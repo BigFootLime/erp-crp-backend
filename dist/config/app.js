@@ -4,8 +4,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
-const swagger_ui_express_1 = __importDefault(require("swagger-ui-express"));
-const swagger_1 = require("../docs/swagger");
+// import { swaggerSpec } from '../docs/swagger';
 const cors_1 = __importDefault(require("cors"));
 const helmet_1 = __importDefault(require("helmet"));
 const morgan_1 = __importDefault(require("morgan"));
@@ -14,7 +13,7 @@ const errorHandler_1 = require("../middlewares/errorHandler");
 const app = (0, express_1.default)();
 // 🔐 Sécurité HTTP
 app.use((0, helmet_1.default)());
-app.use('/api-docs', swagger_ui_express_1.default.serve, swagger_ui_express_1.default.setup(swagger_1.swaggerSpec));
+// app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 // 🌐 Autoriser CORS
 app.use((0, cors_1.default)());
 // 🔍 Logger des requêtes
@@ -27,6 +26,10 @@ app.use(errorHandler_1.errorHandler);
 app.get('/', (req, res) => {
     res.send('✅ Backend ERP en ligne !');
 });
+app.get('/api/v1', (req, res) => {
+    res.send('✅ Backend ERP en ligne en V1 !');
+});
 // 🌍 Point d’entrée versionné
 app.use('/api/v1/', v1_routes_1.default); // ✅ RESTful + versionné
+app.use('/images', express_1.default.static('S:/CRP_SYSTEMS/images'));
 exports.default = app;

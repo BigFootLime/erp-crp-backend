@@ -1,6 +1,7 @@
 // ✅ Début de migration pro du module "outil" vers architecture erp-crp-backend
 // Fichier : /src/module/outils/repository/outil.repository.ts
 
+import path from "path";
 import db from "../../../config/database";
 
 export const outilRepository = {
@@ -141,7 +142,7 @@ export const outilRepository = {
         return result.rows.map(row => ({
             value: row.id_geometrie,
             label: row.nom_geometrie,
-            imagePath: row.image_path ? `http://localhost:5000/images/${row.image_path}` : null,
+            imagePath: row.image_path ? path.basename(row.image_path) : null,
         }));
     },
 
