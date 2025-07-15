@@ -6,7 +6,7 @@ let io: SocketIOServer;
 export const initSocketServer = (server: HttpServer) => {
   io = new SocketIOServer(server, {
     cors: {
-      origin: '*', // 🔐 sécurise en prod (ex: ['http://localhost:5173'])
+      origin: '*',
       methods: ['GET', 'POST'],
     },
   });
