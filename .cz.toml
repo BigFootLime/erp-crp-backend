@@ -1,7 +1,37 @@
 [tool.commitizen]
-name = "cz_conventional_commits"
-tag_format = "$version"
-version_scheme = "semver2"
-version_provider = "npm"
+name = "cz_customize"
+version = "0.1.0"
+version_files = ["package.json"]
+tag_format = "v$version"
 update_changelog_on_bump = true
-major_version_zero = true
+
+[tool.commitizen.customize]
+message_template = "{{change_type}}: {{message}}"
+example = "feat: ajout du système de login"
+schema = "<type>: <description>"
+schema_pattern = "^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|security|initialise)(\\(.*\\))?: .+"
+change_type_order = ["feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci", "chore", "security", "initialise"]
+
+[[tool.commitizen.customize.questions]]
+type = "list"
+name = "change_type"
+message = "Quel est le type de changement ?"
+choices = [
+  { value = "feat", name = "feat: Nouvelle fonctionnalité" },
+  { value = "fix", name = "fix: Correction de bug" },
+  { value = "docs", name = "docs: Documentation" },
+  { value = "style", name = "style: Formatage / indentation" },
+  { value = "refactor", name = "refactor: Refactorisation sans ajout" },
+  { value = "perf", name = "perf: Amélioration de performance" },
+  { value = "test", name = "test: Tests ajoutés ou modifiés" },
+  { value = "build", name = "build: Changements de build ou dépendances" },
+  { value = "ci", name = "ci: Pipeline / intégration continue" },
+  { value = "chore", name = "chore: Tâche sans impact sur le code" },
+  { value = "security", name = "security: Patch ou amélioration de sécurité" },
+  { value = "initialise", name = "initialise: Initialisation ou modification de l'initialisation du projet" }
+]
+
+[[tool.commitizen.customize.questions]]
+type = "input"
+name = "message"
+message = "Description courte du commit"
