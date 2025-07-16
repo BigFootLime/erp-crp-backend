@@ -17,5 +17,5 @@ initSocketServer(httpServer);
 // 🚀 Lancement du serveur
 httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Serveur ERP lancé sur http://0.0.0.0:${PORT}`);
-  console.log(`🌐 Accès depuis le réseau : http://82.25.112.61:${PORT}`);
+  console.log(`🌐 Accès depuis le réseau : http://erp-backend.croix-rousse-precision.fr:8080`);
 });
