@@ -8,7 +8,7 @@ import path from "path";
  * et d’un fichier test (par défaut : FRAISE-A-FILETER.svg)
  */
 export const checkNetworkDrive = async () => {
-    const basePath = path.resolve("\\\\192.168.1.245\\ERP\\CRP_SYSTEMS\\images");
+    const basePath = path.resolve("/home/bigfootlime/erp-crp/erp-crp-backend/uploads/images");
 
     const testFile = "FRAISE-A-FILETER.svg";
     const fullTestPath = path.join(basePath, testFile);
@@ -18,7 +18,7 @@ export const checkNetworkDrive = async () => {
     return new Promise<void>((resolve, reject) => {
         fs.access(basePath, fs.constants.F_OK, (err) => {
             if (err) {
-                console.error("❌ Le dossier réseau S: est **inaccessible**. Vérifie que le lecteur est monté.");
+                console.error("❌ Le dossier réseau: est **inaccessible**. Vérifie que le lecteur est monté.");
                 return reject();
             }
 
