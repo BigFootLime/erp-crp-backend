@@ -45,7 +45,7 @@ app.get('/api/v1', (req, res) => {
 app.use('/api/v1/', v1Router); // ✅ RESTful + versionné
 
 
-const reseauUNC = path.resolve("\\\\82.25.112.61\\ERP\\CRP_SYSTEMS\\images");
+const reseauUNC = path.resolve("/home/bigfootlime/erp-crp/erp-crp-backend/uploads/images");
 
 app.use("/images", express.static(reseauUNC, {
   setHeaders: (res, path) => {
@@ -62,7 +62,7 @@ app.use("/images", express.static(reseauUNC, {
 
 console.log("📂 Dossier réseau exposé :", reseauUNC);
 checkNetworkDrive().catch(() => {
-  console.error("🚨 Attention : le lecteur S:/ n'est pas prêt. Le serveur démarre quand même, mais les images ne seront pas servies.");
+  console.error("🚨 Attention le dossier reseau ne reponds pas. Le serveur démarre quand même, mais les images ne seront pas servies.");
 });
 
 
