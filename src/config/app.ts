@@ -45,24 +45,28 @@ app.get('/api/v1', (req, res) => {
 app.use('/api/v1/', v1Router); // ✅ RESTful + versionné
 
 
-const reseauUNC = path.resolve("/home/bigfootlime/erp-crp/erp-crp-backend/uploads/images");
+const isLocal = process.env.NODE_ENV === "development";
 
-app.use("/images", express.static(reseauUNC, {
-  setHeaders: (res, path) => {
-    const mimeType = mime.lookup(path); // 🔍 devine le type MIME
+const reseauPath = path.resolve("/home/bigfootlime/erp-crp/erp-crp-backend/uploads/images");
+const localPath = path.resolve("uploads/images");
+const imagePath = isLocal ? localPath : reseauPath;
+
+app.use("/images", express.static(imagePath, {
+  setHeaders: (res, filePath) => {
+    const mimeType = mime.lookup(filePath);
     if (mimeType) {
       res.setHeader("Content-Type", mimeType);
-      console.log("header is looool")
     }
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
   }
 }));
 
+console.log("📂 Dossier exposé pour les images :", imagePath);
 
-console.log("📂 Dossier réseau exposé :", reseauUNC);
+// Vérifie que le dossier est bien accessible
 checkNetworkDrive().catch(() => {
-  console.error("🚨 Attention le dossier reseau ne reponds pas. Le serveur démarre quand même, mais les images ne seront pas servies.");
+  console.error("🚨 Le dossier réseau est inaccessible. Le serveur démarre quand même, mais les images ne seront pas servies.");
 });
 
 
