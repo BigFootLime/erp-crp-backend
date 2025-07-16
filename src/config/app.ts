@@ -45,7 +45,7 @@ app.get('/api/v1', (req, res) => {
 app.use('/api/v1/', v1Router); // ✅ RESTful + versionné
 
 
-const reseauUNC = path.resolve("\\\\192.168.1.245\\ERP\\CRP_SYSTEMS\\images");
+const reseauUNC = path.resolve("\\\\82.25.112.61\\ERP\\CRP_SYSTEMS\\images");
 
 app.use("/images", express.static(reseauUNC, {
   setHeaders: (res, path) => {

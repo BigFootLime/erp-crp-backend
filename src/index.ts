@@ -1,7 +1,8 @@
 import dotenv from 'dotenv';
 import app from './config/app';
 import { createServer } from 'http';
-import { initSocketServer } from '../src/sockets/sockeServer';
+import { initSocketServer } from './sockets/sockeServer'
+
 
 dotenv.config();
 
