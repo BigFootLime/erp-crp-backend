@@ -8,7 +8,7 @@ on:
 jobs:
   deploy:
     name: Deploy via SSH to VPS
-    runs-on: ubuntu-latest
+    runs-on: debian-latest
 
     steps:
       - name: 📦 Checkout code
