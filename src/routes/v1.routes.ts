@@ -6,7 +6,7 @@ const router = Router();
 // 📦 Routes versionnées par module
 
 router.use('/auth', authRoutes);
-router.use('/outils', outilRoutes);
+router.use('/outil', outilRoutes);
 
 
 export default router;
