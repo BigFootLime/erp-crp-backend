@@ -42,6 +42,6 @@ router.post(
     ]),
     outilController.create
 );
-router.get("/:id", outilController.getById); // ⚠️ Toujours à la fin !
+router.get("/:id", outilController.getById);
 
 export default router;
