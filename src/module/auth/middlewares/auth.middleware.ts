@@ -46,7 +46,10 @@ export const authorizeRole = (...roles: string[]) => {
       }
   
       if (!roles.includes(req.user.role)) {
-        res.status(403).json({ error: "Accès refusé : rôle insuffisant" });
+        console.log(`🎭 Rôle utilisateur : ${req.user.role}, rôles autorisés : ${roles.join(', ')}`);
+
+       res.status(403).json({ error: 'Accès interdit' });
+
         return;
       }
   
