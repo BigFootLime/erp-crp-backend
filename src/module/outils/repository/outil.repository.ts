@@ -4,7 +4,7 @@
 import path from "path";
 
 import db from "../../../config/database";
-const BASE_IMAGE_URL = process.env.BACKEND_URL || "http://192.168.1.244:5000";
+const BASE_IMAGE_URL = process.env.BACKEND_URL || "http://erp-backend.croix-rousse-precision.fr:8080";
 
 export const outilRepository = {
     // 🔍 Trouver un outil par son ID
