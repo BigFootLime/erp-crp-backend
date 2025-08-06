@@ -5,6 +5,23 @@ import db from "../../../config/database";
 
 export const outilService = {
 
+
+    async reapprovisionner(id_outil: number, quantite: number, prix: number, id_fournisseur: number, utilisateur: string) {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    await outilRepository.addToStock(client, id_outil, quantite);
+    await outilRepository.insertHistoriquePrix(client, id_outil, prix, id_fournisseur);
+    await outilRepository.logMouvementStock(client, id_outil, quantite, "reapprovisionnement", utilisateur);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+},
+
     async getAllOutils() {
         return outilRepository.findAll();
       },
