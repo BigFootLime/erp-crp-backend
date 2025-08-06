@@ -103,6 +103,28 @@ async initStock(client: any, id_outil: number, quantite: number, quantite_minima
         console.log("📦 Stock initial enregistré:", { quantite, quantite_minimale });
     }
 },
+async addToStock(client: any, id_outil: number, quantite: number) {
+  await client.query(
+    `UPDATE gestion_outils_stock SET quantite = quantite + $1, date_maj = NOW() WHERE id_outil = $2`,
+    [quantite, id_outil]
+  );
+},
+
+async insertHistoriquePrix(client: any, id_outil: number, prix: number, id_fournisseur: number) {
+  await client.query(
+    `INSERT INTO gestion_outils_historique_prix (id_outil, prix, date_prix, id_fournisseur)
+     VALUES ($1, $2, NOW(), $3)`,
+    [id_outil, prix, id_fournisseur]
+  );
+},
+
+async logMouvementStock(client: any, id_outil: number, quantite: number, type: string, utilisateur: string) {
+  await client.query(
+    `INSERT INTO gestion_outils_mouvement_stock (id_outil, quantite, type_mouvement, utilisateur, date_mouvement)
+     VALUES ($1, $2, $3, $4, NOW())`,
+    [id_outil, quantite, type, utilisateur]
+  );
+},
 
 // ✅ Déduire une quantité du stock
 async removeFromStock(id_outil: number, quantity: number, user: string, client?: any) {

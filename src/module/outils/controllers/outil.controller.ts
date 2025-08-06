@@ -5,6 +5,7 @@ import { parseId } from "../../../utils/parseId";
 import {parseString} from "../../../utils/parseString"
 const BASE_IMAGE_URL = process.env.BACKEND_URL || "http://192.168.1.244:5000"
 import { getIO } from '../../../sockets/sockeServer'; // ou depuis le bon chemin
+
 export const outilController = {
 
     async getAll(req: Request, res: Response, next: NextFunction) {
@@ -104,7 +105,42 @@ export const outilController = {
         } catch (error) {
           next(error);
         }
-      }
+      },
+
+      reapprovisionner: async (req: Request, res: Response, next: NextFunction) => {
+        try {
+            const { id_outil, quantite, prix, id_fournisseur } = req.body;
+            const utilisateur = req.user?.username || "Utilisateur inconnu";
+
+        if (!id_outil || !quantite || !prix || !id_fournisseur) {
+            return res.status(400).json({ message: "Champs requis manquants." });
+        }
+
+        await outilService.reapprovisionner(
+            Number(id_outil),
+            Number(quantite),
+            Number(prix),
+            Number(id_fournisseur),
+            utilisateur
+      );
+
+        const io = getIO();
+             io.emit("stockUpdated", {
+             id_outil,
+             quantity: quantite,
+             user: utilisateur,
+             type: "reapprovisionnement",
+             date: new Date().toISOString(),
+     });
+
+        return res.status(200).json({
+        success: true,
+        message: `✅ Outil ${id_outil} réapprovisionné de ${quantite} unités.`
+        });
+        } catch (error) {
+            next(error);
+        }
+  },
 };
 
 export const outilSupportController = {
@@ -206,6 +242,8 @@ export const outilSupportController = {
             next(err);
         }
     },
+
+    
 
     postRevetement: async (req: Request, res: Response, next: NextFunction) => {
         try {

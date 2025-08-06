@@ -44,4 +44,10 @@ router.post(
 );
 router.get("/:id", outilController.getById);
 
+router.post(
+  "/reapprovisionner",
+  authenticateToken,
+  asyncHandler(outilController.reapprovisionner)
+);
+
 export default router;
