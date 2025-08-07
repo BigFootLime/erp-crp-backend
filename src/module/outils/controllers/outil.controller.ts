@@ -138,7 +138,9 @@ export const outilController = {
         message: `✅ Outil ${id_outil} réapprovisionné de ${quantite} unités.`
         });
         } catch (error) {
+            console.error("❌ Erreur reapprovisionner :", error);
             next(error);
+            
         }
   },
 };
