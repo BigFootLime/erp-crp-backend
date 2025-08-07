@@ -12,7 +12,7 @@ export const outilService = {
     await client.query("BEGIN");
     await outilRepository.addToStock(client, id_outil, quantite);
     await outilRepository.insertHistoriquePrix(client, id_outil, prix, id_fournisseur);
-    await outilRepository.logMouvementStock(client, id_outil, quantite, "reapprovisionnement", utilisateur);
+    await outilRepository.logMouvementStock(client, id_outil, quantite, "entrée", utilisateur);
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");

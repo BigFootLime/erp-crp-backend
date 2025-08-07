@@ -129,7 +129,7 @@ export const outilController = {
              id_outil,
              quantity: quantite,
              user: utilisateur,
-             type: "reapprovisionnement",
+             type: "entrée",
              date: new Date().toISOString(),
      });
 
