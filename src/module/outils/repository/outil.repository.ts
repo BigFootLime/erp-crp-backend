@@ -112,8 +112,12 @@ async addToStock(client: any, id_outil: number, quantite: number) {
 
 async insertHistoriquePrix(client: any, id_outil: number, prix: number, id_fournisseur: number) {
   await client.query(
-    `INSERT INTO gestion_outils_historique_prix (id_outil, prix, date_prix, id_fournisseur)
-     VALUES ($1, $2, NOW(), $3)`,
+    `INSERT INTO gestion_outils_stock (id_outil, quantite, quantite_minimale, date_maj)
+    VALUES ($1, $2, 0, NOW())
+    ON CONFLICT (id_outil)
+    DO UPDATE SET
+      quantite = gestion_outils_stock.quantite + EXCLUDED.quantite,
+      date_maj = NOW()`,
     [id_outil, prix, id_fournisseur]
   );
 },
