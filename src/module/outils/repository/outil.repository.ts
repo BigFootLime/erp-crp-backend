@@ -111,7 +111,7 @@ async addToStock(client: any, id_outil: number, quantite: number) {
     DO UPDATE SET
       quantite = gestion_outils_stock.quantite + EXCLUDED.quantite,
       date_maj = NOW()`,
-    [quantite, id_outil]
+     [id_outil, quantite]
   );
 },
 
