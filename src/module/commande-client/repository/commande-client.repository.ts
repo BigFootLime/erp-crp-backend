@@ -74,21 +74,33 @@ async function insertEcheances(client: PoolClient, commande_id: string, echs: Cr
 
 async function insertPieces(client: PoolClient, commande_id: string, pieces: CreateCommandeInput["pieces"]) {
   if (!pieces?.length) return
+  // 10 colonnes : id, commande_id, source_piece_id, code_piece, designation, rang, parent_id, plan, coef, article_id
   const sql = `
     INSERT INTO commande_pieces (
       id, commande_id, source_piece_id, code_piece, designation, rang, parent_id, plan, coef, article_id
     ) VALUES
-    ${pieces.map((_,i)=>`($${i*9+1}, $${i*9+2}, $${i*9+3}, $${i*9+4}, $${i*9+5}, $${i*9+6}, $${i*9+7}, $${i*9+8}, $${i*9+9}, $${i*9+10})`).join(",")}
+    ${pieces.map((_, i) =>
+      `($${i*10+1}, $${i*10+2}, $${i*10+3}, $${i*10+4}, $${i*10+5}, $${i*10+6}, $${i*10+7}, $${i*10+8}, $${i*10+9}, $${i*10+10})`
+    ).join(",")}
   `
   const params: any[] = []
-  pieces.forEach(p=>{
+  for (const p of pieces) {
     params.push(
-      p.id, commande_id, p.source_piece_id ?? null, p.code_piece ?? null, p.designation, p.rang,
-      p.parent_id ?? null, p.plan ?? null, p.coef ?? 1, p.article_id ?? null
+      p.id,                           // ✅ id généré côté front (local)
+      commande_id,                    // FK
+      p.source_piece_id ?? null,
+      p.code_piece ?? null,
+      p.designation,
+      p.rang,
+      p.parent_id ?? null,
+      p.plan ?? null,
+      p.coef ?? 1,
+      p.article_id ?? null
     )
-  })
+  }
   await client.query(sql, params)
 }
+
 
 async function insertOperations(client: PoolClient, commande_id: string, ops: NonNullable<CreateCommandeInput["operations"]>) {
   if (!ops?.length) return
@@ -168,5 +180,5 @@ export async function repoListCommandes() {
 export async function repoDeleteCommande(id: string) {
   // suppresion en cascade si FK ON DELETE CASCADE configurées
   const { rowCount } = await db.query(`DELETE FROM commandes WHERE id = $1`, [id])
-  return rowCount > 0
+  return (rowCount ?? 0) > 0  
 }

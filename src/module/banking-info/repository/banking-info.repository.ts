@@ -35,7 +35,7 @@ export async function repoGetBankingInfo(id: string): Promise<BankingInfo | null
 
 export async function repoDeleteBankingInfo(id: string): Promise<boolean> {
   const { rowCount } = await db.query(`DELETE FROM public.informations_bancaires WHERE bank_info_id = $1`, [id])
-  return rowCount > 0
+  return (rowCount ?? 0) > 0  
 }
 
 export async function repoUpdateBankingInfo(

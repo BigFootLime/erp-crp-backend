@@ -131,7 +131,7 @@ export type CreateCommandeInput = {
   lignes: Array<Omit<CommandeLigne,"id"|"commande_id">>
   echeancier?: Array<Omit<CommandeEcheance,"id"|"commande_id">>
 
-  pieces: Array<Omit<CommandePiece,"id"|"commande_id">>
+ pieces: Array<Omit<CommandePiece,"commande_id">>
   operations?: Array<Omit<CommandeOperation,"id"|"commande_id">>
   achats?: Array<Omit<CommandeAchat,"id"|"commande_id">>
 }
