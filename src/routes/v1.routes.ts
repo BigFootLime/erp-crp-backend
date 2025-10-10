@@ -4,13 +4,18 @@ import authRoutes from "../module/auth/routes/auth.routes"
 import outilRoutes from "../module/outils/routes/outil.routes"
 import bankingInfoRoutes from "../module/banking-info/routes/banking-info.routes"
 import commandeClientRoutes from "../module/commande-client/routes/commande-client.routes"
-
+import clientRoutes from "../module/clients/routes/clients.routes";
+import paymentModeRoutes from "../module/payment-modes/routes/payment-modes.routes";
+import billerRoutes from "../module/billers/routes/billers.routes";
 
 const router = Router()
 
 router.use("/auth", authRoutes)
 router.use("/outil", outilRoutes)
 router.use("/banking-info", bankingInfoRoutes)  
-router.use("/commandes", commandeClientRoutes) // ✅                                    
+router.use("/commandes", commandeClientRoutes) // ✅  
+router.use("/clients", clientRoutes);
+router.use("/payment-modes", paymentModeRoutes);  
+router.use("/billers", billerRoutes);                                
 
 export default router
