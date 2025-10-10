@@ -4,9 +4,9 @@ import authRoutes from "../module/auth/routes/auth.routes"
 import outilRoutes from "../module/outils/routes/outil.routes"
 import bankingInfoRoutes from "../module/banking-info/routes/banking-info.routes"
 import commandeClientRoutes from "../module/commande-client/routes/commande-client.routes"
-import clientRoutes from "../module/clients/routes/clients.routes";
-import paymentModeRoutes from "../module/payment-modes/routes/payment-modes.routes";
-import billerRoutes from "../module/billers/routes/billers.routes";
+import clientRoutes from "../module/client/routes/client.routes";
+import paymentModeRoutes from "../module/payment-mode/routes/payment-modes.routes";
+import billerRoutes from "../module/biller/routes/biller.routes";
 
 const router = Router()
 

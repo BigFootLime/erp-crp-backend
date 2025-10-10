@@ -1,17 +1,22 @@
-import { Request, Response } from "express";
-import { createPaymentModeSchema } from "../validators/payment-mode.validators";
-import { createPaymentMode, listPaymentModes } from "../services/payment-modes.service";
+// src/module/payment-modes/controllers/payment-modes.controller.ts
+import { RequestHandler } from "express";
+import { svcCreatePaymentMode, svcListPaymentModes } from "../services/payment-modes.service";
 
-export async function getPaymentModes(req: Request, res: Response) {
-  const data = await listPaymentModes();
-  res.json(data);
-}
-
-export async function postPaymentMode(req: Request, res: Response) {
-  const parsed = createPaymentModeSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ message: "Invalid payload", errors: parsed.error.flatten() });
+export const postPaymentMode: RequestHandler = async (req, res, next) => {
+  try {
+    const created = await svcCreatePaymentMode(req.body);
+    res.status(201).json(created);
+  } catch (err) {
+    next(err);
   }
-  const data = await createPaymentMode(parsed.data);
-  res.status(201).json(data);
-}
+};
+
+export const listPaymentModes: RequestHandler = async (req, res, next) => {
+  try {
+    const q = String(req.query.q ?? "");
+    const rows = await svcListPaymentModes(q);
+    res.json(rows);
+  } catch (err) {
+    next(err);
+  }
+};

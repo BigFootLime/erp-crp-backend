@@ -1,7 +1,11 @@
-import { CreatePaymentModeDTO } from "../validators/payment-mode.validators";
-import { findAllPaymentModes, insertPaymentMode } from "../repository/payment-modes.repository";
+// src/module/payment-modes/services/payment-modes.service.ts
+import { repoCreatePaymentMode, repoListPaymentModes } from "../repository/payment-modes.repository";
 
-export const listPaymentModes = () => findAllPaymentModes();
+export const svcCreatePaymentMode = (dto: { name: string; code?: string }) =>
+  repoCreatePaymentMode(dto);
 
-export const createPaymentMode = (dto: CreatePaymentModeDTO) =>
-  insertPaymentMode(dto.name, dto.code);
+export const svcListPaymentModes = (q = "") =>
+  repoListPaymentModes(q).then(rows =>
+    // shape handy for your frontend selects/autocomplete
+    rows.map(r => ({ id: r.payment_id, value: r.payment_id, label: r.type, code: r.payment_code }))
+  );
