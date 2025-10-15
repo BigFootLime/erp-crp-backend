@@ -39,9 +39,9 @@ app.get('/', (req, res) => {
   res.send('✅ Backend ERP en ligne !');
 });
 
-app.get('/health', (req, res) => {
-  res.send('✅ Backend ERP is operational !');
-});
+// app.get('/health', (req, res) => {
+//   res.send('✅ Backend ERP is operational !');
+// });
 
 app.get('/api/v1', (req, res) => {
   res.send('✅ Backend ERP en ligne en V1 !');
