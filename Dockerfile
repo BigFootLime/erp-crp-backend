@@ -1,5 +1,5 @@
 # --------- Build (TS) ----------
-FROM node:20-alpine AS runtime
+FROM node:20-alpine AS builder
 WORKDIR /app
 RUN apk add --no-cache curl
 ENV CI=true
@@ -12,6 +12,7 @@ RUN npm run build
 # --------- Runtime ------------
 FROM node:20-alpine AS runtime
 WORKDIR /app
+RUN apk add --no-cache curl
 
 # ne force PAS NODE_ENV ici: laisse Coolify le définir côté runtime
 COPY package*.json ./
