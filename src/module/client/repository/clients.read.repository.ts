@@ -57,7 +57,7 @@ export async function repoGetClientById(clientId: string) {
     `
     SELECT mr.payment_id AS id, mr.payment_code AS code, mr.type
     FROM client_payment_modes cpm
-    JOIN mode_reglement mr ON mr.payment_id = cpm.payment_mode_id
+  JOIN mode_reglement mr ON mr.payment_id = cpm.payment_id
     WHERE cpm.client_id = $1
     ORDER BY mr.payment_code ASC
     `,

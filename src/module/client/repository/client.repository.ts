@@ -91,11 +91,11 @@ async function linkPaymentModes(client: any, clientId: string, ids: string[]) {
   if (!ids?.length) return;
   const values = ids.map((_, i) => `($1,$${i + 2})`).join(",");
   await client.query(
-    `INSERT INTO client_payment_modes (client_id, payment_mode_id)
-     VALUES ${values}
-     ON CONFLICT (client_id,payment_mode_id) DO NOTHING`,
-    [clientId, ...ids]
-  );
+  `INSERT INTO client_payment_modes (client_id, payment_id)
+   VALUES ${values}
+   ON CONFLICT (client_id,payment_id) DO NOTHING`,
+  [clientId, ...ids]
+);
 }
 
 export async function repoCreateClient(dto: CreateClientDTO): Promise<{ client_id: string }> {
