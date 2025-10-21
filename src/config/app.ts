@@ -9,6 +9,8 @@ import v1Router from '../routes/v1.routes';
 import { errorHandler } from '../middlewares/errorHandler';
 import { checkNetworkDrive } from "../utils/checkNetworkDrive";
 import mime from "mime-types";
+import { swaggerSpec } from '../swagger/swagger';
+import { apiReference } from '@scalar/express-api-reference';
 
 
 const app = express();
@@ -30,6 +32,12 @@ app.use(morgan('dev'));
 
 // 🔄 Parsing JSON
 app.use(express.json());
+
+app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+  swaggerOptions: { persistAuthorization: true }, // garde le JWT après refresh
+}));
+
+app.use('/reference', apiReference({ spec: { content: swaggerSpec } }));
 
 // 🔄 Parsing des URL
 app.use(errorHandler);

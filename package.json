@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^1.4.1",
+    "@scalar/express-api-reference": "^0.8.22",
     "@types/multer": "^1.4.12",
     "bcryptjs": "^3.0.2",
     "cors": "^2.8.5",

@@ -1,6 +1,8 @@
 // src/module/client/controllers/client.controller.ts
-import { Request, Response } from "express";
+import { Request, RequestHandler, Response } from "express";
 import * as clientService from "../services/client.service"; // ✅ namespace import
+import { createClientSchema } from "../validators/client.validators";
+import { repoCreateClient } from "../repository/client.repository";
 
 export async function getClientById(req: Request, res: Response): Promise<void> {
   const row = await clientService.getClientById(req.params.id);
@@ -18,8 +20,12 @@ export async function listClients(req: Request, res: Response): Promise<void> {
   res.json(rows);
 }
 
-export async function postClient(req: Request, res: Response): Promise<void> {
-  // …validate req.body if you want
-  const created = await clientService.createClient(req.body);
-  res.status(201).json(created);
-}
+export const postClient: RequestHandler = async (req, res, next) => {
+  try {
+    const dto = createClientSchema.parse(req.body);
+    const created = await repoCreateClient(dto);
+    res.status(201).json(created); // { client_id }
+  } catch (e) {
+    next(e);
+  }
+};
