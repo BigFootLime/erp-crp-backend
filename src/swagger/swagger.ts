@@ -52,90 +52,75 @@ export const swaggerSpec: OpenAPIV3_1.Document = {
           civility: { type: ['string', 'null'] },
         },
       },
-      CreateClientDTO: {
-        type: 'object',
-        required: [
-          'company_name',
-          'status',
-          'blocked',
-          'creation_date',
-          'payment_mode_ids',
-          'bank',
-          'bill_address',
-          'delivery_address',
-        ],
-        properties: {
-          company_name: { type: 'string', minLength: 1 },
-          email: { type: ['string', 'null'], format: 'email' },
-          phone: { type: ['string', 'null'] },
-          website_url: { type: ['string', 'null'], format: 'uri' },
-          siret: { type: ['string', 'null'] },
-          vat_number: { type: ['string', 'null'] },
-          naf_code: { type: ['string', 'null'] },
-          status: { type: 'string', enum: ['prospect', 'client', 'inactif'] },
-          blocked: { type: 'boolean' },
-          reason: { type: ['string', 'null'] },
-          creation_date: { type: 'string', description: 'ISO string (sera cast en timestamp côté DB si possible)' },
+      // src/swagger/swagger.ts (components.schemas.CreateClientDTO)
+CreateClientDTO: {
+  type: 'object',
+  required: [
+    'company_name',
+    'status',
+    'blocked',
+    'creation_date',
+    'payment_mode_ids',
+    'bank',
+    'bill_address',
+    'delivery_address',
+  ],
+  properties: {
+    company_name: { type: 'string', minLength: 1 },
+    email: { type: ['string','null'], format: 'email' },
+    phone: { type: ['string','null'] },
+    website_url: { type: ['string','null'], format: 'uri' },
+    siret: { type: ['string','null'] },
+    vat_number: { type: ['string','null'] },
+    naf_code: { type: ['string','null'] },
+    status: { type: 'string', enum: ['prospect', 'client', 'inactif'] },
+    blocked: { type: 'boolean' },
+    reason: { type: ['string','null'] },
+    creation_date: { type: 'string' },
 
-          payment_mode_ids: { type: 'array', items: { type: 'string' }, default: [] },
-          biller_id: { type: ['string', 'null'] },
+    payment_mode_ids: { type: 'array', items: { type: 'string' }, default: [] },
 
-          bank: { $ref: '#/components/schemas/BankInline' },
+    bank: { $ref: '#/components/schemas/BankInline' },
 
-          observations: { type: ['string', 'null'] },
-          provided_documents_id: { type: ['string', 'null'] },
+    observations: { type: ['string','null'] },
+    provided_documents_id: { type: ['string','null'] },
 
-          bill_address: { $ref: '#/components/schemas/AddressInput' },
-          delivery_address: { $ref: '#/components/schemas/AddressInput' },
+    bill_address: { $ref: '#/components/schemas/AddressInput' },
+    delivery_address: { $ref: '#/components/schemas/AddressInput' },
 
-          primary_contact: { $ref: '#/components/schemas/PrimaryContactInput' },
-        },
-        example: {
-          company_name: 'ACME SAS',
-          email: 'contact@acme.fr',
-          phone: '+33 4 72 00 00 00',
-          website_url: 'https://acme.fr',
-          siret: '12345678900011',
-          vat_number: 'FR12 345678900',
-          naf_code: '2562B',
-          status: 'client',
-          blocked: false,
-          reason: '',
-          creation_date: '2025-10-20T10:12:00Z',
-          payment_mode_ids: ['CHQ', 'VIR'],
-          biller_id: 'B001',
-          bank: {
-            bank_name: 'BNP Paribas',
-            iban: 'FR7612345678901234567890123',
-            bic: 'ABCDEFGHXXX',
-          },
-          observations: 'Client historique',
-          provided_documents_id: '',
-          bill_address: {
-            name: 'ACME Facturation',
-            street: '10 rue de la Paix',
-            house_number: 'B',
-            postal_code: '69001',
-            city: 'Lyon',
-            country: 'France',
-          },
-          delivery_address: {
-            name: 'ACME Entrepôt',
-            street: '25 avenue des Frères',
-            postal_code: '69800',
-            city: 'Saint-Priest',
-            country: 'France',
-          },
-          primary_contact: {
-            first_name: 'Jeanne',
-            last_name: 'Durand',
-            email: 'jeanne.durand@acme.fr',
-            phone_personal: '+33 6 12 34 56 78',
-            role: 'Acheteuse',
-            civility: 'Mme',
-          },
-        },
-      },
+    primary_contact: { $ref: '#/components/schemas/PrimaryContactInput' },
+  },
+  example: {
+    company_name: 'ACME SAS',
+    email: 'contact@acme.fr',
+    phone: '+33 4 72 00 00 00',
+    website_url: 'https://acme.fr',
+    siret: '12345678900011',
+    vat_number: 'FR12 345678900',
+    naf_code: '2562B',
+    status: 'client',
+    blocked: false,
+    reason: '',
+    creation_date: '2025-10-20T10:12:00Z',
+    payment_mode_ids: ['CHQ','VIR'],
+    bank: { bank_name: 'BNP Paribas', iban: 'FR7612345678901234567890123', bic: 'ABCDEFGHXXX' },
+    observations: 'Client historique',
+    provided_documents_id: '',
+    bill_address: {
+      name: 'ACME Facturation', street: '10 rue de la Paix', house_number: 'B',
+      postal_code: '69001', city: 'Lyon', country: 'France'
+    },
+    delivery_address: {
+      name: 'ACME Entrepôt', street: '25 avenue des Frères',
+      postal_code: '69800', city: 'Saint-Priest', country: 'France'
+    },
+    primary_contact: {
+      first_name: 'Jeanne', last_name: 'Durand', email: 'jeanne.durand@acme.fr',
+      phone_personal: '+33 6 12 34 56 78', role: 'Acheteuse', civility: 'Mme'
+    }
+  }
+},
+
 
       // ------- OUTPUT SCHEMAS -------
       CreateClientResponse: {

@@ -18,7 +18,6 @@ export type ClientCreateInput = {
   status: "prospect" | "client" | "inactif";
   blocked: boolean; reason?: string; creation_date: string;
   payment_mode_ids: string[];
-  biller_id?: string | "";
   bank: BankInline;
   observations?: string;
   provided_documents_id?: string;
