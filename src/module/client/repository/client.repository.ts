@@ -41,16 +41,6 @@ async function upsertBank(client: any, bank: CreateClientDTO["bank"]) {
   return rows[0].bank_info_id as string;
 }
 
-async function insertPrimaryContact(client: any, dto: NonNullable<CreateClientDTO["primary_contact"]>, clientId: string) {
-  const { rows } = await client.query(
-    `INSERT INTO contacts (first_name,last_name,civility,role,phone_personal,email,client_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7)
-     RETURNING contact_id`,
-    [dto.first_name, dto.last_name, dto.civility ?? null, dto.role ?? null, dto.phone_personal ?? null, dto.email, clientId]
-  );
-  return rows[0].contact_id as string;
-}
-
 async function insertClient(
   client: any,
   id: string,
@@ -87,15 +77,25 @@ async function insertClient(
   ]);
 }
 
+async function insertPrimaryContact(client: any, dto: NonNullable<CreateClientDTO["primary_contact"]>, clientId: string) {
+  const { rows } = await client.query(
+    `INSERT INTO contacts (first_name,last_name,civility,role,phone_personal,email,client_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)
+     RETURNING contact_id`,
+    [dto.first_name, dto.last_name, dto.civility ?? null, dto.role ?? null, dto.phone_personal ?? null, dto.email, clientId]
+  );
+  return rows[0].contact_id as string;
+}
+
 async function linkPaymentModes(client: any, clientId: string, ids: string[]) {
   if (!ids?.length) return;
   const values = ids.map((_, i) => `($1,$${i + 2})`).join(",");
   await client.query(
-  `INSERT INTO client_payment_modes (client_id, payment_id)
-   VALUES ${values}
-   ON CONFLICT (client_id,payment_id) DO NOTHING`,
-  [clientId, ...ids]
-);
+    `INSERT INTO client_payment_modes (client_id, payment_id)
+     VALUES ${values}
+     ON CONFLICT (client_id,payment_id) DO NOTHING`,
+    [clientId, ...ids]
+  );
 }
 
 export async function repoCreateClient(dto: CreateClientDTO): Promise<{ client_id: string }> {
@@ -104,12 +104,26 @@ export async function repoCreateClient(dto: CreateClientDTO): Promise<{ client_i
     await db.query("BEGIN");
 
     const clientId = await nextClientId(db);
+    // 1) Préparer FK nécessaires
     const billAddrId = await insertAddressFacturation(db, dto.bill_address);
     const delivAddrId = await insertAddressLivraison(db, dto.delivery_address);
     const bankInfoId = await upsertBank(db, dto.bank);
-    const contactId = dto.primary_contact ? await insertPrimaryContact(db, dto.primary_contact, clientId) : null;
 
-    await insertClient(db, clientId, dto, billAddrId, delivAddrId, bankInfoId, contactId);
+    // 2) Insérer le client (contact_id = null pour l’instant)
+    await insertClient(db, clientId, dto, billAddrId, delivAddrId, bankInfoId, null);
+
+    // 3) Insérer le contact (si fourni) avec le client déjà existant
+    let contactId: string | null = null;
+    if (dto.primary_contact) {
+      contactId = await insertPrimaryContact(db, dto.primary_contact, clientId);
+      // 4) Répercuter sur le client
+      await db.query(
+        `UPDATE clients SET contact_id = $1 WHERE client_id = $2`,
+        [contactId, clientId]
+      );
+    }
+
+    // 5) Lier modes de règlement
     await linkPaymentModes(db, clientId, dto.payment_mode_ids);
 
     await db.query("COMMIT");
