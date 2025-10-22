@@ -39,7 +39,7 @@ export const createClientSchema = z.object({
   bank: bankSchema,
 
   observations: z.string().optional().or(z.literal("")),
-  provided_documents_id: z.string().uuid().optional(),
+  provided_documents_id: z.string().uuid().optional().or(z.literal("")), // ✅ accepte ""
   bill_address: addressSchema,
   delivery_address: addressSchema,
   primary_contact: contactSchema.optional(),

@@ -54,9 +54,10 @@ async function insertClient(
 ) {
 
     const normalizedProvidedDocsId =
-    dto.provided_documents_id && dto.provided_documents_id.trim() !== ''
-      ? dto.provided_documents_id
-      : null;
+  dto.provided_documents_id && dto.provided_documents_id.trim() !== ''
+    ? dto.provided_documents_id
+    : null;
+
 
 
   const q = `
