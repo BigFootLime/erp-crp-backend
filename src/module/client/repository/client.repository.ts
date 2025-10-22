@@ -53,12 +53,11 @@ async function insertClient(
   
 ) {
 
-  const normalizedBillerId =
-  dto.biller_id && dto.biller_id.trim() !== "" ? dto.biller_id : null;
-  const normalizedProvidedDocsId =
-  dto.provided_documents_id && dto.provided_documents_id.trim() !== ''
-    ? dto.provided_documents_id
-    : null;
+    const normalizedProvidedDocsId =
+    dto.provided_documents_id && dto.provided_documents_id.trim() !== ''
+      ? dto.provided_documents_id
+      : null;
+
 
   const q = `
   INSERT INTO clients (
@@ -77,14 +76,19 @@ async function insertClient(
     NULLIF($17,''), $18
   )
 `;
- await client.query(q, [
-  id, dto.company_name, null,
-  dto.email ?? "", dto.phone ?? "", dto.website_url ?? "",
-  dto.siret ?? "", dto.vat_number ?? "", dto.naf_code ?? "",
-  dto.status, dto.blocked, dto.reason ?? "", dto.creation_date,
-  delivAddrId, billAddrId, normalizedBillerId, bankInfoId,
-  dto.observations ?? "", normalizedProvidedDocsId
-]);
+  await client.query(q, [
+    // 1..3
+    id, dto.company_name, contactId ?? null,
+    // 4..9
+    dto.email ?? "", dto.phone ?? "", dto.website_url ?? "",
+    dto.siret ?? "", dto.vat_number ?? "", dto.naf_code ?? "",
+    // 10..13
+    dto.status, dto.blocked, dto.reason ?? "", dto.creation_date,
+    // 14..16
+    delivAddrId, billAddrId, bankInfoId,
+    // 17..18
+    dto.observations ?? "", normalizedProvidedDocsId
+  ]);
 }
 
 async function insertPrimaryContact(client: any, dto: NonNullable<CreateClientDTO["primary_contact"]>, clientId: string) {
