@@ -42,54 +42,45 @@ async function upsertBank(client: any, bank: CreateClientDTO["bank"]) {
 }
 
 async function insertClient(
-  client: any,
-  id: string,
+  db: any,
   dto: CreateClientDTO,
   billAddrId: string,
   delivAddrId: string,
-  bankInfoId: string,
-  contactId?: string | null
-
-  
-) {
-
-    const normalizedProvidedDocsId =
-  dto.provided_documents_id && dto.provided_documents_id.trim() !== ''
-    ? dto.provided_documents_id
-    : null;
-
-
+  bankInfoId: string
+): Promise<string> {
+  const normalizedProvidedDocsId =
+    dto.provided_documents_id && dto.provided_documents_id.trim() !== ''
+      ? dto.provided_documents_id
+      : null;
 
   const q = `
-  INSERT INTO clients (
-    client_id, company_name, contact_id,
-    email, phone, website_url,
-    siret, vat_number, naf_code,
-    status, blocked, reason, creation_date,
-    delivery_address_id, bill_address_id, bank_info_id,
-    observations, provided_documents_id
-  ) VALUES (
-    $1,$2,$3,
-    NULLIF($4,''), NULLIF($5,''), NULLIF($6,''),
-    NULLIF($7,''), NULLIF($8,''), NULLIF($9,''),
-    $10, $11, NULLIF($12,''), COALESCE($13::timestamp, now()),
-    $14, $15, $16,
-    NULLIF($17,''), $18
-  )
-`;
-  await client.query(q, [
-    // 1..3
-    id, dto.company_name, contactId ?? null,
-    // 4..9
+    INSERT INTO clients (
+      company_name, contact_id,
+      email, phone, website_url,
+      siret, vat_number, naf_code,
+      status, blocked, reason, creation_date,
+      delivery_address_id, bill_address_id, bank_info_id,
+      observations, provided_documents_id
+    ) VALUES (
+      $1,$2,
+      NULLIF($3,''), NULLIF($4,''), NULLIF($5,''),
+      NULLIF($6,''), NULLIF($7,''), NULLIF($8,''),
+      $9, $10, NULLIF($11,''), COALESCE($12::timestamp, now()),
+      $13, $14, $15,
+      NULLIF($16,''), $17
+    )
+    RETURNING client_id
+  `;
+
+  const { rows } = await db.query(q, [
+    dto.company_name, null,
     dto.email ?? "", dto.phone ?? "", dto.website_url ?? "",
     dto.siret ?? "", dto.vat_number ?? "", dto.naf_code ?? "",
-    // 10..13
     dto.status, dto.blocked, dto.reason ?? "", dto.creation_date,
-    // 14..16
     delivAddrId, billAddrId, bankInfoId,
-    // 17..18
     dto.observations ?? "", normalizedProvidedDocsId
   ]);
+  return rows[0].client_id as string;
 }
 
 async function insertPrimaryContact(client: any, dto: NonNullable<CreateClientDTO["primary_contact"]>, clientId: string) {
@@ -102,51 +93,96 @@ async function insertPrimaryContact(client: any, dto: NonNullable<CreateClientDT
   return rows[0].contact_id as string;
 }
 
-async function linkPaymentModes(client: any, clientId: string, ids: string[]) {
-  if (!ids?.length) return;
-  const values = ids.map((_, i) => `($1,$${i + 2})`).join(",");
-  await client.query(
+async function linkPaymentModes(db: any, clientId: string, idsOrCodes: string[]) {
+  if (!idsOrCodes?.length) return;
+
+  const paymentIds = await resolvePaymentIds(db, idsOrCodes);
+
+  const params = [clientId, ...paymentIds];
+  const values = paymentIds.map((_, i) => `($1,$${i + 2})`).join(',');
+
+  await db.query(
     `INSERT INTO client_payment_modes (client_id, payment_id)
      VALUES ${values}
      ON CONFLICT (client_id,payment_id) DO NOTHING`,
-    [clientId, ...ids]
+    params
   );
 }
+
+
+
+
+// src/module/clients/repository/clients.repository.ts
+
+type PaymentRow = { payment_id: string; payment_code: string };
+
+async function resolvePaymentIds(db: any, codes: string[]): Promise<string[]> {
+  if (!Array.isArray(codes) || codes.length === 0) return [];
+
+  // normaliser proprement (et aider TS avec un type guard)
+  const asked: string[] = codes
+    .map((c) => (c ?? '').trim())
+    .filter((c): c is string => c.length > 0);
+
+  if (asked.length === 0) return [];
+
+  // ⚠️ pas de générique sur db.query, on caste après
+  const result = await db.query(
+    `SELECT payment_id, payment_code
+     FROM mode_reglement
+     WHERE payment_code = ANY($1::text[])`,
+    [asked]
+  );
+
+  const rows = result.rows as PaymentRow[];
+
+  // Map<string,string> bien typée
+  const byCode = new Map<string, string>();
+  for (const r of rows) byCode.set(r.payment_code, r.payment_id);
+
+  const missing = asked.filter((c) => !byCode.has(c));
+  if (missing.length) {
+    const err = new Error(`Unknown payment_code(s): ${missing.join(', ')}`);
+    (err as any).status = 400; // pour ton middleware d’erreurs
+    throw err;
+  }
+
+  // TS sait que .get retourne string ici grâce au check précédent
+  return asked.map((c) => byCode.get(c)!);
+}
+
+
 
 export async function repoCreateClient(dto: CreateClientDTO): Promise<{ client_id: string }> {
   const db = await pool.connect();
   try {
-    await db.query("BEGIN");
+    await db.query('BEGIN');
 
-    const clientId = await nextClientId(db);
-    // 1) Préparer FK nécessaires
     const billAddrId = await insertAddressFacturation(db, dto.bill_address);
     const delivAddrId = await insertAddressLivraison(db, dto.delivery_address);
     const bankInfoId = await upsertBank(db, dto.bank);
 
-    // 2) Insérer le client (contact_id = null pour l’instant)
-    await insertClient(db, clientId, dto, billAddrId, delivAddrId, bankInfoId, null);
+    // ✅ récupère l'ID généré par le trigger
+    const clientId = await insertClient(db, dto, billAddrId, delivAddrId, bankInfoId);
 
-    // 3) Insérer le contact (si fourni) avec le client déjà existant
+    // (optionnel) verrou léger pour s'assurer de la visibilité dans la TX
+    await db.query(`SELECT 1 FROM clients WHERE client_id = $1 FOR UPDATE`, [clientId]);
+
     let contactId: string | null = null;
     if (dto.primary_contact) {
       contactId = await insertPrimaryContact(db, dto.primary_contact, clientId);
-      // 4) Répercuter sur le client
-      await db.query(
-        `UPDATE clients SET contact_id = $1 WHERE client_id = $2`,
-        [contactId, clientId]
-      );
+      await db.query(`UPDATE clients SET contact_id = $1 WHERE client_id = $2`, [contactId, clientId]);
     }
 
-    // 5) Lier modes de règlement
     await linkPaymentModes(db, clientId, dto.payment_mode_ids);
 
-    await db.query("COMMIT");
+    await db.query('COMMIT');
     return { client_id: clientId };
   } catch (e) {
-    await db.query("ROLLBACK");
+    await db.query('ROLLBACK');
     throw e;
   } finally {
     db.release();
   }
 }
+
