@@ -35,7 +35,7 @@ export const createClientSchema = z.object({
   reason: z.string().optional().or(z.literal("")),
   creation_date: z.string().min(1),
 
-  payment_mode_ids: z.array(z.string()).default([]),
+   payment_mode_ids: z.array(z.string().uuid("payment_mode must be a UUID")).default([]),
   bank: bankSchema,
 
   observations: z.string().optional().or(z.literal("")),

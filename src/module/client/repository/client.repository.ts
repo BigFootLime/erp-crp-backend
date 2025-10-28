@@ -114,41 +114,43 @@ async function linkPaymentModes(db: any, clientId: string, idsOrCodes: string[])
 
 // src/module/clients/repository/clients.repository.ts
 
-type PaymentRow = { payment_id: string; payment_code: string };
+type PaymentRow = { payment_id: string };
 
-async function resolvePaymentIds(db: any, codes: string[]): Promise<string[]> {
-  if (!Array.isArray(codes) || codes.length === 0) return [];
+const uuidRe =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-  // normaliser proprement (et aider TS avec un type guard)
-  const asked: string[] = codes
-    .map((c) => (c ?? '').trim())
-    .filter((c): c is string => c.length > 0);
+async function resolvePaymentIds(db: any, ids: string[]): Promise<string[]> {
+  if (!Array.isArray(ids) || ids.length === 0) return [];
 
+  // keep only valid-looking UUIDs; trim & dedupe
+  const asked = Array.from(
+    new Set(
+      ids
+        .map((v) => (v ?? "").trim())
+        .filter((v): v is string => v.length > 0 && uuidRe.test(v))
+    )
+  );
   if (asked.length === 0) return [];
 
-  // ⚠️ pas de générique sur db.query, on caste après
+  // select by UUIDs
   const result = await db.query(
-    `SELECT payment_id, payment_code
-     FROM mode_reglement
-     WHERE payment_code = ANY($1::text[])`,
+    `SELECT payment_id
+       FROM mode_reglement
+      WHERE payment_id = ANY($1::uuid[])`,
     [asked]
   );
-
   const rows = result.rows as PaymentRow[];
 
-  // Map<string,string> bien typée
-  const byCode = new Map<string, string>();
-  for (const r of rows) byCode.set(r.payment_code, r.payment_id);
+  const found = new Set(rows.map((r) => r.payment_id));
+  const missing = asked.filter((id) => !found.has(id));
 
-  const missing = asked.filter((c) => !byCode.has(c));
   if (missing.length) {
-    const err = new Error(`Unknown payment_code(s): ${missing.join(', ')}`);
-    (err as any).status = 400; // pour ton middleware d’erreurs
+    const err = new Error(`Unknown payment_id(s): ${missing.join(", ")}`);
+    (err as any).status = 400;
     throw err;
   }
 
-  // TS sait que .get retourne string ici grâce au check précédent
-  return asked.map((c) => byCode.get(c)!);
+  return Array.from(found);
 }
 
 
