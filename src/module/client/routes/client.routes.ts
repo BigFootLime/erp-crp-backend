@@ -6,8 +6,9 @@ import { listClientsAnalytics } from "../controllers/clients.analytics.controlle
 const router = Router();
 
 router.post("/", postClient);          // already there (create)
-router.get("/", listClients);          // for dropdown/picker with ?q=
+router.get("/", listClients);   
+router.get("/analytics", listClientsAnalytics); // new analytics endpoint       // for dropdown/picker with ?q=
 router.get("/:id", getClientById);     // FULL payload for commande
-router.get("/analytics", listClientsAnalytics); // new analytics endpoint
+
 
 export default router;
