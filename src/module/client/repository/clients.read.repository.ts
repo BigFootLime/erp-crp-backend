@@ -129,17 +129,101 @@ export async function repoGetClientById(clientId: string) {
  */
 export async function repoListClients(q: string, limit = 25) {
   const like = `%${q.trim().toLowerCase()}%`;
+
   const { rows } = await pool.query(
     `
-    SELECT client_id, company_name, email, siret
-    FROM clients
+    SELECT
+      c.client_id,
+      c.company_name, c.email, c.phone, c.website_url,
+      c.siret, c.vat_number, c.naf_code,
+      c.status, c.blocked, c.reason, c.creation_date,
+      c.observations, c.provided_documents_id,
+
+      -- Adresse de facturation (aplaties)
+      af.name  AS bill_name,
+      af.street AS bill_street,
+      af.house_number AS bill_house_number,
+      af.postal_code AS bill_postal_code,
+      af.city  AS bill_city,
+      af.country AS bill_country,
+
+      -- Adresse de livraison (aplaties)
+      al.name  AS deliv_name,
+      al.street AS deliv_street,
+      al.house_number AS deliv_house_number,
+      al.postal_code AS deliv_postal_code,
+      al.city  AS deliv_city,
+      al.country AS deliv_country,
+
+      -- Banque
+      ib.name AS bank_name,
+      ib.iban,
+      ib.bic,
+
+      -- Contact principal (aplaties)
+      ct.first_name AS contact_first_name,
+      ct.last_name  AS contact_last_name,
+      ct.email      AS contact_email,
+      ct.phone_personal AS contact_phone_personal,
+      ct.role       AS contact_role,
+      ct.civility   AS contact_civility,
+
+      -- Modes de règlement (liste d’UUID)
+      COALESCE(
+        ARRAY_AGG(cpm.payment_id) FILTER (WHERE cpm.payment_id IS NOT NULL),
+        '{}'
+      ) AS payment_mode_ids
+
+    FROM clients c
+    LEFT JOIN adresse_facturation af ON af.bill_address_id = c.bill_address_id
+    LEFT JOIN adresse_livraison  al ON al.delivery_address_id = c.delivery_address_id
+    LEFT JOIN informations_bancaires ib ON ib.bank_info_id = c.bank_info_id
+    LEFT JOIN contacts ct ON ct.contact_id = c.contact_id
+    LEFT JOIN client_payment_modes cpm ON cpm.client_id = c.client_id
+
     WHERE
       ($1 = '%%')
-      OR (LOWER(company_name) LIKE $1 OR LOWER(client_id) LIKE $1 OR LOWER(COALESCE(email,'')) LIKE $1 OR COALESCE(siret,'') LIKE replace($1,'%',''))
-    ORDER BY company_name ASC
+      OR (LOWER(c.company_name) LIKE $1
+          OR LOWER(c.client_id::text) LIKE $1
+          OR LOWER(COALESCE(c.email,'')) LIKE $1
+          OR COALESCE(c.siret,'') LIKE replace($1,'%',''))
+
+    GROUP BY
+      c.client_id, af.bill_address_id, al.delivery_address_id, ib.bank_info_id, ct.contact_id
+
+    ORDER BY c.company_name ASC
     LIMIT $2
     `,
     [like, limit]
   );
-  return rows as Array<{ client_id: string; company_name: string; email: string | null; siret: string | null }>;
+
+  return rows as Array<{
+    client_id: string;
+    company_name: string;
+    email: string | null;
+    phone: string | null;
+    website_url: string | null;
+    siret: string | null;
+    vat_number: string | null;
+    naf_code: string | null;
+    status: string;
+    blocked: boolean | null;
+    reason: string | null;
+    creation_date: string;
+    observations: string | null;
+    provided_documents_id: string | null;
+
+    bill_name: string | null; bill_street: string | null; bill_house_number: string | null;
+    bill_postal_code: string | null; bill_city: string | null; bill_country: string | null;
+
+    deliv_name: string | null; deliv_street: string | null; deliv_house_number: string | null;
+    deliv_postal_code: string | null; deliv_city: string | null; deliv_country: string | null;
+
+    bank_name: string | null; iban: string | null; bic: string | null;
+
+    contact_first_name: string | null; contact_last_name: string | null; contact_email: string | null;
+    contact_phone_personal: string | null; contact_role: string | null; contact_civility: string | null;
+
+    payment_mode_ids: string[];
+  }>;
 }
