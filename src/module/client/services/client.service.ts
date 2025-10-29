@@ -48,6 +48,7 @@ export type ClientRow = {
 
   // Payment modes
   payment_mode_ids: string[]
+   payment_mode_labels: string[]  
 }
 
 export async function getClientById(id: string): Promise<ClientRow | null> {
@@ -69,40 +70,27 @@ export async function listClients(q = "", limit = 25): Promise<ClientRow[]> {
       c.status, c.blocked, c.reason, c.creation_date,
       c.observations, c.provided_documents_id,
 
-      -- Billing address (flattened)
-      af.name         AS bill_name,
-      af.street       AS bill_street,
-      af.house_number AS bill_house_number,
-      af.postal_code  AS bill_postal_code,
-      af.city         AS bill_city,
-      af.country      AS bill_country,
+      -- Facturation
+      af.name AS bill_name, af.street AS bill_street, af.house_number AS bill_house_number,
+      af.postal_code AS bill_postal_code, af.city AS bill_city, af.country AS bill_country,
 
-      -- Delivery address (flattened)
-      al.name         AS deliv_name,
-      al.street       AS deliv_street,
-      al.house_number AS deliv_house_number,
-      al.postal_code  AS deliv_postal_code,
-      al.city         AS deliv_city,
-      al.country      AS deliv_country,
+      -- Livraison
+      al.name AS deliv_name, al.street AS deliv_street, al.house_number AS deliv_house_number,
+      al.postal_code AS deliv_postal_code, al.city AS deliv_city, al.country AS deliv_country,
 
-      -- Bank
-      ib.name AS bank_name,
-      ib.iban,
-      ib.bic,
+      -- Banque
+      ib.name AS bank_name, ib.iban, ib.bic,
 
-      -- Primary contact (flattened)
-      ct.first_name      AS contact_first_name,
-      ct.last_name       AS contact_last_name,
-      ct.email           AS contact_email,
-      ct.phone_personal  AS contact_phone_personal,
-      ct.role            AS contact_role,
-      ct.civility        AS contact_civility,
+      -- Contact
+      ct.first_name AS contact_first_name, ct.last_name AS contact_last_name,
+      ct.email AS contact_email, ct.phone_personal AS contact_phone_personal,
+      ct.role AS contact_role, ct.civility AS contact_civility,
 
-      -- Payment modes (text[])
+      -- Modes de règlement (libellés)
       COALESCE(
-        ARRAY_AGG(cpm.payment_id::text) FILTER (WHERE cpm.payment_id IS NOT NULL),
+       ARRAY_AGG(DISTINCT (mr.payment_code || COALESCE(' — ' || mr.type, ''))) FILTER (WHERE mr.payment_code IS NOT NULL),
         '{}'
-      ) AS payment_mode_ids
+      ) AS payment_mode_labels
 
     FROM clients c
     LEFT JOIN adresse_facturation   af  ON af.bill_address_id     = c.bill_address_id
@@ -110,6 +98,7 @@ export async function listClients(q = "", limit = 25): Promise<ClientRow[]> {
     LEFT JOIN informations_bancaires ib  ON ib.bank_info_id       = c.bank_info_id
     LEFT JOIN contacts              ct  ON ct.contact_id          = c.contact_id
     LEFT JOIN client_payment_modes  cpm ON cpm.client_id          = c.client_id
+    LEFT JOIN mode_reglement        mr  ON mr.payment_id          = cpm.payment_id   -- <---
 
     WHERE
       $1 = '' OR (
@@ -126,12 +115,10 @@ export async function listClients(q = "", limit = 25): Promise<ClientRow[]> {
 
     ORDER BY c.company_name ASC
     LIMIT $2
-  `
-
-  const { rows } = await pool.query<ClientRow>(sql, [q, limit])
-  return rows
+  `;
+  const { rows } = await pool.query<ClientRow>(sql, [q, limit]);
+  return rows;
 }
-
 export async function createClient(data: {
   company_name: string;
   email?: string;

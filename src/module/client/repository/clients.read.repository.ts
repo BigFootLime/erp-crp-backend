@@ -225,5 +225,6 @@ export async function repoListClients(q: string, limit = 25) {
     contact_phone_personal: string | null; contact_role: string | null; contact_civility: string | null;
 
     payment_mode_ids: string[];
+     payment_mode_labels: string[]  
   }>;
 }
