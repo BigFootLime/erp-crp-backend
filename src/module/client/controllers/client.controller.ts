@@ -29,3 +29,15 @@ export const postClient: RequestHandler = async (req, res, next) => {
     next(e);
   }
 };
+
+export const patchClientPrimaryContact: RequestHandler = async (req, res, next) => {
+  try {
+    const clientId = req.params.id;
+    const { contact_id } = req.body as { contact_id: string };
+    await clientService.updateClientPrimaryContact(clientId, contact_id);
+    res.status(204).end();
+  } catch (e) {
+    next(e);
+  }
+};
+

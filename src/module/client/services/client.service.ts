@@ -16,6 +16,7 @@ export type ClientRow = {
   creation_date: string
   observations: string | null
   provided_documents_id: string | null
+  quality_level: string | null;
 
   // Billing address
   bill_name: string | null
@@ -46,6 +47,15 @@ export type ClientRow = {
   contact_role: string | null
   contact_civility: string | null
 
+  // Liste de contacts pour le dropdown
+contacts: Array<{
+  contact_id: string;
+  full_name: string;
+  email: string | null;
+  role: string | null;
+  phone_personal: string | null;
+}>; 
+
   // Payment modes
   payment_mode_ids: string[]
    payment_mode_labels: string[]  
@@ -69,6 +79,7 @@ export async function listClients(q = "", limit = 25): Promise<ClientRow[]> {
       c.siret, c.vat_number, c.naf_code,
       c.status, c.blocked, c.reason, c.creation_date,
       c.observations, c.provided_documents_id,
+      c.quality_level,    
 
       -- Facturation
       af.name AS bill_name, af.street AS bill_street, af.house_number AS bill_house_number,
@@ -86,6 +97,20 @@ export async function listClients(q = "", limit = 25): Promise<ClientRow[]> {
       ct.email AS contact_email, ct.phone_personal AS contact_phone_personal,
       ct.role AS contact_role, ct.civility AS contact_civility,
 
+      COALESCE(
+  json_agg(
+    DISTINCT jsonb_build_object(
+      'contact_id',   ct2.contact_id::text,
+      'full_name',    trim(concat(ct2.civility,' ',ct2.first_name,' ',ct2.last_name)),
+      'email',        ct2.email,
+      'role',         ct2.role,
+      'phone_personal', ct2.phone_personal
+    )
+  ) FILTER (WHERE ct2.contact_id IS NOT NULL),
+  '[]'
+) AS contacts
+
+
       -- Modes de règlement (libellés)
       COALESCE(
        ARRAY_AGG(DISTINCT (mr.payment_code || COALESCE(' — ' || mr.type, ''))) FILTER (WHERE mr.payment_code IS NOT NULL),
@@ -97,8 +122,12 @@ export async function listClients(q = "", limit = 25): Promise<ClientRow[]> {
     LEFT JOIN adresse_livraison     al  ON al.delivery_address_id = c.delivery_address_id
     LEFT JOIN informations_bancaires ib  ON ib.bank_info_id       = c.bank_info_id
     LEFT JOIN contacts              ct  ON ct.contact_id          = c.contact_id
+    LEFT JOIN contacts ct   ON ct.contact_id = c.contact_id           -- primaire (aplati)
+    LEFT JOIN contacts ct2  ON ct2.client_id  = c.client_id           -- liste pour dropdown
+
     LEFT JOIN client_payment_modes  cpm ON cpm.client_id          = c.client_id
     LEFT JOIN mode_reglement        mr  ON mr.payment_id          = cpm.payment_id   -- <---
+    
 
     WHERE
       $1 = '' OR (
@@ -136,3 +165,8 @@ export async function createClient(data: {
   );
   return rows[0];
 }
+
+export async function updateClientPrimaryContact(clientId: string, contactId: string) {
+  await pool.query(`UPDATE clients SET contact_id = $1 WHERE client_id = $2`, [contactId, clientId]);
+}
+

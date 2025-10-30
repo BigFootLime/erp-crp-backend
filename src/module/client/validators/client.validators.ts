@@ -1,6 +1,8 @@
 // src/module/clients/validators/clients.validators.ts
 import { z } from "zod";
 
+export const qualityLevels = z.enum(["Certificat MP","Certificat TR","Relevé de valeurs"]);
+
 export const addressSchema = z.object({
   name: z.string().min(1),
   street: z.string().min(1),
@@ -43,5 +45,10 @@ export const createClientSchema = z.object({
   bill_address: addressSchema,
   delivery_address: addressSchema,
   primary_contact: contactSchema.optional(),
+  quality_level: qualityLevels.optional().or(z.literal("")).default(""),
+  contacts: z.array(contactSchema).optional().default([]),
+
+
 });
 export type CreateClientDTO = z.infer<typeof createClientSchema>;
+

@@ -60,6 +60,7 @@ async function insertClient(
       siret, vat_number, naf_code,
       status, blocked, reason, creation_date,
       delivery_address_id, bill_address_id, bank_info_id,
+      quality_level,
       observations, provided_documents_id
     ) VALUES (
       $1,$2,
@@ -67,19 +68,21 @@ async function insertClient(
       NULLIF($6,''), NULLIF($7,''), NULLIF($8,''),
       $9, $10, NULLIF($11,''), COALESCE($12::timestamp, now()),
       $13, $14, $15,
-      NULLIF($16,''), $17
+      NULLIF($16,''),
+      NULLIF($17,''), $18
     )
     RETURNING client_id
   `;
 
   const { rows } = await db.query(q, [
-    dto.company_name, null,
-    dto.email ?? "", dto.phone ?? "", dto.website_url ?? "",
-    dto.siret ?? "", dto.vat_number ?? "", dto.naf_code ?? "",
-    dto.status, dto.blocked, dto.reason ?? "", dto.creation_date,
-    delivAddrId, billAddrId, bankInfoId,
-    dto.observations ?? "", normalizedProvidedDocsId
-  ]);
+  dto.company_name, null,
+  dto.email ?? "", dto.phone ?? "", dto.website_url ?? "",
+  dto.siret ?? "", dto.vat_number ?? "", dto.naf_code ?? "",
+  dto.status, dto.blocked, dto.reason ?? "", dto.creation_date,
+  delivAddrId, billAddrId, bankInfoId,
+  dto.quality_level ?? "",        // 👈 AJOUTE ICI
+  dto.observations ?? "", normalizedProvidedDocsId
+]);
   return rows[0].client_id as string;
 }
 
@@ -92,6 +95,17 @@ async function insertPrimaryContact(client: any, dto: NonNullable<CreateClientDT
   );
   return rows[0].contact_id as string;
 }
+
+async function insertContact(db: any, c: NonNullable<CreateClientDTO["contacts"]>[number], clientId: string) {
+  const { rows } = await db.query(
+    `INSERT INTO contacts (first_name,last_name,civility,role,phone_personal,email,client_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)
+     RETURNING contact_id`,
+    [c.first_name, c.last_name, c.civility ?? null, c.role ?? null, c.phone_personal ?? null, c.email, clientId]
+  );
+  return rows[0].contact_id as string;
+}
+
 
 async function linkPaymentModes(db: any, clientId: string, idsOrCodes: string[]) {
   if (!idsOrCodes?.length) return;
@@ -175,6 +189,18 @@ export async function repoCreateClient(dto: CreateClientDTO): Promise<{ client_i
       contactId = await insertPrimaryContact(db, dto.primary_contact, clientId);
       await db.query(`UPDATE clients SET contact_id = $1 WHERE client_id = $2`, [contactId, clientId]);
     }
+
+    if (Array.isArray(dto.contacts) && dto.contacts.length) {
+  const ids: string[] = [];
+  for (const c of dto.contacts) {
+    const id = await insertContact(db, c, clientId);
+    ids.push(id);
+  }
+  // Si pas de primary_contact défini, on pointe sur le 1er de la liste
+  if (!contactId && ids.length) {
+    await db.query(`UPDATE clients SET contact_id = $1 WHERE client_id = $2`, [ids[0], clientId]);
+  }
+}
 
     await linkPaymentModes(db, clientId, dto.payment_mode_ids);
 
