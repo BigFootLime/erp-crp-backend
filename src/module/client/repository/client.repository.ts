@@ -54,35 +54,37 @@ async function insertClient(
       : null;
 
   const q = `
-    INSERT INTO clients (
-      company_name, contact_id,
-      email, phone, website_url,
-      siret, vat_number, naf_code,
-      status, blocked, reason, creation_date,
-      delivery_address_id, bill_address_id, bank_info_id,
-      quality_level,
-      observations, provided_documents_id
-    ) VALUES (
-      $1,$2,
-      NULLIF($3,''), NULLIF($4,''), NULLIF($5,''),
-      NULLIF($6,''), NULLIF($7,''), NULLIF($8,''),
-      $9, $10, NULLIF($11,''), COALESCE($12::timestamp, now()),
-      $13, $14, $15,
-      NULLIF($16,''),
-      NULLIF($17,''), $18
-    )
-    RETURNING client_id
-  `;
+  INSERT INTO clients (
+    company_name, contact_id,
+    email, phone, website_url,
+    siret, vat_number, naf_code,
+    status, blocked, reason, creation_date,
+    delivery_address_id, bill_address_id, bank_info_id,
+    observations, provided_documents_id,
+    quality_levels               
+  ) VALUES (
+    $1,$2,
+    NULLIF($3,''), NULLIF($4,''), NULLIF($5,''),
+    NULLIF($6,''), NULLIF($7,''), NULLIF($8,''),
+    $9, $10, NULLIF($11,''), COALESCE($12::timestamp, now()),
+    $13, $14, $15,
+    NULLIF($16,''), $17,
+    COALESCE($18::text[], '{}')   
+  )
+  RETURNING client_id
+`;
 
-  const { rows } = await db.query(q, [
+
+ const { rows } = await db.query(q, [
   dto.company_name, null,
   dto.email ?? "", dto.phone ?? "", dto.website_url ?? "",
   dto.siret ?? "", dto.vat_number ?? "", dto.naf_code ?? "",
   dto.status, dto.blocked, dto.reason ?? "", dto.creation_date,
   delivAddrId, billAddrId, bankInfoId,
-  dto.quality_level ?? "",        // 👈 AJOUTE ICI
-  dto.observations ?? "", normalizedProvidedDocsId
+  dto.observations ?? "", normalizedProvidedDocsId,
+  dto.quality_levels ?? []              // ⬅️ nouveau param
 ]);
+
   return rows[0].client_id as string;
 }
 

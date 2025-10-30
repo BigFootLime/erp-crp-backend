@@ -17,6 +17,7 @@ export type ClientRow = {
   observations: string | null
   provided_documents_id: string | null
   quality_level: string | null;
+  quality_levels: string[] | null
 
   // Billing address
   bill_name: string | null
@@ -79,7 +80,8 @@ export async function listClients(q = "", limit = 25): Promise<ClientRow[]> {
       c.siret, c.vat_number, c.naf_code,
       c.status, c.blocked, c.reason, c.creation_date,
       c.observations, c.provided_documents_id,
-      c.quality_level,    
+      c.quality_level,
+      c.quality_levels,    
 
       -- Facturation
       af.name AS bill_name, af.street AS bill_street, af.house_number AS bill_house_number,

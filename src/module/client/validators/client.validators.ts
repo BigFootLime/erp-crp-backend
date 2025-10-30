@@ -2,6 +2,7 @@
 import { z } from "zod";
 
 export const qualityLevels = z.enum(["Certificat MP","Certificat TR","Relevé de valeurs"]);
+export const QUALITY_LEVELS = ['Certificat MP', 'Certificat TR', 'Relevé de valeurs'] as const;
 
 export const addressSchema = z.object({
   name: z.string().min(1),
@@ -46,6 +47,9 @@ export const createClientSchema = z.object({
   delivery_address: addressSchema,
   primary_contact: contactSchema.optional(),
   quality_level: qualityLevels.optional().or(z.literal("")).default(""),
+  quality_levels: z
+    .array(z.enum(QUALITY_LEVELS))
+    .default([]),
   contacts: z.array(contactSchema).optional().default([]),
 
 
