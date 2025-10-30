@@ -23,7 +23,7 @@ app.use(helmet());
 // 🌐 Autoriser CORS
 app.use(cors({
   origin: "*", // ou "*" si tu veux tout autoriser
-  methods: ["GET", "POST", "PUT", "DELETE"],
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   credentials: true,
 }));
 
