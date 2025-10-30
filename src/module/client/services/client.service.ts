@@ -50,12 +50,13 @@ export type ClientRow = {
 
   // Liste de contacts pour le dropdown
 contacts: Array<{
-  contact_id: string;
-  full_name: string;
-  email: string | null;
-  role: string | null;
-  phone_personal: string | null;
-}>; 
+  contact_id: string
+  full_name: string | null
+  email: string | null
+  role: string | null
+  phone_personal: string | null
+}>
+
 
   // Payment modes
   payment_mode_ids: string[]
@@ -74,79 +75,91 @@ export async function getClientById(id: string): Promise<ClientRow | null> {
 
 export async function listClients(q = "", limit = 25): Promise<ClientRow[]> {
   const sql = `
-    SELECT
-      c.client_id::text,
-      c.company_name, c.email, c.phone, c.website_url,
-      c.siret, c.vat_number, c.naf_code,
-      c.status, c.blocked, c.reason, c.creation_date,
-      c.observations, c.provided_documents_id,
-      c.quality_level,
-      c.quality_levels,    
+  SELECT
+    c.client_id::text,
+    c.company_name, c.email, c.phone, c.website_url,
+    c.siret, c.vat_number, c.naf_code,
+    c.status, c.blocked, c.reason, c.creation_date,
+    c.observations, c.provided_documents_id,
+    c.quality_level,
+    c.quality_levels,
 
-      -- Facturation
-      af.name AS bill_name, af.street AS bill_street, af.house_number AS bill_house_number,
-      af.postal_code AS bill_postal_code, af.city AS bill_city, af.country AS bill_country,
+    -- Facturation
+    af.name AS bill_name, af.street AS bill_street, af.house_number AS bill_house_number,
+    af.postal_code AS bill_postal_code, af.city AS bill_city, af.country AS bill_country,
 
-      -- Livraison
-      al.name AS deliv_name, al.street AS deliv_street, al.house_number AS deliv_house_number,
-      al.postal_code AS deliv_postal_code, al.city AS deliv_city, al.country AS deliv_country,
+    -- Livraison
+    al.name AS deliv_name, al.street AS deliv_street, al.house_number AS deliv_house_number,
+    al.postal_code AS deliv_postal_code, al.city AS deliv_city, al.country AS deliv_country,
 
-      -- Banque
-      ib.name AS bank_name, ib.iban, ib.bic,
+    -- Banque
+    ib.name AS bank_name, ib.iban, ib.bic,
 
-      -- Contact
-      ct.first_name AS contact_first_name, ct.last_name AS contact_last_name,
-      ct.email AS contact_email, ct.phone_personal AS contact_phone_personal,
-      ct.role AS contact_role, ct.civility AS contact_civility,
+    -- Contact principal (aplati)
+    ct.first_name AS contact_first_name, ct.last_name AS contact_last_name,
+    ct.email AS contact_email, ct.phone_personal AS contact_phone_personal,
+    ct.role AS contact_role, ct.civility AS contact_civility,
 
-      COALESCE(
-  json_agg(
-    DISTINCT jsonb_build_object(
-      'contact_id',   ct2.contact_id::text,
-      'full_name',    trim(concat(ct2.civility,' ',ct2.first_name,' ',ct2.last_name)),
-      'email',        ct2.email,
-      'role',         ct2.role,
-      'phone_personal', ct2.phone_personal
+    -- Tous les contacts du client (pour dropdown)
+    COALESCE(
+      json_agg(
+        DISTINCT jsonb_build_object(
+          'contact_id',      ct2.contact_id::text,
+          'full_name',       trim(concat(ct2.civility,' ',ct2.first_name,' ',ct2.last_name)),
+          'email',           ct2.email,
+          'role',            ct2.role,
+          'phone_personal',  ct2.phone_personal
+        )
+      ) FILTER (WHERE ct2.contact_id IS NOT NULL),
+      '[]'
+    ) AS contacts,
+
+    -- Modes de règlement (libellés) — version robuste sans FILTER
+    COALESCE(
+      ARRAY_REMOVE(
+        ARRAY_AGG(DISTINCT
+          CASE
+            WHEN mr.payment_code IS NOT NULL THEN
+              mr.payment_code || CASE WHEN mr.type IS NOT NULL THEN ' — ' || mr.type ELSE '' END
+            ELSE NULL
+          END
+        ),
+        NULL
+      ),
+      '{}'
+    ) AS payment_mode_labels
+
+  FROM clients c
+  LEFT JOIN adresse_facturation    af  ON af.bill_address_id     = c.bill_address_id
+  LEFT JOIN adresse_livraison      al  ON al.delivery_address_id = c.delivery_address_id
+  LEFT JOIN informations_bancaires ib  ON ib.bank_info_id        = c.bank_info_id
+
+  -- Contact principal (une seule fois !)
+  LEFT JOIN contacts               ct  ON ct.contact_id          = c.contact_id
+
+  -- Tous les contacts liés à ce client (pour le dropdown)
+  LEFT JOIN contacts               ct2 ON ct2.client_id          = c.client_id
+
+  LEFT JOIN client_payment_modes   cpm ON cpm.client_id          = c.client_id
+  LEFT JOIN mode_reglement         mr  ON mr.payment_id          = cpm.payment_id
+
+  WHERE
+    $1 = '' OR (
+      c.company_name ILIKE '%' || $1 || '%'
+      OR c.email ILIKE '%' || $1 || '%'
+      OR c.siret ILIKE replace('%' || $1 || '%',' ','')
+      OR c.vat_number ILIKE '%' || $1 || '%'
+      OR af.city ILIKE '%' || $1 || '%'
+      OR al.city ILIKE '%' || $1 || '%'
     )
-  ) FILTER (WHERE ct2.contact_id IS NOT NULL),
-  '[]'
-) AS contacts
 
+  GROUP BY
+    c.client_id, af.bill_address_id, al.delivery_address_id, ib.bank_info_id, ct.contact_id
 
-      -- Modes de règlement (libellés)
-      COALESCE(
-       ARRAY_AGG(DISTINCT (mr.payment_code || COALESCE(' — ' || mr.type, ''))) FILTER (WHERE mr.payment_code IS NOT NULL),
-        '{}'
-      ) AS payment_mode_labels
+  ORDER BY c.company_name ASC
+  LIMIT $2
+`;
 
-    FROM clients c
-    LEFT JOIN adresse_facturation   af  ON af.bill_address_id     = c.bill_address_id
-    LEFT JOIN adresse_livraison     al  ON al.delivery_address_id = c.delivery_address_id
-    LEFT JOIN informations_bancaires ib  ON ib.bank_info_id       = c.bank_info_id
-    LEFT JOIN contacts              ct  ON ct.contact_id          = c.contact_id
-    LEFT JOIN contacts ct   ON ct.contact_id = c.contact_id           -- primaire (aplati)
-    LEFT JOIN contacts ct2  ON ct2.client_id  = c.client_id           -- liste pour dropdown
-
-    LEFT JOIN client_payment_modes  cpm ON cpm.client_id          = c.client_id
-    LEFT JOIN mode_reglement        mr  ON mr.payment_id          = cpm.payment_id   -- <---
-    
-
-    WHERE
-      $1 = '' OR (
-        c.company_name ILIKE '%' || $1 || '%'
-        OR c.email ILIKE '%' || $1 || '%'
-        OR c.siret ILIKE replace('%' || $1 || '%',' ','')
-        OR c.vat_number ILIKE '%' || $1 || '%'
-        OR af.city ILIKE '%' || $1 || '%'
-        OR al.city ILIKE '%' || $1 || '%'
-      )
-
-    GROUP BY
-      c.client_id, af.bill_address_id, al.delivery_address_id, ib.bank_info_id, ct.contact_id
-
-    ORDER BY c.company_name ASC
-    LIMIT $2
-  `;
   const { rows } = await pool.query<ClientRow>(sql, [q, limit]);
   return rows;
 }
