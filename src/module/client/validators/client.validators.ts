@@ -13,6 +13,7 @@ export const addressSchema = z.object({
   country: z.string().min(1),
 });
 export const contactSchema = z.object({
+  contact_id: z.string().uuid("Invalid contact_id").optional().nullable(),
   first_name: z.string().min(1),
   last_name: z.string().min(1),
   email: z.string().email(),

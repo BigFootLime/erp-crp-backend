@@ -108,6 +108,43 @@ async function insertContact(db: any, c: NonNullable<CreateClientDTO["contacts"]
   return rows[0].contact_id as string;
 }
 
+async function updateContact(
+  db: any,
+  contactId: string,
+  c: NonNullable<CreateClientDTO["contacts"]>[number]
+) {
+  await db.query(
+    `UPDATE contacts
+        SET first_name     = $1,
+            last_name      = $2,
+            civility       = $3,
+            role           = $4,
+            phone_personal = $5,
+            email          = $6
+      WHERE contact_id = $7`,
+    [
+      c.first_name,
+      c.last_name,
+      c.civility ?? null,
+      c.role ?? null,
+      c.phone_personal ?? null,
+      c.email,
+      contactId,
+    ]
+  );
+}
+
+async function fetchExistingContacts(db: any, clientId: string) {
+  const { rows } = await db.query(
+    `SELECT contact_id
+       FROM contacts
+      WHERE client_id = $1`,
+    [clientId]
+  );
+  return rows.map((r: any) => String(r.contact_id));
+}
+
+
 
 async function linkPaymentModes(db: any, clientId: string, idsOrCodes: string[]) {
   if (!idsOrCodes?.length) return;
@@ -215,4 +252,227 @@ export async function repoCreateClient(dto: CreateClientDTO): Promise<{ client_i
     db.release();
   }
 }
+
+// EDIT CLIENT 
+
+export async function repoUpdateClient(id: string, dto: CreateClientDTO): Promise<void> {
+  const db = await pool.connect();
+  try {
+    await db.query("BEGIN");
+
+    // 1) Verrouiller le client + récupérer IDs liés (+ contact_id existant)
+    const current = await db.query(
+      `SELECT client_id,
+              bill_address_id,
+              delivery_address_id,
+              bank_info_id,
+              contact_id AS primary_contact_id
+         FROM clients
+        WHERE client_id = $1
+        FOR UPDATE`,
+      [id]
+    );
+
+    if (current.rows.length === 0) {
+      const err = new Error("Client not found");
+      (err as any).status = 404;
+      throw err;
+    }
+
+    const {
+      bill_address_id,
+      delivery_address_id,
+      bank_info_id,
+      primary_contact_id,
+    } = current.rows[0] as {
+      bill_address_id: string | null;
+      delivery_address_id: string | null;
+      bank_info_id: string | null;
+      primary_contact_id: string | null;
+    };
+
+    // 2) Mise à jour Adresse de facturation
+    if (bill_address_id) {
+      await db.query(
+        `UPDATE adresse_facturation
+            SET street       = $1,
+                house_number = $2,
+                postal_code  = $3,
+                city         = $4,
+                country      = $5,
+                name         = $6
+          WHERE bill_address_id = $7`,
+        [
+          dto.bill_address.street,
+          dto.bill_address.house_number ?? null,
+          dto.bill_address.postal_code,
+          dto.bill_address.city,
+          dto.bill_address.country,
+          dto.bill_address.name,
+          bill_address_id,
+        ]
+      );
+    }
+
+    // 3) Mise à jour Adresse de livraison
+    if (delivery_address_id) {
+      await db.query(
+        `UPDATE adresse_livraison
+            SET street       = $1,
+                house_number = $2,
+                postal_code  = $3,
+                city         = $4,
+                country      = $5,
+                name         = $6
+          WHERE delivery_address_id = $7`,
+        [
+          dto.delivery_address.street,
+          dto.delivery_address.house_number ?? null,
+          dto.delivery_address.postal_code,
+          dto.delivery_address.city,
+          dto.delivery_address.country,
+          dto.delivery_address.name,
+          delivery_address_id,
+        ]
+      );
+    }
+
+    // 4) Banque : upsert + rattachement au client
+    const newBankInfoId = await upsertBank(db, dto.bank);
+    if (!bank_info_id || bank_info_id !== newBankInfoId) {
+      await db.query(
+        `UPDATE clients SET bank_info_id = $1 WHERE client_id = $2`,
+        [newBankInfoId, id]
+      );
+    }
+
+    // 5) Normalisation provided_documents_id
+    const normalizedProvidedDocsId =
+      dto.provided_documents_id && dto.provided_documents_id.trim() !== ""
+        ? dto.provided_documents_id
+        : null;
+
+    // 6) Mise à jour des champs principaux du client
+    await db.query(
+      `
+      UPDATE clients
+         SET company_name          = $1,
+             email                 = NULLIF($2,''),
+             phone                 = NULLIF($3,''),
+             website_url           = NULLIF($4,''),
+             siret                 = NULLIF($5,''),
+             vat_number            = NULLIF($6,''),
+             naf_code              = NULLIF($7,''),
+             status                = $8,
+             blocked               = $9,
+             reason                = NULLIF($10,''),
+             creation_date         = COALESCE($11::timestamp, creation_date),
+             observations          = NULLIF($12,''),
+             provided_documents_id = $13,
+             quality_levels        = COALESCE($14::text[], '{}')
+       WHERE client_id = $15
+      `,
+      [
+        dto.company_name,
+        dto.email ?? "",
+        dto.phone ?? "",
+        dto.website_url ?? "",
+        dto.siret ?? "",
+        dto.vat_number ?? "",
+        dto.naf_code ?? "",
+        dto.status,
+        dto.blocked,
+        dto.reason ?? "",
+        dto.creation_date,
+        dto.observations ?? "",
+        normalizedProvidedDocsId,
+        dto.quality_levels ?? [],
+        id,
+      ]
+    );
+
+    // 7) Contacts : upsert en gardant les contact_id
+
+    // 7.1 Récupérer les contacts existants pour ce client
+    const existingContactIds = await fetchExistingContacts(db, id); // string[]
+
+    const payloadContacts = Array.isArray(dto.contacts) ? dto.contacts : [];
+
+    const usedContactIds = new Set<string>();
+    const newContactIds: string[] = [];
+
+    // 7.2 Upsert de chaque contact du payload
+    for (const c of payloadContacts) {
+      const cid = (c as any).contact_id as string | undefined;
+
+      if (cid && existingContactIds.includes(cid)) {
+        // 🔁 UPDATE contact existant
+        await updateContact(db, cid, c);
+        usedContactIds.add(cid);
+      } else {
+        // 🆕 INSERT nouveau contact
+        const newId = await insertContact(db, c, id);
+        newContactIds.push(newId);
+        usedContactIds.add(newId);
+        (c as any).contact_id = newId; // utile si on veut s’y référer pour le primary_contact
+      }
+    }
+
+    // 7.3 Supprimer les contacts qui ne sont plus dans le payload
+    const toDelete = existingContactIds.filter((cid) => !usedContactIds.has(cid));
+    if (toDelete.length) {
+      await db.query(
+        `DELETE FROM contacts WHERE client_id = $1 AND contact_id = ANY($2::uuid[])`,
+        [id, toDelete]
+      );
+    }
+
+    // 8) Primary contact
+
+    let finalPrimaryContactId: string | null = primary_contact_id;
+
+    if (dto.primary_contact) {
+      const pc = dto.primary_contact as any;
+      if (pc.contact_id && usedContactIds.has(pc.contact_id)) {
+        // 👉 Primary = un contact existant (ou nouvellement lié) du client
+        finalPrimaryContactId = pc.contact_id;
+      } else {
+        // pas d'id ou pas dans la liste → on crée/maj un contact dédié
+        if (primary_contact_id) {
+          // update l’existant
+          await updateContact(db, primary_contact_id, dto.primary_contact);
+          finalPrimaryContactId = primary_contact_id;
+        } else {
+          // create nouveau
+          const newPrimaryId = await insertPrimaryContact(db, dto.primary_contact, id);
+          finalPrimaryContactId = newPrimaryId;
+        }
+      }
+    } else {
+      // pas de primary_contact dans le payload :
+      // si on a déjà des contacts utilisés, on peut en prendre un
+      if (!finalPrimaryContactId && usedContactIds.size > 0) {
+        finalPrimaryContactId = Array.from(usedContactIds)[0];
+      }
+    }
+
+    await db.query(
+      `UPDATE clients SET contact_id = $1 WHERE client_id = $2`,
+      [finalPrimaryContactId, id]
+    );
+
+    // 9) Modes de règlement : reset + relink
+    await db.query(`DELETE FROM client_payment_modes WHERE client_id = $1`, [id]);
+    await linkPaymentModes(db, id, dto.payment_mode_ids);
+
+    await db.query("COMMIT");
+  } catch (e) {
+    await db.query("ROLLBACK");
+    throw e;
+  } finally {
+    db.release();
+  }
+}
+
+
 

@@ -2,7 +2,7 @@
 import { Request, RequestHandler, Response } from "express";
 import * as clientService from "../services/client.service"; // ✅ namespace import
 import { createClientSchema } from "../validators/client.validators";
-import { repoCreateClient } from "../repository/client.repository";
+import { repoCreateClient, repoUpdateClient  } from "../repository/client.repository";
 
 export async function getClientById(req: Request, res: Response): Promise<void> {
   const row = await clientService.getClientById(req.params.id);
@@ -35,6 +35,22 @@ export const patchClientPrimaryContact: RequestHandler = async (req, res, next) 
     const clientId = req.params.id;
     const { contact_id } = req.body as { contact_id: string };
     await clientService.updateClientPrimaryContact(clientId, contact_id);
+    res.status(204).end();
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const patchClient: RequestHandler = async (req, res, next) => {
+  try {
+    const id = req.params.id;
+
+    // on réutilise le même schéma que pour la création
+    const dto = createClientSchema.parse(req.body);
+
+    await repoUpdateClient(id, dto);
+
+    // pas besoin de body, le frontend n'en attend pas
     res.status(204).end();
   } catch (e) {
     next(e);
