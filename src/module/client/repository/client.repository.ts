@@ -419,7 +419,7 @@ export async function repoUpdateClient(id: string, dto: CreateClientDTO): Promis
     }
 
     // 7.3 Supprimer les contacts qui ne sont plus dans le payload
-    const toDelete = existingContactIds.filter((cid) => !usedContactIds.has(cid));
+    const toDelete = existingContactIds.filter((cid: string) => !usedContactIds.has(cid));
     if (toDelete.length) {
       await db.query(
         `DELETE FROM contacts WHERE client_id = $1 AND contact_id = ANY($2::uuid[])`,
