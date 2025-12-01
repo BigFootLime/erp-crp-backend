@@ -7,6 +7,7 @@ import commandeClientRoutes from "../module/commande-client/routes/commande-clie
 import clientRoutes from "../module/client/routes/client.routes";
 import paymentModeRoutes from "../module/payment-mode/routes/payment-modes.routes";
 import billerRoutes from "../module/biller/routes/biller.routes";
+import piecesfamiliesRoutes from "../module/pieces-families/routes/pieces-families.routes"
 
 const router = Router()
 
@@ -16,6 +17,7 @@ router.use("/banking-info", bankingInfoRoutes)
 router.use("/commandes", commandeClientRoutes) // ✅  
 router.use("/clients", clientRoutes);
 router.use("/payment-modes", paymentModeRoutes);  
-router.use("/billers", billerRoutes);                                
+router.use("/billers", billerRoutes);   
+router.use("/pieces-families", piecesfamiliesRoutes)                             
 
 export default router
