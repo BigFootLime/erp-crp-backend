@@ -8,6 +8,7 @@ import clientRoutes from "../module/client/routes/client.routes";
 import paymentModeRoutes from "../module/payment-mode/routes/payment-modes.routes";
 import billerRoutes from "../module/biller/routes/biller.routes";
 import piecesfamiliesRoutes from "../module/pieces-families/routes/pieces-families.routes"
+import CFRoutes from "../module/centre-frais/routes/centre-frais.routes"
 
 const router = Router()
 
@@ -18,6 +19,7 @@ router.use("/commandes", commandeClientRoutes) // ✅
 router.use("/clients", clientRoutes);
 router.use("/payment-modes", paymentModeRoutes);  
 router.use("/billers", billerRoutes);   
-router.use("/pieces-families", piecesfamiliesRoutes)                             
+router.use("/pieces-families", piecesfamiliesRoutes) 
+router.use("/centres-frais", CFRoutes)                            
 
 export default router
