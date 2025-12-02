@@ -20,6 +20,6 @@ router.use("/clients", clientRoutes);
 router.use("/payment-modes", paymentModeRoutes);  
 router.use("/billers", billerRoutes);   
 router.use("/pieces-families", piecesfamiliesRoutes) 
-router.use("/centres-frais", CFRoutes)                            
+router.use("/centre-frais", CFRoutes)                            
 
 export default router
