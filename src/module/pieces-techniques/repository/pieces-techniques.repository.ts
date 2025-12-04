@@ -247,7 +247,7 @@ export async function repoCreatePieceTechnique(
           a.total_achat_ttc ?? 0,
           a.designation ?? null,
           a.designation_2 ?? null,
-          a.designation_3 ?? null,
+          a.designation_3 ?? null
         ]
       )
       const r = rows[0]
@@ -642,7 +642,7 @@ export async function repoUpdatePieceTechnique(
           a.total_achat_ttc ?? 0,
           a.designation ?? null,
           a.designation_2 ?? null,
-          a.designation_3 ?? null,
+          a.designation_3 ?? null
         ]
       )
     }
