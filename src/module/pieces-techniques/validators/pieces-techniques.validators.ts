@@ -3,7 +3,7 @@ import { z } from "zod"
 
 const bomLineSchema = z.object({
   id: z.string().uuid().optional(),
-  child_piece_technique_id: z.string().uuid({ message: "Sous-pièce requise" }),
+  child_piece_id: z.string().uuid({ message: "Sous-pièce requise" }),
   rang: z.number().int().min(1, "Rang >= 1"),
   quantite: z.number().nonnegative(),
   repere: z.string().optional().nullable(),

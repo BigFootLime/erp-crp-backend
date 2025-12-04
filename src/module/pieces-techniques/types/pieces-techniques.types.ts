@@ -2,7 +2,7 @@
 
 export type BomLine = {
   id?: string
-  child_piece_technique_id: string
+  child_piece_id: string
   rang: number
   quantite: number
   repere?: string | null

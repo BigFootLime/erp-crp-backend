@@ -55,7 +55,7 @@ export async function repoCreatePieceTechnique(
         $1, $2, $3, $4,
         $5, $6, $7, $8, $9,
         $10, $11, $12, $13,
-        $14, $15, $16
+        $14, $15,
       )
       RETURNING *
     `
@@ -110,7 +110,7 @@ export async function repoCreatePieceTechnique(
         `,
         [
           pieceId,
-          line.child_piece_technique_id,
+          line.child_piece_id,
           line.rang,
           line.quantite,
           line.repere ?? null,
@@ -120,7 +120,7 @@ export async function repoCreatePieceTechnique(
       const r = rows[0]
       bom.push({
         id: r.id,
-        child_piece_technique_id: r.child_piece_technique_id,
+        child_piece_id: r.child_piece_technique_id,
         rang: r.rang,
         quantite: Number(r.quantite),
         repere: r.repere,
@@ -220,7 +220,7 @@ export async function repoCreatePieceTechnique(
         VALUES (
           $1,$2,$3,$4,$5,$6,$7,$8,
           $9,$10,$11,$12,$13,
-          $14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24
+          $14,$15,$16,$17,$18,$19,$20,$21,$22,$23,
         )
         RETURNING *
         `,
@@ -537,7 +537,7 @@ export async function repoUpdatePieceTechnique(
         `,
         [
           id,
-          line.child_piece_technique_id,
+          line.child_piece_id,
           line.rang,
           line.quantite,
           line.repere ?? null,
@@ -616,7 +616,7 @@ export async function repoUpdatePieceTechnique(
         )
         VALUES (
           $1,$2,$3,$4,$5,$6,$7,$8,
-          $9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24
+          $9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,
         )
         `,
         [
