@@ -45,20 +45,21 @@ export async function repoCreatePieceTechnique(
     await client.query("BEGIN")
 
     const insertMainSQL = `
-      INSERT INTO pieces_techniques (
-        client_id, created_by, updated_by,
-        famille_id, name_piece, code_piece, designation, designation_2,
-        prix_unitaire, en_fabrication, cycle, cycle_fabrication,
-        code_client, client_name, ensemble
-      )
-      VALUES (
-        $1, $2, $3, $4,
-        $5, $6, $7, $8, $9,
-        $10, $11, $12, $13,
-        $14, $15,
-      )
-      RETURNING *
-    `
+  INSERT INTO pieces_techniques (
+    client_id, created_by, updated_by,
+    famille_id, name_piece, code_piece, designation, designation_2,
+    prix_unitaire, en_fabrication, cycle, cycle_fabrication,
+    code_client, client_name, ensemble
+  )
+  VALUES (
+    $1, $2, $3, $4,
+    $5, $6, $7, $8, $9,
+    $10, $11, $12, $13,
+    $14, $15
+  )
+  RETURNING *
+`
+
 
     const mainParams = [
       input.client_id ?? null,
@@ -469,46 +470,47 @@ export async function repoUpdatePieceTechnique(
     await client.query("BEGIN")
 
     const sqlMain = `
-      UPDATE pieces_techniques
-      SET
-        client_id = $2,
-        created_by = $3,
-        updated_by = $4,
-        famille_id = $5,
-        name_piece = $6,
-        code_piece = $7,
-        designation = $8,
-        designation_2 = $9,
-        prix_unitaire = $10,
-        en_fabrication = $11,
-        cycle = $12,
-        cycle_fabrication = $13,
-        code_client = $14,
-        client_name = $15,
-        ensemble = $16,
-        updated_at = now()
-      WHERE id = $17
-      RETURNING *
-    `
+  UPDATE pieces_techniques
+  SET
+    client_id = $1,
+    created_by = $2,
+    updated_by = $3,
+    famille_id = $4,
+    name_piece = $5,
+    code_piece = $6,
+    designation = $7,
+    designation_2 = $8,
+    prix_unitaire = $9,
+    en_fabrication = $10,
+    cycle = $11,
+    cycle_fabrication = $12,
+    code_client = $13,
+    client_name = $14,
+    ensemble = $15,
+    updated_at = now()
+  WHERE id = $16
+  RETURNING *
+`
 
-    const mainParams = [
-      input.client_id ?? null,
-      input.created_by ?? null,
-      input.updated_by ?? null,
-      input.famille_id,
-      input.name_piece,
-      input.code_piece,
-      input.designation,
-      input.designation_2 ?? null,
-      input.prix_unitaire,
-      input.en_fabrication ? 1 : 0,
-      input.cycle ?? null,
-      input.cycle_fabrication ?? null,
-      input.code_client ?? null,
-      input.client_name ?? null,
-      input.ensemble,
-      id,
-    ]
+const mainParams = [
+  input.client_id ?? null,
+  input.created_by ?? null,
+  input.updated_by ?? null,
+  input.famille_id,
+  input.name_piece,
+  input.code_piece,
+  input.designation,
+  input.designation_2 ?? null,
+  input.prix_unitaire,
+  input.en_fabrication ? 1 : 0,
+  input.cycle ?? null,
+  input.cycle_fabrication ?? null,
+  input.code_client ?? null,
+  input.client_name ?? null,
+  input.ensemble,
+  id,
+]
+
 
     const { rows: mainRows } = await client.query(sqlMain, mainParams)
     if (!mainRows[0]) {
