@@ -31,7 +31,6 @@ const achatSchema = z.object({
   phase: z.number().int().optional().nullable(),
   famille_piece_id: z.string().uuid().optional().nullable(),
   nom: z.string().optional().nullable(),
-  article_id: z.string().uuid().optional().nullable(),
   fournisseur_id: z.string().uuid().optional().nullable(),
   fournisseur_nom: z.string().optional().nullable(),
   fournisseur_code: z.string().optional().nullable(),
@@ -55,7 +54,6 @@ const achatSchema = z.object({
 
 export const createPieceTechniqueSchema = z.object({
   body: z.object({
-    article_id: z.string().uuid().optional().nullable(),
     client_id: z.string().max(3).optional().nullable(),
     created_by: z.number().int().optional().nullable(),
     updated_by: z.number().int().optional().nullable(),
