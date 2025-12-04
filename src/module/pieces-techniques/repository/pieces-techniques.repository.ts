@@ -13,7 +13,6 @@ function mapPieceTechniqueRow(row: any): PieceTechnique {
     id: row.id,
     created_at: row.created_at,
     updated_at: row.updated_at,
-    article_id: row.article_id,
     client_id: row.client_id,
     created_by: row.created_by,
     updated_by: row.updated_by,
@@ -47,7 +46,7 @@ export async function repoCreatePieceTechnique(
 
     const insertMainSQL = `
       INSERT INTO pieces_techniques (
-        article_id, client_id, created_by, updated_by,
+        client_id, created_by, updated_by,
         famille_id, name_piece, code_piece, designation, designation_2,
         prix_unitaire, en_fabrication, cycle, cycle_fabrication,
         code_client, client_name, ensemble
@@ -62,7 +61,6 @@ export async function repoCreatePieceTechnique(
     `
 
     const mainParams = [
-      input.article_id ?? null,
       input.client_id ?? null,
       input.created_by ?? null,
       input.updated_by ?? null,
@@ -199,7 +197,6 @@ export async function repoCreatePieceTechnique(
           phase,
           famille_piece_id,
           nom,
-          article_id,
           fournisseur_id,
           fournisseur_nom,
           fournisseur_code,
@@ -232,7 +229,6 @@ export async function repoCreatePieceTechnique(
           a.phase ?? null,
           a.famille_piece_id ?? null,
           a.nom ?? null,
-          a.article_id ?? null,
           a.fournisseur_id ?? null,
           a.fournisseur_nom ?? null,
           a.fournisseur_code ?? null,
@@ -260,7 +256,6 @@ export async function repoCreatePieceTechnique(
         phase: r.phase,
         famille_piece_id: r.famille_piece_id,
         nom: r.nom,
-        article_id: r.article_id,
         fournisseur_id: r.fournisseur_id,
         fournisseur_nom: r.fournisseur_nom,
         fournisseur_code: r.fournisseur_code,
@@ -340,7 +335,6 @@ export async function repoListPieceTechniques(): Promise<PieceTechnique[]> {
             'phase', a.phase,
             'famille_piece_id', a.famille_piece_id,
             'nom', a.nom,
-            'article_id', a.article_id,
             'fournisseur_id', a.fournisseur_id,
             'fournisseur_nom', a.fournisseur_nom,
             'fournisseur_code', a.fournisseur_code,
@@ -420,7 +414,6 @@ export async function repoGetPieceTechnique(id: string): Promise<PieceTechnique 
             'phase', a.phase,
             'famille_piece_id', a.famille_piece_id,
             'nom', a.nom,
-            'article_id', a.article_id,
             'fournisseur_id', a.fournisseur_id,
             'fournisseur_nom', a.fournisseur_nom,
             'fournisseur_code', a.fournisseur_code,
@@ -478,7 +471,6 @@ export async function repoUpdatePieceTechnique(
     const sqlMain = `
       UPDATE pieces_techniques
       SET
-        article_id = $1,
         client_id = $2,
         created_by = $3,
         updated_by = $4,
@@ -500,7 +492,6 @@ export async function repoUpdatePieceTechnique(
     `
 
     const mainParams = [
-      input.article_id ?? null,
       input.client_id ?? null,
       input.created_by ?? null,
       input.updated_by ?? null,
@@ -603,7 +594,6 @@ export async function repoUpdatePieceTechnique(
           phase,
           famille_piece_id,
           nom,
-          article_id,
           fournisseur_id,
           fournisseur_nom,
           fournisseur_code,
@@ -634,7 +624,6 @@ export async function repoUpdatePieceTechnique(
           a.phase ?? null,
           a.famille_piece_id ?? null,
           a.nom ?? null,
-          a.article_id ?? null,
           a.fournisseur_id ?? null,
           a.fournisseur_nom ?? null,
           a.fournisseur_code ?? null,

@@ -30,7 +30,6 @@ export type Achat = {
   phase?: number | null
   famille_piece_id?: string | null
   nom?: string | null
-  article_id?: string | null
   fournisseur_id?: string | null
   fournisseur_nom?: string | null
   fournisseur_code?: string | null
@@ -57,7 +56,6 @@ export type PieceTechnique = {
   created_at: string
   updated_at: string
 
-  article_id: string | null
   client_id: string | null
   created_by: number | null
   updated_by: number | null
