@@ -18,6 +18,20 @@ const app = express();
 // 🔐 Sécurité HTTP
 app.use(helmet());
 
+app.use(
+  express.json({
+    limit: "10mb",
+    // PAS de type: "*/*"
+  })
+);
+app.use(
+  express.urlencoded({
+    extended: true,
+    limit: "10mb",
+  })
+);
+
+
 // app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
 // 🌐 Autoriser CORS
