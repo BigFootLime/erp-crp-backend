@@ -3,6 +3,44 @@ import { Request, RequestHandler, Response } from "express";
 import * as clientService from "../services/client.service"; // ✅ namespace import
 import { createClientSchema } from "../validators/client.validators";
 import { repoCreateClient, repoUpdateClient  } from "../repository/client.repository";
+import path from "node:path";
+import { LOGO_BASE_DIR } from "../upload/client-logo-upload";
+import { updateClientLogoPath } from "../services/client.service";
+
+
+export const uploadClientLogo: RequestHandler = async (req, res, next) => {
+  try {
+    const clientId = req.params.id;
+
+    if (!clientId) {
+      return res.status(400).json({ message: "client_id manquant dans l'URL" });
+    }
+
+    const file = (req as any).file as Express.Multer.File | undefined;
+
+    if (!file) {
+      return res.status(400).json({ message: "Aucun fichier 'logo' reçu" });
+    }
+
+    // chemin absolu sur le serveur (UNC)
+    const absolutePath = file.path; // multer nous donne déjà le chemin complet
+
+    // si tu préfères stocker juste le nom de fichier :
+    // const logoPath = path.join(LOGO_BASE_DIR, path.basename(file.filename));
+    const logoPath = absolutePath;
+
+    // update BDD
+    await updateClientLogoPath(clientId, logoPath);
+
+    return res.status(200).json({
+      client_id: clientId,
+      logo_path: logoPath,
+    });
+  } catch (e) {
+    next(e);
+  }
+};
+
 
 export async function getClientById(req: Request, res: Response): Promise<void> {
   const row = await clientService.getClientById(req.params.id);

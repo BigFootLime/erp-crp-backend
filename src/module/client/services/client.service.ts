@@ -19,6 +19,8 @@ export type ClientRow = {
   quality_level: string | null;
   quality_levels: string[] | null
 
+   logo_path: string | null
+
   // Billing address
   bill_name: string | null
   bill_street: string | null
@@ -73,6 +75,16 @@ export async function getClientById(id: string): Promise<ClientRow | null> {
   return rows[0] ?? null;
 }
 
+export async function updateClientLogoPath(id: string, logoPath: string): Promise<void> {
+  await pool.query(
+    `UPDATE clients
+        SET logo_path = $1
+      WHERE client_id = $2`,
+    [logoPath, id]
+  );
+}
+
+
 export async function listClients(q = "", limit = 25): Promise<ClientRow[]> {
   const sql = `
   SELECT
@@ -83,6 +95,7 @@ export async function listClients(q = "", limit = 25): Promise<ClientRow[]> {
     c.observations, c.provided_documents_id,
     c.quality_level,
     c.quality_levels,
+    c.logo_path, 
 
     -- Facturation
     af.name AS bill_name, af.street AS bill_street, af.house_number AS bill_house_number,
