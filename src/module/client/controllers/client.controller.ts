@@ -22,19 +22,22 @@ export const uploadClientLogo: RequestHandler = async (req, res, next) => {
       return res.status(400).json({ message: "Aucun fichier 'logo' reçu" });
     }
 
-    // chemin absolu sur le serveur (UNC)
-    const absolutePath = file.path; // multer nous donne déjà le chemin complet
+    // chemin absolu sur le VPS (ex: /mnt/crp/CLIENTS/005/LOGOS/005_111225_LOGO.png)
+    const absolutePath = file.path;
 
-    // si tu préfères stocker juste le nom de fichier :
-    // const logoPath = path.join(LOGO_BASE_DIR, path.basename(file.filename));
-    const logoPath = absolutePath;
+    // ➜ chemin relatif par rapport à LOGO_BASE_DIR (CLIENTS)
+    // Exemple: "005/LOGOS/005_111225_LOGO.png"
+    let relativePath = path.relative(LOGO_BASE_DIR, absolutePath);
+
+    // normalisation pour éviter les "\" en DB
+    relativePath = relativePath.replace(/\\/g, "/");
 
     // update BDD
-    await updateClientLogoPath(clientId, logoPath);
+    await updateClientLogoPath(clientId, relativePath);
 
     return res.status(200).json({
       client_id: clientId,
-      logo_path: logoPath,
+      logo_path: relativePath, // ce qui est stocké en DB
     });
   } catch (e) {
     next(e);

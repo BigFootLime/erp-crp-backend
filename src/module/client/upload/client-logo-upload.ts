@@ -1,11 +1,14 @@
+// src/module/client/upload/client-logo-upload.ts
 import path from "node:path";
 import fs from "node:fs";
 import multer from "multer";
 
-// idéalement via env : process.env.CLIENT_LOGO_DIR
-const LOGO_BASE_DIR = "\\\\192.168.1.245\\CRP SYSTEMS\\CLIENTS\\LOGOS";
+// 🔁 Base côté VPS = montage du Windows
+// /mnt/crp  <->  C:\CRP_SYSTEMS
+// Donc ici on pointe sur le dossier CLIENTS
+export const LOGO_BASE_DIR = process.env.CLIENT_LOGO_DIR || "/mnt/crp/CLIENTS";
 
-// s'assurer que le dossier existe
+// s'assurer que le dossier CLIENTS existe
 if (!fs.existsSync(LOGO_BASE_DIR)) {
   fs.mkdirSync(LOGO_BASE_DIR, { recursive: true });
 }
@@ -14,7 +17,7 @@ if (!fs.existsSync(LOGO_BASE_DIR)) {
  * Génère un nom de fichier du type :
  *   CLIENTID_DDMMYY_LOGO.ext
  */
-function buildLogoFilename(clientId: string, originalName: string): string {
+export function buildLogoFilename(clientId: string, originalName: string): string {
   const now = new Date();
   const dd = String(now.getDate()).padStart(2, "0");
   const mm = String(now.getMonth() + 1).padStart(2, "0");
@@ -26,12 +29,21 @@ function buildLogoFilename(clientId: string, originalName: string): string {
 }
 
 const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    cb(null, LOGO_BASE_DIR);
+  destination: (req, _file, cb) => {
+    const rawId = req.params.id;
+    const safeClientId = String(rawId || "").padStart(3, "0");
+
+    // ➜ /mnt/crp/CLIENTS/005/LOGOS
+    const clientDir = path.join(LOGO_BASE_DIR, safeClientId, "LOGOS");
+
+    // crée récursivement le dossier si besoin
+    fs.mkdirSync(clientDir, { recursive: true });
+
+    cb(null, clientDir);
   },
   filename: (req, file, cb) => {
-    const clientId = req.params.id; // récupéré depuis /clients/:id/logo
-    const safeClientId = String(clientId || "").padStart(3, "0");
+    const rawId = req.params.id;
+    const safeClientId = String(rawId || "").padStart(3, "0");
     const filename = buildLogoFilename(safeClientId, file.originalname);
     cb(null, filename);
   },
@@ -49,5 +61,3 @@ export const uploadClientLogoMulter = multer({
     cb(null, true);
   },
 });
-
-export { LOGO_BASE_DIR, buildLogoFilename };
