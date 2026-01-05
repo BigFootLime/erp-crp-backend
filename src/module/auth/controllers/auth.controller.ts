@@ -1,36 +1,38 @@
-import { Request, Response } from 'express';
-import { registerSchema } from '../validators/user.validator';
-import { registerUser } from '../services/auth.service';
-import { loginSchema } from '../validators/auth.validator';
-import { loginUser } from '../services/auth.service';
-import { asyncHandler } from '../../../utils/asyncHandler';
+import { Request, Response } from "express";
+import { loginSchema } from "../validators/auth.validator";
+import { registerSchema } from "../validators/user.validator";
+import { registerUser, loginUser } from "../services/auth.service";
+import { asyncHandler } from "../../../utils/asyncHandler";
+import { getClientIp, parseDevice } from "../../../utils/requestMeta";
 
 export const register = asyncHandler(async (req: Request, res: Response) => {
   const validated = registerSchema.parse(req.body);
-  if (
-    validated.employment_end_date &&
-    validated.employment_date &&
-    new Date(validated.employment_end_date) <= new Date(validated.employment_date)
-  ) {
-    return res.status(400).json({
-      error: "La date de fin d’emploi doit être postérieure à la date d’embauche"
-    });
-  }
+
   const user = await registerUser(validated);
 
   return res.status(201).json({
-    message: 'Utilisateur créé avec succès',
+    message: "Utilisateur créé avec succès",
     user,
   });
 });
 
-// 📌 Connexion utilisateur
 export const login = asyncHandler(async (req: Request, res: Response) => {
   const { username, password } = loginSchema.parse(req.body);
-  const data = await loginUser(username, password);
+
+  const ip = getClientIp(req);
+  const user_agent = req.headers["user-agent"]?.toString() ?? null;
+  const device = parseDevice(user_agent);
+
+  const data = await loginUser(username, password, {
+    ip,
+    user_agent,
+    device_type: device.device_type,
+    os: device.os,
+    browser: device.browser,
+  });
 
   return res.status(200).json({
     message: "Connexion réussie",
-    ...data
+    ...data,
   });
 });
