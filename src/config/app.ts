@@ -10,6 +10,7 @@ import { checkNetworkDrive } from "../utils/checkNetworkDrive";
 import mime from "mime-types";
 import { swaggerSpec } from "../swagger/swagger";
 import { apiReference } from "@scalar/express-api-reference";
+import { validationErrorMiddleware } from "../module/auth/middlewares/validationError.middleware";
 
 const app = express();
 
@@ -96,6 +97,9 @@ app.use(
     },
   })
 );
+
+app.use(validationErrorMiddleware);
+
 
 console.log("📂 Dossier exposé pour les images :", imagePath);
 
