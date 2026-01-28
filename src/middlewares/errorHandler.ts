@@ -1,24 +1,26 @@
-import { Request, Response, NextFunction } from 'express';
-import { AppError } from '../utils/errors';
-import logger from '../utils/logger';
+import type { Request, Response, NextFunction } from "express";
+import { HttpError } from "../utils/httpError.js";
 
-export function errorHandler(
-  err: Error,
-  req: Request,
-  res: Response,
-  next: NextFunction
-): void {
-  logger.error('Error caught by middleware:', {
-    message: err.message,
-    stack: err.stack,
+export function errorHandler(err: any, req: Request, res: Response, _next: NextFunction) {
+  const status = err instanceof HttpError ? err.status : 500;
+
+  const payload = {
+    success: false,
+    message: err?.message ?? "Erreur serveur.",
+    code: err instanceof HttpError ? err.code : "INTERNAL_ERROR",
+    path: req.originalUrl,
+  };
+
+  // logs détaillés côté serveur
+  console.error("[ERROR]", {
+    status,
+    code: payload.code,
+    message: payload.message,
     method: req.method,
-    path: req.path,
-    ip: req.ip,
+    path: req.originalUrl,
+    details: err?.details,
+    stack: err?.stack,
   });
 
-  if (err instanceof AppError) {
-    res.status(err.statusCode).json({ error: err.message });
-  } else {
-    res.status(500).json({ error: 'Internal Server Error' });
-  }
+  return res.status(status).json(payload);
 }
