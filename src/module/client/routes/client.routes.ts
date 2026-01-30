@@ -1,6 +1,6 @@
 // src/module/clients/routes/clients.routes.ts
 import { Router } from "express";
-import { postClient, getClientById, listClients, patchClientPrimaryContact, patchClient,  uploadClientLogo,  } from "../controllers/client.controller";
+import { postClient, getClientById, listClients, patchClientPrimaryContact, patchClient,   } from "../controllers/client.controller";
 import { listClientsAnalytics } from "../controllers/clients.analytics.controller"
 // import { uploadClientLogoMulter } from "../upload/client-logo-upload";
 
