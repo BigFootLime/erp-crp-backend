@@ -4,7 +4,7 @@ import * as clientService from "../services/client.service"; // ✅ namespace im
 import { createClientSchema } from "../validators/client.validators";
 import { repoCreateClient, repoUpdateClient  } from "../repository/client.repository";
 import path from "node:path";
-import { LOGO_BASE_DIR } from "../upload/client-logo-upload";
+// import { LOGO_BASE_DIR } from "../upload/client-logo-upload";
 import { updateClientLogoPath } from "../services/client.service";
 
 
