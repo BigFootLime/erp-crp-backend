@@ -45,6 +45,13 @@ export const outilSchema = z.object({
 
   quantite_stock: z.coerce.number().int().nonnegative().optional().default(0),
   quantite_minimale: z.coerce.number().int().nonnegative().optional().default(0),
+
+   esquisse_file: z.any().optional().nullable(),
+  plan_file: z.any().optional().nullable(),
+  image_file: z.any().optional().nullable(),
+
+  // meta UI
+  _created_at: z.string().optional(),
 });
 
 export type CreateOutilInput = z.infer<typeof outilSchema>;
