@@ -8,41 +8,41 @@ import path from "node:path";
 import { updateClientLogoPath } from "../services/client.service";
 
 
-export const uploadClientLogo: RequestHandler = async (req, res, next) => {
-  try {
-    const clientId = req.params.id;
+// export const uploadClientLogo: RequestHandler = async (req, res, next) => {
+//   try {
+//     const clientId = req.params.id;
 
-    if (!clientId) {
-      return res.status(400).json({ message: "client_id manquant dans l'URL" });
-    }
+//     if (!clientId) {
+//       return res.status(400).json({ message: "client_id manquant dans l'URL" });
+//     }
 
-    const file = (req as any).file as Express.Multer.File | undefined;
+//     const file = (req as any).file as Express.Multer.File | undefined;
 
-    if (!file) {
-      return res.status(400).json({ message: "Aucun fichier 'logo' reçu" });
-    }
+//     if (!file) {
+//       return res.status(400).json({ message: "Aucun fichier 'logo' reçu" });
+//     }
 
-    // chemin absolu sur le VPS (ex: /mnt/crp/CLIENTS/005/LOGOS/005_111225_LOGO.png)
-    const absolutePath = file.path;
+//     // chemin absolu sur le VPS (ex: /mnt/crp/CLIENTS/005/LOGOS/005_111225_LOGO.png)
+//     const absolutePath = file.path;
 
-    // ➜ chemin relatif par rapport à LOGO_BASE_DIR (CLIENTS)
-    // Exemple: "005/LOGOS/005_111225_LOGO.png"
-    let relativePath = path.relative(LOGO_BASE_DIR, absolutePath);
+//     // ➜ chemin relatif par rapport à LOGO_BASE_DIR (CLIENTS)
+//     // Exemple: "005/LOGOS/005_111225_LOGO.png"
+//     let relativePath = path.relative(LOGO_BASE_DIR, absolutePath);
 
-    // normalisation pour éviter les "\" en DB
-    relativePath = relativePath.replace(/\\/g, "/");
+//     // normalisation pour éviter les "\" en DB
+//     relativePath = relativePath.replace(/\\/g, "/");
 
-    // update BDD
-    await updateClientLogoPath(clientId, relativePath);
+//     // update BDD
+//     await updateClientLogoPath(clientId, relativePath);
 
-    return res.status(200).json({
-      client_id: clientId,
-      logo_path: relativePath, // ce qui est stocké en DB
-    });
-  } catch (e) {
-    next(e);
-  }
-};
+//     return res.status(200).json({
+//       client_id: clientId,
+//       logo_path: relativePath, // ce qui est stocké en DB
+//     });
+//   } catch (e) {
+//     next(e);
+//   }
+// };
 
 
 export async function getClientById(req: Request, res: Response): Promise<void> {
