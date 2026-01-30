@@ -15,7 +15,7 @@ import adminRoutes from "../module/admin/routes/admin.routes";
 const router = Router()
 
 router.use("/auth", authRoutes)
-router.use("/outil", outilRoutes)
+router.use("/outils", outilRoutes)
 router.use("/banking-info", bankingInfoRoutes)  
 router.use("/commandes", commandeClientRoutes) // ✅  
 router.use("/clients", clientRoutes);
