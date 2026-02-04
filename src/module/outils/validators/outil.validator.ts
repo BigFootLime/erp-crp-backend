@@ -9,7 +9,21 @@ export const outilSchema = z.object({
   designation_outil_cnc: z.string().min(1),
   reference_fabricant: z.string().trim().min(1).optional(),
 
-  profondeur_utile: z.coerce.number().nullable().optional(),
+ profondeur_utile: z
+  .enum([
+    "3xd",
+    "4xd",
+    "5xd",
+    "6xd",
+    "8xd",
+    "10xd",
+    "12xd",
+    "court",
+    "long",
+  ])
+  .nullable()
+  .optional(),
+
   matiere_usiner: z.string().nullable().optional(),
   utilisation: z.string().nullable().optional(),
 
