@@ -1,0 +1,32 @@
+# Devis API examples (curl)
+
+# Base URL (dev)
+#   http://localhost:5000
+
+# LIST
+curl -sS "http://localhost:5000/api/v1/devis?page=1&pageSize=20&include=client" \
+  -H "Accept: application/json"
+
+# LIST with filters
+curl -sS "http://localhost:5000/api/v1/devis?q=DV&client_id=001&statut=BROUILLON&from=2026-02-01&to=2026-02-28&page=1&pageSize=20&sortBy=date_creation&sortDir=desc&include=client" \
+  -H "Accept: application/json"
+
+# DETAIL
+curl -sS "http://localhost:5000/api/v1/devis/7?include=client,lignes,documents" \
+  -H "Accept: application/json"
+
+# CREATE (multipart)
+# Note: adjust the file path after @
+curl -sS -X POST "http://localhost:5000/api/v1/devis" \
+  -H "Accept: application/json" \
+  -F 'data={"client_id":"001","user_id":1,"statut":"BROUILLON","lignes":[{"description":"Line","quantite":1,"prix_unitaire_ht":100}]}' \
+  -F "documents[]=@./sample.pdf"
+
+# UPDATE (multipart)
+curl -sS -X PATCH "http://localhost:5000/api/v1/devis/7" \
+  -H "Accept: application/json" \
+  -F 'data={"statut":"BROUILLON","user_id":1,"lignes":[{"description":"Updated line","quantite":2,"prix_unitaire_ht":50}]}'
+
+# DELETE
+curl -sS -X DELETE "http://localhost:5000/api/v1/devis/7" \
+  -H "Accept: application/json"
