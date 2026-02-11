@@ -11,6 +11,7 @@ import piecesfamiliesRoutes from "../module/pieces-families/routes/pieces-famili
 import CFRoutes from "../module/centre-frais/routes/centre-frais.routes"
 import piecesTechniquesRoutes from "../module/pieces-techniques/routes/pieces-techniques.routes"
 import adminRoutes from "../module/admin/routes/admin.routes";
+import affaireRoutes from "../module/affaire/routes/affaire.routes";
 
 const router = Router()
 
@@ -25,4 +26,5 @@ router.use("/pieces-families", piecesfamiliesRoutes)
 router.use("/centre-frais", CFRoutes)     
 router.use("/pieces-techniques", piecesTechniquesRoutes)
 router.use("/admin", adminRoutes);
+router.use("/affaires", affaireRoutes);
 export default router
