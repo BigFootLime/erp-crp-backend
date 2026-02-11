@@ -10,6 +10,7 @@ import billerRoutes from "../module/biller/routes/biller.routes";
 import piecesfamiliesRoutes from "../module/pieces-families/routes/pieces-families.routes"
 import CFRoutes from "../module/centre-frais/routes/centre-frais.routes"
 import piecesTechniquesRoutes from "../module/pieces-techniques/routes/pieces-techniques.routes"
+import auditLogsRoutes from "../module/audit-logs/routes/audit-logs.routes"
 import adminRoutes from "../module/admin/routes/admin.routes";
 import affaireRoutes from "../module/affaire/routes/affaire.routes";
 import devisRoutes from "../module/devis/routes/devis.routes";
@@ -26,6 +27,7 @@ router.use("/billers", billerRoutes);
 router.use("/pieces-families", piecesfamiliesRoutes) 
 router.use("/centre-frais", CFRoutes)     
 router.use("/pieces-techniques", piecesTechniquesRoutes)
+router.use("/audit-logs", auditLogsRoutes)
 router.use("/admin", adminRoutes);
 router.use("/affaires", affaireRoutes);
 router.use("/devis", devisRoutes);
