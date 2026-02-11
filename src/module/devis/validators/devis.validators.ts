@@ -29,7 +29,7 @@ export const listDevisQuerySchema = z.object({
   page: z.coerce.number().int().min(1).optional().default(1),
   pageSize: z.coerce.number().int().min(1).max(200).optional().default(20),
   sortBy: z
-    .enum(["numero", "date_creation", "date_validite", "statut", "total_ttc", "total_ht"])
+    .enum(["numero", "date_creation", "date_validite", "statut", "total_ttc", "total_ht", "updated_at"])
     .optional()
     .default("date_creation"),
   sortDir: z.enum(["asc", "desc"]).optional().default("desc"),

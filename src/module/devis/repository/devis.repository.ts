@@ -63,6 +63,8 @@ function sortColumn(sortBy: ListDevisQueryDTO["sortBy"]) {
       return "d.total_ttc";
     case "total_ht":
       return "d.total_ht";
+    case "updated_at":
+      return "d.updated_at";
     default:
       return "d.date_creation";
   }
