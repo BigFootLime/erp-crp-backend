@@ -1,5 +1,14 @@
-export type CommandeClientRow = {
-  id: string;
+export type ClientLite = {
+  client_id: string;
+  company_name: string;
+  email: string | null;
+  phone: string | null;
+  delivery_address_id: string | null;
+  bill_address_id: string | null;
+};
+
+export type CommandeClient = {
+  id: number;
   numero: string;
   client_id: string;
   contact_id: string | null;
@@ -10,7 +19,7 @@ export type CommandeClientRow = {
   arc_edi: boolean;
   arc_date_envoi: string | null;
   compteur_affaire_id: string | null;
-  type_affaire: "fabrication" | "previsionnel" | "regroupement";
+  type_affaire: string;
   mode_port_id: string | null;
   mode_reglement_id: string | null;
   conditions_paiement_id: number | null;
@@ -22,74 +31,62 @@ export type CommandeClientRow = {
   total_ttc: number;
   created_at: string;
   updated_at: string;
-  statut: string | null;
-};
-
-export type ClientLite = {
-  client_id: string;
-  company_name: string;
-  email: string | null;
-  phone: string | null;
-  delivery_address_id: string | null;
-  bill_address_id: string | null;
+  statut: string;
 };
 
 export type CommandeListItem = Pick<
-  CommandeClientRow,
+  CommandeClient,
   "id" | "numero" | "client_id" | "date_commande" | "total_ttc" | "updated_at" | "statut" | "total_ht"
 > & {
   client?: ClientLite | null;
 };
 
-export type CommandeLigneRow = {
-  id: string;
-  commande_id: string;
+export type CommandeClientLine = {
+  id: number;
+  commande_id: number;
   designation: string;
   code_piece: string | null;
-  quantite: string;
+  quantite: number;
   unite: string | null;
-  prix_unitaire_ht: string;
-  remise_ligne: string | null;
-  taux_tva: string | null;
+  prix_unitaire_ht: number;
+  remise_ligne: number | null;
+  taux_tva: number | null;
   delai_client: string | null;
   delai_interne: string | null;
-  total_ht: string;
-  total_ttc: string;
+  total_ht: number;
+  total_ttc: number;
   devis_numero: string | null;
   famille: string | null;
 };
 
-export type CommandeEcheanceRow = {
-  id: string;
-  commande_id: string;
+export type CommandeEcheance = {
+  id: number;
+  commande_id: number;
   libelle: string;
   date_echeance: string;
-  pourcentage: string;
-  montant: string;
+  pourcentage: number;
+  montant: number;
 };
 
-export type DocumentRow = {
+export type DocumentClient = {
   id: string;
-  doc_code: string | null;
-  title: string | null;
-  file_path: string;
-  mime_type: string | null;
-  version_index: string | null;
-  kind: string | null;
-  created_at: string;
+  document_name: string;
+  type?: string | null;
+  creation_date?: string | null;
+  created_by?: string | null;
 };
 
-export type CommandeDocumentRow = {
-  id: string;
-  commande_id: string;
+export type CommandeDocument = {
+  id: number;
+  commande_id: number;
   document_id: string;
-  type: string | null;
-  document: DocumentRow;
+  type?: string | null;
+  document?: DocumentClient | null;
 };
 
-export type CommandeHistoriqueRow = {
-  id: string;
-  commande_id: string;
+export type CommandeHistorique = {
+  id: number;
+  commande_id: number;
   user_id: number | null;
   date_action: string;
   ancien_statut: string | null;
@@ -97,13 +94,13 @@ export type CommandeHistoriqueRow = {
   commentaire: string | null;
 };
 
-export type AffaireRow = {
-  id: string;
+export type Affaire = {
+  id: number;
   reference: string;
   client_id: string;
-  commande_id: string | null;
-  devis_id: string | null;
-  type_affaire: "fabrication" | "previsionnel" | "regroupement";
+  commande_id: number | null;
+  devis_id: number | null;
+  type_affaire: string;
   statut: string;
   date_ouverture: string;
   date_cloture: string | null;
@@ -112,15 +109,14 @@ export type AffaireRow = {
   updated_at: string;
 };
 
-export type CommandeToAffaireRow = {
-  id: string;
-  commande_id: string;
-  affaire_id: string;
+export type CommandeToAffaire = {
+  id: number;
+  commande_id: number;
+  affaire_id: number;
   date_conversion: string;
   commentaire: string | null;
+  affaire?: Affaire;
 };
-
-export type CommandeAffaireRow = CommandeToAffaireRow & { affaire: AffaireRow };
 
 export type CommandeLigneInput = {
   designation: string;
@@ -154,7 +150,7 @@ export type CreateCommandeInput = {
   arc_edi?: boolean;
   arc_date_envoi?: string | null;
   compteur_affaire_id?: string | null;
-  type_affaire?: "fabrication" | "previsionnel" | "regroupement";
+  type_affaire?: string;
   mode_port_id?: string | null;
   mode_reglement_id?: string | null;
   conditions_paiement_id?: number | null;

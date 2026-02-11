@@ -1,3 +1,5 @@
+import fs from "node:fs/promises";
+import crypto from "node:crypto";
 import path from "node:path";
 import type { PoolClient } from "pg";
 import pool from "../../../config/database";
@@ -12,6 +14,17 @@ import type { ListCommandesQueryDTO } from "../validators/commande-client.valida
 function normalizeStoredPath(filePath: string) {
   const rel = path.isAbsolute(filePath) ? path.relative(process.cwd(), filePath) : filePath;
   return rel.replace(/\\/g, "/");
+}
+
+function toInt(value: unknown, label = "id"): number {
+  if (typeof value === "number" && Number.isInteger(value)) return value;
+  if (typeof value === "string" && /^\d+$/.test(value)) return Number.parseInt(value, 10);
+  throw new Error(`Invalid ${label}: ${String(value)}`);
+}
+
+function toNullableInt(value: unknown, label = "id"): number | null {
+  if (value === null || value === undefined) return null;
+  return toInt(value, label);
 }
 
 function sortColumn(sortBy: ListCommandesQueryDTO["sortBy"]) {
@@ -145,11 +158,19 @@ export async function repoListCommandes(filters: ListCommandesQueryDTO) {
     OFFSET $${values.length + 2}
   `;
   const dataValues = [...values, pageSize, offset];
-  const dataRes = await pool.query<
-    Omit<CommandeListItem, "client"> & { client: ClientLite | null }
-  >(dataSql, dataValues);
+  type CommandeListRow = Omit<CommandeListItem, "id"> & {
+    id: string;
+    client: ClientLite | null;
+  };
 
-  return { items: dataRes.rows, total };
+  const dataRes = await pool.query<CommandeListRow>(dataSql, dataValues);
+
+  const items = dataRes.rows.map((r) => ({
+    ...r,
+    id: toInt(r.id, "id"),
+  }));
+
+  return { items, total };
 }
 
 type IncludeFlags = {
@@ -174,6 +195,8 @@ function includeFlags(includes: Set<string>): IncludeFlags {
 }
 
 export async function repoGetCommande(id: string, includes: Set<string>) {
+  const commandeId = toInt(id, "commande_id");
+
   const headerSql = `
     SELECT
       cc.id::text AS id,
@@ -210,9 +233,41 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
     ) st ON TRUE
     WHERE cc.id = $1
   `;
-  const headerRes = await pool.query(headerSql, [id]);
-  const commande = headerRes.rows[0] ?? null;
-  if (!commande) return null;
+  type HeaderRow = {
+    id: string;
+    numero: string;
+    client_id: string;
+    contact_id: string | null;
+    destinataire_id: string | null;
+    emetteur: string | null;
+    code_client: string | null;
+    date_commande: string;
+    arc_edi: boolean;
+    arc_date_envoi: string | null;
+    compteur_affaire_id: string | null;
+    type_affaire: string;
+    mode_port_id: string | null;
+    mode_reglement_id: string | null;
+    conditions_paiement_id: number | null;
+    biller_id: string | null;
+    compte_vente_id: string | null;
+    commentaire: string | null;
+    remise_globale: number;
+    total_ht: number;
+    total_ttc: number;
+    created_at: string;
+    updated_at: string;
+    statut: string;
+  };
+
+  const headerRes = await pool.query<HeaderRow>(headerSql, [commandeId]);
+  const commandeRow = headerRes.rows[0] ?? null;
+  if (!commandeRow) return null;
+
+  const commande = {
+    ...commandeRow,
+    id: toInt(commandeRow.id, "commande.id"),
+  };
 
   const inc = includeFlags(includes);
 
@@ -240,10 +295,16 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
           WHERE commande_id = $1
           ORDER BY id ASC
           `,
-          [id]
+          [commandeId]
         )
       ).rows
     : [];
+
+  const lignesOut = lignes.map((l: any) => ({
+    ...l,
+    id: toInt(l.id, "lignes.id"),
+    commande_id: toInt(l.commande_id, "lignes.commande_id"),
+  }));
 
   const echeances = inc.echeances
     ? (
@@ -260,10 +321,16 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
           WHERE commande_id = $1
           ORDER BY date_echeance ASC, id ASC
           `,
-          [id]
+          [commandeId]
         )
       ).rows
     : [];
+
+  const echeancesOut = echeances.map((e: any) => ({
+    ...e,
+    id: toInt(e.id, "echeances.id"),
+    commande_id: toInt(e.commande_id, "echeances.commande_id"),
+  }));
 
   const documents = inc.documents
     ? (
@@ -274,25 +341,28 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
             cd.commande_id::text AS commande_id,
             cd.document_id::text AS document_id,
             cd.type,
-            jsonb_build_object(
-              'id', d.id::text,
-              'doc_code', d.doc_code,
-              'title', d.title,
-              'file_path', d.file_path,
-              'mime_type', d.mime_type,
-              'version_index', d.version_index,
-              'kind', d.kind,
-              'created_at', d.created_at::text
-            ) AS document
+            CASE WHEN dc.id IS NULL THEN NULL ELSE jsonb_build_object(
+              'id', dc.id::text,
+              'document_name', dc.document_name,
+              'type', dc.type,
+              'creation_date', dc.creation_date::text,
+              'created_by', dc.created_by
+            ) END AS document
           FROM commande_documents cd
-          JOIN documents d ON d.id = cd.document_id
+          LEFT JOIN documents_clients dc ON dc.id = cd.document_id
           WHERE cd.commande_id = $1
           ORDER BY cd.id DESC
           `,
-          [id]
+          [commandeId]
         )
       ).rows
     : [];
+
+  const documentsOut = documents.map((d: any) => ({
+    ...d,
+    id: toInt(d.id, "documents.id"),
+    commande_id: toInt(d.commande_id, "documents.commande_id"),
+  }));
 
   const historique = inc.historique
     ? (
@@ -310,10 +380,17 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
           WHERE commande_id = $1
           ORDER BY date_action DESC, id DESC
           `,
-          [id]
+          [commandeId]
         )
       ).rows
     : [];
+
+  const historiqueOut = historique.map((h: any) => ({
+    ...h,
+    id: toInt(h.id, "historique.id"),
+    commande_id: toInt(h.commande_id, "historique.commande_id"),
+    user_id: toNullableInt(h.user_id, "historique.user_id"),
+  }));
 
   const affaires = inc.affaires
     ? (
@@ -326,11 +403,11 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
             cta.date_conversion::text AS date_conversion,
             cta.commentaire,
             jsonb_build_object(
-              'id', a.id::text,
+              'id', a.id,
               'reference', a.reference,
               'client_id', a.client_id,
-              'commande_id', a.commande_id::text,
-              'devis_id', a.devis_id::text,
+              'commande_id', a.commande_id,
+              'devis_id', a.devis_id,
               'type_affaire', a.type_affaire,
               'statut', a.statut,
               'date_ouverture', a.date_ouverture::text,
@@ -344,10 +421,34 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
           WHERE cta.commande_id = $1
           ORDER BY cta.date_conversion DESC, cta.id DESC
           `,
-          [id]
+          [commandeId]
         )
       ).rows
     : [];
+
+  const affairesOut = affaires.map((a: any) => {
+    const affaireValue: unknown = a.affaire;
+    const affaireOut =
+      affaireValue && typeof affaireValue === "object" && !Array.isArray(affaireValue)
+        ? (() => {
+            const rec = affaireValue as Record<string, unknown>;
+            return {
+              ...rec,
+              id: toInt(rec.id, "affaires.affaire.id"),
+              commande_id: toNullableInt(rec.commande_id, "affaires.affaire.commande_id"),
+              devis_id: toNullableInt(rec.devis_id, "affaires.affaire.devis_id"),
+            };
+          })()
+        : affaireValue;
+
+    return {
+      ...a,
+      id: toInt(a.id, "affaires.id"),
+      commande_id: toInt(a.commande_id, "affaires.commande_id"),
+      affaire_id: toInt(a.affaire_id, "affaires.affaire_id"),
+      affaire: affaireOut,
+    };
+  });
 
   const client = inc.client
     ? (
@@ -370,11 +471,11 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
 
   return {
     commande,
-    lignes,
-    echeances,
-    documents,
-    historique,
-    affaires,
+    lignes: lignesOut,
+    echeances: echeancesOut,
+    documents: documentsOut,
+    historique: historiqueOut,
+    affaires: affairesOut,
     client,
   };
 }
@@ -460,26 +561,38 @@ async function insertCommandeDocuments(client: PoolClient, commandeId: string, d
   if (!documents.length) return;
 
   for (const doc of documents) {
-    const filePath = normalizeStoredPath(doc.path);
+    const documentId = crypto.randomUUID();
+    const isPdf = doc.originalname.toLowerCase().endsWith(".pdf");
+    const docType = isPdf ? "PDF" : doc.mimetype;
 
-    const docRes = await client.query<{ id: string }>(
+    const extCandidate = path.extname(doc.originalname).toLowerCase();
+    const safeExt = /^\.[a-z0-9]+$/.test(extCandidate) && extCandidate.length <= 10 ? extCandidate : "";
+
+    const uploadDir = path.resolve("uploads/docs");
+    const finalPath = path.join(uploadDir, `${documentId}${safeExt}`);
+
+    try {
+      await fs.rename(doc.path, finalPath);
+    } catch {
+      // Fallback for cross-device issues
+      await fs.copyFile(doc.path, finalPath);
+      await fs.unlink(doc.path);
+    }
+
+    await client.query(
       `
-      INSERT INTO documents (title, file_path, mime_type, kind)
-      VALUES ($1, $2, $3, $4)
-      RETURNING id::text AS id
+      INSERT INTO documents_clients (id, document_name, type)
+      VALUES ($1, $2, $3)
       `,
-      [doc.originalname, filePath, doc.mimetype, "commande"]
+      [documentId, doc.originalname, docType]
     );
-    const documentId = docRes.rows[0]?.id;
-    if (!documentId) continue;
 
-    const type = doc.originalname.toLowerCase().endsWith(".pdf") ? "PDF" : null;
     await client.query(
       `
       INSERT INTO commande_documents (commande_id, document_id, type)
       VALUES ($1, $2, $3)
       `,
-      [commandeId, documentId, type]
+      [commandeId, documentId, isPdf ? "PDF" : null]
     );
   }
 }
@@ -547,7 +660,7 @@ export async function repoCreateCommande(input: CreateCommandeInput, documents: 
     await insertCommandeDocuments(client, commandeId, documents);
 
     await client.query("COMMIT");
-    return { id: commandeId };
+    return { id: toInt(commandeId, "commande.id") };
   } catch (e) {
     await client.query("ROLLBACK");
     throw e;
@@ -627,7 +740,7 @@ export async function repoUpdateCommande(id: string, input: CreateCommandeInput,
     await insertCommandeDocuments(client, id, documents);
 
     await client.query("COMMIT");
-    return { id: commandeId };
+    return { id: toInt(commandeId, "commande.id") };
   } catch (e) {
     await client.query("ROLLBACK");
     throw e;
@@ -647,11 +760,12 @@ export async function repoUpdateCommandeStatus(
   commentaire: string | null,
   userId: number | null
 ) {
+  const commandeId = toInt(id, "commande_id");
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
 
-    const exists = await client.query(`SELECT id::text AS id FROM commande_client WHERE id = $1`, [id]);
+    const exists = await client.query(`SELECT id::text AS id FROM commande_client WHERE id = $1`, [commandeId]);
     if (exists.rows.length === 0) {
       await client.query("ROLLBACK");
       return null;
@@ -665,7 +779,7 @@ export async function repoUpdateCommandeStatus(
       ORDER BY date_action DESC, id DESC
       LIMIT 1
       `,
-      [id]
+      [commandeId]
     );
     const ancienStatut = last.rows[0]?.nouveau_statut ?? null;
 
@@ -675,14 +789,14 @@ export async function repoUpdateCommandeStatus(
       VALUES ($1, $2, $3, $4, $5)
       RETURNING id::text AS id
       `,
-      [id, userId, ancienStatut, nouveau_statut, commentaire]
+      [commandeId, userId, ancienStatut, nouveau_statut, commentaire]
     );
 
-    await client.query(`UPDATE commande_client SET updated_at = now() WHERE id = $1`, [id]);
+    await client.query(`UPDATE commande_client SET updated_at = now() WHERE id = $1`, [commandeId]);
 
     await client.query("COMMIT");
     return {
-      id: ins.rows[0]?.id ?? null,
+      id: ins.rows[0]?.id ? toInt(ins.rows[0].id, "commande_historique.id") : null,
       ancien_statut: ancienStatut,
       nouveau_statut,
     };
@@ -695,6 +809,7 @@ export async function repoUpdateCommandeStatus(
 }
 
 export async function repoGenerateAffairesFromOrder(id: string) {
+  const commandeId = toInt(id, "commande_id");
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -709,7 +824,7 @@ export async function repoGenerateAffairesFromOrder(id: string) {
       WHERE id = $1
       FOR UPDATE
       `,
-      [id]
+      [commandeId]
     );
     const commande = commandeRes.rows[0];
     if (!commande) {
@@ -719,25 +834,27 @@ export async function repoGenerateAffairesFromOrder(id: string) {
 
     const existing = await client.query<{ id: string }>(
       `SELECT id::text AS id FROM affaire WHERE commande_id = $1 ORDER BY id ASC`,
-      [id]
+      [commandeId]
     );
     if (existing.rows.length) {
       await client.query("COMMIT");
-      return { affaire_ids: existing.rows.map((r) => r.id) };
+      return { affaire_ids: existing.rows.map((r) => toInt(r.id, "affaire.id")) };
     }
 
     const seq = await client.query<{ id: string }>(`SELECT nextval('public.affaire_id_seq')::bigint::text AS id`);
     const affaireId = seq.rows[0]?.id;
     if (!affaireId) throw new Error("Failed to allocate affaire id");
 
-    const reference = `AFF-${affaireId}`.slice(0, 30);
+    const affaireIdInt = toInt(affaireId, "affaire.id");
+
+    const reference = `AFF-${affaireIdInt}`.slice(0, 30);
 
     await client.query(
       `
       INSERT INTO affaire (id, reference, client_id, commande_id, type_affaire)
       VALUES ($1, $2, $3, $4, $5)
       `,
-      [affaireId, reference, commande.client_id, id, commande.type_affaire]
+      [affaireIdInt, reference, commande.client_id, commandeId, commande.type_affaire]
     );
 
     await client.query(
@@ -745,13 +862,13 @@ export async function repoGenerateAffairesFromOrder(id: string) {
       INSERT INTO commande_to_affaire (commande_id, affaire_id, commentaire)
       VALUES ($1, $2, $3)
       `,
-      [id, affaireId, "Generated from commande"]
+      [commandeId, affaireIdInt, "Generated from commande"]
     );
 
-    await client.query(`UPDATE commande_client SET updated_at = now() WHERE id = $1`, [id]);
+    await client.query(`UPDATE commande_client SET updated_at = now() WHERE id = $1`, [commandeId]);
 
     await client.query("COMMIT");
-    return { affaire_ids: [affaireId] };
+    return { affaire_ids: [affaireIdInt] };
   } catch (e) {
     await client.query("ROLLBACK");
     throw e;
@@ -761,6 +878,7 @@ export async function repoGenerateAffairesFromOrder(id: string) {
 }
 
 export async function repoDuplicateCommande(id: string) {
+  const originalCommandeId = toInt(id, "commande_id");
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -789,7 +907,7 @@ export async function repoDuplicateCommande(id: string) {
       WHERE id = $1
       FOR UPDATE
       `,
-      [id]
+      [originalCommandeId]
     );
     const original = originalRes.rows[0];
     if (!original) {
@@ -815,7 +933,7 @@ export async function repoDuplicateCommande(id: string) {
       WHERE commande_id = $1
       ORDER BY id ASC
       `,
-      [id]
+      [originalCommandeId]
     );
 
     const seq = await client.query<{ id: string }>(
@@ -823,7 +941,8 @@ export async function repoDuplicateCommande(id: string) {
     );
     const newId = seq.rows[0]?.id;
     if (!newId) throw new Error("Failed to allocate commande id");
-    const newNumero = `CC-${newId}`.slice(0, 30);
+    const newIdInt = toInt(newId, "commande_client.id");
+    const newNumero = `CC-${newIdInt}`.slice(0, 30);
 
     await client.query(
       `
@@ -854,7 +973,7 @@ export async function repoDuplicateCommande(id: string) {
       )
       `,
       [
-        newId,
+        newIdInt,
         newNumero,
         original.client_id,
         original.contact_id,
@@ -889,7 +1008,7 @@ export async function repoDuplicateCommande(id: string) {
         devis_numero: (r.devis_numero as string | null) ?? null,
         famille: (r.famille as string | null) ?? null,
       }));
-      await insertCommandeLignes(client, newId, lignesPayload);
+      await insertCommandeLignes(client, String(newIdInt), lignesPayload);
     }
 
     await client.query(
@@ -897,11 +1016,11 @@ export async function repoDuplicateCommande(id: string) {
       INSERT INTO commande_historique (commande_id, user_id, ancien_statut, nouveau_statut, commentaire)
       VALUES ($1, $2, $3, $4, $5)
       `,
-      [newId, null, null, "brouillon", `Duplicated from commande ${id}`]
+      [newIdInt, null, null, "brouillon", `Duplicated from commande ${originalCommandeId}`]
     );
 
     await client.query("COMMIT");
-    return { id: newId };
+    return { id: newIdInt };
   } catch (e) {
     await client.query("ROLLBACK");
     throw e;

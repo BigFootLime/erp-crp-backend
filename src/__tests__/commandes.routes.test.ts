@@ -57,7 +57,7 @@ describe("/api/v1/commandes", () => {
       .mockResolvedValueOnce({
         rows: [
           {
-            id: "123",
+            id: "123", // pg int8 is usually returned as string
             numero: "CC-123",
             client_id: "001",
             date_commande: "2026-02-01",
@@ -97,13 +97,15 @@ describe("/api/v1/commandes", () => {
       total: 1,
       items: [
         {
-          id: "123",
+          id: 123,
           numero: "CC-123",
           client_id: "001",
           total_ttc: 120,
         },
       ],
     });
+
+    expect(typeof res.body.items[0].id).toBe("number");
 
     expect(mocks.poolQuery).toHaveBeenCalledTimes(2);
 
@@ -134,11 +136,38 @@ describe("/api/v1/commandes", () => {
           },
         ],
       })
-      .mockResolvedValueOnce({ rows: [{ id: "1" }] }) // lignes
-      .mockResolvedValueOnce({ rows: [{ id: "2" }] }) // echeances
-      .mockResolvedValueOnce({ rows: [{ id: "3" }] }) // documents
-      .mockResolvedValueOnce({ rows: [{ id: "4" }] }) // historique
-      .mockResolvedValueOnce({ rows: [{ id: "5" }] }) // affaires
+      .mockResolvedValueOnce({ rows: [{ id: "1", commande_id: "123" }] }) // lignes
+      .mockResolvedValueOnce({ rows: [{ id: "2", commande_id: "123" }] }) // echeances
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "3",
+            commande_id: "123",
+            document_id: "11111111-1111-1111-1111-111111111111",
+            type: "PDF",
+            document: {
+              id: "11111111-1111-1111-1111-111111111111",
+              document_name: "doc.pdf",
+              type: "PDF",
+              creation_date: "2026-02-02T10:00:00.000Z",
+              created_by: "test",
+            },
+          },
+        ],
+      }) // documents
+      .mockResolvedValueOnce({ rows: [{ id: "4", commande_id: "123" }] }) // historique
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "5",
+            commande_id: "123",
+            affaire_id: "7",
+            date_conversion: "2026-02-02T10:00:00.000Z",
+            commentaire: null,
+            affaire: { id: 7, reference: "AFF-7" },
+          },
+        ],
+      }) // affaires
       .mockResolvedValueOnce({
         rows: [
           {
@@ -164,7 +193,25 @@ describe("/api/v1/commandes", () => {
     expect(res.body).toHaveProperty("historique");
     expect(res.body).toHaveProperty("affaires");
     expect(res.body).toHaveProperty("client");
-    expect(res.body.commande).toMatchObject({ id: "123", numero: "CC-123" });
+
+    expect(res.body.commande).toMatchObject({ id: 123, numero: "CC-123" });
+    expect(typeof res.body.commande.id).toBe("number");
+
+    expect(Array.isArray(res.body.documents)).toBe(true);
+    expect(res.body.documents[0]).toMatchObject({
+      id: 3,
+      commande_id: 123,
+      document_id: "11111111-1111-1111-1111-111111111111",
+      document: {
+        id: "11111111-1111-1111-1111-111111111111",
+        document_name: "doc.pdf",
+      },
+    });
+
+    // Ensure repo uses documents_clients join (not documents)
+    const docsCall = mocks.poolQuery.mock.calls.find((c) => String(c[0]).includes("FROM commande_documents"));
+    expect(String(docsCall?.[0])).toContain("documents_clients");
+    expect(String(docsCall?.[0])).not.toMatch(/JOIN\s+documents\b/);
   });
 
   it("POST /api/v1/commandes handles multipart data + documents[]", async () => {
@@ -176,7 +223,7 @@ describe("/api/v1/commandes", () => {
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
       .mockResolvedValueOnce({ rows: [{ id: "123" }] }) // INSERT commande_client
       .mockResolvedValueOnce({ rows: [] }) // INSERT commande_ligne
-      .mockResolvedValueOnce({ rows: [{ id: "doc-uuid" }] }) // INSERT documents
+      .mockResolvedValueOnce({ rows: [{ id: "11111111-1111-1111-1111-111111111111" }] }) // INSERT documents_clients
       .mockResolvedValueOnce({ rows: [] }) // INSERT commande_documents
       .mockResolvedValueOnce({ rows: [] }); // COMMIT
 
@@ -199,10 +246,54 @@ describe("/api/v1/commandes", () => {
       .attach("documents[]", tmpFile);
 
     expect(res.status).toBe(201);
-    expect(res.body).toMatchObject({ id: "123" });
+    expect(res.body).toMatchObject({ id: 123 });
     expect(mocks.poolConnect).toHaveBeenCalledTimes(1);
 
+    const insertDocClientCall = mocks.clientQuery.mock.calls.find((c) =>
+      String(c[0]).includes("INSERT INTO documents_clients")
+    );
+    expect(insertDocClientCall).toBeTruthy();
+    expect(String(insertDocClientCall?.[0])).toContain("documents_clients");
+
+    const insertDocCall = mocks.clientQuery.mock.calls.find((c) => String(c[0]).includes("INSERT INTO documents ("));
+    expect(insertDocCall).toBeFalsy();
+
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("PATCH /api/v1/commandes/:id works and replaces lignes", async () => {
+    mocks.clientQuery
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ id: "123" }] }) // UPDATE commande_client
+      .mockResolvedValueOnce({ rows: [] }) // DELETE lignes
+      .mockResolvedValueOnce({ rows: [] }) // DELETE echeances
+      .mockResolvedValueOnce({ rows: [] }) // INSERT commande_ligne
+      .mockResolvedValueOnce({ rows: [] }); // COMMIT
+
+    const payload = {
+      numero: "CC-123",
+      client_id: "001",
+      date_commande: "2026-02-01",
+      lignes: [
+        {
+          designation: "Line updated",
+          quantite: 2,
+          prix_unitaire_ht: 100,
+        },
+      ],
+    };
+
+    const res = await request(app)
+      .patch("/api/v1/commandes/123")
+      .field("data", JSON.stringify(payload));
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ id: 123 });
+
+    const deleteLignesCall = mocks.clientQuery.mock.calls.find((c) =>
+      String(c[0]).includes("DELETE FROM commande_ligne")
+    );
+    expect(deleteLignesCall).toBeTruthy();
   });
 
   it("POST /api/v1/commandes/:id/status writes historique", async () => {
@@ -223,7 +314,7 @@ describe("/api/v1/commandes", () => {
 
     const insertCall = mocks.clientQuery.mock.calls.find((c) => String(c[0]).includes("INSERT INTO commande_historique"));
     expect(insertCall).toBeTruthy();
-    expect(insertCall?.[1]).toEqual(["123", null, "brouillon", "valide", "ok"]);
+    expect(insertCall?.[1]).toEqual([123, null, "brouillon", "valide", "ok"]);
   });
 
   it("POST /api/v1/commandes/:id/duplicate returns new id", async () => {
@@ -278,6 +369,31 @@ describe("/api/v1/commandes", () => {
     const res = await request(app).post("/api/v1/commandes/123/duplicate");
 
     expect(res.status).toBe(201);
-    expect(res.body).toMatchObject({ id: "456" });
+    expect(res.body).toMatchObject({ id: 456 });
+  });
+
+  it("POST /api/v1/commandes/:id/generate-affaires returns affaire_ids and links rows", async () => {
+    mocks.clientQuery
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ client_id: "001", type_affaire: "fabrication" }] }) // commande
+      .mockResolvedValueOnce({ rows: [] }) // existing affaires
+      .mockResolvedValueOnce({ rows: [{ id: "7" }] }) // nextval affaire_id_seq
+      .mockResolvedValueOnce({ rows: [] }) // insert affaire
+      .mockResolvedValueOnce({ rows: [] }) // insert commande_to_affaire
+      .mockResolvedValueOnce({ rows: [] }) // update commande
+      .mockResolvedValueOnce({ rows: [] }); // COMMIT
+
+    const res = await request(app).post("/api/v1/commandes/123/generate-affaires");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ affaire_ids: [7] });
+
+    const insertAffaireCall = mocks.clientQuery.mock.calls.find((c) => String(c[0]).includes("INSERT INTO affaire"));
+    expect(insertAffaireCall).toBeTruthy();
+
+    const linkCall = mocks.clientQuery.mock.calls.find((c) =>
+      String(c[0]).includes("INSERT INTO commande_to_affaire")
+    );
+    expect(linkCall).toBeTruthy();
   });
 });
