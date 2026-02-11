@@ -9,6 +9,17 @@ export type BomLine = {
   designation?: string | null
 }
 
+export type PieceTechniqueStatut = "DRAFT" | "ACTIVE" | "IN_FABRICATION" | "OBSOLETE"
+
+export type PieceTechniqueHistoryEntry = {
+  id: string
+  date_action: string
+  user_id: number | null
+  ancien_statut: PieceTechniqueStatut | null
+  nouveau_statut: PieceTechniqueStatut
+  commentaire: string | null
+}
+
 export type Operation = {
   id?: string
   phase: number
@@ -66,6 +77,7 @@ export type PieceTechnique = {
   designation: string
   designation_2: string | null
   prix_unitaire: number
+  statut: PieceTechniqueStatut
   en_fabrication: boolean
   cycle: number | null
   cycle_fabrication: number | null
@@ -76,6 +88,8 @@ export type PieceTechnique = {
   bom: BomLine[]
   operations: Operation[]
   achats: Achat[]
+
+  history?: PieceTechniqueHistoryEntry[]
 }
 
 // Payload envoyé par le front
@@ -91,7 +105,8 @@ export type CreatePieceTechniqueInput = {
   designation: string
   designation_2?: string | null
   prix_unitaire: number
-  en_fabrication: boolean
+  statut?: PieceTechniqueStatut
+  en_fabrication?: boolean
   cycle?: number | null
   cycle_fabrication?: number | null
   code_client?: string | null
@@ -101,4 +116,27 @@ export type CreatePieceTechniqueInput = {
   bom: BomLine[]
   operations: Operation[]
   achats: Achat[]
+}
+
+export type PieceTechniqueListItem = Pick<
+  PieceTechnique,
+  "id" | "code_piece" | "designation" | "designation_2" | "client_id" | "client_name" | "famille_id" | "statut" | "en_fabrication" | "prix_unitaire" | "created_at" | "updated_at"
+> & {
+  bom_count: number
+  operations_count: number
+  achats_count: number
+  cout_mo_total: number
+  achats_total_ht: number
+}
+
+export type Paginated<T> = {
+  items: T[]
+  total: number
+}
+
+export type PiecesTechniquesStats = {
+  total: number
+  active: number
+  in_fabrication: number
+  obsolete: number
 }
