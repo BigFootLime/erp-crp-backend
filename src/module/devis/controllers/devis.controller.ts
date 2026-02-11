@@ -8,7 +8,14 @@ import {
   type UpdateDevisBodyDTO,
 } from "../validators/devis.validators";
 import type { UploadedDocument } from "../types/devis.types";
-import { svcCreateDevis, svcDeleteDevis, svcGetDevis, svcListDevis, svcUpdateDevis } from "../services/devis.service";
+import {
+  svcConvertDevisToCommande,
+  svcCreateDevis,
+  svcDeleteDevis,
+  svcGetDevis,
+  svcListDevis,
+  svcUpdateDevis,
+} from "../services/devis.service";
 
 function getParsedDevisBody(req: Request): CreateDevisBodyDTO | UpdateDevisBodyDTO | null {
   const body = req.parsedDevisBody;
@@ -101,6 +108,17 @@ export const deleteDevis: RequestHandler = async (req, res, next) => {
       return;
     }
     res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const convertDevisToCommande: RequestHandler = async (req, res, next) => {
+  try {
+    const { id } = devisIdParamsSchema.parse(req.params);
+    const out = await svcConvertDevisToCommande(id);
+    if (!out) throw new HttpError(404, "DEVIS_NOT_FOUND", "Devis not found");
+    res.status(201).json(out);
   } catch (err) {
     next(err);
   }

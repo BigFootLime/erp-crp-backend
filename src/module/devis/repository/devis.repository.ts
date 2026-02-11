@@ -40,6 +40,24 @@ function getPgErrorInfo(err: unknown) {
   return { code, constraint };
 }
 
+function normalizeStatus(value: unknown) {
+  if (value === null || value === undefined) return "";
+  try {
+    return String(value)
+      .trim()
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
+  } catch {
+    return String(value).trim().toLowerCase();
+  }
+}
+
+function isAcceptedStatus(value: unknown) {
+  const s = normalizeStatus(value);
+  return s === "accepte" || s === "acceptee";
+}
+
 function includesSet(includeValue: string) {
   return new Set(
     includeValue
@@ -547,6 +565,175 @@ export async function repoUpdateDevis(
     const { code, constraint } = getPgErrorInfo(err);
     if (code === "23505" && constraint === "devis_numero_key") {
       throw new HttpError(409, "DEVIS_NUMERO_EXISTS", "Numero already exists");
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function repoConvertDevisToCommande(devisId: number) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const devisRes = await client.query<{
+      id: string;
+      numero: string;
+      client_id: string;
+      contact_id: string | null;
+      adresse_livraison_id: string | null;
+      mode_reglement_id: string | null;
+      conditions_paiement_id: number | null;
+      biller_id: string | null;
+      compte_vente_id: string | null;
+      commentaires: string | null;
+      remise_globale: number;
+      total_ht: number;
+      total_ttc: number;
+      statut: string;
+    }>(
+      `
+      SELECT
+        id::text AS id,
+        numero,
+        client_id,
+        contact_id::text AS contact_id,
+        adresse_livraison_id::text AS adresse_livraison_id,
+        mode_reglement_id::text AS mode_reglement_id,
+        conditions_paiement_id,
+        biller_id::text AS biller_id,
+        compte_vente_id::text AS compte_vente_id,
+        commentaires,
+        remise_globale::float8 AS remise_globale,
+        total_ht::float8 AS total_ht,
+        total_ttc::float8 AS total_ttc,
+        statut
+      FROM devis
+      WHERE id = $1
+      FOR UPDATE
+      `,
+      [devisId]
+    );
+
+    const devis = devisRes.rows[0] ?? null;
+    if (!devis) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    if (!isAcceptedStatus(devis.statut)) {
+      throw new HttpError(400, "DEVIS_NOT_ACCEPTED", "Devis must be accepted before conversion");
+    }
+
+    const existing = await client.query<{ id: string; numero: string }>(
+      `
+      SELECT id::text AS id, numero
+      FROM commande_client
+      WHERE devis_id = $1
+      LIMIT 1
+      `,
+      [devisId]
+    );
+    if (existing.rows.length > 0) {
+      const numero = existing.rows[0]?.numero;
+      throw new HttpError(409, "DEVIS_ALREADY_CONVERTED", numero ? `Devis already converted (${numero})` : "Devis already converted");
+    }
+
+    const seq = await client.query<{ id: string }>(
+      `SELECT nextval('public.commande_client_id_seq')::bigint::text AS id`
+    );
+    const idRaw = seq.rows[0]?.id;
+    if (!idRaw) throw new Error("Failed to allocate commande id");
+    const commandeId = toInt(idRaw, "commande_client.id");
+    const commandeNumero = `CC-${commandeId}`.slice(0, 30);
+
+    await client.query(
+      `
+      INSERT INTO commande_client (
+        id,
+        numero,
+        client_id,
+        contact_id,
+        destinataire_id,
+        mode_reglement_id,
+        conditions_paiement_id,
+        biller_id,
+        compte_vente_id,
+        commentaire,
+        remise_globale,
+        total_ht,
+        total_ttc,
+        devis_id
+      ) VALUES (
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14
+      )
+      `,
+      [
+        commandeId,
+        commandeNumero,
+        devis.client_id,
+        devis.contact_id ?? null,
+        devis.adresse_livraison_id ?? null,
+        devis.mode_reglement_id ?? null,
+        devis.conditions_paiement_id ?? null,
+        devis.biller_id ?? null,
+        devis.compte_vente_id ?? null,
+        devis.commentaires ?? null,
+        devis.remise_globale ?? 0,
+        devis.total_ht ?? 0,
+        devis.total_ttc ?? 0,
+        devisId,
+      ]
+    );
+
+    const insLines = await client.query(
+      `
+      INSERT INTO commande_ligne (
+        commande_id,
+        designation,
+        code_piece,
+        quantite,
+        unite,
+        prix_unitaire_ht,
+        remise_ligne,
+        taux_tva,
+        delai_client,
+        delai_interne,
+        devis_numero,
+        famille
+      )
+      SELECT
+        $1,
+        dl.description,
+        NULL,
+        dl.quantite,
+        dl.unite,
+        dl.prix_unitaire_ht,
+        dl.remise_ligne,
+        dl.taux_tva,
+        NULL,
+        NULL,
+        $2,
+        NULL
+      FROM devis_ligne dl
+      WHERE dl.devis_id = $3
+      ORDER BY dl.id ASC
+      `,
+      [commandeId, devis.numero, devisId]
+    );
+
+    if ((insLines.rowCount ?? 0) === 0) {
+      throw new HttpError(400, "DEVIS_EMPTY", "Devis has no lines to convert");
+    }
+
+    await client.query("COMMIT");
+    return { id: commandeId, numero: commandeNumero };
+  } catch (err) {
+    await client.query("ROLLBACK");
+    const { code, constraint } = getPgErrorInfo(err);
+    if (code === "23505" && constraint === "commande_client_devis_id_key") {
+      throw new HttpError(409, "DEVIS_ALREADY_CONVERTED", "Devis already converted");
     }
     throw err;
   } finally {

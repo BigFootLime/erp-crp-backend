@@ -7,6 +7,7 @@ import { z } from "zod";
 import { HttpError } from "../../../utils/httpError";
 import {
   createDevis,
+  convertDevisToCommande,
   deleteDevis,
   getDevis,
   listDevis,
@@ -62,6 +63,7 @@ const router = Router();
 router.get("/", listDevis);
 router.get("/:id", getDevis);
 router.post("/", upload.array("documents[]"), parseMultipartData(createDevisBodySchema), createDevis);
+router.post("/:id/convert-to-commande", convertDevisToCommande);
 router.patch("/:id", upload.array("documents[]"), parseMultipartData(updateDevisBodySchema), updateDevis);
 router.delete("/:id", deleteDevis);
 

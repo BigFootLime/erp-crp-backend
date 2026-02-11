@@ -5,6 +5,7 @@ import type {
 } from "../validators/devis.validators";
 import type { UploadedDocument } from "../types/devis.types";
 import {
+  repoConvertDevisToCommande,
   repoCreateDevis,
   repoDeleteDevis,
   repoGetDevis,
@@ -23,3 +24,5 @@ export const svcUpdateDevis = (id: number, input: UpdateDevisBodyDTO, userId: nu
   repoUpdateDevis(id, input, userId, documents);
 
 export const svcDeleteDevis = (id: number) => repoDeleteDevis(id);
+
+export const svcConvertDevisToCommande = (id: number) => repoConvertDevisToCommande(id);
