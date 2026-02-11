@@ -1,46 +1,180 @@
-import type { RequestHandler } from "express"
-import { createCommandeSVC, deleteCommandeSVC, getCommandeSVC, listCommandesSVC, generateAffairesFromOrderSVC } from "../services/commande-client.service"
+import type { Request, RequestHandler } from "express";
+import {
+  createCommandeSVC,
+  deleteCommandeSVC,
+  duplicateCommandeSVC,
+  generateAffairesFromOrderSVC,
+  getCommandeSVC,
+  listCommandesSVC,
+  updateCommandeSVC,
+  updateCommandeStatusSVC,
+} from "../services/commande-client.service";
+import {
+  listCommandesQuerySchema,
+  updateCommandeStatusBodySchema,
+  type CreateCommandeBodyDTO,
+} from "../validators/commande-client.validators";
+import type { UploadedDocument } from "../types/commande-client.types";
 
-// POST /api/v1/commandes  (multipart)
-// Champ "data" = JSON ; fichiers => documents
+function getParsedCommandeBody(req: Request): CreateCommandeBodyDTO | null {
+  const body = req.parsedCommandeBody;
+  if (!body) return null;
+  return body as CreateCommandeBodyDTO;
+}
+
+function getUploadedDocuments(req: Request): UploadedDocument[] {
+  const filesValue = (req as unknown as { files?: unknown }).files;
+  const files = Array.isArray(filesValue) ? (filesValue as Express.Multer.File[]) : [];
+  return files.map((f) => ({
+    originalname: f.originalname,
+    path: f.path,
+    mimetype: f.mimetype,
+  }));
+}
+
+function parseIncludeSet(req: Request) {
+  const raw = req.query.include;
+  const includeStr = Array.isArray(raw) ? raw.join(",") : typeof raw === "string" ? raw : "";
+  return new Set(
+    includeStr
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0)
+  );
+}
+
+// POST /api/v1/commandes (multipart)
 export const createCommande: RequestHandler = async (req, res, next) => {
   try {
-    // "data" est parsé par un middleware (voir routes) sinon:
-    const payload = (req as any).parsedCommandeBody
-    const documents = ((req as any).files as Express.Multer.File[] || []).map(f => ({
-      filename: f.originalname,
-      path: f.path,
-      mimetype: f.mimetype,
-      size: f.size,
-    }))
-    const row = await createCommandeSVC(payload, documents)
-    res.status(201).json(row); return
-  } catch (err) { next(err) }
-}
+    const payload = getParsedCommandeBody(req);
+    if (!payload) {
+      res.status(400).json({ error: "payload manquant" });
+      return;
+    }
 
-export const listCommandes: RequestHandler = async (_req, res, next) => {
-  try { res.json(await listCommandesSVC()) } catch (e) { next(e) }
-}
+    const documents = getUploadedDocuments(req);
+    const out = await createCommandeSVC(payload, documents);
+    res.status(201).json(out);
+  } catch (err) {
+    next(err);
+  }
+};
 
+// PATCH /api/v1/commandes/:id (multipart)
+export const updateCommande: RequestHandler = async (req, res, next) => {
+  try {
+    const payload = getParsedCommandeBody(req);
+    if (!payload) {
+      res.status(400).json({ error: "payload manquant" });
+      return;
+    }
+
+    const documents = getUploadedDocuments(req);
+    const out = await updateCommandeSVC(req.params.id, payload, documents);
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.status(200).json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /api/v1/commandes
+export const listCommandes: RequestHandler = async (req, res, next) => {
+  try {
+    const parsed = listCommandesQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues?.[0]?.message ?? "Invalid query" });
+      return;
+    }
+    const out = await listCommandesSVC(parsed.data);
+    res.json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /api/v1/commandes/:id
 export const getCommande: RequestHandler = async (req, res, next) => {
   try {
-    const row = await getCommandeSVC(req.params.id)
-    if (!row) { res.status(404).json({error:"Not found"}); return }
-    res.json(row)
-  } catch (e) { next(e) }
-}
+    const includes = parseIncludeSet(req);
+    const out = await getCommandeSVC(req.params.id, includes);
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.json(out);
+  } catch (err) {
+    next(err);
+  }
+};
 
+// DELETE /api/v1/commandes/:id
 export const deleteCommande: RequestHandler = async (req, res, next) => {
   try {
-    const ok = await deleteCommandeSVC(req.params.id)
-    if (!ok) { res.status(404).json({error:"Not found"}); return }
-    res.status(204).send()
-  } catch (e) { next(e) }
-}
+    const ok = await deleteCommandeSVC(req.params.id);
+    if (!ok) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+};
 
+// POST /api/v1/commandes/:id/status
+export const updateCommandeStatus: RequestHandler = async (req, res, next) => {
+  try {
+    const parsed = updateCommandeStatusBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues?.[0]?.message ?? "Invalid request" });
+      return;
+    }
+
+    const userId = typeof req.user?.id === "number" ? req.user.id : null;
+    const out = await updateCommandeStatusSVC(
+      req.params.id,
+      parsed.data.nouveau_statut,
+      parsed.data.commentaire ?? null,
+      userId
+    );
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.status(200).json({ ok: true, ...out });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// POST /api/v1/commandes/:id/generate-affaires
 export const generateAffairesFromOrder: RequestHandler = async (req, res, next) => {
   try {
-    const out = await generateAffairesFromOrderSVC(req.params.id)
-    res.json(out)
-  } catch (e) { next(e) }
-}
+    const out = await generateAffairesFromOrderSVC(req.params.id);
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.status(200).json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// POST /api/v1/commandes/:id/duplicate
+export const duplicateCommande: RequestHandler = async (req, res, next) => {
+  try {
+    const out = await duplicateCommandeSVC(req.params.id);
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.status(201).json(out);
+  } catch (err) {
+    next(err);
+  }
+};

@@ -1,31 +1,35 @@
 // src/module/payment-modes/controllers/payment-modes.controller.ts
-import { Request, Response } from "express";
+import type { RequestHandler } from "express";
 import { svcCreatePaymentMode, svcListPaymentModes } from "../services/payment-modes.service";
 
-export async function postPaymentMode(req: Request, res: Response) {
+export const postPaymentMode: RequestHandler = async (req, res) => {
   try {
     const { name, code, notes } = req.body as { name: string; code?: string; notes?: string };
-    if (!name?.trim()) return res.status(400).send("name requis");
+    if (!name?.trim()) {
+      res.status(400).send("name requis");
+      return;
+    }
 
     const createdBy =
-      (req as any).user?.username ??
-      (req as any).user?.email ??
-      (req as any).user?.id ??
-      null;
+      req.user?.username ??
+      req.user?.email ??
+      (typeof req.user?.id === "number" ? String(req.user.id) : null);
 
     const row = await svcCreatePaymentMode({ name, code, notes, createdBy });
-    return res.status(201).json(row);
-  } catch (e: any) {
-    return res.status(500).send(e?.message ?? "Erreur création mode");
+    res.status(201).json(row);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Erreur création mode";
+    res.status(500).send(msg);
   }
-}
+};
 
-export async function listPaymentModes(req: Request, res: Response) {
+export const listPaymentModes: RequestHandler = async (req, res) => {
   try {
-    const q = (req.query.q as string) ?? "";
+    const q = typeof req.query.q === "string" ? req.query.q : "";
     const rows = await svcListPaymentModes(q);
-    return res.json(rows);
-  } catch (e: any) {
-    return res.status(500).send(e?.message ?? "Erreur liste modes");
+    res.json(rows);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Erreur liste modes";
+    res.status(500).send(msg);
   }
-}
+};

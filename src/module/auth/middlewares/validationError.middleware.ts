@@ -7,11 +7,12 @@ export function validationErrorMiddleware(err: unknown, req: Request, res: Respo
       field: i.path.join("."),
       message: i.message,
     }));
-    return res.status(400).json({
+    res.status(400).json({
       error: "VALIDATION_ERROR",
       message: "Certains champs sont invalides",
       errors,
     });
+    return;
   }
   next(err);
 }

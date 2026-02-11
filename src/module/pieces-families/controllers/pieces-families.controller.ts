@@ -29,7 +29,10 @@ export const listPieceFamilies: RequestHandler = async (_req, res, next) => {
 export const getPieceFamily: RequestHandler = async (req, res, next) => {
   try {
     const row = await getPieceFamilySVC(req.params.id)
-    if (!row) return res.status(404).json({ error: "Not found" })
+    if (!row) {
+      res.status(404).json({ error: "Not found" })
+      return
+    }
     res.json(row)
   } catch (err) {
     next(err)
@@ -39,7 +42,10 @@ export const getPieceFamily: RequestHandler = async (req, res, next) => {
 export const updatePieceFamily: RequestHandler = async (req, res, next) => {
   try {
     const row = await updatePieceFamilySVC(req.params.id, req.body)
-    if (!row) return res.status(404).json({ error: "Not found" })
+    if (!row) {
+      res.status(404).json({ error: "Not found" })
+      return
+    }
     res.json(row)
   } catch (err) {
     next(err)
@@ -49,7 +55,10 @@ export const updatePieceFamily: RequestHandler = async (req, res, next) => {
 export const deletePieceFamily: RequestHandler = async (req, res, next) => {
   try {
     const ok = await deletePieceFamilySVC(req.params.id)
-    if (!ok) return res.status(404).json({ error: "Not found" })
+    if (!ok) {
+      res.status(404).json({ error: "Not found" })
+      return
+    }
     res.status(204).send()
   } catch (err) {
     next(err)

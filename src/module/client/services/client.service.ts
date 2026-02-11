@@ -198,3 +198,33 @@ export async function updateClientPrimaryContact(clientId: string, contactId: st
   await pool.query(`UPDATE clients SET contact_id = $1 WHERE client_id = $2`, [contactId, clientId]);
 }
 
+export type ClientContactRow = {
+  contact_id: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  phone_personal: string | null;
+  role: string | null;
+  civility: string | null;
+};
+
+export async function listClientContacts(clientId: string): Promise<ClientContactRow[]> {
+  const { rows } = await pool.query<ClientContactRow>(
+    `
+    SELECT
+      contact_id::text AS contact_id,
+      first_name,
+      last_name,
+      email,
+      phone_personal,
+      role,
+      civility
+    FROM contacts
+    WHERE client_id = $1
+    ORDER BY last_name ASC, first_name ASC
+    `,
+    [clientId]
+  );
+  return rows;
+}
+

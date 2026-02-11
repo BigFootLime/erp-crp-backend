@@ -1,8 +1,8 @@
 // ce code est un custom async-handler optimisé pour typescript pour eviter d'écrire les try catch dans chaque méthode de contrôleur
-import { Request, Response, NextFunction } from 'express'
+import type { Request, Response, NextFunction, RequestHandler } from "express";
 
 export const asyncHandler =
-  (fn: (req: Request, res: Response, next: NextFunction) => Promise<any>) =>
+  (fn: (req: Request, res: Response, next: NextFunction) => Promise<unknown>): RequestHandler =>
   (req: Request, res: Response, next: NextFunction) => {
-    fn(req, res, next).catch(next)
-  }
+    return fn(req, res, next).then(() => undefined).catch(next);
+  };

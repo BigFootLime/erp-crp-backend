@@ -1,5 +1,5 @@
 // src/module/admin/services/admin.service.ts
-import bcrypt from "bcrypt";
+import bcrypt from "bcryptjs";
 import * as adminRepo from "../repository/admin.repository";
 
 export async function listUsers() {

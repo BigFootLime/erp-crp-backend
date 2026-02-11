@@ -1,6 +1,7 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest'
 import { Request, Response } from 'express'
 import { register, login } from '../module/auth/controllers/auth.controller'
+import { ZodError, ZodIssueCode } from "zod"
 
 // 🔧 Mocks
 vi.mock('../module/auth/validators/user.validator', () => ({
@@ -22,8 +23,10 @@ import * as mockedRegisterValidator from '../module/auth/validators/user.validat
 import * as mockedLoginValidator from '../module/auth/validators/auth.validator'
 import * as mockedAuthService from '../module/auth/services/auth.service'
 
-const mockedRegisterSchema = mockedRegisterValidator.registerSchema
-const mockedLoginSchema = mockedLoginValidator.loginSchema
+const mockedRegisterParse = mockedRegisterValidator.registerSchema.parse as unknown as ReturnType<typeof vi.fn>
+const mockedLoginParse = mockedLoginValidator.loginSchema.parse as unknown as ReturnType<typeof vi.fn>
+const mockedRegisterUser = mockedAuthService.registerUser as unknown as ReturnType<typeof vi.fn>
+const mockedLoginUser = mockedAuthService.loginUser as unknown as ReturnType<typeof vi.fn>
 
 describe('🧪 auth.controller.ts', () => {
   let req: Partial<Request>
@@ -35,7 +38,7 @@ describe('🧪 auth.controller.ts', () => {
     jsonMock = vi.fn()
     statusMock = vi.fn(() => ({ json: jsonMock }))
 
-    req = { body: {} }
+    req = { body: {}, headers: {} }
     res = { status: statusMock } as Response
 
     vi.clearAllMocks()
@@ -44,12 +47,12 @@ describe('🧪 auth.controller.ts', () => {
   test('✅ register crée un utilisateur et renvoie 201', async () => {
     const mockUser = { id: 1, username: 'admin' }
 
-    mockedRegisterSchema.parse.mockReturnValue({
+    mockedRegisterParse.mockReturnValue({
       username: 'admin',
       employment_date: '2025-01-01'
     })
 
-    mockedAuthService.registerUser.mockResolvedValue(mockUser)
+    mockedRegisterUser.mockResolvedValue(mockUser)
 
     await register(req as Request, res as Response, vi.fn())
 
@@ -61,27 +64,33 @@ describe('🧪 auth.controller.ts', () => {
   })
 
   test('❌ register retourne 400 si date de fin < date embauche', async () => {
-    mockedRegisterSchema.parse.mockReturnValue({
-      username: 'admin',
-      employment_date: '2025-01-01',
-      employment_end_date: '2023-01-01'
+    mockedRegisterParse.mockImplementation(() => {
+      throw new ZodError([
+        {
+          code: ZodIssueCode.custom,
+          path: ["employment_end_date"],
+          message: "La date de fin d’emploi doit être postérieure à la date d’embauche",
+          params: {},
+        },
+      ])
     })
 
-    await register(req as Request, res as Response, vi.fn())
+    const nextMock = vi.fn()
+    await register(req as Request, res as Response, nextMock)
 
-    expect(statusMock).toHaveBeenCalledWith(400)
-    expect(jsonMock).toHaveBeenCalledWith({
-      error: "La date de fin d’emploi doit être postérieure à la date d’embauche"
-    })
+    expect(statusMock).toHaveBeenCalledTimes(0)
+    expect(jsonMock).toHaveBeenCalledTimes(0)
+    expect(nextMock).toHaveBeenCalledTimes(1)
+    expect(nextMock.mock.calls[0]?.[0]).toBeInstanceOf(ZodError)
   })
 
   test('✅ login renvoie un token si identifiants valides', async () => {
-    mockedLoginSchema.parse.mockReturnValue({
+    mockedLoginParse.mockReturnValue({
       username: 'admin',
       password: 'secret'
     })
 
-    mockedAuthService.loginUser.mockResolvedValue({
+    mockedLoginUser.mockResolvedValue({
       token: 'fake-jwt',
       user: { id: 1, username: 'admin' }
     })

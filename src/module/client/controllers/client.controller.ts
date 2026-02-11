@@ -55,11 +55,31 @@ export async function getClientById(req: Request, res: Response): Promise<void> 
 }
 
 export async function listClients(req: Request, res: Response): Promise<void> {
-  const q = (req.query.q as string) || "";
-  const limit = Math.min(Number(req.query.limit ?? 25), 100);
+  const q = typeof req.query.q === "string" ? req.query.q : "";
+
+  const limitCandidateRaw =
+    typeof req.query.limit === "string"
+      ? Number.parseInt(req.query.limit, 10)
+      : typeof req.query.limit === "number"
+        ? req.query.limit
+        : NaN;
+
+  const limitCandidate = Number.isFinite(limitCandidateRaw) ? limitCandidateRaw : 25;
+  const limit = Math.min(Math.max(limitCandidate, 1), 100);
+
   const rows = await clientService.listClients(q, limit);
   res.json(rows);
 }
+
+export const listClientContacts: RequestHandler = async (req, res, next) => {
+  try {
+    const clientId = req.params.clientId;
+    const rows = await clientService.listClientContacts(clientId);
+    res.json(rows);
+  } catch (e) {
+    next(e);
+  }
+};
 
 export const postClient: RequestHandler = async (req, res, next) => {
   try {

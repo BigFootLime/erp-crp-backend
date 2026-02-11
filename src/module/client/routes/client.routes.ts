@@ -1,6 +1,13 @@
 // src/module/clients/routes/clients.routes.ts
 import { Router } from "express";
-import { postClient, getClientById, listClients, patchClientPrimaryContact, patchClient,   } from "../controllers/client.controller";
+import {
+  getClientById,
+  listClientContacts,
+  listClients,
+  patchClient,
+  patchClientPrimaryContact,
+  postClient,
+} from "../controllers/client.controller";
 import { listClientsAnalytics } from "../controllers/clients.analytics.controller"
 // import { uploadClientLogoMulter } from "../upload/client-logo-upload";
 
@@ -10,6 +17,7 @@ const router = Router();
 router.post("/", postClient);
 router.get("/", listClients);
 router.get("/analytics", listClientsAnalytics);
+router.get("/:clientId/contacts", listClientContacts);
 router.get("/:id", getClientById);
 
 // 🆕 upload du logo client

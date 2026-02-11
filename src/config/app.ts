@@ -9,7 +9,6 @@ import { errorHandler } from "../middlewares/errorHandler";
 import { checkNetworkDrive } from "../utils/checkNetworkDrive";
 import mime from "mime-types";
 import { swaggerSpec } from "../swagger/swagger";
-import { apiReference } from "@scalar/express-api-reference";
 import { validationErrorMiddleware } from "../module/auth/middlewares/validationError.middleware";
 
 const app = express();
@@ -58,8 +57,6 @@ app.use(
     swaggerOptions: { persistAuthorization: true },
   })
 );
-
-app.use("/reference", apiReference({ spec: { content: swaggerSpec } }));
 
 /* ------------------ 4) Routes ------------------ */
 

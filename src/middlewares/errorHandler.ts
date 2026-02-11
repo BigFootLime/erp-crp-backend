@@ -22,5 +22,5 @@ export function errorHandler(err: any, req: Request, res: Response, _next: NextF
     stack: err?.stack,
   });
 
-  return res.status(status).json(payload);
+  res.status(status).json(payload);
 }
