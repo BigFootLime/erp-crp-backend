@@ -22,18 +22,29 @@ import {
   repoDeleteOperation,
   repoDeletePieceTechnique,
   repoDuplicatePieceTechnique,
+  repoListAffairePieceTechniques,
+  repoGetPieceTechniqueDocumentForDownload,
   repoGetPieceTechnique,
+  repoListPieceTechniqueAffaires,
+  repoListPieceTechniqueDocuments,
   repoListPieceTechniques,
   repoReorderAchats,
   repoReorderBom,
   repoReorderOperations,
+  repoUnlinkPieceTechniqueFromAffaire,
+  repoUpsertPieceTechniqueAffaireLink,
+  repoAttachPieceTechniqueDocuments,
+  repoRemovePieceTechniqueDocument,
   repoUpdateAchat,
   repoUpdateBomLine,
   repoUpdateOperation,
   repoUpdatePieceTechnique,
   repoUpdatePieceTechniqueStatus,
   repoCreatePieceTechnique,
+  type AuditContext,
 } from "../repository/pieces-techniques.repository";
+
+type UploadedDocument = Express.Multer.File;
 
 function roundTo(value: number, decimals: number): number {
   if (!Number.isFinite(value)) return 0;
@@ -78,7 +89,7 @@ export const listPieceTechniquesSVC = (filters: ListPiecesTechniquesQueryDTO) =>
 
 export const getPieceTechniqueSVC = (id: string, includes: Set<string>) => repoGetPieceTechnique(id, includes);
 
-export async function createPieceTechniqueSVC(body: CreatePieceTechniqueBodyDTO, userId: number | null) {
+export async function createPieceTechniqueSVC(body: CreatePieceTechniqueBodyDTO, audit: AuditContext) {
   const statut = body.statut ?? "DRAFT";
   const enFabrication = statut === "IN_FABRICATION";
 
@@ -100,7 +111,7 @@ export async function createPieceTechniqueSVC(body: CreatePieceTechniqueBodyDTO,
         operations,
         achats,
       },
-      userId
+      audit
     );
   } catch (err: unknown) {
     // pg unique violation
@@ -114,23 +125,23 @@ export async function createPieceTechniqueSVC(body: CreatePieceTechniqueBodyDTO,
   }
 }
 
-export async function updatePieceTechniqueSVC(id: string, body: UpdatePieceTechniqueBodyDTO, userId: number | null) {
+export async function updatePieceTechniqueSVC(id: string, body: UpdatePieceTechniqueBodyDTO, audit: AuditContext) {
   if (body.statut !== undefined) {
     throw new HttpError(400, "STATUS_FORBIDDEN", "Use /status endpoint to change statut");
   }
   if (body.bom !== undefined || body.operations !== undefined || body.achats !== undefined) {
     throw new HttpError(400, "SUBRESOURCE_FORBIDDEN", "Use nomenclature/operations/achats endpoints to edit lines");
   }
-  return repoUpdatePieceTechnique(id, body, userId);
+  return repoUpdatePieceTechnique(id, body, audit);
 }
 
-export const deletePieceTechniqueSVC = (id: string) => repoDeletePieceTechnique(id);
+export const deletePieceTechniqueSVC = (id: string, audit: AuditContext) => repoDeletePieceTechnique(id, audit);
 
 export async function duplicatePieceTechniqueSVC(id: string, userId: number | null) {
   return repoDuplicatePieceTechnique(id, userId);
 }
 
-export async function updatePieceTechniqueStatusSVC(id: string, body: PieceTechniqueStatusBodyDTO, userId: number) {
+export async function updatePieceTechniqueStatusSVC(id: string, body: PieceTechniqueStatusBodyDTO, audit: AuditContext) {
   const current = await repoGetPieceTechnique(id, new Set());
   if (!current) return null;
 
@@ -139,7 +150,44 @@ export async function updatePieceTechniqueStatusSVC(id: string, body: PieceTechn
   if (!isValidTransition(from, to)) {
     throw new HttpError(409, "INVALID_TRANSITION", `Invalid transition from ${from} to ${to}`);
   }
-  return repoUpdatePieceTechniqueStatus(id, from, to, body.commentaire ?? null, userId);
+  return repoUpdatePieceTechniqueStatus(id, from, to, body.commentaire ?? null, body.expected_updated_at, audit);
+}
+
+export async function listPieceTechniqueDocumentsSVC(pieceTechniqueId: string) {
+  return repoListPieceTechniqueDocuments(pieceTechniqueId);
+}
+
+export async function attachPieceTechniqueDocumentsSVC(pieceTechniqueId: string, documents: UploadedDocument[], audit: AuditContext) {
+  return repoAttachPieceTechniqueDocuments(pieceTechniqueId, documents, audit);
+}
+
+export async function removePieceTechniqueDocumentSVC(pieceTechniqueId: string, docId: string, audit: AuditContext) {
+  return repoRemovePieceTechniqueDocument(pieceTechniqueId, docId, audit);
+}
+
+export async function downloadPieceTechniqueDocumentSVC(pieceTechniqueId: string, docId: string, audit: AuditContext) {
+  return repoGetPieceTechniqueDocumentForDownload(pieceTechniqueId, docId, audit);
+}
+
+export async function listPieceTechniqueAffairesSVC(pieceTechniqueId: string) {
+  return repoListPieceTechniqueAffaires(pieceTechniqueId);
+}
+
+export async function linkPieceTechniqueAffaireSVC(
+  pieceTechniqueId: string,
+  affaireId: number,
+  role: "MAIN" | "LINKED",
+  audit: AuditContext
+) {
+  return repoUpsertPieceTechniqueAffaireLink(pieceTechniqueId, affaireId, role, audit);
+}
+
+export async function unlinkPieceTechniqueAffaireSVC(pieceTechniqueId: string, affaireId: number, audit: AuditContext) {
+  return repoUnlinkPieceTechniqueFromAffaire(pieceTechniqueId, affaireId, audit);
+}
+
+export async function listAffairePieceTechniquesSVC(affaireId: number) {
+  return repoListAffairePieceTechniques(affaireId);
 }
 
 export async function addBomLineSVC(pieceTechniqueId: string, body: AddBomLineBodyDTO) {

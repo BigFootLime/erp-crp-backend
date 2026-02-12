@@ -20,6 +20,48 @@ export type PieceTechniqueHistoryEntry = {
   commentaire: string | null
 }
 
+export type PieceTechniqueDocument = {
+  id: string
+  piece_technique_id: string
+  original_name: string
+  stored_name: string
+  storage_path: string
+  mime_type: string
+  size_bytes: number
+  sha256: string | null
+  label: string | null
+  created_at: string
+  updated_at: string
+  uploaded_by: number | null
+  removed_at: string | null
+  removed_by: number | null
+}
+
+export type PieceTechniqueAffaireLink = {
+  affaire_id: number
+  piece_technique_id: string
+  role: string
+  created_at: string
+  created_by: number | null
+  affaire_reference: string
+  affaire_client_id: string
+  affaire_statut: string
+}
+
+export type AffairePieceTechniqueLink = {
+  affaire_id: number
+  piece_technique_id: string
+  role: string
+  created_at: string
+  created_by: number | null
+
+  code_piece: string
+  designation: string
+  designation_2: string | null
+  statut: PieceTechniqueStatut
+  updated_at: string
+}
+
 export type Operation = {
   id?: string
   phase: number
@@ -90,6 +132,9 @@ export type PieceTechnique = {
   achats: Achat[]
 
   history?: PieceTechniqueHistoryEntry[]
+
+  documents?: PieceTechniqueDocument[]
+  affaires?: PieceTechniqueAffaireLink[]
 }
 
 // Payload envoyé par le front
@@ -120,13 +165,16 @@ export type CreatePieceTechniqueInput = {
 
 export type PieceTechniqueListItem = Pick<
   PieceTechnique,
-  "id" | "code_piece" | "designation" | "designation_2" | "client_id" | "client_name" | "famille_id" | "statut" | "en_fabrication" | "prix_unitaire" | "created_at" | "updated_at"
+  "id" | "code_piece" | "designation" | "designation_2" | "client_id" | "client_name" | "famille_id" | "statut" | "en_fabrication" | "prix_unitaire" | "created_at" | "updated_at" | "ensemble"
 > & {
   bom_count: number
   operations_count: number
   achats_count: number
   cout_mo_total: number
   achats_total_ht: number
+
+  famille_code?: string | null
+  famille_designation?: string | null
 }
 
 export type Paginated<T> = {

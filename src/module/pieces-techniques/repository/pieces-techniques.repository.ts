@@ -1,13 +1,22 @@
 // src/module/pieces-techniques/repository/pieces-techniques.repository.ts
 import type { PoolClient } from "pg";
+import crypto from "node:crypto";
+import { createReadStream } from "node:fs";
+import fs from "node:fs/promises";
+import path from "node:path";
 import db from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
+import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
+import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 import type {
   Achat,
+  AffairePieceTechniqueLink,
   BomLine,
   Operation,
   Paginated,
   PieceTechnique,
+  PieceTechniqueAffaireLink,
+  PieceTechniqueDocument,
   PieceTechniqueHistoryEntry,
   PieceTechniqueListItem,
   PieceTechniqueStatut,
@@ -23,6 +32,68 @@ import type {
   UpdateOperationBodyDTO,
   UpdatePieceTechniqueBodyDTO,
 } from "../validators/pieces-techniques.validators";
+
+export type AuditContext = {
+  user_id: number;
+  ip: string | null;
+  user_agent: string | null;
+  device_type: string | null;
+  os: string | null;
+  browser: string | null;
+  path: string | null;
+  page_key: string | null;
+  client_session_id: string | null;
+};
+
+type UploadedDocument = Express.Multer.File;
+
+function safeDocExtension(originalName: string): string {
+  const extCandidate = path.extname(originalName).toLowerCase();
+  const safeExt = /^\.[a-z0-9]+$/.test(extCandidate) && extCandidate.length <= 10 ? extCandidate : "";
+  return safeExt;
+}
+
+function toPosixPath(p: string): string {
+  return p.split(path.sep).join(path.posix.sep);
+}
+
+async function sha256File(filePath: string): Promise<string> {
+  const hash = crypto.createHash("sha256");
+  const stream = createReadStream(filePath);
+  for await (const chunk of stream) {
+    hash.update(chunk);
+  }
+  return hash.digest("hex");
+}
+
+async function insertAuditLog(tx: Pick<PoolClient, "query">, audit: AuditContext, entry: {
+  action: string;
+  entity_type: string | null;
+  entity_id: string | null;
+  details?: Record<string, unknown> | null;
+}) {
+  const body: CreateAuditLogBodyDTO = {
+    event_type: "ACTION",
+    action: entry.action,
+    page_key: audit.page_key,
+    entity_type: entry.entity_type,
+    entity_id: entry.entity_id,
+    path: audit.path,
+    client_session_id: audit.client_session_id,
+    details: entry.details ?? null,
+  };
+
+  await repoInsertAuditLog({
+    user_id: audit.user_id,
+    body,
+    ip: audit.ip,
+    user_agent: audit.user_agent,
+    device_type: audit.device_type,
+    os: audit.os,
+    browser: audit.browser,
+    tx,
+  });
+}
 
 function isPgUniqueViolation(err: unknown): boolean {
   return (err as { code?: unknown } | null)?.code === "23505";
@@ -89,6 +160,9 @@ function buildListWhere(filters: ListPiecesTechniquesQueryDTO) {
     return `$${values.length}`;
   };
 
+  // Soft-delete filter (keep list stable and audit-friendly).
+  where.push(`p.deleted_at IS NULL`);
+
   if (filters.q && filters.q.trim().length > 0) {
     const q = `%${filters.q.trim()}%`;
     const p = push(q);
@@ -152,9 +226,12 @@ export async function repoListPieceTechniques(filters: ListPiecesTechniquesQuery
       p.client_id,
       p.client_name,
       p.famille_id::text AS famille_id,
+      f.code AS famille_code,
+      f.designation AS famille_designation,
       p.statut::text AS statut,
       (p.en_fabrication::int = 1) AS en_fabrication,
       p.prix_unitaire::float8 AS prix_unitaire,
+      p.ensemble,
       p.created_at::text AS created_at,
       p.updated_at::text AS updated_at,
       COALESCE(nb.bom_count, 0)::int AS bom_count,
@@ -163,6 +240,7 @@ export async function repoListPieceTechniques(filters: ListPiecesTechniquesQuery
       COALESCE(no.cout_mo_total, 0)::float8 AS cout_mo_total,
       COALESCE(na.achats_total_ht, 0)::float8 AS achats_total_ht
     FROM pieces_techniques p
+    LEFT JOIN pieces_families f ON f.id = p.famille_id
     LEFT JOIN (
       SELECT parent_piece_technique_id, COUNT(*)::int AS bom_count
       FROM pieces_techniques_nomenclature
@@ -188,7 +266,10 @@ export async function repoListPieceTechniques(filters: ListPiecesTechniquesQuery
     OFFSET $${values.length + 2}
   `;
 
-  type Row = Omit<PieceTechniqueListItem, "en_fabrication"> & { en_fabrication: boolean; statut: PieceTechniqueStatut };
+  type Row = Omit<PieceTechniqueListItem, "en_fabrication"> & {
+    en_fabrication: boolean;
+    statut: PieceTechniqueStatut;
+  };
   const dataRes = await db.query<Row>(dataSql, [...values, pageSize, offset]);
   return { items: dataRes.rows, total };
 }
@@ -217,6 +298,7 @@ export async function repoGetPieceTechnique(id: string, includes: Set<string>): 
       p.ensemble
     FROM pieces_techniques p
     WHERE p.id = $1::uuid
+      AND p.deleted_at IS NULL
   `;
   const coreRes = await db.query<PieceTechniqueCoreRow>(coreSql, [id]);
   const core = coreRes.rows[0];
@@ -228,8 +310,604 @@ export async function repoGetPieceTechnique(id: string, includes: Set<string>): 
   if (includes.has("operations")) out.operations = await repoListOperations(id);
   if (includes.has("achats")) out.achats = await repoListAchats(id);
   if (includes.has("history")) out.history = await repoListHistory(id);
+  if (includes.has("documents")) out.documents = (await repoListPieceTechniqueDocuments(id)) ?? [];
+  if (includes.has("affaires")) out.affaires = (await repoListPieceTechniqueAffaires(id)) ?? [];
 
   return out;
+}
+
+type PieceTechniqueAffaireLinkRow = {
+  affaire_id: string;
+  piece_technique_id: string;
+  role: string;
+  created_at: string;
+  created_by: number | null;
+  affaire_reference: string;
+  affaire_client_id: string | null;
+  affaire_statut: string;
+};
+
+function toFiniteNumber(value: string, label: string): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) throw new Error(`Invalid number for ${label}`);
+  return n;
+}
+
+function mapAffaireLinkRow(r: PieceTechniqueAffaireLinkRow): PieceTechniqueAffaireLink {
+  return {
+    affaire_id: toFiniteNumber(r.affaire_id, "affaire_id"),
+    piece_technique_id: r.piece_technique_id,
+    role: r.role,
+    created_at: r.created_at,
+    created_by: r.created_by,
+    affaire_reference: r.affaire_reference,
+    affaire_client_id: r.affaire_client_id ?? "",
+    affaire_statut: r.affaire_statut,
+  };
+}
+
+export async function repoListPieceTechniqueAffaires(pieceTechniqueId: string): Promise<PieceTechniqueAffaireLink[] | null> {
+  const exists = await db.query<{ ok: number }>(
+    "SELECT 1::int AS ok FROM pieces_techniques WHERE id = $1::uuid AND deleted_at IS NULL",
+    [pieceTechniqueId]
+  );
+  if (!exists.rows[0]?.ok) return null;
+
+  const res = await db.query<PieceTechniqueAffaireLinkRow>(
+    `
+      SELECT
+        apt.affaire_id::text AS affaire_id,
+        apt.piece_technique_id::text AS piece_technique_id,
+        apt.role,
+        apt.created_at::text AS created_at,
+        apt.created_by,
+        a.reference AS affaire_reference,
+        a.client_id AS affaire_client_id,
+        a.statut AS affaire_statut
+      FROM affaire_pieces_techniques apt
+      JOIN affaire a ON a.id = apt.affaire_id
+      WHERE apt.piece_technique_id = $1::uuid
+      ORDER BY (apt.role = 'MAIN') DESC, apt.created_at DESC
+    `,
+    [pieceTechniqueId]
+  );
+
+  return res.rows.map(mapAffaireLinkRow);
+}
+
+async function ensureAffaireExists(client: PoolClient, affaireId: number): Promise<{ reference: string; client_id: string | null; statut: string } | null> {
+  const res = await client.query<{ reference: string; client_id: string | null; statut: string }>(
+    `
+      SELECT reference, client_id, statut
+      FROM affaire
+      WHERE id = $1
+    `,
+    [affaireId]
+  );
+  return res.rows[0] ?? null;
+}
+
+export async function repoUpsertPieceTechniqueAffaireLink(
+  pieceTechniqueId: string,
+  affaireId: number,
+  role: "MAIN" | "LINKED",
+  audit: AuditContext
+): Promise<PieceTechniqueAffaireLink[] | null> {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+
+    const pieceExists = await ensurePieceTechniqueExists(client, pieceTechniqueId);
+    if (!pieceExists) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    const affaire = await ensureAffaireExists(client, affaireId);
+    if (!affaire) {
+      throw new HttpError(404, "AFFAIRE_NOT_FOUND", "Affaire not found");
+    }
+
+    const existing = await client.query<{ role: string }>(
+      `
+        SELECT role
+        FROM affaire_pieces_techniques
+        WHERE affaire_id = $1 AND piece_technique_id = $2::uuid
+        FOR UPDATE
+      `,
+      [affaireId, pieceTechniqueId]
+    );
+    const prevRole = existing.rows[0]?.role ?? null;
+
+    let prevMainPieceTechniqueId: string | null = null;
+    if (role === "MAIN") {
+      const prevMain = await client.query<{ piece_technique_id: string }>(
+        `
+          SELECT piece_technique_id::text AS piece_technique_id
+          FROM affaire_pieces_techniques
+          WHERE affaire_id = $1 AND role = 'MAIN'
+          FOR UPDATE
+        `,
+        [affaireId]
+      );
+      prevMainPieceTechniqueId = prevMain.rows[0]?.piece_technique_id ?? null;
+
+      await client.query(
+        `
+          UPDATE affaire_pieces_techniques
+          SET role = 'LINKED'
+          WHERE affaire_id = $1 AND role = 'MAIN'
+        `,
+        [affaireId]
+      );
+    }
+
+    await client.query(
+      `
+        INSERT INTO affaire_pieces_techniques (affaire_id, piece_technique_id, role, created_by)
+        VALUES ($1, $2::uuid, $3, $4)
+        ON CONFLICT (affaire_id, piece_technique_id)
+        DO UPDATE SET role = EXCLUDED.role
+      `,
+      [affaireId, pieceTechniqueId, role, audit.user_id]
+    );
+
+    const action = prevRole === null ? "pieces-techniques.affaires.link" : "pieces-techniques.affaires.update";
+    await insertAuditLog(client, audit, {
+      action,
+      entity_type: "pieces_techniques",
+      entity_id: pieceTechniqueId,
+      details: {
+        affaire_id: affaireId,
+        affaire_reference: affaire.reference,
+        role,
+        prev_role: prevRole,
+        prev_main_piece_technique_id: prevMainPieceTechniqueId,
+      },
+    });
+
+    await client.query("COMMIT");
+    return repoListPieceTechniqueAffaires(pieceTechniqueId);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function repoUnlinkPieceTechniqueFromAffaire(
+  pieceTechniqueId: string,
+  affaireId: number,
+  audit: AuditContext
+): Promise<boolean | null> {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+
+    const pieceExists = await ensurePieceTechniqueExists(client, pieceTechniqueId);
+    if (!pieceExists) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    const row = await client.query<{ role: string }>(
+      `
+        SELECT role
+        FROM affaire_pieces_techniques
+        WHERE affaire_id = $1 AND piece_technique_id = $2::uuid
+        FOR UPDATE
+      `,
+      [affaireId, pieceTechniqueId]
+    );
+    const prevRole = row.rows[0]?.role ?? null;
+    if (!prevRole) {
+      await client.query("ROLLBACK");
+      return false;
+    }
+
+    const del = await client.query(
+      `DELETE FROM affaire_pieces_techniques WHERE affaire_id = $1 AND piece_technique_id = $2::uuid`,
+      [affaireId, pieceTechniqueId]
+    );
+    const removed = (del.rowCount ?? 0) > 0;
+    if (!removed) {
+      await client.query("ROLLBACK");
+      return false;
+    }
+
+    await insertAuditLog(client, audit, {
+      action: "pieces-techniques.affaires.unlink",
+      entity_type: "pieces_techniques",
+      entity_id: pieceTechniqueId,
+      details: {
+        affaire_id: affaireId,
+        prev_role: prevRole,
+      },
+    });
+
+    await client.query("COMMIT");
+    return true;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+type AffairePieceTechniqueLinkRow = {
+  affaire_id: string;
+  piece_technique_id: string;
+  role: string;
+  created_at: string;
+  created_by: number | null;
+  code_piece: string;
+  designation: string;
+  designation_2: string | null;
+  statut: PieceTechniqueStatut;
+  updated_at: string;
+};
+
+function mapAffairePieceTechniqueLinkRow(r: AffairePieceTechniqueLinkRow): AffairePieceTechniqueLink {
+  return {
+    affaire_id: toFiniteNumber(r.affaire_id, "affaire_id"),
+    piece_technique_id: r.piece_technique_id,
+    role: r.role,
+    created_at: r.created_at,
+    created_by: r.created_by,
+    code_piece: r.code_piece,
+    designation: r.designation,
+    designation_2: r.designation_2,
+    statut: r.statut,
+    updated_at: r.updated_at,
+  };
+}
+
+export async function repoListAffairePieceTechniques(affaireId: number): Promise<AffairePieceTechniqueLink[] | null> {
+  const exists = await db.query<{ ok: number }>("SELECT 1::int AS ok FROM affaire WHERE id = $1", [affaireId]);
+  if (!exists.rows[0]?.ok) return null;
+
+  const res = await db.query<AffairePieceTechniqueLinkRow>(
+    `
+      SELECT
+        apt.affaire_id::text AS affaire_id,
+        apt.piece_technique_id::text AS piece_technique_id,
+        apt.role,
+        apt.created_at::text AS created_at,
+        apt.created_by,
+        p.code_piece,
+        p.designation,
+        p.designation_2,
+        p.statut::text AS statut,
+        p.updated_at::text AS updated_at
+      FROM affaire_pieces_techniques apt
+      JOIN pieces_techniques p
+        ON p.id = apt.piece_technique_id
+       AND p.deleted_at IS NULL
+      WHERE apt.affaire_id = $1
+      ORDER BY (apt.role = 'MAIN') DESC, apt.created_at DESC
+    `,
+    [affaireId]
+  );
+
+  return res.rows.map(mapAffairePieceTechniqueLinkRow);
+}
+
+type PieceTechniqueDocumentRow = {
+  id: string;
+  piece_technique_id: string;
+  original_name: string;
+  stored_name: string;
+  storage_path: string;
+  mime_type: string;
+  size_bytes: string;
+  sha256: string | null;
+  label: string | null;
+  created_at: string;
+  updated_at: string;
+  uploaded_by: number | null;
+  removed_at: string | null;
+  removed_by: number | null;
+};
+
+function mapDocRow(r: PieceTechniqueDocumentRow): PieceTechniqueDocument {
+  return {
+    id: r.id,
+    piece_technique_id: r.piece_technique_id,
+    original_name: r.original_name,
+    stored_name: r.stored_name,
+    storage_path: r.storage_path,
+    mime_type: r.mime_type,
+    size_bytes: Number(r.size_bytes),
+    sha256: r.sha256,
+    label: r.label,
+    created_at: r.created_at,
+    updated_at: r.updated_at,
+    uploaded_by: r.uploaded_by,
+    removed_at: r.removed_at,
+    removed_by: r.removed_by,
+  };
+}
+
+export async function repoListPieceTechniqueDocuments(pieceTechniqueId: string): Promise<PieceTechniqueDocument[] | null> {
+  const exists = await db.query<{ ok: number }>(
+    "SELECT 1::int AS ok FROM pieces_techniques WHERE id = $1::uuid AND deleted_at IS NULL",
+    [pieceTechniqueId]
+  );
+  if (!exists.rows[0]?.ok) return null;
+
+  const res = await db.query<PieceTechniqueDocumentRow>(
+    `
+      SELECT
+        id::text AS id,
+        piece_technique_id::text AS piece_technique_id,
+        original_name,
+        stored_name,
+        storage_path,
+        mime_type,
+        size_bytes::text AS size_bytes,
+        sha256,
+        label,
+        created_at::text AS created_at,
+        updated_at::text AS updated_at,
+        uploaded_by,
+        removed_at::text AS removed_at,
+        removed_by
+      FROM pieces_techniques_documents
+      WHERE piece_technique_id = $1::uuid
+        AND removed_at IS NULL
+      ORDER BY created_at DESC, id DESC
+    `,
+    [pieceTechniqueId]
+  );
+  return res.rows.map(mapDocRow);
+}
+
+export async function repoAttachPieceTechniqueDocuments(
+  pieceTechniqueId: string,
+  documents: UploadedDocument[],
+  audit: AuditContext
+): Promise<PieceTechniqueDocument[] | null> {
+  const client = await db.connect();
+  const docsDirRel = path.posix.join("uploads", "docs", "pieces-techniques");
+  const docsDirAbs = path.resolve(docsDirRel);
+
+  try {
+    await client.query("BEGIN");
+
+    const exists = await ensurePieceTechniqueExists(client, pieceTechniqueId);
+    if (!exists) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    if (!documents.length) {
+      await client.query("COMMIT");
+      return [];
+    }
+
+    await fs.mkdir(docsDirAbs, { recursive: true });
+
+    const inserted: PieceTechniqueDocument[] = [];
+    for (const doc of documents) {
+      const documentId = crypto.randomUUID();
+      const safeExt = safeDocExtension(doc.originalname);
+      const storedName = `${documentId}${safeExt}`;
+      const relPath = toPosixPath(path.join(docsDirRel, storedName));
+      const absPath = path.join(docsDirAbs, storedName);
+      const tempPath = path.resolve(doc.path);
+
+      try {
+        await fs.rename(tempPath, absPath);
+      } catch {
+        // Fallback for cross-device issues
+        await fs.copyFile(tempPath, absPath);
+        await fs.unlink(tempPath);
+      }
+
+      const hash = await sha256File(absPath);
+      const ins = await client.query<PieceTechniqueDocumentRow>(
+        `
+          INSERT INTO pieces_techniques_documents (
+            piece_technique_id,
+            original_name,
+            stored_name,
+            storage_path,
+            mime_type,
+            size_bytes,
+            sha256,
+            label,
+            uploaded_by
+          )
+          VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9)
+          RETURNING
+            id::text AS id,
+            piece_technique_id::text AS piece_technique_id,
+            original_name,
+            stored_name,
+            storage_path,
+            mime_type,
+            size_bytes::text AS size_bytes,
+            sha256,
+            label,
+            created_at::text AS created_at,
+            updated_at::text AS updated_at,
+            uploaded_by,
+            removed_at::text AS removed_at,
+            removed_by
+        `,
+        [
+          pieceTechniqueId,
+          doc.originalname,
+          storedName,
+          relPath,
+          doc.mimetype,
+          doc.size,
+          hash,
+          null,
+          audit.user_id,
+        ]
+      );
+
+      const row = ins.rows[0];
+      if (!row) throw new Error("Failed to insert piece technique document");
+      inserted.push(mapDocRow(row));
+    }
+
+    await insertAuditLog(client, audit, {
+      action: "pieces-techniques.documents.attach",
+      entity_type: "pieces_techniques",
+      entity_id: pieceTechniqueId,
+      details: {
+        count: inserted.length,
+        documents: inserted.map((d) => ({
+          id: d.id,
+          original_name: d.original_name,
+          mime_type: d.mime_type,
+          size_bytes: d.size_bytes,
+          sha256: d.sha256,
+        })),
+      },
+    });
+
+    await client.query("COMMIT");
+    return inserted;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function repoRemovePieceTechniqueDocument(
+  pieceTechniqueId: string,
+  documentId: string,
+  audit: AuditContext
+): Promise<boolean | null> {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+
+    const exists = await ensurePieceTechniqueExists(client, pieceTechniqueId);
+    if (!exists) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    const current = await client.query<Pick<PieceTechniqueDocumentRow, "original_name" | "storage_path">>(
+      `
+        SELECT original_name, storage_path
+        FROM pieces_techniques_documents
+        WHERE id = $1::uuid AND piece_technique_id = $2::uuid AND removed_at IS NULL
+        FOR UPDATE
+      `,
+      [documentId, pieceTechniqueId]
+    );
+    const doc = current.rows[0] ?? null;
+    if (!doc) {
+      await client.query("ROLLBACK");
+      return false;
+    }
+
+    const upd = await client.query(
+      `
+        UPDATE pieces_techniques_documents
+        SET removed_at = now(), removed_by = $3, updated_at = now()
+        WHERE id = $1::uuid AND piece_technique_id = $2::uuid AND removed_at IS NULL
+      `,
+      [documentId, pieceTechniqueId, audit.user_id]
+    );
+    if ((upd.rowCount ?? 0) === 0) {
+      await client.query("ROLLBACK");
+      return false;
+    }
+
+    await insertAuditLog(client, audit, {
+      action: "pieces-techniques.documents.remove",
+      entity_type: "pieces_techniques_documents",
+      entity_id: documentId,
+      details: {
+        piece_technique_id: pieceTechniqueId,
+        original_name: doc.original_name,
+        storage_path: doc.storage_path,
+      },
+    });
+
+    await client.query("COMMIT");
+    return true;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function repoGetPieceTechniqueDocumentForDownload(
+  pieceTechniqueId: string,
+  documentId: string,
+  audit: AuditContext
+): Promise<PieceTechniqueDocument | null> {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+
+    const exists = await ensurePieceTechniqueExists(client, pieceTechniqueId);
+    if (!exists) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    const res = await client.query<PieceTechniqueDocumentRow>(
+      `
+        SELECT
+          id::text AS id,
+          piece_technique_id::text AS piece_technique_id,
+          original_name,
+          stored_name,
+          storage_path,
+          mime_type,
+          size_bytes::text AS size_bytes,
+          sha256,
+          label,
+          created_at::text AS created_at,
+          updated_at::text AS updated_at,
+          uploaded_by,
+          removed_at::text AS removed_at,
+          removed_by
+        FROM pieces_techniques_documents
+        WHERE id = $1::uuid
+          AND piece_technique_id = $2::uuid
+          AND removed_at IS NULL
+      `,
+      [documentId, pieceTechniqueId]
+    );
+    const row = res.rows[0] ?? null;
+    if (!row) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    await insertAuditLog(client, audit, {
+      action: "pieces-techniques.documents.download",
+      entity_type: "pieces_techniques_documents",
+      entity_id: documentId,
+      details: {
+        piece_technique_id: pieceTechniqueId,
+        original_name: row.original_name,
+      },
+    });
+
+    await client.query("COMMIT");
+    return mapDocRow(row);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 type BomRow = {
@@ -436,14 +1114,15 @@ export async function repoCreatePieceTechnique(
     operations: (AddOperationBodyDTO & { temps_total: number; cout_mo: number })[];
     achats: (AddAchatBodyDTO & { total_achat_ht: number; total_achat_ttc: number })[];
   },
-  userId: number | null
+  audit: AuditContext
 ): Promise<PieceTechnique> {
   const client = await db.connect();
   try {
     await client.query("BEGIN");
 
-    const createdBy = userId;
-    const updatedBy = userId;
+    const actorUserId = audit.user_id;
+    const createdBy = actorUserId;
+    const updatedBy = actorUserId;
     const insertMainSQL = `
       INSERT INTO pieces_techniques (
         client_id, created_by, updated_by,
@@ -492,8 +1171,8 @@ export async function repoCreatePieceTechnique(
       body.en_fabrication ? 1 : 0,
       body.cycle ?? null,
       body.cycle_fabrication ?? null,
-      null,
-      null,
+      body.code_client ?? null,
+      body.client_name ?? null,
       body.ensemble,
     ];
 
@@ -515,7 +1194,7 @@ export async function repoCreatePieceTechnique(
         VALUES ($1::uuid, $2, $3, $4, $5)
         RETURNING id::text AS id, date_action::text AS date_action
       `,
-      [pieceId, userId, null, body.statut, histComment]
+      [pieceId, actorUserId, null, body.statut, histComment]
     );
     const histRow = histRes.rows[0];
     piece.history = histRow
@@ -523,13 +1202,27 @@ export async function repoCreatePieceTechnique(
           {
             id: histRow.id,
             date_action: histRow.date_action,
-            user_id: userId,
+            user_id: actorUserId,
             ancien_statut: null,
             nouveau_statut: body.statut,
             commentaire: histComment,
           },
         ]
       : [];
+
+    await insertAuditLog(client, audit, {
+      action: "pieces-techniques.create",
+      entity_type: "pieces_techniques",
+      entity_id: pieceId,
+      details: {
+        code_piece: body.code_piece,
+        designation: body.designation,
+        statut: body.statut,
+        bom_count: piece.bom.length,
+        operations_count: piece.operations.length,
+        achats_count: piece.achats.length,
+      },
+    });
 
     await client.query("COMMIT");
     return piece;
@@ -794,8 +1487,9 @@ async function insertAchats(
 export async function repoUpdatePieceTechnique(
   id: string,
   patch: UpdatePieceTechniqueBodyDTO,
-  userId: number | null
+  audit: AuditContext
 ): Promise<PieceTechnique | null> {
+  const client = await db.connect();
   const sets: string[] = [];
   const values: unknown[] = [];
   const push = (v: unknown) => {
@@ -804,6 +1498,8 @@ export async function repoUpdatePieceTechnique(
   };
 
   if (patch.client_id !== undefined) sets.push(`client_id = ${push(patch.client_id)}`);
+  if (patch.code_client !== undefined) sets.push(`code_client = ${push(patch.code_client)}`);
+  if (patch.client_name !== undefined) sets.push(`client_name = ${push(patch.client_name)}`);
   if (patch.famille_id !== undefined) sets.push(`famille_id = ${push(patch.famille_id)}::uuid`);
   if (patch.name_piece !== undefined) sets.push(`name_piece = ${push(patch.name_piece)}`);
   if (patch.code_piece !== undefined) sets.push(`code_piece = ${push(patch.code_piece)}`);
@@ -815,43 +1511,110 @@ export async function repoUpdatePieceTechnique(
   if (patch.ensemble !== undefined) sets.push(`ensemble = ${push(patch.ensemble)}`);
 
   sets.push(`updated_at = now()`);
-  if (userId !== null) sets.push(`updated_by = ${push(userId)}`);
+  sets.push(`updated_by = ${push(audit.user_id)}`);
+
+  const where: string[] = [];
+  where.push(`id = ${push(id)}::uuid`);
+  where.push(`deleted_at IS NULL`);
+  if (patch.expected_updated_at !== undefined) {
+    where.push(`updated_at = ${push(patch.expected_updated_at)}::timestamptz`);
+  }
 
   const sql = `
     UPDATE pieces_techniques
     SET ${sets.join(", ")}
-    WHERE id = ${push(id)}::uuid
-    RETURNING
-      id::text AS id,
-      created_at::text AS created_at,
-      updated_at::text AS updated_at,
-      client_id,
-      created_by,
-      updated_by,
-      famille_id::text AS famille_id,
-      name_piece,
-      code_piece,
-      designation,
-      designation_2,
-      prix_unitaire::float8 AS prix_unitaire,
-      statut::text AS statut,
-      en_fabrication::int AS en_fabrication,
-      cycle,
-      cycle_fabrication,
-      code_client,
-      client_name,
-      ensemble
+    WHERE ${where.join(" AND ")}
+    RETURNING id::text AS id
   `;
 
-  const res = await db.query<PieceTechniqueCoreRow>(sql, values);
-  const row = res.rows[0];
-  if (!row) return null;
-  return mapCoreRow(row);
+  try {
+    await client.query("BEGIN");
+
+    const res = await client.query<{ id: string }>(sql, values);
+    const row = res.rows[0] ?? null;
+    if (!row) {
+      const exists = await client.query<{ ok: number }>(
+        `SELECT 1::int AS ok FROM pieces_techniques WHERE id = $1::uuid AND deleted_at IS NULL`,
+        [id]
+      );
+      if (!exists.rows[0]?.ok) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+      throw new HttpError(409, "CONCURRENT_MODIFICATION", "Record was modified by another user");
+    }
+
+    await insertAuditLog(client, audit, {
+      action: "pieces-techniques.update",
+      entity_type: "pieces_techniques",
+      entity_id: id,
+      details: {
+        patch,
+      },
+    });
+
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  return repoGetPieceTechnique(id, includesSetForCreate());
 }
 
-export async function repoDeletePieceTechnique(id: string): Promise<boolean> {
-  const { rowCount } = await db.query("DELETE FROM pieces_techniques WHERE id = $1::uuid", [id]);
-  return (rowCount ?? 0) > 0;
+export async function repoDeletePieceTechnique(id: string, audit: AuditContext): Promise<boolean> {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+
+    const existing = await client.query<{ code_piece: string; designation: string }>(
+      `
+        SELECT code_piece, designation
+        FROM pieces_techniques
+        WHERE id = $1::uuid AND deleted_at IS NULL
+        FOR UPDATE
+      `,
+      [id]
+    );
+    const base = existing.rows[0] ?? null;
+    if (!base) {
+      await client.query("ROLLBACK");
+      return false;
+    }
+
+    const upd = await client.query(
+      `
+        UPDATE pieces_techniques
+        SET deleted_at = now(), deleted_by = $2, updated_at = now(), updated_by = $2
+        WHERE id = $1::uuid AND deleted_at IS NULL
+      `,
+      [id, audit.user_id]
+    );
+    if ((upd.rowCount ?? 0) === 0) {
+      await client.query("ROLLBACK");
+      return false;
+    }
+
+    await insertAuditLog(client, audit, {
+      action: "pieces-techniques.delete",
+      entity_type: "pieces_techniques",
+      entity_id: id,
+      details: {
+        code_piece: base.code_piece,
+        designation: base.designation,
+      },
+    });
+
+    await client.query("COMMIT");
+    return true;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 export async function repoUpdatePieceTechniqueStatus(
@@ -859,18 +1622,34 @@ export async function repoUpdatePieceTechniqueStatus(
   ancienStatut: PieceTechniqueStatut,
   nouveauStatut: PieceTechniqueStatut,
   commentaire: string | null,
-  userId: number
+  expectedUpdatedAt: string | undefined,
+  audit: AuditContext
 ): Promise<PieceTechnique | null> {
   const client = await db.connect();
   try {
     await client.query("BEGIN");
+
     const lock = await client.query<{ statut: PieceTechniqueStatut }>(
-      `SELECT statut::text AS statut FROM pieces_techniques WHERE id = $1::uuid FOR UPDATE`,
-      [id]
+      `
+        SELECT statut::text AS statut
+        FROM pieces_techniques
+        WHERE id = $1::uuid
+          AND deleted_at IS NULL
+          AND ($2::timestamptz IS NULL OR updated_at = $2::timestamptz)
+        FOR UPDATE
+      `,
+      [id, expectedUpdatedAt ?? null]
     );
     if (!lock.rows[0]) {
-      await client.query("ROLLBACK");
-      return null;
+      const exists = await client.query<{ ok: number }>(
+        `SELECT 1::int AS ok FROM pieces_techniques WHERE id = $1::uuid AND deleted_at IS NULL`,
+        [id]
+      );
+      if (!exists.rows[0]?.ok) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+      throw new HttpError(409, "CONCURRENT_MODIFICATION", "Record was modified by another user");
     }
 
     const enFabrication = nouveauStatut === "IN_FABRICATION";
@@ -880,7 +1659,7 @@ export async function repoUpdatePieceTechniqueStatus(
         SET statut = $2, en_fabrication = $3, updated_by = $4, updated_at = now()
         WHERE id = $1::uuid
       `,
-      [id, nouveauStatut, enFabrication ? 1 : 0, userId]
+      [id, nouveauStatut, enFabrication ? 1 : 0, audit.user_id]
     );
 
     await client.query(
@@ -888,8 +1667,19 @@ export async function repoUpdatePieceTechniqueStatus(
         INSERT INTO pieces_techniques_historique (piece_technique_id, user_id, ancien_statut, nouveau_statut, commentaire)
         VALUES ($1::uuid, $2, $3, $4, $5)
       `,
-      [id, userId, ancienStatut, nouveauStatut, commentaire]
+      [id, audit.user_id, ancienStatut, nouveauStatut, commentaire]
     );
+
+    await insertAuditLog(client, audit, {
+      action: "pieces-techniques.status",
+      entity_type: "pieces_techniques",
+      entity_id: id,
+      details: {
+        from: ancienStatut,
+        to: nouveauStatut,
+        commentaire,
+      },
+    });
 
     await client.query("COMMIT");
     return repoGetPieceTechnique(id, new Set());
@@ -935,6 +1725,7 @@ export async function repoDuplicatePieceTechnique(id: string, userId: number | n
           p.ensemble
         FROM pieces_techniques p
         WHERE p.id = $1::uuid
+          AND p.deleted_at IS NULL
         FOR UPDATE
       `,
       [id]
@@ -1227,7 +2018,7 @@ export async function repoDuplicatePieceTechnique(id: string, userId: number | n
 
 async function ensurePieceTechniqueExists(client: PoolClient, pieceTechniqueId: string): Promise<boolean> {
   const res = await client.query<{ ok: number }>(
-    "SELECT 1::int AS ok FROM pieces_techniques WHERE id = $1::uuid",
+    "SELECT 1::int AS ok FROM pieces_techniques WHERE id = $1::uuid AND deleted_at IS NULL",
     [pieceTechniqueId]
   );
   return Boolean(res.rows[0]?.ok);

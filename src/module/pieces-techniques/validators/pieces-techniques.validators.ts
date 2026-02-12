@@ -29,6 +29,29 @@ export const achatIdParamSchema = z.object({
   params: z.object({ id: uuid, achatId: uuid }),
 })
 
+export const documentIdParamSchema = z.object({
+  params: z.object({ id: uuid, docId: uuid }),
+})
+
+export const affaireIdParamSchema = z.object({
+  params: z.object({ id: uuid, affaireId: z.coerce.number().int().positive() }),
+})
+
+export const affaireOnlyParamSchema = z.object({
+  params: z.object({ affaireId: z.coerce.number().int().positive() }),
+})
+
+export const affairePieceRoleSchema = z.enum(["MAIN", "LINKED"])
+
+export const linkAffaireSchema = z.object({
+  body: z.object({
+    affaire_id: z.coerce.number().int().positive(),
+    role: affairePieceRoleSchema.optional().default("LINKED"),
+  }),
+})
+
+export type LinkAffaireBodyDTO = z.infer<typeof linkAffaireSchema>["body"]
+
 export const listPiecesTechniquesQuerySchema = z.object({
   q: z.string().optional(),
   client_id: z.string().trim().min(1).max(3).optional(),
@@ -107,6 +130,8 @@ const achatInputSchema = z.object({
 export const createPieceTechniqueSchema = z.object({
   body: z.object({
     client_id: z.string().trim().min(1).max(3).optional().nullable(),
+    code_client: z.string().trim().min(1).max(80).optional().nullable(),
+    client_name: z.string().trim().min(1).max(200).optional().nullable(),
     famille_id: uuid,
     name_piece: z.string().trim().min(1, "Nom de pièce requis"),
     code_piece: z.string().trim().min(1, "Code pièce requis"),
@@ -129,6 +154,8 @@ export const updatePieceTechniqueSchema = z.object({
   body: z.object({
     expected_updated_at: z.string().min(1).optional(),
     client_id: z.string().trim().min(1).max(3).optional().nullable(),
+    code_client: z.string().trim().min(1).max(80).optional().nullable(),
+    client_name: z.string().trim().min(1).max(200).optional().nullable(),
     famille_id: uuid.optional(),
     name_piece: z.string().trim().min(1).optional(),
     code_piece: z.string().trim().min(1).optional(),
@@ -204,13 +231,12 @@ export const updateAchatSchema = z.object({
 export type UpdateAchatBodyDTO = z.infer<typeof updateAchatSchema>["body"]
 
 export function validate(schema: z.ZodTypeAny): RequestHandler {
-  return (req, res, next) => {
-    const parsed = schema.safeParse({ body: req.body, params: req.params, query: req.query })
-    if (!parsed.success) {
-      const msg = parsed.error.issues?.[0]?.message ?? "Invalid request"
-      res.status(400).json({ error: msg })
-      return
+  return (req, _res, next) => {
+    try {
+      schema.parse({ body: req.body, params: req.params, query: req.query })
+      next()
+    } catch (e) {
+      next(e)
     }
-    next()
   }
 }

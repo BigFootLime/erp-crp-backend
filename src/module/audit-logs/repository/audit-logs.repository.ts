@@ -1,6 +1,10 @@
+import type { PoolClient } from "pg";
+
 import pool from "../../../config/database";
 import type { AuditLogRow, Paginated } from "../types/audit-logs.types";
 import type { CreateAuditLogBodyDTO, ListAuditLogsQueryDTO } from "../validators/audit-logs.validators";
+
+type DbQueryer = Pick<PoolClient, "query">;
 
 export async function repoInsertAuditLog(params: {
   user_id: number;
@@ -10,10 +14,13 @@ export async function repoInsertAuditLog(params: {
   device_type: string | null;
   os: string | null;
   browser: string | null;
+  tx?: DbQueryer;
 }) {
   const { body } = params;
 
-  const ins = await pool.query<{ id: string; created_at: string }>(
+  const q = params.tx ?? pool;
+
+  const ins = await q.query<{ id: string; created_at: string }>(
     `
       INSERT INTO erp_audit_logs (
         user_id,
