@@ -14,6 +14,11 @@ import auditLogsRoutes from "../module/audit-logs/routes/audit-logs.routes"
 import adminRoutes from "../module/admin/routes/admin.routes";
 import affaireRoutes from "../module/affaire/routes/affaire.routes";
 import devisRoutes from "../module/devis/routes/devis.routes";
+import facturesRoutes from "../module/facturation/routes/factures.routes";
+import avoirsRoutes from "../module/facturation/routes/avoirs.routes";
+import paiementsRoutes from "../module/facturation/routes/paiements.routes";
+import tarificationRoutes from "../module/facturation/routes/tarification.routes";
+import reportingRoutes from "../module/facturation/routes/reporting.routes";
 
 const router = Router()
 
@@ -31,4 +36,9 @@ router.use("/audit-logs", auditLogsRoutes)
 router.use("/admin", adminRoutes);
 router.use("/affaires", affaireRoutes);
 router.use("/devis", devisRoutes);
+router.use("/factures", facturesRoutes);
+router.use("/avoirs", avoirsRoutes);
+router.use("/paiements", paiementsRoutes);
+router.use("/tarification", tarificationRoutes);
+router.use("/reporting", reportingRoutes);
 export default router
