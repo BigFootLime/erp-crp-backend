@@ -19,6 +19,7 @@ import avoirsRoutes from "../module/facturation/routes/avoirs.routes";
 import paiementsRoutes from "../module/facturation/routes/paiements.routes";
 import tarificationRoutes from "../module/facturation/routes/tarification.routes";
 import reportingRoutes from "../module/facturation/routes/reporting.routes";
+import productionRoutes from "../module/production/routes/production.routes";
 
 const router = Router()
 
@@ -41,4 +42,5 @@ router.use("/avoirs", avoirsRoutes);
 router.use("/paiements", paiementsRoutes);
 router.use("/tarification", tarificationRoutes);
 router.use("/reporting", reportingRoutes);
+router.use("/production", productionRoutes);
 export default router
