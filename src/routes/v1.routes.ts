@@ -21,6 +21,7 @@ import tarificationRoutes from "../module/facturation/routes/tarification.routes
 import reportingRoutes from "../module/facturation/routes/reporting.routes";
 import productionRoutes from "../module/production/routes/production.routes";
 import qualiteRoutes from "../module/qualite/routes/qualite.routes";
+import livraisonsRoutes from "../module/livraisons/routes/livraisons.routes";
 
 const router = Router()
 
@@ -45,4 +46,5 @@ router.use("/tarification", tarificationRoutes);
 router.use("/reporting", reportingRoutes);
 router.use("/production", productionRoutes);
 router.use("/qualite", qualiteRoutes);
+router.use("/livraisons", livraisonsRoutes);
 export default router
