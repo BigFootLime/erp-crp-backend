@@ -22,6 +22,17 @@ import {
   updateMachine,
   updatePoste,
 } from "../controllers/production.controller";
+import {
+  createPointageManual,
+  getPointage,
+  listOperators,
+  listPointages,
+  patchPointage,
+  pointagesKpis,
+  startPointage,
+  stopPointage,
+  validatePointage,
+} from "../controllers/pointages.controller";
 
 function isAdminRole(role: string | undefined): boolean {
   if (!role) return false;
@@ -29,9 +40,24 @@ function isAdminRole(role: string | undefined): boolean {
   return r.includes("admin") || r.includes("administrateur");
 }
 
+function isProductionRole(role: string | undefined): boolean {
+  if (!role) return false;
+  const r = role.trim().toLowerCase();
+  return r.includes("production") || r.includes("atelier");
+}
+
 const requireAdmin: RequestHandler = (req, _res, next) => {
   if (!isAdminRole(req.user?.role)) {
     next(new HttpError(403, "FORBIDDEN", "Admin role required"));
+    return;
+  }
+  next();
+};
+
+const requireProductionOrAdmin: RequestHandler = (req, _res, next) => {
+  const role = req.user?.role;
+  if (!isAdminRole(role) && !isProductionRole(role)) {
+    next(new HttpError(403, "FORBIDDEN", "Production role required"));
     return;
   }
   next();
@@ -63,5 +89,16 @@ router.patch("/ofs/:id", updateOrdreFabrication);
 router.patch("/ofs/:id/operations/:opId", updateOrdreFabricationOperation);
 router.post("/ofs/:id/operations/:opId/time-logs/start", startOfOperationTimeLog);
 router.post("/ofs/:id/operations/:opId/time-logs/stop", stopOfOperationTimeLog);
+
+// Pointages
+router.get("/operators", requireProductionOrAdmin, listOperators);
+router.get("/pointages", requireProductionOrAdmin, listPointages);
+router.get("/pointages/kpis", requireProductionOrAdmin, pointagesKpis);
+router.get("/pointages/:id", requireProductionOrAdmin, getPointage);
+router.post("/pointages", requireProductionOrAdmin, createPointageManual);
+router.post("/pointages/:id/start", requireProductionOrAdmin, startPointage);
+router.post("/pointages/:id/stop", requireProductionOrAdmin, stopPointage);
+router.patch("/pointages/:id", requireProductionOrAdmin, patchPointage);
+router.post("/pointages/:id/validate", requireProductionOrAdmin, validatePointage);
 
 export default router;
