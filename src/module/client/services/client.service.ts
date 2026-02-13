@@ -21,6 +21,10 @@ export type ClientRow = {
 
    logo_path: string | null
 
+  delivery_address_id: string | null
+  bill_address_id: string | null
+  biller_id: string | null
+
   // Billing address
   bill_name: string | null
   bill_street: string | null
@@ -97,6 +101,10 @@ export async function listClients(q = "", limit = 25): Promise<ClientRow[]> {
     c.quality_levels,
     c.logo_path, 
 
+    c.delivery_address_id::text AS delivery_address_id,
+    c.bill_address_id::text AS bill_address_id,
+    c.biller_id::text AS biller_id,
+
     -- Facturation
     af.name AS bill_name, af.street AS bill_street, af.house_number AS bill_house_number,
     af.postal_code AS bill_postal_code, af.city AS bill_city, af.country AS bill_country,
@@ -126,6 +134,15 @@ export async function listClients(q = "", limit = 25): Promise<ClientRow[]> {
       ) FILTER (WHERE ct2.contact_id IS NOT NULL),
       '[]'
     ) AS contacts,
+
+    -- Modes de reglement (ids)
+    COALESCE(
+      ARRAY_REMOVE(
+        ARRAY_AGG(DISTINCT cpm.payment_id::text),
+        NULL
+      ),
+      '{}'
+    ) AS payment_mode_ids,
 
     -- Modes de règlement (libellés) — version robuste sans FILTER
     COALESCE(
@@ -206,6 +223,7 @@ export type ClientContactRow = {
   phone_personal: string | null;
   role: string | null;
   civility: string | null;
+  label: string;
 };
 
 export async function listClientContacts(clientId: string): Promise<ClientContactRow[]> {
@@ -225,6 +243,9 @@ export async function listClientContacts(clientId: string): Promise<ClientContac
     `,
     [clientId]
   );
-  return rows;
+  return rows.map((r) => ({
+    ...r,
+    label: `${r.first_name} ${r.last_name} — ${r.email}`,
+  }));
 }
 

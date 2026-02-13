@@ -1,7 +1,9 @@
 // src/module/clients/routes/clients.routes.ts
 import { Router } from "express";
+import { authenticateToken } from "../../auth/middlewares/auth.middleware";
 import {
   getClientById,
+  listClientAddresses,
   listClientContacts,
   listClients,
   patchClient,
@@ -14,10 +16,11 @@ import { listClientsAnalytics } from "../controllers/clients.analytics.controlle
 
 const router = Router();
 
-router.post("/", postClient);
+router.post("/", authenticateToken, postClient);
 router.get("/", listClients);
 router.get("/analytics", listClientsAnalytics);
 router.get("/:clientId/contacts", listClientContacts);
+router.get("/:clientId/addresses", listClientAddresses);
 router.get("/:id", getClientById);
 
 // 🆕 upload du logo client
@@ -28,10 +31,10 @@ router.get("/:id", getClientById);
 // );
 
 // 🆕 update complet
-router.patch("/:id", patchClient);
+router.patch("/:id", authenticateToken, patchClient);
 
-// déjà existant
-router.patch("/:id/contact", patchClientPrimaryContact);
+// deja existant
+router.patch("/:id/contact", authenticateToken, patchClientPrimaryContact);
 
 
 export default router;

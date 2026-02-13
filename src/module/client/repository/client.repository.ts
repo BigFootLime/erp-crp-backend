@@ -1,6 +1,57 @@
 // src/module/clients/repository/clients.repository.ts
+import type { PoolClient } from "pg";
+
 import pool from "../../../config/database";
-import { CreateClientDTO } from "../validators/client.validators";
+import type { CreateClientDTO } from "../validators/client.validators";
+import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
+import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
+
+export type AuditContext = {
+  user_id: number;
+  ip: string | null;
+  user_agent: string | null;
+  device_type: string | null;
+  os: string | null;
+  browser: string | null;
+  path: string | null;
+  page_key: string | null;
+  client_session_id: string | null;
+};
+
+type DbQueryer = Pick<PoolClient, "query">;
+
+async function insertAuditLog(
+  tx: DbQueryer,
+  audit: AuditContext,
+  entry: {
+    action: string;
+    entity_type?: string | null;
+    entity_id?: string | null;
+    details?: Record<string, unknown> | null;
+  }
+) {
+  const body: CreateAuditLogBodyDTO = {
+    event_type: "ACTION",
+    action: entry.action,
+    page_key: audit.page_key,
+    entity_type: entry.entity_type ?? null,
+    entity_id: entry.entity_id ?? null,
+    path: audit.path,
+    client_session_id: audit.client_session_id,
+    details: entry.details ?? null,
+  };
+
+  await repoInsertAuditLog({
+    user_id: audit.user_id,
+    body,
+    ip: audit.ip,
+    user_agent: audit.user_agent,
+    device_type: audit.device_type,
+    os: audit.os,
+    browser: audit.browser,
+    tx,
+  });
+}
 
 /** 001, 002, ... (3 chars) */
 async function nextClientId(client: any): Promise<string> {
@@ -53,12 +104,16 @@ async function insertClient(
       ? dto.provided_documents_id
       : null;
 
+  const normalizedBillerId =
+    typeof dto.biller_id === "string" && dto.biller_id.trim() !== "" ? dto.biller_id : null;
+
   const q = `
   INSERT INTO clients (
     company_name, contact_id,
     email, phone, website_url,
     siret, vat_number, naf_code,
     status, blocked, reason, creation_date,
+    biller_id,
     delivery_address_id, bill_address_id, bank_info_id,
     observations, provided_documents_id,
     quality_levels               
@@ -67,9 +122,10 @@ async function insertClient(
     NULLIF($3,''), NULLIF($4,''), NULLIF($5,''),
     NULLIF($6,''), NULLIF($7,''), NULLIF($8,''),
     $9, $10, NULLIF($11,''), COALESCE($12::timestamp, now()),
-    $13, $14, $15,
-    NULLIF($16,''), $17,
-    COALESCE($18::text[], '{}')   
+    $13,
+    $14, $15, $16,
+    NULLIF($17,''), $18,
+    COALESCE($19::text[], '{}')   
   )
   RETURNING client_id
 `;
@@ -80,6 +136,7 @@ async function insertClient(
   dto.email ?? "", dto.phone ?? "", dto.website_url ?? "",
   dto.siret ?? "", dto.vat_number ?? "", dto.naf_code ?? "",
   dto.status, dto.blocked, dto.reason ?? "", dto.creation_date,
+  normalizedBillerId,
   delivAddrId, billAddrId, bankInfoId,
   dto.observations ?? "", normalizedProvidedDocsId,
   dto.quality_levels ?? []              // ⬅️ nouveau param
@@ -208,7 +265,7 @@ async function resolvePaymentIds(db: any, ids: string[]): Promise<string[]> {
 
 
 
-export async function repoCreateClient(dto: CreateClientDTO): Promise<{ client_id: string }> {
+export async function repoCreateClient(dto: CreateClientDTO, audit: AuditContext): Promise<{ client_id: string }> {
   const db = await pool.connect();
   try {
     await db.query('BEGIN');
@@ -243,6 +300,20 @@ export async function repoCreateClient(dto: CreateClientDTO): Promise<{ client_i
 
     await linkPaymentModes(db, clientId, dto.payment_mode_ids);
 
+    await insertAuditLog(db, audit, {
+      action: "CLIENT_CREATE",
+      entity_type: "client",
+      entity_id: clientId,
+      details: {
+        client_id: clientId,
+        company_name: dto.company_name,
+        status: dto.status,
+        blocked: dto.blocked,
+        contacts_count: Array.isArray(dto.contacts) ? dto.contacts.length : 0,
+        payment_modes_count: Array.isArray(dto.payment_mode_ids) ? dto.payment_mode_ids.length : 0,
+      },
+    });
+
     await db.query('COMMIT');
     return { client_id: clientId };
   } catch (e) {
@@ -255,7 +326,7 @@ export async function repoCreateClient(dto: CreateClientDTO): Promise<{ client_i
 
 // EDIT CLIENT 
 
-export async function repoUpdateClient(id: string, dto: CreateClientDTO): Promise<void> {
+export async function repoUpdateClient(id: string, dto: CreateClientDTO, audit: AuditContext): Promise<void> {
   const db = await pool.connect();
   try {
     await db.query("BEGIN");
@@ -263,6 +334,7 @@ export async function repoUpdateClient(id: string, dto: CreateClientDTO): Promis
     // 1) Verrouiller le client + récupérer IDs liés (+ contact_id existant)
     const current = await db.query(
       `SELECT client_id,
+              blocked,
               bill_address_id,
               delivery_address_id,
               bank_info_id,
@@ -284,12 +356,16 @@ export async function repoUpdateClient(id: string, dto: CreateClientDTO): Promis
       delivery_address_id,
       bank_info_id,
       primary_contact_id,
+      blocked: blocked_before,
     } = current.rows[0] as {
       bill_address_id: string | null;
       delivery_address_id: string | null;
       bank_info_id: string | null;
       primary_contact_id: string | null;
+      blocked: boolean | null;
     };
+
+    const wasBlocked = Boolean(blocked_before);
 
     // 2) Mise à jour Adresse de facturation
     if (bill_address_id) {
@@ -352,25 +428,29 @@ export async function repoUpdateClient(id: string, dto: CreateClientDTO): Promis
         ? dto.provided_documents_id
         : null;
 
+    const normalizedBillerId =
+      typeof dto.biller_id === "string" && dto.biller_id.trim() !== "" ? dto.biller_id : null;
+
     // 6) Mise à jour des champs principaux du client
     await db.query(
       `
       UPDATE clients
          SET company_name          = $1,
-             email                 = NULLIF($2,''),
-             phone                 = NULLIF($3,''),
-             website_url           = NULLIF($4,''),
-             siret                 = NULLIF($5,''),
-             vat_number            = NULLIF($6,''),
-             naf_code              = NULLIF($7,''),
-             status                = $8,
-             blocked               = $9,
-             reason                = NULLIF($10,''),
-             creation_date         = COALESCE($11::timestamp, creation_date),
-             observations          = NULLIF($12,''),
-             provided_documents_id = $13,
-             quality_levels        = COALESCE($14::text[], '{}')
-       WHERE client_id = $15
+              email                 = NULLIF($2,''),
+              phone                 = NULLIF($3,''),
+              website_url           = NULLIF($4,''),
+              siret                 = NULLIF($5,''),
+              vat_number            = NULLIF($6,''),
+              naf_code              = NULLIF($7,''),
+              status                = $8,
+              blocked               = $9,
+              reason                = NULLIF($10,''),
+              creation_date         = COALESCE($11::timestamp, creation_date),
+              biller_id             = $12,
+              observations          = NULLIF($13,''),
+              provided_documents_id = $14,
+              quality_levels        = COALESCE($15::text[], '{}')
+       WHERE client_id = $16
       `,
       [
         dto.company_name,
@@ -384,6 +464,7 @@ export async function repoUpdateClient(id: string, dto: CreateClientDTO): Promis
         dto.blocked,
         dto.reason ?? "",
         dto.creation_date,
+        normalizedBillerId,
         dto.observations ?? "",
         normalizedProvidedDocsId,
         dto.quality_levels ?? [],
@@ -464,6 +545,38 @@ export async function repoUpdateClient(id: string, dto: CreateClientDTO): Promis
     // 9) Modes de règlement : reset + relink
     await db.query(`DELETE FROM client_payment_modes WHERE client_id = $1`, [id]);
     await linkPaymentModes(db, id, dto.payment_mode_ids);
+
+    const contactsAdded = newContactIds.length;
+    const contactsDeleted = toDelete.length;
+    const paymentModesCount = Array.isArray(dto.payment_mode_ids) ? dto.payment_mode_ids.length : 0;
+
+    await insertAuditLog(db, audit, {
+      action: "CLIENT_UPDATE",
+      entity_type: "client",
+      entity_id: id,
+      details: {
+        client_id: id,
+        company_name: dto.company_name,
+        status: dto.status,
+        blocked: dto.blocked,
+        payment_modes_count: paymentModesCount,
+        contacts_added: contactsAdded,
+        contacts_deleted: contactsDeleted,
+      },
+    });
+
+    if (wasBlocked !== dto.blocked) {
+      await insertAuditLog(db, audit, {
+        action: dto.blocked ? "CLIENT_BLOCK" : "CLIENT_UNBLOCK",
+        entity_type: "client",
+        entity_id: id,
+        details: {
+          from: wasBlocked,
+          to: dto.blocked,
+          reason: dto.reason ?? null,
+        },
+      });
+    }
 
     await db.query("COMMIT");
   } catch (e) {

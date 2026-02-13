@@ -1,6 +1,37 @@
 // src/module/clients/repository/clients.read.repository.ts
 import pool from "../../../config/database";
 
+type ClientAddressKind = "billing" | "delivery";
+
+type AddressValue = {
+  name?: string | null;
+  street?: string | null;
+  house_number?: string | null;
+  postal_code?: string | null;
+  city?: string | null;
+  country?: string | null;
+};
+
+function buildStreetLine(address: AddressValue): string {
+  const house = (address.house_number ?? "").trim();
+  const street = (address.street ?? "").trim();
+  return [house, street].filter(Boolean).join(" ").trim();
+}
+
+function buildCityLine(address: AddressValue): string {
+  const postal = (address.postal_code ?? "").trim();
+  const city = (address.city ?? "").trim();
+  return [postal, city].filter(Boolean).join(" ").trim();
+}
+
+function formatAddressInline(address: AddressValue): string {
+  const name = (address.name ?? "").trim();
+  const streetLine = buildStreetLine(address);
+  const cityLine = buildCityLine(address);
+  const country = (address.country ?? "").trim();
+  return [name, streetLine, cityLine, country].filter(Boolean).join(" - ");
+}
+
 /**
  * Shape returned by GET /clients/:id — perfect for creating a commande client.
  * {
@@ -121,6 +152,66 @@ export async function repoGetClientById(clientId: string) {
       : null,
     payment_modes: pm.rows.map((x) => ({ id: x.id, code: x.code, type: x.type })),
   };
+}
+
+export async function repoListClientAddresses(clientId: string) {
+  const { rows } = await pool.query(
+    `
+    SELECT
+      'billing'::text AS kind,
+      af.bill_address_id::text AS id,
+      af.name,
+      af.street,
+      af.house_number,
+      af.postal_code,
+      af.city,
+      af.country
+    FROM clients c
+    JOIN adresse_facturation af ON af.bill_address_id = c.bill_address_id
+    WHERE c.client_id = $1
+
+    UNION ALL
+
+    SELECT
+      'delivery'::text AS kind,
+      al.delivery_address_id::text AS id,
+      al.name,
+      al.street,
+      al.house_number,
+      al.postal_code,
+      al.city,
+      al.country
+    FROM clients c
+    JOIN adresse_livraison al ON al.delivery_address_id = c.delivery_address_id
+    WHERE c.client_id = $1
+    `,
+    [clientId]
+  );
+
+  return rows.map((r) => {
+    const kind = r.kind === "delivery" ? "delivery" : "billing";
+    const name = typeof r.name === "string" ? r.name : null;
+    const street = typeof r.street === "string" ? r.street : null;
+    const house_number = typeof r.house_number === "string" ? r.house_number : null;
+    const postal_code = typeof r.postal_code === "string" ? r.postal_code : null;
+    const city = typeof r.city === "string" ? r.city : null;
+    const country = typeof r.country === "string" ? r.country : null;
+
+    const address: AddressValue = { name, street, house_number, postal_code, city, country };
+    const label = formatAddressInline(address) || (kind === "billing" ? "Adresse de facturation" : "Adresse de livraison");
+
+    return {
+      kind: kind as ClientAddressKind,
+      id: String(r.id),
+      label,
+      name,
+      street,
+      house_number,
+      postal_code,
+      city,
+      country,
+    };
+  });
 }
 
 /**
