@@ -4,8 +4,7 @@
 import path from "path";
 import db from "../../../config/database";
 
-const BASE_IMAGE_URL =
-  process.env.BACKEND_URL || "http://erp-backend.croix-rousse-precision.fr:8080";
+const BASE_IMAGE_URL = process.env.BACKEND_URL || "https://erp-backend.croix-rousse-precision.fr";
 
 type OutilFilters = {
   id_famille?: number;

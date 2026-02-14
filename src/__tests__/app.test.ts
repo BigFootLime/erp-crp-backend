@@ -22,8 +22,11 @@ describe('Test de l\'application Express ERP', () => {
     })
 
     it('🌐 Test CORS headers', async () => {
-        const res = await request(app).get('/')
-        expect(res.headers['access-control-allow-origin']).toBe('*')
+        const origin = 'http://localhost:5173'
+        const res = await request(app).get('/').set('Origin', origin)
+        expect(res.headers['access-control-allow-origin']).toBe(origin)
+        expect(res.headers['access-control-allow-credentials']).toBe('true')
+        expect(String(res.headers['vary'] ?? '')).toContain('Origin')
     })
 
     it('🪪 Vérifie les en-têtes sécurisés de Helmet', async () => {
