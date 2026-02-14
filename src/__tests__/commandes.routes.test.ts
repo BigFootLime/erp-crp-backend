@@ -214,6 +214,35 @@ describe("/api/v1/commandes", () => {
     expect(String(docsCall?.[0])).not.toMatch(/JOIN\s+documents\b/);
   });
 
+  it("GET /api/v1/commandes/:id/documents/:docId/file serves linked document", async () => {
+    const docId = "11111111-1111-1111-1111-111111111111";
+    const uploadsDir = path.resolve("uploads/docs");
+    fs.mkdirSync(uploadsDir, { recursive: true });
+    const filePath = path.join(uploadsDir, `${docId}.pdf`);
+    fs.writeFileSync(filePath, "hello");
+
+    mocks.poolQuery.mockResolvedValueOnce({
+      rows: [{ id: docId, document_name: "doc.pdf", type: "PDF" }],
+    });
+
+    const resInline = await request(app).get(`/api/v1/commandes/123/documents/${docId}/file`);
+    expect(resInline.status).toBe(200);
+    expect(resInline.headers["content-type"]).toContain("application/pdf");
+    expect(resInline.headers["content-disposition"]).toContain('inline; filename="doc.pdf"');
+
+    mocks.poolQuery.mockResolvedValueOnce({
+      rows: [{ id: docId, document_name: "doc.pdf", type: "PDF" }],
+    });
+
+    const resDownload = await request(app)
+      .get(`/api/v1/commandes/123/documents/${docId}/file`)
+      .query({ download: "true" });
+    expect(resDownload.status).toBe(200);
+    expect(resDownload.headers["content-disposition"]).toContain('attachment; filename="doc.pdf"');
+
+    fs.rmSync(filePath, { force: true });
+  });
+
   it("POST /api/v1/commandes handles multipart data + documents[]", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "erp-crp-docs-"));
     const tmpFile = path.join(tmpDir, "doc.txt");

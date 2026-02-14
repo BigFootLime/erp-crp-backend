@@ -6,6 +6,7 @@ import {
   repoDuplicateCommande,
   repoGenerateAffairesFromOrder,
   repoGetCommande,
+  repoGetCommandeDocumentFileMeta,
   repoListCommandes,
   repoUpdateCommande,
   repoUpdateCommandeStatus,
@@ -20,6 +21,9 @@ export const updateCommandeSVC = (id: string, input: CreateCommandeInput, docume
 export const listCommandesSVC = (filters: ListCommandesQueryDTO) => repoListCommandes(filters);
 
 export const getCommandeSVC = (id: string, includes: Set<string>) => repoGetCommande(id, includes);
+
+export const getCommandeDocumentFileMetaSVC = (commandeId: string, docId: string) =>
+  repoGetCommandeDocumentFileMeta(commandeId, docId);
 
 export const deleteCommandeSVC = (id: string) => repoDeleteCommande(id);
 

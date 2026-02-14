@@ -1,9 +1,13 @@
 import type { Request, RequestHandler } from "express";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { HttpError } from "../../../utils/httpError";
 import {
   createCommandeSVC,
   deleteCommandeSVC,
   duplicateCommandeSVC,
   generateAffairesFromOrderSVC,
+  getCommandeDocumentFileMetaSVC,
   getCommandeSVC,
   listCommandesSVC,
   updateCommandeSVC,
@@ -41,6 +45,19 @@ function parseIncludeSet(req: Request) {
       .map((s) => s.trim())
       .filter((s) => s.length > 0)
   );
+}
+
+function resolveMimeType(value: string | null | undefined): string {
+  const t = String(value ?? "").trim().toLowerCase();
+  if (!t) return "application/octet-stream";
+  if (t === "pdf" || t.includes("pdf")) return "application/pdf";
+  if (t.includes("/")) return t;
+  return "application/octet-stream";
+}
+
+function safeExtFromName(name: string): string {
+  const extCandidate = path.extname(name).toLowerCase();
+  return /^\.[a-z0-9]+$/.test(extCandidate) && extCandidate.length <= 10 ? extCandidate : "";
 }
 
 // POST /api/v1/commandes (multipart)
@@ -175,6 +192,42 @@ export const duplicateCommande: RequestHandler = async (req, res, next) => {
     }
     res.status(201).json(out);
   } catch (err) {
+    next(err);
+  }
+};
+
+// GET /api/v1/commandes/:id/documents/:docId/file
+export const getCommandeDocumentFile: RequestHandler = async (req, res, next) => {
+  try {
+    const { id, docId } = req.params;
+    const doc = await getCommandeDocumentFileMetaSVC(id, docId);
+    if (!doc) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+
+    const baseDir = path.resolve("uploads/docs");
+    const absPath = path.resolve(baseDir, `${doc.id}${safeExtFromName(doc.document_name)}`);
+    const basePrefix = baseDir.endsWith(path.sep) ? baseDir : `${baseDir}${path.sep}`;
+    if (!absPath.startsWith(basePrefix)) {
+      throw new HttpError(400, "INVALID_STORAGE_PATH", "Invalid document storage path");
+    }
+
+    await fs.access(absPath);
+
+    res.setHeader("Content-Type", resolveMimeType(doc.type));
+    const rawDownload = (req.query as { download?: unknown } | undefined)?.download;
+    const download = rawDownload === true || rawDownload === "true" || rawDownload === "1" || rawDownload === 1;
+    res.setHeader(
+      "Content-Disposition",
+      `${download ? "attachment" : "inline"}; filename="${encodeURIComponent(doc.document_name)}"`
+    );
+    res.sendFile(absPath);
+  } catch (err) {
+    if (err && typeof err === "object" && "code" in err && (err as { code?: unknown }).code === "ENOENT") {
+      next(new HttpError(404, "FILE_NOT_FOUND", "File not found"));
+      return;
+    }
     next(err);
   }
 };

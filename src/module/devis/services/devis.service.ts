@@ -9,6 +9,7 @@ import {
   repoCreateDevis,
   repoDeleteDevis,
   repoGetDevis,
+  repoGetDevisDocumentFileMeta,
   repoListDevis,
   repoUpdateDevis,
 } from "../repository/devis.repository";
@@ -16,6 +17,9 @@ import {
 export const svcListDevis = (filters: ListDevisQueryDTO) => repoListDevis(filters);
 
 export const svcGetDevis = (id: number, include: string) => repoGetDevis(id, include);
+
+export const svcGetDevisDocumentFileMeta = (devisId: number, docId: string) =>
+  repoGetDevisDocumentFileMeta(devisId, docId);
 
 export const svcCreateDevis = (input: CreateDevisBodyDTO, userId: number, documents: UploadedDocument[]) =>
   repoCreateDevis(input, userId, documents);

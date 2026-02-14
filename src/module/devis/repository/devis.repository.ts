@@ -405,6 +405,29 @@ export async function repoGetDevis(id: number, includeValue: string) {
   return { devis, lignes, documents };
 }
 
+export type DevisDocumentFileMeta = {
+  id: string;
+  document_name: string;
+  type: string | null;
+};
+
+export async function repoGetDevisDocumentFileMeta(devisId: number, docId: string): Promise<DevisDocumentFileMeta | null> {
+  const sql = `
+    SELECT
+      dc.id::text AS id,
+      dc.document_name,
+      dc.type
+    FROM devis_documents dd
+    JOIN documents_clients dc ON dc.id = dd.document_id
+    WHERE dd.devis_id = $1
+      AND dd.document_id = $2
+    LIMIT 1
+  `;
+
+  const res = await pool.query<DevisDocumentFileMeta>(sql, [devisId, docId]);
+  return res.rows[0] ?? null;
+}
+
 export async function repoCreateDevis(input: CreateDevisBodyDTO, userId: number, documents: UploadedDocument[]) {
   const client = await pool.connect();
   try {

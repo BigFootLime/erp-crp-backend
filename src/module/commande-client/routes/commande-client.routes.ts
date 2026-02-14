@@ -9,11 +9,17 @@ import {
   duplicateCommande,
   generateAffairesFromOrder,
   getCommande,
+  getCommandeDocumentFile,
   listCommandes,
   updateCommande,
   updateCommandeStatus,
 } from "../controllers/commande-client.controller"
-import { createCommandeBodySchema, idParamSchema, validate } from "../validators/commande-client.validators"
+import {
+  createCommandeBodySchema,
+  documentIdParamSchema,
+  idParamSchema,
+  validate,
+} from "../validators/commande-client.validators"
 
 // Storage vers /uploads/docs (ou ton NAS si prod)
 const ensureDir = (dir: string) => { if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }) }
@@ -60,6 +66,9 @@ router.get("/", listCommandes)
 
 // GET /api/v1/commandes/:id
 router.get("/:id", validate(idParamSchema), getCommande)
+
+// GET /api/v1/commandes/:id/documents/:docId/file
+router.get("/:id/documents/:docId/file", validate(documentIdParamSchema), getCommandeDocumentFile)
 
 // PATCH /api/v1/commandes/:id  (multipart: data + documents[])
 router.patch("/:id", validate(idParamSchema), upload.array("documents[]"), parseCommandeBody, updateCommande)

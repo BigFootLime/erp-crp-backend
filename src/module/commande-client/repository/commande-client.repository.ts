@@ -480,6 +480,31 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
   };
 }
 
+export type CommandeDocumentFileMeta = {
+  id: string;
+  document_name: string;
+  type: string | null;
+};
+
+export async function repoGetCommandeDocumentFileMeta(commandeId: string, docId: string): Promise<CommandeDocumentFileMeta | null> {
+  const id = toInt(commandeId, "commande_id");
+
+  const sql = `
+    SELECT
+      dc.id::text AS id,
+      dc.document_name,
+      dc.type
+    FROM commande_documents cd
+    JOIN documents_clients dc ON dc.id = cd.document_id
+    WHERE cd.commande_id = $1
+      AND cd.document_id = $2
+    LIMIT 1
+  `;
+
+  const res = await pool.query<CommandeDocumentFileMeta>(sql, [id, docId]);
+  return res.rows[0] ?? null;
+}
+
 async function insertCommandeLignes(client: PoolClient, commandeId: string, lignes: CreateCommandeInput["lignes"]) {
   if (!lignes.length) return;
 

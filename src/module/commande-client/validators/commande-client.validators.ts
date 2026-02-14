@@ -96,6 +96,13 @@ export const idParamSchema = z.object({
   }),
 });
 
+export const documentIdParamSchema = z.object({
+  params: z.object({
+    id: z.string().regex(/^\d+$/, "id must be an integer"),
+    docId: z.string().uuid("docId must be a UUID"),
+  }),
+});
+
 export function validate(schema: z.ZodTypeAny): RequestHandler {
   return (req, res, next) => {
     const parsed = schema.safeParse({ body: req.body, params: req.params, query: req.query });

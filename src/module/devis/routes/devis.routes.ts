@@ -10,6 +10,7 @@ import {
   convertDevisToCommande,
   deleteDevis,
   getDevis,
+  getDevisDocumentFile,
   listDevis,
   updateDevis,
 } from "../controllers/devis.controller";
@@ -62,6 +63,7 @@ const router = Router();
 
 router.get("/", listDevis);
 router.get("/:id", getDevis);
+router.get("/:id/documents/:docId/file", getDevisDocumentFile);
 router.post("/", upload.array("documents[]"), parseMultipartData(createDevisBodySchema), createDevis);
 router.post("/:id/convert-to-commande", convertDevisToCommande);
 router.patch("/:id", upload.array("documents[]"), parseMultipartData(updateDevisBodySchema), updateDevis);

@@ -20,6 +20,11 @@ export const devisIdParamsSchema = z.object({
   id: z.coerce.number().int().positive(),
 });
 
+export const devisDocumentIdParamsSchema = z.object({
+  id: z.coerce.number().int().positive(),
+  docId: z.string().uuid("docId must be a UUID"),
+});
+
 export const listDevisQuerySchema = z.object({
   q: z.string().optional(),
   client_id: z.string().optional(),

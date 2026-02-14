@@ -1,6 +1,9 @@
 import type { Request, RequestHandler } from "express";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { HttpError } from "../../../utils/httpError";
 import {
+  devisDocumentIdParamsSchema,
   devisIdParamsSchema,
   getDevisQuerySchema,
   listDevisQuerySchema,
@@ -13,9 +16,23 @@ import {
   svcCreateDevis,
   svcDeleteDevis,
   svcGetDevis,
+  svcGetDevisDocumentFileMeta,
   svcListDevis,
   svcUpdateDevis,
 } from "../services/devis.service";
+
+function resolveMimeType(value: string | null | undefined): string {
+  const t = String(value ?? "").trim().toLowerCase();
+  if (!t) return "application/octet-stream";
+  if (t === "pdf" || t.includes("pdf")) return "application/pdf";
+  if (t.includes("/")) return t;
+  return "application/octet-stream";
+}
+
+function safeExtFromName(name: string): string {
+  const extCandidate = path.extname(name).toLowerCase();
+  return /^\.[a-z0-9]+$/.test(extCandidate) && extCandidate.length <= 10 ? extCandidate : "";
+}
 
 function getParsedDevisBody(req: Request): CreateDevisBodyDTO | UpdateDevisBodyDTO | null {
   const body = req.parsedDevisBody;
@@ -120,6 +137,42 @@ export const convertDevisToCommande: RequestHandler = async (req, res, next) => 
     if (!out) throw new HttpError(404, "DEVIS_NOT_FOUND", "Devis not found");
     res.status(201).json(out);
   } catch (err) {
+    next(err);
+  }
+};
+
+// GET /api/v1/devis/:id/documents/:docId/file
+export const getDevisDocumentFile: RequestHandler = async (req, res, next) => {
+  try {
+    const { id, docId } = devisDocumentIdParamsSchema.parse(req.params);
+    const doc = await svcGetDevisDocumentFileMeta(id, docId);
+    if (!doc) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+
+    const baseDir = path.resolve("uploads/docs");
+    const absPath = path.resolve(baseDir, `${doc.id}${safeExtFromName(doc.document_name)}`);
+    const basePrefix = baseDir.endsWith(path.sep) ? baseDir : `${baseDir}${path.sep}`;
+    if (!absPath.startsWith(basePrefix)) {
+      throw new HttpError(400, "INVALID_STORAGE_PATH", "Invalid document storage path");
+    }
+
+    await fs.access(absPath);
+
+    res.setHeader("Content-Type", resolveMimeType(doc.type));
+    const rawDownload = (req.query as { download?: unknown } | undefined)?.download;
+    const download = rawDownload === true || rawDownload === "true" || rawDownload === "1" || rawDownload === 1;
+    res.setHeader(
+      "Content-Disposition",
+      `${download ? "attachment" : "inline"}; filename="${encodeURIComponent(doc.document_name)}"`
+    );
+    res.sendFile(absPath);
+  } catch (err) {
+    if (err && typeof err === "object" && "code" in err && (err as { code?: unknown }).code === "ENOENT") {
+      next(new HttpError(404, "FILE_NOT_FOUND", "File not found"));
+      return;
+    }
     next(err);
   }
 };
