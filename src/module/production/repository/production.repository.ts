@@ -1664,6 +1664,7 @@ export async function repoCreateOrdreFabrication(params: {
 
     const b = params.body;
     const numero = typeof b.numero === "string" && b.numero.trim().length > 0 ? b.numero.trim() : null;
+    const numeroForInsert = numero ?? `OF-${ofId}`;
 
     const ins = await client.query<{ id: string; numero: string }>(
       `
@@ -1685,7 +1686,7 @@ export async function repoCreateOrdreFabrication(params: {
         )
         VALUES (
           $1,
-          COALESCE($2, ('OF-' || $1::text)),
+          $2,
           $3::bigint,
           $4::bigint,
           $5,
@@ -1703,7 +1704,7 @@ export async function repoCreateOrdreFabrication(params: {
       `,
       [
         ofId,
-        numero,
+        numeroForInsert,
         b.affaire_id ?? null,
         b.commande_id ?? null,
         b.client_id ?? null,

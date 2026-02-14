@@ -1107,6 +1107,16 @@ async function repoListHistory(pieceTechniqueId: string): Promise<PieceTechnique
   return res.rows;
 }
 
+async function lookupClientCompanyName(tx: Pick<PoolClient, "query">, clientId: string): Promise<string | null> {
+  const res = await tx.query<{ company_name: string | null }>(
+    `SELECT company_name FROM clients WHERE client_id = $1`,
+    [clientId]
+  );
+
+  const name = res.rows[0]?.company_name;
+  return typeof name === "string" && name.trim().length > 0 ? name.trim() : null;
+}
+
 export async function repoCreatePieceTechnique(
   body: CreatePieceTechniqueBodyDTO & {
     statut: PieceTechniqueStatut;
@@ -1123,6 +1133,12 @@ export async function repoCreatePieceTechnique(
     const actorUserId = audit.user_id;
     const createdBy = actorUserId;
     const updatedBy = actorUserId;
+
+    // If the client is selected but the frontend did not send a name, derive it from the clients table.
+    const clientIdForInsert = body.client_id ?? null;
+    const clientNameForInsert =
+      body.client_name ?? (clientIdForInsert ? await lookupClientCompanyName(client, clientIdForInsert) : null);
+
     const insertMainSQL = `
       INSERT INTO pieces_techniques (
         client_id, created_by, updated_by,
@@ -1158,7 +1174,7 @@ export async function repoCreatePieceTechnique(
         ensemble
     `;
     const mainParams = [
-      body.client_id ?? null,
+      clientIdForInsert,
       createdBy,
       updatedBy,
       body.famille_id,
@@ -1172,7 +1188,7 @@ export async function repoCreatePieceTechnique(
       body.cycle ?? null,
       body.cycle_fabrication ?? null,
       body.code_client ?? null,
-      body.client_name ?? null,
+      clientNameForInsert,
       body.ensemble,
     ];
 
