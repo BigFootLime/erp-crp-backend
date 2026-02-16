@@ -51,7 +51,11 @@ export type PlanningEventListItem = {
   archived_at: string | null;
 
   of_numero: string | null;
+  client_id: string | null;
   client_company_name: string | null;
+  client_color: string | null;
+  client_blocked: boolean | null;
+  client_block_reason: string | null;
   piece_code: string | null;
   piece_designation: string | null;
   operation_phase: number | null;
@@ -60,6 +64,13 @@ export type PlanningEventListItem = {
   machine_name: string | null;
   poste_code: string | null;
   poste_label: string | null;
+
+  // Optional fields used for planning visuals.
+  // These may be populated progressively by backend/DB patches.
+  of_date_fin_prevue?: string | null;
+  deadline_ts?: string | null;
+  stop_reason?: string | null;
+  blockers?: string[];
 };
 
 export type PlanningEventComment = {

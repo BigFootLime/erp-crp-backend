@@ -24,6 +24,7 @@ import qualiteRoutes from "../module/qualite/routes/qualite.routes";
 import livraisonsRoutes from "../module/livraisons/routes/livraisons.routes";
 import planningRoutes from "../module/planning/routes/planning.routes";
 import stockRoutes from "../module/stock/routes/stock.routes";
+import programmationRoutes from "../module/programmation/routes/programmation.routes";
 
 const router = Router()
 
@@ -48,6 +49,7 @@ router.use("/tarification", tarificationRoutes);
 router.use("/reporting", reportingRoutes);
 router.use("/production", productionRoutes);
 router.use("/planning", planningRoutes);
+router.use("/programmations", programmationRoutes);
 router.use("/qualite", qualiteRoutes);
 router.use("/livraisons", livraisonsRoutes);
 router.use("/stock", stockRoutes);

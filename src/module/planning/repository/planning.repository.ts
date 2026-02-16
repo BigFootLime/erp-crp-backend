@@ -87,6 +87,44 @@ function toNullableInt(value: unknown, label = "id"): number | null {
   return toInt(value, label);
 }
 
+function toNullableBoolean(value: unknown): boolean | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value === 1 ? true : value === 0 ? false : null;
+  if (typeof value === "string") {
+    const v = value.trim().toLowerCase();
+    if (v === "true" || v === "t" || v === "1" || v === "yes" || v === "y") return true;
+    if (v === "false" || v === "f" || v === "0" || v === "no" || v === "n") return false;
+  }
+  return null;
+}
+
+function toStringArray(value: unknown): string[] {
+  if (!value) return [];
+  if (Array.isArray(value)) {
+    return value
+      .filter((x): x is string => typeof x === "string")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return [];
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (Array.isArray(parsed)) {
+        return parsed
+          .filter((x): x is string => typeof x === "string")
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0);
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return [];
+}
+
 type UploadedDocument = {
   originalname: string;
   path: string;
@@ -113,7 +151,11 @@ async function selectPlanningEventListItemById(q: DbQueryer, id: string): Promis
     updated_at: string;
     archived_at: string | null;
     of_numero: string | null;
+    client_id: string | null;
     client_company_name: string | null;
+    client_color: string | null;
+    client_blocked: unknown;
+    client_block_reason: string | null;
     piece_code: string | null;
     piece_designation: string | null;
     operation_phase: number | null;
@@ -122,6 +164,11 @@ async function selectPlanningEventListItemById(q: DbQueryer, id: string): Promis
     machine_name: string | null;
     poste_code: string | null;
     poste_label: string | null;
+
+    of_date_fin_prevue: string | null;
+    deadline_ts: string | null;
+    stop_reason: string | null;
+    blockers: unknown;
   };
 
   const res = await q.query<Row>(
@@ -145,7 +192,11 @@ async function selectPlanningEventListItemById(q: DbQueryer, id: string): Promis
         e.archived_at::text AS archived_at,
 
         o.numero AS of_numero,
+        o.client_id::text AS client_id,
         c.company_name AS client_company_name,
+        COALESCE(to_jsonb(c)->>'color_hex', to_jsonb(c)->>'color') AS client_color,
+        c.blocked AS client_blocked,
+        c.reason AS client_block_reason,
         pt.code_piece AS piece_code,
         pt.designation AS piece_designation,
         op.phase::int AS operation_phase,
@@ -153,7 +204,12 @@ async function selectPlanningEventListItemById(q: DbQueryer, id: string): Promis
         m.code AS machine_code,
         m.name AS machine_name,
         p.code AS poste_code,
-        p.label AS poste_label
+        p.label AS poste_label,
+
+        o.date_fin_prevue::text AS of_date_fin_prevue,
+        to_jsonb(e)->>'deadline_ts' AS deadline_ts,
+        to_jsonb(e)->>'stop_reason' AS stop_reason,
+        COALESCE(to_jsonb(e)->'blockers', '[]'::jsonb) AS blockers
       FROM public.planning_events e
       LEFT JOIN public.of_operations op ON op.id = e.of_operation_id
       LEFT JOIN public.ordres_fabrication o ON o.id = COALESCE(e.of_id, op.of_id)
@@ -188,7 +244,11 @@ async function selectPlanningEventListItemById(q: DbQueryer, id: string): Promis
     updated_at: row.updated_at,
     archived_at: row.archived_at,
     of_numero: row.of_numero,
+    client_id: row.client_id,
     client_company_name: row.client_company_name,
+    client_color: row.client_color,
+    client_blocked: toNullableBoolean(row.client_blocked),
+    client_block_reason: row.client_block_reason,
     piece_code: row.piece_code,
     piece_designation: row.piece_designation,
     operation_phase: row.operation_phase,
@@ -197,6 +257,11 @@ async function selectPlanningEventListItemById(q: DbQueryer, id: string): Promis
     machine_name: row.machine_name,
     poste_code: row.poste_code,
     poste_label: row.poste_label,
+
+    of_date_fin_prevue: row.of_date_fin_prevue,
+    deadline_ts: row.deadline_ts,
+    stop_reason: row.stop_reason,
+    blockers: toStringArray(row.blockers),
   };
 }
 
@@ -482,7 +547,11 @@ export async function repoListPlanningEvents(filters: ListPlanningEventsQueryDTO
     updated_at: string;
     archived_at: string | null;
     of_numero: string | null;
+    client_id: string | null;
     client_company_name: string | null;
+    client_color: string | null;
+    client_blocked: unknown;
+    client_block_reason: string | null;
     piece_code: string | null;
     piece_designation: string | null;
     operation_phase: number | null;
@@ -491,6 +560,11 @@ export async function repoListPlanningEvents(filters: ListPlanningEventsQueryDTO
     machine_name: string | null;
     poste_code: string | null;
     poste_label: string | null;
+
+    of_date_fin_prevue: string | null;
+    deadline_ts: string | null;
+    stop_reason: string | null;
+    blockers: unknown;
   };
 
   const dataRes = await pool.query<Row>(
@@ -514,7 +588,11 @@ export async function repoListPlanningEvents(filters: ListPlanningEventsQueryDTO
         e.archived_at::text AS archived_at,
 
         o.numero AS of_numero,
+        o.client_id::text AS client_id,
         c.company_name AS client_company_name,
+        COALESCE(to_jsonb(c)->>'color_hex', to_jsonb(c)->>'color') AS client_color,
+        c.blocked AS client_blocked,
+        c.reason AS client_block_reason,
         pt.code_piece AS piece_code,
         pt.designation AS piece_designation,
         op.phase::int AS operation_phase,
@@ -522,7 +600,12 @@ export async function repoListPlanningEvents(filters: ListPlanningEventsQueryDTO
         m.code AS machine_code,
         m.name AS machine_name,
         p.code AS poste_code,
-        p.label AS poste_label
+        p.label AS poste_label,
+
+        o.date_fin_prevue::text AS of_date_fin_prevue,
+        to_jsonb(e)->>'deadline_ts' AS deadline_ts,
+        to_jsonb(e)->>'stop_reason' AS stop_reason,
+        COALESCE(to_jsonb(e)->'blockers', '[]'::jsonb) AS blockers
       FROM public.planning_events e
       LEFT JOIN public.of_operations op ON op.id = e.of_operation_id
       LEFT JOIN public.ordres_fabrication o ON o.id = COALESCE(e.of_id, op.of_id)
@@ -554,7 +637,11 @@ export async function repoListPlanningEvents(filters: ListPlanningEventsQueryDTO
     updated_at: row.updated_at,
     archived_at: row.archived_at,
     of_numero: row.of_numero,
+    client_id: row.client_id,
     client_company_name: row.client_company_name,
+    client_color: row.client_color,
+    client_blocked: toNullableBoolean(row.client_blocked),
+    client_block_reason: row.client_block_reason,
     piece_code: row.piece_code,
     piece_designation: row.piece_designation,
     operation_phase: row.operation_phase,
@@ -563,6 +650,11 @@ export async function repoListPlanningEvents(filters: ListPlanningEventsQueryDTO
     machine_name: row.machine_name,
     poste_code: row.poste_code,
     poste_label: row.poste_label,
+
+    of_date_fin_prevue: row.of_date_fin_prevue,
+    deadline_ts: row.deadline_ts,
+    stop_reason: row.stop_reason,
+    blockers: toStringArray(row.blockers),
   }));
 
   return { items, total };
