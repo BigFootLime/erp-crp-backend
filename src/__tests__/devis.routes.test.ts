@@ -207,7 +207,7 @@ describe("/api/v1/devis", () => {
   });
 
   it("GET /api/v1/devis/:id/documents/:docId/file serves linked document", async () => {
-    const docId = "11111111-1111-1111-1111-111111111111";
+    const docId = "33333333-3333-3333-3333-333333333333";
     const uploadsDir = path.resolve("uploads/docs");
     fs.mkdirSync(uploadsDir, { recursive: true });
     const filePath = path.join(uploadsDir, `${docId}.pdf`);

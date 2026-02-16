@@ -2,6 +2,7 @@
 import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
+import { HttpError } from "../../../utils/httpError";
 import type { CreateClientDTO } from "../validators/client.validators";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
@@ -19,6 +20,10 @@ export type AuditContext = {
 };
 
 type DbQueryer = Pick<PoolClient, "query">;
+
+function isPgForeignKeyViolation(err: unknown): boolean {
+  return (err as { code?: unknown } | null)?.code === "23503";
+}
 
 async function insertAuditLog(
   tx: DbQueryer,
@@ -582,6 +587,57 @@ export async function repoUpdateClient(id: string, dto: CreateClientDTO, audit: 
   } catch (e) {
     await db.query("ROLLBACK");
     throw e;
+  } finally {
+    db.release();
+  }
+}
+
+export async function repoDeleteClient(id: string, audit: AuditContext): Promise<void> {
+  const db = await pool.connect();
+  try {
+    await db.query("BEGIN");
+
+    const currentRes = await db.query<{ client_id: string; company_name: string }>(
+      `
+        SELECT client_id::text AS client_id,
+               company_name
+          FROM clients
+         WHERE client_id = $1
+         FOR UPDATE
+      `,
+      [id]
+    );
+
+    const current = currentRes.rows[0];
+    if (!current) {
+      throw new HttpError(404, "CLIENT_NOT_FOUND", "Client not found");
+    }
+
+    // Break FK from clients.contact_id -> contacts.contact_id before deleting contacts.
+    await db.query(`UPDATE clients SET contact_id = NULL WHERE client_id = $1`, [id]);
+
+    await db.query(`DELETE FROM client_payment_modes WHERE client_id = $1`, [id]);
+    await db.query(`DELETE FROM contacts WHERE client_id = $1`, [id]);
+
+    await db.query(`DELETE FROM clients WHERE client_id = $1`, [id]);
+
+    await insertAuditLog(db, audit, {
+      action: "CLIENT_DELETE",
+      entity_type: "client",
+      entity_id: id,
+      details: {
+        client_id: id,
+        company_name: current.company_name,
+      },
+    });
+
+    await db.query("COMMIT");
+  } catch (err) {
+    await db.query("ROLLBACK");
+    if (isPgForeignKeyViolation(err)) {
+      throw new HttpError(409, "CLIENT_IN_USE", "Client is referenced and cannot be deleted");
+    }
+    throw err;
   } finally {
     db.release();
   }
