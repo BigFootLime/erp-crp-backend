@@ -23,6 +23,7 @@ import productionRoutes from "../module/production/routes/production.routes";
 import qualiteRoutes from "../module/qualite/routes/qualite.routes";
 import livraisonsRoutes from "../module/livraisons/routes/livraisons.routes";
 import planningRoutes from "../module/planning/routes/planning.routes";
+import stockRoutes from "../module/stock/routes/stock.routes";
 
 const router = Router()
 
@@ -49,4 +50,5 @@ router.use("/production", productionRoutes);
 router.use("/planning", planningRoutes);
 router.use("/qualite", qualiteRoutes);
 router.use("/livraisons", livraisonsRoutes);
+router.use("/stock", stockRoutes);
 export default router
