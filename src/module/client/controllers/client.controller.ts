@@ -6,7 +6,7 @@ import { getClientIp, parseDevice } from "../../../utils/requestMeta";
 import * as clientService from "../services/client.service"; // ✅ namespace import
 import { svcGetClientById, svcListClientAddresses } from "../services/clients.read.service";
 import { createClientSchema } from "../validators/client.validators";
-import { type AuditContext, repoCreateClient, repoDeleteClient, repoUpdateClient } from "../repository/client.repository";
+import { type AuditContext, repoArchiveClient, repoCreateClient, repoDeleteClient, repoUpdateClient } from "../repository/client.repository";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import path from "node:path";
 // import { LOGO_BASE_DIR } from "../upload/client-logo-upload";
@@ -202,6 +202,19 @@ export const deleteClient: RequestHandler = async (req, res, next) => {
     if (!id) throw new HttpError(400, "CLIENT_ID_REQUIRED", "client_id is required");
 
     await repoDeleteClient(id, audit);
+    res.status(204).end();
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const archiveClient: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildAuditContext(req);
+    const id = req.params.id;
+    if (!id) throw new HttpError(400, "CLIENT_ID_REQUIRED", "client_id is required");
+
+    await repoArchiveClient(id, audit);
     res.status(204).end();
   } catch (e) {
     next(e);

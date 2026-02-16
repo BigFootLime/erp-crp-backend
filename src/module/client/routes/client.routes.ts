@@ -2,6 +2,7 @@
 import { Router } from "express";
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
 import {
+  archiveClient,
   deleteClient,
   getClientById,
   listClientAddresses,
@@ -35,6 +36,8 @@ router.get("/:id", getClientById);
 router.patch("/:id", authenticateToken, patchClient);
 
 router.delete("/:id", authenticateToken, deleteClient);
+
+router.post("/:id/archive", authenticateToken, archiveClient);
 
 // deja existant
 router.patch("/:id/contact", authenticateToken, patchClientPrimaryContact);

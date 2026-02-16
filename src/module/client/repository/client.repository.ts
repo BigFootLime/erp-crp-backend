@@ -643,5 +643,51 @@ export async function repoDeleteClient(id: string, audit: AuditContext): Promise
   }
 }
 
+export async function repoArchiveClient(id: string, audit: AuditContext): Promise<void> {
+  const db = await pool.connect();
+  try {
+    await db.query("BEGIN");
+
+    const beforeRes = await db.query<{ client_id: string; company_name: string; status: string }>(
+      `
+        SELECT client_id::text AS client_id,
+               company_name,
+               status::text AS status
+          FROM clients
+         WHERE client_id = $1
+         FOR UPDATE
+      `,
+      [id]
+    );
+    const before = beforeRes.rows[0];
+    if (!before) {
+      throw new HttpError(404, "CLIENT_NOT_FOUND", "Client not found");
+    }
+
+    if (String(before.status).toLowerCase() !== "inactif") {
+      await db.query(`UPDATE clients SET status = 'inactif' WHERE client_id = $1`, [id]);
+    }
+
+    await insertAuditLog(db, audit, {
+      action: "CLIENT_ARCHIVE",
+      entity_type: "client",
+      entity_id: id,
+      details: {
+        client_id: id,
+        company_name: before.company_name,
+        from_status: before.status,
+        to_status: "inactif",
+      },
+    });
+
+    await db.query("COMMIT");
+  } catch (err) {
+    await db.query("ROLLBACK");
+    throw err;
+  } finally {
+    db.release();
+  }
+}
+
 
 
