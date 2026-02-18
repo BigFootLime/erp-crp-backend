@@ -20,6 +20,15 @@ export const strongPassword = z
   .refine(v => /\d/.test(v), "Mot de passe : 1 chiffre requis")
   .refine(v => /[^\w\s]/.test(v), "Mot de passe : 1 caractère spécial requis");
 
+export const strongPasswordReset = z
+  .string({ required_error: "Mot de passe requis", invalid_type_error: "Mot de passe invalide" })
+  .min(10, "Mot de passe : minimum 10 caractères")
+  .max(72, "Mot de passe trop long (max 72)")
+  .refine((v) => /[A-Z]/.test(v), "Mot de passe : 1 majuscule requise")
+  .refine((v) => /[a-z]/.test(v), "Mot de passe : 1 minuscule requise")
+  .refine((v) => /\d/.test(v), "Mot de passe : 1 chiffre requis")
+  .refine((v) => /[^\w\s]/.test(v), "Mot de passe : 1 caractère spécial requis");
+
 export const isoDate = (fieldName: string) =>
   z.string({ required_error: `${fieldName} requis`, invalid_type_error: `${fieldName} invalide` })
     .trim()

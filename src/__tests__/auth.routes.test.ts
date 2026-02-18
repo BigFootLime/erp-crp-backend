@@ -5,6 +5,10 @@ import request from 'supertest'
 vi.mock('../module/auth/controllers/auth.controller', () => ({
   register: vi.fn((req, res) => res.status(201).json({ message: 'Utilisateur enregistré' })),
   login: vi.fn((req, res) => res.status(200).json({ token: 'fake-jwt-token' })),
+  forgotPassword: vi.fn((req, res) =>
+    res.status(200).json({ message: 'Si ce compte existe, un lien de réinitialisation a été envoyé.' })
+  ),
+  resetPassword: vi.fn((req, res) => res.status(200).json({ message: 'Mot de passe réinitialisé' })),
 }))
 
 vi.mock('../module/auth/controllers/user.controller', () => ({
@@ -61,6 +65,24 @@ describe('🧪 Routes Authentification (/auth)', () => {
       username: 'admin',
       role: 'Administrateur'
     })
+  })
+
+  it('✅ POST /api/v1/auth/forgot-password retourne un message générique', async () => {
+    const res = await request(app)
+      .post('/api/v1/auth/forgot-password')
+      .send({ usernameOrEmail: 'admin@example.com' })
+
+    expect(res.status).toBe(200)
+    expect(res.body).toHaveProperty('message')
+  })
+
+  it('✅ POST /api/v1/auth/reset-password retourne 200', async () => {
+    const res = await request(app)
+      .post('/api/v1/auth/reset-password')
+      .send({ token: 'deadbeef', newPassword: 'P@ssw0rd-OK' })
+
+    expect(res.status).toBe(200)
+    expect(res.body).toHaveProperty('message')
   })
 
 //   it('🚫 GET /api/v1/auth/me refuse l’accès si rôle non autorisé', async () => {

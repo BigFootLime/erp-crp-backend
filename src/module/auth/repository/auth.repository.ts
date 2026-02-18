@@ -44,3 +44,47 @@ export const findUserByUsername = async (username: string) => {
   }
 };
 
+export type AuthUserLookupRow = {
+  id: number;
+  username: string;
+  email: string | null;
+  password?: string;
+};
+
+export const findUserByUsernameOrEmail = async (usernameOrEmail: string): Promise<AuthUserLookupRow | null> => {
+  const raw = typeof usernameOrEmail === "string" ? usernameOrEmail.trim() : "";
+  if (!raw) return null;
+
+  const normalizedUsername = raw.toUpperCase();
+  const normalizedEmail = raw.toLowerCase();
+
+  const client = await pool.connect();
+  try {
+    const result = await client.query<AuthUserLookupRow>(
+      `
+        SELECT id, username, email, password
+        FROM users
+        WHERE username = $1
+           OR LOWER(email) = $2
+        LIMIT 1
+      `,
+      [normalizedUsername, normalizedEmail]
+    );
+    return result.rows[0] ?? null;
+  } finally {
+    client.release();
+  }
+};
+
+export const updateUserPassword = async (params: { userId: number; passwordHash: string; tx?: { query: (sql: string, values?: unknown[]) => Promise<unknown> } }) => {
+  const q = params.tx ?? pool;
+  await q.query(
+    `
+      UPDATE users
+      SET password = $1
+      WHERE id = $2
+    `,
+    [params.passwordHash, params.userId]
+  );
+};
+

@@ -12,11 +12,19 @@ vi.mock('../module/auth/validators/user.validator', () => ({
 vi.mock('../module/auth/validators/auth.validator', () => ({
   loginSchema: {
     parse: vi.fn()
+  },
+  forgotPasswordSchema: {
+    safeParse: vi.fn()
+  },
+  resetPasswordSchema: {
+    parse: vi.fn()
   }
 }))
 vi.mock('../module/auth/services/auth.service', () => ({
   registerUser: vi.fn(),
-  loginUser: vi.fn()
+  loginUser: vi.fn(),
+  requestPasswordReset: vi.fn(),
+  resetPasswordWithToken: vi.fn()
 }))
 
 import * as mockedRegisterValidator from '../module/auth/validators/user.validator'

@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { register, login } from '../controllers/auth.controller';
+import { register, login, forgotPassword, resetPassword } from '../controllers/auth.controller';
 import {
     authenticateToken,
     authorizeRole
@@ -11,6 +11,8 @@ const router: Router = Router();
 
 router.post('/register', register);
 router.post('/login', login);
+router.post('/forgot-password', forgotPassword);
+router.post('/reset-password', resetPassword);
 router.get(
   '/me',
   authenticateToken,
