@@ -83,6 +83,7 @@ export const forgotPassword = asyncHandler(async (req: Request, res: Response) =
   if (!limited && parsed.success) {
     // Fire-and-forget: we don't want email delivery or DB latency to become an enumeration side-channel.
     void requestPasswordReset(parsed.data.usernameOrEmail, {
+      request_id: req.requestId ?? null,
       ip,
       user_agent,
       device_type: device.device_type,

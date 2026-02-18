@@ -109,6 +109,7 @@ function sha256Hex(value: string): string {
 export async function requestPasswordReset(
   usernameOrEmail: string,
   meta: {
+    request_id?: string | null;
     ip: string | null;
     user_agent: string | null;
     device_type: string | null;
@@ -146,17 +147,61 @@ export async function requestPasswordReset(
   const baseUrl = buildFrontendBaseUrl();
   const resetUrl = baseUrl ? `${baseUrl}/reset-password?token=${encodeURIComponent(token)}` : "";
 
-  try {
-    if (resetUrl) {
-      await sendPasswordResetEmail({
-        to: user.email,
-        username: user.username,
-        resetUrl,
-        expiresMinutes: 15,
-      });
+  let emailDetails: { provider: "resend"; status: "sent"; id?: string } | { provider: "resend"; status: "skipped"; reason: string } | { provider: "resend"; status: "failed"; error: string } | null = null;
+
+  if (!resetUrl) {
+    emailDetails = { provider: "resend", status: "skipped", reason: "FRONTEND_URL_MISSING" };
+    console.warn(
+      JSON.stringify({
+        type: "password_reset_email_skipped",
+        requestId: meta.request_id ?? null,
+        userId: user.id,
+        reason: "FRONTEND_URL_MISSING",
+      })
+    );
+  } else {
+    const emailRes = await sendPasswordResetEmail({
+      to: user.email,
+      username: user.username,
+      resetUrl,
+      expiresMinutes: 15,
+      request_id: meta.request_id ?? null,
+    });
+
+    if (emailRes.ok) {
+      emailDetails = { provider: "resend", status: "sent", id: emailRes.id };
+      console.log(
+        JSON.stringify({
+          type: "password_reset_email_sent",
+          requestId: meta.request_id ?? null,
+          userId: user.id,
+          provider: "resend",
+          resend_id: emailRes.id ?? null,
+        })
+      );
+    } else if ("skipped" in emailRes && emailRes.skipped) {
+      emailDetails = { provider: "resend", status: "skipped", reason: "RESEND_NOT_CONFIGURED" };
+      console.warn(
+        JSON.stringify({
+          type: "password_reset_email_skipped",
+          requestId: meta.request_id ?? null,
+          userId: user.id,
+          reason: "RESEND_NOT_CONFIGURED",
+        })
+      );
+    } else {
+      const err = (emailRes as { ok: false; error: string }).error;
+      emailDetails = { provider: "resend", status: "failed", error: err };
+      console.warn(
+        JSON.stringify({
+          type: "password_reset_email_failed",
+          requestId: meta.request_id ?? null,
+          userId: user.id,
+          provider: "resend",
+          error: err,
+        })
+      );
     }
-  } catch {
-    // ignore email errors (response must remain generic)
   }
 
   try {
@@ -169,7 +214,7 @@ export async function requestPasswordReset(
         entity_type: "user",
         entity_id: String(user.id),
         path: "/api/v1/auth/forgot-password",
-        details: { expires_at: expiresAt.toISOString() },
+        details: { expires_at: expiresAt.toISOString(), email: emailDetails },
       },
       ...meta,
     });

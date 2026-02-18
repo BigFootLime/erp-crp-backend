@@ -1,32 +1,31 @@
-import fs from "node:fs/promises";
-import path from "node:path";
-
-import nodemailer from "nodemailer";
-
-type SmtpConfig = {
-  host: string;
-  port: number;
-  secure: boolean;
-  user: string;
-  pass: string;
+type ResendConfig = {
+  apiKey: string;
   from: string;
+  apiBaseUrl: string;
 };
 
-function readSmtpConfig(): SmtpConfig | null {
-  const host = (process.env.SMTP_HOST ?? "").trim();
-  const portRaw = (process.env.SMTP_PORT ?? "").trim();
-  const user = (process.env.SMTP_USER ?? "").trim();
-  const pass = (process.env.SMTP_PASS ?? "").trim();
-  const from = (process.env.SMTP_FROM ?? "").trim();
+type ResendSendResult =
+  | { ok: true; id?: string }
+  | { ok: false; skipped: true }
+  | { ok: false; error: string };
 
-  if (!host || !portRaw || !user || !pass || !from) return null;
+function readResendConfig(): ResendConfig | null {
+  const apiKey = (process.env.RESEND_API_KEY ?? "").trim();
+  const from = (process.env.RESEND_FROM ?? "").trim();
+  const apiBaseUrl = (process.env.RESEND_API_BASE_URL ?? "https://api.resend.com").trim().replace(/\/+$/, "");
 
-  const port = Number(portRaw);
-  if (!Number.isFinite(port) || port <= 0) return null;
+  if (!apiKey || !from) return null;
+  return { apiKey, from, apiBaseUrl };
+}
 
-  const secure = (process.env.SMTP_SECURE ?? "").trim().toLowerCase() === "true" || port === 465;
+function buildLogoUrl(): string | null {
+  const explicit = (process.env.EMAIL_LOGO_URL ?? "").trim();
+  if (explicit) return explicit;
 
-  return { host, port, secure, user, pass, from };
+  const backendUrl = (process.env.BACKEND_URL ?? "https://erp-backend.croix-rousse-precision.fr").trim().replace(/\/+$/, "");
+  if (!backendUrl) return null;
+
+  return `${backendUrl}/images/images_logiciel/CRP-Ops.png`;
 }
 
 function escapeHtml(text: string): string {
@@ -42,9 +41,11 @@ function buildPasswordResetEmail(params: {
   username: string;
   resetUrl: string;
   expiresMinutes: number;
+  logoSrc?: string | null;
 }): { subject: string; text: string; html: string } {
   const safeUsername = escapeHtml(params.username);
   const safeUrl = escapeHtml(params.resetUrl);
+  const safeLogoSrc = params.logoSrc ? escapeHtml(params.logoSrc) : null;
 
   const subject = "Réinitialisation de mot de passe — CRP Systems";
 
@@ -60,7 +61,7 @@ function buildPasswordResetEmail(params: {
     <div style="max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:14px;overflow:hidden;">
       <div style="padding:18px 18px 8px 18px;border-bottom:1px solid #e2e8f0;">
         <div style="display:flex;align-items:center;gap:12px;">
-          <img src="cid:crp-logo" alt="CRP Systems" style="height:34px;width:auto;display:block;" />
+          ${safeLogoSrc ? `<img src="${safeLogoSrc}" alt="CRP Systems" style="height:34px;width:auto;display:block;" />` : ""}
           <div style="font-size:14px;font-weight:700;letter-spacing:0.2px;">CRP Systems</div>
         </div>
         <div style="margin-top:10px;font-size:18px;font-weight:800;">Réinitialisation de mot de passe</div>
@@ -101,36 +102,57 @@ function buildPasswordResetEmail(params: {
   return { subject, text, html };
 }
 
-async function readLogoAttachment(): Promise<null | { filename: string; content: Buffer; cid: string; contentType: string }>
-{
-  const candidates = [
-    path.resolve("uploads/images/images_logiciel/CRP-Ops.png"),
-    path.resolve("/home/bigfootlime/erp-crp/erp-crp-backend/uploads/images/images_logiciel/CRP-Ops.png"),
-  ];
+function truncate(value: string, max = 1000): string {
+  const s = value.trim();
+  if (s.length <= max) return s;
+  return `${s.slice(0, max)}…`;
+}
 
+async function postResendEmail(params: {
+  cfg: ResendConfig;
+  payload: unknown;
+  idempotencyKey?: string | null;
+}): Promise<ResendSendResult> {
   try {
-    const found = await (async () => {
-      for (const p of candidates) {
-        try {
-          const content = await fs.readFile(p);
-          return { path: p, content };
-        } catch {
-          // keep trying
-        }
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${params.cfg.apiKey}`,
+      "Content-Type": "application/json",
+    };
+
+    const key = (params.idempotencyKey ?? "").trim();
+    if (key) headers["Idempotency-Key"] = key.slice(0, 256);
+
+    const res = await fetch(`${params.cfg.apiBaseUrl}/emails`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(params.payload),
+    });
+
+    const rawText = await (async () => {
+      try {
+        return (await res.text()).trim();
+      } catch {
+        return "";
       }
-      return null;
     })();
 
-    if (!found) return null;
+    if (res.ok) {
+      try {
+        const parsed = rawText ? (JSON.parse(rawText) as unknown) : null;
+        if (parsed && typeof parsed === "object" && "id" in parsed && typeof (parsed as { id: unknown }).id === "string") {
+          return { ok: true, id: (parsed as { id: string }).id };
+        }
+      } catch {
+        // ignore
+      }
+      return { ok: true };
+    }
 
-    return {
-      filename: "CRP-Ops.png",
-      content: found.content,
-      cid: "crp-logo",
-      contentType: "image/png",
-    };
-  } catch {
-    return null;
+    const err = rawText ? `Resend API error (${res.status}): ${truncate(rawText, 1200)}` : `Resend API error (${res.status})`;
+    return { ok: false, error: err };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Resend API request failed";
+    return { ok: false, error: truncate(msg, 1200) };
   }
 }
 
@@ -139,46 +161,82 @@ export async function sendPasswordResetEmail(params: {
   username: string;
   resetUrl: string;
   expiresMinutes: number;
-}): Promise<{ ok: true } | { ok: false; skipped: true } | { ok: false; error: string }> {
-  const cfg = readSmtpConfig();
+  request_id?: string | null;
+}): Promise<ResendSendResult> {
+  const cfg = readResendConfig();
   if (!cfg) {
     return { ok: false, skipped: true };
   }
 
-  const { subject, text, html } = buildPasswordResetEmail({
+  const logoUrl = buildLogoUrl();
+
+  // Prefer inline logo when possible (CID). If it fails (e.g. logo URL not reachable by Resend),
+  // retry once without attachments and with remote logo.
+  if (logoUrl) {
+    const inline = buildPasswordResetEmail({
+      username: params.username,
+      resetUrl: params.resetUrl,
+      expiresMinutes: params.expiresMinutes,
+      logoSrc: "cid:crp-logo",
+    });
+
+    const inlineRes = await postResendEmail({
+      cfg,
+      idempotencyKey: params.request_id ?? null,
+      payload: {
+        from: cfg.from,
+        to: [params.to],
+        subject: inline.subject,
+        text: inline.text,
+        html: inline.html,
+        attachments: [
+          {
+            filename: "CRP-Ops.png",
+            path: logoUrl,
+            content_type: "image/png",
+            content_id: "crp-logo",
+          },
+        ],
+      },
+    });
+
+    if (inlineRes.ok) return inlineRes;
+
+    const remote = buildPasswordResetEmail({
+      username: params.username,
+      resetUrl: params.resetUrl,
+      expiresMinutes: params.expiresMinutes,
+      logoSrc: logoUrl,
+    });
+
+    return await postResendEmail({
+      cfg,
+      idempotencyKey: params.request_id ?? null,
+      payload: {
+        from: cfg.from,
+        to: [params.to],
+        subject: remote.subject,
+        text: remote.text,
+        html: remote.html,
+      },
+    });
+  }
+
+  const noLogo = buildPasswordResetEmail({
     username: params.username,
     resetUrl: params.resetUrl,
     expiresMinutes: params.expiresMinutes,
   });
 
-  const transporter = nodemailer.createTransport({
-    host: cfg.host,
-    port: cfg.port,
-    secure: cfg.secure,
-    auth: { user: cfg.user, pass: cfg.pass },
-    logger: false,
-    debug: false,
-    tls: {
-      rejectUnauthorized: true,
-      minVersion: "TLSv1.2",
+  return await postResendEmail({
+    cfg,
+    idempotencyKey: params.request_id ?? null,
+    payload: {
+      from: cfg.from,
+      to: [params.to],
+      subject: noLogo.subject,
+      text: noLogo.text,
+      html: noLogo.html,
     },
   });
-
-  const logo = await readLogoAttachment();
-  const attachments = logo ? [logo] : [];
-
-  try {
-    await transporter.sendMail({
-      from: cfg.from,
-      to: params.to,
-      subject,
-      text,
-      html,
-      attachments,
-    });
-    return { ok: true };
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : "Email send failed";
-    return { ok: false, error: msg };
-  }
 }
