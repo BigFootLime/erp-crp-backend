@@ -72,7 +72,6 @@ const devisLineSchema = z.preprocess((value) => {
   return v;
 },
 z.object({
-  code_piece: z.preprocess(emptyStringToNull, z.string().trim().min(1)).optional().nullable(),
   description: z.string().trim().min(1),
   quantite: z.coerce.number().positive().optional().default(1),
   unite: z.preprocess(emptyStringToNull, z.string().trim().min(1)).optional().nullable(),

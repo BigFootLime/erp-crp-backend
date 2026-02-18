@@ -215,7 +215,6 @@ async function insertDevisLines(client: PoolClient, devisId: number, lignes: Cre
     const baseIndex = params.length;
     params.push(
       l.description,
-      l.code_piece ?? null,
       l.quantite,
       l.unite ?? null,
       l.prix_unitaire_ht,
@@ -223,7 +222,7 @@ async function insertDevisLines(client: PoolClient, devisId: number, lignes: Cre
       l.taux_tva ?? 20
     );
 
-    const placeholders = Array.from({ length: 7 }, (_, j) => `$${baseIndex + 1 + j}`).join(",");
+    const placeholders = Array.from({ length: 6 }, (_, j) => `$${baseIndex + 1 + j}`).join(",");
     valuesSql.push(`($1,${placeholders})`);
   }
 
@@ -232,7 +231,6 @@ async function insertDevisLines(client: PoolClient, devisId: number, lignes: Cre
     INSERT INTO devis_ligne (
       devis_id,
       description,
-      code_piece,
       quantite,
       unite,
       prix_unitaire_ht,
@@ -350,30 +348,29 @@ export async function repoGetDevis(id: number, includeValue: string) {
           Omit<DevisLine, "id" | "devis_id"> & { id: string; devis_id: string }
         >(
           `
-          SELECT
-            id::text AS id,
-            devis_id::text AS devis_id,
-            code_piece,
-            description,
-            quantite::float8 AS quantite,
-            unite,
-            prix_unitaire_ht::float8 AS prix_unitaire_ht,
-            remise_ligne::float8 AS remise_ligne,
-            taux_tva::float8 AS taux_tva,
-            total_ht::float8 AS total_ht,
-            total_ttc::float8 AS total_ttc
-          FROM devis_ligne
-          WHERE devis_id = $1
-          ORDER BY id ASC
-          `,
-          [id]
-        )
-      ).rows.map((l) => ({
-        ...l,
-        id: toInt(l.id, "devis_ligne.id"),
-        devis_id: toInt(l.devis_id, "devis_ligne.devis_id"),
-      }))
-    : [];
+           SELECT
+             id::text AS id,
+             devis_id::text AS devis_id,
+             description,
+             quantite::float8 AS quantite,
+             unite,
+             prix_unitaire_ht::float8 AS prix_unitaire_ht,
+             remise_ligne::float8 AS remise_ligne,
+             taux_tva::float8 AS taux_tva,
+             total_ht::float8 AS total_ht,
+             total_ttc::float8 AS total_ttc
+           FROM devis_ligne
+           WHERE devis_id = $1
+           ORDER BY id ASC
+           `,
+           [id]
+         )
+       ).rows.map((l) => ({
+         ...l,
+         id: toInt(l.id, "devis_ligne.id"),
+         devis_id: toInt(l.devis_id, "devis_ligne.devis_id"),
+       }))
+     : [];
 
   const documents: DevisDocument[] = includeDocuments
     ? (

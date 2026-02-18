@@ -26,7 +26,6 @@ export type DevisDocument = {
 export type DevisLine = {
   id: number;
   devis_id: number;
-  code_piece: string | null;
   description: string;
   quantite: number;
   unite: string | null;
