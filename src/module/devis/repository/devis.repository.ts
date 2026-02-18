@@ -176,6 +176,7 @@ export async function repoListDevis(filters: ListDevisQueryDTO) {
       d.numero,
       d.client_id,
       d.date_creation::text AS date_creation,
+      d.updated_at::text AS updated_at,
       d.date_validite::text AS date_validite,
       d.statut,
       d.remise_globale::float8 AS remise_globale,
@@ -214,6 +215,7 @@ async function insertDevisLines(client: PoolClient, devisId: number, lignes: Cre
     const baseIndex = params.length;
     params.push(
       l.description,
+      l.code_piece ?? null,
       l.quantite,
       l.unite ?? null,
       l.prix_unitaire_ht,
@@ -221,7 +223,7 @@ async function insertDevisLines(client: PoolClient, devisId: number, lignes: Cre
       l.taux_tva ?? 20
     );
 
-    const placeholders = Array.from({ length: 6 }, (_, j) => `$${baseIndex + 1 + j}`).join(",");
+    const placeholders = Array.from({ length: 7 }, (_, j) => `$${baseIndex + 1 + j}`).join(",");
     valuesSql.push(`($1,${placeholders})`);
   }
 
@@ -230,6 +232,7 @@ async function insertDevisLines(client: PoolClient, devisId: number, lignes: Cre
     INSERT INTO devis_ligne (
       devis_id,
       description,
+      code_piece,
       quantite,
       unite,
       prix_unitaire_ht,
@@ -309,6 +312,7 @@ export async function repoGetDevis(id: number, includeValue: string) {
       d.mode_reglement_id::text AS mode_reglement_id,
       d.compte_vente_id::text AS compte_vente_id,
       d.date_creation::text AS date_creation,
+      d.updated_at::text AS updated_at,
       d.date_validite::text AS date_validite,
       d.statut,
       d.remise_globale::float8 AS remise_globale,
@@ -349,6 +353,7 @@ export async function repoGetDevis(id: number, includeValue: string) {
           SELECT
             id::text AS id,
             devis_id::text AS devis_id,
+            code_piece,
             description,
             quantite::float8 AS quantite,
             unite,
@@ -439,6 +444,7 @@ export async function repoCreateDevis(input: CreateDevisBodyDTO, userId: number,
     const devisId = toInt(idRaw, "devis.id");
 
     const numero = (input.numero ?? `DV-${devisId}`).slice(0, 30);
+    const dateCreation = (input.date_creation ?? new Date().toISOString().slice(0, 10)).slice(0, 10);
 
     const ins = await client.query<{ id: string }>(
       `
@@ -452,6 +458,7 @@ export async function repoCreateDevis(input: CreateDevisBodyDTO, userId: number,
         adresse_livraison_id,
         mode_reglement_id,
         compte_vente_id,
+        date_creation,
         date_validite,
         statut,
         remise_globale,
@@ -461,7 +468,7 @@ export async function repoCreateDevis(input: CreateDevisBodyDTO, userId: number,
         conditions_paiement_id,
         biller_id
       ) VALUES (
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10::date,$11,$12,$13,$14,$15,$16,$17
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10::date,$11::date,$12,$13,$14,$15,$16,$17,$18
       )
       RETURNING id::text AS id
       `,
@@ -475,6 +482,7 @@ export async function repoCreateDevis(input: CreateDevisBodyDTO, userId: number,
         input.adresse_livraison_id ?? null,
         input.mode_reglement_id ?? null,
         input.compte_vente_id ?? null,
+        dateCreation,
         input.date_validite ?? null,
         input.statut,
         input.remise_globale,
@@ -535,6 +543,8 @@ export async function repoUpdateDevis(
       sets.push(`adresse_livraison_id = ${push(input.adresse_livraison_id)}::uuid`);
     if (input.mode_reglement_id !== undefined) sets.push(`mode_reglement_id = ${push(input.mode_reglement_id)}::uuid`);
     if (input.compte_vente_id !== undefined) sets.push(`compte_vente_id = ${push(input.compte_vente_id)}::uuid`);
+    if (input.date_creation !== undefined && input.date_creation !== null)
+      sets.push(`date_creation = ${push(input.date_creation)}::date`);
     if (input.date_validite !== undefined) sets.push(`date_validite = ${push(input.date_validite)}::date`);
     if (input.statut !== undefined) sets.push(`statut = ${push(input.statut)}`);
     if (input.remise_globale !== undefined) sets.push(`remise_globale = ${push(input.remise_globale)}`);
@@ -552,6 +562,7 @@ export async function repoUpdateDevis(
 
     let updatedId: number | null = null;
     if (sets.length) {
+      sets.push("updated_at = now()");
       const updateSql = `
         UPDATE devis
         SET ${sets.join(", ")}
@@ -566,12 +577,16 @@ export async function repoUpdateDevis(
       }
       updatedId = toInt(row.id, "devis.id");
     } else {
-      const exists = await client.query<{ id: string }>(`SELECT id::text AS id FROM devis WHERE id = $1`, [id]);
-      if (exists.rows.length === 0) {
+      const touch = await client.query<{ id: string }>(
+        `UPDATE devis SET updated_at = now() WHERE id = $1 RETURNING id::text AS id`,
+        [id]
+      );
+      const row = touch.rows[0] ?? null;
+      if (!row) {
         await client.query("ROLLBACK");
         return null;
       }
-      updatedId = id;
+      updatedId = toInt(row.id, "devis.id");
     }
 
     if (input.lignes) {

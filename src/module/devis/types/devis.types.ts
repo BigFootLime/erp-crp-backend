@@ -26,6 +26,7 @@ export type DevisDocument = {
 export type DevisLine = {
   id: number;
   devis_id: number;
+  code_piece: string | null;
   description: string;
   quantite: number;
   unite: string | null;
@@ -55,12 +56,22 @@ export type DevisHeader = {
   commentaires: string | null;
   conditions_paiement_id: number | null;
   biller_id: string | null;
+  updated_at?: string | null;
   client?: ClientLite | null;
 };
 
 export type DevisListItem = Pick<
   DevisHeader,
-  "id" | "numero" | "client_id" | "date_creation" | "date_validite" | "statut" | "total_ht" | "total_ttc" | "remise_globale"
+  | "id"
+  | "numero"
+  | "client_id"
+  | "date_creation"
+  | "date_validite"
+  | "statut"
+  | "total_ht"
+  | "total_ttc"
+  | "remise_globale"
+  | "updated_at"
 > & {
   client?: ClientLite | null;
 };

@@ -72,6 +72,7 @@ const devisLineSchema = z.preprocess((value) => {
   return v;
 },
 z.object({
+  code_piece: z.preprocess(emptyStringToNull, z.string().trim().min(1)).optional().nullable(),
   description: z.string().trim().min(1),
   quantite: z.coerce.number().positive().optional().default(1),
   unite: z.preprocess(emptyStringToNull, z.string().trim().min(1)).optional().nullable(),
@@ -89,6 +90,7 @@ export const createDevisBodySchema = z.object({
   adresse_livraison_id: z.string().uuid().optional().nullable(),
   mode_reglement_id: z.string().uuid().optional().nullable(),
   compte_vente_id: z.string().uuid().optional().nullable(),
+  date_creation: z.preprocess(emptyStringToNull, isoDate).optional().nullable(),
   date_validite: z.preprocess(emptyStringToNull, isoDate).optional().nullable(),
   statut: z.preprocess(emptyStringToUndefined, z.string().trim().min(1).max(20)).optional().default("BROUILLON"),
   remise_globale: z.coerce.number().min(0).optional().default(0),
@@ -111,6 +113,7 @@ export const updateDevisBodySchema = z.object({
   adresse_livraison_id: z.string().uuid().optional().nullable(),
   mode_reglement_id: z.string().uuid().optional().nullable(),
   compte_vente_id: z.string().uuid().optional().nullable(),
+  date_creation: z.preprocess(emptyStringToNull, isoDate).optional().nullable(),
   date_validite: z.preprocess(emptyStringToNull, isoDate).optional().nullable(),
   statut: z.preprocess(emptyStringToUndefined, z.string().trim().min(1).max(20)).optional(),
   remise_globale: z.coerce.number().min(0).optional(),
