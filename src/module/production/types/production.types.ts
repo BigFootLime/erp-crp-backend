@@ -64,6 +64,8 @@ export type OrdreFabricationListItem = {
   commande_id: number | null;
   client_id: string | null;
   client_company_name: string | null;
+  production_group_id: string | null;
+  production_group_code: string | null;
   piece_technique_id: string;
   piece_code: string;
   piece_designation: string;
@@ -126,6 +128,8 @@ export type OrdreFabricationDetail = {
   commande_id: number | null;
   client_id: string | null;
   client_company_name: string | null;
+  production_group_id: string | null;
+  production_group_code: string | null;
   piece_technique_id: string;
   piece_code: string;
   piece_designation: string;

@@ -1,20 +1,37 @@
 import type { Request, RequestHandler } from "express";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { z } from "zod";
 import { HttpError } from "../../../utils/httpError";
 import {
   createCommandeSVC,
+  createCadreReleaseSVC,
   deleteCommandeSVC,
+  deleteCadreReleaseLineSVC,
   duplicateCommandeSVC,
+  getCadreReleaseSVC,
   generateAffairesFromOrderSVC,
   getCommandeDocumentFileMetaSVC,
   getCommandeSVC,
+  listCadreReleasesSVC,
   listCommandesSVC,
+  updateCadreReleaseLineSVC,
+  updateCadreReleaseSVC,
+  updateCadreReleaseStatusSVC,
   updateCommandeSVC,
   updateCommandeStatusSVC,
+  addCadreReleaseLineSVC,
+  cancelCadreReleaseSVC,
 } from "../services/commande-client.service";
 import {
+  cadreReleaseStatusSchema,
+  createCadreReleaseBodySchema,
+  createCadreReleaseLineBodySchema,
   listCommandesQuerySchema,
+  releaseIdParamSchema,
+  releaseLineIdParamSchema,
+  updateCadreReleaseBodySchema,
+  updateCadreReleaseLineBodySchema,
   updateCommandeStatusBodySchema,
   type CreateCommandeBodyDTO,
 } from "../validators/commande-client.validators";
@@ -191,6 +208,211 @@ export const duplicateCommande: RequestHandler = async (req, res, next) => {
       return;
     }
     res.status(201).json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+function coerceBool(value: unknown): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value === 1;
+  if (typeof value === "string") {
+    const v = value.trim().toLowerCase();
+    return v === "true" || v === "1" || v === "yes" || v === "y";
+  }
+  return false;
+}
+
+// GET /api/v1/commandes/:id/releases
+export const listCadreReleases: RequestHandler = async (req, res, next) => {
+  try {
+    const includeLines = coerceBool((req.query as { includeLines?: unknown } | undefined)?.includeLines);
+    const out = await listCadreReleasesSVC(req.params.id, { includeLines });
+    res.json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /api/v1/commandes/:id/releases/:releaseId
+export const getCadreRelease: RequestHandler = async (req, res, next) => {
+  try {
+    const parsed = releaseIdParamSchema.safeParse({ params: req.params });
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues?.[0]?.message ?? "Invalid request" });
+      return;
+    }
+    const out = await getCadreReleaseSVC(req.params.id, req.params.releaseId);
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// POST /api/v1/commandes/:id/releases
+export const createCadreRelease: RequestHandler = async (req, res, next) => {
+  try {
+    const body = createCadreReleaseBodySchema.safeParse(req.body);
+    if (!body.success) {
+      res.status(400).json({ error: body.error.issues?.[0]?.message ?? "Invalid request" });
+      return;
+    }
+    const userId = typeof req.user?.id === "number" ? req.user.id : null;
+    const out = await createCadreReleaseSVC(req.params.id, body.data, userId);
+    res.status(201).json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// PATCH /api/v1/commandes/:id/releases/:releaseId
+export const updateCadreRelease: RequestHandler = async (req, res, next) => {
+  try {
+    const paramsParsed = releaseIdParamSchema.safeParse({ params: req.params });
+    if (!paramsParsed.success) {
+      res.status(400).json({ error: paramsParsed.error.issues?.[0]?.message ?? "Invalid request" });
+      return;
+    }
+    const body = updateCadreReleaseBodySchema.safeParse(req.body);
+    if (!body.success) {
+      res.status(400).json({ error: body.error.issues?.[0]?.message ?? "Invalid request" });
+      return;
+    }
+    if (Object.keys(body.data).length === 0) {
+      res.status(400).json({ error: "No fields to update" });
+      return;
+    }
+    const userId = typeof req.user?.id === "number" ? req.user.id : null;
+    const out = await updateCadreReleaseSVC(req.params.id, req.params.releaseId, body.data, userId);
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.status(200).json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// POST /api/v1/commandes/:id/releases/:releaseId/status
+export const updateCadreReleaseStatus: RequestHandler = async (req, res, next) => {
+  try {
+    const paramsParsed = releaseIdParamSchema.safeParse({ params: req.params });
+    if (!paramsParsed.success) {
+      res.status(400).json({ error: paramsParsed.error.issues?.[0]?.message ?? "Invalid request" });
+      return;
+    }
+
+    const parsed = z
+      .object({ statut: cadreReleaseStatusSchema, notes: z.string().max(20000).optional().nullable() })
+      .safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues?.[0]?.message ?? "Invalid request" });
+      return;
+    }
+    const userId = typeof req.user?.id === "number" ? req.user.id : null;
+    const out = await updateCadreReleaseStatusSVC(req.params.id, req.params.releaseId, parsed.data.statut, userId, {
+      notes: parsed.data.notes ?? null,
+    });
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.status(200).json({ ok: true, ...out });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// DELETE /api/v1/commandes/:id/releases/:releaseId
+export const cancelCadreRelease: RequestHandler = async (req, res, next) => {
+  try {
+    const paramsParsed = releaseIdParamSchema.safeParse({ params: req.params });
+    if (!paramsParsed.success) {
+      res.status(400).json({ error: paramsParsed.error.issues?.[0]?.message ?? "Invalid request" });
+      return;
+    }
+    const userId = typeof req.user?.id === "number" ? req.user.id : null;
+    const out = await cancelCadreReleaseSVC(req.params.id, req.params.releaseId, userId);
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.status(200).json({ ok: true, ...out });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// POST /api/v1/commandes/:id/releases/:releaseId/lines
+export const addCadreReleaseLine: RequestHandler = async (req, res, next) => {
+  try {
+    const paramsParsed = releaseIdParamSchema.safeParse({ params: req.params });
+    if (!paramsParsed.success) {
+      res.status(400).json({ error: paramsParsed.error.issues?.[0]?.message ?? "Invalid request" });
+      return;
+    }
+    const body = createCadreReleaseLineBodySchema.safeParse(req.body);
+    if (!body.success) {
+      res.status(400).json({ error: body.error.issues?.[0]?.message ?? "Invalid request" });
+      return;
+    }
+    const userId = typeof req.user?.id === "number" ? req.user.id : null;
+    const out = await addCadreReleaseLineSVC(req.params.id, req.params.releaseId, body.data, userId);
+    res.status(201).json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// PATCH /api/v1/commandes/:id/releases/:releaseId/lines/:lineId
+export const updateCadreReleaseLine: RequestHandler = async (req, res, next) => {
+  try {
+    const paramsParsed = releaseLineIdParamSchema.safeParse({ params: req.params });
+    if (!paramsParsed.success) {
+      res.status(400).json({ error: paramsParsed.error.issues?.[0]?.message ?? "Invalid request" });
+      return;
+    }
+    const body = updateCadreReleaseLineBodySchema.safeParse(req.body);
+    if (!body.success) {
+      res.status(400).json({ error: body.error.issues?.[0]?.message ?? "Invalid request" });
+      return;
+    }
+    if (Object.keys(body.data).length === 0) {
+      res.status(400).json({ error: "No fields to update" });
+      return;
+    }
+    const userId = typeof req.user?.id === "number" ? req.user.id : null;
+    const out = await updateCadreReleaseLineSVC(req.params.id, req.params.releaseId, req.params.lineId, body.data, userId);
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.status(200).json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// DELETE /api/v1/commandes/:id/releases/:releaseId/lines/:lineId
+export const deleteCadreReleaseLine: RequestHandler = async (req, res, next) => {
+  try {
+    const paramsParsed = releaseLineIdParamSchema.safeParse({ params: req.params });
+    if (!paramsParsed.success) {
+      res.status(400).json({ error: paramsParsed.error.issues?.[0]?.message ?? "Invalid request" });
+      return;
+    }
+    const userId = typeof req.user?.id === "number" ? req.user.id : null;
+    const ok = await deleteCadreReleaseLineSVC(req.params.id, req.params.releaseId, req.params.lineId, userId);
+    if (!ok) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.status(204).send();
   } catch (err) {
     next(err);
   }

@@ -65,6 +65,9 @@ export type PlanningEventListItem = {
   poste_code: string | null;
   poste_label: string | null;
 
+  production_group_id?: string | null;
+  production_group_code?: string | null;
+
   // Optional fields used for planning visuals.
   // These may be populated progressively by backend/DB patches.
   of_date_fin_prevue?: string | null;

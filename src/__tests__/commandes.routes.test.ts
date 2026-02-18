@@ -250,9 +250,10 @@ describe("/api/v1/commandes", () => {
 
     mocks.clientQuery
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ id: "123" }] }) // nextval commande_client_id_seq
       .mockResolvedValueOnce({ rows: [{ id: "123" }] }) // INSERT commande_client
       .mockResolvedValueOnce({ rows: [] }) // INSERT commande_ligne
-      .mockResolvedValueOnce({ rows: [{ id: "11111111-1111-1111-1111-111111111111" }] }) // INSERT documents_clients
+      .mockResolvedValueOnce({ rows: [] }) // INSERT documents_clients
       .mockResolvedValueOnce({ rows: [] }) // INSERT commande_documents
       .mockResolvedValueOnce({ rows: [] }); // COMMIT
 
@@ -293,6 +294,20 @@ describe("/api/v1/commandes", () => {
   it("PATCH /api/v1/commandes/:id works and replaces lignes", async () => {
     mocks.clientQuery
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            numero: "CC-123",
+            client_id: "001",
+            order_type: "FERME",
+            adresse_facturation_id: null,
+            cadre_start_date: null,
+            cadre_end_date: null,
+            dest_stock_magasin_id: null,
+            dest_stock_emplacement_id: null,
+          },
+        ],
+      }) // SELECT existing commande_client
       .mockResolvedValueOnce({ rows: [{ id: "123" }] }) // UPDATE commande_client
       .mockResolvedValueOnce({ rows: [] }) // DELETE lignes
       .mockResolvedValueOnce({ rows: [] }) // DELETE echeances

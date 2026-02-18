@@ -4,13 +4,22 @@ import multer from "multer"
 import path from "path"
 import fs from "fs"
 import {
+  addCadreReleaseLine,
   createCommande,
+  createCadreRelease,
+  cancelCadreRelease,
   deleteCommande,
   duplicateCommande,
   generateAffairesFromOrder,
+  getCadreRelease,
   getCommande,
   getCommandeDocumentFile,
+  listCadreReleases,
   listCommandes,
+  deleteCadreReleaseLine,
+  updateCadreRelease,
+  updateCadreReleaseLine,
+  updateCadreReleaseStatus,
   updateCommande,
   updateCommandeStatus,
 } from "../controllers/commande-client.controller"
@@ -18,6 +27,8 @@ import {
   createCommandeBodySchema,
   documentIdParamSchema,
   idParamSchema,
+  releaseIdParamSchema,
+  releaseLineIdParamSchema,
   validate,
 } from "../validators/commande-client.validators"
 
@@ -69,6 +80,42 @@ router.get("/:id", validate(idParamSchema), getCommande)
 
 // GET /api/v1/commandes/:id/documents/:docId/file
 router.get("/:id/documents/:docId/file", validate(documentIdParamSchema), getCommandeDocumentFile)
+
+// CADRE releases (call-offs)
+// GET /api/v1/commandes/:id/releases
+router.get("/:id/releases", validate(idParamSchema), listCadreReleases)
+
+// POST /api/v1/commandes/:id/releases
+router.post("/:id/releases", validate(idParamSchema), createCadreRelease)
+
+// GET /api/v1/commandes/:id/releases/:releaseId
+router.get("/:id/releases/:releaseId", validate(releaseIdParamSchema), getCadreRelease)
+
+// PATCH /api/v1/commandes/:id/releases/:releaseId
+router.patch("/:id/releases/:releaseId", validate(releaseIdParamSchema), updateCadreRelease)
+
+// DELETE /api/v1/commandes/:id/releases/:releaseId  (cancel)
+router.delete("/:id/releases/:releaseId", validate(releaseIdParamSchema), cancelCadreRelease)
+
+// POST /api/v1/commandes/:id/releases/:releaseId/status
+router.post("/:id/releases/:releaseId/status", validate(releaseIdParamSchema), updateCadreReleaseStatus)
+
+// POST /api/v1/commandes/:id/releases/:releaseId/lines
+router.post("/:id/releases/:releaseId/lines", validate(releaseIdParamSchema), addCadreReleaseLine)
+
+// PATCH /api/v1/commandes/:id/releases/:releaseId/lines/:lineId
+router.patch(
+  "/:id/releases/:releaseId/lines/:lineId",
+  validate(releaseLineIdParamSchema),
+  updateCadreReleaseLine
+)
+
+// DELETE /api/v1/commandes/:id/releases/:releaseId/lines/:lineId
+router.delete(
+  "/:id/releases/:releaseId/lines/:lineId",
+  validate(releaseLineIdParamSchema),
+  deleteCadreReleaseLine
+)
 
 // PATCH /api/v1/commandes/:id  (multipart: data + documents[])
 router.patch("/:id", validate(idParamSchema), upload.array("documents[]"), parseCommandeBody, updateCommande)

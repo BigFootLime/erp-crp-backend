@@ -1,6 +1,12 @@
 import type { RequestHandler } from "express";
 import { z } from "zod";
 
+const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date (expected YYYY-MM-DD)");
+
+export const commandeOrderTypeSchema = z.enum(["FERME", "CADRE", "INTERNE"]);
+
+export const cadreReleaseStatusSchema = z.enum(["PLANNED", "SENT", "CONFIRMED", "DELIVERED", "CANCELLED"]);
+
 const boolFromQuery = z.preprocess((value) => {
   if (typeof value !== "string") return value;
   const v = value.trim().toLowerCase();
@@ -40,17 +46,26 @@ export const createCommandeBodySchema = z.preprocess((value) => {
   return value;
 },
 z.object({
-  numero: z.string().min(1),
-  client_id: z.string().min(1),
-  date_commande: z.string().min(1),
+  order_type: commandeOrderTypeSchema.optional().default("FERME"),
+  numero: z.string().trim().min(1).optional(),
+  client_id: z.string().trim().min(1).optional().nullable(),
+  date_commande: isoDate,
   contact_id: z.string().uuid().optional().nullable(),
   destinataire_id: z.string().uuid().optional().nullable(),
+  adresse_facturation_id: z.string().uuid().optional().nullable(),
   emetteur: z.string().optional().nullable(),
   code_client: z.string().optional().nullable(),
   arc_edi: z.boolean().optional().default(false),
   arc_date_envoi: z.string().optional().nullable(),
   compteur_affaire_id: z.string().uuid().optional().nullable(),
   type_affaire: z.enum(["fabrication", "previsionnel", "regroupement"]).optional().default("fabrication"),
+
+  cadre_start_date: isoDate.optional().nullable(),
+  cadre_end_date: isoDate.optional().nullable(),
+
+  dest_stock_magasin_id: z.coerce.number().int().positive().optional().nullable(),
+  dest_stock_emplacement_id: z.coerce.number().int().positive().optional().nullable(),
+
   mode_port_id: z.string().uuid().optional().nullable(),
   mode_reglement_id: z.string().uuid().optional().nullable(),
   conditions_paiement_id: z.number().int().optional().nullable(),
@@ -62,7 +77,54 @@ z.object({
   total_ttc: z.number().min(0).optional().default(0),
   lignes: z.array(commandeLigneInputSchema).min(1),
   echeances: z.array(commandeEcheanceInputSchema).optional().default([]),
-}));
+}))
+  .superRefine((val, ctx) => {
+    if (val.order_type !== "INTERNE") {
+      const clientId = typeof val.client_id === "string" ? val.client_id.trim() : "";
+      if (!clientId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "client_id is required for customer orders",
+          path: ["client_id"],
+        });
+      }
+    }
+
+    if (val.order_type === "INTERNE") {
+      if (!(typeof val.dest_stock_magasin_id === "number" && Number.isFinite(val.dest_stock_magasin_id))) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "dest_stock_magasin_id is required for internal orders",
+          path: ["dest_stock_magasin_id"],
+        });
+      }
+
+      val.lignes.forEach((l, i) => {
+        const codePiece = (l.code_piece ?? "").toString().trim();
+        if (!codePiece) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "code_piece is required for internal order lines",
+            path: ["lignes", i, "code_piece"],
+          });
+        }
+      });
+    }
+
+    if (val.order_type === "CADRE") {
+      if (val.cadre_start_date && val.cadre_end_date) {
+        const start = new Date(val.cadre_start_date).getTime();
+        const end = new Date(val.cadre_end_date).getTime();
+        if (Number.isFinite(start) && Number.isFinite(end) && start > end) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "cadre_start_date must be <= cadre_end_date",
+            path: ["cadre_end_date"],
+          });
+        }
+      }
+    }
+  });
 
 export type CreateCommandeBodyDTO = z.infer<typeof createCommandeBodySchema>;
 
@@ -77,6 +139,7 @@ export const listCommandesQuerySchema = z.object({
   q: z.string().optional(),
   client_id: z.string().optional(),
   statut: z.string().optional(),
+  order_type: commandeOrderTypeSchema.optional(),
   from: z.string().optional(),
   to: z.string().optional(),
   min_total_ttc: z.coerce.number().optional(),
@@ -96,12 +159,74 @@ export const idParamSchema = z.object({
   }),
 });
 
+export const releaseIdParamSchema = z.object({
+  params: z.object({
+    id: z.string().regex(/^\d+$/, "id must be an integer"),
+    releaseId: z.string().regex(/^\d+$/, "releaseId must be an integer"),
+  }),
+});
+
+export const releaseLineIdParamSchema = z.object({
+  params: z.object({
+    id: z.string().regex(/^\d+$/, "id must be an integer"),
+    releaseId: z.string().regex(/^\d+$/, "releaseId must be an integer"),
+    lineId: z.string().regex(/^\d+$/, "lineId must be an integer"),
+  }),
+});
+
 export const documentIdParamSchema = z.object({
   params: z.object({
     id: z.string().regex(/^\d+$/, "id must be an integer"),
     docId: z.string().uuid("docId must be a UUID"),
   }),
 });
+
+export const createCadreReleaseLineBodySchema = z.object({
+  ordre: z.coerce.number().int().positive().optional(),
+  commande_ligne_id: z.coerce.number().int().positive().optional().nullable(),
+  designation: z.string().trim().min(1).max(10000),
+  code_piece: z.string().trim().min(1).max(200).optional().nullable(),
+  quantite: z.coerce.number().positive(),
+  unite: z.string().trim().min(1).max(30).optional().nullable(),
+  delai_client: z.string().trim().min(1).max(100).optional().nullable(),
+});
+
+export type CreateCadreReleaseLineBodyDTO = z.infer<typeof createCadreReleaseLineBodySchema>;
+
+export const updateCadreReleaseLineBodySchema = z.object({
+  ordre: z.coerce.number().int().positive().optional(),
+  commande_ligne_id: z.coerce.number().int().positive().optional().nullable(),
+  designation: z.string().trim().min(1).max(10000).optional(),
+  code_piece: z.string().trim().min(1).max(200).optional().nullable(),
+  quantite: z.coerce.number().positive().optional(),
+  unite: z.string().trim().min(1).max(30).optional().nullable(),
+  delai_client: z.string().trim().min(1).max(100).optional().nullable(),
+});
+
+export type UpdateCadreReleaseLineBodyDTO = z.infer<typeof updateCadreReleaseLineBodySchema>;
+
+export const createCadreReleaseBodySchema = z
+  .object({
+    date_demande: isoDate.optional().default(() => new Date().toISOString().slice(0, 10)),
+    date_livraison_prevue: isoDate.optional().nullable(),
+    statut: cadreReleaseStatusSchema.optional().default("PLANNED"),
+    notes: z.string().max(20000).optional().nullable(),
+    lignes: z.array(createCadreReleaseLineBodySchema).optional().default([]),
+  })
+  .passthrough();
+
+export type CreateCadreReleaseBodyDTO = z.infer<typeof createCadreReleaseBodySchema>;
+
+export const updateCadreReleaseBodySchema = z
+  .object({
+    date_demande: isoDate.optional(),
+    date_livraison_prevue: isoDate.optional().nullable(),
+    statut: cadreReleaseStatusSchema.optional(),
+    notes: z.string().max(20000).optional().nullable(),
+  })
+  .passthrough();
+
+export type UpdateCadreReleaseBodyDTO = z.infer<typeof updateCadreReleaseBodySchema>;
 
 export function validate(schema: z.ZodTypeAny): RequestHandler {
   return (req, res, next) => {

@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import path from "node:path";
 import type { PoolClient } from "pg";
 import pool from "../../../config/database";
+import { HttpError } from "../../../utils/httpError";
 import type {
   CreateCommandeInput,
   UploadedDocument,
@@ -27,6 +28,15 @@ function toNullableInt(value: unknown, label = "id"): number | null {
   return toInt(value, label);
 }
 
+function coerceOrderType(value: unknown): CreateCommandeInput["order_type"] {
+  if (value === "FERME" || value === "CADRE" || value === "INTERNE") return value;
+  if (typeof value === "string") {
+    const v = value.trim().toUpperCase();
+    if (v === "FERME" || v === "CADRE" || v === "INTERNE") return v as CreateCommandeInput["order_type"];
+  }
+  return "FERME";
+}
+
 function sortColumn(sortBy: ListCommandesQueryDTO["sortBy"]) {
   switch (sortBy) {
     case "numero":
@@ -44,6 +54,10 @@ function sortColumn(sortBy: ListCommandesQueryDTO["sortBy"]) {
 
 function sortDirection(sortDir: ListCommandesQueryDTO["sortDir"]) {
   return sortDir === "asc" ? "ASC" : "DESC";
+}
+
+function hasOwn(obj: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(obj, key);
 }
 
 type ListWhere = { whereSql: string; values: unknown[] };
@@ -68,6 +82,11 @@ function buildListWhere(filters: ListCommandesQueryDTO): ListWhere {
   if (filters.statut && filters.statut.trim().length > 0) {
     const p = push(filters.statut.trim());
     where.push(`COALESCE(st.nouveau_statut, 'brouillon') = ${p}`);
+  }
+
+  if (filters.order_type) {
+    const p = push(filters.order_type);
+    where.push(`cc.order_type = ${p}`);
   }
 
   if (filters.from && filters.from.trim().length > 0) {
@@ -130,6 +149,7 @@ export async function repoListCommandes(filters: ListCommandesQueryDTO) {
       cc.id::text AS id,
       cc.numero,
       cc.client_id,
+      cc.order_type,
       cc.date_commande::text AS date_commande,
       cc.total_ht::float8 AS total_ht,
       cc.total_ttc::float8 AS total_ttc,
@@ -204,6 +224,7 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
       cc.client_id,
       cc.contact_id::text AS contact_id,
       cc.destinataire_id::text AS destinataire_id,
+      cc.adresse_facturation_id::text AS adresse_facturation_id,
       cc.emetteur,
       cc.code_client,
       cc.date_commande::text AS date_commande,
@@ -211,6 +232,11 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
       cc.arc_date_envoi::text AS arc_date_envoi,
       cc.compteur_affaire_id::text AS compteur_affaire_id,
       cc.type_affaire,
+      cc.order_type,
+      cc.cadre_start_date::text AS cadre_start_date,
+      cc.cadre_end_date::text AS cadre_end_date,
+      cc.dest_stock_magasin_id::int AS dest_stock_magasin_id,
+      cc.dest_stock_emplacement_id::int AS dest_stock_emplacement_id,
       cc.mode_port_id::text AS mode_port_id,
       cc.mode_reglement_id::text AS mode_reglement_id,
       cc.conditions_paiement_id,
@@ -236,9 +262,10 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
   type HeaderRow = {
     id: string;
     numero: string;
-    client_id: string;
+    client_id: string | null;
     contact_id: string | null;
     destinataire_id: string | null;
+    adresse_facturation_id: string | null;
     emetteur: string | null;
     code_client: string | null;
     date_commande: string;
@@ -246,6 +273,11 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
     arc_date_envoi: string | null;
     compteur_affaire_id: string | null;
     type_affaire: string;
+    order_type: string;
+    cadre_start_date: string | null;
+    cadre_end_date: string | null;
+    dest_stock_magasin_id: number | null;
+    dest_stock_emplacement_id: number | null;
     mode_port_id: string | null;
     mode_reglement_id: string | null;
     conditions_paiement_id: number | null;
@@ -451,22 +483,24 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
   });
 
   const client = inc.client
-    ? (
-        await pool.query(
-          `
-          SELECT
-            client_id,
-            company_name,
-            email,
-            phone,
-            delivery_address_id::text AS delivery_address_id,
-            bill_address_id::text AS bill_address_id
-          FROM clients
-          WHERE client_id = $1
-          `,
-          [commande.client_id]
-        )
-      ).rows[0] ?? null
+    ? commande.client_id
+      ? (
+          await pool.query(
+            `
+            SELECT
+              client_id,
+              company_name,
+              email,
+              phone,
+              delivery_address_id::text AS delivery_address_id,
+              bill_address_id::text AS bill_address_id
+            FROM clients
+            WHERE client_id = $1
+            `,
+            [commande.client_id]
+          )
+        ).rows[0] ?? null
+      : null
     : null;
 
   return {
@@ -627,12 +661,26 @@ export async function repoCreateCommande(input: CreateCommandeInput, documents: 
   try {
     await client.query("BEGIN");
 
+    const idRes = await client.query<{ id: string }>(
+      `SELECT nextval('public.commande_client_id_seq')::bigint::text AS id`
+    );
+    const rawId = idRes.rows[0]?.id;
+    if (!rawId) throw new Error("Failed to allocate commande id");
+    const commandeIdInt = toInt(rawId, "commande_client.id");
+
+    const numero = typeof input.numero === "string" && input.numero.trim().length > 0 ? input.numero.trim() : null;
+    const numeroForInsert = numero ?? `CC-${commandeIdInt}`.slice(0, 30);
+
+    const orderType = input.order_type ?? "FERME";
+
     const insertSql = `
       INSERT INTO commande_client (
+        id,
         numero,
         client_id,
         contact_id,
         destinataire_id,
+        adresse_facturation_id,
         emetteur,
         code_client,
         date_commande,
@@ -640,6 +688,11 @@ export async function repoCreateCommande(input: CreateCommandeInput, documents: 
         arc_date_envoi,
         compteur_affaire_id,
         type_affaire,
+        order_type,
+        cadre_start_date,
+        cadre_end_date,
+        dest_stock_magasin_id,
+        dest_stock_emplacement_id,
         mode_port_id,
         mode_reglement_id,
         conditions_paiement_id,
@@ -650,15 +703,17 @@ export async function repoCreateCommande(input: CreateCommandeInput, documents: 
         total_ht,
         total_ttc
       ) VALUES (
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27
       )
       RETURNING id::text AS id
     `;
     const insertParams = [
-      input.numero,
-      input.client_id,
+      commandeIdInt,
+      numeroForInsert,
+      input.client_id ?? null,
       input.contact_id ?? null,
       input.destinataire_id ?? null,
+      input.adresse_facturation_id ?? null,
       input.emetteur ?? null,
       input.code_client ?? null,
       input.date_commande,
@@ -666,6 +721,11 @@ export async function repoCreateCommande(input: CreateCommandeInput, documents: 
       input.arc_date_envoi ?? null,
       input.compteur_affaire_id ?? null,
       input.type_affaire ?? "fabrication",
+      orderType,
+      input.cadre_start_date ?? null,
+      input.cadre_end_date ?? null,
+      input.dest_stock_magasin_id ?? null,
+      input.dest_stock_emplacement_id ?? null,
       input.mode_port_id ?? null,
       input.mode_reglement_id ?? null,
       input.conditions_paiement_id ?? null,
@@ -699,6 +759,58 @@ export async function repoUpdateCommande(id: string, input: CreateCommandeInput,
   try {
     await client.query("BEGIN");
 
+    const existingRes = await client.query<{
+      numero: string;
+      client_id: string | null;
+      order_type: string;
+      adresse_facturation_id: string | null;
+      cadre_start_date: string | null;
+      cadre_end_date: string | null;
+      dest_stock_magasin_id: number | null;
+      dest_stock_emplacement_id: number | null;
+    }>(
+      `
+      SELECT
+        numero,
+        client_id,
+        order_type,
+        adresse_facturation_id::text AS adresse_facturation_id,
+        cadre_start_date::text AS cadre_start_date,
+        cadre_end_date::text AS cadre_end_date,
+        dest_stock_magasin_id::int AS dest_stock_magasin_id,
+        dest_stock_emplacement_id::int AS dest_stock_emplacement_id
+      FROM commande_client
+      WHERE id = $1::bigint
+      FOR UPDATE
+      `,
+      [id]
+    );
+    const existing = existingRes.rows[0] ?? null;
+    if (!existing) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    const numero = typeof input.numero === "string" && input.numero.trim().length > 0 ? input.numero.trim() : existing.numero;
+    const orderType = input.order_type ?? coerceOrderType(existing.order_type);
+
+    const clientIdForUpdate = hasOwn(input as object, "client_id") ? (input.client_id ?? null) : existing.client_id;
+    const adresseFacturationForUpdate = hasOwn(input as object, "adresse_facturation_id")
+      ? (input.adresse_facturation_id ?? null)
+      : existing.adresse_facturation_id;
+    const cadreStartForUpdate = hasOwn(input as object, "cadre_start_date")
+      ? (input.cadre_start_date ?? null)
+      : existing.cadre_start_date;
+    const cadreEndForUpdate = hasOwn(input as object, "cadre_end_date")
+      ? (input.cadre_end_date ?? null)
+      : existing.cadre_end_date;
+    const destMagasinForUpdate = hasOwn(input as object, "dest_stock_magasin_id")
+      ? (input.dest_stock_magasin_id ?? null)
+      : existing.dest_stock_magasin_id;
+    const destEmplacementForUpdate = hasOwn(input as object, "dest_stock_emplacement_id")
+      ? (input.dest_stock_emplacement_id ?? null)
+      : existing.dest_stock_emplacement_id;
+
     const updateSql = `
       UPDATE commande_client
       SET
@@ -706,32 +818,39 @@ export async function repoUpdateCommande(id: string, input: CreateCommandeInput,
         client_id = $3,
         contact_id = $4,
         destinataire_id = $5,
-        emetteur = $6,
-        code_client = $7,
-        date_commande = $8,
-        arc_edi = $9,
-        arc_date_envoi = $10,
-        compteur_affaire_id = $11,
-        type_affaire = $12,
-        mode_port_id = $13,
-        mode_reglement_id = $14,
-        conditions_paiement_id = $15,
-        biller_id = $16,
-        compte_vente_id = $17,
-        commentaire = $18,
-        remise_globale = $19,
-        total_ht = $20,
-        total_ttc = $21,
+        adresse_facturation_id = $6,
+        emetteur = $7,
+        code_client = $8,
+        date_commande = $9,
+        arc_edi = $10,
+        arc_date_envoi = $11,
+        compteur_affaire_id = $12,
+        type_affaire = $13,
+        order_type = $14,
+        cadre_start_date = $15,
+        cadre_end_date = $16,
+        dest_stock_magasin_id = $17,
+        dest_stock_emplacement_id = $18,
+        mode_port_id = $19,
+        mode_reglement_id = $20,
+        conditions_paiement_id = $21,
+        biller_id = $22,
+        compte_vente_id = $23,
+        commentaire = $24,
+        remise_globale = $25,
+        total_ht = $26,
+        total_ttc = $27,
         updated_at = now()
       WHERE id = $1
       RETURNING id::text AS id
     `;
     const updateParams = [
       id,
-      input.numero,
-      input.client_id,
+      numero,
+      clientIdForUpdate,
       input.contact_id ?? null,
       input.destinataire_id ?? null,
+      adresseFacturationForUpdate,
       input.emetteur ?? null,
       input.code_client ?? null,
       input.date_commande,
@@ -739,6 +858,11 @@ export async function repoUpdateCommande(id: string, input: CreateCommandeInput,
       input.arc_date_envoi ?? null,
       input.compteur_affaire_id ?? null,
       input.type_affaire ?? "fabrication",
+      orderType,
+      cadreStartForUpdate,
+      cadreEndForUpdate,
+      destMagasinForUpdate,
+      destEmplacementForUpdate,
       input.mode_port_id ?? null,
       input.mode_reglement_id ?? null,
       input.conditions_paiement_id ?? null,
@@ -840,11 +964,12 @@ export async function repoGenerateAffairesFromOrder(id: string) {
     await client.query("BEGIN");
 
     const commandeRes = await client.query<{
-      client_id: string;
+      client_id: string | null;
       type_affaire: string;
+      order_type: string;
     }>(
       `
-      SELECT client_id, type_affaire
+      SELECT client_id, type_affaire, order_type
       FROM commande_client
       WHERE id = $1
       FOR UPDATE
@@ -855,6 +980,10 @@ export async function repoGenerateAffairesFromOrder(id: string) {
     if (!commande) {
       await client.query("ROLLBACK");
       return null;
+    }
+
+    if (!commande.client_id) {
+      throw new HttpError(400, "COMMANDE_CLIENT_REQUIRED", "Cannot generate affaire from a commande without client_id");
     }
 
     const existing = await client.query<{ id: string }>(
@@ -915,10 +1044,16 @@ export async function repoDuplicateCommande(id: string) {
         client_id,
         contact_id,
         destinataire_id,
+        adresse_facturation_id,
         emetteur,
         code_client,
         compteur_affaire_id,
         type_affaire,
+        order_type,
+        cadre_start_date,
+        cadre_end_date,
+        dest_stock_magasin_id,
+        dest_stock_emplacement_id,
         mode_port_id,
         mode_reglement_id,
         conditions_paiement_id,
@@ -977,6 +1112,7 @@ export async function repoDuplicateCommande(id: string) {
         client_id,
         contact_id,
         destinataire_id,
+        adresse_facturation_id,
         emetteur,
         code_client,
         date_commande,
@@ -984,6 +1120,11 @@ export async function repoDuplicateCommande(id: string) {
         arc_date_envoi,
         compteur_affaire_id,
         type_affaire,
+        order_type,
+        cadre_start_date,
+        cadre_end_date,
+        dest_stock_magasin_id,
+        dest_stock_emplacement_id,
         mode_port_id,
         mode_reglement_id,
         conditions_paiement_id,
@@ -994,7 +1135,7 @@ export async function repoDuplicateCommande(id: string) {
         total_ht,
         total_ttc
       ) VALUES (
-        $1,$2,$3,$4,$5,$6,$7, CURRENT_DATE, false, NULL, $8,$9,$10,$11,$12,$13,$14,$15,$16,$17
+        $1,$2,$3,$4,$5,$6,$7,$8, CURRENT_DATE, false, NULL, $9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24
       )
       `,
       [
@@ -1003,10 +1144,16 @@ export async function repoDuplicateCommande(id: string) {
         original.client_id,
         original.contact_id,
         original.destinataire_id,
+        original.adresse_facturation_id,
         original.emetteur,
         original.code_client,
         original.compteur_affaire_id,
         original.type_affaire,
+        original.order_type,
+        original.cadre_start_date,
+        original.cadre_end_date,
+        original.dest_stock_magasin_id,
+        original.dest_stock_emplacement_id,
         original.mode_port_id,
         original.mode_reglement_id,
         original.conditions_paiement_id,

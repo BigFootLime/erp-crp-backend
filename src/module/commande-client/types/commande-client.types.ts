@@ -7,12 +7,17 @@ export type ClientLite = {
   bill_address_id: string | null;
 };
 
+export type CommandeOrderType = "FERME" | "CADRE" | "INTERNE";
+
+export type CadreReleaseStatus = "PLANNED" | "SENT" | "CONFIRMED" | "DELIVERED" | "CANCELLED";
+
 export type CommandeClient = {
   id: number;
   numero: string;
-  client_id: string;
+  client_id: string | null;
   contact_id: string | null;
   destinataire_id: string | null;
+  adresse_facturation_id: string | null;
   emetteur: string | null;
   code_client: string | null;
   date_commande: string;
@@ -20,6 +25,11 @@ export type CommandeClient = {
   arc_date_envoi: string | null;
   compteur_affaire_id: string | null;
   type_affaire: string;
+  order_type: CommandeOrderType;
+  cadre_start_date: string | null;
+  cadre_end_date: string | null;
+  dest_stock_magasin_id: number | null;
+  dest_stock_emplacement_id: number | null;
   mode_port_id: string | null;
   mode_reglement_id: string | null;
   conditions_paiement_id: number | null;
@@ -36,9 +46,47 @@ export type CommandeClient = {
 
 export type CommandeListItem = Pick<
   CommandeClient,
-  "id" | "numero" | "client_id" | "date_commande" | "total_ttc" | "updated_at" | "statut" | "total_ht"
+  | "id"
+  | "numero"
+  | "client_id"
+  | "order_type"
+  | "date_commande"
+  | "total_ttc"
+  | "updated_at"
+  | "statut"
+  | "total_ht"
 > & {
   client?: ClientLite | null;
+};
+
+export type CommandeCadreRelease = {
+  id: number;
+  commande_cadre_id: number;
+  numero_release: string;
+  date_demande: string;
+  date_livraison_prevue: string | null;
+  statut: CadreReleaseStatus;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+  created_by: number | null;
+  updated_by: number | null;
+};
+
+export type CommandeCadreReleaseLine = {
+  id: number;
+  release_id: number;
+  ordre: number;
+  commande_ligne_id: number | null;
+  designation: string;
+  code_piece: string | null;
+  quantite: number;
+  unite: string | null;
+  delai_client: string | null;
+  created_at: string;
+  updated_at: string;
+  created_by: number | null;
+  updated_by: number | null;
 };
 
 export type CommandeClientLine = {
@@ -140,17 +188,23 @@ export type CommandeEcheanceInput = {
 };
 
 export type CreateCommandeInput = {
-  numero: string;
-  client_id: string;
+  numero?: string;
+  client_id?: string | null;
   date_commande?: string;
   contact_id?: string | null;
   destinataire_id?: string | null;
+  adresse_facturation_id?: string | null;
   emetteur?: string | null;
   code_client?: string | null;
   arc_edi?: boolean;
   arc_date_envoi?: string | null;
   compteur_affaire_id?: string | null;
   type_affaire?: string;
+  order_type?: CommandeOrderType;
+  cadre_start_date?: string | null;
+  cadre_end_date?: string | null;
+  dest_stock_magasin_id?: number | null;
+  dest_stock_emplacement_id?: number | null;
   mode_port_id?: string | null;
   mode_reglement_id?: string | null;
   conditions_paiement_id?: number | null;
@@ -162,6 +216,49 @@ export type CreateCommandeInput = {
   total_ttc?: number;
   lignes: CommandeLigneInput[];
   echeances?: CommandeEcheanceInput[];
+};
+
+export type CreateCadreReleaseInput = {
+  date_demande?: string;
+  date_livraison_prevue?: string | null;
+  statut?: CadreReleaseStatus;
+  notes?: string | null;
+  lignes?: Array<{
+    ordre?: number;
+    commande_ligne_id?: number | null;
+    designation: string;
+    code_piece?: string | null;
+    quantite: number;
+    unite?: string | null;
+    delai_client?: string | null;
+  }>;
+};
+
+export type UpdateCadreReleasePatch = {
+  date_demande?: string;
+  date_livraison_prevue?: string | null;
+  statut?: CadreReleaseStatus;
+  notes?: string | null;
+};
+
+export type CreateCadreReleaseLineInput = {
+  ordre?: number;
+  commande_ligne_id?: number | null;
+  designation: string;
+  code_piece?: string | null;
+  quantite: number;
+  unite?: string | null;
+  delai_client?: string | null;
+};
+
+export type UpdateCadreReleaseLinePatch = {
+  ordre?: number;
+  commande_ligne_id?: number | null;
+  designation?: string;
+  code_piece?: string | null;
+  quantite?: number;
+  unite?: string | null;
+  delai_client?: string | null;
 };
 
 export type UploadedDocument = {

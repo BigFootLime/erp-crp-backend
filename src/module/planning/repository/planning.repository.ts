@@ -165,6 +165,9 @@ async function selectPlanningEventListItemById(q: DbQueryer, id: string): Promis
     poste_code: string | null;
     poste_label: string | null;
 
+    production_group_id: string | null;
+    production_group_code: string | null;
+
     of_date_fin_prevue: string | null;
     deadline_ts: string | null;
     stop_reason: string | null;
@@ -206,6 +209,9 @@ async function selectPlanningEventListItemById(q: DbQueryer, id: string): Promis
         p.code AS poste_code,
         p.label AS poste_label,
 
+        o.production_group_id::text AS production_group_id,
+        pg.code AS production_group_code,
+
         o.date_fin_prevue::text AS of_date_fin_prevue,
         to_jsonb(e)->>'deadline_ts' AS deadline_ts,
         to_jsonb(e)->>'stop_reason' AS stop_reason,
@@ -215,6 +221,7 @@ async function selectPlanningEventListItemById(q: DbQueryer, id: string): Promis
       LEFT JOIN public.ordres_fabrication o ON o.id = COALESCE(e.of_id, op.of_id)
       LEFT JOIN public.pieces_techniques pt ON pt.id = o.piece_technique_id
       LEFT JOIN public.clients c ON c.client_id = o.client_id
+      LEFT JOIN public.production_group pg ON pg.id = o.production_group_id
       LEFT JOIN public.machines m ON m.id = e.machine_id
       LEFT JOIN public.postes p ON p.id = e.poste_id
       WHERE e.id = $1::uuid
@@ -257,6 +264,9 @@ async function selectPlanningEventListItemById(q: DbQueryer, id: string): Promis
     machine_name: row.machine_name,
     poste_code: row.poste_code,
     poste_label: row.poste_label,
+
+    production_group_id: row.production_group_id,
+    production_group_code: row.production_group_code,
 
     of_date_fin_prevue: row.of_date_fin_prevue,
     deadline_ts: row.deadline_ts,
@@ -561,6 +571,9 @@ export async function repoListPlanningEvents(filters: ListPlanningEventsQueryDTO
     poste_code: string | null;
     poste_label: string | null;
 
+    production_group_id: string | null;
+    production_group_code: string | null;
+
     of_date_fin_prevue: string | null;
     deadline_ts: string | null;
     stop_reason: string | null;
@@ -602,6 +615,9 @@ export async function repoListPlanningEvents(filters: ListPlanningEventsQueryDTO
         p.code AS poste_code,
         p.label AS poste_label,
 
+        o.production_group_id::text AS production_group_id,
+        pg.code AS production_group_code,
+
         o.date_fin_prevue::text AS of_date_fin_prevue,
         to_jsonb(e)->>'deadline_ts' AS deadline_ts,
         to_jsonb(e)->>'stop_reason' AS stop_reason,
@@ -611,6 +627,7 @@ export async function repoListPlanningEvents(filters: ListPlanningEventsQueryDTO
       LEFT JOIN public.ordres_fabrication o ON o.id = COALESCE(e.of_id, op.of_id)
       LEFT JOIN public.pieces_techniques pt ON pt.id = o.piece_technique_id
       LEFT JOIN public.clients c ON c.client_id = o.client_id
+      LEFT JOIN public.production_group pg ON pg.id = o.production_group_id
       LEFT JOIN public.machines m ON m.id = e.machine_id
       LEFT JOIN public.postes p ON p.id = e.poste_id
       ${whereSql}
@@ -650,6 +667,9 @@ export async function repoListPlanningEvents(filters: ListPlanningEventsQueryDTO
     machine_name: row.machine_name,
     poste_code: row.poste_code,
     poste_label: row.poste_label,
+
+    production_group_id: row.production_group_id,
+    production_group_code: row.production_group_code,
 
     of_date_fin_prevue: row.of_date_fin_prevue,
     deadline_ts: row.deadline_ts,

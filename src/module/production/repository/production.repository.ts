@@ -1113,6 +1113,8 @@ async function selectOfHeader(q: DbQueryer, ofId: number): Promise<Omit<OrdreFab
     commande_id: string | null;
     client_id: string | null;
     client_company_name: string | null;
+    production_group_id: string | null;
+    production_group_code: string | null;
     piece_technique_id: string;
     piece_code: string;
     piece_designation: string;
@@ -1141,6 +1143,8 @@ async function selectOfHeader(q: DbQueryer, ofId: number): Promise<Omit<OrdreFab
         o.commande_id::text AS commande_id,
         o.client_id,
         c.company_name AS client_company_name,
+        o.production_group_id::text AS production_group_id,
+        pg.code AS production_group_code,
         o.piece_technique_id::text AS piece_technique_id,
         pt.code_piece AS piece_code,
         pt.designation AS piece_designation,
@@ -1161,6 +1165,7 @@ async function selectOfHeader(q: DbQueryer, ofId: number): Promise<Omit<OrdreFab
       FROM ordres_fabrication o
       JOIN pieces_techniques pt ON pt.id = o.piece_technique_id
       LEFT JOIN clients c ON c.client_id = o.client_id
+      LEFT JOIN production_group pg ON pg.id = o.production_group_id
       WHERE o.id = $1::bigint
       LIMIT 1
     `,
@@ -1177,6 +1182,8 @@ async function selectOfHeader(q: DbQueryer, ofId: number): Promise<Omit<OrdreFab
     commande_id: toNullableInt(row.commande_id, "ordres_fabrication.commande_id"),
     client_id: row.client_id,
     client_company_name: row.client_company_name,
+    production_group_id: row.production_group_id,
+    production_group_code: row.production_group_code,
     piece_technique_id: row.piece_technique_id,
     piece_code: row.piece_code,
     piece_designation: row.piece_designation,
@@ -1548,6 +1555,8 @@ export async function repoListOrdresFabrication(filters: ListOfQueryDTO): Promis
     commande_id: string | null;
     client_id: string | null;
     client_company_name: string | null;
+    production_group_id: string | null;
+    production_group_code: string | null;
     piece_technique_id: string;
     piece_code: string;
     piece_designation: string;
@@ -1572,6 +1581,8 @@ export async function repoListOrdresFabrication(filters: ListOfQueryDTO): Promis
         o.commande_id::text AS commande_id,
         o.client_id,
         c.company_name AS client_company_name,
+        o.production_group_id::text AS production_group_id,
+        pg.code AS production_group_code,
         o.piece_technique_id::text AS piece_technique_id,
         pt.code_piece AS piece_code,
         pt.designation AS piece_designation,
@@ -1588,6 +1599,7 @@ export async function repoListOrdresFabrication(filters: ListOfQueryDTO): Promis
       FROM ordres_fabrication o
       JOIN pieces_techniques pt ON pt.id = o.piece_technique_id
       LEFT JOIN clients c ON c.client_id = o.client_id
+      LEFT JOIN production_group pg ON pg.id = o.production_group_id
       LEFT JOIN LATERAL (
         SELECT
           COUNT(*) AS total_ops,
@@ -1610,6 +1622,8 @@ export async function repoListOrdresFabrication(filters: ListOfQueryDTO): Promis
     commande_id: toNullableInt(r.commande_id, "ordres_fabrication.commande_id"),
     client_id: r.client_id,
     client_company_name: r.client_company_name,
+    production_group_id: r.production_group_id,
+    production_group_code: r.production_group_code,
     piece_technique_id: r.piece_technique_id,
     piece_code: r.piece_code,
     piece_designation: r.piece_designation,

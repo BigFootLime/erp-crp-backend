@@ -23,6 +23,14 @@ import {
   updatePoste,
 } from "../controllers/production.controller";
 import {
+  createProductionGroup,
+  getProductionGroup,
+  linkProductionGroup,
+  listProductionGroups,
+  unlinkProductionGroup,
+  updateProductionGroup,
+} from "../controllers/production-groups.controller";
+import {
   createPointageManual,
   getPointage,
   listOperators,
@@ -89,6 +97,14 @@ router.patch("/ofs/:id", updateOrdreFabrication);
 router.patch("/ofs/:id/operations/:opId", updateOrdreFabricationOperation);
 router.post("/ofs/:id/operations/:opId/time-logs/start", startOfOperationTimeLog);
 router.post("/ofs/:id/operations/:opId/time-logs/stop", stopOfOperationTimeLog);
+
+// Production Groups
+router.get("/groups", requireProductionOrAdmin, listProductionGroups);
+router.post("/groups", requireProductionOrAdmin, createProductionGroup);
+router.get("/groups/:id", requireProductionOrAdmin, getProductionGroup);
+router.patch("/groups/:id", requireProductionOrAdmin, updateProductionGroup);
+router.post("/groups/:id/link", requireProductionOrAdmin, linkProductionGroup);
+router.post("/groups/:id/unlink", requireProductionOrAdmin, unlinkProductionGroup);
 
 // Pointages
 router.get("/operators", requireProductionOrAdmin, listOperators);
