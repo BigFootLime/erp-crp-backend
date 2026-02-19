@@ -228,6 +228,43 @@ export const updateCadreReleaseBodySchema = z
 
 export type UpdateCadreReleaseBodyDTO = z.infer<typeof updateCadreReleaseBodySchema>;
 
+/* -------------------------------------------------------------------------- */
+/* Affaires generation confirmation (stock partial arbitration)                */
+/* -------------------------------------------------------------------------- */
+
+export const generateAffairesChoiceSchema = z.enum([
+  "DELIVER_AVAILABLE",
+  "RESERVE_AND_PRODUCE_REST",
+]);
+
+export type GenerateAffairesChoiceDTO = z.infer<typeof generateAffairesChoiceSchema>;
+
+export const confirmGenerateAffairesSchema = z
+  .object({
+    params: z.object({
+      id: z.string().regex(/^\d+$/, "id must be an integer"),
+    }),
+    body: z
+      .object({
+        choice: generateAffairesChoiceSchema,
+        production_quantities: z
+          .array(
+            z
+              .object({
+                commande_ligne_id: z.coerce.number().int().positive(),
+                qty_to_produce: z.coerce.number().min(0),
+              })
+              .strict()
+          )
+          .optional()
+          .default([]),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type ConfirmGenerateAffairesBodyDTO = z.infer<typeof confirmGenerateAffairesSchema>["body"];
+
 export function validate(schema: z.ZodTypeAny): RequestHandler {
   return (req, res, next) => {
     const parsed = schema.safeParse({ body: req.body, params: req.params, query: req.query });

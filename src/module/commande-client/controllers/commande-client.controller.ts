@@ -10,6 +10,7 @@ import {
   deleteCadreReleaseLineSVC,
   duplicateCommandeSVC,
   getCadreReleaseSVC,
+  confirmGenerateAffairesSVC,
   generateAffairesFromOrderSVC,
   getCommandeDocumentFileMetaSVC,
   getCommandeSVC,
@@ -30,6 +31,7 @@ import {
   listCommandesQuerySchema,
   releaseIdParamSchema,
   releaseLineIdParamSchema,
+  confirmGenerateAffairesSchema,
   updateCadreReleaseBodySchema,
   updateCadreReleaseLineBodySchema,
   updateCommandeStatusBodySchema,
@@ -193,6 +195,27 @@ export const generateAffairesFromOrder: RequestHandler = async (req, res, next) 
       res.status(404).json({ error: "Not found" });
       return;
     }
+    res.status(200).json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// POST /api/v1/commandes/:id/generate-affaires/confirm
+export const confirmGenerateAffaires: RequestHandler = async (req, res, next) => {
+  try {
+    const parsed = confirmGenerateAffairesSchema.safeParse({ params: req.params, body: req.body, query: req.query });
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues?.[0]?.message ?? "Invalid request" });
+      return;
+    }
+
+    const out = await confirmGenerateAffairesSVC(req.params.id, parsed.data.body);
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+
     res.status(200).json(out);
   } catch (err) {
     next(err);

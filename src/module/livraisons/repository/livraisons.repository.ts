@@ -1121,7 +1121,8 @@ export async function repoCreateLivraisonFromCommande(commandeId: number, userId
       SELECT cta.affaire_id
       FROM commande_to_affaire cta
       WHERE cta.commande_id = $1
-      ORDER BY cta.date_conversion DESC, cta.id DESC
+        AND (cta.role = 'LIVRAISON' OR cta.role IS NULL)
+      ORDER BY (cta.role = 'LIVRAISON') DESC, cta.date_conversion DESC, cta.id DESC
       LIMIT 1
       `,
       [commandeId]

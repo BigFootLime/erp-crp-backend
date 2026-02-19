@@ -4,6 +4,7 @@ import {
   repoCreateCommande,
   repoDeleteCommande,
   repoDuplicateCommande,
+  repoConfirmGenerateAffaires,
   repoGenerateAffairesFromOrder,
   repoGetCommande,
   repoGetCommandeDocumentFileMeta,
@@ -28,6 +29,7 @@ import type { CadreReleaseStatus } from "../types/commande-client.types";
 import type {
   CreateCadreReleaseBodyDTO,
   CreateCadreReleaseLineBodyDTO,
+  ConfirmGenerateAffairesBodyDTO,
   UpdateCadreReleaseBodyDTO,
   UpdateCadreReleaseLineBodyDTO,
 } from "../validators/commande-client.validators";
@@ -55,6 +57,9 @@ export const updateCommandeStatusSVC = (
 ) => repoUpdateCommandeStatus(id, nouveau_statut, commentaire, userId);
 
 export const generateAffairesFromOrderSVC = (id: string) => repoGenerateAffairesFromOrder(id);
+
+export const confirmGenerateAffairesSVC = (id: string, body: ConfirmGenerateAffairesBodyDTO) =>
+  repoConfirmGenerateAffaires(id, body);
 
 export const duplicateCommandeSVC = (id: string) => repoDuplicateCommande(id);
 

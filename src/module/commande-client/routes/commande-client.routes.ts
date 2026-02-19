@@ -11,6 +11,7 @@ import {
   deleteCommande,
   duplicateCommande,
   generateAffairesFromOrder,
+  confirmGenerateAffaires,
   getCadreRelease,
   getCommande,
   getCommandeDocumentFile,
@@ -25,6 +26,7 @@ import {
 } from "../controllers/commande-client.controller"
 import {
   createCommandeBodySchema,
+  confirmGenerateAffairesSchema,
   documentIdParamSchema,
   idParamSchema,
   releaseIdParamSchema,
@@ -128,6 +130,9 @@ router.post("/:id/status", validate(idParamSchema), updateCommandeStatus)
 
 // POST /api/v1/commandes/:id/generate-affaires
 router.post("/:id/generate-affaires", validate(idParamSchema), generateAffairesFromOrder)
+
+// POST /api/v1/commandes/:id/generate-affaires/confirm
+router.post("/:id/generate-affaires/confirm", validate(confirmGenerateAffairesSchema), confirmGenerateAffaires)
 
 // POST /api/v1/commandes/:id/duplicate
 router.post("/:id/duplicate", validate(idParamSchema), duplicateCommande)

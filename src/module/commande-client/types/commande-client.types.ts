@@ -163,6 +163,7 @@ export type CommandeToAffaire = {
   affaire_id: number;
   date_conversion: string;
   commentaire: string | null;
+  role?: "LIVRAISON" | "PRODUCTION" | null;
   affaire?: Affaire;
 };
 
