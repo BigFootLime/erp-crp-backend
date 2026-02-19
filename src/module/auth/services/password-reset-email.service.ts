@@ -12,20 +12,12 @@ type ResendSendResult =
 function readResendConfig(): ResendConfig | null {
   const apiKey = (process.env.RESEND_API_KEY ?? "").trim();
   const from = (process.env.RESEND_FROM ?? "").trim();
-  const apiBaseUrl = (process.env.RESEND_API_BASE_URL ?? "https://api.resend.com").trim().replace(/\/+$/, "");
+  const apiBaseUrl = (process.env.RESEND_API_BASE_URL ?? "https://api.resend.com")
+    .trim()
+    .replace(/\/+$/, "");
 
   if (!apiKey || !from) return null;
   return { apiKey, from, apiBaseUrl };
-}
-
-function buildLogoUrl(): string | null {
-  const explicit = (process.env.EMAIL_LOGO_URL ?? "").trim();
-  if (explicit) return explicit;
-
-  const backendUrl = (process.env.BACKEND_URL ?? "https://erp-backend.croix-rousse-precision.fr").trim().replace(/\/+$/, "");
-  if (!backendUrl) return null;
-
-  return `${backendUrl}/images/images_logiciel/CRP-Ops.png`;
 }
 
 function escapeHtml(text: string): string {
@@ -41,11 +33,9 @@ function buildPasswordResetEmail(params: {
   username: string;
   resetUrl: string;
   expiresMinutes: number;
-  logoSrc?: string | null;
 }): { subject: string; text: string; html: string } {
   const safeUsername = escapeHtml(params.username);
   const safeUrl = escapeHtml(params.resetUrl);
-  const safeLogoSrc = params.logoSrc ? escapeHtml(params.logoSrc) : null;
 
   const subject = "Réinitialisation de mot de passe — CRP Systems";
 
@@ -56,14 +46,12 @@ function buildPasswordResetEmail(params: {
     `Si vous n'êtes pas à l'origine de cette demande, vous pouvez ignorer cet email.\n\n` +
     `— CRP Systems`;
 
+  // ✅ No logo here
   const html = `
   <div style="background:#f6f7fb;padding:24px 12px;font-family:Arial,Helvetica,sans-serif;color:#0f172a;">
     <div style="max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:14px;overflow:hidden;">
       <div style="padding:18px 18px 8px 18px;border-bottom:1px solid #e2e8f0;">
-        <div style="display:flex;align-items:center;gap:12px;">
-          ${safeLogoSrc ? `<img src="${safeLogoSrc}" alt="CRP Systems" style="height:34px;width:auto;display:block;" />` : ""}
-          <div style="font-size:14px;font-weight:700;letter-spacing:0.2px;">CRP Systems</div>
-        </div>
+        <div style="font-size:14px;font-weight:700;letter-spacing:0.2px;">CRP Systems</div>
         <div style="margin-top:10px;font-size:18px;font-weight:800;">Réinitialisation de mot de passe</div>
         <div style="margin-top:4px;font-size:12px;color:#475569;">Demande pour l'utilisateur : <b>${safeUsername}</b></div>
       </div>
@@ -139,7 +127,12 @@ async function postResendEmail(params: {
     if (res.ok) {
       try {
         const parsed = rawText ? (JSON.parse(rawText) as unknown) : null;
-        if (parsed && typeof parsed === "object" && "id" in parsed && typeof (parsed as { id: unknown }).id === "string") {
+        if (
+          parsed &&
+          typeof parsed === "object" &&
+          "id" in parsed &&
+          typeof (parsed as { id: unknown }).id === "string"
+        ) {
           return { ok: true, id: (parsed as { id: string }).id };
         }
       } catch {
@@ -148,7 +141,9 @@ async function postResendEmail(params: {
       return { ok: true };
     }
 
-    const err = rawText ? `Resend API error (${res.status}): ${truncate(rawText, 1200)}` : `Resend API error (${res.status})`;
+    const err = rawText
+      ? `Resend API error (${res.status}): ${truncate(rawText, 1200)}`
+      : `Resend API error (${res.status})`;
     return { ok: false, error: err };
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Resend API request failed";
@@ -164,65 +159,10 @@ export async function sendPasswordResetEmail(params: {
   request_id?: string | null;
 }): Promise<ResendSendResult> {
   const cfg = readResendConfig();
-  if (!cfg) {
-    return { ok: false, skipped: true };
-  }
+  if (!cfg) return { ok: false, skipped: true };
 
-  const logoUrl = buildLogoUrl();
-
-  // Prefer inline logo when possible (CID). If it fails (e.g. logo URL not reachable by Resend),
-  // retry once without attachments and with remote logo.
-  if (logoUrl) {
-    const inline = buildPasswordResetEmail({
-      username: params.username,
-      resetUrl: params.resetUrl,
-      expiresMinutes: params.expiresMinutes,
-      logoSrc: "cid:crp-logo",
-    });
-
-    const inlineRes = await postResendEmail({
-      cfg,
-      idempotencyKey: params.request_id ?? null,
-      payload: {
-        from: cfg.from,
-        to: [params.to],
-        subject: inline.subject,
-        text: inline.text,
-        html: inline.html,
-        attachments: [
-          {
-            filename: "CRP-Ops.png",
-            path: logoUrl,
-            content_type: "image/png",
-            content_id: "crp-logo",
-          },
-        ],
-      },
-    });
-
-    if (inlineRes.ok) return inlineRes;
-
-    const remote = buildPasswordResetEmail({
-      username: params.username,
-      resetUrl: params.resetUrl,
-      expiresMinutes: params.expiresMinutes,
-      logoSrc: logoUrl,
-    });
-
-    return await postResendEmail({
-      cfg,
-      idempotencyKey: params.request_id ?? null,
-      payload: {
-        from: cfg.from,
-        to: [params.to],
-        subject: remote.subject,
-        text: remote.text,
-        html: remote.html,
-      },
-    });
-  }
-
-  const noLogo = buildPasswordResetEmail({
+  // ✅ Always build the no-logo email
+  const email = buildPasswordResetEmail({
     username: params.username,
     resetUrl: params.resetUrl,
     expiresMinutes: params.expiresMinutes,
@@ -234,9 +174,9 @@ export async function sendPasswordResetEmail(params: {
     payload: {
       from: cfg.from,
       to: [params.to],
-      subject: noLogo.subject,
-      text: noLogo.text,
-      html: noLogo.html,
+      subject: email.subject,
+      text: email.text,
+      html: email.html,
     },
   });
 }
