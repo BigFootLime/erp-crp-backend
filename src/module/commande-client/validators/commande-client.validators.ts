@@ -269,8 +269,7 @@ export const generateAffairesSchema = z
           .default([]),
       })
       .strict(),
-  })
-  .strict();
+  });
 
 export type GenerateAffairesBodyDTO = z.infer<typeof generateAffairesSchema>["body"];
 
@@ -302,8 +301,7 @@ export const confirmGenerateAffairesSchema = z
           .default([]),
       })
       .strict(),
-  })
-  .strict();
+  });
 
 export type ConfirmGenerateAffairesBodyDTO = z.infer<typeof confirmGenerateAffairesSchema>["body"];
 
