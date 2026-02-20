@@ -56,6 +56,7 @@ CREATE INDEX IF NOT EXISTS commande_to_affaire_role_idx
 
 /* -------------------------------------------------------------------------- */
 /* 2) Commande line allocation (reserved vs to-produce)                        */
+/*    NOTE: article FK column must match public.articles(id) type              */
 /* -------------------------------------------------------------------------- */
 
 CREATE TABLE IF NOT EXISTS public.commande_ligne_affaire_allocation (
@@ -67,7 +68,10 @@ CREATE TABLE IF NOT EXISTS public.commande_ligne_affaire_allocation (
   livraison_affaire_id BIGINT NOT NULL,
   production_affaire_id BIGINT NULL,
 
-  article_id BIGINT NULL,
+  -- Prefer UUID reference (matches public.articles(id) when it is uuid)
+  article_ref_id UUID NULL,
+  -- Optional legacy numeric id (keeps backward compatibility if some envs use bigint)
+  article_legacy_id BIGINT NULL,
 
   qty_ordered NUMERIC(18, 3) NOT NULL,
   qty_from_stock NUMERIC(18, 3) NOT NULL DEFAULT 0,
@@ -86,6 +90,13 @@ CREATE TABLE IF NOT EXISTS public.commande_ligne_affaire_allocation (
   CONSTRAINT commande_ligne_affaire_allocation_from_stock_le_ordered_chk CHECK (qty_from_stock <= qty_ordered),
   CONSTRAINT commande_ligne_affaire_allocation_reserved_le_from_stock_chk CHECK (qty_reserved <= qty_from_stock)
 );
+
+-- If the table already existed from a previous attempt, ensure new columns exist.
+ALTER TABLE public.commande_ligne_affaire_allocation
+  ADD COLUMN IF NOT EXISTS article_ref_id UUID NULL;
+
+ALTER TABLE public.commande_ligne_affaire_allocation
+  ADD COLUMN IF NOT EXISTS article_legacy_id BIGINT NULL;
 
 -- Foreign keys (best-effort: keep patch runnable even if module tables differ)
 DO $$
@@ -132,12 +143,12 @@ BEGIN
 
   IF to_regclass('public.articles') IS NOT NULL AND NOT EXISTS (
     SELECT 1 FROM pg_constraint
-    WHERE conname = 'commande_ligne_affaire_allocation_article_id_fkey'
+    WHERE conname = 'commande_ligne_affaire_allocation_article_ref_id_fkey'
       AND conrelid = 'public.commande_ligne_affaire_allocation'::regclass
   ) THEN
     ALTER TABLE public.commande_ligne_affaire_allocation
-      ADD CONSTRAINT commande_ligne_affaire_allocation_article_id_fkey
-      FOREIGN KEY (article_id) REFERENCES public.articles(id) ON DELETE SET NULL;
+      ADD CONSTRAINT commande_ligne_affaire_allocation_article_ref_id_fkey
+      FOREIGN KEY (article_ref_id) REFERENCES public.articles(id) ON DELETE SET NULL;
   END IF;
 
   -- updated_at trigger (only if shared function exists)
@@ -161,9 +172,13 @@ CREATE INDEX IF NOT EXISTS commande_ligne_affaire_allocation_production_idx
   ON public.commande_ligne_affaire_allocation (production_affaire_id)
   WHERE production_affaire_id IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS commande_ligne_affaire_allocation_article_idx
-  ON public.commande_ligne_affaire_allocation (article_id)
-  WHERE article_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS commande_ligne_affaire_allocation_article_ref_idx
+  ON public.commande_ligne_affaire_allocation (article_ref_id)
+  WHERE article_ref_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS commande_ligne_affaire_allocation_article_legacy_idx
+  ON public.commande_ligne_affaire_allocation (article_legacy_id)
+  WHERE article_legacy_id IS NOT NULL;
 
 COMMIT;
 

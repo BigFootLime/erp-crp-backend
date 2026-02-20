@@ -5,10 +5,12 @@ import {
   repoDeleteCommande,
   repoDuplicateCommande,
   repoConfirmGenerateAffaires,
+  repoGenerateAffairesFromCommande,
   repoGenerateAffairesFromOrder,
   repoGetCommande,
   repoGetCommandeDocumentFileMeta,
   repoListCommandes,
+  repoPreviewAffairesFromCommande,
   repoUpdateCommande,
   repoUpdateCommandeStatus,
 } from "../repository/commande-client.repository";
@@ -30,6 +32,7 @@ import type {
   CreateCadreReleaseBodyDTO,
   CreateCadreReleaseLineBodyDTO,
   ConfirmGenerateAffairesBodyDTO,
+  GenerateAffairesBodyDTO,
   UpdateCadreReleaseBodyDTO,
   UpdateCadreReleaseLineBodyDTO,
 } from "../validators/commande-client.validators";
@@ -57,6 +60,11 @@ export const updateCommandeStatusSVC = (
 ) => repoUpdateCommandeStatus(id, nouveau_statut, commentaire, userId);
 
 export const generateAffairesFromOrderSVC = (id: string) => repoGenerateAffairesFromOrder(id);
+
+export const previewAffairesFromCommandeSVC = (id: string) => repoPreviewAffairesFromCommande(id);
+
+export const generateAffairesFromCommandeSVC = (id: string, body: GenerateAffairesBodyDTO) =>
+  repoGenerateAffairesFromCommande(id, body);
 
 export const confirmGenerateAffairesSVC = (id: string, body: ConfirmGenerateAffairesBodyDTO) =>
   repoConfirmGenerateAffaires(id, body);

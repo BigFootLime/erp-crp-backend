@@ -10,7 +10,11 @@ import type {
   CommandeListItem,
   ClientLite,
 } from "../types/commande-client.types";
-import type { ConfirmGenerateAffairesBodyDTO, ListCommandesQueryDTO } from "../validators/commande-client.validators";
+import type {
+  ConfirmGenerateAffairesBodyDTO,
+  GenerateAffairesBodyDTO,
+  ListCommandesQueryDTO,
+} from "../validators/commande-client.validators";
 
 function normalizeStoredPath(filePath: string) {
   const rel = path.isAbsolute(filePath) ? path.relative(process.cwd(), filePath) : filePath;
@@ -235,8 +239,8 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
       cc.order_type,
       cc.cadre_start_date::text AS cadre_start_date,
       cc.cadre_end_date::text AS cadre_end_date,
-      cc.dest_stock_magasin_id::int AS dest_stock_magasin_id,
-      cc.dest_stock_emplacement_id::int AS dest_stock_emplacement_id,
+      cc.dest_stock_magasin_id::text AS dest_stock_magasin_id,
+      cc.dest_stock_emplacement_id::text AS dest_stock_emplacement_id,
       cc.mode_port_id::text AS mode_port_id,
       cc.mode_reglement_id::text AS mode_reglement_id,
       cc.conditions_paiement_id,
@@ -276,8 +280,8 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
     order_type: string;
     cadre_start_date: string | null;
     cadre_end_date: string | null;
-    dest_stock_magasin_id: number | null;
-    dest_stock_emplacement_id: number | null;
+    dest_stock_magasin_id: string | null;
+    dest_stock_emplacement_id: string | null;
     mode_port_id: string | null;
     mode_reglement_id: string | null;
     conditions_paiement_id: number | null;
@@ -767,8 +771,8 @@ export async function repoUpdateCommande(id: string, input: CreateCommandeInput,
       adresse_facturation_id: string | null;
       cadre_start_date: string | null;
       cadre_end_date: string | null;
-      dest_stock_magasin_id: number | null;
-      dest_stock_emplacement_id: number | null;
+      dest_stock_magasin_id: string | null;
+      dest_stock_emplacement_id: string | null;
     }>(
       `
       SELECT
@@ -778,8 +782,8 @@ export async function repoUpdateCommande(id: string, input: CreateCommandeInput,
         adresse_facturation_id::text AS adresse_facturation_id,
         cadre_start_date::text AS cadre_start_date,
         cadre_end_date::text AS cadre_end_date,
-        dest_stock_magasin_id::int AS dest_stock_magasin_id,
-        dest_stock_emplacement_id::int AS dest_stock_emplacement_id
+        dest_stock_magasin_id::text AS dest_stock_magasin_id,
+        dest_stock_emplacement_id::text AS dest_stock_emplacement_id
       FROM commande_client
       WHERE id = $1::bigint
       FOR UPDATE
@@ -1049,7 +1053,7 @@ export async function repoGenerateAffairesFromOrder(id: string) {
       livraison_affaire_id: livraisonAffaireId,
       production_affaire_id: productionAffaireId,
       allocation_mode: allocationMode,
-      choice: null,
+      reserve_stock: false,
       lines: plan.lines,
     });
 
@@ -1126,7 +1130,8 @@ async function insertCommandeToAffaireMapping(db: PoolClient, input: MappingInse
 type CommandeAllocationPlanLine = {
   commande_ligne_id: number;
   code_piece: string | null;
-  article_id: number | null;
+  article_ref_id: string | null;
+  article_legacy_id: string | null;
   qty_ordered: number;
   qty_on_hand: number;
   qty_from_stock: number;
@@ -1138,11 +1143,21 @@ type CommandeAllocationPlan = {
 };
 
 async function computeCommandeAllocationPlan(db: PoolClient, commandeId: number): Promise<CommandeAllocationPlan> {
+  const uuidRe =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  function splitArticleId(articleId: string | null): { article_ref_id: string | null; article_legacy_id: string | null } {
+    const v = String(articleId ?? "").trim();
+    if (!v) return { article_ref_id: null, article_legacy_id: null };
+    if (uuidRe.test(v)) return { article_ref_id: v, article_legacy_id: null };
+    if (/^\d+$/.test(v)) return { article_ref_id: null, article_legacy_id: v };
+    return { article_ref_id: null, article_legacy_id: null };
+  }
+
   const res = await db.query<{
     commande_ligne_id: number;
     code_piece: string | null;
     qty_ordered: number;
-    article_id: number | null;
+    article_id: string | null;
     qty_on_hand: number;
   }>(
     `
@@ -1150,7 +1165,7 @@ async function computeCommandeAllocationPlan(db: PoolClient, commandeId: number)
       cl.id::bigint::int AS commande_ligne_id,
       cl.code_piece,
       cl.quantite::float8 AS qty_ordered,
-      art.article_id::bigint::int AS article_id,
+      art.article_id::text AS article_id,
       COALESCE(SUM(sb.qty_on_hand), 0)::float8 AS qty_on_hand
     FROM commande_ligne cl
     LEFT JOIN LATERAL (
@@ -1175,8 +1190,8 @@ async function computeCommandeAllocationPlan(db: PoolClient, commandeId: number)
     [commandeId]
   );
 
-  const remainingByArticle = new Map<number, number>();
-  const getRemaining = (articleId: number, initial: number) => {
+  const remainingByArticle = new Map<string, number>();
+  const getRemaining = (articleId: string, initial: number) => {
     if (!remainingByArticle.has(articleId)) remainingByArticle.set(articleId, initial);
     return remainingByArticle.get(articleId) ?? 0;
   };
@@ -1184,7 +1199,8 @@ async function computeCommandeAllocationPlan(db: PoolClient, commandeId: number)
   const lines: CommandeAllocationPlanLine[] = res.rows.map((r) => {
     const qtyOrdered = Number(r.qty_ordered);
     const qtyOnHand = Number(r.qty_on_hand);
-    const articleId = typeof r.article_id === "number" ? r.article_id : null;
+    const articleId = typeof r.article_id === "string" && r.article_id.trim().length > 0 ? r.article_id.trim() : null;
+    const { article_ref_id, article_legacy_id } = splitArticleId(articleId);
 
     let qtyFromStock = 0;
     if (articleId !== null) {
@@ -1198,7 +1214,8 @@ async function computeCommandeAllocationPlan(db: PoolClient, commandeId: number)
     return {
       commande_ligne_id: r.commande_ligne_id,
       code_piece: r.code_piece,
-      article_id: articleId,
+      article_ref_id,
+      article_legacy_id,
       qty_ordered: qtyOrdered,
       qty_on_hand: qtyOnHand,
       qty_from_stock: qtyFromStock,
@@ -1214,13 +1231,13 @@ type AllocationUpsertInput = {
   livraison_affaire_id: number;
   production_affaire_id: number | null;
   allocation_mode: string | null;
-  choice: ConfirmGenerateAffairesBodyDTO["choice"] | null;
+  reserve_stock: boolean;
   lines: CommandeAllocationPlanLine[];
 };
 
 async function upsertCommandeAllocations(db: PoolClient, input: AllocationUpsertInput): Promise<void> {
   for (const l of input.lines) {
-    const qtyReserved = input.choice === "RESERVE_AND_PRODUCE_REST" ? l.qty_from_stock : 0;
+    const qtyReserved = input.reserve_stock ? l.qty_from_stock : 0;
 
     await db.query(
       `
@@ -1229,17 +1246,19 @@ async function upsertCommandeAllocations(db: PoolClient, input: AllocationUpsert
         commande_ligne_id,
         livraison_affaire_id,
         production_affaire_id,
-        article_id,
+        article_ref_id,
+        article_legacy_id,
         qty_ordered,
         qty_from_stock,
         qty_reserved,
         qty_to_produce,
         allocation_mode
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
       ON CONFLICT (commande_ligne_id, livraison_affaire_id)
       DO UPDATE SET
         production_affaire_id = EXCLUDED.production_affaire_id,
-        article_id = EXCLUDED.article_id,
+        article_ref_id = EXCLUDED.article_ref_id,
+        article_legacy_id = EXCLUDED.article_legacy_id,
         qty_ordered = EXCLUDED.qty_ordered,
         qty_from_stock = EXCLUDED.qty_from_stock,
         qty_reserved = EXCLUDED.qty_reserved,
@@ -1252,7 +1271,8 @@ async function upsertCommandeAllocations(db: PoolClient, input: AllocationUpsert
         l.commande_ligne_id,
         input.livraison_affaire_id,
         input.production_affaire_id,
-        l.article_id,
+        l.article_ref_id,
+        l.article_legacy_id,
         l.qty_ordered,
         l.qty_from_stock,
         qtyReserved,
@@ -1260,6 +1280,224 @@ async function upsertCommandeAllocations(db: PoolClient, input: AllocationUpsert
         input.allocation_mode,
       ]
     );
+  }
+}
+
+export async function repoPreviewAffairesFromCommande(id: string) {
+  const commandeId = toInt(id, "commande_id");
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const commandeRes = await client.query<{ client_id: string | null }>(
+      `
+      SELECT client_id
+      FROM commande_client
+      WHERE id = $1
+      `,
+      [commandeId]
+    );
+    const commande = commandeRes.rows[0] ?? null;
+    if (!commande) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    if (!commande.client_id) {
+      throw new HttpError(400, "COMMANDE_CLIENT_REQUIRED", "Cannot generate affaire from a commande without client_id");
+    }
+
+    const existingMappings = await client.query<{ affaire_id: number; role: string | null }>(
+      `
+      SELECT affaire_id::int AS affaire_id, role
+      FROM commande_to_affaire
+      WHERE commande_id = $1
+      ORDER BY date_conversion DESC NULLS LAST, id DESC
+      `,
+      [commandeId]
+    );
+
+    if (existingMappings.rows.length > 0) {
+      const livraison = existingMappings.rows.find((r) => r.role === "LIVRAISON")?.affaire_id ?? null;
+      const production = existingMappings.rows.find((r) => r.role === "PRODUCTION")?.affaire_id ?? null;
+      await client.query("COMMIT");
+      return {
+        already_generated: true,
+        affaire_ids: existingMappings.rows.map((r) => r.affaire_id),
+        livraison_affaire_id: livraison,
+        production_affaire_id: production,
+        requires_confirmation: false,
+        needs_production: production !== null,
+      };
+    }
+
+    const plan = await computeCommandeAllocationPlan(client, commandeId);
+    const requiresConfirmation = plan.lines.some((l) => l.qty_from_stock > 0 && l.qty_to_produce > 0);
+    const needsProduction = plan.lines.some((l) => l.qty_to_produce > 0);
+
+    await client.query("COMMIT");
+    return {
+      already_generated: false,
+      affaire_ids: [],
+      livraison_affaire_id: null,
+      production_affaire_id: null,
+      requires_confirmation: requiresConfirmation,
+      needs_production: needsProduction,
+      plan,
+    };
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+export async function repoGenerateAffairesFromCommande(id: string, body: GenerateAffairesBodyDTO) {
+  const commandeId = toInt(id, "commande_id");
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const commandeRes = await client.query<{
+      client_id: string | null;
+      type_affaire: string;
+    }>(
+      `
+      SELECT client_id, type_affaire
+      FROM commande_client
+      WHERE id = $1
+      FOR UPDATE
+      `,
+      [commandeId]
+    );
+    const commande = commandeRes.rows[0] ?? null;
+    if (!commande) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    if (!commande.client_id) {
+      throw new HttpError(400, "COMMANDE_CLIENT_REQUIRED", "Cannot generate affaire from a commande without client_id");
+    }
+
+    // Idempotency: if mappings already exist, return them deterministically.
+    const existingMappings = await client.query<{ affaire_id: number; role: string | null }>(
+      `
+      SELECT affaire_id::int AS affaire_id, role
+      FROM commande_to_affaire
+      WHERE commande_id = $1
+      ORDER BY date_conversion DESC NULLS LAST, id DESC
+      `,
+      [commandeId]
+    );
+
+    if (existingMappings.rows.length > 0) {
+      const livraison = existingMappings.rows.find((r) => r.role === "LIVRAISON")?.affaire_id ?? null;
+      const production = existingMappings.rows.find((r) => r.role === "PRODUCTION")?.affaire_id ?? null;
+      await client.query("COMMIT");
+      return {
+        affaire_ids: existingMappings.rows.map((r) => r.affaire_id),
+        livraison_affaire_id: livraison,
+        production_affaire_id: production,
+        requires_confirmation: false,
+      };
+    }
+
+    const plan = await computeCommandeAllocationPlan(client, commandeId);
+    const requiresConfirmation = plan.lines.some((l) => l.qty_from_stock > 0 && l.qty_to_produce > 0);
+    const lines = plan.lines;
+
+    if (requiresConfirmation && body.strategy === "AUTO") {
+      throw new HttpError(
+        409,
+        "AFFAIRES_CONFIRMATION_REQUIRED",
+        "Partial stock requires an explicit generation strategy"
+      );
+    }
+
+    // Apply user overrides (only decreasing from the computed missing qty).
+    const overrideByLine = new Map<number, number>();
+    for (const p of body.production_quantities ?? []) {
+      overrideByLine.set(p.commande_ligne_id, Number(p.qty_to_produce));
+    }
+
+    const currentByLine = new Map<number, CommandeAllocationPlanLine>(lines.map((l) => [l.commande_ligne_id, l] as const));
+    for (const [lineId, requestedQtyToProduce] of overrideByLine.entries()) {
+      const current = currentByLine.get(lineId);
+      if (!current) {
+        throw new HttpError(400, "INVALID_LINE", `Unknown commande_ligne_id: ${lineId}`);
+      }
+      if (!Number.isFinite(requestedQtyToProduce) || requestedQtyToProduce < 0) {
+        throw new HttpError(400, "INVALID_QTY", `Invalid qty_to_produce for line ${lineId}`);
+      }
+      if (requestedQtyToProduce > current.qty_to_produce) {
+        throw new HttpError(
+          400,
+          "INVALID_QTY",
+          `qty_to_produce for line ${lineId} cannot exceed missing quantity (${current.qty_to_produce})`
+        );
+      }
+      current.qty_to_produce = requestedQtyToProduce;
+    }
+
+    const needsProduction = lines.some((l) => l.qty_to_produce > 0);
+
+    const livraisonAffaireId = await createAffaire(client, {
+      commande_id: commandeId,
+      client_id: commande.client_id,
+      type_affaire: commande.type_affaire,
+    });
+
+    await insertCommandeToAffaireMapping(client, {
+      commande_id: commandeId,
+      affaire_id: livraisonAffaireId,
+      role: "LIVRAISON",
+      commentaire: "Generated from commande",
+    });
+
+    let productionAffaireId: number | null = null;
+    if (needsProduction) {
+      productionAffaireId = await createAffaire(client, {
+        commande_id: commandeId,
+        client_id: commande.client_id,
+        type_affaire: commande.type_affaire,
+      });
+
+      await insertCommandeToAffaireMapping(client, {
+        commande_id: commandeId,
+        affaire_id: productionAffaireId,
+        role: "PRODUCTION",
+        commentaire: requiresConfirmation
+          ? "Generated from commande after arbitration"
+          : "Auto-generated from commande stock allocation",
+      });
+    }
+
+    const allocationMode = requiresConfirmation ? body.strategy : needsProduction ? "AUTO_PRODUCTION" : "AUTO_STOCK";
+    await upsertCommandeAllocations(client, {
+      commande_id: commandeId,
+      livraison_affaire_id: livraisonAffaireId,
+      production_affaire_id: productionAffaireId,
+      allocation_mode: allocationMode,
+      reserve_stock: requiresConfirmation && body.strategy === "RESERVE_AND_PRODUCE",
+      lines,
+    });
+
+    await client.query(`UPDATE commande_client SET updated_at = now() WHERE id = $1`, [commandeId]);
+
+    await client.query("COMMIT");
+    return {
+      affaire_ids: [livraisonAffaireId, ...(productionAffaireId ? [productionAffaireId] : [])],
+      livraison_affaire_id: livraisonAffaireId,
+      production_affaire_id: productionAffaireId,
+      requires_confirmation: false,
+    };
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
   }
 }
 
@@ -1337,72 +1575,8 @@ export async function repoConfirmGenerateAffaires(id: string, body: ConfirmGener
       };
     }
 
-    // Ensure we have pending allocations (either from previous generate step, or computed now).
-    const allocRes = await client.query<{
-      commande_ligne_id: number;
-      qty_ordered: number;
-      qty_from_stock: number;
-      qty_to_produce: number;
-      article_id: number | null;
-      code_piece: string | null;
-      qty_on_hand: number;
-    }>(
-      `
-      SELECT
-        a.commande_ligne_id::bigint::int AS commande_ligne_id,
-        a.qty_ordered::float8 AS qty_ordered,
-        a.qty_from_stock::float8 AS qty_from_stock,
-        a.qty_to_produce::float8 AS qty_to_produce,
-        a.article_id::bigint::int AS article_id,
-        cl.code_piece,
-        COALESCE(SUM(sb.qty_on_hand), 0)::float8 AS qty_on_hand
-      FROM public.commande_ligne_affaire_allocation a
-      JOIN public.commande_ligne cl ON cl.id = a.commande_ligne_id
-      LEFT JOIN public.stock_balances sb ON sb.article_id = a.article_id
-      WHERE a.commande_id = $1
-        AND a.livraison_affaire_id = $2
-      GROUP BY a.commande_ligne_id, a.qty_ordered, a.qty_from_stock, a.qty_to_produce, a.article_id, cl.code_piece
-      ORDER BY a.commande_ligne_id ASC
-      `,
-      [commandeId, livraisonAffaireId]
-    );
-
-    let lines: CommandeAllocationPlanLine[];
-    if (allocRes.rows.length > 0) {
-      lines = allocRes.rows.map((r) => ({
-        commande_ligne_id: r.commande_ligne_id,
-        code_piece: r.code_piece,
-        article_id: r.article_id,
-        qty_ordered: Number(r.qty_ordered),
-        qty_on_hand: Number(r.qty_on_hand),
-        qty_from_stock: Number(r.qty_from_stock),
-        qty_to_produce: Number(r.qty_to_produce),
-      }));
-    } else {
-      const computed = await computeCommandeAllocationPlan(client, commandeId);
-      lines = computed.lines;
-      await upsertCommandeAllocations(client, {
-        commande_id: commandeId,
-        livraison_affaire_id: livraisonAffaireId,
-        production_affaire_id: null,
-        allocation_mode: "PENDING",
-        choice: null,
-        lines,
-      });
-    }
-
-    const productionAffaireId = await createAffaire(client, {
-      commande_id: commandeId,
-      client_id: commande.client_id,
-      type_affaire: commande.type_affaire,
-    });
-
-    await insertCommandeToAffaireMapping(client, {
-      commande_id: commandeId,
-      affaire_id: productionAffaireId,
-      role: "PRODUCTION",
-      commentaire: "Generated after user confirmation (partial stock)",
-    });
+    const computed = await computeCommandeAllocationPlan(client, commandeId);
+    const lines = computed.lines;
 
     // Apply user overrides (only decreasing from the computed missing qty).
     const overrideByLine = new Map<number, number>();
@@ -1429,12 +1603,30 @@ export async function repoConfirmGenerateAffaires(id: string, body: ConfirmGener
       current.qty_to_produce = requestedQtyToProduce;
     }
 
+    const needsProduction = lines.some((l) => l.qty_to_produce > 0);
+
+    let productionAffaireId: number | null = null;
+    if (needsProduction) {
+      productionAffaireId = await createAffaire(client, {
+        commande_id: commandeId,
+        client_id: commande.client_id,
+        type_affaire: commande.type_affaire,
+      });
+
+      await insertCommandeToAffaireMapping(client, {
+        commande_id: commandeId,
+        affaire_id: productionAffaireId,
+        role: "PRODUCTION",
+        commentaire: "Generated after user confirmation (partial stock)",
+      });
+    }
+
     await upsertCommandeAllocations(client, {
       commande_id: commandeId,
       livraison_affaire_id: livraisonAffaireId,
       production_affaire_id: productionAffaireId,
       allocation_mode: body.choice,
-      choice: body.choice,
+      reserve_stock: body.choice === "RESERVE_AND_PRODUCE_REST",
       lines,
     });
 
@@ -1442,7 +1634,7 @@ export async function repoConfirmGenerateAffaires(id: string, body: ConfirmGener
 
     await client.query("COMMIT");
     return {
-      affaire_ids: [livraisonAffaireId, productionAffaireId],
+      affaire_ids: [livraisonAffaireId, ...(productionAffaireId ? [productionAffaireId] : [])],
       livraison_affaire_id: livraisonAffaireId,
       production_affaire_id: productionAffaireId,
       requires_confirmation: false,

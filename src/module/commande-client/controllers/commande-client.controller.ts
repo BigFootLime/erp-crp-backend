@@ -11,11 +11,13 @@ import {
   duplicateCommandeSVC,
   getCadreReleaseSVC,
   confirmGenerateAffairesSVC,
+  generateAffairesFromCommandeSVC,
   generateAffairesFromOrderSVC,
   getCommandeDocumentFileMetaSVC,
   getCommandeSVC,
   listCadreReleasesSVC,
   listCommandesSVC,
+  previewAffairesFromCommandeSVC,
   updateCadreReleaseLineSVC,
   updateCadreReleaseSVC,
   updateCadreReleaseStatusSVC,
@@ -32,6 +34,7 @@ import {
   releaseIdParamSchema,
   releaseLineIdParamSchema,
   confirmGenerateAffairesSchema,
+  generateAffairesSchema,
   updateCadreReleaseBodySchema,
   updateCadreReleaseLineBodySchema,
   updateCommandeStatusBodySchema,
@@ -211,6 +214,41 @@ export const confirmGenerateAffaires: RequestHandler = async (req, res, next) =>
     }
 
     const out = await confirmGenerateAffairesSVC(req.params.id, parsed.data.body);
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+
+    res.status(200).json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// POST /api/v1/commandes/:id/affaires/preview
+export const previewAffairesFromCommande: RequestHandler = async (req, res, next) => {
+  try {
+    const out = await previewAffairesFromCommandeSVC(req.params.id);
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.status(200).json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// POST /api/v1/commandes/:id/affaires/generate
+export const generateAffairesFromCommande: RequestHandler = async (req, res, next) => {
+  try {
+    const parsed = generateAffairesSchema.safeParse({ params: req.params, body: req.body, query: req.query });
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues?.[0]?.message ?? "Invalid request" });
+      return;
+    }
+
+    const out = await generateAffairesFromCommandeSVC(req.params.id, parsed.data.body);
     if (!out) {
       res.status(404).json({ error: "Not found" });
       return;

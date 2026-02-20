@@ -12,6 +12,8 @@ import {
   duplicateCommande,
   generateAffairesFromOrder,
   confirmGenerateAffaires,
+  previewAffairesFromCommande,
+  generateAffairesFromCommande,
   getCadreRelease,
   getCommande,
   getCommandeDocumentFile,
@@ -27,6 +29,7 @@ import {
 import {
   createCommandeBodySchema,
   confirmGenerateAffairesSchema,
+  generateAffairesSchema,
   documentIdParamSchema,
   idParamSchema,
   releaseIdParamSchema,
@@ -133,6 +136,12 @@ router.post("/:id/generate-affaires", validate(idParamSchema), generateAffairesF
 
 // POST /api/v1/commandes/:id/generate-affaires/confirm
 router.post("/:id/generate-affaires/confirm", validate(confirmGenerateAffairesSchema), confirmGenerateAffaires)
+
+// POST /api/v1/commandes/:id/affaires/preview
+router.post("/:id/affaires/preview", validate(idParamSchema), previewAffairesFromCommande)
+
+// POST /api/v1/commandes/:id/affaires/generate
+router.post("/:id/affaires/generate", validate(generateAffairesSchema), generateAffairesFromCommande)
 
 // POST /api/v1/commandes/:id/duplicate
 router.post("/:id/duplicate", validate(idParamSchema), duplicateCommande)

@@ -62,9 +62,17 @@ z.object({
 
   cadre_start_date: isoDate.optional().nullable(),
   cadre_end_date: isoDate.optional().nullable(),
-
-  dest_stock_magasin_id: z.coerce.number().int().positive().optional().nullable(),
-  dest_stock_emplacement_id: z.coerce.number().int().positive().optional().nullable(),
+ 
+  dest_stock_magasin_id: z.string().uuid().optional().nullable(),
+  dest_stock_emplacement_id: z
+    .preprocess((value) => {
+      if (value === null || value === undefined) return value;
+      if (typeof value === "number" && Number.isFinite(value)) return String(value);
+      if (typeof value === "string") return value.trim();
+      return value;
+    }, z.string().min(1))
+    .optional()
+    .nullable(),
 
   mode_port_id: z.string().uuid().optional().nullable(),
   mode_reglement_id: z.string().uuid().optional().nullable(),
@@ -91,7 +99,7 @@ z.object({
     }
 
     if (val.order_type === "INTERNE") {
-      if (!(typeof val.dest_stock_magasin_id === "number" && Number.isFinite(val.dest_stock_magasin_id))) {
+      if (!(typeof val.dest_stock_magasin_id === "string" && val.dest_stock_magasin_id.trim().length > 0)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: "dest_stock_magasin_id is required for internal orders",
@@ -231,6 +239,40 @@ export type UpdateCadreReleaseBodyDTO = z.infer<typeof updateCadreReleaseBodySch
 /* -------------------------------------------------------------------------- */
 /* Affaires generation confirmation (stock partial arbitration)                */
 /* -------------------------------------------------------------------------- */
+
+export const affairesGenerationStrategySchema = z.enum([
+  "AUTO",
+  "DELIVER_NOW",
+  "RESERVE_AND_PRODUCE",
+]);
+
+export type AffairesGenerationStrategyDTO = z.infer<typeof affairesGenerationStrategySchema>;
+
+export const generateAffairesSchema = z
+  .object({
+    params: z.object({
+      id: z.string().regex(/^\d+$/, "id must be an integer"),
+    }),
+    body: z
+      .object({
+        strategy: affairesGenerationStrategySchema,
+        production_quantities: z
+          .array(
+            z
+              .object({
+                commande_ligne_id: z.coerce.number().int().positive(),
+                qty_to_produce: z.coerce.number().min(0),
+              })
+              .strict()
+          )
+          .optional()
+          .default([]),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type GenerateAffairesBodyDTO = z.infer<typeof generateAffairesSchema>["body"];
 
 export const generateAffairesChoiceSchema = z.enum([
   "DELIVER_AVAILABLE",

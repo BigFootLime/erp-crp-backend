@@ -28,8 +28,8 @@ export type CommandeClient = {
   order_type: CommandeOrderType;
   cadre_start_date: string | null;
   cadre_end_date: string | null;
-  dest_stock_magasin_id: number | null;
-  dest_stock_emplacement_id: number | null;
+  dest_stock_magasin_id: string | null;
+  dest_stock_emplacement_id: string | null;
   mode_port_id: string | null;
   mode_reglement_id: string | null;
   conditions_paiement_id: number | null;
@@ -204,8 +204,8 @@ export type CreateCommandeInput = {
   order_type?: CommandeOrderType;
   cadre_start_date?: string | null;
   cadre_end_date?: string | null;
-  dest_stock_magasin_id?: number | null;
-  dest_stock_emplacement_id?: number | null;
+  dest_stock_magasin_id?: string | null;
+  dest_stock_emplacement_id?: string | null;
   mode_port_id?: string | null;
   mode_reglement_id?: string | null;
   conditions_paiement_id?: number | null;
