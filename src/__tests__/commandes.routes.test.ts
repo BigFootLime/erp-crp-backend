@@ -156,6 +156,7 @@ describe("/api/v1/commandes", () => {
         ],
       }) // documents
       .mockResolvedValueOnce({ rows: [{ id: "4", commande_id: "123" }] }) // historique
+      .mockResolvedValueOnce({ rows: [{ ok: 1 }] }) // schema check: commande_to_affaire.role exists
       .mockResolvedValueOnce({
         rows: [
           {

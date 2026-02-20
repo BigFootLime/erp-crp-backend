@@ -64,6 +64,59 @@ function hasOwn(obj: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(obj, key);
 }
 
+type Queryable = Pick<PoolClient, "query">;
+
+let commandeToAffaireHasRoleColumnCache: boolean | null = null;
+async function hasCommandeToAffaireRoleColumn(db: Queryable): Promise<boolean> {
+  if (commandeToAffaireHasRoleColumnCache !== null) return commandeToAffaireHasRoleColumnCache;
+
+  const res = await db.query<{ ok: number }>(
+    `
+    SELECT 1::int AS ok
+    FROM pg_attribute
+    WHERE attrelid = to_regclass('public.commande_to_affaire')
+      AND attname = 'role'
+      AND NOT attisdropped
+    LIMIT 1
+    `
+  );
+
+  commandeToAffaireHasRoleColumnCache = res.rows.length > 0;
+  return commandeToAffaireHasRoleColumnCache;
+}
+
+type CommandeToAffaireRole = "LIVRAISON" | "PRODUCTION" | null;
+type CommandeToAffaireMapping = { affaire_id: number; role: CommandeToAffaireRole };
+
+async function listCommandeToAffaireMappings(db: Queryable, commandeId: number): Promise<CommandeToAffaireMapping[]> {
+  const hasRoleColumn = await hasCommandeToAffaireRoleColumn(db);
+  const sql = hasRoleColumn
+    ? `
+      SELECT affaire_id::int AS affaire_id, role
+      FROM commande_to_affaire
+      WHERE commande_id = $1
+      ORDER BY date_conversion DESC NULLS LAST, id DESC
+      `
+    : `
+      SELECT
+        affaire_id::int AS affaire_id,
+        CASE
+          WHEN row_number() OVER (PARTITION BY commande_id ORDER BY id ASC) = 1 THEN 'LIVRAISON'
+          WHEN row_number() OVER (PARTITION BY commande_id ORDER BY id ASC) = 2 THEN 'PRODUCTION'
+          ELSE NULL
+        END AS role
+      FROM commande_to_affaire
+      WHERE commande_id = $1
+      ORDER BY id ASC
+      `;
+
+  const res = await db.query<{ affaire_id: number; role: string | null }>(sql, [commandeId]);
+  return res.rows.map((r) => ({
+    affaire_id: r.affaire_id,
+    role: r.role === "LIVRAISON" || r.role === "PRODUCTION" ? r.role : null,
+  }));
+}
+
 type ListWhere = { whereSql: string; values: unknown[] };
 function buildListWhere(filters: ListCommandesQueryDTO): ListWhere {
   const where: string[] = [];
@@ -428,40 +481,52 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
     user_id: toNullableInt(h.user_id, "historique.user_id"),
   }));
 
-  const affaires = inc.affaires
-    ? (
-        await pool.query(
-          `
-           SELECT
-             cta.id::text AS id,
-             cta.commande_id::text AS commande_id,
-             cta.affaire_id::text AS affaire_id,
-             cta.date_conversion::text AS date_conversion,
-             cta.commentaire,
-             cta.role,
-             jsonb_build_object(
-               'id', a.id,
-               'reference', a.reference,
-               'client_id', a.client_id,
-               'commande_id', a.commande_id,
-              'devis_id', a.devis_id,
-              'type_affaire', a.type_affaire,
-              'statut', a.statut,
-              'date_ouverture', a.date_ouverture::text,
-              'date_cloture', a.date_cloture::text,
-              'commentaire', a.commentaire,
-              'created_at', a.created_at::text,
-              'updated_at', a.updated_at::text
-            ) AS affaire
-          FROM commande_to_affaire cta
-          JOIN affaire a ON a.id = cta.affaire_id
-          WHERE cta.commande_id = $1
-          ORDER BY cta.date_conversion DESC, cta.id DESC
-          `,
-          [commandeId]
-        )
-      ).rows
-    : [];
+  let affaires: any[] = [];
+  if (inc.affaires) {
+    const hasRoleColumn = await hasCommandeToAffaireRoleColumn(pool);
+    const roleSql = hasRoleColumn
+      ? "cta.role AS role"
+      : `
+        CASE
+          WHEN row_number() OVER (PARTITION BY cta.commande_id ORDER BY cta.id ASC) = 1 THEN 'LIVRAISON'
+          WHEN row_number() OVER (PARTITION BY cta.commande_id ORDER BY cta.id ASC) = 2 THEN 'PRODUCTION'
+          ELSE NULL
+        END AS role
+      `;
+
+    affaires = (
+      await pool.query(
+        `
+         SELECT
+           cta.id::text AS id,
+           cta.commande_id::text AS commande_id,
+           cta.affaire_id::text AS affaire_id,
+           cta.date_conversion::text AS date_conversion,
+           cta.commentaire,
+           ${roleSql},
+           jsonb_build_object(
+             'id', a.id,
+             'reference', a.reference,
+             'client_id', a.client_id,
+             'commande_id', a.commande_id,
+            'devis_id', a.devis_id,
+            'type_affaire', a.type_affaire,
+            'statut', a.statut,
+            'date_ouverture', a.date_ouverture::text,
+            'date_cloture', a.date_cloture::text,
+            'commentaire', a.commentaire,
+            'created_at', a.created_at::text,
+            'updated_at', a.updated_at::text
+          ) AS affaire
+        FROM commande_to_affaire cta
+        JOIN affaire a ON a.id = cta.affaire_id
+        WHERE cta.commande_id = $1
+        ORDER BY cta.date_conversion DESC, cta.id DESC
+        `,
+        [commandeId]
+      )
+    ).rows;
+  }
 
   const affairesOut = affaires.map((a: any) => {
     const affaireValue: unknown = a.affaire;
@@ -992,22 +1057,14 @@ export async function repoGenerateAffairesFromOrder(id: string) {
     }
 
     // Idempotency: if mappings already exist, return them deterministically.
-    const existingMappings = await client.query<{ affaire_id: number; role: string | null }>(
-      `
-      SELECT affaire_id::int AS affaire_id, role
-      FROM commande_to_affaire
-      WHERE commande_id = $1
-      ORDER BY date_conversion DESC NULLS LAST, id DESC
-      `,
-      [commandeId]
-    );
+    const existingMappings = await listCommandeToAffaireMappings(client, commandeId);
 
-    if (existingMappings.rows.length > 0) {
-      const livraison = existingMappings.rows.find((r) => r.role === "LIVRAISON")?.affaire_id ?? null;
-      const production = existingMappings.rows.find((r) => r.role === "PRODUCTION")?.affaire_id ?? null;
+    if (existingMappings.length > 0) {
+      const livraison = existingMappings.find((r) => r.role === "LIVRAISON")?.affaire_id ?? null;
+      const production = existingMappings.find((r) => r.role === "PRODUCTION")?.affaire_id ?? null;
       await client.query("COMMIT");
       return {
-        affaire_ids: existingMappings.rows.map((r) => r.affaire_id),
+        affaire_ids: existingMappings.map((r) => r.affaire_id),
         livraison_affaire_id: livraison,
         production_affaire_id: production,
         requires_confirmation: false,
@@ -1106,24 +1163,47 @@ type MappingInsertInput = {
 };
 
 async function insertCommandeToAffaireMapping(db: PoolClient, input: MappingInsertInput): Promise<void> {
-  const existing = await db.query<{ id: string }>(
-    `
-    SELECT id::text AS id
-    FROM commande_to_affaire
-    WHERE commande_id = $1 AND role = $2
-    LIMIT 1
-    `,
-    [input.commande_id, input.role]
-  );
+  const hasRoleColumn = await hasCommandeToAffaireRoleColumn(db);
+
+  const existing = hasRoleColumn
+    ? await db.query<{ id: string }>(
+        `
+        SELECT id::text AS id
+        FROM commande_to_affaire
+        WHERE commande_id = $1 AND role = $2
+        LIMIT 1
+        `,
+        [input.commande_id, input.role]
+      )
+    : await db.query<{ id: string }>(
+        `
+        SELECT id::text AS id
+        FROM commande_to_affaire
+        WHERE commande_id = $1 AND affaire_id = $2
+        LIMIT 1
+        `,
+        [input.commande_id, input.affaire_id]
+      );
 
   if (existing.rows.length > 0) return;
 
+  if (hasRoleColumn) {
+    await db.query(
+      `
+      INSERT INTO commande_to_affaire (commande_id, affaire_id, commentaire, role)
+      VALUES ($1, $2, $3, $4)
+      `,
+      [input.commande_id, input.affaire_id, input.commentaire, input.role]
+    );
+    return;
+  }
+
   await db.query(
     `
-    INSERT INTO commande_to_affaire (commande_id, affaire_id, commentaire, role)
-    VALUES ($1, $2, $3, $4)
+    INSERT INTO commande_to_affaire (commande_id, affaire_id, commentaire)
+    VALUES ($1, $2, $3)
     `,
-    [input.commande_id, input.affaire_id, input.commentaire, input.role]
+    [input.commande_id, input.affaire_id, input.commentaire]
   );
 }
 
@@ -1307,23 +1387,15 @@ export async function repoPreviewAffairesFromCommande(id: string) {
       throw new HttpError(400, "COMMANDE_CLIENT_REQUIRED", "Cannot generate affaire from a commande without client_id");
     }
 
-    const existingMappings = await client.query<{ affaire_id: number; role: string | null }>(
-      `
-      SELECT affaire_id::int AS affaire_id, role
-      FROM commande_to_affaire
-      WHERE commande_id = $1
-      ORDER BY date_conversion DESC NULLS LAST, id DESC
-      `,
-      [commandeId]
-    );
+    const existingMappings = await listCommandeToAffaireMappings(client, commandeId);
 
-    if (existingMappings.rows.length > 0) {
-      const livraison = existingMappings.rows.find((r) => r.role === "LIVRAISON")?.affaire_id ?? null;
-      const production = existingMappings.rows.find((r) => r.role === "PRODUCTION")?.affaire_id ?? null;
+    if (existingMappings.length > 0) {
+      const livraison = existingMappings.find((r) => r.role === "LIVRAISON")?.affaire_id ?? null;
+      const production = existingMappings.find((r) => r.role === "PRODUCTION")?.affaire_id ?? null;
       await client.query("COMMIT");
       return {
         already_generated: true,
-        affaire_ids: existingMappings.rows.map((r) => r.affaire_id),
+        affaire_ids: existingMappings.map((r) => r.affaire_id),
         livraison_affaire_id: livraison,
         production_affaire_id: production,
         requires_confirmation: false,
@@ -1382,22 +1454,14 @@ export async function repoGenerateAffairesFromCommande(id: string, body: Generat
     }
 
     // Idempotency: if mappings already exist, return them deterministically.
-    const existingMappings = await client.query<{ affaire_id: number; role: string | null }>(
-      `
-      SELECT affaire_id::int AS affaire_id, role
-      FROM commande_to_affaire
-      WHERE commande_id = $1
-      ORDER BY date_conversion DESC NULLS LAST, id DESC
-      `,
-      [commandeId]
-    );
+    const existingMappings = await listCommandeToAffaireMappings(client, commandeId);
 
-    if (existingMappings.rows.length > 0) {
-      const livraison = existingMappings.rows.find((r) => r.role === "LIVRAISON")?.affaire_id ?? null;
-      const production = existingMappings.rows.find((r) => r.role === "PRODUCTION")?.affaire_id ?? null;
+    if (existingMappings.length > 0) {
+      const livraison = existingMappings.find((r) => r.role === "LIVRAISON")?.affaire_id ?? null;
+      const production = existingMappings.find((r) => r.role === "PRODUCTION")?.affaire_id ?? null;
       await client.query("COMMIT");
       return {
-        affaire_ids: existingMappings.rows.map((r) => r.affaire_id),
+        affaire_ids: existingMappings.map((r) => r.affaire_id),
         livraison_affaire_id: livraison,
         production_affaire_id: production,
         requires_confirmation: false,
@@ -1529,17 +1593,9 @@ export async function repoConfirmGenerateAffaires(id: string, body: ConfirmGener
       throw new HttpError(400, "COMMANDE_CLIENT_REQUIRED", "Cannot generate affaire from a commande without client_id");
     }
 
-    let livraisonAffaireId: number | null = null;
-    const livraisonRes = await client.query<{ affaire_id: number }>(
-      `
-      SELECT affaire_id::int AS affaire_id
-      FROM commande_to_affaire
-      WHERE commande_id = $1 AND role = 'LIVRAISON'
-      LIMIT 1
-      `,
-      [commandeId]
-    );
-    livraisonAffaireId = livraisonRes.rows[0]?.affaire_id ?? null;
+    const existingMappings = await listCommandeToAffaireMappings(client, commandeId);
+    let livraisonAffaireId: number | null =
+      existingMappings.find((m) => m.role === "LIVRAISON")?.affaire_id ?? null;
 
     if (!livraisonAffaireId) {
       livraisonAffaireId = await createAffaire(client, {
@@ -1555,16 +1611,7 @@ export async function repoConfirmGenerateAffaires(id: string, body: ConfirmGener
       });
     }
 
-    const productionRes = await client.query<{ affaire_id: number }>(
-      `
-      SELECT affaire_id::int AS affaire_id
-      FROM commande_to_affaire
-      WHERE commande_id = $1 AND role = 'PRODUCTION'
-      LIMIT 1
-      `,
-      [commandeId]
-    );
-    const existingProductionId = productionRes.rows[0]?.affaire_id ?? null;
+    const existingProductionId = existingMappings.find((m) => m.role === "PRODUCTION")?.affaire_id ?? null;
     if (existingProductionId) {
       await client.query("COMMIT");
       return {

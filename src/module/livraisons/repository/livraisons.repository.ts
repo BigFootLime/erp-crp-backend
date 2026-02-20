@@ -53,6 +53,27 @@ function getPgErrorInfo(err: unknown) {
   return { code, constraint }
 }
 
+type Queryable = Pick<PoolClient, "query">
+
+let commandeToAffaireHasRoleColumnCache: boolean | null = null
+async function hasCommandeToAffaireRoleColumn(db: Queryable): Promise<boolean> {
+  if (commandeToAffaireHasRoleColumnCache !== null) return commandeToAffaireHasRoleColumnCache
+
+  const res = await db.query<{ ok: number }>(
+    `
+    SELECT 1::int AS ok
+    FROM pg_attribute
+    WHERE attrelid = to_regclass('public.commande_to_affaire')
+      AND attname = 'role'
+      AND NOT attisdropped
+    LIMIT 1
+    `
+  )
+
+  commandeToAffaireHasRoleColumnCache = res.rows.length > 0
+  return commandeToAffaireHasRoleColumnCache
+}
+
 function mapUserLite(row: {
   id: number | null
   username: string | null
@@ -1116,17 +1137,25 @@ export async function repoCreateLivraisonFromCommande(commandeId: number, userId
     )
     const deliveryAddressId = clientRes.rows[0]?.delivery_address_id ?? null
 
-    const affaireRes = await db.query<{ affaire_id: number }>(
-      `
-      SELECT cta.affaire_id
-      FROM commande_to_affaire cta
-      WHERE cta.commande_id = $1
-        AND (cta.role = 'LIVRAISON' OR cta.role IS NULL)
-      ORDER BY (cta.role = 'LIVRAISON') DESC, cta.date_conversion DESC, cta.id DESC
-      LIMIT 1
-      `,
-      [commandeId]
-    )
+    const hasRoleColumn = await hasCommandeToAffaireRoleColumn(db)
+    const affaireSql = hasRoleColumn
+      ? `
+        SELECT cta.affaire_id
+        FROM commande_to_affaire cta
+        WHERE cta.commande_id = $1
+          AND (cta.role = 'LIVRAISON' OR cta.role IS NULL)
+        ORDER BY (cta.role = 'LIVRAISON') DESC, cta.date_conversion DESC, cta.id DESC
+        LIMIT 1
+        `
+      : `
+        SELECT cta.affaire_id
+        FROM commande_to_affaire cta
+        WHERE cta.commande_id = $1
+        ORDER BY cta.date_conversion DESC NULLS LAST, cta.id ASC
+        LIMIT 1
+        `
+
+    const affaireRes = await db.query<{ affaire_id: number }>(affaireSql, [commandeId])
     const affaireId = affaireRes.rows[0]?.affaire_id ?? null
 
     const seqRes = await db.query<{ id: string }>(`SELECT nextval('public.bon_livraison_id_seq')::bigint::text AS id`)
