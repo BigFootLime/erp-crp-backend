@@ -117,6 +117,84 @@ async function listCommandeToAffaireMappings(db: Queryable, commandeId: number):
   }));
 }
 
+type StockOnHandSource = {
+  table: string;
+  alias: string;
+  articleIdColumn: string;
+  qtyOnHandColumn: string;
+};
+
+let stockOnHandSourceCache: StockOnHandSource | null | undefined = undefined;
+async function resolveStockOnHandSource(db: Queryable): Promise<StockOnHandSource | null> {
+  if (stockOnHandSourceCache !== undefined) return stockOnHandSourceCache;
+
+  const candidates: Array<{
+    table: string;
+    alias: string;
+    articleIdColumns: readonly string[];
+    qtyColumns: readonly string[];
+  }> = [
+    {
+      table: "public.stock_balances",
+      alias: "sb",
+      articleIdColumns: ["article_id", "article_ref_id"],
+      qtyColumns: [
+        "qty_on_hand",
+        "quantity_on_hand",
+        "qty",
+        "quantity",
+        "qty_available",
+        "available_qty",
+      ],
+    },
+    {
+      table: "public.stock_levels",
+      alias: "sl",
+      articleIdColumns: ["article_id", "article_ref_id"],
+      qtyColumns: [
+        "qty_on_hand",
+        "quantity_on_hand",
+        "qty",
+        "quantity",
+        "qty_available",
+        "available_qty",
+      ],
+    },
+  ];
+
+  for (const c of candidates) {
+    const colsRes = await db.query<{ name: string }>(
+      `
+      SELECT attname AS name
+      FROM pg_attribute
+      WHERE attrelid = to_regclass($1)
+        AND attnum > 0
+        AND NOT attisdropped
+      `,
+      [c.table]
+    );
+
+    if (colsRes.rows.length === 0) continue;
+    const cols = new Set(colsRes.rows.map((r) => r.name));
+
+    const articleIdColumn = c.articleIdColumns.find((n) => cols.has(n)) ?? null;
+    const qtyOnHandColumn = c.qtyColumns.find((n) => cols.has(n)) ?? null;
+
+    if (!articleIdColumn || !qtyOnHandColumn) continue;
+
+    stockOnHandSourceCache = {
+      table: c.table,
+      alias: c.alias,
+      articleIdColumn,
+      qtyOnHandColumn,
+    };
+    return stockOnHandSourceCache;
+  }
+
+  stockOnHandSourceCache = null;
+  return null;
+}
+
 type ListWhere = { whereSql: string; values: unknown[] };
 function buildListWhere(filters: ListCommandesQueryDTO): ListWhere {
   const where: string[] = [];
@@ -1233,6 +1311,14 @@ async function computeCommandeAllocationPlan(db: PoolClient, commandeId: number)
     return { article_ref_id: null, article_legacy_id: null };
   }
 
+  const stockSource = await resolveStockOnHandSource(db);
+  const stockJoinSql = stockSource
+    ? `LEFT JOIN ${stockSource.table} ${stockSource.alias} ON ${stockSource.alias}.${stockSource.articleIdColumn}::text = art.article_id::text`
+    : "";
+  const qtyOnHandExpr = stockSource
+    ? `COALESCE(SUM(${stockSource.alias}.${stockSource.qtyOnHandColumn}), 0)::float8`
+    : `0::float8`;
+
   const res = await db.query<{
     commande_ligne_id: number;
     code_piece: string | null;
@@ -1246,7 +1332,7 @@ async function computeCommandeAllocationPlan(db: PoolClient, commandeId: number)
       cl.code_piece,
       cl.quantite::float8 AS qty_ordered,
       art.article_id::text AS article_id,
-      COALESCE(SUM(sb.qty_on_hand), 0)::float8 AS qty_on_hand
+      ${qtyOnHandExpr} AS qty_on_hand
     FROM commande_ligne cl
     LEFT JOIN LATERAL (
       SELECT a.id AS article_id
@@ -1261,8 +1347,7 @@ async function computeCommandeAllocationPlan(db: PoolClient, commandeId: number)
       ORDER BY (a.code = cl.code_piece) DESC, a.id ASC
       LIMIT 1
     ) art ON TRUE
-    LEFT JOIN public.stock_balances sb
-      ON sb.article_id = art.article_id
+    ${stockJoinSql}
     WHERE cl.commande_id = $1
     GROUP BY cl.id, art.article_id
     ORDER BY cl.id ASC

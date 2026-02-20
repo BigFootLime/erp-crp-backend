@@ -44,6 +44,10 @@ beforeEach(() => {
   mocks.clientQuery.mockReset();
   mocks.clientRelease.mockReset();
 
+  // Default safe responses for any unexpected queries.
+  mocks.poolQuery.mockResolvedValue({ rows: [] });
+  mocks.clientQuery.mockResolvedValue({ rows: [] });
+
   mocks.poolConnect.mockResolvedValue({
     query: mocks.clientQuery,
     release: mocks.clientRelease,
