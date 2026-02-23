@@ -11,6 +11,7 @@ import {
   createMagasinSchema,
   createMovementSchema,
   docIdParamSchema,
+  emplacementIdParamSchema,
   idParamSchema,
   listInventorySessionsQuerySchema,
   listArticlesQuerySchema,
@@ -388,7 +389,7 @@ export const createStockEmplacement: RequestHandler = async (req, res, next) => 
 export const updateStockEmplacement: RequestHandler = async (req, res, next) => {
   try {
     const audit = buildAuditContext(req);
-    const { id } = idParamSchema.parse({ params: req.params }).params;
+    const { id } = emplacementIdParamSchema.parse({ params: req.params }).params;
     const body: UpdateEmplacementBodyDTO = updateEmplacementSchema.parse({ body: req.body }).body;
     const out = await updateStockEmplacementSVC(id, body, audit);
     if (!out) {

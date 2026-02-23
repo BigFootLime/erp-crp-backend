@@ -6,7 +6,7 @@ export type Paginated<T> = {
 export type ArticleType = "PIECE_TECHNIQUE" | "PURCHASED";
 
 export type StockArticleListItem = {
-  id: number;
+  id: string;
   code: string;
   designation: string;
   article_type: ArticleType;
@@ -33,7 +33,7 @@ export type StockArticleKpis = {
 };
 
 export type StockMagasinListItem = {
-  id: number;
+  id: string;
   code: string;
   name: string;
   is_active: boolean;
@@ -45,7 +45,7 @@ export type StockMagasinListItem = {
 
 export type StockMagasinDetail = {
   magasin: {
-    id: number;
+    id: string;
     code: string;
     name: string;
     is_active: boolean;
@@ -65,7 +65,7 @@ export type StockMagasinKpis = {
 
 export type StockEmplacementListItem = {
   id: number;
-  magasin_id: number;
+  magasin_id: string;
   magasin_code: string;
   magasin_name: string;
   code: string;
@@ -77,8 +77,8 @@ export type StockEmplacementListItem = {
 };
 
 export type StockLotListItem = {
-  id: number;
-  article_id: number;
+  id: string;
+  article_id: string;
   article_code: string;
   article_designation: string;
   lot_code: string;
@@ -94,30 +94,50 @@ export type StockLotDetail = StockLotListItem & {
   notes: string | null;
 };
 
+// This endpoint now reflects stock_levels (via v_stock_current).
 export type StockBalanceRow = {
-  article_id: number;
+  id: string;
+  article_id: string;
   article_code: string;
   article_designation: string;
-  magasin_id: number;
-  magasin_code: string;
-  magasin_name: string;
-  emplacement_id: number;
-  emplacement_code: string;
-  emplacement_name: string | null;
-  lot_id: number | null;
-  lot_code: string | null;
-  qty_on_hand: number;
+  warehouse_id: string;
+  warehouse_code: string;
+  warehouse_name: string;
+  location_id: string;
+  location_code: string;
+  location_description: string | null;
+  unit_id: string;
+  unit_code: string;
+  managed_in_stock: boolean;
+  qty_total: number;
+  qty_reserved: number;
+  qty_depreciated: number;
+  qty_available: number;
   updated_at: string;
 };
 
-export type StockMovementType = "IN" | "OUT" | "TRANSFER" | "ADJUSTMENT" | "SCRAP";
+export type StockMovementType =
+  | "IN"
+  | "OUT"
+  | "TRANSFER"
+  | "ADJUST"
+  | "RESERVE"
+  | "UNRESERVE"
+  | "DEPRECIATE"
+  | "ADJUSTMENT"
+  | "SCRAP";
+
 export type StockMovementStatus = "DRAFT" | "POSTED" | "CANCELLED";
 
 export type StockMovementListItem = {
-  id: number;
-  movement_no: string;
+  id: string;
+  movement_no: string | null;
   movement_type: StockMovementType;
   status: StockMovementStatus;
+  article_id: string;
+  article_code: string;
+  article_designation: string;
+  qty: number;
   effective_at: string;
   posted_at: string | null;
   source_document_type: string | null;
@@ -126,35 +146,35 @@ export type StockMovementListItem = {
   updated_at: string;
   created_at: string;
   lines_count: number;
-  qty_total: number;
 };
 
 export type StockMovementLineDetail = {
-  id: number;
-  movement_id: number;
+  id: string;
+  movement_id: string;
   line_no: number;
-  article_id: number;
+  article_id: string;
   article_code: string;
   article_designation: string;
-  lot_id: number | null;
+  lot_id: string | null;
   lot_code: string | null;
   qty: number;
   unite: string | null;
   unit_cost: number | null;
   currency: string | null;
-  src_magasin_id: number | null;
+  src_magasin_id: string | null;
   src_magasin_code: string | null;
   src_magasin_name: string | null;
   src_emplacement_id: number | null;
   src_emplacement_code: string | null;
   src_emplacement_name: string | null;
-  dst_magasin_id: number | null;
+  dst_magasin_id: string | null;
   dst_magasin_code: string | null;
   dst_magasin_name: string | null;
   dst_emplacement_id: number | null;
   dst_emplacement_code: string | null;
   dst_emplacement_name: string | null;
   note: string | null;
+  direction: "IN" | "OUT" | null;
 };
 
 export type StockDocument = {
@@ -164,8 +184,8 @@ export type StockDocument = {
 };
 
 export type StockMovementEvent = {
-  id: number;
-  stock_movement_id: number;
+  id: string;
+  stock_movement_id: string;
   event_type: string;
   old_values: unknown | null;
   new_values: unknown | null;
@@ -175,10 +195,14 @@ export type StockMovementEvent = {
 
 export type StockMovementDetail = {
   movement: {
-    id: number;
-    movement_no: string;
+    id: string;
+    movement_no: string | null;
     movement_type: StockMovementType;
     status: StockMovementStatus;
+    article_id: string;
+    stock_level_id: string;
+    stock_batch_id: string | null;
+    qty: number;
     effective_at: string;
     posted_at: string | null;
     source_document_type: string | null;
@@ -207,31 +231,32 @@ export type StockMovementKpis = {
 export type StockInventorySessionStatus = "OPEN" | "CLOSED";
 
 export type StockInventorySessionListItem = {
-  id: number;
+  id: string;
   session_no: string;
   status: StockInventorySessionStatus;
   started_at: string;
   closed_at: string | null;
-  adjustment_movement_id: number | null;
   notes: string | null;
   updated_at: string;
   created_at: string;
+  adjustment_movements_count: number;
+  last_adjustment_movement_id: string | null;
 };
 
 export type StockInventorySessionLine = {
-  id: number;
-  session_id: number;
+  id: string;
+  session_id: string;
   line_no: number;
-  article_id: number;
+  article_id: string;
   article_code: string;
   article_designation: string;
-  magasin_id: number;
+  magasin_id: string;
   magasin_code: string;
   magasin_name: string;
   emplacement_id: number;
   emplacement_code: string;
   emplacement_name: string | null;
-  lot_id: number | null;
+  lot_id: string | null;
   lot_code: string | null;
   counted_qty: number;
   qty_on_hand: number;
@@ -244,4 +269,5 @@ export type StockInventorySessionLine = {
 export type StockInventorySessionDetail = {
   session: StockInventorySessionListItem;
   lines: StockInventorySessionLine[];
+  adjustment_movement_ids: string[];
 };

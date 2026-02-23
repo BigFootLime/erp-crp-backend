@@ -5,16 +5,16 @@ export const bonLivraisonStatutSchema = z
   .enum(["DRAFT", "READY", "SHIPPED", "DELIVERED", "CANCELLED"]) satisfies z.ZodType<BonLivraisonStatut>
 
 export const livraisonIdParamsSchema = z.object({
-  id: z.coerce.number().int().positive(),
+  id: z.string().uuid(),
 })
 
 export const livraisonLineIdParamsSchema = z.object({
-  id: z.coerce.number().int().positive(),
-  lineId: z.coerce.number().int().positive(),
+  id: z.string().uuid(),
+  lineId: z.string().uuid(),
 })
 
 export const livraisonDocParamsSchema = z.object({
-  id: z.coerce.number().int().positive(),
+  id: z.string().uuid(),
   docId: z.string().uuid(),
 })
 

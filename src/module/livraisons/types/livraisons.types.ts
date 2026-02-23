@@ -46,7 +46,7 @@ export type AdresseLivraisonLite = {
 } | null
 
 export type BonLivraisonListItem = {
-  id: number
+  id: string
   numero: string
   statut: BonLivraisonStatut
   client: ClientLite
@@ -61,7 +61,7 @@ export type BonLivraisonListItem = {
 }
 
 export type BonLivraisonHeader = {
-  id: number
+  id: string
   numero: string
   statut: BonLivraisonStatut
   client: ClientLite
@@ -84,8 +84,8 @@ export type BonLivraisonHeader = {
 }
 
 export type BonLivraisonLigne = {
-  id: number
-  bon_livraison_id: number
+  id: string
+  bon_livraison_id: string
   ordre: number
   designation: string
   code_piece: string | null
@@ -100,8 +100,8 @@ export type BonLivraisonLigne = {
 }
 
 export type BonLivraisonDocument = {
-  id: number
-  bon_livraison_id: number
+  id: string
+  bon_livraison_id: string
   document_id: string
   type: string | null
   version: number
@@ -112,8 +112,8 @@ export type BonLivraisonDocument = {
 }
 
 export type BonLivraisonEventLog = {
-  id: number
-  bon_livraison_id: number
+  id: string
+  bon_livraison_id: string
   event_type: string
   old_values: unknown | null
   new_values: unknown | null

@@ -234,7 +234,7 @@ export async function repoListLivraisons(filters: ListLivraisonsQueryDTO): Promi
   const dataRes = await pool.query<Row>(dataSql, [...values, pageSize, offset])
 
   const items: BonLivraisonListItem[] = dataRes.rows.map((r: Row) => ({
-    id: toInt(r.id, "bon_livraison.id"),
+    id: r.id,
     numero: r.numero,
     statut: r.statut,
     client: { client_id: r.client_id, company_name: r.client_company_name },
@@ -289,7 +289,7 @@ type HeaderRow = {
   updated_by_surname: string | null
 }
 
-async function getHeader(client: PoolClient, id: number, opts?: { forUpdate?: boolean }): Promise<HeaderRow | null> {
+async function getHeader(client: PoolClient, id: string, opts?: { forUpdate?: boolean }): Promise<HeaderRow | null> {
   const lock = opts?.forUpdate ? "FOR UPDATE" : ""
   const sql = `
     SELECT
@@ -335,19 +335,19 @@ async function getHeader(client: PoolClient, id: number, opts?: { forUpdate?: bo
     LEFT JOIN adresse_livraison al ON al.delivery_address_id = bl.adresse_livraison_id
     LEFT JOIN users cb ON cb.id = bl.created_by
     LEFT JOIN users ub ON ub.id = bl.updated_by
-    WHERE bl.id = $1
+    WHERE bl.id = $1::uuid
     ${lock}
   `
   const res = await client.query<HeaderRow>(sql, [id])
   return res.rows[0] ?? null
 }
 
-export async function repoGetLivraisonStatut(id: number): Promise<BonLivraisonStatut | null> {
-  const res = await pool.query<{ statut: BonLivraisonStatut }>(`SELECT statut FROM bon_livraison WHERE id = $1`, [id])
+export async function repoGetLivraisonStatut(id: string): Promise<BonLivraisonStatut | null> {
+  const res = await pool.query<{ statut: BonLivraisonStatut }>(`SELECT statut FROM bon_livraison WHERE id = $1::uuid`, [id])
   return res.rows[0]?.statut ?? null
 }
 
-export async function repoGetLivraisonDetail(id: number): Promise<BonLivraisonDetail | null> {
+export async function repoGetLivraisonDetail(id: string): Promise<BonLivraisonDetail | null> {
   const db = await pool.connect()
   try {
     const headerRow = await getHeader(db, id)
@@ -386,7 +386,7 @@ export async function repoGetLivraisonDetail(id: number): Promise<BonLivraisonDe
     })
 
     const bon_livraison: BonLivraisonHeader = {
-      id: toInt(headerRow.id, "bon_livraison.id"),
+      id: headerRow.id,
       numero: headerRow.numero,
       statut: headerRow.statut,
       client: { client_id: headerRow.client_id, company_name: headerRow.client_company_name },
@@ -456,14 +456,14 @@ export async function repoGetLivraisonDetail(id: number): Promise<BonLivraisonDe
       FROM bon_livraison_ligne l
       LEFT JOIN users cb ON cb.id = l.created_by
       LEFT JOIN users ub ON ub.id = l.updated_by
-      WHERE l.bon_livraison_id = $1
+      WHERE l.bon_livraison_id = $1::uuid
       ORDER BY l.ordre ASC, l.id ASC
       `,
       [id]
     )
     const lignes: BonLivraisonLigne[] = linesRes.rows.map((r: LineRow) => ({
-      id: toInt(r.id, "bon_livraison_ligne.id"),
-      bon_livraison_id: toInt(r.bon_livraison_id, "bon_livraison_ligne.bon_livraison_id"),
+      id: r.id,
+      bon_livraison_id: r.bon_livraison_id,
       ordre: r.ordre,
       designation: r.designation,
       code_piece: r.code_piece,
@@ -521,14 +521,14 @@ export async function repoGetLivraisonDetail(id: number): Promise<BonLivraisonDe
       FROM bon_livraison_documents d
       LEFT JOIN documents_clients dc ON dc.id = d.document_id
       LEFT JOIN users u ON u.id = d.uploaded_by
-      WHERE d.bon_livraison_id = $1
+      WHERE d.bon_livraison_id = $1::uuid
       ORDER BY d.created_at DESC, d.id DESC
       `,
       [id]
     )
     const documents: BonLivraisonDocument[] = docsRes.rows.map((r: DocRow) => ({
-      id: toInt(r.id, "bon_livraison_documents.id"),
-      bon_livraison_id: toInt(r.bon_livraison_id, "bon_livraison_documents.bon_livraison_id"),
+      id: r.id,
+      bon_livraison_id: r.bon_livraison_id,
       document_id: r.document_id,
       type: r.type,
       version: r.version,
@@ -545,7 +545,7 @@ export async function repoGetLivraisonDetail(id: number): Promise<BonLivraisonDe
 
     // Events
     type EventRow = {
-      id: number
+      id: string
       bon_livraison_id: string
       event_type: string
       old_values: unknown | null
@@ -560,7 +560,7 @@ export async function repoGetLivraisonDetail(id: number): Promise<BonLivraisonDe
     const eventsRes = await db.query<EventRow>(
       `
       SELECT
-        e.id,
+        e.id::text AS id,
         e.bon_livraison_id::text AS bon_livraison_id,
         e.event_type,
         e.old_values,
@@ -572,7 +572,7 @@ export async function repoGetLivraisonDetail(id: number): Promise<BonLivraisonDe
         u.surname
       FROM bon_livraison_event_log e
       LEFT JOIN users u ON u.id = e.user_id
-      WHERE e.bon_livraison_id = $1
+      WHERE e.bon_livraison_id = $1::uuid
       ORDER BY e.created_at DESC, e.id DESC
       `,
       [id]
@@ -580,7 +580,7 @@ export async function repoGetLivraisonDetail(id: number): Promise<BonLivraisonDe
 
     const events: BonLivraisonEventLog[] = eventsRes.rows.map((r: EventRow) => ({
       id: r.id,
-      bon_livraison_id: toInt(r.bon_livraison_id, "bon_livraison_event_log.bon_livraison_id"),
+      bon_livraison_id: r.bon_livraison_id,
       event_type: r.event_type,
       old_values: r.old_values ?? null,
       new_values: r.new_values ?? null,
@@ -597,7 +597,7 @@ export async function repoGetLivraisonDetail(id: number): Promise<BonLivraisonDe
 async function insertEvent(
   client: PoolClient,
   params: {
-    bon_livraison_id: number
+    bon_livraison_id: string
     event_type: string
     user_id: number | null
     old_values?: unknown | null
@@ -607,7 +607,7 @@ async function insertEvent(
   await client.query(
     `
     INSERT INTO bon_livraison_event_log (bon_livraison_id, event_type, old_values, new_values, user_id)
-    VALUES ($1, $2, $3::jsonb, $4::jsonb, $5)
+    VALUES ($1::uuid, $2, $3::jsonb, $4::jsonb, $5)
     `,
     [
       params.bon_livraison_id,
@@ -622,7 +622,7 @@ async function insertEvent(
 type InsertLineInput = Pick<CreateLivraisonLineBodyDTO, "designation" | "quantite"> &
   Partial<Pick<CreateLivraisonLineBodyDTO, "ordre" | "code_piece" | "unite" | "commande_ligne_id" | "delai_client">>
 
-async function insertLines(client: PoolClient, bonLivraisonId: number, lignes: InsertLineInput[], userId: number) {
+async function insertLines(client: PoolClient, bonLivraisonId: string, lignes: InsertLineInput[], userId: number) {
   if (!lignes.length) return
 
   const params: unknown[] = [bonLivraisonId]
@@ -643,7 +643,7 @@ async function insertLines(client: PoolClient, bonLivraisonId: number, lignes: I
       userId
     )
     const placeholders = Array.from({ length: 9 }, (_, j) => `$${baseIndex + 1 + j}`).join(",")
-    valuesSql.push(`($1,${placeholders})`)
+    valuesSql.push(`($1::uuid,${placeholders})`)
   })
 
   await client.query(
@@ -665,23 +665,24 @@ async function insertLines(client: PoolClient, bonLivraisonId: number, lignes: I
   )
 }
 
-export async function repoCreateLivraison(input: CreateLivraisonBodyDTO, userId: number): Promise<{ id: number }> {
+export async function repoCreateLivraison(input: CreateLivraisonBodyDTO, userId: number): Promise<{ id: string }> {
   const db = await pool.connect()
   try {
     await db.query("BEGIN")
 
-    const seqRes = await db.query<{ id: string }>(`SELECT nextval('public.bon_livraison_id_seq')::bigint::text AS id`)
-    const idRaw = seqRes.rows[0]?.id
-    if (!idRaw) throw new Error("Failed to reserve bon_livraison id")
-    const id = toInt(idRaw, "bon_livraison.id")
-    const numero = String(`BL-${id}`).slice(0, 30)
+    const seqRes = await db.query<{ n: string }>(`SELECT nextval('public.bon_livraison_no_seq')::text AS n`)
+    const raw = seqRes.rows[0]?.n
+    const n = raw ? Number(raw) : NaN
+    if (!Number.isFinite(n)) throw new Error("Failed to reserve bon_livraison number")
+    const numero = String(`BL-${String(n).padStart(8, "0")}`).slice(0, 30)
     const statut: BonLivraisonStatut = "DRAFT"
 
+    let id: string
+
     try {
-      await db.query(
+      const ins = await db.query<{ id: string }>(
         `
         INSERT INTO bon_livraison (
-          id,
           numero,
           client_id,
           commande_id,
@@ -696,11 +697,11 @@ export async function repoCreateLivraison(input: CreateLivraisonBodyDTO, userId:
           created_by,
           updated_by
         ) VALUES (
-          $1,$2,$3,$4,$5,$6,$7,$8::date,$9,$10,$11,$12,$13,$14
+          $1,$2,$3,$4,$5::uuid,$6,$7::date,$8,$9,$10,$11,$12,$12
         )
+        RETURNING id::text AS id
         `,
         [
-          id,
           numero,
           input.client_id,
           input.commande_id ?? null,
@@ -713,9 +714,11 @@ export async function repoCreateLivraison(input: CreateLivraisonBodyDTO, userId:
           input.commentaire_interne ?? null,
           input.commentaire_client ?? null,
           userId,
-          userId,
         ]
       )
+
+      id = ins.rows[0]?.id ?? ""
+      if (!id) throw new Error("Failed to create bon_livraison")
     } catch (err) {
       const { code, constraint } = getPgErrorInfo(err)
       if (code === "23505" && constraint === "bon_livraison_numero_key") {
@@ -751,7 +754,7 @@ export async function repoCreateLivraison(input: CreateLivraisonBodyDTO, userId:
   }
 }
 
-export async function repoUpdateLivraisonHeader(id: number, patch: UpdateLivraisonBodyDTO, userId: number): Promise<{ id: number } | null> {
+export async function repoUpdateLivraisonHeader(id: string, patch: UpdateLivraisonBodyDTO, userId: number): Promise<{ id: string } | null> {
   const db = await pool.connect()
   try {
     await db.query("BEGIN")
@@ -832,7 +835,7 @@ export async function repoUpdateLivraisonHeader(id: number, patch: UpdateLivrais
     fields.push(`updated_at = now()`)
     fields.push(`updated_by = ${push(userId)}`)
 
-    await db.query(`UPDATE bon_livraison SET ${fields.join(", ")} WHERE id = ${push(id)}`, values)
+    await db.query(`UPDATE bon_livraison SET ${fields.join(", ")} WHERE id = ${push(id)}::uuid`, values)
 
     await insertEvent(db, {
       bon_livraison_id: id,
@@ -853,10 +856,10 @@ export async function repoUpdateLivraisonHeader(id: number, patch: UpdateLivrais
 }
 
 export async function repoAddLivraisonLine(
-  bonLivraisonId: number,
+  bonLivraisonId: string,
   input: CreateLivraisonLineBodyDTO,
   userId: number
-): Promise<{ lineId: number }> {
+): Promise<{ lineId: string }> {
   const db = await pool.connect()
   try {
     await db.query("BEGIN")
@@ -864,7 +867,7 @@ export async function repoAddLivraisonLine(
     if (!current) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
 
     const ordreRes = await db.query<{ next_ordre: number }>(
-      `SELECT COALESCE(MAX(ordre), 0)::int + 1 AS next_ordre FROM bon_livraison_ligne WHERE bon_livraison_id = $1`,
+      `SELECT COALESCE(MAX(ordre), 0)::int + 1 AS next_ordre FROM bon_livraison_ligne WHERE bon_livraison_id = $1::uuid`,
       [bonLivraisonId]
     )
     const ordre = typeof input.ordre === "number" ? input.ordre : ordreRes.rows[0]?.next_ordre ?? 1
@@ -898,9 +901,10 @@ export async function repoAddLivraisonLine(
         userId,
       ]
     )
-    const lineId = toInt(ins.rows[0]?.id, "bon_livraison_ligne.id")
+    const lineId = ins.rows[0]?.id
+    if (!lineId) throw new Error("Failed to insert bon_livraison_ligne")
 
-    await db.query(`UPDATE bon_livraison SET updated_at = now(), updated_by = $2 WHERE id = $1`, [bonLivraisonId, userId])
+    await db.query(`UPDATE bon_livraison SET updated_at = now(), updated_by = $2 WHERE id = $1::uuid`, [bonLivraisonId, userId])
 
     await insertEvent(db, {
       bon_livraison_id: bonLivraisonId,
@@ -920,11 +924,11 @@ export async function repoAddLivraisonLine(
 }
 
 export async function repoUpdateLivraisonLine(
-  bonLivraisonId: number,
-  lineId: number,
+  bonLivraisonId: string,
+  lineId: string,
   patch: UpdateLivraisonLineBodyDTO,
   userId: number
-): Promise<{ lineId: number } | null> {
+): Promise<{ lineId: string } | null> {
   const db = await pool.connect()
   try {
     await db.query("BEGIN")
@@ -955,7 +959,7 @@ export async function repoUpdateLivraisonLine(
         commande_ligne_id::text AS commande_ligne_id,
         delai_client
       FROM bon_livraison_ligne
-      WHERE bon_livraison_id = $1 AND id = $2
+      WHERE bon_livraison_id = $1::uuid AND id = $2::uuid
       FOR UPDATE
       `,
       [bonLivraisonId, lineId]
@@ -1022,11 +1026,11 @@ export async function repoUpdateLivraisonLine(
     fields.push(`updated_by = ${push(userId)}`)
 
     await db.query(
-      `UPDATE bon_livraison_ligne SET ${fields.join(", ")} WHERE bon_livraison_id = ${push(bonLivraisonId)} AND id = ${push(lineId)}`,
+      `UPDATE bon_livraison_ligne SET ${fields.join(", ")} WHERE bon_livraison_id = ${push(bonLivraisonId)}::uuid AND id = ${push(lineId)}::uuid`,
       values
     )
 
-    await db.query(`UPDATE bon_livraison SET updated_at = now(), updated_by = $2 WHERE id = $1`, [bonLivraisonId, userId])
+    await db.query(`UPDATE bon_livraison SET updated_at = now(), updated_by = $2 WHERE id = $1::uuid`, [bonLivraisonId, userId])
 
     await insertEvent(db, {
       bon_livraison_id: bonLivraisonId,
@@ -1046,7 +1050,7 @@ export async function repoUpdateLivraisonLine(
   }
 }
 
-export async function repoDeleteLivraisonLine(bonLivraisonId: number, lineId: number, userId: number): Promise<boolean> {
+export async function repoDeleteLivraisonLine(bonLivraisonId: string, lineId: string, userId: number): Promise<boolean> {
   const db = await pool.connect()
   try {
     await db.query("BEGIN")
@@ -1056,11 +1060,11 @@ export async function repoDeleteLivraisonLine(bonLivraisonId: number, lineId: nu
       return false
     }
 
-    const delRes = await db.query(`DELETE FROM bon_livraison_ligne WHERE bon_livraison_id = $1 AND id = $2`, [bonLivraisonId, lineId])
+    const delRes = await db.query(`DELETE FROM bon_livraison_ligne WHERE bon_livraison_id = $1::uuid AND id = $2::uuid`, [bonLivraisonId, lineId])
     const ok = (delRes.rowCount ?? 0) > 0
 
     if (ok) {
-      await db.query(`UPDATE bon_livraison SET updated_at = now(), updated_by = $2 WHERE id = $1`, [bonLivraisonId, userId])
+      await db.query(`UPDATE bon_livraison SET updated_at = now(), updated_by = $2 WHERE id = $1::uuid`, [bonLivraisonId, userId])
       await insertEvent(db, {
         bon_livraison_id: bonLivraisonId,
         event_type: "LINE_REMOVED",
@@ -1080,11 +1084,11 @@ export async function repoDeleteLivraisonLine(bonLivraisonId: number, lineId: nu
 }
 
 export async function repoUpdateLivraisonStatus(
-  bonLivraisonId: number,
+  bonLivraisonId: string,
   statut: BonLivraisonStatut,
   userId: number,
   meta?: { commentaire?: string | null }
-): Promise<{ id: number; statut: BonLivraisonStatut }> {
+): Promise<{ id: string; statut: BonLivraisonStatut }> {
   const db = await pool.connect()
   try {
     await db.query("BEGIN")
@@ -1092,13 +1096,13 @@ export async function repoUpdateLivraisonStatus(
     if (!current) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
 
     const oldStatut = current.statut
-    await db.query(`UPDATE bon_livraison SET statut = $2, updated_at = now(), updated_by = $3 WHERE id = $1`, [bonLivraisonId, statut, userId])
+    await db.query(`UPDATE bon_livraison SET statut = $2, updated_at = now(), updated_by = $3 WHERE id = $1::uuid`, [bonLivraisonId, statut, userId])
 
     if (statut === "SHIPPED" && !current.date_expedition) {
-      await db.query(`UPDATE bon_livraison SET date_expedition = CURRENT_DATE WHERE id = $1`, [bonLivraisonId])
+      await db.query(`UPDATE bon_livraison SET date_expedition = CURRENT_DATE WHERE id = $1::uuid`, [bonLivraisonId])
     }
     if (statut === "DELIVERED" && !current.date_livraison) {
-      await db.query(`UPDATE bon_livraison SET date_livraison = CURRENT_DATE WHERE id = $1`, [bonLivraisonId])
+      await db.query(`UPDATE bon_livraison SET date_livraison = CURRENT_DATE WHERE id = $1::uuid`, [bonLivraisonId])
     }
 
     await insertEvent(db, {
@@ -1119,7 +1123,7 @@ export async function repoUpdateLivraisonStatus(
   }
 }
 
-export async function repoCreateLivraisonFromCommande(commandeId: number, userId: number): Promise<{ id: number }> {
+export async function repoCreateLivraisonFromCommande(commandeId: number, userId: number): Promise<{ id: string }> {
   const db = await pool.connect()
   try {
     await db.query("BEGIN")
@@ -1158,17 +1162,18 @@ export async function repoCreateLivraisonFromCommande(commandeId: number, userId
     const affaireRes = await db.query<{ affaire_id: number }>(affaireSql, [commandeId])
     const affaireId = affaireRes.rows[0]?.affaire_id ?? null
 
-    const seqRes = await db.query<{ id: string }>(`SELECT nextval('public.bon_livraison_id_seq')::bigint::text AS id`)
-    const idRaw = seqRes.rows[0]?.id
-    if (!idRaw) throw new Error("Failed to reserve bon_livraison id")
-    const id = toInt(idRaw, "bon_livraison.id")
-    const numero = String(`BL-${id}`).slice(0, 30)
+    const seqRes = await db.query<{ n: string }>(`SELECT nextval('public.bon_livraison_no_seq')::text AS n`)
+    const raw = seqRes.rows[0]?.n
+    const n = raw ? Number(raw) : NaN
+    if (!Number.isFinite(n)) throw new Error("Failed to reserve bon_livraison number")
+    const numero = String(`BL-${String(n).padStart(8, "0")}`).slice(0, 30)
+
+    let id: string
 
     try {
-      await db.query(
+      const ins = await db.query<{ id: string }>(
         `
         INSERT INTO bon_livraison (
-          id,
           numero,
           client_id,
           commande_id,
@@ -1178,10 +1183,14 @@ export async function repoCreateLivraisonFromCommande(commandeId: number, userId
           date_creation,
           created_by,
           updated_by
-        ) VALUES ($1,$2,$3,$4,$5,$6,'DRAFT',CURRENT_DATE,$7,$8)
+        ) VALUES ($1,$2,$3,$4,$5::uuid,'DRAFT',CURRENT_DATE,$6,$6)
+        RETURNING id::text AS id
         `,
-        [id, numero, cmd.client_id, cmd.id, affaireId, deliveryAddressId, userId, userId]
+        [numero, cmd.client_id, cmd.id, affaireId, deliveryAddressId, userId]
       )
+
+      id = ins.rows[0]?.id ?? ""
+      if (!id) throw new Error("Failed to create bon_livraison")
     } catch (err) {
       const { code, constraint } = getPgErrorInfo(err)
       if (code === "23505" && constraint === "bon_livraison_numero_key") {
@@ -1243,7 +1252,7 @@ async function ensureDocsDir(): Promise<string> {
 }
 
 export async function repoAttachLivraisonDocuments(params: {
-  bonLivraisonId: number
+  bonLivraisonId: string
   documents: UploadedDocument[]
   type?: string | null
   userId: number
@@ -1289,7 +1298,7 @@ export async function repoAttachLivraisonDocuments(params: {
       insertedDocIds.push(documentId)
     }
 
-    await db.query(`UPDATE bon_livraison SET updated_at = now(), updated_by = $2 WHERE id = $1`, [params.bonLivraisonId, params.userId])
+    await db.query(`UPDATE bon_livraison SET updated_at = now(), updated_by = $2 WHERE id = $1::uuid`, [params.bonLivraisonId, params.userId])
     await insertEvent(db, {
       bon_livraison_id: params.bonLivraisonId,
       event_type: "DOC_ADDED",
@@ -1321,15 +1330,15 @@ export async function repoAttachLivraisonDocuments(params: {
           dc.type AS document_type
         FROM bon_livraison_documents d
         LEFT JOIN documents_clients dc ON dc.id = d.document_id
-        WHERE d.bon_livraison_id = $1
+        WHERE d.bon_livraison_id = $1::uuid
           AND d.document_id = ANY($2::uuid[])
         ORDER BY d.id DESC
         `,
         [params.bonLivraisonId, insertedDocIds]
       )
       docsOut = rows.rows.map((r) => ({
-        id: toInt(r.id, "bon_livraison_documents.id"),
-        bon_livraison_id: toInt(r.bon_livraison_id, "bon_livraison_documents.bon_livraison_id"),
+        id: r.id,
+        bon_livraison_id: r.bon_livraison_id,
         document_id: r.document_id,
         type: r.type,
         version: r.version,
@@ -1351,7 +1360,7 @@ export async function repoAttachLivraisonDocuments(params: {
 }
 
 export async function repoRemoveLivraisonDocument(params: {
-  bonLivraisonId: number
+  bonLivraisonId: string
   documentId: string
   userId: number
 }): Promise<boolean> {
@@ -1364,14 +1373,14 @@ export async function repoRemoveLivraisonDocument(params: {
       return false
     }
 
-    const delRes = await db.query(`DELETE FROM bon_livraison_documents WHERE bon_livraison_id = $1 AND document_id = $2`, [
-      params.bonLivraisonId,
-      params.documentId,
-    ])
+    const delRes = await db.query(
+      `DELETE FROM bon_livraison_documents WHERE bon_livraison_id = $1::uuid AND document_id = $2::uuid`,
+      [params.bonLivraisonId, params.documentId]
+    )
     const ok = (delRes.rowCount ?? 0) > 0
 
     if (ok) {
-      await db.query(`UPDATE bon_livraison SET updated_at = now(), updated_by = $2 WHERE id = $1`, [params.bonLivraisonId, params.userId])
+      await db.query(`UPDATE bon_livraison SET updated_at = now(), updated_by = $2 WHERE id = $1::uuid`, [params.bonLivraisonId, params.userId])
       await insertEvent(db, {
         bon_livraison_id: params.bonLivraisonId,
         event_type: "DOC_REMOVED",
@@ -1418,9 +1427,9 @@ export async function repoFindDocumentFilePath(documentId: string): Promise<stri
   }
 }
 
-export async function repoIsLivraisonDocumentLinked(bonLivraisonId: number, documentId: string): Promise<boolean> {
+export async function repoIsLivraisonDocumentLinked(bonLivraisonId: string, documentId: string): Promise<boolean> {
   const res = await pool.query(
-    `SELECT 1 FROM bon_livraison_documents WHERE bon_livraison_id = $1 AND document_id = $2 LIMIT 1`,
+    `SELECT 1 FROM bon_livraison_documents WHERE bon_livraison_id = $1::uuid AND document_id = $2::uuid LIMIT 1`,
     [bonLivraisonId, documentId]
   )
   return (res.rowCount ?? 0) > 0

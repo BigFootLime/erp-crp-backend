@@ -84,23 +84,23 @@ export async function createStockInventorySessionSVC(body: CreateInventorySessio
   return repoCreateInventorySession(body, audit);
 }
 
-export async function getStockInventorySessionSVC(id: number): Promise<StockInventorySessionDetail | null> {
+export async function getStockInventorySessionSVC(id: string): Promise<StockInventorySessionDetail | null> {
   return repoGetInventorySession(id);
 }
 
-export async function listStockInventorySessionLinesSVC(id: number): Promise<StockInventorySessionLine[] | null> {
+export async function listStockInventorySessionLinesSVC(id: string): Promise<StockInventorySessionLine[] | null> {
   return repoListInventorySessionLines(id);
 }
 
 export async function upsertStockInventorySessionLineSVC(
-  sessionId: number,
+  sessionId: string,
   body: UpsertInventoryLineBodyDTO,
   audit: AuditContext
 ): Promise<StockInventorySessionLine | null> {
   return repoUpsertInventoryLine(sessionId, body, audit);
 }
 
-export async function closeStockInventorySessionSVC(id: number, audit: AuditContext): Promise<StockInventorySessionDetail | null> {
+export async function closeStockInventorySessionSVC(id: string, audit: AuditContext): Promise<StockInventorySessionDetail | null> {
   return repoCloseInventorySession(id, audit);
 }
 
@@ -108,7 +108,7 @@ export async function listStockArticlesSVC(filters: ListArticlesQueryDTO) {
   return repoListArticles(filters);
 }
 
-export async function getStockArticleSVC(id: number): Promise<StockArticleDetail | null> {
+export async function getStockArticleSVC(id: string): Promise<StockArticleDetail | null> {
   return repoGetArticle(id);
 }
 
@@ -121,7 +121,7 @@ export async function createStockArticleSVC(body: CreateArticleBodyDTO, audit: A
 }
 
 export async function updateStockArticleSVC(
-  id: number,
+  id: string,
   patch: UpdateArticleBodyDTO,
   audit: AuditContext
 ): Promise<StockArticleDetail | null> {
@@ -132,7 +132,7 @@ export async function listStockMagasinsSVC(filters: ListMagasinsQueryDTO) {
   return repoListMagasins(filters);
 }
 
-export async function getStockMagasinSVC(id: number): Promise<StockMagasinDetail | null> {
+export async function getStockMagasinSVC(id: string): Promise<StockMagasinDetail | null> {
   return repoGetMagasin(id);
 }
 
@@ -145,7 +145,7 @@ export async function createStockMagasinSVC(body: CreateMagasinBodyDTO, audit: A
 }
 
 export async function updateStockMagasinSVC(
-  id: number,
+  id: string,
   patch: UpdateMagasinBodyDTO,
   audit: AuditContext
 ): Promise<StockMagasinDetail["magasin"] | null> {
@@ -157,7 +157,7 @@ export async function listStockEmplacementsSVC(filters: ListEmplacementsQueryDTO
 }
 
 export async function createStockEmplacementSVC(
-  magasinId: number,
+  magasinId: string,
   body: CreateEmplacementBodyDTO,
   audit: AuditContext
 ): Promise<StockEmplacementListItem | null> {
@@ -176,7 +176,7 @@ export async function listStockLotsSVC(filters: ListLotsQueryDTO) {
   return repoListLots(filters);
 }
 
-export async function getStockLotSVC(id: number): Promise<StockLotDetail | null> {
+export async function getStockLotSVC(id: string): Promise<StockLotDetail | null> {
   return repoGetLot(id);
 }
 
@@ -184,7 +184,7 @@ export async function createStockLotSVC(body: CreateLotBodyDTO, audit: AuditCont
   return repoCreateLot(body, audit);
 }
 
-export async function updateStockLotSVC(id: number, patch: UpdateLotBodyDTO, audit: AuditContext): Promise<StockLotDetail | null> {
+export async function updateStockLotSVC(id: string, patch: UpdateLotBodyDTO, audit: AuditContext): Promise<StockLotDetail | null> {
   return repoUpdateLot(id, patch, audit);
 }
 
@@ -196,7 +196,7 @@ export async function listStockMovementsSVC(filters: ListMovementsQueryDTO) {
   return repoListMovements(filters);
 }
 
-export async function getStockMovementSVC(id: number): Promise<StockMovementDetail | null> {
+export async function getStockMovementSVC(id: string): Promise<StockMovementDetail | null> {
   return repoGetMovement(id);
 }
 
@@ -204,20 +204,20 @@ export async function createStockMovementSVC(body: CreateMovementBodyDTO, audit:
   return repoCreateMovement(body, audit);
 }
 
-export async function postStockMovementSVC(id: number, audit: AuditContext): Promise<StockMovementDetail | null> {
+export async function postStockMovementSVC(id: string, audit: AuditContext): Promise<StockMovementDetail | null> {
   return repoPostMovement(id, audit);
 }
 
-export async function cancelStockMovementSVC(id: number, audit: AuditContext): Promise<StockMovementDetail | null> {
+export async function cancelStockMovementSVC(id: string, audit: AuditContext): Promise<StockMovementDetail | null> {
   return repoCancelMovement(id, audit);
 }
 
-export async function listStockArticleDocumentsSVC(articleId: number): Promise<StockDocument[] | null> {
+export async function listStockArticleDocumentsSVC(articleId: string): Promise<StockDocument[] | null> {
   return repoListArticleDocuments(articleId);
 }
 
 export async function attachStockArticleDocumentsSVC(
-  articleId: number,
+  articleId: string,
   documents: Express.Multer.File[],
   audit: AuditContext
 ): Promise<StockDocument[] | null> {
@@ -225,7 +225,7 @@ export async function attachStockArticleDocumentsSVC(
 }
 
 export async function removeStockArticleDocumentSVC(
-  articleId: number,
+  articleId: string,
   documentId: string,
   audit: AuditContext
 ): Promise<boolean | null> {
@@ -233,19 +233,19 @@ export async function removeStockArticleDocumentSVC(
 }
 
 export async function getStockArticleDocumentForDownloadSVC(
-  articleId: number,
+  articleId: string,
   documentId: string,
   audit: AuditContext
 ) {
   return repoGetArticleDocumentForDownload(articleId, documentId, audit);
 }
 
-export async function listStockMovementDocumentsSVC(movementId: number): Promise<StockDocument[] | null> {
+export async function listStockMovementDocumentsSVC(movementId: string): Promise<StockDocument[] | null> {
   return repoListMovementDocuments(movementId);
 }
 
 export async function attachStockMovementDocumentsSVC(
-  movementId: number,
+  movementId: string,
   documents: Express.Multer.File[],
   audit: AuditContext
 ): Promise<StockDocument[] | null> {
@@ -253,7 +253,7 @@ export async function attachStockMovementDocumentsSVC(
 }
 
 export async function removeStockMovementDocumentSVC(
-  movementId: number,
+  movementId: string,
   documentId: string,
   audit: AuditContext
 ): Promise<boolean | null> {
@@ -261,7 +261,7 @@ export async function removeStockMovementDocumentSVC(
 }
 
 export async function getStockMovementDocumentForDownloadSVC(
-  movementId: number,
+  movementId: string,
   documentId: string,
   audit: AuditContext
 ) {

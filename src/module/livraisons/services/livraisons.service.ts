@@ -48,7 +48,7 @@ export async function svcListLivraisons(filters: ListLivraisonsQueryDTO) {
   return repoListLivraisons(filters)
 }
 
-export async function svcGetLivraison(id: number) {
+export async function svcGetLivraison(id: string) {
   return repoGetLivraisonDetail(id)
 }
 
@@ -60,7 +60,7 @@ export async function svcCreateLivraisonFromCommande(commandeId: number, userId:
   return repoCreateLivraisonFromCommande(commandeId, userId)
 }
 
-export async function svcUpdateLivraisonHeader(id: number, patch: UpdateLivraisonBodyDTO, userId: number) {
+export async function svcUpdateLivraisonHeader(id: string, patch: UpdateLivraisonBodyDTO, userId: number) {
   const statut = await repoGetLivraisonStatut(id)
   if (!statut) return null
 
@@ -79,28 +79,28 @@ export async function svcUpdateLivraisonHeader(id: number, patch: UpdateLivraiso
   return repoUpdateLivraisonHeader(id, patch, userId)
 }
 
-export async function svcAddLivraisonLine(id: number, dto: CreateLivraisonLineBodyDTO, userId: number) {
+export async function svcAddLivraisonLine(id: string, dto: CreateLivraisonLineBodyDTO, userId: number) {
   const statut = await repoGetLivraisonStatut(id)
   if (!statut) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
   assertEditable(statut, "Add line")
   return repoAddLivraisonLine(id, dto, userId)
 }
 
-export async function svcUpdateLivraisonLine(id: number, lineId: number, patch: UpdateLivraisonLineBodyDTO, userId: number) {
+export async function svcUpdateLivraisonLine(id: string, lineId: string, patch: UpdateLivraisonLineBodyDTO, userId: number) {
   const statut = await repoGetLivraisonStatut(id)
   if (!statut) return null
   assertEditable(statut, "Update line")
   return repoUpdateLivraisonLine(id, lineId, patch, userId)
 }
 
-export async function svcDeleteLivraisonLine(id: number, lineId: number, userId: number) {
+export async function svcDeleteLivraisonLine(id: string, lineId: string, userId: number) {
   const statut = await repoGetLivraisonStatut(id)
   if (!statut) return false
   assertEditable(statut, "Delete line")
   return repoDeleteLivraisonLine(id, lineId, userId)
 }
 
-export async function svcUpdateLivraisonStatus(id: number, body: LivraisonStatusBodyDTO, userId: number) {
+export async function svcUpdateLivraisonStatus(id: string, body: LivraisonStatusBodyDTO, userId: number) {
   const current = await repoGetLivraisonStatut(id)
   if (!current) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
   assertAllowedTransition(current, body.statut)
@@ -108,7 +108,7 @@ export async function svcUpdateLivraisonStatus(id: number, body: LivraisonStatus
 }
 
 export async function svcAttachLivraisonDocuments(params: {
-  bonLivraisonId: number
+  bonLivraisonId: string
   documents: Array<{ originalname: string; path: string; mimetype: string }>
   type?: string | null
   userId: number
@@ -121,6 +121,6 @@ export async function svcAttachLivraisonDocuments(params: {
   })
 }
 
-export async function svcRemoveLivraisonDocument(params: { bonLivraisonId: number; documentId: string; userId: number }) {
+export async function svcRemoveLivraisonDocument(params: { bonLivraisonId: string; documentId: string; userId: number }) {
   return repoRemoveLivraisonDocument(params)
 }
