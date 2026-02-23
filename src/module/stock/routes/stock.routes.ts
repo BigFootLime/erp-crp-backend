@@ -8,6 +8,8 @@ import {
   attachStockArticleDocuments,
   attachStockMovementDocuments,
   cancelStockMovement,
+  closeStockInventorySession,
+  createStockInventorySession,
   createStockArticle,
   createStockEmplacement,
   createStockLot,
@@ -15,12 +17,15 @@ import {
   createStockMovement,
   downloadStockArticleDocument,
   downloadStockMovementDocument,
+  getStockInventorySession,
   getStockArticle,
   getStockArticlesKpis,
   getStockLot,
   getStockMagasin,
   getStockMagasinsKpis,
   getStockMovement,
+  listStockInventorySessionLines,
+  listStockInventorySessions,
   listStockArticleDocuments,
   listStockArticles,
   listStockBalances,
@@ -32,6 +37,7 @@ import {
   postStockMovement,
   removeStockArticleDocument,
   removeStockMovementDocument,
+  upsertStockInventorySessionLine,
   updateStockArticle,
   updateStockEmplacement,
   updateStockLot,
@@ -61,6 +67,13 @@ router.get("/articles/kpis", getStockArticlesKpis);
 router.post("/articles", createStockArticle);
 router.get("/articles/:id", getStockArticle);
 router.patch("/articles/:id", updateStockArticle);
+
+router.get("/inventory-sessions", listStockInventorySessions);
+router.post("/inventory-sessions", createStockInventorySession);
+router.get("/inventory-sessions/:id", getStockInventorySession);
+router.get("/inventory-sessions/:id/lines", listStockInventorySessionLines);
+router.put("/inventory-sessions/:id/lines", upsertStockInventorySessionLine);
+router.post("/inventory-sessions/:id/close", closeStockInventorySession);
 
 router.get("/articles/:id/documents", listStockArticleDocuments);
 router.post("/articles/:id/documents", upload.array("documents[]"), attachStockArticleDocuments);

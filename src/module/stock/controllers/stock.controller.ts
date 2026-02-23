@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { HttpError } from "../../../utils/httpError";
 import {
+  createInventorySessionSchema,
   createArticleSchema,
   createEmplacementSchema,
   createLotSchema,
@@ -11,6 +12,7 @@ import {
   createMovementSchema,
   docIdParamSchema,
   idParamSchema,
+  listInventorySessionsQuerySchema,
   listArticlesQuerySchema,
   listBalancesQuerySchema,
   listEmplacementsQuerySchema,
@@ -18,10 +20,12 @@ import {
   listMagasinsQuerySchema,
   listMovementsQuerySchema,
   magasinIdParamSchema,
+  upsertInventoryLineSchema,
   updateArticleSchema,
   updateEmplacementSchema,
   updateLotSchema,
   updateMagasinSchema,
+  type CreateInventorySessionBodyDTO,
   type CreateArticleBodyDTO,
   type CreateEmplacementBodyDTO,
   type CreateLotBodyDTO,
@@ -32,9 +36,16 @@ import {
   type UpdateEmplacementBodyDTO,
   type UpdateLotBodyDTO,
   type UpdateMagasinBodyDTO,
+  type UpsertInventoryLineBodyDTO,
 } from "../validators/stock.validators";
 import type { AuditContext } from "../repository/stock.repository";
 import {
+  closeStockInventorySessionSVC,
+  createStockInventorySessionSVC,
+  getStockInventorySessionSVC,
+  listStockInventorySessionLinesSVC,
+  listStockInventorySessionsSVC,
+  upsertStockInventorySessionLineSVC,
   attachStockArticleDocumentsSVC,
   attachStockMovementDocumentsSVC,
   cancelStockMovementSVC,
@@ -67,6 +78,90 @@ import {
   updateStockLotSVC,
   updateStockMagasinSVC,
 } from "../services/stock.service";
+
+export const listStockInventorySessions: RequestHandler = async (req, res, next) => {
+  try {
+    const parsed = listInventorySessionsQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues?.[0]?.message ?? "Invalid query" });
+      return;
+    }
+    const out = await listStockInventorySessionsSVC(parsed.data);
+    res.json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const createStockInventorySession: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildAuditContext(req);
+    const body: CreateInventorySessionBodyDTO = createInventorySessionSchema.parse({ body: req.body }).body;
+    const out = await createStockInventorySessionSVC(body, audit);
+    res.status(201).json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const getStockInventorySession: RequestHandler = async (req, res, next) => {
+  try {
+    const { id } = idParamSchema.parse({ params: req.params }).params;
+    const out = await getStockInventorySessionSVC(id);
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const listStockInventorySessionLines: RequestHandler = async (req, res, next) => {
+  try {
+    const { id } = idParamSchema.parse({ params: req.params }).params;
+    const out = await listStockInventorySessionLinesSVC(id);
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.json({ items: out, total: out.length });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const upsertStockInventorySessionLine: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildAuditContext(req);
+    const { id } = idParamSchema.parse({ params: req.params }).params;
+    const body: UpsertInventoryLineBodyDTO = upsertInventoryLineSchema.parse({ body: req.body }).body;
+    const out = await upsertStockInventorySessionLineSVC(id, body, audit);
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.status(200).json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const closeStockInventorySession: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildAuditContext(req);
+    const { id } = idParamSchema.parse({ params: req.params }).params;
+    const out = await closeStockInventorySessionSVC(id, audit);
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.status(200).json(out);
+  } catch (err) {
+    next(err);
+  }
+};
 
 function buildAuditContext(req: Request): AuditContext {
   const user = req.user;

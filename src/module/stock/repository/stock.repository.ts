@@ -16,6 +16,9 @@ import type {
   StockBalanceRow,
   StockDocument,
   StockEmplacementListItem,
+  StockInventorySessionDetail,
+  StockInventorySessionLine,
+  StockInventorySessionListItem,
   StockLotDetail,
   StockLotListItem,
   StockMagasinDetail,
@@ -29,11 +32,13 @@ import type {
 } from "../types/stock.types";
 import type {
   CreateArticleBodyDTO,
+  CreateInventorySessionBodyDTO,
   CreateEmplacementBodyDTO,
   CreateLotBodyDTO,
   CreateMagasinBodyDTO,
   CreateMovementBodyDTO,
   CreateMovementLineDTO,
+  ListInventorySessionsQueryDTO,
   ListArticlesQueryDTO,
   ListBalancesQueryDTO,
   ListEmplacementsQueryDTO,
@@ -41,6 +46,7 @@ import type {
   ListMagasinsQueryDTO,
   ListMovementsQueryDTO,
   StockMovementTypeDTO,
+  UpsertInventoryLineBodyDTO,
   UpdateArticleBodyDTO,
   UpdateEmplacementBodyDTO,
   UpdateLotBodyDTO,
@@ -1830,6 +1836,645 @@ export async function repoPostMovement(id: number, audit: AuditContext): Promise
 
     await client.query("COMMIT");
     return repoGetMovement(id);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+function inventorySessionNoFromSeq(n: number): string {
+  const padded = String(n).padStart(8, "0");
+  return `SI-${padded}`;
+}
+
+async function reserveInventorySessionNo(client: Pick<PoolClient, "query">): Promise<string> {
+  const res = await client.query<{ n: string }>(`SELECT nextval('public.stock_inventory_session_no_seq')::text AS n`);
+  const raw = res.rows[0]?.n;
+  const n = raw ? Number(raw) : NaN;
+  if (!Number.isFinite(n)) throw new Error("Failed to reserve inventory session number");
+  return inventorySessionNoFromSeq(n);
+}
+
+function inventorySessionSortColumn(sortBy: ListInventorySessionsQueryDTO["sortBy"]): string {
+  switch (sortBy) {
+    case "created_at":
+      return "s.created_at";
+    case "updated_at":
+      return "s.updated_at";
+    case "session_no":
+      return "s.session_no";
+    case "started_at":
+    default:
+      return "s.started_at";
+  }
+}
+
+export async function repoListInventorySessions(filters: ListInventorySessionsQueryDTO): Promise<Paginated<StockInventorySessionListItem>> {
+  const page = filters.page ?? 1;
+  const pageSize = filters.pageSize ?? 50;
+  const offset = (page - 1) * pageSize;
+
+  const where: string[] = [];
+  const values: unknown[] = [];
+  const push = (v: unknown) => {
+    values.push(v);
+    return `$${values.length}`;
+  };
+
+  if (filters.q && filters.q.trim().length > 0) {
+    where.push(`s.session_no ILIKE ${push(normalizeLikeQuery(filters.q))}`);
+  }
+  if (filters.status) {
+    where.push(`s.status = ${push(filters.status)}`);
+  }
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  const orderBy = inventorySessionSortColumn(filters.sortBy);
+  const orderDir = sortDirection(filters.sortDir);
+
+  const countRes = await db.query<{ total: number }>(
+    `SELECT COUNT(*)::int AS total FROM public.stock_inventory_sessions s ${whereSql}`,
+    values
+  );
+  const total = countRes.rows[0]?.total ?? 0;
+
+  const dataSql = `
+    SELECT
+      s.id::int AS id,
+      s.session_no,
+      s.status,
+      s.started_at::text AS started_at,
+      s.closed_at::text AS closed_at,
+      s.adjustment_movement_id::int AS adjustment_movement_id,
+      s.notes,
+      s.updated_at::text AS updated_at,
+      s.created_at::text AS created_at
+    FROM public.stock_inventory_sessions s
+    ${whereSql}
+    ORDER BY ${orderBy} ${orderDir}, s.id DESC
+    LIMIT $${values.length + 1}
+    OFFSET $${values.length + 2}
+  `;
+
+  const rows = await db.query<StockInventorySessionListItem>(dataSql, [...values, pageSize, offset]);
+  return { items: rows.rows, total };
+}
+
+export async function repoCreateInventorySession(
+  body: CreateInventorySessionBodyDTO,
+  audit: AuditContext
+): Promise<StockInventorySessionListItem> {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const sessionNo = await reserveInventorySessionNo(client);
+
+    const ins = await client.query<{ id: number }>(
+      `
+        INSERT INTO public.stock_inventory_sessions (
+          session_no, status, started_at, notes,
+          created_by, updated_by
+        )
+        VALUES ($1,'OPEN',now(),$2,$3,$3)
+        RETURNING id::int AS id
+      `,
+      [sessionNo, body.notes ?? null, audit.user_id]
+    );
+    const id = ins.rows[0]?.id;
+    if (!id) throw new Error("Failed to create inventory session");
+
+    await insertAuditLog(client, audit, {
+      action: "stock.inventory_sessions.create",
+      entity_type: "stock_inventory_sessions",
+      entity_id: String(id),
+      details: { session_no: sessionNo },
+    });
+
+    await client.query("COMMIT");
+    const out = await db.query<StockInventorySessionListItem>(
+      `
+        SELECT
+          s.id::int AS id,
+          s.session_no,
+          s.status,
+          s.started_at::text AS started_at,
+          s.closed_at::text AS closed_at,
+          s.adjustment_movement_id::int AS adjustment_movement_id,
+          s.notes,
+          s.updated_at::text AS updated_at,
+          s.created_at::text AS created_at
+        FROM public.stock_inventory_sessions s
+        WHERE s.id = $1
+      `,
+      [id]
+    );
+    const row = out.rows[0];
+    if (!row) throw new Error("Failed to read created inventory session");
+    return row;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function repoGetInventorySessionRow(id: number): Promise<StockInventorySessionListItem | null> {
+  const res = await db.query<StockInventorySessionListItem>(
+    `
+      SELECT
+        s.id::int AS id,
+        s.session_no,
+        s.status,
+        s.started_at::text AS started_at,
+        s.closed_at::text AS closed_at,
+        s.adjustment_movement_id::int AS adjustment_movement_id,
+        s.notes,
+        s.updated_at::text AS updated_at,
+        s.created_at::text AS created_at
+      FROM public.stock_inventory_sessions s
+      WHERE s.id = $1
+    `,
+    [id]
+  );
+  return res.rows[0] ?? null;
+}
+
+export async function repoListInventorySessionLines(id: number): Promise<StockInventorySessionLine[] | null> {
+  const session = await repoGetInventorySessionRow(id);
+  if (!session) return null;
+
+  const res = await db.query<StockInventorySessionLine>(
+    `
+      SELECT
+        l.id::int AS id,
+        l.session_id::int AS session_id,
+        l.line_no::int AS line_no,
+        l.article_id::int AS article_id,
+        a.code AS article_code,
+        a.designation AS article_designation,
+        l.magasin_id::int AS magasin_id,
+        m.code AS magasin_code,
+        m.name AS magasin_name,
+        l.emplacement_id::int AS emplacement_id,
+        e.code AS emplacement_code,
+        e.name AS emplacement_name,
+        l.lot_id::int AS lot_id,
+        lot.lot_code AS lot_code,
+        l.counted_qty::float8 AS counted_qty,
+        COALESCE(b.qty_on_hand, 0)::float8 AS qty_on_hand,
+        (l.counted_qty - COALESCE(b.qty_on_hand, 0))::float8 AS delta_qty,
+        l.note,
+        l.updated_at::text AS updated_at,
+        l.created_at::text AS created_at
+      FROM public.stock_inventory_lines l
+      JOIN public.articles a ON a.id = l.article_id
+      JOIN public.magasins m ON m.id = l.magasin_id
+      JOIN public.emplacements e ON e.id = l.emplacement_id
+      LEFT JOIN public.lots lot ON lot.id = l.lot_id
+      LEFT JOIN public.stock_balances b
+        ON b.article_id = l.article_id
+       AND b.magasin_id = l.magasin_id
+       AND b.emplacement_id = l.emplacement_id
+       AND ((b.lot_id IS NULL AND l.lot_id IS NULL) OR b.lot_id = l.lot_id)
+      WHERE l.session_id = $1
+      ORDER BY a.code ASC, m.code ASC, e.code ASC, lot.lot_code NULLS FIRST, l.id ASC
+    `,
+    [id]
+  );
+
+  return res.rows;
+}
+
+export async function repoGetInventorySession(id: number): Promise<StockInventorySessionDetail | null> {
+  const session = await repoGetInventorySessionRow(id);
+  if (!session) return null;
+  const lines = await repoListInventorySessionLines(id);
+  return { session, lines: lines ?? [] };
+}
+
+export async function repoUpsertInventoryLine(
+  sessionId: number,
+  body: UpsertInventoryLineBodyDTO,
+  audit: AuditContext
+): Promise<StockInventorySessionLine | null> {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+
+    const lock = await client.query<{ status: string }>(
+      `SELECT status FROM public.stock_inventory_sessions WHERE id = $1 FOR UPDATE`,
+      [sessionId]
+    );
+    const session = lock.rows[0] ?? null;
+    if (!session) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+    if (session.status !== "OPEN") {
+      throw new HttpError(409, "INVALID_STATUS", "Inventory session is not open");
+    }
+
+    await assertEmplacementBelongsToMagasin(client, body.magasin_id, body.emplacement_id, "dst");
+
+    const existing = await client.query<{ id: number }>(
+      `
+        SELECT id::int AS id
+        FROM public.stock_inventory_lines
+        WHERE session_id = $1
+          AND article_id = $2
+          AND magasin_id = $3
+          AND emplacement_id = $4
+          AND ((lot_id IS NULL AND $5::bigint IS NULL) OR lot_id = $5)
+        FOR UPDATE
+      `,
+      [sessionId, body.article_id, body.magasin_id, body.emplacement_id, body.lot_id ?? null]
+    );
+    const existingId = existing.rows[0]?.id;
+
+    if (existingId) {
+      await client.query(
+        `UPDATE public.stock_inventory_lines SET counted_qty = $2, note = $3, updated_at = now(), updated_by = $4 WHERE id = $1`,
+        [existingId, body.counted_qty, body.note ?? null, audit.user_id]
+      );
+    } else {
+      const nextNo = await client.query<{ n: number }>(
+        `SELECT (COALESCE(MAX(line_no), 0) + 1)::int AS n FROM public.stock_inventory_lines WHERE session_id = $1`,
+        [sessionId]
+      );
+      const lineNo = nextNo.rows[0]?.n ?? 1;
+      await client.query(
+        `
+          INSERT INTO public.stock_inventory_lines (
+            session_id, line_no,
+            article_id, magasin_id, emplacement_id, lot_id,
+            counted_qty, note,
+            created_by, updated_by
+          )
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)
+        `,
+        [
+          sessionId,
+          lineNo,
+          body.article_id,
+          body.magasin_id,
+          body.emplacement_id,
+          body.lot_id ?? null,
+          body.counted_qty,
+          body.note ?? null,
+          audit.user_id,
+        ]
+      );
+    }
+
+    await insertAuditLog(client, audit, {
+      action: "stock.inventory_lines.upsert",
+      entity_type: "stock_inventory_sessions",
+      entity_id: String(sessionId),
+      details: {
+        article_id: body.article_id,
+        magasin_id: body.magasin_id,
+        emplacement_id: body.emplacement_id,
+        lot_id: body.lot_id ?? null,
+        counted_qty: body.counted_qty,
+      },
+    });
+
+    await client.query("COMMIT");
+
+    const lines = await repoListInventorySessionLines(sessionId);
+    if (!lines) return null;
+    const match = lines.find(
+      (l) =>
+        l.article_id === body.article_id &&
+        l.magasin_id === body.magasin_id &&
+        l.emplacement_id === body.emplacement_id &&
+        (l.lot_id ?? null) === (body.lot_id ?? null)
+    );
+    return match ?? null;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function repoCloseInventorySession(id: number, audit: AuditContext): Promise<StockInventorySessionDetail | null> {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+
+    const lock = await client.query<{ session_no: string; status: string; adjustment_movement_id: number | null }>(
+      `SELECT session_no, status, adjustment_movement_id::int AS adjustment_movement_id FROM public.stock_inventory_sessions WHERE id = $1 FOR UPDATE`,
+      [id]
+    );
+    const session = lock.rows[0] ?? null;
+    if (!session) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    if (session.status !== "OPEN") {
+      await client.query("COMMIT");
+      return repoGetInventorySession(id);
+    }
+
+    const lines = await client.query<{
+      article_id: number;
+      magasin_id: number;
+      emplacement_id: number;
+      lot_id: number | null;
+      counted_qty: number;
+      qty_on_hand: number;
+      delta_qty: number;
+    }>(
+      `
+        SELECT
+          l.article_id::int AS article_id,
+          l.magasin_id::int AS magasin_id,
+          l.emplacement_id::int AS emplacement_id,
+          l.lot_id::int AS lot_id,
+          l.counted_qty::float8 AS counted_qty,
+          COALESCE(b.qty_on_hand, 0)::float8 AS qty_on_hand,
+          (l.counted_qty - COALESCE(b.qty_on_hand, 0))::float8 AS delta_qty
+        FROM public.stock_inventory_lines l
+        LEFT JOIN public.stock_balances b
+          ON b.article_id = l.article_id
+         AND b.magasin_id = l.magasin_id
+         AND b.emplacement_id = l.emplacement_id
+         AND ((b.lot_id IS NULL AND l.lot_id IS NULL) OR b.lot_id = l.lot_id)
+        WHERE l.session_id = $1
+        ORDER BY l.article_id ASC, l.magasin_id ASC, l.emplacement_id ASC, l.lot_id NULLS FIRST, l.id ASC
+      `,
+      [id]
+    );
+
+    const adjustments = lines.rows.filter((r) => Number(r.delta_qty) !== 0);
+
+    let movementId: number | null = null;
+
+    if (adjustments.length) {
+      const movementNo = await reserveMovementNo(client);
+      const effectiveAt = new Date();
+
+      const ins = await client.query<{ id: number }>(
+        `
+          INSERT INTO public.stock_movements (
+            movement_no, movement_type, status,
+            effective_at,
+            source_document_type, source_document_id,
+            reason_code, notes,
+            idempotency_key,
+            created_by, updated_by
+          )
+          VALUES ($1,'ADJUSTMENT','DRAFT',$2,$3,$4,$5,$6,$7,$8,$8)
+          RETURNING id::int AS id
+        `,
+        [
+          movementNo,
+          effectiveAt.toISOString(),
+          "STOCK_INVENTORY_SESSION",
+          String(id),
+          "INVENTORY",
+          `Inventaire ${session.session_no}`,
+          `inventory-session:${id}`,
+          audit.user_id,
+        ]
+      );
+      movementId = ins.rows[0]?.id ?? null;
+      if (!movementId) throw new Error("Failed to create inventory adjustment movement");
+
+      const linesToInsert = adjustments.map((a, i) => {
+        const delta = Number(a.delta_qty);
+        const qty = Math.abs(delta);
+        const direction: "IN" | "OUT" = delta > 0 ? "IN" : "OUT";
+        return {
+          line_no: i + 1,
+          article_id: a.article_id,
+          lot_id: a.lot_id,
+          qty,
+          direction,
+          magasin_id: a.magasin_id,
+          emplacement_id: a.emplacement_id,
+        };
+      });
+
+      for (const l of linesToInsert) {
+        await client.query(
+          `
+            INSERT INTO public.stock_movement_lines (
+              movement_id, line_no, article_id, lot_id,
+              qty, unite, unit_cost, currency,
+              src_magasin_id, src_emplacement_id,
+              dst_magasin_id, dst_emplacement_id,
+              note,
+              direction,
+              created_by, updated_by
+            )
+            VALUES ($1,$2,$3,$4,$5,NULL,NULL,NULL,$6,$7,$8,$9,NULL,$10,$11,$11)
+          `,
+          [
+            movementId,
+            l.line_no,
+            l.article_id,
+            l.lot_id ?? null,
+            l.qty,
+            l.direction === "OUT" ? l.magasin_id : null,
+            l.direction === "OUT" ? l.emplacement_id : null,
+            l.direction === "IN" ? l.magasin_id : null,
+            l.direction === "IN" ? l.emplacement_id : null,
+            l.direction,
+            audit.user_id,
+          ]
+        );
+      }
+
+      await client.query(
+        `
+          INSERT INTO public.stock_movement_event_log (
+            stock_movement_id, event_type, old_values, new_values, user_id, created_by, updated_by
+          )
+          VALUES ($1,'CREATED',NULL,$2::jsonb,$3,$3,$3)
+        `,
+        [movementId, JSON.stringify({ status: "DRAFT", movement_type: "ADJUSTMENT", lines_count: linesToInsert.length }), audit.user_id]
+      );
+
+      await insertAuditLog(client, audit, {
+        action: "stock.movements.create",
+        entity_type: "stock_movements",
+        entity_id: String(movementId),
+        details: {
+          movement_no: movementNo,
+          movement_type: "ADJUSTMENT",
+          lines_count: linesToInsert.length,
+          source_document_type: "STOCK_INVENTORY_SESSION",
+          source_document_id: String(id),
+        },
+      });
+
+      // Post the movement (same algorithm as repoPostMovement, but inside our transaction).
+      const movementLines = await client.query<{
+        id: number;
+        article_id: number;
+        lot_id: number | null;
+        qty: number;
+        src_magasin_id: number | null;
+        src_emplacement_id: number | null;
+        dst_magasin_id: number | null;
+        dst_emplacement_id: number | null;
+        direction: "IN" | "OUT" | null;
+      }>(
+        `
+          SELECT
+            id::int AS id,
+            article_id::int AS article_id,
+            lot_id::int AS lot_id,
+            qty::float8 AS qty,
+            src_magasin_id::int AS src_magasin_id,
+            src_emplacement_id::int AS src_emplacement_id,
+            dst_magasin_id::int AS dst_magasin_id,
+            dst_emplacement_id::int AS dst_emplacement_id,
+            direction
+          FROM public.stock_movement_lines
+          WHERE movement_id = $1
+          ORDER BY line_no ASC, id ASC
+        `,
+        [movementId]
+      );
+
+      const legs = await buildPostingLegs(client, "ADJUSTMENT", movementLines.rows);
+      const keys = uniqueBalanceKeys(
+        legs.map((leg) => ({
+          article_id: leg.article_id,
+          magasin_id: leg.magasin_id,
+          emplacement_id: leg.emplacement_id,
+          lot_id: leg.lot_id,
+        }))
+      );
+      const lockedBalances = await ensureAndLockBalanceRows(client, keys, audit.user_id);
+
+      const postedAt = new Date();
+
+      const legsOrdered = [...legs].sort((a, b) => {
+        const ka: BalanceKey = { article_id: a.article_id, magasin_id: a.magasin_id, emplacement_id: a.emplacement_id, lot_id: a.lot_id };
+        const kb: BalanceKey = { article_id: b.article_id, magasin_id: b.magasin_id, emplacement_id: b.emplacement_id, lot_id: b.lot_id };
+        const kcmp = balanceKeySort(ka, kb);
+        if (kcmp !== 0) return kcmp;
+        if (a.movement_line_id !== b.movement_line_id) return a.movement_line_id - b.movement_line_id;
+        return a.leg_no - b.leg_no;
+      });
+
+      for (const leg of legsOrdered) {
+        const key = `${leg.article_id}|${leg.magasin_id}|${leg.emplacement_id}|${leg.lot_id ?? ""}`;
+        const balance = lockedBalances.get(key);
+        if (!balance) throw new Error("Missing locked balance row");
+
+        const before = Number(balance.qty_on_hand);
+        const after = before + Number(leg.delta_qty);
+        if (!Number.isFinite(after)) throw new Error("Invalid stock computation");
+        if (after < 0) {
+          throw new HttpError(409, "NEGATIVE_STOCK", "Posting would result in negative stock");
+        }
+
+        await client.query(
+          `UPDATE public.stock_balances SET qty_on_hand = $2, updated_at = now(), updated_by = $3 WHERE id = $1`,
+          [balance.id, after, audit.user_id]
+        );
+
+        await client.query(
+          `
+            INSERT INTO public.stock_ledger (
+              movement_id, movement_line_id, leg_no,
+              article_id, magasin_id, emplacement_id, lot_id,
+              delta_qty, qty_before, qty_after,
+              effective_at, posted_at,
+              created_by, updated_by
+            )
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13)
+          `,
+          [
+            movementId,
+            leg.movement_line_id,
+            leg.leg_no,
+            leg.article_id,
+            leg.magasin_id,
+            leg.emplacement_id,
+            leg.lot_id,
+            leg.delta_qty,
+            before,
+            after,
+            effectiveAt.toISOString(),
+            postedAt.toISOString(),
+            audit.user_id,
+          ]
+        );
+
+        balance.qty_on_hand = after;
+      }
+
+      await client.query(
+        `
+          UPDATE public.stock_movements
+          SET status = 'POSTED', posted_at = now(), posted_by = $2, updated_at = now(), updated_by = $2
+          WHERE id = $1
+        `,
+        [movementId, audit.user_id]
+      );
+
+      await client.query(
+        `
+          INSERT INTO public.stock_movement_event_log (
+            stock_movement_id, event_type, old_values, new_values, user_id, created_by, updated_by
+          )
+          VALUES ($1,'POSTED',$2::jsonb,$3::jsonb,$4,$4,$4)
+        `,
+        [
+          movementId,
+          JSON.stringify({ status: "DRAFT" }),
+          JSON.stringify({ status: "POSTED", posted_at: postedAt.toISOString(), legs_count: legs.length }),
+          audit.user_id,
+        ]
+      );
+
+      await insertAuditLog(client, audit, {
+        action: "stock.movements.post",
+        entity_type: "stock_movements",
+        entity_id: String(movementId),
+        details: {
+          movement_type: "ADJUSTMENT",
+          source_document_type: "STOCK_INVENTORY_SESSION",
+          source_document_id: String(id),
+          legs_count: legs.length,
+        },
+      });
+    }
+
+    await client.query(
+      `
+        UPDATE public.stock_inventory_sessions
+        SET status = 'CLOSED', closed_at = now(), closed_by = $2,
+            adjustment_movement_id = $3,
+            updated_at = now(), updated_by = $2
+        WHERE id = $1
+      `,
+      [id, audit.user_id, movementId]
+    );
+
+    await insertAuditLog(client, audit, {
+      action: "stock.inventory_sessions.close",
+      entity_type: "stock_inventory_sessions",
+      entity_id: String(id),
+      details: {
+        session_no: session.session_no,
+        adjustment_movement_id: movementId,
+        adjustments_count: adjustments.length,
+      },
+    });
+
+    await client.query("COMMIT");
+    return repoGetInventorySession(id);
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;

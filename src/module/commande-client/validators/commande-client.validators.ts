@@ -63,7 +63,15 @@ z.object({
   cadre_start_date: isoDate.optional().nullable(),
   cadre_end_date: isoDate.optional().nullable(),
  
-  dest_stock_magasin_id: z.string().uuid().optional().nullable(),
+  dest_stock_magasin_id: z
+    .preprocess((value) => {
+      if (value === null || value === undefined) return value;
+      if (typeof value === "number" && Number.isFinite(value)) return String(value);
+      if (typeof value === "string") return value.trim();
+      return value;
+    }, z.string().min(1))
+    .optional()
+    .nullable(),
   dest_stock_emplacement_id: z
     .preprocess((value) => {
       if (value === null || value === undefined) return value;

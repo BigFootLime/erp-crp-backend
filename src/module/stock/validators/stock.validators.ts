@@ -308,3 +308,42 @@ export const createMovementSchema = z.object({
 });
 
 export type CreateMovementBodyDTO = z.infer<typeof createMovementSchema>["body"];
+
+export const stockInventorySessionStatusSchema = z.enum(["OPEN", "CLOSED"]);
+export type StockInventorySessionStatusDTO = z.infer<typeof stockInventorySessionStatusSchema>;
+
+export const listInventorySessionsQuerySchema = z.object({
+  q: z.string().trim().optional(),
+  status: stockInventorySessionStatusSchema.optional(),
+  page: z.coerce.number().int().min(1).optional().default(1),
+  pageSize: z.coerce.number().int().min(1).max(200).optional().default(50),
+  sortBy: z.enum(["started_at", "created_at", "updated_at", "session_no"]).optional().default("started_at"),
+  sortDir: sortDirSchema.optional().default("desc"),
+});
+
+export type ListInventorySessionsQueryDTO = z.infer<typeof listInventorySessionsQuerySchema>;
+
+export const createInventorySessionSchema = z.object({
+  body: z
+    .object({
+      notes: z.string().trim().min(1).optional().nullable(),
+    })
+    .strict(),
+});
+
+export type CreateInventorySessionBodyDTO = z.infer<typeof createInventorySessionSchema>["body"];
+
+export const upsertInventoryLineSchema = z.object({
+  body: z
+    .object({
+      article_id: z.coerce.number().int().positive(),
+      magasin_id: z.coerce.number().int().positive(),
+      emplacement_id: z.coerce.number().int().positive(),
+      lot_id: z.coerce.number().int().positive().optional().nullable(),
+      counted_qty: z.coerce.number().min(0),
+      note: z.string().trim().min(1).optional().nullable(),
+    })
+    .strict(),
+});
+
+export type UpsertInventoryLineBodyDTO = z.infer<typeof upsertInventoryLineSchema>["body"];

@@ -4,6 +4,9 @@ import type {
   StockBalanceRow,
   StockDocument,
   StockEmplacementListItem,
+  StockInventorySessionDetail,
+  StockInventorySessionLine,
+  StockInventorySessionListItem,
   StockLotDetail,
   StockLotListItem,
   StockMagasinDetail,
@@ -13,17 +16,20 @@ import type {
   StockMovementListItem,
 } from "../types/stock.types";
 import type {
+  CreateInventorySessionBodyDTO,
   CreateArticleBodyDTO,
   CreateEmplacementBodyDTO,
   CreateLotBodyDTO,
   CreateMagasinBodyDTO,
   CreateMovementBodyDTO,
+  ListInventorySessionsQueryDTO,
   ListArticlesQueryDTO,
   ListBalancesQueryDTO,
   ListEmplacementsQueryDTO,
   ListLotsQueryDTO,
   ListMagasinsQueryDTO,
   ListMovementsQueryDTO,
+  UpsertInventoryLineBodyDTO,
   UpdateArticleBodyDTO,
   UpdateEmplacementBodyDTO,
   UpdateLotBodyDTO,
@@ -31,6 +37,8 @@ import type {
 } from "../validators/stock.validators";
 import type { AuditContext } from "../repository/stock.repository";
 import {
+  repoCloseInventorySession,
+  repoCreateInventorySession,
   repoAttachArticleDocuments,
   repoAttachMovementDocuments,
   repoCancelMovement,
@@ -39,6 +47,7 @@ import {
   repoCreateLot,
   repoCreateMagasin,
   repoCreateMovement,
+  repoGetInventorySession,
   repoGetArticle,
   repoGetArticlesKpis,
   repoGetLot,
@@ -53,16 +62,47 @@ import {
   repoListEmplacements,
   repoListLots,
   repoListMagasins,
+  repoListInventorySessions,
+  repoListInventorySessionLines,
   repoListMovementDocuments,
   repoListMovements,
   repoPostMovement,
   repoRemoveArticleDocument,
   repoRemoveMovementDocument,
+  repoUpsertInventoryLine,
   repoUpdateArticle,
   repoUpdateEmplacement,
   repoUpdateLot,
   repoUpdateMagasin,
 } from "../repository/stock.repository";
+
+export async function listStockInventorySessionsSVC(filters: ListInventorySessionsQueryDTO) {
+  return repoListInventorySessions(filters);
+}
+
+export async function createStockInventorySessionSVC(body: CreateInventorySessionBodyDTO, audit: AuditContext): Promise<StockInventorySessionListItem> {
+  return repoCreateInventorySession(body, audit);
+}
+
+export async function getStockInventorySessionSVC(id: number): Promise<StockInventorySessionDetail | null> {
+  return repoGetInventorySession(id);
+}
+
+export async function listStockInventorySessionLinesSVC(id: number): Promise<StockInventorySessionLine[] | null> {
+  return repoListInventorySessionLines(id);
+}
+
+export async function upsertStockInventorySessionLineSVC(
+  sessionId: number,
+  body: UpsertInventoryLineBodyDTO,
+  audit: AuditContext
+): Promise<StockInventorySessionLine | null> {
+  return repoUpsertInventoryLine(sessionId, body, audit);
+}
+
+export async function closeStockInventorySessionSVC(id: number, audit: AuditContext): Promise<StockInventorySessionDetail | null> {
+  return repoCloseInventorySession(id, audit);
+}
 
 export async function listStockArticlesSVC(filters: ListArticlesQueryDTO) {
   return repoListArticles(filters);

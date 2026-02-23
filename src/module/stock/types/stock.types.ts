@@ -203,3 +203,45 @@ export type StockMovementKpis = {
   qty_in_30d: number;
   qty_out_30d: number;
 };
+
+export type StockInventorySessionStatus = "OPEN" | "CLOSED";
+
+export type StockInventorySessionListItem = {
+  id: number;
+  session_no: string;
+  status: StockInventorySessionStatus;
+  started_at: string;
+  closed_at: string | null;
+  adjustment_movement_id: number | null;
+  notes: string | null;
+  updated_at: string;
+  created_at: string;
+};
+
+export type StockInventorySessionLine = {
+  id: number;
+  session_id: number;
+  line_no: number;
+  article_id: number;
+  article_code: string;
+  article_designation: string;
+  magasin_id: number;
+  magasin_code: string;
+  magasin_name: string;
+  emplacement_id: number;
+  emplacement_code: string;
+  emplacement_name: string | null;
+  lot_id: number | null;
+  lot_code: string | null;
+  counted_qty: number;
+  qty_on_hand: number;
+  delta_qty: number;
+  note: string | null;
+  updated_at: string;
+  created_at: string;
+};
+
+export type StockInventorySessionDetail = {
+  session: StockInventorySessionListItem;
+  lines: StockInventorySessionLine[];
+};
