@@ -21,7 +21,15 @@ import {
   updateLivraisonLine,
   updateLivraisonStatus,
   uploadLivraisonDocuments,
+  
 } from "../controllers/livraisons.controller"
+
+import {
+  downloadLivraisonPackDocument,
+  generateLivraisonPack,
+  getLivraisonPackPreview,
+  revokeLivraisonPackVersion,
+} from "../controllers/pack.controller"
 
 const ensureDir = (dir: string) => {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
@@ -57,5 +65,10 @@ router.get("/:id/documents/:docId/file", getLivraisonDocumentFile)
 
 router.get("/:id/pdf", getLivraisonPdf)
 router.post("/:id/pdf", generateLivraisonPdf)
+
+router.get("/:id/pack/preview", getLivraisonPackPreview)
+router.post("/:id/pack/generate", generateLivraisonPack)
+router.get("/:id/pack/download/:documentId", downloadLivraisonPackDocument)
+router.post("/:id/pack/revoke/:versionId", revokeLivraisonPackVersion)
 
 export default router
