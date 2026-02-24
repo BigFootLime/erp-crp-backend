@@ -74,6 +74,8 @@ import {
   repoUpdateEmplacement,
   repoUpdateLot,
   repoUpdateMagasin,
+  repoDeactivateMagasin,
+  repoActivateMagasin,
 } from "../repository/stock.repository";
 
 export async function listStockInventorySessionsSVC(filters: ListInventorySessionsQueryDTO) {
@@ -150,6 +152,14 @@ export async function updateStockMagasinSVC(
   audit: AuditContext
 ): Promise<StockMagasinDetail["magasin"] | null> {
   return repoUpdateMagasin(id, patch, audit);
+}
+
+export async function deactivateStockMagasinSVC(id: string, audit: AuditContext): Promise<StockMagasinDetail["magasin"] | null> {
+  return repoDeactivateMagasin(id, audit);
+}
+
+export async function activateStockMagasinSVC(id: string, audit: AuditContext): Promise<StockMagasinDetail["magasin"] | null> {
+  return repoActivateMagasin(id, audit);
 }
 
 export async function listStockEmplacementsSVC(filters: ListEmplacementsQueryDTO) {

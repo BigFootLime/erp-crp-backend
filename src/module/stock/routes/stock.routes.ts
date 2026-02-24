@@ -14,6 +14,8 @@ import {
   createStockEmplacement,
   createStockLot,
   createStockMagasin,
+  deactivateStockMagasin,
+  activateStockMagasin,
   createStockMovement,
   downloadStockArticleDocument,
   downloadStockMovementDocument,
@@ -85,6 +87,8 @@ router.get("/magasins/kpis", getStockMagasinsKpis);
 router.post("/magasins", createStockMagasin);
 router.get("/magasins/:id", getStockMagasin);
 router.patch("/magasins/:id", updateStockMagasin);
+router.post("/magasins/:id/deactivate", deactivateStockMagasin);
+router.post("/magasins/:id/activate", activateStockMagasin);
 router.post("/magasins/:magasinId/emplacements", createStockEmplacement);
 
 router.get("/emplacements", listStockEmplacements);

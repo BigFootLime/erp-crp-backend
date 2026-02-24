@@ -7,8 +7,11 @@ import {
   archiveMachine,
   archivePoste,
   createMachine,
+  createOfReceipt,
   createOrdreFabrication,
   createPoste,
+  getOfReceiptContext,
+  getOfTraceability,
   getOrdreFabrication,
   getMachine,
   getPoste,
@@ -97,6 +100,11 @@ router.patch("/ofs/:id", updateOrdreFabrication);
 router.patch("/ofs/:id/operations/:opId", updateOrdreFabricationOperation);
 router.post("/ofs/:id/operations/:opId/time-logs/start", startOfOperationTimeLog);
 router.post("/ofs/:id/operations/:opId/time-logs/stop", stopOfOperationTimeLog);
+
+// Phase 5 - Fin de production -> Entree en stock
+router.get("/ofs/:id/receipt-context", getOfReceiptContext);
+router.post("/ofs/:id/receipt", createOfReceipt);
+router.get("/ofs/:id/traceability", getOfTraceability);
 
 // Production Groups
 router.get("/groups", requireProductionOrAdmin, listProductionGroups);

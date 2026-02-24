@@ -990,6 +990,123 @@ export async function repoUpdateMagasin(
   }
 }
 
+export async function repoDeactivateMagasin(id: string, audit: AuditContext): Promise<StockMagasinDetail["magasin"] | null> {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+
+    const exists = await client.query<{ id: string }>(
+      `SELECT id::text AS id FROM public.magasins WHERE id = $1::uuid FOR UPDATE`,
+      [id]
+    );
+    if (!exists.rows[0]?.id) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    const blocking = await client.query<{ key: string; value_text: string }>(
+      `
+        SELECT s.key, s.value_text
+        FROM public.erp_settings s
+        WHERE s.key IN ('stock.default_shipping_location','stock.default_receipt_location')
+          AND s.value_text IS NOT NULL
+          AND s.value_text ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          AND EXISTS (
+            SELECT 1
+            FROM public.emplacements e
+            WHERE e.magasin_id = $1::uuid
+              AND e.location_id = s.value_text::uuid
+          )
+        LIMIT 1
+      `,
+      [id]
+    );
+
+    const blocked = blocking.rows[0] ?? null;
+    if (blocked) {
+      throw new HttpError(
+        409,
+        "MAGASIN_DEFAULT_LOCATION",
+        "Impossible de desactiver ce magasin : il contient l'emplacement utilise comme emplacement par defaut dans les parametres."
+      );
+    }
+
+    await client.query(
+      `
+        UPDATE public.magasins
+        SET
+          is_active = false,
+          actif = false,
+          updated_at = now(),
+          updated_by = $2
+        WHERE id = $1::uuid
+      `,
+      [id, audit.user_id]
+    );
+
+    await insertAuditLog(client, audit, {
+      action: "stock.magasins.deactivate",
+      entity_type: "magasins",
+      entity_id: id,
+      details: null,
+    });
+
+    await client.query("COMMIT");
+    const out = await repoGetMagasin(id);
+    return out?.magasin ?? null;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function repoActivateMagasin(id: string, audit: AuditContext): Promise<StockMagasinDetail["magasin"] | null> {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+
+    const exists = await client.query<{ id: string }>(
+      `SELECT id::text AS id FROM public.magasins WHERE id = $1::uuid FOR UPDATE`,
+      [id]
+    );
+    if (!exists.rows[0]?.id) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    await client.query(
+      `
+        UPDATE public.magasins
+        SET
+          is_active = true,
+          actif = true,
+          updated_at = now(),
+          updated_by = $2
+        WHERE id = $1::uuid
+      `,
+      [id, audit.user_id]
+    );
+
+    await insertAuditLog(client, audit, {
+      action: "stock.magasins.activate",
+      entity_type: "magasins",
+      entity_id: id,
+      details: null,
+    });
+
+    await client.query("COMMIT");
+    const out = await repoGetMagasin(id);
+    return out?.magasin ?? null;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 export async function repoListEmplacements(filters: ListEmplacementsQueryDTO): Promise<Paginated<StockEmplacementListItem>> {
   const page = filters.page ?? 1;
   const pageSize = filters.pageSize ?? 50;

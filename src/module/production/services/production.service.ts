@@ -5,6 +5,7 @@ import type {
   ListMachinesQueryDTO,
   ListOfQueryDTO,
   ListPostesQueryDTO,
+  OfReceiptBodyDTO,
   StartOfTimeLogBodyDTO,
   UpdateMachineBodyDTO,
   UpdateOfBodyDTO,
@@ -13,6 +14,7 @@ import type {
   StopOfTimeLogBodyDTO,
 } from "../validators/production.validators";
 import * as repo from "../repository/production.repository";
+import * as receiptsRepo from "../repository/production-receipts.repository";
 
 export const svcListMachines = (filters: ListMachinesQueryDTO) => repo.repoListMachines(filters);
 
@@ -77,3 +79,14 @@ export const svcStopOfOperationTimeLog = (params: {
   body: StopOfTimeLogBodyDTO;
   audit: repo.AuditContext;
 }) => repo.repoStopOfOperationTimeLog(params);
+
+// -------------------------
+// Phase 5 - OF -> Entree en stock
+// -------------------------
+
+export const svcGetOfReceiptContext = (params: { of_id: number }) => receiptsRepo.repoGetOfReceiptContext(params);
+
+export const svcCreateOfReceipt = (params: { of_id: number; body: OfReceiptBodyDTO; audit: repo.AuditContext }) =>
+  receiptsRepo.repoCreateOfReceipt(params);
+
+export const svcGetOfTraceability = (params: { of_id: number }) => receiptsRepo.repoGetOfTraceability(params);

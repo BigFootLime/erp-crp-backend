@@ -78,6 +78,8 @@ import {
   updateStockEmplacementSVC,
   updateStockLotSVC,
   updateStockMagasinSVC,
+  deactivateStockMagasinSVC,
+  activateStockMagasinSVC,
 } from "../services/stock.service";
 
 export const listStockInventorySessions: RequestHandler = async (req, res, next) => {
@@ -346,6 +348,36 @@ export const updateStockMagasin: RequestHandler = async (req, res, next) => {
     const { id } = idParamSchema.parse({ params: req.params }).params;
     const body: UpdateMagasinBodyDTO = updateMagasinSchema.parse({ body: req.body }).body;
     const out = await updateStockMagasinSVC(id, body, audit);
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const deactivateStockMagasin: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildAuditContext(req);
+    const { id } = idParamSchema.parse({ params: req.params }).params;
+    const out = await deactivateStockMagasinSVC(id, audit);
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const activateStockMagasin: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildAuditContext(req);
+    const { id } = idParamSchema.parse({ params: req.params }).params;
+    const out = await activateStockMagasinSVC(id, audit);
     if (!out) {
       res.status(404).json({ error: "Not found" });
       return;

@@ -154,6 +154,29 @@ export const ofOperationIdParamSchema = z.object({
   }),
 });
 
+// -------------------------
+// Phase 5 - OF -> Entree en stock
+// -------------------------
+
+export const ofReceiptBodySchema = z
+  .object({
+    article_id: uuid.optional(),
+    qty_ok: z.coerce.number().positive(),
+    unite: z.string().trim().min(1).max(30).optional().nullable(),
+    location_id: uuid,
+    lot_mode: z.enum(["NEW", "EXISTING"]),
+    lot_id: uuid.optional().nullable(),
+    lot_number: z.string().trim().min(1).max(80).optional().nullable(),
+    commentaire: z.string().trim().min(1).max(2000).optional().nullable(),
+  })
+  .strict();
+
+export const createOfReceiptSchema = z.object({
+  body: ofReceiptBodySchema,
+});
+
+export type OfReceiptBodyDTO = z.infer<typeof ofReceiptBodySchema>;
+
 export const listOfQuerySchema = z.object({
   q: z.string().optional(),
   client_id: z.string().trim().min(1).max(3).optional(),

@@ -5,6 +5,7 @@ import type { AuditContext } from "../repository/production.repository";
 import {
   createMachineSchema,
   createOfSchema,
+  createOfReceiptSchema,
   createPosteSchema,
   listMachinesQuerySchema,
   listOfQuerySchema,
@@ -29,9 +30,12 @@ import {
   svcGetOrdreFabrication,
   svcGetMachine,
   svcGetPoste,
+  svcGetOfReceiptContext,
+  svcGetOfTraceability,
   svcListOrdresFabrication,
   svcListMachines,
   svcListPostes,
+  svcCreateOfReceipt,
   svcStartOfOperationTimeLog,
   svcStopOfOperationTimeLog,
   svcUpdateOrdreFabrication,
@@ -260,6 +264,31 @@ export const startOfOperationTimeLog = asyncHandler(async (req, res) => {
     return;
   }
   res.status(201).json(out);
+});
+
+// -------------------------
+// Phase 5 - OF -> Entree en stock
+// -------------------------
+
+export const getOfReceiptContext = asyncHandler(async (req, res) => {
+  const { id } = ofIdParamSchema.parse({ params: req.params }).params;
+  const out = await svcGetOfReceiptContext({ of_id: id });
+  res.json(out);
+});
+
+export const createOfReceipt = asyncHandler(async (req, res) => {
+  const audit = buildAuditContext(req);
+  const { id } = ofIdParamSchema.parse({ params: req.params }).params;
+  const raw = parseBody(req);
+  const body = createOfReceiptSchema.parse({ body: raw }).body;
+  const out = await svcCreateOfReceipt({ of_id: id, body, audit });
+  res.status(201).json(out);
+});
+
+export const getOfTraceability = asyncHandler(async (req, res) => {
+  const { id } = ofIdParamSchema.parse({ params: req.params }).params;
+  const out = await svcGetOfTraceability({ of_id: id });
+  res.json(out);
 });
 
 export const stopOfOperationTimeLog = asyncHandler(async (req, res) => {
