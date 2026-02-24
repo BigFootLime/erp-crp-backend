@@ -6,10 +6,12 @@ import path from "node:path"
 import { authenticateToken } from "../../auth/middlewares/auth.middleware"
 import {
   addLivraisonLine,
+  addLivraisonLineAllocation,
   createLivraison,
   createLivraisonFromCommande,
   deleteLivraisonDocument,
   deleteLivraisonLine,
+  deleteLivraisonLineAllocation,
   generateLivraisonPdf,
   getLivraison,
   getLivraisonDocumentFile,
@@ -43,6 +45,9 @@ router.put("/:id", updateLivraison)
 router.post("/:id/lines", addLivraisonLine)
 router.put("/:id/lines/:lineId", updateLivraisonLine)
 router.delete("/:id/lines/:lineId", deleteLivraisonLine)
+
+router.post("/:id/lignes/:lineId/allocations", addLivraisonLineAllocation)
+router.delete("/:id/lignes/:lineId/allocations/:allocationId", deleteLivraisonLineAllocation)
 
 router.post("/:id/status", updateLivraisonStatus)
 

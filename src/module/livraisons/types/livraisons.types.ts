@@ -93,6 +93,21 @@ export type BonLivraisonLigne = {
   unite: string | null
   commande_ligne_id: number | null
   delai_client: string | null
+  allocations: BonLivraisonLigneAllocation[]
+  created_at: string
+  updated_at: string
+  created_by: UserLite | null
+  updated_by: UserLite | null
+}
+
+export type BonLivraisonLigneAllocation = {
+  id: string
+  bon_livraison_ligne_id: string
+  article_id: string
+  lot_id: string | null
+  stock_movement_line_id: string | null
+  quantite: number
+  unite: string | null
   created_at: string
   updated_at: string
   created_by: UserLite | null

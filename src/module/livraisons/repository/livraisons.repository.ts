@@ -6,6 +6,8 @@ import type { PoolClient } from "pg"
 import pool from "../../../config/database"
 import { HttpError } from "../../../utils/httpError"
 
+import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
+
 import type {
   AdresseLivraisonLite,
   BonLivraisonDetail,
@@ -13,6 +15,7 @@ import type {
   BonLivraisonEventLog,
   BonLivraisonHeader,
   BonLivraisonLigne,
+  BonLivraisonLigneAllocation,
   BonLivraisonListItem,
   BonLivraisonStatut,
   Paginated,
@@ -20,6 +23,7 @@ import type {
   UserLite,
 } from "../types/livraisons.types"
 import type {
+  CreateLivraisonAllocationBodyDTO,
   CreateLivraisonBodyDTO,
   CreateLivraisonLineBodyDTO,
   ListLivraisonsQueryDTO,
@@ -54,6 +58,242 @@ function getPgErrorInfo(err: unknown) {
 }
 
 type Queryable = Pick<PoolClient, "query">
+
+const DEFAULT_SHIPPING_LOCATION_SETTING_KEY = "stock.default_shipping_location"
+
+function isUuidString(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-fA-F-]{36}$/.test(value)
+}
+
+type ShippingLocationSetting = {
+  magasin_id: string
+  emplacement_id: number
+}
+
+type EmplacementMapping = {
+  magasin_id: string
+  location_id: string
+  warehouse_id: string
+}
+
+async function getEmplacementMapping(
+  db: Queryable,
+  magasinId: string,
+  emplacementId: number,
+  label: "shipping" | "src" | "dst"
+): Promise<EmplacementMapping> {
+  const res = await db.query<{
+    magasin_id: string
+    is_active: boolean
+    is_scrap: boolean
+    location_id: string | null
+    warehouse_id: string | null
+  }>(
+    `
+      SELECT
+        e.magasin_id::text AS magasin_id,
+        e.is_active,
+        e.is_scrap,
+        e.location_id::text AS location_id,
+        l.warehouse_id::text AS warehouse_id
+      FROM public.emplacements e
+      LEFT JOIN public.locations l ON l.id = e.location_id
+      WHERE e.id = $1::bigint
+    `,
+    [emplacementId]
+  )
+
+  const row = res.rows[0] ?? null
+  if (!row) {
+    throw new HttpError(400, "INVALID_LOCATION", `Unknown ${label}_emplacement_id`)
+  }
+  if (row.magasin_id !== magasinId) {
+    throw new HttpError(400, "INVALID_LOCATION", `${label}_emplacement_id does not belong to ${label}_magasin_id`)
+  }
+  if (!row.is_active || row.is_scrap) {
+    throw new HttpError(409, "INVALID_LOCATION", `${label} emplacement is not usable for shipping`)
+  }
+  if (!row.location_id || !row.warehouse_id) {
+    throw new HttpError(409, "LOCATION_NOT_MAPPED", "Shipping emplacement is missing location mapping")
+  }
+
+  return {
+    magasin_id: row.magasin_id,
+    location_id: row.location_id,
+    warehouse_id: row.warehouse_id,
+  }
+}
+
+async function getDefaultShippingLocationSetting(db: Queryable): Promise<ShippingLocationSetting> {
+  const res = await db.query<{ value_json: unknown }>(
+    `SELECT value_json FROM public.erp_settings WHERE key = $1`,
+    [DEFAULT_SHIPPING_LOCATION_SETTING_KEY]
+  )
+
+  const raw = res.rows[0]?.value_json ?? null
+  if (!isRecord(raw)) {
+    throw new HttpError(
+      409,
+      "SHIPPING_LOCATION_NOT_CONFIGURED",
+      `Missing setting ${DEFAULT_SHIPPING_LOCATION_SETTING_KEY} in public.erp_settings`
+    )
+  }
+
+  const magasinId = raw.magasin_id
+  const emplacementIdRaw = raw.emplacement_id
+  const emplacementId =
+    typeof emplacementIdRaw === "number" && Number.isInteger(emplacementIdRaw)
+      ? emplacementIdRaw
+      : typeof emplacementIdRaw === "string" && /^\d+$/.test(emplacementIdRaw)
+        ? Number.parseInt(emplacementIdRaw, 10)
+        : NaN
+
+  if (!isUuidString(magasinId) || !Number.isFinite(emplacementId) || emplacementId <= 0) {
+    throw new HttpError(
+      409,
+      "SHIPPING_LOCATION_NOT_CONFIGURED",
+      `Invalid ${DEFAULT_SHIPPING_LOCATION_SETTING_KEY} format (expected {magasin_id, emplacement_id})`
+    )
+  }
+
+  return { magasin_id: magasinId, emplacement_id: emplacementId }
+}
+
+function stockMovementNoFromSeq(n: number): string {
+  const padded = String(n).padStart(8, "0")
+  return `SM-${padded}`
+}
+
+async function reserveStockMovementNo(db: Queryable): Promise<string> {
+  const res = await db.query<{ n: string }>(`SELECT nextval('public.stock_movement_no_seq')::text AS n`)
+  const raw = res.rows[0]?.n
+  const n = raw ? Number(raw) : NaN
+  if (!Number.isFinite(n)) throw new Error("Failed to reserve stock movement number")
+  return stockMovementNoFromSeq(n)
+}
+
+async function resolveUnitIdForArticle(
+  db: Queryable,
+  articleId: string,
+  preferredUnitCode: string | null | undefined
+): Promise<string> {
+  const preferred = preferredUnitCode?.trim() ? preferredUnitCode.trim() : null
+  let code: string | null = preferred
+
+  if (!code) {
+    const a = await db.query<{ unite: string | null }>(`SELECT unite FROM public.articles WHERE id = $1::uuid`, [articleId])
+    code = a.rows[0]?.unite?.trim() ? a.rows[0].unite.trim() : null
+  }
+  if (!code) code = "u"
+
+  const u = await db.query<{ id: string }>(`SELECT id::text AS id FROM public.units WHERE code = $1`, [code])
+  const unitId = u.rows[0]?.id
+  if (!unitId) {
+    throw new HttpError(400, "UNKNOWN_UNIT", `Unknown unit code: ${code}`)
+  }
+  return unitId
+}
+
+async function ensureStockLevel(
+  db: Queryable,
+  args: {
+    article_id: string
+    unit_id: string
+    warehouse_id: string
+    location_id: string
+    actor_user_id: number
+  }
+): Promise<string> {
+  const existing = await db.query<{ id: string; unit_id: string; warehouse_id: string }>(
+    `
+      SELECT
+        id::text AS id,
+        unit_id::text AS unit_id,
+        warehouse_id::text AS warehouse_id
+      FROM public.stock_levels
+      WHERE article_id = $1::uuid AND location_id = $2::uuid
+    `,
+    [args.article_id, args.location_id]
+  )
+
+  const row = existing.rows[0] ?? null
+  if (row) {
+    if (row.unit_id !== args.unit_id) {
+      throw new HttpError(409, "STOCK_LEVEL_UNIT_MISMATCH", "Stock level unit mismatch")
+    }
+    if (row.warehouse_id !== args.warehouse_id) {
+      throw new HttpError(409, "STOCK_LEVEL_WAREHOUSE_MISMATCH", "Stock level warehouse mismatch")
+    }
+    return row.id
+  }
+
+  await db.query(
+    `
+      INSERT INTO public.stock_levels (
+        article_id, unit_id, warehouse_id, location_id,
+        managed_in_stock,
+        created_by, updated_by
+      )
+      VALUES ($1::uuid,$2::uuid,$3::uuid,$4::uuid,true,$5,$5)
+      ON CONFLICT (article_id, location_id) DO NOTHING
+    `,
+    [args.article_id, args.unit_id, args.warehouse_id, args.location_id, args.actor_user_id]
+  )
+
+  const after = await db.query<{ id: string }>(
+    `SELECT id::text AS id FROM public.stock_levels WHERE article_id = $1::uuid AND location_id = $2::uuid`,
+    [args.article_id, args.location_id]
+  )
+  const id = after.rows[0]?.id
+  if (!id) throw new Error("Failed to ensure stock level")
+  return id
+}
+
+async function ensureStockBatchId(db: Queryable, args: { stock_level_id: string; lot_id: string }): Promise<string> {
+  const lot = await db.query<{ lot_code: string }>(`SELECT lot_code FROM public.lots WHERE id = $1::uuid`, [args.lot_id])
+  const lotCode = lot.rows[0]?.lot_code
+  if (!lotCode) throw new HttpError(400, "INVALID_LOT", "Unknown lot_id")
+
+  await db.query(
+    `
+      INSERT INTO public.stock_batches (stock_level_id, batch_code)
+      VALUES ($1::uuid,$2)
+      ON CONFLICT (stock_level_id, batch_code) DO NOTHING
+    `,
+    [args.stock_level_id, lotCode]
+  )
+
+  const b = await db.query<{ id: string }>(
+    `SELECT id::text AS id FROM public.stock_batches WHERE stock_level_id = $1::uuid AND batch_code = $2`,
+    [args.stock_level_id, lotCode]
+  )
+  const id = b.rows[0]?.id
+  if (!id) throw new Error("Failed to ensure stock batch")
+  return id
+}
+
+async function insertStockMovementEvent(
+  db: Queryable,
+  args: {
+    movement_id: string
+    event_type: string
+    old_values: unknown | null
+    new_values: unknown | null
+    user_id: number
+  }
+) {
+  await db.query(
+    `
+      INSERT INTO public.stock_movement_event_log (
+        stock_movement_id, event_type, old_values, new_values,
+        user_id,
+        created_by, updated_by
+      )
+      VALUES ($1::uuid,$2,$3::jsonb,$4::jsonb,$5,$5,$5)
+    `,
+    [args.movement_id, args.event_type, JSON.stringify(args.old_values), JSON.stringify(args.new_values), args.user_id]
+  )
+}
 
 let commandeToAffaireHasRoleColumnCache: boolean | null = null
 async function hasCommandeToAffaireRoleColumn(db: Queryable): Promise<boolean> {
@@ -290,7 +530,7 @@ type HeaderRow = {
 }
 
 async function getHeader(client: PoolClient, id: string, opts?: { forUpdate?: boolean }): Promise<HeaderRow | null> {
-  const lock = opts?.forUpdate ? "FOR UPDATE" : ""
+  const lock = opts?.forUpdate ? "FOR UPDATE OF bl" : ""
   const sql = `
     SELECT
       bl.id::text AS id,
@@ -471,6 +711,7 @@ export async function repoGetLivraisonDetail(id: string): Promise<BonLivraisonDe
       unite: r.unite,
       commande_ligne_id: r.commande_ligne_id ? toInt(r.commande_ligne_id, "bon_livraison_ligne.commande_ligne_id") : null,
       delai_client: r.delai_client,
+      allocations: [],
       created_at: r.created_at,
       updated_at: r.updated_at,
       created_by: mapUserLite({
@@ -486,6 +727,89 @@ export async function repoGetLivraisonDetail(id: string): Promise<BonLivraisonDe
         surname: r.updated_by_surname,
       }),
     }))
+
+    const lignesById = new Map<string, BonLivraisonLigne>()
+    for (const l of lignes) lignesById.set(l.id, l)
+
+    // Allocations
+    type AllocationRow = {
+      id: string
+      bon_livraison_ligne_id: string
+      article_id: string
+      lot_id: string | null
+      stock_movement_line_id: string | null
+      quantite: string | number
+      unite: string | null
+      created_at: string
+      updated_at: string
+      created_by_id: number | null
+      created_by_username: string | null
+      created_by_name: string | null
+      created_by_surname: string | null
+      updated_by_id: number | null
+      updated_by_username: string | null
+      updated_by_name: string | null
+      updated_by_surname: string | null
+    }
+
+    const allocRes = await db.query<AllocationRow>(
+      `
+      SELECT
+        a.id::text AS id,
+        a.bon_livraison_ligne_id::text AS bon_livraison_ligne_id,
+        a.article_id::text AS article_id,
+        a.lot_id::text AS lot_id,
+        a.stock_movement_line_id::text AS stock_movement_line_id,
+        a.quantite,
+        a.unite,
+        a.created_at::text AS created_at,
+        a.updated_at::text AS updated_at,
+        cb.id AS created_by_id,
+        cb.username AS created_by_username,
+        cb.name AS created_by_name,
+        cb.surname AS created_by_surname,
+        ub.id AS updated_by_id,
+        ub.username AS updated_by_username,
+        ub.name AS updated_by_name,
+        ub.surname AS updated_by_surname
+      FROM public.bon_livraison_ligne_allocations a
+      JOIN public.bon_livraison_ligne l ON l.id = a.bon_livraison_ligne_id
+      LEFT JOIN users cb ON cb.id = a.created_by
+      LEFT JOIN users ub ON ub.id = a.updated_by
+      WHERE l.bon_livraison_id = $1::uuid
+      ORDER BY a.created_at ASC, a.id ASC
+      `,
+      [id]
+    )
+
+    for (const r of allocRes.rows) {
+      const alloc: BonLivraisonLigneAllocation = {
+        id: r.id,
+        bon_livraison_ligne_id: r.bon_livraison_ligne_id,
+        article_id: r.article_id,
+        lot_id: r.lot_id,
+        stock_movement_line_id: r.stock_movement_line_id,
+        quantite: toFloat(r.quantite, "bon_livraison_ligne_allocations.quantite"),
+        unite: r.unite,
+        created_at: r.created_at,
+        updated_at: r.updated_at,
+        created_by: mapUserLite({
+          id: r.created_by_id,
+          username: r.created_by_username,
+          name: r.created_by_name,
+          surname: r.created_by_surname,
+        }),
+        updated_by: mapUserLite({
+          id: r.updated_by_id,
+          username: r.updated_by_username,
+          name: r.updated_by_name,
+          surname: r.updated_by_surname,
+        }),
+      }
+
+      const line = lignesById.get(alloc.bon_livraison_ligne_id)
+      if (line) line.allocations.push(alloc)
+    }
 
     // Documents
     type DocRow = {
@@ -1083,6 +1407,151 @@ export async function repoDeleteLivraisonLine(bonLivraisonId: string, lineId: st
   }
 }
 
+export async function repoCreateLivraisonLineAllocation(
+  bonLivraisonId: string,
+  lineId: string,
+  input: CreateLivraisonAllocationBodyDTO,
+  userId: number
+): Promise<{ allocationId: string }> {
+  const db = await pool.connect()
+  try {
+    await db.query("BEGIN")
+    const header = await getHeader(db, bonLivraisonId, { forUpdate: true })
+    if (!header) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
+
+    const lineRes = await db.query<{ id: string }>(
+      `SELECT id::text AS id FROM bon_livraison_ligne WHERE bon_livraison_id = $1::uuid AND id = $2::uuid FOR UPDATE`,
+      [bonLivraisonId, lineId]
+    )
+    const line = lineRes.rows[0] ?? null
+    if (!line) throw new HttpError(404, "LINE_NOT_FOUND", "Bon de livraison line not found")
+
+    const articleOk = await db.query<{ ok: number }>(`SELECT 1::int AS ok FROM public.articles WHERE id = $1::uuid LIMIT 1`, [input.article_id])
+    if (!articleOk.rows[0]?.ok) {
+      throw new HttpError(400, "INVALID_ARTICLE", "Unknown article_id")
+    }
+
+    if (input.lot_id) {
+      const lot = await db.query<{ article_id: string }>(
+        `SELECT article_id::text AS article_id FROM public.lots WHERE id = $1::uuid`,
+        [input.lot_id]
+      )
+      const lotArticleId = lot.rows[0]?.article_id
+      if (!lotArticleId) {
+        throw new HttpError(400, "INVALID_LOT", "Unknown lot_id")
+      }
+      if (lotArticleId !== input.article_id) {
+        throw new HttpError(400, "LOT_ARTICLE_MISMATCH", "lot_id does not belong to article_id")
+      }
+    }
+
+    const ins = await db.query<{ id: string }>(
+      `
+        INSERT INTO public.bon_livraison_ligne_allocations (
+          bon_livraison_ligne_id,
+          article_id,
+          lot_id,
+          stock_movement_line_id,
+          quantite,
+          unite,
+          created_by,
+          updated_by
+        ) VALUES ($1::uuid,$2::uuid,$3::uuid,NULL,$4,$5,$6,$6)
+        RETURNING id::text AS id
+      `,
+      [lineId, input.article_id, input.lot_id ?? null, input.quantite, input.unite ?? null, userId]
+    )
+    const allocationId = ins.rows[0]?.id
+    if (!allocationId) throw new Error("Failed to insert allocation")
+
+    await db.query(`UPDATE bon_livraison SET updated_at = now(), updated_by = $2 WHERE id = $1::uuid`, [bonLivraisonId, userId])
+
+    await insertEvent(db, {
+      bon_livraison_id: bonLivraisonId,
+      event_type: "ALLOCATION_ADDED",
+      user_id: userId,
+      new_values: {
+        allocation_id: allocationId,
+        line_id: lineId,
+        article_id: input.article_id,
+        lot_id: input.lot_id ?? null,
+        quantite: input.quantite,
+        unite: input.unite ?? null,
+      },
+    })
+
+    await db.query("COMMIT")
+    return { allocationId }
+  } catch (err) {
+    await db.query("ROLLBACK")
+    throw err
+  } finally {
+    db.release()
+  }
+}
+
+export async function repoDeleteLivraisonLineAllocation(
+  bonLivraisonId: string,
+  lineId: string,
+  allocationId: string,
+  userId: number
+): Promise<boolean> {
+  const db = await pool.connect()
+  try {
+    await db.query("BEGIN")
+    const header = await getHeader(db, bonLivraisonId, { forUpdate: true })
+    if (!header) {
+      await db.query("ROLLBACK")
+      return false
+    }
+
+    const lockRes = await db.query<{ stock_movement_line_id: string | null }>(
+      `
+        SELECT a.stock_movement_line_id::text AS stock_movement_line_id
+        FROM public.bon_livraison_ligne_allocations a
+        JOIN public.bon_livraison_ligne l ON l.id = a.bon_livraison_ligne_id
+        WHERE a.id = $1::uuid
+          AND a.bon_livraison_ligne_id = $2::uuid
+          AND l.bon_livraison_id = $3::uuid
+        FOR UPDATE
+      `,
+      [allocationId, lineId, bonLivraisonId]
+    )
+    const locked = lockRes.rows[0] ?? null
+    if (!locked) {
+      await db.query("ROLLBACK")
+      return false
+    }
+    if (locked.stock_movement_line_id) {
+      throw new HttpError(409, "ALLOCATION_LOCKED", "Allocation is linked to a stock movement line")
+    }
+
+    const delRes = await db.query(
+      `DELETE FROM public.bon_livraison_ligne_allocations WHERE id = $1::uuid AND bon_livraison_ligne_id = $2::uuid`,
+      [allocationId, lineId]
+    )
+    const ok = (delRes.rowCount ?? 0) > 0
+
+    if (ok) {
+      await db.query(`UPDATE bon_livraison SET updated_at = now(), updated_by = $2 WHERE id = $1::uuid`, [bonLivraisonId, userId])
+      await insertEvent(db, {
+        bon_livraison_id: bonLivraisonId,
+        event_type: "ALLOCATION_REMOVED",
+        user_id: userId,
+        old_values: { allocation_id: allocationId, line_id: lineId },
+      })
+    }
+
+    await db.query("COMMIT")
+    return ok
+  } catch (err) {
+    await db.query("ROLLBACK")
+    throw err
+  } finally {
+    db.release()
+  }
+}
+
 export async function repoUpdateLivraisonStatus(
   bonLivraisonId: string,
   statut: BonLivraisonStatut,
@@ -1096,6 +1565,267 @@ export async function repoUpdateLivraisonStatus(
     if (!current) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
 
     const oldStatut = current.statut
+
+     const shouldShip = oldStatut === "READY" && statut === "SHIPPED"
+     const issuedMovementIds: string[] = []
+
+     if (shouldShip) {
+       const shipping = await getDefaultShippingLocationSetting(db)
+       const shippingMap = await getEmplacementMapping(db, shipping.magasin_id, shipping.emplacement_id, "shipping")
+
+       const linesRes = await db.query<{ id: string; ordre: number; designation: string }>(
+         `
+           SELECT id::text AS id, ordre, designation
+           FROM public.bon_livraison_ligne
+           WHERE bon_livraison_id = $1::uuid
+           ORDER BY ordre ASC, id ASC
+         `,
+         [bonLivraisonId]
+       )
+       const blLines = linesRes.rows
+
+       type ShipAllocRow = {
+         id: string
+         bon_livraison_ligne_id: string
+         article_id: string
+         lot_id: string | null
+         lot_article_id: string | null
+         stock_movement_line_id: string | null
+         quantite: string | number
+         unite: string | null
+       }
+
+       const allocRes = await db.query<ShipAllocRow>(
+         `
+           SELECT
+             a.id::text AS id,
+             a.bon_livraison_ligne_id::text AS bon_livraison_ligne_id,
+             a.article_id::text AS article_id,
+             a.lot_id::text AS lot_id,
+             lt.article_id::text AS lot_article_id,
+             a.stock_movement_line_id::text AS stock_movement_line_id,
+             a.quantite,
+             a.unite
+           FROM public.bon_livraison_ligne_allocations a
+           JOIN public.bon_livraison_ligne l ON l.id = a.bon_livraison_ligne_id
+           LEFT JOIN public.lots lt ON lt.id = a.lot_id
+           WHERE l.bon_livraison_id = $1::uuid
+           ORDER BY a.created_at ASC, a.id ASC
+         `,
+         [bonLivraisonId]
+       )
+       const allocRows = allocRes.rows
+
+       const allocsByLineId = new Map<string, ShipAllocRow[]>()
+       for (const a of allocRows) {
+         const list = allocsByLineId.get(a.bon_livraison_ligne_id) ?? []
+         list.push(a)
+         allocsByLineId.set(a.bon_livraison_ligne_id, list)
+       }
+
+       const missingLines = blLines.filter((l) => !(allocsByLineId.get(l.id)?.length ?? 0))
+       if (missingLines.length) {
+         throw new HttpError(
+           400,
+           "ALLOCATIONS_REQUIRED",
+           "Allocations are required before shipping. Add allocations for each livraison line."
+         )
+       }
+
+       type AllocItem = {
+         allocation_id: string
+         bon_livraison_ligne_id: string
+         article_id: string
+         lot_id: string | null
+         quantite: number
+         unite: string | null
+       }
+
+       type IssueGroup = {
+         article_id: string
+         lot_id: string | null
+         unite: string | null
+         items: AllocItem[]
+       }
+       const groups = new Map<string, IssueGroup>()
+
+       for (const a of allocRows) {
+         if (a.stock_movement_line_id) {
+           throw new HttpError(409, "ALLOCATION_LOCKED", "Some allocations are already linked to stock movements")
+         }
+
+         if (a.lot_id && a.lot_article_id && a.lot_article_id !== a.article_id) {
+           throw new HttpError(400, "LOT_ARTICLE_MISMATCH", "Allocation lot_id does not belong to allocation article_id")
+         }
+
+         const qty = toFloat(a.quantite, "bon_livraison_ligne_allocations.quantite")
+         if (!Number.isFinite(qty) || qty <= 0) {
+           throw new HttpError(400, "INVALID_QTY", "Allocation quantite must be > 0")
+         }
+
+         const unite = typeof a.unite === "string" && a.unite.trim() ? a.unite.trim() : null
+         const key = `${a.article_id}:${a.lot_id ?? ""}`
+         const g = groups.get(key) ?? { article_id: a.article_id, lot_id: a.lot_id ?? null, unite, items: [] }
+         if (unite && g.unite && unite !== g.unite) {
+           throw new HttpError(409, "UNIT_MISMATCH", "All allocations in the same stock movement must use the same unit")
+         }
+         if (!g.unite && unite) g.unite = unite
+
+         g.items.push({
+           allocation_id: a.id,
+           bon_livraison_ligne_id: a.bon_livraison_ligne_id,
+           article_id: a.article_id,
+           lot_id: a.lot_id ?? null,
+           quantite: qty,
+           unite,
+         })
+         groups.set(key, g)
+       }
+
+       for (const g of groups.values()) {
+         const totalQty = g.items.reduce((acc, it) => acc + it.quantite, 0)
+         if (!Number.isFinite(totalQty) || totalQty <= 0) {
+           throw new HttpError(400, "INVALID_QTY", "Invalid allocated qty")
+         }
+
+         const unitId = await resolveUnitIdForArticle(db, g.article_id, g.unite)
+         const stockLevelId = await ensureStockLevel(db, {
+           article_id: g.article_id,
+           unit_id: unitId,
+           warehouse_id: shippingMap.warehouse_id,
+           location_id: shippingMap.location_id,
+           actor_user_id: userId,
+         })
+         const stockBatchId = g.lot_id ? await ensureStockBatchId(db, { stock_level_id: stockLevelId, lot_id: g.lot_id }) : null
+
+         const movementNo = await reserveStockMovementNo(db)
+         const idempotencyKey = `bon_livraison:${bonLivraisonId}:ship:${g.article_id}:${g.lot_id ?? "none"}`
+         const effectiveAt = new Date().toISOString()
+
+         const ins = await db.query<{ id: string }>(
+           `
+             INSERT INTO public.stock_movements (
+               movement_no,
+               movement_type,
+               status,
+               article_id,
+               stock_level_id,
+               stock_batch_id,
+               qty,
+               currency,
+               effective_at,
+               source_document_type,
+               source_document_id,
+               reason_code,
+               notes,
+               idempotency_key,
+               user_id,
+               created_by,
+               updated_by
+             )
+              VALUES ($1,'OUT'::public.movement_type,'DRAFT',$2::uuid,$3::uuid,$4::uuid,$5,'EUR',$6,$7,$8,$9,$10,$11,$12,$12,$12)
+              RETURNING id::text AS id
+            `,
+           [
+             movementNo,
+             g.article_id,
+             stockLevelId,
+             stockBatchId,
+             totalQty,
+             effectiveAt,
+             "BON_LIVRAISON",
+             bonLivraisonId,
+             "BON_LIVRAISON_SHIPMENT",
+             `Shipment for ${current.numero}`,
+             idempotencyKey,
+             userId,
+           ]
+         )
+         const movementId = ins.rows[0]?.id
+         if (!movementId) throw new Error("Failed to create stock movement")
+         issuedMovementIds.push(movementId)
+
+         await insertStockMovementEvent(db, {
+           movement_id: movementId,
+           event_type: "CREATED",
+           old_values: null,
+           new_values: {
+             status: "DRAFT",
+             movement_type: "OUT",
+             allocations_count: g.items.length,
+             source_document_type: "BON_LIVRAISON",
+             source_document_id: bonLivraisonId,
+           },
+           user_id: userId,
+         })
+
+         let lineNo = 1
+         for (const it of g.items) {
+           const lineIns = await db.query<{ id: string }>(
+             `
+               INSERT INTO public.stock_movement_lines (
+                 movement_id,
+                 line_no,
+                 article_id,
+                 lot_id,
+                 qty,
+                 unite,
+                 src_magasin_id,
+                 src_emplacement_id,
+                 note,
+                 created_by,
+                 updated_by
+               ) VALUES ($1::uuid,$2,$3::uuid,$4::uuid,$5,$6,$7::uuid,$8::bigint,$9,$10,$10)
+               RETURNING id::text AS id
+             `,
+             [
+               movementId,
+               lineNo,
+               it.article_id,
+               it.lot_id,
+               it.quantite,
+               it.unite,
+               shipping.magasin_id,
+               shipping.emplacement_id,
+               `BL ${current.numero} SHIPPED`,
+               userId,
+             ]
+           )
+           const stockLineId = lineIns.rows[0]?.id
+           if (!stockLineId) throw new Error("Failed to create stock movement line")
+
+           await db.query(
+             `
+               UPDATE public.bon_livraison_ligne_allocations
+               SET stock_movement_line_id = $2::uuid,
+                   updated_at = now(),
+                   updated_by = $3
+               WHERE id = $1::uuid
+             `,
+             [it.allocation_id, stockLineId, userId]
+           )
+           lineNo++
+         }
+
+         await db.query(
+           `
+             UPDATE public.stock_movements
+             SET status = 'POSTED', posted_at = now(), posted_by = $2, updated_at = now(), updated_by = $2
+             WHERE id = $1::uuid
+           `,
+           [movementId, userId]
+         )
+
+         await insertStockMovementEvent(db, {
+           movement_id: movementId,
+           event_type: "POSTED",
+           old_values: { status: "DRAFT" },
+           new_values: { status: "POSTED" },
+           user_id: userId,
+         })
+       }
+     }
+
     await db.query(`UPDATE bon_livraison SET statut = $2, updated_at = now(), updated_by = $3 WHERE id = $1::uuid`, [bonLivraisonId, statut, userId])
 
     if (statut === "SHIPPED" && !current.date_expedition) {
@@ -1112,6 +1842,42 @@ export async function repoUpdateLivraisonStatus(
       old_values: { statut: oldStatut },
       new_values: { statut, commentaire: meta?.commentaire ?? null },
     })
+
+     if (shouldShip) {
+        await insertEvent(db, {
+          bon_livraison_id: bonLivraisonId,
+          event_type: "SHIPMENT_VALIDATED",
+          user_id: userId,
+          new_values: {
+            stock_movement_ids: issuedMovementIds,
+          },
+        })
+
+       await repoInsertAuditLog({
+         user_id: userId,
+         body: {
+           event_type: "ACTION",
+           action: "livraisons.shipped",
+           page_key: "livraisons",
+           entity_type: "bon_livraison",
+           entity_id: bonLivraisonId,
+           path: `/api/v1/livraisons/${bonLivraisonId}/status`,
+           client_session_id: null,
+           details: {
+             bon_livraison_numero: current.numero,
+             old_statut: oldStatut,
+             new_statut: statut,
+             stock_movement_ids: issuedMovementIds,
+           },
+         },
+         ip: null,
+         user_agent: null,
+         device_type: null,
+         os: null,
+         browser: null,
+         tx: db,
+       })
+     }
 
     await db.query("COMMIT")
     return { id: bonLivraisonId, statut }

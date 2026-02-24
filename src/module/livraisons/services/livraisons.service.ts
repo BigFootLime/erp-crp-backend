@@ -3,6 +3,7 @@ import { HttpError } from "../../../utils/httpError"
 import type { BonLivraisonStatut } from "../types/livraisons.types"
 import type {
   CreateLivraisonBodyDTO,
+  CreateLivraisonAllocationBodyDTO,
   CreateLivraisonLineBodyDTO,
   ListLivraisonsQueryDTO,
   LivraisonStatusBodyDTO,
@@ -14,7 +15,9 @@ import {
   repoAddLivraisonLine,
   repoAttachLivraisonDocuments,
   repoCreateLivraison,
+  repoCreateLivraisonLineAllocation,
   repoCreateLivraisonFromCommande,
+  repoDeleteLivraisonLineAllocation,
   repoDeleteLivraisonLine,
   repoGetLivraisonDetail,
   repoGetLivraisonStatut,
@@ -98,6 +101,20 @@ export async function svcDeleteLivraisonLine(id: string, lineId: string, userId:
   if (!statut) return false
   assertEditable(statut, "Delete line")
   return repoDeleteLivraisonLine(id, lineId, userId)
+}
+
+export async function svcCreateLivraisonLineAllocation(id: string, lineId: string, dto: CreateLivraisonAllocationBodyDTO, userId: number) {
+  const statut = await repoGetLivraisonStatut(id)
+  if (!statut) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
+  assertEditable(statut, "Allocate line")
+  return repoCreateLivraisonLineAllocation(id, lineId, dto, userId)
+}
+
+export async function svcDeleteLivraisonLineAllocation(id: string, lineId: string, allocationId: string, userId: number) {
+  const statut = await repoGetLivraisonStatut(id)
+  if (!statut) return false
+  assertEditable(statut, "Delete allocation")
+  return repoDeleteLivraisonLineAllocation(id, lineId, allocationId, userId)
 }
 
 export async function svcUpdateLivraisonStatus(id: string, body: LivraisonStatusBodyDTO, userId: number) {

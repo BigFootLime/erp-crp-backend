@@ -13,6 +13,12 @@ export const livraisonLineIdParamsSchema = z.object({
   lineId: z.string().uuid(),
 })
 
+export const livraisonLineAllocationIdParamsSchema = z.object({
+  id: z.string().uuid(),
+  lineId: z.string().uuid(),
+  allocationId: z.string().uuid(),
+})
+
 export const livraisonDocParamsSchema = z.object({
   id: z.string().uuid(),
   docId: z.string().uuid(),
@@ -122,3 +128,14 @@ export const livraisonStatusBodySchema = z
   .passthrough()
 
 export type LivraisonStatusBodyDTO = z.infer<typeof livraisonStatusBodySchema>
+
+export const createLivraisonAllocationBodySchema = z
+  .object({
+    article_id: z.string().uuid(),
+    lot_id: z.string().uuid().optional().nullable(),
+    quantite: z.coerce.number().positive(),
+    unite: z.string().trim().min(1).max(30).optional().nullable(),
+  })
+  .passthrough()
+
+export type CreateLivraisonAllocationBodyDTO = z.infer<typeof createLivraisonAllocationBodySchema>

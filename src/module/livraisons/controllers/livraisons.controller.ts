@@ -4,11 +4,13 @@ import fs from "node:fs/promises"
 import { HttpError } from "../../../utils/httpError"
 import {
   createLivraisonBodySchema,
+  createLivraisonAllocationBodySchema,
   createLivraisonLineBodySchema,
   fromCommandeParamsSchema,
   listLivraisonsQuerySchema,
   livraisonIdParamsSchema,
   livraisonLineIdParamsSchema,
+  livraisonLineAllocationIdParamsSchema,
   livraisonStatusBodySchema,
   updateLivraisonBodySchema,
   updateLivraisonLineBodySchema,
@@ -138,6 +140,33 @@ export const deleteLivraisonLine: RequestHandler = async (req, res, next) => {
     const userId = getUserId(req)
     const { id, lineId } = livraisonLineIdParamsSchema.parse(req.params)
     const ok = await service.svcDeleteLivraisonLine(id, lineId, userId)
+    if (!ok) {
+      res.status(404).json({ error: "Not found" })
+      return
+    }
+    res.status(204).send()
+  } catch (e) {
+    next(e)
+  }
+}
+
+export const addLivraisonLineAllocation: RequestHandler = async (req, res, next) => {
+  try {
+    const userId = getUserId(req)
+    const { id, lineId } = livraisonLineIdParamsSchema.parse(req.params)
+    const dto = createLivraisonAllocationBodySchema.parse(req.body)
+    const out = await service.svcCreateLivraisonLineAllocation(id, lineId, dto, userId)
+    res.status(201).json(out)
+  } catch (e) {
+    next(e)
+  }
+}
+
+export const deleteLivraisonLineAllocation: RequestHandler = async (req, res, next) => {
+  try {
+    const userId = getUserId(req)
+    const { id, lineId, allocationId } = livraisonLineAllocationIdParamsSchema.parse(req.params)
+    const ok = await service.svcDeleteLivraisonLineAllocation(id, lineId, allocationId, userId)
     if (!ok) {
       res.status(404).json({ error: "Not found" })
       return
