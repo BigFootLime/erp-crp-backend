@@ -313,6 +313,38 @@ export const confirmGenerateAffairesSchema = z
 
 export type ConfirmGenerateAffairesBodyDTO = z.infer<typeof confirmGenerateAffairesSchema>["body"];
 
+/* -------------------------------------------------------------------------- */
+/* Phase 3: stock analysis + deterministic affaires generation                 */
+/* -------------------------------------------------------------------------- */
+
+export const commandesStockDecisionSchema = z.enum(["SHIP_AVAILABLE_NOW", "SHIP_ALL_TOGETHER"]);
+export type CommandesStockDecisionDTO = z.infer<typeof commandesStockDecisionSchema>;
+
+export const generateAffairesV3Schema = z
+  .object({
+    params: z.object({
+      id: z.string().regex(/^\d+$/, "id must be an integer"),
+    }),
+    body: z
+      .object({
+        decision: commandesStockDecisionSchema.nullable().optional().default(null),
+        lines: z
+          .array(
+            z
+              .object({
+                commande_ligne_id: z.coerce.number().int().positive(),
+                qty_ship_now: z.coerce.number().min(0),
+              })
+              .strict()
+          )
+          .optional()
+          .default([]),
+      })
+      .strict(),
+  });
+
+export type GenerateAffairesV3BodyDTO = z.infer<typeof generateAffairesV3Schema>["body"];
+
 export function validate(schema: z.ZodTypeAny): RequestHandler {
   return (req, res, next) => {
     const parsed = schema.safeParse({ body: req.body, params: req.params, query: req.query });

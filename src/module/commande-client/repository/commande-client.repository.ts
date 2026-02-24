@@ -4,6 +4,8 @@ import path from "node:path";
 import type { PoolClient } from "pg";
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
+import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
+import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 import type {
   CreateCommandeInput,
   UploadedDocument,
@@ -11,8 +13,10 @@ import type {
   ClientLite,
 } from "../types/commande-client.types";
 import type {
+  CommandesStockDecisionDTO,
   ConfirmGenerateAffairesBodyDTO,
   GenerateAffairesBodyDTO,
+  GenerateAffairesV3BodyDTO,
   ListCommandesQueryDTO,
 } from "../validators/commande-client.validators";
 
@@ -65,6 +69,74 @@ function hasOwn(obj: object, key: string): boolean {
 }
 
 type Queryable = Pick<PoolClient, "query">;
+
+type AuditContext = {
+  user_id: number;
+  ip: string | null;
+  user_agent: string | null;
+  device_type: string | null;
+  os: string | null;
+  browser: string | null;
+  path: string | null;
+  page_key: string | null;
+  client_session_id: string | null;
+};
+
+async function insertAuditLog(tx: Queryable, audit: AuditContext, entry: {
+  action: string;
+  entity_type: string | null;
+  entity_id: string | null;
+  details?: Record<string, unknown> | null;
+}) {
+  const body: CreateAuditLogBodyDTO = {
+    event_type: "ACTION",
+    action: entry.action,
+    page_key: audit.page_key,
+    entity_type: entry.entity_type,
+    entity_id: entry.entity_id,
+    path: audit.path,
+    client_session_id: audit.client_session_id,
+    details: entry.details ?? null,
+  };
+
+  await repoInsertAuditLog({
+    user_id: audit.user_id,
+    body,
+    ip: audit.ip,
+    user_agent: audit.user_agent,
+    device_type: audit.device_type,
+    os: audit.os,
+    browser: audit.browser,
+    tx,
+  });
+}
+
+async function insertCommandeEvent(db: Queryable, params: {
+  commande_id: number;
+  event_type: string;
+  old_values?: unknown | null;
+  new_values?: unknown | null;
+  user_id?: number | null;
+}) {
+  await db.query(
+    `
+      INSERT INTO public.commande_client_event_log (
+        commande_id,
+        event_type,
+        old_values,
+        new_values,
+        user_id
+      ) VALUES ($1,$2,$3,$4,$5)
+    `,
+    [
+      params.commande_id,
+      params.event_type,
+      params.old_values ? JSON.stringify(params.old_values) : null,
+      params.new_values ? JSON.stringify(params.new_values) : null,
+      params.user_id ?? null,
+    ]
+  );
+}
 
 let commandeToAffaireHasRoleColumnCache: boolean | null = null;
 async function hasCommandeToAffaireRoleColumn(db: Queryable): Promise<boolean> {
@@ -193,6 +265,86 @@ async function resolveStockOnHandSource(db: Queryable): Promise<StockOnHandSourc
 
   stockOnHandSourceCache = null;
   return null;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+async function getDefaultShippingLocation(db: Queryable): Promise<{
+  magasin_id: string;
+  emplacement_id: number;
+  location_id: string;
+}> {
+  const setting = await db.query<{ value_json: unknown }>(
+    `SELECT value_json FROM public.erp_settings WHERE key = $1 LIMIT 1`,
+    ["stock.default_shipping_location"]
+  );
+
+  const raw = setting.rows[0]?.value_json ?? null;
+  if (!isObject(raw)) {
+    throw new HttpError(
+      500,
+      "DEFAULT_SHIPPING_LOCATION_NOT_CONFIGURED",
+      "Missing erp_settings key 'stock.default_shipping_location'"
+    );
+  }
+
+  const magasin_id = typeof raw.magasin_id === "string" ? raw.magasin_id : null;
+  const emplacement_id =
+    typeof raw.emplacement_id === "number"
+      ? raw.emplacement_id
+      : typeof raw.emplacement_id === "string" && /^\d+$/.test(raw.emplacement_id)
+        ? Number(raw.emplacement_id)
+        : null;
+
+  if (!magasin_id || typeof emplacement_id !== "number" || !Number.isFinite(emplacement_id)) {
+    throw new HttpError(
+      500,
+      "DEFAULT_SHIPPING_LOCATION_NOT_CONFIGURED",
+      "Invalid format for erp_settings 'stock.default_shipping_location' (expected {magasin_id, emplacement_id})"
+    );
+  }
+
+  const location_id = await resolveLocationIdForEmplacement(db, {
+    magasin_id,
+    emplacement_id,
+    label: "default_shipping_location",
+  });
+
+  return { magasin_id, emplacement_id, location_id };
+}
+
+async function resolveLocationIdForEmplacement(
+  db: Queryable,
+  params: { magasin_id: string; emplacement_id: number; label: string }
+): Promise<string> {
+  const map = await db.query<{ location_id: string }>(
+    `
+      SELECT location_id::text AS location_id
+      FROM public.emplacements
+      WHERE magasin_id = $1::uuid
+        AND id = $2::bigint
+      LIMIT 1
+    `,
+    [params.magasin_id, params.emplacement_id]
+  );
+
+  const location_id = map.rows[0]?.location_id ?? null;
+  if (!location_id) {
+    throw new HttpError(500, "INVALID_LOCATION", `Invalid magasin/emplacement mapping for ${params.label}`);
+  }
+
+  return location_id;
+}
+
+async function getInternalClientIdSetting(db: Queryable): Promise<string | null> {
+  const res = await db.query<{ value_text: string | null }>(
+    `SELECT value_text FROM public.erp_settings WHERE key = $1 LIMIT 1`,
+    ["commandes.internal_client_id"]
+  );
+  const v = (res.rows[0]?.value_text ?? "").trim();
+  return v.length > 0 ? v : null;
 }
 
 type ListWhere = { whereSql: string; values: unknown[] };
@@ -1105,7 +1257,121 @@ export async function repoUpdateCommandeStatus(
   }
 }
 
-export async function repoGenerateAffairesFromOrder(id: string) {
+export async function repoAnalyzeCommandeStock(id: string, audit: AuditContext) {
+  const commandeId = toInt(id, "commande_id");
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const commandeRes = await client.query<{
+      id: number;
+      client_id: string | null;
+      order_type: string;
+      dest_stock_magasin_id: string | null;
+      dest_stock_emplacement_id: string | null;
+    }>(
+      `
+        SELECT
+          id::bigint::int AS id,
+          client_id,
+          order_type,
+          dest_stock_magasin_id::text AS dest_stock_magasin_id,
+          dest_stock_emplacement_id::bigint::text AS dest_stock_emplacement_id
+        FROM commande_client
+        WHERE id = $1
+        FOR UPDATE
+      `,
+      [commandeId]
+    );
+    const commande = commandeRes.rows[0] ?? null;
+    if (!commande) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    let locationId: string;
+    if (commande.order_type === "INTERNE") {
+      const magasinId = commande.dest_stock_magasin_id;
+      const emplacementIdRaw = commande.dest_stock_emplacement_id;
+      const emplacementId = typeof emplacementIdRaw === "string" && /^\d+$/.test(emplacementIdRaw) ? Number(emplacementIdRaw) : null;
+      if (!magasinId || typeof emplacementId !== "number" || !Number.isFinite(emplacementId)) {
+        throw new HttpError(
+          400,
+          "DEST_STOCK_LOCATION_REQUIRED",
+          "dest_stock_magasin_id and dest_stock_emplacement_id are required for internal orders"
+        );
+      }
+      locationId = await resolveLocationIdForEmplacement(client, {
+        magasin_id: magasinId,
+        emplacement_id: emplacementId,
+        label: "dest_stock_location",
+      });
+    } else {
+      const shipping = await getDefaultShippingLocation(client);
+      locationId = shipping.location_id;
+    }
+
+    const analysis = await computeCommandeStockAnalysis(client, { commande_id: commandeId, location_id: locationId });
+
+    const hasPartial = analysis.lines.some((l) => l.status === "PARTIAL");
+    const hasShortage = analysis.lines.some((l) => l.shortage_qty > 0);
+
+    const needs_confirmation = commande.order_type !== "INTERNE" && hasPartial;
+    const suggested_decision: CommandesStockDecisionDTO | null = needs_confirmation ? "SHIP_AVAILABLE_NOW" : null;
+
+    const suggested_scenario =
+      commande.order_type === "INTERNE"
+        ? "PRODUCTION_ONLY"
+        : needs_confirmation
+          ? "CONFIRMATION_REQUIRED"
+          : hasShortage
+            ? "LIVRAISON_AND_PRODUCTION"
+            : "LIVRAISON_ONLY";
+
+    await insertCommandeEvent(client, {
+      commande_id: commandeId,
+      event_type: "STOCK_ANALYZED",
+      new_values: {
+        location_id: locationId,
+        suggested_scenario,
+        needs_confirmation,
+        suggested_decision,
+      },
+      user_id: audit.user_id,
+    });
+
+    await insertAuditLog(client, audit, {
+      action: "commandes.stock.analyze",
+      entity_type: "commande_client",
+      entity_id: String(commandeId),
+      details: {
+        commande_id: commandeId,
+        location_id: locationId,
+        suggested_scenario,
+        needs_confirmation,
+        suggested_decision,
+        lines: analysis.lines,
+      },
+    });
+
+    await client.query("COMMIT");
+    return {
+      commande_id: commandeId,
+      location_id: locationId,
+      lines: analysis.lines,
+      suggested_scenario,
+      needs_confirmation,
+      suggested_decision,
+    };
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAffairesV3BodyDTO, audit: AuditContext) {
   const commandeId = toInt(id, "commande_id");
   const client = await pool.connect();
   try {
@@ -1115,9 +1381,15 @@ export async function repoGenerateAffairesFromOrder(id: string) {
       client_id: string | null;
       type_affaire: string;
       order_type: string;
+      devis_id: string | null;
+      numero: string;
+      dest_stock_magasin_id: string | null;
+      dest_stock_emplacement_id: string | null;
     }>(
       `
-      SELECT client_id, type_affaire, order_type
+      SELECT client_id, type_affaire, order_type, devis_id::text AS devis_id, numero,
+             dest_stock_magasin_id::text AS dest_stock_magasin_id,
+             dest_stock_emplacement_id::bigint::text AS dest_stock_emplacement_id
       FROM commande_client
       WHERE id = $1
       FOR UPDATE
@@ -1130,8 +1402,18 @@ export async function repoGenerateAffairesFromOrder(id: string) {
       return null;
     }
 
-    if (!commande.client_id) {
-      throw new HttpError(400, "COMMANDE_CLIENT_REQUIRED", "Cannot generate affaire from a commande without client_id");
+    const orderType = coerceOrderType(commande.order_type);
+
+    const internalClientId = orderType === "INTERNE" ? await getInternalClientIdSetting(client) : null;
+    const clientId = commande.client_id ?? internalClientId;
+    if (!clientId) {
+      throw new HttpError(
+        400,
+        orderType === "INTERNE" ? "INTERNAL_CLIENT_REQUIRED" : "COMMANDE_CLIENT_REQUIRED",
+        orderType === "INTERNE"
+          ? "Internal orders require client_id (or erp_settings 'commandes.internal_client_id')"
+          : "Cannot generate affaire from a commande without client_id"
+      );
     }
 
     // Idempotency: if mappings already exist, return them deterministically.
@@ -1149,58 +1431,362 @@ export async function repoGenerateAffairesFromOrder(id: string) {
       };
     }
 
-    const livraisonAffaireId = await createAffaire(client, {
-      commande_id: commandeId,
-      client_id: commande.client_id,
-      type_affaire: commande.type_affaire,
-    });
+    let stockLocationId: string | null = null;
+    if (orderType === "INTERNE") {
+      const magasinId = commande.dest_stock_magasin_id;
+      const emplacementIdRaw = commande.dest_stock_emplacement_id;
+      const emplacementId = typeof emplacementIdRaw === "string" && /^\d+$/.test(emplacementIdRaw) ? Number(emplacementIdRaw) : null;
+      if (!magasinId || typeof emplacementId !== "number" || !Number.isFinite(emplacementId)) {
+        throw new HttpError(
+          400,
+          "DEST_STOCK_LOCATION_REQUIRED",
+          "dest_stock_magasin_id and dest_stock_emplacement_id are required for internal orders"
+        );
+      }
+      stockLocationId = await resolveLocationIdForEmplacement(client, {
+        magasin_id: magasinId,
+        emplacement_id: emplacementId,
+        label: "dest_stock_location",
+      });
+    } else {
+      stockLocationId = (await getDefaultShippingLocation(client)).location_id;
+    }
 
-    await insertCommandeToAffaireMapping(client, {
-      commande_id: commandeId,
-      affaire_id: livraisonAffaireId,
-      role: "LIVRAISON",
-      commentaire: "Generated from commande",
-    });
+    const analysis = stockLocationId
+      ? await computeCommandeStockAnalysis(client, { commande_id: commandeId, location_id: stockLocationId })
+      : { lines: [] };
 
-    const plan = await computeCommandeAllocationPlan(client, commandeId);
-    const requiresConfirmation = plan.lines.some((l) => l.qty_from_stock > 0 && l.qty_to_produce > 0);
-    const needsProduction = plan.lines.some((l) => l.qty_to_produce > 0);
+    const hasPartial = analysis.lines.some((l) => l.status === "PARTIAL");
+    const needsConfirmation = orderType !== "INTERNE" && hasPartial;
+    const needsProduction =
+      orderType === "INTERNE" ? true : analysis.lines.some((l) => l.shortage_qty > 0);
 
+    const decision = body.decision ?? null;
+    if (needsConfirmation && decision === null) {
+      throw new HttpError(
+        409,
+        "DECISION_REQUIRED",
+        "Partial availability requires a decision (SHIP_AVAILABLE_NOW or SHIP_ALL_TOGETHER)"
+      );
+    }
+
+    const overrides = new Map<number, number>();
+    for (const l of body.lines ?? []) {
+      overrides.set(l.commande_ligne_id, Number(l.qty_ship_now));
+    }
+
+    const reservedByLine = new Map<number, number>();
+    if (decision !== null) {
+      for (const l of analysis.lines) {
+        const maxShip = Number(l.available_used_qty);
+        const override = overrides.has(l.commande_ligne_id) ? Number(overrides.get(l.commande_ligne_id) ?? 0) : null;
+        const qtyToReserve = override === null ? maxShip : override;
+        if (!Number.isFinite(qtyToReserve) || qtyToReserve < 0) {
+          throw new HttpError(400, "INVALID_QTY", `Invalid qty_ship_now for line ${l.commande_ligne_id}`);
+        }
+        if (qtyToReserve > maxShip) {
+          throw new HttpError(400, "INVALID_QTY", `qty_ship_now for line ${l.commande_ligne_id} exceeds available qty (${maxShip})`);
+        }
+        reservedByLine.set(l.commande_ligne_id, qtyToReserve);
+      }
+    }
+
+    let livraisonAffaireId: number | null = null;
     let productionAffaireId: number | null = null;
-    if (!requiresConfirmation && needsProduction) {
-      productionAffaireId = await createAffaire(client, {
+
+    if (orderType !== "INTERNE") {
+      livraisonAffaireId = await createAffaire(client, {
         commande_id: commandeId,
-        client_id: commande.client_id,
+        devis_id: commande.devis_id ? toNullableInt(commande.devis_id, "commande.devis_id") : null,
+        client_id: clientId,
         type_affaire: commande.type_affaire,
       });
+      await insertCommandeToAffaireMapping(client, {
+        commande_id: commandeId,
+        affaire_id: livraisonAffaireId,
+        role: "LIVRAISON",
+        commentaire: "Generated from commande",
+      });
+    }
 
+    if (needsProduction) {
+      productionAffaireId = await createAffaire(client, {
+        commande_id: commandeId,
+        devis_id: commande.devis_id ? toNullableInt(commande.devis_id, "commande.devis_id") : null,
+        client_id: clientId,
+        type_affaire: commande.type_affaire,
+      });
       await insertCommandeToAffaireMapping(client, {
         commande_id: commandeId,
         affaire_id: productionAffaireId,
         role: "PRODUCTION",
-        commentaire: "Auto-generated from commande stock allocation",
+        commentaire: "Auto-generated from commande stock analysis",
       });
     }
 
-    const allocationMode = requiresConfirmation ? "PENDING" : needsProduction ? "AUTO_PRODUCTION" : "AUTO_STOCK";
-    await upsertCommandeAllocations(client, {
+    if (livraisonAffaireId) {
+      const planLines: CommandeAllocationPlanLine[] = analysis.lines.map((l) => ({
+        commande_ligne_id: l.commande_ligne_id,
+        code_piece: l.code_piece,
+        article_ref_id: l.article_id,
+        article_legacy_id: null,
+        qty_ordered: l.requested_qty,
+        qty_on_hand: 0,
+        qty_from_stock: l.available_used_qty,
+        qty_to_produce: l.shortage_qty,
+      }));
+
+      const allocationMode =
+        decision !== null
+          ? decision
+          : needsProduction
+            ? "AUTO_PRODUCTION"
+            : "AUTO_STOCK";
+
+      await upsertCommandeAllocations(client, {
+        commande_id: commandeId,
+        livraison_affaire_id: livraisonAffaireId,
+        production_affaire_id: productionAffaireId,
+        allocation_mode: allocationMode,
+        reserve_stock: false,
+        reserved_qty_by_line: decision !== null ? reservedByLine : null,
+        lines: planLines,
+      });
+    }
+
+    const reservationsCreated: string[] = [];
+    if (decision !== null && stockLocationId) {
+      const reservationItems = analysis.lines
+        .map((l) => {
+          const qty = Number(reservedByLine.get(l.commande_ligne_id) ?? 0);
+          return { line: l, qty };
+        })
+        .filter((x) => x.qty > 0);
+
+      reservationItems.sort((a, b) => {
+        const aa = a.line.article_id ?? "";
+        const bb = b.line.article_id ?? "";
+        if (aa !== bb) return aa.localeCompare(bb);
+        return a.line.commande_ligne_id - b.line.commande_ligne_id;
+      });
+
+      for (const it of reservationItems) {
+        const articleId = it.line.article_id;
+        if (!articleId) {
+          throw new HttpError(400, "ARTICLE_REQUIRED", `Cannot reserve stock for line ${it.line.commande_ligne_id} (missing article_id)`);
+        }
+
+        const sl = await client.query<{ id: string; qty_total: number; qty_reserved: number }>(
+          `
+            SELECT id::text AS id, qty_total::float8 AS qty_total, qty_reserved::float8 AS qty_reserved
+            FROM public.stock_levels
+            WHERE article_id = $1::uuid
+              AND location_id = $2::uuid
+            FOR UPDATE
+            LIMIT 1
+          `,
+          [articleId, stockLocationId]
+        );
+        const row = sl.rows[0] ?? null;
+        if (!row) {
+          throw new HttpError(409, "INSUFFICIENT_STOCK", `No stock level found for article ${articleId}`);
+        }
+
+        const available = Number(row.qty_total) - Number(row.qty_reserved);
+        if (available < it.qty - 1e-9) {
+          throw new HttpError(409, "INSUFFICIENT_STOCK", `Not enough available stock for article ${articleId} (need ${it.qty}, have ${available})`);
+        }
+
+        await client.query(
+          `
+            UPDATE public.stock_levels
+            SET qty_reserved = qty_reserved + $2,
+                updated_at = now(),
+                updated_by = $3
+            WHERE id = $1::uuid
+          `,
+          [row.id, it.qty, audit.user_id]
+        );
+
+        const ins = await client.query<{ id: string }>(
+          `
+            INSERT INTO public.stock_reservations (
+              article_id,
+              location_id,
+              qty_reserved,
+              source_type,
+              source_id,
+              status,
+              created_by,
+              updated_by
+            ) VALUES ($1::uuid,$2::uuid,$3,'COMMANDE_LIGNE',$4,'ACTIVE',$5,$5)
+            RETURNING id::text AS id
+          `,
+          [articleId, stockLocationId, it.qty, String(it.line.commande_ligne_id), audit.user_id]
+        );
+        const reservationId = ins.rows[0]?.id ?? null;
+        if (reservationId) reservationsCreated.push(reservationId);
+      }
+    }
+
+    const ofIds: number[] = [];
+    if (productionAffaireId) {
+      const refs = await selectCommandeLineRefs(client, commandeId);
+      const byLine = new Map<number, CommandeLineRef>(refs.map((r) => [r.commande_ligne_id, r] as const));
+
+      for (const l of analysis.lines) {
+        const qtyToProduce =
+          orderType === "INTERNE" ? l.requested_qty : Number(l.shortage_qty);
+        if (!Number.isFinite(qtyToProduce) || qtyToProduce <= 0) continue;
+
+        const ref = byLine.get(l.commande_ligne_id) ?? null;
+        const pieceTechniqueId = ref?.piece_technique_id ?? null;
+        if (!pieceTechniqueId) {
+          throw new HttpError(
+            400,
+            "PIECE_TECHNIQUE_REQUIRED",
+            `Cannot create OF: missing piece_technique_id for line ${l.commande_ligne_id}`
+          );
+        }
+
+        const idRes = await client.query<{ of_id: string }>(
+          `SELECT nextval(pg_get_serial_sequence('public.ordres_fabrication','id'))::text AS of_id`
+        );
+        const rawId = idRes.rows[0]?.of_id;
+        const ofId = toInt(rawId, "ordres_fabrication.id");
+        const numero = `OF-${ofId}`;
+
+        await client.query(
+          `
+            INSERT INTO public.ordres_fabrication (
+              id,
+              numero,
+              affaire_id,
+              commande_id,
+              client_id,
+              piece_technique_id,
+              quantite_lancee,
+              statut,
+              priority,
+              notes,
+              created_by,
+              updated_by
+            ) VALUES ($1,$2,$3::bigint,$4::bigint,$5,$6::uuid,$7,'BROUILLON'::of_status,'NORMAL'::of_priority,$8,$9,$9)
+          `,
+          [
+            ofId,
+            numero,
+            productionAffaireId,
+            commandeId,
+            clientId,
+            pieceTechniqueId,
+            qtyToProduce,
+            `Generated from commande ${commande.numero} line ${l.commande_ligne_id}`,
+            audit.user_id,
+          ]
+        );
+
+        await client.query(
+          `
+            INSERT INTO public.of_operations (
+              of_id,
+              phase,
+              designation,
+              cf_id,
+              poste_id,
+              machine_id,
+              hourly_rate_applied,
+              tp,
+              tf_unit,
+              qte,
+              coef,
+              temps_total_planned,
+              status,
+              notes
+            )
+            SELECT
+              $1::bigint AS of_id,
+              pto.phase,
+              pto.designation,
+              pto.cf_id,
+              NULL::uuid AS poste_id,
+              NULL::uuid AS machine_id,
+              COALESCE(pto.taux_horaire, 0)::numeric(12,2) AS hourly_rate_applied,
+              COALESCE(pto.tp, 0)::numeric(12,3) AS tp,
+              COALESCE(pto.tf_unit, 0)::numeric(12,3) AS tf_unit,
+              COALESCE(pto.qte, 1)::numeric(12,3) AS qte,
+              COALESCE(pto.coef, 1)::numeric(10,3) AS coef,
+              ROUND((COALESCE(pto.tp,0) + COALESCE(pto.tf_unit,0) * COALESCE(pto.qte,1)) * COALESCE(pto.coef,1), 3)::numeric(12,3) AS temps_total_planned,
+              'TODO'::of_operation_status AS status,
+              pto.designation_2 AS notes
+            FROM public.pieces_techniques_operations pto
+            WHERE pto.piece_technique_id = $2::uuid
+            ORDER BY pto.phase ASC, pto.id ASC
+          `,
+          [ofId, pieceTechniqueId]
+        );
+
+        ofIds.push(ofId);
+      }
+    }
+
+    await insertCommandeEvent(client, {
       commande_id: commandeId,
-      livraison_affaire_id: livraisonAffaireId,
-      production_affaire_id: productionAffaireId,
-      allocation_mode: allocationMode,
-      reserve_stock: false,
-      lines: plan.lines,
+      event_type: "AFFAIRES_GENERATED",
+      new_values: {
+        order_type: orderType,
+        decision,
+        stock_location_id: stockLocationId,
+        reservations_created: reservationsCreated.length,
+        of_created: ofIds.length,
+      },
+      user_id: audit.user_id,
     });
+
+    await insertAuditLog(client, audit, {
+      action: "commandes.affaires.generate",
+      entity_type: "commande_client",
+      entity_id: String(commandeId),
+      details: {
+        commande_id: commandeId,
+        order_type: orderType,
+        decision,
+        livraison_affaire_id: livraisonAffaireId,
+        production_affaire_id: productionAffaireId,
+        reservations_created: reservationsCreated,
+        of_ids: ofIds,
+      },
+    });
+
+    if (reservationsCreated.length > 0) {
+      await insertAuditLog(client, audit, {
+        action: "stock.reservations.create",
+        entity_type: "commande_client",
+        entity_id: String(commandeId),
+        details: {
+          commande_id: commandeId,
+          decision,
+          stock_location_id: stockLocationId,
+          reservation_ids: reservationsCreated,
+        },
+      });
+    }
 
     await client.query(`UPDATE commande_client SET updated_at = now() WHERE id = $1`, [commandeId]);
 
     await client.query("COMMIT");
+
+    const affaireIds: number[] = [];
+    if (livraisonAffaireId) affaireIds.push(livraisonAffaireId);
+    if (productionAffaireId) affaireIds.push(productionAffaireId);
+
     return {
-      affaire_ids: [livraisonAffaireId, ...(productionAffaireId ? [productionAffaireId] : [])],
+      affaire_ids: affaireIds,
       livraison_affaire_id: livraisonAffaireId,
       production_affaire_id: productionAffaireId,
-      requires_confirmation: requiresConfirmation,
-      ...(requiresConfirmation ? { plan } : {}),
+      requires_confirmation: false,
+      reservations_created: reservationsCreated,
+      of_ids: ofIds,
     };
   } catch (e) {
     await client.query("ROLLBACK");
@@ -1213,6 +1799,7 @@ export async function repoGenerateAffairesFromOrder(id: string) {
 type AffaireCreationInput = {
   commande_id: number;
   client_id: string;
+  devis_id?: number | null;
   type_affaire: string;
 };
 
@@ -1225,10 +1812,10 @@ async function createAffaire(db: PoolClient, input: AffaireCreationInput): Promi
 
   await db.query(
     `
-    INSERT INTO affaire (id, reference, client_id, commande_id, type_affaire)
-    VALUES ($1, $2, $3, $4, $5)
+    INSERT INTO affaire (id, reference, client_id, commande_id, devis_id, type_affaire)
+    VALUES ($1, $2, $3, $4, $5, $6)
     `,
-    [id, reference, input.client_id, input.commande_id, input.type_affaire]
+    [id, reference, input.client_id, input.commande_id, input.devis_id ?? null, input.type_affaire]
   );
   return id;
 }
@@ -1300,6 +1887,185 @@ type CommandeAllocationPlan = {
   lines: CommandeAllocationPlanLine[];
 };
 
+type CommandeLineRef = {
+  commande_ligne_id: number;
+  code_piece: string | null;
+  qty_ordered: number;
+  article_id: string | null;
+  piece_technique_id: string | null;
+};
+
+async function selectCommandeLineRefs(db: PoolClient, commandeId: number): Promise<CommandeLineRef[]> {
+  const res = await db.query<{
+    commande_ligne_id: number;
+    code_piece: string | null;
+    qty_ordered: number;
+    article_id: string | null;
+    piece_technique_id: string | null;
+  }>(
+    `
+      SELECT
+        cl.id::bigint::int AS commande_ligne_id,
+        cl.code_piece,
+        cl.quantite::float8 AS qty_ordered,
+        art.article_id::text AS article_id,
+        COALESCE(art.piece_technique_id::text, pt.piece_technique_id::text) AS piece_technique_id
+      FROM commande_ligne cl
+      LEFT JOIN LATERAL (
+        SELECT a.id AS article_id, a.piece_technique_id
+        FROM public.articles a
+        LEFT JOIN public.pieces_techniques apt
+          ON apt.id = a.piece_technique_id
+        WHERE cl.code_piece IS NOT NULL
+          AND (
+            a.code = cl.code_piece
+            OR apt.code_piece = cl.code_piece
+          )
+        ORDER BY (a.code = cl.code_piece) DESC, a.id ASC
+        LIMIT 1
+      ) art ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT pt.id AS piece_technique_id
+        FROM public.pieces_techniques pt
+        WHERE cl.code_piece IS NOT NULL
+          AND pt.code_piece = cl.code_piece
+        ORDER BY pt.id ASC
+        LIMIT 1
+      ) pt ON TRUE
+      WHERE cl.commande_id = $1
+      ORDER BY cl.id ASC
+    `,
+    [commandeId]
+  );
+
+  return res.rows.map((r) => ({
+    commande_ligne_id: r.commande_ligne_id,
+    code_piece: r.code_piece,
+    qty_ordered: Number(r.qty_ordered),
+    article_id: typeof r.article_id === "string" && r.article_id.trim().length > 0 ? r.article_id.trim() : null,
+    piece_technique_id:
+      typeof r.piece_technique_id === "string" && r.piece_technique_id.trim().length > 0 ? r.piece_technique_id.trim() : null,
+  }));
+}
+
+async function loadAvailableQtyByArticle(db: PoolClient, params: {
+  article_ids: string[];
+  location_id?: string | null;
+}): Promise<Map<string, number>> {
+  if (params.article_ids.length === 0) return new Map();
+
+  const values: unknown[] = [];
+  const push = (v: unknown) => {
+    values.push(v);
+    return `$${values.length}`;
+  };
+
+  const where: string[] = [`sl.article_id = ANY(${push(params.article_ids)}::uuid[])`];
+  if (params.location_id) where.push(`sl.location_id = ${push(params.location_id)}::uuid`);
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
+  const res = await db.query<{ article_id: string; qty_available: number }>(
+    `
+      SELECT
+        sl.article_id::text AS article_id,
+        COALESCE(SUM(sl.qty_total - sl.qty_reserved), 0)::float8 AS qty_available
+      FROM public.stock_levels sl
+      ${whereSql}
+      GROUP BY sl.article_id
+    `,
+    values
+  );
+
+  const out = new Map<string, number>();
+  for (const r of res.rows) {
+    const k = typeof r.article_id === "string" ? r.article_id : "";
+    if (!k) continue;
+    out.set(k, Number(r.qty_available));
+  }
+  return out;
+}
+
+type StockAvailabilityStatus = "FULL" | "PARTIAL" | "NONE";
+
+type CommandeStockAnalysisLine = {
+  commande_ligne_id: number;
+  code_piece: string | null;
+  article_id: string | null;
+  piece_technique_id: string | null;
+  requested_qty: number;
+  available_qty: number;
+  available_used_qty: number;
+  shortage_qty: number;
+  status: StockAvailabilityStatus;
+};
+
+type CommandeStockAnalysis = {
+  lines: CommandeStockAnalysisLine[];
+};
+
+async function computeCommandeStockAnalysis(db: PoolClient, params: {
+  commande_id: number;
+  location_id: string;
+}): Promise<CommandeStockAnalysis> {
+  const refs = await selectCommandeLineRefs(db, params.commande_id);
+  const articleIds = Array.from(
+    new Set(refs.map((r) => r.article_id).filter((v): v is string => typeof v === "string" && v.length > 0))
+  );
+
+  const availableByArticle = await loadAvailableQtyByArticle(db, {
+    article_ids: articleIds,
+    location_id: params.location_id,
+  });
+
+  const remainingByArticle = new Map<string, number>();
+  const getRemaining = (articleId: string, initial: number) => {
+    if (!remainingByArticle.has(articleId)) remainingByArticle.set(articleId, initial);
+    return remainingByArticle.get(articleId) ?? 0;
+  };
+
+  const lines: CommandeStockAnalysisLine[] = refs.map((r) => {
+    const requestedQty = Number(r.qty_ordered);
+    const articleId = r.article_id;
+
+    if (!articleId) {
+      const shortage = Math.max(0, requestedQty);
+      return {
+        commande_ligne_id: r.commande_ligne_id,
+        code_piece: r.code_piece,
+        article_id: null,
+        piece_technique_id: r.piece_technique_id,
+        requested_qty: requestedQty,
+        available_qty: 0,
+        available_used_qty: 0,
+        shortage_qty: shortage,
+        status: shortage > 0 ? "NONE" : "FULL",
+      };
+    }
+
+    const initialAvailable = Number(availableByArticle.get(articleId) ?? 0);
+    const remaining = getRemaining(articleId, initialAvailable);
+    const used = Math.max(0, Math.min(requestedQty, remaining));
+    remainingByArticle.set(articleId, remaining - used);
+
+    const shortage = Math.max(0, requestedQty - used);
+    const status: StockAvailabilityStatus = shortage === 0 ? "FULL" : used === 0 ? "NONE" : "PARTIAL";
+
+    return {
+      commande_ligne_id: r.commande_ligne_id,
+      code_piece: r.code_piece,
+      article_id: articleId,
+      piece_technique_id: r.piece_technique_id,
+      requested_qty: requestedQty,
+      available_qty: initialAvailable,
+      available_used_qty: used,
+      shortage_qty: shortage,
+      status,
+    };
+  });
+
+  return { lines };
+}
+
 async function computeCommandeAllocationPlan(db: PoolClient, commandeId: number): Promise<CommandeAllocationPlan> {
   const uuidRe =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -1311,49 +2077,11 @@ async function computeCommandeAllocationPlan(db: PoolClient, commandeId: number)
     return { article_ref_id: null, article_legacy_id: null };
   }
 
-  const stockSource = await resolveStockOnHandSource(db);
-  const stockJoinSql = stockSource
-    ? `LEFT JOIN ${stockSource.table} ${stockSource.alias} ON ${stockSource.alias}.${stockSource.articleIdColumn}::text = art.article_id::text`
-    : "";
-  const qtyOnHandExpr = stockSource
-    ? `COALESCE(SUM(${stockSource.alias}.${stockSource.qtyOnHandColumn}), 0)::float8`
-    : `0::float8`;
-
-  const res = await db.query<{
-    commande_ligne_id: number;
-    code_piece: string | null;
-    qty_ordered: number;
-    article_id: string | null;
-    qty_on_hand: number;
-  }>(
-    `
-    SELECT
-      cl.id::bigint::int AS commande_ligne_id,
-      cl.code_piece,
-      cl.quantite::float8 AS qty_ordered,
-      art.article_id::text AS article_id,
-      ${qtyOnHandExpr} AS qty_on_hand
-    FROM commande_ligne cl
-    LEFT JOIN LATERAL (
-      SELECT a.id AS article_id
-      FROM public.articles a
-      LEFT JOIN public.pieces_techniques pt
-        ON pt.id = a.piece_technique_id
-      WHERE cl.code_piece IS NOT NULL
-        AND (
-          a.code = cl.code_piece
-          OR pt.code_piece = cl.code_piece
-        )
-      ORDER BY (a.code = cl.code_piece) DESC, a.id ASC
-      LIMIT 1
-    ) art ON TRUE
-    ${stockJoinSql}
-    WHERE cl.commande_id = $1
-    GROUP BY cl.id, art.article_id
-    ORDER BY cl.id ASC
-    `,
-    [commandeId]
+  const refs = await selectCommandeLineRefs(db, commandeId);
+  const articleIds = Array.from(
+    new Set(refs.map((r) => r.article_id).filter((v): v is string => typeof v === "string" && v.length > 0))
   );
+  const availableByArticle = await loadAvailableQtyByArticle(db, { article_ids: articleIds });
 
   const remainingByArticle = new Map<string, number>();
   const getRemaining = (articleId: string, initial: number) => {
@@ -1361,10 +2089,10 @@ async function computeCommandeAllocationPlan(db: PoolClient, commandeId: number)
     return remainingByArticle.get(articleId) ?? 0;
   };
 
-  const lines: CommandeAllocationPlanLine[] = res.rows.map((r) => {
+  const lines: CommandeAllocationPlanLine[] = refs.map((r) => {
     const qtyOrdered = Number(r.qty_ordered);
-    const qtyOnHand = Number(r.qty_on_hand);
-    const articleId = typeof r.article_id === "string" && r.article_id.trim().length > 0 ? r.article_id.trim() : null;
+    const qtyOnHand = r.article_id ? Number(availableByArticle.get(r.article_id) ?? 0) : 0;
+    const articleId = r.article_id;
     const { article_ref_id, article_legacy_id } = splitArticleId(articleId);
 
     let qtyFromStock = 0;
@@ -1397,12 +2125,18 @@ type AllocationUpsertInput = {
   production_affaire_id: number | null;
   allocation_mode: string | null;
   reserve_stock: boolean;
+  reserved_qty_by_line?: Map<number, number> | null;
   lines: CommandeAllocationPlanLine[];
 };
 
 async function upsertCommandeAllocations(db: PoolClient, input: AllocationUpsertInput): Promise<void> {
   for (const l of input.lines) {
-    const qtyReserved = input.reserve_stock ? l.qty_from_stock : 0;
+    const qtyReserved =
+      input.reserved_qty_by_line && input.reserved_qty_by_line.has(l.commande_ligne_id)
+        ? Number(input.reserved_qty_by_line.get(l.commande_ligne_id) ?? 0)
+        : input.reserve_stock
+          ? l.qty_from_stock
+          : 0;
 
     await db.query(
       `

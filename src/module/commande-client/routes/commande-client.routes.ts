@@ -3,8 +3,11 @@ import { Router } from "express"
 import multer from "multer"
 import path from "path"
 import fs from "fs"
+
+import { authenticateToken } from "../../auth/middlewares/auth.middleware"
 import {
   addCadreReleaseLine,
+  analyzeCommandeStock,
   createCommande,
   createCadreRelease,
   cancelCadreRelease,
@@ -30,6 +33,7 @@ import {
   createCommandeBodySchema,
   confirmGenerateAffairesSchema,
   generateAffairesSchema,
+  generateAffairesV3Schema,
   documentIdParamSchema,
   idParamSchema,
   releaseIdParamSchema,
@@ -131,8 +135,11 @@ router.delete("/:id", validate(idParamSchema), deleteCommande)
 // POST /api/v1/commandes/:id/status
 router.post("/:id/status", validate(idParamSchema), updateCommandeStatus)
 
+// POST /api/v1/commandes/:id/analyze-stock
+router.post("/:id/analyze-stock", authenticateToken, validate(idParamSchema), analyzeCommandeStock)
+
 // POST /api/v1/commandes/:id/generate-affaires
-router.post("/:id/generate-affaires", validate(idParamSchema), generateAffairesFromOrder)
+router.post("/:id/generate-affaires", authenticateToken, validate(generateAffairesV3Schema), generateAffairesFromOrder)
 
 // POST /api/v1/commandes/:id/generate-affaires/confirm
 router.post("/:id/generate-affaires/confirm", validate(confirmGenerateAffairesSchema), confirmGenerateAffaires)

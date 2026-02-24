@@ -13,6 +13,7 @@ import {
   confirmGenerateAffairesSVC,
   generateAffairesFromCommandeSVC,
   generateAffairesFromOrderSVC,
+  analyzeCommandeStockSVC,
   getCommandeDocumentFileMetaSVC,
   getCommandeSVC,
   listCadreReleasesSVC,
@@ -35,6 +36,7 @@ import {
   releaseLineIdParamSchema,
   confirmGenerateAffairesSchema,
   generateAffairesSchema,
+  generateAffairesV3Schema,
   updateCadreReleaseBodySchema,
   updateCadreReleaseLineBodySchema,
   updateCommandeStatusBodySchema,
@@ -80,6 +82,26 @@ function resolveMimeType(value: string | null | undefined): string {
 function safeExtFromName(name: string): string {
   const extCandidate = path.extname(name).toLowerCase();
   return /^\.[a-z0-9]+$/.test(extCandidate) && extCandidate.length <= 10 ? extCandidate : "";
+}
+
+function getUserId(req: Request): number {
+  const userId = typeof req.user?.id === "number" ? req.user.id : null;
+  if (!userId) throw new HttpError(401, "UNAUTHORIZED", "Authentication required");
+  return userId;
+}
+
+function buildAudit(req: Request) {
+  return {
+    user_id: getUserId(req),
+    ip: null,
+    user_agent: typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : null,
+    device_type: null,
+    os: null,
+    browser: null,
+    path: typeof req.originalUrl === "string" ? req.originalUrl : null,
+    page_key: "commandes",
+    client_session_id: null,
+  };
 }
 
 // POST /api/v1/commandes (multipart)
@@ -193,7 +215,27 @@ export const updateCommandeStatus: RequestHandler = async (req, res, next) => {
 // POST /api/v1/commandes/:id/generate-affaires
 export const generateAffairesFromOrder: RequestHandler = async (req, res, next) => {
   try {
-    const out = await generateAffairesFromOrderSVC(req.params.id);
+    const parsed = generateAffairesV3Schema.safeParse({ params: req.params, body: req.body, query: req.query });
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues?.[0]?.message ?? "Invalid request" });
+      return;
+    }
+
+    const out = await generateAffairesFromOrderSVC(req.params.id, parsed.data.body, buildAudit(req));
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.status(200).json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// POST /api/v1/commandes/:id/analyze-stock
+export const analyzeCommandeStock: RequestHandler = async (req, res, next) => {
+  try {
+    const out = await analyzeCommandeStockSVC(req.params.id, buildAudit(req));
     if (!out) {
       res.status(404).json({ error: "Not found" });
       return;

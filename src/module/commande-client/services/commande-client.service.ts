@@ -1,5 +1,8 @@
 import type { CreateCommandeInput, UploadedDocument } from "../types/commande-client.types";
-import type { ListCommandesQueryDTO } from "../validators/commande-client.validators";
+import type {
+  GenerateAffairesV3BodyDTO,
+  ListCommandesQueryDTO,
+} from "../validators/commande-client.validators";
 import {
   repoCreateCommande,
   repoDeleteCommande,
@@ -7,6 +10,7 @@ import {
   repoConfirmGenerateAffaires,
   repoGenerateAffairesFromCommande,
   repoGenerateAffairesFromOrder,
+  repoAnalyzeCommandeStock,
   repoGetCommande,
   repoGetCommandeDocumentFileMeta,
   repoListCommandes,
@@ -37,6 +41,18 @@ import type {
   UpdateCadreReleaseLineBodyDTO,
 } from "../validators/commande-client.validators";
 
+export type CommandesAuditContext = {
+  user_id: number;
+  ip: string | null;
+  user_agent: string | null;
+  device_type: string | null;
+  os: string | null;
+  browser: string | null;
+  path: string | null;
+  page_key: string | null;
+  client_session_id: string | null;
+};
+
 export const createCommandeSVC = (input: CreateCommandeInput, documents: UploadedDocument[]) =>
   repoCreateCommande(input, documents);
 
@@ -59,7 +75,10 @@ export const updateCommandeStatusSVC = (
   userId: number | null
 ) => repoUpdateCommandeStatus(id, nouveau_statut, commentaire, userId);
 
-export const generateAffairesFromOrderSVC = (id: string) => repoGenerateAffairesFromOrder(id);
+export const analyzeCommandeStockSVC = (id: string, audit: CommandesAuditContext) => repoAnalyzeCommandeStock(id, audit);
+
+export const generateAffairesFromOrderSVC = (id: string, body: GenerateAffairesV3BodyDTO, audit: CommandesAuditContext) =>
+  repoGenerateAffairesFromOrder(id, body, audit);
 
 export const previewAffairesFromCommandeSVC = (id: string) => repoPreviewAffairesFromCommande(id);
 
