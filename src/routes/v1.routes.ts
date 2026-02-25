@@ -28,6 +28,7 @@ import programmationRoutes from "../module/programmation/routes/programmation.ro
 import operationDossiersRoutes from "../module/operation-dossiers/routes/operation-dossiers.routes";
 import fournisseursRoutes from "../module/fournisseurs/routes/fournisseurs.routes";
 import receptionsRoutes from "../module/receptions/routes/receptions.routes";
+import metrologieRoutes from "../module/metrologie/routes/metrologie.routes";
 
 const router = Router()
 
@@ -59,4 +60,5 @@ router.use("/stock", stockRoutes);
 router.use("/dossiers", operationDossiersRoutes);
 router.use("/fournisseurs", fournisseursRoutes);
 router.use("/receptions", receptionsRoutes);
+router.use("/metrologie", metrologieRoutes);
 export default router

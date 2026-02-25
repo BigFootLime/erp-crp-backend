@@ -7,6 +7,7 @@ import path from "node:path";
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
+import { repoGetMetrologieBlockState } from "../../metrologie/repository/metrologie.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 
 import type {
@@ -1223,6 +1224,15 @@ export async function repoValidateControl(params: { id: string; body: ValidateCo
     }
     if (before.control.validation_date) {
       throw new HttpError(400, "ALREADY_VALIDATED", "Control already validated");
+    }
+
+    const block = await repoGetMetrologieBlockState(client);
+    if (block.enabled && block.overdue_critical > 0) {
+      throw new HttpError(
+        409,
+        "METROLOGIE_BLOCKED",
+        `Métrologie : ${block.overdue_critical} équipement(s) critique(s) en retard d'étalonnage.`
+      );
     }
 
     const points = await selectControlPoints(client, id);
