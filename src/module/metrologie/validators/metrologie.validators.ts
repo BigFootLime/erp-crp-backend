@@ -22,7 +22,7 @@ export type MetrologieCriticiteDTO = z.infer<typeof metrologieCriticiteSchema>;
 export const metrologieEquipementStatutSchema = z.enum(["ACTIF", "INACTIF", "REBUT"]);
 export type MetrologieEquipementStatutDTO = z.infer<typeof metrologieEquipementStatutSchema>;
 
-export const metrologiePlanStatutSchema = z.enum(["EN_COURS", "SUSPENDU"]);
+export const metrologiePlanStatutSchema = z.enum(["EN_COURS", "SUSPENDU", "EN_RETARD", "HORS_TOLERANCE"]);
 export type MetrologiePlanStatutDTO = z.infer<typeof metrologiePlanStatutSchema>;
 
 export const metrologieCertificatResultatSchema = z.enum(["CONFORME", "NON_CONFORME", "AJUSTAGE"]);

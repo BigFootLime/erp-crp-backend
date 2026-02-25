@@ -13,6 +13,7 @@ import {
   listCertificats,
   listEquipements,
   metrologieAlerts,
+  metrologieAlertsSummary,
   metrologieKpis,
   patchEquipement,
   removeCertificat,
@@ -37,6 +38,7 @@ const router = Router();
 router.use(authenticateToken);
 
 router.get("/kpis", metrologieKpis);
+router.get("/alerts/summary", metrologieAlertsSummary);
 router.get("/alerts", metrologieAlerts);
 
 router.get("/equipements", listEquipements);

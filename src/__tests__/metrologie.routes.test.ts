@@ -133,6 +133,27 @@ describe("/api/v1/metrologie", () => {
     expect(String(mocks.poolQuery.mock.calls[1]?.[0])).toContain("FROM public.metrologie_equipements")
   })
 
+  it("GET /api/v1/metrologie/alerts/summary returns counts", async () => {
+    const token = makeToken()
+
+    mocks.poolQuery.mockResolvedValueOnce({
+      rows: [{ overdue_count: 2, due_soon_count: 1, oot_count: 3 }],
+    })
+
+    const res = await request(app).get("/api/v1/metrologie/alerts/summary").set("Authorization", `Bearer ${token}`)
+
+    expect(res.status).toBe(200)
+    expect(res.body).toMatchObject({
+      overdue_count: 2,
+      due_soon_count: 1,
+      oot_count: 3,
+    })
+
+    expect(mocks.poolQuery).toHaveBeenCalledTimes(1)
+    expect(String(mocks.poolQuery.mock.calls[0]?.[0])).toContain("FROM public.metrologie_equipements")
+    expect(String(mocks.poolQuery.mock.calls[0]?.[0])).toContain("public.metrologie_plan")
+  })
+
   it("GET /api/v1/metrologie/equipements returns {items,total} and applies filters", async () => {
     const token = makeToken()
 

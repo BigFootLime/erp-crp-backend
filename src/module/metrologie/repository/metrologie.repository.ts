@@ -18,6 +18,7 @@ import type {
 } from "../validators/metrologie.validators";
 import type {
   MetrologieAlerts,
+  MetrologieAlertsSummary,
   MetrologieCertificat,
   MetrologieEquipement,
   MetrologieEquipementDetail,
@@ -194,7 +195,7 @@ export async function repoListEquipements(filters: ListEquipementsQueryDTO): Pro
   if (filters.overdue === true) {
     where.push(`(
       p.deleted_at IS NULL
-      AND p.statut = 'EN_COURS'
+      AND p.statut <> 'SUSPENDU'
       AND p.next_due_date IS NOT NULL
       AND p.next_due_date < CURRENT_DATE
     )`);
@@ -230,7 +231,7 @@ export async function repoListEquipements(filters: ListEquipementsQueryDTO): Pro
         p.next_due_date::text AS next_due_date,
         (
           p.deleted_at IS NULL
-          AND p.statut = 'EN_COURS'
+          AND p.statut <> 'SUSPENDU'
           AND p.next_due_date IS NOT NULL
           AND p.next_due_date < CURRENT_DATE
         ) AS is_overdue,
@@ -267,17 +268,27 @@ export async function repoGetKpis(): Promise<MetrologieKpis> {
         COUNT(*) FILTER (WHERE e.criticite = 'CRITIQUE')::int AS critiques,
         COUNT(*) FILTER (
           WHERE p.deleted_at IS NULL
-            AND p.statut = 'EN_COURS'
-            AND p.next_due_date IS NOT NULL
-            AND p.next_due_date < CURRENT_DATE
+            AND p.statut <> 'SUSPENDU'
+            AND (
+              p.statut = 'EN_RETARD'
+              OR (
+                p.next_due_date IS NOT NULL
+                AND p.next_due_date < CURRENT_DATE
+              )
+            )
         )::int AS en_retard,
         COUNT(*) FILTER (
           WHERE e.statut = 'ACTIF'
             AND e.criticite = 'CRITIQUE'
             AND p.deleted_at IS NULL
-            AND p.statut = 'EN_COURS'
-            AND p.next_due_date IS NOT NULL
-            AND p.next_due_date < CURRENT_DATE
+            AND p.statut <> 'SUSPENDU'
+            AND (
+              p.statut = 'EN_RETARD'
+              OR (
+                p.next_due_date IS NOT NULL
+                AND p.next_due_date < CURRENT_DATE
+              )
+            )
         )::int AS en_retard_critiques,
         COUNT(*) FILTER (
           WHERE p.deleted_at IS NULL
@@ -318,9 +329,14 @@ export async function repoGetAlerts(): Promise<MetrologieAlerts> {
       WHERE e.deleted_at IS NULL
         AND e.statut = 'ACTIF'
         AND e.criticite = 'CRITIQUE'
-        AND p.statut = 'EN_COURS'
-        AND p.next_due_date IS NOT NULL
-        AND p.next_due_date < CURRENT_DATE
+        AND p.statut <> 'SUSPENDU'
+        AND (
+          p.statut = 'EN_RETARD'
+          OR (
+            p.next_due_date IS NOT NULL
+            AND p.next_due_date < CURRENT_DATE
+          )
+        )
     `
   );
   const overdue_critical_count = countRes.rows[0]?.total ?? 0;
@@ -350,9 +366,14 @@ export async function repoGetAlerts(): Promise<MetrologieAlerts> {
       WHERE e.deleted_at IS NULL
         AND e.statut = 'ACTIF'
         AND e.criticite = 'CRITIQUE'
-        AND p.statut = 'EN_COURS'
-        AND p.next_due_date IS NOT NULL
-        AND p.next_due_date < CURRENT_DATE
+        AND p.statut <> 'SUSPENDU'
+        AND (
+          p.statut = 'EN_RETARD'
+          OR (
+            p.next_due_date IS NOT NULL
+            AND p.next_due_date < CURRENT_DATE
+          )
+        )
       ORDER BY p.next_due_date ASC, e.id ASC
       LIMIT 50
     `
@@ -361,6 +382,53 @@ export async function repoGetAlerts(): Promise<MetrologieAlerts> {
   return {
     overdue_critical_count,
     overdue_critical: listRes.rows,
+  };
+}
+
+export async function repoGetAlertsSummary(): Promise<MetrologieAlertsSummary> {
+  const res = await db.query<{ overdue_count: number; due_soon_count: number; oot_count: number }>(
+    `
+      SELECT
+        SUM(CASE WHEN p.statut = 'HORS_TOLERANCE' THEN 1 ELSE 0 END)::int AS oot_count,
+        SUM(
+          CASE
+            WHEN p.statut <> 'HORS_TOLERANCE'
+              AND (
+                p.statut = 'EN_RETARD'
+                OR (
+                  p.next_due_date IS NOT NULL
+                  AND p.next_due_date < CURRENT_DATE
+                )
+              )
+            THEN 1
+            ELSE 0
+          END
+        )::int AS overdue_count,
+        SUM(
+          CASE
+            WHEN p.statut = 'EN_COURS'
+              AND p.next_due_date IS NOT NULL
+              AND p.next_due_date >= CURRENT_DATE
+              AND p.next_due_date <= (CURRENT_DATE + INTERVAL '30 days')
+            THEN 1
+            ELSE 0
+          END
+        )::int AS due_soon_count
+      FROM public.metrologie_equipements e
+      JOIN public.metrologie_plan p
+        ON p.equipement_id = e.id
+        AND p.deleted_at IS NULL
+      WHERE e.deleted_at IS NULL
+        AND e.statut = 'ACTIF'
+        AND p.statut <> 'SUSPENDU'
+    `
+  );
+
+  const row = res.rows[0] ?? null;
+  return {
+    overdue_count: row?.overdue_count ?? 0,
+    due_soon_count: row?.due_soon_count ?? 0,
+    oot_count: row?.oot_count ?? 0,
   };
 }
 
@@ -1311,6 +1379,26 @@ export async function repoAttachCertificats(params: {
         `,
         [plan.id, body.date_etalonnage, body.date_echeance ?? null, audit.user_id]
       );
+
+      if (body.resultat === "NON_CONFORME" || body.resultat === "CONFORME") {
+        await client.query(
+          `
+            UPDATE public.metrologie_plan
+            SET
+              statut = CASE
+                WHEN $2 = 'NON_CONFORME' THEN 'HORS_TOLERANCE'
+                WHEN $2 = 'CONFORME' THEN 'EN_COURS'
+                ELSE statut
+              END,
+              updated_at = now(),
+              updated_by = $3
+            WHERE id = $1::uuid
+              AND deleted_at IS NULL
+              AND statut <> 'SUSPENDU'
+          `,
+          [plan.id, body.resultat, audit.user_id]
+        );
+      }
     }
 
     await insertMetrologieEvent(client, {

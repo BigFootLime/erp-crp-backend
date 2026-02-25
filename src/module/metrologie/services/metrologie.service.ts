@@ -7,6 +7,7 @@ import type {
 } from "../validators/metrologie.validators";
 import type {
   MetrologieAlerts,
+  MetrologieAlertsSummary,
   MetrologieCertificat,
   MetrologieEquipementDetail,
   MetrologieEquipementListItem,
@@ -18,6 +19,7 @@ import {
   repoAttachCertificats,
   repoDeleteEquipement,
   repoGetAlerts,
+  repoGetAlertsSummary,
   repoGetCertificatForDownload,
   repoGetEquipementDetail,
   repoGetKpis,
@@ -44,6 +46,10 @@ export async function svcGetKpis(): Promise<MetrologieKpis> {
 
 export async function svcGetAlerts(): Promise<MetrologieAlerts> {
   return repoGetAlerts();
+}
+
+export async function svcGetAlertsSummary(): Promise<MetrologieAlertsSummary> {
+  return repoGetAlertsSummary();
 }
 
 export async function svcGetEquipementDetail(id: string): Promise<MetrologieEquipementDetail | null> {

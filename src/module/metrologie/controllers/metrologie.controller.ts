@@ -21,6 +21,7 @@ import {
   svcCreateEquipement,
   svcDeleteEquipement,
   svcGetAlerts,
+  svcGetAlertsSummary,
   svcGetCertificatForDownload,
   svcGetEquipementDetail,
   svcGetKpis,
@@ -87,6 +88,11 @@ export const metrologieKpis: RequestHandler = asyncHandler(async (_req, res) => 
 
 export const metrologieAlerts: RequestHandler = asyncHandler(async (_req, res) => {
   const out = await svcGetAlerts();
+  res.json(out);
+});
+
+export const metrologieAlertsSummary: RequestHandler = asyncHandler(async (_req, res) => {
+  const out = await svcGetAlertsSummary();
   res.json(out);
 });
 

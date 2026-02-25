@@ -160,6 +160,10 @@ CREATE INDEX IF NOT EXISTS metrologie_plan_next_due_date_idx
   ON public.metrologie_plan (next_due_date)
   WHERE deleted_at IS NULL;
 
+CREATE INDEX IF NOT EXISTS metrologie_plan_statut_next_due_date_idx
+  ON public.metrologie_plan (statut, next_due_date)
+  WHERE deleted_at IS NULL;
+
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -221,6 +225,23 @@ BEGIN
       ADD CONSTRAINT metrologie_plan_deleted_by_fkey
       FOREIGN KEY (deleted_by) REFERENCES public.users(id) ON DELETE SET NULL;
   END IF;
+END $$;
+
+-- Update/extend allowed plan statuses (idempotent).
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'metrologie_plan_statut_check'
+      AND conrelid = 'public.metrologie_plan'::regclass
+  ) THEN
+    ALTER TABLE public.metrologie_plan
+      DROP CONSTRAINT metrologie_plan_statut_check;
+  END IF;
+
+  ALTER TABLE public.metrologie_plan
+    ADD CONSTRAINT metrologie_plan_statut_check
+    CHECK (statut IN ('EN_COURS','SUSPENDU','EN_RETARD','HORS_TOLERANCE'));
 END $$;
 
 /* -------------------------------------------------------------------------- */

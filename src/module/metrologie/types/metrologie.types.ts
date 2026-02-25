@@ -13,7 +13,7 @@ export type UserLite = {
 
 export type MetrologieCriticite = "NORMAL" | "CRITIQUE";
 export type MetrologieEquipementStatut = "ACTIF" | "INACTIF" | "REBUT";
-export type MetrologiePlanStatut = "EN_COURS" | "SUSPENDU";
+export type MetrologiePlanStatut = "EN_COURS" | "SUSPENDU" | "EN_RETARD" | "HORS_TOLERANCE";
 export type MetrologieCertificatResultat = "CONFORME" | "NON_CONFORME" | "AJUSTAGE";
 
 export type MetrologieEquipement = {
@@ -122,4 +122,10 @@ export type MetrologieAlertItem = {
 export type MetrologieAlerts = {
   overdue_critical: MetrologieAlertItem[];
   overdue_critical_count: number;
+};
+
+export type MetrologieAlertsSummary = {
+  overdue_count: number;
+  due_soon_count: number;
+  oot_count: number;
 };
