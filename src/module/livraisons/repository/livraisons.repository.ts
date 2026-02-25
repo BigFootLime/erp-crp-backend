@@ -1432,16 +1432,22 @@ export async function repoCreateLivraisonLineAllocation(
     }
 
     if (input.lot_id) {
-      const lot = await db.query<{ article_id: string }>(
-        `SELECT article_id::text AS article_id FROM public.lots WHERE id = $1::uuid`,
+      const lot = await db.query<{ article_id: string; lot_status: string | null }>(
+        `SELECT article_id::text AS article_id, lot_status FROM public.lots WHERE id = $1::uuid`,
         [input.lot_id]
       )
-      const lotArticleId = lot.rows[0]?.article_id
+      const row = lot.rows[0] ?? null
+      const lotArticleId = row?.article_id
       if (!lotArticleId) {
         throw new HttpError(400, "INVALID_LOT", "Unknown lot_id")
       }
       if (lotArticleId !== input.article_id) {
         throw new HttpError(400, "LOT_ARTICLE_MISMATCH", "lot_id does not belong to article_id")
+      }
+
+      const lotStatus = row?.lot_status ?? "LIBERE"
+      if (lotStatus === "BLOQUE") {
+        throw new HttpError(409, "LOT_BLOCKED", "Ce lot est bloque et ne peut pas etre consomme")
       }
     }
 
@@ -1590,6 +1596,7 @@ export async function repoUpdateLivraisonStatus(
          article_id: string
          lot_id: string | null
          lot_article_id: string | null
+         lot_status: string | null
          stock_movement_line_id: string | null
          quantite: string | number
          unite: string | null
@@ -1603,6 +1610,7 @@ export async function repoUpdateLivraisonStatus(
              a.article_id::text AS article_id,
              a.lot_id::text AS lot_id,
              lt.article_id::text AS lot_article_id,
+             lt.lot_status,
              a.stock_movement_line_id::text AS stock_movement_line_id,
              a.quantite,
              a.unite
@@ -1615,6 +1623,11 @@ export async function repoUpdateLivraisonStatus(
          [bonLivraisonId]
        )
        const allocRows = allocRes.rows
+
+       const blocked = allocRows.find((a) => Boolean(a.lot_id) && a.lot_status === "BLOQUE")
+       if (blocked?.lot_id) {
+         throw new HttpError(409, "LOT_BLOCKED", "Expedition impossible: un lot alloue est bloque")
+       }
 
        const allocsByLineId = new Map<string, ShipAllocRow[]>()
        for (const a of allocRows) {

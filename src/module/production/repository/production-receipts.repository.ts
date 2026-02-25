@@ -461,9 +461,9 @@ export async function repoCreateOfReceipt(params: { of_id: number; body: OfRecei
     if (params.body.lot_mode === "EXISTING") {
       const rawLotId = params.body.lot_id ?? null;
       if (!rawLotId) throw new HttpError(422, "LOT_REQUIRED", "Veuillez selectionner un lot");
-      const lot = await client.query<{ id: string; lot_code: string }>(
+      const lot = await client.query<{ id: string; lot_code: string; lot_status: string | null }>(
         `
-          SELECT id::text AS id, lot_code
+          SELECT id::text AS id, lot_code, lot_status
           FROM public.lots
           WHERE id = $1::uuid AND article_id = $2::uuid
           LIMIT 1
@@ -472,6 +472,12 @@ export async function repoCreateOfReceipt(params: { of_id: number; body: OfRecei
       );
       const row = lot.rows[0] ?? null;
       if (!row) throw new HttpError(400, "INVALID_LOT", "Lot introuvable pour cet article");
+
+      const lotStatus = row.lot_status ?? "LIBERE";
+      if (lotStatus === "BLOQUE") {
+        throw new HttpError(409, "LOT_BLOCKED", "Ce lot est bloque et ne peut pas etre utilise");
+      }
+
       lotId = row.id;
       lotCode = row.lot_code;
     } else {

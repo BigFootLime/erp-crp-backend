@@ -27,6 +27,7 @@ import stockRoutes from "../module/stock/routes/stock.routes";
 import programmationRoutes from "../module/programmation/routes/programmation.routes";
 import operationDossiersRoutes from "../module/operation-dossiers/routes/operation-dossiers.routes";
 import fournisseursRoutes from "../module/fournisseurs/routes/fournisseurs.routes";
+import receptionsRoutes from "../module/receptions/routes/receptions.routes";
 
 const router = Router()
 
@@ -57,4 +58,5 @@ router.use("/livraisons", livraisonsRoutes);
 router.use("/stock", stockRoutes);
 router.use("/dossiers", operationDossiersRoutes);
 router.use("/fournisseurs", fournisseursRoutes);
+router.use("/receptions", receptionsRoutes);
 export default router
