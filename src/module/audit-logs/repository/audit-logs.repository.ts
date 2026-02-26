@@ -59,7 +59,19 @@ export async function repoInsertAuditLog(params: {
     ]
   );
 
-  return ins.rows[0] ?? null;
+  const inserted = ins.rows[0] ?? null;
+  if (inserted?.id) {
+    try {
+      await q.query("SELECT pg_notify('erp_audit_new', $1)", [JSON.stringify({ auditId: inserted.id })]);
+    } catch (err) {
+      console.warn("[audit_notify] pg_notify failed", {
+        error: err instanceof Error ? err.name : "unknown",
+        auditId: inserted.id,
+      });
+    }
+  }
+
+  return inserted;
 }
 
 export async function repoListAuditLogs(filters: ListAuditLogsQueryDTO): Promise<Paginated<AuditLogRow>> {

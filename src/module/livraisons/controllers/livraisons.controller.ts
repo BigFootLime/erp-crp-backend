@@ -18,6 +18,7 @@ import {
 import * as service from "../services/livraisons.service"
 import * as pdfService from "../services/pdf.service"
 import { repoFindDocumentFilePath, repoGetDocumentName, repoIsLivraisonDocumentLinked } from "../repository/livraisons.repository"
+import { emitEntityChanged } from "../../../shared/realtime/realtime.service"
 
 function coerceBool(value: unknown): boolean {
   if (typeof value === "boolean") return value
@@ -33,6 +34,25 @@ function getUserId(req: Express.Request): number {
   const userId = typeof req.user?.id === "number" ? req.user.id : null
   if (!userId) throw new HttpError(401, "UNAUTHORIZED", "Authentication required")
   return userId
+}
+
+function getUserRef(req: Express.Request): { id: number; name: string } {
+  const id = getUserId(req)
+  const name = typeof req.user?.username === "string" && req.user.username.trim() ? req.user.username.trim() : String(id)
+  return { id, name }
+}
+
+function emitLivraisonChanged(req: Express.Request, params: { entityId: string; action: "created" | "updated" | "deleted" | "status_changed" }) {
+  const entityId = params.entityId
+  emitEntityChanged({
+    entityType: "BON_LIVRAISON",
+    entityId,
+    action: params.action,
+    module: "livraisons",
+    at: new Date().toISOString(),
+    by: getUserRef(req),
+    invalidateKeys: ["livraisons:list", `livraisons:detail:${entityId}`],
+  })
 }
 
 export const listLivraisons: RequestHandler = async (req, res, next) => {
@@ -66,6 +86,8 @@ export const createLivraison: RequestHandler = async (req, res, next) => {
     const userId = getUserId(req)
     const dto = createLivraisonBodySchema.parse(req.body)
     const out = await service.svcCreateLivraison(dto, userId)
+
+    emitLivraisonChanged(req, { entityId: out.id, action: "created" })
     res.status(201).json(out)
   } catch (e) {
     next(e)
@@ -77,6 +99,8 @@ export const createLivraisonFromCommande: RequestHandler = async (req, res, next
     const userId = getUserId(req)
     const { commandeId } = fromCommandeParamsSchema.parse(req.params)
     const out = await service.svcCreateLivraisonFromCommande(commandeId, userId)
+
+    emitLivraisonChanged(req, { entityId: out.id, action: "created" })
     res.status(201).json(out)
   } catch (e) {
     next(e)
@@ -97,6 +121,8 @@ export const updateLivraison: RequestHandler = async (req, res, next) => {
       res.status(404).json({ error: "Not found" })
       return
     }
+
+    emitLivraisonChanged(req, { entityId: id, action: "updated" })
     res.status(200).json(out)
   } catch (e) {
     next(e)
@@ -109,6 +135,8 @@ export const addLivraisonLine: RequestHandler = async (req, res, next) => {
     const { id } = livraisonIdParamsSchema.parse(req.params)
     const dto = createLivraisonLineBodySchema.parse(req.body)
     const out = await service.svcAddLivraisonLine(id, dto, userId)
+
+    emitLivraisonChanged(req, { entityId: id, action: "updated" })
     res.status(201).json(out)
   } catch (e) {
     next(e)
@@ -129,6 +157,8 @@ export const updateLivraisonLine: RequestHandler = async (req, res, next) => {
       res.status(404).json({ error: "Not found" })
       return
     }
+
+    emitLivraisonChanged(req, { entityId: id, action: "updated" })
     res.status(200).json(out)
   } catch (e) {
     next(e)
@@ -144,6 +174,8 @@ export const deleteLivraisonLine: RequestHandler = async (req, res, next) => {
       res.status(404).json({ error: "Not found" })
       return
     }
+
+    emitLivraisonChanged(req, { entityId: id, action: "updated" })
     res.status(204).send()
   } catch (e) {
     next(e)
@@ -156,6 +188,8 @@ export const addLivraisonLineAllocation: RequestHandler = async (req, res, next)
     const { id, lineId } = livraisonLineIdParamsSchema.parse(req.params)
     const dto = createLivraisonAllocationBodySchema.parse(req.body)
     const out = await service.svcCreateLivraisonLineAllocation(id, lineId, dto, userId)
+
+    emitLivraisonChanged(req, { entityId: id, action: "updated" })
     res.status(201).json(out)
   } catch (e) {
     next(e)
@@ -171,6 +205,8 @@ export const deleteLivraisonLineAllocation: RequestHandler = async (req, res, ne
       res.status(404).json({ error: "Not found" })
       return
     }
+
+    emitLivraisonChanged(req, { entityId: id, action: "updated" })
     res.status(204).send()
   } catch (e) {
     next(e)
@@ -183,6 +219,8 @@ export const updateLivraisonStatus: RequestHandler = async (req, res, next) => {
     const { id } = livraisonIdParamsSchema.parse(req.params)
     const body = livraisonStatusBodySchema.parse(req.body)
     const out = await service.svcUpdateLivraisonStatus(id, body, userId)
+
+    emitLivraisonChanged(req, { entityId: id, action: "status_changed" })
     res.status(200).json(out)
   } catch (e) {
     next(e)
@@ -214,6 +252,8 @@ export const uploadLivraisonDocuments: RequestHandler = async (req, res, next) =
       type,
       userId,
     })
+
+    emitLivraisonChanged(req, { entityId: id, action: "updated" })
     res.status(201).json({ documents: out })
   } catch (e) {
     next(e)
@@ -235,6 +275,8 @@ export const deleteLivraisonDocument: RequestHandler = async (req, res, next) =>
       res.status(404).json({ error: "Not found" })
       return
     }
+
+    emitLivraisonChanged(req, { entityId: id, action: "updated" })
     res.status(204).send()
   } catch (e) {
     next(e)
@@ -275,6 +317,8 @@ export const generateLivraisonPdf: RequestHandler = async (req, res, next) => {
     const userId = getUserId(req)
     const { id } = livraisonIdParamsSchema.parse(req.params)
     const out = await pdfService.svcGenerateLivraisonPdf(id, userId)
+
+    emitLivraisonChanged(req, { entityId: id, action: "updated" })
     res.status(201).json(out)
   } catch (e) {
     next(e)

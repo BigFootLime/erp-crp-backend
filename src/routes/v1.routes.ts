@@ -32,6 +32,7 @@ import metrologieRoutes from "../module/metrologie/routes/metrologie.routes";
 
 import traceabilityRoutes from "../module/traceability/routes/traceability.routes"
 import asbuiltRoutes from "../module/asbuilt/routes/asbuilt.routes"
+import locksRoutes from "../module/locks/routes/locks.routes"
 const router = Router()
 
 router.use("/auth", authRoutes)
@@ -65,4 +66,5 @@ router.use("/receptions", receptionsRoutes);
 router.use("/metrologie", metrologieRoutes);
 router.use("/traceability", traceabilityRoutes)
 router.use("/asbuilt", asbuiltRoutes)
+router.use("/locks", locksRoutes)
 export default router

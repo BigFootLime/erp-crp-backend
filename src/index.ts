@@ -2,6 +2,7 @@ import dotenv from 'dotenv';
 import app from './config/app';
 import { createServer } from 'http';
 import { initSocketServer } from './sockets/sockeServer'
+import { startAuditNotifyListener } from "./shared/realtime/audit-notify.listener";
 
 
 dotenv.config();
@@ -13,6 +14,11 @@ const httpServer = createServer(app);
 
 // 🔌 Initialisation du serveur WebSocket
 initSocketServer(httpServer);
+
+// 📣 Realtime: audit:new listener (Postgres NOTIFY)
+startAuditNotifyListener().catch((err) => {
+  console.error("[audit_notify] failed to start", err);
+});
 
 // 🚀 Lancement du serveur
 httpServer.listen(PORT, '0.0.0.0', () => {
