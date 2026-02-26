@@ -13,6 +13,7 @@ import {
   createAction,
   createControl,
   createNonConformity,
+  createNonConformityDisposition,
   downloadActionDocument,
   downloadControlDocument,
   downloadNonConformityDocument,
@@ -24,11 +25,14 @@ import {
   listControlDocuments,
   listControls,
   listNonConformities,
+  listNonConformityDispositions,
   listNonConformityDocuments,
   listQualityUsers,
   patchAction,
   patchControl,
   patchNonConformity,
+  qualiteDashboard,
+  updateNonConformityStatus,
   qualiteKpis,
   removeActionDocument,
   removeControlDocument,
@@ -63,6 +67,7 @@ router.use(requireQualityOrAdmin);
 
 // KPIs + users for selects
 router.get("/kpis", qualiteKpis);
+router.get("/dashboard", qualiteDashboard);
 router.get("/users", listQualityUsers);
 
 // Controls
@@ -77,6 +82,9 @@ router.get("/non-conformities", listNonConformities);
 router.get("/non-conformities/:id", getNonConformity);
 router.post("/non-conformities", createNonConformity);
 router.patch("/non-conformities/:id", patchNonConformity);
+router.post("/non-conformities/:id/status", updateNonConformityStatus);
+router.get("/non-conformities/:id/dispositions", listNonConformityDispositions);
+router.post("/non-conformities/:id/dispositions", createNonConformityDisposition);
 
 // Actions
 router.get("/actions", listActions);

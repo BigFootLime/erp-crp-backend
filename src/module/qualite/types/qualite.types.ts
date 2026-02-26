@@ -12,6 +12,15 @@ export type QualityPointResult = "OK" | "NOK";
 export type NonConformitySeverity = "MINOR" | "MAJOR" | "CRITICAL";
 export type NonConformityStatus = "OPEN" | "ANALYSIS" | "ACTION_PLAN" | "CLOSED";
 
+export type NonConformityDispositionType =
+  | "HOLD"
+  | "RELEASE"
+  | "USE_AS_IS"
+  | "REWORK"
+  | "SORT"
+  | "SCRAP"
+  | "RETURN_SUPPLIER";
+
 export type QualityActionType = "CORRECTIVE" | "PREVENTIVE";
 export type QualityActionStatus = "OPEN" | "IN_PROGRESS" | "DONE" | "VERIFIED";
 
@@ -149,6 +158,12 @@ export type NonConformityListItem = {
   status: NonConformityStatus;
   detection_date: string;
 
+  lot_id: string | null;
+  lot_code: string | null;
+  lot_status: string | null;
+
+  due_date: string | null;
+
   affaire: QualityAffaireLite | null;
   of: QualityOfLite | null;
   piece_technique: QualityPieceTechniqueLite | null;
@@ -162,13 +177,37 @@ export type NonConformityListItem = {
 export type NonConformityDetail = NonConformityListItem & {
   root_cause: string | null;
   impact: string | null;
+
+  containment_action: string | null;
+  correction_action: string | null;
+
+  closed_at: string | null;
+  closed_by: QualityUserLite | null;
+
   created_at: string;
   updated_at: string;
   created_by: QualityUserLite;
   updated_by: QualityUserLite;
   actions: QualityActionListItem[];
+  dispositions: NonConformityDisposition[];
   documents: QualityDocument[];
   events: QualityEventLog[];
+};
+
+export type NonConformityDisposition = {
+  id: string;
+  non_conformity_id: string;
+  disposition_type: NonConformityDispositionType;
+  qty: number | null;
+  unite: string | null;
+  comment: string | null;
+  decided_by: QualityUserLite | null;
+  decided_at: string;
+  stock_movement_id: string | null;
+  created_at: string;
+  updated_at: string;
+  created_by: QualityUserLite | null;
+  updated_by: QualityUserLite | null;
 };
 
 export type QualityActionListItem = {

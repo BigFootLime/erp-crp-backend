@@ -2,6 +2,7 @@ import type {
   CreateActionBodyDTO,
   CreateControlBodyDTO,
   CreateNonConformityBodyDTO,
+  CreateNonConformityDispositionBodyDTO,
   KpisQueryDTO,
   ListActionsQueryDTO,
   ListControlsQueryDTO,
@@ -12,10 +13,12 @@ import type {
   PatchNonConformityBodyDTO,
   QualityDocumentTypeDTO,
   QualityEntityTypeDTO,
+  UpdateNonConformityStatusBodyDTO,
   ValidateControlBodyDTO,
 } from "../validators/qualite.validators";
 import type {
   NonConformityDetail,
+  NonConformityDisposition,
   NonConformityListItem,
   Paginated,
   QualityActionDetail,
@@ -33,11 +36,13 @@ import {
   repoCreateAction,
   repoCreateControl,
   repoCreateNonConformity,
+  repoCreateNonConformityDisposition,
   repoGetAction,
   repoGetControl,
   repoGetDocumentForDownload,
   repoGetNonConformity,
   repoKpis,
+  repoListNonConformityDispositions,
   repoListActions,
   repoListControls,
   repoListDocuments,
@@ -46,13 +51,18 @@ import {
   repoPatchAction,
   repoPatchControl,
   repoPatchNonConformity,
+  repoQualiteDashboard,
   repoRemoveDocument,
+  repoUpdateNonConformityStatus,
   repoValidateControl,
 } from "../repository/qualite.repository";
 
 type UploadedDocument = Express.Multer.File;
 
 export const svcKpis = (filters: KpisQueryDTO): Promise<QualityKpis> => repoKpis(filters);
+
+export const svcQualiteDashboard = (filters: KpisQueryDTO): Promise<{ kpis: QualityKpis["kpis"]; lots: { blocked: number; quarantine: number }; non_conformities: { overdue: number } }> =>
+  repoQualiteDashboard(filters);
 
 export const svcListUsers = (filters: ListUsersQueryDTO): Promise<QualityUserLite[]> => repoListUsers(filters);
 
@@ -82,6 +92,16 @@ export const svcCreateNonConformity = (
 export const svcPatchNonConformity = (
   params: { id: string; body: PatchNonConformityBodyDTO; audit: AuditContext }
 ): Promise<NonConformityDetail | null> => repoPatchNonConformity(params);
+
+export const svcUpdateNonConformityStatus = (
+  params: { id: string; body: UpdateNonConformityStatusBodyDTO; audit: AuditContext }
+): Promise<NonConformityDetail | null> => repoUpdateNonConformityStatus(params);
+
+export const svcListNonConformityDispositions = (id: string): Promise<NonConformityDisposition[]> => repoListNonConformityDispositions(id);
+
+export const svcCreateNonConformityDisposition = (
+  params: { id: string; body: CreateNonConformityDispositionBodyDTO; audit: AuditContext }
+): Promise<NonConformityDisposition> => repoCreateNonConformityDisposition(params);
 
 export const svcListActions = (filters: ListActionsQueryDTO): Promise<Paginated<QualityActionListItem>> => repoListActions(filters);
 

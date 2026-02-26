@@ -11,6 +11,7 @@ import {
   actionIdParamSchema,
   attachDocumentsSchema,
   controlIdParamSchema,
+  createNonConformityDispositionSchema,
   createActionSchema,
   createControlSchema,
   createNonConformitySchema,
@@ -24,6 +25,7 @@ import {
   patchActionSchema,
   patchControlSchema,
   patchNonConformitySchema,
+  updateNonConformityStatusSchema,
   validateControlSchema,
 } from "../validators/qualite.validators";
 import {
@@ -31,11 +33,13 @@ import {
   svcCreateAction,
   svcCreateControl,
   svcCreateNonConformity,
+  svcCreateNonConformityDisposition,
   svcGetAction,
   svcGetControl,
   svcGetDocumentForDownload,
   svcGetNonConformity,
   svcKpis,
+  svcListNonConformityDispositions,
   svcListActions,
   svcListControls,
   svcListDocuments,
@@ -44,8 +48,10 @@ import {
   svcPatchAction,
   svcPatchControl,
   svcPatchNonConformity,
+  svcQualiteDashboard,
   svcQualityDocumentBaseDir,
   svcRemoveDocument,
+  svcUpdateNonConformityStatus,
   svcValidateControl,
 } from "../services/qualite.service";
 
@@ -94,6 +100,12 @@ function getMulterFiles(req: Request): Express.Multer.File[] {
 export const qualiteKpis = asyncHandler(async (req, res) => {
   const query = kpisQuerySchema.parse(req.query);
   const out = await svcKpis(query);
+  res.json(out);
+});
+
+export const qualiteDashboard = asyncHandler(async (req, res) => {
+  const query = kpisQuerySchema.parse(req.query);
+  const out = await svcQualiteDashboard(query);
   res.json(out);
 });
 
@@ -185,6 +197,32 @@ export const patchNonConformity = asyncHandler(async (req, res) => {
     return;
   }
   res.json(out);
+});
+
+export const updateNonConformityStatus = asyncHandler(async (req, res) => {
+  const audit = buildAuditContext(req);
+  const { id } = nonConformityIdParamSchema.parse({ params: req.params }).params;
+  const body = updateNonConformityStatusSchema.parse({ body: req.body }).body;
+  const out = await svcUpdateNonConformityStatus({ id, body, audit });
+  if (!out) {
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
+  res.json(out);
+});
+
+export const listNonConformityDispositions = asyncHandler(async (req, res) => {
+  const { id } = nonConformityIdParamSchema.parse({ params: req.params }).params;
+  const out = await svcListNonConformityDispositions(id);
+  res.json({ items: out });
+});
+
+export const createNonConformityDisposition = asyncHandler(async (req, res) => {
+  const audit = buildAuditContext(req);
+  const { id } = nonConformityIdParamSchema.parse({ params: req.params }).params;
+  const body = createNonConformityDispositionSchema.parse({ body: req.body }).body;
+  const out = await svcCreateNonConformityDisposition({ id, body, audit });
+  res.status(201).json(out);
 });
 
 // Actions

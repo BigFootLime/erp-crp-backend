@@ -5,7 +5,7 @@ export type Paginated<T> = {
 
 export type ReceptionFournisseurStatus = "OPEN" | "CLOSED" | "CANCELLED"
 
-export type LotStatus = "LIBERE" | "BLOQUE" | "EN_ATTENTE"
+export type LotStatus = "LIBERE" | "BLOQUE" | "EN_ATTENTE" | "QUARANTAINE"
 
 export type IncomingInspectionStatus = "IN_PROGRESS" | "DECIDED"
 

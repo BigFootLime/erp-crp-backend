@@ -412,7 +412,7 @@ export async function repoListReceptions(filters: ListReceptionsQueryDTO): Promi
       SELECT
         l.reception_id,
         COUNT(*)::int AS lines_count,
-        SUM(CASE WHEN COALESCE(lot.lot_status, 'LIBERE') = 'EN_ATTENTE' THEN 1 ELSE 0 END)::int AS pending_lines_count,
+        SUM(CASE WHEN COALESCE(lot.lot_status, 'LIBERE') IN ('EN_ATTENTE','QUARANTAINE') THEN 1 ELSE 0 END)::int AS pending_lines_count,
         SUM(CASE WHEN COALESCE(lot.lot_status, 'LIBERE') = 'BLOQUE' THEN 1 ELSE 0 END)::int AS blocked_lines_count
       FROM public.reception_fournisseur_lignes l
       LEFT JOIN public.lots lot ON lot.id = l.lot_id
@@ -443,7 +443,7 @@ export async function repoGetReceptionsKpis(): Promise<{ kpis: ReceptionKpis }> 
           SELECT COUNT(*)::int
           FROM public.reception_fournisseur_lignes l
           LEFT JOIN public.lots lot ON lot.id = l.lot_id
-          WHERE COALESCE(lot.lot_status, 'LIBERE') = 'EN_ATTENTE'
+      WHERE COALESCE(lot.lot_status, 'LIBERE') IN ('EN_ATTENTE','QUARANTAINE')
         ) AS pending_inspection,
         (
           SELECT COUNT(*)::int

@@ -8,7 +8,7 @@ export const sortDirSchema = z.enum(["asc", "desc"])
 export const receptionStatusSchema = z.enum(["OPEN", "CLOSED", "CANCELLED"])
 export type ReceptionStatusDTO = z.infer<typeof receptionStatusSchema>
 
-export const lotStatusSchema = z.enum(["LIBERE", "BLOQUE", "EN_ATTENTE"])
+export const lotStatusSchema = z.enum(["LIBERE", "BLOQUE", "EN_ATTENTE", "QUARANTAINE"])
 export type LotStatusDTO = z.infer<typeof lotStatusSchema>
 
 export const receptionDocumentTypeSchema = z.enum(["CERTIFICAT_MATIERE", "BON_LIVRAISON", "AUTRE"])

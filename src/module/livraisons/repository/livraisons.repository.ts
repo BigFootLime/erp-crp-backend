@@ -1446,8 +1446,8 @@ export async function repoCreateLivraisonLineAllocation(
       }
 
       const lotStatus = row?.lot_status ?? "LIBERE"
-      if (lotStatus === "BLOQUE") {
-        throw new HttpError(409, "LOT_BLOCKED", "Ce lot est bloque et ne peut pas etre consomme")
+      if (lotStatus === "BLOQUE" || lotStatus === "EN_ATTENTE" || lotStatus === "QUARANTAINE") {
+        throw new HttpError(409, "LOT_NOT_CONSUMABLE", `Ce lot n'est pas consommable (statut: ${lotStatus})`)
       }
     }
 
@@ -1624,9 +1624,9 @@ export async function repoUpdateLivraisonStatus(
        )
        const allocRows = allocRes.rows
 
-       const blocked = allocRows.find((a) => Boolean(a.lot_id) && a.lot_status === "BLOQUE")
+       const blocked = allocRows.find((a) => Boolean(a.lot_id) && ["BLOQUE", "EN_ATTENTE", "QUARANTAINE"].includes(a.lot_status ?? "LIBERE"))
        if (blocked?.lot_id) {
-         throw new HttpError(409, "LOT_BLOCKED", "Expedition impossible: un lot alloue est bloque")
+         throw new HttpError(409, "LOT_NOT_CONSUMABLE", "Expedition impossible : un lot alloue n'est pas consommable")
        }
 
        const allocsByLineId = new Map<string, ShipAllocRow[]>()

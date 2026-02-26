@@ -474,8 +474,8 @@ export async function repoCreateOfReceipt(params: { of_id: number; body: OfRecei
       if (!row) throw new HttpError(400, "INVALID_LOT", "Lot introuvable pour cet article");
 
       const lotStatus = row.lot_status ?? "LIBERE";
-      if (lotStatus === "BLOQUE") {
-        throw new HttpError(409, "LOT_BLOCKED", "Ce lot est bloque et ne peut pas etre utilise");
+      if (lotStatus === "BLOQUE" || lotStatus === "EN_ATTENTE" || lotStatus === "QUARANTAINE") {
+        throw new HttpError(409, "LOT_NOT_CONSUMABLE", `Ce lot n'est pas consommable (statut: ${lotStatus})`);
       }
 
       lotId = row.id;

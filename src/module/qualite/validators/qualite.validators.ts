@@ -31,6 +31,17 @@ export type NonConformitySeverityDTO = z.infer<typeof nonConformitySeveritySchem
 export const nonConformityStatusSchema = z.enum(["OPEN", "ANALYSIS", "ACTION_PLAN", "CLOSED"]);
 export type NonConformityStatusDTO = z.infer<typeof nonConformityStatusSchema>;
 
+export const nonConformityDispositionTypeSchema = z.enum([
+  "HOLD",
+  "RELEASE",
+  "USE_AS_IS",
+  "REWORK",
+  "SORT",
+  "SCRAP",
+  "RETURN_SUPPLIER",
+]);
+export type NonConformityDispositionTypeDTO = z.infer<typeof nonConformityDispositionTypeSchema>;
+
 export const qualityActionTypeSchema = z.enum(["CORRECTIVE", "PREVENTIVE"]);
 export type QualityActionTypeDTO = z.infer<typeof qualityActionTypeSchema>;
 
@@ -157,6 +168,7 @@ export const listNonConformitiesQuerySchema = z.object({
   piece_technique_id: uuid.optional(),
   control_id: uuid.optional(),
   client_id: z.string().trim().min(1).optional(),
+  lot_id: uuid.optional(),
   page: z.coerce.number().int().min(1).optional().default(1),
   pageSize: z.coerce.number().int().min(1).max(200).optional().default(50),
   sortBy: z.enum(["detection_date", "updated_at", "severity"]).optional().default("detection_date"),
@@ -172,14 +184,23 @@ export const createNonConformitySchema = z.object({
       affaire_id: z.coerce.number().int().positive().optional().nullable(),
       of_id: z.coerce.number().int().positive().optional().nullable(),
       piece_technique_id: uuid.optional().nullable(),
+      of_operation_id: uuid.optional().nullable(),
+      piece_technique_operation_id: uuid.optional().nullable(),
       control_id: uuid.optional().nullable(),
       client_id: z.string().trim().min(1).max(10).optional().nullable(),
+      lot_id: uuid.optional().nullable(),
+      bon_livraison_id: uuid.optional().nullable(),
+      reception_ligne_id: uuid.optional().nullable(),
+      fournisseur_id: uuid.optional().nullable(),
       description: z.string().trim().min(1).max(10000),
       severity: nonConformitySeveritySchema.optional(),
       status: nonConformityStatusSchema.optional(),
       detection_date: isoDateTime.optional(),
       root_cause: z.string().trim().min(1).max(10000).optional().nullable(),
       impact: z.string().trim().min(1).max(10000).optional().nullable(),
+      containment_action: z.string().trim().min(1).max(10000).optional().nullable(),
+      correction_action: z.string().trim().min(1).max(10000).optional().nullable(),
+      due_date: isoDate.optional().nullable(),
     })
     .strict(),
 });
@@ -195,18 +216,53 @@ export const patchNonConformitySchema = z.object({
         affaire_id: z.coerce.number().int().positive().optional().nullable(),
         of_id: z.coerce.number().int().positive().optional().nullable(),
         piece_technique_id: uuid.optional().nullable(),
+        of_operation_id: uuid.optional().nullable(),
+        piece_technique_operation_id: uuid.optional().nullable(),
         control_id: uuid.optional().nullable(),
         client_id: z.string().trim().min(1).max(10).optional().nullable(),
+        lot_id: uuid.optional().nullable(),
+        bon_livraison_id: uuid.optional().nullable(),
+        reception_ligne_id: uuid.optional().nullable(),
+        fournisseur_id: uuid.optional().nullable(),
         description: z.string().trim().min(1).max(10000).optional(),
         severity: nonConformitySeveritySchema.optional(),
         status: nonConformityStatusSchema.optional(),
         detection_date: isoDateTime.optional(),
         root_cause: z.string().trim().min(1).max(10000).optional().nullable(),
         impact: z.string().trim().min(1).max(10000).optional().nullable(),
+        containment_action: z.string().trim().min(1).max(10000).optional().nullable(),
+        correction_action: z.string().trim().min(1).max(10000).optional().nullable(),
+        due_date: isoDate.optional().nullable(),
       })
       .strict(),
   }),
 });
+
+export const updateNonConformityStatusSchema = z.object({
+  body: z
+    .object({
+      note: z.string().trim().min(1).max(2000).optional().nullable(),
+      status: nonConformityStatusSchema,
+    })
+    .strict(),
+});
+export type UpdateNonConformityStatusBodyDTO = z.infer<typeof updateNonConformityStatusSchema>["body"];
+
+export const createNonConformityDispositionSchema = z.object({
+  body: z
+    .object({
+      note: z.string().trim().min(1).max(2000).optional().nullable(),
+      disposition_type: nonConformityDispositionTypeSchema,
+      qty: z.coerce.number().finite().positive().optional().nullable(),
+      unite: z.string().trim().min(1).max(30).optional().nullable(),
+      comment: z.string().trim().min(1).max(5000).optional().nullable(),
+
+      src_magasin_id: uuid.optional().nullable(),
+      src_emplacement_id: z.coerce.number().int().positive().optional().nullable(),
+    })
+    .strict(),
+});
+export type CreateNonConformityDispositionBodyDTO = z.infer<typeof createNonConformityDispositionSchema>["body"];
 
 export type PatchNonConformityBodyDTO = z.infer<typeof patchNonConformitySchema>["body"];
 

@@ -14,6 +14,7 @@ import type {
   CreateActionBodyDTO,
   CreateControlBodyDTO,
   CreateNonConformityBodyDTO,
+  CreateNonConformityDispositionBodyDTO,
   KpisQueryDTO,
   ListActionsQueryDTO,
   ListControlsQueryDTO,
@@ -24,9 +25,11 @@ import type {
   PatchNonConformityBodyDTO,
   QualityDocumentTypeDTO,
   QualityEntityTypeDTO,
+  UpdateNonConformityStatusBodyDTO,
   ValidateControlBodyDTO,
 } from "../validators/qualite.validators";
 import type {
+  NonConformityDisposition,
   NonConformityDetail,
   NonConformityListItem,
   Paginated,
@@ -1311,6 +1314,40 @@ export async function repoKpis(_filters: KpisQueryDTO): Promise<QualityKpis> {
   };
 }
 
+export async function repoQualiteDashboard(filters: KpisQueryDTO): Promise<{
+  kpis: QualityKpis["kpis"];
+  lots: { blocked: number; quarantine: number };
+  non_conformities: { overdue: number };
+}> {
+  const kpis = await repoKpis(filters);
+
+  const lotsRes = await pool.query<{ blocked: number; quarantine: number }>(
+    `
+      SELECT
+        SUM(CASE WHEN COALESCE(lot_status, 'LIBERE') = 'BLOQUE' THEN 1 ELSE 0 END)::int AS blocked,
+        SUM(CASE WHEN COALESCE(lot_status, 'LIBERE') IN ('EN_ATTENTE','QUARANTAINE') THEN 1 ELSE 0 END)::int AS quarantine
+      FROM public.lots
+    `
+  );
+  const lots = lotsRes.rows[0] ?? { blocked: 0, quarantine: 0 };
+
+  const overdueNcRes = await pool.query<{ total: number }>(
+    `
+      SELECT COUNT(*)::int AS total
+      FROM public.non_conformity
+      WHERE due_date IS NOT NULL
+        AND due_date < CURRENT_DATE
+        AND status <> 'CLOSED'
+    `
+  );
+
+  return {
+    kpis: kpis.kpis,
+    lots: { blocked: lots.blocked ?? 0, quarantine: lots.quarantine ?? 0 },
+    non_conformities: { overdue: overdueNcRes.rows[0]?.total ?? 0 },
+  };
+}
+
 export async function repoListUsers(filters: ListUsersQueryDTO): Promise<QualityUserLite[]> {
   const q = filters.q?.trim() ?? "";
   const limit = filters.limit ?? 200;
@@ -1738,6 +1775,7 @@ export async function repoListNonConformities(filters: ListNonConformitiesQueryD
   if (filters.piece_technique_id) where.push(`nc.piece_technique_id = ${push(filters.piece_technique_id)}::uuid`);
   if (filters.control_id) where.push(`nc.control_id = ${push(filters.control_id)}::uuid`);
   if (filters.client_id) where.push(`nc.client_id = ${push(filters.client_id)}`);
+  if (filters.lot_id) where.push(`nc.lot_id = ${push(filters.lot_id)}::uuid`);
 
   if (filters.q && filters.q.trim().length > 0) {
     const q = `%${filters.q.trim()}%`;
@@ -1782,6 +1820,10 @@ export async function repoListNonConformities(filters: ListNonConformitiesQueryD
     severity: NonConformityListItem["severity"];
     status: NonConformityListItem["status"];
     detection_date: string;
+    lot_id: string | null;
+    lot_code: string | null;
+    lot_status: string | null;
+    due_date: string | null;
     control_id: string | null;
     client_id: string | null;
     client_company_name: string | null;
@@ -1816,6 +1858,10 @@ export async function repoListNonConformities(filters: ListNonConformitiesQueryD
         nc.severity::text AS severity,
         nc.status::text AS status,
         nc.detection_date::text AS detection_date,
+        nc.lot_id::text AS lot_id,
+        lt.lot_code AS lot_code,
+        lt.lot_status,
+        nc.due_date::text AS due_date,
         nc.control_id::text AS control_id,
         nc.client_id,
         c.company_name AS client_company_name,
@@ -1840,6 +1886,7 @@ export async function repoListNonConformities(filters: ListNonConformitiesQueryD
         u.name AS detected_by_name,
         u.surname AS detected_by_surname
       FROM non_conformity nc
+      LEFT JOIN public.lots lt ON lt.id = nc.lot_id
       LEFT JOIN ordres_fabrication o ON o.id = nc.of_id
       LEFT JOIN clients oc ON oc.client_id = o.client_id
       LEFT JOIN affaire a ON a.id = COALESCE(nc.affaire_id, o.affaire_id)
@@ -1866,6 +1913,13 @@ export async function repoListNonConformities(filters: ListNonConformitiesQueryD
       severity: r.severity,
       status: r.status,
       detection_date: r.detection_date,
+
+      lot_id: r.lot_id,
+      lot_code: r.lot_code,
+      lot_status: r.lot_status,
+
+      due_date: r.due_date,
+
       affaire:
         affaireId !== null && r.affaire_reference
           ? {
@@ -1990,6 +2044,100 @@ async function selectNcSnapshot(q: DbQueryer, id: string): Promise<NcSnapshot | 
   };
 }
 
+async function selectNcDispositions(q: DbQueryer, nonConformityId: string): Promise<NonConformityDisposition[]> {
+  type Row = {
+    id: string;
+    non_conformity_id: string;
+    disposition_type: NonConformityDisposition["disposition_type"];
+    qty: number | null;
+    unite: string | null;
+    comment: string | null;
+    decided_at: string;
+    stock_movement_id: string | null;
+    created_at: string;
+    updated_at: string;
+
+    decided_by_id: number | null;
+    decided_by_username: string | null;
+    decided_by_name: string | null;
+    decided_by_surname: string | null;
+
+    created_by_id: number | null;
+    created_by_username: string | null;
+    created_by_name: string | null;
+    created_by_surname: string | null;
+
+    updated_by_id: number | null;
+    updated_by_username: string | null;
+    updated_by_name: string | null;
+    updated_by_surname: string | null;
+  };
+
+  const res = await q.query<Row>(
+    `
+      SELECT
+        d.id::text AS id,
+        d.non_conformity_id::text AS non_conformity_id,
+        d.disposition_type AS disposition_type,
+        d.qty::float8 AS qty,
+        d.unite,
+        d.comment,
+        d.decided_at::text AS decided_at,
+        d.stock_movement_id::text AS stock_movement_id,
+        d.created_at::text AS created_at,
+        d.updated_at::text AS updated_at,
+
+        du.id AS decided_by_id,
+        du.username AS decided_by_username,
+        du.name AS decided_by_name,
+        du.surname AS decided_by_surname,
+
+        cb.id AS created_by_id,
+        cb.username AS created_by_username,
+        cb.name AS created_by_name,
+        cb.surname AS created_by_surname,
+
+        ub.id AS updated_by_id,
+        ub.username AS updated_by_username,
+        ub.name AS updated_by_name,
+        ub.surname AS updated_by_surname
+      FROM public.non_conformity_dispositions d
+      LEFT JOIN public.users du ON du.id = d.decided_by
+      LEFT JOIN public.users cb ON cb.id = d.created_by
+      LEFT JOIN public.users ub ON ub.id = d.updated_by
+      WHERE d.non_conformity_id = $1::uuid
+      ORDER BY d.decided_at DESC, d.id DESC
+      LIMIT 200
+    `,
+    [nonConformityId]
+  );
+
+  return res.rows.map((r) => ({
+    id: r.id,
+    non_conformity_id: r.non_conformity_id,
+    disposition_type: r.disposition_type,
+    qty: r.qty === null ? null : Number(r.qty),
+    unite: r.unite,
+    comment: r.comment,
+    decided_at: r.decided_at,
+    stock_movement_id: r.stock_movement_id,
+    created_at: r.created_at,
+    updated_at: r.updated_at,
+    decided_by:
+      r.decided_by_id && r.decided_by_username
+        ? mapUserLite({ id: r.decided_by_id, username: r.decided_by_username, name: r.decided_by_name, surname: r.decided_by_surname })
+        : null,
+    created_by:
+      r.created_by_id && r.created_by_username
+        ? mapUserLite({ id: r.created_by_id, username: r.created_by_username, name: r.created_by_name, surname: r.created_by_surname })
+        : null,
+    updated_by:
+      r.updated_by_id && r.updated_by_username
+        ? mapUserLite({ id: r.updated_by_id, username: r.updated_by_username, name: r.updated_by_name, surname: r.updated_by_surname })
+        : null,
+  }));
+}
+
 export async function repoGetNonConformity(id: string): Promise<NonConformityDetail | null> {
   type Row = {
     id: string;
@@ -1998,8 +2146,15 @@ export async function repoGetNonConformity(id: string): Promise<NonConformityDet
     severity: NonConformityDetail["severity"];
     status: NonConformityDetail["status"];
     detection_date: string;
+    lot_id: string | null;
+    lot_code: string | null;
+    lot_status: string | null;
+    due_date: string | null;
     root_cause: string | null;
     impact: string | null;
+    containment_action: string | null;
+    correction_action: string | null;
+    closed_at: string | null;
     control_id: string | null;
     client_id: string | null;
     client_company_name: string | null;
@@ -2035,6 +2190,11 @@ export async function repoGetNonConformity(id: string): Promise<NonConformityDet
     piece_technique_id: string | null;
     piece_code_piece: string | null;
     piece_designation: string | null;
+
+    closed_by_id: number | null;
+    closed_by_username: string | null;
+    closed_by_name: string | null;
+    closed_by_surname: string | null;
   };
 
   const res = await pool.query<Row>(
@@ -2046,8 +2206,15 @@ export async function repoGetNonConformity(id: string): Promise<NonConformityDet
         nc.severity::text AS severity,
         nc.status::text AS status,
         nc.detection_date::text AS detection_date,
+        nc.lot_id::text AS lot_id,
+        lt.lot_code AS lot_code,
+        lt.lot_status,
+        nc.due_date::text AS due_date,
         nc.root_cause,
         nc.impact,
+        nc.containment_action,
+        nc.correction_action,
+        nc.closed_at::text AS closed_at,
         nc.control_id::text AS control_id,
         nc.client_id,
         c.company_name AS client_company_name,
@@ -2069,6 +2236,11 @@ export async function repoGetNonConformity(id: string): Promise<NonConformityDet
         du.name AS detected_by_name,
         du.surname AS detected_by_surname,
 
+        clu.id AS closed_by_id,
+        clu.username AS closed_by_username,
+        clu.name AS closed_by_name,
+        clu.surname AS closed_by_surname,
+
         o.id::text AS of_id,
         o.numero AS of_numero,
         o.client_id AS of_client_id,
@@ -2084,6 +2256,7 @@ export async function repoGetNonConformity(id: string): Promise<NonConformityDet
         pt.code_piece AS piece_code_piece,
         pt.designation AS piece_designation
       FROM non_conformity nc
+      LEFT JOIN public.lots lt ON lt.id = nc.lot_id
       LEFT JOIN ordres_fabrication o ON o.id = nc.of_id
       LEFT JOIN clients oc ON oc.client_id = o.client_id
       LEFT JOIN affaire a ON a.id = COALESCE(nc.affaire_id, o.affaire_id)
@@ -2093,6 +2266,7 @@ export async function repoGetNonConformity(id: string): Promise<NonConformityDet
       JOIN users du ON du.id = nc.detected_by
       JOIN users cb ON cb.id = nc.created_by
       JOIN users ub ON ub.id = nc.updated_by
+      LEFT JOIN users clu ON clu.id = nc.closed_by
       WHERE nc.id = $1::uuid
       LIMIT 1
     `,
@@ -2150,6 +2324,7 @@ export async function repoGetNonConformity(id: string): Promise<NonConformityDet
 
   const documents = await selectDocuments(pool, "NON_CONFORMITY", id);
   const events = await selectEvents(pool, "NON_CONFORMITY", id);
+  const dispositions = await selectNcDispositions(pool, id);
 
   const actions: QualityActionListItem[] = actionsRes.rows.map((a) => ({
     id: a.id,
@@ -2174,8 +2349,24 @@ export async function repoGetNonConformity(id: string): Promise<NonConformityDet
     severity: r.severity,
     status: r.status,
     detection_date: r.detection_date,
+
+    lot_id: r.lot_id,
+    lot_code: r.lot_code,
+    lot_status: r.lot_status,
+
+    due_date: r.due_date,
+
     root_cause: r.root_cause,
     impact: r.impact,
+
+    containment_action: r.containment_action,
+    correction_action: r.correction_action,
+
+    closed_at: r.closed_at,
+    closed_by:
+      r.closed_by_id && r.closed_by_username
+        ? mapUserLite({ id: r.closed_by_id, username: r.closed_by_username, name: r.closed_by_name, surname: r.closed_by_surname })
+        : null,
     affaire:
       affaireId !== null && r.affaire_reference
         ? { id: affaireId, reference: r.affaire_reference, client_id: r.affaire_client_id, client_company_name: r.affaire_client_company_name }
@@ -2197,6 +2388,7 @@ export async function repoGetNonConformity(id: string): Promise<NonConformityDet
     created_by: mapUserLite({ id: r.created_by_id, username: r.created_by_username, name: r.created_by_name, surname: r.created_by_surname }),
     updated_by: mapUserLite({ id: r.updated_by_id, username: r.updated_by_username, name: r.updated_by_name, surname: r.updated_by_surname }),
     actions,
+    dispositions,
     documents,
     events,
   };
@@ -2208,15 +2400,21 @@ export async function repoCreateNonConformity(params: { body: CreateNonConformit
   try {
     await client.query("BEGIN");
 
-    const ins = await client.query<{ id: string }>(
+    const ins = await client.query<{ id: string; reference: string }>(
       `
         INSERT INTO non_conformity (
           reference,
           affaire_id,
           of_id,
           piece_technique_id,
+          of_operation_id,
+          piece_technique_operation_id,
           control_id,
           client_id,
+          lot_id,
+          bon_livraison_id,
+          reception_ligne_id,
+          fournisseur_id,
           description,
           severity,
           status,
@@ -2224,24 +2422,36 @@ export async function repoCreateNonConformity(params: { body: CreateNonConformit
           detection_date,
           root_cause,
           impact,
+          containment_action,
+          correction_action,
+          due_date,
+          closed_at,
+          closed_by,
           created_by,
           updated_by
         )
         VALUES (
           COALESCE($1, public.quality_generate_nc_reference()),
-          $2::bigint,$3::bigint,$4::uuid,$5::uuid,$6,
-          $7,$8::quality_nc_severity,$9::quality_nc_status,$10,$11::timestamptz,
-          $12,$13,$14,$15
+          $2::bigint,$3::bigint,$4::uuid,$5::uuid,$6::uuid,$7::uuid,$8,
+          $9::uuid,$10::uuid,$11::uuid,$12::uuid,
+          $13,$14::quality_nc_severity,$15::quality_nc_status,$16,$17::timestamptz,
+          $18,$19,$20,$21,$22::date,NULL,NULL,$23,$24
         )
-        RETURNING id::text AS id
+        RETURNING id::text AS id, reference
       `,
       [
         body.reference ?? null,
         body.affaire_id ?? null,
         body.of_id ?? null,
         body.piece_technique_id ?? null,
+        body.of_operation_id ?? null,
+        body.piece_technique_operation_id ?? null,
         body.control_id ?? null,
         body.client_id ?? null,
+        body.lot_id ?? null,
+        body.bon_livraison_id ?? null,
+        body.reception_ligne_id ?? null,
+        body.fournisseur_id ?? null,
         body.description,
         body.severity ?? "MINOR",
         body.status ?? "OPEN",
@@ -2249,12 +2459,39 @@ export async function repoCreateNonConformity(params: { body: CreateNonConformit
         body.detection_date ?? new Date().toISOString(),
         body.root_cause ?? null,
         body.impact ?? null,
+        body.containment_action ?? null,
+        body.correction_action ?? null,
+        body.due_date ?? null,
         audit.user_id,
         audit.user_id,
       ]
     );
     const id = ins.rows[0]?.id;
     if (!id) throw new Error("Failed to create non conformity");
+
+    const reference = ins.rows[0]?.reference ?? body.reference ?? null;
+    if (body.lot_id) {
+      const lot = await client.query<{ lot_status: string | null }>(
+        `SELECT lot_status FROM public.lots WHERE id = $1::uuid FOR UPDATE`,
+        [body.lot_id]
+      );
+      const row = lot.rows[0] ?? null;
+      if (!row) {
+        throw new HttpError(400, "INVALID_LOT", "Unknown lot_id");
+      }
+      const current = row.lot_status ?? "LIBERE";
+      if (current === "LIBERE") {
+        const note = reference ? `NC ${reference} : mise en quarantaine` : "Mise en quarantaine (NC)";
+        await client.query(
+          `
+            UPDATE public.lots
+            SET lot_status = 'EN_ATTENTE', lot_status_note = $2, updated_at = now(), updated_by = $3
+            WHERE id = $1::uuid
+          `,
+          [body.lot_id, note, audit.user_id]
+        );
+      }
+    }
 
     const snapshot = await selectNcSnapshot(client, id);
     await insertQualityEvent(client, {
@@ -2308,14 +2545,33 @@ export async function repoPatchNonConformity(params: { id: string; body: PatchNo
     if (patch.affaire_id !== undefined) fields.push(`affaire_id = ${push(patch.affaire_id)}::bigint`);
     if (patch.of_id !== undefined) fields.push(`of_id = ${push(patch.of_id)}::bigint`);
     if (patch.piece_technique_id !== undefined) fields.push(`piece_technique_id = ${push(patch.piece_technique_id)}::uuid`);
+    if (patch.of_operation_id !== undefined) fields.push(`of_operation_id = ${push(patch.of_operation_id)}::uuid`);
+    if (patch.piece_technique_operation_id !== undefined)
+      fields.push(`piece_technique_operation_id = ${push(patch.piece_technique_operation_id)}::uuid`);
     if (patch.control_id !== undefined) fields.push(`control_id = ${push(patch.control_id)}::uuid`);
     if (patch.client_id !== undefined) fields.push(`client_id = ${push(patch.client_id)}`);
+    if (patch.lot_id !== undefined) fields.push(`lot_id = ${push(patch.lot_id)}::uuid`);
+    if (patch.bon_livraison_id !== undefined) fields.push(`bon_livraison_id = ${push(patch.bon_livraison_id)}::uuid`);
+    if (patch.reception_ligne_id !== undefined) fields.push(`reception_ligne_id = ${push(patch.reception_ligne_id)}::uuid`);
+    if (patch.fournisseur_id !== undefined) fields.push(`fournisseur_id = ${push(patch.fournisseur_id)}::uuid`);
     if (patch.description !== undefined) fields.push(`description = ${push(patch.description)}`);
     if (patch.severity !== undefined) fields.push(`severity = ${push(patch.severity)}::quality_nc_severity`);
-    if (patch.status !== undefined) fields.push(`status = ${push(patch.status)}::quality_nc_status`);
+    if (patch.status !== undefined) {
+      fields.push(`status = ${push(patch.status)}::quality_nc_status`);
+      if (patch.status === "CLOSED") {
+        fields.push(`closed_at = now()`);
+        fields.push(`closed_by = ${push(audit.user_id)}`);
+      } else {
+        fields.push(`closed_at = NULL`);
+        fields.push(`closed_by = NULL`);
+      }
+    }
     if (patch.detection_date !== undefined) fields.push(`detection_date = ${push(patch.detection_date)}::timestamptz`);
     if (patch.root_cause !== undefined) fields.push(`root_cause = ${push(patch.root_cause)}`);
     if (patch.impact !== undefined) fields.push(`impact = ${push(patch.impact)}`);
+    if (patch.containment_action !== undefined) fields.push(`containment_action = ${push(patch.containment_action)}`);
+    if (patch.correction_action !== undefined) fields.push(`correction_action = ${push(patch.correction_action)}`);
+    if (patch.due_date !== undefined) fields.push(`due_date = ${push(patch.due_date)}::date`);
 
     fields.push(`updated_by = ${push(audit.user_id)}`);
 
@@ -2344,6 +2600,505 @@ export async function repoPatchNonConformity(params: { id: string; body: PatchNo
 
     await client.query("COMMIT");
     return repoGetNonConformity(id);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function repoUpdateNonConformityStatus(params: {
+  id: string;
+  body: UpdateNonConformityStatusBodyDTO;
+  audit: AuditContext;
+}): Promise<NonConformityDetail | null> {
+  const { id, body, audit } = params;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const before = await selectNcSnapshot(client, id);
+    if (!before) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    const sets: string[] = [
+      `status = $2::quality_nc_status`,
+      `updated_by = $3`,
+      `updated_at = now()`,
+    ];
+    const values: unknown[] = [id, body.status, audit.user_id];
+
+    if (body.status === "CLOSED") {
+      sets.push(`closed_at = now()`);
+      sets.push(`closed_by = $3`);
+    } else {
+      sets.push(`closed_at = NULL`);
+      sets.push(`closed_by = NULL`);
+    }
+
+    await client.query(`UPDATE non_conformity SET ${sets.join(", ")} WHERE id = $1::uuid`, values);
+
+    const after = await selectNcSnapshot(client, id);
+    await insertQualityEvent(client, {
+      entity_type: "NON_CONFORMITY",
+      entity_id: id,
+      event_type: "STATUS_CHANGE",
+      user_id: audit.user_id,
+      old_values: before as unknown as Record<string, unknown>,
+      new_values: after ? (after as unknown as Record<string, unknown>) : null,
+    });
+
+    await insertAuditLog(client, audit, {
+      action: "qualite.non-conformities.status",
+      entity_type: "non_conformity",
+      entity_id: id,
+      details: { status: body.status, note: body.note ?? null },
+    });
+
+    await client.query("COMMIT");
+    return repoGetNonConformity(id);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function repoListNonConformityDispositions(id: string): Promise<NonConformityDisposition[]> {
+  return selectNcDispositions(pool, id);
+}
+
+function movementNoFromSeq(n: number): string {
+  const padded = String(n).padStart(8, "0");
+  return `SM-${padded}`;
+}
+
+async function reserveStockMovementNo(tx: DbQueryer): Promise<string> {
+  const res = await tx.query<{ n: string }>(`SELECT nextval('public.stock_movement_no_seq')::text AS n`);
+  const raw = res.rows[0]?.n;
+  const n = raw ? Number(raw) : NaN;
+  if (!Number.isFinite(n)) throw new Error("Failed to reserve stock movement number");
+  return movementNoFromSeq(n);
+}
+
+async function resolveUnitIdForArticle(tx: DbQueryer, articleId: string, preferredUnitCode: string | null | undefined): Promise<string> {
+  const preferred = preferredUnitCode?.trim() ? preferredUnitCode.trim() : null;
+  let code: string | null = preferred;
+  if (!code) {
+    const a = await tx.query<{ unite: string | null }>(`SELECT unite FROM public.articles WHERE id = $1::uuid`, [articleId]);
+    code = a.rows[0]?.unite?.trim() ? a.rows[0].unite.trim() : null;
+  }
+  if (!code) code = "u";
+
+  const u = await tx.query<{ id: string }>(`SELECT id::text AS id FROM public.units WHERE code = $1`, [code]);
+  const unitId = u.rows[0]?.id;
+  if (!unitId) {
+    throw new HttpError(400, "UNKNOWN_UNIT", `Unknown unit code: ${code}`);
+  }
+  return unitId;
+}
+
+type EmplacementMapping = {
+  magasin_id: string;
+  location_id: string;
+  warehouse_id: string;
+};
+
+async function getEmplacementMapping(tx: DbQueryer, magasinId: string, emplacementId: number, label: "src"): Promise<EmplacementMapping> {
+  const res = await tx.query<{
+    magasin_id: string;
+    is_active: boolean;
+    location_id: string | null;
+    warehouse_id: string | null;
+  }>(
+    `
+      SELECT
+        e.magasin_id::text AS magasin_id,
+        e.is_active,
+        e.location_id::text AS location_id,
+        l.warehouse_id::text AS warehouse_id
+      FROM public.emplacements e
+      LEFT JOIN public.locations l ON l.id = e.location_id
+      WHERE e.id = $1::bigint
+    `,
+    [emplacementId]
+  );
+
+  const row = res.rows[0] ?? null;
+  if (!row) {
+    throw new HttpError(400, "INVALID_LOCATION", `Unknown ${label}_emplacement_id`);
+  }
+  if (row.magasin_id !== magasinId) {
+    throw new HttpError(400, "INVALID_LOCATION", `${label}_emplacement_id does not belong to ${label}_magasin_id`);
+  }
+  if (!row.is_active) {
+    throw new HttpError(409, "INVALID_LOCATION", `${label} emplacement is not active`);
+  }
+  if (!row.location_id || !row.warehouse_id) {
+    throw new HttpError(409, "LOCATION_NOT_MAPPED", "Emplacement is missing location mapping");
+  }
+  return { magasin_id: row.magasin_id, location_id: row.location_id, warehouse_id: row.warehouse_id };
+}
+
+async function ensureStockLevel(
+  tx: DbQueryer,
+  args: {
+    article_id: string;
+    unit_id: string;
+    warehouse_id: string;
+    location_id: string;
+    actor_user_id: number;
+  }
+): Promise<string> {
+  const existing = await tx.query<{ id: string; unit_id: string; warehouse_id: string }>(
+    `
+      SELECT
+        id::text AS id,
+        unit_id::text AS unit_id,
+        warehouse_id::text AS warehouse_id
+      FROM public.stock_levels
+      WHERE article_id = $1::uuid AND location_id = $2::uuid
+    `,
+    [args.article_id, args.location_id]
+  );
+
+  const row = existing.rows[0] ?? null;
+  if (row) {
+    if (row.unit_id !== args.unit_id) {
+      throw new HttpError(409, "STOCK_LEVEL_UNIT_MISMATCH", "Stock level unit mismatch");
+    }
+    if (row.warehouse_id !== args.warehouse_id) {
+      throw new HttpError(409, "STOCK_LEVEL_WAREHOUSE_MISMATCH", "Stock level warehouse mismatch");
+    }
+    return row.id;
+  }
+
+  await tx.query(
+    `
+      INSERT INTO public.stock_levels (
+        article_id, unit_id, warehouse_id, location_id,
+        managed_in_stock,
+        created_by, updated_by
+      )
+      VALUES ($1::uuid,$2::uuid,$3::uuid,$4::uuid,true,$5,$5)
+      ON CONFLICT (article_id, location_id) DO NOTHING
+    `,
+    [args.article_id, args.unit_id, args.warehouse_id, args.location_id, args.actor_user_id]
+  );
+
+  const after = await tx.query<{ id: string }>(
+    `SELECT id::text AS id FROM public.stock_levels WHERE article_id = $1::uuid AND location_id = $2::uuid`,
+    [args.article_id, args.location_id]
+  );
+  const id = after.rows[0]?.id;
+  if (!id) throw new Error("Failed to ensure stock level");
+  return id;
+}
+
+async function ensureStockBatchId(tx: DbQueryer, args: { stock_level_id: string; lot_id: string }): Promise<string> {
+  const lot = await tx.query<{ lot_code: string }>(`SELECT lot_code FROM public.lots WHERE id = $1::uuid`, [args.lot_id]);
+  const lotCode = lot.rows[0]?.lot_code;
+  if (!lotCode) throw new HttpError(400, "INVALID_LOT", "Unknown lot_id");
+
+  await tx.query(
+    `
+      INSERT INTO public.stock_batches (stock_level_id, batch_code)
+      VALUES ($1::uuid,$2)
+      ON CONFLICT (stock_level_id, batch_code) DO NOTHING
+    `,
+    [args.stock_level_id, lotCode]
+  );
+
+  const b = await tx.query<{ id: string }>(
+    `SELECT id::text AS id FROM public.stock_batches WHERE stock_level_id = $1::uuid AND batch_code = $2`,
+    [args.stock_level_id, lotCode]
+  );
+  const id = b.rows[0]?.id;
+  if (!id) throw new Error("Failed to ensure stock batch");
+  return id;
+}
+
+async function resolveStockSourceForLot(tx: DbQueryer, lotId: string, qtyRequired: number, hint?: { magasin_id: string; emplacement_id: number }) {
+  type Row = {
+    magasin_id: string;
+    emplacement_id: number;
+    qty_available: number;
+  };
+
+  const rows = await tx.query<Row>(
+    `
+      SELECT
+        e.magasin_id::text AS magasin_id,
+        e.id::int AS emplacement_id,
+        GREATEST(0, COALESCE(sb.qty_total, 0) - COALESCE(sb.qty_reserved, 0) - COALESCE(sb.qty_depreciated, 0))::float8 AS qty_available
+      FROM public.stock_batches sb
+      JOIN public.stock_levels sl ON sl.id = sb.stock_level_id
+      JOIN public.emplacements e ON e.location_id = sl.location_id
+      WHERE sb.lot_id = $1::uuid
+      ORDER BY qty_available DESC, e.id ASC
+    `,
+    [lotId]
+  );
+
+  const candidates = rows.rows.filter((r) => Number.isFinite(r.qty_available) && r.qty_available > 0);
+  if (hint) {
+    const match = candidates.find((c) => c.magasin_id === hint.magasin_id && c.emplacement_id === hint.emplacement_id);
+    if (!match) {
+      throw new HttpError(409, "STOCK_SOURCE_REQUIRED", "Aucune disponibilite sur l'emplacement choisi pour ce lot");
+    }
+    if (match.qty_available < qtyRequired) {
+      throw new HttpError(409, "INSUFFICIENT_STOCK", "Quantite insuffisante sur l'emplacement choisi");
+    }
+    return match;
+  }
+
+  if (candidates.length === 0) {
+    throw new HttpError(409, "INSUFFICIENT_STOCK", "Aucun stock disponible pour ce lot");
+  }
+  if (candidates.length > 1) {
+    throw new HttpError(409, "STOCK_SOURCE_REQUIRED", "Plusieurs emplacements contiennent ce lot : choisissez un emplacement source");
+  }
+  const only = candidates[0];
+  if (!only) throw new HttpError(409, "STOCK_SOURCE_REQUIRED", "Emplacement source requis");
+  if (only.qty_available < qtyRequired) {
+    throw new HttpError(409, "INSUFFICIENT_STOCK", "Quantite insuffisante");
+  }
+  return only;
+}
+
+async function createPostedStockMovementForDisposition(tx: DbQueryer, args: {
+  movement_type: "OUT" | "SCRAP";
+  lot_id: string;
+  qty: number;
+  unite: string | null;
+  src_magasin_id: string;
+  src_emplacement_id: number;
+  source_document_type: string;
+  source_document_id: string;
+  reason_code: string;
+  notes: string | null;
+  audit: AuditContext;
+  idempotency_key: string;
+}): Promise<{ movement_id: string; movement_no: string }> {
+  const lot = await tx.query<{ article_id: string }>(
+    `SELECT article_id::text AS article_id FROM public.lots WHERE id = $1::uuid`,
+    [args.lot_id]
+  );
+  const articleId = lot.rows[0]?.article_id;
+  if (!articleId) throw new HttpError(400, "INVALID_LOT", "Unknown lot_id");
+
+  const unitId = await resolveUnitIdForArticle(tx, articleId, args.unite);
+  const map = await getEmplacementMapping(tx, args.src_magasin_id, args.src_emplacement_id, "src");
+  const stockLevelId = await ensureStockLevel(tx, {
+    article_id: articleId,
+    unit_id: unitId,
+    warehouse_id: map.warehouse_id,
+    location_id: map.location_id,
+    actor_user_id: args.audit.user_id,
+  });
+  const stockBatchId = await ensureStockBatchId(tx, { stock_level_id: stockLevelId, lot_id: args.lot_id });
+
+  const movementNo = await reserveStockMovementNo(tx);
+
+  const ins = await tx.query<{ id: string }>(
+    `
+      INSERT INTO public.stock_movements (
+        movement_no,
+        movement_type,
+        status,
+        article_id,
+        stock_level_id,
+        stock_batch_id,
+        qty,
+        currency,
+        effective_at,
+        source_document_type,
+        source_document_id,
+        reason_code,
+        notes,
+        idempotency_key,
+        user_id,
+        created_by,
+        updated_by
+      )
+      VALUES ($1,$2::public.movement_type,'DRAFT',$3::uuid,$4::uuid,$5::uuid,$6,'EUR',now(),$7,$8,$9,$10,$11,$12,$12,$12)
+      RETURNING id::text AS id
+    `,
+    [
+      movementNo,
+      args.movement_type,
+      articleId,
+      stockLevelId,
+      stockBatchId,
+      args.qty,
+      args.source_document_type,
+      args.source_document_id,
+      args.reason_code,
+      args.notes,
+      args.idempotency_key,
+      args.audit.user_id,
+    ]
+  );
+  const movementId = ins.rows[0]?.id;
+  if (!movementId) throw new Error("Failed to create stock movement");
+
+  await tx.query(
+    `
+      INSERT INTO public.stock_movement_lines (
+        movement_id, line_no, article_id, lot_id,
+        qty, unite, unit_cost, currency,
+        src_magasin_id, src_emplacement_id,
+        dst_magasin_id, dst_emplacement_id,
+        note,
+        direction,
+        created_by, updated_by
+      )
+      VALUES ($1::uuid,1,$2::uuid,$3::uuid,$4,$5,NULL,NULL,$6::uuid,$7::bigint,NULL,NULL,$8,NULL,$9,$9)
+    `,
+    [movementId, articleId, args.lot_id, args.qty, args.unite, args.src_magasin_id, args.src_emplacement_id, args.notes ?? null, args.audit.user_id]
+  );
+
+  await tx.query(
+    `
+      UPDATE public.stock_movements
+      SET status = 'POSTED', posted_at = now(), posted_by = $2, updated_at = now(), updated_by = $2
+      WHERE id = $1::uuid AND status = 'DRAFT'
+    `,
+    [movementId, args.audit.user_id]
+  );
+
+  return { movement_id: movementId, movement_no: movementNo };
+}
+
+export async function repoCreateNonConformityDisposition(params: {
+  id: string;
+  body: CreateNonConformityDispositionBodyDTO;
+  audit: AuditContext;
+}): Promise<NonConformityDisposition> {
+  const { id, body, audit } = params;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const nc = await client.query<{ id: string; reference: string; lot_id: string | null }>(
+      `SELECT id::text AS id, reference, lot_id::text AS lot_id FROM public.non_conformity WHERE id = $1::uuid FOR UPDATE`,
+      [id]
+    );
+    const row = nc.rows[0] ?? null;
+    if (!row) {
+      await client.query("ROLLBACK");
+      throw new HttpError(404, "NC_NOT_FOUND", "Non-conformite introuvable");
+    }
+
+    const ins = await client.query<{ id: string }>(
+      `
+        INSERT INTO public.non_conformity_dispositions (
+          non_conformity_id,
+          disposition_type,
+          qty,
+          unite,
+          comment,
+          decided_by,
+          decided_at,
+          stock_movement_id,
+          created_by,
+          updated_by
+        )
+        VALUES ($1::uuid,$2,$3,$4,$5,$6,now(),NULL,$6,$6)
+        RETURNING id::text AS id
+      `,
+      [id, body.disposition_type, body.qty ?? null, body.unite ?? null, body.comment ?? null, audit.user_id]
+    );
+    const dispositionId = ins.rows[0]?.id;
+    if (!dispositionId) throw new Error("Failed to create disposition");
+
+    const lotId = row.lot_id;
+    const needsMovement = body.disposition_type === "SCRAP" || body.disposition_type === "RETURN_SUPPLIER";
+    if (needsMovement) {
+      if (!lotId) throw new HttpError(409, "LOT_REQUIRED", "Cette disposition necessite un lot lie a la NC");
+      const qty = body.qty ?? null;
+      if (!qty || !Number.isFinite(qty) || qty <= 0) {
+        throw new HttpError(422, "QTY_REQUIRED", "Veuillez renseigner une quantite positive");
+      }
+
+      const hint =
+        body.src_magasin_id && body.src_emplacement_id
+          ? { magasin_id: body.src_magasin_id, emplacement_id: body.src_emplacement_id }
+          : undefined;
+      const source = await resolveStockSourceForLot(client, lotId, qty, hint);
+
+      const movementType = body.disposition_type === "SCRAP" ? "SCRAP" : "OUT";
+      const reason = body.disposition_type === "SCRAP" ? "NC_SCRAP" : "NC_RETURN_SUPPLIER";
+      const notes = body.comment?.trim() ? body.comment.trim() : `NC ${row.reference} - ${body.disposition_type}`;
+      const idempotencyKey = `qualite:nc:${id}:disposition:${dispositionId}:movement`;
+
+      const movement = await createPostedStockMovementForDisposition(client, {
+        movement_type: movementType,
+        lot_id: lotId,
+        qty,
+        unite: body.unite ?? null,
+        src_magasin_id: source.magasin_id,
+        src_emplacement_id: source.emplacement_id,
+        source_document_type: "NON_CONFORMITY",
+        source_document_id: row.reference,
+        reason_code: reason,
+        notes,
+        audit,
+        idempotency_key: idempotencyKey,
+      });
+
+      await client.query(
+        `UPDATE public.non_conformity_dispositions SET stock_movement_id = $2::uuid, updated_at = now(), updated_by = $3 WHERE id = $1::uuid`,
+        [dispositionId, movement.movement_id, audit.user_id]
+      );
+
+      await client.query(
+        `UPDATE public.lots SET lot_status = 'BLOQUE', lot_status_note = $2, updated_at = now(), updated_by = $3 WHERE id = $1::uuid`,
+        [lotId, `NC ${row.reference} : ${body.disposition_type}`, audit.user_id]
+      );
+    } else if (lotId) {
+      if (body.disposition_type === "HOLD") {
+        await client.query(
+          `UPDATE public.lots SET lot_status = 'EN_ATTENTE', lot_status_note = $2, updated_at = now(), updated_by = $3 WHERE id = $1::uuid`,
+          [lotId, `NC ${row.reference} : mise en quarantaine`, audit.user_id]
+        );
+      }
+      if (body.disposition_type === "RELEASE") {
+        await client.query(
+          `UPDATE public.lots SET lot_status = 'LIBERE', lot_status_note = $2, updated_at = now(), updated_by = $3 WHERE id = $1::uuid`,
+          [lotId, `NC ${row.reference} : lot libere`, audit.user_id]
+        );
+      }
+    }
+
+    await insertQualityEvent(client, {
+      entity_type: "NON_CONFORMITY",
+      entity_id: id,
+      event_type: "DISPOSITION_CREATE",
+      user_id: audit.user_id,
+      old_values: null,
+      new_values: {
+        disposition_id: dispositionId,
+        disposition_type: body.disposition_type,
+        qty: body.qty ?? null,
+      },
+    });
+
+    await insertAuditLog(client, audit, {
+      action: "qualite.non-conformities.dispositions.create",
+      entity_type: "non_conformity_dispositions",
+      entity_id: dispositionId,
+      details: { nc_id: id, disposition_type: body.disposition_type, note: body.note ?? null },
+    });
+
+    await client.query("COMMIT");
+
+    const created = (await selectNcDispositions(pool, id)).find((d) => d.id === dispositionId) ?? null;
+    if (!created) throw new Error("Failed to reload disposition");
+    return created;
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;
