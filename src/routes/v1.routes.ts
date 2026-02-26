@@ -30,6 +30,8 @@ import fournisseursRoutes from "../module/fournisseurs/routes/fournisseurs.route
 import receptionsRoutes from "../module/receptions/routes/receptions.routes";
 import metrologieRoutes from "../module/metrologie/routes/metrologie.routes";
 
+import traceabilityRoutes from "../module/traceability/routes/traceability.routes"
+import asbuiltRoutes from "../module/asbuilt/routes/asbuilt.routes"
 const router = Router()
 
 router.use("/auth", authRoutes)
@@ -61,4 +63,6 @@ router.use("/dossiers", operationDossiersRoutes);
 router.use("/fournisseurs", fournisseursRoutes);
 router.use("/receptions", receptionsRoutes);
 router.use("/metrologie", metrologieRoutes);
+router.use("/traceability", traceabilityRoutes)
+router.use("/asbuilt", asbuiltRoutes)
 export default router
