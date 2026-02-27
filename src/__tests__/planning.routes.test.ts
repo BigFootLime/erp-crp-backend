@@ -173,4 +173,109 @@ describe("/api/v1/planning", () => {
       poste_id: "22222222-2222-2222-2222-222222222222",
     });
   });
+
+  it("POST /api/v1/planning/autoplan creates sequential events", async () => {
+    // Autoplan query: list operations for selected OFs
+    mocks.poolQuery
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            of_id: "7",
+            of_numero: "OF-7",
+            of_priority: "NORMAL",
+            of_operation_id: "44444444-4444-4444-4444-444444444444",
+            phase: 10,
+            designation: "Usinage",
+            temps_total_planned: 120,
+            status: "TODO",
+            machine_id: null,
+            poste_id: "22222222-2222-2222-2222-222222222222",
+          },
+        ],
+      })
+      // Skip-planned check: no existing active planning event
+      .mockResolvedValueOnce({ rows: [] })
+      // repoCreatePlanningEvent reload: event list item
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "33333333-3333-3333-3333-333333333333",
+            kind: "OF_OPERATION",
+            status: "PLANNED",
+            priority: "NORMAL",
+            of_id: "7",
+            of_operation_id: "44444444-4444-4444-4444-444444444444",
+            machine_id: null,
+            poste_id: "22222222-2222-2222-2222-222222222222",
+            title: "P10 - Usinage",
+            description: null,
+            start_ts: "2026-02-14T08:00:00.000Z",
+            end_ts: "2026-02-14T10:00:00.000Z",
+            allow_overlap: false,
+            created_at: "2026-02-14T07:00:00.000Z",
+            updated_at: "2026-02-14T07:00:00.000Z",
+            archived_at: null,
+            of_numero: "OF-7",
+            client_id: "C01",
+            client_company_name: "ACME",
+            client_color: null,
+            client_blocked: false,
+            client_block_reason: null,
+            piece_code: "P-001",
+            piece_designation: "Piece",
+            operation_phase: 10,
+            operation_designation: "Usinage",
+            machine_code: null,
+            machine_name: null,
+            poste_code: "P01",
+            poste_label: "Poste 1",
+            of_date_fin_prevue: null,
+            deadline_ts: null,
+            stop_reason: null,
+            blockers: [],
+          },
+        ],
+      });
+
+    // repoCreatePlanningEvent internals: BEGIN, select defaults, conflict check, insert, audit, COMMIT
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const q = String(sql);
+      if (q.includes("FROM public.of_operations op")) {
+        return {
+          rows: [
+            {
+              of_id: "7",
+              phase: 10,
+              designation: "Usinage",
+              machine_id: null,
+              poste_id: "22222222-2222-2222-2222-222222222222",
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const res = await request(app)
+      .post("/api/v1/planning/autoplan")
+      .set("Authorization", "Bearer fake")
+      .send({
+        of_ids: [7],
+        start_ts: "2026-02-14T08:00:00.000Z",
+        step_minutes: 15,
+        skip_planned: true,
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({
+      created_events: [
+        {
+          event_id: "33333333-3333-3333-3333-333333333333",
+          of_id: 7,
+          of_operation_id: "44444444-4444-4444-4444-444444444444",
+        },
+      ],
+      skipped_operations: [],
+    });
+  });
 });

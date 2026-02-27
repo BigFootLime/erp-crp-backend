@@ -680,6 +680,105 @@ export async function repoListPlanningEvents(filters: ListPlanningEventsQueryDTO
   return { items, total };
 }
 
+export async function repoListOfOperationsForAutoplan(params: {
+  of_ids: number[];
+  include_done?: boolean;
+}): Promise<
+  Array<{
+    of_id: number;
+    of_numero: string;
+    of_priority: PlanningEventListItem["priority"] | null;
+    of_operation_id: string;
+    phase: number;
+    designation: string;
+    temps_total_planned: number;
+    status: string;
+    machine_id: string | null;
+    poste_id: string | null;
+  }>
+> {
+  const includeDone = params.include_done === true;
+
+  type Row = {
+    of_id: string;
+    of_numero: string;
+    of_priority: string | null;
+    of_operation_id: string;
+    phase: number;
+    designation: string;
+    temps_total_planned: number | string | null;
+    status: string;
+    machine_id: string | null;
+    poste_id: string | null;
+  };
+
+  const res = await pool.query<Row>(
+    `
+      SELECT
+        o.id::text AS of_id,
+        o.numero AS of_numero,
+        o.priority::text AS of_priority,
+        op.id::text AS of_operation_id,
+        op.phase::int AS phase,
+        op.designation,
+        op.temps_total_planned::float AS temps_total_planned,
+        op.status::text AS status,
+        op.machine_id::text AS machine_id,
+        op.poste_id::text AS poste_id
+      FROM public.ordres_fabrication o
+      JOIN public.of_operations op ON op.of_id = o.id
+      WHERE o.id = ANY($1::bigint[])
+        ${includeDone ? "" : "AND op.status::text <> 'DONE'"}
+      ORDER BY o.id ASC, op.phase ASC, op.id ASC
+    `,
+    [params.of_ids]
+  );
+
+  const prioritySet = new Set(["LOW", "NORMAL", "HIGH", "CRITICAL"]);
+  return res.rows.map((r) => {
+    const raw = r.temps_total_planned;
+    const n = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : NaN;
+    const ofPriority = typeof r.of_priority === "string" && prioritySet.has(r.of_priority) ? (r.of_priority as PlanningEventListItem["priority"]) : null;
+
+    return {
+      of_id: toInt(r.of_id, "of_operations.of_id"),
+      of_numero: r.of_numero,
+      of_priority: ofPriority,
+      of_operation_id: r.of_operation_id,
+      phase: r.phase,
+      designation: r.designation,
+      temps_total_planned: Number.isFinite(n) ? n : 0,
+      status: r.status,
+      machine_id: r.machine_id,
+      poste_id: r.poste_id,
+    };
+  });
+}
+
+export async function repoGetActivePlanningEventForOfOperation(opId: string): Promise<{
+  id: string;
+  start_ts: string;
+  end_ts: string;
+} | null> {
+  const res = await pool.query<{ id: string; start_ts: string; end_ts: string }>(
+    `
+      SELECT
+        e.id::text AS id,
+        e.start_ts::text AS start_ts,
+        e.end_ts::text AS end_ts
+      FROM public.planning_events e
+      WHERE e.of_operation_id = $1::uuid
+        AND e.archived_at IS NULL
+        AND e.status::text <> 'CANCELLED'
+      ORDER BY e.end_ts DESC, e.id ASC
+      LIMIT 1
+    `,
+    [opId]
+  );
+
+  return res.rows[0] ?? null;
+}
+
 export async function repoGetPlanningEventDetail(id: string): Promise<PlanningEventDetail | null> {
   const event = await selectPlanningEventListItemById(pool, id);
   if (!event) return null;

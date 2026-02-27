@@ -141,9 +141,9 @@ function mapFournisseurRow(r: FournisseurRow): Fournisseur {
 function sortColumn(sortBy: ListFournisseursQueryDTO["sortBy"]) {
   switch (sortBy) {
     case "code":
-      return "f.code"
+      return "COALESCE(f.code, f.code_fournisseur)"
     case "nom":
-      return "f.nom"
+      return "COALESCE(f.nom, f.raison_sociale)"
     case "updated_at":
     default:
       return "f.updated_at"
@@ -165,7 +165,7 @@ export async function repoListFournisseurs(filters: ListFournisseursQueryDTO): P
   if (filters.search && filters.search.trim()) {
     const q = `%${filters.search.trim()}%`
     const p = push(q)
-    where.push(`(f.code ILIKE ${p} OR f.nom ILIKE ${p})`)
+    where.push(`(COALESCE(f.code, f.code_fournisseur) ILIKE ${p} OR COALESCE(f.nom, f.raison_sociale) ILIKE ${p})`)
   }
   if (typeof filters.actif === "boolean") {
     where.push(`f.actif = ${push(filters.actif)}`)
@@ -188,8 +188,8 @@ export async function repoListFournisseurs(filters: ListFournisseursQueryDTO): P
     `
       SELECT
         f.id::text AS id,
-        f.code,
-        f.nom,
+        COALESCE(f.code, f.code_fournisseur) AS code,
+        COALESCE(f.nom, f.raison_sociale) AS nom,
         f.actif,
         f.tva,
         f.siret,
@@ -226,8 +226,8 @@ export async function repoGetFournisseur(id: string): Promise<Fournisseur | null
     `
       SELECT
         f.id::text AS id,
-        f.code,
-        f.nom,
+        COALESCE(f.code, f.code_fournisseur) AS code,
+        COALESCE(f.nom, f.raison_sociale) AS nom,
         f.actif,
         f.tva,
         f.siret,
@@ -257,14 +257,25 @@ export async function repoCreateFournisseur(body: CreateFournisseurBodyDTO, audi
     const ins = await client.query<FournisseurRow>(
       `
         INSERT INTO public.fournisseurs (
-          code, nom, actif, tva, siret, email, telephone, site_web, notes,
-          created_by, updated_by
+          code,
+          code_fournisseur,
+          nom,
+          raison_sociale,
+          actif,
+          tva,
+          siret,
+          email,
+          telephone,
+          site_web,
+          notes,
+          created_by,
+          updated_by
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12)
         RETURNING
           id::text AS id,
-          code,
-          nom,
+          COALESCE(code, code_fournisseur) AS code,
+          COALESCE(nom, raison_sociale) AS nom,
           actif,
           tva,
           siret,
@@ -279,6 +290,8 @@ export async function repoCreateFournisseur(body: CreateFournisseurBodyDTO, audi
       `,
       [
         body.code,
+        body.code,
+        body.nom,
         body.nom,
         body.actif ?? true,
         body.tva ?? null,
@@ -324,8 +337,14 @@ export async function repoUpdateFournisseur(
     return `$${values.length}`
   }
 
-  if (patch.code !== undefined) sets.push(`code = ${push(patch.code)}`)
-  if (patch.nom !== undefined) sets.push(`nom = ${push(patch.nom)}`)
+  if (patch.code !== undefined) {
+    sets.push(`code = ${push(patch.code)}`)
+    sets.push(`code_fournisseur = ${push(patch.code)}`)
+  }
+  if (patch.nom !== undefined) {
+    sets.push(`nom = ${push(patch.nom)}`)
+    sets.push(`raison_sociale = ${push(patch.nom)}`)
+  }
   if (patch.actif !== undefined) sets.push(`actif = ${push(patch.actif)}`)
   if (patch.tva !== undefined) sets.push(`tva = ${push(patch.tva)}`)
   if (patch.siret !== undefined) sets.push(`siret = ${push(patch.siret)}`)
@@ -343,8 +362,8 @@ export async function repoUpdateFournisseur(
     WHERE id = ${push(id)}::uuid
     RETURNING
       id::text AS id,
-      code,
-      nom,
+      COALESCE(code, code_fournisseur) AS code,
+      COALESCE(nom, raison_sociale) AS nom,
       actif,
       tva,
       siret,

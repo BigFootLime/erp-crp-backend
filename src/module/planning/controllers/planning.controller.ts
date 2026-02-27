@@ -7,6 +7,7 @@ import { asyncHandler } from "../../../utils/asyncHandler";
 import { HttpError } from "../../../utils/httpError";
 import type { AuditContext } from "../repository/planning.repository";
 import {
+  autoPlanPlanningSchema,
   createPlanningEventCommentSchema,
   createPlanningEventSchema,
   listPlanningEventsQuerySchema,
@@ -16,6 +17,7 @@ import {
   planningEventIdParamSchema,
 } from "../validators/planning.validators";
 import {
+  svcAutoPlanPlanning,
   svcArchivePlanningEvent,
   svcCreatePlanningEvent,
   svcCreatePlanningEventComment,
@@ -128,6 +130,13 @@ export const createPlanningEvent: RequestHandler = async (req, res, next) => {
     next(err);
   }
 };
+
+export const autoPlanPlanning: RequestHandler = asyncHandler(async (req, res) => {
+  const audit = buildAuditContext(req);
+  const body = autoPlanPlanningSchema.parse({ body: req.body }).body;
+  const out = await svcAutoPlanPlanning({ body, audit });
+  res.status(201).json(out);
+});
 
 export const patchPlanningEvent: RequestHandler = async (req, res, next) => {
   try {

@@ -29,6 +29,7 @@ import operationDossiersRoutes from "../module/operation-dossiers/routes/operati
 import fournisseursRoutes from "../module/fournisseurs/routes/fournisseurs.routes";
 import receptionsRoutes from "../module/receptions/routes/receptions.routes";
 import metrologieRoutes from "../module/metrologie/routes/metrologie.routes";
+import quickCommandeRoutes from "../module/quick-commande/routes/quick-commande.routes";
 
 import traceabilityRoutes from "../module/traceability/routes/traceability.routes"
 import asbuiltRoutes from "../module/asbuilt/routes/asbuilt.routes"
@@ -64,6 +65,7 @@ router.use("/dossiers", operationDossiersRoutes);
 router.use("/fournisseurs", fournisseursRoutes);
 router.use("/receptions", receptionsRoutes);
 router.use("/metrologie", metrologieRoutes);
+router.use("/quick-commande", quickCommandeRoutes);
 router.use("/traceability", traceabilityRoutes)
 router.use("/asbuilt", asbuiltRoutes)
 router.use("/locks", locksRoutes)

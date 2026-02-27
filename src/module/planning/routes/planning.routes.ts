@@ -4,6 +4,7 @@ import { authenticateToken } from "../../auth/middlewares/auth.middleware";
 import { HttpError } from "../../../utils/httpError";
 import {
   archivePlanningEvent,
+  autoPlanPlanning,
   createPlanningEvent,
   createPlanningEventComment,
   getPlanningEvent,
@@ -47,6 +48,7 @@ router.get("/health", healthPlanning);
 
 router.get("/resources", listPlanningResources);
 router.get("/events", listPlanningEvents);
+router.post("/autoplan", autoPlanPlanning);
 router.post("/events", createPlanningEvent);
 router.get("/events/:id", getPlanningEvent);
 router.patch("/events/:id", patchPlanningEvent);

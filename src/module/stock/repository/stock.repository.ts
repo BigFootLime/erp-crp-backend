@@ -1205,6 +1205,83 @@ export async function repoCreateEmplacement(
     const id = ins.rows[0]?.id;
     if (!id) throw new Error("Failed to create emplacement");
 
+    // Ensure an emplacement is mapped to a stock location (required by movements).
+    // Legacy databases may not have triggers to maintain this mapping.
+    const warehouseCode = base.code;
+    const warehouseName = base.name;
+
+    let warehouseId = (
+      await client.query<{ id: string }>(
+        `SELECT id::text AS id FROM public.warehouses WHERE code = $1::citext LIMIT 1`,
+        [warehouseCode]
+      )
+    ).rows[0]?.id;
+
+    if (!warehouseId) {
+      try {
+        warehouseId = (
+          await client.query<{ id: string }>(
+            `INSERT INTO public.warehouses (code, name) VALUES ($1::citext,$2) RETURNING id::text AS id`,
+            [warehouseCode, warehouseName]
+          )
+        ).rows[0]?.id;
+      } catch (err) {
+        if (isPgUniqueViolation(err)) {
+          warehouseId = (
+            await client.query<{ id: string }>(
+              `SELECT id::text AS id FROM public.warehouses WHERE code = $1::citext LIMIT 1`,
+              [warehouseCode]
+            )
+          ).rows[0]?.id;
+        } else {
+          throw err;
+        }
+      }
+    }
+
+    if (!warehouseId) throw new Error("Failed to resolve warehouse for emplacement");
+
+    const locationCode = `${warehouseCode}-${body.code}`;
+    let locationId = (
+      await client.query<{ id: string }>(
+        `SELECT id::text AS id FROM public.locations WHERE warehouse_id = $1::uuid AND code = $2::citext LIMIT 1`,
+        [warehouseId, locationCode]
+      )
+    ).rows[0]?.id;
+
+    if (!locationId) {
+      try {
+        locationId = (
+          await client.query<{ id: string }>(
+            `
+              INSERT INTO public.locations (warehouse_id, code, description)
+              VALUES ($1::uuid,$2::citext,$3)
+              RETURNING id::text AS id
+            `,
+            [warehouseId, locationCode, `Emplacement ${body.code}`]
+          )
+        ).rows[0]?.id;
+      } catch (err) {
+        if (isPgUniqueViolation(err)) {
+          locationId = (
+            await client.query<{ id: string }>(
+              `SELECT id::text AS id FROM public.locations WHERE warehouse_id = $1::uuid AND code = $2::citext LIMIT 1`,
+              [warehouseId, locationCode]
+            )
+          ).rows[0]?.id;
+        } else {
+          throw err;
+        }
+      }
+    }
+
+    if (!locationId) throw new Error("Failed to resolve location for emplacement");
+
+    await client.query(
+      `UPDATE public.emplacements SET location_id = $2::uuid, updated_at = now(), updated_by = $3 WHERE id = $1::bigint`,
+      [id, locationId, audit.user_id]
+    );
+
     await insertAuditLog(client, audit, {
       action: "stock.emplacements.create",
       entity_type: "emplacements",

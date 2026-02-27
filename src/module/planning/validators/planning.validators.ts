@@ -123,6 +123,30 @@ export const createPlanningEventSchema = z
 
 export type CreatePlanningEventBodyDTO = z.infer<typeof createPlanningEventSchema>["body"];
 
+export const autoPlanPlanningSchema = z
+  .object({
+    body: z
+      .object({
+        of_ids: z.array(z.coerce.number().int().positive()).min(1).max(50),
+        start_ts: dateTimeString.optional(),
+        step_minutes: z.coerce.number().int().min(1).max(120).optional().default(15),
+        skip_planned: z.boolean().optional().default(true),
+        include_done: z.boolean().optional().default(false),
+        fallback_resource: z
+          .object({
+            resource_type: z.enum(["POSTE", "MACHINE"]),
+            resource_id: uuid,
+          })
+          .strict()
+          .optional()
+          .nullable(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type AutoPlanPlanningBodyDTO = z.infer<typeof autoPlanPlanningSchema>["body"];
+
 export const patchPlanningEventSchema = z
   .object({
     body: z
