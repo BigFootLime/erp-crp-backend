@@ -1459,9 +1459,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
 
     const hasPartial = analysis.lines.some((l) => l.status === "PARTIAL");
     const needsConfirmation = orderType !== "INTERNE" && hasPartial;
-    const needsLivraison = orderType !== "INTERNE" && analysis.lines.some((l) => Number(l.available_used_qty) > 0);
-    const needsProduction =
-      orderType === "INTERNE" ? true : analysis.lines.some((l) => l.shortage_qty > 0);
+    const needsProduction = orderType === "INTERNE" ? true : analysis.lines.some((l) => l.shortage_qty > 0);
 
     const decision = body.decision ?? null;
     if (needsConfirmation && decision === null) {
@@ -1493,70 +1491,49 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       }
     }
 
-    let livraisonAffaireId: number | null = null;
-    let productionAffaireId: number | null = null;
+    const livraisonAffaireId = await createAffaire(client, {
+      commande_id: commandeId,
+      devis_id: commande.devis_id ? toNullableInt(commande.devis_id, "commande.devis_id") : null,
+      client_id: clientId,
+      type_affaire: commande.type_affaire,
+      role: "LIVRAISON",
+    });
+    await insertCommandeToAffaireMapping(client, {
+      commande_id: commandeId,
+      affaire_id: livraisonAffaireId,
+      role: "LIVRAISON",
+      commentaire: "Generated from commande",
+    });
 
-    if (needsLivraison) {
-      livraisonAffaireId = await createAffaire(client, {
-        commande_id: commandeId,
-        devis_id: commande.devis_id ? toNullableInt(commande.devis_id, "commande.devis_id") : null,
-        client_id: clientId,
-        type_affaire: commande.type_affaire,
-        role: "LIVRAISON",
-      });
-      await insertCommandeToAffaireMapping(client, {
-        commande_id: commandeId,
-        affaire_id: livraisonAffaireId,
-        role: "LIVRAISON",
-        commentaire: "Generated from commande",
-      });
-    }
+    const productionAffaireId: number | null = null;
 
-    if (needsProduction) {
-      productionAffaireId = await createAffaire(client, {
-        commande_id: commandeId,
-        devis_id: commande.devis_id ? toNullableInt(commande.devis_id, "commande.devis_id") : null,
-        client_id: clientId,
-        type_affaire: commande.type_affaire,
-        role: "PRODUCTION",
-      });
-      await insertCommandeToAffaireMapping(client, {
-        commande_id: commandeId,
-        affaire_id: productionAffaireId,
-        role: "PRODUCTION",
-        commentaire: "Auto-generated from commande stock analysis",
-      });
-    }
+    const planLines: CommandeAllocationPlanLine[] = analysis.lines.map((l) => ({
+      commande_ligne_id: l.commande_ligne_id,
+      code_piece: l.code_piece,
+      article_ref_id: l.article_id,
+      article_legacy_id: null,
+      qty_ordered: l.requested_qty,
+      qty_on_hand: 0,
+      qty_from_stock: l.available_used_qty,
+      qty_to_produce: l.shortage_qty,
+    }));
 
-    if (livraisonAffaireId) {
-      const planLines: CommandeAllocationPlanLine[] = analysis.lines.map((l) => ({
-        commande_ligne_id: l.commande_ligne_id,
-        code_piece: l.code_piece,
-        article_ref_id: l.article_id,
-        article_legacy_id: null,
-        qty_ordered: l.requested_qty,
-        qty_on_hand: 0,
-        qty_from_stock: l.available_used_qty,
-        qty_to_produce: l.shortage_qty,
-      }));
+    const allocationMode =
+      decision !== null
+        ? decision
+        : needsProduction
+          ? "AUTO_PRODUCTION"
+          : "AUTO_STOCK";
 
-      const allocationMode =
-        decision !== null
-          ? decision
-          : needsProduction
-            ? "AUTO_PRODUCTION"
-            : "AUTO_STOCK";
-
-      await upsertCommandeAllocations(client, {
-        commande_id: commandeId,
-        livraison_affaire_id: livraisonAffaireId,
-        production_affaire_id: productionAffaireId,
-        allocation_mode: allocationMode,
-        reserve_stock: false,
-        reserved_qty_by_line: decision !== null ? reservedByLine : null,
-        lines: planLines,
-      });
-    }
+    await upsertCommandeAllocations(client, {
+      commande_id: commandeId,
+      livraison_affaire_id: livraisonAffaireId,
+      production_affaire_id: productionAffaireId,
+      allocation_mode: allocationMode,
+      reserve_stock: false,
+      reserved_qty_by_line: decision !== null ? reservedByLine : null,
+      lines: planLines,
+    });
 
     const reservationsCreated: string[] = [];
     if (decision !== null && stockLocationId) {
@@ -1634,7 +1611,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
     }
 
     const ofIds: number[] = [];
-    if (productionAffaireId) {
+    if (needsProduction) {
       const refs = await selectCommandeLineRefs(client, commandeId);
       const byLine = new Map<number, CommandeLineRef>(refs.map((r) => [r.commande_ligne_id, r] as const));
 
@@ -1680,7 +1657,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
           [
             ofId,
             numero,
-            productionAffaireId,
+            livraisonAffaireId,
             commandeId,
             clientId,
             pieceTechniqueId,
@@ -1780,9 +1757,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
 
     await client.query("COMMIT");
 
-    const affaireIds: number[] = [];
-    if (livraisonAffaireId) affaireIds.push(livraisonAffaireId);
-    if (productionAffaireId) affaireIds.push(productionAffaireId);
+    const affaireIds: number[] = [livraisonAffaireId];
 
     return {
       affaire_ids: affaireIds,
@@ -2350,24 +2325,7 @@ export async function repoGenerateAffairesFromCommande(id: string, body: Generat
       commentaire: "Generated from commande",
     });
 
-    let productionAffaireId: number | null = null;
-    if (needsProduction) {
-      productionAffaireId = await createAffaire(client, {
-        commande_id: commandeId,
-        client_id: commande.client_id,
-        type_affaire: commande.type_affaire,
-        role: "PRODUCTION",
-      });
-
-      await insertCommandeToAffaireMapping(client, {
-        commande_id: commandeId,
-        affaire_id: productionAffaireId,
-        role: "PRODUCTION",
-        commentaire: requiresConfirmation
-          ? "Generated from commande after arbitration"
-          : "Auto-generated from commande stock allocation",
-      });
-    }
+    const productionAffaireId: number | null = null;
 
     const allocationMode = requiresConfirmation ? body.strategy : needsProduction ? "AUTO_PRODUCTION" : "AUTO_STOCK";
     await upsertCommandeAllocations(client, {
@@ -2383,7 +2341,7 @@ export async function repoGenerateAffairesFromCommande(id: string, body: Generat
 
     await client.query("COMMIT");
     return {
-      affaire_ids: [livraisonAffaireId, ...(productionAffaireId ? [productionAffaireId] : [])],
+      affaire_ids: [livraisonAffaireId],
       livraison_affaire_id: livraisonAffaireId,
       production_affaire_id: productionAffaireId,
       requires_confirmation: false,
@@ -2484,22 +2442,7 @@ export async function repoConfirmGenerateAffaires(id: string, body: ConfirmGener
 
     const needsProduction = lines.some((l) => l.qty_to_produce > 0);
 
-    let productionAffaireId: number | null = null;
-    if (needsProduction) {
-      productionAffaireId = await createAffaire(client, {
-        commande_id: commandeId,
-        client_id: commande.client_id,
-        type_affaire: commande.type_affaire,
-        role: "PRODUCTION",
-      });
-
-      await insertCommandeToAffaireMapping(client, {
-        commande_id: commandeId,
-        affaire_id: productionAffaireId,
-        role: "PRODUCTION",
-        commentaire: "Generated after user confirmation (partial stock)",
-      });
-    }
+    const productionAffaireId: number | null = null;
 
     await upsertCommandeAllocations(client, {
       commande_id: commandeId,
@@ -2514,7 +2457,7 @@ export async function repoConfirmGenerateAffaires(id: string, body: ConfirmGener
 
     await client.query("COMMIT");
     return {
-      affaire_ids: [livraisonAffaireId, ...(productionAffaireId ? [productionAffaireId] : [])],
+      affaire_ids: [livraisonAffaireId],
       livraison_affaire_id: livraisonAffaireId,
       production_affaire_id: productionAffaireId,
       requires_confirmation: false,

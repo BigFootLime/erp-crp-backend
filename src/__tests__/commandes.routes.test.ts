@@ -546,7 +546,7 @@ describe("/api/v1/commandes", () => {
     expect(linkCall).toBeTruthy();
   });
 
-  it("POST /api/v1/commandes/:id/generate-affaires creates PRODUCTION only when no stock is available", async () => {
+  it("POST /api/v1/commandes/:id/generate-affaires creates LIVRAISON even when no stock is available", async () => {
     process.env.JWT_SECRET = "test-secret";
     const token = jwt.sign(
       { id: 1, username: "test", email: "test@example.com", role: "admin" },
@@ -650,8 +650,8 @@ describe("/api/v1/commandes", () => {
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({
       affaire_ids: [7],
-      livraison_affaire_id: null,
-      production_affaire_id: 7,
+      livraison_affaire_id: 7,
+      production_affaire_id: null,
     });
   });
 });
