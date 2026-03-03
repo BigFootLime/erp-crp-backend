@@ -4,6 +4,11 @@ import { z } from "zod";
 export const qualityLevels = z.enum(["Certificat MP","Certificat TR","Relevé de valeurs"]);
 export const QUALITY_LEVELS = ['Certificat MP', 'Certificat TR', 'Relevé de valeurs'] as const;
 
+function emptyStringToUndefined(value: unknown) {
+  if (typeof value !== "string") return value;
+  return value.trim() === "" ? undefined : value;
+}
+
 export const addressSchema = z.object({
   name: z.string().min(1),
   street: z.string().min(1),
@@ -27,6 +32,7 @@ export const bankSchema = z.object({
   bic: z.string().min(8),
 });
 export const createClientSchema = z.object({
+  client_code: z.preprocess(emptyStringToUndefined, z.string().trim().min(1).max(30)).optional(),
   company_name: z.string().min(1),
   email: z.string().email().optional().or(z.literal("")),
   phone: z.string().optional().or(z.literal("")),

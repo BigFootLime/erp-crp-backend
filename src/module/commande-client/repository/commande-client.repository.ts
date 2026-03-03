@@ -4,6 +4,7 @@ import path from "node:path";
 import type { PoolClient } from "pg";
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
+import { generateAffaireCode, requireClientCode } from "../../../shared/codes/code-generator.service";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 import type {
@@ -1458,6 +1459,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
 
     const hasPartial = analysis.lines.some((l) => l.status === "PARTIAL");
     const needsConfirmation = orderType !== "INTERNE" && hasPartial;
+    const needsLivraison = orderType !== "INTERNE" && analysis.lines.some((l) => Number(l.available_used_qty) > 0);
     const needsProduction =
       orderType === "INTERNE" ? true : analysis.lines.some((l) => l.shortage_qty > 0);
 
@@ -1494,12 +1496,13 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
     let livraisonAffaireId: number | null = null;
     let productionAffaireId: number | null = null;
 
-    if (orderType !== "INTERNE") {
+    if (needsLivraison) {
       livraisonAffaireId = await createAffaire(client, {
         commande_id: commandeId,
         devis_id: commande.devis_id ? toNullableInt(commande.devis_id, "commande.devis_id") : null,
         client_id: clientId,
         type_affaire: commande.type_affaire,
+        role: "LIVRAISON",
       });
       await insertCommandeToAffaireMapping(client, {
         commande_id: commandeId,
@@ -1515,6 +1518,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         devis_id: commande.devis_id ? toNullableInt(commande.devis_id, "commande.devis_id") : null,
         client_id: clientId,
         type_affaire: commande.type_affaire,
+        role: "PRODUCTION",
       });
       await insertCommandeToAffaireMapping(client, {
         commande_id: commandeId,
@@ -1801,6 +1805,7 @@ type AffaireCreationInput = {
   client_id: string;
   devis_id?: number | null;
   type_affaire: string;
+  role: "LIVRAISON" | "PRODUCTION";
 };
 
 async function createAffaire(db: PoolClient, input: AffaireCreationInput): Promise<number> {
@@ -1808,7 +1813,12 @@ async function createAffaire(db: PoolClient, input: AffaireCreationInput): Promi
   const rawId = seq.rows[0]?.id;
   if (!rawId) throw new Error("Failed to allocate affaire id");
   const id = toInt(rawId, "affaire.id");
-  const reference = `AFF-${id}`.slice(0, 30);
+
+  const clientCode = await requireClientCode(db, input.client_id);
+  const reference = await generateAffaireCode(db, {
+    type: input.role === "PRODUCTION" ? "PROD" : "LIV",
+    client_code: clientCode,
+  });
 
   await db.query(
     `
@@ -2330,6 +2340,7 @@ export async function repoGenerateAffairesFromCommande(id: string, body: Generat
       commande_id: commandeId,
       client_id: commande.client_id,
       type_affaire: commande.type_affaire,
+      role: "LIVRAISON",
     });
 
     await insertCommandeToAffaireMapping(client, {
@@ -2345,6 +2356,7 @@ export async function repoGenerateAffairesFromCommande(id: string, body: Generat
         commande_id: commandeId,
         client_id: commande.client_id,
         type_affaire: commande.type_affaire,
+        role: "PRODUCTION",
       });
 
       await insertCommandeToAffaireMapping(client, {
@@ -2421,6 +2433,7 @@ export async function repoConfirmGenerateAffaires(id: string, body: ConfirmGener
         commande_id: commandeId,
         client_id: commande.client_id,
         type_affaire: commande.type_affaire,
+        role: "LIVRAISON",
       });
       await insertCommandeToAffaireMapping(client, {
         commande_id: commandeId,
@@ -2477,6 +2490,7 @@ export async function repoConfirmGenerateAffaires(id: string, body: ConfirmGener
         commande_id: commandeId,
         client_id: commande.client_id,
         type_affaire: commande.type_affaire,
+        role: "PRODUCTION",
       });
 
       await insertCommandeToAffaireMapping(client, {

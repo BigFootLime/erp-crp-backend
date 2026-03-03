@@ -441,6 +441,14 @@ describe("/api/v1/commandes", () => {
 
       if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
 
+      if (q.toLowerCase().includes("pg_get_serial_sequence")) {
+        return { rows: [{ of_id: "9" }] };
+      }
+
+      if (q.includes("pg_get_serial_sequence")) {
+        return { rows: [{ of_id: "9" }] };
+      }
+
       if (q.includes("FROM commande_client") && q.includes("FOR UPDATE") && q.includes("order_type")) {
         return {
           rows: [
@@ -495,6 +503,22 @@ describe("/api/v1/commandes", () => {
         return { rows: [{ id: "7" }] };
       }
 
+      if (q.includes("SELECT client_code FROM public.clients")) {
+        return { rows: [{ client_code: "CLI-001" }] };
+      }
+
+      if (q.includes("public.fn_next_code_value")) {
+        return { rows: [{ v: "1" }] };
+      }
+
+      if (q.includes("pg_get_serial_sequence") && q.includes("ordres_fabrication")) {
+        return { rows: [{ of_id: "9" }] };
+      }
+
+      if (q.includes("pg_get_serial_sequence") && q.includes("ordres_fabrication")) {
+        return { rows: [{ of_id: "9" }] };
+      }
+
       if (q.includes("INSERT INTO affaire")) return { rows: [] };
       if (q.includes("INSERT INTO commande_to_affaire")) return { rows: [] };
       if (q.includes("INSERT INTO public.commande_ligne_affaire_allocation")) return { rows: [] };
@@ -520,5 +544,114 @@ describe("/api/v1/commandes", () => {
       String(c[0]).includes("INSERT INTO commande_to_affaire")
     );
     expect(linkCall).toBeTruthy();
+  });
+
+  it("POST /api/v1/commandes/:id/generate-affaires creates PRODUCTION only when no stock is available", async () => {
+    process.env.JWT_SECRET = "test-secret";
+    const token = jwt.sign(
+      { id: 1, username: "test", email: "test@example.com", role: "admin" },
+      process.env.JWT_SECRET,
+      { expiresIn: "1h" }
+    );
+
+    const MAGASIN_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+    const LOCATION_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+    const ARTICLE_ID = "11111111-1111-1111-1111-111111111111";
+    const PIECE_ID = "22222222-2222-2222-2222-222222222222";
+
+    mocks.clientQuery.mockImplementation(async (sql: unknown, params?: unknown[]) => {
+      const q = String(sql);
+      const p0 = Array.isArray(params) ? params[0] : undefined;
+
+      if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
+
+      if (q.includes("FROM commande_client") && q.includes("FOR UPDATE") && q.includes("order_type")) {
+        return {
+          rows: [
+            {
+              client_id: "001",
+              type_affaire: "fabrication",
+              order_type: "FERME",
+              devis_id: null,
+              numero: "CC-123",
+              dest_stock_magasin_id: null,
+              dest_stock_emplacement_id: null,
+            },
+          ],
+        };
+      }
+
+      if (q.includes("FROM pg_attribute") && q.includes("commande_to_affaire") && q.includes("attname = 'role'")) {
+        return { rows: [{ ok: 1 }] };
+      }
+
+      if (q.includes("FROM commande_to_affaire") && q.includes("WHERE commande_id")) {
+        return { rows: [] };
+      }
+
+      if (q.includes("FROM public.erp_settings") && String(p0) === "stock.default_shipping_location") {
+        return { rows: [{ value_json: { magasin_id: MAGASIN_ID, emplacement_id: 1 } }] };
+      }
+
+      if (q.includes("FROM public.emplacements") && q.includes("SELECT location_id")) {
+        return { rows: [{ location_id: LOCATION_ID }] };
+      }
+
+      if (q.includes("FROM commande_ligne") && q.includes("LEFT JOIN LATERAL")) {
+        return {
+          rows: [
+            {
+              commande_ligne_id: 1,
+              code_piece: "P1",
+              qty_ordered: 1,
+              article_id: ARTICLE_ID,
+              piece_technique_id: PIECE_ID,
+            },
+          ],
+        };
+      }
+
+      // No stock available -> should create production only.
+      if (q.includes("FROM public.stock_levels") && q.includes("GROUP BY sl.article_id")) {
+        return { rows: [{ article_id: ARTICLE_ID, qty_available: 0 }] };
+      }
+
+      if (q.includes("nextval('public.affaire_id_seq')")) {
+        return { rows: [{ id: "7" }] };
+      }
+
+      if (q.includes("SELECT client_code FROM public.clients")) {
+        return { rows: [{ client_code: "CLI-001" }] };
+      }
+
+      if (q.includes("public.fn_next_code_value")) {
+        return { rows: [{ v: "1" }] };
+      }
+
+      if (q.includes("INSERT INTO affaire")) return { rows: [] };
+      if (q.includes("INSERT INTO commande_to_affaire")) return { rows: [] };
+      if (q.includes("INSERT INTO public.commande_client_event_log")) return { rows: [] };
+      if (q.includes("INSERT INTO erp_audit_logs")) return { rows: [{ id: "1", created_at: "2026-01-01T00:00:00.000Z" }] };
+      if (q.includes("UPDATE commande_client SET updated_at")) return { rows: [] };
+
+      if (q.toLowerCase().includes("pg_get_serial_sequence")) {
+        return { rows: [{ of_id: "9" }] };
+      }
+
+      // OF creation is allowed but not asserted here.
+      return { rows: [] };
+    });
+
+    const res = await request(app)
+      .post("/api/v1/commandes/123/generate-affaires")
+      .set("Authorization", `Bearer ${token}`)
+      .send({});
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      affaire_ids: [7],
+      livraison_affaire_id: null,
+      production_affaire_id: 7,
+    });
   });
 });

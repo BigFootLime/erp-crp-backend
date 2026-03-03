@@ -6,6 +6,8 @@ import { HttpError } from "../../../utils/httpError";
 import type { CreateClientDTO } from "../validators/client.validators";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
+import { generateClientCode } from "../../../shared/codes/code-generator.service";
+import { codeFormatHintText, isValidCode } from "../../../shared/codes/code-validator";
 
 export type AuditContext = {
   user_id: number;
@@ -23,6 +25,14 @@ type DbQueryer = Pick<PoolClient, "query">;
 
 function isPgForeignKeyViolation(err: unknown): boolean {
   return (err as { code?: unknown } | null)?.code === "23503";
+}
+
+function getPgErrorInfo(err: unknown): { code: string | null; constraint: string | null } {
+  const e = err as { code?: unknown; constraint?: unknown } | null;
+  return {
+    code: typeof e?.code === "string" ? e.code : null,
+    constraint: typeof e?.constraint === "string" ? e.constraint : null,
+  };
 }
 
 async function insertAuditLog(
@@ -102,7 +112,8 @@ async function insertClient(
   dto: CreateClientDTO,
   billAddrId: string,
   delivAddrId: string,
-  bankInfoId: string
+  bankInfoId: string,
+  clientCode: string
 ): Promise<string> {
   const normalizedProvidedDocsId =
     dto.provided_documents_id && dto.provided_documents_id.trim() !== ''
@@ -114,6 +125,7 @@ async function insertClient(
 
   const q = `
   INSERT INTO clients (
+    client_code,
     company_name, contact_id,
     email, phone, website_url,
     siret, vat_number, naf_code,
@@ -123,20 +135,21 @@ async function insertClient(
     observations, provided_documents_id,
     quality_levels               
   ) VALUES (
-    $1,$2,
-    NULLIF($3,''), NULLIF($4,''), NULLIF($5,''),
-    NULLIF($6,''), NULLIF($7,''), NULLIF($8,''),
-    $9, $10, NULLIF($11,''), COALESCE($12::timestamp, now()),
-    $13,
-    $14, $15, $16,
-    NULLIF($17,''), $18,
-    COALESCE($19::text[], '{}')   
+    $1,$2,$3,
+    NULLIF($4,''), NULLIF($5,''), NULLIF($6,''),
+    NULLIF($7,''), NULLIF($8,''), NULLIF($9,''),
+    $10, $11, NULLIF($12,''), COALESCE($13::timestamp, now()),
+    $14,
+    $15, $16, $17,
+    NULLIF($18,''), $19,
+    COALESCE($20::text[], '{}')   
   )
   RETURNING client_id
 `;
 
 
  const { rows } = await db.query(q, [
+  clientCode,
   dto.company_name, null,
   dto.email ?? "", dto.phone ?? "", dto.website_url ?? "",
   dto.siret ?? "", dto.vat_number ?? "", dto.naf_code ?? "",
@@ -279,8 +292,28 @@ export async function repoCreateClient(dto: CreateClientDTO, audit: AuditContext
     const delivAddrId = await insertAddressLivraison(db, dto.delivery_address);
     const bankInfoId = await upsertBank(db, dto.bank);
 
+    const clientCode = await (async (): Promise<string> => {
+      const provided = (dto.client_code ?? "").trim();
+      if (provided) {
+        if (!isValidCode("client", provided)) {
+          throw new HttpError(400, "CLIENT_CODE_INVALID", `Code client invalide. ${codeFormatHintText("client")}`);
+        }
+        return provided;
+      }
+      return generateClientCode(db);
+    })();
+
     // ✅ récupère l'ID généré par le trigger
-    const clientId = await insertClient(db, dto, billAddrId, delivAddrId, bankInfoId);
+    let clientId = "";
+    try {
+      clientId = await insertClient(db, dto, billAddrId, delivAddrId, bankInfoId, clientCode);
+    } catch (err) {
+      const { code, constraint } = getPgErrorInfo(err);
+      if (code === "23505" && constraint === "clients_client_code_key") {
+        throw new HttpError(409, "CLIENT_CODE_EXISTS", "Code client deja utilise");
+      }
+      throw err;
+    }
 
     // (optionnel) verrou léger pour s'assurer de la visibilité dans la TX
     await db.query(`SELECT 1 FROM clients WHERE client_id = $1 FOR UPDATE`, [clientId]);
@@ -311,6 +344,7 @@ export async function repoCreateClient(dto: CreateClientDTO, audit: AuditContext
       entity_id: clientId,
       details: {
         client_id: clientId,
+        client_code: clientCode,
         company_name: dto.company_name,
         status: dto.status,
         blocked: dto.blocked,
@@ -436,29 +470,44 @@ export async function repoUpdateClient(id: string, dto: CreateClientDTO, audit: 
     const normalizedBillerId =
       typeof dto.biller_id === "string" && dto.biller_id.trim() !== "" ? dto.biller_id : null;
 
+    const clientCodeToSet = await (async (): Promise<string | null> => {
+      if (dto.client_code === undefined) return null;
+      const provided = (dto.client_code ?? "").trim();
+      if (!provided) {
+        throw new HttpError(400, "CLIENT_CODE_REQUIRED", "Code client requis");
+      }
+      if (!isValidCode("client", provided)) {
+        throw new HttpError(400, "CLIENT_CODE_INVALID", `Code client invalide. ${codeFormatHintText("client")}`);
+      }
+      return provided;
+    })();
+
     // 6) Mise à jour des champs principaux du client
-    await db.query(
+    try {
+      await db.query(
       `
       UPDATE clients
          SET company_name          = $1,
-              email                 = NULLIF($2,''),
-              phone                 = NULLIF($3,''),
-              website_url           = NULLIF($4,''),
-              siret                 = NULLIF($5,''),
-              vat_number            = NULLIF($6,''),
-              naf_code              = NULLIF($7,''),
-              status                = $8,
-              blocked               = $9,
-              reason                = NULLIF($10,''),
-              creation_date         = COALESCE($11::timestamp, creation_date),
-              biller_id             = $12,
-              observations          = NULLIF($13,''),
-              provided_documents_id = $14,
-              quality_levels        = COALESCE($15::text[], '{}')
-       WHERE client_id = $16
+             client_code           = COALESCE($2, client_code),
+              email                 = NULLIF($3,''),
+              phone                 = NULLIF($4,''),
+              website_url           = NULLIF($5,''),
+              siret                 = NULLIF($6,''),
+              vat_number            = NULLIF($7,''),
+              naf_code              = NULLIF($8,''),
+              status                = $9,
+              blocked               = $10,
+              reason                = NULLIF($11,''),
+              creation_date         = COALESCE($12::timestamp, creation_date),
+              biller_id             = $13,
+              observations          = NULLIF($14,''),
+              provided_documents_id = $15,
+              quality_levels        = COALESCE($16::text[], '{}')
+       WHERE client_id = $17
       `,
       [
         dto.company_name,
+        clientCodeToSet,
         dto.email ?? "",
         dto.phone ?? "",
         dto.website_url ?? "",
@@ -475,7 +524,14 @@ export async function repoUpdateClient(id: string, dto: CreateClientDTO, audit: 
         dto.quality_levels ?? [],
         id,
       ]
-    );
+      );
+    } catch (err) {
+      const { code, constraint } = getPgErrorInfo(err);
+      if (code === "23505" && constraint === "clients_client_code_key") {
+        throw new HttpError(409, "CLIENT_CODE_EXISTS", "Code client deja utilise");
+      }
+      throw err;
+    }
 
     // 7) Contacts : upsert en gardant les contact_id
 
