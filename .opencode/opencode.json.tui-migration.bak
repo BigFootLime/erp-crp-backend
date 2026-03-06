@@ -20,6 +20,11 @@
     "auto": true,
     "prune": true
   },
+  "theme": "opencode",
+  "tui": {
+    "scroll_speed": 3,
+    "diff_style": "auto"
+  },
   "watcher": {
     "ignore": ["node_modules/**", "dist/**", "build/**", ".git/**", "*.log"]
   },

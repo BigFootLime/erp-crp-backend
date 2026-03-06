@@ -1045,6 +1045,15 @@ export async function repoCreateCommande(input: CreateCommandeInput, documents: 
     await insertCommandeEcheances(client, commandeId, input.echeances ?? []);
     await insertCommandeDocuments(client, commandeId, documents);
 
+    // Initial workflow status: ENREGISTREE
+    await client.query(
+      `
+        INSERT INTO commande_historique (commande_id, user_id, ancien_statut, nouveau_statut, commentaire)
+        VALUES ($1, $2, $3, $4, $5)
+      `,
+      [commandeIdInt, null, null, "ENREGISTREE", "Commande créée"]
+    );
+
     await client.query("COMMIT");
     return { id: toInt(commandeId, "commande.id") };
   } catch (e) {
@@ -1417,18 +1426,59 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       );
     }
 
-    // Idempotency: if mappings already exist, return them deterministically.
+    const requestedLivraisonCountRaw = typeof body.livraison_count === "number" ? body.livraison_count : 1;
+    const requestedLivraisonCount = Math.max(1, Math.min(10, Math.trunc(requestedLivraisonCountRaw)));
+
+    // Idempotency + split delivery support: allow multiple LIVRAISON mappings per commande.
     const existingMappings = await listCommandeToAffaireMappings(client, commandeId);
+    const existingLivraisons = existingMappings.filter((r) => r.role === "LIVRAISON");
+    const existingProduction = existingMappings.find((r) => r.role === "PRODUCTION")?.affaire_id ?? null;
 
     if (existingMappings.length > 0) {
-      const livraison = existingMappings.find((r) => r.role === "LIVRAISON")?.affaire_id ?? null;
-      const production = existingMappings.find((r) => r.role === "PRODUCTION")?.affaire_id ?? null;
+      if (existingLivraisons.length >= requestedLivraisonCount) {
+        const livraison = existingLivraisons[0]?.affaire_id ?? null;
+        await client.query("COMMIT");
+        return {
+          affaire_ids: existingMappings.map((r) => r.affaire_id),
+          livraison_affaire_id: livraison,
+          production_affaire_id: existingProduction,
+          requires_confirmation: false,
+          livraison_affaire_ids: existingLivraisons.map((l) => l.affaire_id),
+        };
+      }
+
+      // Only create additional livraison affaires. Do not re-run allocations/reservations/OF generation.
+      const missing = requestedLivraisonCount - existingLivraisons.length;
+      const created: number[] = [];
+      for (let i = 0; i < missing; i += 1) {
+        const livraisonId = await createAffaire(client, {
+          commande_id: commandeId,
+          devis_id: commande.devis_id ? toNullableInt(commande.devis_id, "commande.devis_id") : null,
+          client_id: clientId,
+          type_affaire: commande.type_affaire,
+          role: "LIVRAISON",
+        });
+        await insertCommandeToAffaireMapping(client, {
+          commande_id: commandeId,
+          affaire_id: livraisonId,
+          role: "LIVRAISON",
+          commentaire: `Split delivery (${existingLivraisons.length + i + 1}/${requestedLivraisonCount})`,
+        });
+        created.push(livraisonId);
+      }
+
+      const nextMappings = await listCommandeToAffaireMappings(client, commandeId);
+      const nextLivraisons = nextMappings.filter((r) => r.role === "LIVRAISON");
+      const livraison = nextLivraisons[0]?.affaire_id ?? null;
+      const production = nextMappings.find((r) => r.role === "PRODUCTION")?.affaire_id ?? null;
       await client.query("COMMIT");
       return {
-        affaire_ids: existingMappings.map((r) => r.affaire_id),
+        affaire_ids: nextMappings.map((r) => r.affaire_id),
         livraison_affaire_id: livraison,
         production_affaire_id: production,
         requires_confirmation: false,
+        livraison_affaire_ids: nextLivraisons.map((l) => l.affaire_id),
+        split_created: created,
       };
     }
 
@@ -1491,6 +1541,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       }
     }
 
+    const livraisonAffaireIds: number[] = [];
     const livraisonAffaireId = await createAffaire(client, {
       commande_id: commandeId,
       devis_id: commande.devis_id ? toNullableInt(commande.devis_id, "commande.devis_id") : null,
@@ -1504,6 +1555,24 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       role: "LIVRAISON",
       commentaire: "Generated from commande",
     });
+    livraisonAffaireIds.push(livraisonAffaireId);
+
+    for (let i = 1; i < requestedLivraisonCount; i += 1) {
+      const extraId = await createAffaire(client, {
+        commande_id: commandeId,
+        devis_id: commande.devis_id ? toNullableInt(commande.devis_id, "commande.devis_id") : null,
+        client_id: clientId,
+        type_affaire: commande.type_affaire,
+        role: "LIVRAISON",
+      });
+      await insertCommandeToAffaireMapping(client, {
+        commande_id: commandeId,
+        affaire_id: extraId,
+        role: "LIVRAISON",
+        commentaire: `Split delivery (${i + 1}/${requestedLivraisonCount})`,
+      });
+      livraisonAffaireIds.push(extraId);
+    }
 
     const productionAffaireId: number | null = null;
 
@@ -1718,6 +1787,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         order_type: orderType,
         decision,
         stock_location_id: stockLocationId,
+        livraison_affaire_ids: livraisonAffaireIds,
         reservations_created: reservationsCreated.length,
         of_created: ofIds.length,
       },
@@ -1733,6 +1803,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         order_type: orderType,
         decision,
         livraison_affaire_id: livraisonAffaireId,
+        livraison_affaire_ids: livraisonAffaireIds,
         production_affaire_id: productionAffaireId,
         reservations_created: reservationsCreated,
         of_ids: ofIds,
@@ -1757,13 +1828,12 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
 
     await client.query("COMMIT");
 
-    const affaireIds: number[] = [livraisonAffaireId];
-
     return {
-      affaire_ids: affaireIds,
+      affaire_ids: livraisonAffaireIds,
       livraison_affaire_id: livraisonAffaireId,
       production_affaire_id: productionAffaireId,
       requires_confirmation: false,
+      livraison_affaire_ids: livraisonAffaireIds,
       reservations_created: reservationsCreated,
       of_ids: ofIds,
     };
@@ -1814,17 +1884,27 @@ type MappingInsertInput = {
 
 async function insertCommandeToAffaireMapping(db: PoolClient, input: MappingInsertInput): Promise<void> {
   const hasRoleColumn = await hasCommandeToAffaireRoleColumn(db);
-
+  
   const existing = hasRoleColumn
-    ? await db.query<{ id: string }>(
-        `
-        SELECT id::text AS id
-        FROM commande_to_affaire
-        WHERE commande_id = $1 AND role = $2
-        LIMIT 1
-        `,
-        [input.commande_id, input.role]
-      )
+    ? input.role === "PRODUCTION"
+      ? await db.query<{ id: string }>(
+          `
+          SELECT id::text AS id
+          FROM commande_to_affaire
+          WHERE commande_id = $1 AND role = $2
+          LIMIT 1
+          `,
+          [input.commande_id, input.role]
+        )
+      : await db.query<{ id: string }>(
+          `
+          SELECT id::text AS id
+          FROM commande_to_affaire
+          WHERE commande_id = $1 AND affaire_id = $2
+          LIMIT 1
+          `,
+          [input.commande_id, input.affaire_id]
+        )
     : await db.query<{ id: string }>(
         `
         SELECT id::text AS id
@@ -2627,7 +2707,7 @@ export async function repoDuplicateCommande(id: string) {
       INSERT INTO commande_historique (commande_id, user_id, ancien_statut, nouveau_statut, commentaire)
       VALUES ($1, $2, $3, $4, $5)
       `,
-      [newIdInt, null, null, "brouillon", `Duplicated from commande ${originalCommandeId}`]
+      [newIdInt, null, null, "ENREGISTREE", `Duplicated from commande ${originalCommandeId}`]
     );
 
     await client.query("COMMIT");

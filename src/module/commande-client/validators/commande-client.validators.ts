@@ -328,6 +328,7 @@ export const generateAffairesV3Schema = z
     body: z
       .object({
         decision: commandesStockDecisionSchema.nullable().optional().default(null),
+        livraison_count: z.coerce.number().int().min(1).max(10).optional().default(1),
         lines: z
           .array(
             z
