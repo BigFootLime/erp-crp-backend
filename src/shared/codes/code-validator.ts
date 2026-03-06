@@ -18,10 +18,10 @@ export const CODE_FORMATS = {
   },
   affaire: {
     // Legacy AFF-<id> is still accepted for existing data.
-    regex: /^(AFF-(LIV|PROD)-CLI-\d{3}-\d{4}-\d{4}|AFF-\d+)$/,
-    example: "AFF-PROD-CLI-001-2026-0001",
-    hintText: "Format attendu: AFF-(LIV|PROD)-CLI-001-2026-0001",
-  },
+    regex: /^(AFF-LIV-CLI-\d{3}-\d{4}-\d{4}|AFF-\d+)$/,
+    example: "AFF-LIV-CLI-001-2026-0001",
+    hintText: "Format attendu: AFF-LIV-CLI-001-2026-0001",
+    },
   pieceTechnique: {
     // Legacy patterns are still accepted for existing data.
     regex: /^(PCT-CLI-\d{3}-\d{4}|P-\d{3,})$/,

@@ -696,12 +696,13 @@ export async function repoConvertDevisToCommande(devisId: number) {
         biller_id,
         compte_vente_id,
         commentaire,
+        type_affaire,
         remise_globale,
         total_ht,
         total_ttc,
         devis_id
       ) VALUES (
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15
       )
       `,
       [
@@ -715,6 +716,7 @@ export async function repoConvertDevisToCommande(devisId: number) {
         devis.biller_id ?? null,
         devis.compte_vente_id ?? null,
         devis.commentaires ?? null,
+        "livraison",
         devis.remise_globale ?? 0,
         devis.total_ht ?? 0,
         devis.total_ttc ?? 0,

@@ -17,7 +17,7 @@ export const affaireIdParamsSchema = z.object({
 });
 
 export const affaireStatutSchema = z.enum(["OUVERTE", "EN_COURS", "SUSPENDUE", "CLOTUREE", "ANNULEE"]);
-export const affaireTypeSchema = z.enum(["fabrication", "previsionnel", "regroupement"]);
+export const affaireTypeSchema = z.enum(["livraison"]);
 
 export const listAffairesQuerySchema = z.object({
   q: z.string().optional(),
@@ -66,7 +66,7 @@ export const createAffaireBodySchema = z.object({
   client_id: z.string().trim().min(1),
   commande_id: z.coerce.number().int().positive().optional().nullable(),
   devis_id: z.coerce.number().int().positive().optional().nullable(),
-  type_affaire: affaireTypeSchema.optional().default("fabrication"),
+  type_affaire: affaireTypeSchema.optional().default("livraison"),
   statut: affaireStatutSchema.optional().default("OUVERTE"),
   date_ouverture: z.preprocess(emptyStringToUndefined, isoDate).optional(),
   date_cloture: z.preprocess(emptyStringToNull, isoDate).optional().nullable(),

@@ -68,7 +68,7 @@ This file lives in `docs/frontend_repo_map.md` by request, but it documents the 
 - JWT auth + allowlist RBAC: `src/module/auth/middlewares/auth.middleware.ts` (`authenticateToken`, `authorizeRole`)
 - Route-local role gates (inline RequestHandler functions in route files):
   - `requireAdmin` (production, pieces-techniques)
-  - `requireProductionOrAdmin` (production, planning, programmation, quick-commande)
+  - `requireProductionOrAdmin` (production, planning, programmation)
   - `requireQualityOrAdmin` (qualite)
 - Route-local multipart parsing/validation:
   - `parseCommandeBody` in `src/module/commande-client/routes/commande-client.routes.ts`
@@ -106,7 +106,6 @@ All modules are mounted under `/api/v1` via `src/routes/v1.routes.ts`.
 | `src/module/production` | `/production` | `src/module/production/routes/production.routes.ts` |
 | `src/module/programmation` | `/programmations` | `src/module/programmation/routes/programmation.routes.ts` |
 | `src/module/qualite` | `/qualite` | `src/module/qualite/routes/qualite.routes.ts` |
-| `src/module/quick-commande` | `/quick-commande` | `src/module/quick-commande/routes/quick-commande.routes.ts` |
 | `src/module/receptions` | `/receptions` | `src/module/receptions/routes/receptions.routes.ts` |
 | `src/module/stock` | `/stock` | `src/module/stock/routes/stock.routes.ts` |
 | `src/module/traceability` | `/traceability` | `src/module/traceability/routes/traceability.routes.ts` |
@@ -147,7 +146,6 @@ Exports from `src/module/**/types/*.types.ts` (type/interface/enum/class names):
 - `src/module/production/types/production.types.ts`: `Paginated`, `MachineListItem`, `MachineDetail`, `PosteListItem`, `PosteDetail`, `OrdreFabricationListItem`, `OfTimeLog`, `OfOperation`, `OrdreFabricationDetail`
 - `src/module/programmation/types/programmation.types.ts`: `ProgrammationTaskListItem`, `Paginated`
 - `src/module/qualite/types/qualite.types.ts`: `Paginated`, `QualityControlType`, `QualityControlStatus`, `QualityControlResult`, `QualityPointResult`, `NonConformitySeverity`, `NonConformityStatus`, `NonConformityDispositionType`, `QualityActionType`, `QualityActionStatus`, `QualityEntityType`, `QualityDocumentType`, `QualityUserLite`, `QualityMachineLite`, `QualityPosteLite`, `QualityOfLite`, `QualityAffaireLite`, `QualityPieceTechniqueLite`, `QualityOperationLite`, `QualityControlPoint`, `QualityDocument`, `QualityEventLog`, `QualityControlListItem`, `QualityControlDetail`, `NonConformityListItem`, `NonConformityDetail`, `NonConformityDisposition`, `QualityActionListItem`, `QualityActionDetail`, `QualityKpis`
-- `src/module/quick-commande/types/quick-commande.types.ts`: `QuickCommandeResource`, `QuickCommandePlannedOperation`, `QuickCommandePreviewPlan`, `QuickCommandePreviewResponse`, `QuickCommandeConfirmResponse`
 - `src/module/receptions/types/receptions.types.ts`: `Paginated`, `ReceptionFournisseurStatus`, `LotStatus`, `IncomingInspectionStatus`, `IncomingInspectionDecision`, `ReceptionFournisseur`, `ReceptionFournisseurListItem`, `ReceptionFournisseurLine`, `ReceptionFournisseurDocument`, `ReceptionIncomingInspection`, `ReceptionIncomingMeasurement`, `ReceptionStockReceipt`, `ReceptionKpis`, `ReceptionFournisseurDetail`
 - `src/module/stock/types/stock.types.ts`: `Paginated`, `ArticleType`, `StockArticleListItem`, `StockArticleDetail`, `StockArticleKpis`, `StockMagasinListItem`, `StockMagasinDetail`, `StockMagasinKpis`, `StockEmplacementListItem`, `StockLotListItem`, `StockLotDetail`, `StockBalanceRow`, `StockMovementType`, `StockMovementStatus`, `StockMovementListItem`, `StockMovementLineDetail`, `StockDocument`, `StockMovementEvent`, `StockMovementDetail`, `StockMovementKpis`, `StockInventorySessionStatus`, `StockInventorySessionListItem`, `StockInventorySessionLine`, `StockInventorySessionDetail`
 - `src/module/traceability/types/traceability.types.ts`: `TraceabilityNodeType`, `TraceabilityNodeRef`, `TraceabilityNodeId`, `TraceabilityNode`, `TraceabilityEdge`, `TraceabilityHighlight`, `TraceabilityChainResult`
@@ -220,8 +218,6 @@ public.quality_control
 public.quality_control_points
 public.quality_documents
 public.quality_event_log
-public.quick_commande_confirmations
-public.quick_commande_previews
 public.reception_fournisseur_documents
 public.reception_fournisseur_lignes
 public.reception_fournisseur_stock_receipts
@@ -585,9 +581,6 @@ DELETE	/api/v1/qualite/non-conformities/:id/documents/:docId	authenticateToken, 
 GET	/api/v1/qualite/non-conformities/:id/documents/:docId/file	authenticateToken, requireQualityOrAdmin	controller
 POST	/api/v1/qualite/non-conformities/:id/status	authenticateToken, requireQualityOrAdmin	controller
 GET	/api/v1/qualite/users	authenticateToken, requireQualityOrAdmin	controller
-POST	/api/v1/quick-commande/confirm	authenticateToken, requireProductionOrAdmin	controller
-GET	/api/v1/quick-commande/health	authenticateToken, requireProductionOrAdmin	controller
-POST	/api/v1/quick-commande/preview	authenticateToken, requireProductionOrAdmin	controller
 GET	/api/v1/receptions	authenticateToken	controller
 POST	/api/v1/receptions	authenticateToken	controller
 GET	/api/v1/receptions/:id	authenticateToken	controller
@@ -685,7 +678,6 @@ GET	/api/v1/traceability/chain	authenticateToken	controller
 - `db/patches/20260226_receptions_incoming_quality.sql`: `public.receptions_fournisseurs`, `public.reception_fournisseur_lignes`, `public.reception_fournisseur_documents`, `public.reception_incoming_inspections`, `public.reception_incoming_measurements`, `public.reception_fournisseur_stock_receipts`
 - `db/patches/20260227_metrologie_calibration.sql`: `public.metrologie_equipements`, `public.metrologie_plan`, `public.metrologie_certificats`, `public.metrologie_event_log` (and extends `public.erp_settings`)
 - `db/patches/20260226_entity_locks.sql`: `public.entity_locks`
-- `db/patches/20260226_phase14_quick_commande.sql`: `public.quick_commande_previews`, `public.quick_commande_confirmations`
 - `db/patches/20260228_traceability_links.sql`: `public.traceability_links`
 - `db/patches/20260228_asbuilt_pack.sql`: `public.asbuilt_pack_versions`
 - `db/patches/20260227_nomenclature_codes.sql`: `public.code_sequences` + `public.fn_next_code_value` + `public.quality_generate_action_reference`
@@ -718,7 +710,7 @@ Foreign keys are defined extensively in patches (hundreds). Examples of central 
 - Exact role allow-list: `authorizeRole('Administrateur Systeme et Reseau', 'Directeur')` (e.g. `src/module/admin/routes/admin.routes.ts`, `src/module/auth/routes/auth.routes.ts`)
 - Inline role contains checks:
   - `requireAdmin` in `src/module/production/routes/production.routes.ts` and `src/module/pieces-techniques/routes/pieces-techniques.routes.ts`
-  - `requireProductionOrAdmin` in `src/module/production/routes/production.routes.ts`, `src/module/planning/routes/planning.routes.ts`, `src/module/programmation/routes/programmation.routes.ts`, `src/module/quick-commande/routes/quick-commande.routes.ts`
+  - `requireProductionOrAdmin` in `src/module/production/routes/production.routes.ts`, `src/module/planning/routes/planning.routes.ts`, `src/module/programmation/routes/programmation.routes.ts`
   - `requireQualityOrAdmin` in `src/module/qualite/routes/qualite.routes.ts`
 
 ### Socket.IO

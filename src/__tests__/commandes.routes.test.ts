@@ -454,7 +454,7 @@ describe("/api/v1/commandes", () => {
           rows: [
             {
               client_id: "001",
-              type_affaire: "fabrication",
+              type_affaire: "livraison",
               order_type: "FERME",
               devis_id: null,
               numero: "CC-123",
@@ -570,7 +570,7 @@ describe("/api/v1/commandes", () => {
           rows: [
             {
               client_id: "001",
-              type_affaire: "fabrication",
+              type_affaire: "livraison",
               order_type: "FERME",
               devis_id: null,
               numero: "CC-123",
@@ -611,7 +611,7 @@ describe("/api/v1/commandes", () => {
         };
       }
 
-      // No stock available -> should create production only.
+      // No stock available -> should create the livraison affaire and OF.
       if (q.includes("FROM public.stock_levels") && q.includes("GROUP BY sl.article_id")) {
         return { rows: [{ article_id: ARTICLE_ID, qty_available: 0 }] };
       }
@@ -651,7 +651,6 @@ describe("/api/v1/commandes", () => {
     expect(res.body).toMatchObject({
       affaire_ids: [7],
       livraison_affaire_id: 7,
-      production_affaire_id: null,
     });
   });
 });

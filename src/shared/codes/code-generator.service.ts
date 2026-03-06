@@ -59,7 +59,7 @@ export async function generateCommandeCode(tx: DbQueryer, params: { client_code:
 
 export async function generateAffaireCode(
   tx: DbQueryer,
-  params: { type: "LIV" | "PROD"; client_code: string; date?: Date }
+  params: { type: "LIV"; client_code: string; date?: Date }
 ): Promise<string> {
   const date = params.date ?? new Date();
   const y = yearFromDate(date);

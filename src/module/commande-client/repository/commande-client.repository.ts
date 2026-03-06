@@ -158,7 +158,7 @@ async function hasCommandeToAffaireRoleColumn(db: Queryable): Promise<boolean> {
   return commandeToAffaireHasRoleColumnCache;
 }
 
-type CommandeToAffaireRole = "LIVRAISON" | "PRODUCTION" | null;
+type CommandeToAffaireRole = "LIVRAISON" | null;
 type CommandeToAffaireMapping = { affaire_id: number; role: CommandeToAffaireRole };
 
 async function listCommandeToAffaireMappings(db: Queryable, commandeId: number): Promise<CommandeToAffaireMapping[]> {
@@ -173,11 +173,7 @@ async function listCommandeToAffaireMappings(db: Queryable, commandeId: number):
     : `
       SELECT
         affaire_id::int AS affaire_id,
-        CASE
-          WHEN row_number() OVER (PARTITION BY commande_id ORDER BY id ASC) = 1 THEN 'LIVRAISON'
-          WHEN row_number() OVER (PARTITION BY commande_id ORDER BY id ASC) = 2 THEN 'PRODUCTION'
-          ELSE NULL
-        END AS role
+        'LIVRAISON' AS role
       FROM commande_to_affaire
       WHERE commande_id = $1
       ORDER BY id ASC
@@ -186,7 +182,7 @@ async function listCommandeToAffaireMappings(db: Queryable, commandeId: number):
   const res = await db.query<{ affaire_id: number; role: string | null }>(sql, [commandeId]);
   return res.rows.map((r) => ({
     affaire_id: r.affaire_id,
-    role: r.role === "LIVRAISON" || r.role === "PRODUCTION" ? r.role : null,
+    role: r.role === "LIVRAISON" ? r.role : null,
   }));
 }
 
@@ -1021,7 +1017,7 @@ export async function repoCreateCommande(input: CreateCommandeInput, documents: 
       input.arc_edi ?? false,
       input.arc_date_envoi ?? null,
       input.compteur_affaire_id ?? null,
-      input.type_affaire ?? "fabrication",
+      "livraison",
       orderType,
       input.cadre_start_date ?? null,
       input.cadre_end_date ?? null,
@@ -1331,11 +1327,11 @@ export async function repoAnalyzeCommandeStock(id: string, audit: AuditContext) 
 
     const suggested_scenario =
       commande.order_type === "INTERNE"
-        ? "PRODUCTION_ONLY"
+        ? "INTERNE_OF"
         : needs_confirmation
           ? "CONFIRMATION_REQUIRED"
           : hasShortage
-            ? "LIVRAISON_AND_PRODUCTION"
+            ? "LIVRAISON_AND_OF"
             : "LIVRAISON_ONLY";
 
     await insertCommandeEvent(client, {
@@ -1432,16 +1428,14 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
     // Idempotency + split delivery support: allow multiple LIVRAISON mappings per commande.
     const existingMappings = await listCommandeToAffaireMappings(client, commandeId);
     const existingLivraisons = existingMappings.filter((r) => r.role === "LIVRAISON");
-    const existingProduction = existingMappings.find((r) => r.role === "PRODUCTION")?.affaire_id ?? null;
 
     if (existingMappings.length > 0) {
       if (existingLivraisons.length >= requestedLivraisonCount) {
         const livraison = existingLivraisons[0]?.affaire_id ?? null;
         await client.query("COMMIT");
         return {
-          affaire_ids: existingMappings.map((r) => r.affaire_id),
+          affaire_ids: existingLivraisons.map((r) => r.affaire_id),
           livraison_affaire_id: livraison,
-          production_affaire_id: existingProduction,
           requires_confirmation: false,
           livraison_affaire_ids: existingLivraisons.map((l) => l.affaire_id),
         };
@@ -1455,8 +1449,6 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
           commande_id: commandeId,
           devis_id: commande.devis_id ? toNullableInt(commande.devis_id, "commande.devis_id") : null,
           client_id: clientId,
-          type_affaire: commande.type_affaire,
-          role: "LIVRAISON",
         });
         await insertCommandeToAffaireMapping(client, {
           commande_id: commandeId,
@@ -1470,12 +1462,10 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       const nextMappings = await listCommandeToAffaireMappings(client, commandeId);
       const nextLivraisons = nextMappings.filter((r) => r.role === "LIVRAISON");
       const livraison = nextLivraisons[0]?.affaire_id ?? null;
-      const production = nextMappings.find((r) => r.role === "PRODUCTION")?.affaire_id ?? null;
       await client.query("COMMIT");
       return {
-        affaire_ids: nextMappings.map((r) => r.affaire_id),
+        affaire_ids: nextLivraisons.map((r) => r.affaire_id),
         livraison_affaire_id: livraison,
-        production_affaire_id: production,
         requires_confirmation: false,
         livraison_affaire_ids: nextLivraisons.map((l) => l.affaire_id),
         split_created: created,
@@ -1546,8 +1536,6 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       commande_id: commandeId,
       devis_id: commande.devis_id ? toNullableInt(commande.devis_id, "commande.devis_id") : null,
       client_id: clientId,
-      type_affaire: commande.type_affaire,
-      role: "LIVRAISON",
     });
     await insertCommandeToAffaireMapping(client, {
       commande_id: commandeId,
@@ -1562,8 +1550,6 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         commande_id: commandeId,
         devis_id: commande.devis_id ? toNullableInt(commande.devis_id, "commande.devis_id") : null,
         client_id: clientId,
-        type_affaire: commande.type_affaire,
-        role: "LIVRAISON",
       });
       await insertCommandeToAffaireMapping(client, {
         commande_id: commandeId,
@@ -1573,8 +1559,6 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       });
       livraisonAffaireIds.push(extraId);
     }
-
-    const productionAffaireId: number | null = null;
 
     const planLines: CommandeAllocationPlanLine[] = analysis.lines.map((l) => ({
       commande_ligne_id: l.commande_ligne_id,
@@ -1591,13 +1575,12 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       decision !== null
         ? decision
         : needsProduction
-          ? "AUTO_PRODUCTION"
+          ? "AUTO_OF"
           : "AUTO_STOCK";
 
     await upsertCommandeAllocations(client, {
       commande_id: commandeId,
       livraison_affaire_id: livraisonAffaireId,
-      production_affaire_id: productionAffaireId,
       allocation_mode: allocationMode,
       reserve_stock: false,
       reserved_qty_by_line: decision !== null ? reservedByLine : null,
@@ -1804,7 +1787,6 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         decision,
         livraison_affaire_id: livraisonAffaireId,
         livraison_affaire_ids: livraisonAffaireIds,
-        production_affaire_id: productionAffaireId,
         reservations_created: reservationsCreated,
         of_ids: ofIds,
       },
@@ -1831,7 +1813,6 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
     return {
       affaire_ids: livraisonAffaireIds,
       livraison_affaire_id: livraisonAffaireId,
-      production_affaire_id: productionAffaireId,
       requires_confirmation: false,
       livraison_affaire_ids: livraisonAffaireIds,
       reservations_created: reservationsCreated,
@@ -1849,8 +1830,6 @@ type AffaireCreationInput = {
   commande_id: number;
   client_id: string;
   devis_id?: number | null;
-  type_affaire: string;
-  role: "LIVRAISON" | "PRODUCTION";
 };
 
 async function createAffaire(db: PoolClient, input: AffaireCreationInput): Promise<number> {
@@ -1861,16 +1840,18 @@ async function createAffaire(db: PoolClient, input: AffaireCreationInput): Promi
 
   const clientCode = await requireClientCode(db, input.client_id);
   const reference = await generateAffaireCode(db, {
-    type: input.role === "PRODUCTION" ? "PROD" : "LIV",
+    type: "LIV",
     client_code: clientCode,
   });
+
+  const typeAffaire = "livraison";
 
   await db.query(
     `
     INSERT INTO affaire (id, reference, client_id, commande_id, devis_id, type_affaire)
     VALUES ($1, $2, $3, $4, $5, $6)
     `,
-    [id, reference, input.client_id, input.commande_id, input.devis_id ?? null, input.type_affaire]
+    [id, reference, input.client_id, input.commande_id, input.devis_id ?? null, typeAffaire]
   );
   return id;
 }
@@ -1878,7 +1859,7 @@ async function createAffaire(db: PoolClient, input: AffaireCreationInput): Promi
 type MappingInsertInput = {
   commande_id: number;
   affaire_id: number;
-  role: "LIVRAISON" | "PRODUCTION";
+  role: "LIVRAISON";
   commentaire: string | null;
 };
 
@@ -1886,25 +1867,15 @@ async function insertCommandeToAffaireMapping(db: PoolClient, input: MappingInse
   const hasRoleColumn = await hasCommandeToAffaireRoleColumn(db);
   
   const existing = hasRoleColumn
-    ? input.role === "PRODUCTION"
-      ? await db.query<{ id: string }>(
-          `
-          SELECT id::text AS id
-          FROM commande_to_affaire
-          WHERE commande_id = $1 AND role = $2
-          LIMIT 1
-          `,
-          [input.commande_id, input.role]
-        )
-      : await db.query<{ id: string }>(
-          `
+    ? await db.query<{ id: string }>(
+        `
           SELECT id::text AS id
           FROM commande_to_affaire
           WHERE commande_id = $1 AND affaire_id = $2
           LIMIT 1
-          `,
-          [input.commande_id, input.affaire_id]
-        )
+        `,
+        [input.commande_id, input.affaire_id]
+      )
     : await db.query<{ id: string }>(
         `
         SELECT id::text AS id
@@ -2187,7 +2158,6 @@ async function computeCommandeAllocationPlan(db: PoolClient, commandeId: number)
 type AllocationUpsertInput = {
   commande_id: number;
   livraison_affaire_id: number;
-  production_affaire_id: number | null;
   allocation_mode: string | null;
   reserve_stock: boolean;
   reserved_qty_by_line?: Map<number, number> | null;
@@ -2217,10 +2187,10 @@ async function upsertCommandeAllocations(db: PoolClient, input: AllocationUpsert
         qty_reserved,
         qty_to_produce,
         allocation_mode
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+      ) VALUES ($1,$2,$3,NULL,$4,$5,$6,$7,$8,$9,$10)
       ON CONFLICT (commande_ligne_id, livraison_affaire_id)
       DO UPDATE SET
-        production_affaire_id = EXCLUDED.production_affaire_id,
+        production_affaire_id = NULL,
         article_ref_id = EXCLUDED.article_ref_id,
         article_legacy_id = EXCLUDED.article_legacy_id,
         qty_ordered = EXCLUDED.qty_ordered,
@@ -2234,7 +2204,6 @@ async function upsertCommandeAllocations(db: PoolClient, input: AllocationUpsert
         input.commande_id,
         l.commande_ligne_id,
         input.livraison_affaire_id,
-        input.production_affaire_id,
         l.article_ref_id,
         l.article_legacy_id,
         l.qty_ordered,
@@ -2274,31 +2243,26 @@ export async function repoPreviewAffairesFromCommande(id: string) {
     const existingMappings = await listCommandeToAffaireMappings(client, commandeId);
 
     if (existingMappings.length > 0) {
-      const livraison = existingMappings.find((r) => r.role === "LIVRAISON")?.affaire_id ?? null;
-      const production = existingMappings.find((r) => r.role === "PRODUCTION")?.affaire_id ?? null;
+      const livraisons = existingMappings.filter((r) => r.role === "LIVRAISON").map((r) => r.affaire_id);
+      const livraison = livraisons[0] ?? null;
       await client.query("COMMIT");
       return {
         already_generated: true,
-        affaire_ids: existingMappings.map((r) => r.affaire_id),
+        affaire_ids: livraisons,
         livraison_affaire_id: livraison,
-        production_affaire_id: production,
         requires_confirmation: false,
-        needs_production: production !== null,
       };
     }
 
     const plan = await computeCommandeAllocationPlan(client, commandeId);
     const requiresConfirmation = plan.lines.some((l) => l.qty_from_stock > 0 && l.qty_to_produce > 0);
-    const needsProduction = plan.lines.some((l) => l.qty_to_produce > 0);
 
     await client.query("COMMIT");
     return {
       already_generated: false,
       affaire_ids: [],
       livraison_affaire_id: null,
-      production_affaire_id: null,
       requires_confirmation: requiresConfirmation,
-      needs_production: needsProduction,
       plan,
     };
   } catch (e) {
@@ -2341,13 +2305,12 @@ export async function repoGenerateAffairesFromCommande(id: string, body: Generat
     const existingMappings = await listCommandeToAffaireMappings(client, commandeId);
 
     if (existingMappings.length > 0) {
-      const livraison = existingMappings.find((r) => r.role === "LIVRAISON")?.affaire_id ?? null;
-      const production = existingMappings.find((r) => r.role === "PRODUCTION")?.affaire_id ?? null;
+      const livraisons = existingMappings.filter((r) => r.role === "LIVRAISON").map((r) => r.affaire_id);
+      const livraison = livraisons[0] ?? null;
       await client.query("COMMIT");
       return {
-        affaire_ids: existingMappings.map((r) => r.affaire_id),
+        affaire_ids: livraisons,
         livraison_affaire_id: livraison,
-        production_affaire_id: production,
         requires_confirmation: false,
       };
     }
@@ -2394,8 +2357,6 @@ export async function repoGenerateAffairesFromCommande(id: string, body: Generat
     const livraisonAffaireId = await createAffaire(client, {
       commande_id: commandeId,
       client_id: commande.client_id,
-      type_affaire: commande.type_affaire,
-      role: "LIVRAISON",
     });
 
     await insertCommandeToAffaireMapping(client, {
@@ -2405,13 +2366,10 @@ export async function repoGenerateAffairesFromCommande(id: string, body: Generat
       commentaire: "Generated from commande",
     });
 
-    const productionAffaireId: number | null = null;
-
-    const allocationMode = requiresConfirmation ? body.strategy : needsProduction ? "AUTO_PRODUCTION" : "AUTO_STOCK";
+    const allocationMode = requiresConfirmation ? body.strategy : needsProduction ? "AUTO_OF" : "AUTO_STOCK";
     await upsertCommandeAllocations(client, {
       commande_id: commandeId,
       livraison_affaire_id: livraisonAffaireId,
-      production_affaire_id: productionAffaireId,
       allocation_mode: allocationMode,
       reserve_stock: requiresConfirmation && body.strategy === "RESERVE_AND_PRODUCE",
       lines,
@@ -2423,7 +2381,6 @@ export async function repoGenerateAffairesFromCommande(id: string, body: Generat
     return {
       affaire_ids: [livraisonAffaireId],
       livraison_affaire_id: livraisonAffaireId,
-      production_affaire_id: productionAffaireId,
       requires_confirmation: false,
     };
   } catch (e) {
@@ -2470,8 +2427,6 @@ export async function repoConfirmGenerateAffaires(id: string, body: ConfirmGener
       livraisonAffaireId = await createAffaire(client, {
         commande_id: commandeId,
         client_id: commande.client_id,
-        type_affaire: commande.type_affaire,
-        role: "LIVRAISON",
       });
       await insertCommandeToAffaireMapping(client, {
         commande_id: commandeId,
@@ -2479,17 +2434,6 @@ export async function repoConfirmGenerateAffaires(id: string, body: ConfirmGener
         role: "LIVRAISON",
         commentaire: "Generated from commande",
       });
-    }
-
-    const existingProductionId = existingMappings.find((m) => m.role === "PRODUCTION")?.affaire_id ?? null;
-    if (existingProductionId) {
-      await client.query("COMMIT");
-      return {
-        affaire_ids: [livraisonAffaireId, existingProductionId],
-        livraison_affaire_id: livraisonAffaireId,
-        production_affaire_id: existingProductionId,
-        requires_confirmation: false,
-      };
     }
 
     const computed = await computeCommandeAllocationPlan(client, commandeId);
@@ -2520,14 +2464,9 @@ export async function repoConfirmGenerateAffaires(id: string, body: ConfirmGener
       current.qty_to_produce = requestedQtyToProduce;
     }
 
-    const needsProduction = lines.some((l) => l.qty_to_produce > 0);
-
-    const productionAffaireId: number | null = null;
-
     await upsertCommandeAllocations(client, {
       commande_id: commandeId,
       livraison_affaire_id: livraisonAffaireId,
-      production_affaire_id: productionAffaireId,
       allocation_mode: body.choice,
       reserve_stock: body.choice === "RESERVE_AND_PRODUCE_REST",
       lines,
@@ -2539,7 +2478,6 @@ export async function repoConfirmGenerateAffaires(id: string, body: ConfirmGener
     return {
       affaire_ids: [livraisonAffaireId],
       livraison_affaire_id: livraisonAffaireId,
-      production_affaire_id: productionAffaireId,
       requires_confirmation: false,
     };
   } catch (e) {
@@ -2667,7 +2605,7 @@ export async function repoDuplicateCommande(id: string) {
         original.emetteur,
         original.code_client,
         original.compteur_affaire_id,
-        original.type_affaire,
+        "livraison",
         original.order_type,
         original.cadre_start_date,
         original.cadre_end_date,

@@ -58,7 +58,7 @@ z.object({
   arc_edi: z.boolean().optional().default(false),
   arc_date_envoi: z.string().optional().nullable(),
   compteur_affaire_id: z.string().uuid().optional().nullable(),
-  type_affaire: z.enum(["fabrication", "previsionnel", "regroupement"]).optional().default("fabrication"),
+  type_affaire: z.enum(["livraison"]).optional().default("livraison"),
 
   cadre_start_date: isoDate.optional().nullable(),
   cadre_end_date: isoDate.optional().nullable(),
