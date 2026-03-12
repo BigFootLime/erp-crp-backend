@@ -4,9 +4,12 @@ import path from "node:path";
 import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
+import { emitAppNotificationCreated, emitEntityChanged } from "../../../shared/realtime/realtime.service";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
+import { repoEnsureCommandeWorkflowStatus } from "../../commande-client/repository/commande-client.repository";
+import type { AppNotification } from "../../notifications/types/notifications.types";
 import type {
   Paginated,
   PlanningEventComment,
@@ -142,6 +145,7 @@ async function selectPlanningEventListItemById(q: DbQueryer, id: string): Promis
     of_operation_id: string | null;
     machine_id: string | null;
     poste_id: string | null;
+    operator_id: number | null;
     title: string;
     description: string | null;
     start_ts: string;
@@ -164,6 +168,9 @@ async function selectPlanningEventListItemById(q: DbQueryer, id: string): Promis
     machine_name: string | null;
     poste_code: string | null;
     poste_label: string | null;
+    operator_name: string | null;
+    operation_started_at: string | null;
+    operation_ended_at: string | null;
 
     production_group_id: string | null;
     production_group_code: string | null;
@@ -179,12 +186,22 @@ async function selectPlanningEventListItemById(q: DbQueryer, id: string): Promis
       SELECT
         e.id::text AS id,
         e.kind::text AS kind,
-        e.status::text AS status,
+        CASE
+          WHEN e.kind = 'OF_OPERATION'::planning_event_kind AND e.of_operation_id IS NOT NULL THEN
+            CASE op.status::text
+              WHEN 'DONE' THEN 'DONE'
+              WHEN 'RUNNING' THEN 'IN_PROGRESS'
+              WHEN 'BLOCKED' THEN 'BLOCKED'
+              ELSE 'PLANNED'
+            END
+          ELSE e.status::text
+        END AS status,
         e.priority::text AS priority,
         COALESCE(e.of_id, op.of_id)::text AS of_id,
         e.of_operation_id::text AS of_operation_id,
         e.machine_id::text AS machine_id,
         e.poste_id::text AS poste_id,
+        e.operator_id::int AS operator_id,
         e.title,
         e.description,
         e.start_ts::text AS start_ts,
@@ -208,6 +225,9 @@ async function selectPlanningEventListItemById(q: DbQueryer, id: string): Promis
         m.name AS machine_name,
         p.code AS poste_code,
         p.label AS poste_label,
+        u.username AS operator_name,
+        op.started_at::text AS operation_started_at,
+        op.ended_at::text AS operation_ended_at,
 
         o.production_group_id::text AS production_group_id,
         pg.code AS production_group_code,
@@ -224,6 +244,7 @@ async function selectPlanningEventListItemById(q: DbQueryer, id: string): Promis
       LEFT JOIN public.production_group pg ON pg.id = o.production_group_id
       LEFT JOIN public.machines m ON m.id = e.machine_id
       LEFT JOIN public.postes p ON p.id = e.poste_id
+      LEFT JOIN public.users u ON u.id = e.operator_id
       WHERE e.id = $1::uuid
       LIMIT 1
     `,
@@ -242,6 +263,7 @@ async function selectPlanningEventListItemById(q: DbQueryer, id: string): Promis
     of_operation_id: row.of_operation_id,
     machine_id: row.machine_id,
     poste_id: row.poste_id,
+    operator_id: row.operator_id,
     title: row.title,
     description: row.description,
     start_ts: row.start_ts,
@@ -264,6 +286,9 @@ async function selectPlanningEventListItemById(q: DbQueryer, id: string): Promis
     machine_name: row.machine_name,
     poste_code: row.poste_code,
     poste_label: row.poste_label,
+    operator_name: row.operator_name,
+    operation_started_at: row.operation_started_at,
+    operation_ended_at: row.operation_ended_at,
 
     production_group_id: row.production_group_id,
     production_group_code: row.production_group_code,
@@ -417,6 +442,239 @@ function resolveResource(params: {
   throw new HttpError(400, "MISSING_RESOURCE", "Operation has no machine/poste assigned; choose a resource");
 }
 
+function mapOfOperationStatusToPlanningStatus(status: string | null | undefined): PlanningEventListItem["status"] {
+  const normalized = typeof status === "string" ? status.trim().toUpperCase() : "";
+  if (normalized === "DONE") return "DONE";
+  if (normalized === "RUNNING") return "IN_PROGRESS";
+  if (normalized === "BLOCKED") return "BLOCKED";
+  return "PLANNED";
+}
+
+async function ensurePlanningOperationTransitionAllowed(params: {
+  tx: DbQueryer;
+  of_operation_id: string;
+  target_status: PlanningEventListItem["status"];
+}) {
+  const res = await params.tx.query<{
+    open_time_log_count: number;
+  }>(
+    `
+      SELECT COUNT(*)::int AS open_time_log_count
+      FROM public.of_time_logs
+      WHERE of_operation_id = $1::uuid
+        AND ended_at IS NULL
+    `,
+    [params.of_operation_id]
+  );
+
+  const openTimeLogs = res.rows[0]?.open_time_log_count ?? 0;
+  if (openTimeLogs <= 0) return;
+  if (params.target_status === "IN_PROGRESS") return;
+
+  throw new HttpError(
+    409,
+    "PLANNING_OPERATION_RUNNING",
+    "Stop the running time log before cancelling or completing this planned operation"
+  );
+}
+
+async function syncLinkedOfOperationFromPlanning(params: {
+  tx: DbQueryer;
+  of_operation_id: string;
+  user_id: number;
+}): Promise<{ of_id: number | null; notifications: AppNotification[] }> {
+  const summary = await params.tx.query<{
+    of_id: string;
+    current_status: string;
+    has_done: boolean;
+    has_in_progress: boolean;
+    has_blocked: boolean;
+    has_planned: boolean;
+  }>(
+    `
+      SELECT
+        op.of_id::text AS of_id,
+        op.status::text AS current_status,
+        COALESCE(BOOL_OR(e.status = 'DONE'::planning_event_status), FALSE) AS has_done,
+        COALESCE(BOOL_OR(e.status = 'IN_PROGRESS'::planning_event_status), FALSE) AS has_in_progress,
+        COALESCE(BOOL_OR(e.status = 'BLOCKED'::planning_event_status), FALSE) AS has_blocked,
+        COALESCE(BOOL_OR(e.status = 'PLANNED'::planning_event_status), FALSE) AS has_planned
+      FROM public.of_operations op
+      LEFT JOIN public.planning_events e
+        ON e.of_operation_id = op.id
+       AND e.archived_at IS NULL
+       AND e.status <> 'CANCELLED'::planning_event_status
+      WHERE op.id = $1::uuid
+      GROUP BY op.of_id, op.status
+      LIMIT 1
+    `,
+    [params.of_operation_id]
+  );
+
+  const row = summary.rows[0] ?? null;
+  if (!row) return { of_id: null, notifications: [] };
+
+  const nextStatus = row.has_done
+    ? "DONE"
+    : row.has_in_progress
+      ? "RUNNING"
+      : row.has_blocked
+        ? "BLOCKED"
+        : row.has_planned
+          ? "READY"
+          : "TODO";
+
+  await params.tx.query(
+    `
+      UPDATE public.of_operations
+      SET
+        status = $2::of_operation_status,
+        started_at = CASE
+          WHEN $2::of_operation_status = 'RUNNING'::of_operation_status THEN COALESCE(started_at, now())
+          ELSE started_at
+        END,
+        ended_at = CASE
+          WHEN $2::of_operation_status = 'DONE'::of_operation_status THEN COALESCE(ended_at, now())
+          WHEN $2::of_operation_status <> 'DONE'::of_operation_status THEN NULL
+          ELSE ended_at
+        END,
+        updated_at = now()
+      WHERE id = $1::uuid
+    `,
+    [params.of_operation_id, nextStatus]
+  );
+
+  const ofId = toInt(row.of_id, "of_operations.of_id");
+  const notifications = await maybePromoteOfAndCommandeAfterPlanning({
+    tx: params.tx,
+    of_id: ofId,
+    user_id: params.user_id,
+  });
+
+  return { of_id: ofId, notifications };
+}
+
+async function maybePromoteOfAndCommandeAfterPlanning(params: {
+  tx: DbQueryer;
+  of_id: number;
+  user_id: number;
+}): Promise<AppNotification[]> {
+  const statusRes = await params.tx.query<{
+    statut: string;
+    commande_id: string | null;
+    numero: string;
+    total_ops: number;
+    done_ops: number;
+    running_ops: number;
+    active_events: number;
+  }>(
+    `
+      SELECT
+        o.statut::text AS statut,
+        o.commande_id::text AS commande_id,
+        o.numero,
+        COUNT(op.id)::int AS total_ops,
+        COUNT(op.id) FILTER (WHERE op.status = 'DONE'::of_operation_status)::int AS done_ops,
+        COUNT(op.id) FILTER (WHERE op.status = 'RUNNING'::of_operation_status)::int AS running_ops,
+        (
+          SELECT COUNT(*)::int
+          FROM public.planning_events pe
+          WHERE pe.archived_at IS NULL
+            AND pe.status <> 'CANCELLED'::planning_event_status
+            AND (
+              pe.of_id = o.id
+              OR pe.of_operation_id IN (SELECT op2.id FROM public.of_operations op2 WHERE op2.of_id = o.id)
+            )
+        ) AS active_events
+      FROM public.ordres_fabrication o
+      LEFT JOIN public.of_operations op ON op.of_id = o.id
+      WHERE o.id = $1::bigint
+      GROUP BY o.id, o.statut, o.commande_id, o.numero
+      LIMIT 1
+    `,
+    [params.of_id]
+  );
+
+  const row = statusRes.rows[0] ?? null;
+  if (!row) return [];
+
+  const currentStatus = typeof row.statut === "string" ? row.statut.trim().toUpperCase() : "BROUILLON";
+  let nextStatus: string | null = null;
+
+  if (currentStatus !== "ANNULE" && currentStatus !== "CLOTURE") {
+    if (row.total_ops > 0 && row.done_ops === row.total_ops) nextStatus = "TERMINE";
+    else if (row.running_ops > 0) nextStatus = "EN_COURS";
+    else if (row.active_events > 0 && currentStatus === "BROUILLON") nextStatus = "PLANIFIE";
+  }
+
+  if (nextStatus && nextStatus !== currentStatus) {
+    await params.tx.query(
+      `
+        UPDATE public.ordres_fabrication
+        SET
+          statut = $2::of_status,
+          date_lancement_reelle = CASE
+            WHEN $2::of_status = 'EN_COURS'::of_status THEN COALESCE(date_lancement_reelle, CURRENT_DATE)
+            ELSE date_lancement_reelle
+          END,
+          date_fin_reelle = CASE
+            WHEN $2::of_status = 'TERMINE'::of_status THEN COALESCE(date_fin_reelle, CURRENT_DATE)
+            ELSE date_fin_reelle
+          END,
+          updated_at = now(),
+          updated_by = $3::int
+        WHERE id = $1::bigint
+      `,
+      [params.of_id, nextStatus, params.user_id]
+    );
+  }
+
+  const commandeId = toNullableInt(row.commande_id, "ordres_fabrication.commande_id");
+  if (!commandeId || row.active_events <= 0) return [];
+
+  const workflow = await repoEnsureCommandeWorkflowStatus({
+    tx: params.tx,
+    commande_id: commandeId,
+    nouveau_statut: "PLANIFIEE",
+    commentaire: `Commande automatiquement planifiée à partir de l'OF ${row.numero}`,
+    user_id: params.user_id,
+  });
+
+  return workflow.notifications;
+}
+
+async function loadCommandeIdForOf(tx: DbQueryer, ofId: number): Promise<number | null> {
+  const res = await tx.query<{ commande_id: string | null }>(
+    `SELECT commande_id::text AS commande_id FROM public.ordres_fabrication WHERE id = $1::bigint LIMIT 1`,
+    [ofId]
+  );
+  return toNullableInt(res.rows[0]?.commande_id ?? null, "ordres_fabrication.commande_id");
+}
+
+function emitPlanningRealtime(params: {
+  event_id: string;
+  of_id?: number | null;
+  commande_id?: number | null;
+  action: "created" | "updated" | "deleted" | "status_changed";
+  user_id: number;
+}) {
+  const invalidateKeys = ["planning:events", `planning:event:${params.event_id}`, "production:ofs"];
+  if (typeof params.of_id === "number") invalidateKeys.push(`production:of:${params.of_id}`);
+  if (typeof params.commande_id === "number") {
+    invalidateKeys.push("commandes:list", `commandes:detail:${params.commande_id}`);
+  }
+
+  emitEntityChanged({
+    entityType: "planning_events",
+    entityId: params.event_id,
+    action: params.action,
+    module: "planning",
+    at: new Date().toISOString(),
+    by: { id: params.user_id, name: `User #${params.user_id}` },
+    invalidateKeys,
+  });
+}
+
 export async function repoListPlanningResources(query: ListPlanningResourcesQueryDTO): Promise<PlanningResources> {
   const machinesWhere = query.include_archived ? "" : "WHERE m.archived_at IS NULL";
   const postesWhere = query.include_archived ? "" : "WHERE p.archived_at IS NULL";
@@ -548,6 +806,7 @@ export async function repoListPlanningEvents(filters: ListPlanningEventsQueryDTO
     of_operation_id: string | null;
     machine_id: string | null;
     poste_id: string | null;
+    operator_id: number | null;
     title: string;
     description: string | null;
     start_ts: string;
@@ -570,6 +829,9 @@ export async function repoListPlanningEvents(filters: ListPlanningEventsQueryDTO
     machine_name: string | null;
     poste_code: string | null;
     poste_label: string | null;
+    operator_name: string | null;
+    operation_started_at: string | null;
+    operation_ended_at: string | null;
 
     production_group_id: string | null;
     production_group_code: string | null;
@@ -585,12 +847,22 @@ export async function repoListPlanningEvents(filters: ListPlanningEventsQueryDTO
       SELECT
         e.id::text AS id,
         e.kind::text AS kind,
-        e.status::text AS status,
+        CASE
+          WHEN e.kind = 'OF_OPERATION'::planning_event_kind AND e.of_operation_id IS NOT NULL THEN
+            CASE op.status::text
+              WHEN 'DONE' THEN 'DONE'
+              WHEN 'RUNNING' THEN 'IN_PROGRESS'
+              WHEN 'BLOCKED' THEN 'BLOCKED'
+              ELSE 'PLANNED'
+            END
+          ELSE e.status::text
+        END AS status,
         e.priority::text AS priority,
         COALESCE(e.of_id, op.of_id)::text AS of_id,
         e.of_operation_id::text AS of_operation_id,
         e.machine_id::text AS machine_id,
         e.poste_id::text AS poste_id,
+        e.operator_id::int AS operator_id,
         e.title,
         e.description,
         e.start_ts::text AS start_ts,
@@ -614,6 +886,9 @@ export async function repoListPlanningEvents(filters: ListPlanningEventsQueryDTO
         m.name AS machine_name,
         p.code AS poste_code,
         p.label AS poste_label,
+        u.username AS operator_name,
+        op.started_at::text AS operation_started_at,
+        op.ended_at::text AS operation_ended_at,
 
         o.production_group_id::text AS production_group_id,
         pg.code AS production_group_code,
@@ -630,6 +905,7 @@ export async function repoListPlanningEvents(filters: ListPlanningEventsQueryDTO
       LEFT JOIN public.production_group pg ON pg.id = o.production_group_id
       LEFT JOIN public.machines m ON m.id = e.machine_id
       LEFT JOIN public.postes p ON p.id = e.poste_id
+      LEFT JOIN public.users u ON u.id = e.operator_id
       ${whereSql}
       ORDER BY e.start_ts ASC, e.id ASC
     `,
@@ -645,6 +921,7 @@ export async function repoListPlanningEvents(filters: ListPlanningEventsQueryDTO
     of_operation_id: row.of_operation_id,
     machine_id: row.machine_id,
     poste_id: row.poste_id,
+    operator_id: row.operator_id,
     title: row.title,
     description: row.description,
     start_ts: row.start_ts,
@@ -667,6 +944,9 @@ export async function repoListPlanningEvents(filters: ListPlanningEventsQueryDTO
     machine_name: row.machine_name,
     poste_code: row.poste_code,
     poste_label: row.poste_label,
+    operator_name: row.operator_name,
+    operation_started_at: row.operation_started_at,
+    operation_ended_at: row.operation_ended_at,
 
     production_group_id: row.production_group_id,
     production_group_code: row.production_group_code,
@@ -861,6 +1141,13 @@ export async function repoCreatePlanningEvent(params: {
     if (b.of_operation_id && !op) {
       throw new HttpError(404, "OF_OPERATION_NOT_FOUND", "OF operation not found");
     }
+    if (b.of_operation_id) {
+      await ensurePlanningOperationTransitionAllowed({
+        tx: client,
+        of_operation_id: b.of_operation_id,
+        target_status: b.status,
+      });
+    }
 
     const finalOfId = typeof b.of_id === "number" ? b.of_id : op?.of_id ?? null;
     if (typeof b.of_id === "number" && op && op.of_id !== b.of_id) {
@@ -897,6 +1184,7 @@ export async function repoCreatePlanningEvent(params: {
           of_operation_id,
           machine_id,
           poste_id,
+          operator_id,
           title,
           description,
           start_ts,
@@ -914,13 +1202,14 @@ export async function repoCreatePlanningEvent(params: {
           $6::uuid,
           $7::uuid,
           $8::uuid,
-          $9,
+          $9::int,
           $10,
-          $11::timestamptz,
+          $11,
           $12::timestamptz,
-          $13,
+          $13::timestamptz,
           $14,
-          $15
+          $15,
+          $16
         )
       `,
       [
@@ -932,6 +1221,7 @@ export async function repoCreatePlanningEvent(params: {
         b.of_operation_id ?? null,
         resource.machine_id,
         resource.poste_id,
+        b.operator_id ?? null,
         title,
         b.description ?? null,
         b.start_ts,
@@ -941,6 +1231,26 @@ export async function repoCreatePlanningEvent(params: {
         params.audit.user_id,
       ]
     );
+
+    let synchronizedOfId = finalOfId;
+    let notifications: AppNotification[] = [];
+    if (b.of_operation_id) {
+      const sync = await syncLinkedOfOperationFromPlanning({
+        tx: client,
+        of_operation_id: b.of_operation_id,
+        user_id: params.audit.user_id,
+      });
+      synchronizedOfId = sync.of_id ?? synchronizedOfId;
+      notifications = sync.notifications;
+    } else if (typeof synchronizedOfId === "number") {
+      notifications = await maybePromoteOfAndCommandeAfterPlanning({
+        tx: client,
+        of_id: synchronizedOfId,
+        user_id: params.audit.user_id,
+      });
+    }
+
+    const commandeId = typeof synchronizedOfId === "number" ? await loadCommandeIdForOf(client, synchronizedOfId) : null;
 
     await insertAuditLog(client, params.audit, {
       action: "planning.events.create",
@@ -954,6 +1264,7 @@ export async function repoCreatePlanningEvent(params: {
         of_operation_id: b.of_operation_id ?? null,
         machine_id: resource.machine_id,
         poste_id: resource.poste_id,
+        operator_id: b.operator_id ?? null,
         start_ts: b.start_ts,
         end_ts: b.end_ts,
         allow_overlap: b.allow_overlap,
@@ -961,6 +1272,17 @@ export async function repoCreatePlanningEvent(params: {
     });
 
     await client.query("COMMIT");
+
+    for (const notification of notifications) {
+      emitAppNotificationCreated(notification.user_id, notification);
+    }
+    emitPlanningRealtime({
+      event_id: eventId,
+      of_id: synchronizedOfId,
+      commande_id: commandeId,
+      action: b.status === "DONE" || b.status === "BLOCKED" ? "status_changed" : "created",
+      user_id: params.audit.user_id,
+    });
 
     const out = await selectPlanningEventListItemById(pool, eventId);
     if (!out) throw new Error("Failed to reload created planning event");
@@ -994,6 +1316,7 @@ export async function repoPatchPlanningEvent(params: {
       of_operation_id: string | null;
       machine_id: string | null;
       poste_id: string | null;
+      operator_id: number | null;
       title: string;
       description: string | null;
       start_ts: string;
@@ -1012,6 +1335,7 @@ export async function repoPatchPlanningEvent(params: {
           of_operation_id::text AS of_operation_id,
           machine_id::text AS machine_id,
           poste_id::text AS poste_id,
+          operator_id::int AS operator_id,
           title,
           description,
           start_ts::text AS start_ts,
@@ -1044,9 +1368,17 @@ export async function repoPatchPlanningEvent(params: {
 
     const nextOfId = p.of_id !== undefined ? p.of_id : toNullableInt(before.of_id, "planning_events.of_id");
     const nextOfOperationId = p.of_operation_id !== undefined ? p.of_operation_id : before.of_operation_id;
+    const nextStatus = p.status !== undefined ? p.status : before.status;
 
     if (typeof nextOfId === "number" && op && op.of_id !== nextOfId) {
       throw new HttpError(400, "OF_OPERATION_MISMATCH", "Operation does not belong to the provided OF");
+    }
+    if (nextOfOperationId) {
+      await ensurePlanningOperationTransitionAllowed({
+        tx: client,
+        of_operation_id: nextOfOperationId,
+        target_status: nextStatus,
+      });
     }
 
     const nextStart = p.start_ts !== undefined ? p.start_ts : before.start_ts;
@@ -1096,6 +1428,7 @@ export async function repoPatchPlanningEvent(params: {
       sets.push(`machine_id = ${push(resource.machine_id)}::uuid`);
       sets.push(`poste_id = ${push(resource.poste_id)}::uuid`);
     }
+    if (p.operator_id !== undefined) sets.push(`operator_id = ${push(p.operator_id ?? null)}::int`);
     if (p.title !== undefined) sets.push(`title = ${push(p.title)}`);
     if (p.description !== undefined) sets.push(`description = ${push(p.description ?? null)}`);
     if (p.start_ts !== undefined) sets.push(`start_ts = ${push(nextStart)}::timestamptz`);
@@ -1131,6 +1464,7 @@ export async function repoPatchPlanningEvent(params: {
           of_operation_id: nextOfOperationId,
           machine_id: resource.machine_id,
           poste_id: resource.poste_id,
+          operator_id: p.operator_id !== undefined ? p.operator_id : before.operator_id,
           start_ts: nextStart,
           end_ts: nextEnd,
           allow_overlap: nextAllowOverlap,
@@ -1138,7 +1472,47 @@ export async function repoPatchPlanningEvent(params: {
       },
     });
 
+    let synchronizedOfId = nextOfId;
+    let notifications: AppNotification[] = [];
+    if (before.of_operation_id && before.of_operation_id !== nextOfOperationId) {
+      const previousSync = await syncLinkedOfOperationFromPlanning({
+        tx: client,
+        of_operation_id: before.of_operation_id,
+        user_id: params.audit.user_id,
+      });
+      synchronizedOfId = previousSync.of_id ?? synchronizedOfId;
+    }
+
+    if (nextOfOperationId) {
+      const sync = await syncLinkedOfOperationFromPlanning({
+        tx: client,
+        of_operation_id: nextOfOperationId,
+        user_id: params.audit.user_id,
+      });
+      synchronizedOfId = sync.of_id ?? synchronizedOfId;
+      notifications = sync.notifications;
+    } else if (typeof synchronizedOfId === "number") {
+      notifications = await maybePromoteOfAndCommandeAfterPlanning({
+        tx: client,
+        of_id: synchronizedOfId,
+        user_id: params.audit.user_id,
+      });
+    }
+
+    const commandeId = typeof synchronizedOfId === "number" ? await loadCommandeIdForOf(client, synchronizedOfId) : null;
+
     await client.query("COMMIT");
+
+    for (const notification of notifications) {
+      emitAppNotificationCreated(notification.user_id, notification);
+    }
+    emitPlanningRealtime({
+      event_id: params.id,
+      of_id: synchronizedOfId,
+      commande_id: commandeId,
+      action: p.status !== undefined ? "status_changed" : "updated",
+      user_id: params.audit.user_id,
+    });
 
     const out = await selectPlanningEventListItemById(pool, params.id);
     if (!out) throw new Error("Failed to reload patched planning event");
@@ -1159,8 +1533,8 @@ export async function repoArchivePlanningEvent(params: { id: string; audit: Audi
   try {
     await client.query("BEGIN");
 
-    const beforeRes = await client.query<{ id: string; archived_at: string | null }>(
-      `SELECT id::text AS id, archived_at::text AS archived_at FROM public.planning_events WHERE id = $1::uuid FOR UPDATE`,
+    const beforeRes = await client.query<{ id: string; archived_at: string | null; of_id: string | null; of_operation_id: string | null }>(
+      `SELECT id::text AS id, archived_at::text AS archived_at, of_id::text AS of_id, of_operation_id::text AS of_operation_id FROM public.planning_events WHERE id = $1::uuid FOR UPDATE`,
       [params.id]
     );
     const before = beforeRes.rows[0];
@@ -1171,6 +1545,13 @@ export async function repoArchivePlanningEvent(params: { id: string; audit: Audi
     if (before.archived_at) {
       await client.query("ROLLBACK");
       return false;
+    }
+    if (before.of_operation_id) {
+      await ensurePlanningOperationTransitionAllowed({
+        tx: client,
+        of_operation_id: before.of_operation_id,
+        target_status: "CANCELLED",
+      });
     }
 
     await client.query(
@@ -1194,7 +1575,32 @@ export async function repoArchivePlanningEvent(params: { id: string; audit: Audi
       details: null,
     });
 
+    let synchronizedOfId = toNullableInt(before.of_id, "planning_events.of_id");
+    let notifications: AppNotification[] = [];
+    if (before.of_operation_id) {
+      const sync = await syncLinkedOfOperationFromPlanning({
+        tx: client,
+        of_operation_id: before.of_operation_id,
+        user_id: params.audit.user_id,
+      });
+      synchronizedOfId = sync.of_id ?? synchronizedOfId;
+      notifications = sync.notifications;
+    }
+
+    const commandeId = typeof synchronizedOfId === "number" ? await loadCommandeIdForOf(client, synchronizedOfId) : null;
+
     await client.query("COMMIT");
+
+    for (const notification of notifications) {
+      emitAppNotificationCreated(notification.user_id, notification);
+    }
+    emitPlanningRealtime({
+      event_id: params.id,
+      of_id: synchronizedOfId,
+      commande_id: commandeId,
+      action: "deleted",
+      user_id: params.audit.user_id,
+    });
     return true;
   } catch (err) {
     await client.query("ROLLBACK");

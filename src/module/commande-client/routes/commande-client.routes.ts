@@ -5,6 +5,7 @@ import path from "path"
 import fs from "fs"
 
 import { authenticateToken } from "../../auth/middlewares/auth.middleware"
+import { HttpError } from "../../../utils/httpError"
 import {
   addCadreReleaseLine,
   analyzeCommandeStock,
@@ -29,6 +30,11 @@ import {
   updateCommande,
   updateCommandeStatus,
 } from "../controllers/commande-client.controller"
+import { generateCommandeAr, sendCommandeAr } from "../controllers/commande-ar.controller"
+import {
+  generateCommandeArSchema,
+  sendCommandeArSchema,
+} from "../validators/commande-ar.validators"
 import {
   createCommandeBodySchema,
   confirmGenerateAffairesSchema,
@@ -77,6 +83,27 @@ const parseCommandeBody: RequestHandler = (req, res, next) => {
 }
 
 const router = Router()
+
+function isAdminRole(role: string | undefined): boolean {
+  if (!role) return false
+  const r = role.trim().toLowerCase()
+  return r.includes("admin") || r.includes("administrateur") || r.includes("directeur")
+}
+
+function isOfficeSupportRole(role: string | undefined): boolean {
+  if (!role) return false
+  const r = role.trim().toLowerCase()
+  return r.includes("secr") || r.includes("secret") || r.includes("compt")
+}
+
+const requireOfficeSupportOrAdmin: RequestHandler = (req, _res, next) => {
+  const role = req.user?.role
+  if (!isAdminRole(role) && !isOfficeSupportRole(role)) {
+    next(new HttpError(403, "FORBIDDEN", "Secretary or accounting role required"))
+    return
+  }
+  next()
+}
 
 // POST /api/v1/commandes  (multipart: data + documents[])
 router.post("/", upload.array("documents[]"), parseCommandeBody, createCommande)
@@ -133,7 +160,13 @@ router.patch("/:id", validate(idParamSchema), upload.array("documents[]"), parse
 router.delete("/:id", validate(idParamSchema), deleteCommande)
 
 // POST /api/v1/commandes/:id/status
-router.post("/:id/status", validate(idParamSchema), updateCommandeStatus)
+router.post("/:id/status", authenticateToken, validate(idParamSchema), updateCommandeStatus)
+
+// POST /api/v1/commandes/:id/ar/generate
+router.post("/:id/ar/generate", authenticateToken, requireOfficeSupportOrAdmin, validate(generateCommandeArSchema), generateCommandeAr)
+
+// POST /api/v1/commandes/:id/ar/send
+router.post("/:id/ar/send", authenticateToken, requireOfficeSupportOrAdmin, validate(sendCommandeArSchema), sendCommandeAr)
 
 // POST /api/v1/commandes/:id/analyze-stock
 router.post("/:id/analyze-stock", authenticateToken, validate(idParamSchema), analyzeCommandeStock)

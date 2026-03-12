@@ -37,6 +37,22 @@ vi.mock("../utils/checkNetworkDrive", () => ({
   checkNetworkDrive: vi.fn(() => Promise.resolve()),
 }));
 
+vi.mock("../module/auth/middlewares/auth.middleware", () => ({
+  authenticateToken: (req: { user?: { id: number; role: string } }, _res: unknown, next: () => void) => {
+    req.user = { id: 1, role: "Administrateur Systeme et Reseau" };
+    next();
+  },
+  authorizeRole:
+    (...roles: string[]) =>
+    (req: { user?: { role: string } }, res: { status: (n: number) => { json: (b: unknown) => unknown } }, next: () => void) => {
+      if (req.user && roles.includes(req.user.role)) {
+        next();
+        return;
+      }
+      res.status(403).json({ error: "Accès interdit" });
+    },
+}));
+
 import app from "../config/app";
 
 beforeEach(() => {
@@ -364,7 +380,7 @@ describe("/api/v1/commandes", () => {
 
     const insertCall = mocks.clientQuery.mock.calls.find((c) => String(c[0]).includes("INSERT INTO commande_historique"));
     expect(insertCall).toBeTruthy();
-    expect(insertCall?.[1]).toEqual([123, null, "brouillon", "valide", "ok"]);
+    expect(insertCall?.[1]).toEqual([123, 1, "brouillon", "valide", "ok"]);
   });
 
   it("POST /api/v1/commandes/:id/duplicate returns new id", async () => {
