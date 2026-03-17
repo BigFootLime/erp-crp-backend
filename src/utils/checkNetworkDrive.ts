@@ -1,17 +1,13 @@
 import fs from "fs";
 import path from "path";
+import { getImagesRootPath } from "./imageStorage";
 
 /**
  * Vérifie l’accessibilité du dossier d’upload (local ou réseau)
  * et d’un fichier test (par défaut : FRAISE-A-FILETER.svg)
  */
 export const checkNetworkDrive = async () => {
-    const isLocal = process.env.NODE_ENV === "development";
-
-    const localPath = path.resolve("uploads/images");
-    const reseauPath = path.resolve("/home/bigfootlime/erp-crp/erp-crp-backend/uploads/images");
-
-    const basePath = isLocal ? localPath : reseauPath;
+    const basePath = getImagesRootPath();
 
     const testFile = "FRAISE-A-FILETER.svg";
     const fullTestPath = path.join(basePath, testFile);

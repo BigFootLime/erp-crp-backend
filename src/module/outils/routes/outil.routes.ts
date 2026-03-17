@@ -1,9 +1,14 @@
 // src/module/outils/routes/outils.routes.ts
 import { Router } from "express";
 import { outilController, outilSupportController } from "../controllers/outil.controller";
-import { upload } from "../../../middlewares/upload";
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
 import { asyncHandler } from "../../../utils/asyncHandler";
+import {
+  outillageFabricantUpload,
+  outillageFamilleUpload,
+  outillageGeometrieUpload,
+  outillageToolUpload,
+} from "../utils/outillage-upload";
 
 const router = Router();
 
@@ -13,11 +18,13 @@ const router = Router();
  * =========================
  */
 router.get("/familles", asyncHandler(outilSupportController.getFamilles));
+router.post("/familles", authenticateToken, outillageFamilleUpload.single("image"), asyncHandler(outilSupportController.postFamille));
+router.patch("/familles/:id", authenticateToken, outillageFamilleUpload.single("image"), asyncHandler(outilSupportController.patchFamille));
 router.get("/fabricants", asyncHandler(outilSupportController.getFabricants));
 router.post(
   "/fabricants",
   authenticateToken,
-  upload.single("logo"),
+  outillageFabricantUpload.single("logo"),
   asyncHandler(outilSupportController.postFabricant)
 );
 
@@ -25,6 +32,8 @@ router.get("/fournisseurs", asyncHandler(outilSupportController.getFournisseurs)
 router.post("/fournisseurs", authenticateToken, asyncHandler(outilSupportController.postFournisseur));
 
 router.get("/geometries", asyncHandler(outilSupportController.getGeometries));
+router.post("/geometries", authenticateToken, outillageGeometrieUpload.single("image"), asyncHandler(outilSupportController.postGeometrie));
+router.patch("/geometries/:id", authenticateToken, outillageGeometrieUpload.single("image"), asyncHandler(outilSupportController.patchGeometrie));
 router.get("/revetements", asyncHandler(outilSupportController.getRevetements));
 router.post("/revetements", authenticateToken, asyncHandler(outilSupportController.postRevetement));
 
@@ -44,6 +53,7 @@ router.get("", asyncHandler(outilController.getFiltered));
 router.get("/low-stock", authenticateToken, asyncHandler(outilController.getLowStock));
 
 // ✅ Détail par id
+router.get("/:id/pricing", authenticateToken, asyncHandler(outilController.getPricing));
 router.get("/:id", asyncHandler(outilController.getById));
 
 // ✅ Lookup par code barre (référence fabricant)
@@ -57,13 +67,26 @@ router.get("/ref_fabricant/:ref_fabricant", asyncHandler(outilController.getByRe
 router.post(
   "/",
   authenticateToken,
-  upload.fields([
+  outillageToolUpload.fields([
     { name: "esquisse", maxCount: 1 },
     { name: "plan", maxCount: 1 },
     { name: "image", maxCount: 1 },
   ]),
   asyncHandler(outilController.create)
 );
+
+router.patch(
+  "/:id",
+  authenticateToken,
+  outillageToolUpload.fields([
+    { name: "esquisse", maxCount: 1 },
+    { name: "plan", maxCount: 1 },
+    { name: "image", maxCount: 1 },
+  ]),
+  asyncHandler(outilController.update)
+);
+
+router.delete("/:id", authenticateToken, asyncHandler(outilController.remove));
 
 /**
  * =========================

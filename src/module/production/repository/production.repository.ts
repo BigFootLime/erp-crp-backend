@@ -1813,13 +1813,45 @@ export async function repoUpdateOrdreFabrication(params: {
   try {
     await client.query("BEGIN");
 
-    const exists = await client.query<{ id: string }>(
-      `SELECT id::text AS id FROM ordres_fabrication WHERE id = $1::bigint FOR UPDATE`,
+    const exists = await client.query<{ id: string; commande_id: string | null }>(
+      `
+        SELECT
+          id::text AS id,
+          commande_id::text AS commande_id
+        FROM ordres_fabrication
+        WHERE id = $1::bigint
+        FOR UPDATE
+      `,
       [params.id]
     );
-    if (!exists.rows[0]?.id) {
+    const ofRow = exists.rows[0] ?? null;
+    if (!ofRow?.id) {
       await client.query("ROLLBACK");
       return null;
+    }
+
+    const commandeId = ofRow.commande_id ? toInt(ofRow.commande_id, "ordres_fabrication.commande_id") : null;
+    if (commandeId !== null) {
+      const lockRes = await client.query<{ ar_sent_at: string | null }>(
+        `SELECT ar_sent_at::text AS ar_sent_at FROM commande_client WHERE id = $1::bigint LIMIT 1`,
+        [commandeId]
+      );
+      const lockedAfterAr = Boolean(lockRes.rows[0]?.ar_sent_at);
+      if (lockedAfterAr) {
+        const allowed = new Set<keyof UpdateOfBodyDTO>([
+          "statut",
+          "quantite_bonne",
+          "quantite_rebut",
+          "date_lancement_reelle",
+          "date_fin_reelle",
+          "notes",
+        ]);
+        const keys = Object.keys(params.patch) as Array<keyof UpdateOfBodyDTO>;
+        const hasDisallowed = keys.some((k) => !allowed.has(k));
+        if (hasDisallowed) {
+          throw new HttpError(409, "OF_LOCKED_AFTER_AR", "OF is locked after AR has been sent");
+        }
+      }
     }
 
     const sets: string[] = [];
@@ -1916,6 +1948,26 @@ export async function repoUpdateOrdreFabricationOperation(params: {
     };
 
     const p = params.patch;
+
+    const wantsResourceChange = p.poste_id !== undefined || p.machine_id !== undefined;
+    if (wantsResourceChange) {
+      const ofRes = await client.query<{ commande_id: string | null }>(
+        `SELECT commande_id::text AS commande_id FROM ordres_fabrication WHERE id = $1::bigint LIMIT 1`,
+        [params.of_id]
+      );
+      const commandeId = ofRes.rows[0]?.commande_id ? toInt(ofRes.rows[0].commande_id, "ordres_fabrication.commande_id") : null;
+      if (commandeId !== null) {
+        const lockRes = await client.query<{ ar_sent_at: string | null }>(
+          `SELECT ar_sent_at::text AS ar_sent_at FROM commande_client WHERE id = $1::bigint LIMIT 1`,
+          [commandeId]
+        );
+        const lockedAfterAr = Boolean(lockRes.rows[0]?.ar_sent_at);
+        if (lockedAfterAr) {
+          throw new HttpError(409, "OF_OPERATION_LOCKED_AFTER_AR", "OF operation is locked after AR has been sent");
+        }
+      }
+    }
+
     if (p.poste_id !== undefined) sets.push(`poste_id = ${push(p.poste_id ?? null)}::uuid`);
     if (p.machine_id !== undefined) sets.push(`machine_id = ${push(p.machine_id ?? null)}::uuid`);
     if (p.status !== undefined) {

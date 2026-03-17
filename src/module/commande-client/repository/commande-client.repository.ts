@@ -366,6 +366,21 @@ async function getInternalClientIdSetting(db: Queryable): Promise<string | null>
 }
 
 type ListWhere = { whereSql: string; values: unknown[] };
+
+function normalizedCommandeStatusSql(rawExpr: string): string {
+  return `
+    CASE
+      WHEN ${rawExpr} IS NULL THEN 'ENREGISTREE'
+      WHEN ${rawExpr} IN ('ENREGISTREE','PLANIFIEE','AR_ENVOYEE','LIVREE') THEN ${rawExpr}
+      WHEN lower(${rawExpr}) IN ('brouillon','envoyée','envoyee','confirmée','confirmee') THEN 'ENREGISTREE'
+      WHEN lower(${rawExpr}) IN ('en préparation','en preparation','en production') THEN 'PLANIFIEE'
+      WHEN lower(${rawExpr}) IN ('partielle') THEN 'AR_ENVOYEE'
+      WHEN lower(${rawExpr}) IN ('livrée','livree','facturée','facturee','clôturée','cloturee') THEN 'LIVREE'
+      ELSE 'ENREGISTREE'
+    END
+  `;
+}
+
 function buildListWhere(filters: ListCommandesQueryDTO): ListWhere {
   const where: string[] = [];
   const values: unknown[] = [];
@@ -386,7 +401,7 @@ function buildListWhere(filters: ListCommandesQueryDTO): ListWhere {
 
   if (filters.statut && filters.statut.trim().length > 0) {
     const p = push(filters.statut.trim());
-    where.push(`COALESCE(st.nouveau_statut, 'brouillon') = ${p}`);
+    where.push(`(${normalizedCommandeStatusSql("st.nouveau_statut")}) = ${p}`);
   }
 
   if (filters.order_type) {
@@ -592,7 +607,7 @@ export async function repoListCommandes(filters: ListCommandesQueryDTO) {
       cc.total_ht::float8 AS total_ht,
       cc.total_ttc::float8 AS total_ttc,
       cc.updated_at::text AS updated_at,
-      COALESCE(st.nouveau_statut, 'brouillon') AS statut,
+      ${normalizedCommandeStatusSql("st.nouveau_statut")} AS statut,
       CASE WHEN c.client_id IS NULL THEN NULL ELSE jsonb_build_object(
         'client_id', c.client_id,
         'company_name', c.company_name,
@@ -686,7 +701,7 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
       cc.total_ttc::float8 AS total_ttc,
       cc.created_at::text AS created_at,
       cc.updated_at::text AS updated_at,
-      COALESCE(st.nouveau_statut, 'brouillon') AS statut
+      ${normalizedCommandeStatusSql("st.nouveau_statut")} AS statut
     FROM commande_client cc
     LEFT JOIN LATERAL (
       SELECT ch.nouveau_statut
@@ -1228,6 +1243,7 @@ export async function repoUpdateCommande(id: string, input: CreateCommandeInput,
       cadre_end_date: string | null;
       dest_stock_magasin_id: string | null;
       dest_stock_emplacement_id: string | null;
+      ar_sent_at: string | null;
     }>(
       `
       SELECT
@@ -1238,7 +1254,8 @@ export async function repoUpdateCommande(id: string, input: CreateCommandeInput,
         cadre_start_date::text AS cadre_start_date,
         cadre_end_date::text AS cadre_end_date,
         dest_stock_magasin_id::text AS dest_stock_magasin_id,
-        dest_stock_emplacement_id::text AS dest_stock_emplacement_id
+        dest_stock_emplacement_id::text AS dest_stock_emplacement_id,
+        ar_sent_at::text AS ar_sent_at
       FROM commande_client
       WHERE id = $1::bigint
       FOR UPDATE
@@ -1249,6 +1266,10 @@ export async function repoUpdateCommande(id: string, input: CreateCommandeInput,
     if (!existing) {
       await client.query("ROLLBACK");
       return null;
+    }
+
+    if (existing.ar_sent_at) {
+      throw new HttpError(409, "COMMANDE_LOCKED_AFTER_AR", "Commande is locked after AR has been sent");
     }
 
     const numero = typeof input.numero === "string" && input.numero.trim().length > 0 ? input.numero.trim() : existing.numero;
@@ -1317,7 +1338,7 @@ export async function repoUpdateCommande(id: string, input: CreateCommandeInput,
       input.arc_edi ?? false,
       input.arc_date_envoi ?? null,
       input.compteur_affaire_id ?? null,
-      input.type_affaire ?? "fabrication",
+      "livraison",
       orderType,
       cadreStartForUpdate,
       cadreEndForUpdate,
@@ -1359,7 +1380,18 @@ export async function repoUpdateCommande(id: string, input: CreateCommandeInput,
 }
 
 export async function repoDeleteCommande(id: string) {
-  const { rowCount } = await pool.query(`DELETE FROM commande_client WHERE id = $1`, [id]);
+  const commandeId = toInt(id, "commande_id");
+  const before = await pool.query<{ ar_sent_at: string | null }>(
+    `SELECT ar_sent_at::text AS ar_sent_at FROM commande_client WHERE id = $1::bigint LIMIT 1`,
+    [commandeId]
+  );
+  const row = before.rows[0] ?? null;
+  if (!row) return false;
+  if (row.ar_sent_at) {
+    throw new HttpError(409, "COMMANDE_LOCKED_AFTER_AR", "Commande is locked after AR has been sent");
+  }
+
+  const { rowCount } = await pool.query(`DELETE FROM commande_client WHERE id = $1::bigint`, [commandeId]);
   return (rowCount ?? 0) > 0;
 }
 
@@ -1374,6 +1406,137 @@ export async function repoUpdateCommandeStatus(
   try {
     await client.query("BEGIN");
 
+<<<<<<< HEAD
+    if (userId === null) {
+      throw new HttpError(401, "UNAUTHORIZED", "Authentication required");
+    }
+
+    const commandeRes = await client.query<{
+      id: string;
+      planning_validated_at: string | null;
+      ar_sent_at: string | null;
+    }>(
+      `
+        SELECT
+          id::text AS id,
+          planning_validated_at::text AS planning_validated_at,
+          ar_sent_at::text AS ar_sent_at
+        FROM commande_client
+        WHERE id = $1::bigint
+        FOR UPDATE
+      `,
+      [commandeId]
+    );
+    const commandeRow = commandeRes.rows[0] ?? null;
+    if (!commandeRow) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    type WorkflowStatus = "ENREGISTREE" | "PLANIFIEE" | "AR_ENVOYEE" | "LIVREE";
+    const workflowOrder: readonly WorkflowStatus[] = [
+      "ENREGISTREE",
+      "PLANIFIEE",
+      "AR_ENVOYEE",
+      "LIVREE",
+    ] as const;
+    const isWorkflowStatus = (v: string): v is WorkflowStatus => (workflowOrder as readonly string[]).includes(v);
+    const normalizeWorkflowStatus = (raw: string | null | undefined): WorkflowStatus => {
+      const v = String(raw ?? "").trim();
+      if (isWorkflowStatus(v)) return v;
+      const lower = v.toLowerCase();
+      if (!lower) return "ENREGISTREE";
+      if (
+        lower === "livrée" ||
+        lower === "livree" ||
+        lower === "facturée" ||
+        lower === "facturee" ||
+        lower === "clôturée" ||
+        lower === "cloturee"
+      ) {
+        return "LIVREE";
+      }
+      if (lower === "partielle") return "AR_ENVOYEE";
+      if (lower === "en préparation" || lower === "en preparation" || lower === "en production") return "PLANIFIEE";
+      return "ENREGISTREE";
+    };
+    const indexOfStatus = (s: WorkflowStatus): number => workflowOrder.indexOf(s);
+
+    const nextStatusRaw = String(nouveau_statut ?? "").trim();
+    if (!isWorkflowStatus(nextStatusRaw)) {
+      throw new HttpError(400, "INVALID_STATUS", "Invalid workflow status");
+    }
+    const nextStatus: WorkflowStatus = nextStatusRaw;
+
+    const last = await client.query<{ nouveau_statut: string }>(
+      `
+      SELECT nouveau_statut
+      FROM commande_historique
+      WHERE commande_id = $1
+      ORDER BY date_action DESC, id DESC
+      LIMIT 1
+      `,
+      [commandeId]
+    );
+    const ancienStatut = last.rows[0]?.nouveau_statut ?? null;
+
+    const currentStatus = normalizeWorkflowStatus(ancienStatut);
+    if (nextStatus === currentStatus) {
+      await client.query("COMMIT");
+      return {
+        id: null,
+        ancien_statut: ancienStatut,
+        nouveau_statut: nextStatus,
+      };
+    }
+
+    const currentIdx = indexOfStatus(currentStatus);
+    const nextIdx = indexOfStatus(nextStatus);
+    if (nextIdx !== currentIdx + 1) {
+      throw new HttpError(409, "INVALID_WORKFLOW_TRANSITION", `Invalid workflow transition: ${currentStatus} -> ${nextStatus}`);
+    }
+
+    // Milestones / locks
+    if (nextStatus === "PLANIFIEE") {
+      await client.query(
+        `
+          UPDATE commande_client
+          SET
+            planning_validated_at = COALESCE(planning_validated_at, now()),
+            planning_validated_by = COALESCE(planning_validated_by, $2),
+            updated_at = now()
+          WHERE id = $1::bigint
+        `,
+        [commandeId, userId]
+      );
+    } else if (nextStatus === "AR_ENVOYEE") {
+      if (!commandeRow.planning_validated_at) {
+        throw new HttpError(409, "PLANNING_NOT_VALIDATED", "Planning must be validated before sending AR");
+      }
+      await client.query(
+        `
+          UPDATE commande_client
+          SET
+            ar_sent_at = COALESCE(ar_sent_at, now()),
+            ar_sent_by = COALESCE(ar_sent_by, $2),
+            updated_at = now()
+          WHERE id = $1::bigint
+        `,
+        [commandeId, userId]
+      );
+    } else {
+      await client.query(`UPDATE commande_client SET updated_at = now() WHERE id = $1::bigint`, [commandeId]);
+    }
+
+    const ins = await client.query<{ id: string }>(
+      `
+        INSERT INTO commande_historique (commande_id, user_id, ancien_statut, nouveau_statut, commentaire)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING id::text AS id
+      `,
+      [commandeId, userId, ancienStatut, nextStatus, commentaire]
+    );
+=======
     const out = await repoEnsureCommandeWorkflowStatus({
       tx: client,
       commande_id: commandeId,
@@ -1381,6 +1544,7 @@ export async function repoUpdateCommandeStatus(
       commentaire,
       user_id: userId,
     });
+>>>>>>> a322c2187ed53033d14332df639e61e7a1dbc25c
 
     await client.query("COMMIT");
 
@@ -1400,10 +1564,16 @@ export async function repoUpdateCommandeStatus(
     }
 
     return {
+<<<<<<< HEAD
+      id: ins.rows[0]?.id ? toInt(ins.rows[0].id, "commande_historique.id") : null,
+      ancien_statut: ancienStatut,
+      nouveau_statut: nextStatus,
+=======
       id: out.history_id,
       ancien_statut: out.ancien_statut,
       nouveau_statut: out.nouveau_statut,
       changed: out.changed,
+>>>>>>> a322c2187ed53033d14332df639e61e7a1dbc25c
     };
   } catch (e) {
     await client.query("ROLLBACK");
@@ -1541,11 +1711,13 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       numero: string;
       dest_stock_magasin_id: string | null;
       dest_stock_emplacement_id: string | null;
+      ar_sent_at: string | null;
     }>(
       `
       SELECT client_id, type_affaire, order_type, devis_id::text AS devis_id, numero,
              dest_stock_magasin_id::text AS dest_stock_magasin_id,
-             dest_stock_emplacement_id::bigint::text AS dest_stock_emplacement_id
+             dest_stock_emplacement_id::bigint::text AS dest_stock_emplacement_id,
+             ar_sent_at::text AS ar_sent_at
       FROM commande_client
       WHERE id = $1
       FOR UPDATE
@@ -1622,43 +1794,66 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       };
     }
 
+    if (commande.ar_sent_at) {
+      throw new HttpError(409, "COMMANDE_LOCKED_AFTER_AR", "Commande is locked after AR has been sent");
+    }
+
+    const refs = await selectCommandeLineRefs(client, commandeId);
+
     let stockLocationId: string | null = null;
     if (orderType === "INTERNE") {
       const magasinId = commande.dest_stock_magasin_id;
       const emplacementIdRaw = commande.dest_stock_emplacement_id;
       const emplacementId = typeof emplacementIdRaw === "string" && /^\d+$/.test(emplacementIdRaw) ? Number(emplacementIdRaw) : null;
-      if (!magasinId || typeof emplacementId !== "number" || !Number.isFinite(emplacementId)) {
-        throw new HttpError(
-          400,
-          "DEST_STOCK_LOCATION_REQUIRED",
-          "dest_stock_magasin_id and dest_stock_emplacement_id are required for internal orders"
-        );
+      if (magasinId && typeof emplacementId === "number" && Number.isFinite(emplacementId)) {
+        stockLocationId = await resolveLocationIdForEmplacement(client, {
+          magasin_id: magasinId,
+          emplacement_id: emplacementId,
+          label: "dest_stock_location",
+        });
       }
-      stockLocationId = await resolveLocationIdForEmplacement(client, {
-        magasin_id: magasinId,
-        emplacement_id: emplacementId,
-        label: "dest_stock_location",
-      });
     } else {
-      stockLocationId = (await getDefaultShippingLocation(client)).location_id;
+      try {
+        stockLocationId = (await getDefaultShippingLocation(client)).location_id;
+      } catch {
+        stockLocationId = null;
+      }
     }
 
-    const analysis = stockLocationId
-      ? await computeCommandeStockAnalysis(client, { commande_id: commandeId, location_id: stockLocationId })
-      : { lines: [] };
+    let analysis: CommandeStockAnalysis | null = null;
+    if (stockLocationId) {
+      try {
+        analysis = await computeCommandeStockAnalysis(client, { commande_id: commandeId, location_id: stockLocationId });
+      } catch {
+        analysis = null;
+      }
+    }
+    if (!analysis) {
+      analysis = {
+        lines: refs.map((r) => {
+          const requestedQty = Number(r.qty_ordered);
+          const shortage = Math.max(0, requestedQty);
+          return {
+            commande_ligne_id: r.commande_ligne_id,
+            code_piece: r.code_piece,
+            article_id: r.article_id,
+            piece_technique_id: r.piece_technique_id,
+            requested_qty: requestedQty,
+            available_qty: 0,
+            available_used_qty: 0,
+            shortage_qty: shortage,
+            status: shortage > 0 ? "NONE" : "FULL",
+          };
+        }),
+      };
+    }
 
     const hasPartial = analysis.lines.some((l) => l.status === "PARTIAL");
     const needsConfirmation = orderType !== "INTERNE" && hasPartial;
     const needsProduction = orderType === "INTERNE" ? true : analysis.lines.some((l) => l.shortage_qty > 0);
 
-    const decision = body.decision ?? null;
-    if (needsConfirmation && decision === null) {
-      throw new HttpError(
-        409,
-        "DECISION_REQUIRED",
-        "Partial availability requires a decision (SHIP_AVAILABLE_NOW or SHIP_ALL_TOGETHER)"
-      );
-    }
+    let decision = body.decision ?? null;
+    if (needsConfirmation && decision === null) decision = "SHIP_AVAILABLE_NOW";
 
     const overrides = new Map<number, number>();
     for (const l of body.lines ?? []) {
@@ -1814,7 +2009,6 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
 
     const ofIds: number[] = [];
     if (needsProduction) {
-      const refs = await selectCommandeLineRefs(client, commandeId);
       const byLine = new Map<number, CommandeLineRef>(refs.map((r) => [r.commande_ligne_id, r] as const));
 
       for (const l of analysis.lines) {

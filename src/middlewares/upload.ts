@@ -1,30 +1,37 @@
 import multer from "multer";
 import path from "path";
-import fs from "fs";
+import { ensureImagesSubdir } from "../utils/imageStorage";
 
-// Définir les chemins
-const reseauPath = path.resolve("/home/bigfootlime/erp-crp/erp-crp-backend/uploads/images");
-const localPath = path.resolve("uploads/images");
-
-// Choisir dynamiquement le chemin en fonction de l’environnement
-const isLocal = process.env.NODE_ENV === "development";
-const uploadPath = isLocal ? localPath : reseauPath;
-
-// S'assurer que le dossier existe
-if (!fs.existsSync(uploadPath)) {
-    fs.mkdirSync(uploadPath, { recursive: true });
+function sanitizeStem(value: string) {
+  return value
+    .normalize("NFKD")
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .toLowerCase();
 }
 
-// Configurer multer
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        cb(null, uploadPath);
-    },
-    filename: (req, file, cb) => {
-        const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-        const ext = path.extname(file.originalname);
-        cb(null, `${file.fieldname}-${uniqueSuffix}${ext}`);
-    },
-});
+function splitSubdirectory(subdirectory?: string) {
+  return (subdirectory ?? "")
+    .split(/[\\/]+/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+}
 
-export const upload = multer({ storage });
+export function createImageUpload(subdirectory?: string) {
+  const storage = multer.diskStorage({
+    destination: (_req, _file, cb) => {
+      cb(null, ensureImagesSubdir(...splitSubdirectory(subdirectory)));
+    },
+    filename: (_req, file, cb) => {
+      const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+      const ext = path.extname(file.originalname).toLowerCase();
+      const stem = sanitizeStem(path.basename(file.originalname, ext)) || sanitizeStem(file.fieldname) || "image";
+      cb(null, `${stem}-${uniqueSuffix}${ext}`);
+    },
+  });
+
+  return multer({ storage });
+}
+
+export const upload = createImageUpload();
