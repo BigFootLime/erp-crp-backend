@@ -3,6 +3,7 @@ import pool from "../../../config/database";
 
 export type ClientRow = {
   client_id: string
+  client_code: string | null
   company_name: string
   email: string | null
   phone: string | null
@@ -93,6 +94,10 @@ export async function listClients(q = "", limit = 25): Promise<ClientRow[]> {
   const sql = `
   SELECT
     c.client_id::text,
+    COALESCE(
+      NULLIF(btrim(to_jsonb(c)->>'client_code'), ''),
+      NULLIF(btrim(to_jsonb(c)->>'code_client'), '')
+    ) AS client_code,
     c.company_name, c.email, c.phone, c.website_url,
     c.siret, c.vat_number, c.naf_code,
     c.status, c.blocked, c.reason, c.creation_date,
@@ -173,12 +178,16 @@ export async function listClients(q = "", limit = 25): Promise<ClientRow[]> {
   LEFT JOIN client_payment_modes   cpm ON cpm.client_id          = c.client_id
   LEFT JOIN mode_reglement         mr  ON mr.payment_id          = cpm.payment_id
 
-  WHERE
-    $1 = '' OR (
-      c.company_name ILIKE '%' || $1 || '%'
-      OR c.email ILIKE '%' || $1 || '%'
-      OR c.siret ILIKE replace('%' || $1 || '%',' ','')
-      OR c.vat_number ILIKE '%' || $1 || '%'
+    WHERE
+      $1 = '' OR (
+        c.company_name ILIKE '%' || $1 || '%'
+        OR COALESCE(
+          NULLIF(btrim(to_jsonb(c)->>'client_code'), ''),
+          NULLIF(btrim(to_jsonb(c)->>'code_client'), '')
+        ) ILIKE '%' || $1 || '%'
+        OR c.email ILIKE '%' || $1 || '%'
+        OR c.siret ILIKE replace('%' || $1 || '%',' ','')
+        OR c.vat_number ILIKE '%' || $1 || '%'
       OR af.city ILIKE '%' || $1 || '%'
       OR al.city ILIKE '%' || $1 || '%'
     )

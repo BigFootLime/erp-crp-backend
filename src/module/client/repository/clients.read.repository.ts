@@ -49,6 +49,10 @@ export async function repoGetClientById(clientId: string) {
     `
     SELECT
       c.client_id,
+      COALESCE(
+        NULLIF(btrim(to_jsonb(c)->>'client_code'), ''),
+        NULLIF(btrim(to_jsonb(c)->>'code_client'), '')
+      ) AS client_code,
       c.company_name, c.email, c.phone, c.website_url,
       c.siret, c.vat_number, c.naf_code,
       c.status, c.blocked, c.reason, c.creation_date,
@@ -98,6 +102,7 @@ export async function repoGetClientById(clientId: string) {
   return {
     client: {
       client_id: r.client_id,
+      client_code: r.client_code ?? null,
       company_name: r.company_name,
       email: r.email ?? null,
       phone: r.phone ?? null,
@@ -225,6 +230,10 @@ export async function repoListClients(q: string, limit = 25) {
     `
     SELECT
       c.client_id,
+      COALESCE(
+        NULLIF(btrim(to_jsonb(c)->>'client_code'), ''),
+        NULLIF(btrim(to_jsonb(c)->>'code_client'), '')
+      ) AS client_code,
       c.company_name, c.email, c.phone, c.website_url,
       c.siret, c.vat_number, c.naf_code,
       c.status, c.blocked, c.reason, c.creation_date,
@@ -275,7 +284,10 @@ export async function repoListClients(q: string, limit = 25) {
     WHERE
       ($1 = '%%')
       OR (LOWER(c.company_name) LIKE $1
-          OR LOWER(c.client_id::text) LIKE $1
+          OR LOWER(COALESCE(
+               NULLIF(btrim(to_jsonb(c)->>'client_code'), ''),
+               NULLIF(btrim(to_jsonb(c)->>'code_client'), '')
+             )) LIKE $1
           OR LOWER(COALESCE(c.email,'')) LIKE $1
           OR COALESCE(c.siret,'') LIKE replace($1,'%',''))
 
@@ -290,6 +302,7 @@ export async function repoListClients(q: string, limit = 25) {
 
   return rows as Array<{
     client_id: string;
+    client_code: string | null;
     company_name: string;
     email: string | null;
     phone: string | null;

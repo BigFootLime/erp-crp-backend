@@ -303,7 +303,10 @@ async function resolvePaymentIds(db: any, ids: string[]): Promise<string[]> {
 
 
 
-export async function repoCreateClient(dto: CreateClientDTO, audit: AuditContext): Promise<{ client_id: string }> {
+export async function repoCreateClient(
+  dto: CreateClientDTO,
+  audit: AuditContext
+): Promise<{ client_id: string; client_code: string }> {
   const db = await pool.connect();
   try {
     await db.query('BEGIN');
@@ -375,7 +378,7 @@ export async function repoCreateClient(dto: CreateClientDTO, audit: AuditContext
     });
 
     await db.query('COMMIT');
-    return { client_id: clientId };
+    return { client_id: clientId, client_code: clientCode };
   } catch (e) {
     await db.query('ROLLBACK');
     throw e;
