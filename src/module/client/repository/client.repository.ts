@@ -7,7 +7,7 @@ import type { CreateClientDTO } from "../validators/client.validators";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 import { generateClientCode } from "../../../shared/codes/code-generator.service";
-import { codeFormatHintText, isValidCode } from "../../../shared/codes/code-validator";
+import { codeFormatExample, isValidCode } from "../../../shared/codes/code-validator";
 
 export type AuditContext = {
   user_id: number;
@@ -22,6 +22,10 @@ export type AuditContext = {
 };
 
 type DbQueryer = Pick<PoolClient, "query">;
+
+const clientCodeInvalidMessage = `Le code client doit être au format ${codeFormatExample("client")}.`;
+const clientCodeExistsMessage = "Un client avec ce code existe déjà.";
+const clientCodeRequiredMessage = "Le code client est obligatoire.";
 
 function isPgForeignKeyViolation(err: unknown): boolean {
   return (err as { code?: unknown } | null)?.code === "23503";
@@ -84,6 +88,22 @@ async function insertAddressFacturation(client: any, a: CreateClientDTO["bill_ad
     [a.street, a.house_number ?? null, a.postal_code, a.city, a.country, a.name]
   );
   return rows[0].bill_address_id as string;
+}
+
+async function ensureClientCodeAvailable(db: any, clientCode: string, excludeClientId?: string) {
+  const result = await db.query(
+    `SELECT client_id::text AS client_id
+       FROM clients
+      WHERE client_code = $1
+      LIMIT 1`,
+    [clientCode]
+  );
+
+  const rows = result.rows as Array<{ client_id: string }>;
+  const existingClientId = rows[0]?.client_id ?? null;
+  if (existingClientId && existingClientId !== excludeClientId) {
+    throw new HttpError(409, "CLIENT_CODE_EXISTS", clientCodeExistsMessage);
+  }
 }
 
 async function insertAddressLivraison(client: any, a: CreateClientDTO["delivery_address"]) {
@@ -288,20 +308,21 @@ export async function repoCreateClient(dto: CreateClientDTO, audit: AuditContext
   try {
     await db.query('BEGIN');
 
-    const billAddrId = await insertAddressFacturation(db, dto.bill_address);
-    const delivAddrId = await insertAddressLivraison(db, dto.delivery_address);
-    const bankInfoId = await upsertBank(db, dto.bank);
-
     const clientCode = await (async (): Promise<string> => {
       const provided = (dto.client_code ?? "").trim();
       if (provided) {
         if (!isValidCode("client", provided)) {
-          throw new HttpError(400, "CLIENT_CODE_INVALID", `Code client invalide. ${codeFormatHintText("client")}`);
+          throw new HttpError(400, "CLIENT_CODE_INVALID", clientCodeInvalidMessage);
         }
+        await ensureClientCodeAvailable(db, provided);
         return provided;
       }
       return generateClientCode(db);
     })();
+
+    const billAddrId = await insertAddressFacturation(db, dto.bill_address);
+    const delivAddrId = await insertAddressLivraison(db, dto.delivery_address);
+    const bankInfoId = await upsertBank(db, dto.bank);
 
     // ✅ récupère l'ID généré par le trigger
     let clientId = "";
@@ -310,7 +331,7 @@ export async function repoCreateClient(dto: CreateClientDTO, audit: AuditContext
     } catch (err) {
       const { code, constraint } = getPgErrorInfo(err);
       if (code === "23505" && constraint === "clients_client_code_key") {
-        throw new HttpError(409, "CLIENT_CODE_EXISTS", "Code client deja utilise");
+        throw new HttpError(409, "CLIENT_CODE_EXISTS", clientCodeExistsMessage);
       }
       throw err;
     }
@@ -474,11 +495,13 @@ export async function repoUpdateClient(id: string, dto: CreateClientDTO, audit: 
       if (dto.client_code === undefined) return null;
       const provided = (dto.client_code ?? "").trim();
       if (!provided) {
-        throw new HttpError(400, "CLIENT_CODE_REQUIRED", "Code client requis");
+        throw new HttpError(400, "CLIENT_CODE_REQUIRED", clientCodeRequiredMessage);
       }
       if (!isValidCode("client", provided)) {
-        throw new HttpError(400, "CLIENT_CODE_INVALID", `Code client invalide. ${codeFormatHintText("client")}`);
+        throw new HttpError(400, "CLIENT_CODE_INVALID", clientCodeInvalidMessage);
       }
+
+      await ensureClientCodeAvailable(db, provided, id);
       return provided;
     })();
 
@@ -528,7 +551,7 @@ export async function repoUpdateClient(id: string, dto: CreateClientDTO, audit: 
     } catch (err) {
       const { code, constraint } = getPgErrorInfo(err);
       if (code === "23505" && constraint === "clients_client_code_key") {
-        throw new HttpError(409, "CLIENT_CODE_EXISTS", "Code client deja utilise");
+        throw new HttpError(409, "CLIENT_CODE_EXISTS", clientCodeExistsMessage);
       }
       throw err;
     }
