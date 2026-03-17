@@ -90,6 +90,7 @@ export const createPlanningEventSchema = z
 
         machine_id: uuid.optional().nullable(),
         poste_id: uuid.optional().nullable(),
+        operator_id: z.coerce.number().int().positive().optional().nullable(),
 
         title: z.string().trim().min(1).max(500).optional(),
         description: z.string().trim().min(1).optional().nullable(),
@@ -160,6 +161,7 @@ export const patchPlanningEventSchema = z
             of_operation_id: uuid.optional().nullable(),
             machine_id: uuid.optional().nullable(),
             poste_id: uuid.optional().nullable(),
+            operator_id: z.coerce.number().int().positive().optional().nullable(),
             title: z.string().trim().min(1).max(500).optional(),
             description: z.string().trim().min(1).optional().nullable(),
             start_ts: dateTimeString.optional(),

@@ -17,6 +17,8 @@ export const sortDirSchema = z.enum(["asc", "desc"]);
 
 export const articleTypeSchema = z.enum(["PIECE_TECHNIQUE", "PURCHASED"]);
 export type ArticleTypeDTO = z.infer<typeof articleTypeSchema>;
+export const articleCategorySchema = z.enum(["PIECE_TECHNIQUE", "MATIERE_PREMIERE", "TRAITEMENT", "FOURNITURE"]);
+export type ArticleCategoryDTO = z.infer<typeof articleCategorySchema>;
 
 // Mirrors DB enum: public.movement_type
 export const stockMovementTypeSchema = z.enum([
@@ -49,8 +51,10 @@ export const docIdParamSchema = z.object({
 export const listArticlesQuerySchema = z.object({
   q: z.string().trim().optional(),
   article_type: articleTypeSchema.optional(),
+  article_category: articleCategorySchema.optional(),
   is_active: z.preprocess(parseBoolean, z.boolean().optional()),
   lot_tracking: z.preprocess(parseBoolean, z.boolean().optional()),
+  stock_managed: z.preprocess(parseBoolean, z.boolean().optional()),
   page: z.coerce.number().int().min(1).optional().default(1),
   pageSize: z.coerce.number().int().min(1).max(200).optional().default(20),
   sortBy: z.enum(["updated_at", "created_at", "code", "designation"]).optional().default("updated_at"),
@@ -65,13 +69,31 @@ export const createArticleSchema = z.object({
       code: z.string().trim().min(1).max(80),
       designation: z.string().trim().min(1).max(400),
       article_type: articleTypeSchema.optional().default("PURCHASED"),
+      article_category: articleCategorySchema.optional().default("MATIERE_PREMIERE"),
+      stock_managed: z.boolean().optional().default(true),
       piece_technique_id: uuid.optional().nullable(),
       unite: z.string().trim().min(1).max(30).optional().nullable(),
       lot_tracking: z.boolean().optional().default(false),
       is_active: z.boolean().optional().default(true),
       notes: z.string().trim().min(1).optional().nullable(),
     })
-    .strict(),
+    .strict()
+    .superRefine((body, ctx) => {
+      if (body.article_type === "PIECE_TECHNIQUE") {
+        if (!body.piece_technique_id) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: "piece_technique_id is required for PIECE_TECHNIQUE articles", path: ["piece_technique_id"] });
+        }
+        if (body.article_category !== "PIECE_TECHNIQUE") {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: "PIECE_TECHNIQUE articles must use article_category PIECE_TECHNIQUE", path: ["article_category"] });
+        }
+      }
+      if (body.article_type === "PURCHASED" && body.article_category === "PIECE_TECHNIQUE") {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "PURCHASED articles cannot use article_category PIECE_TECHNIQUE", path: ["article_category"] });
+      }
+      if (!body.stock_managed && body.lot_tracking) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "lot_tracking requires stock_managed=true", path: ["lot_tracking"] });
+      }
+    }),
 });
 
 export type CreateArticleBodyDTO = z.infer<typeof createArticleSchema>["body"];
@@ -82,6 +104,8 @@ export const updateArticleSchema = z.object({
       code: z.string().trim().min(1).max(80).optional(),
       designation: z.string().trim().min(1).max(400).optional(),
       article_type: articleTypeSchema.optional(),
+      article_category: articleCategorySchema.optional(),
+      stock_managed: z.boolean().optional(),
       piece_technique_id: uuid.optional().nullable(),
       unite: z.string().trim().min(1).max(30).optional().nullable(),
       lot_tracking: z.boolean().optional(),
@@ -223,6 +247,9 @@ export type UpdateLotBodyDTO = z.infer<typeof updateLotSchema>["body"];
 
 export const listBalancesQuerySchema = z.object({
   article_id: uuid.optional(),
+  magasin_id: uuid.optional(),
+  emplacement_id: z.coerce.number().int().positive().optional(),
+  lot_id: uuid.optional(),
   warehouse_id: uuid.optional(),
   location_id: uuid.optional(),
   page: z.coerce.number().int().min(1).optional().default(1),
@@ -230,6 +257,14 @@ export const listBalancesQuerySchema = z.object({
 });
 
 export type ListBalancesQueryDTO = z.infer<typeof listBalancesQuerySchema>;
+
+export const listAnalyticsQuerySchema = z.object({
+  from: z.string().trim().optional(),
+  to: z.string().trim().optional(),
+  magasin_id: uuid.optional(),
+});
+
+export type ListAnalyticsQueryDTO = z.infer<typeof listAnalyticsQuerySchema>;
 
 export const listMovementsQuerySchema = z.object({
   q: z.string().trim().optional(),

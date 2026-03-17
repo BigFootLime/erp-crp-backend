@@ -96,6 +96,10 @@ export const initSocketServer = (server: HttpServer) => {
 
   io.on("connection", (socket) => {
     socket.join("erp:global");
+    const user = socket.data.user as JwtUser | undefined;
+    if (user && Number.isInteger(user.id) && user.id > 0) {
+      socket.join(`USER:${user.id}`);
+    }
 
     socket.on("room:join", (payload: unknown, cb?: (r: { ok: boolean; error?: string }) => void) => {
       const room =
