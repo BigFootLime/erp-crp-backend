@@ -37,6 +37,22 @@ vi.mock("../utils/checkNetworkDrive", () => ({
   checkNetworkDrive: vi.fn(() => Promise.resolve()),
 }));
 
+vi.mock("../module/auth/middlewares/auth.middleware", () => ({
+  authenticateToken: (req: { user?: { id: number; role: string } }, _res: unknown, next: () => void) => {
+    req.user = { id: 1, role: "Administrateur Systeme et Reseau" };
+    next();
+  },
+  authorizeRole:
+    (...roles: string[]) =>
+    (req: { user?: { role: string } }, res: { status: (n: number) => { json: (b: unknown) => unknown } }, next: () => void) => {
+      if (req.user && roles.includes(req.user.role)) {
+        next();
+        return;
+      }
+      res.status(403).json({ error: "Accès interdit" });
+    },
+}));
+
 import app from "../config/app";
 
 beforeEach(() => {

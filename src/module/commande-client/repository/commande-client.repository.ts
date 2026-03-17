@@ -5,8 +5,11 @@ import type { PoolClient } from "pg";
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
 import { generateAffaireCode, requireClientCode } from "../../../shared/codes/code-generator.service";
+import { emitAppNotificationCreated, emitEntityChanged } from "../../../shared/realtime/realtime.service";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
+import { repoCreateAppNotifications, repoListUsersForCommandePlanningNotification } from "../../notifications/repository/notifications.repository";
+import type { AppNotification } from "../../notifications/types/notifications.types";
 import type {
   CreateCommandeInput,
   UploadedDocument,
@@ -81,6 +84,15 @@ type AuditContext = {
   path: string | null;
   page_key: string | null;
   client_session_id: string | null;
+};
+
+type CommandeWorkflowStatus = "ENREGISTREE" | "PLANIFIEE" | "AR_ENVOYEE" | "LIVREE";
+
+const commandeWorkflowOrder: Record<CommandeWorkflowStatus, number> = {
+  ENREGISTREE: 0,
+  PLANIFIEE: 1,
+  AR_ENVOYEE: 2,
+  LIVREE: 3,
 };
 
 async function insertAuditLog(tx: Queryable, audit: AuditContext, entry: {
@@ -268,6 +280,15 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+function normalizeCommandeWorkflowStatus(value: unknown): CommandeWorkflowStatus | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toUpperCase();
+  if (normalized === "ENREGISTREE" || normalized === "PLANIFIEE" || normalized === "AR_ENVOYEE" || normalized === "LIVREE") {
+    return normalized;
+  }
+  return null;
+}
+
 async function getDefaultShippingLocation(db: Queryable): Promise<{
   magasin_id: string;
   emplacement_id: number;
@@ -415,6 +436,139 @@ function buildListWhere(filters: ListCommandesQueryDTO): ListWhere {
   return {
     whereSql: where.length ? `WHERE ${where.join(" AND ")}` : "",
     values,
+  };
+}
+
+async function loadCommandeWorkflowHeader(tx: Queryable, commandeId: number): Promise<{
+  id: number;
+  numero: string;
+  client_id: string | null;
+} | null> {
+  const res = await tx.query<{ id: number; numero: string; client_id: string | null }>(
+    `
+      SELECT id::int AS id, numero, client_id
+      FROM commande_client
+      WHERE id = $1
+      LIMIT 1
+    `,
+    [commandeId]
+  );
+
+  return res.rows[0] ?? null;
+}
+
+export async function repoEnsureCommandeWorkflowStatus(params: {
+  tx: Queryable;
+  commande_id: number;
+  nouveau_statut: string;
+  commentaire: string | null;
+  user_id: number | null;
+}): Promise<{
+  changed: boolean;
+  ancien_statut: string | null;
+  nouveau_statut: string;
+  history_id: number | null;
+  notifications: AppNotification[];
+}> {
+  const commande = await loadCommandeWorkflowHeader(params.tx, params.commande_id);
+  if (!commande) {
+    throw new HttpError(404, "COMMANDE_NOT_FOUND", "Commande introuvable");
+  }
+
+  const nextRaw = params.nouveau_statut.trim();
+  const nextNormalized = normalizeCommandeWorkflowStatus(nextRaw);
+
+  const last = await params.tx.query<{ nouveau_statut: string }>(
+    `
+      SELECT nouveau_statut
+      FROM commande_historique
+      WHERE commande_id = $1
+      ORDER BY date_action DESC, id DESC
+      LIMIT 1
+    `,
+    [params.commande_id]
+  );
+
+  const ancienStatut = last.rows[0]?.nouveau_statut ?? null;
+  const currentNormalized = normalizeCommandeWorkflowStatus(ancienStatut);
+
+  if (ancienStatut && ancienStatut.trim().toUpperCase() === nextRaw.toUpperCase()) {
+    return {
+      changed: false,
+      ancien_statut: ancienStatut,
+      nouveau_statut: ancienStatut,
+      history_id: null,
+      notifications: [],
+    };
+  }
+
+  if (
+    currentNormalized &&
+    nextNormalized &&
+    commandeWorkflowOrder[nextNormalized] < commandeWorkflowOrder[currentNormalized]
+  ) {
+    return {
+      changed: false,
+      ancien_statut: ancienStatut,
+      nouveau_statut: ancienStatut ?? nextRaw,
+      history_id: null,
+      notifications: [],
+    };
+  }
+
+  const ins = await params.tx.query<{ id: string }>(
+    `
+      INSERT INTO commande_historique (commande_id, user_id, ancien_statut, nouveau_statut, commentaire)
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING id::text AS id
+    `,
+    [params.commande_id, params.user_id, ancienStatut, nextRaw, params.commentaire]
+  );
+
+  if (nextNormalized === "AR_ENVOYEE") {
+    await params.tx.query(
+      `UPDATE commande_client SET updated_at = now(), arc_date_envoi = COALESCE(arc_date_envoi, now()) WHERE id = $1`,
+      [params.commande_id]
+    );
+  } else {
+    await params.tx.query(`UPDATE commande_client SET updated_at = now() WHERE id = $1`, [params.commande_id]);
+  }
+
+  await insertCommandeEvent(params.tx, {
+    commande_id: params.commande_id,
+    event_type: "STATUS_CHANGED",
+    old_values: { ancien_statut: ancienStatut },
+    new_values: { nouveau_statut: nextRaw },
+    user_id: params.user_id ?? null,
+  });
+
+  let notifications: AppNotification[] = [];
+  if (nextNormalized === "PLANIFIEE") {
+    const recipientIds = await repoListUsersForCommandePlanningNotification(params.tx);
+    notifications = await repoCreateAppNotifications({
+      tx: params.tx,
+      user_ids: recipientIds,
+      kind: "commande.planifiee",
+      title: `Commande ${commande.numero} planifiée`,
+      message: `La commande ${commande.numero} est maintenant planifiée. Un AR peut être envoyé au client.`,
+      severity: "success",
+      action_url: `/commandes/${params.commande_id}`,
+      action_label: "Ouvrir",
+      payload: {
+        commande_id: params.commande_id,
+        numero: commande.numero,
+        client_id: commande.client_id,
+      },
+      dedupe_key: `commande:${params.commande_id}:planifiee`,
+    });
+  }
+
+  return {
+    changed: true,
+    ancien_statut: ancienStatut,
+    nouveau_statut: nextRaw,
+    history_id: ins.rows[0]?.id ? toInt(ins.rows[0].id, "commande_historique.id") : null,
+    notifications,
   };
 }
 
@@ -1252,6 +1406,7 @@ export async function repoUpdateCommandeStatus(
   try {
     await client.query("BEGIN");
 
+<<<<<<< HEAD
     if (userId === null) {
       throw new HttpError(401, "UNAUTHORIZED", "Authentication required");
     }
@@ -1381,12 +1536,44 @@ export async function repoUpdateCommandeStatus(
       `,
       [commandeId, userId, ancienStatut, nextStatus, commentaire]
     );
+=======
+    const out = await repoEnsureCommandeWorkflowStatus({
+      tx: client,
+      commande_id: commandeId,
+      nouveau_statut,
+      commentaire,
+      user_id: userId,
+    });
+>>>>>>> a322c2187ed53033d14332df639e61e7a1dbc25c
 
     await client.query("COMMIT");
+
+    for (const notification of out.notifications) {
+      emitAppNotificationCreated(notification.user_id, notification);
+    }
+    if (out.changed) {
+      emitEntityChanged({
+        entityType: "commande_client",
+        entityId: String(commandeId),
+        action: "status_changed",
+        module: "commandes",
+        at: new Date().toISOString(),
+        by: { id: userId ?? 0, name: userId ? `User #${userId}` : "System" },
+        invalidateKeys: ["commandes:list", `commandes:detail:${commandeId}`],
+      });
+    }
+
     return {
+<<<<<<< HEAD
       id: ins.rows[0]?.id ? toInt(ins.rows[0].id, "commande_historique.id") : null,
       ancien_statut: ancienStatut,
       nouveau_statut: nextStatus,
+=======
+      id: out.history_id,
+      ancien_statut: out.ancien_statut,
+      nouveau_statut: out.nouveau_statut,
+      changed: out.changed,
+>>>>>>> a322c2187ed53033d14332df639e61e7a1dbc25c
     };
   } catch (e) {
     await client.query("ROLLBACK");

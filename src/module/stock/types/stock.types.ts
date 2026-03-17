@@ -4,18 +4,25 @@ export type Paginated<T> = {
 };
 
 export type ArticleType = "PIECE_TECHNIQUE" | "PURCHASED";
+export type ArticleCategory = "PIECE_TECHNIQUE" | "MATIERE_PREMIERE" | "TRAITEMENT" | "FOURNITURE";
 
 export type StockArticleListItem = {
   id: string;
   code: string;
   designation: string;
   article_type: ArticleType;
+  article_category: ArticleCategory;
+  stock_managed: boolean;
   piece_technique_id: string | null;
   piece_code: string | null;
   piece_designation: string | null;
   unite: string | null;
   lot_tracking: boolean;
   is_active: boolean;
+  qty_available: number;
+  qty_reserved: number;
+  qty_total: number;
+  locations_count: number;
   updated_at: string;
   created_at: string;
 };
@@ -28,8 +35,12 @@ export type StockArticleKpis = {
   total: number;
   active: number;
   lot_tracked: number;
+  stock_managed: number;
   piece_technique: number;
   purchased: number;
+  raw_material: number;
+  treatment: number;
+  fourniture: number;
 };
 
 export type StockMagasinListItem = {
@@ -96,10 +107,17 @@ export type StockLotDetail = StockLotListItem & {
 
 // This endpoint now reflects stock_levels (via v_stock_current).
 export type StockBalanceRow = {
-  id: string;
   article_id: string;
   article_code: string;
   article_designation: string;
+  magasin_id: string | null;
+  magasin_code: string | null;
+  magasin_name: string | null;
+  emplacement_id: number | null;
+  emplacement_code: string | null;
+  emplacement_name: string | null;
+  lot_id: string | null;
+  lot_code: string | null;
   warehouse_id: string;
   warehouse_code: string;
   warehouse_name: string;
@@ -109,9 +127,8 @@ export type StockBalanceRow = {
   unit_id: string;
   unit_code: string;
   managed_in_stock: boolean;
-  qty_total: number;
+  qty_on_hand: number;
   qty_reserved: number;
-  qty_depreciated: number;
   qty_available: number;
   updated_at: string;
 };
@@ -137,7 +154,7 @@ export type StockMovementListItem = {
   article_id: string;
   article_code: string;
   article_designation: string;
-  qty: number;
+  qty_total: number;
   effective_at: string;
   posted_at: string | null;
   source_document_type: string | null;
@@ -226,6 +243,42 @@ export type StockMovementKpis = {
   movements_draft: number;
   qty_in_30d: number;
   qty_out_30d: number;
+};
+
+export type StockAnalytics = {
+  kpis: {
+    articles_count: number;
+    stock_managed_articles: number;
+    qty_on_hand: number;
+    qty_available: number;
+    qty_reserved: number;
+  };
+  magasins: Array<{
+    id: string;
+    code: string;
+    name: string;
+  }>;
+  category_counts: Array<{
+    article_category: ArticleCategory;
+    articles_count: number;
+    stock_managed_count: number;
+  }>;
+  series: {
+    net_by_date: Array<{
+      date: string;
+      qty_in: number;
+      qty_out: number;
+      net_qty: number;
+    }>;
+    top_articles: Array<{
+      article_id: string;
+      code: string;
+      designation: string;
+      qty_moved: number;
+      qty_on_hand: number;
+      qty_available: number;
+    }>;
+  };
 };
 
 export type StockInventorySessionStatus = "OPEN" | "CLOSED";

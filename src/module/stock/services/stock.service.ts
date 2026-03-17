@@ -1,4 +1,5 @@
 import type {
+  StockAnalytics,
   StockArticleDetail,
   StockArticleKpis,
   StockBalanceRow,
@@ -22,6 +23,7 @@ import type {
   CreateLotBodyDTO,
   CreateMagasinBodyDTO,
   CreateMovementBodyDTO,
+  ListAnalyticsQueryDTO,
   ListInventorySessionsQueryDTO,
   ListArticlesQueryDTO,
   ListBalancesQueryDTO,
@@ -48,6 +50,7 @@ import {
   repoCreateMagasin,
   repoCreateMovement,
   repoGetInventorySession,
+  repoGetStockAnalytics,
   repoGetArticle,
   repoGetArticlesKpis,
   repoGetLot,
@@ -200,6 +203,10 @@ export async function updateStockLotSVC(id: string, patch: UpdateLotBodyDTO, aud
 
 export async function listStockBalancesSVC(filters: ListBalancesQueryDTO) {
   return repoListBalances(filters);
+}
+
+export async function getStockAnalyticsSVC(filters: ListAnalyticsQueryDTO): Promise<StockAnalytics> {
+  return repoGetStockAnalytics(filters);
 }
 
 export async function listStockMovementsSVC(filters: ListMovementsQueryDTO) {

@@ -9,7 +9,9 @@ import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 import type {
+  ArticleCategory,
   Paginated,
+  StockAnalytics,
   StockArticleDetail,
   StockArticleKpis,
   StockArticleListItem,
@@ -30,6 +32,7 @@ import type {
   StockMovementListItem,
 } from "../types/stock.types";
 import type {
+  ArticleCategoryDTO,
   CreateArticleBodyDTO,
   CreateEmplacementBodyDTO,
   CreateInventorySessionBodyDTO,
@@ -37,6 +40,7 @@ import type {
   CreateMagasinBodyDTO,
   CreateMovementBodyDTO,
   CreateMovementLineDTO,
+  ListAnalyticsQueryDTO,
   ListArticlesQueryDTO,
   ListBalancesQueryDTO,
   ListEmplacementsQueryDTO,
@@ -128,6 +132,125 @@ async function insertAuditLog(
 
 function normalizeLikeQuery(raw: string): string {
   return `%${raw.trim()}%`;
+}
+
+function isArticleCategory(value: string): value is ArticleCategory {
+  return value === "PIECE_TECHNIQUE" || value === "MATIERE_PREMIERE" || value === "TRAITEMENT" || value === "FOURNITURE";
+}
+
+function resolveArticleCategory(articleType: string, requested: string | null | undefined): ArticleCategory {
+  const normalizedType = articleType.trim().toUpperCase();
+  if (normalizedType === "PIECE_TECHNIQUE") return "PIECE_TECHNIQUE";
+  if (typeof requested === "string" && isArticleCategory(requested)) return requested;
+  return "MATIERE_PREMIERE";
+}
+
+function normalizeArticleState(args: {
+  article_type: string;
+  article_category: string | null | undefined;
+  piece_technique_id: string | null;
+  stock_managed: boolean;
+  lot_tracking: boolean;
+}) {
+  const article_type = args.article_type.trim().toUpperCase();
+  const article_category = resolveArticleCategory(article_type, args.article_category ?? null);
+  const piece_technique_id = article_type === "PIECE_TECHNIQUE" ? args.piece_technique_id : null;
+  const stock_managed = article_category === "TRAITEMENT" ? args.stock_managed : args.stock_managed;
+  const lot_tracking = stock_managed ? args.lot_tracking : false;
+
+  if (article_type === "PIECE_TECHNIQUE" && !piece_technique_id) {
+    throw new HttpError(400, "INVALID_ARTICLE", "PIECE_TECHNIQUE articles require piece_technique_id");
+  }
+  if (article_type === "PURCHASED" && article_category === "PIECE_TECHNIQUE") {
+    throw new HttpError(400, "INVALID_ARTICLE", "PURCHASED articles cannot use PIECE_TECHNIQUE category");
+  }
+
+  return {
+    article_type: article_type as "PIECE_TECHNIQUE" | "PURCHASED",
+    article_category,
+    piece_technique_id,
+    stock_managed,
+    lot_tracking,
+  };
+}
+
+async function ensurePieceTechniqueExists(client: Pick<PoolClient, "query">, pieceTechniqueId: string) {
+  const res = await client.query<{ ok: number }>(
+    `SELECT 1::int AS ok FROM public.pieces_techniques WHERE id = $1::uuid LIMIT 1`,
+    [pieceTechniqueId]
+  );
+  if (!res.rows[0]?.ok) {
+    throw new HttpError(400, "INVALID_PIECE_TECHNIQUE", "Unknown piece_technique_id");
+  }
+}
+
+async function syncPieceTechniqueArticleLink(
+  client: Pick<PoolClient, "query">,
+  args: {
+    article_id: string;
+    previous_piece_technique_id: string | null;
+    next_piece_technique_id: string | null;
+  }
+) {
+  if (args.previous_piece_technique_id && args.previous_piece_technique_id !== args.next_piece_technique_id) {
+    await client.query(
+      `UPDATE public.pieces_techniques SET article_id = NULL WHERE id = $1::uuid AND article_id = $2::uuid`,
+      [args.previous_piece_technique_id, args.article_id]
+    );
+  }
+
+  if (!args.next_piece_technique_id) {
+    await client.query(`UPDATE public.pieces_techniques SET article_id = NULL WHERE article_id = $1::uuid`, [args.article_id]);
+    return;
+  }
+
+  await ensurePieceTechniqueExists(client, args.next_piece_technique_id);
+  await client.query(`UPDATE public.pieces_techniques SET article_id = $2::uuid WHERE id = $1::uuid`, [args.next_piece_technique_id, args.article_id]);
+}
+
+async function getArticleStockSettings(client: Pick<PoolClient, "query">, articleId: string) {
+  const res = await client.query<{ stock_managed: boolean; lot_tracking: boolean }>(
+    `SELECT stock_managed, lot_tracking FROM public.articles WHERE id = $1::uuid LIMIT 1`,
+    [articleId]
+  );
+  const row = res.rows[0] ?? null;
+  if (!row) {
+    throw new HttpError(400, "INVALID_ARTICLE", "Unknown article_id");
+  }
+  return row;
+}
+
+async function ensureArticleStockManaged(client: Pick<PoolClient, "query">, articleId: string) {
+  const row = await getArticleStockSettings(client, articleId);
+  if (!row.stock_managed) {
+    throw new HttpError(409, "ARTICLE_NOT_STOCK_MANAGED", "This article is not managed in stock and cannot be used in stock movements");
+  }
+}
+
+async function ensureLotTrackingRespected(client: Pick<PoolClient, "query">, articleId: string, lines: CreateMovementLineDTO[]) {
+  const row = await getArticleStockSettings(client, articleId);
+  if (!row.lot_tracking) return;
+  const missingLot = lines.some((line) => !line.lot_id);
+  if (missingLot) {
+    throw new HttpError(409, "LOT_REQUIRED", "This article is lot-tracked and requires lot_id on every movement line");
+  }
+}
+
+async function ensureArticleCanDisableStockManagement(client: Pick<PoolClient, "query">, articleId: string) {
+  const res = await client.query<{ qty_total: number; qty_reserved: number }>(
+    `
+      SELECT
+        COALESCE(SUM(qty_total), 0)::float8 AS qty_total,
+        COALESCE(SUM(qty_reserved), 0)::float8 AS qty_reserved
+      FROM public.v_stock_current
+      WHERE article_id = $1::uuid
+    `,
+    [articleId]
+  );
+  const row = res.rows[0] ?? { qty_total: 0, qty_reserved: 0 };
+  if (Math.abs(Number(row.qty_total ?? 0)) > 0.0001 || Math.abs(Number(row.qty_reserved ?? 0)) > 0.0001) {
+    throw new HttpError(409, "ARTICLE_HAS_STOCK", "This article still has stock or reservations and cannot be switched to non-stock-managed");
+  }
 }
 
 function articleSortColumn(sortBy: ListArticlesQueryDTO["sortBy"]): string {
@@ -573,8 +696,10 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
     where.push(`(a.code ILIKE ${p} OR a.designation ILIKE ${p})`);
   }
   if (filters.article_type) where.push(`a.article_type = ${push(filters.article_type)}`);
+  if (filters.article_category) where.push(`a.article_category = ${push(filters.article_category)}`);
   if (filters.is_active !== undefined) where.push(`a.is_active = ${push(filters.is_active)}`);
   if (filters.lot_tracking !== undefined) where.push(`a.lot_tracking = ${push(filters.lot_tracking)}`);
+  if (filters.stock_managed !== undefined) where.push(`a.stock_managed = ${push(filters.stock_managed)}`);
 
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
   const orderBy = articleSortColumn(filters.sortBy);
@@ -592,17 +717,33 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
       a.code,
       a.designation,
       a.article_type,
+      a.article_category,
+      a.stock_managed,
       a.piece_technique_id::text AS piece_technique_id,
       pt.code_piece AS piece_code,
       pt.designation AS piece_designation,
       a.unite,
       a.lot_tracking,
       a.is_active,
+      COALESCE(bs.qty_available, 0)::float8 AS qty_available,
+      COALESCE(bs.qty_reserved, 0)::float8 AS qty_reserved,
+      COALESCE(bs.qty_total, 0)::float8 AS qty_total,
+      COALESCE(bs.locations_count, 0)::int AS locations_count,
       a.updated_at::text AS updated_at,
       a.created_at::text AS created_at
     FROM public.articles a
     LEFT JOIN public.pieces_techniques pt
       ON pt.id = a.piece_technique_id
+    LEFT JOIN (
+      SELECT
+        article_id::text AS article_id,
+        COUNT(*)::int AS locations_count,
+        COALESCE(SUM(qty_available), 0)::float8 AS qty_available,
+        COALESCE(SUM(qty_reserved), 0)::float8 AS qty_reserved,
+        COALESCE(SUM(qty_total), 0)::float8 AS qty_total
+      FROM public.v_stock_current
+      GROUP BY article_id
+    ) bs ON bs.article_id = a.id::text
     ${whereSql}
     ORDER BY ${orderBy} ${orderDir}
     LIMIT $${values.length + 1}
@@ -621,6 +762,8 @@ export async function repoGetArticle(id: string): Promise<StockArticleDetail | n
         a.code,
         a.designation,
         a.article_type,
+        a.article_category,
+        a.stock_managed,
         a.piece_technique_id::text AS piece_technique_id,
         pt.code_piece AS piece_code,
         pt.designation AS piece_designation,
@@ -628,11 +771,25 @@ export async function repoGetArticle(id: string): Promise<StockArticleDetail | n
         a.lot_tracking,
         a.is_active,
         a.notes,
+        COALESCE(bs.qty_available, 0)::float8 AS qty_available,
+        COALESCE(bs.qty_reserved, 0)::float8 AS qty_reserved,
+        COALESCE(bs.qty_total, 0)::float8 AS qty_total,
+        COALESCE(bs.locations_count, 0)::int AS locations_count,
         a.updated_at::text AS updated_at,
         a.created_at::text AS created_at
       FROM public.articles a
       LEFT JOIN public.pieces_techniques pt
         ON pt.id = a.piece_technique_id
+      LEFT JOIN (
+        SELECT
+          article_id::text AS article_id,
+          COUNT(*)::int AS locations_count,
+          COALESCE(SUM(qty_available), 0)::float8 AS qty_available,
+          COALESCE(SUM(qty_reserved), 0)::float8 AS qty_reserved,
+          COALESCE(SUM(qty_total), 0)::float8 AS qty_total
+        FROM public.v_stock_current
+        GROUP BY article_id
+      ) bs ON bs.article_id = a.id::text
       WHERE a.id = $1::uuid
     `,
     [id]
@@ -647,8 +804,12 @@ export async function repoGetArticlesKpis(): Promise<StockArticleKpis> {
         COUNT(*)::int AS total,
         COUNT(*) FILTER (WHERE is_active)::int AS active,
         COUNT(*) FILTER (WHERE lot_tracking)::int AS lot_tracked,
+        COUNT(*) FILTER (WHERE stock_managed)::int AS stock_managed,
         COUNT(*) FILTER (WHERE article_type = 'PIECE_TECHNIQUE')::int AS piece_technique,
-        COUNT(*) FILTER (WHERE article_type = 'PURCHASED')::int AS purchased
+        COUNT(*) FILTER (WHERE article_type = 'PURCHASED')::int AS purchased,
+        COUNT(*) FILTER (WHERE article_category = 'MATIERE_PREMIERE')::int AS raw_material,
+        COUNT(*) FILTER (WHERE article_category = 'TRAITEMENT')::int AS treatment,
+        COUNT(*) FILTER (WHERE article_category = 'FOURNITURE')::int AS fourniture
       FROM public.articles
     `
   );
@@ -657,31 +818,52 @@ export async function repoGetArticlesKpis(): Promise<StockArticleKpis> {
       total: 0,
       active: 0,
       lot_tracked: 0,
+      stock_managed: 0,
       piece_technique: 0,
       purchased: 0,
+      raw_material: 0,
+      treatment: 0,
+      fourniture: 0,
     }
   );
 }
 
 export async function repoCreateArticle(body: CreateArticleBodyDTO, audit: AuditContext): Promise<StockArticleDetail> {
+  const client = await db.connect();
   try {
-    const res = await db.query<{ id: string }>(
+    await client.query("BEGIN");
+
+    const normalized = normalizeArticleState({
+      article_type: body.article_type,
+      article_category: body.article_category,
+      piece_technique_id: body.piece_technique_id ?? null,
+      stock_managed: body.stock_managed,
+      lot_tracking: body.lot_tracking,
+    });
+
+    if (normalized.piece_technique_id) {
+      await ensurePieceTechniqueExists(client, normalized.piece_technique_id);
+    }
+
+    const res = await client.query<{ id: string }>(
       `
         INSERT INTO public.articles (
-          code, designation, article_type, piece_technique_id, unite,
+          code, designation, article_type, article_category, stock_managed, piece_technique_id, unite,
           lot_tracking, is_active, notes,
           created_by, updated_by
         )
-        VALUES ($1,$2,$3,$4::uuid,$5,$6,$7,$8,$9,$9)
+        VALUES ($1,$2,$3,$4,$5,$6::uuid,$7,$8,$9,$10,$11,$11)
         RETURNING id::text AS id
       `,
       [
         body.code,
         body.designation,
-        body.article_type,
-        body.piece_technique_id ?? null,
+        normalized.article_type,
+        normalized.article_category,
+        normalized.stock_managed,
+        normalized.piece_technique_id,
         body.unite ?? null,
-        body.lot_tracking,
+        normalized.lot_tracking,
         body.is_active,
         body.notes ?? null,
         audit.user_id,
@@ -690,26 +872,39 @@ export async function repoCreateArticle(body: CreateArticleBodyDTO, audit: Audit
 
     const id = res.rows[0]?.id;
     if (!id) throw new Error("Failed to create article");
-    const out = await repoGetArticle(id);
-    if (!out) throw new Error("Failed to read created article");
+    await syncPieceTechniqueArticleLink(client, {
+      article_id: id,
+      previous_piece_technique_id: null,
+      next_piece_technique_id: normalized.piece_technique_id,
+    });
 
-    await insertAuditLog(db, audit, {
+    await insertAuditLog(client, audit, {
       action: "stock.articles.create",
       entity_type: "articles",
       entity_id: id,
       details: {
         code: body.code,
         designation: body.designation,
-        article_type: body.article_type,
+        article_type: normalized.article_type,
+        article_category: normalized.article_category,
+        stock_managed: normalized.stock_managed,
       },
     });
 
+    await client.query("COMMIT");
+
+    const out = await repoGetArticle(id);
+    if (!out) throw new Error("Failed to read created article");
+
     return out;
   } catch (err) {
+    await client.query("ROLLBACK");
     if (isPgUniqueViolation(err)) {
       throw new HttpError(409, "DUPLICATE", "Article code already exists");
     }
     throw err;
+  } finally {
+    client.release();
   }
 }
 
@@ -718,6 +913,7 @@ export async function repoUpdateArticle(
   patch: UpdateArticleBodyDTO,
   audit: AuditContext
 ): Promise<StockArticleDetail | null> {
+  const client = await db.connect();
   const sets: string[] = [];
   const values: unknown[] = [];
   const push = (v: unknown) => {
@@ -725,43 +921,101 @@ export async function repoUpdateArticle(
     return `$${values.length}`;
   };
 
-  if (patch.code !== undefined) sets.push(`code = ${push(patch.code)}`);
-  if (patch.designation !== undefined) sets.push(`designation = ${push(patch.designation)}`);
-  if (patch.article_type !== undefined) sets.push(`article_type = ${push(patch.article_type)}`);
-  if (patch.piece_technique_id !== undefined) sets.push(`piece_technique_id = ${push(patch.piece_technique_id)}::uuid`);
-  if (patch.unite !== undefined) sets.push(`unite = ${push(patch.unite)}`);
-  if (patch.lot_tracking !== undefined) sets.push(`lot_tracking = ${push(patch.lot_tracking)}`);
-  if (patch.is_active !== undefined) sets.push(`is_active = ${push(patch.is_active)}`);
-  if (patch.notes !== undefined) sets.push(`notes = ${push(patch.notes)}`);
-
-  sets.push(`updated_at = now()`);
-  sets.push(`updated_by = ${push(audit.user_id)}`);
-
-  const sql = `
-    UPDATE public.articles
-    SET ${sets.join(", ")}
-    WHERE id = ${push(id)}::uuid
-    RETURNING id::text AS id
-  `;
-
   try {
-    const res = await db.query<{ id: string }>(sql, values);
+    await client.query("BEGIN");
+
+    const currentRes = await client.query<{
+      id: string;
+      article_type: string;
+      article_category: string;
+      piece_technique_id: string | null;
+      stock_managed: boolean;
+      lot_tracking: boolean;
+    }>(
+      `
+        SELECT
+          id::text AS id,
+          article_type,
+          article_category,
+          piece_technique_id::text AS piece_technique_id,
+          stock_managed,
+          lot_tracking
+        FROM public.articles
+        WHERE id = $1::uuid
+        FOR UPDATE
+      `,
+      [id]
+    );
+    const current = currentRes.rows[0] ?? null;
+    if (!current) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    const normalized = normalizeArticleState({
+      article_type: patch.article_type ?? current.article_type,
+      article_category: patch.article_category ?? current.article_category,
+      piece_technique_id: patch.piece_technique_id !== undefined ? patch.piece_technique_id : current.piece_technique_id,
+      stock_managed: patch.stock_managed ?? current.stock_managed,
+      lot_tracking: patch.lot_tracking ?? current.lot_tracking,
+    });
+
+    if (current.stock_managed && !normalized.stock_managed) {
+      await ensureArticleCanDisableStockManagement(client, id);
+    }
+
+    if (patch.code !== undefined) sets.push(`code = ${push(patch.code)}`);
+    if (patch.designation !== undefined) sets.push(`designation = ${push(patch.designation)}`);
+    sets.push(`article_type = ${push(normalized.article_type)}`);
+    sets.push(`article_category = ${push(normalized.article_category)}`);
+    sets.push(`stock_managed = ${push(normalized.stock_managed)}`);
+    sets.push(`piece_technique_id = ${push(normalized.piece_technique_id)}::uuid`);
+    if (patch.unite !== undefined) sets.push(`unite = ${push(patch.unite)}`);
+    sets.push(`lot_tracking = ${push(normalized.lot_tracking)}`);
+    if (patch.is_active !== undefined) sets.push(`is_active = ${push(patch.is_active)}`);
+    if (patch.notes !== undefined) sets.push(`notes = ${push(patch.notes)}`);
+
+    sets.push(`updated_at = now()`);
+    sets.push(`updated_by = ${push(audit.user_id)}`);
+
+    const sql = `
+      UPDATE public.articles
+      SET ${sets.join(", ")}
+      WHERE id = ${push(id)}::uuid
+      RETURNING id::text AS id
+    `;
+
+    const res = await client.query<{ id: string }>(sql, values);
     const rowId = res.rows[0]?.id;
     if (!rowId) return null;
 
-    await insertAuditLog(db, audit, {
+    await syncPieceTechniqueArticleLink(client, {
+      article_id: id,
+      previous_piece_technique_id: current.piece_technique_id,
+      next_piece_technique_id: normalized.piece_technique_id,
+    });
+
+    await insertAuditLog(client, audit, {
       action: "stock.articles.update",
       entity_type: "articles",
       entity_id: id,
-      details: { patch },
+      details: {
+        patch,
+        normalized,
+      },
     });
+
+    await client.query("COMMIT");
 
     return repoGetArticle(id);
   } catch (err) {
+    await client.query("ROLLBACK");
     if (isPgUniqueViolation(err)) {
       throw new HttpError(409, "DUPLICATE", "Article code already exists");
     }
     throw err;
+  } finally {
+    client.release();
   }
 }
 
@@ -1572,12 +1826,20 @@ export async function repoListBalances(filters: ListBalancesQueryDTO): Promise<P
   };
 
   if (filters.article_id) where.push(`b.article_id = ${push(filters.article_id)}::uuid`);
+  if (filters.magasin_id) where.push(`e.magasin_id = ${push(filters.magasin_id)}::uuid`);
+  if (filters.emplacement_id) where.push(`e.id = ${push(filters.emplacement_id)}::bigint`);
+  if (filters.lot_id) where.push(`1 = 0`);
   if (filters.warehouse_id) where.push(`b.warehouse_id = ${push(filters.warehouse_id)}::uuid`);
   if (filters.location_id) where.push(`b.location_id = ${push(filters.location_id)}::uuid`);
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
   const countRes = await db.query<{ total: number }>(
-    `SELECT COUNT(*)::int AS total FROM public.v_stock_current b ${whereSql}`,
+    `
+      SELECT COUNT(*)::int AS total
+      FROM public.v_stock_current b
+      LEFT JOIN public.emplacements e ON e.location_id = b.location_id
+      ${whereSql}
+    `,
     values
   );
   const total = countRes.rows[0]?.total ?? 0;
@@ -1588,6 +1850,14 @@ export async function repoListBalances(filters: ListBalancesQueryDTO): Promise<P
       b.article_id::text AS article_id,
       a.code AS article_code,
       a.designation AS article_designation,
+      e.magasin_id::text AS magasin_id,
+      COALESCE(m.code, m.code_magasin)::text AS magasin_code,
+      COALESCE(m.name, m.libelle)::text AS magasin_name,
+      e.id::int AS emplacement_id,
+      e.code AS emplacement_code,
+      e.name AS emplacement_name,
+      NULL::text AS lot_id,
+      NULL::text AS lot_code,
       b.warehouse_id::text AS warehouse_id,
       w.code::text AS warehouse_code,
       w.name AS warehouse_name,
@@ -1597,9 +1867,8 @@ export async function repoListBalances(filters: ListBalancesQueryDTO): Promise<P
       b.unit_id::text AS unit_id,
       u.code::text AS unit_code,
       b.managed_in_stock,
-      b.qty_total::float8 AS qty_total,
+      b.qty_total::float8 AS qty_on_hand,
       b.qty_reserved::float8 AS qty_reserved,
-      b.qty_depreciated::float8 AS qty_depreciated,
       b.qty_available::float8 AS qty_available,
       b.updated_at::text AS updated_at
     FROM public.v_stock_current b
@@ -1607,14 +1876,183 @@ export async function repoListBalances(filters: ListBalancesQueryDTO): Promise<P
     JOIN public.warehouses w ON w.id = b.warehouse_id
     JOIN public.locations l ON l.id = b.location_id
     JOIN public.units u ON u.id = b.unit_id
+    LEFT JOIN public.emplacements e ON e.location_id = b.location_id
+    LEFT JOIN public.magasins m ON m.id = e.magasin_id
     ${whereSql}
-    ORDER BY a.code ASC, w.code ASC, l.code ASC
+    ORDER BY a.code ASC, COALESCE(m.code, m.code_magasin, w.code) ASC, COALESCE(e.code, l.code) ASC
     LIMIT $${values.length + 1}
     OFFSET $${values.length + 2}
   `;
 
   const rows = await db.query<StockBalanceRow>(dataSql, [...values, pageSize, offset]);
   return { items: rows.rows, total };
+}
+
+export async function repoGetStockAnalytics(filters: ListAnalyticsQueryDTO): Promise<StockAnalytics> {
+  const movementValues: unknown[] = [];
+  const currentValues: unknown[] = [];
+  const pushMovement = (v: unknown) => {
+    movementValues.push(v);
+    return `$${movementValues.length}`;
+  };
+  const pushCurrent = (v: unknown) => {
+    currentValues.push(v);
+    return `$${currentValues.length}`;
+  };
+
+  const movementWhere: string[] = [
+    `m.status = 'POSTED'`,
+    `(m.doc_type IS DISTINCT FROM 'STOCK_TRANSFER_INTERNAL')`,
+    `(m.movement_type IN ('IN','OUT','SCRAP','ADJUSTMENT','ADJUST'))`,
+  ];
+
+  const currentWhere: string[] = [];
+
+  if (filters.from) movementWhere.push(`m.effective_at >= ${pushMovement(filters.from)}::timestamptz`);
+  if (filters.to) movementWhere.push(`m.effective_at <= ${pushMovement(filters.to)}::timestamptz`);
+  if (filters.magasin_id) {
+    movementWhere.push(`e.magasin_id = ${pushMovement(filters.magasin_id)}::uuid`);
+    currentWhere.push(`e.magasin_id = ${pushCurrent(filters.magasin_id)}::uuid`);
+  }
+
+  const movementWhereSql = movementWhere.length ? `WHERE ${movementWhere.join(" AND ")}` : "";
+  const currentWhereSql = currentWhere.length ? `WHERE ${currentWhere.join(" AND ")}` : "";
+  const currentWhereSqlCombined = currentWhereSql.replace(/\$(\d+)/g, (_match, n: string) => `$${Number(n) + movementValues.length}`);
+
+  const [kpisRes, magasinsRes, categoriesRes, seriesRes, topArticlesRes] = await Promise.all([
+    db.query<StockAnalytics["kpis"]>(
+      `
+        SELECT
+          COUNT(*)::int AS articles_count,
+          COUNT(*) FILTER (WHERE a.stock_managed)::int AS stock_managed_articles,
+          COALESCE(SUM(cur.qty_total), 0)::float8 AS qty_on_hand,
+          COALESCE(SUM(cur.qty_available), 0)::float8 AS qty_available,
+          COALESCE(SUM(cur.qty_reserved), 0)::float8 AS qty_reserved
+        FROM public.articles a
+        LEFT JOIN (
+          SELECT
+            b.article_id,
+            SUM(b.qty_total)::float8 AS qty_total,
+            SUM(b.qty_available)::float8 AS qty_available,
+            SUM(b.qty_reserved)::float8 AS qty_reserved
+          FROM public.v_stock_current b
+          LEFT JOIN public.emplacements e ON e.location_id = b.location_id
+          ${currentWhereSql}
+          GROUP BY b.article_id
+        ) cur ON cur.article_id = a.id
+      `,
+      currentValues
+    ),
+    db.query<{ id: string; code: string; name: string }>(
+      `
+        SELECT id::text AS id, COALESCE(code, code_magasin)::text AS code, COALESCE(name, libelle)::text AS name
+        FROM public.magasins
+        WHERE is_active = true
+        ORDER BY COALESCE(code, code_magasin) ASC
+      `
+    ),
+    db.query<StockAnalytics["category_counts"][number]>(
+      `
+        SELECT
+          a.article_category::text AS article_category,
+          COUNT(*)::int AS articles_count,
+          COUNT(*) FILTER (WHERE a.stock_managed)::int AS stock_managed_count
+        FROM public.articles a
+        GROUP BY a.article_category
+        ORDER BY a.article_category ASC
+      `
+    ),
+    db.query<StockAnalytics["series"]["net_by_date"][number]>(
+      `
+        SELECT
+          to_char(date_trunc('day', m.effective_at), 'YYYY-MM-DD') AS date,
+          COALESCE(SUM(
+            CASE
+              WHEN m.movement_type = 'IN'::public.movement_type THEN ABS(m.qty)
+              WHEN m.movement_type IN ('ADJUST'::public.movement_type,'ADJUSTMENT'::public.movement_type) AND m.qty > 0 THEN ABS(m.qty)
+              ELSE 0
+            END
+          ), 0)::float8 AS qty_in,
+          COALESCE(SUM(
+            CASE
+              WHEN m.movement_type IN ('OUT'::public.movement_type,'SCRAP'::public.movement_type) THEN ABS(m.qty)
+              WHEN m.movement_type IN ('ADJUST'::public.movement_type,'ADJUSTMENT'::public.movement_type) AND m.qty < 0 THEN ABS(m.qty)
+              ELSE 0
+            END
+          ), 0)::float8 AS qty_out,
+          COALESCE(SUM(
+            CASE
+              WHEN m.movement_type = 'IN'::public.movement_type THEN ABS(m.qty)
+              WHEN m.movement_type IN ('ADJUST'::public.movement_type,'ADJUSTMENT'::public.movement_type) AND m.qty > 0 THEN ABS(m.qty)
+              WHEN m.movement_type IN ('OUT'::public.movement_type,'SCRAP'::public.movement_type) THEN -ABS(m.qty)
+              WHEN m.movement_type IN ('ADJUST'::public.movement_type,'ADJUSTMENT'::public.movement_type) AND m.qty < 0 THEN -ABS(m.qty)
+              ELSE 0
+            END
+          ), 0)::float8 AS net_qty
+        FROM public.stock_movements m
+        LEFT JOIN public.stock_levels sl ON sl.id = m.stock_level_id
+        LEFT JOIN public.emplacements e ON e.location_id = sl.location_id
+        ${movementWhereSql}
+        GROUP BY date_trunc('day', m.effective_at)
+        ORDER BY date ASC
+      `,
+      movementValues
+    ),
+    db.query<StockAnalytics["series"]["top_articles"][number]>(
+      `
+        WITH moved AS (
+          SELECT
+            m.article_id,
+            SUM(ABS(m.qty))::float8 AS qty_moved
+          FROM public.stock_movements m
+          LEFT JOIN public.stock_levels sl ON sl.id = m.stock_level_id
+          LEFT JOIN public.emplacements e ON e.location_id = sl.location_id
+          ${movementWhereSql}
+          GROUP BY m.article_id
+        ), current_stock AS (
+          SELECT
+            b.article_id,
+            SUM(b.qty_total)::float8 AS qty_on_hand,
+            SUM(b.qty_available)::float8 AS qty_available
+          FROM public.v_stock_current b
+          LEFT JOIN public.emplacements e ON e.location_id = b.location_id
+          ${currentWhereSqlCombined}
+          GROUP BY b.article_id
+        )
+        SELECT
+          a.id::text AS article_id,
+          a.code,
+          a.designation,
+          COALESCE(moved.qty_moved, 0)::float8 AS qty_moved,
+          COALESCE(current_stock.qty_on_hand, 0)::float8 AS qty_on_hand,
+          COALESCE(current_stock.qty_available, 0)::float8 AS qty_available
+        FROM public.articles a
+        LEFT JOIN moved ON moved.article_id = a.id
+        LEFT JOIN current_stock ON current_stock.article_id = a.id
+        WHERE COALESCE(moved.qty_moved, 0) > 0 OR COALESCE(current_stock.qty_on_hand, 0) > 0
+        ORDER BY COALESCE(moved.qty_moved, 0) DESC, a.code ASC
+        LIMIT 8
+      `,
+      [...movementValues, ...currentValues]
+    ),
+  ]);
+
+  return {
+    kpis:
+      kpisRes.rows[0] ?? {
+        articles_count: 0,
+        stock_managed_articles: 0,
+        qty_on_hand: 0,
+        qty_available: 0,
+        qty_reserved: 0,
+      },
+    magasins: magasinsRes.rows,
+    category_counts: categoriesRes.rows,
+    series: {
+      net_by_date: seriesRes.rows,
+      top_articles: topArticlesRes.rows,
+    },
+  };
 }
 
 export async function repoListMovements(filters: ListMovementsQueryDTO): Promise<Paginated<StockMovementListItem>> {
@@ -1656,7 +2094,7 @@ export async function repoListMovements(filters: ListMovementsQueryDTO): Promise
       m.article_id::text AS article_id,
       a.code AS article_code,
       a.designation AS article_designation,
-      m.qty::float8 AS qty,
+      ABS(m.qty)::float8 AS qty_total,
       m.effective_at::text AS effective_at,
       m.posted_at::text AS posted_at,
       m.source_document_type,
@@ -1810,6 +2248,9 @@ export async function repoCreateMovement(body: CreateMovementBodyDTO, audit: Aud
     const effectiveAt = parseEffectiveAt(body.effective_at);
     const articleId = body.lines[0]?.article_id;
     if (!articleId) throw new HttpError(400, "INVALID_MOVEMENT", "Missing article_id");
+
+    await ensureArticleStockManaged(client, articleId);
+    await ensureLotTrackingRespected(client, articleId, body.lines);
 
     const unitId = await resolveUnitIdForArticle(client, articleId, body.lines[0]?.unite ?? null);
 
@@ -2103,36 +2544,40 @@ export async function repoPostMovement(id: string, audit: AuditContext): Promise
       throw new HttpError(409, "INVALID_STATUS", "Only DRAFT movements can be posted");
     }
 
+    await ensureArticleStockManaged(client, m.article_id);
+
+    const draftLines = await client.query<CreateMovementLineDTO>(
+      `
+        SELECT
+          line_no,
+          article_id::text AS article_id,
+          lot_id::text AS lot_id,
+          qty::float8 AS qty,
+          unite,
+          unit_cost::float8 AS unit_cost,
+          currency,
+          src_magasin_id::text AS src_magasin_id,
+          src_emplacement_id::int AS src_emplacement_id,
+          dst_magasin_id::text AS dst_magasin_id,
+          dst_emplacement_id::int AS dst_emplacement_id,
+          note,
+          direction
+        FROM public.stock_movement_lines
+        WHERE movement_id = $1::uuid
+        ORDER BY line_no ASC
+      `,
+      [id]
+    );
+    await ensureLotTrackingRespected(client, m.article_id, draftLines.rows);
+
     if (m.movement_type === "TRANSFER") {
-      const lines = await client.query<CreateMovementLineDTO>(
-        `
-          SELECT
-            line_no,
-            article_id::text AS article_id,
-            lot_id::text AS lot_id,
-            qty::float8 AS qty,
-            unite,
-            unit_cost::float8 AS unit_cost,
-            currency,
-            src_magasin_id::text AS src_magasin_id,
-            src_emplacement_id::int AS src_emplacement_id,
-            dst_magasin_id::text AS dst_magasin_id,
-            dst_emplacement_id::int AS dst_emplacement_id,
-            note,
-            direction
-          FROM public.stock_movement_lines
-          WHERE movement_id = $1::uuid
-          ORDER BY line_no ASC
-        `,
-        [id]
-      );
-      const movementLines = lines.rows;
+      const movementLines = draftLines.rows;
       if (!movementLines.length) {
         throw new HttpError(400, "INVALID_MOVEMENT", "TRANSFER movement has no lines");
       }
 
       assertSameArticle(movementLines);
-      assertConsistentLocations(movementLines, "TRANSFER");
+        assertConsistentLocations(movementLines, "TRANSFER");
 
       const totalQty = sumQty(movementLines);
       if (!Number.isFinite(totalQty) || totalQty <= 0) {

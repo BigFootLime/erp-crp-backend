@@ -19,6 +19,7 @@ import {
   createStockMovement,
   downloadStockArticleDocument,
   downloadStockMovementDocument,
+  getStockAnalytics,
   getStockInventorySession,
   getStockArticle,
   getStockArticlesKpis,
@@ -64,6 +65,7 @@ const upload = multer({
 
 router.use(authenticateToken);
 
+router.get("/analytics", getStockAnalytics);
 router.get("/articles", listStockArticles);
 router.get("/articles/kpis", getStockArticlesKpis);
 router.post("/articles", createStockArticle);

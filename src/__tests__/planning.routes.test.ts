@@ -240,7 +240,24 @@ describe("/api/v1/planning", () => {
     // repoCreatePlanningEvent internals: BEGIN, select defaults, conflict check, insert, audit, COMMIT
     mocks.clientQuery.mockImplementation(async (sql: unknown) => {
       const q = String(sql);
-      if (q.includes("FROM public.of_operations op")) {
+      if (q.includes("FROM public.of_time_logs")) {
+        return { rows: [{ open_time_log_count: 0 }] };
+      }
+      if (q.includes("GROUP BY op.of_id, op.status")) {
+        return {
+          rows: [
+            {
+              of_id: "7",
+              current_status: "TODO",
+              has_done: false,
+              has_in_progress: false,
+              has_blocked: false,
+              has_planned: true,
+            },
+          ],
+        };
+      }
+      if (q.includes("FROM public.of_operations op") && q.includes("LIMIT 1")) {
         return {
           rows: [
             {
@@ -252,6 +269,24 @@ describe("/api/v1/planning", () => {
             },
           ],
         };
+      }
+      if (q.includes("FROM public.ordres_fabrication o") && q.includes("active_events")) {
+        return {
+          rows: [
+            {
+              statut: "PLANIFIE",
+              commande_id: null,
+              numero: "OF-7",
+              total_ops: 1,
+              done_ops: 0,
+              running_ops: 0,
+              active_events: 1,
+            },
+          ],
+        };
+      }
+      if (q.includes("SELECT commande_id::text AS commande_id FROM public.ordres_fabrication")) {
+        return { rows: [{ commande_id: null }] };
       }
       return { rows: [] };
     });
@@ -277,5 +312,172 @@ describe("/api/v1/planning", () => {
       ],
       skipped_operations: [],
     });
+  });
+
+  it("POST /api/v1/planning/events promotes commande to PLANIFIEE and creates notifications", async () => {
+    mocks.poolQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          id: "33333333-3333-3333-3333-333333333333",
+          kind: "OF_OPERATION",
+          status: "PLANNED",
+          priority: "NORMAL",
+          of_id: "7",
+          of_operation_id: "44444444-4444-4444-4444-444444444444",
+          machine_id: null,
+          poste_id: "22222222-2222-2222-2222-222222222222",
+          operator_id: null,
+          title: "P10 - Usinage",
+          description: null,
+          start_ts: "2026-02-14T08:00:00.000Z",
+          end_ts: "2026-02-14T10:00:00.000Z",
+          allow_overlap: false,
+          created_at: "2026-02-14T07:00:00.000Z",
+          updated_at: "2026-02-14T07:00:00.000Z",
+          archived_at: null,
+          of_numero: "OF-7",
+          client_id: "C01",
+          client_company_name: "ACME",
+          client_color: null,
+          client_blocked: false,
+          client_block_reason: null,
+          piece_code: "P-001",
+          piece_designation: "Piece",
+          operation_phase: 10,
+          operation_designation: "Usinage",
+          machine_code: null,
+          machine_name: null,
+          poste_code: "P01",
+          poste_label: "Poste 1",
+          operator_name: null,
+          operation_started_at: null,
+          operation_ended_at: null,
+          production_group_id: null,
+          production_group_code: null,
+          of_date_fin_prevue: null,
+          deadline_ts: null,
+          stop_reason: null,
+          blockers: [],
+        },
+      ],
+    });
+
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const q = String(sql);
+      if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
+      if (q.includes("FROM public.of_operations op") && q.includes("WHERE op.id = $1::uuid") && q.includes("LIMIT 1")) {
+        return {
+          rows: [
+            {
+              of_id: "7",
+              phase: 10,
+              designation: "Usinage",
+              machine_id: null,
+              poste_id: "22222222-2222-2222-2222-222222222222",
+            },
+          ],
+        };
+      }
+      if (q.includes("FROM public.of_time_logs")) {
+        return { rows: [{ open_time_log_count: 0 }] };
+      }
+      if (q.includes("FROM public.planning_events e") && q.includes("LIMIT 25")) {
+        return { rows: [] };
+      }
+      if (q.includes("INSERT INTO public.planning_events")) {
+        return { rows: [] };
+      }
+      if (q.includes("GROUP BY op.of_id, op.status")) {
+        return {
+          rows: [
+            {
+              of_id: "7",
+              current_status: "TODO",
+              has_done: false,
+              has_in_progress: false,
+              has_blocked: false,
+              has_planned: true,
+            },
+          ],
+        };
+      }
+      if (q.includes("UPDATE public.of_operations")) {
+        return { rows: [] };
+      }
+      if (q.includes("FROM public.ordres_fabrication o") && q.includes("active_events")) {
+        return {
+          rows: [
+            {
+              statut: "BROUILLON",
+              commande_id: "123",
+              numero: "OF-7",
+              total_ops: 1,
+              done_ops: 0,
+              running_ops: 0,
+              active_events: 1,
+            },
+          ],
+        };
+      }
+      if (q.includes("SELECT id::int AS id, numero, client_id") && q.includes("FROM commande_client")) {
+        return { rows: [{ id: 123, numero: "CC-123", client_id: "001" }] };
+      }
+      if (q.includes("FROM commande_historique") && q.includes("LIMIT 1")) {
+        return { rows: [{ nouveau_statut: "ENREGISTREE" }] };
+      }
+      if (q.includes("INSERT INTO commande_historique")) {
+        return { rows: [{ id: "11" }] };
+      }
+      if (q.includes("INSERT INTO public.commande_client_event_log")) {
+        return { rows: [] };
+      }
+      if (q.includes("FROM public.users u") && q.includes("ghislaine")) {
+        return { rows: [{ id: 9 }] };
+      }
+      if (q.includes("FROM public.app_notifications") && q.includes("dedupe_key")) {
+        return { rows: [] };
+      }
+      if (q.includes("INSERT INTO public.app_notifications")) {
+        return {
+          rows: [
+            {
+              id: "55555555-5555-5555-5555-555555555555",
+              user_id: 9,
+              kind: "commande.planifiee",
+              title: "Commande CC-123 planifiée",
+              message: "La commande CC-123 est maintenant planifiée. Un AR peut être envoyé au client.",
+              severity: "success",
+              action_url: "/commandes/123",
+              action_label: "Ouvrir",
+              payload: {},
+              created_at: "2026-02-14T07:01:00.000Z",
+              read_at: null,
+            },
+          ],
+        };
+      }
+      if (q.includes("SELECT commande_id::text AS commande_id FROM public.ordres_fabrication")) {
+        return { rows: [{ commande_id: "123" }] };
+      }
+      return { rows: [] };
+    });
+
+    const res = await request(app)
+      .post("/api/v1/planning/events")
+      .set("Authorization", "Bearer fake")
+      .send({
+        kind: "OF_OPERATION",
+        status: "PLANNED",
+        priority: "NORMAL",
+        of_id: 7,
+        of_operation_id: "44444444-4444-4444-4444-444444444444",
+        poste_id: "22222222-2222-2222-2222-222222222222",
+        start_ts: "2026-02-14T08:00:00.000Z",
+        end_ts: "2026-02-14T10:00:00.000Z",
+      });
+
+    expect(res.status).toBe(201);
+    expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO commande_historique"))).toBe(true);
+    expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO public.app_notifications"))).toBe(true);
   });
 });

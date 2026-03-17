@@ -41,6 +41,7 @@ export type PlanningEventListItem = {
   of_operation_id: string | null;
   machine_id: string | null;
   poste_id: string | null;
+  operator_id?: number | null;
   title: string;
   description: string | null;
   start_ts: string;
@@ -64,6 +65,9 @@ export type PlanningEventListItem = {
   machine_name: string | null;
   poste_code: string | null;
   poste_label: string | null;
+  operator_name?: string | null;
+  operation_started_at?: string | null;
+  operation_ended_at?: string | null;
 
   production_group_id?: string | null;
   production_group_code?: string | null;

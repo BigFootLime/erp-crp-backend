@@ -13,6 +13,7 @@ import {
   docIdParamSchema,
   emplacementIdParamSchema,
   idParamSchema,
+  listAnalyticsQuerySchema,
   listInventorySessionsQuerySchema,
   listArticlesQuerySchema,
   listBalancesQuerySchema,
@@ -32,6 +33,7 @@ import {
   type CreateLotBodyDTO,
   type CreateMagasinBodyDTO,
   type CreateMovementBodyDTO,
+  type ListAnalyticsQueryDTO,
   type ListBalancesQueryDTO,
   type UpdateArticleBodyDTO,
   type UpdateEmplacementBodyDTO,
@@ -44,6 +46,7 @@ import {
   closeStockInventorySessionSVC,
   createStockInventorySessionSVC,
   getStockInventorySessionSVC,
+  getStockAnalyticsSVC,
   listStockInventorySessionLinesSVC,
   listStockInventorySessionsSVC,
   upsertStockInventorySessionLineSVC,
@@ -238,6 +241,16 @@ export const listStockArticles: RequestHandler = async (req, res, next) => {
       return;
     }
     const out = await listStockArticlesSVC(parsed.data);
+    res.json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const getStockAnalytics: RequestHandler = async (req, res, next) => {
+  try {
+    const filters: ListAnalyticsQueryDTO = listAnalyticsQuerySchema.parse(req.query);
+    const out = await getStockAnalyticsSVC(filters);
     res.json(out);
   } catch (err) {
     next(err);
