@@ -347,24 +347,32 @@ describe("/api/v1/commandes", () => {
   });
 
   it("POST /api/v1/commandes/:id/status writes historique", async () => {
+    process.env.JWT_SECRET = "test-secret";
+    const token = jwt.sign(
+      { id: 1, username: "test", email: "test@example.com", role: "admin" },
+      process.env.JWT_SECRET,
+      { expiresIn: "1h" }
+    );
+
     mocks.clientQuery
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
       .mockResolvedValueOnce({ rows: [{ id: "123" }] }) // exists
-      .mockResolvedValueOnce({ rows: [{ nouveau_statut: "brouillon" }] }) // last
+      .mockResolvedValueOnce({ rows: [{ nouveau_statut: "ENREGISTREE" }] }) // last
       .mockResolvedValueOnce({ rows: [{ id: "10" }] }) // insert historique
       .mockResolvedValueOnce({ rows: [] }) // update commande
       .mockResolvedValueOnce({ rows: [] }); // COMMIT
 
     const res = await request(app)
       .post("/api/v1/commandes/123/status")
-      .send({ nouveau_statut: "valide", commentaire: "ok" });
+      .set("Authorization", `Bearer ${token}`)
+      .send({ nouveau_statut: "PLANIFIEE", commentaire: "ok" });
 
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ ok: true, nouveau_statut: "valide" });
+    expect(res.body).toMatchObject({ ok: true, nouveau_statut: "PLANIFIEE" });
 
     const insertCall = mocks.clientQuery.mock.calls.find((c) => String(c[0]).includes("INSERT INTO commande_historique"));
     expect(insertCall).toBeTruthy();
-    expect(insertCall?.[1]).toEqual([123, null, "brouillon", "valide", "ok"]);
+    expect(insertCall?.[1]).toEqual([123, 1, "ENREGISTREE", "PLANIFIEE", "ok"]);
   });
 
   it("POST /api/v1/commandes/:id/duplicate returns new id", async () => {

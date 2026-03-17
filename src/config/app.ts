@@ -12,6 +12,7 @@ import { swaggerSpec } from "../swagger/swagger";
 import { validationErrorMiddleware } from "../module/auth/middlewares/validationError.middleware";
 import { requestIdMiddleware } from "../middlewares/requestId";
 import { requestLogger } from "../middlewares/requestLogger";
+import { getImagesRootPath } from "../utils/imageStorage";
 
 const app = express();
 
@@ -137,13 +138,7 @@ app.use("/api/v1/", v1Router);
 
 /* ------------------ 5) Static images ------------------ */
 
-const isLocal = process.env.NODE_ENV === "development";
-
-const reseauPath = path.resolve(
-  "/home/bigfootlime/erp-crp/erp-crp-backend/uploads/images"
-);
-const localPath = path.resolve("uploads/images");
-const imagePath = isLocal ? localPath : reseauPath;
+const imagePath = getImagesRootPath();
 
 app.use(
   "/images",

@@ -144,8 +144,16 @@ z.object({
 
 export type CreateCommandeBodyDTO = z.infer<typeof createCommandeBodySchema>;
 
+export const commandeWorkflowStatusSchema = z.enum([
+  "ENREGISTREE",
+  "PLANIFIEE",
+  "AR_ENVOYEE",
+  "LIVREE",
+]);
+export type CommandeWorkflowStatusDTO = z.infer<typeof commandeWorkflowStatusSchema>;
+
 export const updateCommandeStatusBodySchema = z.object({
-  nouveau_statut: z.string().min(1),
+  nouveau_statut: commandeWorkflowStatusSchema,
   commentaire: z.string().optional().nullable(),
 });
 

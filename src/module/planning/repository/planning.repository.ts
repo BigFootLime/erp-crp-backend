@@ -867,6 +867,23 @@ export async function repoCreatePlanningEvent(params: {
       throw new HttpError(400, "OF_OPERATION_MISMATCH", "Operation does not belong to the provided OF");
     }
 
+    if (typeof finalOfId === "number") {
+      const lock = await client.query<{ ar_sent_at: string | null }>(
+        `
+          SELECT cc.ar_sent_at::text AS ar_sent_at
+          FROM public.ordres_fabrication o
+          LEFT JOIN public.commande_client cc ON cc.id = o.commande_id
+          WHERE o.id = $1::bigint
+          LIMIT 1
+        `,
+        [finalOfId]
+      );
+      const lockedAfterAr = Boolean(lock.rows[0]?.ar_sent_at);
+      if (lockedAfterAr) {
+        throw new HttpError(409, "PLANNING_LOCKED_AFTER_AR", "Planning is locked after AR has been sent");
+      }
+    }
+
     const title = b.title ?? deriveTitleFromOperation(op);
     const resource = resolveResource({ machine_id: b.machine_id ?? null, poste_id: b.poste_id ?? null, op });
 
@@ -1049,6 +1066,29 @@ export async function repoPatchPlanningEvent(params: {
       throw new HttpError(400, "OF_OPERATION_MISMATCH", "Operation does not belong to the provided OF");
     }
 
+    let lockOfId: number | null = typeof nextOfId === "number" ? nextOfId : op?.of_id ?? null;
+    if (lockOfId === null && nextOfOperationId) {
+      const opForLock = await selectOfOperationDefaults(client, nextOfOperationId);
+      lockOfId = opForLock?.of_id ?? null;
+    }
+
+    if (typeof lockOfId === "number") {
+      const lock = await client.query<{ ar_sent_at: string | null }>(
+        `
+          SELECT cc.ar_sent_at::text AS ar_sent_at
+          FROM public.ordres_fabrication o
+          LEFT JOIN public.commande_client cc ON cc.id = o.commande_id
+          WHERE o.id = $1::bigint
+          LIMIT 1
+        `,
+        [lockOfId]
+      );
+      const lockedAfterAr = Boolean(lock.rows[0]?.ar_sent_at);
+      if (lockedAfterAr) {
+        throw new HttpError(409, "PLANNING_LOCKED_AFTER_AR", "Planning is locked after AR has been sent");
+      }
+    }
+
     const nextStart = p.start_ts !== undefined ? p.start_ts : before.start_ts;
     const nextEnd = p.end_ts !== undefined ? p.end_ts : before.end_ts;
 
@@ -1159,8 +1199,17 @@ export async function repoArchivePlanningEvent(params: { id: string; audit: Audi
   try {
     await client.query("BEGIN");
 
-    const beforeRes = await client.query<{ id: string; archived_at: string | null }>(
-      `SELECT id::text AS id, archived_at::text AS archived_at FROM public.planning_events WHERE id = $1::uuid FOR UPDATE`,
+    const beforeRes = await client.query<{ id: string; archived_at: string | null; of_id: string | null; of_operation_id: string | null }>(
+      `
+        SELECT
+          id::text AS id,
+          archived_at::text AS archived_at,
+          of_id::text AS of_id,
+          of_operation_id::text AS of_operation_id
+        FROM public.planning_events
+        WHERE id = $1::uuid
+        FOR UPDATE
+      `,
       [params.id]
     );
     const before = beforeRes.rows[0];
@@ -1171,6 +1220,29 @@ export async function repoArchivePlanningEvent(params: { id: string; audit: Audi
     if (before.archived_at) {
       await client.query("ROLLBACK");
       return false;
+    }
+
+    let lockOfId = toNullableInt(before.of_id, "planning_events.of_id");
+    if (lockOfId === null && before.of_operation_id) {
+      const opForLock = await selectOfOperationDefaults(client, before.of_operation_id);
+      lockOfId = opForLock?.of_id ?? null;
+    }
+
+    if (typeof lockOfId === "number") {
+      const lock = await client.query<{ ar_sent_at: string | null }>(
+        `
+          SELECT cc.ar_sent_at::text AS ar_sent_at
+          FROM public.ordres_fabrication o
+          LEFT JOIN public.commande_client cc ON cc.id = o.commande_id
+          WHERE o.id = $1::bigint
+          LIMIT 1
+        `,
+        [lockOfId]
+      );
+      const lockedAfterAr = Boolean(lock.rows[0]?.ar_sent_at);
+      if (lockedAfterAr) {
+        throw new HttpError(409, "PLANNING_LOCKED_AFTER_AR", "Planning is locked after AR has been sent");
+      }
     }
 
     await client.query(

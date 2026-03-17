@@ -133,7 +133,7 @@ router.patch("/:id", validate(idParamSchema), upload.array("documents[]"), parse
 router.delete("/:id", validate(idParamSchema), deleteCommande)
 
 // POST /api/v1/commandes/:id/status
-router.post("/:id/status", validate(idParamSchema), updateCommandeStatus)
+router.post("/:id/status", authenticateToken, validate(idParamSchema), updateCommandeStatus)
 
 // POST /api/v1/commandes/:id/analyze-stock
 router.post("/:id/analyze-stock", authenticateToken, validate(idParamSchema), analyzeCommandeStock)

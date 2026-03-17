@@ -1,64 +1,111 @@
-// src/module/outils/controllers/outil.controller.ts
-import { Request, Response, NextFunction } from "express";
-import { outilService, outilSupportService } from "../services/outil.service";
-import { outilSchema } from "../validators/outil.validator";
-import { parseId } from "../../../utils/parseId";
-import { parseString } from "../../../utils/parseString";
-import { getIO } from "../../../sockets/sockeServer";
+import type { NextFunction, Request, Response } from "express"
+import { getIO } from "../../../sockets/sockeServer"
+import { HttpError } from "../../../utils/httpError"
+import { parseId } from "../../../utils/parseId"
+import { parseString } from "../../../utils/parseString"
+import { deleteStoredImageFile } from "../../../utils/imageStorage"
+import { outilService, outilSupportService } from "../services/outil.service"
+import {
+  adjustStockSchema,
+  createFabricantSchema,
+  createFamilleSchema,
+  createFournisseurSchema,
+  createGeometrieSchema,
+  createRevetementSchema,
+  outilUpsertSchema,
+  reapprovisionnementSchema,
+  scanMovementSchema,
+  sortieStockSchema,
+  updateFamilleSchema,
+  updateGeometrieSchema,
+} from "../validators/outil.validator"
+import {
+  getOutillageFabricantStoredPath,
+  getOutillageFamilleStoredPath,
+  getOutillageGeometrieStoredPath,
+  getOutillageToolStoredPath,
+} from "../utils/outillage-upload"
 
-// ⚠️ adapte ce chemin réseau si besoin
-const IMAGE_SHARE_PATH = "\\\\192.168.1.245\\ERP\\CRP_SYSTEMS\\images\\";
-
-function isPgUniqueViolation(err: any) {
-  return err?.code === "23505";
+function isPgUniqueViolation(err: unknown): err is { code?: string; constraint?: string; detail?: string; table?: string } {
+  return typeof err === "object" && err !== null && "code" in err && (err as { code?: string }).code === "23505"
 }
 
-function uniqueViolationDetails(err: any) {
-  // pg: err.constraint / err.detail / err.table
+function uniqueViolationDetails(err: { constraint?: string; detail?: string; table?: string }) {
   return {
-    constraint: err?.constraint,
-    detail: err?.detail,
-    table: err?.table,
-  };
+    constraint: err.constraint,
+    detail: err.detail,
+    table: err.table,
+  }
+}
+
+function requireUser(req: Request) {
+  const user = req.user
+  if (!user) throw new HttpError(401, "UNAUTHORIZED", "Authentication required")
+  return user
+}
+
+function parseMultipartJsonBody<T>(raw: unknown, schema: { parse: (value: unknown) => T }) {
+  if (typeof raw !== "string" || !raw.trim()) {
+    throw new HttpError(400, "MISSING_DATA", "Donnees manquantes (champ 'data')")
+  }
+
+  let parsedJson: unknown
+  try {
+    parsedJson = JSON.parse(raw)
+  } catch {
+    throw new HttpError(400, "INVALID_JSON", "Le champ 'data' doit etre un JSON valide")
+  }
+
+  return schema.parse(parsedJson)
+}
+
+function extractUploadedToolPaths(files: Request["files"]) {
+  const uploaded = files as Record<string, Express.Multer.File[]> | undefined
+
+  const paths = {
+    esquisse: uploaded?.esquisse?.[0]?.filename ? getOutillageToolStoredPath(uploaded.esquisse[0].filename) : undefined,
+    plan: uploaded?.plan?.[0]?.filename ? getOutillageToolStoredPath(uploaded.plan[0].filename) : undefined,
+    image: uploaded?.image?.[0]?.filename ? getOutillageToolStoredPath(uploaded.image[0].filename) : undefined,
+  }
+
+  const uploadedPaths = [paths.esquisse, paths.plan, paths.image].filter((value): value is string => Boolean(value))
+  return { paths, uploadedPaths }
 }
 
 export const outilController = {
-  // ✅ Liste complète (legacy)
-  async getAll(req: Request, res: Response, next: NextFunction) {
+  async getAll(_req: Request, res: Response, next: NextFunction) {
     try {
-      const outils = await outilService.getAllOutils();
-      return res.status(200).json(outils);
+      const outils = await outilService.getAllOutils()
+      return res.status(200).json(outils)
     } catch (error) {
-      next(error);
+      next(error)
     }
   },
 
-  // ✅ Liste filtrée / paginée pour UI cards
   async getFiltered(req: Request, res: Response, next: NextFunction) {
     try {
-      // query params: id_famille, id_geometrie, q, only_in_stock, limit, offset
-      const id_famille = req.query.id_famille ? Number(req.query.id_famille) : undefined;
-      const id_geometrie = req.query.id_geometrie ? Number(req.query.id_geometrie) : undefined;
-      const q = typeof req.query.q === "string" ? req.query.q : undefined;
+      const id_famille = req.query.id_famille ? Number(req.query.id_famille) : undefined
+      const id_geometrie = req.query.id_geometrie ? Number(req.query.id_geometrie) : undefined
+      const q = typeof req.query.q === "string" ? req.query.q : undefined
       const only_in_stock =
         typeof req.query.only_in_stock === "string"
           ? req.query.only_in_stock === "true" || req.query.only_in_stock === "1"
-          : undefined;
+          : undefined
 
-      const limit = req.query.limit ? Number(req.query.limit) : undefined;
-      const offset = req.query.offset ? Number(req.query.offset) : undefined;
+      const limit = req.query.limit ? Number(req.query.limit) : undefined
+      const offset = req.query.offset ? Number(req.query.offset) : undefined
 
       if (id_famille !== undefined && (!Number.isFinite(id_famille) || id_famille <= 0)) {
-        return res.status(400).json({ message: "id_famille invalide" });
+        throw new HttpError(400, "INVALID_FAMILLE", "id_famille invalide")
       }
       if (id_geometrie !== undefined && (!Number.isFinite(id_geometrie) || id_geometrie <= 0)) {
-        return res.status(400).json({ message: "id_geometrie invalide" });
+        throw new HttpError(400, "INVALID_GEOMETRIE", "id_geometrie invalide")
       }
       if (limit !== undefined && (!Number.isFinite(limit) || limit <= 0)) {
-        return res.status(400).json({ message: "limit invalide" });
+        throw new HttpError(400, "INVALID_LIMIT", "limit invalide")
       }
       if (offset !== undefined && (!Number.isFinite(offset) || offset < 0)) {
-        return res.status(400).json({ message: "offset invalide" });
+        throw new HttpError(400, "INVALID_OFFSET", "offset invalide")
       }
 
       const outils = await outilService.getAllFiltered({
@@ -68,458 +115,517 @@ export const outilController = {
         only_in_stock,
         limit,
         offset,
-      });
+      })
 
-      return res.status(200).json(outils);
+      return res.status(200).json(outils)
     } catch (error) {
-      next(error);
+      next(error)
     }
   },
 
-  // 🚨 Outils sous le stock minimum
-  async getLowStock(req: Request, res: Response, next: NextFunction) {
+  async getLowStock(_req: Request, res: Response, next: NextFunction) {
     try {
-      const rows = await outilService.getLowStock();
-      return res.status(200).json(rows);
+      const rows = await outilService.getLowStock()
+      return res.status(200).json(rows)
     } catch (error) {
-      next(error);
+      next(error)
     }
   },
 
   async getById(req: Request, res: Response, next: NextFunction) {
     try {
-      const id = parseId(req.params.id, "ID Outil");
-      const outil = await outilService.getOutil(id);
-      return res.status(200).json(outil);
+      const id = parseId(req.params.id, "ID Outil")
+      const outil = await outilService.getOutil(id)
+      return res.status(200).json(outil)
     } catch (error) {
-      next(error);
+      next(error)
+    }
+  },
+
+  async getPricing(req: Request, res: Response, next: NextFunction) {
+    try {
+      const id = parseId(req.params.id, "ID Outil")
+      const pricing = await outilService.getOutilPricing(id)
+      return res.status(200).json(pricing)
+    } catch (error) {
+      next(error)
     }
   },
 
   async getByReferenceFabricant(req: Request, res: Response, next: NextFunction) {
     try {
-      const ref = parseString(req.params.ref_fabricant, "Référence fabricant");
-      const outil = await outilService.getOutilByRefFabricant(ref);
+      const ref = parseString(req.params.ref_fabricant, "Reference fabricant")
+      const outil = await outilService.getOutilByRefFabricant(ref)
 
-      if (!outil) return res.status(404).json({ message: "Aucun outil trouvé." });
-
-      return res.status(200).json(outil);
+      if (!outil) return res.status(404).json({ message: "Aucun outil trouve." })
+      return res.status(200).json(outil)
     } catch (error) {
-      next(error);
+      next(error)
     }
   },
 
-  // ✅ Création outil + images + relations + init stock (UPSERT via repo)
   async create(req: Request, res: Response, next: NextFunction) {
+    const { uploadedPaths, paths } = extractUploadedToolPaths(req.files)
+
     try {
-      const { data } = req.body;
-      if (!data) return res.status(400).json({ message: "Données manquantes (champ 'data')" });
-
-      // ✅ validation Zod
-      const parsed = outilSchema.parse(JSON.parse(data));
-
-      // 📂 Fichiers reçus (multer fields)
-      const fichiers = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
-
-      const cheminsImages = {
-        esquisse: fichiers?.esquisse?.[0] ? `${IMAGE_SHARE_PATH}${fichiers.esquisse[0].filename}` : null,
-        plan: fichiers?.plan?.[0] ? `${IMAGE_SHARE_PATH}${fichiers.plan[0].filename}` : null,
-        image: fichiers?.image?.[0] ? `${IMAGE_SHARE_PATH}${fichiers.image[0].filename}` : null,
-      };
-
-      const finalData = {
+      const parsed = parseMultipartJsonBody(req.body.data, outilUpsertSchema)
+      const result = await outilService.createOutil({
         ...parsed,
-        ...cheminsImages,
-      };
+        esquisse: paths.esquisse ?? null,
+        plan: paths.plan ?? null,
+        image: paths.image ?? null,
+      })
 
-      const result = await outilService.createOutil(finalData);
-
-      // 🔔 broadcast (optionnel, utile si tu as une page outils live)
       try {
-        const io = getIO();
-        io.emit("outilCreated", { id_outil: result.id_outil });
-      } catch (_) {}
-
-      return res.status(201).json(result);
-    } catch (error: any) {
-      // ✅ si l’index unique (id_fabricant, reference_fabricant) est violé
-      if (isPgUniqueViolation(error)) {
-        const meta = uniqueViolationDetails(error);
-        return res.status(409).json({
-          message: "Doublon: cette référence fabricant existe déjà pour ce fabricant.",
-          ...meta,
-        });
+        const io = getIO()
+        io.emit("outilCreated", { id_outil: result.id_outil })
+      } catch {
+        // noop
       }
-      next(error);
+
+      return res.status(201).json(result)
+    } catch (error) {
+      await Promise.all(uploadedPaths.map((value) => deleteStoredImageFile(value)))
+
+      if (isPgUniqueViolation(error)) {
+        return res.status(409).json({
+          message: "Doublon: cette reference fabricant existe deja pour ce fabricant.",
+          ...uniqueViolationDetails(error),
+        })
+      }
+
+      next(error)
     }
   },
 
-  // ➖ Sortie stock MANUELLE (par ID outil)
+  async update(req: Request, res: Response, next: NextFunction) {
+    const id = parseId(req.params.id, "ID Outil")
+    const { uploadedPaths, paths } = extractUploadedToolPaths(req.files)
+
+    try {
+      const parsed = parseMultipartJsonBody(req.body.data, outilUpsertSchema)
+      await outilService.updateOutil(id, {
+        ...parsed,
+        esquisse: paths.esquisse,
+        plan: paths.plan,
+        image: paths.image,
+      })
+
+      try {
+        const io = getIO()
+        io.emit("outilUpdated", { id_outil: id })
+      } catch {
+        // noop
+      }
+
+      return res.status(200).json({ id_outil: id })
+    } catch (error) {
+      await Promise.all(uploadedPaths.map((value) => deleteStoredImageFile(value)))
+
+      if (isPgUniqueViolation(error)) {
+        return res.status(409).json({
+          message: "Doublon: cette reference fabricant existe deja pour ce fabricant.",
+          ...uniqueViolationDetails(error),
+        })
+      }
+
+      next(error)
+    }
+  },
+
+  async remove(req: Request, res: Response, next: NextFunction) {
+    try {
+      const id = parseId(req.params.id, "ID Outil")
+      await outilService.deleteOutil(id)
+
+      try {
+        const io = getIO()
+        io.emit("outilDeleted", { id_outil: id })
+      } catch {
+        // noop
+      }
+
+      return res.status(200).json({ success: true })
+    } catch (error) {
+      next(error)
+    }
+  },
+
   async sortieStock(req: Request, res: Response, next: NextFunction) {
     try {
-      const { id, quantity, reason, note, affaire_id } = req.body;
-
-      const user = req.user?.username || "Utilisateur inconnu";
-      const user_id = req.user?.id ?? null;
-
-      if (id === undefined || quantity === undefined) {
-        return res.status(400).json({ error: "Paramètres 'id' et 'quantity' requis." });
-      }
-
-      const id_outil = Number(id);
-      const qte = Number(quantity);
-
-      if (!Number.isFinite(id_outil) || id_outil <= 0) {
-        return res.status(400).json({ error: "Paramètre 'id' invalide." });
-      }
-      if (!Number.isFinite(qte) || qte <= 0) {
-        return res.status(400).json({ error: "Paramètre 'quantity' invalide (doit être > 0)." });
-      }
+      const user = requireUser(req)
+      const payload = sortieStockSchema.parse(req.body)
 
       await outilService.sortieStock({
-        id_outil,
-        quantite: qte,
-        utilisateur: user,
-        user_id,
-        reason: reason ?? null,
+        id_outil: payload.id,
+        quantite: payload.quantity,
+        utilisateur: user.username,
+        user_id: user.id ?? null,
+        reason: payload.reason ?? null,
         source: "manual",
-        note: note ?? null,
-        affaire_id: affaire_id ? Number(affaire_id) : null,
-      });
+        note: payload.note ?? null,
+        affaire_id: payload.affaire_id ?? null,
+      })
 
-      // ✅ EMIT APRES SUCCÈS
-      const io = getIO();
-      io.emit("stockUpdated", {
-        id_outil,
-        quantity: qte,
-        user,
-        type: "sortie",
-        date: new Date().toISOString(),
-      });
+      try {
+        const io = getIO()
+        io.emit("stockUpdated", {
+          id_outil: payload.id,
+          quantity: payload.quantity,
+          user: user.username,
+          type: "sortie",
+          date: new Date().toISOString(),
+        })
+      } catch {
+        // noop
+      }
 
       return res.status(200).json({
         success: true,
-        message: `🛠️ Outil ${id_outil} retiré du stock par ${user}, quantité : ${qte}`,
-      });
+        message: `Outil ${payload.id} retire du stock, quantite : ${payload.quantity}`,
+      })
     } catch (error) {
-      next(error);
+      next(error)
     }
   },
 
-  // ➕ Réapprovisionnement MANUEL (par ID outil)
   async reapprovisionner(req: Request, res: Response, next: NextFunction) {
     try {
-      const { id_outil, quantite, prix, id_fournisseur, reason, note, affaire_id } = req.body;
-
-      const utilisateur = req.user?.username || "Utilisateur inconnu";
-      const user_id = req.user?.id ?? null;
-
-      if (!id_outil || !quantite || prix === undefined || !id_fournisseur) {
-        return res.status(400).json({ message: "Champs requis manquants." });
-      }
-
-      const idOutil = Number(id_outil);
-      const qte = Number(quantite);
-      const p = Number(prix);
-      const idF = Number(id_fournisseur);
-
-      if (!Number.isFinite(idOutil) || idOutil <= 0) return res.status(400).json({ message: "id_outil invalide" });
-      if (!Number.isFinite(qte) || qte <= 0) return res.status(400).json({ message: "quantite invalide (>0)" });
-      if (!Number.isFinite(p) || p < 0) return res.status(400).json({ message: "prix invalide (>=0)" });
-      if (!Number.isFinite(idF) || idF <= 0) return res.status(400).json({ message: "id_fournisseur invalide" });
+      const user = requireUser(req)
+      const payload = reapprovisionnementSchema.parse(req.body)
 
       await outilService.reapprovisionner({
-        id_outil: idOutil,
-        quantite: qte,
-        prix: p,
-        id_fournisseur: idF,
-        utilisateur,
-        user_id,
-        reason: reason ?? null,
+        ...payload,
+        utilisateur: user.username,
+        user_id: user.id ?? null,
+        reason: payload.reason ?? null,
         source: "manual",
-        note: note ?? null,
-        affaire_id: affaire_id ? Number(affaire_id) : null,
-      });
+        note: payload.note ?? null,
+        affaire_id: payload.affaire_id ?? null,
+      })
 
-      const io = getIO();
-      io.emit("stockUpdated", {
-        id_outil: idOutil,
-        quantity: qte,
-        user: utilisateur,
-        type: "entrée",
-        date: new Date().toISOString(),
-      });
+      try {
+        const io = getIO()
+        io.emit("stockUpdated", {
+          id_outil: payload.id_outil,
+          quantity: payload.quantite,
+          user: user.username,
+          type: "entree",
+          date: new Date().toISOString(),
+        })
+      } catch {
+        // noop
+      }
 
       return res.status(200).json({
         success: true,
-        message: `✅ Outil ${idOutil} réapprovisionné de ${qte} unités.`,
-      });
+        message: `Outil ${payload.id_outil} reapprovisionne de ${payload.quantite} unite(s).`,
+      })
     } catch (error) {
-      next(error);
+      next(error)
     }
   },
 
-  // 📷 Scan sortie (code barre = reference_fabricant)
   async scanSortie(req: Request, res: Response, next: NextFunction) {
     try {
-      const { barcode, quantity, reason, note, affaire_id } = req.body;
-
-      const utilisateur = req.user?.username || "Utilisateur inconnu";
-      const user_id = req.user?.id ?? null;
-
-      if (!barcode) return res.status(400).json({ message: "barcode requis" });
-
-      const ref = parseString(String(barcode), "barcode");
-      const qte = quantity === undefined ? 1 : Number(quantity);
-
-      if (!Number.isFinite(qte) || qte <= 0) {
-        return res.status(400).json({ message: "quantity invalide (>0)" });
-      }
+      const user = requireUser(req)
+      const payload = scanMovementSchema.parse(req.body)
 
       const result = await outilService.scanSortie({
-        reference_fabricant: ref,
-        quantite: qte,
-        utilisateur,
-        user_id,
-        reason: reason ?? null,
+        reference_fabricant: payload.barcode,
+        quantite: payload.quantity,
+        utilisateur: user.username,
+        user_id: user.id ?? null,
+        reason: payload.reason ?? null,
         source: "scan",
-        note: note ?? null,
-        affaire_id: affaire_id ? Number(affaire_id) : null,
-      });
+        note: payload.note ?? null,
+        affaire_id: payload.affaire_id ?? null,
+      })
 
-      const io = getIO();
-      io.emit("stockUpdated", {
-        id_outil: result.id_outil,
-        quantity: qte,
-        user: utilisateur,
-        type: "sortie",
-        date: new Date().toISOString(),
-        source: "scan",
-      });
+      try {
+        const io = getIO()
+        io.emit("stockUpdated", {
+          id_outil: result.id_outil,
+          quantity: payload.quantity,
+          user: user.username,
+          type: "sortie",
+          date: new Date().toISOString(),
+          source: "scan",
+        })
+      } catch {
+        // noop
+      }
 
       return res.status(200).json({
         success: true,
         ...result,
-        message: `📷 Sortie stock OK (${ref}) x${qte}`,
-      });
+        message: `Sortie stock OK (${payload.barcode}) x${payload.quantity}`,
+      })
     } catch (error) {
-      next(error);
+      next(error)
     }
   },
 
-  // 📷 Scan entrée (code barre = reference_fabricant)
   async scanEntree(req: Request, res: Response, next: NextFunction) {
     try {
-      const { barcode, quantity, prix, id_fournisseur, reason, note, affaire_id } = req.body;
-
-      const utilisateur = req.user?.username || "Utilisateur inconnu";
-      const user_id = req.user?.id ?? null;
-
-      if (!barcode) return res.status(400).json({ message: "barcode requis" });
-
-      const ref = parseString(String(barcode), "barcode");
-      const qte = quantity === undefined ? 1 : Number(quantity);
-
-      if (!Number.isFinite(qte) || qte <= 0) {
-        return res.status(400).json({ message: "quantity invalide (>0)" });
-      }
-
-      // prix / fournisseur optionnels en scan (selon ton process)
-      const p = prix !== undefined ? Number(prix) : undefined;
-      const idF = id_fournisseur !== undefined ? Number(id_fournisseur) : undefined;
-
-      if (p !== undefined && (!Number.isFinite(p) || p < 0)) return res.status(400).json({ message: "prix invalide (>=0)" });
-      if (idF !== undefined && (!Number.isFinite(idF) || idF <= 0)) return res.status(400).json({ message: "id_fournisseur invalide" });
+      const user = requireUser(req)
+      const payload = scanMovementSchema.parse(req.body)
 
       const result = await outilService.scanEntree({
-        reference_fabricant: ref,
-        quantite: qte,
-        prix: p,
-        id_fournisseur: idF,
-        utilisateur,
-        user_id,
-        reason: reason ?? null,
+        reference_fabricant: payload.barcode,
+        quantite: payload.quantity,
+        prix: payload.prix,
+        id_fournisseur: payload.id_fournisseur,
+        utilisateur: user.username,
+        user_id: user.id ?? null,
+        reason: payload.reason ?? null,
         source: "scan",
-        note: note ?? null,
-        affaire_id: affaire_id ? Number(affaire_id) : null,
-      });
+        note: payload.note ?? null,
+        affaire_id: payload.affaire_id ?? null,
+      })
 
-      const io = getIO();
-      io.emit("stockUpdated", {
-        id_outil: result.id_outil,
-        quantity: qte,
-        user: utilisateur,
-        type: "entrée",
-        date: new Date().toISOString(),
-        source: "scan",
-      });
+      try {
+        const io = getIO()
+        io.emit("stockUpdated", {
+          id_outil: result.id_outil,
+          quantity: payload.quantity,
+          user: user.username,
+          type: "entree",
+          date: new Date().toISOString(),
+          source: "scan",
+        })
+      } catch {
+        // noop
+      }
 
       return res.status(200).json({
         success: true,
         ...result,
-        message: `📷 Entrée stock OK (${ref}) x${qte}`,
-      });
+        message: `Entree stock OK (${payload.barcode}) x${payload.quantity}`,
+      })
     } catch (error) {
-      next(error);
+      next(error)
     }
   },
 
-  // 🧾 Inventaire: set stock absolu
   async inventaireSet(req: Request, res: Response, next: NextFunction) {
     try {
-      const { id_outil, new_qty, reason, note } = req.body;
-
-      const utilisateur = req.user?.username || "Utilisateur inconnu";
-      const user_id = req.user?.id ?? null;
-
-      if (!id_outil || new_qty === undefined) {
-        return res.status(400).json({ message: "id_outil et new_qty requis" });
-      }
-
-      const idOutil = Number(id_outil);
-      const qty = Number(new_qty);
-
-      if (!Number.isFinite(idOutil) || idOutil <= 0) return res.status(400).json({ message: "id_outil invalide" });
-      if (!Number.isFinite(qty) || qty < 0) return res.status(400).json({ message: "new_qty invalide (>=0)" });
+      const user = requireUser(req)
+      const payload = adjustStockSchema.parse(req.body)
 
       await outilService.inventaireSet({
-        id_outil: idOutil,
-        new_qty: qty,
-        utilisateur,
-        user_id,
-        reason: reason ?? "inventaire",
+        id_outil: payload.id_outil,
+        new_qty: payload.new_qty,
+        utilisateur: user.username,
+        user_id: user.id ?? null,
+        reason: payload.reason ?? "inventaire",
         source: "manual",
-        note: note ?? null,
-      });
+        note: payload.note ?? null,
+      })
 
-      const io = getIO();
-      io.emit("stockUpdated", {
-        id_outil: idOutil,
-        quantity: qty,
-        user: utilisateur,
-        type: "inventaire",
-        date: new Date().toISOString(),
-      });
+      try {
+        const io = getIO()
+        io.emit("stockUpdated", {
+          id_outil: payload.id_outil,
+          quantity: payload.new_qty,
+          user: user.username,
+          type: "inventaire",
+          date: new Date().toISOString(),
+        })
+      } catch {
+        // noop
+      }
 
-      return res.status(200).json({ success: true, message: `📦 Inventaire OK (outil ${idOutil} => ${qty})` });
+      return res.status(200).json({ success: true, message: `Inventaire OK (outil ${payload.id_outil} => ${payload.new_qty})` })
     } catch (error) {
-      next(error);
+      next(error)
     }
   },
-};
+}
 
 export const outilSupportController = {
-  getFamilles: async (_: Request, res: Response, next: NextFunction) => {
+  getFamilles: async (_req: Request, res: Response, next: NextFunction) => {
     try {
-      const familles = await outilSupportService.getFamilles();
-      return res.json(familles);
-    } catch (err) {
-      next(err);
+      const familles = await outilSupportService.getFamilles()
+      return res.json(familles)
+    } catch (error) {
+      next(error)
     }
   },
 
-  getFabricants: async (_: Request, res: Response, next: NextFunction) => {
+  postFamille: async (req: Request, res: Response, next: NextFunction) => {
+    const uploadedImage = req.file?.filename ? getOutillageFamilleStoredPath(req.file.filename) : null
+
     try {
-      const fabricants = await outilSupportService.getFabricants();
-      return res.json(fabricants);
-    } catch (err) {
-      next(err);
+      requireUser(req)
+      const parsed = createFamilleSchema.parse(req.body)
+      const famille = await outilSupportService.createFamille(parsed.nom_famille, uploadedImage)
+      return res.status(201).json(famille)
+    } catch (error) {
+      await deleteStoredImageFile(uploadedImage)
+      next(error)
+    }
+  },
+
+  patchFamille: async (req: Request, res: Response, next: NextFunction) => {
+    const uploadedImage = req.file?.filename ? getOutillageFamilleStoredPath(req.file.filename) : null
+
+    try {
+      requireUser(req)
+      const id = parseId(req.params.id, "ID Famille")
+      const parsed = updateFamilleSchema.parse(req.body)
+      const famille = await outilSupportService.updateFamille(id, parsed.nom_famille, uploadedImage)
+      return res.status(200).json(famille)
+    } catch (error) {
+      await deleteStoredImageFile(uploadedImage)
+      next(error)
+    }
+  },
+
+  getFabricants: async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      const fabricants = await outilSupportService.getFabricants()
+      return res.json(fabricants)
+    } catch (error) {
+      next(error)
     }
   },
 
   postFabricant: async (req: Request, res: Response, next: NextFunction) => {
+    const uploadedLogo = req.file?.filename ? getOutillageFabricantStoredPath(req.file.filename) : null
+
     try {
-      const { nom_fabricant, id_fournisseurs } = req.body;
+      requireUser(req)
+      let fournisseursPayload: unknown = []
+      if (req.body.id_fournisseurs) {
+        try {
+          fournisseursPayload = JSON.parse(req.body.id_fournisseurs)
+        } catch {
+          throw new HttpError(400, "INVALID_JSON", "id_fournisseurs doit etre un JSON valide")
+        }
+      }
 
-      if (!nom_fabricant) return res.status(400).json({ message: "nom_fabricant requis" });
+      const parsed = createFabricantSchema.parse({
+        nom_fabricant: req.body.nom_fabricant,
+        id_fournisseurs: fournisseursPayload,
+      })
 
-      const parsedFournisseurs: number[] = id_fournisseurs ? JSON.parse(id_fournisseurs) : [];
-      if (!Array.isArray(parsedFournisseurs)) return res.status(400).json({ message: "id_fournisseurs invalide" });
-
-      const logo = req.file ? `${IMAGE_SHARE_PATH}${req.file.filename}` : null;
-
-      const id = await outilSupportService.createFabricant(nom_fabricant, logo, parsedFournisseurs);
-      return res.status(201).json({ message: "Fabricant créé", id });
-    } catch (err) {
-      next(err);
+      const id = await outilSupportService.createFabricant(parsed.nom_fabricant, uploadedLogo, parsed.id_fournisseurs)
+      return res.status(201).json({ message: "Fabricant cree", id })
+    } catch (error) {
+      await deleteStoredImageFile(uploadedLogo)
+      next(error)
     }
   },
 
   getFournisseurs: async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const fabricantId = req.query.fabricantId ? parseId(req.query.fabricantId as string, "ID Fabricant") : undefined;
-      const fournisseurs = await outilSupportService.getFournisseurs(fabricantId);
-      return res.json(fournisseurs);
-    } catch (err) {
-      next(err);
+      const fabricantId = req.query.fabricantId ? parseId(req.query.fabricantId as string, "ID Fabricant") : undefined
+      const fournisseurs = await outilSupportService.getFournisseurs(fabricantId)
+      return res.json(fournisseurs)
+    } catch (error) {
+      next(error)
     }
   },
 
   postFournisseur: async (req: Request, res: Response, next: NextFunction) => {
     try {
-      await outilSupportService.createFournisseur(req.body);
-      res.status(201).json({ message: "Fournisseur créé" });
+      requireUser(req)
+      const parsed = createFournisseurSchema.parse(req.body)
+      await outilSupportService.createFournisseur(parsed)
+      res.status(201).json({ message: "Fournisseur cree" })
 
       try {
-        const io = getIO();
-        io.emit("fournisseurAdded");
-      } catch (_) {}
-    } catch (err) {
-      next(err);
+        const io = getIO()
+        io.emit("fournisseurAdded")
+      } catch {
+        // noop
+      }
+    } catch (error) {
+      next(error)
     }
   },
 
   getGeometries: async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const id = req.query.id_famille ? parseId(req.query.id_famille as string, "ID Famille") : undefined;
-      const result = await outilSupportService.getGeometries(id);
-      return res.json(result);
-    } catch (err) {
-      next(err);
+      const id = req.query.id_famille ? parseId(req.query.id_famille as string, "ID Famille") : undefined
+      const result = await outilSupportService.getGeometries(id)
+      return res.json(result)
+    } catch (error) {
+      next(error)
+    }
+  },
+
+  postGeometrie: async (req: Request, res: Response, next: NextFunction) => {
+    const uploadedImage = req.file?.filename ? getOutillageGeometrieStoredPath(req.file.filename) : null
+
+    try {
+      requireUser(req)
+      const parsed = createGeometrieSchema.parse(req.body)
+      const geometrie = await outilSupportService.createGeometrie(parsed.nom_geometrie, parsed.id_famille, uploadedImage)
+      return res.status(201).json(geometrie)
+    } catch (error) {
+      await deleteStoredImageFile(uploadedImage)
+      next(error)
+    }
+  },
+
+  patchGeometrie: async (req: Request, res: Response, next: NextFunction) => {
+    const uploadedImage = req.file?.filename ? getOutillageGeometrieStoredPath(req.file.filename) : null
+
+    try {
+      requireUser(req)
+      const id = parseId(req.params.id, "ID Geometrie")
+      const parsed = updateGeometrieSchema.parse(req.body)
+      const geometrie = await outilSupportService.updateGeometrie(
+        id,
+        parsed.nom_geometrie,
+        parsed.id_famille,
+        uploadedImage
+      )
+      return res.status(200).json(geometrie)
+    } catch (error) {
+      await deleteStoredImageFile(uploadedImage)
+      next(error)
     }
   },
 
   getRevetements: async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const id = req.query.id_fabricant ? parseId(req.query.id_fabricant as string, "ID Fabricant") : undefined;
-      const result = await outilSupportService.getRevetements(id);
-      return res.json(result);
-    } catch (err) {
-      next(err);
+      const id = req.query.id_fabricant ? parseId(req.query.id_fabricant as string, "ID Fabricant") : undefined
+      const result = await outilSupportService.getRevetements(id)
+      return res.json(result)
+    } catch (error) {
+      next(error)
     }
   },
 
   getAretes: async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const id = req.query.id_geometrie ? parseId(req.query.id_geometrie as string, "ID Géométrie") : undefined;
-      const result = await outilSupportService.getAretes(id);
-      return res.json(result);
-    } catch (err) {
-      next(err);
+      const id = req.query.id_geometrie ? parseId(req.query.id_geometrie as string, "ID Geometrie") : undefined
+      const result = await outilSupportService.getAretes(id)
+      return res.json(result)
+    } catch (error) {
+      next(error)
     }
   },
 
   postRevetement: async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { nom, id_fabricant } = req.body;
-
-      if (!nom || typeof nom !== "string") {
-        return res.status(400).json({ message: "Le nom du revêtement est requis" });
-      }
-      if (!id_fabricant || isNaN(Number(id_fabricant))) {
-        return res.status(400).json({ message: "Un fabricant valide est requis" });
-      }
-
-      const id = await outilSupportService.createRevetement(nom, Number(id_fabricant));
+      requireUser(req)
+      const parsed = createRevetementSchema.parse(req.body)
+      const id = await outilSupportService.createRevetement(parsed.nom, parsed.id_fabricant)
 
       try {
-        const io = getIO();
-        io.emit("revetementAdded");
-      } catch (_) {}
+        const io = getIO()
+        io.emit("revetementAdded")
+      } catch {
+        // noop
+      }
 
-      return res.status(201).json({ message: "Revêtement créé", id });
-    } catch (err) {
-      next(err);
+      return res.status(201).json({ message: "Revetement cree", id })
+    } catch (error) {
+      next(error)
     }
   },
-};
+}
