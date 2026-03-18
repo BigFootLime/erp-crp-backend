@@ -78,6 +78,8 @@ export type CommandeCadreReleaseLine = {
   release_id: number;
   ordre: number;
   commande_ligne_id: number | null;
+  article_id?: string | null;
+  piece_technique_id?: string | null;
   designation: string;
   code_piece: string | null;
   quantite: number;
@@ -92,6 +94,8 @@ export type CommandeCadreReleaseLine = {
 export type CommandeClientLine = {
   id: number;
   commande_id: number;
+  article_id?: string | null;
+  piece_technique_id?: string | null;
   designation: string;
   code_piece: string | null;
   quantite: number;
@@ -168,6 +172,7 @@ export type CommandeToAffaire = {
 };
 
 export type CommandeLigneInput = {
+  article_id?: string | null;
   designation: string;
   code_piece?: string | null;
   quantite: number;
@@ -245,6 +250,7 @@ export type UpdateCadreReleasePatch = {
 export type CreateCadreReleaseLineInput = {
   ordre?: number;
   commande_ligne_id?: number | null;
+  article_id?: string | null;
   designation: string;
   code_piece?: string | null;
   quantite: number;
@@ -255,6 +261,7 @@ export type CreateCadreReleaseLineInput = {
 export type UpdateCadreReleaseLinePatch = {
   ordre?: number;
   commande_ligne_id?: number | null;
+  article_id?: string | null;
   designation?: string;
   code_piece?: string | null;
   quantite?: number;

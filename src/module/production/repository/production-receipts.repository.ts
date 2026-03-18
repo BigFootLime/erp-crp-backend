@@ -124,6 +124,135 @@ async function resolveArticleForPieceTechnique(client: Pick<PoolClient, "query">
   return row;
 }
 
+async function reserveProducedQtyForCommandeLine(
+  client: Pick<PoolClient, "query">,
+  args: {
+    commande_ligne_id: number;
+    article_id: string;
+    location_id: string;
+    stock_level_id: string;
+    qty_ok: number;
+    actor_user_id: number;
+  }
+): Promise<{ reservation_id: string; qty_reserved: number } | null> {
+  if (!Number.isFinite(args.qty_ok) || args.qty_ok <= 0) return null;
+
+  const lineRes = await client.query<{ quantite: number; article_id: string | null }>(
+    `
+      SELECT
+        quantite::float8 AS quantite,
+        article_id::text AS article_id
+      FROM public.commande_ligne
+      WHERE id = $1::bigint
+      LIMIT 1
+    `,
+    [args.commande_ligne_id]
+  );
+  const line = lineRes.rows[0] ?? null;
+  if (!line) return null;
+  if (line.article_id && line.article_id !== args.article_id) {
+    throw new HttpError(409, "ARTICLE_MISMATCH", "La ligne de commande n'est pas liee a l'article recu en stock");
+  }
+
+  const currentReservedRes = await client.query<{ qty_reserved: number }>(
+    `
+      SELECT COALESCE(SUM(qty_reserved), 0)::float8 AS qty_reserved
+      FROM public.stock_reservations
+      WHERE source_type = 'COMMANDE_LIGNE'
+        AND source_id = $1
+        AND status = 'ACTIVE'
+    `,
+    [String(args.commande_ligne_id)]
+  );
+
+  const orderedQty = Number(line.quantite);
+  const alreadyReserved = Number(currentReservedRes.rows[0]?.qty_reserved ?? 0);
+  const remainingToReserve = Math.max(0, orderedQty - alreadyReserved);
+  const qtyToReserve = Math.min(args.qty_ok, remainingToReserve);
+  if (qtyToReserve <= 0) return null;
+
+  const stockLevelRes = await client.query<{ qty_total: number; qty_reserved: number }>(
+    `
+      SELECT qty_total::float8 AS qty_total, qty_reserved::float8 AS qty_reserved
+      FROM public.stock_levels
+      WHERE id = $1::uuid
+      FOR UPDATE
+    `,
+    [args.stock_level_id]
+  );
+  const stockLevel = stockLevelRes.rows[0] ?? null;
+  if (!stockLevel) {
+    throw new HttpError(409, "STOCK_LEVEL_NOT_FOUND", "Niveau de stock introuvable pour la reservation automatique");
+  }
+
+  const availableQty = Number(stockLevel.qty_total) - Number(stockLevel.qty_reserved);
+  if (availableQty + 1e-9 < qtyToReserve) {
+    throw new HttpError(409, "INSUFFICIENT_STOCK", "Le stock produit n'est pas encore disponible pour la reservation automatique");
+  }
+
+  await client.query(
+    `
+      UPDATE public.stock_levels
+      SET qty_reserved = qty_reserved + $2,
+          updated_at = now(),
+          updated_by = $3
+      WHERE id = $1::uuid
+    `,
+    [args.stock_level_id, qtyToReserve, args.actor_user_id]
+  );
+
+  const existingReservation = await client.query<{ id: string }>(
+    `
+      SELECT id::text AS id
+      FROM public.stock_reservations
+      WHERE article_id = $1::uuid
+        AND location_id = $2::uuid
+        AND source_type = 'COMMANDE_LIGNE'
+        AND source_id = $3
+        AND status = 'ACTIVE'
+      ORDER BY created_at ASC
+      LIMIT 1
+      FOR UPDATE
+    `,
+    [args.article_id, args.location_id, String(args.commande_ligne_id)]
+  );
+
+  const existingId = existingReservation.rows[0]?.id ?? null;
+  if (existingId) {
+    await client.query(
+      `
+        UPDATE public.stock_reservations
+        SET qty_reserved = qty_reserved + $2,
+            updated_at = now(),
+            updated_by = $3
+        WHERE id = $1::uuid
+      `,
+      [existingId, qtyToReserve, args.actor_user_id]
+    );
+    return { reservation_id: existingId, qty_reserved: qtyToReserve };
+  }
+
+  const insertReservation = await client.query<{ id: string }>(
+    `
+      INSERT INTO public.stock_reservations (
+        article_id,
+        location_id,
+        qty_reserved,
+        source_type,
+        source_id,
+        status,
+        created_by,
+        updated_by
+      ) VALUES ($1::uuid,$2::uuid,$3,'COMMANDE_LIGNE',$4,'ACTIVE',$5,$5)
+      RETURNING id::text AS id
+    `,
+    [args.article_id, args.location_id, qtyToReserve, String(args.commande_ligne_id), args.actor_user_id]
+  );
+
+  const reservationId = insertReservation.rows[0]?.id ?? null;
+  return reservationId ? { reservation_id: reservationId, qty_reserved: qtyToReserve } : null;
+}
+
 async function resolveUnitIdForArticle(
   client: Pick<PoolClient, "query">,
   articleId: string,
@@ -304,6 +433,7 @@ export async function repoGetOfReceiptContext(params: { of_id: number }): Promis
     id: string;
     numero: string;
     piece_technique_id: string;
+    article_id: string | null;
     piece_code: string;
     piece_designation: string;
     quantite_lancee: number;
@@ -316,6 +446,7 @@ export async function repoGetOfReceiptContext(params: { of_id: number }): Promis
         o.id::text AS id,
         o.numero,
         o.piece_technique_id::text AS piece_technique_id,
+        o.article_id::text AS article_id,
         pt.code AS piece_code,
         pt.designation AS piece_designation,
         o.quantite_lancee::float8 AS quantite_lancee,
@@ -333,7 +464,14 @@ export async function repoGetOfReceiptContext(params: { of_id: number }): Promis
   const ofId = Number(ofRow.id);
   if (!Number.isFinite(ofId)) throw new Error("Invalid OF id");
 
-  const article = await resolveArticleForPieceTechnique(pool, ofRow.piece_technique_id);
+  const article = ofRow.article_id
+    ? {
+        id: ofRow.article_id,
+        unite: (
+          await pool.query<{ unite: string | null }>(`SELECT unite FROM public.articles WHERE id = $1::uuid LIMIT 1`, [ofRow.article_id])
+        ).rows[0]?.unite ?? null,
+      }
+    : await resolveArticleForPieceTechnique(pool, ofRow.piece_technique_id);
   const outputLotsRes = await pool.query<{ lot_id: string; lot_code: string; qty_ok: number; updated_at: string }>(
     `
       SELECT
@@ -426,11 +564,19 @@ export async function repoCreateOfReceipt(params: { of_id: number; body: OfRecei
   try {
     await client.query("BEGIN");
 
-    const ofRes = await client.query<{ numero: string; piece_technique_id: string; quantite_bonne: number }>(
+    const ofRes = await client.query<{
+      numero: string;
+      piece_technique_id: string;
+      article_id: string | null;
+      commande_ligne_id: number | null;
+      quantite_bonne: number;
+    }>(
       `
         SELECT
           numero,
           piece_technique_id::text AS piece_technique_id,
+          article_id::text AS article_id,
+          commande_ligne_id::bigint::int AS commande_ligne_id,
           quantite_bonne::float8 AS quantite_bonne
         FROM public.ordres_fabrication
         WHERE id = $1::bigint
@@ -441,7 +587,14 @@ export async function repoCreateOfReceipt(params: { of_id: number; body: OfRecei
     const ofRow = ofRes.rows[0] ?? null;
     if (!ofRow) throw new HttpError(404, "OF_NOT_FOUND", "Ordre de fabrication introuvable");
 
-    const article = await resolveArticleForPieceTechnique(client, ofRow.piece_technique_id);
+    const article = ofRow.article_id
+      ? {
+          id: ofRow.article_id,
+          unite: (
+            await client.query<{ unite: string | null }>(`SELECT unite FROM public.articles WHERE id = $1::uuid LIMIT 1`, [ofRow.article_id])
+          ).rows[0]?.unite ?? null,
+        }
+      : await resolveArticleForPieceTechnique(client, ofRow.piece_technique_id);
     if (params.body.article_id && params.body.article_id !== article.id) {
       throw new HttpError(400, "ARTICLE_MISMATCH", "L'article selectionne ne correspond pas a la piece technique de l'OF");
     }
@@ -634,6 +787,18 @@ export async function repoCreateOfReceipt(params: { of_id: number; body: OfRecei
       [params.of_id, lotId, params.body.qty_ok, params.audit.user_id]
     );
 
+    const autoReservation =
+      typeof ofRow.commande_ligne_id === "number"
+        ? await reserveProducedQtyForCommandeLine(client, {
+            commande_ligne_id: ofRow.commande_ligne_id,
+            article_id: article.id,
+            location_id: map.location_id,
+            stock_level_id: stockLevelId,
+            qty_ok: params.body.qty_ok,
+            actor_user_id: params.audit.user_id,
+          })
+        : null;
+
     await insertAuditLog(client, params.audit, {
       action: "production.of.receipt",
       entity_type: "ordres_fabrication",
@@ -645,6 +810,10 @@ export async function repoCreateOfReceipt(params: { of_id: number; body: OfRecei
         location_id: map.location_id,
         stock_movement_id: movementId,
         movement_no: movementNo,
+        commande_ligne_id: ofRow.commande_ligne_id ?? null,
+        article_id: article.id,
+        auto_reservation_id: autoReservation?.reservation_id ?? null,
+        auto_reserved_qty: autoReservation?.qty_reserved ?? 0,
       },
     });
 

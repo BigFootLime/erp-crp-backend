@@ -17,6 +17,7 @@ const boolFromQuery = z.preprocess((value) => {
 
 export const commandeLigneInputSchema = z.object({
   designation: z.string().min(1),
+  article_id: z.string().uuid().optional().nullable(),
   code_piece: z.string().optional().nullable(),
   quantite: z.number().positive(),
   unite: z.string().optional().nullable(),
@@ -116,16 +117,36 @@ z.object({
       }
 
       val.lignes.forEach((l, i) => {
+        const articleId = (l.article_id ?? "").toString().trim();
         const codePiece = (l.code_piece ?? "").toString().trim();
-        if (!codePiece) {
+        if (!articleId && !codePiece) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
-            message: "code_piece is required for internal order lines",
-            path: ["lignes", i, "code_piece"],
+            message: "article_id is required for internal order lines",
+            path: ["lignes", i, "article_id"],
           });
         }
       });
     }
+
+    val.lignes.forEach((l, i) => {
+      const articleId = (l.article_id ?? "").toString().trim();
+      const codePiece = (l.code_piece ?? "").toString().trim();
+      if (!articleId && !codePiece) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "article_id is required for order lines",
+          path: ["lignes", i, "article_id"],
+        });
+      }
+      if (articleId && !/^[0-9a-fA-F-]{36}$/.test(articleId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "article_id must be a UUID",
+          path: ["lignes", i, "article_id"],
+        });
+      }
+    });
 
     if (val.order_type === "CADRE") {
       if (val.cadre_start_date && val.cadre_end_date) {
@@ -208,6 +229,7 @@ export const documentIdParamSchema = z.object({
 export const createCadreReleaseLineBodySchema = z.object({
   ordre: z.coerce.number().int().positive().optional(),
   commande_ligne_id: z.coerce.number().int().positive().optional().nullable(),
+  article_id: z.string().uuid().optional().nullable(),
   designation: z.string().trim().min(1).max(10000),
   code_piece: z.string().trim().min(1).max(200).optional().nullable(),
   quantite: z.coerce.number().positive(),
@@ -220,6 +242,7 @@ export type CreateCadreReleaseLineBodyDTO = z.infer<typeof createCadreReleaseLin
 export const updateCadreReleaseLineBodySchema = z.object({
   ordre: z.coerce.number().int().positive().optional(),
   commande_ligne_id: z.coerce.number().int().positive().optional().nullable(),
+  article_id: z.string().uuid().optional().nullable(),
   designation: z.string().trim().min(1).max(10000).optional(),
   code_piece: z.string().trim().min(1).max(200).optional().nullable(),
   quantite: z.coerce.number().positive().optional(),

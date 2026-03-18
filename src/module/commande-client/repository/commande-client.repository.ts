@@ -74,6 +74,18 @@ function hasOwn(obj: object, key: string): boolean {
 
 type Queryable = Pick<PoolClient, "query">;
 
+type CommandeLineArticleResolution = {
+  article_id: string;
+  article_code: string;
+  article_designation: string;
+  article_unite: string | null;
+  piece_technique_id: string | null;
+  piece_code: string | null;
+  piece_designation: string | null;
+  stock_managed: boolean;
+  is_active: boolean;
+};
+
 type AuditContext = {
   user_id: number;
   ip: string | null;
@@ -149,6 +161,78 @@ async function insertCommandeEvent(db: Queryable, params: {
       params.user_id ?? null,
     ]
   );
+}
+
+async function resolveCommandeLineArticle(
+  db: Queryable,
+  line: CreateCommandeInput["lignes"][number]
+): Promise<CommandeLineArticleResolution> {
+  const requestedArticleId = typeof line.article_id === "string" && line.article_id.trim() ? line.article_id.trim() : null;
+  const requestedCode = typeof line.code_piece === "string" && line.code_piece.trim() ? line.code_piece.trim() : null;
+
+  if (!requestedArticleId && !requestedCode) {
+    throw new HttpError(400, "ARTICLE_REQUIRED", "Each commande line must reference an article");
+  }
+
+  const res = await db.query<CommandeLineArticleResolution>(
+    `
+      SELECT
+        a.id::text AS article_id,
+        a.code AS article_code,
+        a.designation AS article_designation,
+        a.unite AS article_unite,
+        a.piece_technique_id::text AS piece_technique_id,
+        pt.code_piece AS piece_code,
+        pt.designation AS piece_designation,
+        a.stock_managed,
+        a.is_active
+      FROM public.articles a
+      LEFT JOIN public.pieces_techniques pt ON pt.id = a.piece_technique_id
+      WHERE ($1::uuid IS NOT NULL AND a.id = $1::uuid)
+         OR ($2::text IS NOT NULL AND (a.code = $2 OR pt.code_piece = $2))
+      ORDER BY
+        CASE
+          WHEN $1::uuid IS NOT NULL AND a.id = $1::uuid THEN 0
+          WHEN $2::text IS NOT NULL AND a.code = $2 THEN 1
+          WHEN $2::text IS NOT NULL AND pt.code_piece = $2 THEN 2
+          ELSE 9
+        END,
+        a.updated_at DESC NULLS LAST,
+        a.created_at DESC NULLS LAST,
+        a.id ASC
+      LIMIT 1
+    `,
+    [requestedArticleId, requestedCode]
+  );
+
+  const article = res.rows[0] ?? null;
+  if (!article) {
+    throw new HttpError(
+      400,
+      "INVALID_ARTICLE",
+      requestedCode
+        ? `Unknown article for reference ${requestedCode}`
+        : `Unknown article_id ${requestedArticleId}`
+    );
+  }
+
+  if (!article.is_active) {
+    throw new HttpError(409, "ARTICLE_INACTIVE", `Article ${article.article_code} is inactive`);
+  }
+
+  if (!article.stock_managed) {
+    throw new HttpError(409, "ARTICLE_NOT_STOCK_MANAGED", `Article ${article.article_code} is not stock-managed`);
+  }
+
+  if (!article.piece_technique_id) {
+    throw new HttpError(
+      409,
+      "ARTICLE_PIECE_TECHNIQUE_REQUIRED",
+      `Article ${article.article_code} must be linked to a piece technique before it can be sold`
+    );
+  }
+
+  return article;
 }
 
 let commandeToAffaireHasRoleColumnCache: boolean | null = null;
@@ -761,24 +845,27 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
         await pool.query(
           `
           SELECT
-            id::text AS id,
-            commande_id::text AS commande_id,
-            designation,
-            code_piece,
-            quantite::float8 AS quantite,
-            unite,
-            prix_unitaire_ht::float8 AS prix_unitaire_ht,
-            remise_ligne::float8 AS remise_ligne,
-            taux_tva::float8 AS taux_tva,
-            delai_client::text AS delai_client,
-            delai_interne::text AS delai_interne,
-            total_ht::float8 AS total_ht,
-            total_ttc::float8 AS total_ttc,
-            devis_numero,
-            famille
-          FROM commande_ligne
-          WHERE commande_id = $1
-          ORDER BY id ASC
+            cl.id::text AS id,
+            cl.commande_id::text AS commande_id,
+            cl.designation,
+            COALESCE(a.code, cl.code_piece) AS code_piece,
+            cl.article_id::text AS article_id,
+            COALESCE(cl.piece_technique_id::text, a.piece_technique_id::text) AS piece_technique_id,
+            cl.quantite::float8 AS quantite,
+            cl.unite,
+            cl.prix_unitaire_ht::float8 AS prix_unitaire_ht,
+            cl.remise_ligne::float8 AS remise_ligne,
+            cl.taux_tva::float8 AS taux_tva,
+            cl.delai_client::text AS delai_client,
+            cl.delai_interne::text AS delai_interne,
+            cl.total_ht::float8 AS total_ht,
+            cl.total_ttc::float8 AS total_ttc,
+            cl.devis_numero,
+            cl.famille
+          FROM commande_ligne cl
+          LEFT JOIN public.articles a ON a.id = cl.article_id
+          WHERE cl.commande_id = $1
+          ORDER BY cl.id ASC
           `,
           [commandeId]
         )
@@ -1008,48 +1095,67 @@ export async function repoGetCommandeDocumentFileMeta(commandeId: string, docId:
 async function insertCommandeLignes(client: PoolClient, commandeId: string, lignes: CreateCommandeInput["lignes"]) {
   if (!lignes.length) return;
 
-  const params: unknown[] = [commandeId];
-  const valuesSql: string[] = [];
-
   for (const l of lignes) {
-    const baseIndex = params.length;
-    params.push(
-      l.designation,
-      l.code_piece ?? null,
-      l.quantite,
-      l.unite ?? null,
-      l.prix_unitaire_ht,
-      l.remise_ligne ?? 0,
-      l.taux_tva ?? 20,
-      l.delai_client ?? null,
-      l.delai_interne ?? null,
-      l.devis_numero ?? null,
-      l.famille ?? null
+    const resolved = await resolveCommandeLineArticle(client, l);
+    const designation = typeof l.designation === "string" && l.designation.trim().length > 0
+      ? l.designation.trim()
+      : resolved.article_designation;
+    const unite = typeof l.unite === "string" && l.unite.trim().length > 0
+      ? l.unite.trim()
+      : resolved.article_unite;
+
+    await client.query(
+      `
+        INSERT INTO commande_ligne (
+          commande_id,
+          article_id,
+          piece_technique_id,
+          designation,
+          code_piece,
+          quantite,
+          unite,
+          prix_unitaire_ht,
+          remise_ligne,
+          taux_tva,
+          delai_client,
+          delai_interne,
+          devis_numero,
+          famille
+        ) VALUES (
+          $1,
+          $2::uuid,
+          $3::uuid,
+          $4,
+          $5,
+          $6,
+          $7,
+          $8,
+          $9,
+          $10,
+          $11,
+          $12,
+          $13,
+          $14
+        )
+      `,
+      [
+        commandeId,
+        resolved.article_id,
+        resolved.piece_technique_id,
+        designation,
+        resolved.article_code,
+        l.quantite,
+        unite ?? null,
+        l.prix_unitaire_ht,
+        l.remise_ligne ?? 0,
+        l.taux_tva ?? 20,
+        l.delai_client ?? null,
+        l.delai_interne ?? null,
+        l.devis_numero ?? null,
+        l.famille ?? null,
+      ]
     );
-
-    const placeholders = Array.from({ length: 11 }, (_, j) => `$${baseIndex + 1 + j}`).join(",");
-    valuesSql.push(`($1,${placeholders})`);
   }
-
-  await client.query(
-    `
-    INSERT INTO commande_ligne (
-      commande_id,
-      designation,
-      code_piece,
-      quantite,
-      unite,
-      prix_unitaire_ht,
-      remise_ligne,
-      taux_tva,
-      delai_client,
-      delai_interne,
-      devis_numero,
-      famille
-    ) VALUES ${valuesSql.join(",")}
-    `,
-    params
-  );
 }
 
 async function insertCommandeEcheances(
@@ -1703,7 +1809,11 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
             commande_ligne_id: r.commande_ligne_id,
             code_piece: r.code_piece,
             article_id: r.article_id,
+            article_code: r.article_code,
+            article_designation: r.article_designation,
             piece_technique_id: r.piece_technique_id,
+            piece_code: r.piece_code,
+            piece_designation: r.piece_designation,
             requested_qty: requestedQty,
             available_qty: 0,
             available_used_qty: 0,
@@ -1714,9 +1824,11 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       };
     }
 
-    const hasPartial = analysis.lines.some((l) => l.status === "PARTIAL");
+    const stockAnalysis = analysis;
+
+    const hasPartial = stockAnalysis.lines.some((l) => l.status === "PARTIAL");
     const needsConfirmation = orderType !== "INTERNE" && hasPartial;
-    const needsProduction = orderType === "INTERNE" ? true : analysis.lines.some((l) => l.shortage_qty > 0);
+    const needsProduction = orderType === "INTERNE" ? true : stockAnalysis.lines.some((l) => l.shortage_qty > 0);
 
     let decision = body.decision ?? null;
     if (needsConfirmation && decision === null) decision = "SHIP_AVAILABLE_NOW";
@@ -1728,7 +1840,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
 
     const reservedByLine = new Map<number, number>();
     if (decision !== null) {
-      for (const l of analysis.lines) {
+      for (const l of stockAnalysis.lines) {
         const maxShip = Number(l.available_used_qty);
         const override = overrides.has(l.commande_ligne_id) ? Number(overrides.get(l.commande_ligne_id) ?? 0) : null;
         const qtyToReserve = override === null ? maxShip : override;
@@ -1800,7 +1912,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
 
     const reservationsCreated: string[] = [];
     if (decision !== null && stockLocationId) {
-      const reservationItems = analysis.lines
+      const reservationItems = stockAnalysis.lines
         .map((l) => {
           const qty = Number(reservedByLine.get(l.commande_ligne_id) ?? 0);
           return { line: l, qty };
@@ -1877,7 +1989,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
     if (needsProduction) {
       const byLine = new Map<number, CommandeLineRef>(refs.map((r) => [r.commande_ligne_id, r] as const));
 
-      for (const l of analysis.lines) {
+      for (const l of stockAnalysis.lines) {
         const qtyToProduce =
           orderType === "INTERNE" ? l.requested_qty : Number(l.shortage_qty);
         if (!Number.isFinite(qtyToProduce) || qtyToProduce <= 0) continue;
@@ -1906,6 +2018,8 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
               numero,
               affaire_id,
               commande_id,
+              commande_ligne_id,
+              article_id,
               client_id,
               piece_technique_id,
               quantite_lancee,
@@ -1914,13 +2028,15 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
               notes,
               created_by,
               updated_by
-            ) VALUES ($1,$2,$3::bigint,$4::bigint,$5,$6::uuid,$7,'BROUILLON'::of_status,'NORMAL'::of_priority,$8,$9,$9)
+            ) VALUES ($1,$2,$3::bigint,$4::bigint,$5::bigint,$6::uuid,$7,$8::uuid,$9,'BROUILLON'::of_status,'NORMAL'::of_priority,$10,$10,$10)
           `,
           [
             ofId,
             numero,
             livraisonAffaireId,
             commandeId,
+            l.commande_ligne_id,
+            l.article_id,
             clientId,
             pieceTechniqueId,
             qtyToProduce,
@@ -2138,7 +2254,11 @@ type CommandeLineRef = {
   code_piece: string | null;
   qty_ordered: number;
   article_id: string | null;
+  article_code: string | null;
+  article_designation: string | null;
   piece_technique_id: string | null;
+  piece_code: string | null;
+  piece_designation: string | null;
 };
 
 async function selectCommandeLineRefs(db: PoolClient, commandeId: number): Promise<CommandeLineRef[]> {
@@ -2147,37 +2267,46 @@ async function selectCommandeLineRefs(db: PoolClient, commandeId: number): Promi
     code_piece: string | null;
     qty_ordered: number;
     article_id: string | null;
+    article_code: string | null;
+    article_designation: string | null;
     piece_technique_id: string | null;
+    piece_code: string | null;
+    piece_designation: string | null;
   }>(
     `
       SELECT
         cl.id::bigint::int AS commande_ligne_id,
-        cl.code_piece,
+        COALESCE(a.code, legacy.article_code, cl.code_piece) AS code_piece,
         cl.quantite::float8 AS qty_ordered,
-        art.article_id::text AS article_id,
-        COALESCE(art.piece_technique_id::text, pt.piece_technique_id::text) AS piece_technique_id
+        COALESCE(cl.article_id::text, a.id::text, legacy.article_id) AS article_id,
+        COALESCE(a.code, legacy.article_code, cl.code_piece) AS article_code,
+        COALESCE(a.designation, legacy.article_designation, cl.designation) AS article_designation,
+        COALESCE(cl.piece_technique_id::text, a.piece_technique_id::text, legacy.piece_technique_id) AS piece_technique_id,
+        COALESCE(pt.code_piece, legacy.piece_code) AS piece_code,
+        COALESCE(pt.designation, legacy.piece_designation) AS piece_designation
       FROM commande_ligne cl
+      LEFT JOIN public.articles a ON a.id = cl.article_id
+      LEFT JOIN public.pieces_techniques pt ON pt.id = COALESCE(cl.piece_technique_id, a.piece_technique_id)
       LEFT JOIN LATERAL (
-        SELECT a.id AS article_id, a.piece_technique_id
+        SELECT
+          a.id::text AS article_id,
+          a.code AS article_code,
+          a.designation AS article_designation,
+          a.piece_technique_id::text AS piece_technique_id,
+          apt.code_piece AS piece_code,
+          apt.designation AS piece_designation
         FROM public.articles a
         LEFT JOIN public.pieces_techniques apt
           ON apt.id = a.piece_technique_id
-        WHERE cl.code_piece IS NOT NULL
+        WHERE cl.article_id IS NULL
+          AND cl.code_piece IS NOT NULL
           AND (
             a.code = cl.code_piece
             OR apt.code_piece = cl.code_piece
           )
         ORDER BY (a.code = cl.code_piece) DESC, a.id ASC
         LIMIT 1
-      ) art ON TRUE
-      LEFT JOIN LATERAL (
-        SELECT pt.id AS piece_technique_id
-        FROM public.pieces_techniques pt
-        WHERE cl.code_piece IS NOT NULL
-          AND pt.code_piece = cl.code_piece
-        ORDER BY pt.id ASC
-        LIMIT 1
-      ) pt ON TRUE
+      ) legacy ON TRUE
       WHERE cl.commande_id = $1
       ORDER BY cl.id ASC
     `,
@@ -2189,8 +2318,18 @@ async function selectCommandeLineRefs(db: PoolClient, commandeId: number): Promi
     code_piece: r.code_piece,
     qty_ordered: Number(r.qty_ordered),
     article_id: typeof r.article_id === "string" && r.article_id.trim().length > 0 ? r.article_id.trim() : null,
+    article_code: typeof r.article_code === "string" && r.article_code.trim().length > 0 ? r.article_code.trim() : null,
+    article_designation:
+      typeof r.article_designation === "string" && r.article_designation.trim().length > 0
+        ? r.article_designation.trim()
+        : null,
     piece_technique_id:
       typeof r.piece_technique_id === "string" && r.piece_technique_id.trim().length > 0 ? r.piece_technique_id.trim() : null,
+    piece_code: typeof r.piece_code === "string" && r.piece_code.trim().length > 0 ? r.piece_code.trim() : null,
+    piece_designation:
+      typeof r.piece_designation === "string" && r.piece_designation.trim().length > 0
+        ? r.piece_designation.trim()
+        : null,
   }));
 }
 
@@ -2237,7 +2376,11 @@ type CommandeStockAnalysisLine = {
   commande_ligne_id: number;
   code_piece: string | null;
   article_id: string | null;
+  article_code: string | null;
+  article_designation: string | null;
   piece_technique_id: string | null;
+  piece_code: string | null;
+  piece_designation: string | null;
   requested_qty: number;
   available_qty: number;
   available_used_qty: number;
@@ -2279,7 +2422,11 @@ async function computeCommandeStockAnalysis(db: PoolClient, params: {
         commande_ligne_id: r.commande_ligne_id,
         code_piece: r.code_piece,
         article_id: null,
+        article_code: r.article_code,
+        article_designation: r.article_designation,
         piece_technique_id: r.piece_technique_id,
+        piece_code: r.piece_code,
+        piece_designation: r.piece_designation,
         requested_qty: requestedQty,
         available_qty: 0,
         available_used_qty: 0,
@@ -2300,7 +2447,11 @@ async function computeCommandeStockAnalysis(db: PoolClient, params: {
       commande_ligne_id: r.commande_ligne_id,
       code_piece: r.code_piece,
       article_id: articleId,
+      article_code: r.article_code,
+      article_designation: r.article_designation,
       piece_technique_id: r.piece_technique_id,
+      piece_code: r.piece_code,
+      piece_designation: r.piece_designation,
       requested_qty: requestedQty,
       available_qty: initialAvailable,
       available_used_qty: used,
@@ -2747,6 +2898,8 @@ export async function repoDuplicateCommande(id: string) {
       SELECT
         designation,
         code_piece,
+        article_id::text AS article_id,
+        piece_technique_id::text AS piece_technique_id,
         quantite,
         unite,
         prix_unitaire_ht,
@@ -2836,6 +2989,7 @@ export async function repoDuplicateCommande(id: string) {
     if (lignesRes.rows.length) {
       const lignesPayload = lignesRes.rows.map((r) => ({
         designation: r.designation as string,
+        article_id: (r.article_id as string | null) ?? null,
         code_piece: (r.code_piece as string | null) ?? null,
         quantite: Number(r.quantite),
         unite: (r.unite as string | null) ?? null,

@@ -266,6 +266,8 @@ describe("/api/v1/commandes", () => {
   });
 
   it("POST /api/v1/commandes handles multipart data + documents[]", async () => {
+    const ARTICLE_ID = "11111111-1111-1111-1111-111111111111";
+    const PIECE_ID = "22222222-2222-2222-2222-222222222222";
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "erp-crp-docs-"));
     const tmpFile = path.join(tmpDir, "doc.txt");
     fs.writeFileSync(tmpFile, "hello");
@@ -274,6 +276,19 @@ describe("/api/v1/commandes", () => {
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
       .mockResolvedValueOnce({ rows: [{ id: "123" }] }) // nextval commande_client_id_seq
       .mockResolvedValueOnce({ rows: [{ id: "123" }] }) // INSERT commande_client
+      .mockResolvedValueOnce({
+        rows: [{
+          article_id: ARTICLE_ID,
+          article_code: "ART-001",
+          article_designation: "Article test",
+          article_unite: "u",
+          piece_technique_id: PIECE_ID,
+          piece_code: "PT-001",
+          piece_designation: "Pièce test",
+          stock_managed: true,
+          is_active: true,
+        }],
+      }) // resolve article
       .mockResolvedValueOnce({ rows: [] }) // INSERT commande_ligne
       .mockResolvedValueOnce({ rows: [] }) // INSERT documents_clients
       .mockResolvedValueOnce({ rows: [] }) // INSERT commande_documents
@@ -285,6 +300,7 @@ describe("/api/v1/commandes", () => {
       date_commande: "2026-02-01",
       lignes: [
         {
+          article_id: ARTICLE_ID,
           designation: "Line",
           quantite: 1,
           prix_unitaire_ht: 100,
@@ -314,6 +330,8 @@ describe("/api/v1/commandes", () => {
   });
 
   it("PATCH /api/v1/commandes/:id works and replaces lignes", async () => {
+    const ARTICLE_ID = "11111111-1111-1111-1111-111111111111";
+    const PIECE_ID = "22222222-2222-2222-2222-222222222222";
     mocks.clientQuery
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
       .mockResolvedValueOnce({
@@ -333,6 +351,19 @@ describe("/api/v1/commandes", () => {
       .mockResolvedValueOnce({ rows: [{ id: "123" }] }) // UPDATE commande_client
       .mockResolvedValueOnce({ rows: [] }) // DELETE lignes
       .mockResolvedValueOnce({ rows: [] }) // DELETE echeances
+      .mockResolvedValueOnce({
+        rows: [{
+          article_id: ARTICLE_ID,
+          article_code: "ART-001",
+          article_designation: "Article test",
+          article_unite: "u",
+          piece_technique_id: PIECE_ID,
+          piece_code: "PT-001",
+          piece_designation: "Pièce test",
+          stock_managed: true,
+          is_active: true,
+        }],
+      }) // resolve article
       .mockResolvedValueOnce({ rows: [] }) // INSERT commande_ligne
       .mockResolvedValueOnce({ rows: [] }); // COMMIT
 
@@ -342,6 +373,7 @@ describe("/api/v1/commandes", () => {
       date_commande: "2026-02-01",
       lignes: [
         {
+          article_id: ARTICLE_ID,
           designation: "Line updated",
           quantite: 2,
           prix_unitaire_ht: 100,
@@ -392,6 +424,8 @@ describe("/api/v1/commandes", () => {
   });
 
   it("POST /api/v1/commandes/:id/duplicate returns new id", async () => {
+    const ARTICLE_ID = "11111111-1111-1111-1111-111111111111";
+    const PIECE_ID = "22222222-2222-2222-2222-222222222222";
     mocks.clientQuery
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
       .mockResolvedValueOnce({
@@ -421,7 +455,9 @@ describe("/api/v1/commandes", () => {
         rows: [
           {
             designation: "Line",
-            code_piece: null,
+            code_piece: "ART-001",
+            article_id: ARTICLE_ID,
+            piece_technique_id: PIECE_ID,
             quantite: 1,
             unite: "u",
             prix_unitaire_ht: 100,
@@ -436,6 +472,19 @@ describe("/api/v1/commandes", () => {
       }) // lignes
       .mockResolvedValueOnce({ rows: [{ id: "456" }] }) // nextval
       .mockResolvedValueOnce({ rows: [] }) // insert commande
+      .mockResolvedValueOnce({
+        rows: [{
+          article_id: ARTICLE_ID,
+          article_code: "ART-001",
+          article_designation: "Article test",
+          article_unite: "u",
+          piece_technique_id: PIECE_ID,
+          piece_code: "PT-001",
+          piece_designation: "Pièce test",
+          stock_managed: true,
+          is_active: true,
+        }],
+      }) // resolve article
       .mockResolvedValueOnce({ rows: [] }) // insert lignes
       .mockResolvedValueOnce({ rows: [] }) // insert historique
       .mockResolvedValueOnce({ rows: [] }); // COMMIT
