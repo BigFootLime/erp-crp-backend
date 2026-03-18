@@ -161,15 +161,12 @@ router.delete("/:id", validate(idParamSchema), deleteCommande)
 
 // POST /api/v1/commandes/:id/status
 router.post("/:id/status", authenticateToken, validate(idParamSchema), updateCommandeStatus)
-<<<<<<< HEAD
-=======
 
 // POST /api/v1/commandes/:id/ar/generate
-router.post("/:id/ar/generate", authenticateToken, requireOfficeSupportOrAdmin, validate(generateCommandeArSchema), generateCommandeAr)
+router.post("/:id/ar/generate", authenticateToken, validate(generateCommandeArSchema), generateCommandeAr)
 
 // POST /api/v1/commandes/:id/ar/send
-router.post("/:id/ar/send", authenticateToken, requireOfficeSupportOrAdmin, validate(sendCommandeArSchema), sendCommandeAr)
->>>>>>> a322c2187ed53033d14332df639e61e7a1dbc25c
+router.post("/:id/ar/send", authenticateToken, validate(sendCommandeArSchema), sendCommandeAr)
 
 // POST /api/v1/commandes/:id/analyze-stock
 router.post("/:id/analyze-stock", authenticateToken, validate(idParamSchema), analyzeCommandeStock)

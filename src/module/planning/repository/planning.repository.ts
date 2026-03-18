@@ -1574,7 +1574,6 @@ export async function repoArchivePlanningEvent(params: { id: string; audit: Audi
     await client.query("BEGIN");
 
     const beforeRes = await client.query<{ id: string; archived_at: string | null; of_id: string | null; of_operation_id: string | null }>(
-<<<<<<< HEAD
       `
         SELECT
           id::text AS id,
@@ -1585,9 +1584,6 @@ export async function repoArchivePlanningEvent(params: { id: string; audit: Audi
         WHERE id = $1::uuid
         FOR UPDATE
       `,
-=======
-      `SELECT id::text AS id, archived_at::text AS archived_at, of_id::text AS of_id, of_operation_id::text AS of_operation_id FROM public.planning_events WHERE id = $1::uuid FOR UPDATE`,
->>>>>>> a322c2187ed53033d14332df639e61e7a1dbc25c
       [params.id]
     );
     const before = beforeRes.rows[0];

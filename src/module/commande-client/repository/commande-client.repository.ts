@@ -1406,137 +1406,10 @@ export async function repoUpdateCommandeStatus(
   try {
     await client.query("BEGIN");
 
-<<<<<<< HEAD
     if (userId === null) {
       throw new HttpError(401, "UNAUTHORIZED", "Authentication required");
     }
 
-    const commandeRes = await client.query<{
-      id: string;
-      planning_validated_at: string | null;
-      ar_sent_at: string | null;
-    }>(
-      `
-        SELECT
-          id::text AS id,
-          planning_validated_at::text AS planning_validated_at,
-          ar_sent_at::text AS ar_sent_at
-        FROM commande_client
-        WHERE id = $1::bigint
-        FOR UPDATE
-      `,
-      [commandeId]
-    );
-    const commandeRow = commandeRes.rows[0] ?? null;
-    if (!commandeRow) {
-      await client.query("ROLLBACK");
-      return null;
-    }
-
-    type WorkflowStatus = "ENREGISTREE" | "PLANIFIEE" | "AR_ENVOYEE" | "LIVREE";
-    const workflowOrder: readonly WorkflowStatus[] = [
-      "ENREGISTREE",
-      "PLANIFIEE",
-      "AR_ENVOYEE",
-      "LIVREE",
-    ] as const;
-    const isWorkflowStatus = (v: string): v is WorkflowStatus => (workflowOrder as readonly string[]).includes(v);
-    const normalizeWorkflowStatus = (raw: string | null | undefined): WorkflowStatus => {
-      const v = String(raw ?? "").trim();
-      if (isWorkflowStatus(v)) return v;
-      const lower = v.toLowerCase();
-      if (!lower) return "ENREGISTREE";
-      if (
-        lower === "livrée" ||
-        lower === "livree" ||
-        lower === "facturée" ||
-        lower === "facturee" ||
-        lower === "clôturée" ||
-        lower === "cloturee"
-      ) {
-        return "LIVREE";
-      }
-      if (lower === "partielle") return "AR_ENVOYEE";
-      if (lower === "en préparation" || lower === "en preparation" || lower === "en production") return "PLANIFIEE";
-      return "ENREGISTREE";
-    };
-    const indexOfStatus = (s: WorkflowStatus): number => workflowOrder.indexOf(s);
-
-    const nextStatusRaw = String(nouveau_statut ?? "").trim();
-    if (!isWorkflowStatus(nextStatusRaw)) {
-      throw new HttpError(400, "INVALID_STATUS", "Invalid workflow status");
-    }
-    const nextStatus: WorkflowStatus = nextStatusRaw;
-
-    const last = await client.query<{ nouveau_statut: string }>(
-      `
-      SELECT nouveau_statut
-      FROM commande_historique
-      WHERE commande_id = $1
-      ORDER BY date_action DESC, id DESC
-      LIMIT 1
-      `,
-      [commandeId]
-    );
-    const ancienStatut = last.rows[0]?.nouveau_statut ?? null;
-
-    const currentStatus = normalizeWorkflowStatus(ancienStatut);
-    if (nextStatus === currentStatus) {
-      await client.query("COMMIT");
-      return {
-        id: null,
-        ancien_statut: ancienStatut,
-        nouveau_statut: nextStatus,
-      };
-    }
-
-    const currentIdx = indexOfStatus(currentStatus);
-    const nextIdx = indexOfStatus(nextStatus);
-    if (nextIdx !== currentIdx + 1) {
-      throw new HttpError(409, "INVALID_WORKFLOW_TRANSITION", `Invalid workflow transition: ${currentStatus} -> ${nextStatus}`);
-    }
-
-    // Milestones / locks
-    if (nextStatus === "PLANIFIEE") {
-      await client.query(
-        `
-          UPDATE commande_client
-          SET
-            planning_validated_at = COALESCE(planning_validated_at, now()),
-            planning_validated_by = COALESCE(planning_validated_by, $2),
-            updated_at = now()
-          WHERE id = $1::bigint
-        `,
-        [commandeId, userId]
-      );
-    } else if (nextStatus === "AR_ENVOYEE") {
-      if (!commandeRow.planning_validated_at) {
-        throw new HttpError(409, "PLANNING_NOT_VALIDATED", "Planning must be validated before sending AR");
-      }
-      await client.query(
-        `
-          UPDATE commande_client
-          SET
-            ar_sent_at = COALESCE(ar_sent_at, now()),
-            ar_sent_by = COALESCE(ar_sent_by, $2),
-            updated_at = now()
-          WHERE id = $1::bigint
-        `,
-        [commandeId, userId]
-      );
-    } else {
-      await client.query(`UPDATE commande_client SET updated_at = now() WHERE id = $1::bigint`, [commandeId]);
-    }
-
-    const ins = await client.query<{ id: string }>(
-      `
-        INSERT INTO commande_historique (commande_id, user_id, ancien_statut, nouveau_statut, commentaire)
-        VALUES ($1, $2, $3, $4, $5)
-        RETURNING id::text AS id
-      `,
-      [commandeId, userId, ancienStatut, nextStatus, commentaire]
-    );
-=======
     const out = await repoEnsureCommandeWorkflowStatus({
       tx: client,
       commande_id: commandeId,
@@ -1544,7 +1417,6 @@ export async function repoUpdateCommandeStatus(
       commentaire,
       user_id: userId,
     });
->>>>>>> a322c2187ed53033d14332df639e61e7a1dbc25c
 
     await client.query("COMMIT");
 
@@ -1564,16 +1436,10 @@ export async function repoUpdateCommandeStatus(
     }
 
     return {
-<<<<<<< HEAD
-      id: ins.rows[0]?.id ? toInt(ins.rows[0].id, "commande_historique.id") : null,
-      ancien_statut: ancienStatut,
-      nouveau_statut: nextStatus,
-=======
       id: out.history_id,
       ancien_statut: out.ancien_statut,
       nouveau_statut: out.nouveau_statut,
       changed: out.changed,
->>>>>>> a322c2187ed53033d14332df639e61e7a1dbc25c
     };
   } catch (e) {
     await client.query("ROLLBACK");
