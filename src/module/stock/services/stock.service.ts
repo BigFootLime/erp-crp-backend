@@ -1,6 +1,8 @@
 import type {
   StockAnalytics,
+  StockArticleCategoryOption,
   StockArticleDetail,
+  StockArticleFamily,
   StockArticleKpis,
   StockBalanceRow,
   StockDocument,
@@ -19,6 +21,7 @@ import type {
 import type {
   CreateInventorySessionBodyDTO,
   CreateArticleBodyDTO,
+  CreateArticleFamilyBodyDTO,
   CreateEmplacementBodyDTO,
   CreateLotBodyDTO,
   CreateMagasinBodyDTO,
@@ -26,6 +29,7 @@ import type {
   ListAnalyticsQueryDTO,
   ListInventorySessionsQueryDTO,
   ListArticlesQueryDTO,
+  ListArticleFamiliesQueryDTO,
   ListBalancesQueryDTO,
   ListEmplacementsQueryDTO,
   ListLotsQueryDTO,
@@ -41,6 +45,7 @@ import type { AuditContext } from "../repository/stock.repository";
 import {
   repoCloseInventorySession,
   repoCreateInventorySession,
+  repoCreateArticleFamily,
   repoAttachArticleDocuments,
   repoAttachMovementDocuments,
   repoCancelMovement,
@@ -52,6 +57,8 @@ import {
   repoGetInventorySession,
   repoGetStockAnalytics,
   repoGetArticle,
+  repoListArticleCategories,
+  repoListArticleFamilies,
   repoGetArticlesKpis,
   repoGetLot,
   repoGetMagasin,
@@ -119,6 +126,21 @@ export async function getStockArticleSVC(id: string): Promise<StockArticleDetail
 
 export async function getStockArticlesKpisSVC(): Promise<StockArticleKpis> {
   return repoGetArticlesKpis();
+}
+
+export async function listStockArticleCategoriesSVC(): Promise<StockArticleCategoryOption[]> {
+  return repoListArticleCategories();
+}
+
+export async function listStockArticleFamiliesSVC(filters: ListArticleFamiliesQueryDTO): Promise<StockArticleFamily[]> {
+  return repoListArticleFamilies(filters);
+}
+
+export async function createStockArticleFamilySVC(
+  body: CreateArticleFamilyBodyDTO,
+  audit: AuditContext
+): Promise<StockArticleFamily> {
+  return repoCreateArticleFamily(body, audit);
 }
 
 export async function createStockArticleSVC(body: CreateArticleBodyDTO, audit: AuditContext): Promise<StockArticleDetail> {

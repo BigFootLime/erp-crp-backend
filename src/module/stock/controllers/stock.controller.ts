@@ -6,6 +6,7 @@ import { HttpError } from "../../../utils/httpError";
 import {
   createInventorySessionSchema,
   createArticleSchema,
+  createArticleFamilySchema,
   createEmplacementSchema,
   createLotSchema,
   createMagasinSchema,
@@ -16,6 +17,7 @@ import {
   listAnalyticsQuerySchema,
   listInventorySessionsQuerySchema,
   listArticlesQuerySchema,
+  listArticleFamiliesQuerySchema,
   listBalancesQuerySchema,
   listEmplacementsQuerySchema,
   listLotsQuerySchema,
@@ -29,6 +31,7 @@ import {
   updateMagasinSchema,
   type CreateInventorySessionBodyDTO,
   type CreateArticleBodyDTO,
+  type CreateArticleFamilyBodyDTO,
   type CreateEmplacementBodyDTO,
   type CreateLotBodyDTO,
   type CreateMagasinBodyDTO,
@@ -45,6 +48,7 @@ import type { AuditContext } from "../repository/stock.repository";
 import {
   closeStockInventorySessionSVC,
   createStockInventorySessionSVC,
+  createStockArticleFamilySVC,
   getStockInventorySessionSVC,
   getStockAnalyticsSVC,
   listStockInventorySessionLinesSVC,
@@ -61,6 +65,8 @@ import {
   getStockArticleDocumentForDownloadSVC,
   getStockArticleSVC,
   getStockArticlesKpisSVC,
+  listStockArticleCategoriesSVC,
+  listStockArticleFamiliesSVC,
   getStockLotSVC,
   getStockMagasinSVC,
   getStockMagasinsKpisSVC,
@@ -242,6 +248,40 @@ export const listStockArticles: RequestHandler = async (req, res, next) => {
     }
     const out = await listStockArticlesSVC(parsed.data);
     res.json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const listStockArticleCategories: RequestHandler = async (_req, res, next) => {
+  try {
+    const out = await listStockArticleCategoriesSVC();
+    res.json({ items: out, total: out.length });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const listStockArticleFamilies: RequestHandler = async (req, res, next) => {
+  try {
+    const parsed = listArticleFamiliesQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues?.[0]?.message ?? "Invalid query" });
+      return;
+    }
+    const out = await listStockArticleFamiliesSVC(parsed.data);
+    res.json({ items: out, total: out.length });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const createStockArticleFamily: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildAuditContext(req);
+    const body: CreateArticleFamilyBodyDTO = createArticleFamilySchema.parse({ body: req.body }).body;
+    const out = await createStockArticleFamilySVC(body, audit);
+    res.status(201).json(out);
   } catch (err) {
     next(err);
   }

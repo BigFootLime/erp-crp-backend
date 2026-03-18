@@ -11,6 +11,7 @@ import {
   closeStockInventorySession,
   createStockInventorySession,
   createStockArticle,
+  createStockArticleFamily,
   createStockEmplacement,
   createStockLot,
   createStockMagasin,
@@ -22,6 +23,8 @@ import {
   getStockAnalytics,
   getStockInventorySession,
   getStockArticle,
+  listStockArticleCategories,
+  listStockArticleFamilies,
   getStockArticlesKpis,
   getStockLot,
   getStockMagasin,
@@ -66,6 +69,9 @@ const upload = multer({
 router.use(authenticateToken);
 
 router.get("/analytics", getStockAnalytics);
+router.get("/article-categories", listStockArticleCategories);
+router.get("/article-families", listStockArticleFamilies);
+router.post("/article-families", createStockArticleFamily);
 router.get("/articles", listStockArticles);
 router.get("/articles/kpis", getStockArticlesKpis);
 router.post("/articles", createStockArticle);

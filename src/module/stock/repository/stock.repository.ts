@@ -12,7 +12,9 @@ import type {
   ArticleCategory,
   Paginated,
   StockAnalytics,
+  StockArticleCategoryOption,
   StockArticleDetail,
+  StockArticleFamily,
   StockArticleKpis,
   StockArticleListItem,
   StockBalanceRow,
@@ -34,6 +36,7 @@ import type {
 import type {
   ArticleCategoryDTO,
   CreateArticleBodyDTO,
+  CreateArticleFamilyBodyDTO,
   CreateEmplacementBodyDTO,
   CreateInventorySessionBodyDTO,
   CreateLotBodyDTO,
@@ -42,6 +45,7 @@ import type {
   CreateMovementLineDTO,
   ListAnalyticsQueryDTO,
   ListArticlesQueryDTO,
+  ListArticleFamiliesQueryDTO,
   ListBalancesQueryDTO,
   ListEmplacementsQueryDTO,
   ListInventorySessionsQueryDTO,
@@ -67,6 +71,41 @@ export type AuditContext = {
   page_key: string | null;
   client_session_id: string | null;
 };
+
+const ARTICLE_CATEGORY_OPTIONS: StockArticleCategoryOption[] = [
+  {
+    code: "fabrique",
+    label: "Fabriqué",
+    code_segment: "FAB",
+    stock_managed_default: true,
+    piece_technique_required: true,
+    commande_client_selectable: true,
+  },
+  {
+    code: "matiere",
+    label: "Matière",
+    code_segment: "MAT",
+    stock_managed_default: true,
+    piece_technique_required: false,
+    commande_client_selectable: false,
+  },
+  {
+    code: "traitement",
+    label: "Traitement",
+    code_segment: "TRT",
+    stock_managed_default: false,
+    piece_technique_required: false,
+    commande_client_selectable: false,
+  },
+  {
+    code: "achat",
+    label: "Achat",
+    code_segment: "ACH",
+    stock_managed_default: true,
+    piece_technique_required: false,
+    commande_client_selectable: false,
+  },
+];
 
 type UploadedDocument = Express.Multer.File;
 
@@ -135,42 +174,189 @@ function normalizeLikeQuery(raw: string): string {
 }
 
 function isArticleCategory(value: string): value is ArticleCategory {
-  return value === "PIECE_TECHNIQUE" || value === "MATIERE_PREMIERE" || value === "TRAITEMENT" || value === "FOURNITURE";
+  return value === "fabrique" || value === "matiere" || value === "traitement" || value === "achat";
 }
 
-function resolveArticleCategory(articleType: string, requested: string | null | undefined): ArticleCategory {
-  const normalizedType = articleType.trim().toUpperCase();
-  if (normalizedType === "PIECE_TECHNIQUE") return "PIECE_TECHNIQUE";
-  if (typeof requested === "string" && isArticleCategory(requested)) return requested;
-  return "MATIERE_PREMIERE";
+function toBusinessArticleCategory(requested: string | null | undefined, fallback: ArticleCategory = "achat"): ArticleCategory {
+  const value = typeof requested === "string" ? requested.trim() : "";
+  if (!value) return fallback;
+
+  const normalized = value.toLowerCase();
+  if (isArticleCategory(normalized)) return normalized;
+
+  const legacy = value.trim().toUpperCase();
+  if (legacy === "PIECE_TECHNIQUE") return "fabrique";
+  if (legacy === "MATIERE_PREMIERE") return "matiere";
+  if (legacy === "TRAITEMENT") return "traitement";
+  if (legacy === "FOURNITURE") return "achat";
+  return fallback;
 }
 
-function normalizeArticleState(args: {
-  article_type: string;
+function inferArticleType(category: ArticleCategory): "PIECE_TECHNIQUE" | "PURCHASED" {
+  return category === "fabrique" ? "PIECE_TECHNIQUE" : "PURCHASED";
+}
+
+function defaultFamilyCodeForCategory(category: ArticleCategory): string {
+  if (category === "fabrique") return "PT";
+  if (category === "matiere") return "MAT";
+  if (category === "traitement") return "TRT";
+  return "ACH";
+}
+
+function normalizeFamilyCode(value: string | null | undefined, fallback: string): string {
+  const raw = typeof value === "string" ? value.trim().toUpperCase() : "";
+  const normalized = raw.replace(/[^A-Z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return normalized || fallback;
+}
+
+function sanitizeCodeToken(value: string | null | undefined, fallback: string): string {
+  const raw = typeof value === "string" ? value.trim().toUpperCase() : "";
+  const normalized = raw.replace(/[^A-Z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return normalized || fallback;
+}
+
+function normalizeFullArticleCode(value: string): string {
+  return value
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-{2,}/g, "-");
+}
+
+function categoryCodeSegment(category: ArticleCategory): string {
+  if (category === "fabrique") return "FAB";
+  if (category === "matiere") return "MAT";
+  if (category === "traitement") return "TRT";
+  return "ACH";
+}
+
+async function getPieceTechniqueMetadata(
+  client: Pick<PoolClient, "query">,
+  pieceTechniqueId: string
+): Promise<{ code_piece: string; designation: string; family_code: string | null }> {
+  const res = await client.query<{ code_piece: string; designation: string; family_code: string | null }>(
+    `
+      SELECT
+        pt.code_piece,
+        pt.designation,
+        pf.code AS family_code
+      FROM public.pieces_techniques pt
+      LEFT JOIN public.pieces_families pf ON pf.id = pt.famille_id
+      WHERE pt.id = $1::uuid
+      LIMIT 1
+    `,
+    [pieceTechniqueId]
+  );
+  const row = res.rows[0] ?? null;
+  if (!row) {
+    throw new HttpError(400, "INVALID_PIECE_TECHNIQUE", "Unknown piece_technique_id");
+  }
+  return row;
+}
+
+function buildSuggestedArticleCode(args: {
+  category: ArticleCategory;
+  family_code: string;
+  final_segment: string;
+}): string {
+  return `ART-${categoryCodeSegment(args.category)}-${args.family_code}-${args.final_segment}`;
+}
+
+async function resolveArticleCode(
+  client: Pick<PoolClient, "query">,
+  args: {
+    code: string;
+    designation: string;
+    category: ArticleCategory;
+    family_code: string;
+    piece_technique_id: string | null;
+  }
+): Promise<string> {
+  const pieceMeta = args.piece_technique_id ? await getPieceTechniqueMetadata(client, args.piece_technique_id) : null;
+  const finalSegment = args.category === "fabrique"
+    ? sanitizeCodeToken(pieceMeta?.code_piece, "PT")
+    : sanitizeCodeToken(args.code || args.designation, "GEN");
+  const suggested = buildSuggestedArticleCode({
+    category: args.category,
+    family_code: args.family_code,
+    final_segment: finalSegment,
+  });
+
+  const provided = args.code.trim();
+  if (!provided) return suggested;
+
+  const normalized = normalizeFullArticleCode(provided);
+  const expectedPrefix = `ART-${categoryCodeSegment(args.category)}-${args.family_code}-`;
+  if (!normalized.startsWith(expectedPrefix)) {
+    throw new HttpError(
+      400,
+      "INVALID_ARTICLE_CODE",
+      `Article code must start with ${expectedPrefix}`
+    );
+  }
+
+  if (args.category === "fabrique") {
+    const requiredToken = sanitizeCodeToken(pieceMeta?.code_piece, "PT");
+    if (!normalized.includes(requiredToken)) {
+      throw new HttpError(
+        400,
+        "INVALID_ARTICLE_CODE",
+        `Fabricated article code must include linked piece technique code ${requiredToken}`
+      );
+    }
+  }
+
+  return normalized;
+}
+
+async function normalizeArticleState(args: {
+  article_type: string | null | undefined;
   article_category: string | null | undefined;
+  family_code: string | null | undefined;
   piece_technique_id: string | null;
   stock_managed: boolean;
   lot_tracking: boolean;
+  code: string;
+  designation: string;
+  client: Pick<PoolClient, "query">;
 }) {
-  const article_type = args.article_type.trim().toUpperCase();
-  const article_category = resolveArticleCategory(article_type, args.article_category ?? null);
-  const piece_technique_id = article_type === "PIECE_TECHNIQUE" ? args.piece_technique_id : null;
-  const stock_managed = article_category === "TRAITEMENT" ? args.stock_managed : args.stock_managed;
+  const categoryFromType = (() => {
+    const articleType = typeof args.article_type === "string" ? args.article_type.trim().toUpperCase() : "";
+    if (articleType === "PIECE_TECHNIQUE") return "fabrique" as const;
+    if (articleType === "PURCHASED") return toBusinessArticleCategory(args.article_category, "achat");
+    return toBusinessArticleCategory(args.article_category, "achat");
+  })();
+  const article_category = toBusinessArticleCategory(args.article_category, categoryFromType);
+  const article_type = inferArticleType(article_category);
+  const piece_technique_id = article_category === "fabrique" ? args.piece_technique_id : null;
+  const family_code = normalizeFamilyCode(args.family_code, defaultFamilyCodeForCategory(article_category));
+  const stock_managed = args.stock_managed;
   const lot_tracking = stock_managed ? args.lot_tracking : false;
 
-  if (article_type === "PIECE_TECHNIQUE" && !piece_technique_id) {
-    throw new HttpError(400, "INVALID_ARTICLE", "PIECE_TECHNIQUE articles require piece_technique_id");
+  if (article_category === "fabrique" && !piece_technique_id) {
+    throw new HttpError(400, "INVALID_ARTICLE", "Fabricated articles require piece_technique_id");
   }
-  if (article_type === "PURCHASED" && article_category === "PIECE_TECHNIQUE") {
-    throw new HttpError(400, "INVALID_ARTICLE", "PURCHASED articles cannot use PIECE_TECHNIQUE category");
+  if (article_category !== "fabrique" && piece_technique_id) {
+    throw new HttpError(400, "INVALID_ARTICLE", "Only fabricated articles can be linked to a piece technique");
   }
+
+  const code = await resolveArticleCode(args.client, {
+    code: args.code,
+    designation: args.designation,
+    category: article_category,
+    family_code,
+    piece_technique_id,
+  });
 
   return {
     article_type: article_type as "PIECE_TECHNIQUE" | "PURCHASED",
     article_category,
+    family_code,
     piece_technique_id,
     stock_managed,
     lot_tracking,
+    code,
   };
 }
 
@@ -206,6 +392,177 @@ async function syncPieceTechniqueArticleLink(
 
   await ensurePieceTechniqueExists(client, args.next_piece_technique_id);
   await client.query(`UPDATE public.pieces_techniques SET article_id = $2::uuid WHERE id = $1::uuid`, [args.next_piece_technique_id, args.article_id]);
+}
+
+function articleFamilyTable(category: ArticleCategory): string {
+  if (category === "fabrique") return "articles_fabrique_families";
+  if (category === "matiere") return "articles_matiere_families";
+  if (category === "traitement") return "articles_traitement_families";
+  return "articles_achat_families";
+}
+
+function articleDetailTable(category: ArticleCategory): string {
+  if (category === "fabrique") return "articles_fabrique";
+  if (category === "matiere") return "articles_matiere";
+  if (category === "traitement") return "articles_traitement";
+  return "articles_achat";
+}
+
+export async function repoListArticleCategories(): Promise<StockArticleCategoryOption[]> {
+  return ARTICLE_CATEGORY_OPTIONS;
+}
+
+export async function repoListArticleFamilies(
+  filters: ListArticleFamiliesQueryDTO = {}
+): Promise<StockArticleFamily[]> {
+  const categories = filters.category ? [filters.category] : ARTICLE_CATEGORY_OPTIONS.map((item) => item.code);
+  const rows: StockArticleFamily[] = [];
+
+  for (const category of categories) {
+    const table = articleFamilyTable(category);
+    const res = await db.query<StockArticleFamily>(
+      `
+        SELECT
+          code,
+          designation,
+          $1::text AS category,
+          is_active,
+          created_at::text AS created_at,
+          updated_at::text AS updated_at
+        FROM public.${table}
+        ORDER BY code ASC
+      `,
+      [category]
+    );
+    rows.push(...res.rows);
+  }
+
+  return rows;
+}
+
+export async function repoCreateArticleFamily(
+  body: CreateArticleFamilyBodyDTO,
+  audit: AuditContext
+): Promise<StockArticleFamily> {
+  const category = body.category;
+  const table = articleFamilyTable(category);
+  const code = normalizeFamilyCode(body.code, defaultFamilyCodeForCategory(category));
+
+  let res;
+  try {
+    res = await db.query<StockArticleFamily>(
+      `
+        INSERT INTO public.${table} (code, designation)
+        VALUES ($1, $2)
+        RETURNING
+          code,
+          designation,
+          $3::text AS category,
+          is_active,
+          created_at::text AS created_at,
+          updated_at::text AS updated_at
+      `,
+      [code, body.designation.trim(), category]
+    );
+  } catch (err) {
+    if (isPgUniqueViolation(err)) {
+      throw new HttpError(409, "DUPLICATE_ARTICLE_FAMILY", `Family ${code} already exists for category ${category}`);
+    }
+    throw err;
+  }
+
+  const row = res.rows[0] ?? null;
+  if (!row) {
+    throw new Error("Failed to create article family");
+  }
+
+  await repoInsertAuditLog({
+    user_id: audit.user_id,
+    body: {
+      event_type: "ACTION",
+      action: "stock.article-families.create",
+      page_key: audit.page_key,
+      entity_type: "article_families",
+      entity_id: `${category}:${row.code}`,
+      path: audit.path,
+      client_session_id: audit.client_session_id,
+      details: { category, code: row.code, designation: row.designation },
+    },
+    ip: audit.ip,
+    user_agent: audit.user_agent,
+    device_type: audit.device_type,
+    os: audit.os,
+    browser: audit.browser,
+  });
+
+  return row;
+}
+
+async function ensureArticleFamilyEntry(
+  client: Pick<PoolClient, "query">,
+  category: ArticleCategory,
+  familyCode: string
+) {
+  const table = articleFamilyTable(category);
+  await client.query(
+    `
+      INSERT INTO public.${table} (code, designation)
+      VALUES ($1, $1)
+      ON CONFLICT (code) DO UPDATE SET updated_at = now()
+    `,
+    [familyCode]
+  );
+}
+
+async function syncArticleSubtypeDetails(
+  client: Pick<PoolClient, "query">,
+  args: {
+    article_id: string;
+    category: ArticleCategory;
+    family_code: string;
+    piece_technique_id: string | null;
+  }
+) {
+  await ensureArticleFamilyEntry(client, args.category, args.family_code);
+
+  const detailTables = [
+    "articles_fabrique",
+    "articles_matiere",
+    "articles_traitement",
+    "articles_achat",
+  ] as const;
+
+  for (const table of detailTables) {
+    if (table === articleDetailTable(args.category)) continue;
+    await client.query(`DELETE FROM public.${table} WHERE article_id = $1::uuid`, [args.article_id]);
+  }
+
+  if (args.category === "fabrique") {
+    await client.query(
+      `
+        INSERT INTO public.articles_fabrique (article_id, family_code, piece_technique_id)
+        VALUES ($1::uuid,$2,$3::uuid)
+        ON CONFLICT (article_id) DO UPDATE
+        SET family_code = EXCLUDED.family_code,
+            piece_technique_id = EXCLUDED.piece_technique_id,
+            updated_at = now()
+      `,
+      [args.article_id, args.family_code, args.piece_technique_id]
+    );
+    return;
+  }
+
+  const table = articleDetailTable(args.category);
+  await client.query(
+    `
+      INSERT INTO public.${table} (article_id, family_code)
+      VALUES ($1::uuid,$2)
+      ON CONFLICT (article_id) DO UPDATE
+      SET family_code = EXCLUDED.family_code,
+          updated_at = now()
+    `,
+    [args.article_id, args.family_code]
+  );
 }
 
 async function getArticleStockSettings(client: Pick<PoolClient, "query">, articleId: string) {
@@ -265,6 +622,23 @@ function articleSortColumn(sortBy: ListArticlesQueryDTO["sortBy"]): string {
     default:
       return "a.updated_at";
   }
+}
+
+function normalizedArticleCategorySql(column = "a.article_category") {
+  return `CASE
+    WHEN ${column} = 'PIECE_TECHNIQUE' THEN 'fabrique'
+    WHEN ${column} = 'MATIERE_PREMIERE' THEN 'matiere'
+    WHEN ${column} = 'TRAITEMENT' THEN 'traitement'
+    WHEN ${column} = 'FOURNITURE' THEN 'achat'
+    ELSE ${column}
+  END`;
+}
+
+function articleCategoryFilterSql(column: string, category: ArticleCategory): string {
+  if (category === "fabrique") return `(${column} = 'fabrique' OR ${column} = 'PIECE_TECHNIQUE')`;
+  if (category === "matiere") return `(${column} = 'matiere' OR ${column} = 'MATIERE_PREMIERE')`;
+  if (category === "traitement") return `(${column} = 'traitement' OR ${column} = 'TRAITEMENT')`;
+  return `(${column} = 'achat' OR ${column} = 'FOURNITURE')`;
 }
 
 function magasinSortColumn(sortBy: ListMagasinsQueryDTO["sortBy"]): string {
@@ -693,10 +1067,24 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
   if (filters.q && filters.q.trim().length > 0) {
     const q = normalizeLikeQuery(filters.q);
     const p = push(q);
-    where.push(`(a.code ILIKE ${p} OR a.designation ILIKE ${p})`);
+    where.push(`(
+      a.code ILIKE ${p}
+      OR a.designation ILIKE ${p}
+      OR a.family_code ILIKE ${p}
+      OR COALESCE(pt.code_piece, '') ILIKE ${p}
+      OR COALESCE(pt.designation, '') ILIKE ${p}
+      OR COALESCE(pt.designation_2, '') ILIKE ${p}
+    )`);
   }
-  if (filters.article_type) where.push(`a.article_type = ${push(filters.article_type)}`);
-  if (filters.article_category) where.push(`a.article_category = ${push(filters.article_category)}`);
+  if (filters.article_type) {
+    where.push(
+      filters.article_type === "PIECE_TECHNIQUE"
+        ? articleCategoryFilterSql("a.article_category", "fabrique")
+        : `NOT ${articleCategoryFilterSql("a.article_category", "fabrique")}`
+    );
+  }
+  if (filters.article_category) where.push(articleCategoryFilterSql("a.article_category", filters.article_category));
+  if (filters.family_code) where.push(`a.family_code = ${push(normalizeFamilyCode(filters.family_code, "GEN"))}`);
   if (filters.is_active !== undefined) where.push(`a.is_active = ${push(filters.is_active)}`);
   if (filters.lot_tracking !== undefined) where.push(`a.lot_tracking = ${push(filters.lot_tracking)}`);
   if (filters.stock_managed !== undefined) where.push(`a.stock_managed = ${push(filters.stock_managed)}`);
@@ -706,7 +1094,12 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
   const orderDir = sortDirection(filters.sortDir);
 
   const countRes = await db.query<{ total: number }>(
-    `SELECT COUNT(*)::int AS total FROM public.articles a ${whereSql}`,
+    `
+      SELECT COUNT(*)::int AS total
+      FROM public.articles a
+      LEFT JOIN public.pieces_techniques pt ON pt.id = a.piece_technique_id
+      ${whereSql}
+    `,
     values
   );
   const total = countRes.rows[0]?.total ?? 0;
@@ -716,8 +1109,9 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
       a.id::text AS id,
       a.code,
       a.designation,
-      a.article_type,
-      a.article_category,
+      CASE WHEN ${normalizedArticleCategorySql("a.article_category")} = 'fabrique' THEN 'PIECE_TECHNIQUE' ELSE 'PURCHASED' END AS article_type,
+      ${normalizedArticleCategorySql("a.article_category")} AS article_category,
+      a.family_code,
       a.stock_managed,
       a.piece_technique_id::text AS piece_technique_id,
       pt.code_piece AS piece_code,
@@ -761,8 +1155,9 @@ export async function repoGetArticle(id: string): Promise<StockArticleDetail | n
         a.id::text AS id,
         a.code,
         a.designation,
-        a.article_type,
-        a.article_category,
+        CASE WHEN ${normalizedArticleCategorySql("a.article_category")} = 'fabrique' THEN 'PIECE_TECHNIQUE' ELSE 'PURCHASED' END AS article_type,
+        ${normalizedArticleCategorySql("a.article_category")} AS article_category,
+        a.family_code,
         a.stock_managed,
         a.piece_technique_id::text AS piece_technique_id,
         pt.code_piece AS piece_code,
@@ -805,11 +1200,11 @@ export async function repoGetArticlesKpis(): Promise<StockArticleKpis> {
         COUNT(*) FILTER (WHERE is_active)::int AS active,
         COUNT(*) FILTER (WHERE lot_tracking)::int AS lot_tracked,
         COUNT(*) FILTER (WHERE stock_managed)::int AS stock_managed,
-        COUNT(*) FILTER (WHERE article_type = 'PIECE_TECHNIQUE')::int AS piece_technique,
-        COUNT(*) FILTER (WHERE article_type = 'PURCHASED')::int AS purchased,
-        COUNT(*) FILTER (WHERE article_category = 'MATIERE_PREMIERE')::int AS raw_material,
-        COUNT(*) FILTER (WHERE article_category = 'TRAITEMENT')::int AS treatment,
-        COUNT(*) FILTER (WHERE article_category = 'FOURNITURE')::int AS fourniture
+        COUNT(*) FILTER (WHERE ${normalizedArticleCategorySql("article_category")} = 'fabrique')::int AS fabricated,
+        COUNT(*) FILTER (WHERE ${normalizedArticleCategorySql("article_category")} <> 'fabrique')::int AS purchased,
+        COUNT(*) FILTER (WHERE ${normalizedArticleCategorySql("article_category")} = 'matiere')::int AS matiere,
+        COUNT(*) FILTER (WHERE ${normalizedArticleCategorySql("article_category")} = 'traitement')::int AS treatment,
+        COUNT(*) FILTER (WHERE ${normalizedArticleCategorySql("article_category")} = 'achat')::int AS achat
       FROM public.articles
     `
   );
@@ -819,11 +1214,11 @@ export async function repoGetArticlesKpis(): Promise<StockArticleKpis> {
       active: 0,
       lot_tracked: 0,
       stock_managed: 0,
-      piece_technique: 0,
+      fabricated: 0,
       purchased: 0,
-      raw_material: 0,
+      matiere: 0,
       treatment: 0,
-      fourniture: 0,
+      achat: 0,
     }
   );
 }
@@ -833,12 +1228,16 @@ export async function repoCreateArticle(body: CreateArticleBodyDTO, audit: Audit
   try {
     await client.query("BEGIN");
 
-    const normalized = normalizeArticleState({
+    const normalized = await normalizeArticleState({
       article_type: body.article_type,
       article_category: body.article_category,
+      family_code: body.family_code,
       piece_technique_id: body.piece_technique_id ?? null,
       stock_managed: body.stock_managed,
       lot_tracking: body.lot_tracking,
+      code: body.code,
+      designation: body.designation,
+      client,
     });
 
     if (normalized.piece_technique_id) {
@@ -848,18 +1247,19 @@ export async function repoCreateArticle(body: CreateArticleBodyDTO, audit: Audit
     const res = await client.query<{ id: string }>(
       `
         INSERT INTO public.articles (
-          code, designation, article_type, article_category, stock_managed, piece_technique_id, unite,
+          code, designation, article_type, article_category, family_code, stock_managed, piece_technique_id, unite,
           lot_tracking, is_active, notes,
           created_by, updated_by
         )
-        VALUES ($1,$2,$3,$4,$5,$6::uuid,$7,$8,$9,$10,$11,$11)
+        VALUES ($1,$2,$3,$4,$5,$6,$7::uuid,$8,$9,$10,$11,$12,$12)
         RETURNING id::text AS id
       `,
       [
-        body.code,
+        normalized.code,
         body.designation,
         normalized.article_type,
         normalized.article_category,
+        normalized.family_code,
         normalized.stock_managed,
         normalized.piece_technique_id,
         body.unite ?? null,
@@ -878,15 +1278,23 @@ export async function repoCreateArticle(body: CreateArticleBodyDTO, audit: Audit
       next_piece_technique_id: normalized.piece_technique_id,
     });
 
+    await syncArticleSubtypeDetails(client, {
+      article_id: id,
+      category: normalized.article_category,
+      family_code: normalized.family_code,
+      piece_technique_id: normalized.piece_technique_id,
+    });
+
     await insertAuditLog(client, audit, {
       action: "stock.articles.create",
       entity_type: "articles",
       entity_id: id,
       details: {
-        code: body.code,
+        code: normalized.code,
         designation: body.designation,
         article_type: normalized.article_type,
         article_category: normalized.article_category,
+        family_code: normalized.family_code,
         stock_managed: normalized.stock_managed,
       },
     });
@@ -926,8 +1334,11 @@ export async function repoUpdateArticle(
 
     const currentRes = await client.query<{
       id: string;
+      code: string;
+      designation: string;
       article_type: string;
       article_category: string;
+      family_code: string;
       piece_technique_id: string | null;
       stock_managed: boolean;
       lot_tracking: boolean;
@@ -935,8 +1346,11 @@ export async function repoUpdateArticle(
       `
         SELECT
           id::text AS id,
+          code,
+          designation,
           article_type,
           article_category,
+          family_code,
           piece_technique_id::text AS piece_technique_id,
           stock_managed,
           lot_tracking
@@ -952,22 +1366,27 @@ export async function repoUpdateArticle(
       return null;
     }
 
-    const normalized = normalizeArticleState({
+    const normalized = await normalizeArticleState({
       article_type: patch.article_type ?? current.article_type,
       article_category: patch.article_category ?? current.article_category,
+      family_code: patch.family_code ?? current.family_code,
       piece_technique_id: patch.piece_technique_id !== undefined ? patch.piece_technique_id : current.piece_technique_id,
       stock_managed: patch.stock_managed ?? current.stock_managed,
       lot_tracking: patch.lot_tracking ?? current.lot_tracking,
+      code: patch.code ?? current.code ?? "",
+      designation: patch.designation ?? current.designation,
+      client,
     });
 
     if (current.stock_managed && !normalized.stock_managed) {
       await ensureArticleCanDisableStockManagement(client, id);
     }
 
-    if (patch.code !== undefined) sets.push(`code = ${push(patch.code)}`);
+    sets.push(`code = ${push(normalized.code)}`);
     if (patch.designation !== undefined) sets.push(`designation = ${push(patch.designation)}`);
     sets.push(`article_type = ${push(normalized.article_type)}`);
     sets.push(`article_category = ${push(normalized.article_category)}`);
+    sets.push(`family_code = ${push(normalized.family_code)}`);
     sets.push(`stock_managed = ${push(normalized.stock_managed)}`);
     sets.push(`piece_technique_id = ${push(normalized.piece_technique_id)}::uuid`);
     if (patch.unite !== undefined) sets.push(`unite = ${push(patch.unite)}`);
@@ -993,6 +1412,13 @@ export async function repoUpdateArticle(
       article_id: id,
       previous_piece_technique_id: current.piece_technique_id,
       next_piece_technique_id: normalized.piece_technique_id,
+    });
+
+    await syncArticleSubtypeDetails(client, {
+      article_id: id,
+      category: normalized.article_category,
+      family_code: normalized.family_code,
+      piece_technique_id: normalized.piece_technique_id,
     });
 
     await insertAuditLog(client, audit, {

@@ -17,7 +17,7 @@ export const sortDirSchema = z.enum(["asc", "desc"]);
 
 export const articleTypeSchema = z.enum(["PIECE_TECHNIQUE", "PURCHASED"]);
 export type ArticleTypeDTO = z.infer<typeof articleTypeSchema>;
-export const articleCategorySchema = z.enum(["PIECE_TECHNIQUE", "MATIERE_PREMIERE", "TRAITEMENT", "FOURNITURE"]);
+export const articleCategorySchema = z.enum(["fabrique", "matiere", "traitement", "achat"]);
 export type ArticleCategoryDTO = z.infer<typeof articleCategorySchema>;
 
 // Mirrors DB enum: public.movement_type
@@ -52,6 +52,7 @@ export const listArticlesQuerySchema = z.object({
   q: z.string().trim().optional(),
   article_type: articleTypeSchema.optional(),
   article_category: articleCategorySchema.optional(),
+  family_code: z.string().trim().min(1).max(40).optional(),
   is_active: z.preprocess(parseBoolean, z.boolean().optional()),
   lot_tracking: z.preprocess(parseBoolean, z.boolean().optional()),
   stock_managed: z.preprocess(parseBoolean, z.boolean().optional()),
@@ -63,13 +64,30 @@ export const listArticlesQuerySchema = z.object({
 
 export type ListArticlesQueryDTO = z.infer<typeof listArticlesQuerySchema>;
 
+export const listArticleFamiliesQuerySchema = z.object({
+  category: articleCategorySchema.optional(),
+});
+export type ListArticleFamiliesQueryDTO = z.infer<typeof listArticleFamiliesQuerySchema>;
+
+export const createArticleFamilySchema = z.object({
+  body: z
+    .object({
+      code: z.string().trim().min(1).max(40),
+      designation: z.string().trim().min(1).max(160),
+      category: articleCategorySchema,
+    })
+    .strict(),
+});
+export type CreateArticleFamilyBodyDTO = z.infer<typeof createArticleFamilySchema>["body"];
+
 export const createArticleSchema = z.object({
   body: z
     .object({
       code: z.string().trim().min(1).max(80),
       designation: z.string().trim().min(1).max(400),
-      article_type: articleTypeSchema.optional().default("PURCHASED"),
-      article_category: articleCategorySchema.optional().default("MATIERE_PREMIERE"),
+      article_type: articleTypeSchema.optional(),
+      article_category: articleCategorySchema.optional().default("achat"),
+      family_code: z.string().trim().min(1).max(40),
       stock_managed: z.boolean().optional().default(true),
       piece_technique_id: uuid.optional().nullable(),
       unite: z.string().trim().min(1).max(30).optional().nullable(),
@@ -79,16 +97,13 @@ export const createArticleSchema = z.object({
     })
     .strict()
     .superRefine((body, ctx) => {
-      if (body.article_type === "PIECE_TECHNIQUE") {
+      if (body.article_category === "fabrique") {
         if (!body.piece_technique_id) {
-          ctx.addIssue({ code: z.ZodIssueCode.custom, message: "piece_technique_id is required for PIECE_TECHNIQUE articles", path: ["piece_technique_id"] });
-        }
-        if (body.article_category !== "PIECE_TECHNIQUE") {
-          ctx.addIssue({ code: z.ZodIssueCode.custom, message: "PIECE_TECHNIQUE articles must use article_category PIECE_TECHNIQUE", path: ["article_category"] });
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: "piece_technique_id is required for fabricated articles", path: ["piece_technique_id"] });
         }
       }
-      if (body.article_type === "PURCHASED" && body.article_category === "PIECE_TECHNIQUE") {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "PURCHASED articles cannot use article_category PIECE_TECHNIQUE", path: ["article_category"] });
+      if (body.article_category !== "fabrique" && body.piece_technique_id) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Only fabricated articles may reference a piece technique", path: ["piece_technique_id"] });
       }
       if (!body.stock_managed && body.lot_tracking) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: "lot_tracking requires stock_managed=true", path: ["lot_tracking"] });
@@ -105,6 +120,7 @@ export const updateArticleSchema = z.object({
       designation: z.string().trim().min(1).max(400).optional(),
       article_type: articleTypeSchema.optional(),
       article_category: articleCategorySchema.optional(),
+      family_code: z.string().trim().min(1).max(40).optional(),
       stock_managed: z.boolean().optional(),
       piece_technique_id: uuid.optional().nullable(),
       unite: z.string().trim().min(1).max(30).optional().nullable(),

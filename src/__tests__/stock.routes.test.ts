@@ -68,7 +68,7 @@ describe("/api/v1/stock", () => {
     mocks.poolQuery
       .mockResolvedValueOnce({ rows: [{ articles_count: 12, stock_managed_articles: 9, qty_on_hand: 120, qty_available: 100, qty_reserved: 20 }] })
       .mockResolvedValueOnce({ rows: [{ id: "mag-1", code: "MAT", name: "Matières" }] })
-      .mockResolvedValueOnce({ rows: [{ article_category: "MATIERE_PREMIERE", articles_count: 5, stock_managed_count: 5 }] })
+      .mockResolvedValueOnce({ rows: [{ article_category: "matiere", articles_count: 5, stock_managed_count: 5 }] })
       .mockResolvedValueOnce({ rows: [{ date: "2026-03-13", qty_in: 10, qty_out: 3, net_qty: 7 }] })
       .mockResolvedValueOnce({ rows: [{ article_id: "art-1", code: "MAT-001", designation: "Alu", qty_moved: 20, qty_on_hand: 15, qty_available: 12 }] });
 
@@ -80,7 +80,7 @@ describe("/api/v1/stock", () => {
     expect(res.body).toMatchObject({
       kpis: { articles_count: 12, stock_managed_articles: 9 },
       magasins: [{ code: "MAT" }],
-      category_counts: [{ article_category: "MATIERE_PREMIERE" }],
+      category_counts: [{ article_category: "matiere" }],
     });
   });
 
@@ -88,13 +88,22 @@ describe("/api/v1/stock", () => {
     mocks.clientQuery.mockImplementation(async (sql: unknown) => {
       const q = String(sql);
       if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
+      if (q.includes("FROM public.pieces_techniques pt") && q.includes("LEFT JOIN public.pieces_families")) {
+        return { rows: [{ code_piece: "PT-001", designation: "Pièce stockée", family_code: "PT" }] };
+      }
       if (q.includes("FROM public.pieces_techniques WHERE id = $1::uuid LIMIT 1")) {
         return { rows: [{ ok: 1 }] };
       }
       if (q.includes("INSERT INTO public.articles")) {
         return { rows: [{ id: "11111111-1111-1111-1111-111111111111" }] };
       }
+      if (q.includes("INSERT INTO public.articles_fabrique_families")) {
+        return { rows: [] };
+      }
       if (q.includes("UPDATE public.pieces_techniques SET article_id = $2::uuid WHERE id = $1::uuid")) {
+        return { rows: [] };
+      }
+      if (q.includes("INSERT INTO public.articles_fabrique")) {
         return { rows: [] };
       }
       return { rows: [] };
@@ -104,10 +113,11 @@ describe("/api/v1/stock", () => {
       rows: [
         {
           id: "11111111-1111-1111-1111-111111111111",
-          code: "PT-001",
+          code: "ART-FAB-PT-PT-001",
           designation: "Pièce stockée",
           article_type: "PIECE_TECHNIQUE",
-          article_category: "PIECE_TECHNIQUE",
+          article_category: "fabrique",
+          family_code: "PT",
           stock_managed: true,
           piece_technique_id: "22222222-2222-2222-2222-222222222222",
           piece_code: "PT-001",
@@ -130,10 +140,10 @@ describe("/api/v1/stock", () => {
       .post("/api/v1/stock/articles")
       .set("Authorization", "Bearer fake")
       .send({
-        code: "PT-001",
+        code: "ART-FAB-PT-PT-001",
         designation: "Pièce stockée",
-        article_type: "PIECE_TECHNIQUE",
-        article_category: "PIECE_TECHNIQUE",
+        article_category: "fabrique",
+        family_code: "PT",
         stock_managed: true,
         piece_technique_id: "22222222-2222-2222-2222-222222222222",
         lot_tracking: false,
@@ -141,7 +151,7 @@ describe("/api/v1/stock", () => {
       });
 
     expect(res.status).toBe(201);
-    expect(res.body).toMatchObject({ article_category: "PIECE_TECHNIQUE", stock_managed: true });
+    expect(res.body).toMatchObject({ article_category: "fabrique", family_code: "PT", stock_managed: true });
     expect(
       mocks.clientQuery.mock.calls.some((call) =>
         String(call[0]).includes("UPDATE public.pieces_techniques SET article_id = $2::uuid WHERE id = $1::uuid")

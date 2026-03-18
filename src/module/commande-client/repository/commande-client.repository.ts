@@ -78,6 +78,8 @@ type CommandeLineArticleResolution = {
   article_id: string;
   article_code: string;
   article_designation: string;
+  article_category: string;
+  family_code: string;
   article_unite: string | null;
   piece_technique_id: string | null;
   piece_code: string | null;
@@ -180,6 +182,8 @@ async function resolveCommandeLineArticle(
         a.id::text AS article_id,
         a.code AS article_code,
         a.designation AS article_designation,
+        a.article_category,
+        a.family_code,
         a.unite AS article_unite,
         a.piece_technique_id::text AS piece_technique_id,
         pt.code_piece AS piece_code,
@@ -222,6 +226,10 @@ async function resolveCommandeLineArticle(
 
   if (!article.stock_managed) {
     throw new HttpError(409, "ARTICLE_NOT_STOCK_MANAGED", `Article ${article.article_code} is not stock-managed`);
+  }
+
+  if (article.article_category !== "fabrique" && article.article_category !== "PIECE_TECHNIQUE") {
+    throw new HttpError(409, "ARTICLE_NOT_FABRICATED", `Article ${article.article_code} is not a fabricated article and cannot be sold in commande client`);
   }
 
   if (!article.piece_technique_id) {

@@ -4,7 +4,25 @@ export type Paginated<T> = {
 };
 
 export type ArticleType = "PIECE_TECHNIQUE" | "PURCHASED";
-export type ArticleCategory = "PIECE_TECHNIQUE" | "MATIERE_PREMIERE" | "TRAITEMENT" | "FOURNITURE";
+export type ArticleCategory = "fabrique" | "matiere" | "traitement" | "achat";
+
+export type StockArticleCategoryOption = {
+  code: ArticleCategory;
+  label: string;
+  code_segment: string;
+  stock_managed_default: boolean;
+  piece_technique_required: boolean;
+  commande_client_selectable: boolean;
+};
+
+export type StockArticleFamily = {
+  code: string;
+  designation: string;
+  category: ArticleCategory;
+  is_active: boolean;
+  created_at: string | null;
+  updated_at: string | null;
+};
 
 export type StockArticleListItem = {
   id: string;
@@ -12,6 +30,7 @@ export type StockArticleListItem = {
   designation: string;
   article_type: ArticleType;
   article_category: ArticleCategory;
+  family_code: string;
   stock_managed: boolean;
   piece_technique_id: string | null;
   piece_code: string | null;
@@ -36,11 +55,11 @@ export type StockArticleKpis = {
   active: number;
   lot_tracked: number;
   stock_managed: number;
-  piece_technique: number;
+  fabricated: number;
   purchased: number;
-  raw_material: number;
+  matiere: number;
   treatment: number;
-  fourniture: number;
+  achat: number;
 };
 
 export type StockMagasinListItem = {
