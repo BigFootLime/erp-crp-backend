@@ -56,6 +56,15 @@ function isValidRoom(room: string): boolean {
   return false;
 }
 
+function parseUserRoomId(room: string): number | null {
+  const m = /^USER:(\d+)$/.exec(room);
+  if (!m?.[1]) return null;
+  const n = Number(m[1]);
+  if (!Number.isFinite(n)) return null;
+  const i = Math.trunc(n);
+  return i > 0 ? i : null;
+}
+
 export const initSocketServer = (server: HttpServer) => {
   io = new SocketIOServer(server, {
     cors: {
@@ -108,6 +117,15 @@ export const initSocketServer = (server: HttpServer) => {
       if (!room || !isValidRoom(room)) {
         cb?.({ ok: false, error: "invalid_room" });
         return;
+      }
+
+      const requestedUserId = parseUserRoomId(room);
+      if (requestedUserId !== null) {
+        const authedUser = socket.data.user as JwtUser | undefined;
+        if (!authedUser || authedUser.id !== requestedUserId) {
+          cb?.({ ok: false, error: "forbidden" });
+          return;
+        }
       }
 
       if (socket.rooms.size >= 64) {

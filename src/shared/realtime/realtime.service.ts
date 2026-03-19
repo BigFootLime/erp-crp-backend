@@ -7,6 +7,8 @@ export const REALTIME_EVENTS = {
   AUDIT_NEW: "audit:new",
   LOCK_UPDATED: "lock:updated",
   APP_NOTIFICATION_CREATED: "app-notification:created",
+  CHAT_MESSAGE_CREATED: "chat:message:created",
+  CHAT_CONVERSATION_READ: "chat:conversation:read",
 } as const;
 
 export const REALTIME_ROOMS = {
@@ -62,6 +64,32 @@ export type AppNotificationCreatedPayload = {
   read_at: string | null;
 };
 
+export type ChatMessageCreatedPayload = {
+  conversation_id: string;
+  message: {
+    id: string;
+    conversation_id: string;
+    sender_user_id: number;
+    message_type: "text";
+    content: string;
+    created_at: string;
+  };
+  sender: {
+    id: number;
+    username: string;
+    name: string | null;
+    surname: string | null;
+    email: string | null;
+    role: string | null;
+    status: string | null;
+  };
+};
+
+export type ChatConversationReadPayload = {
+  conversation_id: string;
+  read_at: string;
+};
+
 function tryGetIO(): SocketIOServer | null {
   try {
     return getIO();
@@ -109,4 +137,16 @@ export function emitAppNotificationCreated(userId: number, payload: AppNotificat
   const io = tryGetIO();
   if (!io) return;
   io.to(userRoom(userId)).emit(REALTIME_EVENTS.APP_NOTIFICATION_CREATED, payload);
+}
+
+export function emitChatMessageCreated(userId: number, payload: ChatMessageCreatedPayload): void {
+  const io = tryGetIO();
+  if (!io) return;
+  io.to(userRoom(userId)).emit(REALTIME_EVENTS.CHAT_MESSAGE_CREATED, payload);
+}
+
+export function emitChatConversationRead(userId: number, payload: ChatConversationReadPayload): void {
+  const io = tryGetIO();
+  if (!io) return;
+  io.to(userRoom(userId)).emit(REALTIME_EVENTS.CHAT_CONVERSATION_READ, payload);
 }
