@@ -11,6 +11,23 @@ type JwtUser = {
 
 let io: SocketIOServer;
 
+const CHAT_PRESENCE_SNAPSHOT_EVENT = "chat:presence:snapshot";
+const CHAT_USER_PRESENCE_EVENT = "chat:user:presence";
+const onlineUserCounts = new Map<number, number>();
+
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+function listOnlineUserIds(): number[] {
+  const ids: number[] = [];
+  for (const [id, count] of onlineUserCounts.entries()) {
+    if (count > 0) ids.push(id);
+  }
+  ids.sort((a, b) => a - b);
+  return ids;
+}
+
 const staticAllowedOrigins = new Set<string>([
   "https://crp-systems.croix-rousse-precision.fr",
   "http://crp-systems.croix-rousse-precision.fr",
@@ -106,8 +123,43 @@ export const initSocketServer = (server: HttpServer) => {
   io.on("connection", (socket) => {
     socket.join("erp:global");
     const user = socket.data.user as JwtUser | undefined;
-    if (user && Number.isInteger(user.id) && user.id > 0) {
-      socket.join(`USER:${user.id}`);
+    const userId = user && Number.isInteger(user.id) && user.id > 0 ? user.id : null;
+    if (userId) {
+      socket.join(`USER:${userId}`);
+
+      const prevCount = onlineUserCounts.get(userId) ?? 0;
+      onlineUserCounts.set(userId, prevCount + 1);
+
+      const at = nowIso();
+
+      // Snapshot is per-socket to initialize UI quickly.
+      socket.emit(CHAT_PRESENCE_SNAPSHOT_EVENT, {
+        online_user_ids: listOnlineUserIds(),
+        at,
+      });
+
+      // Only broadcast transitions (first tab connects / last tab disconnects).
+      if (prevCount === 0) {
+        io.to("erp:global").emit(CHAT_USER_PRESENCE_EVENT, {
+          user_id: userId,
+          online: true,
+          at,
+        });
+      }
+
+      socket.on("disconnect", () => {
+        const current = onlineUserCounts.get(userId) ?? 0;
+        if (current <= 1) {
+          onlineUserCounts.delete(userId);
+          io.to("erp:global").emit(CHAT_USER_PRESENCE_EVENT, {
+            user_id: userId,
+            online: false,
+            at: nowIso(),
+          });
+        } else {
+          onlineUserCounts.set(userId, current - 1);
+        }
+      });
     }
 
     socket.on("room:join", (payload: unknown, cb?: (r: { ok: boolean; error?: string }) => void) => {
