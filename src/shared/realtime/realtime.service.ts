@@ -9,6 +9,7 @@ export const REALTIME_EVENTS = {
   APP_NOTIFICATION_CREATED: "app-notification:created",
   CHAT_MESSAGE_CREATED: "chat:message:created",
   CHAT_CONVERSATION_READ: "chat:conversation:read",
+  CHAT_CONVERSATION_UPSERT: "chat:conversation:upsert",
 } as const;
 
 export const REALTIME_ROOMS = {
@@ -90,6 +91,12 @@ export type ChatConversationReadPayload = {
   read_at: string;
 };
 
+export type ChatConversationUpsertPayload = {
+  conversation_id: string;
+  type: "direct" | "group";
+  group_name: string | null;
+};
+
 function tryGetIO(): SocketIOServer | null {
   try {
     return getIO();
@@ -149,4 +156,10 @@ export function emitChatConversationRead(userId: number, payload: ChatConversati
   const io = tryGetIO();
   if (!io) return;
   io.to(userRoom(userId)).emit(REALTIME_EVENTS.CHAT_CONVERSATION_READ, payload);
+}
+
+export function emitChatConversationUpsert(userId: number, payload: ChatConversationUpsertPayload): void {
+  const io = tryGetIO();
+  if (!io) return;
+  io.to(userRoom(userId)).emit(REALTIME_EVENTS.CHAT_CONVERSATION_UPSERT, payload);
 }

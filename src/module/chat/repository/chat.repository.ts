@@ -1,7 +1,7 @@
 import type { PoolClient } from "pg";
 import pool from "../../../config/database";
 
-import type { ChatConversation, ChatMessage, ChatUser } from "../types/chat.types";
+import type { ChatConversation, ChatDirectConversation, ChatGroupConversation, ChatMessage, ChatUser } from "../types/chat.types";
 
 type DbQueryer = Pick<PoolClient, "query">;
 
@@ -48,6 +48,40 @@ export async function repoGetChatUserById(userId: number): Promise<ChatUser | nu
   return row ? mapUser(row) : null;
 }
 
+export async function repoListChatUsersByIds(userIds: number[]): Promise<ChatUser[]> {
+  const seen = new Set<number>();
+  const ids = userIds
+    .map((n) => (Number.isFinite(n) ? Math.trunc(n) : 0))
+    .filter((n) => n > 0)
+    .filter((n) => {
+      if (seen.has(n)) return false;
+      seen.add(n);
+      return true;
+    });
+
+  if (!ids.length) return [];
+
+  const res = await pool.query<ChatUserRow>(
+    `
+      SELECT
+        u.id::int AS id,
+        u.username,
+        u.name,
+        u.surname,
+        u.email,
+        u.role,
+        u.status
+      FROM public.users u
+      WHERE u.id = ANY($1::int[])
+        AND COALESCE(NULLIF(lower(trim(u.status)), ''), 'active') NOT IN ('inactive', 'blocked', 'suspended')
+      ORDER BY u.id ASC
+    `,
+    [ids]
+  );
+
+  return res.rows.map(mapUser);
+}
+
 export async function repoListChatUsers(params: { me_user_id: number; q?: string; limit?: number }): Promise<ChatUser[]> {
   const q = typeof params.q === "string" ? params.q.trim() : "";
   const limit = Math.max(1, Math.min(200, Math.trunc(params.limit ?? 50)));
@@ -83,13 +117,16 @@ export async function repoListChatUsers(params: { me_user_id: number; q?: string
 
 type ConversationRow = {
   conversation_id: string;
-  type: string;
+  type: "direct" | "group";
+  group_name: string | null;
+  created_by: number | null;
+  participant_count: number;
   created_at: string;
   updated_at: string;
   last_message_at: string | null;
   last_read_at: string | null;
-  other_user_id: number;
-  other_username: string;
+  other_user_id: number | null;
+  other_username: string | null;
   other_name: string | null;
   other_surname: string | null;
   other_email: string | null;
@@ -109,15 +146,44 @@ function mapConversation(row: ConversationRow): ChatConversation {
         id: row.last_message_id,
         conversation_id: row.conversation_id,
         sender_user_id: row.last_message_sender_user_id ?? 0,
+        sender: null,
         message_type: (row.last_message_type ?? "text") === "text" ? "text" : "text",
         content: row.last_message_content ?? "",
         created_at: row.last_message_created_at ?? "",
       }
     : null;
 
-  return {
+  const base = {
     id: row.conversation_id,
-    type: row.type === "direct" ? "direct" : "direct",
+    type: row.type,
+    last_message: lastMessage,
+    unread_count: Number.isFinite(row.unread_count) ? row.unread_count : 0,
+    last_read_at: row.last_read_at,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    last_message_at: row.last_message_at,
+  };
+
+  if (row.type === "group") {
+    const conv: ChatGroupConversation = {
+      ...base,
+      type: "group",
+      group: {
+        name: (row.group_name ?? "").trim() || "Groupe",
+        participant_count: Number.isFinite(row.participant_count) ? row.participant_count : 0,
+        created_by: row.created_by,
+      },
+    };
+    return conv;
+  }
+
+  if (typeof row.other_user_id !== "number" || !row.other_username) {
+    throw new Error("Invalid direct conversation row: missing other user");
+  }
+
+  const conv: ChatDirectConversation = {
+    ...base,
+    type: "direct",
     other_user: {
       id: row.other_user_id,
       username: row.other_username,
@@ -127,13 +193,8 @@ function mapConversation(row: ConversationRow): ChatConversation {
       role: row.other_role,
       status: row.other_status,
     },
-    last_message: lastMessage,
-    unread_count: Number.isFinite(row.unread_count) ? row.unread_count : 0,
-    last_read_at: row.last_read_at,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-    last_message_at: row.last_message_at,
   };
+  return conv;
 }
 
 async function repoListConversationsForUser(q: DbQueryer, params: { user_id: number; conversation_id?: string | null }) {
@@ -143,11 +204,19 @@ async function repoListConversationsForUser(q: DbQueryer, params: { user_id: num
     `
       SELECT
         c.id::text AS conversation_id,
-        c.type,
+        c.type::text AS type,
+        c.group_name,
+        c.created_by::int AS created_by,
         c.created_at::text AS created_at,
         c.updated_at::text AS updated_at,
         c.last_message_at::text AS last_message_at,
         p.last_read_at::text AS last_read_at,
+
+        (
+          SELECT COUNT(*)::int
+          FROM public.chat_conversation_participants pp
+          WHERE pp.conversation_id = c.id
+        ) AS participant_count,
 
         ou.id::int AS other_user_id,
         ou.username AS other_username,
@@ -175,11 +244,23 @@ async function repoListConversationsForUser(q: DbQueryer, params: { user_id: num
       JOIN public.chat_conversation_participants p
         ON p.conversation_id = c.id
        AND p.user_id = $1::int
-      JOIN public.chat_conversation_participants op
-        ON op.conversation_id = c.id
-       AND op.user_id <> $1::int
-      JOIN public.users ou
-        ON ou.id = op.user_id
+      LEFT JOIN LATERAL (
+        SELECT
+          u.id,
+          u.username,
+          u.name,
+          u.surname,
+          u.email,
+          u.role,
+          u.status
+        FROM public.chat_conversation_participants op
+        JOIN public.users u ON u.id = op.user_id
+        WHERE op.conversation_id = c.id
+          AND op.user_id <> $1::int
+          AND c.type = 'direct'
+        ORDER BY u.id ASC
+        LIMIT 1
+      ) ou ON true
       LEFT JOIN LATERAL (
         SELECT
           m.id,
@@ -193,7 +274,7 @@ async function repoListConversationsForUser(q: DbQueryer, params: { user_id: num
         ORDER BY m.created_at DESC, m.id DESC
         LIMIT 1
       ) lm ON true
-      WHERE c.type = 'direct'
+      WHERE c.type IN ('direct', 'group')
         AND ($2::uuid IS NULL OR c.id = $2::uuid)
       ORDER BY COALESCE(c.last_message_at, c.updated_at, c.created_at) DESC, c.id DESC
       LIMIT 200
@@ -266,6 +347,57 @@ export async function repoGetOrCreateDirectConversation(params: { user_id: numbe
   }
 }
 
+export async function repoCreateGroupConversation(params: {
+  created_by: number;
+  group_name: string;
+  participant_user_ids: number[];
+}): Promise<{ conversation_id: string; participant_user_ids: number[] }> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const convRes = await client.query<{ id: string }>(
+      `
+        INSERT INTO public.chat_conversations (
+          type,
+          group_name,
+          created_by,
+          created_at,
+          updated_at
+        )
+        VALUES ('group', $1::text, $2::int, now(), now())
+        RETURNING id::text AS id
+      `,
+      [params.group_name, params.created_by]
+    );
+
+    const conversationId = convRes.rows[0]?.id;
+    if (!conversationId) throw new Error("Failed to create group conversation");
+
+    await client.query(
+      `
+        INSERT INTO public.chat_conversation_participants (conversation_id, user_id, joined_at)
+        SELECT $1::uuid, u::int, now()
+        FROM unnest($2::int[]) AS u
+        ON CONFLICT (conversation_id, user_id) DO NOTHING
+      `,
+      [conversationId, params.participant_user_ids]
+    );
+
+    await client.query("COMMIT");
+    return { conversation_id: conversationId, participant_user_ids: params.participant_user_ids };
+  } catch (err) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      // ignore
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 type ChatMessageRow = {
   id: string;
   conversation_id: string;
@@ -275,11 +407,21 @@ type ChatMessageRow = {
   created_at: string;
 };
 
-function mapMessage(row: ChatMessageRow): ChatMessage {
+type ChatMessageListRow = ChatMessageRow & {
+  sender_username: string;
+  sender_name: string | null;
+  sender_surname: string | null;
+};
+
+function mapMessage(
+  row: ChatMessageRow,
+  sender: { id: number; username: string; name: string | null; surname: string | null } | null
+): ChatMessage {
   return {
     id: row.id,
     conversation_id: row.conversation_id,
     sender_user_id: row.sender_user_id,
+    sender,
     message_type: "text",
     content: row.content,
     created_at: row.created_at,
@@ -296,16 +438,20 @@ export async function repoListChatMessages(params: {
   const limit = Math.max(1, Math.min(100, Math.trunc(params.limit ?? 50)));
   const pageSize = limit + 1;
 
-  const res = await pool.query<ChatMessageRow>(
+  const res = await pool.query<ChatMessageListRow>(
     `
       SELECT
         m.id::text AS id,
         m.conversation_id::text AS conversation_id,
         m.sender_user_id::int AS sender_user_id,
+        u.username AS sender_username,
+        u.name AS sender_name,
+        u.surname AS sender_surname,
         m.message_type::text AS message_type,
         m.content,
         m.created_at::text AS created_at
       FROM public.chat_messages m
+      JOIN public.users u ON u.id = m.sender_user_id
       JOIN public.chat_conversation_participants p
         ON p.conversation_id = m.conversation_id
        AND p.user_id = $2::int
@@ -336,7 +482,16 @@ export async function repoListChatMessages(params: {
   const rows = res.rows;
   const hasMore = rows.length > limit;
   const sliced = hasMore ? rows.slice(0, limit) : rows;
-  const items = sliced.map(mapMessage).reverse();
+  const items = sliced
+    .map((row) =>
+      mapMessage(row, {
+        id: row.sender_user_id,
+        username: row.sender_username,
+        name: row.sender_name,
+        surname: row.sender_surname,
+      })
+    )
+    .reverse();
   const nextBefore = items.length ? items[0]!.created_at : null;
 
   return {
@@ -446,10 +601,16 @@ export async function repoSendChatMessage(params: {
 
     await client.query("COMMIT");
 
+    const sender = mapUser(senderRow);
     return {
-      message: mapMessage(msgRow),
+      message: mapMessage(msgRow, {
+        id: sender.id,
+        username: sender.username,
+        name: sender.name,
+        surname: sender.surname,
+      }),
       participant_user_ids: partsRes.rows.map((r) => r.user_id),
-      sender: mapUser(senderRow),
+      sender,
     };
   } catch (err) {
     try {

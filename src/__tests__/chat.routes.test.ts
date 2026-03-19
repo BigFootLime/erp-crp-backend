@@ -100,4 +100,81 @@ describe("/api/v1/chat", () => {
     expect(res.status).toBe(404);
     expect(res.body).toMatchObject({ success: false, code: "CONVERSATION_NOT_FOUND" });
   });
+
+  it("POST /api/v1/chat/conversations/group creates a group conversation", async () => {
+    const convId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+
+    mocks.poolQuery
+      // repoListChatUsersByIds
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: 2,
+            username: "U2",
+            name: "Alice",
+            surname: "Doe",
+            email: "u2@example.com",
+            role: "Atelier",
+            status: "Active",
+          },
+          {
+            id: 3,
+            username: "U3",
+            name: "Bob",
+            surname: "Doe",
+            email: "u3@example.com",
+            role: "Atelier",
+            status: "Active",
+          },
+        ],
+      })
+      // repoGetChatConversation (repoListConversationsForUser)
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            conversation_id: convId,
+            type: "group",
+            group_name: "Equipe Atelier",
+            created_by: 1,
+            participant_count: 3,
+            created_at: "2026-03-19T10:00:00.000Z",
+            updated_at: "2026-03-19T10:00:00.000Z",
+            last_message_at: null,
+            last_read_at: null,
+
+            other_user_id: null,
+            other_username: null,
+            other_name: null,
+            other_surname: null,
+            other_email: null,
+            other_role: null,
+            other_status: null,
+
+            last_message_id: null,
+            last_message_sender_user_id: null,
+            last_message_type: null,
+            last_message_content: null,
+            last_message_created_at: null,
+
+            unread_count: 0,
+          },
+        ],
+      });
+
+    mocks.clientQuery
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ id: convId }] }) // INSERT conversation
+      .mockResolvedValueOnce({ rows: [] }) // INSERT participants
+      .mockResolvedValueOnce({ rows: [] }); // COMMIT
+
+    const res = await request(app)
+      .post("/api/v1/chat/conversations/group")
+      .set("Authorization", "Bearer fake")
+      .send({ name: "Equipe Atelier", participant_user_ids: [2, 3] });
+
+    expect(res.status).toBe(201);
+    expect(res.body).toHaveProperty("conversation");
+    expect(res.body.conversation).toMatchObject({ id: convId, type: "group" });
+    expect(res.body.conversation.group).toMatchObject({ name: "Equipe Atelier", participant_count: 3 });
+  });
 });

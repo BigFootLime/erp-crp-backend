@@ -5,12 +5,14 @@ import { asyncHandler } from "../../../utils/asyncHandler";
 import { HttpError } from "../../../utils/httpError";
 import {
   chatConversationIdParamSchema,
+  createGroupConversationBodySchema,
   listChatMessagesQuerySchema,
   listChatUsersQuerySchema,
   openDirectConversationBodySchema,
   sendChatMessageBodySchema,
 } from "../validators/chat.validators";
 import {
+  svcCreateGroupConversation,
   svcGetUnreadCount,
   svcListChatConversations,
   svcListChatMessages,
@@ -43,6 +45,17 @@ export const openDirectConversation: RequestHandler = asyncHandler(async (req, r
   const userId = requireUserId(req);
   const body = openDirectConversationBodySchema.parse(req.body);
   const conversation = await svcOpenDirectConversation({ user_id: userId, other_user_id: body.user_id });
+  res.status(201).json({ conversation });
+});
+
+export const createGroupConversation: RequestHandler = asyncHandler(async (req, res) => {
+  const userId = requireUserId(req);
+  const body = createGroupConversationBodySchema.parse(req.body);
+  const conversation = await svcCreateGroupConversation({
+    user_id: userId,
+    name: body.name,
+    participant_user_ids: body.participant_user_ids,
+  });
   res.status(201).json({ conversation });
 });
 

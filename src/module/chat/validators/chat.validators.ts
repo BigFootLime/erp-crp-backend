@@ -31,3 +31,10 @@ export const sendChatMessageBodySchema = z.object({
 });
 
 export type SendChatMessageBodyDTO = z.infer<typeof sendChatMessageBodySchema>;
+
+export const createGroupConversationBodySchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  participant_user_ids: z.array(z.coerce.number().int().min(1)).min(1).max(50),
+});
+
+export type CreateGroupConversationBodyDTO = z.infer<typeof createGroupConversationBodySchema>;

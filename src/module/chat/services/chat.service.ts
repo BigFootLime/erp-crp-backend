@@ -1,15 +1,17 @@
 import { HttpError } from "../../../utils/httpError";
-import { emitChatConversationRead, emitChatMessageCreated } from "../../../shared/realtime/realtime.service";
+import { emitChatConversationRead, emitChatConversationUpsert, emitChatMessageCreated } from "../../../shared/realtime/realtime.service";
 import type { ChatConversation, ChatMessage, ChatUser } from "../types/chat.types";
 import {
   repoGetChatConversation,
   repoGetChatUserById,
   repoGetOrCreateDirectConversation,
   repoGetUnreadCount,
+  repoListChatUsersByIds,
   repoListChatConversations,
   repoListChatMessages,
   repoListChatUsers,
   repoMarkConversationRead,
+  repoCreateGroupConversation,
   repoSendChatMessage,
 } from "../repository/chat.repository";
 
@@ -80,4 +82,52 @@ export async function svcMarkConversationRead(params: { user_id: number; convers
 export async function svcGetUnreadCount(params: { user_id: number }): Promise<{ total_unread: number }> {
   const total = await repoGetUnreadCount(params);
   return { total_unread: total };
+}
+
+export async function svcCreateGroupConversation(params: {
+  user_id: number;
+  name: string;
+  participant_user_ids: number[];
+}): Promise<ChatConversation> {
+  const name = typeof params.name === "string" ? params.name.trim() : "";
+  if (!name) throw new HttpError(400, "INVALID_NAME", "Group name is required");
+
+  const seen = new Set<number>();
+  const others = params.participant_user_ids
+    .map((n) => (Number.isFinite(n) ? Math.trunc(n) : 0))
+    .filter((n) => n > 0)
+    .filter((n) => n !== params.user_id)
+    .filter((n) => {
+      if (seen.has(n)) return false;
+      seen.add(n);
+      return true;
+    });
+
+  if (!others.length) {
+    throw new HttpError(400, "INVALID_PARTICIPANTS", "Select at least one other user");
+  }
+
+  const activeUsers = await repoListChatUsersByIds(others);
+  if (activeUsers.length !== others.length) {
+    throw new HttpError(404, "USER_NOT_FOUND", "User not found");
+  }
+
+  const participants = [params.user_id, ...others];
+  const created = await repoCreateGroupConversation({
+    created_by: params.user_id,
+    group_name: name,
+    participant_user_ids: participants,
+  });
+
+  for (const userId of created.participant_user_ids) {
+    emitChatConversationUpsert(userId, {
+      conversation_id: created.conversation_id,
+      type: "group",
+      group_name: name,
+    });
+  }
+
+  const conv = await repoGetChatConversation({ user_id: params.user_id, conversation_id: created.conversation_id });
+  if (!conv) throw new Error("Group conversation created but not readable");
+  return conv;
 }

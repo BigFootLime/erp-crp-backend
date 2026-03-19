@@ -8,6 +8,7 @@ import {
   listMessages,
   markConversationRead,
   openDirectConversation,
+  createGroupConversation,
   sendMessage,
 } from "../controllers/chat.controller";
 
@@ -17,6 +18,7 @@ router.use(authenticateToken);
 router.get("/users", listChatUsers);
 router.get("/conversations", listConversations);
 router.post("/conversations/direct", openDirectConversation);
+router.post("/conversations/group", createGroupConversation);
 router.get("/conversations/:id/messages", listMessages);
 router.post("/conversations/:id/messages", sendMessage);
 router.post("/conversations/:id/read", markConversationRead);
