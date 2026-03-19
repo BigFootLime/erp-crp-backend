@@ -8,6 +8,7 @@ export type ChatUser = {
   email: string | null;
   role: string | null;
   status: string | null;
+  profile_picture: string | null;
 };
 
 export type ChatMessageType = "text";

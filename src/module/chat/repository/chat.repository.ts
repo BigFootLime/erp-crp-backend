@@ -13,6 +13,7 @@ type ChatUserRow = {
   email: string | null;
   role: string | null;
   status: string | null;
+  profile_picture?: string | null;
 };
 
 function mapUser(row: ChatUserRow): ChatUser {
@@ -24,6 +25,7 @@ function mapUser(row: ChatUserRow): ChatUser {
     email: row.email,
     role: row.role,
     status: row.status,
+    profile_picture: row.profile_picture ?? null,
   };
 }
 
@@ -37,7 +39,8 @@ export async function repoGetChatUserById(userId: number): Promise<ChatUser | nu
         surname,
         email,
         role,
-        status
+        status,
+        profile_picture
       FROM public.users
       WHERE id = $1::int
       LIMIT 1
@@ -70,7 +73,8 @@ export async function repoListChatUsersByIds(userIds: number[]): Promise<ChatUse
         u.surname,
         u.email,
         u.role,
-        u.status
+        u.status,
+        u.profile_picture
       FROM public.users u
       WHERE u.id = ANY($1::int[])
         AND COALESCE(NULLIF(lower(trim(u.status)), ''), 'active') NOT IN ('inactive', 'blocked', 'suspended')
@@ -95,7 +99,8 @@ export async function repoListChatUsers(params: { me_user_id: number; q?: string
         u.surname,
         u.email,
         u.role,
-        u.status
+        u.status,
+        u.profile_picture
       FROM public.users u
       WHERE u.id <> $1::int
         AND COALESCE(NULLIF(lower(trim(u.status)), ''), 'active') NOT IN ('inactive', 'blocked', 'suspended')
@@ -132,6 +137,7 @@ type ConversationRow = {
   other_email: string | null;
   other_role: string | null;
   other_status: string | null;
+  other_profile_picture?: string | null;
   last_message_id: string | null;
   last_message_sender_user_id: number | null;
   last_message_type: string | null;
@@ -192,6 +198,7 @@ function mapConversation(row: ConversationRow): ChatConversation {
       email: row.other_email,
       role: row.other_role,
       status: row.other_status,
+      profile_picture: row.other_profile_picture ?? null,
     },
   };
   return conv;
@@ -225,6 +232,7 @@ async function repoListConversationsForUser(q: DbQueryer, params: { user_id: num
         ou.email AS other_email,
         ou.role AS other_role,
         ou.status AS other_status,
+        ou.profile_picture AS other_profile_picture,
 
         lm.id::text AS last_message_id,
         lm.sender_user_id::int AS last_message_sender_user_id,
@@ -252,7 +260,8 @@ async function repoListConversationsForUser(q: DbQueryer, params: { user_id: num
           u.surname,
           u.email,
           u.role,
-          u.status
+          u.status,
+          u.profile_picture
         FROM public.chat_conversation_participants op
         JOIN public.users u ON u.id = op.user_id
         WHERE op.conversation_id = c.id
@@ -292,6 +301,38 @@ export async function repoListChatConversations(params: { user_id: number }): Pr
 export async function repoGetChatConversation(params: { user_id: number; conversation_id: string }): Promise<ChatConversation | null> {
   const items = await repoListConversationsForUser(pool, { user_id: params.user_id, conversation_id: params.conversation_id });
   return items[0] ?? null;
+}
+
+export async function repoListChatConversationParticipants(params: {
+  user_id: number;
+  conversation_id: string;
+}): Promise<ChatUser[] | null> {
+  const res = await pool.query<ChatUserRow>(
+    `
+      SELECT
+        u.id::int AS id,
+        u.username,
+        u.name,
+        u.surname,
+        u.email,
+        u.role,
+        u.status,
+        u.profile_picture
+      FROM public.chat_conversation_participants p
+      JOIN public.chat_conversation_participants me
+        ON me.conversation_id = p.conversation_id
+       AND me.user_id = $2::int
+      JOIN public.users u
+        ON u.id = p.user_id
+      WHERE p.conversation_id = $1::uuid
+        AND COALESCE(NULLIF(lower(trim(u.status)), ''), 'active') NOT IN ('inactive', 'blocked', 'suspended')
+      ORDER BY u.username ASC, u.id ASC
+    `,
+    [params.conversation_id, params.user_id]
+  );
+
+  if (!res.rows.length) return null;
+  return res.rows.map(mapUser);
 }
 
 export async function repoGetOrCreateDirectConversation(params: { user_id: number; other_user_id: number }): Promise<string> {
@@ -588,7 +629,8 @@ export async function repoSendChatMessage(params: {
           surname,
           email,
           role,
-          status
+          status,
+          profile_picture
         FROM public.users
         WHERE id = $1::int
         LIMIT 1

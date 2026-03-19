@@ -8,6 +8,7 @@ import {
   repoGetUnreadCount,
   repoListChatUsersByIds,
   repoListChatConversations,
+  repoListChatConversationParticipants,
   repoListChatMessages,
   repoListChatUsers,
   repoMarkConversationRead,
@@ -21,6 +22,12 @@ export async function svcListChatUsers(params: { me_user_id: number; q?: string;
 
 export async function svcListChatConversations(params: { user_id: number }): Promise<ChatConversation[]> {
   return repoListChatConversations(params);
+}
+
+export async function svcListChatConversationParticipants(params: { user_id: number; conversation_id: string }): Promise<ChatUser[]> {
+  const out = await repoListChatConversationParticipants(params);
+  if (!out) throw new HttpError(404, "CONVERSATION_NOT_FOUND", "Conversation not found");
+  return out;
 }
 
 export async function svcOpenDirectConversation(params: { user_id: number; other_user_id: number }): Promise<ChatConversation> {

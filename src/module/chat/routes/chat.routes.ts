@@ -6,6 +6,7 @@ import {
   listChatUsers,
   listConversations,
   listMessages,
+  listParticipants,
   markConversationRead,
   openDirectConversation,
   createGroupConversation,
@@ -20,6 +21,7 @@ router.get("/conversations", listConversations);
 router.post("/conversations/direct", openDirectConversation);
 router.post("/conversations/group", createGroupConversation);
 router.get("/conversations/:id/messages", listMessages);
+router.get("/conversations/:id/participants", listParticipants);
 router.post("/conversations/:id/messages", sendMessage);
 router.post("/conversations/:id/read", markConversationRead);
 router.get("/unread-count", getUnreadCount);

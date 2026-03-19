@@ -177,4 +177,53 @@ describe("/api/v1/chat", () => {
     expect(res.body.conversation).toMatchObject({ id: convId, type: "group" });
     expect(res.body.conversation.group).toMatchObject({ name: "Equipe Atelier", participant_count: 3 });
   });
+
+  it("GET /api/v1/chat/conversations/:id/participants returns {items}", async () => {
+    const convId = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+
+    mocks.poolQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          id: 1,
+          username: "U1",
+          name: "Alice",
+          surname: "Doe",
+          email: "u1@example.com",
+          role: "Atelier",
+          status: "Active",
+          profile_picture: null,
+        },
+        {
+          id: 2,
+          username: "U2",
+          name: "Bob",
+          surname: "Doe",
+          email: "u2@example.com",
+          role: "Atelier",
+          status: "Active",
+          profile_picture: "bob.png",
+        },
+      ],
+    });
+
+    const res = await request(app)
+      .get(`/api/v1/chat/conversations/${convId}/participants`)
+      .set("Authorization", "Bearer fake");
+
+    expect(res.status).toBe(200);
+    expect(res.body.items).toHaveLength(2);
+    expect(res.body.items[0]).toMatchObject({ id: 1, username: "U1" });
+  });
+
+  it("GET /api/v1/chat/conversations/:id/participants returns 404 when not participant", async () => {
+    const convId = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+    mocks.poolQuery.mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app)
+      .get(`/api/v1/chat/conversations/${convId}/participants`)
+      .set("Authorization", "Bearer fake");
+
+    expect(res.status).toBe(404);
+    expect(res.body).toMatchObject({ success: false, code: "CONVERSATION_NOT_FOUND" });
+  });
 });

@@ -15,6 +15,7 @@ import {
   svcCreateGroupConversation,
   svcGetUnreadCount,
   svcListChatConversations,
+  svcListChatConversationParticipants,
   svcListChatMessages,
   svcListChatUsers,
   svcMarkConversationRead,
@@ -65,6 +66,13 @@ export const listMessages: RequestHandler = asyncHandler(async (req, res) => {
   const query = listChatMessagesQuerySchema.parse(req.query);
   const out = await svcListChatMessages({ user_id: userId, conversation_id: id, before: query.before ?? null, limit: query.limit });
   res.json(out);
+});
+
+export const listParticipants: RequestHandler = asyncHandler(async (req, res) => {
+  const userId = requireUserId(req);
+  const { id } = chatConversationIdParamSchema.parse({ id: req.params.id });
+  const items = await svcListChatConversationParticipants({ user_id: userId, conversation_id: id });
+  res.json({ items });
 });
 
 export const sendMessage: RequestHandler = asyncHandler(async (req, res) => {
