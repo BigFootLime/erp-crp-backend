@@ -7,6 +7,7 @@ type AddressValue = {
   name?: string | null;
   street?: string | null;
   house_number?: string | null;
+  address_complement?: string | null;
   postal_code?: string | null;
   city?: string | null;
   country?: string | null;
@@ -15,7 +16,9 @@ type AddressValue = {
 function buildStreetLine(address: AddressValue): string {
   const house = (address.house_number ?? "").trim();
   const street = (address.street ?? "").trim();
-  return [house, street].filter(Boolean).join(" ").trim();
+  const complement = (address.address_complement ?? "").trim();
+  const base = [house, street].filter(Boolean).join(" ").trim();
+  return [base, complement].filter(Boolean).join(" - ").trim();
 }
 
 function buildCityLine(address: AddressValue): string {
@@ -63,16 +66,18 @@ export async function repoGetClientById(clientId: string) {
 
       -- addresses
       af.bill_address_id, af.name AS bill_name, af.street AS bill_street, af.house_number AS bill_house_number,
+      af.address_complement AS bill_address_complement,
       af.postal_code AS bill_postal_code, af.city AS bill_city, af.country AS bill_country,
 
       al.delivery_address_id, al.name AS deliv_name, al.street AS deliv_street, al.house_number AS deliv_house_number,
+      al.address_complement AS deliv_address_complement,
       al.postal_code AS deliv_postal_code, al.city AS deliv_city, al.country AS deliv_country,
 
       -- bank
       ib.bank_info_id, ib.name AS bank_name, ib.iban, ib.bic,
 
       -- primary contact
-      ct.contact_id, ct.first_name, ct.last_name, ct.civility, ct.role, ct.phone_personal, ct.email AS contact_email
+      ct.contact_id, ct.first_name, ct.last_name, ct.civility, ct.role, ct.phone_direct, ct.phone_personal, ct.email AS contact_email
     FROM clients c
     LEFT JOIN factureur f ON f.biller_id = c.biller_id
     LEFT JOIN adresse_facturation af ON af.bill_address_id = c.bill_address_id
@@ -125,6 +130,7 @@ export async function repoGetClientById(clientId: string) {
       name: r.bill_name,
       street: r.bill_street,
       house_number: r.bill_house_number,
+      address_complement: r.bill_address_complement ?? null,
       postal_code: r.bill_postal_code,
       city: r.bill_city,
       country: r.bill_country,
@@ -134,15 +140,16 @@ export async function repoGetClientById(clientId: string) {
       name: r.deliv_name,
       street: r.deliv_street,
       house_number: r.deliv_house_number,
+      address_complement: r.deliv_address_complement ?? null,
       postal_code: r.deliv_postal_code,
       city: r.deliv_city,
       country: r.deliv_country,
     },
     bank: {
-      id: r.bank_info_id,
-      bank_name: r.bank_name,
-      iban: r.iban,
-      bic: r.bic,
+      id: r.bank_info_id ?? null,
+      bank_name: r.bank_name ?? null,
+      iban: r.iban ?? null,
+      bic: r.bic ?? null,
     },
     primary_contact: r.contact_id
       ? {
@@ -151,6 +158,7 @@ export async function repoGetClientById(clientId: string) {
           last_name: r.last_name,
           civility: r.civility,
           role: r.role,
+          phone_direct: r.phone_direct ?? null,
           phone_personal: r.phone_personal,
           email: r.contact_email,
         }
@@ -168,6 +176,7 @@ export async function repoListClientAddresses(clientId: string) {
       af.name,
       af.street,
       af.house_number,
+      af.address_complement,
       af.postal_code,
       af.city,
       af.country
@@ -183,6 +192,7 @@ export async function repoListClientAddresses(clientId: string) {
       al.name,
       al.street,
       al.house_number,
+      al.address_complement,
       al.postal_code,
       al.city,
       al.country
@@ -198,11 +208,12 @@ export async function repoListClientAddresses(clientId: string) {
     const name = typeof r.name === "string" ? r.name : null;
     const street = typeof r.street === "string" ? r.street : null;
     const house_number = typeof r.house_number === "string" ? r.house_number : null;
+    const address_complement = typeof r.address_complement === "string" ? r.address_complement : null;
     const postal_code = typeof r.postal_code === "string" ? r.postal_code : null;
     const city = typeof r.city === "string" ? r.city : null;
     const country = typeof r.country === "string" ? r.country : null;
 
-    const address: AddressValue = { name, street, house_number, postal_code, city, country };
+    const address: AddressValue = { name, street, house_number, address_complement, postal_code, city, country };
     const label = formatAddressInline(address) || (kind === "billing" ? "Adresse de facturation" : "Adresse de livraison");
 
     return {
@@ -212,6 +223,7 @@ export async function repoListClientAddresses(clientId: string) {
       name,
       street,
       house_number,
+      address_complement,
       postal_code,
       city,
       country,

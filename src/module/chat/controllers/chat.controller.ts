@@ -5,6 +5,9 @@ import { asyncHandler } from "../../../utils/asyncHandler";
 import { HttpError } from "../../../utils/httpError";
 import {
   chatConversationIdParamSchema,
+  chatUserIdParamSchema,
+  renameGroupConversationBodySchema,
+  addGroupMembersBodySchema,
   createGroupConversationBodySchema,
   listChatMessagesQuerySchema,
   listChatUsersQuerySchema,
@@ -12,14 +15,20 @@ import {
   sendChatMessageBodySchema,
 } from "../validators/chat.validators";
 import {
+  svcAddGroupMembers,
   svcCreateGroupConversation,
+  svcDeleteGroupConversation,
   svcGetUnreadCount,
+  svcArchiveChatConversation,
+  svcLeaveGroupConversation,
   svcListChatConversations,
   svcListChatConversationParticipants,
   svcListChatMessages,
   svcListChatUsers,
   svcMarkConversationRead,
   svcOpenDirectConversation,
+  svcRemoveGroupMember,
+  svcRenameGroupConversation,
   svcSendChatMessage,
 } from "../services/chat.service";
 
@@ -60,6 +69,44 @@ export const createGroupConversation: RequestHandler = asyncHandler(async (req, 
   res.status(201).json({ conversation });
 });
 
+export const renameGroupConversation: RequestHandler = asyncHandler(async (req, res) => {
+  const userId = requireUserId(req);
+  const { id } = chatConversationIdParamSchema.parse({ id: req.params.id });
+  const body = renameGroupConversationBodySchema.parse(req.body);
+  const conversation = await svcRenameGroupConversation({ user_id: userId, conversation_id: id, name: body.name });
+  res.json({ conversation });
+});
+
+export const addGroupMembers: RequestHandler = asyncHandler(async (req, res) => {
+  const userId = requireUserId(req);
+  const { id } = chatConversationIdParamSchema.parse({ id: req.params.id });
+  const body = addGroupMembersBodySchema.parse(req.body);
+  const conversation = await svcAddGroupMembers({ user_id: userId, conversation_id: id, user_ids: body.user_ids });
+  res.json({ conversation });
+});
+
+export const removeGroupMember: RequestHandler = asyncHandler(async (req, res) => {
+  const userId = requireUserId(req);
+  const { id } = chatConversationIdParamSchema.parse({ id: req.params.id });
+  const { userId: removeUserId } = chatUserIdParamSchema.parse({ userId: req.params.userId });
+  const out = await svcRemoveGroupMember({ user_id: userId, conversation_id: id, remove_user_id: removeUserId });
+  res.json(out);
+});
+
+export const leaveGroupConversation: RequestHandler = asyncHandler(async (req, res) => {
+  const userId = requireUserId(req);
+  const { id } = chatConversationIdParamSchema.parse({ id: req.params.id });
+  const out = await svcLeaveGroupConversation({ user_id: userId, conversation_id: id });
+  res.json(out);
+});
+
+export const deleteGroupConversation: RequestHandler = asyncHandler(async (req, res) => {
+  const userId = requireUserId(req);
+  const { id } = chatConversationIdParamSchema.parse({ id: req.params.id });
+  const out = await svcDeleteGroupConversation({ user_id: userId, conversation_id: id });
+  res.json(out);
+});
+
 export const listMessages: RequestHandler = asyncHandler(async (req, res) => {
   const userId = requireUserId(req);
   const { id } = chatConversationIdParamSchema.parse({ id: req.params.id });
@@ -93,5 +140,12 @@ export const markConversationRead: RequestHandler = asyncHandler(async (req, res
 export const getUnreadCount: RequestHandler = asyncHandler(async (req, res) => {
   const userId = requireUserId(req);
   const out = await svcGetUnreadCount({ user_id: userId });
+  res.json(out);
+});
+
+export const archiveConversation: RequestHandler = asyncHandler(async (req, res) => {
+  const userId = requireUserId(req);
+  const { id } = chatConversationIdParamSchema.parse({ id: req.params.id });
+  const out = await svcArchiveChatConversation({ user_id: userId, conversation_id: id });
   res.json(out);
 });

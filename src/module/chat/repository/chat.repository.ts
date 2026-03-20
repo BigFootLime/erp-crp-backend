@@ -130,6 +130,7 @@ type ConversationRow = {
   updated_at: string;
   last_message_at: string | null;
   last_read_at: string | null;
+  archived_at?: string | null;
   other_user_id: number | null;
   other_username: string | null;
   other_name: string | null;
@@ -218,6 +219,7 @@ async function repoListConversationsForUser(q: DbQueryer, params: { user_id: num
         c.updated_at::text AS updated_at,
         c.last_message_at::text AS last_message_at,
         p.last_read_at::text AS last_read_at,
+        p.archived_at::text AS archived_at,
 
         (
           SELECT COUNT(*)::int
@@ -284,6 +286,10 @@ async function repoListConversationsForUser(q: DbQueryer, params: { user_id: num
         LIMIT 1
       ) lm ON true
       WHERE c.type IN ('direct', 'group')
+        AND (
+          p.archived_at IS NULL
+          OR COALESCE(c.last_message_at, c.updated_at, c.created_at) > p.archived_at
+        )
         AND ($2::uuid IS NULL OR c.id = $2::uuid)
       ORDER BY COALESCE(c.last_message_at, c.updated_at, c.created_at) DESC, c.id DESC
       LIMIT 200
@@ -301,6 +307,27 @@ export async function repoListChatConversations(params: { user_id: number }): Pr
 export async function repoGetChatConversation(params: { user_id: number; conversation_id: string }): Promise<ChatConversation | null> {
   const items = await repoListConversationsForUser(pool, { user_id: params.user_id, conversation_id: params.conversation_id });
   return items[0] ?? null;
+}
+
+export async function repoArchiveChatConversation(params: {
+  user_id: number;
+  conversation_id: string;
+}): Promise<{ archived_at: string } | null> {
+  const res = await pool.query<{ archived_at: string }>(
+    `
+      UPDATE public.chat_conversation_participants
+      SET
+        archived_at = now(),
+        last_read_at = now()
+      WHERE conversation_id = $1::uuid
+        AND user_id = $2::int
+      RETURNING archived_at::text AS archived_at
+    `,
+    [params.conversation_id, params.user_id]
+  );
+
+  const row = res.rows[0] ?? null;
+  return row ? { archived_at: row.archived_at } : null;
 }
 
 export async function repoListChatConversationParticipants(params: {
@@ -333,6 +360,86 @@ export async function repoListChatConversationParticipants(params: {
 
   if (!res.rows.length) return null;
   return res.rows.map(mapUser);
+}
+
+export async function repoListChatConversationParticipantUserIds(params: {
+  conversation_id: string;
+}): Promise<number[]> {
+  const res = await pool.query<{ user_id: number }>(
+    `
+      SELECT user_id::int AS user_id
+      FROM public.chat_conversation_participants
+      WHERE conversation_id = $1::uuid
+      ORDER BY user_id ASC
+    `,
+    [params.conversation_id]
+  );
+  return res.rows.map((r) => r.user_id);
+}
+
+export async function repoUpdateGroupConversationName(params: {
+  conversation_id: string;
+  name: string;
+}): Promise<boolean> {
+  const res = await pool.query<{ ok: number }>(
+    `
+      UPDATE public.chat_conversations
+      SET
+        group_name = $2::text,
+        updated_at = now()
+      WHERE id = $1::uuid
+        AND type = 'group'
+      RETURNING 1 AS ok
+    `,
+    [params.conversation_id, params.name]
+  );
+  return Boolean(res.rows[0]?.ok);
+}
+
+export async function repoAddGroupConversationMembers(params: {
+  conversation_id: string;
+  user_ids: number[];
+}): Promise<void> {
+  await pool.query(
+    `
+      INSERT INTO public.chat_conversation_participants (conversation_id, user_id, joined_at)
+      SELECT $1::uuid, u::int, now()
+      FROM unnest($2::int[]) AS u
+      ON CONFLICT (conversation_id, user_id) DO NOTHING
+    `,
+    [params.conversation_id, params.user_ids]
+  );
+}
+
+export async function repoRemoveGroupConversationMember(params: {
+  conversation_id: string;
+  user_id: number;
+}): Promise<boolean> {
+  const res = await pool.query<{ ok: number }>(
+    `
+      DELETE FROM public.chat_conversation_participants
+      WHERE conversation_id = $1::uuid
+        AND user_id = $2::int
+      RETURNING 1 AS ok
+    `,
+    [params.conversation_id, params.user_id]
+  );
+  return Boolean(res.rows[0]?.ok);
+}
+
+export async function repoDeleteGroupConversation(params: {
+  conversation_id: string;
+}): Promise<boolean> {
+  const res = await pool.query<{ ok: number }>(
+    `
+      DELETE FROM public.chat_conversations
+      WHERE id = $1::uuid
+        AND type = 'group'
+      RETURNING 1 AS ok
+    `,
+    [params.conversation_id]
+  );
+  return Boolean(res.rows[0]?.ok);
 }
 
 export async function repoGetOrCreateDirectConversation(params: { user_id: number; other_user_id: number }): Promise<string> {

@@ -30,6 +30,7 @@ export type ClientRow = {
   bill_name: string | null
   bill_street: string | null
   bill_house_number: string | null
+  bill_address_complement: string | null
   bill_postal_code: string | null
   bill_city: string | null
   bill_country: string | null
@@ -38,6 +39,7 @@ export type ClientRow = {
   deliv_name: string | null
   deliv_street: string | null
   deliv_house_number: string | null
+  deliv_address_complement: string | null
   deliv_postal_code: string | null
   deliv_city: string | null
   deliv_country: string | null
@@ -51,18 +53,20 @@ export type ClientRow = {
   contact_first_name: string | null
   contact_last_name: string | null
   contact_email: string | null
+  contact_phone_direct: string | null
   contact_phone_personal: string | null
   contact_role: string | null
   contact_civility: string | null
 
   // Liste de contacts pour le dropdown
-contacts: Array<{
-  contact_id: string
-  full_name: string | null
-  email: string | null
-  role: string | null
-  phone_personal: string | null
-}>
+ contacts: Array<{
+   contact_id: string
+   full_name: string | null
+   email: string | null
+   role: string | null
+   phone_direct: string | null
+   phone_personal: string | null
+ }>
 
 
   // Payment modes
@@ -112,10 +116,12 @@ export async function listClients(q = "", limit = 25): Promise<ClientRow[]> {
 
     -- Facturation
     af.name AS bill_name, af.street AS bill_street, af.house_number AS bill_house_number,
+    af.address_complement AS bill_address_complement,
     af.postal_code AS bill_postal_code, af.city AS bill_city, af.country AS bill_country,
 
     -- Livraison
     al.name AS deliv_name, al.street AS deliv_street, al.house_number AS deliv_house_number,
+    al.address_complement AS deliv_address_complement,
     al.postal_code AS deliv_postal_code, al.city AS deliv_city, al.country AS deliv_country,
 
     -- Banque
@@ -123,7 +129,7 @@ export async function listClients(q = "", limit = 25): Promise<ClientRow[]> {
 
     -- Contact principal (aplati)
     ct.first_name AS contact_first_name, ct.last_name AS contact_last_name,
-    ct.email AS contact_email, ct.phone_personal AS contact_phone_personal,
+    ct.email AS contact_email, ct.phone_direct AS contact_phone_direct, ct.phone_personal AS contact_phone_personal,
     ct.role AS contact_role, ct.civility AS contact_civility,
 
     -- Tous les contacts du client (pour dropdown)
@@ -134,6 +140,7 @@ export async function listClients(q = "", limit = 25): Promise<ClientRow[]> {
           'full_name',       trim(concat(ct2.civility,' ',ct2.first_name,' ',ct2.last_name)),
           'email',           ct2.email,
           'role',            ct2.role,
+          'phone_direct',    ct2.phone_direct,
           'phone_personal',  ct2.phone_personal
         )
       ) FILTER (WHERE ct2.contact_id IS NOT NULL),
@@ -229,6 +236,7 @@ export type ClientContactRow = {
   first_name: string;
   last_name: string;
   email: string;
+  phone_direct: string | null;
   phone_personal: string | null;
   role: string | null;
   civility: string | null;
@@ -243,6 +251,7 @@ export async function listClientContacts(clientId: string): Promise<ClientContac
       first_name,
       last_name,
       email,
+      phone_direct,
       phone_personal,
       role,
       civility

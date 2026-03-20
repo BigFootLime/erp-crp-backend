@@ -10,6 +10,7 @@ const nafRegex = /^\d{4}[A-Z]$/;
 const frVatRegex = /^FR[0-9A-Z]{2}\s?\d{9}$/i;
 const ibanRegex = /^[A-Z]{2}[0-9A-Z]{13,32}$/i;
 const bicRegex = /^[A-Z0-9]{8}([A-Z0-9]{3})?$/i;
+const CIVILITY_OPTIONS = ["Madame", "Monsieur"] as const;
 const clientCodeFormatMessage = `Le code client doit être au format ${codeFormatExample("client")}.`;
 
 function emptyStringToUndefined(value: unknown) {
@@ -41,6 +42,7 @@ type ContactInput = {
   first_name?: string | null;
   last_name?: string | null;
   email?: string | null;
+  phone_direct?: string | null;
   phone_personal?: string | null;
   role?: string | null;
   civility?: string | null;
@@ -51,6 +53,7 @@ type NormalizedContact = {
   first_name: string;
   last_name: string;
   email: string;
+  phone_direct?: string | null;
   phone_personal?: string | null;
   role?: string | null;
   civility?: string | null;
@@ -63,6 +66,7 @@ function isBlankContactInput(value: ContactInput | undefined | null) {
     value.first_name,
     value.last_name,
     value.email,
+    value.phone_direct,
     value.phone_personal,
     value.role,
     value.civility,
@@ -77,6 +81,7 @@ function normalizeContact(value: ContactInput): NormalizedContact | undefined {
     first_name: value.first_name?.trim() ?? "",
     last_name: value.last_name?.trim() ?? "",
     email: value.email?.trim() ?? "",
+    ...(optionalTrimmedText(value.phone_direct) ? { phone_direct: optionalTrimmedText(value.phone_direct) } : {}),
     ...(optionalTrimmedText(value.phone_personal) ? { phone_personal: optionalTrimmedText(value.phone_personal) } : {}),
     ...(optionalTrimmedText(value.role) ? { role: optionalTrimmedText(value.role) } : {}),
     ...(optionalTrimmedText(value.civility) ? { civility: optionalTrimmedText(value.civility) } : {}),
@@ -87,6 +92,7 @@ export const addressSchema = z.object({
   name: requiredText("Nom de l'adresse requis"),
   street: requiredText("Rue requise"),
   house_number: z.preprocess(emptyStringToUndefined, z.string().trim().optional().nullable()),
+  address_complement: z.preprocess(emptyStringToUndefined, z.string().trim().optional().nullable()),
   postal_code: requiredText("Code postal requis"),
   city: requiredText("Ville requise"),
   country: requiredText("Pays requis"),
@@ -101,6 +107,7 @@ const contactInputSchema = z
     first_name: z.union([z.string(), z.literal(""), z.null()]).optional(),
     last_name: z.union([z.string(), z.literal(""), z.null()]).optional(),
     email: z.union([z.string(), z.literal(""), z.null()]).optional(),
+    phone_direct: z.union([z.string(), z.literal(""), z.null()]).optional(),
     phone_personal: z.union([z.string(), z.literal(""), z.null()]).optional(),
     role: z.union([z.string(), z.literal(""), z.null()]).optional(),
     civility: z.union([z.string(), z.literal(""), z.null()]).optional(),
@@ -124,14 +131,69 @@ const contactInputSchema = z
     if (!z.string().email("Email invalide").safeParse(value.email.trim()).success) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["email"], message: "Email invalide" });
     }
+
+    const civility = typeof value.civility === "string" ? value.civility.trim() : "";
+    if (civility && !CIVILITY_OPTIONS.includes(civility as (typeof CIVILITY_OPTIONS)[number])) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["civility"],
+        message: "Civilité invalide (Madame ou Monsieur)",
+      });
+    }
   });
 
 const normalizedContactSchema = contactInputSchema.transform((value) => normalizeContact(value));
 
-export const bankSchema = z.object({
-  bank_name: requiredText("Nom de la banque requis"),
-  iban: requiredText("IBAN requis").regex(ibanRegex, "IBAN invalide"),
-  bic: requiredText("BIC requis").regex(bicRegex, "BIC invalide"),
+const bankInputSchema = z
+  .object({
+    bank_name: z.preprocess(emptyStringToUndefined, z.string().trim().optional()),
+    iban: z.preprocess(emptyStringToUndefined, z.string().trim().optional()),
+    bic: z.preprocess(emptyStringToUndefined, z.string().trim().optional()),
+  })
+  .superRefine((value, ctx) => {
+    const bankName = typeof value.bank_name === "string" ? value.bank_name.trim() : "";
+    const ibanRaw = typeof value.iban === "string" ? value.iban.trim() : "";
+    const bicRaw = typeof value.bic === "string" ? value.bic.trim() : "";
+
+    if (!bankName && !ibanRaw && !bicRaw) return;
+
+    if (!ibanRaw) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["iban"],
+        message: "IBAN requis pour enregistrer des coordonnées bancaires",
+      });
+      return;
+    }
+
+    const iban = ibanRaw.replace(/\s+/g, "").toUpperCase();
+    if (!ibanRegex.test(iban)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["iban"], message: "IBAN invalide" });
+    }
+
+    if (bicRaw) {
+      const bic = bicRaw.replace(/\s+/g, "").toUpperCase();
+      if (!bicRegex.test(bic)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["bic"], message: "BIC invalide" });
+      }
+    }
+  });
+
+export const bankSchema = bankInputSchema.transform((value) => {
+  const bankName = typeof value.bank_name === "string" ? value.bank_name.trim() : "";
+  const ibanRaw = typeof value.iban === "string" ? value.iban.trim() : "";
+  const bicRaw = typeof value.bic === "string" ? value.bic.trim() : "";
+
+  if (!bankName && !ibanRaw && !bicRaw) return undefined;
+
+  const iban = ibanRaw ? ibanRaw.replace(/\s+/g, "").toUpperCase() : undefined;
+  const bic = bicRaw ? bicRaw.replace(/\s+/g, "").toUpperCase() : undefined;
+
+  return {
+    ...(bankName ? { bank_name: bankName } : {}),
+    ...(iban ? { iban } : {}),
+    ...(bic ? { bic } : {}),
+  };
 });
 
 export const createClientSchema = z.object({
@@ -160,7 +222,7 @@ export const createClientSchema = z.object({
     z.string().uuid("L'entité de facturation est invalide").optional()
   ),
   payment_mode_ids: z.array(z.string().uuid("Le mode de règlement est invalide")).default([]),
-  bank: bankSchema,
+  bank: bankSchema.optional().transform((value) => value ?? undefined),
   observations: z.preprocess(emptyStringToUndefined, z.string().trim().optional()),
   provided_documents_id: z.preprocess(
     emptyStringToUndefined,

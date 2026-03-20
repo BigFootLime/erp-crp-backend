@@ -178,6 +178,35 @@ describe("/api/v1/chat", () => {
     expect(res.body.conversation.group).toMatchObject({ name: "Equipe Atelier", participant_count: 3 });
   });
 
+  it("POST /api/v1/chat/conversations/:id/archive archives the conversation for me", async () => {
+    const convId = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+    mocks.poolQuery.mockResolvedValueOnce({ rows: [{ archived_at: "2026-03-20T10:00:00.000Z" }] });
+
+    const res = await request(app)
+      .post(`/api/v1/chat/conversations/${convId}/archive`)
+      .set("Authorization", "Bearer fake");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ archived_at: "2026-03-20T10:00:00.000Z" });
+
+    const sql = String(mocks.poolQuery.mock.calls[0]?.[0] ?? "");
+    expect(sql).toContain("UPDATE public.chat_conversation_participants");
+    expect(sql).toContain("SET");
+    expect(sql).toContain("archived_at");
+  });
+
+  it("POST /api/v1/chat/conversations/:id/archive returns 404 when not participant", async () => {
+    const convId = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
+    mocks.poolQuery.mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app)
+      .post(`/api/v1/chat/conversations/${convId}/archive`)
+      .set("Authorization", "Bearer fake");
+
+    expect(res.status).toBe(404);
+    expect(res.body).toMatchObject({ success: false, code: "CONVERSATION_NOT_FOUND" });
+  });
+
   it("GET /api/v1/chat/conversations/:id/participants returns {items}", async () => {
     const convId = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
 
@@ -225,5 +254,163 @@ describe("/api/v1/chat", () => {
 
     expect(res.status).toBe(404);
     expect(res.body).toMatchObject({ success: false, code: "CONVERSATION_NOT_FOUND" });
+  });
+
+  it("PATCH /api/v1/chat/conversations/:id/group renames group conversation", async () => {
+    const convId = "ffffffff-ffff-ffff-ffff-ffffffffffff";
+
+    const baseRow = {
+      conversation_id: convId,
+      type: "group",
+      group_name: "Equipe Atelier",
+      created_by: 1,
+      participant_count: 3,
+      created_at: "2026-03-20T10:00:00.000Z",
+      updated_at: "2026-03-20T10:00:00.000Z",
+      last_message_at: null,
+      last_read_at: null,
+      archived_at: null,
+
+      other_user_id: null,
+      other_username: null,
+      other_name: null,
+      other_surname: null,
+      other_email: null,
+      other_role: null,
+      other_status: null,
+      other_profile_picture: null,
+
+      last_message_id: null,
+      last_message_sender_user_id: null,
+      last_message_type: null,
+      last_message_content: null,
+      last_message_created_at: null,
+      unread_count: 0,
+    };
+
+    mocks.poolQuery
+      // repoGetChatConversation
+      .mockResolvedValueOnce({ rows: [baseRow] })
+      // repoUpdateGroupConversationName
+      .mockResolvedValueOnce({ rows: [{ ok: 1 }] })
+      // repoListChatConversationParticipantUserIds
+      .mockResolvedValueOnce({ rows: [{ user_id: 1 }, { user_id: 2 }, { user_id: 3 }] })
+      // repoGetChatConversation after update
+      .mockResolvedValueOnce({ rows: [{ ...baseRow, group_name: "Nouveau nom" }] });
+
+    const res = await request(app)
+      .patch(`/api/v1/chat/conversations/${convId}/group`)
+      .set("Authorization", "Bearer fake")
+      .send({ name: "Nouveau nom" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.conversation).toMatchObject({ id: convId, type: "group" });
+    expect(res.body.conversation.group).toMatchObject({ name: "Nouveau nom" });
+  });
+
+  it("POST /api/v1/chat/conversations/:id/group/members adds members", async () => {
+    const convId = "abababab-abab-abab-abab-abababababab";
+
+    const baseRow = {
+      conversation_id: convId,
+      type: "group",
+      group_name: "Equipe Atelier",
+      created_by: 1,
+      participant_count: 3,
+      created_at: "2026-03-20T10:00:00.000Z",
+      updated_at: "2026-03-20T10:00:00.000Z",
+      last_message_at: null,
+      last_read_at: null,
+      archived_at: null,
+
+      other_user_id: null,
+      other_username: null,
+      other_name: null,
+      other_surname: null,
+      other_email: null,
+      other_role: null,
+      other_status: null,
+      other_profile_picture: null,
+
+      last_message_id: null,
+      last_message_sender_user_id: null,
+      last_message_type: null,
+      last_message_content: null,
+      last_message_created_at: null,
+      unread_count: 0,
+    };
+
+    mocks.poolQuery
+      // repoGetChatConversation
+      .mockResolvedValueOnce({ rows: [baseRow] })
+      // repoListChatUsersByIds
+      .mockResolvedValueOnce({
+        rows: [
+          { id: 4, username: "U4", name: "X", surname: "Y", email: "u4@example.com", role: "Atelier", status: "Active", profile_picture: null },
+        ],
+      })
+      // repoAddGroupConversationMembers
+      .mockResolvedValueOnce({ rows: [] })
+      // repoListChatConversationParticipantUserIds
+      .mockResolvedValueOnce({ rows: [{ user_id: 1 }, { user_id: 2 }, { user_id: 3 }, { user_id: 4 }] })
+      // repoGetChatConversation after update
+      .mockResolvedValueOnce({ rows: [{ ...baseRow, participant_count: 4 }] });
+
+    const res = await request(app)
+      .post(`/api/v1/chat/conversations/${convId}/group/members`)
+      .set("Authorization", "Bearer fake")
+      .send({ user_ids: [4] });
+
+    expect(res.status).toBe(200);
+    expect(res.body.conversation).toMatchObject({ id: convId, type: "group" });
+    expect(res.body.conversation.group).toMatchObject({ participant_count: 4 });
+  });
+
+  it("DELETE /api/v1/chat/conversations/:id/group/members/:userId removes member", async () => {
+    const convId = "cdcdcdcd-cdcd-cdcd-cdcd-cdcdcdcdcdcd";
+
+    const baseRow = {
+      conversation_id: convId,
+      type: "group",
+      group_name: "Equipe Atelier",
+      created_by: 1,
+      participant_count: 3,
+      created_at: "2026-03-20T10:00:00.000Z",
+      updated_at: "2026-03-20T10:00:00.000Z",
+      last_message_at: null,
+      last_read_at: null,
+      archived_at: null,
+
+      other_user_id: null,
+      other_username: null,
+      other_name: null,
+      other_surname: null,
+      other_email: null,
+      other_role: null,
+      other_status: null,
+      other_profile_picture: null,
+
+      last_message_id: null,
+      last_message_sender_user_id: null,
+      last_message_type: null,
+      last_message_content: null,
+      last_message_created_at: null,
+      unread_count: 0,
+    };
+
+    mocks.poolQuery
+      // repoGetChatConversation
+      .mockResolvedValueOnce({ rows: [baseRow] })
+      // repoRemoveGroupConversationMember
+      .mockResolvedValueOnce({ rows: [{ ok: 1 }] })
+      // repoListChatConversationParticipantUserIds
+      .mockResolvedValueOnce({ rows: [{ user_id: 1 }, { user_id: 3 }] });
+
+    const res = await request(app)
+      .delete(`/api/v1/chat/conversations/${convId}/group/members/2`)
+      .set("Authorization", "Bearer fake");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true });
   });
 });

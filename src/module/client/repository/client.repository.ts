@@ -82,10 +82,10 @@ async function nextClientId(client: any): Promise<string> {
 
 async function insertAddressFacturation(client: any, a: CreateClientDTO["bill_address"]) {
   const { rows } = await client.query(
-    `INSERT INTO adresse_facturation (street,house_number,postal_code,city,country,name)
-     VALUES ($1,$2,$3,$4,$5,$6)
+    `INSERT INTO adresse_facturation (street,house_number,address_complement,postal_code,city,country,name)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)
      RETURNING bill_address_id`,
-    [a.street, a.house_number ?? null, a.postal_code, a.city, a.country, a.name]
+    [a.street, a.house_number ?? null, a.address_complement ?? null, a.postal_code, a.city, a.country, a.name]
   );
   return rows[0].bill_address_id as string;
 }
@@ -108,21 +108,21 @@ async function ensureClientCodeAvailable(db: any, clientCode: string, excludeCli
 
 async function insertAddressLivraison(client: any, a: CreateClientDTO["delivery_address"]) {
   const { rows } = await client.query(
-    `INSERT INTO adresse_livraison (street,house_number,postal_code,city,country,name)
-     VALUES ($1,$2,$3,$4,$5,$6)
+    `INSERT INTO adresse_livraison (street,house_number,address_complement,postal_code,city,country,name)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)
      RETURNING delivery_address_id`,
-    [a.street, a.house_number ?? null, a.postal_code, a.city, a.country, a.name]
+    [a.street, a.house_number ?? null, a.address_complement ?? null, a.postal_code, a.city, a.country, a.name]
   );
   return rows[0].delivery_address_id as string;
 }
 
-async function upsertBank(client: any, bank: CreateClientDTO["bank"]) {
+async function upsertBank(client: any, bank: NonNullable<CreateClientDTO["bank"]>) {
   const { rows } = await client.query(
     `INSERT INTO informations_bancaires (iban,bic,name)
      VALUES ($1,$2,$3)
      ON CONFLICT (iban) DO UPDATE SET bic=EXCLUDED.bic, name=EXCLUDED.name
      RETURNING bank_info_id`,
-    [bank.iban, bank.bic, bank.bank_name]
+    [bank.iban, bank.bic ?? null, bank.bank_name ?? null]
   );
   return rows[0].bank_info_id as string;
 }
@@ -132,7 +132,7 @@ async function insertClient(
   dto: CreateClientDTO,
   billAddrId: string,
   delivAddrId: string,
-  bankInfoId: string,
+  bankInfoId: string | null,
   clientCode: string
 ): Promise<string> {
   const normalizedProvidedDocsId =
@@ -151,7 +151,7 @@ async function insertClient(
     siret, vat_number, naf_code,
     status, blocked, reason, creation_date,
     biller_id,
-    delivery_address_id, bill_address_id, bank_info_id,
+     delivery_address_id, bill_address_id, bank_info_id,
     observations, provided_documents_id,
     quality_levels               
   ) VALUES (
@@ -174,31 +174,53 @@ async function insertClient(
   dto.email ?? "", dto.phone ?? "", dto.website_url ?? "",
   dto.siret ?? "", dto.vat_number ?? "", dto.naf_code ?? "",
   dto.status, dto.blocked, dto.reason ?? "", dto.creation_date,
-  normalizedBillerId,
-  delivAddrId, billAddrId, bankInfoId,
-  dto.observations ?? "", normalizedProvidedDocsId,
-  dto.quality_levels ?? []              // ⬅️ nouveau param
+   normalizedBillerId,
+   delivAddrId, billAddrId, bankInfoId,
+   dto.observations ?? "", normalizedProvidedDocsId,
+   dto.quality_levels ?? []              // ⬅️ nouveau param
 ]);
 
   return rows[0].client_id as string;
 }
 
-async function insertPrimaryContact(client: any, dto: NonNullable<CreateClientDTO["primary_contact"]>, clientId: string) {
+async function insertPrimaryContact(
+  client: any,
+  dto: NonNullable<CreateClientDTO["primary_contact"]>,
+  clientId: string
+) {
   const { rows } = await client.query(
-    `INSERT INTO contacts (first_name,last_name,civility,role,phone_personal,email,client_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7)
+    `INSERT INTO contacts (first_name,last_name,civility,role,phone_direct,phone_personal,email,client_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
      RETURNING contact_id`,
-    [dto.first_name, dto.last_name, dto.civility ?? null, dto.role ?? null, dto.phone_personal ?? null, dto.email, clientId]
+    [
+      dto.first_name,
+      dto.last_name,
+      dto.civility ?? null,
+      dto.role ?? null,
+      dto.phone_direct ?? null,
+      dto.phone_personal ?? null,
+      dto.email,
+      clientId,
+    ]
   );
   return rows[0].contact_id as string;
 }
 
 async function insertContact(db: any, c: NonNullable<CreateClientDTO["contacts"]>[number], clientId: string) {
   const { rows } = await db.query(
-    `INSERT INTO contacts (first_name,last_name,civility,role,phone_personal,email,client_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7)
+    `INSERT INTO contacts (first_name,last_name,civility,role,phone_direct,phone_personal,email,client_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
      RETURNING contact_id`,
-    [c.first_name, c.last_name, c.civility ?? null, c.role ?? null, c.phone_personal ?? null, c.email, clientId]
+    [
+      c.first_name,
+      c.last_name,
+      c.civility ?? null,
+      c.role ?? null,
+      c.phone_direct ?? null,
+      c.phone_personal ?? null,
+      c.email,
+      clientId,
+    ]
   );
   return rows[0].contact_id as string;
 }
@@ -214,14 +236,16 @@ async function updateContact(
             last_name      = $2,
             civility       = $3,
             role           = $4,
-            phone_personal = $5,
-            email          = $6
-      WHERE contact_id = $7`,
+            phone_direct   = $5,
+            phone_personal = $6,
+            email          = $7
+      WHERE contact_id = $8`,
     [
       c.first_name,
       c.last_name,
       c.civility ?? null,
       c.role ?? null,
+      c.phone_direct ?? null,
       c.phone_personal ?? null,
       c.email,
       contactId,
@@ -325,7 +349,7 @@ export async function repoCreateClient(
 
     const billAddrId = await insertAddressFacturation(db, dto.bill_address);
     const delivAddrId = await insertAddressLivraison(db, dto.delivery_address);
-    const bankInfoId = await upsertBank(db, dto.bank);
+    const bankInfoId = dto.bank ? await upsertBank(db, dto.bank) : null;
 
     // ✅ récupère l'ID généré par le trigger
     let clientId = "";
@@ -436,14 +460,16 @@ export async function repoUpdateClient(id: string, dto: CreateClientDTO, audit: 
         `UPDATE adresse_facturation
             SET street       = $1,
                 house_number = $2,
-                postal_code  = $3,
-                city         = $4,
-                country      = $5,
-                name         = $6
-          WHERE bill_address_id = $7`,
+                address_complement = $3,
+                postal_code  = $4,
+                city         = $5,
+                country      = $6,
+                name         = $7
+          WHERE bill_address_id = $8`,
         [
           dto.bill_address.street,
           dto.bill_address.house_number ?? null,
+          dto.bill_address.address_complement ?? null,
           dto.bill_address.postal_code,
           dto.bill_address.city,
           dto.bill_address.country,
@@ -459,14 +485,16 @@ export async function repoUpdateClient(id: string, dto: CreateClientDTO, audit: 
         `UPDATE adresse_livraison
             SET street       = $1,
                 house_number = $2,
-                postal_code  = $3,
-                city         = $4,
-                country      = $5,
-                name         = $6
-          WHERE delivery_address_id = $7`,
+                address_complement = $3,
+                postal_code  = $4,
+                city         = $5,
+                country      = $6,
+                name         = $7
+          WHERE delivery_address_id = $8`,
         [
           dto.delivery_address.street,
           dto.delivery_address.house_number ?? null,
+          dto.delivery_address.address_complement ?? null,
           dto.delivery_address.postal_code,
           dto.delivery_address.city,
           dto.delivery_address.country,
@@ -477,12 +505,14 @@ export async function repoUpdateClient(id: string, dto: CreateClientDTO, audit: 
     }
 
     // 4) Banque : upsert + rattachement au client
-    const newBankInfoId = await upsertBank(db, dto.bank);
-    if (!bank_info_id || bank_info_id !== newBankInfoId) {
-      await db.query(
-        `UPDATE clients SET bank_info_id = $1 WHERE client_id = $2`,
-        [newBankInfoId, id]
-      );
+    if (dto.bank) {
+      const newBankInfoId = await upsertBank(db, dto.bank);
+      if (!bank_info_id || bank_info_id !== newBankInfoId) {
+        await db.query(
+          `UPDATE clients SET bank_info_id = $1 WHERE client_id = $2`,
+          [newBankInfoId, id]
+        );
+      }
     }
 
     // 5) Normalisation provided_documents_id

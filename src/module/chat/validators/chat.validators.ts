@@ -20,6 +20,12 @@ export const chatConversationIdParamSchema = z.object({
 
 export type ChatConversationIdParamDTO = z.infer<typeof chatConversationIdParamSchema>;
 
+export const chatUserIdParamSchema = z.object({
+  userId: z.coerce.number().int().min(1),
+});
+
+export type ChatUserIdParamDTO = z.infer<typeof chatUserIdParamSchema>;
+
 export const openDirectConversationBodySchema = z.object({
   user_id: z.coerce.number().int().min(1),
 });
@@ -38,3 +44,15 @@ export const createGroupConversationBodySchema = z.object({
 });
 
 export type CreateGroupConversationBodyDTO = z.infer<typeof createGroupConversationBodySchema>;
+
+export const renameGroupConversationBodySchema = z.object({
+  name: z.string().trim().min(1).max(120),
+});
+
+export type RenameGroupConversationBodyDTO = z.infer<typeof renameGroupConversationBodySchema>;
+
+export const addGroupMembersBodySchema = z.object({
+  user_ids: z.array(z.coerce.number().int().min(1)).min(1).max(50),
+});
+
+export type AddGroupMembersBodyDTO = z.infer<typeof addGroupMembersBodySchema>;
