@@ -5,9 +5,17 @@ export type Paginated<T> = {
 
 export type ArticleType = "PIECE_TECHNIQUE" | "PURCHASED";
 export type ArticleCategory = "fabrique" | "matiere" | "traitement" | "achat";
+export type ArticleBusinessCategory =
+  | "matiere_premiere"
+  | "traitement_surface"
+  | "achat_revente"
+  | "achat_transforme"
+  | "sous_traitance"
+  | "piece_finie_fabriquee";
+export type ArticleWorkflowStatus = "EN_DEVIS" | "VALIDE";
 
 export type StockArticleCategoryOption = {
-  code: ArticleCategory;
+  code: ArticleBusinessCategory;
   label: string;
   code_segment: string;
   stock_managed_default: boolean;
@@ -26,10 +34,17 @@ export type StockArticleFamily = {
 
 export type StockArticleListItem = {
   id: string;
+  root_article_id: string;
+  parent_article_id: string | null;
+  version_number: number;
+  plan_index: number;
+  status: ArticleWorkflowStatus;
+  projet_id: number | null;
   code: string;
   designation: string;
   article_type: ArticleType;
   article_category: ArticleCategory;
+  article_categories: ArticleBusinessCategory[];
   family_code: string;
   stock_managed: boolean;
   piece_technique_id: string | null;

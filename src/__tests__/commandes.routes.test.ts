@@ -331,6 +331,163 @@ describe("/api/v1/commandes", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  it("POST /api/v1/commandes rejects preparatory sources when officialization flag is false", async () => {
+    mocks.clientQuery
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ id: "123" }] }) // nextval commande_client_id_seq
+      .mockResolvedValueOnce({ rows: [{ id: "123" }] }) // INSERT commande_client
+      .mockResolvedValueOnce({ rows: [] }); // ROLLBACK
+
+    const payload = {
+      client_id: "001",
+      date_commande: "2026-03-26",
+      officialize_preparatory_data: false,
+      lignes: [
+        {
+          source_article_devis_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          designation: "Line preparatory",
+          code_piece: "PCT-001",
+          quantite: 1,
+          prix_unitaire_ht: 100,
+        },
+      ],
+    };
+
+    const res = await request(app).post("/api/v1/commandes").field("data", JSON.stringify(payload));
+
+    expect(res.status).toBe(400);
+    const rollbackCall = mocks.clientQuery.mock.calls.find((c) => c[0] === "ROLLBACK");
+    expect(rollbackCall).toBeTruthy();
+  });
+
+  it("POST /api/v1/commandes officializes preparatory data idempotently", async () => {
+    let seq = 122;
+    let piecePromoted = false;
+    let articlePromoted = false;
+
+    mocks.clientQuery.mockImplementation(async (sql: unknown, params?: unknown[]) => {
+      const q = String(sql);
+      if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
+
+      if (q.includes("nextval('public.commande_client_id_seq')")) {
+        seq += 1;
+        return { rows: [{ id: String(seq) }] };
+      }
+
+      if (q.includes("INSERT INTO commande_client")) {
+        return { rows: [{ id: String(seq) }] };
+      }
+
+      if (q.includes("FROM public.article_devis ad") && q.includes("dossier_technique_piece_devis")) {
+        return {
+          rows: [
+            {
+              article_devis_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+              article_devis_devis_id: 7,
+              article_code: "ART-DV-001",
+              article_designation: "Article devis",
+              primary_category: "piece_finie_fabriquee",
+              article_categories: ["piece_finie_fabriquee"],
+              family_code: "PT",
+              plan_index: 1,
+              projet_id: null,
+              source_official_article_id: null,
+              dossier_devis_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+              dossier_devis_devis_id: 7,
+              dossier_code_piece: "PCT-001",
+              dossier_designation: "Pièce devis",
+              source_official_piece_technique_id: null,
+              dossier_payload: { famille_id: "33333333-3333-3333-3333-333333333333" },
+            },
+          ],
+        };
+      }
+
+      if (q.includes("FROM public.dossier_technique_piece_devis_promotion")) {
+        return { rows: piecePromoted ? [{ promoted_piece_technique_id: "99999999-9999-9999-9999-999999999999" }] : [] };
+      }
+      if (q.includes("INSERT INTO public.pieces_techniques")) {
+        piecePromoted = true;
+        return { rows: [] };
+      }
+      if (q.includes("INSERT INTO public.dossier_technique_piece_devis_promotion")) {
+        piecePromoted = true;
+        return { rows: [] };
+      }
+
+      if (q.includes("FROM public.article_devis_promotion")) {
+        return { rows: articlePromoted ? [{ promoted_article_id: "88888888-8888-8888-8888-888888888888" }] : [] };
+      }
+      if (q.includes("INSERT INTO public.articles (") && q.includes("status")) {
+        articlePromoted = true;
+        return { rows: [] };
+      }
+      if (q.includes("INSERT INTO public.article_devis_promotion")) {
+        articlePromoted = true;
+        return { rows: [] };
+      }
+      if (q.includes("SELECT") && q.includes("FROM public.articles a") && q.includes("WHERE a.id = $1::uuid")) {
+        return {
+          rows: [
+            {
+              article_id: "88888888-8888-8888-8888-888888888888",
+              article_code: "ART-DV-001",
+              article_designation: "Article devis",
+              article_category: "fabrique",
+              family_code: "PT",
+              article_unite: "u",
+              piece_technique_id: "99999999-9999-9999-9999-999999999999",
+              piece_code: "PCT-001",
+              piece_designation: "Pièce devis",
+              stock_managed: true,
+              is_active: true,
+            },
+          ],
+        };
+      }
+
+      if (q.includes("INSERT INTO commande_ligne")) return { rows: [{ id: "1" }] };
+      if (q.includes("UPDATE public.article_devis_promotion")) return { rows: [] };
+      if (q.includes("UPDATE public.dossier_technique_piece_devis_promotion")) return { rows: [] };
+      if (q.includes("UPDATE public.articles a") || q.includes("UPDATE public.articles SET status = 'VALIDE'")) return { rows: [] };
+      if (q.includes("INSERT INTO commande_historique")) return { rows: [] };
+      if (q.includes("DELETE FROM public.article_category_link")) return { rows: [] };
+      if (q.includes("INSERT INTO public.article_category_link")) return { rows: [] };
+
+      return { rows: [] };
+    });
+
+    const payload = {
+      client_id: "001",
+      date_commande: "2026-03-26",
+      officialize_preparatory_data: true,
+      lignes: [
+        {
+          source_article_devis_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          source_dossier_devis_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+          designation: "Line preparatory",
+          code_piece: "PCT-001",
+          quantite: 1,
+          prix_unitaire_ht: 100,
+        },
+      ],
+    };
+
+    const first = await request(app).post("/api/v1/commandes").field("data", JSON.stringify(payload));
+    const second = await request(app).post("/api/v1/commandes").field("data", JSON.stringify(payload));
+
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+
+    const pieceCreateCalls = mocks.clientQuery.mock.calls.filter((c) => String(c[0]).includes("INSERT INTO public.pieces_techniques"));
+    const articleCreateCalls = mocks.clientQuery.mock.calls.filter((c) =>
+      String(c[0]).includes("INSERT INTO public.articles (") && String(c[0]).includes("status")
+    );
+
+    expect(pieceCreateCalls.length).toBe(1);
+    expect(articleCreateCalls.length).toBe(1);
+  });
+
   it("PATCH /api/v1/commandes/:id works and replaces lignes", async () => {
     const ARTICLE_ID = "11111111-1111-1111-1111-111111111111";
     const PIECE_ID = "22222222-2222-2222-2222-222222222222";

@@ -21,7 +21,7 @@ export type CommandeHeaderLite = {
 export type DevisHeaderLite = {
   id: number;
   numero: string;
-  client_id: string;
+  client_id: string | null;
   date_creation: string;
   date_validite: string | null;
   statut: string;
@@ -32,7 +32,7 @@ export type DevisHeaderLite = {
 export type Affaire = {
   id: number;
   reference: string;
-  client_id: string;
+  client_id: string | null;
   commande_id: number | null;
   devis_id: number | null;
   type_affaire: string;
@@ -51,7 +51,7 @@ export type AffaireListItem = Omit<Affaire, "commande" | "devis">;
 
 export type AffaireUpsertPayload = {
   reference?: string;
-  client_id?: string;
+  client_id?: string | null;
   commande_id?: number | null;
   devis_id?: number | null;
   type_affaire?: string;

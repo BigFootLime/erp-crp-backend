@@ -15,6 +15,8 @@ export type CommandeClient = {
   id: number;
   numero: string;
   client_id: string | null;
+  devis_id?: number | null;
+  source_devis_version_id?: number | null;
   contact_id: string | null;
   destinataire_id: string | null;
   adresse_facturation_id: string | null;
@@ -96,6 +98,8 @@ export type CommandeClientLine = {
   commande_id: number;
   article_id?: string | null;
   piece_technique_id?: string | null;
+  source_article_devis_id?: string | null;
+  source_dossier_devis_id?: string | null;
   designation: string;
   code_piece: string | null;
   quantite: number;
@@ -173,6 +177,9 @@ export type CommandeToAffaire = {
 
 export type CommandeLigneInput = {
   article_id?: string | null;
+  piece_technique_id?: string | null;
+  source_article_devis_id?: string | null;
+  source_dossier_devis_id?: string | null;
   designation: string;
   code_piece?: string | null;
   quantite: number;
@@ -184,6 +191,27 @@ export type CommandeLigneInput = {
   delai_interne?: string | null;
   devis_numero?: string | null;
   famille?: string | null;
+  article_devis_data?: {
+    id: string;
+    devis_id: number;
+    code: string;
+    designation: string;
+    primary_category: string;
+    article_categories: string[];
+    family_code: string;
+    plan_index: number;
+    projet_id?: number | null;
+    source_official_article_id?: string | null;
+  } | null;
+  dossier_technique_piece_devis_data?: {
+    id: string;
+    article_devis_id: string;
+    devis_id: number;
+    code_piece: string;
+    designation: string;
+    source_official_piece_technique_id?: string | null;
+    payload?: Record<string, unknown>;
+  } | null;
 };
 
 export type CommandeEcheanceInput = {
@@ -196,6 +224,10 @@ export type CommandeEcheanceInput = {
 export type CreateCommandeInput = {
   numero?: string;
   client_id?: string | null;
+  devis_id?: number | null;
+  source_devis_updated_at?: string | null;
+  source_devis_version_id?: number | null;
+  officialize_preparatory_data?: boolean;
   date_commande?: string;
   contact_id?: string | null;
   destinataire_id?: string | null;

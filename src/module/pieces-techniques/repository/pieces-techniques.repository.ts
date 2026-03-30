@@ -102,6 +102,10 @@ function isPgUniqueViolation(err: unknown): boolean {
 function mapCoreRow(row: PieceTechniqueCoreRow): PieceTechnique {
   return {
     id: row.id,
+    article_id: row.article_id,
+    root_piece_technique_id: row.root_piece_technique_id,
+    parent_piece_technique_id: row.parent_piece_technique_id,
+    version_number: row.version_number,
     created_at: row.created_at,
     updated_at: row.updated_at,
     client_id: row.client_id,
@@ -128,6 +132,10 @@ function mapCoreRow(row: PieceTechniqueCoreRow): PieceTechnique {
 
 type PieceTechniqueCoreRow = {
   id: string;
+  article_id: string | null;
+  root_piece_technique_id: string;
+  parent_piece_technique_id: string | null;
+  version_number: number;
   created_at: string;
   updated_at: string;
   client_id: string | null;
@@ -220,6 +228,10 @@ export async function repoListPieceTechniques(filters: ListPiecesTechniquesQuery
   const dataSql = `
     SELECT
       p.id::text AS id,
+      p.article_id::text AS article_id,
+      p.root_piece_technique_id::text AS root_piece_technique_id,
+      p.parent_piece_technique_id::text AS parent_piece_technique_id,
+      p.version_number::int AS version_number,
       p.code_piece,
       p.designation,
       p.designation_2,
@@ -278,6 +290,10 @@ export async function repoGetPieceTechnique(id: string, includes: Set<string>): 
   const coreSql = `
     SELECT
       p.id::text AS id,
+      p.article_id::text AS article_id,
+      p.root_piece_technique_id::text AS root_piece_technique_id,
+      p.parent_piece_technique_id::text AS parent_piece_technique_id,
+      p.version_number::int AS version_number,
       p.created_at::text AS created_at,
       p.updated_at::text AS updated_at,
       p.client_id,
@@ -1133,6 +1149,7 @@ export async function repoCreatePieceTechnique(
     const actorUserId = audit.user_id;
     const createdBy = actorUserId;
     const updatedBy = actorUserId;
+    const pieceTechniqueId = crypto.randomUUID();
 
     // If the client is selected but the frontend did not send a name, derive it from the clients table.
     const clientIdForInsert = body.client_id ?? null;
@@ -1141,19 +1158,29 @@ export async function repoCreatePieceTechnique(
 
     const insertMainSQL = `
       INSERT INTO pieces_techniques (
+        id,
+        article_id,
+        root_piece_technique_id,
+        parent_piece_technique_id,
+        version_number,
         client_id, created_by, updated_by,
         famille_id, name_piece, code_piece, designation, designation_2,
         prix_unitaire, statut, en_fabrication, cycle, cycle_fabrication,
         code_client, client_name, ensemble
       )
       VALUES (
-        $1, $2, $3, $4,
-        $5, $6, $7, $8,
-        $9, $10, $11, $12, $13,
-        $14, $15, $16
+        $1::uuid, $2::uuid, $3::uuid, $4::uuid, $5,
+        $6, $7, $8, $9,
+        $10, $11, $12, $13,
+        $14, $15, $16, $17, $18,
+        $19, $20, $21
       )
       RETURNING
         id::text AS id,
+        article_id::text AS article_id,
+        root_piece_technique_id::text AS root_piece_technique_id,
+        parent_piece_technique_id::text AS parent_piece_technique_id,
+        version_number::int AS version_number,
         created_at::text AS created_at,
         updated_at::text AS updated_at,
         client_id,
@@ -1174,6 +1201,11 @@ export async function repoCreatePieceTechnique(
         ensemble
     `;
     const mainParams = [
+      pieceTechniqueId,
+      body.article_id ?? null,
+      body.root_piece_technique_id ?? pieceTechniqueId,
+      body.parent_piece_technique_id ?? null,
+      body.version_number ?? 1,
       clientIdForInsert,
       createdBy,
       updatedBy,
@@ -1514,6 +1546,10 @@ export async function repoUpdatePieceTechnique(
   };
 
   if (patch.client_id !== undefined) sets.push(`client_id = ${push(patch.client_id)}`);
+  if (patch.article_id !== undefined) sets.push(`article_id = ${push(patch.article_id)}::uuid`);
+  if (patch.root_piece_technique_id !== undefined) sets.push(`root_piece_technique_id = ${push(patch.root_piece_technique_id)}::uuid`);
+  if (patch.parent_piece_technique_id !== undefined) sets.push(`parent_piece_technique_id = ${push(patch.parent_piece_technique_id)}::uuid`);
+  if (patch.version_number !== undefined) sets.push(`version_number = ${push(patch.version_number)}::int`);
   if (patch.code_client !== undefined) sets.push(`code_client = ${push(patch.code_client)}`);
   if (patch.client_name !== undefined) sets.push(`client_name = ${push(patch.client_name)}`);
   if (patch.famille_id !== undefined) sets.push(`famille_id = ${push(patch.famille_id)}::uuid`);

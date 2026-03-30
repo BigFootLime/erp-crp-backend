@@ -10,6 +10,7 @@ import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repos
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 import type {
   ArticleCategory,
+  ArticleBusinessCategory,
   Paginated,
   StockAnalytics,
   StockArticleCategoryOption,
@@ -72,40 +73,72 @@ export type AuditContext = {
   client_session_id: string | null;
 };
 
+const ARTICLE_PRIMARY_CATEGORY_OPTIONS: Array<{ code: ArticleCategory }> = [
+  { code: "fabrique" },
+  { code: "matiere" },
+  { code: "traitement" },
+  { code: "achat" },
+];
+
 const ARTICLE_CATEGORY_OPTIONS: StockArticleCategoryOption[] = [
   {
-    code: "fabrique",
-    label: "Fabriqué",
-    code_segment: "FAB",
+    code: "piece_finie_fabriquee",
+    label: "Pièce finie / Fabriquée",
+    code_segment: "PLAN",
     stock_managed_default: true,
     piece_technique_required: true,
     commande_client_selectable: true,
   },
   {
-    code: "matiere",
-    label: "Matière",
-    code_segment: "MAT",
+    code: "matiere_premiere",
+    label: "Matière Première",
+    code_segment: "MP",
     stock_managed_default: true,
     piece_technique_required: false,
     commande_client_selectable: false,
   },
   {
-    code: "traitement",
-    label: "Traitement",
+    code: "traitement_surface",
+    label: "Traitement de Surface",
     code_segment: "TRT",
     stock_managed_default: false,
     piece_technique_required: false,
     commande_client_selectable: false,
   },
   {
-    code: "achat",
-    label: "Achat",
+    code: "achat_revente",
+    label: "Achat-Revente",
     code_segment: "ACH",
     stock_managed_default: true,
     piece_technique_required: false,
     commande_client_selectable: false,
   },
+  {
+    code: "achat_transforme",
+    label: "Achat-Transformé",
+    code_segment: "AHT",
+    stock_managed_default: true,
+    piece_technique_required: false,
+    commande_client_selectable: false,
+  },
+  {
+    code: "sous_traitance",
+    label: "Sous-traitance",
+    code_segment: "STA",
+    stock_managed_default: false,
+    piece_technique_required: false,
+    commande_client_selectable: false,
+  },
 ];
+
+const BUSINESS_TO_PRIMARY_CATEGORY: Record<ArticleBusinessCategory, ArticleCategory> = {
+  piece_finie_fabriquee: "fabrique",
+  matiere_premiere: "matiere",
+  traitement_surface: "traitement",
+  achat_revente: "achat",
+  achat_transforme: "achat",
+  sous_traitance: "achat",
+};
 
 type UploadedDocument = Express.Multer.File;
 
@@ -177,6 +210,10 @@ function isArticleCategory(value: string): value is ArticleCategory {
   return value === "fabrique" || value === "matiere" || value === "traitement" || value === "achat";
 }
 
+function isArticleBusinessCategory(value: string): value is ArticleBusinessCategory {
+  return ARTICLE_CATEGORY_OPTIONS.some((item) => item.code === value);
+}
+
 function toBusinessArticleCategory(requested: string | null | undefined, fallback: ArticleCategory = "achat"): ArticleCategory {
   const value = typeof requested === "string" ? requested.trim() : "";
   if (!value) return fallback;
@@ -192,6 +229,13 @@ function toBusinessArticleCategory(requested: string | null | undefined, fallbac
   return fallback;
 }
 
+function defaultBusinessCategoryForPrimary(category: ArticleCategory): ArticleBusinessCategory {
+  if (category === "fabrique") return "piece_finie_fabriquee";
+  if (category === "matiere") return "matiere_premiere";
+  if (category === "traitement") return "traitement_surface";
+  return "achat_revente";
+}
+
 function inferArticleType(category: ArticleCategory): "PIECE_TECHNIQUE" | "PURCHASED" {
   return category === "fabrique" ? "PIECE_TECHNIQUE" : "PURCHASED";
 }
@@ -202,6 +246,14 @@ function defaultFamilyCodeForCategory(category: ArticleCategory): string {
   if (category === "traitement") return "TRT";
   return "ACH";
 }
+
+const familyCodeAliasMap: Record<string, string> = {
+  ROND: "RO",
+  TUBE: "TU",
+  TOLE: "TO",
+  BARRE: "BA",
+  PROFIL: "PR",
+};
 
 function normalizeFamilyCode(value: string | null | undefined, fallback: string): string {
   const raw = typeof value === "string" ? value.trim().toUpperCase() : "";
@@ -224,11 +276,60 @@ function normalizeFullArticleCode(value: string): string {
     .replace(/-{2,}/g, "-");
 }
 
+function normalizeArticleWorkflowStatus(value: string | null | undefined): "EN_DEVIS" | "VALIDE" {
+  const normalized = typeof value === "string" ? value.trim().toUpperCase() : "";
+  return normalized === "EN_DEVIS" ? "EN_DEVIS" : "VALIDE";
+}
+
+function normalizeArticleCategories(
+  requested: string[] | null | undefined,
+  primaryCategory: ArticleCategory
+): ArticleBusinessCategory[] {
+  const out: ArticleBusinessCategory[] = [];
+  const push = (value: string | null | undefined) => {
+    const raw = typeof value === "string" ? value.trim() : "";
+    if (!raw) return;
+    const normalized = raw.toLowerCase();
+    if (isArticleBusinessCategory(normalized)) {
+      if (!out.includes(normalized)) out.push(normalized);
+      return;
+    }
+    if (isArticleCategory(normalized)) {
+      const mapped = defaultBusinessCategoryForPrimary(normalized);
+      if (!out.includes(mapped)) out.push(mapped);
+      return;
+    }
+    throw new HttpError(400, "INVALID_ARTICLE_CATEGORY", `Unknown article category ${raw}`);
+  };
+
+  push(defaultBusinessCategoryForPrimary(primaryCategory));
+  for (const value of requested ?? []) push(value);
+  return out;
+}
+
+function derivePrimaryCategoryFromBusinessCategories(categories: ArticleBusinessCategory[]): ArticleCategory {
+  if (categories.some((value) => BUSINESS_TO_PRIMARY_CATEGORY[value] === "fabrique")) return "fabrique";
+  if (categories.some((value) => BUSINESS_TO_PRIMARY_CATEGORY[value] === "matiere")) return "matiere";
+  if (categories.some((value) => BUSINESS_TO_PRIMARY_CATEGORY[value] === "traitement")) return "traitement";
+  return "achat";
+}
+
+function expectedFabricatedArticleCodeFromPlan(planReference: string, planIndex: number): string {
+  return `${sanitizeCodeToken(planReference, "PLAN")}-P${planIndex}`;
+}
+
 function categoryCodeSegment(category: ArticleCategory): string {
-  if (category === "fabrique") return "FAB";
-  if (category === "matiere") return "MAT";
+  if (category === "fabrique") return "PLAN";
+  if (category === "matiere") return "MP";
   if (category === "traitement") return "TRT";
   return "ACH";
+}
+
+function familyCodeSegment(value: string | null | undefined): string {
+  const normalized = normalizeFamilyCode(value, "GEN");
+  const alias = familyCodeAliasMap[normalized];
+  if (alias) return alias;
+  return normalized.slice(0, 3);
 }
 
 async function getPieceTechniqueMetadata(
@@ -260,7 +361,10 @@ function buildSuggestedArticleCode(args: {
   family_code: string;
   final_segment: string;
 }): string {
-  return `ART-${categoryCodeSegment(args.category)}-${args.family_code}-${args.final_segment}`;
+  if (args.category === "fabrique") {
+    return sanitizeCodeToken(args.final_segment, "PLAN");
+  }
+  return `${categoryCodeSegment(args.category)}-${familyCodeSegment(args.family_code)}-${sanitizeCodeToken(args.final_segment, "GEN")}`;
 }
 
 async function resolveArticleCode(
@@ -271,11 +375,12 @@ async function resolveArticleCode(
     category: ArticleCategory;
     family_code: string;
     piece_technique_id: string | null;
+    plan_index: number;
   }
 ): Promise<string> {
   const pieceMeta = args.piece_technique_id ? await getPieceTechniqueMetadata(client, args.piece_technique_id) : null;
   const finalSegment = args.category === "fabrique"
-    ? sanitizeCodeToken(pieceMeta?.code_piece, "PT")
+    ? sanitizeCodeToken(pieceMeta?.code_piece, "PLAN")
     : sanitizeCodeToken(args.code || args.designation, "GEN");
   const suggested = buildSuggestedArticleCode({
     category: args.category,
@@ -283,30 +388,26 @@ async function resolveArticleCode(
     final_segment: finalSegment,
   });
 
+  if (args.category === "fabrique") {
+    const expected = expectedFabricatedArticleCodeFromPlan(finalSegment, args.plan_index);
+    const provided = args.code.trim();
+    if (!provided) return expected;
+
+    const normalized = normalizeFullArticleCode(provided);
+    if (normalized !== expected) {
+      throw new HttpError(
+        400,
+        "INVALID_FABRICATED_ARTICLE_CODE",
+        `Fabricated article code must match plan reference with index (${expected})`
+      );
+    }
+    return normalized;
+  }
+
   const provided = args.code.trim();
   if (!provided) return suggested;
 
   const normalized = normalizeFullArticleCode(provided);
-  const expectedPrefix = `ART-${categoryCodeSegment(args.category)}-${args.family_code}-`;
-  if (!normalized.startsWith(expectedPrefix)) {
-    throw new HttpError(
-      400,
-      "INVALID_ARTICLE_CODE",
-      `Article code must start with ${expectedPrefix}`
-    );
-  }
-
-  if (args.category === "fabrique") {
-    const requiredToken = sanitizeCodeToken(pieceMeta?.code_piece, "PT");
-    if (!normalized.includes(requiredToken)) {
-      throw new HttpError(
-        400,
-        "INVALID_ARTICLE_CODE",
-        `Fabricated article code must include linked piece technique code ${requiredToken}`
-      );
-    }
-  }
-
   return normalized;
 }
 
@@ -315,6 +416,11 @@ async function normalizeArticleState(args: {
   article_category: string | null | undefined;
   family_code: string | null | undefined;
   piece_technique_id: string | null;
+  article_categories: string[] | null | undefined;
+  version_number: number | null | undefined;
+  plan_index: number | null | undefined;
+  status: string | null | undefined;
+  projet_id: number | null | undefined;
   stock_managed: boolean;
   lot_tracking: boolean;
   code: string;
@@ -327,10 +433,16 @@ async function normalizeArticleState(args: {
     if (articleType === "PURCHASED") return toBusinessArticleCategory(args.article_category, "achat");
     return toBusinessArticleCategory(args.article_category, "achat");
   })();
-  const article_category = toBusinessArticleCategory(args.article_category, categoryFromType);
+  const requestedPrimaryCategory = toBusinessArticleCategory(args.article_category, categoryFromType);
+  const article_categories = normalizeArticleCategories(args.article_categories, requestedPrimaryCategory);
+  const article_category = derivePrimaryCategoryFromBusinessCategories(article_categories);
   const article_type = inferArticleType(article_category);
   const piece_technique_id = article_category === "fabrique" ? args.piece_technique_id : null;
   const family_code = normalizeFamilyCode(args.family_code, defaultFamilyCodeForCategory(article_category));
+  const version_number = typeof args.version_number === "number" && Number.isFinite(args.version_number) ? Math.max(1, Math.trunc(args.version_number)) : 1;
+  const plan_index = typeof args.plan_index === "number" && Number.isFinite(args.plan_index) ? Math.max(1, Math.trunc(args.plan_index)) : 1;
+  const status = normalizeArticleWorkflowStatus(args.status);
+  const projet_id = typeof args.projet_id === "number" && Number.isFinite(args.projet_id) ? Math.trunc(args.projet_id) : null;
   const stock_managed = args.stock_managed;
   const lot_tracking = stock_managed ? args.lot_tracking : false;
 
@@ -341,18 +453,32 @@ async function normalizeArticleState(args: {
     throw new HttpError(400, "INVALID_ARTICLE", "Only fabricated articles can be linked to a piece technique");
   }
 
+  if (article_category === "fabrique" && !projet_id) {
+    throw new HttpError(400, "INVALID_ARTICLE", "Fabricated articles require projet_id");
+  }
+
+  if (projet_id) {
+    await ensureProjetAffaireExists(args.client, projet_id);
+  }
+
   const code = await resolveArticleCode(args.client, {
     code: args.code,
     designation: args.designation,
     category: article_category,
     family_code,
     piece_technique_id,
+    plan_index,
   });
 
   return {
     article_type: article_type as "PIECE_TECHNIQUE" | "PURCHASED",
     article_category,
+    article_categories,
     family_code,
+    version_number,
+    plan_index,
+    status,
+    projet_id,
     piece_technique_id,
     stock_managed,
     lot_tracking,
@@ -415,7 +541,7 @@ export async function repoListArticleCategories(): Promise<StockArticleCategoryO
 export async function repoListArticleFamilies(
   filters: ListArticleFamiliesQueryDTO = {}
 ): Promise<StockArticleFamily[]> {
-  const categories = filters.category ? [filters.category] : ARTICLE_CATEGORY_OPTIONS.map((item) => item.code);
+  const categories = filters.category ? [filters.category] : ARTICLE_PRIMARY_CATEGORY_OPTIONS.map((item) => item.code);
   const rows: StockArticleFamily[] = [];
 
   for (const category of categories) {
@@ -624,6 +750,41 @@ function articleSortColumn(sortBy: ListArticlesQueryDTO["sortBy"]): string {
   }
 }
 
+async function ensureProjetAffaireExists(client: Pick<PoolClient, "query">, projetId: number) {
+  const res = await client.query<{ ok: number }>(
+    `
+      SELECT 1::int AS ok
+      FROM public.affaire
+      WHERE id = $1
+        AND type_affaire = 'projet'
+      LIMIT 1
+    `,
+    [projetId]
+  );
+  if (!res.rows[0]?.ok) {
+    throw new HttpError(400, "INVALID_PROJET", "projet_id must reference an existing affaire with type_affaire='projet'");
+  }
+}
+
+async function syncArticleCategories(
+  client: Pick<PoolClient, "query">,
+  articleId: string,
+  categories: ArticleBusinessCategory[],
+  actorUserId: number
+) {
+  await client.query(`DELETE FROM public.article_category_link WHERE article_id = $1::uuid`, [articleId]);
+  for (let i = 0; i < categories.length; i++) {
+    const code = categories[i];
+    await client.query(
+      `
+        INSERT INTO public.article_category_link (article_id, category_code, is_primary, created_by)
+        VALUES ($1::uuid, $2, $3, $4)
+      `,
+      [articleId, code, i === 0, actorUserId]
+    );
+  }
+}
+
 function normalizedArticleCategorySql(column = "a.article_category") {
   return `CASE
     WHEN ${column} = 'PIECE_TECHNIQUE' THEN 'fabrique'
@@ -631,6 +792,18 @@ function normalizedArticleCategorySql(column = "a.article_category") {
     WHEN ${column} = 'TRAITEMENT' THEN 'traitement'
     WHEN ${column} = 'FOURNITURE' THEN 'achat'
     ELSE ${column}
+  END`;
+}
+
+function normalizedBusinessCategorySql(column = "a.article_category") {
+  return `CASE
+    WHEN ${column} = 'fabrique' THEN 'piece_finie_fabriquee'
+    WHEN ${column} = 'PIECE_TECHNIQUE' THEN 'piece_finie_fabriquee'
+    WHEN ${column} = 'matiere' THEN 'matiere_premiere'
+    WHEN ${column} = 'MATIERE_PREMIERE' THEN 'matiere_premiere'
+    WHEN ${column} = 'traitement' THEN 'traitement_surface'
+    WHEN ${column} = 'TRAITEMENT' THEN 'traitement_surface'
+    ELSE 'achat_revente'
   END`;
 }
 
@@ -1083,7 +1256,20 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
         : `NOT ${articleCategoryFilterSql("a.article_category", "fabrique")}`
     );
   }
-  if (filters.article_category) where.push(articleCategoryFilterSql("a.article_category", filters.article_category));
+  if (filters.article_category) {
+    const categoryFilter = articleCategoryFilterSql("a.article_category", filters.article_category);
+    where.push(`(
+      ${categoryFilter}
+      OR EXISTS (
+        SELECT 1
+        FROM public.article_category_link aclf
+        WHERE aclf.article_id = a.id
+          AND aclf.category_code = ${push(filters.article_category)}
+      )
+    )`);
+  }
+  if (filters.status) where.push(`a.status = ${push(filters.status)}`);
+  if (filters.projet_id) where.push(`a.projet_id = ${push(filters.projet_id)}`);
   if (filters.family_code) where.push(`a.family_code = ${push(normalizeFamilyCode(filters.family_code, "GEN"))}`);
   if (filters.is_active !== undefined) where.push(`a.is_active = ${push(filters.is_active)}`);
   if (filters.lot_tracking !== undefined) where.push(`a.lot_tracking = ${push(filters.lot_tracking)}`);
@@ -1107,10 +1293,17 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
   const dataSql = `
     SELECT
       a.id::text AS id,
+      a.root_article_id::text AS root_article_id,
+      a.parent_article_id::text AS parent_article_id,
+      a.version_number::int AS version_number,
+      a.plan_index::int AS plan_index,
+      a.status,
+      a.projet_id::int AS projet_id,
       a.code,
       a.designation,
       CASE WHEN ${normalizedArticleCategorySql("a.article_category")} = 'fabrique' THEN 'PIECE_TECHNIQUE' ELSE 'PURCHASED' END AS article_type,
       ${normalizedArticleCategorySql("a.article_category")} AS article_category,
+      COALESCE(ac.categories, ARRAY[${normalizedBusinessCategorySql("a.article_category")}]::text[]) AS article_categories,
       a.family_code,
       a.stock_managed,
       a.piece_technique_id::text AS piece_technique_id,
@@ -1138,6 +1331,11 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
       FROM public.v_stock_current
       GROUP BY article_id
     ) bs ON bs.article_id = a.id::text
+    LEFT JOIN LATERAL (
+      SELECT array_agg(acl.category_code ORDER BY acl.is_primary DESC, acl.category_code ASC)::text[] AS categories
+      FROM public.article_category_link acl
+      WHERE acl.article_id = a.id
+    ) ac ON TRUE
     ${whereSql}
     ORDER BY ${orderBy} ${orderDir}
     LIMIT $${values.length + 1}
@@ -1153,10 +1351,17 @@ export async function repoGetArticle(id: string): Promise<StockArticleDetail | n
     `
       SELECT
         a.id::text AS id,
+        a.root_article_id::text AS root_article_id,
+        a.parent_article_id::text AS parent_article_id,
+        a.version_number::int AS version_number,
+        a.plan_index::int AS plan_index,
+        a.status,
+        a.projet_id::int AS projet_id,
         a.code,
         a.designation,
         CASE WHEN ${normalizedArticleCategorySql("a.article_category")} = 'fabrique' THEN 'PIECE_TECHNIQUE' ELSE 'PURCHASED' END AS article_type,
         ${normalizedArticleCategorySql("a.article_category")} AS article_category,
+      COALESCE(ac.categories, ARRAY[${normalizedBusinessCategorySql("a.article_category")}]::text[]) AS article_categories,
         a.family_code,
         a.stock_managed,
         a.piece_technique_id::text AS piece_technique_id,
@@ -1185,6 +1390,11 @@ export async function repoGetArticle(id: string): Promise<StockArticleDetail | n
         FROM public.v_stock_current
         GROUP BY article_id
       ) bs ON bs.article_id = a.id::text
+      LEFT JOIN LATERAL (
+        SELECT array_agg(acl.category_code ORDER BY acl.is_primary DESC, acl.category_code ASC)::text[] AS categories
+        FROM public.article_category_link acl
+        WHERE acl.article_id = a.id
+      ) ac ON TRUE
       WHERE a.id = $1::uuid
     `,
     [id]
@@ -1231,7 +1441,12 @@ export async function repoCreateArticle(body: CreateArticleBodyDTO, audit: Audit
     const normalized = await normalizeArticleState({
       article_type: body.article_type,
       article_category: body.article_category,
+      article_categories: body.article_categories,
       family_code: body.family_code,
+      version_number: body.version_number,
+      plan_index: body.plan_index,
+      status: body.status,
+      projet_id: body.projet_id ?? null,
       piece_technique_id: body.piece_technique_id ?? null,
       stock_managed: body.stock_managed,
       lot_tracking: body.lot_tracking,
@@ -1244,17 +1459,22 @@ export async function repoCreateArticle(body: CreateArticleBodyDTO, audit: Audit
       await ensurePieceTechniqueExists(client, normalized.piece_technique_id);
     }
 
+    const articleId = crypto.randomUUID();
+
     const res = await client.query<{ id: string }>(
       `
         INSERT INTO public.articles (
+          id,
           code, designation, article_type, article_category, family_code, stock_managed, piece_technique_id, unite,
+          root_article_id, parent_article_id, version_number, plan_index, status, projet_id,
           lot_tracking, is_active, notes,
           created_by, updated_by
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7::uuid,$8,$9,$10,$11,$12,$12)
+        VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8::uuid,$9,$10::uuid,$11::uuid,$12,$13,$14,$15,$16,$17,$18,$19,$19)
         RETURNING id::text AS id
       `,
       [
+        articleId,
         normalized.code,
         body.designation,
         normalized.article_type,
@@ -1263,6 +1483,12 @@ export async function repoCreateArticle(body: CreateArticleBodyDTO, audit: Audit
         normalized.stock_managed,
         normalized.piece_technique_id,
         body.unite ?? null,
+        articleId,
+        null,
+        normalized.version_number,
+        normalized.plan_index,
+        normalized.status,
+        normalized.projet_id,
         normalized.lot_tracking,
         body.is_active,
         body.notes ?? null,
@@ -1272,6 +1498,8 @@ export async function repoCreateArticle(body: CreateArticleBodyDTO, audit: Audit
 
     const id = res.rows[0]?.id;
     if (!id) throw new Error("Failed to create article");
+    await syncArticleCategories(client, id, normalized.article_categories, audit.user_id);
+
     await syncPieceTechniqueArticleLink(client, {
       article_id: id,
       previous_piece_technique_id: null,
@@ -1294,7 +1522,12 @@ export async function repoCreateArticle(body: CreateArticleBodyDTO, audit: Audit
         designation: body.designation,
         article_type: normalized.article_type,
         article_category: normalized.article_category,
+        article_categories: normalized.article_categories,
         family_code: normalized.family_code,
+        version_number: normalized.version_number,
+        plan_index: normalized.plan_index,
+        status: normalized.status,
+        projet_id: normalized.projet_id,
         stock_managed: normalized.stock_managed,
       },
     });
@@ -1338,6 +1571,12 @@ export async function repoUpdateArticle(
       designation: string;
       article_type: string;
       article_category: string;
+      article_categories: string[] | null;
+      root_article_id: string | null;
+      version_number: number;
+      plan_index: number;
+      status: string;
+      projet_id: number | null;
       family_code: string;
       piece_technique_id: string | null;
       stock_managed: boolean;
@@ -1350,6 +1589,16 @@ export async function repoUpdateArticle(
           designation,
           article_type,
           article_category,
+          (
+            SELECT array_agg(acl.category_code ORDER BY acl.is_primary DESC, acl.category_code ASC)::text[]
+            FROM public.article_category_link acl
+            WHERE acl.article_id = public.articles.id
+          ) AS article_categories,
+          root_article_id::text AS root_article_id,
+          version_number::int AS version_number,
+          plan_index::int AS plan_index,
+          status,
+          projet_id::int AS projet_id,
           family_code,
           piece_technique_id::text AS piece_technique_id,
           stock_managed,
@@ -1369,7 +1618,12 @@ export async function repoUpdateArticle(
     const normalized = await normalizeArticleState({
       article_type: patch.article_type ?? current.article_type,
       article_category: patch.article_category ?? current.article_category,
+      article_categories: patch.article_categories ?? current.article_categories,
       family_code: patch.family_code ?? current.family_code,
+      version_number: patch.version_number ?? current.version_number,
+      plan_index: patch.plan_index ?? current.plan_index,
+      status: patch.status ?? current.status,
+      projet_id: patch.projet_id !== undefined ? patch.projet_id : current.projet_id,
       piece_technique_id: patch.piece_technique_id !== undefined ? patch.piece_technique_id : current.piece_technique_id,
       stock_managed: patch.stock_managed ?? current.stock_managed,
       lot_tracking: patch.lot_tracking ?? current.lot_tracking,
@@ -1386,6 +1640,10 @@ export async function repoUpdateArticle(
     if (patch.designation !== undefined) sets.push(`designation = ${push(patch.designation)}`);
     sets.push(`article_type = ${push(normalized.article_type)}`);
     sets.push(`article_category = ${push(normalized.article_category)}`);
+    sets.push(`version_number = ${push(normalized.version_number)}`);
+    sets.push(`plan_index = ${push(normalized.plan_index)}`);
+    sets.push(`status = ${push(normalized.status)}`);
+    sets.push(`projet_id = ${push(normalized.projet_id)}::bigint`);
     sets.push(`family_code = ${push(normalized.family_code)}`);
     sets.push(`stock_managed = ${push(normalized.stock_managed)}`);
     sets.push(`piece_technique_id = ${push(normalized.piece_technique_id)}::uuid`);
@@ -1407,6 +1665,8 @@ export async function repoUpdateArticle(
     const res = await client.query<{ id: string }>(sql, values);
     const rowId = res.rows[0]?.id;
     if (!rowId) return null;
+
+    await syncArticleCategories(client, id, normalized.article_categories, audit.user_id);
 
     await syncPieceTechniqueArticleLink(client, {
       article_id: id,

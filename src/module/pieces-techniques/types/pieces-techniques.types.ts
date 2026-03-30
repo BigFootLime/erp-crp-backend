@@ -106,6 +106,10 @@ export type Achat = {
 
 export type PieceTechnique = {
   id: string
+  article_id: string | null
+  root_piece_technique_id: string
+  parent_piece_technique_id: string | null
+  version_number: number
   created_at: string
   updated_at: string
 
@@ -140,6 +144,9 @@ export type PieceTechnique = {
 // Payload envoyé par le front
 export type CreatePieceTechniqueInput = {
   article_id?: string | null
+  root_piece_technique_id?: string | null
+  parent_piece_technique_id?: string | null
+  version_number?: number
   client_id?: string | null
   created_by?: number | null
   updated_by?: number | null
@@ -165,7 +172,7 @@ export type CreatePieceTechniqueInput = {
 
 export type PieceTechniqueListItem = Pick<
   PieceTechnique,
-  "id" | "code_piece" | "designation" | "designation_2" | "client_id" | "client_name" | "famille_id" | "statut" | "en_fabrication" | "prix_unitaire" | "created_at" | "updated_at" | "ensemble"
+  "id" | "article_id" | "root_piece_technique_id" | "parent_piece_technique_id" | "version_number" | "code_piece" | "designation" | "designation_2" | "client_id" | "client_name" | "famille_id" | "statut" | "en_fabrication" | "prix_unitaire" | "created_at" | "updated_at" | "ensemble"
 > & {
   bom_count: number
   operations_count: number

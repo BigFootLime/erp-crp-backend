@@ -94,8 +94,14 @@ describe("/api/v1/stock", () => {
       if (q.includes("FROM public.pieces_techniques WHERE id = $1::uuid LIMIT 1")) {
         return { rows: [{ ok: 1 }] };
       }
+      if (q.includes("FROM public.affaire") && q.includes("type_affaire = 'projet'")) {
+        return { rows: [{ ok: 1 }] };
+      }
       if (q.includes("INSERT INTO public.articles")) {
         return { rows: [{ id: "11111111-1111-1111-1111-111111111111" }] };
+      }
+      if (q.includes("INSERT INTO public.article_category_link")) {
+        return { rows: [] };
       }
       if (q.includes("INSERT INTO public.articles_fabrique_families")) {
         return { rows: [] };
@@ -113,10 +119,17 @@ describe("/api/v1/stock", () => {
       rows: [
         {
           id: "11111111-1111-1111-1111-111111111111",
-          code: "ART-FAB-PT-PT-001",
+          root_article_id: "11111111-1111-1111-1111-111111111111",
+          parent_article_id: null,
+          version_number: 1,
+          plan_index: 1,
+          status: "VALIDE",
+          projet_id: 7,
+          code: "PT-001-P1",
           designation: "Pièce stockée",
           article_type: "PIECE_TECHNIQUE",
           article_category: "fabrique",
+          article_categories: ["fabrique"],
           family_code: "PT",
           stock_managed: true,
           piece_technique_id: "22222222-2222-2222-2222-222222222222",
@@ -140,12 +153,15 @@ describe("/api/v1/stock", () => {
       .post("/api/v1/stock/articles")
       .set("Authorization", "Bearer fake")
       .send({
-        code: "ART-FAB-PT-PT-001",
+        code: "PT-001-P1",
+        projet_id: 7,
         designation: "Pièce stockée",
         article_category: "fabrique",
+        article_categories: ["fabrique"],
         family_code: "PT",
         stock_managed: true,
         piece_technique_id: "22222222-2222-2222-2222-222222222222",
+        plan_index: 1,
         lot_tracking: false,
         is_active: true,
       });

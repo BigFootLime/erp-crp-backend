@@ -25,6 +25,18 @@ export const devisDocumentIdParamsSchema = z.object({
   docId: z.string().uuid("docId must be a UUID"),
 });
 
+export const devisArticleParamsSchema = z.object({
+  articleId: z.string().uuid("articleId must be a UUID"),
+});
+
+export const devisArticleDevisCodeParamsSchema = z.object({
+  code: z.string().trim().min(1, "code is required"),
+});
+
+export const devisByArticleQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).optional().default(50),
+});
+
 export const listDevisQuerySchema = z.object({
   q: z.string().optional(),
   client_id: z.string().optional(),
@@ -72,12 +84,43 @@ const devisLineSchema = z.preprocess((value) => {
   return v;
 },
 z.object({
+  article_id: z.string().uuid().optional().nullable(),
+  piece_technique_id: z.string().uuid().optional().nullable(),
+  code_piece: z.preprocess(emptyStringToNull, z.string().trim().min(1)).optional().nullable(),
   description: z.string().trim().min(1),
   quantite: z.coerce.number().positive().optional().default(1),
   unite: z.preprocess(emptyStringToNull, z.string().trim().min(1)).optional().nullable(),
   prix_unitaire_ht: z.coerce.number().min(0),
   remise_ligne: z.coerce.number().min(0).max(100).optional().default(0),
   taux_tva: z.coerce.number().min(0).max(100).optional().default(20),
+  article_devis: z
+    .object({
+      id: z.string().uuid().optional(),
+      root_article_devis_id: z.string().uuid().optional(),
+      parent_article_devis_id: z.string().uuid().optional().nullable(),
+      version_number: z.coerce.number().int().positive().optional(),
+      code: z.string().trim().min(1),
+      designation: z.string().trim().min(1),
+      primary_category: z.string().trim().min(1),
+      article_categories: z.array(z.string().trim().min(1)).optional().default([]),
+      family_code: z.string().trim().min(1),
+      plan_index: z.coerce.number().int().positive().optional().default(1),
+      projet_id: z.coerce.number().int().positive().optional().nullable(),
+      source_official_article_id: z.string().uuid().optional().nullable(),
+    })
+    .optional(),
+  dossier_technique_piece_devis: z
+    .object({
+      id: z.string().uuid().optional(),
+      root_dossier_devis_id: z.string().uuid().optional(),
+      parent_dossier_devis_id: z.string().uuid().optional().nullable(),
+      version_number: z.coerce.number().int().positive().optional(),
+      code_piece: z.string().trim().min(1),
+      designation: z.string().trim().min(1),
+      source_official_piece_technique_id: z.string().uuid().optional().nullable(),
+      payload: z.record(z.string(), z.unknown()).optional().default({}),
+    })
+    .optional(),
 }));
 
 export const createDevisBodySchema = z.object({

@@ -17,7 +17,7 @@ export const affaireIdParamsSchema = z.object({
 });
 
 export const affaireStatutSchema = z.enum(["OUVERTE", "EN_COURS", "SUSPENDUE", "CLOTUREE", "ANNULEE"]);
-export const affaireTypeSchema = z.enum(["livraison"]);
+export const affaireTypeSchema = z.enum(["livraison", "projet"]);
 
 export const listAffairesQuerySchema = z.object({
   q: z.string().optional(),
@@ -63,7 +63,7 @@ export const getAffaireQuerySchema = z.object({
 
 export const createAffaireBodySchema = z.object({
   reference: z.preprocess(emptyStringToUndefined, z.string().trim().min(1).max(30)).optional(),
-  client_id: z.string().trim().min(1),
+  client_id: z.preprocess(emptyStringToNull, z.string().trim().min(1)).optional().nullable(),
   commande_id: z.coerce.number().int().positive().optional().nullable(),
   devis_id: z.coerce.number().int().positive().optional().nullable(),
   type_affaire: affaireTypeSchema.optional().default("livraison"),
@@ -71,13 +71,17 @@ export const createAffaireBodySchema = z.object({
   date_ouverture: z.preprocess(emptyStringToUndefined, isoDate).optional(),
   date_cloture: z.preprocess(emptyStringToNull, isoDate).optional().nullable(),
   commentaire: z.preprocess(emptyStringToNull, z.string().trim().min(1)).optional().nullable(),
+}).superRefine((value, ctx) => {
+  if (value.type_affaire === "livraison" && !(typeof value.client_id === "string" && value.client_id.trim().length > 0)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "client_id is required for livraison", path: ["client_id"] });
+  }
 });
 
 export type CreateAffaireBodyDTO = z.infer<typeof createAffaireBodySchema>;
 
 export const updateAffaireBodySchema = z.object({
   reference: z.preprocess(emptyStringToUndefined, z.string().trim().min(1).max(30)).optional(),
-  client_id: z.string().trim().min(1).optional(),
+  client_id: z.preprocess(emptyStringToNull, z.string().trim().min(1)).optional().nullable(),
   commande_id: z.coerce.number().int().positive().optional().nullable(),
   devis_id: z.coerce.number().int().positive().optional().nullable(),
   type_affaire: affaireTypeSchema.optional(),

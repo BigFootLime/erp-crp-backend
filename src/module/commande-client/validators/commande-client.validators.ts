@@ -18,6 +18,9 @@ const boolFromQuery = z.preprocess((value) => {
 export const commandeLigneInputSchema = z.object({
   designation: z.string().min(1),
   article_id: z.string().uuid().optional().nullable(),
+  piece_technique_id: z.string().uuid().optional().nullable(),
+  source_article_devis_id: z.string().uuid().optional().nullable(),
+  source_dossier_devis_id: z.string().uuid().optional().nullable(),
   code_piece: z.string().optional().nullable(),
   quantite: z.number().positive(),
   unite: z.string().optional().nullable(),
@@ -28,6 +31,33 @@ export const commandeLigneInputSchema = z.object({
   delai_interne: z.string().optional().nullable(),
   devis_numero: z.string().optional().nullable(),
   famille: z.string().optional().nullable(),
+  article_devis_data: z
+    .object({
+      id: z.string().uuid(),
+      devis_id: z.coerce.number().int().positive(),
+      code: z.string().trim().min(1),
+      designation: z.string().trim().min(1),
+      primary_category: z.string().trim().min(1),
+      article_categories: z.array(z.string().trim().min(1)).optional().default([]),
+      family_code: z.string().trim().min(1),
+      plan_index: z.coerce.number().int().positive().optional().default(1),
+      projet_id: z.coerce.number().int().positive().optional().nullable(),
+      source_official_article_id: z.string().uuid().optional().nullable(),
+    })
+    .optional()
+    .nullable(),
+  dossier_technique_piece_devis_data: z
+    .object({
+      id: z.string().uuid(),
+      article_devis_id: z.string().uuid(),
+      devis_id: z.coerce.number().int().positive(),
+      code_piece: z.string().trim().min(1),
+      designation: z.string().trim().min(1),
+      source_official_piece_technique_id: z.string().uuid().optional().nullable(),
+      payload: z.record(z.string(), z.unknown()).optional().default({}),
+    })
+    .optional()
+    .nullable(),
 });
 
 export const commandeEcheanceInputSchema = z.object({
@@ -50,6 +80,10 @@ z.object({
   order_type: commandeOrderTypeSchema.optional().default("FERME"),
   numero: z.string().trim().min(1).optional(),
   client_id: z.string().trim().min(1).optional().nullable(),
+  devis_id: z.coerce.number().int().positive().optional().nullable(),
+  source_devis_updated_at: z.string().trim().min(1).optional().nullable(),
+  source_devis_version_id: z.coerce.number().int().positive().optional().nullable(),
+  officialize_preparatory_data: z.boolean().optional().default(false),
   date_commande: isoDate,
   contact_id: z.string().uuid().optional().nullable(),
   destinataire_id: z.string().uuid().optional().nullable(),
@@ -132,11 +166,19 @@ z.object({
     val.lignes.forEach((l, i) => {
       const articleId = (l.article_id ?? "").toString().trim();
       const codePiece = (l.code_piece ?? "").toString().trim();
+      const sourceArticleDevisId = (l.source_article_devis_id ?? "").toString().trim();
       if (!articleId && !codePiece) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: "article_id is required for order lines",
           path: ["lignes", i, "article_id"],
+        });
+      }
+      if (sourceArticleDevisId && !/^[0-9a-fA-F-]{36}$/.test(sourceArticleDevisId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "source_article_devis_id must be a UUID",
+          path: ["lignes", i, "source_article_devis_id"],
         });
       }
       if (articleId && !/^[0-9a-fA-F-]{36}$/.test(articleId)) {

@@ -26,6 +26,11 @@ export type DevisDocument = {
 export type DevisLine = {
   id: number;
   devis_id: number;
+  article_id: string | null;
+  piece_technique_id: string | null;
+  source_article_devis_id?: string | null;
+  source_dossier_devis_id?: string | null;
+  code_piece: string | null;
   description: string;
   quantite: number;
   unite: string | null;
@@ -34,10 +39,49 @@ export type DevisLine = {
   taux_tva: number;
   total_ht: number;
   total_ttc: number;
+  article_devis?: ArticleDevis | null;
+  dossier_technique_piece_devis?: DossierTechniquePieceDevis | null;
+};
+
+export type ArticleDevis = {
+  id: string;
+  devis_id: number;
+  devis_ligne_id: number | null;
+  root_article_devis_id: string;
+  parent_article_devis_id: string | null;
+  version_number: number;
+  code: string;
+  designation: string;
+  primary_category: string;
+  article_categories: string[];
+  family_code: string;
+  plan_index: number;
+  projet_id: number | null;
+  source_official_article_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DossierTechniquePieceDevis = {
+  id: string;
+  article_devis_id: string;
+  devis_id: number;
+  root_dossier_devis_id: string;
+  parent_dossier_devis_id: string | null;
+  version_number: number;
+  code_piece: string;
+  designation: string;
+  source_official_piece_technique_id: string | null;
+  payload: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
 };
 
 export type DevisHeader = {
   id: number;
+  root_devis_id: number;
+  parent_devis_id: number | null;
+  version_number: number;
   numero: string;
   client_id: string;
   contact_id: string | null;
@@ -62,6 +106,9 @@ export type DevisHeader = {
 export type DevisListItem = Pick<
   DevisHeader,
   | "id"
+  | "root_devis_id"
+  | "parent_devis_id"
+  | "version_number"
   | "numero"
   | "client_id"
   | "date_creation"

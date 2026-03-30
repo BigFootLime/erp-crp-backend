@@ -8,9 +8,13 @@ import {
   repoConvertDevisToCommande,
   repoCreateDevis,
   repoDeleteDevis,
+  repoFindDevisByArticle,
+  repoFindDevisByArticleDevisCode,
+  repoGetCommandeDraftFromDevis,
   repoGetDevis,
   repoGetDevisDocumentFileMeta,
   repoListDevis,
+  repoReviseDevis,
   repoUpdateDevis,
 } from "../repository/devis.repository";
 
@@ -27,6 +31,16 @@ export const svcCreateDevis = (input: CreateDevisBodyDTO, userId: number, docume
 export const svcUpdateDevis = (id: number, input: UpdateDevisBodyDTO, userId: number, documents: UploadedDocument[]) =>
   repoUpdateDevis(id, input, userId, documents);
 
+export const svcReviseDevis = (id: number, input: UpdateDevisBodyDTO, userId: number, documents: UploadedDocument[]) =>
+  repoReviseDevis(id, input, userId, documents);
+
 export const svcDeleteDevis = (id: number) => repoDeleteDevis(id);
+
+export const svcGetCommandeDraftFromDevis = (id: number) => repoGetCommandeDraftFromDevis(id);
+
+export const svcFindDevisByArticle = (articleId: string, limit: number) => repoFindDevisByArticle(articleId, limit);
+
+export const svcFindDevisByArticleDevisCode = (code: string, limit: number) =>
+  repoFindDevisByArticleDevisCode(code, limit);
 
 export const svcConvertDevisToCommande = (id: number) => repoConvertDevisToCommande(id);

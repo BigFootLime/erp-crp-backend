@@ -19,6 +19,20 @@ export const articleTypeSchema = z.enum(["PIECE_TECHNIQUE", "PURCHASED"]);
 export type ArticleTypeDTO = z.infer<typeof articleTypeSchema>;
 export const articleCategorySchema = z.enum(["fabrique", "matiere", "traitement", "achat"]);
 export type ArticleCategoryDTO = z.infer<typeof articleCategorySchema>;
+export const articleBusinessCategorySchema = z.enum([
+  "matiere_premiere",
+  "traitement_surface",
+  "achat_revente",
+  "achat_transforme",
+  "sous_traitance",
+  "piece_finie_fabriquee",
+  "fabrique",
+  "matiere",
+  "traitement",
+  "achat",
+]);
+export const articleWorkflowStatusSchema = z.enum(["EN_DEVIS", "VALIDE"]);
+export type ArticleWorkflowStatusDTO = z.infer<typeof articleWorkflowStatusSchema>;
 
 // Mirrors DB enum: public.movement_type
 export const stockMovementTypeSchema = z.enum([
@@ -52,6 +66,8 @@ export const listArticlesQuerySchema = z.object({
   q: z.string().trim().optional(),
   article_type: articleTypeSchema.optional(),
   article_category: articleCategorySchema.optional(),
+  status: articleWorkflowStatusSchema.optional(),
+  projet_id: z.coerce.number().int().positive().optional(),
   family_code: z.string().trim().min(1).max(40).optional(),
   is_active: z.preprocess(parseBoolean, z.boolean().optional()),
   lot_tracking: z.preprocess(parseBoolean, z.boolean().optional()),
@@ -87,7 +103,12 @@ export const createArticleSchema = z.object({
       designation: z.string().trim().min(1).max(400),
       article_type: articleTypeSchema.optional(),
       article_category: articleCategorySchema.optional().default("achat"),
+      article_categories: z.array(articleBusinessCategorySchema).min(1).max(8).optional(),
       family_code: z.string().trim().min(1).max(40),
+      version_number: z.coerce.number().int().positive().optional(),
+      plan_index: z.coerce.number().int().positive().optional().default(1),
+      status: articleWorkflowStatusSchema.optional().default("VALIDE"),
+      projet_id: z.coerce.number().int().positive().optional().nullable(),
       stock_managed: z.boolean().optional().default(true),
       piece_technique_id: uuid.optional().nullable(),
       unite: z.string().trim().min(1).max(30).optional().nullable(),
@@ -100,6 +121,9 @@ export const createArticleSchema = z.object({
       if (body.article_category === "fabrique") {
         if (!body.piece_technique_id) {
           ctx.addIssue({ code: z.ZodIssueCode.custom, message: "piece_technique_id is required for fabricated articles", path: ["piece_technique_id"] });
+        }
+        if (!body.projet_id) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: "projet_id is required for fabricated articles", path: ["projet_id"] });
         }
       }
       if (body.article_category !== "fabrique" && body.piece_technique_id) {
@@ -120,7 +144,12 @@ export const updateArticleSchema = z.object({
       designation: z.string().trim().min(1).max(400).optional(),
       article_type: articleTypeSchema.optional(),
       article_category: articleCategorySchema.optional(),
+      article_categories: z.array(articleBusinessCategorySchema).min(1).max(8).optional(),
       family_code: z.string().trim().min(1).max(40).optional(),
+      version_number: z.coerce.number().int().positive().optional(),
+      plan_index: z.coerce.number().int().positive().optional(),
+      status: articleWorkflowStatusSchema.optional(),
+      projet_id: z.coerce.number().int().positive().optional().nullable(),
       stock_managed: z.boolean().optional(),
       piece_technique_id: uuid.optional().nullable(),
       unite: z.string().trim().min(1).max(30).optional().nullable(),

@@ -3,6 +3,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { HttpError } from "../../../utils/httpError";
 import {
+  devisArticleParamsSchema,
+  devisArticleDevisCodeParamsSchema,
+  devisByArticleQuerySchema,
   devisDocumentIdParamsSchema,
   devisIdParamsSchema,
   getDevisQuerySchema,
@@ -15,9 +18,13 @@ import {
   svcConvertDevisToCommande,
   svcCreateDevis,
   svcDeleteDevis,
+  svcFindDevisByArticle,
+  svcFindDevisByArticleDevisCode,
+  svcGetCommandeDraftFromDevis,
   svcGetDevis,
   svcGetDevisDocumentFileMeta,
   svcListDevis,
+  svcReviseDevis,
   svcUpdateDevis,
 } from "../services/devis.service";
 
@@ -136,6 +143,60 @@ export const convertDevisToCommande: RequestHandler = async (req, res, next) => 
     const out = await svcConvertDevisToCommande(id);
     if (!out) throw new HttpError(404, "DEVIS_NOT_FOUND", "Devis not found");
     res.status(201).json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const reviseDevis: RequestHandler = async (req, res, next) => {
+  try {
+    const { id } = devisIdParamsSchema.parse(req.params);
+    const dto = getParsedDevisBody(req);
+    if (!dto) throw new HttpError(400, "MISSING_DATA", "Missing data field");
+
+    const userId = typeof dto.user_id === "number" ? dto.user_id : typeof req.user?.id === "number" ? req.user.id : null;
+    if (!userId) throw new HttpError(422, "USER_ID_REQUIRED", "user_id is required");
+
+    const documents = getUploadedDocuments(req);
+    const out = await svcReviseDevis(id, dto as UpdateDevisBodyDTO, userId, documents);
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.status(201).json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const getCommandeDraftFromDevis: RequestHandler = async (req, res, next) => {
+  try {
+    const { id } = devisIdParamsSchema.parse(req.params);
+    const out = await svcGetCommandeDraftFromDevis(id);
+    if (!out) throw new HttpError(404, "DEVIS_NOT_FOUND", "Devis not found");
+    res.json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const findDevisByArticle: RequestHandler = async (req, res, next) => {
+  try {
+    const { articleId } = devisArticleParamsSchema.parse(req.params);
+    const { limit } = devisByArticleQuerySchema.parse(req.query);
+    const out = await svcFindDevisByArticle(articleId, limit);
+    res.json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const findDevisByArticleDevisCode: RequestHandler = async (req, res, next) => {
+  try {
+    const { code } = devisArticleDevisCodeParamsSchema.parse(req.params);
+    const { limit } = devisByArticleQuerySchema.parse(req.query);
+    const out = await svcFindDevisByArticleDevisCode(code, limit);
+    res.json(out);
   } catch (err) {
     next(err);
   }

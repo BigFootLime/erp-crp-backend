@@ -9,9 +9,13 @@ import {
   createDevis,
   convertDevisToCommande,
   deleteDevis,
+  findDevisByArticle,
+  findDevisByArticleDevisCode,
+  getCommandeDraftFromDevis,
   getDevis,
   getDevisDocumentFile,
   listDevis,
+  reviseDevis,
   updateDevis,
 } from "../controllers/devis.controller";
 import { createDevisBodySchema, updateDevisBodySchema } from "../validators/devis.validators";
@@ -62,10 +66,14 @@ const parseMultipartData = (schema: z.ZodTypeAny): RequestHandler => {
 const router = Router();
 
 router.get("/", listDevis);
+router.get("/by-article/:articleId", findDevisByArticle);
+router.get("/by-article-devis-code/:code", findDevisByArticleDevisCode);
 router.get("/:id", getDevis);
+router.get("/:id/commande-draft", getCommandeDraftFromDevis);
 router.get("/:id/documents/:docId/file", getDevisDocumentFile);
 router.post("/", upload.array("documents[]"), parseMultipartData(createDevisBodySchema), createDevis);
 router.post("/:id/convert-to-commande", convertDevisToCommande);
+router.post("/:id/revise", upload.array("documents[]"), parseMultipartData(updateDevisBodySchema), reviseDevis);
 router.patch("/:id", upload.array("documents[]"), parseMultipartData(updateDevisBodySchema), updateDevis);
 router.delete("/:id", deleteDevis);
 

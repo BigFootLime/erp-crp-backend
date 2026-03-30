@@ -243,6 +243,437 @@ async function resolveCommandeLineArticle(
   return article;
 }
 
+type PreparatorySourceBundle = {
+  source_article_devis_id: string;
+  source_dossier_devis_id: string | null;
+  article_devis: {
+    id: string;
+    devis_id: number;
+    code: string;
+    designation: string;
+    primary_category: string;
+    article_categories: string[];
+    family_code: string;
+    plan_index: number;
+    projet_id: number | null;
+    source_official_article_id: string | null;
+  };
+  dossier_technique_piece_devis: {
+    id: string;
+    article_devis_id: string;
+    devis_id: number;
+    code_piece: string;
+    designation: string;
+    source_official_piece_technique_id: string | null;
+    payload: Record<string, unknown>;
+  } | null;
+};
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return isObject(value) ? value : {};
+}
+
+function lineHasPreparatorySource(line: CreateCommandeInput["lignes"][number]): boolean {
+  return Boolean(
+    (typeof line.source_article_devis_id === "string" && line.source_article_devis_id.trim()) ||
+      line.article_devis_data ||
+      (typeof line.source_dossier_devis_id === "string" && line.source_dossier_devis_id.trim()) ||
+      line.dossier_technique_piece_devis_data
+  );
+}
+
+async function getOfficialArticleMetaById(db: Queryable, articleId: string): Promise<CommandeLineArticleResolution | null> {
+  const res = await db.query<CommandeLineArticleResolution>(
+    `
+      SELECT
+        a.id::text AS article_id,
+        a.code AS article_code,
+        a.designation AS article_designation,
+        a.article_category,
+        a.family_code,
+        a.unite AS article_unite,
+        a.piece_technique_id::text AS piece_technique_id,
+        pt.code_piece AS piece_code,
+        pt.designation AS piece_designation,
+        a.stock_managed,
+        a.is_active
+      FROM public.articles a
+      LEFT JOIN public.pieces_techniques pt ON pt.id = a.piece_technique_id
+      WHERE a.id = $1::uuid
+      LIMIT 1
+    `,
+    [articleId]
+  );
+  return res.rows[0] ?? null;
+}
+
+async function loadPreparatorySourceBundle(
+  db: Queryable,
+  line: CreateCommandeInput["lignes"][number]
+): Promise<PreparatorySourceBundle | null> {
+  const sourceArticleDevisId = typeof line.source_article_devis_id === "string" ? line.source_article_devis_id.trim() : "";
+  const sourceDossierDevisId = typeof line.source_dossier_devis_id === "string" ? line.source_dossier_devis_id.trim() : "";
+
+  if (line.article_devis_data && line.article_devis_data.id) {
+    const articleData = line.article_devis_data;
+    const dossierData = line.dossier_technique_piece_devis_data;
+    return {
+      source_article_devis_id: articleData.id,
+      source_dossier_devis_id: dossierData?.id ?? (sourceDossierDevisId || null),
+      article_devis: {
+        id: articleData.id,
+        devis_id: articleData.devis_id,
+        code: articleData.code,
+        designation: articleData.designation,
+        primary_category: articleData.primary_category,
+        article_categories: articleData.article_categories ?? [],
+        family_code: articleData.family_code,
+        plan_index: articleData.plan_index,
+        projet_id: articleData.projet_id ?? null,
+        source_official_article_id: articleData.source_official_article_id ?? null,
+      },
+      dossier_technique_piece_devis: dossierData
+        ? {
+            id: dossierData.id,
+            article_devis_id: dossierData.article_devis_id,
+            devis_id: dossierData.devis_id,
+            code_piece: dossierData.code_piece,
+            designation: dossierData.designation,
+            source_official_piece_technique_id: dossierData.source_official_piece_technique_id ?? null,
+            payload: dossierData.payload ?? {},
+          }
+        : null,
+    };
+  }
+
+  if (!sourceArticleDevisId && !sourceDossierDevisId) return null;
+
+  const res = await db.query<{
+    article_devis_id: string;
+    article_devis_devis_id: number;
+    article_code: string;
+    article_designation: string;
+    primary_category: string;
+    article_categories: string[];
+    family_code: string;
+    plan_index: number;
+    projet_id: number | null;
+    source_official_article_id: string | null;
+    dossier_devis_id: string | null;
+    dossier_devis_devis_id: number | null;
+    dossier_code_piece: string | null;
+    dossier_designation: string | null;
+    source_official_piece_technique_id: string | null;
+    dossier_payload: Record<string, unknown> | null;
+  }>(
+    `
+      SELECT
+        ad.id::text AS article_devis_id,
+        ad.devis_id::int AS article_devis_devis_id,
+        ad.code AS article_code,
+        ad.designation AS article_designation,
+        ad.primary_category,
+        COALESCE(ad.article_categories, ARRAY[]::text[]) AS article_categories,
+        ad.family_code,
+        ad.plan_index::int AS plan_index,
+        ad.projet_id::int AS projet_id,
+        ad.source_official_article_id::text AS source_official_article_id,
+        dd.id::text AS dossier_devis_id,
+        dd.devis_id::int AS dossier_devis_devis_id,
+        dd.code_piece AS dossier_code_piece,
+        dd.designation AS dossier_designation,
+        dd.source_official_piece_technique_id::text AS source_official_piece_technique_id,
+        dd.payload AS dossier_payload
+      FROM public.article_devis ad
+      LEFT JOIN public.dossier_technique_piece_devis dd
+        ON dd.article_devis_id = ad.id
+      WHERE ad.id = COALESCE($1::uuid, dd.article_devis_id)
+        AND ($2::uuid IS NULL OR dd.id = $2::uuid)
+      ORDER BY dd.created_at DESC NULLS LAST
+      LIMIT 1
+    `,
+    [sourceArticleDevisId || null, sourceDossierDevisId || null]
+  );
+
+  const row = res.rows[0] ?? null;
+  if (!row) return null;
+
+  return {
+    source_article_devis_id: row.article_devis_id,
+    source_dossier_devis_id: row.dossier_devis_id ?? null,
+    article_devis: {
+      id: row.article_devis_id,
+      devis_id: row.article_devis_devis_id,
+      code: row.article_code,
+      designation: row.article_designation,
+      primary_category: row.primary_category,
+      article_categories: row.article_categories ?? [],
+      family_code: row.family_code,
+      plan_index: row.plan_index,
+      projet_id: row.projet_id ?? null,
+      source_official_article_id: row.source_official_article_id ?? null,
+    },
+    dossier_technique_piece_devis: row.dossier_devis_id
+      ? {
+          id: row.dossier_devis_id,
+          article_devis_id: row.article_devis_id,
+          devis_id: row.dossier_devis_devis_id ?? row.article_devis_devis_id,
+          code_piece: row.dossier_code_piece ?? row.article_code,
+          designation: row.dossier_designation ?? row.article_designation,
+          source_official_piece_technique_id: row.source_official_piece_technique_id ?? null,
+          payload: row.dossier_payload ?? {},
+        }
+      : null,
+  };
+}
+
+async function ensureOfficialPieceFromPreparatory(
+  db: Queryable,
+  source: PreparatorySourceBundle,
+  commandeId: number
+): Promise<string | null> {
+  const dossier = source.dossier_technique_piece_devis;
+  if (!dossier) return null;
+
+  const existingPromotion = await db.query<{ promoted_piece_technique_id: string }>(
+    `
+      SELECT promoted_piece_technique_id::text AS promoted_piece_technique_id
+      FROM public.dossier_technique_piece_devis_promotion
+      WHERE source_dossier_devis_id = $1::uuid
+      LIMIT 1
+    `,
+    [dossier.id]
+  );
+  const existingPromotedId = existingPromotion.rows[0]?.promoted_piece_technique_id ?? null;
+  if (existingPromotedId) return existingPromotedId;
+
+  let officialPieceId = dossier.source_official_piece_technique_id;
+  if (officialPieceId) {
+    const exists = await db.query<{ id: string }>(
+      `SELECT id::text AS id FROM public.pieces_techniques WHERE id = $1::uuid LIMIT 1`,
+      [officialPieceId]
+    );
+    if (!exists.rows[0]) officialPieceId = null;
+  }
+
+  if (!officialPieceId) {
+    const payload = asRecord(dossier.payload);
+    const maybeFamilleId = typeof payload.famille_id === "string" ? payload.famille_id : null;
+    const maybeClientId = typeof payload.client_id === "string" ? payload.client_id : null;
+    const maybeCodeClient = typeof payload.code_client === "string" ? payload.code_client : null;
+    const maybeClientName = typeof payload.client_name === "string" ? payload.client_name : null;
+    const maybeNamePiece = typeof payload.name_piece === "string" && payload.name_piece.trim().length > 0
+      ? payload.name_piece.trim()
+      : dossier.designation;
+    const maybeDesignation2 = typeof payload.designation_2 === "string" ? payload.designation_2 : null;
+    const maybePrixUnitaire = typeof payload.prix_unitaire === "number" ? payload.prix_unitaire : 0;
+
+    officialPieceId = crypto.randomUUID();
+    await db.query(
+      `
+        INSERT INTO public.pieces_techniques (
+          id,
+          article_id,
+          root_piece_technique_id,
+          parent_piece_technique_id,
+          version_number,
+          client_id,
+          created_by,
+          updated_by,
+          famille_id,
+          name_piece,
+          code_piece,
+          designation,
+          designation_2,
+          prix_unitaire,
+          statut,
+          en_fabrication,
+          cycle,
+          cycle_fabrication,
+          code_client,
+          client_name,
+          ensemble
+        ) VALUES (
+          $1::uuid,
+          NULL,
+          $1::uuid,
+          NULL,
+          1,
+          $2,
+          NULL,
+          NULL,
+          $3::uuid,
+          $4,
+          $5,
+          $6,
+          $7,
+          $8,
+          'ACTIVE',
+          0,
+          NULL,
+          NULL,
+          $9,
+          $10,
+          false
+        )
+      `,
+      [
+        officialPieceId,
+        maybeClientId,
+        maybeFamilleId,
+        maybeNamePiece,
+        dossier.code_piece,
+        dossier.designation,
+        maybeDesignation2,
+        maybePrixUnitaire,
+        maybeCodeClient,
+        maybeClientName,
+      ]
+    );
+  }
+
+  await db.query(
+    `
+      INSERT INTO public.dossier_technique_piece_devis_promotion (
+        source_dossier_devis_id,
+        promoted_piece_technique_id,
+        commande_id,
+        commande_ligne_id,
+        promoted_at
+      ) VALUES ($1::uuid,$2::uuid,$3::bigint,NULL,now())
+      ON CONFLICT (source_dossier_devis_id)
+      DO UPDATE SET
+        promoted_piece_technique_id = EXCLUDED.promoted_piece_technique_id,
+        commande_id = EXCLUDED.commande_id,
+        promoted_at = now(),
+        updated_at = now()
+    `,
+    [dossier.id, officialPieceId, commandeId]
+  );
+
+  return officialPieceId;
+}
+
+async function ensureOfficialArticleFromPreparatory(
+  db: Queryable,
+  source: PreparatorySourceBundle,
+  commandeId: number,
+  officialPieceId: string | null
+): Promise<CommandeLineArticleResolution> {
+  const existingPromotion = await db.query<{ promoted_article_id: string }>(
+    `
+      SELECT promoted_article_id::text AS promoted_article_id
+      FROM public.article_devis_promotion
+      WHERE source_article_devis_id = $1::uuid
+      LIMIT 1
+    `,
+    [source.source_article_devis_id]
+  );
+
+  let officialArticleId: string | null =
+    existingPromotion.rows[0]?.promoted_article_id ?? source.article_devis.source_official_article_id ?? null;
+  if (officialArticleId) {
+    const meta = await getOfficialArticleMetaById(db, officialArticleId);
+    if (meta) {
+      await db.query(`UPDATE public.articles SET status = 'VALIDE', updated_at = now() WHERE id = $1::uuid`, [officialArticleId]);
+      return {
+        ...meta,
+        piece_technique_id: officialPieceId ?? meta.piece_technique_id,
+      };
+    }
+    officialArticleId = null;
+  }
+
+  if (!officialArticleId) {
+    officialArticleId = crypto.randomUUID();
+    const categories = Array.from(new Set([source.article_devis.primary_category, ...(source.article_devis.article_categories ?? [])]))
+      .filter((c) => c && c.trim().length > 0)
+      .map((c) => c.trim());
+
+    await db.query(
+      `
+        INSERT INTO public.articles (
+          id,
+          code,
+          designation,
+          article_type,
+          article_category,
+          family_code,
+          stock_managed,
+          piece_technique_id,
+          unite,
+          root_article_id,
+          parent_article_id,
+          version_number,
+          plan_index,
+          status,
+          projet_id,
+          lot_tracking,
+          is_active,
+          notes,
+          created_by,
+          updated_by
+        ) VALUES (
+          $1::uuid,$2,$3,'PIECE_TECHNIQUE','fabrique',$4,true,$5::uuid,'u',$1::uuid,NULL,1,$6::int,'VALIDE',$7::bigint,false,true,NULL,NULL,NULL
+        )
+      `,
+      [
+        officialArticleId,
+        source.article_devis.code,
+        source.article_devis.designation,
+        source.article_devis.family_code,
+        officialPieceId,
+        source.article_devis.plan_index > 0 ? source.article_devis.plan_index : 1,
+        source.article_devis.projet_id ?? null,
+      ]
+    );
+
+    if (categories.length > 0) {
+      await db.query(`DELETE FROM public.article_category_link WHERE article_id = $1::uuid`, [officialArticleId]);
+      for (let i = 0; i < categories.length; i++) {
+        await db.query(
+          `
+            INSERT INTO public.article_category_link (article_id, category_code, is_primary)
+            VALUES ($1::uuid,$2,$3)
+            ON CONFLICT (article_id, category_code) DO UPDATE SET is_primary = EXCLUDED.is_primary
+          `,
+          [officialArticleId, categories[i], i === 0]
+        );
+      }
+    }
+  }
+
+  await db.query(
+    `
+      INSERT INTO public.article_devis_promotion (
+        source_article_devis_id,
+        promoted_article_id,
+        commande_id,
+        commande_ligne_id,
+        promoted_at
+      ) VALUES ($1::uuid,$2::uuid,$3::bigint,NULL,now())
+      ON CONFLICT (source_article_devis_id)
+      DO UPDATE SET
+        promoted_article_id = EXCLUDED.promoted_article_id,
+        commande_id = EXCLUDED.commande_id,
+        promoted_at = now(),
+        updated_at = now()
+    `,
+    [source.source_article_devis_id, officialArticleId, commandeId]
+  );
+
+  await db.query(`UPDATE public.articles SET status = 'VALIDE', updated_at = now() WHERE id = $1::uuid`, [officialArticleId]);
+
+  const meta = await getOfficialArticleMetaById(db, officialArticleId);
+  if (!meta) {
+    throw new HttpError(500, "ARTICLE_PROMOTION_FAILED", "Official article creation failed");
+  }
+  return {
+    ...meta,
+    piece_technique_id: officialPieceId ?? meta.piece_technique_id,
+  };
+}
+
 let commandeToAffaireHasRoleColumnCache: boolean | null = null;
 async function hasCommandeToAffaireRoleColumn(db: Queryable): Promise<boolean> {
   if (commandeToAffaireHasRoleColumnCache !== null) return commandeToAffaireHasRoleColumnCache;
@@ -767,6 +1198,8 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
       cc.id::text AS id,
       cc.numero,
       cc.client_id,
+      cc.devis_id::text AS devis_id,
+      cc.source_devis_version_id::text AS source_devis_version_id,
       cc.contact_id::text AS contact_id,
       cc.destinataire_id::text AS destinataire_id,
       cc.adresse_facturation_id::text AS adresse_facturation_id,
@@ -808,6 +1241,8 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
     id: string;
     numero: string;
     client_id: string | null;
+    devis_id: string | null;
+    source_devis_version_id: string | null;
     contact_id: string | null;
     destinataire_id: string | null;
     adresse_facturation_id: string | null;
@@ -844,6 +1279,8 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
   const commande = {
     ...commandeRow,
     id: toInt(commandeRow.id, "commande.id"),
+    devis_id: toNullableInt(commandeRow.devis_id, "commande.devis_id"),
+    source_devis_version_id: toNullableInt(commandeRow.source_devis_version_id, "commande.source_devis_version_id"),
   };
 
   const inc = includeFlags(includes);
@@ -859,6 +1296,8 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
             COALESCE(a.code, cl.code_piece) AS code_piece,
             cl.article_id::text AS article_id,
             COALESCE(cl.piece_technique_id::text, a.piece_technique_id::text) AS piece_technique_id,
+            cl.source_article_devis_id::text AS source_article_devis_id,
+            cl.source_dossier_devis_id::text AS source_dossier_devis_id,
             cl.quantite::float8 AS quantite,
             cl.unite,
             cl.prix_unitaire_ht::float8 AS prix_unitaire_ht,
@@ -1100,11 +1539,47 @@ export async function repoGetCommandeDocumentFileMeta(commandeId: string, docId:
   return res.rows[0] ?? null;
 }
 
-async function insertCommandeLignes(client: PoolClient, commandeId: string, lignes: CreateCommandeInput["lignes"]) {
+type InsertCommandeLignesOptions = {
+  officialize_preparatory_data: boolean;
+  commande_id_int: number;
+};
+
+async function insertCommandeLignes(
+  client: PoolClient,
+  commandeId: string,
+  lignes: CreateCommandeInput["lignes"],
+  options: InsertCommandeLignesOptions
+) {
   if (!lignes.length) return;
 
   for (const l of lignes) {
-    const resolved = await resolveCommandeLineArticle(client, l);
+    const hasPreparatory = lineHasPreparatorySource(l);
+    if (hasPreparatory && !options.officialize_preparatory_data) {
+      throw new HttpError(
+        400,
+        "PREPARATORY_OFFICIALIZATION_REQUIRED",
+        "Preparatory quote data requires officialize_preparatory_data=true before creating or updating commande"
+      );
+    }
+
+    let resolved: CommandeLineArticleResolution;
+    let sourceArticleDevisId: string | null = typeof l.source_article_devis_id === "string" ? l.source_article_devis_id.trim() || null : null;
+    let sourceDossierDevisId: string | null = typeof l.source_dossier_devis_id === "string" ? l.source_dossier_devis_id.trim() || null : null;
+
+    if (hasPreparatory) {
+      const bundle = await loadPreparatorySourceBundle(client, l);
+      if (!bundle) {
+        throw new HttpError(400, "INVALID_PREPARATORY_SOURCE", "Unknown preparatory source identifiers");
+      }
+      sourceArticleDevisId = bundle.source_article_devis_id;
+      sourceDossierDevisId = bundle.source_dossier_devis_id;
+
+      const officialPieceId = await ensureOfficialPieceFromPreparatory(client, bundle, options.commande_id_int);
+      resolved = await ensureOfficialArticleFromPreparatory(client, bundle, options.commande_id_int, officialPieceId);
+    } else {
+      resolved = await resolveCommandeLineArticle(client, l);
+    }
+
     const designation = typeof l.designation === "string" && l.designation.trim().length > 0
       ? l.designation.trim()
       : resolved.article_designation;
@@ -1112,7 +1587,7 @@ async function insertCommandeLignes(client: PoolClient, commandeId: string, lign
       ? l.unite.trim()
       : resolved.article_unite;
 
-    await client.query(
+    const insertRes = await client.query<{ id: string }>(
       `
         INSERT INTO commande_ligne (
           commande_id,
@@ -1128,7 +1603,9 @@ async function insertCommandeLignes(client: PoolClient, commandeId: string, lign
           delai_client,
           delai_interne,
           devis_numero,
-          famille
+          famille,
+          source_article_devis_id,
+          source_dossier_devis_id
         ) VALUES (
           $1,
           $2::uuid,
@@ -1143,8 +1620,11 @@ async function insertCommandeLignes(client: PoolClient, commandeId: string, lign
           $11,
           $12,
           $13,
-          $14
+          $14,
+          $15::uuid,
+          $16::uuid
         )
+        RETURNING id::bigint::text AS id
       `,
       [
         commandeId,
@@ -1161,8 +1641,36 @@ async function insertCommandeLignes(client: PoolClient, commandeId: string, lign
         l.delai_interne ?? null,
         l.devis_numero ?? null,
         l.famille ?? null,
+        sourceArticleDevisId,
+        sourceDossierDevisId,
       ]
     );
+
+    const createdLineIdRaw = insertRes.rows[0]?.id;
+    const createdLineId = createdLineIdRaw ? toInt(createdLineIdRaw, "commande_ligne.id") : null;
+
+    if (sourceArticleDevisId && createdLineId) {
+      await client.query(
+        `
+          UPDATE public.article_devis_promotion
+          SET commande_ligne_id = $2::bigint,
+              updated_at = now()
+          WHERE source_article_devis_id = $1::uuid
+        `,
+        [sourceArticleDevisId, createdLineId]
+      );
+    }
+    if (sourceDossierDevisId && createdLineId) {
+      await client.query(
+        `
+          UPDATE public.dossier_technique_piece_devis_promotion
+          SET commande_ligne_id = $2::bigint,
+              updated_at = now()
+          WHERE source_dossier_devis_id = $1::uuid
+        `,
+        [sourceDossierDevisId, createdLineId]
+      );
+    }
   }
 }
 
@@ -1236,10 +1744,67 @@ async function insertCommandeDocuments(client: PoolClient, commandeId: string, d
   }
 }
 
+async function assertDevisDraftIsFresh(
+  client: Queryable,
+  devisId: number | null | undefined,
+  expectedUpdatedAt: string | null | undefined
+) {
+  if (!devisId || !expectedUpdatedAt) return;
+
+  const res = await client.query<{ updated_at: string | null; created_at: string | null }>(
+    `
+      SELECT updated_at::text AS updated_at, created_at::text AS created_at
+      FROM public.devis
+      WHERE id = $1::bigint
+      LIMIT 1
+    `,
+    [devisId]
+  );
+
+  const row = res.rows[0] ?? null;
+  if (!row) {
+    throw new HttpError(400, "INVALID_SOURCE_DEVIS", `Unknown devis_id ${devisId}`);
+  }
+
+  const currentVersion = row.updated_at ?? row.created_at ?? null;
+  if (currentVersion && currentVersion !== expectedUpdatedAt) {
+    throw new HttpError(409, "DEVIS_DRAFT_STALE", "The source devis changed after this draft was prepared. Please reload it.");
+  }
+}
+
+async function transitionLinkedDevisArticlesToValide(
+  client: Queryable,
+  commandeId: number,
+  devisId: number | null | undefined
+) {
+  if (!devisId) return 0;
+
+  const updated = await client.query<{ id: string }>(
+    `
+      UPDATE public.articles a
+      SET status = 'VALIDE',
+          updated_at = now()
+      WHERE a.status = 'EN_DEVIS'
+        AND a.id IN (
+          SELECT DISTINCT cl.article_id
+          FROM public.commande_ligne cl
+          WHERE cl.commande_id = $1
+            AND cl.article_id IS NOT NULL
+        )
+      RETURNING a.id::text AS id
+    `,
+    [commandeId]
+  );
+
+  return updated.rowCount ?? 0;
+}
+
 export async function repoCreateCommande(input: CreateCommandeInput, documents: UploadedDocument[]) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+
+    await assertDevisDraftIsFresh(client, input.devis_id ?? null, input.source_devis_updated_at ?? null);
 
     const idRes = await client.query<{ id: string }>(
       `SELECT nextval('public.commande_client_id_seq')::bigint::text AS id`
@@ -1281,9 +1846,11 @@ export async function repoCreateCommande(input: CreateCommandeInput, documents: 
         commentaire,
         remise_globale,
         total_ht,
-        total_ttc
+        total_ttc,
+        devis_id,
+        source_devis_version_id
       ) VALUES (
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29
       )
       RETURNING id::text AS id
     `;
@@ -1315,14 +1882,20 @@ export async function repoCreateCommande(input: CreateCommandeInput, documents: 
       input.remise_globale ?? 0,
       input.total_ht ?? 0,
       input.total_ttc ?? 0,
+      input.devis_id ?? null,
+      input.source_devis_version_id ?? input.devis_id ?? null,
     ];
     const ins = await client.query<{ id: string }>(insertSql, insertParams);
     const commandeId = ins.rows[0]?.id;
     if (!commandeId) throw new Error("Failed to create commande");
 
-    await insertCommandeLignes(client, commandeId, input.lignes);
+    await insertCommandeLignes(client, commandeId, input.lignes, {
+      officialize_preparatory_data: input.officialize_preparatory_data ?? false,
+      commande_id_int: commandeIdInt,
+    });
     await insertCommandeEcheances(client, commandeId, input.echeances ?? []);
     await insertCommandeDocuments(client, commandeId, documents);
+    await transitionLinkedDevisArticlesToValide(client, commandeIdInt, input.devis_id ?? null);
 
     // Initial workflow status: ENREGISTREE
     await client.query(
@@ -1337,6 +1910,13 @@ export async function repoCreateCommande(input: CreateCommandeInput, documents: 
     return { id: toInt(commandeId, "commande.id") };
   } catch (e) {
     await client.query("ROLLBACK");
+    if (isObject(e)) {
+      const code = typeof e.code === "string" ? e.code : null;
+      const constraint = typeof e.constraint === "string" ? e.constraint : null;
+      if (code === "23505" && constraint === "commande_client_devis_id_key") {
+        throw new HttpError(409, "DEVIS_ALREADY_CONVERTED", "Devis already converted");
+      }
+    }
     throw e;
   } finally {
     client.release();
@@ -1351,6 +1931,7 @@ export async function repoUpdateCommande(id: string, input: CreateCommandeInput,
     const existingRes = await client.query<{
       numero: string;
       client_id: string | null;
+      devis_id: string | null;
       order_type: string;
       adresse_facturation_id: string | null;
       cadre_start_date: string | null;
@@ -1363,6 +1944,7 @@ export async function repoUpdateCommande(id: string, input: CreateCommandeInput,
       SELECT
         numero,
         client_id,
+        devis_id::text AS devis_id,
         order_type,
         adresse_facturation_id::text AS adresse_facturation_id,
         cadre_start_date::text AS cadre_start_date,
@@ -1390,6 +1972,7 @@ export async function repoUpdateCommande(id: string, input: CreateCommandeInput,
     const orderType = input.order_type ?? coerceOrderType(existing.order_type);
 
     const clientIdForUpdate = hasOwn(input as object, "client_id") ? (input.client_id ?? null) : existing.client_id;
+    const devisIdForUpdate = hasOwn(input as object, "devis_id") ? (input.devis_id ?? null) : toNullableInt(existing.devis_id, "devis_id");
     const adresseFacturationForUpdate = hasOwn(input as object, "adresse_facturation_id")
       ? (input.adresse_facturation_id ?? null)
       : existing.adresse_facturation_id;
@@ -1405,6 +1988,8 @@ export async function repoUpdateCommande(id: string, input: CreateCommandeInput,
     const destEmplacementForUpdate = hasOwn(input as object, "dest_stock_emplacement_id")
       ? (input.dest_stock_emplacement_id ?? null)
       : existing.dest_stock_emplacement_id;
+
+    await assertDevisDraftIsFresh(client, devisIdForUpdate, input.source_devis_updated_at ?? null);
 
     const updateSql = `
       UPDATE commande_client
@@ -1435,6 +2020,8 @@ export async function repoUpdateCommande(id: string, input: CreateCommandeInput,
         remise_globale = $25,
         total_ht = $26,
         total_ttc = $27,
+        devis_id = $28,
+        source_devis_version_id = $29,
         updated_at = now()
       WHERE id = $1
       RETURNING id::text AS id
@@ -1467,6 +2054,8 @@ export async function repoUpdateCommande(id: string, input: CreateCommandeInput,
       input.remise_globale ?? 0,
       input.total_ht ?? 0,
       input.total_ttc ?? 0,
+      devisIdForUpdate,
+      input.source_devis_version_id ?? devisIdForUpdate,
     ];
 
     const updated = await client.query<{ id: string }>(updateSql, updateParams);
@@ -1479,14 +2068,25 @@ export async function repoUpdateCommande(id: string, input: CreateCommandeInput,
     // Safe strategy: replace all lignes + echeances from payload.
     await client.query(`DELETE FROM commande_ligne WHERE commande_id = $1`, [id]);
     await client.query(`DELETE FROM commande_echeance WHERE commande_id = $1`, [id]);
-    await insertCommandeLignes(client, id, input.lignes);
+    await insertCommandeLignes(client, id, input.lignes, {
+      officialize_preparatory_data: input.officialize_preparatory_data ?? false,
+      commande_id_int: toInt(id, "commande_id"),
+    });
     await insertCommandeEcheances(client, id, input.echeances ?? []);
     await insertCommandeDocuments(client, id, documents);
+    await transitionLinkedDevisArticlesToValide(client, toInt(id, "commande_id"), devisIdForUpdate);
 
     await client.query("COMMIT");
     return { id: toInt(commandeId, "commande.id") };
   } catch (e) {
     await client.query("ROLLBACK");
+    if (isObject(e)) {
+      const code = typeof e.code === "string" ? e.code : null;
+      const constraint = typeof e.constraint === "string" ? e.constraint : null;
+      if (code === "23505" && constraint === "commande_client_devis_id_key") {
+        throw new HttpError(409, "DEVIS_ALREADY_CONVERTED", "Devis already converted");
+      }
+    }
     throw e;
   } finally {
     client.release();
@@ -2908,6 +3508,8 @@ export async function repoDuplicateCommande(id: string) {
         code_piece,
         article_id::text AS article_id,
         piece_technique_id::text AS piece_technique_id,
+        source_article_devis_id::text AS source_article_devis_id,
+        source_dossier_devis_id::text AS source_dossier_devis_id,
         quantite,
         unite,
         prix_unitaire_ht,
@@ -2998,6 +3600,8 @@ export async function repoDuplicateCommande(id: string) {
       const lignesPayload = lignesRes.rows.map((r) => ({
         designation: r.designation as string,
         article_id: (r.article_id as string | null) ?? null,
+        source_article_devis_id: (r.source_article_devis_id as string | null) ?? null,
+        source_dossier_devis_id: (r.source_dossier_devis_id as string | null) ?? null,
         code_piece: (r.code_piece as string | null) ?? null,
         quantite: Number(r.quantite),
         unite: (r.unite as string | null) ?? null,
@@ -3009,7 +3613,10 @@ export async function repoDuplicateCommande(id: string) {
         devis_numero: (r.devis_numero as string | null) ?? null,
         famille: (r.famille as string | null) ?? null,
       }));
-      await insertCommandeLignes(client, String(newIdInt), lignesPayload);
+      await insertCommandeLignes(client, String(newIdInt), lignesPayload, {
+        officialize_preparatory_data: true,
+        commande_id_int: newIdInt,
+      });
     }
 
     await client.query(

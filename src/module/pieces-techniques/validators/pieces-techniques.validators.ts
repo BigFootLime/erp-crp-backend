@@ -129,6 +129,10 @@ const achatInputSchema = z.object({
 
 export const createPieceTechniqueSchema = z.object({
   body: z.object({
+    article_id: uuid.optional().nullable(),
+    root_piece_technique_id: uuid.optional().nullable(),
+    parent_piece_technique_id: uuid.optional().nullable(),
+    version_number: z.coerce.number().int().positive().optional(),
     client_id: z.string().trim().min(1).max(3).optional().nullable(),
     code_client: z.string().trim().min(1).max(80).optional().nullable(),
     client_name: z.string().trim().min(1).max(200).optional().nullable(),
@@ -153,6 +157,10 @@ export type CreatePieceTechniqueBodyDTO = z.infer<typeof createPieceTechniqueSch
 export const updatePieceTechniqueSchema = z.object({
   body: z.object({
     expected_updated_at: z.string().min(1).optional(),
+    article_id: uuid.optional().nullable(),
+    root_piece_technique_id: uuid.optional().nullable(),
+    parent_piece_technique_id: uuid.optional().nullable(),
+    version_number: z.coerce.number().int().positive().optional(),
     client_id: z.string().trim().min(1).max(3).optional().nullable(),
     code_client: z.string().trim().min(1).max(80).optional().nullable(),
     client_name: z.string().trim().min(1).max(200).optional().nullable(),
