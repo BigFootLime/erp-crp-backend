@@ -175,6 +175,104 @@ describe("/api/v1/stock", () => {
     ).toBe(true);
   });
 
+  it("POST /api/v1/stock/articles persists article_matiere payload", async () => {
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const q = String(sql);
+      if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
+      if (q.includes("INSERT INTO public.articles (") || q.includes("INSERT INTO public.articles\n")) {
+        return { rows: [{ id: "11111111-1111-1111-1111-111111111111" }] };
+      }
+      if (q.includes("INSERT INTO public.article_category_link")) {
+        return { rows: [] };
+      }
+      if (q.includes("INSERT INTO public.articles_matiere_families")) {
+        return { rows: [] };
+      }
+      if (q.includes("INSERT INTO public.articles_matiere")) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    });
+
+    mocks.poolQuery.mockResolvedValue({
+      rows: [
+        {
+          id: "11111111-1111-1111-1111-111111111111",
+          root_article_id: "11111111-1111-1111-1111-111111111111",
+          parent_article_id: null,
+          version_number: 1,
+          plan_index: 1,
+          status: "VALIDE",
+          projet_id: null,
+          code: "MP-PL-ALU-ETAT-50x10x1000",
+          designation: "Alu plat",
+          article_type: "PURCHASED",
+          article_category: "matiere",
+          article_categories: ["matiere_premiere"],
+          family_code: "PLAT",
+          stock_managed: true,
+          piece_technique_id: null,
+          piece_code: null,
+          piece_designation: null,
+          unite: null,
+          lot_tracking: false,
+          is_active: true,
+          notes: null,
+          article_matiere: {
+            nuance_id: 1,
+            etat_id: 2,
+            sous_etat_id: null,
+            barre_a_decouper: false,
+            longueur_mm: 1000,
+            longueur_unitaire_mm: null,
+            largeur_mm: 50,
+            hauteur_mm: null,
+            epaisseur_mm: 10,
+            diametre_mm: null,
+            largeur_plat_mm: null,
+          },
+          qty_available: 0,
+          qty_reserved: 0,
+          qty_total: 0,
+          locations_count: 0,
+          updated_at: "2026-03-13T00:00:00.000Z",
+          created_at: "2026-03-13T00:00:00.000Z",
+        },
+      ],
+    });
+
+    const res = await request(app)
+      .post("/api/v1/stock/articles")
+      .set("Authorization", "Bearer fake")
+      .send({
+        code: "MP-PL-ALU-ETAT-50x10x1000",
+        designation: "Alu plat",
+        article_category: "matiere",
+        article_categories: ["matiere_premiere"],
+        family_code: "PLAT",
+        stock_managed: true,
+        lot_tracking: false,
+        is_active: true,
+        article_matiere: {
+          nuance_id: 1,
+          etat_id: 2,
+          sous_etat_id: null,
+          barre_a_decouper: false,
+          longueur_mm: 1000,
+          longueur_unitaire_mm: null,
+          largeur_mm: 50,
+          epaisseur_mm: 10,
+        },
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({ article_category: "matiere", family_code: "PLAT" });
+    expect(res.body.article_matiere).toMatchObject({ nuance_id: 1, etat_id: 2, longueur_mm: 1000 });
+    expect(
+      mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO public.articles_matiere"))
+    ).toBe(true);
+  });
+
   it("POST /api/v1/stock/movements rejects missing lot for lot-tracked article", async () => {
     mocks.clientQuery.mockImplementation(async (sql: unknown) => {
       const q = String(sql);

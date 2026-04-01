@@ -12,6 +12,9 @@ import {
   createStockInventorySession,
   createStockArticle,
   createStockArticleFamily,
+  createStockMatiereEtat,
+  createStockMatiereNuance,
+  createStockMatiereSousEtat,
   createStockEmplacement,
   createStockLot,
   createStockMagasin,
@@ -38,6 +41,9 @@ import {
   listStockEmplacements,
   listStockLots,
   listStockMagasins,
+  listStockMatiereEtats,
+  listStockMatiereNuances,
+  listStockMatiereSousEtats,
   listStockMovementDocuments,
   listStockMovements,
   postStockMovement,
@@ -72,6 +78,12 @@ router.get("/analytics", getStockAnalytics);
 router.get("/article-categories", listStockArticleCategories);
 router.get("/article-families", listStockArticleFamilies);
 router.post("/article-families", createStockArticleFamily);
+router.get("/matiere-nuances", listStockMatiereNuances);
+router.post("/matiere-nuances", createStockMatiereNuance);
+router.get("/matiere-etats", listStockMatiereEtats);
+router.post("/matiere-etats", createStockMatiereEtat);
+router.get("/matiere-sous-etats", listStockMatiereSousEtats);
+router.post("/matiere-sous-etats", createStockMatiereSousEtat);
 router.get("/articles", listStockArticles);
 router.get("/articles/kpis", getStockArticlesKpis);
 router.post("/articles", createStockArticle);

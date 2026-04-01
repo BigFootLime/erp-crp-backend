@@ -2,6 +2,23 @@ import { z } from "zod";
 
 const uuid = z.string().uuid();
 
+const positiveInt = z.coerce.number().int().positive();
+
+const optionalPositiveInt = z.preprocess(
+  (value) => (value === "" || value === null || value === undefined ? undefined : value),
+  positiveInt.optional()
+);
+
+const nullablePositiveInt = z.preprocess(
+  (value) => (value === "" || value === null || value === undefined ? null : value),
+  z.coerce.number().int().positive().nullable()
+);
+
+const nullablePositiveNumber = z.preprocess(
+  (value) => (value === "" || value === null || value === undefined ? null : value),
+  z.coerce.number().positive().nullable()
+);
+
 function parseBoolean(value: unknown): boolean | undefined {
   if (value === undefined || value === null) return undefined;
   if (typeof value === "boolean") return value;
@@ -85,6 +102,65 @@ export const listArticleFamiliesQuerySchema = z.object({
 });
 export type ListArticleFamiliesQueryDTO = z.infer<typeof listArticleFamiliesQuerySchema>;
 
+export const listMatiereNuancesQuerySchema = z.object({
+  q: z.string().trim().optional(),
+  etat_id: optionalPositiveInt,
+  is_active: z.preprocess(parseBoolean, z.boolean().optional()),
+});
+export type ListMatiereNuancesQueryDTO = z.infer<typeof listMatiereNuancesQuerySchema>;
+
+export const createMatiereNuanceSchema = z.object({
+  body: z
+    .object({
+      code: z.string().trim().min(1).max(40),
+      designation: z.string().trim().min(1).max(160),
+      densite: nullablePositiveNumber.optional(),
+      etat_ids: z.array(positiveInt).optional().default([]),
+      is_active: z.boolean().optional().default(true),
+    })
+    .strict(),
+});
+export type CreateMatiereNuanceBodyDTO = z.infer<typeof createMatiereNuanceSchema>["body"];
+
+export const listMatiereEtatsQuerySchema = z.object({
+  q: z.string().trim().optional(),
+  nuance_id: optionalPositiveInt,
+  is_active: z.preprocess(parseBoolean, z.boolean().optional()),
+});
+export type ListMatiereEtatsQueryDTO = z.infer<typeof listMatiereEtatsQuerySchema>;
+
+export const createMatiereEtatSchema = z.object({
+  body: z
+    .object({
+      code: z.string().trim().min(1).max(40),
+      designation: z.string().trim().min(1).max(160),
+      unite_achat: optionalPositiveInt,
+      nuance_ids: z.array(positiveInt).optional().default([]),
+      is_active: z.boolean().optional().default(true),
+    })
+    .strict(),
+});
+export type CreateMatiereEtatBodyDTO = z.infer<typeof createMatiereEtatSchema>["body"];
+
+export const listMatiereSousEtatsQuerySchema = z.object({
+  q: z.string().trim().optional(),
+  etat_id: optionalPositiveInt,
+  is_active: z.preprocess(parseBoolean, z.boolean().optional()),
+});
+export type ListMatiereSousEtatsQueryDTO = z.infer<typeof listMatiereSousEtatsQuerySchema>;
+
+export const createMatiereSousEtatSchema = z.object({
+  body: z
+    .object({
+      etat_id: positiveInt,
+      code: z.string().trim().min(1).max(40),
+      designation: z.string().trim().min(1).max(160),
+      is_active: z.boolean().optional().default(true),
+    })
+    .strict(),
+});
+export type CreateMatiereSousEtatBodyDTO = z.infer<typeof createMatiereSousEtatSchema>["body"];
+
 export const createArticleFamilySchema = z.object({
   body: z
     .object({
@@ -115,6 +191,22 @@ export const createArticleSchema = z.object({
       lot_tracking: z.boolean().optional().default(false),
       is_active: z.boolean().optional().default(true),
       notes: z.string().trim().min(1).optional().nullable(),
+      article_matiere: z
+        .object({
+          nuance_id: nullablePositiveInt.optional(),
+          etat_id: nullablePositiveInt.optional(),
+          sous_etat_id: nullablePositiveInt.optional(),
+          barre_a_decouper: z.boolean().optional().default(false),
+          longueur_mm: nullablePositiveInt.optional(),
+          longueur_unitaire_mm: nullablePositiveInt.optional(),
+          largeur_mm: nullablePositiveInt.optional(),
+          hauteur_mm: nullablePositiveInt.optional(),
+          epaisseur_mm: nullablePositiveInt.optional(),
+          diametre_mm: nullablePositiveInt.optional(),
+          largeur_plat_mm: nullablePositiveInt.optional(),
+        })
+        .strict()
+        .optional(),
     })
     .strict()
     .superRefine((body, ctx) => {
@@ -131,6 +223,14 @@ export const createArticleSchema = z.object({
       }
       if (!body.stock_managed && body.lot_tracking) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: "lot_tracking requires stock_managed=true", path: ["lot_tracking"] });
+      }
+
+      if (body.article_matiere && body.article_category !== "matiere") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "article_matiere is only allowed for article_category=matiere",
+          path: ["article_matiere"],
+        });
       }
     }),
 });

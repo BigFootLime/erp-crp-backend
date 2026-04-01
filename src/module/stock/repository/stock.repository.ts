@@ -18,6 +18,9 @@ import type {
   StockArticleFamily,
   StockArticleKpis,
   StockArticleListItem,
+  StockMatiereEtat,
+  StockMatiereNuance,
+  StockMatiereSousEtat,
   StockBalanceRow,
   StockDocument,
   StockEmplacementListItem,
@@ -36,6 +39,9 @@ import type {
 } from "../types/stock.types";
 import type {
   ArticleCategoryDTO,
+  CreateMatiereEtatBodyDTO,
+  CreateMatiereNuanceBodyDTO,
+  CreateMatiereSousEtatBodyDTO,
   CreateArticleBodyDTO,
   CreateArticleFamilyBodyDTO,
   CreateEmplacementBodyDTO,
@@ -47,6 +53,9 @@ import type {
   ListAnalyticsQueryDTO,
   ListArticlesQueryDTO,
   ListArticleFamiliesQueryDTO,
+  ListMatiereEtatsQueryDTO,
+  ListMatiereNuancesQueryDTO,
+  ListMatiereSousEtatsQueryDTO,
   ListBalancesQueryDTO,
   ListEmplacementsQueryDTO,
   ListInventorySessionsQueryDTO,
@@ -624,6 +633,477 @@ export async function repoCreateArticleFamily(
   return row;
 }
 
+function isPgForeignKeyViolation(err: unknown): boolean {
+  return (err as { code?: unknown } | null)?.code === "23503";
+}
+
+function normalizeStockReferentialCode(raw: string, kind: string): string {
+  const normalized = raw
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-{2,}/g, "-");
+  if (!normalized) {
+    throw new HttpError(400, "INVALID_CODE", `${kind} code is invalid`);
+  }
+  return normalized;
+}
+
+function uniqPositiveInts(values: number[] | null | undefined): number[] {
+  const out: number[] = [];
+  for (const v of values ?? []) {
+    const n = typeof v === "number" ? v : Number(v);
+    if (!Number.isFinite(n) || n <= 0) continue;
+    const i = Math.trunc(n);
+    if (!out.includes(i)) out.push(i);
+  }
+  return out;
+}
+
+async function insertNuanceEtatLinks(params: {
+  tx: Pick<PoolClient, "query">;
+  nuance_id: number;
+  etat_ids: number[];
+}) {
+  const ids = uniqPositiveInts(params.etat_ids);
+  for (const etatId of ids) {
+    await params.tx.query(
+      `
+        INSERT INTO public.stock_nuance_etats (nuance_id, etat_id)
+        VALUES ($1::bigint, $2::bigint)
+        ON CONFLICT (nuance_id, etat_id) DO NOTHING
+      `,
+      [params.nuance_id, etatId]
+    );
+  }
+}
+
+async function insertEtatNuanceLinks(params: {
+  tx: Pick<PoolClient, "query">;
+  etat_id: number;
+  nuance_ids: number[];
+}) {
+  const ids = uniqPositiveInts(params.nuance_ids);
+  for (const nuanceId of ids) {
+    await params.tx.query(
+      `
+        INSERT INTO public.stock_nuance_etats (nuance_id, etat_id)
+        VALUES ($1::bigint, $2::bigint)
+        ON CONFLICT (nuance_id, etat_id) DO NOTHING
+      `,
+      [nuanceId, params.etat_id]
+    );
+  }
+}
+
+export async function repoListMatiereNuances(filters: ListMatiereNuancesQueryDTO = {}): Promise<StockMatiereNuance[]> {
+  const where: string[] = [];
+  const values: unknown[] = [];
+  const push = (v: unknown) => {
+    values.push(v);
+    return `$${values.length}`;
+  };
+
+  const shouldFilterByEtat = await (async () => {
+    if (typeof filters.etat_id !== "number" || !Number.isFinite(filters.etat_id)) return false;
+    const check = await db.query<{ ok: number }>(
+      `SELECT 1::int AS ok FROM public.stock_nuance_etats WHERE etat_id = $1::bigint LIMIT 1`,
+      [filters.etat_id]
+    );
+    return Boolean(check.rows[0]?.ok);
+  })();
+
+  if (filters.q) {
+    const q = `%${filters.q.trim()}%`;
+    const p = push(q);
+    where.push(`(n.code ILIKE ${p} OR n.designation ILIKE ${p})`);
+  }
+  if (typeof filters.is_active === "boolean") {
+    where.push(`n.is_active = ${push(filters.is_active)}`);
+  }
+  if (shouldFilterByEtat && typeof filters.etat_id === "number" && Number.isFinite(filters.etat_id)) {
+    where.push(
+      `EXISTS (SELECT 1 FROM public.stock_nuance_etats ne2 WHERE ne2.nuance_id = n.id AND ne2.etat_id = ${push(filters.etat_id)}::bigint)`
+    );
+  }
+
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  const res = await db.query<{
+    id: number;
+    code: string;
+    designation: string;
+    densite: string | number | null;
+    is_active: boolean;
+    etat_ids: number[];
+  }>(
+    `
+      SELECT
+        n.id::int AS id,
+        n.code,
+        n.designation,
+        n.densite,
+        n.is_active,
+        COALESCE(
+          array_agg(ne.etat_id::int ORDER BY ne.etat_id) FILTER (WHERE ne.etat_id IS NOT NULL),
+          ARRAY[]::int[]
+        ) AS etat_ids
+      FROM public.stock_nuances n
+      LEFT JOIN public.stock_nuance_etats ne ON ne.nuance_id = n.id
+      ${whereSql}
+      GROUP BY n.id
+      ORDER BY n.code ASC
+    `,
+    values
+  );
+
+  return res.rows.map((row) => ({
+    id: row.id,
+    code: row.code,
+    designation: row.designation,
+    densite: row.densite === null ? null : typeof row.densite === "number" ? row.densite : Number(row.densite),
+    is_active: row.is_active,
+    etat_ids: Array.isArray(row.etat_ids) ? row.etat_ids.filter((v) => typeof v === "number") : [],
+  }));
+}
+
+export async function repoCreateMatiereNuance(body: CreateMatiereNuanceBodyDTO, audit: AuditContext): Promise<StockMatiereNuance> {
+  const code = normalizeStockReferentialCode(body.code, "Nuance");
+  const designation = body.designation.trim();
+  const densite = body.densite ?? null;
+  const is_active = body.is_active;
+  const etat_ids = uniqPositiveInts(body.etat_ids);
+
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+
+    let ins;
+    try {
+      ins = await client.query<{ id: number }>(
+        `
+          INSERT INTO public.stock_nuances (code, designation, densite, is_active)
+          VALUES ($1,$2,$3,$4)
+          RETURNING id::int AS id
+        `,
+        [code, designation, densite, is_active]
+      );
+    } catch (err) {
+      if (isPgUniqueViolation(err)) {
+        throw new HttpError(409, "DUPLICATE_NUANCE", `Nuance ${code} already exists`);
+      }
+      throw err;
+    }
+
+    const nuanceId = ins.rows[0]?.id;
+    if (!nuanceId) throw new Error("Failed to create nuance");
+
+    if (etat_ids.length) {
+      try {
+        await insertNuanceEtatLinks({ tx: client, nuance_id: nuanceId, etat_ids });
+      } catch (err) {
+        if (isPgForeignKeyViolation(err)) {
+          throw new HttpError(400, "INVALID_ETAT", "One or more etat_ids are invalid");
+        }
+        throw err;
+      }
+    }
+
+    await repoInsertAuditLog({
+      user_id: audit.user_id,
+      body: {
+        event_type: "ACTION",
+        action: "stock.matiere-nuances.create",
+        page_key: audit.page_key,
+        entity_type: "stock_nuances",
+        entity_id: String(nuanceId),
+        path: audit.path,
+        client_session_id: audit.client_session_id,
+        details: { code, designation, densite, is_active, etat_ids },
+      },
+      ip: audit.ip,
+      user_agent: audit.user_agent,
+      device_type: audit.device_type,
+      os: audit.os,
+      browser: audit.browser,
+      tx: client,
+    });
+
+    await client.query("COMMIT");
+
+    return {
+      id: nuanceId,
+      code,
+      designation,
+      densite: densite === null ? null : Number(densite),
+      is_active,
+      etat_ids,
+    };
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function repoListMatiereEtats(filters: ListMatiereEtatsQueryDTO = {}): Promise<StockMatiereEtat[]> {
+  const where: string[] = [];
+  const values: unknown[] = [];
+  const push = (v: unknown) => {
+    values.push(v);
+    return `$${values.length}`;
+  };
+
+  const shouldFilterByNuance = await (async () => {
+    if (typeof filters.nuance_id !== "number" || !Number.isFinite(filters.nuance_id)) return false;
+    const check = await db.query<{ ok: number }>(
+      `SELECT 1::int AS ok FROM public.stock_nuance_etats WHERE nuance_id = $1::bigint LIMIT 1`,
+      [filters.nuance_id]
+    );
+    return Boolean(check.rows[0]?.ok);
+  })();
+
+  if (filters.q) {
+    const q = `%${filters.q.trim()}%`;
+    const p = push(q);
+    where.push(`(e.code ILIKE ${p} OR e.designation ILIKE ${p})`);
+  }
+  if (typeof filters.is_active === "boolean") {
+    where.push(`e.is_active = ${push(filters.is_active)}`);
+  }
+  if (shouldFilterByNuance && typeof filters.nuance_id === "number" && Number.isFinite(filters.nuance_id)) {
+    where.push(
+      `EXISTS (SELECT 1 FROM public.stock_nuance_etats ne2 WHERE ne2.etat_id = e.id AND ne2.nuance_id = ${push(filters.nuance_id)}::bigint)`
+    );
+  }
+
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  const res = await db.query<{
+    id: number;
+    code: string;
+    designation: string;
+    unite_achat: number;
+    is_active: boolean;
+    nuance_ids: number[];
+  }>(
+    `
+      SELECT
+        e.id::int AS id,
+        e.code,
+        e.designation,
+        e.unite_achat::int AS unite_achat,
+        e.is_active,
+        COALESCE(
+          array_agg(ne.nuance_id::int ORDER BY ne.nuance_id) FILTER (WHERE ne.nuance_id IS NOT NULL),
+          ARRAY[]::int[]
+        ) AS nuance_ids
+      FROM public.stock_etats e
+      LEFT JOIN public.stock_nuance_etats ne ON ne.etat_id = e.id
+      ${whereSql}
+      GROUP BY e.id
+      ORDER BY e.code ASC
+    `,
+    values
+  );
+
+  return res.rows.map((row) => ({
+    id: row.id,
+    code: row.code,
+    designation: row.designation,
+    unite_achat: typeof row.unite_achat === "number" ? row.unite_achat : Number(row.unite_achat) || 3020,
+    is_active: row.is_active,
+    nuance_ids: Array.isArray(row.nuance_ids) ? row.nuance_ids.filter((v) => typeof v === "number") : [],
+  }));
+}
+
+export async function repoCreateMatiereEtat(body: CreateMatiereEtatBodyDTO, audit: AuditContext): Promise<StockMatiereEtat> {
+  const code = normalizeStockReferentialCode(body.code, "Etat");
+  const designation = body.designation.trim();
+  const unite_achat = typeof body.unite_achat === "number" && Number.isFinite(body.unite_achat) ? Math.trunc(body.unite_achat) : 3020;
+  const is_active = body.is_active;
+  const nuance_ids = uniqPositiveInts(body.nuance_ids);
+
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+
+    let ins;
+    try {
+      ins = await client.query<{ id: number }>(
+        `
+          INSERT INTO public.stock_etats (code, designation, unite_achat, is_active)
+          VALUES ($1,$2,$3,$4)
+          RETURNING id::int AS id
+        `,
+        [code, designation, unite_achat, is_active]
+      );
+    } catch (err) {
+      if (isPgUniqueViolation(err)) {
+        throw new HttpError(409, "DUPLICATE_ETAT", `Etat ${code} already exists`);
+      }
+      throw err;
+    }
+
+    const etatId = ins.rows[0]?.id;
+    if (!etatId) throw new Error("Failed to create etat");
+
+    if (nuance_ids.length) {
+      try {
+        await insertEtatNuanceLinks({ tx: client, etat_id: etatId, nuance_ids });
+      } catch (err) {
+        if (isPgForeignKeyViolation(err)) {
+          throw new HttpError(400, "INVALID_NUANCE", "One or more nuance_ids are invalid");
+        }
+        throw err;
+      }
+    }
+
+    await repoInsertAuditLog({
+      user_id: audit.user_id,
+      body: {
+        event_type: "ACTION",
+        action: "stock.matiere-etats.create",
+        page_key: audit.page_key,
+        entity_type: "stock_etats",
+        entity_id: String(etatId),
+        path: audit.path,
+        client_session_id: audit.client_session_id,
+        details: { code, designation, unite_achat, is_active, nuance_ids },
+      },
+      ip: audit.ip,
+      user_agent: audit.user_agent,
+      device_type: audit.device_type,
+      os: audit.os,
+      browser: audit.browser,
+      tx: client,
+    });
+
+    await client.query("COMMIT");
+
+    return {
+      id: etatId,
+      code,
+      designation,
+      unite_achat,
+      is_active,
+      nuance_ids,
+    };
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function repoListMatiereSousEtats(filters: ListMatiereSousEtatsQueryDTO = {}): Promise<StockMatiereSousEtat[]> {
+  const where: string[] = [];
+  const values: unknown[] = [];
+  const push = (v: unknown) => {
+    values.push(v);
+    return `$${values.length}`;
+  };
+
+  if (filters.q) {
+    const q = `%${filters.q.trim()}%`;
+    const p = push(q);
+    where.push(`(se.code ILIKE ${p} OR se.designation ILIKE ${p})`);
+  }
+  if (typeof filters.is_active === "boolean") {
+    where.push(`se.is_active = ${push(filters.is_active)}`);
+  }
+  if (typeof filters.etat_id === "number" && Number.isFinite(filters.etat_id)) {
+    where.push(`se.etat_id = ${push(filters.etat_id)}::bigint`);
+  }
+
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  const res = await db.query<{
+    id: number;
+    etat_id: number;
+    code: string;
+    designation: string;
+    is_active: boolean;
+  }>(
+    `
+      SELECT
+        se.id::int AS id,
+        se.etat_id::int AS etat_id,
+        se.code,
+        se.designation,
+        se.is_active
+      FROM public.stock_sous_etats se
+      ${whereSql}
+      ORDER BY se.code ASC
+    `,
+    values
+  );
+  return res.rows;
+}
+
+export async function repoCreateMatiereSousEtat(body: CreateMatiereSousEtatBodyDTO, audit: AuditContext): Promise<StockMatiereSousEtat> {
+  const etat_id = Math.trunc(body.etat_id);
+  const code = normalizeStockReferentialCode(body.code, "Sous-etat");
+  const designation = body.designation.trim();
+  const is_active = body.is_active;
+
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+
+    let ins;
+    try {
+      ins = await client.query<StockMatiereSousEtat>(
+        `
+          INSERT INTO public.stock_sous_etats (etat_id, code, designation, is_active)
+          VALUES ($1::bigint,$2,$3,$4)
+          RETURNING id::int AS id, etat_id::int AS etat_id, code, designation, is_active
+        `,
+        [etat_id, code, designation, is_active]
+      );
+    } catch (err) {
+      if (isPgUniqueViolation(err)) {
+        throw new HttpError(409, "DUPLICATE_SOUS_ETAT", `Sous-etat ${code} already exists for this etat`);
+      }
+      if (isPgForeignKeyViolation(err)) {
+        throw new HttpError(400, "INVALID_ETAT", "etat_id is invalid");
+      }
+      throw err;
+    }
+
+    const row = ins.rows[0] ?? null;
+    if (!row) throw new Error("Failed to create sous-etat");
+
+    await repoInsertAuditLog({
+      user_id: audit.user_id,
+      body: {
+        event_type: "ACTION",
+        action: "stock.matiere-sous-etats.create",
+        page_key: audit.page_key,
+        entity_type: "stock_sous_etats",
+        entity_id: String(row.id),
+        path: audit.path,
+        client_session_id: audit.client_session_id,
+        details: { etat_id, code, designation, is_active },
+      },
+      ip: audit.ip,
+      user_agent: audit.user_agent,
+      device_type: audit.device_type,
+      os: audit.os,
+      browser: audit.browser,
+      tx: client,
+    });
+
+    await client.query("COMMIT");
+    return row;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 async function ensureArticleFamilyEntry(
   client: Pick<PoolClient, "query">,
   category: ArticleCategory,
@@ -647,6 +1127,7 @@ async function syncArticleSubtypeDetails(
     category: ArticleCategory;
     family_code: string;
     piece_technique_id: string | null;
+    article_matiere?: CreateArticleBodyDTO["article_matiere"];
   }
 ) {
   await ensureArticleFamilyEntry(client, args.category, args.family_code);
@@ -674,6 +1155,74 @@ async function syncArticleSubtypeDetails(
             updated_at = now()
       `,
       [args.article_id, args.family_code, args.piece_technique_id]
+    );
+    return;
+  }
+
+  if (args.category === "matiere" && args.article_matiere) {
+    const m = args.article_matiere;
+    await client.query(
+      `
+        INSERT INTO public.articles_matiere (
+          article_id,
+          family_code,
+          nuance_id,
+          etat_id,
+          sous_etat_id,
+          barre_a_decouper,
+          longueur_mm,
+          longueur_unitaire_mm,
+          largeur_mm,
+          hauteur_mm,
+          epaisseur_mm,
+          diametre_mm,
+          largeur_plat_mm
+        )
+        VALUES (
+          $1::uuid,
+          $2,
+          $3::bigint,
+          $4::bigint,
+          $5::bigint,
+          $6,
+          $7::int,
+          $8::int,
+          $9::int,
+          $10::int,
+          $11::int,
+          $12::int,
+          $13::int
+        )
+        ON CONFLICT (article_id) DO UPDATE
+        SET family_code = EXCLUDED.family_code,
+            nuance_id = EXCLUDED.nuance_id,
+            etat_id = EXCLUDED.etat_id,
+            sous_etat_id = EXCLUDED.sous_etat_id,
+            barre_a_decouper = EXCLUDED.barre_a_decouper,
+            longueur_mm = EXCLUDED.longueur_mm,
+            longueur_unitaire_mm = EXCLUDED.longueur_unitaire_mm,
+            largeur_mm = EXCLUDED.largeur_mm,
+            hauteur_mm = EXCLUDED.hauteur_mm,
+            epaisseur_mm = EXCLUDED.epaisseur_mm,
+            diametre_mm = EXCLUDED.diametre_mm,
+            largeur_plat_mm = EXCLUDED.largeur_plat_mm,
+            updated_at = now()
+      `,
+      [
+        args.article_id,
+        args.family_code,
+        m.nuance_id ?? null,
+        m.etat_id ?? null,
+        m.sous_etat_id ?? null,
+        m.barre_a_decouper ?? false,
+        m.longueur_mm ?? null,
+        m.longueur_unitaire_mm ?? null,
+        m.largeur_mm ?? null,
+        m.hauteur_mm ?? null,
+        m.epaisseur_mm ?? null,
+        m.diametre_mm ?? null,
+        m.largeur_plat_mm ?? null,
+      ]
     );
     return;
   }
@@ -1368,25 +1917,44 @@ export async function repoGetArticle(id: string): Promise<StockArticleDetail | n
         pt.code_piece AS piece_code,
         pt.designation AS piece_designation,
         a.unite,
-        a.lot_tracking,
-        a.is_active,
-        a.notes,
-        COALESCE(bs.qty_available, 0)::float8 AS qty_available,
-        COALESCE(bs.qty_reserved, 0)::float8 AS qty_reserved,
-        COALESCE(bs.qty_total, 0)::float8 AS qty_total,
-        COALESCE(bs.locations_count, 0)::int AS locations_count,
-        a.updated_at::text AS updated_at,
-        a.created_at::text AS created_at
-      FROM public.articles a
-      LEFT JOIN public.pieces_techniques pt
-        ON pt.id = a.piece_technique_id
-      LEFT JOIN (
-        SELECT
-          article_id::text AS article_id,
-          COUNT(*)::int AS locations_count,
-          COALESCE(SUM(qty_available), 0)::float8 AS qty_available,
-          COALESCE(SUM(qty_reserved), 0)::float8 AS qty_reserved,
-          COALESCE(SUM(qty_total), 0)::float8 AS qty_total
+         a.lot_tracking,
+         a.is_active,
+         a.notes,
+         CASE
+           WHEN ${normalizedArticleCategorySql("a.article_category")} <> 'matiere' THEN NULL
+           WHEN am.article_id IS NULL THEN NULL
+           ELSE jsonb_build_object(
+             'nuance_id', am.nuance_id,
+             'etat_id', am.etat_id,
+             'sous_etat_id', am.sous_etat_id,
+             'barre_a_decouper', am.barre_a_decouper,
+             'longueur_mm', am.longueur_mm,
+             'longueur_unitaire_mm', am.longueur_unitaire_mm,
+             'largeur_mm', am.largeur_mm,
+             'hauteur_mm', am.hauteur_mm,
+             'epaisseur_mm', am.epaisseur_mm,
+             'diametre_mm', am.diametre_mm,
+             'largeur_plat_mm', am.largeur_plat_mm
+           )
+         END AS article_matiere,
+         COALESCE(bs.qty_available, 0)::float8 AS qty_available,
+         COALESCE(bs.qty_reserved, 0)::float8 AS qty_reserved,
+         COALESCE(bs.qty_total, 0)::float8 AS qty_total,
+         COALESCE(bs.locations_count, 0)::int AS locations_count,
+         a.updated_at::text AS updated_at,
+         a.created_at::text AS created_at
+       FROM public.articles a
+       LEFT JOIN public.pieces_techniques pt
+         ON pt.id = a.piece_technique_id
+       LEFT JOIN public.articles_matiere am
+         ON am.article_id = a.id
+       LEFT JOIN (
+         SELECT
+           article_id::text AS article_id,
+           COUNT(*)::int AS locations_count,
+           COALESCE(SUM(qty_available), 0)::float8 AS qty_available,
+           COALESCE(SUM(qty_reserved), 0)::float8 AS qty_reserved,
+           COALESCE(SUM(qty_total), 0)::float8 AS qty_total
         FROM public.v_stock_current
         GROUP BY article_id
       ) bs ON bs.article_id = a.id::text
@@ -1511,6 +2079,7 @@ export async function repoCreateArticle(body: CreateArticleBodyDTO, audit: Audit
       category: normalized.article_category,
       family_code: normalized.family_code,
       piece_technique_id: normalized.piece_technique_id,
+      article_matiere: body.article_matiere,
     });
 
     await insertAuditLog(client, audit, {

@@ -7,6 +7,9 @@ import {
   createInventorySessionSchema,
   createArticleSchema,
   createArticleFamilySchema,
+  createMatiereEtatSchema,
+  createMatiereNuanceSchema,
+  createMatiereSousEtatSchema,
   createEmplacementSchema,
   createLotSchema,
   createMagasinSchema,
@@ -18,6 +21,9 @@ import {
   listInventorySessionsQuerySchema,
   listArticlesQuerySchema,
   listArticleFamiliesQuerySchema,
+  listMatiereEtatsQuerySchema,
+  listMatiereNuancesQuerySchema,
+  listMatiereSousEtatsQuerySchema,
   listBalancesQuerySchema,
   listEmplacementsQuerySchema,
   listLotsQuerySchema,
@@ -32,12 +38,18 @@ import {
   type CreateInventorySessionBodyDTO,
   type CreateArticleBodyDTO,
   type CreateArticleFamilyBodyDTO,
+  type CreateMatiereEtatBodyDTO,
+  type CreateMatiereNuanceBodyDTO,
+  type CreateMatiereSousEtatBodyDTO,
   type CreateEmplacementBodyDTO,
   type CreateLotBodyDTO,
   type CreateMagasinBodyDTO,
   type CreateMovementBodyDTO,
   type ListAnalyticsQueryDTO,
   type ListBalancesQueryDTO,
+  type ListMatiereEtatsQueryDTO,
+  type ListMatiereNuancesQueryDTO,
+  type ListMatiereSousEtatsQueryDTO,
   type UpdateArticleBodyDTO,
   type UpdateEmplacementBodyDTO,
   type UpdateLotBodyDTO,
@@ -67,6 +79,9 @@ import {
   getStockArticlesKpisSVC,
   listStockArticleCategoriesSVC,
   listStockArticleFamiliesSVC,
+  listStockMatiereEtatsSVC,
+  listStockMatiereNuancesSVC,
+  listStockMatiereSousEtatsSVC,
   getStockLotSVC,
   getStockMagasinSVC,
   getStockMagasinsKpisSVC,
@@ -89,6 +104,9 @@ import {
   updateStockMagasinSVC,
   deactivateStockMagasinSVC,
   activateStockMagasinSVC,
+  createStockMatiereEtatSVC,
+  createStockMatiereNuanceSVC,
+  createStockMatiereSousEtatSVC,
 } from "../services/stock.service";
 
 export const listStockInventorySessions: RequestHandler = async (req, res, next) => {
@@ -271,6 +289,81 @@ export const listStockArticleFamilies: RequestHandler = async (req, res, next) =
     }
     const out = await listStockArticleFamiliesSVC(parsed.data);
     res.json({ items: out, total: out.length });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const listStockMatiereNuances: RequestHandler = async (req, res, next) => {
+  try {
+    const parsed = listMatiereNuancesQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues?.[0]?.message ?? "Invalid query" });
+      return;
+    }
+    const out = await listStockMatiereNuancesSVC(parsed.data as ListMatiereNuancesQueryDTO);
+    res.json({ items: out, total: out.length });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const createStockMatiereNuance: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildAuditContext(req);
+    const body: CreateMatiereNuanceBodyDTO = createMatiereNuanceSchema.parse({ body: req.body }).body;
+    const out = await createStockMatiereNuanceSVC(body, audit);
+    res.status(201).json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const listStockMatiereEtats: RequestHandler = async (req, res, next) => {
+  try {
+    const parsed = listMatiereEtatsQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues?.[0]?.message ?? "Invalid query" });
+      return;
+    }
+    const out = await listStockMatiereEtatsSVC(parsed.data as ListMatiereEtatsQueryDTO);
+    res.json({ items: out, total: out.length });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const createStockMatiereEtat: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildAuditContext(req);
+    const body: CreateMatiereEtatBodyDTO = createMatiereEtatSchema.parse({ body: req.body }).body;
+    const out = await createStockMatiereEtatSVC(body, audit);
+    res.status(201).json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const listStockMatiereSousEtats: RequestHandler = async (req, res, next) => {
+  try {
+    const parsed = listMatiereSousEtatsQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues?.[0]?.message ?? "Invalid query" });
+      return;
+    }
+    const out = await listStockMatiereSousEtatsSVC(parsed.data as ListMatiereSousEtatsQueryDTO);
+    res.json({ items: out, total: out.length });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const createStockMatiereSousEtat: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildAuditContext(req);
+    const body: CreateMatiereSousEtatBodyDTO = createMatiereSousEtatSchema.parse({ body: req.body }).body;
+    const out = await createStockMatiereSousEtatSVC(body, audit);
+    res.status(201).json(out);
   } catch (err) {
     next(err);
   }

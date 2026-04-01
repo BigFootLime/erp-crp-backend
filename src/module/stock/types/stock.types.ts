@@ -32,6 +32,46 @@ export type StockArticleFamily = {
   updated_at: string | null;
 };
 
+export type StockMatiereNuance = {
+  id: number;
+  code: string;
+  designation: string;
+  densite: number | null;
+  is_active: boolean;
+  etat_ids: number[];
+};
+
+export type StockMatiereEtat = {
+  id: number;
+  code: string;
+  designation: string;
+  unite_achat: number;
+  is_active: boolean;
+  nuance_ids: number[];
+};
+
+export type StockMatiereSousEtat = {
+  id: number;
+  etat_id: number;
+  code: string;
+  designation: string;
+  is_active: boolean;
+};
+
+export type ArticleMatierePayload = {
+  nuance_id?: number | null;
+  etat_id?: number | null;
+  sous_etat_id?: number | null;
+  barre_a_decouper?: boolean;
+  longueur_mm?: number | null;
+  longueur_unitaire_mm?: number | null;
+  largeur_mm?: number | null;
+  hauteur_mm?: number | null;
+  epaisseur_mm?: number | null;
+  diametre_mm?: number | null;
+  largeur_plat_mm?: number | null;
+};
+
 export type StockArticleListItem = {
   id: string;
   root_article_id: string;
@@ -63,6 +103,7 @@ export type StockArticleListItem = {
 
 export type StockArticleDetail = StockArticleListItem & {
   notes: string | null;
+  article_matiere: ArticleMatierePayload | null;
 };
 
 export type StockArticleKpis = {

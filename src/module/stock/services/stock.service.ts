@@ -5,6 +5,9 @@ import type {
   StockArticleFamily,
   StockArticleKpis,
   StockBalanceRow,
+  StockMatiereEtat,
+  StockMatiereNuance,
+  StockMatiereSousEtat,
   StockDocument,
   StockEmplacementListItem,
   StockInventorySessionDetail,
@@ -22,6 +25,9 @@ import type {
   CreateInventorySessionBodyDTO,
   CreateArticleBodyDTO,
   CreateArticleFamilyBodyDTO,
+  CreateMatiereEtatBodyDTO,
+  CreateMatiereNuanceBodyDTO,
+  CreateMatiereSousEtatBodyDTO,
   CreateEmplacementBodyDTO,
   CreateLotBodyDTO,
   CreateMagasinBodyDTO,
@@ -30,6 +36,9 @@ import type {
   ListInventorySessionsQueryDTO,
   ListArticlesQueryDTO,
   ListArticleFamiliesQueryDTO,
+  ListMatiereEtatsQueryDTO,
+  ListMatiereNuancesQueryDTO,
+  ListMatiereSousEtatsQueryDTO,
   ListBalancesQueryDTO,
   ListEmplacementsQueryDTO,
   ListLotsQueryDTO,
@@ -46,6 +55,9 @@ import {
   repoCloseInventorySession,
   repoCreateInventorySession,
   repoCreateArticleFamily,
+  repoCreateMatiereEtat,
+  repoCreateMatiereNuance,
+  repoCreateMatiereSousEtat,
   repoAttachArticleDocuments,
   repoAttachMovementDocuments,
   repoCancelMovement,
@@ -59,6 +71,9 @@ import {
   repoGetArticle,
   repoListArticleCategories,
   repoListArticleFamilies,
+  repoListMatiereEtats,
+  repoListMatiereNuances,
+  repoListMatiereSousEtats,
   repoGetArticlesKpis,
   repoGetLot,
   repoGetMagasin,
@@ -134,6 +149,30 @@ export async function listStockArticleCategoriesSVC(): Promise<StockArticleCateg
 
 export async function listStockArticleFamiliesSVC(filters: ListArticleFamiliesQueryDTO): Promise<StockArticleFamily[]> {
   return repoListArticleFamilies(filters);
+}
+
+export async function listStockMatiereNuancesSVC(filters: ListMatiereNuancesQueryDTO): Promise<StockMatiereNuance[]> {
+  return repoListMatiereNuances(filters);
+}
+
+export async function createStockMatiereNuanceSVC(body: CreateMatiereNuanceBodyDTO, audit: AuditContext): Promise<StockMatiereNuance> {
+  return repoCreateMatiereNuance(body, audit);
+}
+
+export async function listStockMatiereEtatsSVC(filters: ListMatiereEtatsQueryDTO): Promise<StockMatiereEtat[]> {
+  return repoListMatiereEtats(filters);
+}
+
+export async function createStockMatiereEtatSVC(body: CreateMatiereEtatBodyDTO, audit: AuditContext): Promise<StockMatiereEtat> {
+  return repoCreateMatiereEtat(body, audit);
+}
+
+export async function listStockMatiereSousEtatsSVC(filters: ListMatiereSousEtatsQueryDTO): Promise<StockMatiereSousEtat[]> {
+  return repoListMatiereSousEtats(filters);
+}
+
+export async function createStockMatiereSousEtatSVC(body: CreateMatiereSousEtatBodyDTO, audit: AuditContext): Promise<StockMatiereSousEtat> {
+  return repoCreateMatiereSousEtat(body, audit);
 }
 
 export async function createStockArticleFamilySVC(
