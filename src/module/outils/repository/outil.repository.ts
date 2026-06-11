@@ -9,6 +9,10 @@ import type {
   OutilStockMovement,
   OutilSupplierPriceSummary,
   OutilValeurArete,
+  OutillageControlCenterSummary,
+  OutillageImportBatchSummary,
+  OutillageImportBatchSummaryItem,
+  OutillageRecentMovement,
 } from "../types/outil.types";
 import type { CreateOutilInput, UpdateOutilInput } from "../validators/outil.validator";
 
@@ -140,8 +144,40 @@ function mapSupplierSummary(row: Record<string, unknown>): OutilSupplierPriceSum
   };
 }
 
+function mapRecentMovement(row: Record<string, unknown>): OutillageRecentMovement {
+  return {
+    ...mapStockMovement(row),
+    id_outil: asInteger(row.id_outil),
+    reference_fabricant: asNullableString(row.reference_fabricant),
+    designation_outil_cnc: asNullableString(row.designation_outil_cnc),
+    codification: asNullableString(row.codification),
+    nom_famille: asNullableString(row.nom_famille),
+    nom_geometrie: asNullableString(row.nom_geometrie),
+    nom_fabricant: asNullableString(row.nom_fabricant),
+  };
+}
+
+function mapImportBatchSummary(row: Record<string, unknown>): OutillageImportBatchSummaryItem {
+  return {
+    id_import_batch: asInteger(row.id_import_batch),
+    source_filename: asNullableString(row.source_filename),
+    source_catalogue: asNullableString(row.source_catalogue),
+    status: asNullableString(row.status),
+    created_tools_count: asInteger(row.created_tools_count),
+    rejected_rows_count: asInteger(row.rejected_rows_count),
+    warning_rows_count: asInteger(row.warning_rows_count),
+    created_at: asNullableString(row.created_at),
+    finished_at: asNullableString(row.finished_at),
+  };
+}
+
 function isUndefinedColumnError(error: unknown): error is { code: string } {
   return typeof error === "object" && error !== null && "code" in error && (error as { code?: string }).code === "42703";
+}
+
+async function hasTable(tableName: string) {
+  const result = await db.query(`SELECT to_regclass($1) AS table_name`, [tableName]);
+  return Boolean(result.rows[0]?.table_name);
 }
 
 async function getOutilBaseRow(client: DbClient, id: number) {
@@ -170,10 +206,137 @@ async function getOutilBaseRow(client: DbClient, id: number) {
   return result.rows[0] ?? null;
 }
 
+function uniquePositiveIntegers(values: Array<number | null | undefined>) {
+  return Array.from(
+    new Set(
+      values
+        .map((value) => asInteger(value, 0))
+        .filter((value) => Number.isInteger(value) && value > 0)
+    )
+  );
+}
+
 export const outilRepository = {
   async exists(id: number) {
     const result = await db.query(`SELECT 1 AS ok FROM gestion_outils_outil WHERE id_outil = $1 LIMIT 1`, [id]);
     return Boolean(result.rows[0]);
+  },
+
+  async getControlCenterSummary(): Promise<OutillageControlCenterSummary> {
+    const [stockSummary, movementSummary, hasImportBatches] = await Promise.all([
+      db.query(
+        `
+          SELECT
+            COUNT(*)::int AS total_tools,
+            COUNT(*) FILTER (WHERE COALESCE(s.quantite, 0) = 0)::int AS stock_ruptures,
+            COUNT(*) FILTER (
+              WHERE COALESCE(s.quantite, 0) <= COALESCE(s.quantite_minimale, 0)
+                AND COALESCE(s.quantite_minimale, 0) > 0
+            )::int AS under_minimum,
+            COUNT(*) FILTER (
+              WHERE COALESCE(s.quantite, 0) <= COALESCE(s.quantite_minimale, 0)
+                AND COALESCE(s.quantite_minimale, 0) > 0
+            )::int AS to_replenish,
+            COUNT(DISTINCT o.id_famille)::int AS families_count,
+            COUNT(DISTINCT o.id_geometrie)::int AS geometries_count,
+            COUNT(DISTINCT o.id_fabricant)::int AS manufacturers_count
+          FROM gestion_outils_outil o
+          LEFT JOIN gestion_outils_stock s ON s.id_outil = o.id_outil
+        `
+      ),
+      db.query(
+        `
+          SELECT COUNT(*)::int AS movements_today
+          FROM gestion_outils_mouvement_stock
+          WHERE date_mouvement::date = CURRENT_DATE
+        `
+      ),
+      hasTable("public.gestion_outils_import_batch"),
+    ]);
+
+    const row = stockSummary.rows[0] ?? {};
+    return {
+      total_tools: asInteger(row.total_tools),
+      stock_ruptures: asInteger(row.stock_ruptures),
+      under_minimum: asInteger(row.under_minimum),
+      to_replenish: asInteger(row.to_replenish),
+      families_count: asInteger(row.families_count),
+      geometries_count: asInteger(row.geometries_count),
+      manufacturers_count: asInteger(row.manufacturers_count),
+      movements_today: asInteger(movementSummary.rows[0]?.movements_today),
+      active_sorties: null,
+      active_sorties_available: false,
+      import_batches_available: hasImportBatches,
+    };
+  },
+
+  async getRecentMovements(limit: number): Promise<OutillageRecentMovement[]> {
+    const result = await db.query(
+      `
+        SELECT
+          m.id_mouvement,
+          m.id_outil,
+          m.type_mouvement,
+          m.quantite,
+          m.date_mouvement::text AS date_mouvement,
+          m.commentaire,
+          m.utilisateur,
+          m.user_id,
+          m.reason,
+          m.source,
+          m.note,
+          m.affaire_id,
+          m.id_fournisseur,
+          fs.nom AS fournisseur_nom,
+          m.prix_unitaire,
+          o.reference_fabricant,
+          o.designation_outil_cnc,
+          o.codification,
+          fam.nom_famille,
+          g.nom_geometrie,
+          fab.name AS nom_fabricant
+        FROM gestion_outils_mouvement_stock m
+        JOIN gestion_outils_outil o ON o.id_outil = m.id_outil
+        LEFT JOIN gestion_outils_fournisseur fs ON fs.id_fournisseur = m.id_fournisseur
+        LEFT JOIN gestion_outils_famille fam ON fam.id_famille = o.id_famille
+        LEFT JOIN gestion_outils_geometrie g ON g.id_geometrie = o.id_geometrie
+        LEFT JOIN gestion_outils_fabricant fab ON fab.id_fabricant = o.id_fabricant
+        ORDER BY m.date_mouvement DESC NULLS LAST, m.id_mouvement DESC
+        LIMIT $1
+      `,
+      [limit]
+    );
+
+    return result.rows.map(mapRecentMovement);
+  },
+
+  async getImportBatchesSummary(limit: number): Promise<OutillageImportBatchSummary> {
+    const configured = await hasTable("public.gestion_outils_import_batch");
+    if (!configured) return { configured: false, batches: [] };
+
+    const result = await db.query(
+      `
+        SELECT
+          id_import_batch,
+          source_filename,
+          source_catalogue,
+          status,
+          created_tools_count,
+          rejected_rows_count,
+          warning_rows_count,
+          created_at::text AS created_at,
+          finished_at::text AS finished_at
+        FROM gestion_outils_import_batch
+        ORDER BY created_at DESC NULLS LAST, id_import_batch DESC
+        LIMIT $1
+      `,
+      [limit]
+    );
+
+    return {
+      configured: true,
+      batches: result.rows.map(mapImportBatchSummary),
+    };
   },
 
   // 🔍 Trouver un outil par son ID
@@ -396,10 +559,88 @@ export const outilRepository = {
   },
 
   // ➕ Créer un nouvel outil + gérer les relations + init stock
+  async assertCreationRelations(
+    client: DbClient,
+    data: CreateOutilInput | UpdateOutilInput,
+    supplierIds: number[]
+  ) {
+    if (data.id_geometrie) {
+      const geometry = await client.query(
+        `SELECT 1 FROM gestion_outils_geometrie WHERE id_geometrie = $1 AND id_famille = $2 LIMIT 1`,
+        [data.id_geometrie, data.id_famille]
+      );
+      if (!geometry.rows[0]) {
+        throw new HttpError(422, "GEOMETRY_FAMILY_MISMATCH", "La geometrie ne correspond pas a la famille selectionnee");
+      }
+    }
+
+    if (data.revetements?.length) {
+      const result = await client.query(
+        `
+        SELECT id_revetement
+        FROM gestion_outils_revetement
+        WHERE id_fabricant = $1 AND id_revetement = ANY($2::int[])
+        `,
+        [data.id_fabricant, data.revetements]
+      );
+      if (result.rows.length !== data.revetements.length) {
+        throw new HttpError(422, "REVETEMENT_FABRICANT_MISMATCH", "Un revetement ne correspond pas au fabricant selectionne");
+      }
+    }
+
+    if (data.id_geometrie && data.valeurs_aretes?.length) {
+      const mapping = await client.query(
+        `SELECT id_arete_coupe FROM gestion_outils_geometrie_aretecoupe WHERE id_geometrie = $1`,
+        [data.id_geometrie]
+      );
+      if (mapping.rows.length) {
+        const allowed = new Set(mapping.rows.map((row) => asInteger(row.id_arete_coupe)));
+        const invalid = data.valeurs_aretes.some((item) => !allowed.has(asInteger(item.id_arete_coupe)));
+        if (invalid) {
+          throw new HttpError(422, "ARETE_GEOMETRIE_MISMATCH", "Une arete de coupe ne correspond pas a la geometrie selectionnee");
+        }
+      }
+    }
+
+    if (supplierIds.length) {
+      const configured = await client.query(
+        `SELECT COUNT(*)::int AS count FROM gestion_outils_fournisseur_fabricant WHERE id_fabricant = $1`,
+        [data.id_fabricant]
+      );
+      if (asInteger(configured.rows[0]?.count) > 0) {
+        const linked = await client.query(
+          `
+          SELECT id_fournisseur
+          FROM gestion_outils_fournisseur_fabricant
+          WHERE id_fabricant = $1 AND id_fournisseur = ANY($2::int[])
+          `,
+          [data.id_fabricant, supplierIds]
+        );
+        if (linked.rows.length !== supplierIds.length) {
+          throw new HttpError(422, "FOURNISSEUR_FABRICANT_MISMATCH", "Un fournisseur ne correspond pas au fabricant selectionne");
+        }
+      }
+    }
+  },
+
   async create(
-    data: CreateOutilInput & { esquisse?: string | null; plan?: string | null; image?: string | null },
+    data: CreateOutilInput & {
+      esquisse?: string | null;
+      plan?: string | null;
+      image?: string | null;
+      utilisateur: string;
+      user_id?: number | null;
+    },
     client: DbClient
   ): Promise<number> {
+    const supplierIds = uniquePositiveIntegers([
+      ...(data.fournisseurs ?? []),
+      ...(data.prix_fournisseurs ?? []).map((item) => item.id_fournisseur),
+      data.stock_initial_id_fournisseur,
+    ]);
+
+    await this.assertCreationRelations(client, data, supplierIds);
+
     const result = await client.query(
       `
       INSERT INTO gestion_outils_outil (
@@ -456,14 +697,43 @@ export const outilRepository = {
     );
 
     const id_outil = asInteger(result.rows[0]?.id_outil);
+    const initialQuantity = asInteger(data.quantite_stock ?? 0);
 
     // ✅ Stock initial (UPSERT)
-    await this.initStock(client, id_outil, data.quantite_stock ?? 0, data.quantite_minimale ?? 0);
+    await this.initStock(client, id_outil, initialQuantity, data.quantite_minimale ?? 0);
 
     // 🔗 relations
-    if (data.fournisseurs?.length) await this.linkFournisseurs(client, id_outil, data.fournisseurs);
+    if (supplierIds.length) await this.linkFournisseurs(client, id_outil, supplierIds);
     if (data.revetements?.length) await this.linkRevetements(client, id_outil, data.revetements);
     if (data.valeurs_aretes?.length) await this.linkValeursAretes(client, id_outil, data.valeurs_aretes);
+    if (data.prix_fournisseurs?.length) {
+      await this.insertUniqueHistoriquePrixRows(client, id_outil, data.prix_fournisseurs);
+    }
+
+    if (initialQuantity > 0) {
+      await this.logMouvementStock(client, {
+        id_outil,
+        quantite: initialQuantity,
+        type: "entrée",
+        utilisateur: data.utilisateur,
+        user_id: data.user_id ?? null,
+        reason: data.stock_initial_reason ?? "creation_outil",
+        source: "creation",
+        note: data.stock_initial_note ?? null,
+        affaire_id: null,
+        id_fournisseur: data.stock_initial_id_fournisseur ?? null,
+        prix_unitaire: data.stock_initial_prix_unitaire ?? null,
+      });
+
+      if (data.stock_initial_id_fournisseur && data.stock_initial_prix_unitaire !== undefined) {
+        await this.insertUniqueHistoriquePrixRows(client, id_outil, [
+          {
+            id_fournisseur: data.stock_initial_id_fournisseur,
+            prix: data.stock_initial_prix_unitaire,
+          },
+        ]);
+      }
+    }
 
     return id_outil;
   },
@@ -475,6 +745,12 @@ export const outilRepository = {
   ) {
     const existing = await getOutilBaseRow(client, id_outil);
     if (!existing) throw new HttpError(404, "OUTIL_NOT_FOUND", "Outil introuvable");
+    const supplierIds = uniquePositiveIntegers([
+      ...(data.fournisseurs ?? []),
+      ...(data.prix_fournisseurs ?? []).map((item) => item.id_fournisseur),
+    ]);
+
+    await this.assertCreationRelations(client, data, supplierIds);
 
     await client.query(
       `
@@ -542,9 +818,12 @@ export const outilRepository = {
     );
 
     await this.initStock(client, id_outil, data.quantite_stock ?? 0, data.quantite_minimale ?? 0);
-    await this.replaceFournisseurs(client, id_outil, data.fournisseurs ?? []);
+    await this.replaceFournisseurs(client, id_outil, supplierIds);
     await this.replaceRevetements(client, id_outil, data.revetements ?? []);
     await this.replaceValeursAretes(client, id_outil, data.valeurs_aretes ?? []);
+    if (data.prix_fournisseurs?.length) {
+      await this.insertUniqueHistoriquePrixRows(client, id_outil, data.prix_fournisseurs);
+    }
   },
 
   async delete(id_outil: number, client: DbClient) {
@@ -672,6 +951,22 @@ export const outilRepository = {
   },
 
   // 🧾 Journaliser un mouvement (compatible ancien schéma + nouveau schéma)
+  async insertUniqueHistoriquePrixRows(
+    client: DbClient,
+    id_outil: number,
+    rows: { id_fournisseur: number; prix: number }[]
+  ) {
+    const seen = new Set<string>();
+    for (const row of rows) {
+      const id_fournisseur = asInteger(row.id_fournisseur);
+      const prix = Number(row.prix);
+      const key = `${id_fournisseur}:${prix}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      await this.insertHistoriquePrix(client, id_outil, prix, id_fournisseur);
+    }
+  },
+
   async logMouvementStock(client: any, payload: LogMouvementPayload) {
     // On tente d'insérer avec les colonnes enrichies.
     // Si ta BDD n'a pas encore les colonnes, on fallback sur l'ancien INSERT.

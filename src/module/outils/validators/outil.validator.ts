@@ -122,6 +122,15 @@ export const outilUpsertSchema = z.object({
 
   fournisseurs: positiveIntegerArray,
   revetements: positiveIntegerArray,
+  prix_fournisseurs: z
+    .array(
+      z.object({
+        id_fournisseur: positiveInt,
+        prix: nonNegativeNumber,
+      })
+    )
+    .optional()
+    .default([]),
   valeurs_aretes: z
     .array(
       z.object({
@@ -134,12 +143,29 @@ export const outilUpsertSchema = z.object({
 
   quantite_stock: nonNegativeInt.default(0),
   quantite_minimale: nonNegativeInt.default(0),
+  stock_initial_reason: optionalString.default("creation_outil"),
+  stock_initial_note: optionalString,
+  stock_initial_id_fournisseur: optionalPositiveInt,
+  stock_initial_prix_unitaire: z.preprocess((value) => {
+    const parsed = toFiniteNumber(value)
+    return parsed === null ? undefined : parsed
+  }, z.number().finite().nonnegative().optional()),
 
   esquisse_file: z.unknown().optional().nullable(),
   plan_file: z.unknown().optional().nullable(),
   image_file: z.unknown().optional().nullable(),
 
   _created_at: optionalString,
+}).superRefine((value, ctx) => {
+  const hasInitialSupplier = typeof value.stock_initial_id_fournisseur === "number"
+  const hasInitialPrice = typeof value.stock_initial_prix_unitaire === "number"
+  if (hasInitialSupplier !== hasInitialPrice) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: hasInitialSupplier ? ["stock_initial_prix_unitaire"] : ["stock_initial_id_fournisseur"],
+      message: "Le fournisseur et le prix initial doivent etre renseignes ensemble",
+    })
+  }
 })
 
 export type CreateOutilInput = z.infer<typeof outilUpsertSchema>
@@ -154,6 +180,16 @@ export const sortieStockSchema = z.object({
 })
 
 export type SortieStockInput = z.infer<typeof sortieStockSchema>
+
+export const retourStockSchema = z.object({
+  id: positiveInt,
+  quantity: positiveQuantity,
+  reason: optionalString,
+  note: optionalString,
+  affaire_id: optionalPositiveInt,
+})
+
+export type RetourStockInput = z.infer<typeof retourStockSchema>
 
 export const reapprovisionnementSchema = z.object({
   id_outil: positiveInt,

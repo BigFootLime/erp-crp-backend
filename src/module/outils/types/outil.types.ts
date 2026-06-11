@@ -90,6 +90,47 @@ export type OutilPricingResponse = {
   replenishments: OutilStockMovement[]
 }
 
+export type OutillageControlCenterSummary = {
+  total_tools: number
+  stock_ruptures: number
+  under_minimum: number
+  to_replenish: number
+  families_count: number
+  geometries_count: number
+  manufacturers_count: number
+  movements_today: number
+  active_sorties: number | null
+  active_sorties_available: boolean
+  import_batches_available: boolean
+}
+
+export type OutillageRecentMovement = OutilStockMovement & {
+  id_outil: number
+  reference_fabricant: string | null
+  designation_outil_cnc: string | null
+  codification: string | null
+  nom_famille: string | null
+  nom_geometrie: string | null
+  nom_fabricant: string | null
+}
+
+export type OutillageImportBatchSummaryItem = {
+  id_import_batch: number
+  source_filename: string | null
+  source_catalogue: string | null
+  status: string | null
+  created_tools_count: number
+  rejected_rows_count: number
+  warning_rows_count: number
+  created_at: string | null
+  finished_at: string | null
+}
+
+export type OutillageImportBatchSummary = {
+  configured: boolean
+  batches: OutillageImportBatchSummaryItem[]
+}
+
 export type OutilDetail = OutilListItem & {
   fournisseurs: OutilRelationOption[]
   revetements: OutilRelationOption[]

@@ -14,6 +14,7 @@ import {
   createRevetementSchema,
   outilUpsertSchema,
   reapprovisionnementSchema,
+  retourStockSchema,
   scanMovementSchema,
   sortieStockSchema,
   updateFamilleSchema,
@@ -72,6 +73,12 @@ function extractUploadedToolPaths(files: Request["files"]) {
   return { paths, uploadedPaths }
 }
 
+function parseLimit(value: unknown, fallback: number, max: number) {
+  const parsed = typeof value === "string" ? Number(value) : undefined
+  if (!Number.isFinite(parsed)) return fallback
+  return Math.min(Math.max(Math.trunc(parsed as number), 1), max)
+}
+
 export const outilController = {
   async getAll(_req: Request, res: Response, next: NextFunction) {
     try {
@@ -123,6 +130,35 @@ export const outilController = {
     }
   },
 
+  async getSummary(_req: Request, res: Response, next: NextFunction) {
+    try {
+      const summary = await outilService.getControlCenterSummary()
+      return res.status(200).json(summary)
+    } catch (error) {
+      next(error)
+    }
+  },
+
+  async getRecentMovements(req: Request, res: Response, next: NextFunction) {
+    try {
+      const limit = parseLimit(req.query.limit, 20, 100)
+      const rows = await outilService.getRecentMovements(limit)
+      return res.status(200).json(rows)
+    } catch (error) {
+      next(error)
+    }
+  },
+
+  async getImportBatchesSummary(req: Request, res: Response, next: NextFunction) {
+    try {
+      const limit = parseLimit(req.query.limit, 5, 50)
+      const summary = await outilService.getImportBatchesSummary(limit)
+      return res.status(200).json(summary)
+    } catch (error) {
+      next(error)
+    }
+  },
+
   async getLowStock(_req: Request, res: Response, next: NextFunction) {
     try {
       const rows = await outilService.getLowStock()
@@ -168,12 +204,15 @@ export const outilController = {
     const { uploadedPaths, paths } = extractUploadedToolPaths(req.files)
 
     try {
+      const user = requireUser(req)
       const parsed = parseMultipartJsonBody(req.body.data, outilUpsertSchema)
       const result = await outilService.createOutil({
         ...parsed,
         esquisse: paths.esquisse ?? null,
         plan: paths.plan ?? null,
         image: paths.image ?? null,
+        utilisateur: user.username,
+        user_id: user.id ?? null,
       })
 
       try {
@@ -283,6 +322,43 @@ export const outilController = {
       return res.status(200).json({
         success: true,
         message: `Outil ${payload.id} retire du stock, quantite : ${payload.quantity}`,
+      })
+    } catch (error) {
+      next(error)
+    }
+  },
+
+  async retourStock(req: Request, res: Response, next: NextFunction) {
+    try {
+      const user = requireUser(req)
+      const payload = retourStockSchema.parse(req.body)
+
+      await outilService.retourStock({
+        id_outil: payload.id,
+        quantite: payload.quantity,
+        utilisateur: user.username,
+        user_id: user.id ?? null,
+        reason: payload.reason ?? null,
+        source: "retour",
+        note: payload.note ?? null,
+        affaire_id: payload.affaire_id ?? null,
+      })
+
+      try {
+        const io = getIO()
+        io.emit("stockUpdated", {
+          id_outil: payload.id,
+          quantity: payload.quantity,
+          user: user.username,
+          type: "retour",
+          date: new Date().toISOString(),
+        })
+      } catch {
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: `Retour outil ${payload.id} enregistre, quantite : ${payload.quantity}`,
       })
     } catch (error) {
       next(error)

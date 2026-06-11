@@ -48,6 +48,9 @@ router.get("/aretes", asyncHandler(outilSupportController.getAretes));
 // ✅ Nouveau listing filtré/paginé (cards UI)
 // GET /outils? id_famille=1&id_geometrie=2&q=abc&only_in_stock=true&limit=50&offset=0
 router.get("", asyncHandler(outilController.getFiltered));
+router.get("/summary", authenticateToken, asyncHandler(outilController.getSummary));
+router.get("/recent-movements", authenticateToken, asyncHandler(outilController.getRecentMovements));
+router.get("/import-batches/summary", authenticateToken, asyncHandler(outilController.getImportBatchesSummary));
 
 // ✅ Low stock
 router.get("/low-stock", authenticateToken, asyncHandler(outilController.getLowStock));
@@ -96,6 +99,7 @@ router.delete("/:id", authenticateToken, asyncHandler(outilController.remove));
 
 // ➖ Sortie stock (manuel, par id_outil)
 router.post("/sortie", authenticateToken, asyncHandler(outilController.sortieStock));
+router.post("/retour", authenticateToken, asyncHandler(outilController.retourStock));
 
 // ➕ Réappro (manuel, par id_outil)
 router.post("/reapprovisionner", authenticateToken, asyncHandler(outilController.reapprovisionner));

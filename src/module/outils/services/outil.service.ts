@@ -2,7 +2,7 @@ import db from "../../../config/database"
 import { deleteStoredImageFile } from "../../../utils/imageStorage"
 import { HttpError } from "../../../utils/httpError"
 import { outilRepository } from "../repository/outil.repository"
-import type { OutilPricingResponse } from "../types/outil.types"
+import type { OutillageImportBatchSummary, OutillageRecentMovement, OutilPricingResponse } from "../types/outil.types"
 import type {
   CreateOutilInput,
   UpdateOutilInput,
@@ -18,6 +18,8 @@ type SortieStockPayload = {
   note?: string | null
   affaire_id?: number | null
 }
+
+type RetourStockPayload = SortieStockPayload
 
 type ReapproPayload = {
   id_outil: number
@@ -82,9 +84,27 @@ function assertUser(utilisateur: string) {
   if (!utilisateur) throw new HttpError(401, "UNAUTHORIZED", "Utilisateur requis")
 }
 
+function normalizeTaxonomyLabel(value: string) {
+  return value.trim().toLocaleUpperCase("fr-FR")
+}
+
 export const outilService = {
   async getAllOutils() {
     return outilRepository.findAll()
+  },
+
+  async getControlCenterSummary() {
+    return outilRepository.getControlCenterSummary()
+  },
+
+  async getRecentMovements(limit: number): Promise<OutillageRecentMovement[]> {
+    const safeLimit = Number.isFinite(limit) ? Math.min(Math.max(Math.trunc(limit), 1), 100) : 20
+    return outilRepository.getRecentMovements(safeLimit)
+  },
+
+  async getImportBatchesSummary(limit: number): Promise<OutillageImportBatchSummary> {
+    const safeLimit = Number.isFinite(limit) ? Math.min(Math.max(Math.trunc(limit), 1), 50) : 5
+    return outilRepository.getImportBatchesSummary(safeLimit)
   },
 
   async getAllFiltered(filters: {
@@ -123,7 +143,17 @@ export const outilService = {
     return outilRepository.findByReferenceFabricant(reference_fabricant)
   },
 
-  async createOutil(data: CreateOutilInput & { esquisse?: string | null; plan?: string | null; image?: string | null }) {
+  async createOutil(
+    data: CreateOutilInput & {
+      esquisse?: string | null
+      plan?: string | null
+      image?: string | null
+      utilisateur: string
+      user_id?: number | null
+    }
+  ) {
+    assertUser(data.utilisateur)
+
     const client = await db.connect()
     try {
       await client.query("BEGIN")
@@ -202,6 +232,43 @@ export const outilService = {
         user_id: payload.user_id ?? null,
         reason: payload.reason ?? null,
         source: payload.source ?? "manual",
+        note: payload.note ?? null,
+        affaire_id: payload.affaire_id ?? null,
+      })
+
+      await client.query("COMMIT")
+      return { success: true }
+    } catch (error) {
+      await client.query("ROLLBACK")
+      throw error
+    } finally {
+      client.release()
+    }
+  },
+
+  async retourStock(payload: RetourStockPayload) {
+    const { id_outil, quantite, utilisateur } = payload
+
+    assertPositiveInt(id_outil, "id_outil")
+    assertPositiveNumber(quantite, "quantite")
+    assertUser(utilisateur)
+
+    const client = await db.connect()
+    try {
+      await client.query("BEGIN")
+
+      const exists = await outilRepository.exists(id_outil)
+      if (!exists) throw new HttpError(404, "OUTIL_NOT_FOUND", "Outil introuvable")
+
+      await outilRepository.addToStock(client, id_outil, quantite)
+      await outilRepository.logMouvementStock(client, {
+        id_outil,
+        quantite,
+        type: "entr\u00e9e",
+        utilisateur,
+        user_id: payload.user_id ?? null,
+        reason: payload.reason ?? "retour_outil",
+        source: payload.source ?? "retour",
         note: payload.note ?? null,
         affaire_id: payload.affaire_id ?? null,
       })
@@ -383,9 +450,10 @@ export const outilService = {
 
 export const outilSupportService = {
   getFamilles: () => outilRepository.getFamilles(),
-  createFamille: (nom_famille: string, image_path: string | null) => outilRepository.createFamille(nom_famille, image_path),
+  createFamille: (nom_famille: string, image_path: string | null) =>
+    outilRepository.createFamille(normalizeTaxonomyLabel(nom_famille), image_path),
   updateFamille: (id_famille: number, nom_famille: string, image_path?: string | null) =>
-    outilRepository.updateFamille(id_famille, nom_famille, image_path),
+    outilRepository.updateFamille(id_famille, normalizeTaxonomyLabel(nom_famille), image_path),
   getFabricants: () => outilRepository.getFabricants(),
   getFournisseurs: (fabricantId?: number) => outilRepository.getFournisseurs(fabricantId),
   createFabricant: (nom: string, logo: string | null, fournisseurs: number[]) =>
@@ -403,9 +471,9 @@ export const outilSupportService = {
   }) => outilRepository.createFournisseur(data),
   getGeometries: (id_famille?: number) => outilRepository.getGeometries(id_famille),
   createGeometrie: (nom_geometrie: string, id_famille: number, image_path: string | null) =>
-    outilRepository.createGeometrie(nom_geometrie, id_famille, image_path),
+    outilRepository.createGeometrie(normalizeTaxonomyLabel(nom_geometrie), id_famille, image_path),
   updateGeometrie: (id_geometrie: number, nom_geometrie: string, id_famille: number, image_path?: string | null) =>
-    outilRepository.updateGeometrie(id_geometrie, nom_geometrie, id_famille, image_path),
+    outilRepository.updateGeometrie(id_geometrie, normalizeTaxonomyLabel(nom_geometrie), id_famille, image_path),
   getRevetements: (id_fabricant?: number) => outilRepository.getRevetements(id_fabricant),
   getAretes: (id_geometrie?: number) => outilRepository.getAretes(id_geometrie),
   createRevetement: (nom: string, id_fabricant: number) => outilRepository.createRevetement(nom, id_fabricant),
