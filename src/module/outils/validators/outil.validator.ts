@@ -78,7 +78,7 @@ const positiveIntegerArray = z
       .map((item) => Math.trunc(item))
   )
 
-export const outilUpsertSchema = z.object({
+const outilUpsertBaseSchema = z.object({
   id_fabricant: positiveInt,
   id_famille: positiveInt,
   id_geometrie: nullableInt.optional(),
@@ -156,7 +156,9 @@ export const outilUpsertSchema = z.object({
   image_file: z.unknown().optional().nullable(),
 
   _created_at: optionalString,
-}).superRefine((value, ctx) => {
+})
+
+export const outilUpsertSchema = outilUpsertBaseSchema.superRefine((value, ctx) => {
   const hasInitialSupplier = typeof value.stock_initial_id_fournisseur === "number"
   const hasInitialPrice = typeof value.stock_initial_prix_unitaire === "number"
   if (hasInitialSupplier !== hasInitialPrice) {
@@ -168,8 +170,16 @@ export const outilUpsertSchema = z.object({
   }
 })
 
+export const outilUpdateSchema = outilUpsertBaseSchema.omit({
+  quantite_stock: true,
+  stock_initial_reason: true,
+  stock_initial_note: true,
+  stock_initial_id_fournisseur: true,
+  stock_initial_prix_unitaire: true,
+})
+
 export type CreateOutilInput = z.infer<typeof outilUpsertSchema>
-export type UpdateOutilInput = z.infer<typeof outilUpsertSchema>
+export type UpdateOutilInput = z.infer<typeof outilUpdateSchema>
 
 export const sortieStockSchema = z.object({
   id: positiveInt,
@@ -243,6 +253,8 @@ export const createFabricantSchema = z.object({
   id_fournisseurs: positiveIntegerArray,
 })
 
+export const updateFabricantSchema = createFabricantSchema
+
 export const createFournisseurSchema = z.object({
   nom: requiredString,
   adresse_ligne: optionalString,
@@ -256,6 +268,8 @@ export const createFournisseurSchema = z.object({
   }),
   nom_commercial: optionalString,
 })
+
+export const updateFournisseurSchema = createFournisseurSchema
 
 export const createRevetementSchema = z.object({
   nom: requiredString,

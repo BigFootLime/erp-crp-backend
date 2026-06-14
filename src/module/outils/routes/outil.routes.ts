@@ -27,9 +27,16 @@ router.post(
   outillageFabricantUpload.single("logo"),
   asyncHandler(outilSupportController.postFabricant)
 );
+router.patch(
+  "/fabricants/:id",
+  authenticateToken,
+  outillageFabricantUpload.single("logo"),
+  asyncHandler(outilSupportController.patchFabricant)
+);
 
 router.get("/fournisseurs", asyncHandler(outilSupportController.getFournisseurs));
 router.post("/fournisseurs", authenticateToken, asyncHandler(outilSupportController.postFournisseur));
+router.patch("/fournisseurs/:id", authenticateToken, asyncHandler(outilSupportController.patchFournisseur));
 
 router.get("/geometries", asyncHandler(outilSupportController.getGeometries));
 router.post("/geometries", authenticateToken, outillageGeometrieUpload.single("image"), asyncHandler(outilSupportController.postGeometrie));

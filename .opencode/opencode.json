@@ -2,7 +2,7 @@
   "$schema": "https://opencode.ai/config.json",
   "model": "openai/gpt-5.2",
   "small_model": "openai/gpt-5.2",
-  "instructions": ["INSTRUCTIONS.md"],
+  "instructions": ["AGENTS.md", "INSTRUCTIONS_BACKEND.md"],
   "plugin": ["oh-my-opencode", "opencode-antigravity-auth"],
   "tools": {
     "write": true,

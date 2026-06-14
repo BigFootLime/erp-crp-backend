@@ -6,6 +6,13 @@ import type {
   OfStatusDTO,
   OfTimeLogTypeDTO,
 } from "../validators/production.validators";
+import type {
+  MachineCapability,
+  MachineDocument,
+  MachineModelSummary,
+  MachineSpec,
+  MachineTooling,
+} from "./machine-intelligence.types";
 
 export type Paginated<T> = { items: T[]; total: number };
 
@@ -14,11 +21,22 @@ export type MachineListItem = {
   code: string;
   name: string;
   type: MachineTypeDTO;
+  machine_model_id: string | null;
+  model_display_name: string | null;
+  manufacturer: string | null;
+  model_name: string | null;
+  display_name: string | null;
   status: MachineStatusDTO;
   hourly_rate: number;
   currency: string;
   is_available: boolean;
   image_url: string | null;
+  dashboard_color: string | null;
+  model_3d_path: string | null;
+  documentation_url: string | null;
+  documentation_source: string | null;
+  scheduling_enabled: boolean;
+  outillage_enabled: boolean;
   archived_at: string | null;
   updated_at: string;
 };
@@ -27,6 +45,7 @@ export type MachineDetail = MachineListItem & {
   brand: string | null;
   model: string | null;
   serial_number: string | null;
+  commissioned_year: number | null;
   location: string | null;
   workshop_zone: string | null;
   notes: string | null;
@@ -35,6 +54,11 @@ export type MachineDetail = MachineListItem & {
   updated_by: number | null;
   archived_by: number | null;
   image_path: string | null;
+  machine_model?: MachineModelSummary | null;
+  specs?: MachineSpec | null;
+  capabilities?: MachineCapability[];
+  tooling?: MachineTooling[];
+  documents?: MachineDocument[];
 };
 
 export type PosteListItem = {

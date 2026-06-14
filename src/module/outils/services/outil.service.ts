@@ -458,6 +458,8 @@ export const outilSupportService = {
   getFournisseurs: (fabricantId?: number) => outilRepository.getFournisseurs(fabricantId),
   createFabricant: (nom: string, logo: string | null, fournisseurs: number[]) =>
     outilRepository.createFabricant(nom, logo, fournisseurs),
+  updateFabricant: (id_fabricant: number, nom: string, logo: string | null, fournisseurs: number[]) =>
+    outilRepository.updateFabricant(id_fabricant, nom, logo, fournisseurs),
   createFournisseur: (data: {
     nom: string
     adresse_ligne?: string
@@ -469,6 +471,17 @@ export const outilSupportService = {
     email?: string
     nom_commercial?: string
   }) => outilRepository.createFournisseur(data),
+  updateFournisseur: (id_fournisseur: number, data: {
+    nom: string
+    adresse_ligne?: string
+    house_no?: string
+    postcode?: string
+    city?: string
+    country?: string
+    phone_num?: string
+    email?: string
+    nom_commercial?: string
+  }) => outilRepository.updateFournisseur(id_fournisseur, data),
   getGeometries: (id_famille?: number) => outilRepository.getGeometries(id_famille),
   createGeometrie: (nom_geometrie: string, id_famille: number, image_path: string | null) =>
     outilRepository.createGeometrie(normalizeTaxonomyLabel(nom_geometrie), id_famille, image_path),

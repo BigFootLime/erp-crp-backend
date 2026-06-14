@@ -11,6 +11,8 @@ export type OutilListItem = {
   nom_geometrie: string | null
   image: string | null
   image_path: string | null
+  famille_image_path?: string | null
+  fabricant_logo?: string | null
   plan: string | null
   esquisse: string | null
   profondeur_utile?: string | null

@@ -76,6 +76,8 @@ function mapOutilListItem(row: Record<string, unknown>): OutilListItem {
     nom_geometrie: asNullableString(row.nom_geometrie),
     image: buildPublicImageUrl(asNullableString(row.image)),
     image_path: buildPublicImageUrl(asNullableString(row.image_path)),
+    famille_image_path: buildPublicImageUrl(asNullableString(row.famille_image_path)),
+    fabricant_logo: buildPublicImageUrl(asNullableString(row.fabricant_logo)),
     plan: buildPublicImageUrl(asNullableString(row.plan)),
     esquisse: buildPublicImageUrl(asNullableString(row.esquisse)),
     profondeur_utile: asNullableString(row.profondeur_utile),
@@ -186,6 +188,7 @@ async function getOutilBaseRow(client: DbClient, id: number) {
       SELECT
         o.*,
         f.name AS nom_fabricant,
+        f.logo AS fabricant_logo,
         fam.nom_famille,
         fam.image_path AS famille_image_path,
         g.nom_geometrie,
@@ -512,7 +515,9 @@ export const outilRepository = {
       SELECT
         o.*,
         f.name AS nom_fabricant,
+        f.logo AS fabricant_logo,
         fam.nom_famille,
+        fam.image_path AS famille_image_path,
         g.nom_geometrie,
         g.image_path,
         COALESCE(s.quantite, 0) AS quantite_stock,
@@ -623,6 +628,36 @@ export const outilRepository = {
     }
   },
 
+  async assertReferenceFabricantAvailable(
+    client: DbClient,
+    id_fabricant: number,
+    reference_fabricant?: string | null,
+    excludeId?: number
+  ) {
+    const reference = reference_fabricant?.trim();
+    if (!reference) return;
+
+    const result = await client.query(
+      `
+        SELECT id_outil
+        FROM gestion_outils_outil
+        WHERE id_fabricant = $1
+          AND LOWER(reference_fabricant) = LOWER($2)
+          AND ($3::int IS NULL OR id_outil <> $3::int)
+        LIMIT 1
+      `,
+      [id_fabricant, reference, excludeId ?? null]
+    );
+
+    if (result.rows[0]) {
+      throw new HttpError(
+        409,
+        "REFERENCE_FABRICANT_DUPLICATE",
+        "Cette reference fabricant existe deja pour ce fabricant"
+      );
+    }
+  },
+
   async create(
     data: CreateOutilInput & {
       esquisse?: string | null;
@@ -640,6 +675,7 @@ export const outilRepository = {
     ]);
 
     await this.assertCreationRelations(client, data, supplierIds);
+    await this.assertReferenceFabricantAvailable(client, data.id_fabricant, data.reference_fabricant);
 
     const result = await client.query(
       `
@@ -751,6 +787,7 @@ export const outilRepository = {
     ]);
 
     await this.assertCreationRelations(client, data, supplierIds);
+    await this.assertReferenceFabricantAvailable(client, data.id_fabricant, data.reference_fabricant, id_outil);
 
     await client.query(
       `
@@ -817,7 +854,7 @@ export const outilRepository = {
       ]
     );
 
-    await this.initStock(client, id_outil, data.quantite_stock ?? 0, data.quantite_minimale ?? 0);
+    await this.updateStockSettings(client, id_outil, data.quantite_minimale ?? 0);
     await this.replaceFournisseurs(client, id_outil, supplierIds);
     await this.replaceRevetements(client, id_outil, data.revetements ?? []);
     await this.replaceValeursAretes(client, id_outil, data.valeurs_aretes ?? []);
@@ -861,6 +898,21 @@ export const outilRepository = {
         date_maj = NOW()
       `,
       [id_outil, qte, qteMin]
+    );
+  },
+
+  async updateStockSettings(client: DbClient, id_outil: number, quantite_minimale: number = 0) {
+    const qteMin = Number(quantite_minimale ?? 0);
+
+    await client.query(
+      `
+      INSERT INTO gestion_outils_stock (id_outil, quantite, quantite_minimale, date_maj)
+      VALUES ($1, 0, $2, NOW())
+      ON CONFLICT (id_outil) DO UPDATE SET
+        quantite_minimale = EXCLUDED.quantite_minimale,
+        date_maj = NOW()
+      `,
+      [id_outil, qteMin]
     );
   },
 
@@ -1169,6 +1221,52 @@ export const outilRepository = {
     }
   },
 
+  async updateFabricant(id_fabricant: number, nom_fabricant: string, logo: string | null, id_fournisseurs: number[]) {
+    const client = await db.connect();
+    try {
+      await client.query("BEGIN");
+
+      const result = await client.query(
+        `
+        UPDATE gestion_outils_fabricant
+        SET
+          name = $2,
+          logo = COALESCE($3, logo)
+        WHERE id_fabricant = $1
+        RETURNING id_fabricant, name, logo
+        `,
+        [id_fabricant, nom_fabricant, normalizeStoredImagePath(logo)]
+      );
+
+      if (!result.rows[0]) throw new HttpError(404, "FABRICANT_NOT_FOUND", "Fabricant introuvable");
+
+      await client.query(`DELETE FROM gestion_outils_fournisseur_fabricant WHERE id_fabricant = $1`, [id_fabricant]);
+      for (const id_fournisseur of uniquePositiveIntegers(id_fournisseurs)) {
+        await client.query(
+          `
+          INSERT INTO gestion_outils_fournisseur_fabricant (id_fabricant, id_fournisseur)
+          VALUES ($1, $2)
+          ON CONFLICT DO NOTHING
+          `,
+          [id_fabricant, id_fournisseur]
+        );
+      }
+
+      await client.query("COMMIT");
+      const row = result.rows[0];
+      return {
+        value: asInteger(row.id_fabricant),
+        label: asNullableString(row.name) ?? "",
+        logo: buildPublicImageUrl(asNullableString(row.logo)),
+      };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  },
+
   // 🤝 Fournisseurs
   async getFournisseurs(fabricantId?: number) {
     if (fabricantId) {
@@ -1213,6 +1311,46 @@ export const outilRepository = {
       `,
       [nom, adresse_ligne, house_no, postcode, city, country, phone_num, email, nom_commercial]
     );
+  },
+
+  async updateFournisseur(id_fournisseur: number, data: any) {
+    const {
+      nom,
+      adresse_ligne,
+      house_no,
+      postcode,
+      city,
+      country,
+      phone_num,
+      email,
+      nom_commercial,
+    } = data;
+
+    const result = await db.query(
+      `
+      UPDATE gestion_outils_fournisseur
+      SET
+        nom = $2,
+        adresse_ligne = $3,
+        house_no = $4,
+        postcode = $5,
+        city = $6,
+        country = $7,
+        phone_num = $8,
+        email = $9,
+        nom_commercial = $10
+      WHERE id_fournisseur = $1
+      RETURNING id_fournisseur, nom
+      `,
+      [id_fournisseur, nom, adresse_ligne, house_no, postcode, city, country, phone_num, email, nom_commercial]
+    );
+
+    if (!result.rows[0]) throw new HttpError(404, "FOURNISSEUR_NOT_FOUND", "Fournisseur introuvable");
+
+    return {
+      value: asInteger(result.rows[0].id_fournisseur),
+      label: asNullableString(result.rows[0].nom) ?? "",
+    };
   },
 
   // 🧠 Géométries (par famille)

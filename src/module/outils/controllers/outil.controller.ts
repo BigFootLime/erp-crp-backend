@@ -12,12 +12,15 @@ import {
   createFournisseurSchema,
   createGeometrieSchema,
   createRevetementSchema,
+  outilUpdateSchema,
   outilUpsertSchema,
   reapprovisionnementSchema,
   retourStockSchema,
   scanMovementSchema,
   sortieStockSchema,
   updateFamilleSchema,
+  updateFabricantSchema,
+  updateFournisseurSchema,
   updateGeometrieSchema,
 } from "../validators/outil.validator"
 import {
@@ -205,7 +208,7 @@ export const outilController = {
 
     try {
       const user = requireUser(req)
-      const parsed = parseMultipartJsonBody(req.body.data, outilUpsertSchema)
+      const parsed = parseMultipartJsonBody(req.body.data, outilUpdateSchema)
       const result = await outilService.createOutil({
         ...parsed,
         esquisse: paths.esquisse ?? null,
@@ -594,6 +597,47 @@ export const outilSupportController = {
     }
   },
 
+  patchFabricant: async (req: Request, res: Response, next: NextFunction) => {
+    const uploadedLogo = req.file?.filename ? getOutillageFabricantStoredPath(req.file.filename) : null
+
+    try {
+      requireUser(req)
+      const id = parseId(req.params.id, "ID Fabricant")
+      let fournisseursPayload: unknown = []
+      if (req.body.id_fournisseurs) {
+        try {
+          fournisseursPayload = JSON.parse(req.body.id_fournisseurs)
+        } catch {
+          throw new HttpError(400, "INVALID_JSON", "id_fournisseurs doit etre un JSON valide")
+        }
+      }
+
+      const parsed = updateFabricantSchema.parse({
+        nom_fabricant: req.body.nom_fabricant,
+        id_fournisseurs: fournisseursPayload,
+      })
+
+      const fabricant = await outilSupportService.updateFabricant(
+        id,
+        parsed.nom_fabricant,
+        uploadedLogo,
+        parsed.id_fournisseurs
+      )
+
+      try {
+        const io = getIO()
+        io.emit("fabricantUpdated", { id })
+      } catch {
+        // noop
+      }
+
+      return res.status(200).json(fabricant)
+    } catch (error) {
+      await deleteStoredImageFile(uploadedLogo)
+      next(error)
+    }
+  },
+
   getFournisseurs: async (req: Request, res: Response, next: NextFunction) => {
     try {
       const fabricantId = req.query.fabricantId ? parseId(req.query.fabricantId as string, "ID Fabricant") : undefined
@@ -617,6 +661,26 @@ export const outilSupportController = {
       } catch {
         // noop
       }
+    } catch (error) {
+      next(error)
+    }
+  },
+
+  patchFournisseur: async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      requireUser(req)
+      const id = parseId(req.params.id, "ID Fournisseur")
+      const parsed = updateFournisseurSchema.parse(req.body)
+      const fournisseur = await outilSupportService.updateFournisseur(id, parsed)
+
+      try {
+        const io = getIO()
+        io.emit("fournisseurUpdated", { id })
+      } catch {
+        // noop
+      }
+
+      return res.status(200).json(fournisseur)
     } catch (error) {
       next(error)
     }
