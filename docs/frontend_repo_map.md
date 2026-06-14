@@ -520,6 +520,7 @@ PATCH	/api/v1/production/groups/:id	authenticateToken, requireProductionOrAdmin	
 POST	/api/v1/production/groups/:id/link	authenticateToken, requireProductionOrAdmin	controller
 POST	/api/v1/production/groups/:id/unlink	authenticateToken, requireProductionOrAdmin	controller
 GET	/api/v1/production/machines	authenticateToken	controller
+POST	/api/v1/production/machines/onboarding	authenticateToken, requireProductionOrAdmin, upload.single("image")	controller
 POST	/api/v1/production/machines	authenticateToken, upload.single("image")	controller
 DELETE	/api/v1/production/machines/:id	authenticateToken, requireAdmin	controller
 GET	/api/v1/production/machines/:id	authenticateToken	controller

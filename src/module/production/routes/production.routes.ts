@@ -7,6 +7,7 @@ import {
   archiveMachine,
   archivePoste,
   createMachine,
+  createMachineOnboarding,
   createOfReceipt,
   createOrdreFabrication,
   createPoste,
@@ -44,6 +45,14 @@ import {
   stopPointage,
   validatePointage,
 } from "../controllers/pointages.controller";
+import {
+  getMachineModel,
+  listMachineCapabilities,
+  listMachineDocuments,
+  listMachineModelCapabilities,
+  listMachineModelDocuments,
+  listMachineModels,
+} from "../controllers/machine-intelligence.controller";
 
 function isAdminRole(role: string | undefined): boolean {
   if (!role) return false;
@@ -79,8 +88,16 @@ const router = Router();
 router.use(authenticateToken);
 
 // Machines
+router.get("/machine-models", listMachineModels);
+router.get("/machine-models/:id", getMachineModel);
+router.get("/machine-models/:id/capabilities", listMachineModelCapabilities);
+router.get("/machine-models/:id/documents", listMachineModelDocuments);
+
 router.get("/machines", listMachines);
+router.get("/machines/:id/capabilities", listMachineCapabilities);
+router.get("/machines/:id/documents", listMachineDocuments);
 router.get("/machines/:id", getMachine);
+router.post("/machines/onboarding", requireProductionOrAdmin, upload.single("image"), createMachineOnboarding);
 router.post("/machines", upload.single("image"), createMachine);
 router.patch("/machines/:id", upload.single("image"), updateMachine);
 router.delete("/machines/:id", requireAdmin, archiveMachine);

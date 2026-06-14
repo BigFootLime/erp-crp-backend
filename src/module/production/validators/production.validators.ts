@@ -39,19 +39,40 @@ export type ListMachinesQueryDTO = z.infer<typeof listMachinesQuerySchema>;
 
 const currencySchema = z.string().trim().min(1).max(10).optional().default("EUR");
 const currencyPatchSchema = z.string().trim().min(1).max(10).optional();
+const optionalUrlSchema = z.string().trim().url().max(1000).optional().nullable();
+const optionalPathSchema = z.string().trim().min(1).max(1000).optional().nullable();
+const optionalYearSchema = z.coerce.number().int().min(1950).max(2100).optional().nullable();
+const optionalPositiveIntSchema = z.coerce.number().int().positive().optional().nullable();
+const optionalPositiveNumberSchema = z.coerce.number().positive().optional().nullable();
+const optionalNonNegativeNumberSchema = z.coerce.number().min(0).optional().nullable();
+const optionalShortTextSchema = z.string().trim().min(1).max(120).optional().nullable();
+const optionalMediumTextSchema = z.string().trim().min(1).max(500).optional().nullable();
+const onboardingTextArraySchema = z.array(z.string().trim().min(1).max(120)).max(50).optional().default([]);
+const sourceConfidenceSchema = z.enum(["official", "resale_listing", "estimated", "internal", "unknown"]);
+const sourceTypeSchema = z.enum(["manufacturer_page", "manufacturer_pdf", "resale_listing", "internal_note", "mixed", "unknown"]);
+const capabilityLevelSchema = z.enum(["preferred", "primary", "supported", "limited", "unknown"]);
 
 export const createMachineSchema = z.object({
   body: z.object({
     code: z.string().trim().min(1).max(50),
     name: z.string().trim().min(1).max(200),
     type: machineTypeSchema.optional().default("OTHER"),
+    machine_model_id: uuid.optional().nullable(),
+    display_name: z.string().trim().min(1).max(200).optional().nullable(),
     brand: z.string().trim().min(1).max(120).optional().nullable(),
     model: z.string().trim().min(1).max(120).optional().nullable(),
     serial_number: z.string().trim().min(1).max(120).optional().nullable(),
+    commissioned_year: optionalYearSchema,
     hourly_rate: z.coerce.number().min(0).optional().default(0),
     currency: currencySchema,
     status: machineStatusSchema.optional().default("ACTIVE"),
     is_available: z.boolean().optional().default(true),
+    dashboard_color: z.string().trim().min(1).max(40).optional().nullable(),
+    model_3d_path: optionalPathSchema,
+    documentation_url: optionalUrlSchema,
+    documentation_source: z.string().trim().min(1).max(120).optional().nullable(),
+    scheduling_enabled: z.boolean().optional().default(true),
+    outillage_enabled: z.boolean().optional().default(true),
     location: z.string().trim().min(1).max(200).optional().nullable(),
     workshop_zone: z.string().trim().min(1).max(200).optional().nullable(),
     notes: z.string().trim().min(1).optional().nullable(),
@@ -60,18 +81,98 @@ export const createMachineSchema = z.object({
 
 export type CreateMachineBodyDTO = z.infer<typeof createMachineSchema>["body"];
 
+export const createMachineOnboardingSchema = z.object({
+  body: z.object({
+    machine: createMachineSchema.shape.body,
+    machine_model: z
+      .object({
+        id: uuid.optional().nullable(),
+        model_code: z.string().trim().min(1).max(120).optional().nullable(),
+        manufacturer: optionalShortTextSchema,
+        model: optionalShortTextSchema,
+        display_name: z.string().trim().min(1).max(200).optional().nullable(),
+        machine_type: machineTypeSchema.optional(),
+        axes_count: optionalPositiveIntSchema,
+        description: z.string().trim().min(1).max(2000).optional().nullable(),
+        source_summary: z.string().trim().min(1).max(2000).optional().nullable(),
+        is_active: z.boolean().optional().default(true),
+      })
+      .optional()
+      .nullable(),
+    specs: z
+      .object({
+        x_travel_mm: optionalPositiveNumberSchema,
+        y_travel_mm: optionalPositiveNumberSchema,
+        z_travel_mm: optionalPositiveNumberSchema,
+        table_length_mm: optionalPositiveNumberSchema,
+        table_width_mm: optionalPositiveNumberSchema,
+        max_table_load_kg: optionalPositiveNumberSchema,
+        spindle_taper: optionalShortTextSchema,
+        spindle_speed_max_rpm: optionalPositiveIntSchema,
+        spindle_power_kw: optionalPositiveNumberSchema,
+        tool_magazine_capacity: optionalPositiveIntSchema,
+        compatible_holders: onboardingTextArraySchema,
+        operations_notes: optionalMediumTextSchema,
+        maintenance_notes: optionalMediumTextSchema,
+        source_type: sourceTypeSchema.optional().default("internal_note"),
+        source_confidence: sourceConfidenceSchema.optional().default("internal"),
+        source_notes: optionalMediumTextSchema,
+      })
+      .optional()
+      .nullable(),
+    capabilities: z
+      .array(
+        z.object({
+          process_type: z.string().trim().min(1).max(120),
+          material_family: optionalShortTextSchema,
+          capability_level: capabilityLevelSchema.optional().default("supported"),
+          notes: optionalMediumTextSchema,
+          source_confidence: sourceConfidenceSchema.optional().default("internal"),
+        })
+      )
+      .max(80)
+      .optional()
+      .default([]),
+    tooling: z
+      .array(
+        z.object({
+          holder_type: z.string().trim().min(1).max(120),
+          spindle_taper: optionalShortTextSchema,
+          tool_family: optionalShortTextSchema,
+          compatible: z.boolean().optional().default(true),
+          notes: optionalMediumTextSchema,
+          source_confidence: sourceConfidenceSchema.optional().default("internal"),
+        })
+      )
+      .max(80)
+      .optional()
+      .default([]),
+  }),
+});
+
+export type CreateMachineOnboardingBodyDTO = z.infer<typeof createMachineOnboardingSchema>["body"];
+
 export const updateMachineSchema = z.object({
   body: z.object({
     code: z.string().trim().min(1).max(50).optional(),
     name: z.string().trim().min(1).max(200).optional(),
     type: machineTypeSchema.optional(),
+    machine_model_id: uuid.optional().nullable(),
+    display_name: z.string().trim().min(1).max(200).optional().nullable(),
     brand: z.string().trim().min(1).max(120).optional().nullable(),
     model: z.string().trim().min(1).max(120).optional().nullable(),
     serial_number: z.string().trim().min(1).max(120).optional().nullable(),
+    commissioned_year: optionalYearSchema,
     hourly_rate: z.coerce.number().min(0).optional(),
     currency: currencyPatchSchema,
     status: machineStatusSchema.optional(),
     is_available: z.boolean().optional(),
+    dashboard_color: z.string().trim().min(1).max(40).optional().nullable(),
+    model_3d_path: optionalPathSchema,
+    documentation_url: optionalUrlSchema,
+    documentation_source: z.string().trim().min(1).max(120).optional().nullable(),
+    scheduling_enabled: z.boolean().optional(),
+    outillage_enabled: z.boolean().optional(),
     location: z.string().trim().min(1).max(200).optional().nullable(),
     workshop_zone: z.string().trim().min(1).max(200).optional().nullable(),
     notes: z.string().trim().min(1).optional().nullable(),

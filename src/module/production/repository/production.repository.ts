@@ -18,6 +18,7 @@ import type {
 } from "../types/production.types";
 import type {
   CreateMachineBodyDTO,
+  CreateMachineOnboardingBodyDTO,
   CreateOfBodyDTO,
   CreatePosteBodyDTO,
   ListMachinesQueryDTO,
@@ -84,6 +85,62 @@ async function insertAuditLog(tx: DbQueryer, audit: AuditContext, entry: {
 function isPgUniqueViolation(err: unknown): boolean {
   return (err as { code?: unknown } | null)?.code === "23505";
 }
+
+function pgConstraint(err: unknown): string | null {
+  const value = (err as { constraint?: unknown } | null)?.constraint;
+  return typeof value === "string" ? value : null;
+}
+
+function isPgForeignKeyViolation(err: unknown): boolean {
+  return (err as { code?: unknown } | null)?.code === "23503";
+}
+
+function textOrNull(value: string | null | undefined): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length ? trimmed : null;
+}
+
+function makeMachineModelCode(manufacturer: string, model: string): string {
+  const raw = `${manufacturer}-${model}`
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return raw.slice(0, 120) || `MACHINE-MODEL-${Date.now()}`;
+}
+
+function hasModelDraft(input: CreateMachineOnboardingBodyDTO["machine_model"]): input is NonNullable<CreateMachineOnboardingBodyDTO["machine_model"]> {
+  if (!input) return false;
+  return Boolean(
+    input.id ||
+      textOrNull(input.manufacturer) ||
+      textOrNull(input.model) ||
+      textOrNull(input.display_name) ||
+      textOrNull(input.model_code) ||
+      input.axes_count
+  );
+}
+
+function hasSpecDraft(input: CreateMachineOnboardingBodyDTO["specs"]): input is NonNullable<CreateMachineOnboardingBodyDTO["specs"]> {
+  if (!input) return false;
+  return Object.entries(input).some(([key, value]) => {
+    if (key === "source_type" || key === "source_confidence") return false;
+    if (Array.isArray(value)) return value.length > 0;
+    if (typeof value === "string") return value.trim().length > 0;
+    return value !== null && value !== undefined;
+  });
+}
+
+type MachineModelMini = {
+  id: string;
+  model_code: string;
+  manufacturer: string;
+  model: string;
+  display_name: string;
+};
 
 function toInt(value: unknown, label = "id"): number {
   if (typeof value === "number" && Number.isInteger(value)) return value;
@@ -161,11 +218,22 @@ export async function repoListMachines(filters: ListMachinesQueryDTO): Promise<P
     code: string;
     name: string;
     type: MachineListItem["type"];
+    machine_model_id: string | null;
+    model_display_name: string | null;
+    manufacturer: string | null;
+    model_name: string | null;
+    display_name: string | null;
     status: MachineListItem["status"];
     hourly_rate: number;
     currency: string;
     is_available: boolean;
     image_path: string | null;
+    dashboard_color: string | null;
+    model_3d_path: string | null;
+    documentation_url: string | null;
+    documentation_source: string | null;
+    scheduling_enabled: boolean;
+    outillage_enabled: boolean;
     archived_at: string | null;
     updated_at: string;
   };
@@ -177,14 +245,26 @@ export async function repoListMachines(filters: ListMachinesQueryDTO): Promise<P
         m.code,
         m.name,
         m.type::text AS type,
+        m.machine_model_id::text AS machine_model_id,
+        mm.display_name AS model_display_name,
+        mm.manufacturer,
+        mm.model AS model_name,
+        m.display_name,
         m.status::text AS status,
         m.hourly_rate::float8 AS hourly_rate,
         m.currency,
         m.is_available,
         m.image_path,
+        m.dashboard_color,
+        m.model_3d_path,
+        m.documentation_url,
+        m.documentation_source,
+        m.scheduling_enabled,
+        m.outillage_enabled,
         m.archived_at::text AS archived_at,
         m.updated_at::text AS updated_at
       FROM machines m
+      LEFT JOIN public.production_machine_models mm ON mm.id = m.machine_model_id
       ${whereSql}
       ORDER BY ${orderBy} ${orderDir}, m.id ${orderDir}
       LIMIT $${values.length + 1}
@@ -198,11 +278,22 @@ export async function repoListMachines(filters: ListMachinesQueryDTO): Promise<P
     code: r.code,
     name: r.name,
     type: r.type,
+    machine_model_id: r.machine_model_id,
+    model_display_name: r.model_display_name,
+    manufacturer: r.manufacturer,
+    model_name: r.model_name,
+    display_name: r.display_name,
     status: r.status,
     hourly_rate: Number(r.hourly_rate),
     currency: r.currency,
     is_available: r.is_available,
     image_url: imageUrl(r.image_path),
+    dashboard_color: r.dashboard_color,
+    model_3d_path: r.model_3d_path,
+    documentation_url: r.documentation_url,
+    documentation_source: r.documentation_source,
+    scheduling_enabled: r.scheduling_enabled,
+    outillage_enabled: r.outillage_enabled,
     archived_at: r.archived_at,
     updated_at: r.updated_at,
   }));
@@ -217,13 +308,25 @@ export async function repoGetMachine(id: string): Promise<MachineDetail | null> 
     name: string;
     type: MachineDetail["type"];
     status: MachineDetail["status"];
+    machine_model_id: string | null;
+    model_display_name: string | null;
+    manufacturer: string | null;
+    model_name: string | null;
+    display_name: string | null;
     brand: string | null;
     model: string | null;
     serial_number: string | null;
+    commissioned_year: number | null;
     image_path: string | null;
     hourly_rate: number;
     currency: string;
     is_available: boolean;
+    dashboard_color: string | null;
+    model_3d_path: string | null;
+    documentation_url: string | null;
+    documentation_source: string | null;
+    scheduling_enabled: boolean;
+    outillage_enabled: boolean;
     location: string | null;
     workshop_zone: string | null;
     notes: string | null;
@@ -243,13 +346,25 @@ export async function repoGetMachine(id: string): Promise<MachineDetail | null> 
         m.name,
         m.type::text AS type,
         m.status::text AS status,
+        m.machine_model_id::text AS machine_model_id,
+        mm.display_name AS model_display_name,
+        mm.manufacturer,
+        mm.model AS model_name,
+        m.display_name,
         m.brand,
         m.model,
         m.serial_number,
+        m.commissioned_year,
         m.image_path,
         m.hourly_rate::float8 AS hourly_rate,
         m.currency,
         m.is_available,
+        m.dashboard_color,
+        m.model_3d_path,
+        m.documentation_url,
+        m.documentation_source,
+        m.scheduling_enabled,
+        m.outillage_enabled,
         m.location,
         m.workshop_zone,
         m.notes,
@@ -260,6 +375,7 @@ export async function repoGetMachine(id: string): Promise<MachineDetail | null> 
         m.archived_at::text AS archived_at,
         m.archived_by
       FROM machines m
+      LEFT JOIN public.production_machine_models mm ON mm.id = m.machine_model_id
       WHERE m.id = $1::uuid
       LIMIT 1
     `,
@@ -273,15 +389,27 @@ export async function repoGetMachine(id: string): Promise<MachineDetail | null> 
     code: row.code,
     name: row.name,
     type: row.type,
+    machine_model_id: row.machine_model_id,
+    model_display_name: row.model_display_name,
+    manufacturer: row.manufacturer,
+    model_name: row.model_name,
+    display_name: row.display_name,
     status: row.status,
     hourly_rate: Number(row.hourly_rate),
     currency: row.currency,
     is_available: row.is_available,
     image_url: imageUrl(row.image_path),
     image_path: row.image_path,
+    dashboard_color: row.dashboard_color,
+    model_3d_path: row.model_3d_path,
+    documentation_url: row.documentation_url,
+    documentation_source: row.documentation_source,
+    scheduling_enabled: row.scheduling_enabled,
+    outillage_enabled: row.outillage_enabled,
     brand: row.brand,
     model: row.model,
     serial_number: row.serial_number,
+    commissioned_year: row.commissioned_year,
     location: row.location,
     workshop_zone: row.workshop_zone,
     notes: row.notes,
@@ -309,13 +437,22 @@ export async function repoCreateMachine(params: {
       name: string;
       type: MachineDetail["type"];
       status: MachineDetail["status"];
+      machine_model_id: string | null;
+      display_name: string | null;
       brand: string | null;
       model: string | null;
       serial_number: string | null;
+      commissioned_year: number | null;
       image_path: string | null;
       hourly_rate: number;
       currency: string;
       is_available: boolean;
+      dashboard_color: string | null;
+      model_3d_path: string | null;
+      documentation_url: string | null;
+      documentation_source: string | null;
+      scheduling_enabled: boolean;
+      outillage_enabled: boolean;
       location: string | null;
       workshop_zone: string | null;
       notes: string | null;
@@ -337,14 +474,23 @@ export async function repoCreateMachine(params: {
           code,
           name,
           type,
+          machine_model_id,
+          display_name,
           brand,
           model,
           serial_number,
+          commissioned_year,
           image_path,
           hourly_rate,
           currency,
           status,
           is_available,
+          dashboard_color,
+          model_3d_path,
+          documentation_url,
+          documentation_source,
+          scheduling_enabled,
+          outillage_enabled,
           location,
           workshop_zone,
           notes,
@@ -352,8 +498,8 @@ export async function repoCreateMachine(params: {
           updated_by
         )
         VALUES (
-          $1,$2,$3::machine_type,$4,$5,$6,$7,
-          $8,$9,$10::machine_status,$11,$12,$13,$14,$15,$16
+          $1,$2,$3::machine_type,$4::uuid,$5,$6,$7,$8,$9,$10,
+          $11,$12,$13::machine_status,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25
         )
         RETURNING
           id::text AS id,
@@ -361,13 +507,22 @@ export async function repoCreateMachine(params: {
           name,
           type::text AS type,
           status::text AS status,
+          machine_model_id::text AS machine_model_id,
+          display_name,
           brand,
           model,
           serial_number,
+          commissioned_year,
           image_path,
           hourly_rate::float8 AS hourly_rate,
           currency,
           is_available,
+          dashboard_color,
+          model_3d_path,
+          documentation_url,
+          documentation_source,
+          scheduling_enabled,
+          outillage_enabled,
           location,
           workshop_zone,
           notes,
@@ -382,14 +537,23 @@ export async function repoCreateMachine(params: {
         b.code,
         b.name,
         b.type,
+        b.machine_model_id ?? null,
+        b.display_name ?? null,
         b.brand ?? null,
         b.model ?? null,
         b.serial_number ?? null,
+        b.commissioned_year ?? null,
         params.image_path,
         b.hourly_rate,
         b.currency,
         b.status,
         b.is_available,
+        b.dashboard_color ?? null,
+        b.model_3d_path ?? null,
+        b.documentation_url ?? null,
+        b.documentation_source ?? null,
+        b.scheduling_enabled,
+        b.outillage_enabled,
         b.location ?? null,
         b.workshop_zone ?? null,
         b.notes ?? null,
@@ -420,17 +584,29 @@ export async function repoCreateMachine(params: {
       code: row.code,
       name: row.name,
       type: row.type,
+      machine_model_id: row.machine_model_id,
+      model_display_name: null,
+      manufacturer: null,
+      model_name: null,
+      display_name: row.display_name,
       status: row.status,
       hourly_rate: Number(row.hourly_rate),
       currency: row.currency,
       is_available: row.is_available,
       image_url: imageUrl(row.image_path),
       image_path: row.image_path,
+      dashboard_color: row.dashboard_color,
+      model_3d_path: row.model_3d_path,
+      documentation_url: row.documentation_url,
+      documentation_source: row.documentation_source,
+      scheduling_enabled: row.scheduling_enabled,
+      outillage_enabled: row.outillage_enabled,
       archived_at: row.archived_at,
       updated_at: row.updated_at,
       brand: row.brand,
       model: row.model,
       serial_number: row.serial_number,
+      commissioned_year: row.commissioned_year,
       location: row.location,
       workshop_zone: row.workshop_zone,
       notes: row.notes,
@@ -443,6 +619,451 @@ export async function repoCreateMachine(params: {
     await client.query("ROLLBACK");
     if (isPgUniqueViolation(err)) {
       throw new HttpError(409, "MACHINE_CODE_EXISTS", "A machine with this code already exists");
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function repoCreateMachineOnboarding(params: {
+  body: CreateMachineOnboardingBodyDTO;
+  image_path: string | null;
+  audit: AuditContext;
+}): Promise<MachineDetail> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const b = params.body;
+    const modelInput = b.machine_model ?? null;
+    const explicitMachineModelId = b.machine.machine_model_id ?? null;
+    const explicitDraftModelId = modelInput?.id ?? null;
+
+    if (explicitMachineModelId && explicitDraftModelId && explicitMachineModelId !== explicitDraftModelId) {
+      throw new HttpError(400, "MACHINE_MODEL_MISMATCH", "Machine model identifiers do not match");
+    }
+
+    let resolvedModel: MachineModelMini | null = null;
+    let resolvedModelId = explicitMachineModelId ?? explicitDraftModelId ?? null;
+
+    if (resolvedModelId) {
+      const existing = await client.query<MachineModelMini>(
+        `
+          SELECT
+            id::text AS id,
+            model_code,
+            manufacturer,
+            model,
+            display_name
+          FROM public.production_machine_models
+          WHERE id = $1::uuid
+          LIMIT 1
+        `,
+        [resolvedModelId]
+      );
+      resolvedModel = existing.rows[0] ?? null;
+      if (!resolvedModel) {
+        throw new HttpError(422, "MACHINE_MODEL_NOT_FOUND", "Machine model not found");
+      }
+    } else if (hasModelDraft(modelInput)) {
+      const manufacturer = textOrNull(modelInput.manufacturer) ?? textOrNull(b.machine.brand);
+      const modelName = textOrNull(modelInput.model) ?? textOrNull(b.machine.model);
+
+      if (!manufacturer || !modelName) {
+        throw new HttpError(422, "MACHINE_MODEL_IDENTITY_REQUIRED", "Manufacturer and model are required to create a machine model");
+      }
+
+      const displayName = textOrNull(modelInput.display_name) ?? `${manufacturer} ${modelName}`;
+      const modelCode = textOrNull(modelInput.model_code) ?? makeMachineModelCode(manufacturer, modelName);
+
+      const upsert = await client.query<MachineModelMini>(
+        `
+          INSERT INTO public.production_machine_models (
+            model_code,
+            manufacturer,
+            model,
+            display_name,
+            machine_type,
+            axes_count,
+            description,
+            source_summary,
+            is_active
+          )
+          VALUES ($1,$2,$3,$4,$5::machine_type,$6,$7,$8,$9)
+          ON CONFLICT (manufacturer, model) DO UPDATE
+          SET
+            display_name = EXCLUDED.display_name,
+            machine_type = EXCLUDED.machine_type,
+            axes_count = COALESCE(EXCLUDED.axes_count, public.production_machine_models.axes_count),
+            description = COALESCE(EXCLUDED.description, public.production_machine_models.description),
+            source_summary = COALESCE(EXCLUDED.source_summary, public.production_machine_models.source_summary),
+            is_active = EXCLUDED.is_active,
+            updated_at = now()
+          RETURNING
+            id::text AS id,
+            model_code,
+            manufacturer,
+            model,
+            display_name
+        `,
+        [
+          modelCode,
+          manufacturer,
+          modelName,
+          displayName,
+          modelInput.machine_type ?? b.machine.type,
+          modelInput.axes_count ?? null,
+          textOrNull(modelInput.description),
+          textOrNull(modelInput.source_summary),
+          modelInput.is_active ?? true,
+        ]
+      );
+
+      resolvedModel = upsert.rows[0] ?? null;
+      resolvedModelId = resolvedModel?.id ?? null;
+    }
+
+    const wantsIntelligence = hasSpecDraft(b.specs) || (b.capabilities ?? []).length > 0 || (b.tooling ?? []).length > 0;
+    if (wantsIntelligence && !resolvedModelId) {
+      throw new HttpError(422, "MACHINE_MODEL_REQUIRED_FOR_INTELLIGENCE", "A machine model is required to persist specs, capabilities or tooling");
+    }
+
+    if (resolvedModelId && hasSpecDraft(b.specs)) {
+      const specs = b.specs;
+      await client.query(
+        `
+          INSERT INTO public.production_machine_specs (
+            machine_model_id,
+            x_travel_mm,
+            y_travel_mm,
+            z_travel_mm,
+            table_length_mm,
+            table_width_mm,
+            max_table_load_kg,
+            spindle_taper,
+            spindle_speed_max_rpm,
+            spindle_power_kw,
+            tool_magazine_capacity,
+            compatible_holders,
+            operations_notes,
+            maintenance_notes,
+            source_type,
+            source_confidence,
+            source_notes
+          )
+          VALUES (
+            $1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::text[],$13,$14,$15,$16,$17
+          )
+          ON CONFLICT (machine_model_id) DO UPDATE
+          SET
+            x_travel_mm = COALESCE(EXCLUDED.x_travel_mm, public.production_machine_specs.x_travel_mm),
+            y_travel_mm = COALESCE(EXCLUDED.y_travel_mm, public.production_machine_specs.y_travel_mm),
+            z_travel_mm = COALESCE(EXCLUDED.z_travel_mm, public.production_machine_specs.z_travel_mm),
+            table_length_mm = COALESCE(EXCLUDED.table_length_mm, public.production_machine_specs.table_length_mm),
+            table_width_mm = COALESCE(EXCLUDED.table_width_mm, public.production_machine_specs.table_width_mm),
+            max_table_load_kg = COALESCE(EXCLUDED.max_table_load_kg, public.production_machine_specs.max_table_load_kg),
+            spindle_taper = COALESCE(EXCLUDED.spindle_taper, public.production_machine_specs.spindle_taper),
+            spindle_speed_max_rpm = COALESCE(EXCLUDED.spindle_speed_max_rpm, public.production_machine_specs.spindle_speed_max_rpm),
+            spindle_power_kw = COALESCE(EXCLUDED.spindle_power_kw, public.production_machine_specs.spindle_power_kw),
+            tool_magazine_capacity = COALESCE(EXCLUDED.tool_magazine_capacity, public.production_machine_specs.tool_magazine_capacity),
+            compatible_holders = CASE
+              WHEN array_length(EXCLUDED.compatible_holders, 1) IS NULL THEN public.production_machine_specs.compatible_holders
+              ELSE EXCLUDED.compatible_holders
+            END,
+            operations_notes = COALESCE(EXCLUDED.operations_notes, public.production_machine_specs.operations_notes),
+            maintenance_notes = COALESCE(EXCLUDED.maintenance_notes, public.production_machine_specs.maintenance_notes),
+            source_type = EXCLUDED.source_type,
+            source_confidence = EXCLUDED.source_confidence,
+            source_notes = COALESCE(EXCLUDED.source_notes, public.production_machine_specs.source_notes),
+            updated_at = now()
+        `,
+        [
+          resolvedModelId,
+          specs.x_travel_mm ?? null,
+          specs.y_travel_mm ?? null,
+          specs.z_travel_mm ?? null,
+          specs.table_length_mm ?? null,
+          specs.table_width_mm ?? null,
+          specs.max_table_load_kg ?? null,
+          textOrNull(specs.spindle_taper),
+          specs.spindle_speed_max_rpm ?? null,
+          specs.spindle_power_kw ?? null,
+          specs.tool_magazine_capacity ?? null,
+          specs.compatible_holders ?? [],
+          textOrNull(specs.operations_notes),
+          textOrNull(specs.maintenance_notes),
+          specs.source_type ?? "internal_note",
+          specs.source_confidence ?? "internal",
+          textOrNull(specs.source_notes),
+        ]
+      );
+    }
+
+    if (resolvedModelId) {
+      for (const capability of b.capabilities ?? []) {
+        await client.query(
+          `
+            INSERT INTO public.production_machine_capabilities (
+              machine_model_id,
+              process_type,
+              material_family,
+              capability_level,
+              notes,
+              source_confidence
+            )
+            VALUES ($1::uuid,$2,$3,$4,$5,$6)
+            ON CONFLICT (machine_model_id, process_type, (COALESCE(material_family, ''))) DO UPDATE
+            SET
+              capability_level = EXCLUDED.capability_level,
+              notes = COALESCE(EXCLUDED.notes, public.production_machine_capabilities.notes),
+              source_confidence = EXCLUDED.source_confidence,
+              updated_at = now()
+          `,
+          [
+            resolvedModelId,
+            capability.process_type,
+            textOrNull(capability.material_family),
+            capability.capability_level ?? "supported",
+            textOrNull(capability.notes),
+            capability.source_confidence ?? "internal",
+          ]
+        );
+      }
+
+      for (const tooling of b.tooling ?? []) {
+        await client.query(
+          `
+            INSERT INTO public.production_machine_tooling (
+              machine_model_id,
+              holder_type,
+              spindle_taper,
+              tool_family,
+              compatible,
+              notes,
+              source_confidence
+            )
+            VALUES ($1::uuid,$2,$3,$4,$5,$6,$7)
+            ON CONFLICT (machine_model_id, holder_type, (COALESCE(tool_family, ''))) DO UPDATE
+            SET
+              spindle_taper = COALESCE(EXCLUDED.spindle_taper, public.production_machine_tooling.spindle_taper),
+              compatible = EXCLUDED.compatible,
+              notes = COALESCE(EXCLUDED.notes, public.production_machine_tooling.notes),
+              source_confidence = EXCLUDED.source_confidence,
+              updated_at = now()
+          `,
+          [
+            resolvedModelId,
+            tooling.holder_type,
+            textOrNull(tooling.spindle_taper),
+            textOrNull(tooling.tool_family),
+            tooling.compatible ?? true,
+            textOrNull(tooling.notes),
+            tooling.source_confidence ?? "internal",
+          ]
+        );
+      }
+    }
+
+    type Row = {
+      id: string;
+      code: string;
+      name: string;
+      type: MachineDetail["type"];
+      status: MachineDetail["status"];
+      machine_model_id: string | null;
+      display_name: string | null;
+      brand: string | null;
+      model: string | null;
+      serial_number: string | null;
+      commissioned_year: number | null;
+      image_path: string | null;
+      hourly_rate: number;
+      currency: string;
+      is_available: boolean;
+      dashboard_color: string | null;
+      model_3d_path: string | null;
+      documentation_url: string | null;
+      documentation_source: string | null;
+      scheduling_enabled: boolean;
+      outillage_enabled: boolean;
+      location: string | null;
+      workshop_zone: string | null;
+      notes: string | null;
+      created_at: string;
+      updated_at: string;
+      created_by: number | null;
+      updated_by: number | null;
+      archived_at: string | null;
+      archived_by: number | null;
+    };
+
+    const machine = b.machine;
+    const ins = await client.query<Row>(
+      `
+        INSERT INTO machines (
+          code,
+          name,
+          type,
+          machine_model_id,
+          display_name,
+          brand,
+          model,
+          serial_number,
+          commissioned_year,
+          image_path,
+          hourly_rate,
+          currency,
+          status,
+          is_available,
+          dashboard_color,
+          model_3d_path,
+          documentation_url,
+          documentation_source,
+          scheduling_enabled,
+          outillage_enabled,
+          location,
+          workshop_zone,
+          notes,
+          created_by,
+          updated_by
+        )
+        VALUES (
+          $1,$2,$3::machine_type,$4::uuid,$5,$6,$7,$8,$9,$10,
+          $11,$12,$13::machine_status,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25
+        )
+        RETURNING
+          id::text AS id,
+          code,
+          name,
+          type::text AS type,
+          status::text AS status,
+          machine_model_id::text AS machine_model_id,
+          display_name,
+          brand,
+          model,
+          serial_number,
+          commissioned_year,
+          image_path,
+          hourly_rate::float8 AS hourly_rate,
+          currency,
+          is_available,
+          dashboard_color,
+          model_3d_path,
+          documentation_url,
+          documentation_source,
+          scheduling_enabled,
+          outillage_enabled,
+          location,
+          workshop_zone,
+          notes,
+          created_at::text AS created_at,
+          updated_at::text AS updated_at,
+          created_by,
+          updated_by,
+          archived_at::text AS archived_at,
+          archived_by
+      `,
+      [
+        machine.code,
+        machine.name,
+        machine.type,
+        resolvedModelId,
+        machine.display_name ?? null,
+        machine.brand ?? resolvedModel?.manufacturer ?? null,
+        machine.model ?? resolvedModel?.model ?? null,
+        machine.serial_number ?? null,
+        machine.commissioned_year ?? null,
+        params.image_path,
+        machine.hourly_rate,
+        machine.currency,
+        machine.status,
+        machine.is_available,
+        machine.dashboard_color ?? null,
+        machine.model_3d_path ?? null,
+        machine.documentation_url ?? null,
+        machine.documentation_source ?? null,
+        machine.scheduling_enabled,
+        machine.outillage_enabled,
+        machine.location ?? null,
+        machine.workshop_zone ?? null,
+        machine.notes ?? null,
+        params.audit.user_id,
+        params.audit.user_id,
+      ]
+    );
+
+    const row = ins.rows[0];
+    if (!row) throw new Error("Failed to create machine from onboarding");
+
+    await insertAuditLog(client, params.audit, {
+      action: "production.machines.onboarding.create",
+      entity_type: "machines",
+      entity_id: row.id,
+      details: {
+        code: row.code,
+        name: row.name,
+        type: row.type,
+        status: row.status,
+        machine_model_id: resolvedModelId,
+        specs_written: hasSpecDraft(b.specs),
+        capabilities_count: b.capabilities?.length ?? 0,
+        tooling_count: b.tooling?.length ?? 0,
+      },
+    });
+
+    await client.query("COMMIT");
+
+    return {
+      id: row.id,
+      code: row.code,
+      name: row.name,
+      type: row.type,
+      machine_model_id: row.machine_model_id,
+      model_display_name: resolvedModel?.display_name ?? null,
+      manufacturer: resolvedModel?.manufacturer ?? null,
+      model_name: resolvedModel?.model ?? null,
+      display_name: row.display_name,
+      status: row.status,
+      hourly_rate: Number(row.hourly_rate),
+      currency: row.currency,
+      is_available: row.is_available,
+      image_url: imageUrl(row.image_path),
+      image_path: row.image_path,
+      dashboard_color: row.dashboard_color,
+      model_3d_path: row.model_3d_path,
+      documentation_url: row.documentation_url,
+      documentation_source: row.documentation_source,
+      scheduling_enabled: row.scheduling_enabled,
+      outillage_enabled: row.outillage_enabled,
+      archived_at: row.archived_at,
+      updated_at: row.updated_at,
+      brand: row.brand,
+      model: row.model,
+      serial_number: row.serial_number,
+      commissioned_year: row.commissioned_year,
+      location: row.location,
+      workshop_zone: row.workshop_zone,
+      notes: row.notes,
+      created_at: row.created_at,
+      created_by: row.created_by,
+      updated_by: row.updated_by,
+      archived_by: row.archived_by,
+    };
+  } catch (err) {
+    await client.query("ROLLBACK");
+    if (isPgUniqueViolation(err)) {
+      const constraint = pgConstraint(err);
+      if (constraint === "machines_code_key") {
+        throw new HttpError(409, "MACHINE_CODE_EXISTS", "A machine with this code already exists");
+      }
+      if (constraint === "production_machine_models_code_key") {
+        throw new HttpError(409, "MACHINE_MODEL_CODE_EXISTS", "A machine model with this code already exists");
+      }
+      throw new HttpError(409, "MACHINE_ONBOARDING_UNIQUE_CONFLICT", "Machine onboarding conflicts with existing data");
+    }
+    if (isPgForeignKeyViolation(err)) {
+      throw new HttpError(422, "MACHINE_ONBOARDING_REFERENCE_INVALID", "Machine onboarding references invalid data");
     }
     throw err;
   } finally {
@@ -484,13 +1105,22 @@ export async function repoUpdateMachine(params: {
     if (p.code !== undefined) sets.push(`code = ${push(p.code)}`);
     if (p.name !== undefined) sets.push(`name = ${push(p.name)}`);
     if (p.type !== undefined) sets.push(`type = ${push(p.type)}::machine_type`);
+    if (p.machine_model_id !== undefined) sets.push(`machine_model_id = ${push(p.machine_model_id ?? null)}::uuid`);
+    if (p.display_name !== undefined) sets.push(`display_name = ${push(p.display_name ?? null)}`);
     if (p.brand !== undefined) sets.push(`brand = ${push(p.brand ?? null)}`);
     if (p.model !== undefined) sets.push(`model = ${push(p.model ?? null)}`);
     if (p.serial_number !== undefined) sets.push(`serial_number = ${push(p.serial_number ?? null)}`);
+    if (p.commissioned_year !== undefined) sets.push(`commissioned_year = ${push(p.commissioned_year ?? null)}`);
     if (p.hourly_rate !== undefined) sets.push(`hourly_rate = ${push(p.hourly_rate)}`);
     if (p.currency !== undefined) sets.push(`currency = ${push(p.currency)}`);
     if (p.status !== undefined) sets.push(`status = ${push(p.status)}::machine_status`);
     if (p.is_available !== undefined) sets.push(`is_available = ${push(p.is_available)}`);
+    if (p.dashboard_color !== undefined) sets.push(`dashboard_color = ${push(p.dashboard_color ?? null)}`);
+    if (p.model_3d_path !== undefined) sets.push(`model_3d_path = ${push(p.model_3d_path ?? null)}`);
+    if (p.documentation_url !== undefined) sets.push(`documentation_url = ${push(p.documentation_url ?? null)}`);
+    if (p.documentation_source !== undefined) sets.push(`documentation_source = ${push(p.documentation_source ?? null)}`);
+    if (p.scheduling_enabled !== undefined) sets.push(`scheduling_enabled = ${push(p.scheduling_enabled)}`);
+    if (p.outillage_enabled !== undefined) sets.push(`outillage_enabled = ${push(p.outillage_enabled)}`);
     if (p.location !== undefined) sets.push(`location = ${push(p.location ?? null)}`);
     if (p.workshop_zone !== undefined) sets.push(`workshop_zone = ${push(p.workshop_zone ?? null)}`);
     if (p.notes !== undefined) sets.push(`notes = ${push(p.notes ?? null)}`);
@@ -508,13 +1138,22 @@ export async function repoUpdateMachine(params: {
       name: string;
       type: MachineDetail["type"];
       status: MachineDetail["status"];
+      machine_model_id: string | null;
+      display_name: string | null;
       brand: string | null;
       model: string | null;
       serial_number: string | null;
+      commissioned_year: number | null;
       image_path: string | null;
       hourly_rate: number;
       currency: string;
       is_available: boolean;
+      dashboard_color: string | null;
+      model_3d_path: string | null;
+      documentation_url: string | null;
+      documentation_source: string | null;
+      scheduling_enabled: boolean;
+      outillage_enabled: boolean;
       location: string | null;
       workshop_zone: string | null;
       notes: string | null;
@@ -537,13 +1176,22 @@ export async function repoUpdateMachine(params: {
           name,
           type::text AS type,
           status::text AS status,
+          machine_model_id::text AS machine_model_id,
+          display_name,
           brand,
           model,
           serial_number,
+          commissioned_year,
           image_path,
           hourly_rate::float8 AS hourly_rate,
           currency,
           is_available,
+          dashboard_color,
+          model_3d_path,
+          documentation_url,
+          documentation_source,
+          scheduling_enabled,
+          outillage_enabled,
           location,
           workshop_zone,
           notes,
@@ -580,17 +1228,29 @@ export async function repoUpdateMachine(params: {
       code: row.code,
       name: row.name,
       type: row.type,
+      machine_model_id: row.machine_model_id,
+      model_display_name: null,
+      manufacturer: null,
+      model_name: null,
+      display_name: row.display_name,
       status: row.status,
       hourly_rate: Number(row.hourly_rate),
       currency: row.currency,
       is_available: row.is_available,
       image_url: imageUrl(row.image_path),
       image_path: row.image_path,
+      dashboard_color: row.dashboard_color,
+      model_3d_path: row.model_3d_path,
+      documentation_url: row.documentation_url,
+      documentation_source: row.documentation_source,
+      scheduling_enabled: row.scheduling_enabled,
+      outillage_enabled: row.outillage_enabled,
       archived_at: row.archived_at,
       updated_at: row.updated_at,
       brand: row.brand,
       model: row.model,
       serial_number: row.serial_number,
+      commissioned_year: row.commissioned_year,
       location: row.location,
       workshop_zone: row.workshop_zone,
       notes: row.notes,

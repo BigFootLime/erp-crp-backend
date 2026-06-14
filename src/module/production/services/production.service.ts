@@ -1,5 +1,6 @@
 import type {
   CreateMachineBodyDTO,
+  CreateMachineOnboardingBodyDTO,
   CreateOfBodyDTO,
   CreatePosteBodyDTO,
   ListMachinesQueryDTO,
@@ -25,6 +26,12 @@ export const svcCreateMachine = (params: {
   image_path: string | null;
   audit: repo.AuditContext;
 }) => repo.repoCreateMachine(params);
+
+export const svcCreateMachineOnboarding = (params: {
+  body: CreateMachineOnboardingBodyDTO;
+  image_path: string | null;
+  audit: repo.AuditContext;
+}) => repo.repoCreateMachineOnboarding(params);
 
 export const svcUpdateMachine = (params: {
   id: string;

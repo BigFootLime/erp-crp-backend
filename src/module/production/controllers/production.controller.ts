@@ -4,6 +4,7 @@ import { HttpError } from "../../../utils/httpError";
 import { emitEntityChanged } from "../../../shared/realtime/realtime.service";
 import type { AuditContext } from "../repository/production.repository";
 import {
+  createMachineOnboardingSchema,
   createMachineSchema,
   createOfSchema,
   createOfReceiptSchema,
@@ -26,6 +27,7 @@ import {
   svcArchiveMachine,
   svcArchivePoste,
   svcCreateMachine,
+  svcCreateMachineOnboarding,
   svcCreateOrdreFabrication,
   svcCreatePoste,
   svcGetOrdreFabrication,
@@ -44,6 +46,7 @@ import {
   svcUpdateMachine,
   svcUpdatePoste,
 } from "../services/production.service";
+import { svcGetMachineIntelligence } from "../services/machine-intelligence.service";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -137,7 +140,8 @@ export const getMachine = asyncHandler(async (req, res) => {
     res.status(404).json({ error: "Not found" });
     return;
   }
-  res.json(out);
+  const intelligence = await svcGetMachineIntelligence(id);
+  res.json({ ...out, ...(intelligence ?? {}) });
 });
 
 export const createMachine = asyncHandler(async (req, res) => {
@@ -147,6 +151,16 @@ export const createMachine = asyncHandler(async (req, res) => {
   const file = (req as Request & { file?: unknown }).file;
   const imagePath = isMulterFile(file) ? file.path : null;
   const out = await svcCreateMachine({ body, image_path: imagePath, audit });
+  res.status(201).json(out);
+});
+
+export const createMachineOnboarding = asyncHandler(async (req, res) => {
+  const audit = buildAuditContext(req);
+  const raw = parseBody(req);
+  const body = createMachineOnboardingSchema.parse({ body: raw }).body;
+  const file = (req as Request & { file?: unknown }).file;
+  const imagePath = isMulterFile(file) ? file.path : null;
+  const out = await svcCreateMachineOnboarding({ body, image_path: imagePath, audit });
   res.status(201).json(out);
 });
 
