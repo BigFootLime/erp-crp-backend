@@ -1,5 +1,6 @@
 import type { RequestHandler } from "express";
 import { z } from "zod";
+import { COMMANDE_CHECKPOINT_STATUSES } from "../workflow/commande-client-workflow.definition";
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date (expected YYYY-MM-DD)");
 
@@ -208,6 +209,21 @@ z.object({
 export type CreateCommandeBodyDTO = z.infer<typeof createCommandeBodySchema>;
 
 export const commandeWorkflowStatusSchema = z.enum([
+  "BROUILLON",
+  "EN_ANALYSE",
+  "ATTENTE_TECHNIQUE",
+  "ATTENTE_PLANNING",
+  "PLANNING_VALIDE",
+  "AR_PRET",
+  "AR_ENVOYE",
+  "EN_PRODUCTION",
+  "PRODUCTION_TERMINEE",
+  "CONTROLE_QUALITE",
+  "PRET_LIVRAISON",
+  "LIVRE",
+  "FACTURE",
+  "ARCHIVE",
+  "BLOQUE",
   "ENREGISTREE",
   "PLANIFIEE",
   "AR_ENVOYEE",
@@ -221,6 +237,39 @@ export const updateCommandeStatusBodySchema = z.object({
 });
 
 export type UpdateCommandeStatusBodyDTO = z.infer<typeof updateCommandeStatusBodySchema>;
+
+export const commandeCheckpointStatusSchema = z.enum(COMMANDE_CHECKPOINT_STATUSES);
+
+export const commandeWorkflowCheckpointCodeParamSchema = z.object({
+  params: z.object({
+    id: z.string().regex(/^\d+$/, "id must be an integer"),
+    checkpointCode: z.string().trim().min(1).max(100),
+  }),
+});
+
+export const updateCommandeWorkflowCheckpointBodySchema = z
+  .object({
+    status: commandeCheckpointStatusSchema.optional(),
+    assigned_user_id: z.coerce.number().int().positive().optional().nullable(),
+    due_at: z.string().datetime().optional().nullable(),
+    blocked_reason: z.string().max(20000).optional().nullable(),
+    notes: z.string().max(20000).optional().nullable(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict();
+
+export type UpdateCommandeWorkflowCheckpointBodyDTO = z.infer<typeof updateCommandeWorkflowCheckpointBodySchema>;
+
+export const runCommandeWorkflowActionBodySchema = z
+  .object({
+    action: z.string().trim().min(1).max(100),
+    commentaire: z.string().max(20000).optional().nullable(),
+    assigned_user_id: z.coerce.number().int().positive().optional().nullable(),
+    due_at: z.string().datetime().optional().nullable(),
+  })
+  .strict();
+
+export type RunCommandeWorkflowActionBodyDTO = z.infer<typeof runCommandeWorkflowActionBodySchema>;
 
 export const listCommandesQuerySchema = z.object({
   q: z.string().optional(),

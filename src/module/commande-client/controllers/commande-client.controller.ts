@@ -16,13 +16,16 @@ import {
   analyzeCommandeStockSVC,
   getCommandeDocumentFileMetaSVC,
   getCommandeSVC,
+  getCommandeWorkflowSVC,
   listCadreReleasesSVC,
   listCommandesSVC,
   previewAffairesFromCommandeSVC,
+  runCommandeWorkflowActionSVC,
   updateCadreReleaseLineSVC,
   updateCadreReleaseSVC,
   updateCadreReleaseStatusSVC,
   updateCommandeSVC,
+  updateCommandeWorkflowCheckpointSVC,
   updateCommandeStatusSVC,
   addCadreReleaseLineSVC,
   cancelCadreReleaseSVC,
@@ -37,8 +40,10 @@ import {
   confirmGenerateAffairesSchema,
   generateAffairesSchema,
   generateAffairesV3Schema,
+  runCommandeWorkflowActionBodySchema,
   updateCadreReleaseBodySchema,
   updateCadreReleaseLineBodySchema,
+  updateCommandeWorkflowCheckpointBodySchema,
   updateCommandeStatusBodySchema,
   type CreateCommandeBodyDTO,
 } from "../validators/commande-client.validators";
@@ -167,6 +172,65 @@ export const getCommande: RequestHandler = async (req, res, next) => {
       return;
     }
     res.json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /api/v1/commandes/:id/workflow
+export const getCommandeWorkflow: RequestHandler = async (req, res, next) => {
+  try {
+    const out = await getCommandeWorkflowSVC(req.params.id);
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// PATCH /api/v1/commandes/:id/workflow/checkpoints/:checkpointCode
+export const updateCommandeWorkflowCheckpoint: RequestHandler = async (req, res, next) => {
+  try {
+    const parsed = updateCommandeWorkflowCheckpointBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues?.[0]?.message ?? "Invalid request" });
+      return;
+    }
+    const userId = typeof req.user?.id === "number" ? req.user.id : null;
+    const out = await updateCommandeWorkflowCheckpointSVC(
+      req.params.id,
+      req.params.checkpointCode,
+      parsed.data,
+      userId
+    );
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.status(200).json({ ok: true, ...out });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// POST /api/v1/commandes/:id/workflow/actions
+export const runCommandeWorkflowAction: RequestHandler = async (req, res, next) => {
+  try {
+    const parsed = runCommandeWorkflowActionBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues?.[0]?.message ?? "Invalid request" });
+      return;
+    }
+    const userId = typeof req.user?.id === "number" ? req.user.id : null;
+    const out = await runCommandeWorkflowActionSVC(req.params.id, parsed.data, userId);
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.status(200).json({ ok: true, workflow: out });
   } catch (err) {
     next(err);
   }

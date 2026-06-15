@@ -22,7 +22,19 @@ import type {
   GenerateAffairesBodyDTO,
   GenerateAffairesV3BodyDTO,
   ListCommandesQueryDTO,
+  RunCommandeWorkflowActionBodyDTO,
+  UpdateCommandeWorkflowCheckpointBodyDTO,
 } from "../validators/commande-client.validators";
+import {
+  COMMANDE_CHECKPOINT_STATUSES,
+  COMMANDE_WORKFLOW_CHECKPOINTS,
+  COMMANDE_WORKFLOW_STATUS_ORDER,
+  getCommandeWorkflowAction,
+  getCommandeWorkflowCheckpointDefinition,
+  normalizeCommandeWorkflowStatus,
+  type CommandeCheckpointStatus,
+  type CommandeWorkflowStatus,
+} from "../workflow/commande-client-workflow.definition";
 
 function normalizeStoredPath(filePath: string) {
   const rel = path.isAbsolute(filePath) ? path.relative(process.cwd(), filePath) : filePath;
@@ -98,15 +110,6 @@ type AuditContext = {
   path: string | null;
   page_key: string | null;
   client_session_id: string | null;
-};
-
-type CommandeWorkflowStatus = "ENREGISTREE" | "PLANIFIEE" | "AR_ENVOYEE" | "LIVREE";
-
-const commandeWorkflowOrder: Record<CommandeWorkflowStatus, number> = {
-  ENREGISTREE: 0,
-  PLANIFIEE: 1,
-  AR_ENVOYEE: 2,
-  LIVREE: 3,
 };
 
 async function insertAuditLog(tx: Queryable, audit: AuditContext, entry: {
@@ -803,15 +806,6 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-function normalizeCommandeWorkflowStatus(value: unknown): CommandeWorkflowStatus | null {
-  if (typeof value !== "string") return null;
-  const normalized = value.trim().toUpperCase();
-  if (normalized === "ENREGISTREE" || normalized === "PLANIFIEE" || normalized === "AR_ENVOYEE" || normalized === "LIVREE") {
-    return normalized;
-  }
-  return null;
-}
-
 async function getDefaultShippingLocation(db: Queryable): Promise<{
   magasin_id: string;
   emplacement_id: number;
@@ -893,13 +887,21 @@ type ListWhere = { whereSql: string; values: unknown[] };
 function normalizedCommandeStatusSql(rawExpr: string): string {
   return `
     CASE
-      WHEN ${rawExpr} IS NULL THEN 'ENREGISTREE'
-      WHEN ${rawExpr} IN ('ENREGISTREE','PLANIFIEE','AR_ENVOYEE','LIVREE') THEN ${rawExpr}
+      WHEN ${rawExpr} IS NULL THEN 'BROUILLON'
+      WHEN ${rawExpr} IN (
+        'BROUILLON','EN_ANALYSE','ATTENTE_TECHNIQUE','ATTENTE_PLANNING','PLANNING_VALIDE',
+        'AR_PRET','AR_ENVOYE','EN_PRODUCTION','PRODUCTION_TERMINEE','CONTROLE_QUALITE',
+        'PRET_LIVRAISON','LIVRE','FACTURE','ARCHIVE','BLOQUE'
+      ) THEN ${rawExpr}
+      WHEN ${rawExpr} = 'ENREGISTREE' THEN 'EN_ANALYSE'
+      WHEN ${rawExpr} = 'PLANIFIEE' THEN 'PLANNING_VALIDE'
+      WHEN ${rawExpr} = 'AR_ENVOYEE' THEN 'AR_ENVOYE'
+      WHEN ${rawExpr} = 'LIVREE' THEN 'LIVRE'
       WHEN lower(${rawExpr}) IN ('brouillon','envoyée','envoyee','confirmée','confirmee') THEN 'ENREGISTREE'
       WHEN lower(${rawExpr}) IN ('en préparation','en preparation','en production') THEN 'PLANIFIEE'
       WHEN lower(${rawExpr}) IN ('partielle') THEN 'AR_ENVOYEE'
       WHEN lower(${rawExpr}) IN ('livrée','livree','facturée','facturee','clôturée','cloturee') THEN 'LIVREE'
-      ELSE 'ENREGISTREE'
+      ELSE 'BROUILLON'
     END
   `;
 }
@@ -1028,7 +1030,9 @@ export async function repoEnsureCommandeWorkflowStatus(params: {
   if (
     currentNormalized &&
     nextNormalized &&
-    commandeWorkflowOrder[nextNormalized] < commandeWorkflowOrder[currentNormalized]
+    currentNormalized !== "BLOQUE" &&
+    nextNormalized !== "BLOQUE" &&
+    COMMANDE_WORKFLOW_STATUS_ORDER[nextNormalized] < COMMANDE_WORKFLOW_STATUS_ORDER[currentNormalized]
   ) {
     return {
       changed: false,
@@ -1048,7 +1052,7 @@ export async function repoEnsureCommandeWorkflowStatus(params: {
     [params.commande_id, params.user_id, ancienStatut, nextRaw, params.commentaire]
   );
 
-  if (nextNormalized === "AR_ENVOYEE") {
+  if (nextNormalized === "AR_ENVOYE") {
     await params.tx.query(
       `UPDATE commande_client SET updated_at = now(), arc_date_envoi = COALESCE(arc_date_envoi, now()) WHERE id = $1`,
       [params.commande_id]
@@ -1066,12 +1070,12 @@ export async function repoEnsureCommandeWorkflowStatus(params: {
   });
 
   let notifications: AppNotification[] = [];
-  if (nextNormalized === "PLANIFIEE") {
+  if (nextNormalized === "PLANNING_VALIDE") {
     const recipientIds = await repoListUsersForCommandePlanningNotification(params.tx);
     notifications = await repoCreateAppNotifications({
       tx: params.tx,
       user_ids: recipientIds,
-      kind: "commande.planifiee",
+      kind: "commande.planning_valide",
       title: `Commande ${commande.numero} planifiée`,
       message: `La commande ${commande.numero} est maintenant planifiée. Un AR peut être envoyé au client.`,
       severity: "success",
@@ -1082,7 +1086,7 @@ export async function repoEnsureCommandeWorkflowStatus(params: {
         numero: commande.numero,
         client_id: commande.client_id,
       },
-      dedupe_key: `commande:${params.commande_id}:planifiee`,
+      dedupe_key: `commande:${params.commande_id}:planning_valide`,
     });
   }
 
@@ -1093,6 +1097,569 @@ export async function repoEnsureCommandeWorkflowStatus(params: {
     history_id: ins.rows[0]?.id ? toInt(ins.rows[0].id, "commande_historique.id") : null,
     notifications,
   };
+}
+
+type CommandeWorkflowHeader = {
+  id: number;
+  numero: string;
+  client_id: string | null;
+  statut: CommandeWorkflowStatus;
+  raw_statut: string | null;
+};
+
+type WorkflowCheckpointRow = {
+  id: string;
+  commande_id: string;
+  checkpoint_code: string;
+  label: string;
+  sort_order: number;
+  status: CommandeCheckpointStatus;
+  responsible_role: string;
+  assigned_user_id: number | null;
+  due_at: string | null;
+  completed_at: string | null;
+  completed_by: number | null;
+  blocked_reason: string | null;
+  notes: string | null;
+  action_key: string | null;
+  action_label: string | null;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+};
+
+const checkpointStatusSet = new Set<string>(COMMANDE_CHECKPOINT_STATUSES);
+
+function normalizeCheckpointStatus(value: unknown): CommandeCheckpointStatus {
+  const status = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return checkpointStatusSet.has(status) ? (status as CommandeCheckpointStatus) : "pending";
+}
+
+function mapWorkflowCheckpoint(row: WorkflowCheckpointRow) {
+  return {
+    ...row,
+    id: toInt(row.id, "workflow_checkpoint.id"),
+    commande_id: toInt(row.commande_id, "workflow_checkpoint.commande_id"),
+    status: normalizeCheckpointStatus(row.status),
+    assigned_user_id: toNullableInt(row.assigned_user_id, "workflow_checkpoint.assigned_user_id"),
+    completed_by: toNullableInt(row.completed_by, "workflow_checkpoint.completed_by"),
+    metadata: row.metadata ?? {},
+  };
+}
+
+function checkpointSeedStatus(definitionStatus: CommandeWorkflowStatus, currentStatus: CommandeWorkflowStatus, activeAssigned: { value: boolean }) {
+  if (currentStatus !== "BLOQUE" && COMMANDE_WORKFLOW_STATUS_ORDER[definitionStatus] <= COMMANDE_WORKFLOW_STATUS_ORDER[currentStatus]) {
+    return "done" as CommandeCheckpointStatus;
+  }
+  if (!activeAssigned.value) {
+    activeAssigned.value = true;
+    return currentStatus === "BLOQUE" ? "blocked" as CommandeCheckpointStatus : "active" as CommandeCheckpointStatus;
+  }
+  return "pending" as CommandeCheckpointStatus;
+}
+
+async function loadCommandeWorkflowHeaderWithStatus(tx: Queryable, commandeId: number): Promise<CommandeWorkflowHeader | null> {
+  const res = await tx.query<{
+    id: string;
+    numero: string;
+    client_id: string | null;
+    raw_statut: string | null;
+  }>(
+    `
+      SELECT
+        cc.id::text AS id,
+        cc.numero,
+        cc.client_id,
+        st.nouveau_statut AS raw_statut
+      FROM commande_client cc
+      LEFT JOIN LATERAL (
+        SELECT ch.nouveau_statut
+        FROM commande_historique ch
+        WHERE ch.commande_id = cc.id
+        ORDER BY ch.date_action DESC, ch.id DESC
+        LIMIT 1
+      ) st ON TRUE
+      WHERE cc.id = $1
+      LIMIT 1
+    `,
+    [commandeId]
+  );
+
+  const row = res.rows[0] ?? null;
+  if (!row) return null;
+  const statut = normalizeCommandeWorkflowStatus(row.raw_statut) ?? "BROUILLON";
+  return {
+    id: toInt(row.id, "commande.id"),
+    numero: row.numero,
+    client_id: row.client_id,
+    raw_statut: row.raw_statut,
+    statut,
+  };
+}
+
+async function ensureCommandeWorkflowCheckpoints(tx: Queryable, commandeId: number, currentStatus: CommandeWorkflowStatus) {
+  const activeAssigned = { value: false };
+  for (const checkpoint of COMMANDE_WORKFLOW_CHECKPOINTS) {
+    const status = checkpointSeedStatus(checkpoint.status_when_done, currentStatus, activeAssigned);
+    await tx.query(
+      `
+        INSERT INTO public.commande_client_workflow_checkpoint (
+          commande_id,
+          checkpoint_code,
+          label,
+          sort_order,
+          status,
+          responsible_role,
+          completed_at,
+          action_key,
+          action_label,
+          metadata
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,CASE WHEN $5 = 'done' THEN now() ELSE NULL END,$7,$8,$9::jsonb)
+        ON CONFLICT (commande_id, checkpoint_code) DO UPDATE
+        SET label = EXCLUDED.label,
+            sort_order = EXCLUDED.sort_order,
+            responsible_role = EXCLUDED.responsible_role,
+            action_key = EXCLUDED.action_key,
+            action_label = EXCLUDED.action_label,
+            updated_at = now()
+      `,
+      [
+        commandeId,
+        checkpoint.code,
+        checkpoint.label,
+        checkpoint.sort_order,
+        status,
+        checkpoint.responsible_role,
+        checkpoint.action_key,
+        checkpoint.action_label,
+        JSON.stringify({ description: checkpoint.description, status_when_done: checkpoint.status_when_done }),
+      ]
+    );
+  }
+}
+
+async function loadCommandeWorkflowCheckpoints(tx: Queryable, commandeId: number) {
+  const rows = await tx.query<WorkflowCheckpointRow>(
+    `
+      SELECT
+        id::text AS id,
+        commande_id::text AS commande_id,
+        checkpoint_code,
+        label,
+        sort_order::int AS sort_order,
+        status,
+        responsible_role,
+        assigned_user_id::int AS assigned_user_id,
+        due_at::text AS due_at,
+        completed_at::text AS completed_at,
+        completed_by::int AS completed_by,
+        blocked_reason,
+        notes,
+        action_key,
+        action_label,
+        metadata,
+        created_at::text AS created_at,
+        updated_at::text AS updated_at
+      FROM public.commande_client_workflow_checkpoint
+      WHERE commande_id = $1
+      ORDER BY sort_order ASC, id ASC
+    `,
+    [commandeId]
+  );
+  return rows.rows.map(mapWorkflowCheckpoint);
+}
+
+function buildWorkflowView(header: CommandeWorkflowHeader, checkpoints: ReturnType<typeof mapWorkflowCheckpoint>[]) {
+  const activeCheckpoint =
+    checkpoints.find((checkpoint) => checkpoint.status === "active" || checkpoint.status === "blocked") ??
+    checkpoints.find((checkpoint) => checkpoint.status === "pending") ??
+    null;
+  const action = activeCheckpoint?.action_key ? getCommandeWorkflowAction(activeCheckpoint.action_key) : null;
+
+  return {
+    commande_id: header.id,
+    numero: header.numero,
+    client_id: header.client_id,
+    statut: header.statut,
+    raw_statut: header.raw_statut,
+    current_checkpoint: activeCheckpoint,
+    checkpoints,
+    available_actions: action && activeCheckpoint
+      ? [{
+          key: action.key,
+          label: action.label,
+          checkpoint_code: action.checkpoint_code,
+          target_status: action.target_status,
+          next_checkpoint_code: action.next_checkpoint_code,
+          responsible_role: activeCheckpoint.responsible_role,
+        }]
+      : [],
+  };
+}
+
+async function listUsersForCommandeWorkflowRole(tx: Queryable, role: string): Promise<number[]> {
+  const r = role.trim().toLowerCase();
+  const patternsByRole: Record<string, string[]> = {
+    secretariat: ["%secr%", "%secret%", "%assist%", "%admin%"],
+    technique: ["%method%", "%methode%", "%tech%", "%bureau%"],
+    planning: ["%planning%", "%atelier%", "%production%", "%admin%"],
+    production: ["%production%", "%atelier%", "%operateur%", "%admin%"],
+    qualite: ["%qual%", "%controle%", "%admin%"],
+    logistique: ["%livraison%", "%logist%", "%expedition%", "%admin%"],
+    comptabilite: ["%compt%", "%factur%", "%admin%"],
+    direction: ["%direct%", "%admin%", "%administrateur%"],
+  };
+  const patterns = patternsByRole[r] ?? ["%admin%", "%administrateur%"];
+  const values: unknown[] = [];
+  const clauses = patterns.map((pattern) => {
+    values.push(pattern);
+    const p = `$${values.length}`;
+    return `(lower(COALESCE(u.role, '')) LIKE ${p}
+      OR lower(COALESCE(u.username, '')) LIKE ${p}
+      OR lower(COALESCE(u.email, '')) LIKE ${p}
+      OR lower(COALESCE(u.name, '')) LIKE ${p}
+      OR lower(COALESCE(u.surname, '')) LIKE ${p})`;
+  });
+
+  const res = await tx.query<{ id: number }>(
+    `
+      SELECT DISTINCT u.id::int AS id
+      FROM public.users u
+      WHERE COALESCE(NULLIF(lower(trim(u.status)), ''), 'active') NOT IN ('inactive', 'blocked', 'suspended')
+        AND (${clauses.join(" OR ")})
+      ORDER BY u.id ASC
+    `,
+    values
+  );
+  return res.rows.map((row) => row.id).filter((id) => Number.isInteger(id) && id > 0);
+}
+
+async function notifyWorkflowRole(tx: Queryable, params: {
+  commande: CommandeWorkflowHeader;
+  role: string;
+  kind: string;
+  title: string;
+  message: string;
+  severity?: "info" | "success" | "warning" | "error";
+  checkpoint_code: string | null;
+  dedupe_key: string;
+}) {
+  const recipientIds = await listUsersForCommandeWorkflowRole(tx, params.role);
+  return repoCreateAppNotifications({
+    tx,
+    user_ids: recipientIds,
+    kind: params.kind,
+    title: params.title,
+    message: params.message,
+    severity: params.severity ?? "info",
+    action_url: `/commandes/${params.commande.id}`,
+    action_label: "Ouvrir",
+    payload: {
+      commande_id: params.commande.id,
+      numero: params.commande.numero,
+      client_id: params.commande.client_id,
+      checkpoint_code: params.checkpoint_code,
+      role: params.role,
+    },
+    dedupe_key: params.dedupe_key,
+  });
+}
+
+async function activateNextCheckpoint(tx: Queryable, commandeId: number, nextCheckpointCode: string | null) {
+  if (!nextCheckpointCode) return;
+  await tx.query(
+    `
+      UPDATE public.commande_client_workflow_checkpoint
+      SET status = CASE WHEN status IN ('done','skipped') THEN status ELSE 'active' END,
+          blocked_reason = CASE WHEN status = 'blocked' THEN NULL ELSE blocked_reason END,
+          updated_at = now()
+      WHERE commande_id = $1
+        AND checkpoint_code = $2
+    `,
+    [commandeId, nextCheckpointCode]
+  );
+}
+
+export async function repoGetCommandeWorkflow(id: string) {
+  const commandeId = toInt(id, "commande_id");
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const header = await loadCommandeWorkflowHeaderWithStatus(client, commandeId);
+    if (!header) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+    await ensureCommandeWorkflowCheckpoints(client, commandeId, header.statut);
+    const checkpoints = await loadCommandeWorkflowCheckpoints(client, commandeId);
+    await client.query("COMMIT");
+    return buildWorkflowView(header, checkpoints);
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+export async function repoUpdateCommandeWorkflowCheckpoint(
+  id: string,
+  checkpointCode: string,
+  body: UpdateCommandeWorkflowCheckpointBodyDTO,
+  userId: number | null
+) {
+  const commandeId = toInt(id, "commande_id");
+  if (userId === null) throw new HttpError(401, "UNAUTHORIZED", "Authentication required");
+  const definition = getCommandeWorkflowCheckpointDefinition(checkpointCode);
+  if (!definition) throw new HttpError(400, "UNKNOWN_CHECKPOINT", "Unknown workflow checkpoint");
+
+  const client = await pool.connect();
+  let notifications: AppNotification[] = [];
+  try {
+    await client.query("BEGIN");
+    const header = await loadCommandeWorkflowHeaderWithStatus(client, commandeId);
+    if (!header) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+    await ensureCommandeWorkflowCheckpoints(client, commandeId, header.statut);
+
+    const existing = await client.query<WorkflowCheckpointRow>(
+      `
+        SELECT
+          id::text AS id,
+          commande_id::text AS commande_id,
+          checkpoint_code,
+          label,
+          sort_order::int AS sort_order,
+          status,
+          responsible_role,
+          assigned_user_id::int AS assigned_user_id,
+          due_at::text AS due_at,
+          completed_at::text AS completed_at,
+          completed_by::int AS completed_by,
+          blocked_reason,
+          notes,
+          action_key,
+          action_label,
+          metadata,
+          created_at::text AS created_at,
+          updated_at::text AS updated_at
+        FROM public.commande_client_workflow_checkpoint
+        WHERE commande_id = $1 AND checkpoint_code = $2
+        FOR UPDATE
+      `,
+      [commandeId, definition.code]
+    );
+    const before = existing.rows[0] ?? null;
+    if (!before) throw new HttpError(404, "CHECKPOINT_NOT_FOUND", "Workflow checkpoint not found");
+
+    const nextStatus = body.status ?? normalizeCheckpointStatus(before.status);
+    const metadata = { ...(before.metadata ?? {}), ...(body.metadata ?? {}) };
+    const updated = await client.query<WorkflowCheckpointRow>(
+      `
+        UPDATE public.commande_client_workflow_checkpoint
+        SET status = $3,
+            assigned_user_id = COALESCE($4::int, assigned_user_id),
+            due_at = COALESCE($5::timestamptz, due_at),
+            completed_at = CASE WHEN $3 = 'done' THEN COALESCE(completed_at, now()) ELSE completed_at END,
+            completed_by = CASE WHEN $3 = 'done' THEN COALESCE($6::int, completed_by) ELSE completed_by END,
+            blocked_reason = CASE WHEN $3 = 'blocked' THEN $7 ELSE blocked_reason END,
+            notes = COALESCE($8, notes),
+            metadata = $9::jsonb,
+            updated_at = now()
+        WHERE commande_id = $1 AND checkpoint_code = $2
+        RETURNING
+          id::text AS id,
+          commande_id::text AS commande_id,
+          checkpoint_code,
+          label,
+          sort_order::int AS sort_order,
+          status,
+          responsible_role,
+          assigned_user_id::int AS assigned_user_id,
+          due_at::text AS due_at,
+          completed_at::text AS completed_at,
+          completed_by::int AS completed_by,
+          blocked_reason,
+          notes,
+          action_key,
+          action_label,
+          metadata,
+          created_at::text AS created_at,
+          updated_at::text AS updated_at
+      `,
+      [
+        commandeId,
+        definition.code,
+        nextStatus,
+        body.assigned_user_id ?? null,
+        body.due_at ?? null,
+        userId,
+        body.blocked_reason ?? null,
+        body.notes ?? null,
+        JSON.stringify(metadata),
+      ]
+    );
+
+    if (nextStatus === "blocked") {
+      await repoEnsureCommandeWorkflowStatus({
+        tx: client,
+        commande_id: commandeId,
+        nouveau_statut: "BLOQUE",
+        commentaire: body.blocked_reason ?? body.notes ?? `Checkpoint ${definition.code} blocked`,
+        user_id: userId,
+      });
+      notifications = await notifyWorkflowRole(client, {
+        commande: header,
+        role: "direction",
+        kind: "commande.workflow.blocked",
+        title: `Commande ${header.numero} bloquee`,
+        message: `Le checkpoint ${definition.label} est bloque.`,
+        severity: "warning",
+        checkpoint_code: definition.code,
+        dedupe_key: `commande:${commandeId}:checkpoint:${definition.code}:blocked`,
+      });
+    }
+
+    await insertCommandeEvent(client, {
+      commande_id: commandeId,
+      event_type: "CHECKPOINT_UPDATED",
+      old_values: { checkpoint_code: definition.code, status: before.status },
+      new_values: { checkpoint_code: definition.code, status: nextStatus },
+      user_id: userId,
+    });
+
+    await client.query("COMMIT");
+    for (const notification of notifications) {
+      emitAppNotificationCreated(notification.user_id, notification);
+    }
+    emitEntityChanged({
+      entityType: "commande_client",
+      entityId: String(commandeId),
+      action: "updated",
+      module: "commandes",
+      at: new Date().toISOString(),
+      by: { id: userId, name: `User #${userId}` },
+      invalidateKeys: ["commandes:list", `commandes:detail:${commandeId}`, `commandes:workflow:${commandeId}`],
+    });
+
+    return { checkpoint: mapWorkflowCheckpoint(updated.rows[0]) };
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+export async function repoRunCommandeWorkflowAction(
+  id: string,
+  body: RunCommandeWorkflowActionBodyDTO,
+  userId: number | null
+) {
+  const commandeId = toInt(id, "commande_id");
+  if (userId === null) throw new HttpError(401, "UNAUTHORIZED", "Authentication required");
+  const action = getCommandeWorkflowAction(body.action);
+  if (!action) throw new HttpError(400, "UNKNOWN_WORKFLOW_ACTION", "Unknown workflow action");
+
+  const client = await pool.connect();
+  let notifications: AppNotification[] = [];
+  try {
+    await client.query("BEGIN");
+    const header = await loadCommandeWorkflowHeaderWithStatus(client, commandeId);
+    if (!header) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+    await ensureCommandeWorkflowCheckpoints(client, commandeId, header.statut);
+
+    const checkpointRes = await client.query<{ status: string; responsible_role: string }>(
+      `
+        SELECT status, responsible_role
+        FROM public.commande_client_workflow_checkpoint
+        WHERE commande_id = $1 AND checkpoint_code = $2
+        FOR UPDATE
+      `,
+      [commandeId, action.checkpoint_code]
+    );
+    const checkpoint = checkpointRes.rows[0] ?? null;
+    if (!checkpoint) throw new HttpError(404, "CHECKPOINT_NOT_FOUND", "Workflow checkpoint not found");
+    if (checkpoint.status === "blocked") {
+      throw new HttpError(409, "CHECKPOINT_BLOCKED", "Resolve the blocker before running this workflow action");
+    }
+
+    await client.query(
+      `
+        UPDATE public.commande_client_workflow_checkpoint
+        SET status = 'done',
+            completed_at = COALESCE(completed_at, now()),
+            completed_by = COALESCE(completed_by, $3::int),
+            notes = COALESCE($4, notes),
+            updated_at = now()
+        WHERE commande_id = $1 AND checkpoint_code = $2
+      `,
+      [commandeId, action.checkpoint_code, userId, body.commentaire ?? null]
+    );
+    await activateNextCheckpoint(client, commandeId, action.next_checkpoint_code);
+
+    const transition = await repoEnsureCommandeWorkflowStatus({
+      tx: client,
+      commande_id: commandeId,
+      nouveau_statut: action.target_status,
+      commentaire: body.commentaire ?? action.label,
+      user_id: userId,
+    });
+    notifications = [...transition.notifications];
+
+    if (action.next_checkpoint_code) {
+      const nextDef = getCommandeWorkflowCheckpointDefinition(action.next_checkpoint_code);
+      if (nextDef) {
+        const roleNotifications = await notifyWorkflowRole(client, {
+          commande: header,
+          role: nextDef.responsible_role,
+          kind: "commande.workflow.handoff",
+          title: `Commande ${header.numero}: ${nextDef.label}`,
+          message: `Le checkpoint ${nextDef.label} est maintenant actif.`,
+          severity: "info",
+          checkpoint_code: nextDef.code,
+          dedupe_key: `commande:${commandeId}:checkpoint:${nextDef.code}:active`,
+        });
+        notifications = [...notifications, ...roleNotifications];
+      }
+    }
+
+    await insertCommandeEvent(client, {
+      commande_id: commandeId,
+      event_type: "WORKFLOW_ACTION",
+      old_values: { statut: header.statut, checkpoint_code: action.checkpoint_code },
+      new_values: { statut: action.target_status, action: action.key, next_checkpoint_code: action.next_checkpoint_code },
+      user_id: userId,
+    });
+
+    await client.query("COMMIT");
+
+    for (const notification of notifications) {
+      emitAppNotificationCreated(notification.user_id, notification);
+    }
+    emitEntityChanged({
+      entityType: "commande_client",
+      entityId: String(commandeId),
+      action: "updated",
+      module: "commandes",
+      at: new Date().toISOString(),
+      by: { id: userId, name: `User #${userId}` },
+      invalidateKeys: ["commandes:list", `commandes:detail:${commandeId}`, `commandes:workflow:${commandeId}`],
+    });
+
+    return repoGetCommandeWorkflow(id);
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 export async function repoListCommandes(filters: ListCommandesQueryDTO) {
@@ -1896,14 +2463,15 @@ export async function repoCreateCommande(input: CreateCommandeInput, documents: 
     await insertCommandeEcheances(client, commandeId, input.echeances ?? []);
     await insertCommandeDocuments(client, commandeId, documents);
     await transitionLinkedDevisArticlesToValide(client, commandeIdInt, input.devis_id ?? null);
+    await ensureCommandeWorkflowCheckpoints(client, commandeIdInt, "BROUILLON");
 
-    // Initial workflow status: ENREGISTREE
+    // Initial checkpoint workflow status.
     await client.query(
       `
         INSERT INTO commande_historique (commande_id, user_id, ancien_statut, nouveau_statut, commentaire)
         VALUES ($1, $2, $3, $4, $5)
       `,
-      [commandeIdInt, null, null, "ENREGISTREE", "Commande créée"]
+      [commandeIdInt, null, null, "BROUILLON", "Commande creee"]
     );
 
     await client.query("COMMIT");

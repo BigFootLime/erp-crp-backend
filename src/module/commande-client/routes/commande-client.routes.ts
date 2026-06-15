@@ -21,13 +21,16 @@ import {
   getCadreRelease,
   getCommande,
   getCommandeDocumentFile,
+  getCommandeWorkflow,
   listCadreReleases,
   listCommandes,
   deleteCadreReleaseLine,
+  runCommandeWorkflowAction,
   updateCadreRelease,
   updateCadreReleaseLine,
   updateCadreReleaseStatus,
   updateCommande,
+  updateCommandeWorkflowCheckpoint,
   updateCommandeStatus,
 } from "../controllers/commande-client.controller"
 import { generateCommandeAr, sendCommandeAr } from "../controllers/commande-ar.controller"
@@ -40,6 +43,7 @@ import {
   confirmGenerateAffairesSchema,
   generateAffairesSchema,
   generateAffairesV3Schema,
+  commandeWorkflowCheckpointCodeParamSchema,
   documentIdParamSchema,
   idParamSchema,
   releaseIdParamSchema,
@@ -113,6 +117,20 @@ router.get("/", listCommandes)
 
 // GET /api/v1/commandes/:id
 router.get("/:id", validate(idParamSchema), getCommande)
+
+// GET /api/v1/commandes/:id/workflow
+router.get("/:id/workflow", authenticateToken, validate(idParamSchema), getCommandeWorkflow)
+
+// PATCH /api/v1/commandes/:id/workflow/checkpoints/:checkpointCode
+router.patch(
+  "/:id/workflow/checkpoints/:checkpointCode",
+  authenticateToken,
+  validate(commandeWorkflowCheckpointCodeParamSchema),
+  updateCommandeWorkflowCheckpoint
+)
+
+// POST /api/v1/commandes/:id/workflow/actions
+router.post("/:id/workflow/actions", authenticateToken, validate(idParamSchema), runCommandeWorkflowAction)
 
 // GET /api/v1/commandes/:id/documents/:docId/file
 router.get("/:id/documents/:docId/file", validate(documentIdParamSchema), getCommandeDocumentFile)

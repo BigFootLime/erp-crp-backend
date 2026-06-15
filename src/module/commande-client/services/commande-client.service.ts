@@ -13,8 +13,11 @@ import {
   repoAnalyzeCommandeStock,
   repoGetCommande,
   repoGetCommandeDocumentFileMeta,
+  repoGetCommandeWorkflow,
   repoListCommandes,
   repoPreviewAffairesFromCommande,
+  repoRunCommandeWorkflowAction,
+  repoUpdateCommandeWorkflowCheckpoint,
   repoUpdateCommande,
   repoUpdateCommandeStatus,
 } from "../repository/commande-client.repository";
@@ -37,8 +40,10 @@ import type {
   CreateCadreReleaseLineBodyDTO,
   ConfirmGenerateAffairesBodyDTO,
   GenerateAffairesBodyDTO,
+  RunCommandeWorkflowActionBodyDTO,
   UpdateCadreReleaseBodyDTO,
   UpdateCadreReleaseLineBodyDTO,
+  UpdateCommandeWorkflowCheckpointBodyDTO,
 } from "../validators/commande-client.validators";
 
 export type CommandesAuditContext = {
@@ -62,6 +67,21 @@ export const updateCommandeSVC = (id: string, input: CreateCommandeInput, docume
 export const listCommandesSVC = (filters: ListCommandesQueryDTO) => repoListCommandes(filters);
 
 export const getCommandeSVC = (id: string, includes: Set<string>) => repoGetCommande(id, includes);
+
+export const getCommandeWorkflowSVC = (id: string) => repoGetCommandeWorkflow(id);
+
+export const updateCommandeWorkflowCheckpointSVC = (
+  id: string,
+  checkpointCode: string,
+  body: UpdateCommandeWorkflowCheckpointBodyDTO,
+  userId: number | null
+) => repoUpdateCommandeWorkflowCheckpoint(id, checkpointCode, body, userId);
+
+export const runCommandeWorkflowActionSVC = (
+  id: string,
+  body: RunCommandeWorkflowActionBodyDTO,
+  userId: number | null
+) => repoRunCommandeWorkflowAction(id, body, userId);
 
 export const getCommandeDocumentFileMetaSVC = (commandeId: string, docId: string) =>
   repoGetCommandeDocumentFileMeta(commandeId, docId);
