@@ -14,6 +14,15 @@ function parseBoolean(value: unknown): boolean | undefined {
 }
 
 export const sortDirSchema = z.enum(["asc", "desc"])
+export const fournisseurStatusSchema = z.enum(["actif", "a_completer", "inactif", "archive"])
+
+const optionalText = (max: number) => z.string().trim().min(1).max(max).optional().nullable()
+
+const domaineLienInputSchema = z.object({
+  domaine_code: z.string().trim().min(1).max(80),
+  is_primary: z.boolean().optional().default(false),
+  notes: z.string().trim().min(1).max(1000).optional().nullable(),
+})
 
 export const fournisseurIdParamSchema = z.object({
   params: z.object({ id: uuid }),
@@ -23,6 +32,8 @@ export const listFournisseursQuerySchema = z
   .object({
     search: z.string().trim().optional(),
     actif: z.preprocess(parseBoolean, z.boolean().optional()),
+    status: fournisseurStatusSchema.optional(),
+    domaines: z.string().trim().optional(),
     page: z.coerce.number().int().min(1).optional().default(1),
     pageSize: z.coerce.number().int().min(1).max(200).optional().default(20),
     sortBy: z.enum(["updated_at", "code", "nom"]).optional().default("updated_at"),
@@ -38,12 +49,22 @@ export const createFournisseurSchema = z.object({
       code: z.string().trim().min(1).max(80),
       nom: z.string().trim().min(1).max(250),
       actif: z.boolean().optional().default(true),
-      tva: z.string().trim().min(1).max(80).optional().nullable(),
-      siret: z.string().trim().min(1).max(80).optional().nullable(),
-      email: z.string().trim().min(1).max(200).optional().nullable(),
-      telephone: z.string().trim().min(1).max(50).optional().nullable(),
-      site_web: z.string().trim().min(1).max(300).optional().nullable(),
-      notes: z.string().trim().min(1).max(10000).optional().nullable(),
+      status: fournisseurStatusSchema.optional(),
+      type_principal: optionalText(80),
+      tva: optionalText(80),
+      siret: optionalText(80),
+      email: optionalText(200),
+      telephone: optionalText(50),
+      site_web: optionalText(300),
+      adresse_ligne: optionalText(300),
+      house_no: optionalText(30),
+      postcode: optionalText(30),
+      city: optionalText(120),
+      country: optionalText(120),
+      nom_commercial: optionalText(250),
+      logo: optionalText(1000),
+      notes: optionalText(10000),
+      domaines: z.array(domaineLienInputSchema).max(20).optional(),
     })
     .strict(),
 })
@@ -56,12 +77,22 @@ export const updateFournisseurSchema = z.object({
       code: z.string().trim().min(1).max(80).optional(),
       nom: z.string().trim().min(1).max(250).optional(),
       actif: z.boolean().optional(),
-      tva: z.string().trim().min(1).max(80).optional().nullable(),
-      siret: z.string().trim().min(1).max(80).optional().nullable(),
-      email: z.string().trim().min(1).max(200).optional().nullable(),
-      telephone: z.string().trim().min(1).max(50).optional().nullable(),
-      site_web: z.string().trim().min(1).max(300).optional().nullable(),
-      notes: z.string().trim().min(1).max(10000).optional().nullable(),
+      status: fournisseurStatusSchema.optional(),
+      type_principal: optionalText(80),
+      tva: optionalText(80),
+      siret: optionalText(80),
+      email: optionalText(200),
+      telephone: optionalText(50),
+      site_web: optionalText(300),
+      adresse_ligne: optionalText(300),
+      house_no: optionalText(30),
+      postcode: optionalText(30),
+      city: optionalText(120),
+      country: optionalText(120),
+      nom_commercial: optionalText(250),
+      logo: optionalText(1000),
+      notes: optionalText(10000),
+      domaines: z.array(domaineLienInputSchema).max(20).optional(),
     })
     .strict(),
 })
@@ -76,10 +107,15 @@ export const createContactSchema = z.object({
   body: z
     .object({
       nom: z.string().trim().min(1).max(200),
-      email: z.string().trim().min(1).max(200).optional().nullable(),
-      telephone: z.string().trim().min(1).max(50).optional().nullable(),
-      role: z.string().trim().min(1).max(120).optional().nullable(),
-      notes: z.string().trim().min(1).max(5000).optional().nullable(),
+      first_name: optionalText(100),
+      last_name: optionalText(100),
+      full_name: optionalText(220),
+      email: optionalText(200),
+      telephone: optionalText(50),
+      mobile: optionalText(50),
+      role: optionalText(120),
+      notes: optionalText(5000),
+      is_primary: z.boolean().optional().default(false),
       actif: z.boolean().optional().default(true),
     })
     .strict(),
@@ -91,10 +127,15 @@ export const updateContactSchema = z.object({
   body: z
     .object({
       nom: z.string().trim().min(1).max(200).optional(),
-      email: z.string().trim().min(1).max(200).optional().nullable(),
-      telephone: z.string().trim().min(1).max(50).optional().nullable(),
-      role: z.string().trim().min(1).max(120).optional().nullable(),
-      notes: z.string().trim().min(1).max(5000).optional().nullable(),
+      first_name: optionalText(100),
+      last_name: optionalText(100),
+      full_name: optionalText(220),
+      email: optionalText(200),
+      telephone: optionalText(50),
+      mobile: optionalText(50),
+      role: optionalText(120),
+      notes: optionalText(5000),
+      is_primary: z.boolean().optional(),
       actif: z.boolean().optional(),
     })
     .strict(),
@@ -179,3 +220,11 @@ export const attachDocumentsBodySchema = z
   .passthrough()
 
 export type AttachDocumentsBodyDTO = z.infer<typeof attachDocumentsBodySchema>
+
+export const putFournisseurDomainesSchema = z.object({
+  body: z.object({
+    domaines: z.array(domaineLienInputSchema).max(20).default([]),
+  }),
+})
+
+export type PutFournisseurDomainesDTO = z.infer<typeof putFournisseurDomainesSchema>["body"]

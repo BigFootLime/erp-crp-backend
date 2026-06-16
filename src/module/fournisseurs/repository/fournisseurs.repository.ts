@@ -23,8 +23,13 @@ import type {
   Fournisseur,
   FournisseurCatalogueItem,
   FournisseurContact,
+  FournisseurDomaine,
+  FournisseurDomaineLien,
   FournisseurDocument,
+  FournisseurEvent,
   FournisseurListItem,
+  FournisseurRelations,
+  FournisseurStatus,
   Paginated,
 } from "../types/fournisseurs.types"
 
@@ -42,6 +47,25 @@ export type AuditContext = {
 
 type DbQueryer = Pick<PoolClient, "query">
 type UploadedDocument = Express.Multer.File
+
+const DEFAULT_FOURNISSEUR_DOMAINES: FournisseurDomaine[] = [
+  { id: "11111111-0000-4000-8000-000000000010", code: "outillage", label: "Outillage", description: null, icon: "Wrench", sort_order: 10, is_active: true },
+  { id: "11111111-0000-4000-8000-000000000020", code: "matiere_brute", label: "Matière brute", description: null, icon: "Package", sort_order: 20, is_active: true },
+  { id: "11111111-0000-4000-8000-000000000030", code: "machines_cnc", label: "Machines CNC", description: null, icon: "Factory", sort_order: 30, is_active: true },
+  { id: "11111111-0000-4000-8000-000000000040", code: "electrique", label: "Électrique", description: null, icon: "Zap", sort_order: 40, is_active: true },
+  { id: "11111111-0000-4000-8000-000000000050", code: "traitements", label: "Traitements", description: null, icon: "Layers", sort_order: 50, is_active: true },
+  { id: "11111111-0000-4000-8000-000000000060", code: "informatique", label: "Informatique / IT", description: null, icon: "Monitor", sort_order: 60, is_active: true },
+  { id: "11111111-0000-4000-8000-000000000070", code: "maintenance", label: "Maintenance", description: null, icon: "Settings", sort_order: 70, is_active: true },
+  { id: "11111111-0000-4000-8000-000000000080", code: "transport", label: "Transport", description: null, icon: "Truck", sort_order: 80, is_active: true },
+  { id: "11111111-0000-4000-8000-000000000090", code: "sous_traitance", label: "Sous-traitance", description: null, icon: "Handshake", sort_order: 90, is_active: true },
+  { id: "11111111-0000-4000-8000-000000000100", code: "metrologie", label: "Métrologie", description: null, icon: "Ruler", sort_order: 100, is_active: true },
+  { id: "11111111-0000-4000-8000-000000000110", code: "epi", label: "EPI", description: null, icon: "Shield", sort_order: 110, is_active: true },
+  { id: "11111111-0000-4000-8000-000000000120", code: "consommables_atelier", label: "Consommables atelier", description: null, icon: "Boxes", sort_order: 120, is_active: true },
+  { id: "11111111-0000-4000-8000-000000000130", code: "services_generaux", label: "Services généraux", description: null, icon: "Building", sort_order: 130, is_active: true },
+  { id: "11111111-0000-4000-8000-000000000999", code: "autre", label: "Autres", description: null, icon: "Circle", sort_order: 999, is_active: true },
+]
+
+const emptyRelations: FournisseurRelations = { outillage: null }
 
 function safeDocExtension(originalName: string): string {
   const extCandidate = path.extname(originalName).toLowerCase()
@@ -94,6 +118,11 @@ function isPgUniqueViolation(err: unknown): boolean {
   return (err as { code?: unknown } | null)?.code === "23505"
 }
 
+function isOptionalFournisseurEcosystemMissing(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code
+  return code === "42P01" || code === "42703"
+}
+
 async function ensureFournisseurExists(tx: DbQueryer, fournisseurId: string): Promise<boolean> {
   const res = await tx.query<{ ok: number }>(
     `SELECT 1::int AS ok FROM public.fournisseurs WHERE id = $1::uuid LIMIT 1`,
@@ -107,34 +136,91 @@ type FournisseurRow = {
   code: string
   nom: string
   actif: boolean
+  status?: FournisseurStatus | null
+  type_principal?: string | null
   tva: string | null
   siret: string | null
   email: string | null
   telephone: string | null
   site_web: string | null
+  adresse_ligne?: string | null
+  house_no?: string | null
+  postcode?: string | null
+  city?: string | null
+  country?: string | null
+  nom_commercial?: string | null
+  logo?: string | null
   notes: string | null
+  archived_at?: string | null
   created_at: string
   updated_at: string
   created_by: number | null
   updated_by: number | null
+  domaines?: FournisseurDomaineLien[] | null
+  relations?: FournisseurRelations | null
+  contacts_count?: number | null
+  catalogue_count?: number | null
+  documents_count?: number | null
+  events_count?: number | null
 }
 
 function mapFournisseurRow(r: FournisseurRow): Fournisseur {
+  const status = r.status ?? (r.actif ? "actif" : "inactif")
   return {
     id: r.id,
     code: r.code,
     nom: r.nom,
     actif: r.actif,
+    status,
+    type_principal: r.type_principal ?? null,
     tva: r.tva,
     siret: r.siret,
     email: r.email,
     telephone: r.telephone,
     site_web: r.site_web,
+    adresse_ligne: r.adresse_ligne ?? null,
+    house_no: r.house_no ?? null,
+    postcode: r.postcode ?? null,
+    city: r.city ?? null,
+    country: r.country ?? null,
+    nom_commercial: r.nom_commercial ?? null,
+    logo: r.logo ?? null,
     notes: r.notes,
+    archived_at: r.archived_at ?? null,
     created_at: r.created_at,
     updated_at: r.updated_at,
     created_by: r.created_by,
     updated_by: r.updated_by,
+    domaines: Array.isArray(r.domaines) ? r.domaines : [],
+    relations: r.relations ?? emptyRelations,
+    contacts_count: Number(r.contacts_count ?? 0),
+    catalogue_count: Number(r.catalogue_count ?? 0),
+    documents_count: Number(r.documents_count ?? 0),
+    events_count: Number(r.events_count ?? 0),
+  }
+}
+
+function mapFournisseurListItem(r: FournisseurRow): FournisseurListItem {
+  const supplier = mapFournisseurRow(r)
+  return {
+    id: supplier.id,
+    code: supplier.code,
+    nom: supplier.nom,
+    actif: supplier.actif,
+    status: supplier.status,
+    type_principal: supplier.type_principal,
+    email: supplier.email,
+    telephone: supplier.telephone,
+    city: supplier.city,
+    country: supplier.country,
+    logo: supplier.logo,
+    updated_at: supplier.updated_at,
+    domaines: supplier.domaines,
+    relations: supplier.relations,
+    contacts_count: supplier.contacts_count,
+    catalogue_count: supplier.catalogue_count,
+    documents_count: supplier.documents_count,
+    events_count: supplier.events_count,
   }
 }
 
@@ -210,13 +296,7 @@ export async function repoListFournisseurs(filters: ListFournisseursQueryDTO): P
     [...values, pageSize, offset]
   )
 
-  const items: FournisseurListItem[] = dataRes.rows.map((r) => ({
-    id: r.id,
-    code: r.code,
-    nom: r.nom,
-    actif: r.actif,
-    updated_at: r.updated_at,
-  }))
+  const items: FournisseurListItem[] = dataRes.rows.map(mapFournisseurListItem)
 
   return { items, total }
 }
@@ -247,6 +327,106 @@ export async function repoGetFournisseur(id: string): Promise<Fournisseur | null
   )
   const row = res.rows[0] ?? null
   return row ? mapFournisseurRow(row) : null
+}
+
+export async function repoListFournisseurDomaines(): Promise<FournisseurDomaine[]> {
+  try {
+    const res = await db.query<FournisseurDomaine>(
+      `
+        SELECT
+          id::text AS id,
+          code,
+          label,
+          description,
+          icon,
+          sort_order,
+          is_active
+        FROM public.fournisseur_domaines
+        WHERE is_active = true
+        ORDER BY sort_order ASC, label ASC
+      `
+    )
+    return res.rows.length ? res.rows : DEFAULT_FOURNISSEUR_DOMAINES
+  } catch (err) {
+    if (isOptionalFournisseurEcosystemMissing(err)) return DEFAULT_FOURNISSEUR_DOMAINES
+    throw err
+  }
+}
+
+export async function repoReplaceFournisseurDomaines(
+  fournisseurId: string,
+  domaines: Array<{ domaine_code: string; is_primary?: boolean; notes?: string | null }>,
+  audit: AuditContext
+): Promise<Fournisseur | null> {
+  const exists = await ensureFournisseurExists(db, fournisseurId)
+  if (!exists) return null
+
+  const normalized = domaines.map((domain, index) => ({
+    ...domain,
+    is_primary: Boolean(domain.is_primary) || (index === 0 && !domaines.some((d) => d.is_primary)),
+  }))
+
+  const client = await db.connect()
+  try {
+    await client.query("BEGIN")
+    await client.query(`DELETE FROM public.fournisseur_domaine_lien WHERE fournisseur_id = $1::uuid`, [fournisseurId])
+    for (const domain of normalized) {
+      await client.query(
+        `
+          INSERT INTO public.fournisseur_domaine_lien (fournisseur_id, domaine_code, is_primary, notes, created_by, updated_by)
+          VALUES ($1::uuid,$2,$3,$4,$5,$5)
+          ON CONFLICT (fournisseur_id, domaine_code)
+          DO UPDATE SET is_primary = EXCLUDED.is_primary, notes = EXCLUDED.notes, updated_by = EXCLUDED.updated_by, updated_at = now()
+        `,
+        [fournisseurId, domain.domaine_code, domain.is_primary, domain.notes ?? null, audit.user_id]
+      )
+    }
+
+    await insertAuditLog(client, audit, {
+      action: "fournisseurs.domaines.replace",
+      entity_type: "FOURNISSEUR",
+      entity_id: fournisseurId,
+      details: { domaines: normalized.map((d) => d.domaine_code) },
+    })
+    await client.query("COMMIT")
+  } catch (err) {
+    await client.query("ROLLBACK")
+    if (!isOptionalFournisseurEcosystemMissing(err)) throw err
+  } finally {
+    client.release()
+  }
+
+  return repoGetFournisseur(fournisseurId)
+}
+
+export async function repoListFournisseurEvents(fournisseurId: string): Promise<FournisseurEvent[] | null> {
+  const exists = await ensureFournisseurExists(db, fournisseurId)
+  if (!exists) return null
+
+  try {
+    const res = await db.query<FournisseurEvent>(
+      `
+        SELECT
+          id::text AS id,
+          fournisseur_id::text AS fournisseur_id,
+          event_type,
+          title,
+          description,
+          COALESCE(metadata, '{}'::jsonb) AS metadata,
+          created_by,
+          created_at::text AS created_at
+        FROM public.fournisseur_events
+        WHERE fournisseur_id = $1::uuid
+        ORDER BY created_at DESC, id DESC
+        LIMIT 100
+      `,
+      [fournisseurId]
+    )
+    return res.rows
+  } catch (err) {
+    if (isOptionalFournisseurEcosystemMissing(err)) return []
+    throw err
+  }
 }
 
 export async function repoCreateFournisseur(body: CreateFournisseurBodyDTO, audit: AuditContext): Promise<Fournisseur> {
@@ -443,10 +623,15 @@ type ContactRow = {
   id: string
   fournisseur_id: string
   nom: string
+  first_name?: string | null
+  last_name?: string | null
+  full_name?: string | null
   email: string | null
   telephone: string | null
+  mobile?: string | null
   role: string | null
   notes: string | null
+  is_primary?: boolean | null
   actif: boolean
   created_at: string
   updated_at: string
@@ -459,10 +644,15 @@ function mapContactRow(r: ContactRow): FournisseurContact {
     id: r.id,
     fournisseur_id: r.fournisseur_id,
     nom: r.nom,
+    first_name: r.first_name ?? null,
+    last_name: r.last_name ?? null,
+    full_name: r.full_name ?? r.nom,
     email: r.email,
     telephone: r.telephone,
+    mobile: r.mobile ?? null,
     role: r.role,
     notes: r.notes,
+    is_primary: Boolean(r.is_primary),
     actif: r.actif,
     created_at: r.created_at,
     updated_at: r.updated_at,

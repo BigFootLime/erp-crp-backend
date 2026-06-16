@@ -5,6 +5,7 @@ import type {
   CreateFournisseurBodyDTO,
   ListCatalogueQueryDTO,
   ListFournisseursQueryDTO,
+  PutFournisseurDomainesDTO,
   UpdateCatalogueBodyDTO,
   UpdateContactBodyDTO,
   UpdateFournisseurBodyDTO,
@@ -17,6 +18,13 @@ type UploadedDocument = Express.Multer.File
 export const listFournisseursSVC = (filters: ListFournisseursQueryDTO) => repo.repoListFournisseurs(filters)
 
 export const getFournisseurSVC = (id: string) => repo.repoGetFournisseur(id)
+
+export const listFournisseurDomainesSVC = () => repo.repoListFournisseurDomaines()
+
+export const replaceFournisseurDomainesSVC = (id: string, body: PutFournisseurDomainesDTO, audit: AuditContext) =>
+  repo.repoReplaceFournisseurDomaines(id, body.domaines, audit)
+
+export const listFournisseurEventsSVC = (id: string) => repo.repoListFournisseurEvents(id)
 
 export async function createFournisseurSVC(body: CreateFournisseurBodyDTO, audit: AuditContext) {
   try {

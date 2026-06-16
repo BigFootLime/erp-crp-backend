@@ -15,6 +15,7 @@ import {
   fournisseurIdParamSchema,
   listCatalogueQuerySchema,
   listFournisseursQuerySchema,
+  putFournisseurDomainesSchema,
   updateCatalogueSchema,
   updateContactSchema,
   updateFournisseurSchema,
@@ -32,8 +33,11 @@ import {
   listFournisseurCatalogueSVC,
   listFournisseurContactsSVC,
   listFournisseurDocumentsSVC,
+  listFournisseurDomainesSVC,
+  listFournisseurEventsSVC,
   listFournisseursSVC,
   removeFournisseurDocumentSVC,
+  replaceFournisseurDomainesSVC,
   updateFournisseurCatalogueItemSVC,
   updateFournisseurContactSVC,
   updateFournisseurSVC,
@@ -133,6 +137,45 @@ export const getFournisseur: RequestHandler = async (req, res, next) => {
     const { id } = fournisseurIdParamSchema.parse({ params: req.params }).params
     const out = await getFournisseurSVC(id)
     if (!out) {
+      res.status(404).json({ error: "Not found" })
+      return
+    }
+    res.json(out)
+  } catch (err) {
+    next(err)
+  }
+}
+
+export const listFournisseurDomaines: RequestHandler = async (_req, res, next) => {
+  try {
+    const out = await listFournisseurDomainesSVC()
+    res.json(out)
+  } catch (err) {
+    next(err)
+  }
+}
+
+export const replaceFournisseurDomaines: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildAuditContext(req)
+    const { id } = fournisseurIdParamSchema.parse({ params: req.params }).params
+    const body = putFournisseurDomainesSchema.parse({ body: req.body }).body
+    const out = await replaceFournisseurDomainesSVC(id, body, audit)
+    if (!out) {
+      res.status(404).json({ error: "Not found" })
+      return
+    }
+    res.json(out)
+  } catch (err) {
+    next(err)
+  }
+}
+
+export const listFournisseurEvents: RequestHandler = async (req, res, next) => {
+  try {
+    const { id } = fournisseurIdParamSchema.parse({ params: req.params }).params
+    const out = await listFournisseurEventsSVC(id)
+    if (out === null) {
       res.status(404).json({ error: "Not found" })
       return
     }
