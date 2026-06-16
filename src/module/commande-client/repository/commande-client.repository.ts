@@ -1610,6 +1610,58 @@ export async function repoRunCommandeWorkflowAction(
   const action = getCommandeWorkflowAction(body.action);
   if (!action) throw new HttpError(400, "UNKNOWN_WORKFLOW_ACTION", "Unknown workflow action");
 
+  const workflowAudit: AuditContext = {
+    user_id: userId,
+    ip: null,
+    user_agent: null,
+    device_type: null,
+    os: null,
+    browser: null,
+    path: null,
+    page_key: "commande.workflow",
+    client_session_id: null,
+  };
+  let generatedAffaires: Awaited<ReturnType<typeof repoGenerateAffairesFromOrder>> | null = null;
+  const runsTechnicalGeneration = action.key === "complete_technical_analysis";
+  if (runsTechnicalGeneration) {
+    const preflightClient = await pool.connect();
+    try {
+      await preflightClient.query("BEGIN");
+      const header = await loadCommandeWorkflowHeaderWithStatus(preflightClient, commandeId);
+      if (!header) {
+        await preflightClient.query("ROLLBACK");
+        return null;
+      }
+      await ensureCommandeWorkflowCheckpoints(preflightClient, commandeId, header.statut);
+      const checkpointRes = await preflightClient.query<{ status: string }>(
+        `
+          SELECT status
+          FROM public.commande_client_workflow_checkpoint
+          WHERE commande_id = $1 AND checkpoint_code = $2
+          FOR UPDATE
+        `,
+        [commandeId, action.checkpoint_code]
+      );
+      const checkpoint = checkpointRes.rows[0] ?? null;
+      if (!checkpoint) throw new HttpError(404, "CHECKPOINT_NOT_FOUND", "Workflow checkpoint not found");
+      if (checkpoint.status === "blocked") {
+        throw new HttpError(409, "CHECKPOINT_BLOCKED", "Resolve the blocker before running this workflow action");
+      }
+      await preflightClient.query("ROLLBACK");
+    } catch (e) {
+      await preflightClient.query("ROLLBACK").catch(() => undefined);
+      throw e;
+    } finally {
+      preflightClient.release();
+    }
+
+    generatedAffaires = await repoGenerateAffairesFromOrder(
+      id,
+      { decision: null, livraison_count: 1, lines: [] },
+      workflowAudit
+    );
+  }
+
   const client = await pool.connect();
   let notifications: AppNotification[] = [];
   try {
@@ -1636,6 +1688,8 @@ export async function repoRunCommandeWorkflowAction(
       throw new HttpError(409, "CHECKPOINT_BLOCKED", "Resolve the blocker before running this workflow action");
     }
 
+    const nextCheckpointCode = runsTechnicalGeneration ? "planning_validation" : action.next_checkpoint_code;
+
     await client.query(
       `
         UPDATE public.commande_client_workflow_checkpoint
@@ -1648,7 +1702,30 @@ export async function repoRunCommandeWorkflowAction(
       `,
       [commandeId, action.checkpoint_code, userId, body.commentaire ?? null]
     );
-    await activateNextCheckpoint(client, commandeId, action.next_checkpoint_code);
+    if (runsTechnicalGeneration) {
+      await client.query(
+        `
+          UPDATE public.commande_client_workflow_checkpoint
+          SET status = 'done',
+              completed_at = COALESCE(completed_at, now()),
+              completed_by = COALESCE(completed_by, $2::int),
+              metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+              updated_at = now()
+          WHERE commande_id = $1
+            AND checkpoint_code = 'of_generation'
+            AND status <> 'done'
+        `,
+        [
+          commandeId,
+          userId,
+          JSON.stringify({
+            automated_by: "complete_technical_analysis",
+            generated_affaires: generatedAffaires,
+          }),
+        ]
+      );
+    }
+    await activateNextCheckpoint(client, commandeId, nextCheckpointCode);
 
     const transition = await repoEnsureCommandeWorkflowStatus({
       tx: client,
@@ -1659,8 +1736,8 @@ export async function repoRunCommandeWorkflowAction(
     });
     notifications = [...transition.notifications];
 
-    if (action.next_checkpoint_code) {
-      const nextDef = getCommandeWorkflowCheckpointDefinition(action.next_checkpoint_code);
+    if (nextCheckpointCode) {
+      const nextDef = getCommandeWorkflowCheckpointDefinition(nextCheckpointCode);
       if (nextDef) {
         const roleNotifications = await notifyWorkflowRole(client, {
           commande: header,
@@ -1680,7 +1757,12 @@ export async function repoRunCommandeWorkflowAction(
       commande_id: commandeId,
       event_type: "WORKFLOW_ACTION",
       old_values: { statut: header.statut, checkpoint_code: action.checkpoint_code },
-      new_values: { statut: action.target_status, action: action.key, next_checkpoint_code: action.next_checkpoint_code },
+      new_values: {
+        statut: action.target_status,
+        action: action.key,
+        next_checkpoint_code: nextCheckpointCode,
+        generated_affaires: generatedAffaires,
+      },
       user_id: userId,
     });
 

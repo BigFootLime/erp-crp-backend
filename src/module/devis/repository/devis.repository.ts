@@ -735,39 +735,66 @@ async function deleteDevisPreparatoryEntities(client: PoolClient, devisId: numbe
   await client.query(`DELETE FROM public.article_devis WHERE devis_id = $1::bigint`, [devisId]);
 }
 
+async function hasPublicColumn(client: PoolClient, tableName: string, columnName: string) {
+  const res = await client.query<{ exists: boolean }>(
+    `
+      SELECT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = $1
+          AND column_name = $2
+      ) AS exists
+    `,
+    [tableName, columnName]
+  );
+  return res.rows[0]?.exists === true;
+}
+
 async function insertDevisLines(client: PoolClient, devisId: number, lignes: CreateDevisBodyDTO["lignes"]) {
   if (!lignes.length) return [] as InsertedDevisLine[];
 
+  const hasCodePieceColumn = await hasPublicColumn(client, "devis_ligne", "code_piece");
   const inserted: InsertedDevisLine[] = [];
   for (const line of lignes as DevisLineWithPreparatoryInput[]) {
+    const columns = [
+      "devis_id",
+      "description",
+      "article_id",
+      "piece_technique_id",
+      ...(hasCodePieceColumn ? ["code_piece"] : []),
+      "quantite",
+      "unite",
+      "prix_unitaire_ht",
+      "remise_ligne",
+      "taux_tva",
+    ];
+    const values = [
+      devisId,
+      line.description,
+      line.article_id ?? null,
+      line.piece_technique_id ?? null,
+      ...(hasCodePieceColumn ? [line.code_piece ?? null] : []),
+      line.quantite,
+      line.unite ?? null,
+      line.prix_unitaire_ht,
+      line.remise_ligne ?? 0,
+      line.taux_tva ?? 20,
+    ];
+    const placeholders = values.map((_, idx) => {
+      const index = idx + 1;
+      const column = columns[idx];
+      if (column === "article_id" || column === "piece_technique_id") return `$${index}::uuid`;
+      return `$${index}`;
+    });
+
     const res = await client.query<{ id: string }>(
       `
-      INSERT INTO devis_ligne (
-        devis_id,
-        description,
-        article_id,
-        piece_technique_id,
-        code_piece,
-        quantite,
-        unite,
-        prix_unitaire_ht,
-        remise_ligne,
-        taux_tva
-      ) VALUES ($1,$2,$3::uuid,$4::uuid,$5,$6,$7,$8,$9,$10)
+      INSERT INTO devis_ligne (${columns.join(", ")})
+      VALUES (${placeholders.join(", ")})
       RETURNING id::text AS id
       `,
-      [
-        devisId,
-        line.description,
-        line.article_id ?? null,
-        line.piece_technique_id ?? null,
-        line.code_piece ?? null,
-        line.quantite,
-        line.unite ?? null,
-        line.prix_unitaire_ht,
-        line.remise_ligne ?? 0,
-        line.taux_tva ?? 20,
-      ]
+      values
     );
     const insertedId = res.rows[0]?.id;
     if (!insertedId) throw new Error("Failed to create devis line");

@@ -1,0 +1,1 @@
+[audit_notify] DATABASE_URL is missing; audit:new realtime disabled

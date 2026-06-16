@@ -1,0 +1,28 @@
+
+> erp-crp-backend@1.0.0 dev
+> ts-node-dev --respawn --transpile-only src/index.ts
+
+[INFO] 12:02:49 ts-node-dev ver. 2.0.0 (using ts-node ver. 10.9.2, typescript ver. 5.9.3)
+[ERROR] 12:02:51 Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+[INFO] 12:29:46 Restarting: C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\module\devis\repository\devis.repository.ts has been modified
+[ERROR] 12:29:47 Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+[INFO] 12:31:07 Restarting: C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\module\commande-client\repository\commande-client.repository.ts has been modified
+[ERROR] 12:31:08 Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+[INFO] 12:31:21 Restarting: C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\module\commande-client\repository\commande-client.repository.ts has been modified
+[ERROR] 12:31:22 Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
