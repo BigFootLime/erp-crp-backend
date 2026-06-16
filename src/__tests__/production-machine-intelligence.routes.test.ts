@@ -279,4 +279,140 @@ describe("/api/v1/production machine intelligence", () => {
     expect(sqlCalls).toContain("INSERT INTO machines");
     expect(mocks.clientRelease).toHaveBeenCalled();
   });
+
+  it("PATCH /api/v1/production/machines/:id/onboarding updates the physical machine and model intelligence", async () => {
+    const modelId = "11111111-1111-1111-1111-111111111111";
+    const machineId = "33333333-3333-3333-3333-333333333333";
+
+    mocks.clientQuery
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [{ id: machineId, machine_model_id: modelId, archived_at: null }],
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: modelId,
+            model_code: "HURCO-VM10",
+            manufacturer: "Hurco",
+            model: "VM10",
+            display_name: "Hurco VM10",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: machineId,
+            code: "VM10-01",
+            name: "Hurco VM10 cellule 1",
+            type: "MILLING",
+            status: "ACTIVE",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [{ id: "audit-1", created_at: "2026-06-15T08:00:00.000Z" }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    mocks.poolQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          id: machineId,
+          code: "VM10-01",
+          name: "Hurco VM10 cellule 1",
+          type: "MILLING",
+          status: "ACTIVE",
+          machine_model_id: modelId,
+          model_display_name: "Hurco VM10",
+          manufacturer: "Hurco",
+          model_name: "VM10",
+          display_name: "VM10 cellule 1",
+          brand: "Hurco",
+          model: "VM10",
+          serial_number: null,
+          commissioned_year: null,
+          image_path: null,
+          hourly_rate: 0,
+          currency: "EUR",
+          is_available: true,
+          dashboard_color: null,
+          model_3d_path: "/models/machines/cnc-01.glb",
+          documentation_url: null,
+          documentation_source: null,
+          scheduling_enabled: true,
+          outillage_enabled: true,
+          location: "Atelier principal",
+          workshop_zone: "Zone fraisage",
+          notes: "Centre prioritaire production.",
+          created_at: "2026-06-15T08:00:00.000Z",
+          updated_at: "2026-06-15T09:00:00.000Z",
+          created_by: 1,
+          updated_by: 1,
+          archived_at: null,
+          archived_by: null,
+        },
+      ],
+    });
+
+    const res = await request(app)
+      .patch(`/api/v1/production/machines/${machineId}/onboarding`)
+      .set("Authorization", "Bearer fake")
+      .send({
+        machine: {
+          code: "VM10-01",
+          name: "Hurco VM10 cellule 1",
+          type: "MILLING",
+          machine_model_id: modelId,
+          display_name: "VM10 cellule 1",
+          brand: "Hurco",
+          model: "VM10",
+          hourly_rate: 0,
+          currency: "EUR",
+          status: "ACTIVE",
+          is_available: true,
+          model_3d_path: "/models/machines/cnc-01.glb",
+          scheduling_enabled: true,
+          outillage_enabled: true,
+          location: "Atelier principal",
+          workshop_zone: "Zone fraisage",
+          notes: "Centre prioritaire production.",
+        },
+        specs: {
+          x_travel_mm: 661,
+          y_travel_mm: 407,
+          z_travel_mm: 508,
+          spindle_taper: "CAT 40",
+          spindle_speed_max_rpm: 12000,
+          spindle_power_kw: 11,
+          spindle_torque_nm: 72.4,
+          tool_magazine_capacity: 24,
+          max_tool_diameter_mm: 80,
+          compatible_holders: ["CAT 40"],
+        },
+        capabilities: [{ process_type: "Fraisage 3 axes", material_family: "Aluminium", capability_level: "preferred" }],
+        tooling: [{ holder_type: "CAT 40", spindle_taper: "CAT 40", compatible: true }],
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      id: machineId,
+      code: "VM10-01",
+      name: "Hurco VM10 cellule 1",
+      machine_model_id: modelId,
+      manufacturer: "Hurco",
+      model_name: "VM10",
+    });
+
+    const sqlCalls = mocks.clientQuery.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(sqlCalls).toContain("production_machine_specs");
+    expect(sqlCalls).toContain("spindle_torque_nm");
+    expect(sqlCalls).toContain("production_machine_capabilities");
+    expect(sqlCalls).toContain("production_machine_tooling");
+    expect(sqlCalls).toContain("UPDATE machines");
+    expect(JSON.stringify(mocks.clientQuery.mock.calls)).toContain("production.machines.onboarding.update");
+    expect(mocks.clientRelease).toHaveBeenCalled();
+  });
 });

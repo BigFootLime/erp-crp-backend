@@ -524,6 +524,7 @@ POST	/api/v1/production/machines/onboarding	authenticateToken, requireProduction
 POST	/api/v1/production/machines	authenticateToken, upload.single("image")	controller
 DELETE	/api/v1/production/machines/:id	authenticateToken, requireAdmin	controller
 GET	/api/v1/production/machines/:id	authenticateToken	controller
+PATCH	/api/v1/production/machines/:id/onboarding	authenticateToken, requireProductionOrAdmin, upload.single("image")	controller
 PATCH	/api/v1/production/machines/:id	authenticateToken, upload.single("image")	controller
 GET	/api/v1/production/ofs	authenticateToken	controller
 POST	/api/v1/production/ofs	authenticateToken	controller

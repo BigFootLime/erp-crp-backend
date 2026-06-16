@@ -27,6 +27,7 @@ import type {
   StartOfTimeLogBodyDTO,
   StopOfTimeLogBodyDTO,
   UpdateMachineBodyDTO,
+  UpdateMachineOnboardingBodyDTO,
   UpdateOfBodyDTO,
   UpdateOfOperationBodyDTO,
   UpdatePosteBodyDTO,
@@ -141,6 +142,196 @@ type MachineModelMini = {
   model: string;
   display_name: string;
 };
+
+type MachineOnboardingSpecInput = NonNullable<CreateMachineOnboardingBodyDTO["specs"]>;
+type MachineOnboardingCapabilityInput = NonNullable<CreateMachineOnboardingBodyDTO["capabilities"]>[number];
+type MachineOnboardingToolingInput = NonNullable<CreateMachineOnboardingBodyDTO["tooling"]>[number];
+
+async function selectMachineModelMini(tx: DbQueryer, id: string): Promise<MachineModelMini | null> {
+  const existing = await tx.query<MachineModelMini>(
+    `
+      SELECT
+        id::text AS id,
+        model_code,
+        manufacturer,
+        model,
+        display_name
+      FROM public.production_machine_models
+      WHERE id = $1::uuid
+      LIMIT 1
+    `,
+    [id]
+  );
+  return existing.rows[0] ?? null;
+}
+
+async function upsertMachineSpecs(
+  tx: DbQueryer,
+  modelId: string,
+  specs: MachineOnboardingSpecInput,
+  mode: "merge" | "replace"
+): Promise<void> {
+  const replaceExisting = mode === "replace";
+  await tx.query(
+    `
+      INSERT INTO public.production_machine_specs (
+        machine_model_id,
+        x_travel_mm,
+        y_travel_mm,
+        z_travel_mm,
+        table_length_mm,
+        table_width_mm,
+        max_table_load_kg,
+        spindle_taper,
+        spindle_speed_max_rpm,
+        spindle_power_kw,
+        spindle_torque_nm,
+        tool_magazine_capacity,
+        max_tool_diameter_mm,
+        max_tool_length_mm,
+        max_tool_weight_kg,
+        tool_change_time_sec,
+        compatible_holders,
+        operations_notes,
+        maintenance_notes,
+        source_type,
+        source_confidence,
+        source_notes
+      )
+      VALUES (
+        $1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::text[],$18,$19,$20,$21,$22
+      )
+      ON CONFLICT (machine_model_id) DO UPDATE
+      SET
+        x_travel_mm = CASE WHEN $23::boolean THEN EXCLUDED.x_travel_mm ELSE COALESCE(EXCLUDED.x_travel_mm, public.production_machine_specs.x_travel_mm) END,
+        y_travel_mm = CASE WHEN $23::boolean THEN EXCLUDED.y_travel_mm ELSE COALESCE(EXCLUDED.y_travel_mm, public.production_machine_specs.y_travel_mm) END,
+        z_travel_mm = CASE WHEN $23::boolean THEN EXCLUDED.z_travel_mm ELSE COALESCE(EXCLUDED.z_travel_mm, public.production_machine_specs.z_travel_mm) END,
+        table_length_mm = CASE WHEN $23::boolean THEN EXCLUDED.table_length_mm ELSE COALESCE(EXCLUDED.table_length_mm, public.production_machine_specs.table_length_mm) END,
+        table_width_mm = CASE WHEN $23::boolean THEN EXCLUDED.table_width_mm ELSE COALESCE(EXCLUDED.table_width_mm, public.production_machine_specs.table_width_mm) END,
+        max_table_load_kg = CASE WHEN $23::boolean THEN EXCLUDED.max_table_load_kg ELSE COALESCE(EXCLUDED.max_table_load_kg, public.production_machine_specs.max_table_load_kg) END,
+        spindle_taper = CASE WHEN $23::boolean THEN EXCLUDED.spindle_taper ELSE COALESCE(EXCLUDED.spindle_taper, public.production_machine_specs.spindle_taper) END,
+        spindle_speed_max_rpm = CASE WHEN $23::boolean THEN EXCLUDED.spindle_speed_max_rpm ELSE COALESCE(EXCLUDED.spindle_speed_max_rpm, public.production_machine_specs.spindle_speed_max_rpm) END,
+        spindle_power_kw = CASE WHEN $23::boolean THEN EXCLUDED.spindle_power_kw ELSE COALESCE(EXCLUDED.spindle_power_kw, public.production_machine_specs.spindle_power_kw) END,
+        spindle_torque_nm = CASE WHEN $23::boolean THEN EXCLUDED.spindle_torque_nm ELSE COALESCE(EXCLUDED.spindle_torque_nm, public.production_machine_specs.spindle_torque_nm) END,
+        tool_magazine_capacity = CASE WHEN $23::boolean THEN EXCLUDED.tool_magazine_capacity ELSE COALESCE(EXCLUDED.tool_magazine_capacity, public.production_machine_specs.tool_magazine_capacity) END,
+        max_tool_diameter_mm = CASE WHEN $23::boolean THEN EXCLUDED.max_tool_diameter_mm ELSE COALESCE(EXCLUDED.max_tool_diameter_mm, public.production_machine_specs.max_tool_diameter_mm) END,
+        max_tool_length_mm = CASE WHEN $23::boolean THEN EXCLUDED.max_tool_length_mm ELSE COALESCE(EXCLUDED.max_tool_length_mm, public.production_machine_specs.max_tool_length_mm) END,
+        max_tool_weight_kg = CASE WHEN $23::boolean THEN EXCLUDED.max_tool_weight_kg ELSE COALESCE(EXCLUDED.max_tool_weight_kg, public.production_machine_specs.max_tool_weight_kg) END,
+        tool_change_time_sec = CASE WHEN $23::boolean THEN EXCLUDED.tool_change_time_sec ELSE COALESCE(EXCLUDED.tool_change_time_sec, public.production_machine_specs.tool_change_time_sec) END,
+        compatible_holders = CASE
+          WHEN $23::boolean THEN EXCLUDED.compatible_holders
+          WHEN array_length(EXCLUDED.compatible_holders, 1) IS NULL THEN public.production_machine_specs.compatible_holders
+          ELSE EXCLUDED.compatible_holders
+        END,
+        operations_notes = CASE WHEN $23::boolean THEN EXCLUDED.operations_notes ELSE COALESCE(EXCLUDED.operations_notes, public.production_machine_specs.operations_notes) END,
+        maintenance_notes = CASE WHEN $23::boolean THEN EXCLUDED.maintenance_notes ELSE COALESCE(EXCLUDED.maintenance_notes, public.production_machine_specs.maintenance_notes) END,
+        source_type = EXCLUDED.source_type,
+        source_confidence = EXCLUDED.source_confidence,
+        source_notes = CASE WHEN $23::boolean THEN EXCLUDED.source_notes ELSE COALESCE(EXCLUDED.source_notes, public.production_machine_specs.source_notes) END,
+        updated_at = now()
+    `,
+    [
+      modelId,
+      specs.x_travel_mm ?? null,
+      specs.y_travel_mm ?? null,
+      specs.z_travel_mm ?? null,
+      specs.table_length_mm ?? null,
+      specs.table_width_mm ?? null,
+      specs.max_table_load_kg ?? null,
+      textOrNull(specs.spindle_taper),
+      specs.spindle_speed_max_rpm ?? null,
+      specs.spindle_power_kw ?? null,
+      specs.spindle_torque_nm ?? null,
+      specs.tool_magazine_capacity ?? null,
+      specs.max_tool_diameter_mm ?? null,
+      specs.max_tool_length_mm ?? null,
+      specs.max_tool_weight_kg ?? null,
+      specs.tool_change_time_sec ?? null,
+      specs.compatible_holders ?? [],
+      textOrNull(specs.operations_notes),
+      textOrNull(specs.maintenance_notes),
+      specs.source_type ?? "internal_note",
+      specs.source_confidence ?? "internal",
+      textOrNull(specs.source_notes),
+      replaceExisting,
+    ]
+  );
+}
+
+async function upsertMachineCapabilities(
+  tx: DbQueryer,
+  modelId: string,
+  capabilities: MachineOnboardingCapabilityInput[]
+): Promise<void> {
+  for (const capability of capabilities) {
+    await tx.query(
+      `
+        INSERT INTO public.production_machine_capabilities (
+          machine_model_id,
+          process_type,
+          material_family,
+          capability_level,
+          notes,
+          source_confidence
+        )
+        VALUES ($1::uuid,$2,$3,$4,$5,$6)
+        ON CONFLICT (machine_model_id, process_type, (COALESCE(material_family, ''))) DO UPDATE
+        SET
+          capability_level = EXCLUDED.capability_level,
+          notes = COALESCE(EXCLUDED.notes, public.production_machine_capabilities.notes),
+          source_confidence = EXCLUDED.source_confidence,
+          updated_at = now()
+      `,
+      [
+        modelId,
+        capability.process_type,
+        textOrNull(capability.material_family),
+        capability.capability_level ?? "supported",
+        textOrNull(capability.notes),
+        capability.source_confidence ?? "internal",
+      ]
+    );
+  }
+}
+
+async function upsertMachineTooling(
+  tx: DbQueryer,
+  modelId: string,
+  toolingRows: MachineOnboardingToolingInput[]
+): Promise<void> {
+  for (const tooling of toolingRows) {
+    await tx.query(
+      `
+        INSERT INTO public.production_machine_tooling (
+          machine_model_id,
+          holder_type,
+          spindle_taper,
+          tool_family,
+          compatible,
+          notes,
+          source_confidence
+        )
+        VALUES ($1::uuid,$2,$3,$4,$5,$6,$7)
+        ON CONFLICT (machine_model_id, holder_type, (COALESCE(tool_family, ''))) DO UPDATE
+        SET
+          spindle_taper = COALESCE(EXCLUDED.spindle_taper, public.production_machine_tooling.spindle_taper),
+          compatible = EXCLUDED.compatible,
+          notes = COALESCE(EXCLUDED.notes, public.production_machine_tooling.notes),
+          source_confidence = EXCLUDED.source_confidence,
+          updated_at = now()
+      `,
+      [
+        modelId,
+        tooling.holder_type,
+        textOrNull(tooling.spindle_taper),
+        textOrNull(tooling.tool_family),
+        tooling.compatible ?? true,
+        textOrNull(tooling.notes),
+        tooling.source_confidence ?? "internal",
+      ]
+    );
+  }
+}
 
 function toInt(value: unknown, label = "id"): number {
   if (typeof value === "number" && Number.isInteger(value)) return value;
@@ -730,139 +921,12 @@ export async function repoCreateMachineOnboarding(params: {
     }
 
     if (resolvedModelId && hasSpecDraft(b.specs)) {
-      const specs = b.specs;
-      await client.query(
-        `
-          INSERT INTO public.production_machine_specs (
-            machine_model_id,
-            x_travel_mm,
-            y_travel_mm,
-            z_travel_mm,
-            table_length_mm,
-            table_width_mm,
-            max_table_load_kg,
-            spindle_taper,
-            spindle_speed_max_rpm,
-            spindle_power_kw,
-            tool_magazine_capacity,
-            compatible_holders,
-            operations_notes,
-            maintenance_notes,
-            source_type,
-            source_confidence,
-            source_notes
-          )
-          VALUES (
-            $1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::text[],$13,$14,$15,$16,$17
-          )
-          ON CONFLICT (machine_model_id) DO UPDATE
-          SET
-            x_travel_mm = COALESCE(EXCLUDED.x_travel_mm, public.production_machine_specs.x_travel_mm),
-            y_travel_mm = COALESCE(EXCLUDED.y_travel_mm, public.production_machine_specs.y_travel_mm),
-            z_travel_mm = COALESCE(EXCLUDED.z_travel_mm, public.production_machine_specs.z_travel_mm),
-            table_length_mm = COALESCE(EXCLUDED.table_length_mm, public.production_machine_specs.table_length_mm),
-            table_width_mm = COALESCE(EXCLUDED.table_width_mm, public.production_machine_specs.table_width_mm),
-            max_table_load_kg = COALESCE(EXCLUDED.max_table_load_kg, public.production_machine_specs.max_table_load_kg),
-            spindle_taper = COALESCE(EXCLUDED.spindle_taper, public.production_machine_specs.spindle_taper),
-            spindle_speed_max_rpm = COALESCE(EXCLUDED.spindle_speed_max_rpm, public.production_machine_specs.spindle_speed_max_rpm),
-            spindle_power_kw = COALESCE(EXCLUDED.spindle_power_kw, public.production_machine_specs.spindle_power_kw),
-            tool_magazine_capacity = COALESCE(EXCLUDED.tool_magazine_capacity, public.production_machine_specs.tool_magazine_capacity),
-            compatible_holders = CASE
-              WHEN array_length(EXCLUDED.compatible_holders, 1) IS NULL THEN public.production_machine_specs.compatible_holders
-              ELSE EXCLUDED.compatible_holders
-            END,
-            operations_notes = COALESCE(EXCLUDED.operations_notes, public.production_machine_specs.operations_notes),
-            maintenance_notes = COALESCE(EXCLUDED.maintenance_notes, public.production_machine_specs.maintenance_notes),
-            source_type = EXCLUDED.source_type,
-            source_confidence = EXCLUDED.source_confidence,
-            source_notes = COALESCE(EXCLUDED.source_notes, public.production_machine_specs.source_notes),
-            updated_at = now()
-        `,
-        [
-          resolvedModelId,
-          specs.x_travel_mm ?? null,
-          specs.y_travel_mm ?? null,
-          specs.z_travel_mm ?? null,
-          specs.table_length_mm ?? null,
-          specs.table_width_mm ?? null,
-          specs.max_table_load_kg ?? null,
-          textOrNull(specs.spindle_taper),
-          specs.spindle_speed_max_rpm ?? null,
-          specs.spindle_power_kw ?? null,
-          specs.tool_magazine_capacity ?? null,
-          specs.compatible_holders ?? [],
-          textOrNull(specs.operations_notes),
-          textOrNull(specs.maintenance_notes),
-          specs.source_type ?? "internal_note",
-          specs.source_confidence ?? "internal",
-          textOrNull(specs.source_notes),
-        ]
-      );
+      await upsertMachineSpecs(client, resolvedModelId, b.specs, "merge");
     }
 
     if (resolvedModelId) {
-      for (const capability of b.capabilities ?? []) {
-        await client.query(
-          `
-            INSERT INTO public.production_machine_capabilities (
-              machine_model_id,
-              process_type,
-              material_family,
-              capability_level,
-              notes,
-              source_confidence
-            )
-            VALUES ($1::uuid,$2,$3,$4,$5,$6)
-            ON CONFLICT (machine_model_id, process_type, (COALESCE(material_family, ''))) DO UPDATE
-            SET
-              capability_level = EXCLUDED.capability_level,
-              notes = COALESCE(EXCLUDED.notes, public.production_machine_capabilities.notes),
-              source_confidence = EXCLUDED.source_confidence,
-              updated_at = now()
-          `,
-          [
-            resolvedModelId,
-            capability.process_type,
-            textOrNull(capability.material_family),
-            capability.capability_level ?? "supported",
-            textOrNull(capability.notes),
-            capability.source_confidence ?? "internal",
-          ]
-        );
-      }
-
-      for (const tooling of b.tooling ?? []) {
-        await client.query(
-          `
-            INSERT INTO public.production_machine_tooling (
-              machine_model_id,
-              holder_type,
-              spindle_taper,
-              tool_family,
-              compatible,
-              notes,
-              source_confidence
-            )
-            VALUES ($1::uuid,$2,$3,$4,$5,$6,$7)
-            ON CONFLICT (machine_model_id, holder_type, (COALESCE(tool_family, ''))) DO UPDATE
-            SET
-              spindle_taper = COALESCE(EXCLUDED.spindle_taper, public.production_machine_tooling.spindle_taper),
-              compatible = EXCLUDED.compatible,
-              notes = COALESCE(EXCLUDED.notes, public.production_machine_tooling.notes),
-              source_confidence = EXCLUDED.source_confidence,
-              updated_at = now()
-          `,
-          [
-            resolvedModelId,
-            tooling.holder_type,
-            textOrNull(tooling.spindle_taper),
-            textOrNull(tooling.tool_family),
-            tooling.compatible ?? true,
-            textOrNull(tooling.notes),
-            tooling.source_confidence ?? "internal",
-          ]
-        );
-      }
+      await upsertMachineCapabilities(client, resolvedModelId, b.capabilities ?? []);
+      await upsertMachineTooling(client, resolvedModelId, b.tooling ?? []);
     }
 
     type Row = {
@@ -1059,6 +1123,280 @@ export async function repoCreateMachineOnboarding(params: {
       }
       if (constraint === "production_machine_models_code_key") {
         throw new HttpError(409, "MACHINE_MODEL_CODE_EXISTS", "A machine model with this code already exists");
+      }
+      throw new HttpError(409, "MACHINE_ONBOARDING_UNIQUE_CONFLICT", "Machine onboarding conflicts with existing data");
+    }
+    if (isPgForeignKeyViolation(err)) {
+      throw new HttpError(422, "MACHINE_ONBOARDING_REFERENCE_INVALID", "Machine onboarding references invalid data");
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function repoUpdateMachineOnboarding(params: {
+  id: string;
+  body: UpdateMachineOnboardingBodyDTO;
+  image_path?: string | null;
+  audit: AuditContext;
+}): Promise<MachineDetail | null> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const existingMachine = await client.query<{ id: string; machine_model_id: string | null; archived_at: string | null }>(
+      `
+        SELECT
+          id::text AS id,
+          machine_model_id::text AS machine_model_id,
+          archived_at::text AS archived_at
+        FROM machines
+        WHERE id = $1::uuid
+        FOR UPDATE
+      `,
+      [params.id]
+    );
+    const existing = existingMachine.rows[0] ?? null;
+    if (!existing) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+    if (existing.archived_at) {
+      throw new HttpError(409, "MACHINE_ARCHIVED", "Archived machine cannot be edited");
+    }
+
+    const b = params.body;
+    const machine = b.machine;
+    const modelInput = b.machine_model ?? null;
+    const hasMachineModelIdField = Object.prototype.hasOwnProperty.call(machine, "machine_model_id");
+    const explicitMachineModelId = hasMachineModelIdField ? machine.machine_model_id ?? null : undefined;
+    const explicitDraftModelId = modelInput?.id ?? null;
+
+    if (explicitMachineModelId && explicitDraftModelId && explicitMachineModelId !== explicitDraftModelId) {
+      throw new HttpError(400, "MACHINE_MODEL_MISMATCH", "Machine model identifiers do not match");
+    }
+
+    let resolvedModel: MachineModelMini | null = null;
+    let resolvedModelId =
+      explicitMachineModelId !== undefined
+        ? explicitMachineModelId
+        : explicitDraftModelId ?? existing.machine_model_id ?? null;
+
+    if (resolvedModelId) {
+      const currentModel = await selectMachineModelMini(client, resolvedModelId);
+      if (!currentModel) {
+        throw new HttpError(422, "MACHINE_MODEL_NOT_FOUND", "Machine model not found");
+      }
+
+      if (hasModelDraft(modelInput)) {
+        const manufacturer = textOrNull(modelInput.manufacturer) ?? currentModel.manufacturer ?? textOrNull(machine.brand);
+        const modelName = textOrNull(modelInput.model) ?? currentModel.model ?? textOrNull(machine.model);
+        if (!manufacturer || !modelName) {
+          throw new HttpError(422, "MACHINE_MODEL_IDENTITY_REQUIRED", "Manufacturer and model are required to update a machine model");
+        }
+
+        const updatedModel = await client.query<MachineModelMini>(
+          `
+            UPDATE public.production_machine_models
+            SET
+              model_code = $2,
+              manufacturer = $3,
+              model = $4,
+              display_name = $5,
+              machine_type = $6::machine_type,
+              axes_count = COALESCE($7, axes_count),
+              description = COALESCE($8, description),
+              source_summary = COALESCE($9, source_summary),
+              is_active = COALESCE($10, is_active),
+              updated_at = now()
+            WHERE id = $1::uuid
+            RETURNING
+              id::text AS id,
+              model_code,
+              manufacturer,
+              model,
+              display_name
+          `,
+          [
+            resolvedModelId,
+            textOrNull(modelInput.model_code) ?? currentModel.model_code,
+            manufacturer,
+            modelName,
+            textOrNull(modelInput.display_name) ?? currentModel.display_name ?? `${manufacturer} ${modelName}`,
+            modelInput.machine_type ?? machine.type,
+            modelInput.axes_count ?? null,
+            textOrNull(modelInput.description),
+            textOrNull(modelInput.source_summary),
+            modelInput.is_active ?? null,
+          ]
+        );
+        resolvedModel = updatedModel.rows[0] ?? currentModel;
+      } else {
+        resolvedModel = currentModel;
+      }
+    } else if (hasModelDraft(modelInput)) {
+      const manufacturer = textOrNull(modelInput.manufacturer) ?? textOrNull(machine.brand);
+      const modelName = textOrNull(modelInput.model) ?? textOrNull(machine.model);
+
+      if (!manufacturer || !modelName) {
+        throw new HttpError(422, "MACHINE_MODEL_IDENTITY_REQUIRED", "Manufacturer and model are required to create a machine model");
+      }
+
+      const displayName = textOrNull(modelInput.display_name) ?? `${manufacturer} ${modelName}`;
+      const modelCode = textOrNull(modelInput.model_code) ?? makeMachineModelCode(manufacturer, modelName);
+
+      const upsert = await client.query<MachineModelMini>(
+        `
+          INSERT INTO public.production_machine_models (
+            model_code,
+            manufacturer,
+            model,
+            display_name,
+            machine_type,
+            axes_count,
+            description,
+            source_summary,
+            is_active
+          )
+          VALUES ($1,$2,$3,$4,$5::machine_type,$6,$7,$8,$9)
+          ON CONFLICT (manufacturer, model) DO UPDATE
+          SET
+            display_name = EXCLUDED.display_name,
+            machine_type = EXCLUDED.machine_type,
+            axes_count = COALESCE(EXCLUDED.axes_count, public.production_machine_models.axes_count),
+            description = COALESCE(EXCLUDED.description, public.production_machine_models.description),
+            source_summary = COALESCE(EXCLUDED.source_summary, public.production_machine_models.source_summary),
+            is_active = EXCLUDED.is_active,
+            updated_at = now()
+          RETURNING
+            id::text AS id,
+            model_code,
+            manufacturer,
+            model,
+            display_name
+        `,
+        [
+          modelCode,
+          manufacturer,
+          modelName,
+          displayName,
+          modelInput.machine_type ?? machine.type,
+          modelInput.axes_count ?? null,
+          textOrNull(modelInput.description),
+          textOrNull(modelInput.source_summary),
+          modelInput.is_active ?? true,
+        ]
+      );
+
+      resolvedModel = upsert.rows[0] ?? null;
+      resolvedModelId = resolvedModel?.id ?? null;
+    }
+
+    const wantsIntelligence = hasSpecDraft(b.specs) || (b.capabilities ?? []).length > 0 || (b.tooling ?? []).length > 0;
+    if (wantsIntelligence && !resolvedModelId) {
+      throw new HttpError(422, "MACHINE_MODEL_REQUIRED_FOR_INTELLIGENCE", "A machine model is required to persist specs, capabilities or tooling");
+    }
+
+    if (resolvedModelId && hasSpecDraft(b.specs)) {
+      await upsertMachineSpecs(client, resolvedModelId, b.specs, "replace");
+    }
+
+    if (resolvedModelId) {
+      await upsertMachineCapabilities(client, resolvedModelId, b.capabilities ?? []);
+      await upsertMachineTooling(client, resolvedModelId, b.tooling ?? []);
+    }
+
+    const sets: string[] = [];
+    const values: unknown[] = [];
+    const push = (v: unknown) => {
+      values.push(v);
+      return `$${values.length}`;
+    };
+
+    sets.push(`code = ${push(machine.code)}`);
+    sets.push(`name = ${push(machine.name)}`);
+    sets.push(`type = ${push(machine.type)}::machine_type`);
+    sets.push(`machine_model_id = ${push(resolvedModelId)}::uuid`);
+    sets.push(`display_name = ${push(machine.display_name ?? null)}`);
+    sets.push(`brand = ${push(machine.brand ?? resolvedModel?.manufacturer ?? null)}`);
+    sets.push(`model = ${push(machine.model ?? resolvedModel?.model ?? null)}`);
+    sets.push(`serial_number = ${push(machine.serial_number ?? null)}`);
+    sets.push(`commissioned_year = ${push(machine.commissioned_year ?? null)}`);
+    sets.push(`hourly_rate = ${push(machine.hourly_rate)}`);
+    sets.push(`currency = ${push(machine.currency)}`);
+    sets.push(`status = ${push(machine.status)}::machine_status`);
+    sets.push(`is_available = ${push(machine.is_available)}`);
+    sets.push(`dashboard_color = ${push(machine.dashboard_color ?? null)}`);
+    sets.push(`model_3d_path = ${push(machine.model_3d_path ?? null)}`);
+    sets.push(`documentation_url = ${push(machine.documentation_url ?? null)}`);
+    sets.push(`documentation_source = ${push(machine.documentation_source ?? null)}`);
+    sets.push(`scheduling_enabled = ${push(machine.scheduling_enabled)}`);
+    sets.push(`outillage_enabled = ${push(machine.outillage_enabled)}`);
+    sets.push(`location = ${push(machine.location ?? null)}`);
+    sets.push(`workshop_zone = ${push(machine.workshop_zone ?? null)}`);
+    sets.push(`notes = ${push(machine.notes ?? null)}`);
+    if (params.image_path !== undefined) {
+      sets.push(`image_path = ${push(params.image_path)}`);
+    }
+    sets.push(`updated_by = ${push(params.audit.user_id)}`);
+    sets.push(`updated_at = now()`);
+
+    const upd = await client.query<{ id: string; code: string; name: string; type: string; status: string }>(
+      `
+        UPDATE machines
+        SET ${sets.join(", ")}
+        WHERE id = ${push(params.id)}::uuid
+        RETURNING
+          id::text AS id,
+          code,
+          name,
+          type::text AS type,
+          status::text AS status
+      `,
+      values
+    );
+
+    const row = upd.rows[0] ?? null;
+    if (!row) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    await insertAuditLog(client, params.audit, {
+      action: "production.machines.onboarding.update",
+      entity_type: "machines",
+      entity_id: row.id,
+      details: {
+        code: row.code,
+        name: row.name,
+        type: row.type,
+        status: row.status,
+        machine_model_id: resolvedModelId,
+        model_updated: hasModelDraft(modelInput),
+        specs_written: hasSpecDraft(b.specs),
+        capabilities_count: b.capabilities?.length ?? 0,
+        tooling_count: b.tooling?.length ?? 0,
+      },
+    });
+
+    await client.query("COMMIT");
+
+    const out = await repoGetMachine(row.id);
+    if (!out) throw new Error("Failed to load updated machine");
+    return out;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    if (isPgUniqueViolation(err)) {
+      const constraint = pgConstraint(err);
+      if (constraint === "machines_code_key") {
+        throw new HttpError(409, "MACHINE_CODE_EXISTS", "A machine with this code already exists");
+      }
+      if (constraint === "production_machine_models_code_key") {
+        throw new HttpError(409, "MACHINE_MODEL_CODE_EXISTS", "A machine model with this code already exists");
+      }
+      if (constraint === "production_machine_models_manufacturer_model_key") {
+        throw new HttpError(409, "MACHINE_MODEL_EXISTS", "A machine model with this manufacturer and model already exists");
       }
       throw new HttpError(409, "MACHINE_ONBOARDING_UNIQUE_CONFLICT", "Machine onboarding conflicts with existing data");
     }

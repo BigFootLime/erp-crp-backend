@@ -24,6 +24,7 @@ import {
   updateOrdreFabrication,
   updateOrdreFabricationOperation,
   updateMachine,
+  updateMachineOnboarding,
   updatePoste,
 } from "../controllers/production.controller";
 import {
@@ -99,6 +100,7 @@ router.get("/machines/:id/documents", listMachineDocuments);
 router.get("/machines/:id", getMachine);
 router.post("/machines/onboarding", requireProductionOrAdmin, upload.single("image"), createMachineOnboarding);
 router.post("/machines", upload.single("image"), createMachine);
+router.patch("/machines/:id/onboarding", requireProductionOrAdmin, upload.single("image"), updateMachineOnboarding);
 router.patch("/machines/:id", upload.single("image"), updateMachine);
 router.delete("/machines/:id", requireAdmin, archiveMachine);
 

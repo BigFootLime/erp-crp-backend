@@ -110,7 +110,12 @@ export const createMachineOnboardingSchema = z.object({
         spindle_taper: optionalShortTextSchema,
         spindle_speed_max_rpm: optionalPositiveIntSchema,
         spindle_power_kw: optionalPositiveNumberSchema,
+        spindle_torque_nm: optionalPositiveNumberSchema,
         tool_magazine_capacity: optionalPositiveIntSchema,
+        max_tool_diameter_mm: optionalPositiveNumberSchema,
+        max_tool_length_mm: optionalPositiveNumberSchema,
+        max_tool_weight_kg: optionalPositiveNumberSchema,
+        tool_change_time_sec: optionalPositiveNumberSchema,
         compatible_holders: onboardingTextArraySchema,
         operations_notes: optionalMediumTextSchema,
         maintenance_notes: optionalMediumTextSchema,
@@ -151,6 +156,9 @@ export const createMachineOnboardingSchema = z.object({
 });
 
 export type CreateMachineOnboardingBodyDTO = z.infer<typeof createMachineOnboardingSchema>["body"];
+
+export const updateMachineOnboardingSchema = createMachineOnboardingSchema;
+export type UpdateMachineOnboardingBodyDTO = CreateMachineOnboardingBodyDTO;
 
 export const updateMachineSchema = z.object({
   body: z.object({

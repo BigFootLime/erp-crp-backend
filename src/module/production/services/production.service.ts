@@ -9,6 +9,7 @@ import type {
   OfReceiptBodyDTO,
   StartOfTimeLogBodyDTO,
   UpdateMachineBodyDTO,
+  UpdateMachineOnboardingBodyDTO,
   UpdateOfBodyDTO,
   UpdateOfOperationBodyDTO,
   UpdatePosteBodyDTO,
@@ -39,6 +40,13 @@ export const svcUpdateMachine = (params: {
   image_path?: string | null;
   audit: repo.AuditContext;
 }) => repo.repoUpdateMachine(params);
+
+export const svcUpdateMachineOnboarding = (params: {
+  id: string;
+  body: UpdateMachineOnboardingBodyDTO;
+  image_path?: string | null;
+  audit: repo.AuditContext;
+}) => repo.repoUpdateMachineOnboarding(params);
 
 export const svcArchiveMachine = (params: { id: string; audit: repo.AuditContext }) => repo.repoArchiveMachine(params);
 

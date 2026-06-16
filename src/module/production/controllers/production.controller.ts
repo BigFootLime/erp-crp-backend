@@ -19,6 +19,7 @@ import {
   startOfTimeLogSchema,
   stopOfTimeLogSchema,
   updateMachineSchema,
+  updateMachineOnboardingSchema,
   updateOfOperationSchema,
   updateOfSchema,
   updatePosteSchema,
@@ -44,6 +45,7 @@ import {
   svcUpdateOrdreFabrication,
   svcUpdateOrdreFabricationOperation,
   svcUpdateMachine,
+  svcUpdateMachineOnboarding,
   svcUpdatePoste,
 } from "../services/production.service";
 import { svcGetMachineIntelligence } from "../services/machine-intelligence.service";
@@ -172,6 +174,21 @@ export const updateMachine = asyncHandler(async (req, res) => {
   const file = (req as Request & { file?: unknown }).file;
   const imagePath = isMulterFile(file) ? file.path : undefined;
   const out = await svcUpdateMachine({ id, patch, image_path: imagePath, audit });
+  if (!out) {
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
+  res.status(200).json(out);
+});
+
+export const updateMachineOnboarding = asyncHandler(async (req, res) => {
+  const audit = buildAuditContext(req);
+  const { id } = machineIdParamSchema.parse({ params: req.params }).params;
+  const raw = parseBody(req);
+  const body = updateMachineOnboardingSchema.parse({ body: raw }).body;
+  const file = (req as Request & { file?: unknown }).file;
+  const imagePath = isMulterFile(file) ? file.path : undefined;
+  const out = await svcUpdateMachineOnboarding({ id, body, image_path: imagePath, audit });
   if (!out) {
     res.status(404).json({ error: "Not found" });
     return;
