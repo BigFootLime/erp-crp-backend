@@ -208,7 +208,7 @@ export const outilController = {
 
     try {
       const user = requireUser(req)
-      const parsed = parseMultipartJsonBody(req.body.data, outilUpdateSchema)
+      const parsed = parseMultipartJsonBody(req.body.data, outilUpsertSchema)
       const result = await outilService.createOutil({
         ...parsed,
         esquisse: paths.esquisse ?? null,
