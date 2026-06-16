@@ -3,7 +3,7 @@ import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
-import type { CreateClientDTO } from "../validators/client.validators";
+import type { CreateClientContactDTO, CreateClientDTO } from "../validators/client.validators";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 import { generateClientCode } from "../../../shared/codes/code-generator.service";
@@ -405,6 +405,112 @@ export async function repoCreateClient(
     return { client_id: clientId, client_code: clientCode };
   } catch (e) {
     await db.query('ROLLBACK');
+    throw e;
+  } finally {
+    db.release();
+  }
+}
+
+export async function repoCreateClientContact(
+  clientId: string,
+  dto: CreateClientContactDTO,
+  audit: AuditContext
+): Promise<{
+  contact_id: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  phone_direct: string | null;
+  phone_personal: string | null;
+  role: string | null;
+  civility: string | null;
+}> {
+  const db = await pool.connect();
+  try {
+    await db.query("BEGIN");
+
+    const current = await db.query<{ contact_id: string | null }>(
+      `
+        SELECT contact_id::text AS contact_id
+        FROM clients
+        WHERE client_id = $1
+        FOR UPDATE
+      `,
+      [clientId]
+    );
+
+    if (current.rows.length === 0) {
+      throw new HttpError(404, "CLIENT_NOT_FOUND", "Client not found");
+    }
+
+    const { rows } = await db.query<{
+      contact_id: string;
+      first_name: string;
+      last_name: string;
+      email: string;
+      phone_direct: string | null;
+      phone_personal: string | null;
+      role: string | null;
+      civility: string | null;
+    }>(
+      `
+        INSERT INTO contacts (
+          first_name,
+          last_name,
+          civility,
+          role,
+          phone_direct,
+          phone_personal,
+          email,
+          client_id
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+        RETURNING
+          contact_id::text AS contact_id,
+          first_name,
+          last_name,
+          email,
+          phone_direct,
+          phone_personal,
+          role,
+          civility
+      `,
+      [
+        dto.first_name,
+        dto.last_name,
+        dto.civility ?? null,
+        dto.role ?? null,
+        dto.phone_direct ?? null,
+        dto.phone_personal ?? null,
+        dto.email,
+        clientId,
+      ]
+    );
+
+    const contact = rows[0];
+    if (!contact) throw new Error("Failed to create client contact");
+
+    const currentPrimaryContactId = current.rows[0]?.contact_id ?? null;
+    if (dto.set_primary || !currentPrimaryContactId) {
+      await db.query(`UPDATE clients SET contact_id = $1 WHERE client_id = $2`, [contact.contact_id, clientId]);
+    }
+
+    await insertAuditLog(db, audit, {
+      action: "CLIENT_CONTACT_CREATE",
+      entity_type: "client",
+      entity_id: clientId,
+      details: {
+        client_id: clientId,
+        contact_id: contact.contact_id,
+        email: contact.email,
+        set_primary: Boolean(dto.set_primary || !currentPrimaryContactId),
+      },
+    });
+
+    await db.query("COMMIT");
+    return contact;
+  } catch (e) {
+    await db.query("ROLLBACK");
     throw e;
   } finally {
     db.release();

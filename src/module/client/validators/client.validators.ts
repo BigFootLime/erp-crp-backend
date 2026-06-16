@@ -241,3 +241,16 @@ export const createClientSchema = z.object({
 });
 
 export type CreateClientDTO = z.infer<typeof createClientSchema>;
+
+export const createClientContactSchema = z.object({
+  first_name: requiredText("Prénom requis"),
+  last_name: requiredText("Nom requis"),
+  email: z.string().trim().email("Email invalide"),
+  phone_direct: z.preprocess(emptyStringToUndefined, z.string().trim().optional().nullable()),
+  phone_personal: z.preprocess(emptyStringToUndefined, z.string().trim().optional().nullable()),
+  role: z.preprocess(emptyStringToUndefined, z.string().trim().optional().nullable()),
+  civility: z.preprocess(emptyStringToUndefined, z.enum(CIVILITY_OPTIONS).optional().nullable()),
+  set_primary: z.boolean().optional().default(false),
+});
+
+export type CreateClientContactDTO = z.infer<typeof createClientContactSchema>;

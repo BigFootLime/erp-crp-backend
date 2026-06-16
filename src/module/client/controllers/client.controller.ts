@@ -5,8 +5,15 @@ import { getClientIp, parseDevice } from "../../../utils/requestMeta";
 
 import * as clientService from "../services/client.service"; // ✅ namespace import
 import { svcGetClientById, svcListClientAddresses } from "../services/clients.read.service";
-import { createClientSchema } from "../validators/client.validators";
-import { type AuditContext, repoArchiveClient, repoCreateClient, repoDeleteClient, repoUpdateClient } from "../repository/client.repository";
+import { createClientContactSchema, createClientSchema } from "../validators/client.validators";
+import {
+  type AuditContext,
+  repoArchiveClient,
+  repoCreateClient,
+  repoCreateClientContact,
+  repoDeleteClient,
+  repoUpdateClient,
+} from "../repository/client.repository";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import path from "node:path";
 // import { LOGO_BASE_DIR } from "../upload/client-logo-upload";
@@ -141,6 +148,20 @@ export const postClient: RequestHandler = async (req, res, next) => {
     const dto = createClientSchema.parse(req.body);
     const created = await repoCreateClient(dto, audit);
     res.status(201).json(created); // { client_id }
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const postClientContact: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildAuditContext(req);
+    const rawClientId = req.params.clientId;
+    const clientId = Array.isArray(rawClientId) ? rawClientId[0] : rawClientId;
+    if (!clientId) throw new HttpError(400, "CLIENT_ID_REQUIRED", "client_id is required");
+    const dto = createClientContactSchema.parse(req.body);
+    const created = await repoCreateClientContact(clientId, dto, audit);
+    res.status(201).json(created);
   } catch (e) {
     next(e);
   }

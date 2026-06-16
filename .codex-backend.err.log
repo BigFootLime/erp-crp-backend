@@ -58,3 +58,303 @@ Require stack:
     at Object.<anonymous> (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts:2:1)
     at Module.<anonymous> (node:internal/modules/cjs/loader:1812:14)
     at Module._compile (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\node_modules\source-map-support\source-map-support.js:568:25)
+Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1456:15)
+    at defaultResolveImpl (node:internal/modules/cjs/loader:1066:19)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1071:22)
+    at Module._load (node:internal/modules/cjs/loader:1242:25)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.require (node:internal/modules/cjs/loader:1556:12)
+    at require (node:internal/modules/helpers:152:16)
+    at Object.<anonymous> (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts:2:1)
+    at Module.<anonymous> (node:internal/modules/cjs/loader:1812:14)
+    at Module._compile (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\node_modules\source-map-support\source-map-support.js:568:25)
+Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1456:15)
+    at defaultResolveImpl (node:internal/modules/cjs/loader:1066:19)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1071:22)
+    at Module._load (node:internal/modules/cjs/loader:1242:25)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.require (node:internal/modules/cjs/loader:1556:12)
+    at require (node:internal/modules/helpers:152:16)
+    at Object.<anonymous> (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts:2:1)
+    at Module.<anonymous> (node:internal/modules/cjs/loader:1812:14)
+    at Module._compile (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\node_modules\source-map-support\source-map-support.js:568:25)
+Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1456:15)
+    at defaultResolveImpl (node:internal/modules/cjs/loader:1066:19)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1071:22)
+    at Module._load (node:internal/modules/cjs/loader:1242:25)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.require (node:internal/modules/cjs/loader:1556:12)
+    at require (node:internal/modules/helpers:152:16)
+    at Object.<anonymous> (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts:2:1)
+    at Module.<anonymous> (node:internal/modules/cjs/loader:1812:14)
+    at Module._compile (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\node_modules\source-map-support\source-map-support.js:568:25)
+Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1456:15)
+    at defaultResolveImpl (node:internal/modules/cjs/loader:1066:19)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1071:22)
+    at Module._load (node:internal/modules/cjs/loader:1242:25)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.require (node:internal/modules/cjs/loader:1556:12)
+    at require (node:internal/modules/helpers:152:16)
+    at Object.<anonymous> (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts:2:1)
+    at Module.<anonymous> (node:internal/modules/cjs/loader:1812:14)
+    at Module._compile (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\node_modules\source-map-support\source-map-support.js:568:25)
+Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1456:15)
+    at defaultResolveImpl (node:internal/modules/cjs/loader:1066:19)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1071:22)
+    at Module._load (node:internal/modules/cjs/loader:1242:25)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.require (node:internal/modules/cjs/loader:1556:12)
+    at require (node:internal/modules/helpers:152:16)
+    at Object.<anonymous> (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts:2:1)
+    at Module.<anonymous> (node:internal/modules/cjs/loader:1812:14)
+    at Module._compile (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\node_modules\source-map-support\source-map-support.js:568:25)
+Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1456:15)
+    at defaultResolveImpl (node:internal/modules/cjs/loader:1066:19)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1071:22)
+    at Module._load (node:internal/modules/cjs/loader:1242:25)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.require (node:internal/modules/cjs/loader:1556:12)
+    at require (node:internal/modules/helpers:152:16)
+    at Object.<anonymous> (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts:2:1)
+    at Module.<anonymous> (node:internal/modules/cjs/loader:1812:14)
+    at Module._compile (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\node_modules\source-map-support\source-map-support.js:568:25)
+Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1456:15)
+    at defaultResolveImpl (node:internal/modules/cjs/loader:1066:19)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1071:22)
+    at Module._load (node:internal/modules/cjs/loader:1242:25)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.require (node:internal/modules/cjs/loader:1556:12)
+    at require (node:internal/modules/helpers:152:16)
+    at Object.<anonymous> (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts:2:1)
+    at Module.<anonymous> (node:internal/modules/cjs/loader:1812:14)
+    at Module._compile (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\node_modules\source-map-support\source-map-support.js:568:25)
+Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1456:15)
+    at defaultResolveImpl (node:internal/modules/cjs/loader:1066:19)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1071:22)
+    at Module._load (node:internal/modules/cjs/loader:1242:25)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.require (node:internal/modules/cjs/loader:1556:12)
+    at require (node:internal/modules/helpers:152:16)
+    at Object.<anonymous> (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts:2:1)
+    at Module.<anonymous> (node:internal/modules/cjs/loader:1812:14)
+    at Module._compile (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\node_modules\source-map-support\source-map-support.js:568:25)
+Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1456:15)
+    at defaultResolveImpl (node:internal/modules/cjs/loader:1066:19)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1071:22)
+    at Module._load (node:internal/modules/cjs/loader:1242:25)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.require (node:internal/modules/cjs/loader:1556:12)
+    at require (node:internal/modules/helpers:152:16)
+    at Object.<anonymous> (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts:2:1)
+    at Module.<anonymous> (node:internal/modules/cjs/loader:1812:14)
+    at Module._compile (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\node_modules\source-map-support\source-map-support.js:568:25)
+Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1456:15)
+    at defaultResolveImpl (node:internal/modules/cjs/loader:1066:19)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1071:22)
+    at Module._load (node:internal/modules/cjs/loader:1242:25)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.require (node:internal/modules/cjs/loader:1556:12)
+    at require (node:internal/modules/helpers:152:16)
+    at Object.<anonymous> (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts:2:1)
+    at Module.<anonymous> (node:internal/modules/cjs/loader:1812:14)
+    at Module._compile (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\node_modules\source-map-support\source-map-support.js:568:25)
+Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1456:15)
+    at defaultResolveImpl (node:internal/modules/cjs/loader:1066:19)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1071:22)
+    at Module._load (node:internal/modules/cjs/loader:1242:25)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.require (node:internal/modules/cjs/loader:1556:12)
+    at require (node:internal/modules/helpers:152:16)
+    at Object.<anonymous> (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts:2:1)
+    at Module.<anonymous> (node:internal/modules/cjs/loader:1812:14)
+    at Module._compile (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\node_modules\source-map-support\source-map-support.js:568:25)
+Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1456:15)
+    at defaultResolveImpl (node:internal/modules/cjs/loader:1066:19)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1071:22)
+    at Module._load (node:internal/modules/cjs/loader:1242:25)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.require (node:internal/modules/cjs/loader:1556:12)
+    at require (node:internal/modules/helpers:152:16)
+    at Object.<anonymous> (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts:2:1)
+    at Module.<anonymous> (node:internal/modules/cjs/loader:1812:14)
+    at Module._compile (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\node_modules\source-map-support\source-map-support.js:568:25)
+Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1456:15)
+    at defaultResolveImpl (node:internal/modules/cjs/loader:1066:19)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1071:22)
+    at Module._load (node:internal/modules/cjs/loader:1242:25)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.require (node:internal/modules/cjs/loader:1556:12)
+    at require (node:internal/modules/helpers:152:16)
+    at Object.<anonymous> (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts:2:1)
+    at Module.<anonymous> (node:internal/modules/cjs/loader:1812:14)
+    at Module._compile (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\node_modules\source-map-support\source-map-support.js:568:25)
+Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1456:15)
+    at defaultResolveImpl (node:internal/modules/cjs/loader:1066:19)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1071:22)
+    at Module._load (node:internal/modules/cjs/loader:1242:25)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.require (node:internal/modules/cjs/loader:1556:12)
+    at require (node:internal/modules/helpers:152:16)
+    at Object.<anonymous> (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts:2:1)
+    at Module.<anonymous> (node:internal/modules/cjs/loader:1812:14)
+    at Module._compile (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\node_modules\source-map-support\source-map-support.js:568:25)
+Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1456:15)
+    at defaultResolveImpl (node:internal/modules/cjs/loader:1066:19)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1071:22)
+    at Module._load (node:internal/modules/cjs/loader:1242:25)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.require (node:internal/modules/cjs/loader:1556:12)
+    at require (node:internal/modules/helpers:152:16)
+    at Object.<anonymous> (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts:2:1)
+    at Module.<anonymous> (node:internal/modules/cjs/loader:1812:14)
+    at Module._compile (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\node_modules\source-map-support\source-map-support.js:568:25)
+Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1456:15)
+    at defaultResolveImpl (node:internal/modules/cjs/loader:1066:19)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1071:22)
+    at Module._load (node:internal/modules/cjs/loader:1242:25)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.require (node:internal/modules/cjs/loader:1556:12)
+    at require (node:internal/modules/helpers:152:16)
+    at Object.<anonymous> (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts:2:1)
+    at Module.<anonymous> (node:internal/modules/cjs/loader:1812:14)
+    at Module._compile (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\node_modules\source-map-support\source-map-support.js:568:25)
+Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1456:15)
+    at defaultResolveImpl (node:internal/modules/cjs/loader:1066:19)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1071:22)
+    at Module._load (node:internal/modules/cjs/loader:1242:25)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.require (node:internal/modules/cjs/loader:1556:12)
+    at require (node:internal/modules/helpers:152:16)
+    at Object.<anonymous> (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts:2:1)
+    at Module.<anonymous> (node:internal/modules/cjs/loader:1812:14)
+    at Module._compile (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\node_modules\source-map-support\source-map-support.js:568:25)
+Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1456:15)
+    at defaultResolveImpl (node:internal/modules/cjs/loader:1066:19)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1071:22)
+    at Module._load (node:internal/modules/cjs/loader:1242:25)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.require (node:internal/modules/cjs/loader:1556:12)
+    at require (node:internal/modules/helpers:152:16)
+    at Object.<anonymous> (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts:2:1)
+    at Module.<anonymous> (node:internal/modules/cjs/loader:1812:14)
+    at Module._compile (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\node_modules\source-map-support\source-map-support.js:568:25)
+Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1456:15)
+    at defaultResolveImpl (node:internal/modules/cjs/loader:1066:19)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1071:22)
+    at Module._load (node:internal/modules/cjs/loader:1242:25)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.require (node:internal/modules/cjs/loader:1556:12)
+    at require (node:internal/modules/helpers:152:16)
+    at Object.<anonymous> (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts:2:1)
+    at Module.<anonymous> (node:internal/modules/cjs/loader:1812:14)
+    at Module._compile (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\node_modules\source-map-support\source-map-support.js:568:25)
+Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1456:15)
+    at defaultResolveImpl (node:internal/modules/cjs/loader:1066:19)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1071:22)
+    at Module._load (node:internal/modules/cjs/loader:1242:25)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.require (node:internal/modules/cjs/loader:1556:12)
+    at require (node:internal/modules/helpers:152:16)
+    at Object.<anonymous> (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts:2:1)
+    at Module.<anonymous> (node:internal/modules/cjs/loader:1812:14)
+    at Module._compile (C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\node_modules\source-map-support\source-map-support.js:568:25)

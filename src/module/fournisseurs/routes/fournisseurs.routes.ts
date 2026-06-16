@@ -16,9 +16,12 @@ import {
   getFournisseur,
   listFournisseurCatalogue,
   listFournisseurContacts,
+  listFournisseurDomaines,
   listFournisseurDocuments,
+  listFournisseurEvents,
   listFournisseurs,
   removeFournisseurDocument,
+  replaceFournisseurDomaines,
   updateFournisseur,
   updateFournisseurCatalogueItem,
   updateFournisseurContact,
@@ -41,9 +44,12 @@ router.use(authenticateToken)
 
 router.get("/", listFournisseurs)
 router.post("/", createFournisseur)
+router.get("/domaines", listFournisseurDomaines)
 router.get("/:id", getFournisseur)
 router.patch("/:id", updateFournisseur)
 router.post("/:id/deactivate", deactivateFournisseur)
+router.put("/:id/domaines", replaceFournisseurDomaines)
+router.get("/:id/events", listFournisseurEvents)
 
 router.get("/:id/contacts", listFournisseurContacts)
 router.post("/:id/contacts", createFournisseurContact)

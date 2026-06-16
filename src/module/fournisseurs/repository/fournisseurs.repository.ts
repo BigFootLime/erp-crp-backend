@@ -13,8 +13,10 @@ import type {
   CreateCatalogueBodyDTO,
   CreateContactBodyDTO,
   CreateFournisseurBodyDTO,
+  FournisseurDomaineLienInputDTO,
   ListCatalogueQueryDTO,
   ListFournisseursQueryDTO,
+  PutFournisseurDomainesBodyDTO,
   UpdateCatalogueBodyDTO,
   UpdateContactBodyDTO,
   UpdateFournisseurBodyDTO,
@@ -23,8 +25,12 @@ import type {
   Fournisseur,
   FournisseurCatalogueItem,
   FournisseurContact,
+  FournisseurDomaine,
+  FournisseurDomaineLien,
+  FournisseurEvent,
   FournisseurDocument,
   FournisseurListItem,
+  FournisseurRelations,
   Paginated,
 } from "../types/fournisseurs.types"
 
@@ -107,16 +113,78 @@ type FournisseurRow = {
   code: string
   nom: string
   actif: boolean
+  status: string | null
+  type_principal: string | null
   tva: string | null
   siret: string | null
   email: string | null
   telephone: string | null
   site_web: string | null
+  adresse_ligne: string | null
+  house_no: string | null
+  postcode: string | null
+  city: string | null
+  country: string | null
+  nom_commercial: string | null
+  logo: string | null
   notes: string | null
+  archived_at: string | null
   created_at: string
   updated_at: string
   created_by: number | null
   updated_by: number | null
+  domaines_json: FournisseurDomaineLien[] | string | null
+  outillage_id_fournisseur: number | null
+  outillage_outils_count: number | string | null
+  outillage_fabricants_count: number | string | null
+  outillage_prix_count: number | string | null
+  outillage_mouvements_count: number | string | null
+  contacts_count: number | string | null
+  catalogue_count: number | string | null
+  documents_count: number | string | null
+  events_count: number | string | null
+}
+
+function toInt(value: number | string | null | undefined): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value
+  if (typeof value === "string" && value.trim()) {
+    const n = Number(value)
+    return Number.isFinite(n) ? n : 0
+  }
+  return 0
+}
+
+function parseDomaines(value: FournisseurDomaineLien[] | string | null | undefined): FournisseurDomaineLien[] {
+  if (Array.isArray(value)) return value
+  if (typeof value !== "string" || !value.trim()) return []
+  try {
+    const parsed = JSON.parse(value)
+    return Array.isArray(parsed) ? parsed as FournisseurDomaineLien[] : []
+  } catch {
+    return []
+  }
+}
+
+function normalizeStatus(row: Pick<FournisseurRow, "status" | "actif" | "archived_at">): Fournisseur["status"] {
+  if (row.archived_at) return "archive"
+  if (row.status === "a_completer" || row.status === "inactif" || row.status === "archive" || row.status === "actif") return row.status
+  return row.actif ? "actif" : "inactif"
+}
+
+function mapRelations(r: FournisseurRow): FournisseurRelations {
+  if (r.outillage_id_fournisseur === null || typeof r.outillage_id_fournisseur === "undefined") {
+    return { outillage: null }
+  }
+
+  return {
+    outillage: {
+      id_fournisseur: Number(r.outillage_id_fournisseur),
+      outils_count: toInt(r.outillage_outils_count),
+      fabricants_count: toInt(r.outillage_fabricants_count),
+      prix_count: toInt(r.outillage_prix_count),
+      mouvements_count: toInt(r.outillage_mouvements_count),
+    },
+  }
 }
 
 function mapFournisseurRow(r: FournisseurRow): Fournisseur {
@@ -125,16 +193,32 @@ function mapFournisseurRow(r: FournisseurRow): Fournisseur {
     code: r.code,
     nom: r.nom,
     actif: r.actif,
+    status: normalizeStatus(r),
+    type_principal: r.type_principal,
     tva: r.tva,
     siret: r.siret,
     email: r.email,
     telephone: r.telephone,
     site_web: r.site_web,
+    adresse_ligne: r.adresse_ligne,
+    house_no: r.house_no,
+    postcode: r.postcode,
+    city: r.city,
+    country: r.country,
+    nom_commercial: r.nom_commercial,
+    logo: r.logo,
     notes: r.notes,
+    archived_at: r.archived_at,
     created_at: r.created_at,
     updated_at: r.updated_at,
     created_by: r.created_by,
     updated_by: r.updated_by,
+    domaines: parseDomaines(r.domaines_json),
+    relations: mapRelations(r),
+    contacts_count: toInt(r.contacts_count),
+    catalogue_count: toInt(r.catalogue_count),
+    documents_count: toInt(r.documents_count),
+    events_count: toInt(r.events_count),
   }
 }
 
@@ -154,6 +238,100 @@ function sortDirection(sortDir: ListFournisseursQueryDTO["sortDir"]) {
   return sortDir === "asc" ? "ASC" : "DESC"
 }
 
+const fournisseurSelectFields = `
+  f.id::text AS id,
+  COALESCE(f.code, f.code_fournisseur) AS code,
+  COALESCE(f.nom, f.raison_sociale) AS nom,
+  f.actif,
+  f.status,
+  f.type_principal,
+  f.tva,
+  f.siret,
+  f.email,
+  f.telephone,
+  f.site_web,
+  f.adresse_ligne,
+  f.house_no,
+  f.postcode,
+  f.city,
+  f.country,
+  f.nom_commercial,
+  f.logo,
+  f.notes,
+  f.archived_at::text AS archived_at,
+  f.created_at::text AS created_at,
+  f.updated_at::text AS updated_at,
+  f.created_by,
+  f.updated_by,
+  (
+    SELECT COALESCE(
+      jsonb_agg(
+        jsonb_build_object(
+          'id', d.id::text,
+          'code', d.code,
+          'label', d.label,
+          'description', d.description,
+          'icon', d.icon,
+          'sort_order', d.sort_order,
+          'is_active', d.is_active,
+          'is_primary', l.is_primary,
+          'notes', l.notes
+        )
+        ORDER BY l.is_primary DESC, d.sort_order ASC, d.label ASC
+      ),
+      '[]'::jsonb
+    )
+    FROM public.fournisseur_domaine_lien l
+    JOIN public.fournisseur_domaines d ON d.id = l.domaine_id
+    WHERE l.fournisseur_id = f.id
+      AND d.is_active = true
+  ) AS domaines_json,
+  fom.id_fournisseur AS outillage_id_fournisseur,
+  CASE WHEN fom.id_fournisseur IS NULL THEN 0 ELSE (
+    SELECT COUNT(*)::int
+    FROM public.gestion_outils_outil_fournisseur oof
+    WHERE oof.id_fournisseur = fom.id_fournisseur
+  ) END AS outillage_outils_count,
+  CASE WHEN fom.id_fournisseur IS NULL THEN 0 ELSE (
+    SELECT COUNT(*)::int
+    FROM public.gestion_outils_fournisseur_fabricant ff
+    WHERE ff.id_fournisseur = fom.id_fournisseur
+  ) END AS outillage_fabricants_count,
+  CASE WHEN fom.id_fournisseur IS NULL THEN 0 ELSE (
+    SELECT COUNT(*)::int
+    FROM public.gestion_outils_historique_prix hp
+    WHERE hp.id_fournisseur = fom.id_fournisseur
+  ) END AS outillage_prix_count,
+  CASE WHEN fom.id_fournisseur IS NULL THEN 0 ELSE (
+    SELECT COUNT(*)::int
+    FROM public.gestion_outils_mouvement_stock ms
+    WHERE ms.id_fournisseur = fom.id_fournisseur
+  ) END AS outillage_mouvements_count,
+  (
+    SELECT COUNT(*)::int
+    FROM public.fournisseur_contacts c
+    WHERE c.fournisseur_id = f.id
+      AND c.actif = true
+  ) AS contacts_count,
+  (
+    SELECT COUNT(*)::int
+    FROM public.fournisseur_catalogue cat
+    WHERE cat.fournisseur_id = f.id
+      AND cat.actif = true
+  ) AS catalogue_count,
+  (
+    SELECT COUNT(*)::int
+    FROM public.fournisseur_documents doc
+    WHERE doc.fournisseur_id = f.id
+      AND doc.removed_at IS NULL
+  ) AS documents_count,
+  (
+    SELECT COUNT(*)::int
+    FROM public.fournisseur_events ev
+    WHERE ev.fournisseur_id = f.id
+  ) AS events_count
+`
+
 export async function repoListFournisseurs(filters: ListFournisseursQueryDTO): Promise<Paginated<FournisseurListItem>> {
   const where: string[] = []
   const values: unknown[] = []
@@ -165,10 +343,57 @@ export async function repoListFournisseurs(filters: ListFournisseursQueryDTO): P
   if (filters.search && filters.search.trim()) {
     const q = `%${filters.search.trim()}%`
     const p = push(q)
-    where.push(`(COALESCE(f.code, f.code_fournisseur) ILIKE ${p} OR COALESCE(f.nom, f.raison_sociale) ILIKE ${p})`)
+    where.push(`(
+      COALESCE(f.code, f.code_fournisseur) ILIKE ${p}
+      OR COALESCE(f.nom, f.raison_sociale) ILIKE ${p}
+      OR f.email ILIKE ${p}
+      OR f.telephone ILIKE ${p}
+      OR f.city ILIKE ${p}
+      OR f.country ILIKE ${p}
+      OR EXISTS (
+        SELECT 1
+        FROM public.fournisseur_contacts c
+        WHERE c.fournisseur_id = f.id
+          AND c.actif = true
+          AND (
+            c.nom ILIKE ${p}
+            OR c.full_name ILIKE ${p}
+            OR c.email ILIKE ${p}
+            OR c.telephone ILIKE ${p}
+            OR c.mobile ILIKE ${p}
+          )
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM public.fournisseur_domaine_lien l
+        JOIN public.fournisseur_domaines d ON d.id = l.domaine_id
+        WHERE l.fournisseur_id = f.id
+          AND (d.code ILIKE ${p} OR d.label ILIKE ${p})
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM public.fournisseur_outillage_mapping om
+        JOIN public.gestion_outils_fournisseur of ON of.id_fournisseur = om.id_fournisseur
+        WHERE om.fournisseur_id = f.id
+          AND of.nom ILIKE ${p}
+      )
+    )`)
   }
   if (typeof filters.actif === "boolean") {
     where.push(`f.actif = ${push(filters.actif)}`)
+  }
+  if (filters.status) {
+    where.push(`COALESCE(f.status, CASE WHEN f.actif THEN 'actif' ELSE 'inactif' END) = ${push(filters.status)}`)
+  }
+  const domaineCodes = filters.domaines?.split(",").map((item) => item.trim()).filter(Boolean) ?? []
+  if (domaineCodes.length) {
+    where.push(`EXISTS (
+      SELECT 1
+      FROM public.fournisseur_domaine_lien l
+      JOIN public.fournisseur_domaines d ON d.id = l.domaine_id
+      WHERE l.fournisseur_id = f.id
+        AND d.code = ANY(${push(domaineCodes)}::text[])
+    )`)
   }
 
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : ""
@@ -187,21 +412,9 @@ export async function repoListFournisseurs(filters: ListFournisseursQueryDTO): P
   const dataRes = await db.query<FournisseurRow>(
     `
       SELECT
-        f.id::text AS id,
-        COALESCE(f.code, f.code_fournisseur) AS code,
-        COALESCE(f.nom, f.raison_sociale) AS nom,
-        f.actif,
-        f.tva,
-        f.siret,
-        f.email,
-        f.telephone,
-        f.site_web,
-        f.notes,
-        f.created_at::text AS created_at,
-        f.updated_at::text AS updated_at,
-        f.created_by,
-        f.updated_by
+        ${fournisseurSelectFields}
       FROM public.fournisseurs f
+      LEFT JOIN public.fournisseur_outillage_mapping fom ON fom.fournisseur_id = f.id
       ${whereSql}
       ORDER BY ${orderBy} ${orderDir}, f.id ${orderDir}
       LIMIT $${values.length + 1}
@@ -210,13 +423,29 @@ export async function repoListFournisseurs(filters: ListFournisseursQueryDTO): P
     [...values, pageSize, offset]
   )
 
-  const items: FournisseurListItem[] = dataRes.rows.map((r) => ({
-    id: r.id,
-    code: r.code,
-    nom: r.nom,
-    actif: r.actif,
-    updated_at: r.updated_at,
-  }))
+  const items: FournisseurListItem[] = dataRes.rows.map((r) => {
+    const f = mapFournisseurRow(r)
+    return {
+      id: f.id,
+      code: f.code,
+      nom: f.nom,
+      actif: f.actif,
+      status: f.status,
+      type_principal: f.type_principal,
+      email: f.email,
+      telephone: f.telephone,
+      city: f.city,
+      country: f.country,
+      logo: f.logo,
+      updated_at: f.updated_at,
+      domaines: f.domaines,
+      relations: f.relations,
+      contacts_count: f.contacts_count,
+      catalogue_count: f.catalogue_count,
+      documents_count: f.documents_count,
+      events_count: f.events_count,
+    }
+  })
 
   return { items, total }
 }
@@ -225,21 +454,9 @@ export async function repoGetFournisseur(id: string): Promise<Fournisseur | null
   const res = await db.query<FournisseurRow>(
     `
       SELECT
-        f.id::text AS id,
-        COALESCE(f.code, f.code_fournisseur) AS code,
-        COALESCE(f.nom, f.raison_sociale) AS nom,
-        f.actif,
-        f.tva,
-        f.siret,
-        f.email,
-        f.telephone,
-        f.site_web,
-        f.notes,
-        f.created_at::text AS created_at,
-        f.updated_at::text AS updated_at,
-        f.created_by,
-        f.updated_by
+        ${fournisseurSelectFields}
       FROM public.fournisseurs f
+      LEFT JOIN public.fournisseur_outillage_mapping fom ON fom.fournisseur_id = f.id
       WHERE f.id = $1::uuid
       LIMIT 1
     `,
@@ -249,12 +466,105 @@ export async function repoGetFournisseur(id: string): Promise<Fournisseur | null
   return row ? mapFournisseurRow(row) : null
 }
 
+function normalizeDomainLinks(links: FournisseurDomaineLienInputDTO[] | undefined): FournisseurDomaineLienInputDTO[] {
+  if (!Array.isArray(links)) return []
+
+  const byCode = new Map<string, FournisseurDomaineLienInputDTO>()
+  for (const link of links) {
+    const code = link.domaine_code.trim()
+    if (!code) continue
+    if (!byCode.has(code)) {
+      byCode.set(code, { domaine_code: code, is_primary: Boolean(link.is_primary), notes: link.notes ?? null })
+      continue
+    }
+    const current = byCode.get(code)!
+    byCode.set(code, {
+      domaine_code: code,
+      is_primary: current.is_primary || Boolean(link.is_primary),
+      notes: current.notes ?? link.notes ?? null,
+    })
+  }
+
+  const normalized = Array.from(byCode.values())
+  if (!normalized.length) return []
+  const primaryIndex = normalized.findIndex((link) => link.is_primary)
+  return normalized.map((link, index) => ({
+    ...link,
+    is_primary: primaryIndex >= 0 ? index === primaryIndex : index === 0,
+  }))
+}
+
+function primaryDomainCode(links: FournisseurDomaineLienInputDTO[] | undefined): string | null {
+  const normalized = normalizeDomainLinks(links)
+  return normalized.find((link) => link.is_primary)?.domaine_code ?? normalized[0]?.domaine_code ?? null
+}
+
+async function replaceFournisseurDomainesTx(
+  tx: DbQueryer,
+  fournisseurId: string,
+  links: FournisseurDomaineLienInputDTO[] | undefined,
+  audit: AuditContext
+) {
+  const normalized = normalizeDomainLinks(links)
+
+  await tx.query(`DELETE FROM public.fournisseur_domaine_lien WHERE fournisseur_id = $1::uuid`, [fournisseurId])
+
+  for (const link of normalized) {
+    const inserted = await tx.query(
+      `
+        INSERT INTO public.fournisseur_domaine_lien (
+          fournisseur_id,
+          domaine_id,
+          is_primary,
+          notes,
+          created_by,
+          updated_by
+        )
+        SELECT $1::uuid, d.id, $3, $4, $5, $5
+        FROM public.fournisseur_domaines d
+        WHERE d.code = $2
+          AND d.is_active = true
+        ON CONFLICT (fournisseur_id, domaine_id) DO UPDATE SET
+          is_primary = EXCLUDED.is_primary,
+          notes = EXCLUDED.notes,
+          updated_at = now(),
+          updated_by = EXCLUDED.updated_by
+      `,
+      [fournisseurId, link.domaine_code, link.is_primary, link.notes ?? null, audit.user_id]
+    )
+    if ((inserted.rowCount ?? 0) === 0) {
+      throw new HttpError(400, "UNKNOWN_FOURNISSEUR_DOMAIN", `Domaine fournisseur inconnu: ${link.domaine_code}`)
+    }
+  }
+
+  await tx.query(
+    `
+      UPDATE public.fournisseurs f
+      SET
+        type_principal = (
+          SELECT d.code
+          FROM public.fournisseur_domaine_lien l
+          JOIN public.fournisseur_domaines d ON d.id = l.domaine_id
+          WHERE l.fournisseur_id = f.id
+          ORDER BY l.is_primary DESC, d.sort_order ASC, d.label ASC
+          LIMIT 1
+        ),
+        updated_at = now(),
+        updated_by = $2
+      WHERE f.id = $1::uuid
+    `,
+    [fournisseurId, audit.user_id]
+  )
+}
+
 export async function repoCreateFournisseur(body: CreateFournisseurBodyDTO, audit: AuditContext): Promise<Fournisseur> {
   const client = await db.connect()
   try {
     await client.query("BEGIN")
+    const mainDomain = body.type_principal ?? primaryDomainCode(body.domaines)
+    const status = body.status ?? (body.actif === false ? "inactif" : "actif")
 
-    const ins = await client.query<FournisseurRow>(
+    const ins = await client.query<{ id: string; code: string; nom: string; actif: boolean }>(
       `
         INSERT INTO public.fournisseurs (
           code,
@@ -262,31 +572,30 @@ export async function repoCreateFournisseur(body: CreateFournisseurBodyDTO, audi
           nom,
           raison_sociale,
           actif,
+          status,
+          type_principal,
           tva,
           siret,
           email,
           telephone,
           site_web,
+          adresse_ligne,
+          house_no,
+          postcode,
+          city,
+          country,
+          nom_commercial,
+          logo,
           notes,
           created_by,
           updated_by
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$21)
         RETURNING
           id::text AS id,
           COALESCE(code, code_fournisseur) AS code,
           COALESCE(nom, raison_sociale) AS nom,
-          actif,
-          tva,
-          siret,
-          email,
-          telephone,
-          site_web,
-          notes,
-          created_at::text AS created_at,
-          updated_at::text AS updated_at,
-          created_by,
-          updated_by
+          actif
       `,
       [
         body.code,
@@ -294,11 +603,20 @@ export async function repoCreateFournisseur(body: CreateFournisseurBodyDTO, audi
         body.nom,
         body.nom,
         body.actif ?? true,
+        status,
+        mainDomain,
         body.tva ?? null,
         body.siret ?? null,
         body.email ?? null,
         body.telephone ?? null,
         body.site_web ?? null,
+        body.adresse_ligne ?? null,
+        body.house_no ?? null,
+        body.postcode ?? null,
+        body.city ?? null,
+        body.country ?? null,
+        body.nom_commercial ?? null,
+        body.logo ?? null,
         body.notes ?? null,
         audit.user_id,
       ]
@@ -307,15 +625,41 @@ export async function repoCreateFournisseur(body: CreateFournisseurBodyDTO, audi
     const row = ins.rows[0] ?? null
     if (!row) throw new Error("Failed to create fournisseur")
 
+    if (body.domaines !== undefined) {
+      await replaceFournisseurDomainesTx(client, row.id, body.domaines, audit)
+    }
+
+    await client.query(
+      `
+        INSERT INTO public.fournisseur_events (
+          fournisseur_id,
+          event_type,
+          title,
+          description,
+          metadata,
+          created_by
+        )
+        VALUES ($1::uuid, 'created', 'Fournisseur créé', $2, $3::jsonb, $4)
+      `,
+      [
+        row.id,
+        `Création de ${row.nom}`,
+        JSON.stringify({ code: row.code, nom: row.nom, domains: body.domaines?.map((d) => d.domaine_code) ?? [] }),
+        audit.user_id,
+      ]
+    )
+
     await insertAuditLog(client, audit, {
       action: "fournisseurs.create",
       entity_type: "FOURNISSEUR",
       entity_id: row.id,
-      details: { code: row.code, nom: row.nom, actif: row.actif },
+      details: { code: row.code, nom: row.nom, actif: row.actif, status, type_principal: mainDomain },
     })
 
     await client.query("COMMIT")
-    return mapFournisseurRow(row)
+    const created = await repoGetFournisseur(row.id)
+    if (!created) throw new Error("Failed to reload fournisseur after create")
+    return created
   } catch (err) {
     await client.query("ROLLBACK")
     throw err
@@ -346,11 +690,24 @@ export async function repoUpdateFournisseur(
     sets.push(`raison_sociale = ${push(patch.nom)}`)
   }
   if (patch.actif !== undefined) sets.push(`actif = ${push(patch.actif)}`)
+  if (patch.status !== undefined) {
+    sets.push(`status = ${push(patch.status)}`)
+    if (patch.status === "archive") sets.push("archived_at = COALESCE(archived_at, now())")
+    if (patch.status !== "archive") sets.push("archived_at = NULL")
+  }
+  if (patch.type_principal !== undefined) sets.push(`type_principal = ${push(patch.type_principal)}`)
   if (patch.tva !== undefined) sets.push(`tva = ${push(patch.tva)}`)
   if (patch.siret !== undefined) sets.push(`siret = ${push(patch.siret)}`)
   if (patch.email !== undefined) sets.push(`email = ${push(patch.email)}`)
   if (patch.telephone !== undefined) sets.push(`telephone = ${push(patch.telephone)}`)
   if (patch.site_web !== undefined) sets.push(`site_web = ${push(patch.site_web)}`)
+  if (patch.adresse_ligne !== undefined) sets.push(`adresse_ligne = ${push(patch.adresse_ligne)}`)
+  if (patch.house_no !== undefined) sets.push(`house_no = ${push(patch.house_no)}`)
+  if (patch.postcode !== undefined) sets.push(`postcode = ${push(patch.postcode)}`)
+  if (patch.city !== undefined) sets.push(`city = ${push(patch.city)}`)
+  if (patch.country !== undefined) sets.push(`country = ${push(patch.country)}`)
+  if (patch.nom_commercial !== undefined) sets.push(`nom_commercial = ${push(patch.nom_commercial)}`)
+  if (patch.logo !== undefined) sets.push(`logo = ${push(patch.logo)}`)
   if (patch.notes !== undefined) sets.push(`notes = ${push(patch.notes)}`)
 
   sets.push("updated_at = now()")
@@ -361,29 +718,34 @@ export async function repoUpdateFournisseur(
     SET ${sets.join(", ")}
     WHERE id = ${push(id)}::uuid
     RETURNING
-      id::text AS id,
-      COALESCE(code, code_fournisseur) AS code,
-      COALESCE(nom, raison_sociale) AS nom,
-      actif,
-      tva,
-      siret,
-      email,
-      telephone,
-      site_web,
-      notes,
-      created_at::text AS created_at,
-      updated_at::text AS updated_at,
-      created_by,
-      updated_by
+      id::text AS id
   `
 
   try {
     await client.query("BEGIN")
-    const res = await client.query<FournisseurRow>(sql, values)
+    const res = await client.query<{ id: string }>(sql, values)
     const row = res.rows[0] ?? null
     if (!row) {
       await client.query("ROLLBACK")
       return null
+    }
+
+    if (patch.domaines !== undefined) {
+      await replaceFournisseurDomainesTx(client, id, patch.domaines, audit)
+      await client.query(
+        `
+          INSERT INTO public.fournisseur_events (
+            fournisseur_id,
+            event_type,
+            title,
+            description,
+            metadata,
+            created_by
+          )
+          VALUES ($1::uuid, 'domaines.updated', 'Domaines fournisseur mis à jour', NULL, $2::jsonb, $3)
+        `,
+        [id, JSON.stringify({ domains: patch.domaines.map((d) => d.domaine_code) }), audit.user_id]
+      )
     }
 
     await insertAuditLog(client, audit, {
@@ -394,7 +756,7 @@ export async function repoUpdateFournisseur(
     })
 
     await client.query("COMMIT")
-    return mapFournisseurRow(row)
+    return await repoGetFournisseur(row.id)
   } catch (err) {
     await client.query("ROLLBACK")
     throw err
@@ -418,7 +780,7 @@ export async function repoDeactivateFournisseur(id: string, audit: AuditContext)
     }
 
     await client.query(
-      `UPDATE public.fournisseurs SET actif = false, updated_at = now(), updated_by = $2 WHERE id = $1::uuid`,
+      `UPDATE public.fournisseurs SET actif = false, status = 'inactif', updated_at = now(), updated_by = $2 WHERE id = $1::uuid`,
       [id, audit.user_id]
     )
 
@@ -439,14 +801,167 @@ export async function repoDeactivateFournisseur(id: string, audit: AuditContext)
   }
 }
 
+type DomaineRow = {
+  id: string
+  code: string
+  label: string
+  description: string | null
+  icon: string | null
+  sort_order: number
+  is_active: boolean
+}
+
+function mapDomaineRow(r: DomaineRow): FournisseurDomaine {
+  return {
+    id: r.id,
+    code: r.code,
+    label: r.label,
+    description: r.description,
+    icon: r.icon,
+    sort_order: Number(r.sort_order),
+    is_active: r.is_active,
+  }
+}
+
+export async function repoListFournisseurDomaines(): Promise<FournisseurDomaine[]> {
+  const res = await db.query<DomaineRow>(
+    `
+      SELECT
+        id::text AS id,
+        code,
+        label,
+        description,
+        icon,
+        sort_order,
+        is_active
+      FROM public.fournisseur_domaines
+      WHERE is_active = true
+      ORDER BY sort_order ASC, label ASC
+    `
+  )
+  return res.rows.map(mapDomaineRow)
+}
+
+export async function repoReplaceFournisseurDomaines(
+  fournisseurId: string,
+  body: PutFournisseurDomainesBodyDTO,
+  audit: AuditContext
+): Promise<Fournisseur | null> {
+  const client = await db.connect()
+  try {
+    await client.query("BEGIN")
+    const exists = await ensureFournisseurExists(client, fournisseurId)
+    if (!exists) {
+      await client.query("ROLLBACK")
+      return null
+    }
+
+    await replaceFournisseurDomainesTx(client, fournisseurId, body.domaines, audit)
+    await client.query(
+      `
+        INSERT INTO public.fournisseur_events (
+          fournisseur_id,
+          event_type,
+          title,
+          description,
+          metadata,
+          created_by
+        )
+        VALUES ($1::uuid, 'domaines.updated', 'Domaines fournisseur mis à jour', NULL, $2::jsonb, $3)
+      `,
+      [fournisseurId, JSON.stringify({ domains: body.domaines.map((d) => d.domaine_code) }), audit.user_id]
+    )
+
+    await insertAuditLog(client, audit, {
+      action: "fournisseurs.domaines.replace",
+      entity_type: "FOURNISSEUR",
+      entity_id: fournisseurId,
+      details: { domaines: body.domaines },
+    })
+
+    await client.query("COMMIT")
+    return await repoGetFournisseur(fournisseurId)
+  } catch (err) {
+    await client.query("ROLLBACK")
+    throw err
+  } finally {
+    client.release()
+  }
+}
+
+type EventRow = {
+  id: string
+  fournisseur_id: string
+  event_type: string
+  title: string
+  description: string | null
+  metadata: Record<string, unknown> | string | null
+  created_by: number | null
+  created_at: string
+}
+
+function mapEventRow(r: EventRow): FournisseurEvent {
+  let metadata: Record<string, unknown> = {}
+  if (r.metadata && typeof r.metadata === "object" && !Array.isArray(r.metadata)) metadata = r.metadata
+  if (typeof r.metadata === "string" && r.metadata.trim()) {
+    try {
+      const parsed = JSON.parse(r.metadata)
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) metadata = parsed
+    } catch {
+      metadata = {}
+    }
+  }
+
+  return {
+    id: r.id,
+    fournisseur_id: r.fournisseur_id,
+    event_type: r.event_type,
+    title: r.title,
+    description: r.description,
+    metadata,
+    created_by: r.created_by,
+    created_at: r.created_at,
+  }
+}
+
+export async function repoListFournisseurEvents(fournisseurId: string): Promise<FournisseurEvent[] | null> {
+  const exists = await ensureFournisseurExists(db, fournisseurId)
+  if (!exists) return null
+
+  const res = await db.query<EventRow>(
+    `
+      SELECT
+        id::text AS id,
+        fournisseur_id::text AS fournisseur_id,
+        event_type,
+        title,
+        description,
+        metadata,
+        created_by,
+        created_at::text AS created_at
+      FROM public.fournisseur_events
+      WHERE fournisseur_id = $1::uuid
+      ORDER BY created_at DESC, id DESC
+      LIMIT 100
+    `,
+    [fournisseurId]
+  )
+  return res.rows.map(mapEventRow)
+}
+
 type ContactRow = {
   id: string
   fournisseur_id: string
   nom: string
+  first_name: string | null
+  last_name: string | null
+  full_name: string | null
   email: string | null
   telephone: string | null
+  mobile: string | null
   role: string | null
   notes: string | null
+  is_primary: boolean
   actif: boolean
   created_at: string
   updated_at: string
@@ -459,10 +974,15 @@ function mapContactRow(r: ContactRow): FournisseurContact {
     id: r.id,
     fournisseur_id: r.fournisseur_id,
     nom: r.nom,
+    first_name: r.first_name,
+    last_name: r.last_name,
+    full_name: r.full_name,
     email: r.email,
     telephone: r.telephone,
+    mobile: r.mobile,
     role: r.role,
     notes: r.notes,
+    is_primary: r.is_primary,
     actif: r.actif,
     created_at: r.created_at,
     updated_at: r.updated_at,
@@ -481,10 +1001,15 @@ export async function repoListFournisseurContacts(fournisseurId: string): Promis
         id::text AS id,
         fournisseur_id::text AS fournisseur_id,
         nom,
+        first_name,
+        last_name,
+        full_name,
         email,
         telephone,
+        mobile,
         role,
         notes,
+        is_primary,
         actif,
         created_at::text AS created_at,
         updated_at::text AS updated_at,
@@ -514,21 +1039,33 @@ export async function repoCreateFournisseurContact(
       return null
     }
 
+    if (body.is_primary) {
+      await client.query(
+        `UPDATE public.fournisseur_contacts SET is_primary = false, updated_at = now(), updated_by = $2 WHERE fournisseur_id = $1::uuid`,
+        [fournisseurId, audit.user_id]
+      )
+    }
+
     const ins = await client.query<ContactRow>(
       `
         INSERT INTO public.fournisseur_contacts (
-          fournisseur_id, nom, email, telephone, role, notes, actif,
+          fournisseur_id, nom, first_name, last_name, full_name, email, telephone, mobile, role, notes, is_primary, actif,
           created_by, updated_by
         )
-        VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$8)
+        VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13)
         RETURNING
           id::text AS id,
           fournisseur_id::text AS fournisseur_id,
           nom,
+          first_name,
+          last_name,
+          full_name,
           email,
           telephone,
+          mobile,
           role,
           notes,
+          is_primary,
           actif,
           created_at::text AS created_at,
           updated_at::text AS updated_at,
@@ -538,10 +1075,15 @@ export async function repoCreateFournisseurContact(
       [
         fournisseurId,
         body.nom,
+        body.first_name ?? null,
+        body.last_name ?? null,
+        body.full_name ?? body.nom,
         body.email ?? null,
         body.telephone ?? null,
+        body.mobile ?? null,
         body.role ?? null,
         body.notes ?? null,
+        body.is_primary ?? false,
         body.actif ?? true,
         audit.user_id,
       ]
@@ -581,10 +1123,15 @@ export async function repoUpdateFournisseurContact(
   }
 
   if (patch.nom !== undefined) sets.push(`nom = ${push(patch.nom)}`)
+  if (patch.first_name !== undefined) sets.push(`first_name = ${push(patch.first_name)}`)
+  if (patch.last_name !== undefined) sets.push(`last_name = ${push(patch.last_name)}`)
+  if (patch.full_name !== undefined) sets.push(`full_name = ${push(patch.full_name)}`)
   if (patch.email !== undefined) sets.push(`email = ${push(patch.email)}`)
   if (patch.telephone !== undefined) sets.push(`telephone = ${push(patch.telephone)}`)
+  if (patch.mobile !== undefined) sets.push(`mobile = ${push(patch.mobile)}`)
   if (patch.role !== undefined) sets.push(`role = ${push(patch.role)}`)
   if (patch.notes !== undefined) sets.push(`notes = ${push(patch.notes)}`)
+  if (patch.is_primary !== undefined) sets.push(`is_primary = ${push(patch.is_primary)}`)
   if (patch.actif !== undefined) sets.push(`actif = ${push(patch.actif)}`)
 
   sets.push("updated_at = now()")
@@ -598,6 +1145,13 @@ export async function repoUpdateFournisseurContact(
       return null
     }
 
+    if (patch.is_primary === true) {
+      await client.query(
+        `UPDATE public.fournisseur_contacts SET is_primary = false, updated_at = now(), updated_by = $2 WHERE fournisseur_id = $1::uuid`,
+        [fournisseurId, audit.user_id]
+      )
+    }
+
     const res = await client.query<ContactRow>(
       `
         UPDATE public.fournisseur_contacts
@@ -608,10 +1162,15 @@ export async function repoUpdateFournisseurContact(
           id::text AS id,
           fournisseur_id::text AS fournisseur_id,
           nom,
+          first_name,
+          last_name,
+          full_name,
           email,
           telephone,
+          mobile,
           role,
           notes,
+          is_primary,
           actif,
           created_at::text AS created_at,
           updated_at::text AS updated_at,

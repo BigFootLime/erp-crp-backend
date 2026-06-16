@@ -187,4 +187,51 @@ describe("/api/v1/clients", () => {
       company_name: "ACME SAS",
     });
   });
+
+  it("POST /api/v1/clients/:clientId/contacts creates and returns a client contact", async () => {
+    mocks.clientQuery
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ contact_id: null }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            contact_id: "contact-1",
+            first_name: "Camille",
+            last_name: "Martin",
+            email: "camille@acme.test",
+            phone_direct: null,
+            phone_personal: "0102030405",
+            role: "Achats",
+            civility: "Madame",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app).post("/api/v1/clients/45/contacts").send({
+      first_name: "Camille",
+      last_name: "Martin",
+      email: "camille@acme.test",
+      phone_personal: "0102030405",
+      role: "Achats",
+      civility: "Madame",
+      set_primary: true,
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({
+      contact_id: "contact-1",
+      first_name: "Camille",
+      last_name: "Martin",
+      email: "camille@acme.test",
+      phone_personal: "0102030405",
+      role: "Achats",
+    });
+    expect(mocks.clientQuery).toHaveBeenCalledWith(
+      "UPDATE clients SET contact_id = $1 WHERE client_id = $2",
+      ["contact-1", "45"]
+    );
+  });
 });

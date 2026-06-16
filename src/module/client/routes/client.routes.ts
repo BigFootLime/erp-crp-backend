@@ -11,6 +11,7 @@ import {
   patchClient,
   patchClientPrimaryContact,
   postClient,
+  postClientContact,
 } from "../controllers/client.controller";
 import { listClientsAnalytics } from "../controllers/clients.analytics.controller"
 // import { uploadClientLogoMulter } from "../upload/client-logo-upload";
@@ -21,6 +22,7 @@ const router = Router();
 router.post("/", authenticateToken, postClient);
 router.get("/", listClients);
 router.get("/analytics", listClientsAnalytics);
+router.post("/:clientId/contacts", authenticateToken, postClientContact);
 router.get("/:clientId/contacts", listClientContacts);
 router.get("/:clientId/addresses", listClientAddresses);
 router.get("/:id", getClientById);

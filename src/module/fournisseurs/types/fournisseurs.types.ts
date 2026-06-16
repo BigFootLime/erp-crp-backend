@@ -3,33 +3,103 @@ export type Paginated<T> = {
   total: number
 }
 
+export type FournisseurStatus = "actif" | "a_completer" | "inactif" | "archive"
+
+export type FournisseurDomaine = {
+  id: string
+  code: string
+  label: string
+  description: string | null
+  icon: string | null
+  sort_order: number
+  is_active: boolean
+}
+
+export type FournisseurDomaineLien = FournisseurDomaine & {
+  is_primary: boolean
+  notes: string | null
+}
+
+export type FournisseurOutillageRelations = {
+  id_fournisseur: number
+  outils_count: number
+  fabricants_count: number
+  prix_count: number
+  mouvements_count: number
+}
+
+export type FournisseurRelations = {
+  outillage: FournisseurOutillageRelations | null
+}
+
 export type Fournisseur = {
   id: string
   code: string
   nom: string
   actif: boolean
+  status: FournisseurStatus
+  type_principal: string | null
   tva: string | null
   siret: string | null
   email: string | null
   telephone: string | null
   site_web: string | null
+  adresse_ligne: string | null
+  house_no: string | null
+  postcode: string | null
+  city: string | null
+  country: string | null
+  nom_commercial: string | null
+  logo: string | null
   notes: string | null
+  archived_at: string | null
   created_at: string
   updated_at: string
   created_by: number | null
   updated_by: number | null
+  domaines: FournisseurDomaineLien[]
+  relations: FournisseurRelations
+  contacts_count: number
+  catalogue_count: number
+  documents_count: number
+  events_count: number
 }
 
-export type FournisseurListItem = Pick<Fournisseur, "id" | "code" | "nom" | "actif" | "updated_at">
+export type FournisseurListItem = Pick<
+  Fournisseur,
+  | "id"
+  | "code"
+  | "nom"
+  | "actif"
+  | "status"
+  | "type_principal"
+  | "email"
+  | "telephone"
+  | "city"
+  | "country"
+  | "logo"
+  | "updated_at"
+  | "domaines"
+  | "relations"
+  | "contacts_count"
+  | "catalogue_count"
+  | "documents_count"
+  | "events_count"
+>
 
 export type FournisseurContact = {
   id: string
   fournisseur_id: string
   nom: string
+  first_name: string | null
+  last_name: string | null
+  full_name: string | null
   email: string | null
   telephone: string | null
+  mobile: string | null
   role: string | null
   notes: string | null
+  is_primary: boolean
   actif: boolean
   created_at: string
   updated_at: string
@@ -84,4 +154,15 @@ export type FournisseurDocument = {
   updated_at: string
   created_by: number | null
   updated_by: number | null
+}
+
+export type FournisseurEvent = {
+  id: string
+  fournisseur_id: string
+  event_type: string
+  title: string
+  description: string | null
+  metadata: Record<string, unknown>
+  created_by: number | null
+  created_at: string
 }
