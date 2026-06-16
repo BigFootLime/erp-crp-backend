@@ -1135,6 +1135,12 @@ function normalizeCheckpointStatus(value: unknown): CommandeCheckpointStatus {
   return checkpointStatusSet.has(status) ? (status as CommandeCheckpointStatus) : "pending";
 }
 
+function statusBeforeCheckpoint(checkpointCode: string): CommandeWorkflowStatus {
+  const index = COMMANDE_WORKFLOW_CHECKPOINTS.findIndex((checkpoint) => checkpoint.code === checkpointCode);
+  if (index <= 0) return "BROUILLON";
+  return COMMANDE_WORKFLOW_CHECKPOINTS[index - 1]?.status_when_done ?? "BROUILLON";
+}
+
 function mapWorkflowCheckpoint(row: WorkflowCheckpointRow) {
   return {
     ...row,
@@ -1457,16 +1463,34 @@ export async function repoUpdateCommandeWorkflowCheckpoint(
 
     const nextStatus = body.status ?? normalizeCheckpointStatus(before.status);
     const metadata = { ...(before.metadata ?? {}), ...(body.metadata ?? {}) };
+    const wasBlocked = normalizeCheckpointStatus(before.status) === "blocked";
+    const hasAssignedUser = Object.prototype.hasOwnProperty.call(body, "assigned_user_id");
+    const hasDueAt = Object.prototype.hasOwnProperty.call(body, "due_at");
+    const hasNotes = Object.prototype.hasOwnProperty.call(body, "notes");
+
+    if (nextStatus === "blocked" && !wasBlocked) {
+      metadata.previous_status_before_block = header.statut;
+    }
+
+    const resumeStatus =
+      nextStatus !== "blocked" && wasBlocked
+        ? normalizeCommandeWorkflowStatus(metadata.previous_status_before_block) ?? statusBeforeCheckpoint(definition.code)
+        : null;
+
+    if (resumeStatus) {
+      delete metadata.previous_status_before_block;
+    }
+
     const updated = await client.query<WorkflowCheckpointRow>(
       `
         UPDATE public.commande_client_workflow_checkpoint
         SET status = $3,
-            assigned_user_id = COALESCE($4::int, assigned_user_id),
-            due_at = COALESCE($5::timestamptz, due_at),
+            assigned_user_id = CASE WHEN $10::boolean THEN $4::int ELSE assigned_user_id END,
+            due_at = CASE WHEN $11::boolean THEN $5::timestamptz ELSE due_at END,
             completed_at = CASE WHEN $3 = 'done' THEN COALESCE(completed_at, now()) ELSE completed_at END,
             completed_by = CASE WHEN $3 = 'done' THEN COALESCE($6::int, completed_by) ELSE completed_by END,
-            blocked_reason = CASE WHEN $3 = 'blocked' THEN $7 ELSE blocked_reason END,
-            notes = COALESCE($8, notes),
+            blocked_reason = CASE WHEN $3 = 'blocked' THEN $7 ELSE NULL END,
+            notes = CASE WHEN $12::boolean THEN $8 ELSE notes END,
             metadata = $9::jsonb,
             updated_at = now()
         WHERE commande_id = $1 AND checkpoint_code = $2
@@ -1500,6 +1524,9 @@ export async function repoUpdateCommandeWorkflowCheckpoint(
         body.blocked_reason ?? null,
         body.notes ?? null,
         JSON.stringify(metadata),
+        hasAssignedUser,
+        hasDueAt,
+        hasNotes,
       ]
     );
 
@@ -1521,13 +1548,32 @@ export async function repoUpdateCommandeWorkflowCheckpoint(
         checkpoint_code: definition.code,
         dedupe_key: `commande:${commandeId}:checkpoint:${definition.code}:blocked`,
       });
+    } else if (resumeStatus && header.statut === "BLOQUE") {
+      await repoEnsureCommandeWorkflowStatus({
+        tx: client,
+        commande_id: commandeId,
+        nouveau_statut: resumeStatus,
+        commentaire: body.notes ?? `Checkpoint ${definition.code} resumed`,
+        user_id: userId,
+      });
     }
 
     await insertCommandeEvent(client, {
       commande_id: commandeId,
       event_type: "CHECKPOINT_UPDATED",
-      old_values: { checkpoint_code: definition.code, status: before.status },
-      new_values: { checkpoint_code: definition.code, status: nextStatus },
+      old_values: {
+        checkpoint_code: definition.code,
+        status: before.status,
+        assigned_user_id: before.assigned_user_id,
+        due_at: before.due_at,
+      },
+      new_values: {
+        checkpoint_code: definition.code,
+        status: nextStatus,
+        assigned_user_id: hasAssignedUser ? body.assigned_user_id ?? null : before.assigned_user_id,
+        due_at: hasDueAt ? body.due_at ?? null : before.due_at,
+        resumed_status: resumeStatus,
+      },
       user_id: userId,
     });
 
