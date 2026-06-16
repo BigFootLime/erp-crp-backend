@@ -299,6 +299,7 @@ describe("/api/v1/commandes", () => {
     const payload = {
       numero: "CC-123",
       client_id: "001",
+      code_client: "PO-TEST-001",
       date_commande: "2026-02-01",
       lignes: [
         {
@@ -306,6 +307,7 @@ describe("/api/v1/commandes", () => {
           designation: "Line",
           quantite: 1,
           prix_unitaire_ht: 100,
+          delai_client: "2026-02-15",
         },
       ],
     };
@@ -340,6 +342,7 @@ describe("/api/v1/commandes", () => {
 
     const payload = {
       client_id: "001",
+      code_client: "PO-TEST-002",
       date_commande: "2026-03-26",
       officialize_preparatory_data: false,
       lignes: [
@@ -349,6 +352,7 @@ describe("/api/v1/commandes", () => {
           code_piece: "PCT-001",
           quantite: 1,
           prix_unitaire_ht: 100,
+          delai_client: "2026-04-10",
         },
       ],
     };
@@ -459,6 +463,7 @@ describe("/api/v1/commandes", () => {
 
     const payload = {
       client_id: "001",
+      code_client: "PO-TEST-003",
       date_commande: "2026-03-26",
       officialize_preparatory_data: true,
       lignes: [
@@ -469,6 +474,7 @@ describe("/api/v1/commandes", () => {
           code_piece: "PCT-001",
           quantite: 1,
           prix_unitaire_ht: 100,
+          delai_client: "2026-04-10",
         },
       ],
     };
@@ -531,6 +537,7 @@ describe("/api/v1/commandes", () => {
     const payload = {
       numero: "CC-123",
       client_id: "001",
+      code_client: "PO-TEST-004",
       date_commande: "2026-02-01",
       lignes: [
         {
@@ -538,6 +545,7 @@ describe("/api/v1/commandes", () => {
           designation: "Line updated",
           quantite: 2,
           prix_unitaire_ht: 100,
+          delai_client: "2026-02-15",
         },
       ],
     };

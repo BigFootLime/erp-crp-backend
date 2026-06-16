@@ -2414,6 +2414,7 @@ async function transitionLinkedDevisArticlesToValide(
 
 export async function repoCreateCommande(input: CreateCommandeInput, documents: UploadedDocument[]) {
   const client = await pool.connect();
+  let notifications: AppNotification[] = [];
   try {
     await client.query("BEGIN");
 
@@ -2509,18 +2510,49 @@ export async function repoCreateCommande(input: CreateCommandeInput, documents: 
     await insertCommandeEcheances(client, commandeId, input.echeances ?? []);
     await insertCommandeDocuments(client, commandeId, documents);
     await transitionLinkedDevisArticlesToValide(client, commandeIdInt, input.devis_id ?? null);
-    await ensureCommandeWorkflowCheckpoints(client, commandeIdInt, "BROUILLON");
+    const initialWorkflowStatus: CommandeWorkflowStatus = "ATTENTE_TECHNIQUE";
+    await ensureCommandeWorkflowCheckpoints(client, commandeIdInt, initialWorkflowStatus);
 
-    // Initial checkpoint workflow status.
     await client.query(
       `
         INSERT INTO commande_historique (commande_id, user_id, ancien_statut, nouveau_statut, commentaire)
         VALUES ($1, $2, $3, $4, $5)
       `,
-      [commandeIdInt, null, null, "BROUILLON", "Commande creee"]
+      [commandeIdInt, null, null, initialWorkflowStatus, "Commande creee - Analyse technique a lancer"]
     );
 
+    await insertCommandeEvent(client, {
+      commande_id: commandeIdInt,
+      event_type: "WORKFLOW_INITIALIZED",
+      old_values: { statut: null },
+      new_values: {
+        statut: initialWorkflowStatus,
+        active_checkpoint: "technical_analysis",
+      },
+      user_id: null,
+    });
+
+    notifications = await notifyWorkflowRole(client, {
+      commande: {
+        id: commandeIdInt,
+        numero: numeroForInsert,
+        client_id: input.client_id ?? null,
+        statut: initialWorkflowStatus,
+        raw_statut: initialWorkflowStatus,
+      },
+      role: "technique",
+      kind: "commande.workflow.created",
+      title: `Commande ${numeroForInsert}: Analyse technique`,
+      message: "Commande creee - Analyse technique a lancer.",
+      severity: "info",
+      checkpoint_code: "technical_analysis",
+      dedupe_key: `commande:${commandeIdInt}:checkpoint:technical_analysis:created`,
+    });
+
     await client.query("COMMIT");
+    for (const notification of notifications) {
+      emitAppNotificationCreated(notification.user_id, notification);
+    }
     return { id: toInt(commandeId, "commande.id") };
   } catch (e) {
     await client.query("ROLLBACK");

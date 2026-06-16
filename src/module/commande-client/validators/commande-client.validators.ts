@@ -140,6 +140,14 @@ z.object({
           path: ["client_id"],
         });
       }
+      const customerReference = typeof val.code_client === "string" ? val.code_client.trim() : "";
+      if (!customerReference) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "code_client is required for customer orders",
+          path: ["code_client"],
+        });
+      }
     }
 
     if (val.order_type === "INTERNE") {
@@ -187,6 +195,14 @@ z.object({
           code: z.ZodIssueCode.custom,
           message: "article_id must be a UUID",
           path: ["lignes", i, "article_id"],
+        });
+      }
+      const delaiClient = typeof l.delai_client === "string" ? l.delai_client.trim() : "";
+      if (val.order_type !== "INTERNE" && !delaiClient) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "delai_client is required for customer order lines",
+          path: ["lignes", i, "delai_client"],
         });
       }
     });
