@@ -3364,7 +3364,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
               notes,
               created_by,
               updated_by
-            ) VALUES ($1,$2,$3::bigint,$4::bigint,$5::bigint,$6::uuid,$7,$8::uuid,$9,'BROUILLON'::of_status,'NORMAL'::of_priority,$10,$10,$10)
+            ) VALUES ($1,$2,$3::bigint,$4::bigint,$5::bigint,$6::uuid,$7,$8::uuid,$9,'BROUILLON'::of_status,'NORMAL'::of_priority,$10,$11,$11)
           `,
           [
             ofId,
