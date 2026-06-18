@@ -79,7 +79,15 @@ const corsOptionsDelegate: cors.CorsOptionsDelegate = (req, cb) => {
     origin: allowed ? origin : false,
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-Request-Id", "Idempotency-Key"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "X-Request-Id",
+      "X-Page-Key",
+      "X-Client-Session-Id",
+      "X-Session-Id",
+      "Idempotency-Key",
+    ],
     exposedHeaders: ["X-Request-Id"],
     optionsSuccessStatus: 204,
   });

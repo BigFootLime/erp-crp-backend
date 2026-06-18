@@ -17,7 +17,18 @@ export const affaireIdParamsSchema = z.object({
 });
 
 export const affaireStatutSchema = z.enum(["OUVERTE", "EN_COURS", "SUSPENDUE", "CLOTUREE", "ANNULEE"]);
-export const affaireTypeSchema = z.enum(["livraison", "projet"]);
+export const affaireTypeSchema = z.literal("livraison");
+export const affaireCommandCenterSegmentSchema = z.enum([
+  "active",
+  "production",
+  "control",
+  "ready_delivery",
+  "partial_delivered",
+  "delivered",
+  "to_invoice",
+  "blocked",
+  "late",
+]);
 
 export const listAffairesQuerySchema = z.object({
   q: z.string().optional(),
@@ -49,6 +60,12 @@ export const listAffairesQuerySchema = z.object({
 
 export type ListAffairesQueryDTO = z.infer<typeof listAffairesQuerySchema>;
 
+export const listAffairesCommandCenterQuerySchema = listAffairesQuerySchema.extend({
+  segment: affaireCommandCenterSegmentSchema.optional(),
+});
+
+export type ListAffairesCommandCenterQueryDTO = z.infer<typeof listAffairesCommandCenterQuerySchema>;
+
 export const getAffaireQuerySchema = z.object({
   include: z
     .preprocess((value) => {
@@ -72,7 +89,7 @@ export const createAffaireBodySchema = z.object({
   date_cloture: z.preprocess(emptyStringToNull, isoDate).optional().nullable(),
   commentaire: z.preprocess(emptyStringToNull, z.string().trim().min(1)).optional().nullable(),
 }).superRefine((value, ctx) => {
-  if (value.type_affaire === "livraison" && !(typeof value.client_id === "string" && value.client_id.trim().length > 0)) {
+  if (!(typeof value.client_id === "string" && value.client_id.trim().length > 0)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: "client_id is required for livraison", path: ["client_id"] });
   }
 });

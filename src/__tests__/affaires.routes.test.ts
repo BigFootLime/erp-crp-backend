@@ -33,6 +33,19 @@ vi.mock("../utils/checkNetworkDrive", () => ({
   checkNetworkDrive: vi.fn(() => Promise.resolve()),
 }));
 
+vi.mock("../module/auth/middlewares/auth.middleware", () => ({
+  authenticateToken: (req: { user?: { id: number; username: string; email: string; role: string } }, _res: unknown, next: () => void) => {
+    req.user = {
+      id: 1,
+      username: "test-admin",
+      email: "admin@example.test",
+      role: "administrateur",
+    };
+    next();
+  },
+  authorizeRole: () => (_req: unknown, _res: unknown, next: () => void) => next(),
+}));
+
 import app from "../config/app";
 
 beforeEach(() => {
@@ -219,11 +232,110 @@ describe("/api/v1/affaires", () => {
     expect(String(mocks.poolQuery.mock.calls[2][0])).toContain("FROM devis");
   });
 
+  it("GET /api/v1/affaires/command-center returns aggregate ERP rollups", async () => {
+    mocks.poolQuery
+      .mockResolvedValueOnce({ rows: [{ total: 1 }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "1",
+            reference: "AFF-1",
+            client_id: "001",
+            commande_id: "123",
+            devis_id: null,
+            type_affaire: "livraison",
+            statut: "EN_COURS",
+            date_ouverture: "2026-02-01",
+            date_cloture: null,
+            commentaire: null,
+            created_at: "2026-02-01T10:00:00.000Z",
+            updated_at: "2026-02-02T10:00:00.000Z",
+            client: {
+              client_id: "001",
+              company_name: "ACME",
+              email: null,
+              phone: null,
+              delivery_address_id: null,
+              bill_address_id: null,
+            },
+            commande: {
+              id: "123",
+              numero: "CC-123",
+              statut: "EN_PRODUCTION",
+              date_commande: "2026-02-01",
+              total_ht: 100,
+              total_ttc: 120,
+            },
+            current_checkpoint: "delivery",
+            current_label: "Livraison",
+            current_status: "active",
+            responsible_role: "logistique",
+            blocked_reason: null,
+            due_at: null,
+            of_count: 2,
+            of_done_count: 1,
+            of_running_count: 1,
+            of_blocked_count: 0,
+            of_planned_end_at: "2026-02-10",
+            of_last_update_at: "2026-02-03T10:00:00.000Z",
+            bl_count: 1,
+            bl_delivered_count: 0,
+            bl_shipped_count: 0,
+            bl_ready_count: 1,
+            bl_last_numero: "BL-1",
+            bl_planned_at: "2026-02-12",
+            bl_delivered_at: null,
+            bl_tracking_number: null,
+            bl_last_update_at: "2026-02-04T10:00:00.000Z",
+            facture_count: 0,
+            facture_total_ht: 0,
+            facture_total_ttc: 0,
+            facture_paid_ttc: 0,
+            facture_remaining_ttc: 0,
+            facture_last_numero: null,
+            facture_last_update_at: null,
+            audit_count: 3,
+            audit_last_audit_at: "2026-02-05T10:00:00.000Z",
+            traceability: [
+              {
+                section: "affaire",
+                source_table: "affaire",
+                source_id: "1",
+                source_ref: "AFF-1",
+                status: "EN_COURS",
+                updated_at: "2026-02-02T10:00:00.000Z",
+                evidence_count: 1,
+              },
+            ],
+          },
+        ],
+      });
+
+    const res = await request(app).get("/api/v1/affaires/command-center").query({ segment: "ready_delivery" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.items[0]).toMatchObject({
+      id: 1,
+      reference: "AFF-1",
+      commande: { id: 123, numero: "CC-123" },
+      production: { of_count: 2, open_count: 1, completion_rate: 50 },
+      livraison: { bl_count: 1, latest_status: "READY" },
+      facturation: { facture_count: 0, open_amount: 0 },
+      control: { active_checkpoint_count: 1, audit_event_count: 3 },
+      status: { production: "in_progress", livraison: "ready", facturation: "none" },
+      next_action: "Livraison",
+      traceability: [{ source_table: "affaire", evidence_count: 1 }],
+    });
+    expect(String(mocks.poolQuery.mock.calls[1][0])).toContain("FROM affaire a");
+  });
+
   it("POST /api/v1/affaires generates reference when missing and returns {id}", async () => {
     mocks.clientQuery
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
       .mockResolvedValueOnce({ rows: [{ id: "7" }] }) // nextval
       .mockResolvedValueOnce({ rows: [{ id: "7" }] }) // INSERT
+      .mockResolvedValueOnce({ rows: [{ id: "audit-1", created_at: "2026-02-01T10:00:00.000Z" }] }) // audit
+      .mockResolvedValueOnce({ rows: [] }) // notify
       .mockResolvedValueOnce({ rows: [] }); // COMMIT
 
     const res = await request(app).post("/api/v1/affaires").send({ client_id: "001" });
@@ -264,14 +376,20 @@ describe("/api/v1/affaires", () => {
   });
 
   it("PATCH /api/v1/affaires/:id sets date_cloture when statut=CLOTUREE and missing date_cloture", async () => {
-    mocks.poolQuery.mockResolvedValueOnce({ rows: [{ id: "7" }] });
+    mocks.clientQuery
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ before: { id: 7, statut: "EN_COURS" } }] }) // lock before
+      .mockResolvedValueOnce({ rows: [{ id: "7" }] }) // update
+      .mockResolvedValueOnce({ rows: [{ id: "audit-1", created_at: "2026-02-01T10:00:00.000Z" }] }) // audit
+      .mockResolvedValueOnce({ rows: [] }) // notify
+      .mockResolvedValueOnce({ rows: [] }); // COMMIT
 
     const res = await request(app).patch("/api/v1/affaires/7").send({ statut: "CLOTUREE" });
 
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ id: 7 });
 
-    const updateCall = mocks.poolQuery.mock.calls[0];
+    const updateCall = mocks.clientQuery.mock.calls[2];
     expect(String(updateCall[0])).toContain("UPDATE affaire");
     expect(String(updateCall[0])).toContain("date_cloture = COALESCE(date_cloture, CURRENT_DATE)");
     expect(updateCall[1]).toEqual([7, "CLOTUREE"]);
@@ -280,14 +398,18 @@ describe("/api/v1/affaires", () => {
   it("DELETE /api/v1/affaires/:id deletes successfully", async () => {
     mocks.clientQuery
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ before: { id: 7, reference: "AFF-7" } }] }) // lock before
+      .mockResolvedValueOnce({ rows: [{ count: 1 }] }) // mapping count
       .mockResolvedValueOnce({ rowCount: 1, rows: [] }) // delete links
       .mockResolvedValueOnce({ rowCount: 1, rows: [] }) // delete affaire
+      .mockResolvedValueOnce({ rows: [{ id: "audit-1", created_at: "2026-02-01T10:00:00.000Z" }] }) // audit
+      .mockResolvedValueOnce({ rows: [] }) // notify
       .mockResolvedValueOnce({ rows: [] }); // COMMIT
 
     const res = await request(app).delete("/api/v1/affaires/7");
     expect(res.status).toBe(204);
 
-    expect(String(mocks.clientQuery.mock.calls[1][0])).toContain("DELETE FROM commande_to_affaire");
-    expect(String(mocks.clientQuery.mock.calls[2][0])).toContain("DELETE FROM affaire");
+    expect(String(mocks.clientQuery.mock.calls[3][0])).toContain("DELETE FROM commande_to_affaire");
+    expect(String(mocks.clientQuery.mock.calls[4][0])).toContain("DELETE FROM affaire");
   });
 });
