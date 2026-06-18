@@ -95,6 +95,12 @@ function getUserId(req: Request): number {
   return userId;
 }
 
+function routeParam(req: Request, name: string): string {
+  const value = req.params[name];
+  if (typeof value === "string" && value.length > 0) return value;
+  throw new HttpError(400, "INVALID_ROUTE_PARAM", `${name} must be a string`);
+}
+
 function buildAudit(req: Request) {
   return {
     user_id: getUserId(req),
@@ -136,7 +142,7 @@ export const updateCommande: RequestHandler = async (req, res, next) => {
     }
 
     const documents = getUploadedDocuments(req);
-    const out = await updateCommandeSVC(req.params.id, payload, documents);
+    const out = await updateCommandeSVC(routeParam(req, "id"), payload, documents);
     if (!out) {
       res.status(404).json({ error: "Not found" });
       return;
@@ -166,7 +172,7 @@ export const listCommandes: RequestHandler = async (req, res, next) => {
 export const getCommande: RequestHandler = async (req, res, next) => {
   try {
     const includes = parseIncludeSet(req);
-    const out = await getCommandeSVC(req.params.id, includes);
+    const out = await getCommandeSVC(routeParam(req, "id"), includes);
     if (!out) {
       res.status(404).json({ error: "Not found" });
       return;
@@ -180,7 +186,7 @@ export const getCommande: RequestHandler = async (req, res, next) => {
 // GET /api/v1/commandes/:id/workflow
 export const getCommandeWorkflow: RequestHandler = async (req, res, next) => {
   try {
-    const out = await getCommandeWorkflowSVC(req.params.id);
+    const out = await getCommandeWorkflowSVC(routeParam(req, "id"));
     if (!out) {
       res.status(404).json({ error: "Not found" });
       return;
@@ -201,8 +207,8 @@ export const updateCommandeWorkflowCheckpoint: RequestHandler = async (req, res,
     }
     const userId = typeof req.user?.id === "number" ? req.user.id : null;
     const out = await updateCommandeWorkflowCheckpointSVC(
-      req.params.id,
-      req.params.checkpointCode,
+      routeParam(req, "id"),
+      routeParam(req, "checkpointCode"),
       parsed.data,
       userId
     );
@@ -225,7 +231,7 @@ export const runCommandeWorkflowAction: RequestHandler = async (req, res, next) 
       return;
     }
     const userId = typeof req.user?.id === "number" ? req.user.id : null;
-    const out = await runCommandeWorkflowActionSVC(req.params.id, parsed.data, userId);
+    const out = await runCommandeWorkflowActionSVC(routeParam(req, "id"), parsed.data, userId);
     if (!out) {
       res.status(404).json({ error: "Not found" });
       return;
@@ -239,7 +245,7 @@ export const runCommandeWorkflowAction: RequestHandler = async (req, res, next) 
 // DELETE /api/v1/commandes/:id
 export const deleteCommande: RequestHandler = async (req, res, next) => {
   try {
-    const ok = await deleteCommandeSVC(req.params.id);
+    const ok = await deleteCommandeSVC(routeParam(req, "id"));
     if (!ok) {
       res.status(404).json({ error: "Not found" });
       return;
@@ -261,7 +267,7 @@ export const updateCommandeStatus: RequestHandler = async (req, res, next) => {
 
     const userId = typeof req.user?.id === "number" ? req.user.id : null;
     const out = await updateCommandeStatusSVC(
-      req.params.id,
+      routeParam(req, "id"),
       parsed.data.nouveau_statut,
       parsed.data.commentaire ?? null,
       userId
@@ -285,7 +291,7 @@ export const generateAffairesFromOrder: RequestHandler = async (req, res, next) 
       return;
     }
 
-    const out = await generateAffairesFromOrderSVC(req.params.id, parsed.data.body, buildAudit(req));
+    const out = await generateAffairesFromOrderSVC(routeParam(req, "id"), parsed.data.body, buildAudit(req));
     if (!out) {
       res.status(404).json({ error: "Not found" });
       return;
@@ -299,7 +305,7 @@ export const generateAffairesFromOrder: RequestHandler = async (req, res, next) 
 // POST /api/v1/commandes/:id/analyze-stock
 export const analyzeCommandeStock: RequestHandler = async (req, res, next) => {
   try {
-    const out = await analyzeCommandeStockSVC(req.params.id, buildAudit(req));
+    const out = await analyzeCommandeStockSVC(routeParam(req, "id"), buildAudit(req));
     if (!out) {
       res.status(404).json({ error: "Not found" });
       return;
@@ -319,7 +325,7 @@ export const confirmGenerateAffaires: RequestHandler = async (req, res, next) =>
       return;
     }
 
-    const out = await confirmGenerateAffairesSVC(req.params.id, parsed.data.body);
+    const out = await confirmGenerateAffairesSVC(routeParam(req, "id"), parsed.data.body);
     if (!out) {
       res.status(404).json({ error: "Not found" });
       return;
@@ -334,7 +340,7 @@ export const confirmGenerateAffaires: RequestHandler = async (req, res, next) =>
 // POST /api/v1/commandes/:id/affaires/preview
 export const previewAffairesFromCommande: RequestHandler = async (req, res, next) => {
   try {
-    const out = await previewAffairesFromCommandeSVC(req.params.id);
+    const out = await previewAffairesFromCommandeSVC(routeParam(req, "id"));
     if (!out) {
       res.status(404).json({ error: "Not found" });
       return;
@@ -354,7 +360,7 @@ export const generateAffairesFromCommande: RequestHandler = async (req, res, nex
       return;
     }
 
-    const out = await generateAffairesFromCommandeSVC(req.params.id, parsed.data.body);
+    const out = await generateAffairesFromCommandeSVC(routeParam(req, "id"), parsed.data.body);
     if (!out) {
       res.status(404).json({ error: "Not found" });
       return;
@@ -369,7 +375,7 @@ export const generateAffairesFromCommande: RequestHandler = async (req, res, nex
 // POST /api/v1/commandes/:id/duplicate
 export const duplicateCommande: RequestHandler = async (req, res, next) => {
   try {
-    const out = await duplicateCommandeSVC(req.params.id);
+    const out = await duplicateCommandeSVC(routeParam(req, "id"));
     if (!out) {
       res.status(404).json({ error: "Not found" });
       return;
@@ -394,7 +400,7 @@ function coerceBool(value: unknown): boolean {
 export const listCadreReleases: RequestHandler = async (req, res, next) => {
   try {
     const includeLines = coerceBool((req.query as { includeLines?: unknown } | undefined)?.includeLines);
-    const out = await listCadreReleasesSVC(req.params.id, { includeLines });
+    const out = await listCadreReleasesSVC(routeParam(req, "id"), { includeLines });
     res.json(out);
   } catch (err) {
     next(err);
@@ -409,7 +415,7 @@ export const getCadreRelease: RequestHandler = async (req, res, next) => {
       res.status(400).json({ error: parsed.error.issues?.[0]?.message ?? "Invalid request" });
       return;
     }
-    const out = await getCadreReleaseSVC(req.params.id, req.params.releaseId);
+    const out = await getCadreReleaseSVC(routeParam(req, "id"), routeParam(req, "releaseId"));
     if (!out) {
       res.status(404).json({ error: "Not found" });
       return;
@@ -429,7 +435,7 @@ export const createCadreRelease: RequestHandler = async (req, res, next) => {
       return;
     }
     const userId = typeof req.user?.id === "number" ? req.user.id : null;
-    const out = await createCadreReleaseSVC(req.params.id, body.data, userId);
+    const out = await createCadreReleaseSVC(routeParam(req, "id"), body.data, userId);
     res.status(201).json(out);
   } catch (err) {
     next(err);
@@ -454,7 +460,7 @@ export const updateCadreRelease: RequestHandler = async (req, res, next) => {
       return;
     }
     const userId = typeof req.user?.id === "number" ? req.user.id : null;
-    const out = await updateCadreReleaseSVC(req.params.id, req.params.releaseId, body.data, userId);
+    const out = await updateCadreReleaseSVC(routeParam(req, "id"), routeParam(req, "releaseId"), body.data, userId);
     if (!out) {
       res.status(404).json({ error: "Not found" });
       return;
@@ -482,7 +488,7 @@ export const updateCadreReleaseStatus: RequestHandler = async (req, res, next) =
       return;
     }
     const userId = typeof req.user?.id === "number" ? req.user.id : null;
-    const out = await updateCadreReleaseStatusSVC(req.params.id, req.params.releaseId, parsed.data.statut, userId, {
+    const out = await updateCadreReleaseStatusSVC(routeParam(req, "id"), routeParam(req, "releaseId"), parsed.data.statut, userId, {
       notes: parsed.data.notes ?? null,
     });
     if (!out) {
@@ -504,7 +510,7 @@ export const cancelCadreRelease: RequestHandler = async (req, res, next) => {
       return;
     }
     const userId = typeof req.user?.id === "number" ? req.user.id : null;
-    const out = await cancelCadreReleaseSVC(req.params.id, req.params.releaseId, userId);
+    const out = await cancelCadreReleaseSVC(routeParam(req, "id"), routeParam(req, "releaseId"), userId);
     if (!out) {
       res.status(404).json({ error: "Not found" });
       return;
@@ -529,7 +535,7 @@ export const addCadreReleaseLine: RequestHandler = async (req, res, next) => {
       return;
     }
     const userId = typeof req.user?.id === "number" ? req.user.id : null;
-    const out = await addCadreReleaseLineSVC(req.params.id, req.params.releaseId, body.data, userId);
+    const out = await addCadreReleaseLineSVC(routeParam(req, "id"), routeParam(req, "releaseId"), body.data, userId);
     res.status(201).json(out);
   } catch (err) {
     next(err);
@@ -554,7 +560,13 @@ export const updateCadreReleaseLine: RequestHandler = async (req, res, next) => 
       return;
     }
     const userId = typeof req.user?.id === "number" ? req.user.id : null;
-    const out = await updateCadreReleaseLineSVC(req.params.id, req.params.releaseId, req.params.lineId, body.data, userId);
+    const out = await updateCadreReleaseLineSVC(
+      routeParam(req, "id"),
+      routeParam(req, "releaseId"),
+      routeParam(req, "lineId"),
+      body.data,
+      userId
+    );
     if (!out) {
       res.status(404).json({ error: "Not found" });
       return;
@@ -574,7 +586,12 @@ export const deleteCadreReleaseLine: RequestHandler = async (req, res, next) => 
       return;
     }
     const userId = typeof req.user?.id === "number" ? req.user.id : null;
-    const ok = await deleteCadreReleaseLineSVC(req.params.id, req.params.releaseId, req.params.lineId, userId);
+    const ok = await deleteCadreReleaseLineSVC(
+      routeParam(req, "id"),
+      routeParam(req, "releaseId"),
+      routeParam(req, "lineId"),
+      userId
+    );
     if (!ok) {
       res.status(404).json({ error: "Not found" });
       return;
@@ -588,7 +605,8 @@ export const deleteCadreReleaseLine: RequestHandler = async (req, res, next) => 
 // GET /api/v1/commandes/:id/documents/:docId/file
 export const getCommandeDocumentFile: RequestHandler = async (req, res, next) => {
   try {
-    const { id, docId } = req.params;
+    const id = routeParam(req, "id");
+    const docId = routeParam(req, "docId");
     const doc = await getCommandeDocumentFileMetaSVC(id, docId);
     if (!doc) {
       res.status(404).json({ error: "Not found" });

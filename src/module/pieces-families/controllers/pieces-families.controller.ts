@@ -8,6 +8,10 @@ import {
   updatePieceFamilySVC,
 } from "../services/pieces-families.service"
 
+function routeParam(value: string | string[] | undefined): string | null {
+  return typeof value === "string" ? value : null
+}
+
 export const createPieceFamily: RequestHandler = async (req, res, next) => {
   try {
     const row = await createPieceFamilySVC(req.body)
@@ -28,7 +32,12 @@ export const listPieceFamilies: RequestHandler = async (_req, res, next) => {
 
 export const getPieceFamily: RequestHandler = async (req, res, next) => {
   try {
-    const row = await getPieceFamilySVC(req.params.id)
+    const id = routeParam(req.params.id)
+    if (!id) {
+      res.status(400).json({ error: "id must be a string" })
+      return
+    }
+    const row = await getPieceFamilySVC(id)
     if (!row) {
       res.status(404).json({ error: "Not found" })
       return
@@ -41,7 +50,12 @@ export const getPieceFamily: RequestHandler = async (req, res, next) => {
 
 export const updatePieceFamily: RequestHandler = async (req, res, next) => {
   try {
-    const row = await updatePieceFamilySVC(req.params.id, req.body)
+    const id = routeParam(req.params.id)
+    if (!id) {
+      res.status(400).json({ error: "id must be a string" })
+      return
+    }
+    const row = await updatePieceFamilySVC(id, req.body)
     if (!row) {
       res.status(404).json({ error: "Not found" })
       return
@@ -54,7 +68,12 @@ export const updatePieceFamily: RequestHandler = async (req, res, next) => {
 
 export const deletePieceFamily: RequestHandler = async (req, res, next) => {
   try {
-    const ok = await deletePieceFamilySVC(req.params.id)
+    const id = routeParam(req.params.id)
+    if (!id) {
+      res.status(400).json({ error: "id must be a string" })
+      return
+    }
+    const ok = await deletePieceFamilySVC(id)
     if (!ok) {
       res.status(404).json({ error: "Not found" })
       return

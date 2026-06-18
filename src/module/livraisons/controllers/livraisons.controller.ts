@@ -1,4 +1,4 @@
-import type { RequestHandler } from "express"
+import type { Request, RequestHandler } from "express"
 import fs from "node:fs/promises"
 
 import { HttpError } from "../../../utils/httpError"
@@ -34,6 +34,12 @@ function getUserId(req: Express.Request): number {
   const userId = typeof req.user?.id === "number" ? req.user.id : null
   if (!userId) throw new HttpError(401, "UNAUTHORIZED", "Authentication required")
   return userId
+}
+
+function routeParam(req: Request, name: string): string {
+  const value = req.params[name]
+  if (typeof value === "string" && value.length > 0) return value
+  throw new HttpError(400, "INVALID_ROUTE_PARAM", `${name} must be a string`)
 }
 
 function getUserRef(req: Express.Request): { id: number; name: string } {
@@ -264,7 +270,7 @@ export const deleteLivraisonDocument: RequestHandler = async (req, res, next) =>
   try {
     const userId = getUserId(req)
     const { id } = livraisonIdParamsSchema.parse(req.params)
-    const docId = req.params.docId
+    const docId = routeParam(req, "docId")
     if (!docId || !/^[0-9a-fA-F-]{36}$/.test(docId)) {
       res.status(400).json({ error: "Invalid docId" })
       return
@@ -287,7 +293,7 @@ export const getLivraisonDocumentFile: RequestHandler = async (req, res, next) =
   try {
     getUserId(req)
     const { id } = livraisonIdParamsSchema.parse(req.params)
-    const docId = req.params.docId
+    const docId = routeParam(req, "docId")
     if (!docId || !/^[0-9a-fA-F-]{36}$/.test(docId)) {
       res.status(400).json({ error: "Invalid docId" })
       return

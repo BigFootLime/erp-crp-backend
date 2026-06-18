@@ -84,7 +84,7 @@ describe("/api/v1/stock", () => {
     });
   });
 
-  it("POST /api/v1/stock/articles syncs reverse piece technique link", async () => {
+  it("POST /api/v1/stock/articles creates fabricated article without projet_id and syncs reverse piece technique link", async () => {
     mocks.clientQuery.mockImplementation(async (sql: unknown) => {
       const q = String(sql);
       if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
@@ -124,7 +124,7 @@ describe("/api/v1/stock", () => {
           version_number: 1,
           plan_index: 1,
           status: "VALIDE",
-          projet_id: 7,
+          projet_id: null,
           code: "PT-001-P1",
           designation: "Pièce stockée",
           article_type: "PIECE_TECHNIQUE",
@@ -154,7 +154,7 @@ describe("/api/v1/stock", () => {
       .set("Authorization", "Bearer fake")
       .send({
         code: "PT-001-P1",
-        projet_id: 7,
+        projet_id: null,
         designation: "Pièce stockée",
         article_category: "fabrique",
         article_categories: ["fabrique"],
@@ -173,6 +173,11 @@ describe("/api/v1/stock", () => {
         String(call[0]).includes("UPDATE public.pieces_techniques SET article_id = $2::uuid WHERE id = $1::uuid")
       )
     ).toBe(true);
+    expect(
+      mocks.clientQuery.mock.calls.some((call) =>
+        String(call[0]).includes("FROM public.affaire") && String(call[0]).includes("type_affaire = 'projet'")
+      )
+    ).toBe(false);
   });
 
   it("POST /api/v1/stock/articles persists article_matiere payload", async () => {
