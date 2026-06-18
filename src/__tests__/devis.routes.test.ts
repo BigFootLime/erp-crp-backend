@@ -157,6 +157,9 @@ describe("/api/v1/devis", () => {
         ],
       })
       .mockResolvedValueOnce({
+        rows: [{ exists: false }],
+      })
+      .mockResolvedValueOnce({
         rows: [
           {
             id: "1",
@@ -290,6 +293,9 @@ describe("/api/v1/devis", () => {
             created_at: "2026-03-23T10:00:00.000Z",
           },
         ],
+      })
+      .mockResolvedValueOnce({
+        rows: [{ exists: false }],
       })
       .mockResolvedValueOnce({
         rows: [

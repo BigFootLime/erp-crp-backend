@@ -181,6 +181,14 @@ function isAcceptedStatus(value: unknown) {
   return s === "accepte" || s === "acceptee";
 }
 
+async function devisLineCodePieceSelect(client: Pick<PoolClient, "query">) {
+  const legacyColumnExpr = (await hasPublicColumn(client, "devis_ligne", "code_piece"))
+    ? "NULLIF(dl.code_piece, '')"
+    : "NULL::text";
+
+  return `COALESCE(${legacyColumnExpr}, dd.code_piece, ad.code, a.code, pt.code_piece) AS code_piece`;
+}
+
 async function loadDevisCommandeHeader(
   client: Pick<PoolClient, "query">,
   devisId: number,
@@ -220,6 +228,7 @@ async function loadDevisCommandeLines(
   client: Pick<PoolClient, "query">,
   devisId: number
 ): Promise<DevisCommandeLineRow[]> {
+  const codePieceSelect = await devisLineCodePieceSelect(client);
   const res = await client.query<DevisCommandeLineRow>(
     `
         SELECT
@@ -229,7 +238,7 @@ async function loadDevisCommandeLines(
           piece_technique_id::text AS piece_technique_id,
           ad.id::text AS source_article_devis_id,
           dd.id::text AS source_dossier_devis_id,
-          code_piece,
+          ${codePieceSelect},
           quantite::float8 AS quantite,
           unite,
           prix_unitaire_ht::float8 AS prix_unitaire_ht,
@@ -238,6 +247,8 @@ async function loadDevisCommandeLines(
       FROM devis_ligne dl
       LEFT JOIN public.article_devis ad ON ad.devis_ligne_id = dl.id
       LEFT JOIN public.dossier_technique_piece_devis dd ON dd.article_devis_id = ad.id
+      LEFT JOIN public.articles a ON a.id = dl.article_id
+      LEFT JOIN public.pieces_techniques pt ON pt.id = COALESCE(dl.piece_technique_id, a.piece_technique_id, dd.source_official_piece_technique_id)
       WHERE dl.devis_id = $1
       ORDER BY dl.id ASC
     `,
@@ -735,7 +746,7 @@ async function deleteDevisPreparatoryEntities(client: PoolClient, devisId: numbe
   await client.query(`DELETE FROM public.article_devis WHERE devis_id = $1::bigint`, [devisId]);
 }
 
-async function hasPublicColumn(client: PoolClient, tableName: string, columnName: string) {
+async function hasPublicColumn(client: Pick<PoolClient, "query">, tableName: string, columnName: string) {
   const res = await client.query<{ exists: boolean }>(
     `
       SELECT EXISTS (
@@ -912,6 +923,7 @@ export async function repoGetDevis(id: number, includeValue: string) {
     client: includeClient ? row.client : undefined,
   };
 
+  const codePieceSelect = includeLignes ? await devisLineCodePieceSelect(pool) : "NULL::text AS code_piece";
   const lignes: DevisLine[] = includeLignes
     ? (
         await pool.query<
@@ -925,7 +937,7 @@ export async function repoGetDevis(id: number, includeValue: string) {
               dl.piece_technique_id::text AS piece_technique_id,
               ad.id::text AS source_article_devis_id,
               dd.id::text AS source_dossier_devis_id,
-              dl.code_piece,
+              ${codePieceSelect},
               dl.description,
               dl.quantite::float8 AS quantite,
               dl.unite,
@@ -937,6 +949,8 @@ export async function repoGetDevis(id: number, includeValue: string) {
             FROM devis_ligne dl
             LEFT JOIN public.article_devis ad ON ad.devis_ligne_id = dl.id
             LEFT JOIN public.dossier_technique_piece_devis dd ON dd.article_devis_id = ad.id
+            LEFT JOIN public.articles a ON a.id = dl.article_id
+            LEFT JOIN public.pieces_techniques pt ON pt.id = COALESCE(dl.piece_technique_id, a.piece_technique_id, dd.source_official_piece_technique_id)
             WHERE dl.devis_id = $1
             ORDER BY dl.id ASC
             `,

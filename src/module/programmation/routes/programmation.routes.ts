@@ -12,13 +12,13 @@ function isAdminRole(role: string | undefined): boolean {
 function isProductionRole(role: string | undefined): boolean {
   if (!role) return false;
   const r = role.trim().toLowerCase();
-  return r.includes("production") || r.includes("atelier");
+  return r.includes("production") || r.includes("atelier") || r.includes("secretaire") || r.includes("secretariat");
 }
 
 const requireProductionOrAdmin: RequestHandler = (req, _res, next) => {
   const role = req.user?.role;
   if (!isAdminRole(role) && !isProductionRole(role)) {
-    next(new HttpError(403, "FORBIDDEN", "Production role required"));
+    next(new HttpError(403, "FORBIDDEN", "Production, atelier, secretariat or admin role required"));
     return;
   }
   next();
