@@ -203,3 +203,48 @@ export const createPlanningEventCommentSchema = z.object({
 });
 
 export type CreatePlanningEventCommentBodyDTO = z.infer<typeof createPlanningEventCommentSchema>["body"];
+
+export const validatePlanningForArSchema = z
+  .object({
+    body: z
+      .object({
+        event_ids: z.array(uuid).min(1).max(200).optional(),
+        commande_ids: z.array(z.coerce.number().int().positive()).min(1).max(200).optional(),
+        from: dateTimeString.optional(),
+        to: dateTimeString.optional(),
+        commentaire: z.string().trim().max(4000).optional().nullable(),
+      })
+      .strict()
+      .superRefine((v, ctx) => {
+        const hasEventIds = Array.isArray(v.event_ids) && v.event_ids.length > 0;
+        const hasCommandeIds = Array.isArray(v.commande_ids) && v.commande_ids.length > 0;
+        const hasRange = Boolean(v.from && v.to);
+
+        if (!hasEventIds && !hasCommandeIds && !hasRange) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Provide event_ids, commande_ids, or from/to",
+            path: ["event_ids"],
+          });
+        }
+
+        if ((v.from && !v.to) || (!v.from && v.to)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "from and to must be provided together",
+            path: v.from ? ["to"] : ["from"],
+          });
+        }
+
+        if (v.from && v.to) {
+          const from = Date.parse(v.from);
+          const to = Date.parse(v.to);
+          if (Number.isFinite(from) && Number.isFinite(to) && from >= to) {
+            ctx.addIssue({ code: z.ZodIssueCode.custom, message: "'from' must be < 'to'", path: ["to"] });
+          }
+        }
+      }),
+  })
+  .strict();
+
+export type ValidatePlanningForArBodyDTO = z.infer<typeof validatePlanningForArSchema>["body"];

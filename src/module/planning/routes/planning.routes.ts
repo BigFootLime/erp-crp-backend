@@ -14,6 +14,7 @@ import {
   listPlanningResources,
   patchPlanningEvent,
   uploadPlanningEventDocuments,
+  validatePlanningForAr,
 } from "../controllers/planning.controller";
 
 function isAdminRole(role: string | undefined): boolean {
@@ -49,6 +50,7 @@ router.get("/health", healthPlanning);
 router.get("/resources", listPlanningResources);
 router.get("/events", listPlanningEvents);
 router.post("/autoplan", autoPlanPlanning);
+router.post("/validate-for-ar", validatePlanningForAr);
 router.post("/events", createPlanningEvent);
 router.get("/events/:id", getPlanningEvent);
 router.patch("/events/:id", patchPlanningEvent);

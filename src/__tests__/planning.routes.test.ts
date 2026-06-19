@@ -240,6 +240,23 @@ describe("/api/v1/planning", () => {
     // repoCreatePlanningEvent internals: BEGIN, select defaults, conflict check, insert, audit, COMMIT
     mocks.clientQuery.mockImplementation(async (sql: unknown) => {
       const q = String(sql);
+      if (q.includes("FROM public.postes p") && q.includes("p.id = $1::uuid")) {
+        return {
+          rows: [
+            {
+              id: "22222222-2222-2222-2222-222222222222",
+              code: "P01",
+              label: "Poste 1",
+              is_active: true,
+              machine_id: null,
+              machine_code: null,
+              machine_status: null,
+              machine_is_available: null,
+              machine_scheduling_enabled: null,
+            },
+          ],
+        };
+      }
       if (q.includes("FROM public.of_time_logs")) {
         return { rows: [{ open_time_log_count: 0 }] };
       }
@@ -365,6 +382,23 @@ describe("/api/v1/planning", () => {
     mocks.clientQuery.mockImplementation(async (sql: unknown) => {
       const q = String(sql);
       if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
+      if (q.includes("FROM public.postes p") && q.includes("p.id = $1::uuid")) {
+        return {
+          rows: [
+            {
+              id: "22222222-2222-2222-2222-222222222222",
+              code: "P01",
+              label: "Poste 1",
+              is_active: true,
+              machine_id: null,
+              machine_code: null,
+              machine_status: null,
+              machine_is_available: null,
+              machine_scheduling_enabled: null,
+            },
+          ],
+        };
+      }
       if (q.includes("FROM public.of_operations op") && q.includes("WHERE op.id = $1::uuid") && q.includes("LIMIT 1")) {
         return {
           rows: [
@@ -479,5 +513,61 @@ describe("/api/v1/planning", () => {
     expect(res.status).toBe(201);
     expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO commande_historique"))).toBe(true);
     expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO public.app_notifications"))).toBe(true);
+  });
+
+  it("POST /api/v1/planning/events rejects a blocked machine", async () => {
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const q = String(sql);
+      if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
+      if (q.includes("FROM public.of_operations op") && q.includes("WHERE op.id = $1::uuid") && q.includes("LIMIT 1")) {
+        return {
+          rows: [
+            {
+              of_id: "7",
+              phase: 10,
+              designation: "Usinage",
+              machine_id: "11111111-1111-1111-1111-111111111111",
+              poste_id: null,
+            },
+          ],
+        };
+      }
+      if (q.includes("FROM public.machines m") && q.includes("m.id = $1::uuid")) {
+        return {
+          rows: [
+            {
+              id: "11111111-1111-1111-1111-111111111111",
+              code: "M01",
+              name: "Machine 1",
+              status: "maintenance",
+              is_available: true,
+              scheduling_enabled: true,
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const res = await request(app)
+      .post("/api/v1/planning/events")
+      .set("Authorization", "Bearer fake")
+      .send({
+        kind: "OF_OPERATION",
+        status: "PLANNED",
+        priority: "NORMAL",
+        of_id: 7,
+        of_operation_id: "44444444-4444-4444-4444-444444444444",
+        machine_id: "11111111-1111-1111-1111-111111111111",
+        start_ts: "2026-02-14T08:00:00.000Z",
+        end_ts: "2026-02-14T10:00:00.000Z",
+      });
+
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({
+      code: "PLANNING_RESOURCE_BLOCKED",
+      message: "Machine en maintenance",
+    });
+    expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO public.planning_events"))).toBe(false);
   });
 });

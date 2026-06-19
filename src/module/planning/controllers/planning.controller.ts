@@ -15,6 +15,7 @@ import {
   patchPlanningEventSchema,
   planningEventDocumentIdParamSchema,
   planningEventIdParamSchema,
+  validatePlanningForArSchema,
 } from "../validators/planning.validators";
 import {
   svcAutoPlanPlanning,
@@ -27,6 +28,7 @@ import {
   svcListPlanningResources,
   svcPatchPlanningEvent,
   svcUploadPlanningEventDocuments,
+  svcValidatePlanningForAr,
 } from "../services/planning.service";
 
 function buildAuditContext(req: Request): AuditContext {
@@ -46,6 +48,7 @@ function buildAuditContext(req: Request): AuditContext {
 
   return {
     user_id: user.id,
+    role: user.role ?? null,
     ip: ipFromHeader ?? req.ip ?? null,
     user_agent: ua,
     device_type: null,
@@ -136,6 +139,13 @@ export const autoPlanPlanning: RequestHandler = asyncHandler(async (req, res) =>
   const body = autoPlanPlanningSchema.parse({ body: req.body }).body;
   const out = await svcAutoPlanPlanning({ body, audit });
   res.status(201).json(out);
+});
+
+export const validatePlanningForAr: RequestHandler = asyncHandler(async (req, res) => {
+  const audit = buildAuditContext(req);
+  const body = validatePlanningForArSchema.parse({ body: req.body }).body;
+  const out = await svcValidatePlanningForAr({ body, audit });
+  res.status(200).json(out);
 });
 
 export const patchPlanningEvent: RequestHandler = async (req, res, next) => {

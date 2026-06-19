@@ -12,6 +12,7 @@ export type PlanningMachineResource = {
   type: string;
   status: string;
   is_available: boolean;
+  scheduling_enabled?: boolean;
   archived_at: string | null;
 };
 
@@ -104,4 +105,29 @@ export type PlanningEventDetail = {
 export type Paginated<T> = {
   items: T[];
   total: number;
+};
+
+export type PlanningValidationCommande = {
+  commande_id: number;
+  numero: string;
+  client_id: string | null;
+  planning_validated_at: string | null;
+  workflow_status: "AR_PRET";
+};
+
+export type PlanningValidationSkippedCommande = {
+  commande_id: number;
+  numero: string;
+  reason: "NO_PLANNED_OF" | "AR_ALREADY_SENT" | "ALREADY_READY" | "WORKFLOW_NOT_ADVANCED";
+  message: string;
+};
+
+export type PlanningValidationResult = {
+  validated_commandes: PlanningValidationCommande[];
+  skipped_commandes: PlanningValidationSkippedCommande[];
+  ar_prompt: {
+    should_prompt: boolean;
+    commande_ids: number[];
+    primary_commande_id: number | null;
+  };
 };
