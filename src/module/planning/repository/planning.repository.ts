@@ -19,6 +19,7 @@ import type {
   PlanningMachineResource,
   PlanningPosteResource,
   PlanningResources,
+  PlanningValidationResult,
 } from "../types/planning.types";
 import type {
   CreatePlanningEventBodyDTO,
@@ -26,10 +27,12 @@ import type {
   ListPlanningEventsQueryDTO,
   ListPlanningResourcesQueryDTO,
   PatchPlanningEventBodyDTO,
+  ValidatePlanningForArBodyDTO,
 } from "../validators/planning.validators";
 
 export type AuditContext = {
   user_id: number;
+  role?: string | null;
   ip: string | null;
   user_agent: string | null;
   device_type: string | null;
@@ -102,6 +105,13 @@ function toNullableBoolean(value: unknown): boolean | null {
   return null;
 }
 
+function durationMinutes(start: string, end: string): number | null {
+  const startMs = new Date(start).getTime();
+  const endMs = new Date(end).getTime();
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return null;
+  return Math.round((endMs - startMs) / 60_000);
+}
+
 function toStringArray(value: unknown): string[] {
   if (!value) return [];
   if (Array.isArray(value)) {
@@ -126,6 +136,158 @@ function toStringArray(value: unknown): string[] {
     }
   }
   return [];
+}
+
+function normalizeStatusText(value: unknown): string {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[\s_-]+/g, "");
+}
+
+function isMachineBlockedStatus(status: unknown): boolean {
+  const s = normalizeStatusText(status);
+  if (!s) return false;
+  return (
+    s.includes("maintenance") ||
+    s.includes("panne") ||
+    s.includes("offline") ||
+    s.includes("blocked") ||
+    s.includes("bloque") ||
+    s.includes("outofservice") ||
+    s.includes("indisponible")
+  );
+}
+
+function machineBlockedReason(params: {
+  status: string | null;
+  is_available: boolean | null;
+  scheduling_enabled?: boolean | null;
+}): string | null {
+  const status = normalizeStatusText(params.status);
+  if (status.includes("maintenance")) return "Machine en maintenance";
+  if (
+    status.includes("panne") ||
+    status.includes("offline") ||
+    status.includes("blocked") ||
+    status.includes("bloque") ||
+    status.includes("outofservice") ||
+    status.includes("indisponible")
+  ) {
+    return "Machine en panne / indisponible";
+  }
+  if (params.is_available === false) return "Machine en panne / indisponible";
+  if (params.scheduling_enabled === false) return "Machine non planifiable";
+  return null;
+}
+
+function canForcePlanningOverlap(role: string | null | undefined): boolean {
+  const r = String(role ?? "").trim().toLowerCase();
+  if (!r) return false;
+  if (r.includes("admin") || r.includes("administrateur")) return true;
+  if (r.includes("responsable") && r.includes("atelier")) return true;
+  if (r.includes("chef") && r.includes("atelier")) return true;
+  return false;
+}
+
+async function assertResourceSchedulable(
+  q: DbQueryer,
+  resource: { machine_id: string | null; poste_id: string | null }
+): Promise<void> {
+  if (resource.machine_id) {
+    const res = await q.query<{
+      id: string;
+      code: string;
+      status: string | null;
+      is_available: boolean | null;
+      scheduling_enabled: boolean | null;
+    }>(
+      `
+        SELECT
+          m.id::text AS id,
+          m.code,
+          m.status::text AS status,
+          m.is_available,
+          COALESCE((to_jsonb(m)->>'scheduling_enabled')::boolean, TRUE) AS scheduling_enabled
+        FROM public.machines m
+        WHERE m.id = $1::uuid
+        LIMIT 1
+      `,
+      [resource.machine_id]
+    );
+    const row = res.rows[0] ?? null;
+    if (!row) throw new HttpError(404, "MACHINE_NOT_FOUND", "Machine not found");
+    const reason = machineBlockedReason(row);
+    if (reason) {
+      throw new HttpError(409, "PLANNING_RESOURCE_BLOCKED", reason, {
+        resource_type: "MACHINE",
+        machine_id: row.id,
+        machine_code: row.code,
+        status: row.status,
+        is_available: row.is_available,
+        scheduling_enabled: row.scheduling_enabled,
+        reason,
+      });
+    }
+    return;
+  }
+
+  if (resource.poste_id) {
+    const res = await q.query<{
+      poste_id: string;
+      poste_code: string;
+      poste_active: boolean | null;
+      machine_id: string | null;
+      machine_code: string | null;
+      status: string | null;
+      is_available: boolean | null;
+      scheduling_enabled: boolean | null;
+    }>(
+      `
+        SELECT
+          p.id::text AS poste_id,
+          p.code AS poste_code,
+          p.is_active AS poste_active,
+          m.id::text AS machine_id,
+          m.code AS machine_code,
+          m.status::text AS status,
+          m.is_available,
+          COALESCE((to_jsonb(m)->>'scheduling_enabled')::boolean, TRUE) AS scheduling_enabled
+        FROM public.postes p
+        LEFT JOIN public.machines m ON m.id = p.machine_id
+        WHERE p.id = $1::uuid
+        LIMIT 1
+      `,
+      [resource.poste_id]
+    );
+    const row = res.rows[0] ?? null;
+    if (!row) throw new HttpError(404, "POSTE_NOT_FOUND", "Poste not found");
+    if (row.poste_active === false) {
+      throw new HttpError(409, "PLANNING_RESOURCE_BLOCKED", "Poste non planifiable", {
+        resource_type: "POSTE",
+        poste_id: row.poste_id,
+        poste_code: row.poste_code,
+        reason: "Poste non planifiable",
+      });
+    }
+    if (!row.machine_id) return;
+    const reason = machineBlockedReason(row);
+    if (reason) {
+      throw new HttpError(409, "PLANNING_RESOURCE_BLOCKED", reason, {
+        resource_type: "POSTE",
+        poste_id: row.poste_id,
+        poste_code: row.poste_code,
+        machine_id: row.machine_id,
+        machine_code: row.machine_code,
+        status: row.status,
+        is_available: row.is_available,
+        scheduling_enabled: row.scheduling_enabled,
+        reason,
+      });
+    }
+  }
 }
 
 type UploadedDocument = {
@@ -675,6 +837,214 @@ function emitPlanningRealtime(params: {
   });
 }
 
+export async function repoValidatePlanningForAr(params: {
+  body: ValidatePlanningForArBodyDTO;
+  audit: AuditContext;
+}): Promise<PlanningValidationResult> {
+  const client = await pool.connect();
+  const notifications: AppNotification[] = [];
+  const validated: PlanningValidationResult["validated_commandes"] = [];
+  const skipped: PlanningValidationResult["skipped_commandes"] = [];
+
+  try {
+    await client.query("BEGIN");
+
+    const where: string[] = [
+      "e.archived_at IS NULL",
+      "e.status <> 'CANCELLED'::planning_event_status",
+      "o.commande_id IS NOT NULL",
+    ];
+    const values: unknown[] = [];
+    const push = (v: unknown) => {
+      values.push(v);
+      return `$${values.length}`;
+    };
+
+    if (params.body.event_ids?.length) {
+      where.push(`e.id = ANY(${push(params.body.event_ids)}::uuid[])`);
+    }
+    if (params.body.commande_ids?.length) {
+      where.push(`o.commande_id = ANY(${push(params.body.commande_ids)}::bigint[])`);
+    }
+    if (params.body.from && params.body.to) {
+      const fromP = push(params.body.from);
+      const toP = push(params.body.to);
+      where.push(`tstzrange(e.start_ts, e.end_ts, '[)') && tstzrange(${fromP}::timestamptz, ${toP}::timestamptz, '[)')`);
+    }
+
+    type CandidateRow = {
+      commande_id: string;
+      numero: string;
+      client_id: string | null;
+      planning_validated_at: string | null;
+      ar_sent_at: string | null;
+    };
+
+    const candidatesRes = await client.query<CandidateRow>(
+      `
+        WITH candidate_ids AS (
+          SELECT DISTINCT o.commande_id
+          FROM public.planning_events e
+          LEFT JOIN public.of_operations op ON op.id = e.of_operation_id
+          JOIN public.ordres_fabrication o ON o.id = COALESCE(e.of_id, op.of_id)
+          WHERE ${where.join(" AND ")}
+        )
+        SELECT
+          cc.id::text AS commande_id,
+          cc.numero,
+          cc.client_id::text AS client_id,
+          cc.planning_validated_at::text AS planning_validated_at,
+          cc.ar_sent_at::text AS ar_sent_at
+        FROM public.commande_client cc
+        JOIN candidate_ids ci ON ci.commande_id = cc.id
+        ORDER BY cc.numero ASC, cc.id ASC
+        FOR UPDATE
+      `,
+      values
+    );
+
+    const candidates = candidatesRes.rows;
+    const candidateIds = new Set(candidates.map((row) => toInt(row.commande_id, "commande_client.id")));
+
+    if (params.body.commande_ids?.length) {
+      const requested = Array.from(new Set(params.body.commande_ids));
+      const missing = requested.filter((id) => !candidateIds.has(id));
+      if (missing.length) {
+        const missingRes = await client.query<{ id: string; numero: string }>(
+          `
+            SELECT id::text AS id, numero
+            FROM public.commande_client
+            WHERE id = ANY($1::bigint[])
+            ORDER BY numero ASC, id ASC
+          `,
+          [missing]
+        );
+        for (const row of missingRes.rows) {
+          skipped.push({
+            commande_id: toInt(row.id, "commande_client.id"),
+            numero: row.numero,
+            reason: "NO_PLANNED_OF",
+            message: "Aucun OF planifie actif pour cette commande.",
+          });
+        }
+      }
+    }
+
+    const commentaire =
+      params.body.commentaire?.trim() ||
+      "Planning valide depuis le planning atelier; AR pret pour preparation manuelle.";
+
+    for (const row of candidates) {
+      const commandeId = toInt(row.commande_id, "commande_client.id");
+      if (row.ar_sent_at) {
+        skipped.push({
+          commande_id: commandeId,
+          numero: row.numero,
+          reason: "AR_ALREADY_SENT",
+          message: "AR deja envoye; planning verrouille.",
+        });
+        continue;
+      }
+
+      const transition = await repoEnsureCommandeWorkflowStatus({
+        tx: client,
+        commande_id: commandeId,
+        nouveau_statut: "AR_PRET",
+        commentaire,
+        user_id: params.audit.user_id,
+      });
+      notifications.push(...transition.notifications);
+
+      await client.query(
+        `
+          UPDATE public.commande_client_workflow_checkpoint
+          SET
+            status = 'done',
+            completed_at = COALESCE(completed_at, now()),
+            completed_by = COALESCE(completed_by, $2::int),
+            notes = COALESCE($3, notes),
+            updated_at = now()
+          WHERE commande_id = $1
+            AND checkpoint_code IN ('planning_validation', 'ar_preparation')
+            AND status <> 'done'
+        `,
+        [commandeId, params.audit.user_id, commentaire]
+      );
+
+      await client.query(
+        `
+          UPDATE public.commande_client_workflow_checkpoint
+          SET status = 'active', updated_at = now()
+          WHERE commande_id = $1
+            AND checkpoint_code = 'ar_sent'
+            AND status = 'pending'
+        `,
+        [commandeId]
+      );
+
+      const milestone = await client.query<{ planning_validated_at: string | null }>(
+        `SELECT planning_validated_at::text AS planning_validated_at FROM public.commande_client WHERE id = $1::bigint LIMIT 1`,
+        [commandeId]
+      );
+
+      validated.push({
+        commande_id: commandeId,
+        numero: row.numero,
+        client_id: row.client_id,
+        planning_validated_at: milestone.rows[0]?.planning_validated_at ?? row.planning_validated_at ?? null,
+        workflow_status: "AR_PRET",
+      });
+    }
+
+    await insertAuditLog(client, params.audit, {
+      action: "planning.validate_for_ar",
+      entity_type: "planning",
+      entity_id: null,
+      details: {
+        event_ids: params.body.event_ids ?? null,
+        commande_ids: params.body.commande_ids ?? null,
+        from: params.body.from ?? null,
+        to: params.body.to ?? null,
+        validated_commandes: validated.map((item) => item.commande_id),
+        skipped_commandes: skipped,
+      },
+    });
+
+    await client.query("COMMIT");
+
+    for (const notification of notifications) {
+      emitAppNotificationCreated(notification.user_id, notification);
+    }
+    for (const item of validated) {
+      emitEntityChanged({
+        entityType: "commande_client",
+        entityId: String(item.commande_id),
+        action: "updated",
+        module: "planning",
+        at: new Date().toISOString(),
+        by: { id: params.audit.user_id, name: `User #${params.audit.user_id}` },
+        invalidateKeys: ["commandes:list", `commandes:detail:${item.commande_id}`, `commandes:workflow:${item.commande_id}`],
+      });
+    }
+
+    const commandeIds = validated.map((item) => item.commande_id);
+    return {
+      validated_commandes: validated,
+      skipped_commandes: skipped,
+      ar_prompt: {
+        should_prompt: commandeIds.length > 0,
+        commande_ids: commandeIds,
+        primary_commande_id: commandeIds[0] ?? null,
+      },
+    };
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 export async function repoListPlanningResources(query: ListPlanningResourcesQueryDTO): Promise<PlanningResources> {
   const machinesWhere = query.include_archived ? "" : "WHERE m.archived_at IS NULL";
   const postesWhere = query.include_archived ? "" : "WHERE p.archived_at IS NULL";
@@ -686,6 +1056,7 @@ export async function repoListPlanningResources(query: ListPlanningResourcesQuer
     type: string;
     status: string;
     is_available: boolean;
+    scheduling_enabled: boolean;
     archived_at: string | null;
   };
 
@@ -698,6 +1069,7 @@ export async function repoListPlanningResources(query: ListPlanningResourcesQuer
         m.type::text AS type,
         m.status::text AS status,
         m.is_available,
+        COALESCE((to_jsonb(m)->>'scheduling_enabled')::boolean, TRUE) AS scheduling_enabled,
         m.archived_at::text AS archived_at
       FROM public.machines m
       ${machinesWhere}
@@ -713,6 +1085,7 @@ export async function repoListPlanningResources(query: ListPlanningResourcesQuer
     type: r.type,
     status: r.status,
     is_available: r.is_available,
+    scheduling_enabled: r.scheduling_enabled,
     archived_at: r.archived_at,
   }));
 
@@ -1174,18 +1547,22 @@ export async function repoCreatePlanningEvent(params: {
     const title = b.title ?? deriveTitleFromOperation(op);
     const resource = resolveResource({ machine_id: b.machine_id ?? null, poste_id: b.poste_id ?? null, op });
 
-    if (!b.allow_overlap) {
-      const conflicts = await selectPlanningEventConflicts(client, {
-        start_ts: b.start_ts,
-        end_ts: b.end_ts,
-        machine_id: resource.machine_id,
-        poste_id: resource.poste_id,
+    await assertResourceSchedulable(client, resource);
+
+    if (b.allow_overlap && !canForcePlanningOverlap(params.audit.role)) {
+      throw new HttpError(403, "PLANNING_FORCE_OVERLAP_FORBIDDEN", "Only admin or responsable atelier can force overlaps");
+    }
+
+    const conflicts = await selectPlanningEventConflicts(client, {
+      start_ts: b.start_ts,
+      end_ts: b.end_ts,
+      machine_id: resource.machine_id,
+      poste_id: resource.poste_id,
+    });
+    if (conflicts.length && !b.allow_overlap) {
+      throw new HttpError(409, "PLANNING_CONFLICT", "Resource has conflicting events", {
+        conflicts,
       });
-      if (conflicts.length) {
-        throw new HttpError(409, "PLANNING_CONFLICT", "Resource has conflicting events", {
-          conflicts,
-        });
-      }
     }
 
     const eventId = crypto.randomUUID();
@@ -1285,6 +1662,8 @@ export async function repoCreatePlanningEvent(params: {
         start_ts: b.start_ts,
         end_ts: b.end_ts,
         allow_overlap: b.allow_overlap,
+        force_overlap: b.allow_overlap && conflicts.length > 0,
+        conflicts: b.allow_overlap && conflicts.length > 0 ? conflicts : undefined,
       },
     });
 
@@ -1430,20 +1809,32 @@ export async function repoPatchPlanningEvent(params: {
       op,
     });
 
+    const touchesSchedule =
+      p.machine_id !== undefined ||
+      p.poste_id !== undefined ||
+      p.start_ts !== undefined ||
+      p.end_ts !== undefined ||
+      p.of_operation_id !== undefined;
+    if (touchesSchedule) {
+      await assertResourceSchedulable(client, resource);
+    }
+
     const nextAllowOverlap = p.allow_overlap !== undefined ? p.allow_overlap : before.allow_overlap;
-    if (!nextAllowOverlap) {
-      const conflicts = await selectPlanningEventConflicts(client, {
-        start_ts: nextStart,
-        end_ts: nextEnd,
-        machine_id: resource.machine_id,
-        poste_id: resource.poste_id,
-        exclude_id: params.id,
+    if (nextAllowOverlap && !canForcePlanningOverlap(params.audit.role)) {
+      throw new HttpError(403, "PLANNING_FORCE_OVERLAP_FORBIDDEN", "Only admin or responsable atelier can force overlaps");
+    }
+
+    const conflicts = await selectPlanningEventConflicts(client, {
+      start_ts: nextStart,
+      end_ts: nextEnd,
+      machine_id: resource.machine_id,
+      poste_id: resource.poste_id,
+      exclude_id: params.id,
+    });
+    if (conflicts.length && !nextAllowOverlap) {
+      throw new HttpError(409, "PLANNING_CONFLICT", "Resource has conflicting events", {
+        conflicts,
       });
-      if (conflicts.length) {
-        throw new HttpError(409, "PLANNING_CONFLICT", "Resource has conflicting events", {
-          conflicts,
-        });
-      }
     }
 
     const sets: string[] = [];
@@ -1493,12 +1884,37 @@ export async function repoPatchPlanningEvent(params: {
       throw new HttpError(409, "PLANNING_STALE", "Event has been modified by another user");
     }
 
+    const beforeDurationMinutes = durationMinutes(before.start_ts, before.end_ts);
+    const nextDurationMinutes = durationMinutes(nextStart, nextEnd);
+    const changes = {
+      machine_id: before.machine_id !== resource.machine_id ? { from: before.machine_id, to: resource.machine_id } : undefined,
+      poste_id: before.poste_id !== resource.poste_id ? { from: before.poste_id, to: resource.poste_id } : undefined,
+      start_ts: before.start_ts !== nextStart ? { from: before.start_ts, to: nextStart } : undefined,
+      end_ts: before.end_ts !== nextEnd ? { from: before.end_ts, to: nextEnd } : undefined,
+      duration_minutes:
+        beforeDurationMinutes !== nextDurationMinutes
+          ? { from: beforeDurationMinutes, to: nextDurationMinutes }
+          : undefined,
+      allow_overlap: before.allow_overlap !== nextAllowOverlap ? { from: before.allow_overlap, to: nextAllowOverlap } : undefined,
+    };
+
     await insertAuditLog(client, params.audit, {
       action: "planning.events.update",
       entity_type: "planning_events",
       entity_id: params.id,
       details: {
         patch: p,
+        before: {
+          of_id: toNullableInt(before.of_id, "planning_events.of_id"),
+          of_operation_id: before.of_operation_id,
+          machine_id: before.machine_id,
+          poste_id: before.poste_id,
+          operator_id: before.operator_id,
+          start_ts: before.start_ts,
+          end_ts: before.end_ts,
+          duration_minutes: beforeDurationMinutes,
+          allow_overlap: before.allow_overlap,
+        },
         next: {
           of_id: nextOfId,
           of_operation_id: nextOfOperationId,
@@ -1507,8 +1923,12 @@ export async function repoPatchPlanningEvent(params: {
           operator_id: p.operator_id !== undefined ? p.operator_id : before.operator_id,
           start_ts: nextStart,
           end_ts: nextEnd,
+          duration_minutes: nextDurationMinutes,
           allow_overlap: nextAllowOverlap,
+          force_overlap: nextAllowOverlap && conflicts.length > 0,
+          conflicts: nextAllowOverlap && conflicts.length > 0 ? conflicts : undefined,
         },
+        changes,
       },
     });
 

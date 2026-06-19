@@ -5,6 +5,7 @@ import type {
   PlanningEventDocument,
   PlanningEventListItem,
   PlanningResources,
+  PlanningValidationResult,
 } from "../types/planning.types";
 import type {
   CreatePlanningEventBodyDTO,
@@ -13,6 +14,7 @@ import type {
   ListPlanningEventsQueryDTO,
   ListPlanningResourcesQueryDTO,
   PatchPlanningEventBodyDTO,
+  ValidatePlanningForArBodyDTO,
 } from "../validators/planning.validators";
 import type { AuditContext } from "../repository/planning.repository";
 import {
@@ -27,6 +29,7 @@ import {
   repoListPlanningResources,
   repoPatchPlanningEvent,
   repoUploadPlanningEventDocuments,
+  repoValidatePlanningForAr,
 } from "../repository/planning.repository";
 
 function clampPositiveInt(n: number, fallback: number): number {
@@ -242,6 +245,13 @@ export async function svcAutoPlanPlanning(params: {
   }
 
   return { created_events, skipped_operations };
+}
+
+export async function svcValidatePlanningForAr(params: {
+  body: ValidatePlanningForArBodyDTO;
+  audit: AuditContext;
+}): Promise<PlanningValidationResult> {
+  return repoValidatePlanningForAr(params);
 }
 
 export async function svcPatchPlanningEvent(params: {

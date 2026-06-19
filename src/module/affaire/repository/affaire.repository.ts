@@ -1063,7 +1063,7 @@ export async function repoGetAffaireOperations(id: number): Promise<AffaireOpera
     WHERE f.affaire_id = $1::bigint
     ORDER BY created_at DESC NULLS LAST, source ASC
     `,
-    [id, affaire.commande_id]
+    [id, affaire.commande.id]
   );
 
   type TimelineRow = {
@@ -1120,7 +1120,7 @@ export async function repoGetAffaireOperations(id: number): Promise<AffaireOpera
     ORDER BY created_at DESC
     LIMIT 80
     `,
-    [id, affaire.commande_id]
+    [id, affaire.commande.id]
   );
 
   return {
