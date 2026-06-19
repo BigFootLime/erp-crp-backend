@@ -32,6 +32,7 @@ import metrologieRoutes from "../module/metrologie/routes/metrologie.routes";
 import codesRoutes from "../module/codes/routes/codes.routes";
 import notificationsRoutes from "../module/notifications/routes/notifications.routes";
 import chatRoutes from "../module/chat/routes/chat.routes";
+import usersRoutes from "../module/users/routes/users.routes";
 
 import traceabilityRoutes from "../module/traceability/routes/traceability.routes"
 import asbuiltRoutes from "../module/asbuilt/routes/asbuilt.routes"
@@ -70,6 +71,7 @@ router.use("/metrologie", metrologieRoutes);
 router.use("/codes", codesRoutes);
 router.use("/notifications", notificationsRoutes);
 router.use("/chat", chatRoutes);
+router.use("/users", usersRoutes);
 router.use("/traceability", traceabilityRoutes)
 router.use("/asbuilt", asbuiltRoutes)
 router.use("/locks", locksRoutes)

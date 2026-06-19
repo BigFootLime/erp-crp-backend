@@ -214,9 +214,6 @@ export const createArticleSchema = z.object({
         if (!body.piece_technique_id) {
           ctx.addIssue({ code: z.ZodIssueCode.custom, message: "piece_technique_id is required for fabricated articles", path: ["piece_technique_id"] });
         }
-        if (!body.projet_id) {
-          ctx.addIssue({ code: z.ZodIssueCode.custom, message: "projet_id is required for fabricated articles", path: ["projet_id"] });
-        }
       }
       if (body.article_category !== "fabrique" && body.piece_technique_id) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Only fabricated articles may reference a piece technique", path: ["piece_technique_id"] });

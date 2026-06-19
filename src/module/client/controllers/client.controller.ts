@@ -81,9 +81,15 @@ function buildAuditContext(req: Request): AuditContext {
   };
 }
 
+function routeParam(req: Request, name: string): string {
+  const value = req.params[name];
+  if (typeof value === "string" && value.length > 0) return value;
+  throw new HttpError(400, "INVALID_ROUTE_PARAM", `${name} must be a string`);
+}
+
 export const getClientById: RequestHandler = async (req, res, next) => {
   try {
-    const row = await svcGetClientById(req.params.id);
+    const row = await svcGetClientById(routeParam(req, "id"));
     if (!row) {
       res.status(404).json({ message: "Client not found" });
       return;
@@ -117,7 +123,7 @@ export const listClients: RequestHandler = async (req, res, next) => {
 
 export const listClientContacts: RequestHandler = async (req, res, next) => {
   try {
-    const clientId = req.params.clientId;
+    const clientId = routeParam(req, "clientId");
     const rows = await clientService.listClientContacts(clientId);
     res.json(rows);
   } catch (e) {
@@ -127,7 +133,7 @@ export const listClientContacts: RequestHandler = async (req, res, next) => {
 
 export const listClientAddresses: RequestHandler = async (req, res, next) => {
   try {
-    const clientId = req.params.clientId;
+    const clientId = routeParam(req, "clientId");
     const rows = await svcListClientAddresses(clientId);
     res.json(rows);
   } catch (e) {
@@ -149,7 +155,7 @@ export const postClient: RequestHandler = async (req, res, next) => {
 export const patchClientPrimaryContact: RequestHandler = async (req, res, next) => {
   try {
     const audit = buildAuditContext(req);
-    const clientId = req.params.id;
+    const clientId = routeParam(req, "id");
     const { contact_id } = req.body as { contact_id: string };
     await clientService.updateClientPrimaryContact(clientId, contact_id);
 
@@ -181,7 +187,7 @@ export const patchClientPrimaryContact: RequestHandler = async (req, res, next) 
 export const patchClient: RequestHandler = async (req, res, next) => {
   try {
     const audit = buildAuditContext(req);
-    const id = req.params.id;
+    const id = routeParam(req, "id");
 
     // on réutilise le même schéma que pour la création
     const dto = createClientSchema.parse(req.body);
@@ -198,8 +204,7 @@ export const patchClient: RequestHandler = async (req, res, next) => {
 export const deleteClient: RequestHandler = async (req, res, next) => {
   try {
     const audit = buildAuditContext(req);
-    const id = req.params.id;
-    if (!id) throw new HttpError(400, "CLIENT_ID_REQUIRED", "client_id is required");
+    const id = routeParam(req, "id");
 
     await repoDeleteClient(id, audit);
     res.status(204).end();
@@ -211,8 +216,7 @@ export const deleteClient: RequestHandler = async (req, res, next) => {
 export const archiveClient: RequestHandler = async (req, res, next) => {
   try {
     const audit = buildAuditContext(req);
-    const id = req.params.id;
-    if (!id) throw new HttpError(400, "CLIENT_ID_REQUIRED", "client_id is required");
+    const id = routeParam(req, "id");
 
     await repoArchiveClient(id, audit);
     res.status(204).end();

@@ -462,10 +462,6 @@ async function normalizeArticleState(args: {
     throw new HttpError(400, "INVALID_ARTICLE", "Only fabricated articles can be linked to a piece technique");
   }
 
-  if (article_category === "fabrique" && !projet_id) {
-    throw new HttpError(400, "INVALID_ARTICLE", "Fabricated articles require projet_id");
-  }
-
   if (projet_id) {
     await ensureProjetAffaireExists(args.client, projet_id);
   }

@@ -1052,14 +1052,37 @@ export async function repoEnsureCommandeWorkflowStatus(params: {
     [params.commande_id, params.user_id, ancienStatut, nextRaw, params.commentaire]
   );
 
-  if (nextNormalized === "AR_ENVOYE") {
-    await params.tx.query(
-      `UPDATE commande_client SET updated_at = now(), arc_date_envoi = COALESCE(arc_date_envoi, now()) WHERE id = $1`,
-      [params.commande_id]
-    );
-  } else {
-    await params.tx.query(`UPDATE commande_client SET updated_at = now() WHERE id = $1`, [params.commande_id]);
-  }
+  const marksPlanningValidated = nextNormalized === "PLANNING_VALIDE" || nextNormalized === "AR_PRET" || nextNormalized === "AR_ENVOYE";
+  const marksArSent = nextNormalized === "AR_ENVOYE";
+  await params.tx.query(
+    `
+      UPDATE commande_client
+      SET
+        updated_at = now(),
+        planning_validated_at = CASE
+          WHEN $2::boolean THEN COALESCE(planning_validated_at, now())
+          ELSE planning_validated_at
+        END,
+        planning_validated_by = CASE
+          WHEN $2::boolean THEN COALESCE(planning_validated_by, $3::int)
+          ELSE planning_validated_by
+        END,
+        ar_sent_at = CASE
+          WHEN $4::boolean THEN COALESCE(ar_sent_at, now())
+          ELSE ar_sent_at
+        END,
+        ar_sent_by = CASE
+          WHEN $4::boolean THEN COALESCE(ar_sent_by, $3::int)
+          ELSE ar_sent_by
+        END,
+        arc_date_envoi = CASE
+          WHEN $4::boolean THEN COALESCE(arc_date_envoi, now())
+          ELSE arc_date_envoi
+        END
+      WHERE id = $1
+    `,
+    [params.commande_id, marksPlanningValidated, params.user_id ?? null, marksArSent]
+  );
 
   await insertCommandeEvent(params.tx, {
     commande_id: params.commande_id,
@@ -1087,6 +1110,26 @@ export async function repoEnsureCommandeWorkflowStatus(params: {
         client_id: commande.client_id,
       },
       dedupe_key: `commande:${params.commande_id}:planning_valide`,
+    });
+  }
+
+  if (nextNormalized === "AR_PRET") {
+    const recipientIds = await repoListUsersForCommandePlanningNotification(params.tx);
+    notifications = await repoCreateAppNotifications({
+      tx: params.tx,
+      user_ids: recipientIds,
+      kind: "commande.ar_pret",
+      title: `AR pret pour ${commande.numero}`,
+      message: `La commande ${commande.numero} a un planning valide. L'AR peut etre prepare et envoye manuellement.`,
+      severity: "success",
+      action_url: `/commandes/${params.commande_id}`,
+      action_label: "Preparer l'AR",
+      payload: {
+        commande_id: params.commande_id,
+        numero: commande.numero,
+        client_id: commande.client_id,
+      },
+      dedupe_key: `commande:${params.commande_id}:ar_pret`,
     });
   }
 
@@ -3364,7 +3407,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
               notes,
               created_by,
               updated_by
-            ) VALUES ($1,$2,$3::bigint,$4::bigint,$5::bigint,$6::uuid,$7,$8::uuid,$9,'BROUILLON'::of_status,'NORMAL'::of_priority,$10,$10,$10)
+            ) VALUES ($1,$2,$3::bigint,$4::bigint,$5::bigint,$6::uuid,$7,$8::uuid,$9,'BROUILLON'::of_status,'NORMAL'::of_priority,$10,$11,$11)
           `,
           [
             ofId,
@@ -3381,7 +3424,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
           ]
         );
 
-        await client.query(
+        const operationsInsert = await client.query(
           `
             INSERT INTO public.of_operations (
               of_id,
@@ -3420,6 +3463,13 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
           `,
           [ofId, pieceTechniqueId]
         );
+        if ((operationsInsert.rowCount ?? 0) === 0) {
+          throw new HttpError(
+            409,
+            "PIECE_TECHNIQUE_OPERATION_REQUIRED",
+            `Cannot create complete OF: piece technique ${pieceTechniqueId} has no operation for line ${l.commande_ligne_id}`
+          );
+        }
 
         ofIds.push(ofId);
       }

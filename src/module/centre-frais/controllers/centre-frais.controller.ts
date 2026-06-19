@@ -8,6 +8,10 @@ import {
   updatePieceCFSVC,
 } from "../services/centre-frais.service"
 
+function routeParam(value: string | string[] | undefined): string | null {
+  return typeof value === "string" ? value : null
+}
+
 export const createPieceCF: RequestHandler = async (req, res, next) => {
   try {
     const row = await createPieceCFSVC(req.body)
@@ -28,7 +32,12 @@ export const listPieceCF: RequestHandler = async (_req, res, next) => {
 
 export const getPieceCF: RequestHandler = async (req, res, next) => {
   try {
-    const row = await getPieceCFSVC(req.params.id)
+    const id = routeParam(req.params.id)
+    if (!id) {
+      res.status(400).json({ error: "id must be a string" })
+      return
+    }
+    const row = await getPieceCFSVC(id)
     if (!row) {
       res.status(404).json({ error: "Not found" })
       return
@@ -41,7 +50,12 @@ export const getPieceCF: RequestHandler = async (req, res, next) => {
 
 export const updatePieceCF: RequestHandler = async (req, res, next) => {
   try {
-    const row = await updatePieceCFSVC(req.params.id, req.body)
+    const id = routeParam(req.params.id)
+    if (!id) {
+      res.status(400).json({ error: "id must be a string" })
+      return
+    }
+    const row = await updatePieceCFSVC(id, req.body)
     if (!row) {
       res.status(404).json({ error: "Not found" })
       return
@@ -54,7 +68,12 @@ export const updatePieceCF: RequestHandler = async (req, res, next) => {
 
 export const deletePieceCF: RequestHandler = async (req, res, next) => {
   try {
-    const ok = await deletePieceCFSVC(req.params.id)
+    const id = routeParam(req.params.id)
+    if (!id) {
+      res.status(400).json({ error: "id must be a string" })
+      return
+    }
+    const ok = await deletePieceCFSVC(id)
     if (!ok) {
       res.status(404).json({ error: "Not found" })
       return

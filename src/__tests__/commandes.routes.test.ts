@@ -1037,6 +1037,7 @@ describe("/api/v1/commandes", () => {
       if (q.includes("INSERT INTO affaire")) return { rows: [] };
       if (q.includes("INSERT INTO commande_to_affaire")) return { rows: [] };
       if (q.includes("INSERT INTO public.commande_ligne_affaire_allocation")) return { rows: [] };
+      if (q.includes("INSERT INTO public.of_operations")) return { rows: [], rowCount: 1 };
       if (q.includes("INSERT INTO public.commande_client_event_log")) return { rows: [] };
       if (q.includes("INSERT INTO erp_audit_logs")) return { rows: [{ id: "1", created_at: "2026-01-01T00:00:00.000Z" }] };
       if (q.includes("UPDATE commande_client SET updated_at")) return { rows: [] };
@@ -1145,6 +1146,7 @@ describe("/api/v1/commandes", () => {
 
       if (q.includes("INSERT INTO affaire")) return { rows: [] };
       if (q.includes("INSERT INTO commande_to_affaire")) return { rows: [] };
+      if (q.includes("INSERT INTO public.of_operations")) return { rows: [], rowCount: 1 };
       if (q.includes("INSERT INTO public.commande_client_event_log")) return { rows: [] };
       if (q.includes("INSERT INTO erp_audit_logs")) return { rows: [{ id: "1", created_at: "2026-01-01T00:00:00.000Z" }] };
       if (q.includes("UPDATE commande_client SET updated_at")) return { rows: [] };

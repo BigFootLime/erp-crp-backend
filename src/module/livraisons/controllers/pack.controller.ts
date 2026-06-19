@@ -1,4 +1,4 @@
-import type { RequestHandler } from "express"
+import type { Request, RequestHandler } from "express"
 
 import { HttpError } from "../../../utils/httpError"
 import { packGenerateBodySchema, packPreviewParamsSchema, packRevokeParamsSchema } from "../validators/pack.validators"
@@ -19,6 +19,12 @@ function getUserId(req: Express.Request): number {
   const userId = typeof req.user?.id === "number" ? req.user.id : null
   if (!userId) throw new HttpError(401, "UNAUTHORIZED", "Authentication required")
   return userId
+}
+
+function routeParam(req: Request, name: string): string {
+  const value = req.params[name]
+  if (typeof value === "string" && value.length > 0) return value
+  throw new HttpError(400, "INVALID_ROUTE_PARAM", `${name} must be a string`)
 }
 
 export const getLivraisonPackPreview: RequestHandler = async (req, res, next) => {
@@ -48,7 +54,7 @@ export const downloadLivraisonPackDocument: RequestHandler = async (req, res, ne
   try {
     getUserId(req)
     const { id } = packPreviewParamsSchema.parse(req.params)
-    const documentId = req.params.documentId
+    const documentId = routeParam(req, "documentId")
     if (!documentId || !/^[0-9a-fA-F-]{36}$/.test(documentId)) {
       res.status(400).json({ error: "Invalid documentId" })
       return

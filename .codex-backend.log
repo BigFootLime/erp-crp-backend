@@ -26,3 +26,189 @@ Require stack:
 - C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
 - C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
 - C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+[INFO] 14:09:01 Restarting: C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\module\client\validators\client.validators.ts has been modified
+[ERROR] 14:09:01 Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+[INFO] 14:09:16 Restarting: C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\module\client\validators\client.validators.ts has been modified
+[ERROR] 14:09:17 Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+[INFO] 14:10:14 Restarting: C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\module\client\repository\client.repository.ts has been modified
+[ERROR] 14:10:15 Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+[INFO] 14:12:44 Restarting: C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\module\client\controllers\client.controller.ts has been modified
+[ERROR] 14:12:45 Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+[INFO] 14:12:49 Restarting: C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\module\client\routes\client.routes.ts has been modified
+[ERROR] 14:12:49 Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+[INFO] 14:34:40 Restarting: C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\module\client\controllers\client.controller.ts has been modified
+[ERROR] 14:34:40 Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+[INFO] 17:18:53 Restarting: C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\module\fournisseurs\validators\fournisseurs.validators.ts has been modified
+[ERROR] 17:18:56 Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+[INFO] 17:19:02 Restarting: C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\module\fournisseurs\repository\fournisseurs.repository.ts has been modified
+[ERROR] 17:19:03 Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+[INFO] 17:19:27 Restarting: C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\module\fournisseurs\repository\fournisseurs.repository.ts has been modified
+[ERROR] 17:19:29 Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+[INFO] 17:20:24 Restarting: C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\module\fournisseurs\repository\fournisseurs.repository.ts has been modified
+[ERROR] 17:20:24 Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+[INFO] 17:20:36 Restarting: C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\module\fournisseurs\repository\fournisseurs.repository.ts has been modified
+[ERROR] 17:20:37 Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+[INFO] 17:21:08 Restarting: C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\module\fournisseurs\repository\fournisseurs.repository.ts has been modified
+[ERROR] 17:21:09 Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+[INFO] 17:21:38 Restarting: C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\module\fournisseurs\repository\fournisseurs.repository.ts has been modified
+[ERROR] 17:21:39 Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+[INFO] 17:22:06 Restarting: C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\module\fournisseurs\repository\fournisseurs.repository.ts has been modified
+[ERROR] 17:22:07 Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+[INFO] 17:22:16 Restarting: C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\module\fournisseurs\repository\fournisseurs.repository.ts has been modified
+[ERROR] 17:22:18 Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+[INFO] 17:22:45 Restarting: C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\module\fournisseurs\repository\fournisseurs.repository.ts has been modified
+[ERROR] 17:22:45 Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+[INFO] 17:23:14 Restarting: C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\module\fournisseurs\repository\fournisseurs.repository.ts has been modified
+[ERROR] 17:23:14 Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+[INFO] 17:23:24 Restarting: C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\module\fournisseurs\services\fournisseurs.service.ts has been modified
+[ERROR] 17:23:24 Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+[INFO] 17:23:39 Restarting: C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\module\fournisseurs\controllers\fournisseurs.controller.ts has been modified
+[ERROR] 17:23:39 Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+[INFO] 17:23:49 Restarting: C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\module\fournisseurs\routes\fournisseurs.routes.ts has been modified
+[ERROR] 17:23:50 Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+[INFO] 17:40:01 Restarting: C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\module\client\routes\client.routes.ts has been modified
+[ERROR] 17:40:02 Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+[INFO] 17:45:56 Restarting: C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\module\fournisseurs\validators\fournisseurs.validators.ts has been modified
+[ERROR] 17:45:57 Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+[INFO] 17:46:05 Restarting: C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\module\fournisseurs\services\fournisseurs.service.ts has been modified
+[ERROR] 17:46:06 Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+[INFO] 17:46:20 Restarting: C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\module\fournisseurs\controllers\fournisseurs.controller.ts has been modified
+[ERROR] 17:46:21 Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+[INFO] 17:46:30 Restarting: C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\module\fournisseurs\routes\fournisseurs.routes.ts has been modified
+[ERROR] 17:46:31 Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+[INFO] 17:47:09 Restarting: C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\module\fournisseurs\repository\fournisseurs.repository.ts has been modified
+[ERROR] 17:47:10 Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+[INFO] 17:48:16 Restarting: C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\module\fournisseurs\repository\fournisseurs.repository.ts has been modified
+[ERROR] 17:48:17 Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+[INFO] 17:48:21 Restarting: C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\module\fournisseurs\repository\fournisseurs.repository.ts has been modified
+[ERROR] 17:48:21 Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+[INFO] 17:48:28 Restarting: C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\module\fournisseurs\repository\fournisseurs.repository.ts has been modified
+[ERROR] 17:48:29 Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+[INFO] 17:48:35 Restarting: C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\module\fournisseurs\repository\fournisseurs.repository.ts has been modified
+[ERROR] 17:48:36 Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
+[INFO] 17:48:58 Restarting: C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\module\fournisseurs\repository\fournisseurs.repository.ts has been modified
+[ERROR] 17:48:59 Error: Cannot find module '../utils/httpError.js'
+Require stack:
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\middlewares\errorHandler.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\config\app.ts
+- C:\Users\KeenanMARTIN\Documents\Github\erp-crp-backend\src\index.ts
