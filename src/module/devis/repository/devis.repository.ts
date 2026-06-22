@@ -197,25 +197,25 @@ async function loadDevisCommandeHeader(
   const res = await client.query<DevisCommandeHeaderRow>(
     `
       SELECT
-        id::text AS id,
-        numero,
-        client_id,
-        contact_id::text AS contact_id,
-        adresse_facturation_id::text AS adresse_facturation_id,
-        adresse_livraison_id::text AS adresse_livraison_id,
-        mode_reglement_id::text AS mode_reglement_id,
-        conditions_paiement_id,
-        biller_id::text AS biller_id,
-        compte_vente_id::text AS compte_vente_id,
-        commentaires,
-        remise_globale::float8 AS remise_globale,
-        total_ht::float8 AS total_ht,
-        total_ttc::float8 AS total_ttc,
-        statut,
+        d.id::text AS id,
+        d.numero,
+        d.client_id,
+        d.contact_id::text AS contact_id,
+        d.adresse_facturation_id::text AS adresse_facturation_id,
+        d.adresse_livraison_id::text AS adresse_livraison_id,
+        d.mode_reglement_id::text AS mode_reglement_id,
+        d.conditions_paiement_id,
+        d.biller_id::text AS biller_id,
+        d.compte_vente_id::text AS compte_vente_id,
+        d.commentaires,
+        d.remise_globale::float8 AS remise_globale,
+        d.total_ht::float8 AS total_ht,
+        d.total_ttc::float8 AS total_ttc,
+        d.statut,
         to_jsonb(d)->>'updated_at' AS updated_at,
         COALESCE(to_jsonb(d)->>'created_at', d.date_creation::text) AS created_at
       FROM devis d
-      WHERE id = $1
+      WHERE d.id = $1
       ${lockClause}
     `,
     [devisId]
@@ -232,18 +232,18 @@ async function loadDevisCommandeLines(
   const res = await client.query<DevisCommandeLineRow>(
     `
         SELECT
-          id::text AS id,
-          description,
-          article_id::text AS article_id,
-          piece_technique_id::text AS piece_technique_id,
+          dl.id::text AS id,
+          dl.description,
+          dl.article_id::text AS article_id,
+          dl.piece_technique_id::text AS piece_technique_id,
           ad.id::text AS source_article_devis_id,
           dd.id::text AS source_dossier_devis_id,
           ${codePieceSelect},
-          quantite::float8 AS quantite,
-          unite,
-          prix_unitaire_ht::float8 AS prix_unitaire_ht,
-          remise_ligne::float8 AS remise_ligne,
-          taux_tva::float8 AS taux_tva
+          dl.quantite::float8 AS quantite,
+          dl.unite,
+          dl.prix_unitaire_ht::float8 AS prix_unitaire_ht,
+          dl.remise_ligne::float8 AS remise_ligne,
+          dl.taux_tva::float8 AS taux_tva
       FROM devis_ligne dl
       LEFT JOIN public.article_devis ad ON ad.devis_ligne_id = dl.id
       LEFT JOIN public.dossier_technique_piece_devis dd ON dd.article_devis_id = ad.id
@@ -1148,13 +1148,13 @@ async function cloneDevisPreparatoryEntities(client: PoolClient, sourceDevisId: 
   const lineMapRes = await client.query<{ source_line_id: string; target_line_id: string }>(
     `
       WITH src AS (
-        SELECT id, row_number() OVER (ORDER BY id ASC) AS rn
-        FROM public.devis_ligne
-        WHERE devis_id = $1::bigint
+        SELECT dl.id, row_number() OVER (ORDER BY dl.id ASC) AS rn
+        FROM public.devis_ligne dl
+        WHERE dl.devis_id = $1::bigint
       ), tgt AS (
-        SELECT id, row_number() OVER (ORDER BY id ASC) AS rn
-        FROM public.devis_ligne
-        WHERE devis_id = $2::bigint
+        SELECT dl.id, row_number() OVER (ORDER BY dl.id ASC) AS rn
+        FROM public.devis_ligne dl
+        WHERE dl.devis_id = $2::bigint
       )
       SELECT src.id::text AS source_line_id, tgt.id::text AS target_line_id
       FROM src
@@ -1663,18 +1663,18 @@ export async function repoReviseDevis(
           )
           SELECT
             $1,
-            description,
-            article_id,
-            piece_technique_id,
-            code_piece,
-            quantite,
-            unite,
-            prix_unitaire_ht,
-            remise_ligne,
-            taux_tva
-          FROM devis_ligne
-          WHERE devis_id = $2
-          ORDER BY id ASC
+            dl.description,
+            dl.article_id,
+            dl.piece_technique_id,
+            dl.code_piece,
+            dl.quantite,
+            dl.unite,
+            dl.prix_unitaire_ht,
+            dl.remise_ligne,
+            dl.taux_tva
+          FROM devis_ligne dl
+          WHERE dl.devis_id = $2
+          ORDER BY dl.id ASC
         `,
         [newDevisId, id]
       );
@@ -1863,9 +1863,9 @@ export async function repoConvertDevisToCommande(devisId: number) {
 
     const existing = await client.query<{ id: string; numero: string }>(
       `
-      SELECT id::text AS id, numero
-      FROM commande_client
-      WHERE devis_id = $1
+      SELECT cc.id::text AS id, cc.numero
+      FROM commande_client cc
+      WHERE cc.devis_id = $1
       LIMIT 1
       `,
       [devisId]
