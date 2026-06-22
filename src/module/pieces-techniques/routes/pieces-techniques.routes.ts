@@ -1,10 +1,9 @@
 // src/module/pieces-techniques/routes/pieces-techniques.routes.ts
 import { Router, type RequestHandler } from "express"
-import fs from "fs"
 import multer from "multer"
-import path from "path"
 
 import { authenticateToken } from "../../auth/middlewares/auth.middleware"
+import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
 import {
   addAchat,
@@ -74,12 +73,7 @@ const requireAdmin: RequestHandler = (req, _res, next) => {
   next()
 }
 
-const ensureDir = (dir: string) => {
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-}
-
-const docsBaseDir = path.resolve("uploads/docs/pieces-techniques")
-ensureDir(docsBaseDir)
+const docsBaseDir = ensureDocumentStoragePath("pieces-techniques")
 
 const upload = multer({
   dest: docsBaseDir,

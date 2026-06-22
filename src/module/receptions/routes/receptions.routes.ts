@@ -1,9 +1,8 @@
 import { Router } from "express"
-import fs from "node:fs"
 import multer from "multer"
-import path from "node:path"
 
 import { authenticateToken } from "../../auth/middlewares/auth.middleware"
+import { ensureTmpStoragePath } from "../../../utils/cerpStorage"
 import {
   addIncomingMeasurement,
   attachReceptionDocuments,
@@ -21,12 +20,7 @@ import {
   startIncomingInspection,
 } from "../controllers/receptions.controller"
 
-const ensureDir = (dir: string) => {
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-}
-
-const tmpBaseDir = path.resolve("uploads/tmp/receptions")
-ensureDir(tmpBaseDir)
+const tmpBaseDir = ensureTmpStoragePath("receptions")
 
 const upload = multer({
   dest: tmpBaseDir,

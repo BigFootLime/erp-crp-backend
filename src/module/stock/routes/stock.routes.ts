@@ -1,9 +1,8 @@
 import { Router } from "express";
-import fs from "fs";
 import multer from "multer";
-import path from "path";
 
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
+import { ensureTmpStoragePath } from "../../../utils/cerpStorage";
 import {
   attachStockArticleDocuments,
   attachStockMovementDocuments,
@@ -58,12 +57,7 @@ import {
 
 const router = Router();
 
-const ensureDir = (dir: string) => {
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-};
-
-const tmpBaseDir = path.resolve("uploads/tmp/stock");
-ensureDir(tmpBaseDir);
+const tmpBaseDir = ensureTmpStoragePath("stock");
 
 const upload = multer({
   dest: tmpBaseDir,

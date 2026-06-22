@@ -4,6 +4,7 @@ import path from "node:path";
 import type { PoolClient } from "pg";
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
+import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { generateAffaireCode, requireClientCode } from "../../../shared/codes/code-generator.service";
 import { emitAppNotificationCreated, emitEntityChanged } from "../../../shared/realtime/realtime.service";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
@@ -2453,7 +2454,7 @@ async function insertCommandeDocuments(client: PoolClient, commandeId: string, d
     const extCandidate = path.extname(doc.originalname).toLowerCase();
     const safeExt = /^\.[a-z0-9]+$/.test(extCandidate) && extCandidate.length <= 10 ? extCandidate : "";
 
-    const uploadDir = path.resolve("uploads/docs");
+    const uploadDir = ensureDocumentStoragePath();
     const finalPath = path.join(uploadDir, `${documentId}${safeExt}`);
 
     try {

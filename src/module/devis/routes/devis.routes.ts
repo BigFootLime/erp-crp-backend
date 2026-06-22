@@ -1,10 +1,9 @@
 import type { RequestHandler } from "express";
 import { Router } from "express";
-import fs from "node:fs";
-import path from "node:path";
 import multer from "multer";
 import { z } from "zod";
 import { HttpError } from "../../../utils/httpError";
+import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import {
   createDevis,
   convertDevisToCommande,
@@ -28,11 +27,7 @@ declare global {
   }
 }
 
-const ensureDir = (dir: string) => {
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-};
-const uploadDir = path.resolve("uploads/docs");
-ensureDir(uploadDir);
+const uploadDir = ensureDocumentStoragePath();
 const upload = multer({ dest: uploadDir });
 
 const parseMultipartData = (schema: z.ZodTypeAny): RequestHandler => {

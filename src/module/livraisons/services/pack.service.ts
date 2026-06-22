@@ -3,6 +3,7 @@ import path from "node:path"
 import crypto from "node:crypto"
 
 import pool from "../../../config/database"
+import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
 
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
@@ -30,7 +31,7 @@ function safeFileToken(input: string): string {
 }
 
 async function ensureDocsDir(): Promise<string> {
-  const baseDir = path.resolve("uploads/docs/livraisons")
+  const baseDir = ensureDocumentStoragePath("livraisons")
   await fs.mkdir(baseDir, { recursive: true })
   return baseDir
 }

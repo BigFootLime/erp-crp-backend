@@ -1,14 +1,15 @@
 import fs from "fs"
 import path from "path"
+import { getGeneratedRootPath } from "./cerpStorage"
 
-const DEFAULT_IMAGES_DIR = path.resolve("uploads/images")
+const DEFAULT_IMAGES_DIR = getGeneratedRootPath("images")
 
 function trimSlashes(value: string) {
   return value.replace(/^\/+|\/+$/g, "")
 }
 
 export function getImagesRootPath() {
-  const configured = process.env.IMAGES_UPLOAD_DIR?.trim()
+  const configured = (process.env.CERP_IMAGES_ROOT ?? process.env.IMAGES_UPLOAD_DIR)?.trim()
   return path.resolve(configured && configured.length ? configured : DEFAULT_IMAGES_DIR)
 }
 

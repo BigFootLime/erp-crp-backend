@@ -1,6 +1,7 @@
 import type { Request, RequestHandler } from "express";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { getDocumentStoragePath, isPathInsideDirectory } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import {
   devisArticleParamsSchema,
@@ -212,10 +213,9 @@ export const getDevisDocumentFile: RequestHandler = async (req, res, next) => {
       return;
     }
 
-    const baseDir = path.resolve("uploads/docs");
+    const baseDir = getDocumentStoragePath();
     const absPath = path.resolve(baseDir, `${doc.id}${safeExtFromName(doc.document_name)}`);
-    const basePrefix = baseDir.endsWith(path.sep) ? baseDir : `${baseDir}${path.sep}`;
-    if (!absPath.startsWith(basePrefix)) {
+    if (!isPathInsideDirectory(baseDir, absPath)) {
       throw new HttpError(400, "INVALID_STORAGE_PATH", "Invalid document storage path");
     }
 

@@ -1,21 +1,15 @@
 import { Router } from "express"
 import multer from "multer"
-import fs from "node:fs"
-import path from "node:path"
 
 import { authenticateToken } from "../../auth/middlewares/auth.middleware"
+import { ensureTmpStoragePath } from "../../../utils/cerpStorage"
 import {
   createOperationDossierVersion,
   downloadOperationDossierDocument,
   getOperationDossierByOperation,
 } from "../controllers/operation-dossiers.controller"
 
-const ensureDir = (dir: string) => {
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-}
-
-const uploadTmpDir = path.resolve("uploads/tmp")
-ensureDir(uploadTmpDir)
+const uploadTmpDir = ensureTmpStoragePath("operation-dossiers")
 const upload = multer({ dest: uploadTmpDir, limits: { files: 10 } })
 
 const router = Router()

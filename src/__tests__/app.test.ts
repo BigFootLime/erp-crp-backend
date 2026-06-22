@@ -8,17 +8,17 @@ vi.mock('../utils/checkNetworkDrive', () => ({
     checkNetworkDrive: vi.fn(() => Promise.resolve())
 }))
 
-describe('Test de l\'application Express ERP', () => {
+describe('Test de l\'application Express CERP', () => {
     it('✅ GET / doit renvoyer un message de confirmation', async () => {
         const res = await request(app).get('/')
         expect(res.status).toBe(200)
-        expect(res.text).toContain('Backend ERP en ligne')
+        expect(res.text).toContain('Backend CERP en ligne')
     })
 
     it('✅ GET /api/v1 doit répondre correctement', async () => {
         const res = await request(app).get('/api/v1')
         expect(res.status).toBe(200)
-        expect(res.text).toContain('Backend ERP en ligne en V1')
+        expect(res.text).toContain('Backend CERP en ligne en V1')
     })
 
     it('🌐 Test CORS headers', async () => {
