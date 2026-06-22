@@ -492,6 +492,7 @@ describe("/api/v1/devis", () => {
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
       .mockResolvedValueOnce({ rows: [{ id: "7" }] }) // nextval devis_id_seq
       .mockResolvedValueOnce({ rows: [{ id: "7" }] }) // INSERT devis
+      .mockResolvedValueOnce({ rows: [{ exists: false }] }) // legacy devis_ligne.code_piece probe
       .mockResolvedValueOnce({ rows: [{ id: "1" }] }) // INSERT devis_ligne (RETURNING id)
       .mockResolvedValueOnce({ rows: [] }) // INSERT documents_clients
       .mockResolvedValueOnce({ rows: [] }) // INSERT devis_documents
@@ -537,6 +538,7 @@ describe("/api/v1/devis", () => {
       .mockResolvedValueOnce({ rows: [] }) // DELETE dossier_technique_piece_devis
       .mockResolvedValueOnce({ rows: [] }) // DELETE article_devis
       .mockResolvedValueOnce({ rows: [] }) // DELETE devis_ligne
+      .mockResolvedValueOnce({ rows: [{ exists: false }] }) // legacy devis_ligne.code_piece probe
       .mockResolvedValueOnce({ rows: [{ id: "1" }] }) // INSERT devis_ligne (RETURNING id)
       .mockResolvedValueOnce({ rows: [] }); // COMMIT
 

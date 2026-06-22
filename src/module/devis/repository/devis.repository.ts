@@ -212,9 +212,9 @@ async function loadDevisCommandeHeader(
         total_ht::float8 AS total_ht,
         total_ttc::float8 AS total_ttc,
         statut,
-        updated_at::text AS updated_at,
-        created_at::text AS created_at
-      FROM devis
+        to_jsonb(d)->>'updated_at' AS updated_at,
+        COALESCE(to_jsonb(d)->>'created_at', d.date_creation::text) AS created_at
+      FROM devis d
       WHERE id = $1
       ${lockClause}
     `,
@@ -291,14 +291,17 @@ async function resolveDraftArticlesByCode(
           WHERE pt.id = a.piece_technique_id
             AND pt.code_piece = lookup.lookup_code
         )
-      WHERE a.is_active = true
-        AND a.stock_managed = true
-        AND (a.article_category = 'fabrique' OR a.article_category = 'PIECE_TECHNIQUE')
+      WHERE COALESCE((to_jsonb(a)->>'is_active')::boolean, true) = true
+        AND COALESCE((to_jsonb(a)->>'stock_managed')::boolean, true) = true
+        AND COALESCE(
+          to_jsonb(a)->>'article_category',
+          CASE WHEN a.article_type = 'PIECE_TECHNIQUE' THEN 'fabrique' ELSE NULL END
+        ) IN ('fabrique', 'PIECE_TECHNIQUE')
       ORDER BY
         lookup.lookup_code,
         CASE WHEN a.code = lookup.lookup_code THEN 0 ELSE 1 END,
-        a.updated_at DESC NULLS LAST,
-        a.created_at DESC NULLS LAST,
+        ((to_jsonb(a)->>'updated_at')::timestamptz) DESC NULLS LAST,
+        ((to_jsonb(a)->>'created_at')::timestamptz) DESC NULLS LAST,
         a.id ASC
     `,
     [codes]
@@ -376,8 +379,8 @@ async function resolveDraftPreparatoryByCode(
       ORDER BY
         lookup.lookup_code,
         CASE WHEN ad.devis_id = $2::bigint THEN 0 ELSE 1 END,
-        ad.updated_at DESC NULLS LAST,
-        ad.created_at DESC NULLS LAST,
+        ((to_jsonb(ad)->>'updated_at')::timestamptz) DESC NULLS LAST,
+        ((to_jsonb(ad)->>'created_at')::timestamptz) DESC NULLS LAST,
         ad.id ASC
     `,
     [codes, devisId]
@@ -1056,11 +1059,11 @@ async function loadArticleDevisByDevis(client: Pick<PoolClient, "query">, devisI
         ad.plan_index::int AS plan_index,
         ad.projet_id::int AS projet_id,
         ad.source_official_article_id::text AS source_official_article_id,
-        ad.created_at::text AS created_at,
-        ad.updated_at::text AS updated_at
+        COALESCE(to_jsonb(ad)->>'created_at', to_jsonb(ad)->>'updated_at', now()::text) AS created_at,
+        COALESCE(to_jsonb(ad)->>'updated_at', to_jsonb(ad)->>'created_at', now()::text) AS updated_at
       FROM public.article_devis ad
       WHERE ad.devis_id = $1::bigint
-      ORDER BY ad.created_at ASC, ad.id ASC
+      ORDER BY ((to_jsonb(ad)->>'created_at')::timestamptz) ASC NULLS LAST, ad.id ASC
     `,
     [devisId]
   );
@@ -1089,11 +1092,11 @@ async function loadDossierDevisByDevis(client: Pick<PoolClient, "query">, devisI
         dd.designation,
         dd.source_official_piece_technique_id::text AS source_official_piece_technique_id,
         dd.payload,
-        dd.created_at::text AS created_at,
-        dd.updated_at::text AS updated_at
+        COALESCE(to_jsonb(dd)->>'created_at', to_jsonb(dd)->>'updated_at', now()::text) AS created_at,
+        COALESCE(to_jsonb(dd)->>'updated_at', to_jsonb(dd)->>'created_at', now()::text) AS updated_at
       FROM public.dossier_technique_piece_devis dd
       WHERE dd.devis_id = $1::bigint
-      ORDER BY dd.created_at ASC, dd.id ASC
+      ORDER BY ((to_jsonb(dd)->>'created_at')::timestamptz) ASC NULLS LAST, dd.id ASC
     `,
     [devisId]
   );
@@ -1135,7 +1138,7 @@ async function cloneDevisPreparatoryEntities(client: PoolClient, sourceDevisId: 
         source_official_article_id::text AS source_official_article_id
       FROM public.article_devis
       WHERE devis_id = $1::bigint
-      ORDER BY created_at ASC, id ASC
+      ORDER BY ((to_jsonb(article_devis)->>'created_at')::timestamptz) ASC NULLS LAST, id ASC
     `,
     [sourceDevisId]
   );
@@ -1246,7 +1249,7 @@ async function cloneDevisPreparatoryEntities(client: PoolClient, sourceDevisId: 
         payload
       FROM public.dossier_technique_piece_devis
       WHERE devis_id = $1::bigint
-      ORDER BY created_at ASC, id ASC
+      ORDER BY ((to_jsonb(dossier_technique_piece_devis)->>'created_at')::timestamptz) ASC NULLS LAST, id ASC
     `,
     [sourceDevisId]
   );
@@ -1785,7 +1788,7 @@ export async function repoFindDevisByArticleDevisCode(code: string, limit: numbe
         d.numero,
         d.client_id,
         d.date_creation::text AS date_creation,
-        d.updated_at::text AS updated_at,
+        to_jsonb(d)->>'updated_at' AS updated_at,
         d.date_validite::text AS date_validite,
         d.statut,
         d.remise_globale::float8 AS remise_globale,
@@ -1803,7 +1806,7 @@ export async function repoFindDevisByArticleDevisCode(code: string, limit: numbe
       JOIN public.devis d ON d.id = ad.devis_id
       LEFT JOIN public.clients c ON c.client_id = d.client_id
       WHERE ad.code = $1
-      ORDER BY d.updated_at DESC NULLS LAST, d.date_creation DESC, d.id DESC
+      ORDER BY ((to_jsonb(d)->>'updated_at')::timestamptz) DESC NULLS LAST, d.date_creation DESC, d.id DESC
       LIMIT $2
     `,
     [normalizedCode, limit]

@@ -2491,9 +2491,11 @@ async function assertDevisDraftIsFresh(
 
   const res = await client.query<{ updated_at: string | null; created_at: string | null }>(
     `
-      SELECT updated_at::text AS updated_at, created_at::text AS created_at
-      FROM public.devis
-      WHERE id = $1::bigint
+      SELECT
+        to_jsonb(d)->>'updated_at' AS updated_at,
+        COALESCE(to_jsonb(d)->>'created_at', d.date_creation::text) AS created_at
+      FROM public.devis d
+      WHERE d.id = $1::bigint
       LIMIT 1
     `,
     [devisId]
