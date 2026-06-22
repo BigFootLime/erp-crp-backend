@@ -376,6 +376,77 @@ describe("/api/v1/devis", () => {
     });
 
     expect(mocks.clientRelease).toHaveBeenCalled();
+
+    const headerSql = String(
+      mocks.clientQuery.mock.calls.find((c) => String(c[0]).includes("FROM devis d"))?.[0] ?? ""
+    );
+    expect(headerSql).toContain("d.id::text AS id");
+    expect(headerSql).toContain("WHERE d.id = $1");
+
+    const linesSql = String(
+      mocks.clientQuery.mock.calls.find(
+        (c) => String(c[0]).includes("FROM devis_ligne dl") && String(c[0]).includes("source_article_devis_id")
+      )?.[0] ?? ""
+    );
+    expect(linesSql).toContain("dl.id::text AS id");
+    expect(linesSql).not.toMatch(/^\s*id::text AS id/m);
+  });
+
+  it("POST /api/v1/devis/:id/convert-to-commande creates commande and lines from accepted devis", async () => {
+    mocks.clientQuery
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "7",
+            numero: "DV-7",
+            client_id: "001",
+            contact_id: null,
+            adresse_facturation_id: null,
+            adresse_livraison_id: "33333333-3333-3333-3333-333333333333",
+            mode_reglement_id: null,
+            conditions_paiement_id: 15,
+            biller_id: null,
+            compte_vente_id: null,
+            commentaires: "Depuis devis",
+            remise_globale: 0,
+            total_ht: 100,
+            total_ttc: 120,
+            statut: "ACCEPTE",
+            updated_at: "2026-03-24T10:00:00.000Z",
+            created_at: "2026-03-23T10:00:00.000Z",
+          },
+        ],
+      }) // load devis FOR UPDATE
+      .mockResolvedValueOnce({ rows: [] }) // existing commande
+      .mockResolvedValueOnce({ rows: [{ id: "55" }] }) // commande id sequence
+      .mockResolvedValueOnce({ rows: [] }) // INSERT commande_client
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] }) // INSERT commande_ligne from devis_ligne
+      .mockResolvedValueOnce({ rows: [] }) // UPDATE articles EN_DEVIS -> VALIDE
+      .mockResolvedValueOnce({ rows: [] }); // COMMIT
+
+    const res = await request(app).post("/api/v1/devis/7/convert-to-commande");
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({ id: 55, numero: "CC-55" });
+
+    const existingSql = String(
+      mocks.clientQuery.mock.calls.find((c) => String(c[0]).includes("FROM commande_client cc"))?.[0] ?? ""
+    );
+    expect(existingSql).toContain("cc.id::text AS id");
+    expect(existingSql).toContain("WHERE cc.devis_id = $1");
+
+    const insertCommandeSql = String(
+      mocks.clientQuery.mock.calls.find((c) => String(c[0]).includes("INSERT INTO commande_client"))?.[0] ?? ""
+    );
+    expect(insertCommandeSql).toContain("source_devis_version_id");
+
+    const insertLinesSql = String(
+      mocks.clientQuery.mock.calls.find((c) => String(c[0]).includes("INSERT INTO commande_ligne"))?.[0] ?? ""
+    );
+    expect(insertLinesSql).toContain("ad.id");
+    expect(insertLinesSql).toContain("dd.id");
+    expect(insertLinesSql).not.toMatch(/^\s*id\b/m);
   });
 
   it("GET /api/v1/devis/by-article/:articleId returns related devis with versions", async () => {
