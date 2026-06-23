@@ -37,21 +37,21 @@ function buildPasswordResetEmail(params: {
   const safeUsername = escapeHtml(params.username);
   const safeUrl = escapeHtml(params.resetUrl);
 
-  const subject = "Réinitialisation de mot de passe — CRP Systems";
+  const subject = "Réinitialisation de mot de passe — CERP";
 
   const text =
     `Bonjour ${params.username},\n\n` +
-    `Une demande de réinitialisation de mot de passe a été effectuée pour votre compte CRP Systems.\n\n` +
+    `Une demande de réinitialisation de mot de passe a été effectuée pour votre compte CERP.\n\n` +
     `Lien (valide ${params.expiresMinutes} minutes) :\n${params.resetUrl}\n\n` +
     `Si vous n'êtes pas à l'origine de cette demande, vous pouvez ignorer cet email.\n\n` +
-    `— CRP Systems`;
+    `— CERP`;
 
   // ✅ No logo here
   const html = `
   <div style="background:#f6f7fb;padding:24px 12px;font-family:Arial,Helvetica,sans-serif;color:#0f172a;">
-    <div style="max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:14px;overflow:hidden;">
-      <div style="padding:18px 18px 8px 18px;border-bottom:1px solid #e2e8f0;">
-        <div style="font-size:14px;font-weight:700;letter-spacing:0.2px;">CRP Systems</div>
+      <div style="max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:14px;overflow:hidden;">
+        <div style="padding:18px 18px 8px 18px;border-bottom:1px solid #e2e8f0;">
+        <div style="font-size:14px;font-weight:700;letter-spacing:0.2px;">CERP</div>
         <div style="margin-top:10px;font-size:18px;font-weight:800;">Réinitialisation de mot de passe</div>
         <div style="margin-top:4px;font-size:12px;color:#475569;">Demande pour l'utilisateur : <b>${safeUsername}</b></div>
       </div>

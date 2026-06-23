@@ -1,6 +1,7 @@
 import { Router, type RequestHandler } from "express";
 import multer from "multer";
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
+import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import {
   archivePlanningEvent,
@@ -38,7 +39,7 @@ const requireProductionOrAdmin: RequestHandler = (req, _res, next) => {
   next();
 };
 
-const uploadDocs = multer({ dest: "uploads/docs" });
+const uploadDocs = multer({ dest: ensureDocumentStoragePath() });
 
 const router = Router();
 

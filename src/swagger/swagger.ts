@@ -3,14 +3,14 @@ import { OpenAPIV3_1 } from 'openapi-types';
 export const swaggerSpec: OpenAPIV3_1.Document = {
   openapi: '3.0.3',
   info: {
-    title: 'ERP CRP API',
+    title: 'CERP API',
     version: '1.0.0',
     description:
-      'Documentation des endpoints ERP CRP pour la gestion des clients. Authentification par JWT (Bearer).',
+      'Documentation des endpoints CERP. Authentification par JWT (Bearer).',
   },
   servers: [
     { url: '/api/v1', description: 'API v1 (même host)' },
-    // { url: 'https://api.crp-systems.croix-rousse-precision.fr/api/v1', description: 'Prod' },
+    // { url: 'https://cerp.croix-rousse-precision.fr/api/v1', description: 'Prod' },
   ],
   components: {
     securitySchemes: {

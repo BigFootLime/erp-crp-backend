@@ -5,6 +5,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import jwt from "jsonwebtoken";
+import { getDocumentStoragePath } from "../utils/cerpStorage";
+
+process.env.CERP_DOCUMENTS_ROOT = path.resolve("uploads", "docs");
 
 const mocks = vi.hoisted(() => ({
   poolQuery: vi.fn(),
@@ -238,7 +241,7 @@ describe("/api/v1/commandes", () => {
 
   it("GET /api/v1/commandes/:id/documents/:docId/file serves linked document", async () => {
     const docId = "22222222-2222-2222-2222-222222222222";
-    const uploadsDir = path.resolve("uploads/docs");
+    const uploadsDir = getDocumentStoragePath();
     fs.mkdirSync(uploadsDir, { recursive: true });
     const filePath = path.join(uploadsDir, `${docId}.pdf`);
     fs.writeFileSync(filePath, "hello");
@@ -268,7 +271,7 @@ describe("/api/v1/commandes", () => {
   it("POST /api/v1/commandes handles multipart data + documents[]", async () => {
     const ARTICLE_ID = "11111111-1111-1111-1111-111111111111";
     const PIECE_ID = "22222222-2222-2222-2222-222222222222";
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "erp-crp-docs-"));
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "cerp-docs-"));
     const tmpFile = path.join(tmpDir, "doc.txt");
     fs.writeFileSync(tmpFile, "hello");
 

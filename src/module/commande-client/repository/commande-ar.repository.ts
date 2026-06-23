@@ -4,6 +4,7 @@ import path from "node:path";
 import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
+import { getDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { repoEnsureCommandeWorkflowStatus } from "./commande-client.repository";
 import type { AppNotification } from "../../notifications/types/notifications.types";
@@ -283,7 +284,7 @@ export async function repoCreateCommandeArDraft(params: {
   const client = await pool.connect();
   const documentId = crypto.randomUUID();
   const arId = crypto.randomUUID();
-  const filePath = path.resolve("uploads/docs", `${documentId}.pdf`);
+  const filePath = path.resolve(getDocumentStoragePath(), `${documentId}.pdf`);
 
   try {
     await client.query("BEGIN");

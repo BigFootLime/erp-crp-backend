@@ -1,7 +1,7 @@
 import type { Request, RequestHandler, Response } from "express"
 import fs from "node:fs/promises"
-import path from "node:path"
 
+import { getDocumentStoragePath, isPathInsideDirectory, resolveCerpStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
 import { emitEntityChanged } from "../../../shared/realtime/realtime.service"
 import type { AuditContext } from "../repository/receptions.repository"
@@ -104,10 +104,9 @@ async function sendDocumentFile(
   res: Response,
   doc: { storage_path: string; mime_type: string; original_name: string }
 ) {
-  const baseDir = path.resolve(path.posix.join("uploads", "docs", "receptions"))
-  const absPath = path.resolve(doc.storage_path)
-  const basePrefix = baseDir.endsWith(path.sep) ? baseDir : `${baseDir}${path.sep}`
-  if (!absPath.startsWith(basePrefix)) {
+  const baseDir = getDocumentStoragePath("receptions")
+  const absPath = resolveCerpStoragePath(doc.storage_path, baseDir)
+  if (!isPathInsideDirectory(baseDir, absPath)) {
     throw new HttpError(400, "INVALID_STORAGE_PATH", "Invalid document storage path")
   }
 

@@ -4,6 +4,7 @@ import path from "node:path"
 import type { PoolClient } from "pg"
 
 import pool from "../../../config/database"
+import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
 
 import type {
@@ -353,7 +354,7 @@ export async function repoInsertAsbuiltPackVersionTx(
 }
 
 async function ensureDocsDir(): Promise<string> {
-  const baseDir = path.resolve("uploads/docs/asbuilt")
+  const baseDir = ensureDocumentStoragePath("asbuilt")
   await fs.mkdir(baseDir, { recursive: true })
   return baseDir
 }

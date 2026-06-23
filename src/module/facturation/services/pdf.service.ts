@@ -3,6 +3,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import PDFDocument from "pdfkit";
 import pool from "../../../config/database";
+import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { repoGetAvoir } from "../repository/avoirs.repository";
 import { repoGetFacture } from "../repository/factures.repository";
@@ -27,7 +28,7 @@ function formatDateFR(iso: string | null | undefined): string {
 }
 
 async function ensureDocsDir(): Promise<string> {
-  const uploadDir = path.resolve("uploads/docs");
+  const uploadDir = ensureDocumentStoragePath();
   await fs.mkdir(uploadDir, { recursive: true });
   return uploadDir;
 }

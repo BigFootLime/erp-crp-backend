@@ -1,9 +1,8 @@
 import { Router } from "express"
 import multer from "multer"
-import fs from "node:fs"
-import path from "node:path"
 
 import { authenticateToken } from "../../auth/middlewares/auth.middleware"
+import { ensureTmpStoragePath } from "../../../utils/cerpStorage"
 import {
   addLivraisonLine,
   addLivraisonLineAllocation,
@@ -31,12 +30,7 @@ import {
   revokeLivraisonPackVersion,
 } from "../controllers/pack.controller"
 
-const ensureDir = (dir: string) => {
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-}
-
-const uploadTmpDir = path.resolve("uploads/tmp")
-ensureDir(uploadTmpDir)
+const uploadTmpDir = ensureTmpStoragePath("livraisons")
 const upload = multer({ dest: uploadTmpDir })
 
 const router = Router()

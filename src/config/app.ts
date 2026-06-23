@@ -26,8 +26,8 @@ app.use(requestIdMiddleware);
 app.use(helmet());
 
 const staticAllowedOrigins = new Set<string>([
-  "https://crp-systems.croix-rousse-precision.fr",
-  "http://crp-systems.croix-rousse-precision.fr",
+  "https://cerp.croix-rousse-precision.fr",
+  "http://cerp.croix-rousse-precision.fr",
   "http://localhost:5173",
   "http://localhost:5137",
   "http://localhost:4173",
@@ -134,11 +134,11 @@ app.use(
 /* ------------------ 4) Routes ------------------ */
 
 app.get("/", (_req, res) => {
-  res.send("✅ Backend ERP en ligne !");
+  res.send("✅ Backend CERP en ligne !");
 });
 
 app.get("/api/v1", (_req, res) => {
-  res.send("✅ Backend ERP en ligne en V1 !");
+  res.send("✅ Backend CERP en ligne en V1 !");
 });
 
 // Routes API v1

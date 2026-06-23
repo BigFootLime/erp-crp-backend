@@ -1,6 +1,6 @@
 # INSTRUCTIONS_BACKEND.md
 
-Repo-specific instructions for automated coding agents working on the **erp-crp-backend** (CRP SYSTEMS backend).
+Repo-specific instructions for automated coding agents working on the **cerp-api** backend.
 
 ## 1) Audience, Language, Non-Goals
 

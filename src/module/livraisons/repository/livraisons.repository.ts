@@ -4,6 +4,7 @@ import crypto from "node:crypto"
 import type { PoolClient } from "pg"
 
 import pool from "../../../config/database"
+import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
 
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
@@ -2025,7 +2026,7 @@ export async function repoCreateLivraisonFromCommande(commandeId: number, userId
 }
 
 async function ensureDocsDir(): Promise<string> {
-  const baseDir = path.resolve("uploads/docs/livraisons")
+  const baseDir = ensureDocumentStoragePath("livraisons")
   await fs.mkdir(baseDir, { recursive: true })
   return baseDir
 }

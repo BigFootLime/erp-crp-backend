@@ -22,6 +22,6 @@ startAuditNotifyListener().catch((err) => {
 
 // 🚀 Lancement du serveur
 httpServer.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Serveur ERP lancé sur http://0.0.0.0:${PORT}`);
-  console.log(`🌐 Accès depuis le réseau : http://erp-backend.croix-rousse-precision.fr:8080`);
+  console.log(`🚀 Serveur CERP lancé sur http://0.0.0.0:${PORT}`);
+  console.log(`🌐 Accès local prévu : http://10.90.0.2:${PORT}`);
 });
