@@ -8,6 +8,7 @@ export const loginSchema = z.object({
   password: z
     .string({ required_error: "Mot de passe requis" })
     .min(1, "Mot de passe requis"),
+  database: z.enum(["cerp_prod", "cerp_test"]).optional(),
 }).strict();
 
 export type LoginDTO = z.infer<typeof loginSchema>;
