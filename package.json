@@ -1,5 +1,5 @@
 {
-  "name": "erp-crp-backend",
+  "name": "cerp-api",
   "version": "1.0.0",
   "description": "",
   "author": "",
@@ -9,6 +9,9 @@
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
+    "db:patches:status": "node scripts/db-patches.js status",
+    "db:patches:up": "node scripts/db-patches.js up",
+    "db:patches:baseline": "node scripts/db-patches.js baseline",
     "test": "vitest",
     "test:run": "vitest run",
     "test:ui": "vitest --ui"

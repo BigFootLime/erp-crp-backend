@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { HttpError } from "../../../utils/httpError";
+import { getDocumentStoragePath } from "../../../utils/cerpStorage";
 import { emitAppNotificationCreated, emitEntityChanged } from "../../../shared/realtime/realtime.service";
 import { sendTransactionalEmail, type ResendSendResult } from "../../../shared/email/resend.service";
 import type {
@@ -291,7 +292,7 @@ export async function svcSendCommandeAr(params: {
     throw new HttpError(404, "COMMANDE_AR_NOT_FOUND", "Accusé de réception introuvable");
   }
 
-  const filePath = path.resolve("uploads/docs", `${draft.document_id}.pdf`);
+  const filePath = path.resolve(getDocumentStoragePath(), `${draft.document_id}.pdf`);
   const pdfBuffer = await fs.readFile(filePath);
 
   const baseText = draft.body_text?.trim() || `Veuillez trouver ci-joint l'accuse de reception de la commande.`;

@@ -5,6 +5,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import pool from "../../../config/database";
+import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 
@@ -140,7 +141,7 @@ async function insertMetrologieEvent(
 }
 
 export function repoMetrologieDocsBaseDir(): string {
-  return path.resolve(path.posix.join("uploads", "docs", "metrologie"));
+  return ensureDocumentStoragePath("metrologie");
 }
 
 function normalizeLikeQuery(q: string): string {
@@ -1232,7 +1233,7 @@ export async function repoAttachCertificats(params: {
 }): Promise<MetrologieCertificat[] | null> {
   const { equipement_id, body, documents, audit } = params;
   const client = await pool.connect();
-  const docsDirRel = path.posix.join("uploads", "docs", "metrologie");
+  const docsDirRel = ensureDocumentStoragePath("metrologie");
   const docsDirAbs = path.resolve(docsDirRel);
 
   try {

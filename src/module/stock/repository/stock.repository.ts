@@ -5,6 +5,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import db from "../../../config/database";
+import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
@@ -4233,7 +4234,7 @@ export async function repoAttachArticleDocuments(
   audit: AuditContext
 ): Promise<StockDocument[] | null> {
   const client = await db.connect();
-  const docsDirRel = path.posix.join("uploads", "docs", "stock", "articles");
+  const docsDirRel = ensureDocumentStoragePath("stock", "articles");
   try {
     await client.query("BEGIN");
 
@@ -4396,7 +4397,7 @@ export async function repoAttachMovementDocuments(
   audit: AuditContext
 ): Promise<StockDocument[] | null> {
   const client = await db.connect();
-  const docsDirRel = path.posix.join("uploads", "docs", "stock", "movements");
+  const docsDirRel = ensureDocumentStoragePath("stock", "movements");
   try {
     await client.query("BEGIN");
 

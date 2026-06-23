@@ -4,6 +4,9 @@ import { EventEmitter } from "events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { getDocumentStoragePath } from "../utils/cerpStorage";
+
+process.env.CERP_DOCUMENTS_ROOT = path.resolve("uploads", "docs");
 
 const mocks = vi.hoisted(() => ({
   poolQuery: vi.fn(),
@@ -529,7 +532,7 @@ describe("/api/v1/devis", () => {
 
   it("GET /api/v1/devis/:id/documents/:docId/file serves linked document", async () => {
     const docId = "33333333-3333-3333-3333-333333333333";
-    const uploadsDir = path.resolve("uploads/docs");
+    const uploadsDir = getDocumentStoragePath();
     fs.mkdirSync(uploadsDir, { recursive: true });
     const filePath = path.join(uploadsDir, `${docId}.pdf`);
     fs.writeFileSync(filePath, "hello");
@@ -555,7 +558,7 @@ describe("/api/v1/devis", () => {
   });
 
   it("POST /api/v1/devis supports multipart data + optional documents[]", async () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "erp-crp-devis-"));
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "cerp-devis-"));
     const tmpFile = path.join(tmpDir, "doc.txt");
     fs.writeFileSync(tmpFile, "hello");
 

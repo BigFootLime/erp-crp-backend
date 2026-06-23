@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import path from "node:path";
 import type { PoolClient } from "pg";
 import pool from "../../../config/database";
+import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import type {
   CreateDevisBodyDTO,
@@ -829,7 +830,7 @@ async function insertDevisDocuments(client: PoolClient, devisId: number, documen
 
     const extCandidate = path.extname(doc.originalname).toLowerCase();
     const safeExt = /^\.[a-z0-9]+$/.test(extCandidate) && extCandidate.length <= 10 ? extCandidate : "";
-    const uploadDir = path.resolve("uploads/docs");
+    const uploadDir = ensureDocumentStoragePath();
     const finalPath = path.join(uploadDir, `${documentId}${safeExt}`);
 
     try {

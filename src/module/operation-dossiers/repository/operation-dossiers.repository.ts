@@ -4,6 +4,7 @@ import path from "node:path"
 import type { PoolClient } from "pg"
 
 import pool from "../../../config/database"
+import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators"
@@ -112,7 +113,7 @@ function resolveMimeType(value: string | null | undefined): string {
 }
 
 async function ensureDocsDir(): Promise<string> {
-  const baseDir = path.resolve("uploads/docs/operation-dossiers")
+  const baseDir = ensureDocumentStoragePath("operation-dossiers")
   await fs.mkdir(baseDir, { recursive: true })
   return baseDir
 }

@@ -1,9 +1,8 @@
 import { Router } from "express"
-import fs from "fs"
 import multer from "multer"
-import path from "path"
 
 import { authenticateToken } from "../../auth/middlewares/auth.middleware"
+import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
 import {
   attachFournisseurDocuments,
   createFournisseur,
@@ -27,12 +26,7 @@ import {
   updateFournisseurContact,
 } from "../controllers/fournisseurs.controller"
 
-const ensureDir = (dir: string) => {
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-}
-
-const docsBaseDir = path.resolve("uploads/docs/fournisseurs")
-ensureDir(docsBaseDir)
+const docsBaseDir = ensureDocumentStoragePath("fournisseurs")
 
 const upload = multer({
   dest: docsBaseDir,

@@ -5,6 +5,7 @@ import crypto from "node:crypto"
 import PDFDocument from "pdfkit"
 
 import pool from "../../../config/database"
+import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
 import { repoGetLivraisonDetail, repoGetDocumentName } from "../repository/livraisons.repository"
 
@@ -23,7 +24,7 @@ function formatDateFR(iso: string | null | undefined): string {
 }
 
 async function ensureDocsDir(): Promise<string> {
-  const uploadDir = path.resolve("uploads/docs/livraisons")
+  const uploadDir = ensureDocumentStoragePath("livraisons")
   await fs.mkdir(uploadDir, { recursive: true })
   return uploadDir
 }

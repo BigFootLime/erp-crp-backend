@@ -1,8 +1,8 @@
-# Backend Project Map (erp-crp-backend)
+# Backend Project Map (cerp-api)
 
 Generated from repository inspection on 2026-03-05.
 
-This file lives in `docs/frontend_repo_map.md` by request, but it documents the backend repository `erp-crp-backend`.
+This file lives in `docs/frontend_repo_map.md` by request, but it documents the CERP backend repository.
 
 ## A) Repo Structure Summary
 

@@ -1,8 +1,8 @@
 import type { Request, RequestHandler } from "express";
 import fs from "node:fs/promises";
-import path from "node:path";
 
 import { asyncHandler } from "../../../utils/asyncHandler";
+import { isPathInsideDirectory, resolveCerpStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { getClientIp, parseDevice } from "../../../utils/requestMeta";
 import { emitEntityChanged } from "../../../shared/realtime/realtime.service";
@@ -321,9 +321,8 @@ async function downloadDocHandler(req: Request, res: Parameters<RequestHandler>[
   }
 
   const baseDir = svcQualityDocumentBaseDir();
-  const absPath = path.resolve(doc.storage_path);
-  const basePrefix = baseDir.endsWith(path.sep) ? baseDir : `${baseDir}${path.sep}`;
-  if (!absPath.startsWith(basePrefix)) {
+  const absPath = resolveCerpStoragePath(doc.storage_path, baseDir);
+  if (!isPathInsideDirectory(baseDir, absPath)) {
     throw new HttpError(400, "INVALID_STORAGE_PATH", "Invalid document storage path");
   }
   await fs.access(absPath);

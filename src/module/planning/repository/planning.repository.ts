@@ -5,6 +5,7 @@ import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
 import { emitAppNotificationCreated, emitEntityChanged } from "../../../shared/realtime/realtime.service";
+import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
@@ -2185,7 +2186,7 @@ async function insertPlanningEventDocuments(tx: PoolClient, params: {
     const extCandidate = path.extname(doc.originalname).toLowerCase();
     const safeExt = /^\.[a-z0-9]+$/.test(extCandidate) && extCandidate.length <= 10 ? extCandidate : "";
 
-    const uploadDir = path.resolve("uploads/docs");
+    const uploadDir = ensureDocumentStoragePath();
     const finalPath = path.join(uploadDir, `${documentId}${safeExt}`);
 
     try {

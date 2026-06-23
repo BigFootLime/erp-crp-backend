@@ -1,7 +1,7 @@
 // src/module/pieces-techniques/controllers/pieces-techniques.controller.ts
 import type { Request, RequestHandler } from "express"
 import fs from "node:fs/promises"
-import path from "node:path"
+import { getDocumentStoragePath, isPathInsideDirectory, resolveCerpStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
 import {
   achatIdParamSchema,
@@ -281,10 +281,9 @@ export const downloadPieceTechniqueDocument: RequestHandler = async (req, res, n
       return
     }
 
-    const baseDir = path.resolve("uploads/docs/pieces-techniques")
-    const absPath = path.resolve(doc.storage_path)
-    const basePrefix = baseDir.endsWith(path.sep) ? baseDir : `${baseDir}${path.sep}`
-    if (!absPath.startsWith(basePrefix)) {
+    const baseDir = getDocumentStoragePath("pieces-techniques")
+    const absPath = resolveCerpStoragePath(doc.storage_path, baseDir)
+    if (!isPathInsideDirectory(baseDir, absPath)) {
       throw new HttpError(400, "INVALID_STORAGE_PATH", "Invalid document storage path")
     }
     await fs.access(absPath)

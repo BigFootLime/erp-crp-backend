@@ -5,6 +5,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import pool from "../../../config/database";
+import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import { repoGetMetrologieBlockState } from "../../metrologie/repository/metrologie.repository";
@@ -1413,7 +1414,7 @@ export async function repoAttachDocuments(params: {
   const { entity_type, entity_id, document_type, documents, audit } = params;
 
   const client = await pool.connect();
-  const docsDirRel = path.posix.join("uploads", "docs", "qualite");
+  const docsDirRel = ensureDocumentStoragePath("qualite");
   const docsDirAbs = path.resolve(docsDirRel);
 
   try {
@@ -1739,7 +1740,7 @@ export async function repoGetDocumentForDownload(params: {
 }
 
 export function qualityDocumentBaseDir(): string {
-  return path.resolve("uploads/docs/qualite");
+  return ensureDocumentStoragePath("qualite");
 }
 
 /* -------------------------------------------------------------------------- */

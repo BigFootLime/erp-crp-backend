@@ -1,9 +1,8 @@
 import { Router, type RequestHandler } from "express";
-import fs from "node:fs";
 import multer from "multer";
-import path from "node:path";
 
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
+import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 
 import {
@@ -93,12 +92,7 @@ router.post("/actions", createAction);
 router.patch("/actions/:id", patchAction);
 
 // Documents (multer)
-const ensureDir = (dir: string) => {
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-};
-
-const docsBaseDir = path.resolve("uploads/docs/qualite");
-ensureDir(docsBaseDir);
+const docsBaseDir = ensureDocumentStoragePath("qualite");
 
 const upload = multer({
   dest: docsBaseDir,

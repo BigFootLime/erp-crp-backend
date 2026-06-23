@@ -1,11 +1,10 @@
 import type { RequestHandler } from "express"
 import { Router } from "express"
 import multer from "multer"
-import path from "path"
-import fs from "fs"
 
 import { authenticateToken } from "../../auth/middlewares/auth.middleware"
 import { HttpError } from "../../../utils/httpError"
+import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
 import {
   addCadreReleaseLine,
   analyzeCommandeStock,
@@ -51,10 +50,7 @@ import {
   validate,
 } from "../validators/commande-client.validators"
 
-// Storage vers /uploads/docs (ou ton NAS si prod)
-const ensureDir = (dir: string) => { if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }) }
-const uploadDir = path.resolve("uploads/docs")
-ensureDir(uploadDir)
+const uploadDir = ensureDocumentStoragePath()
 const upload = multer({ dest: uploadDir })
 
 // middleware pour parser `data` JSON depuis multipart

@@ -3,6 +3,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 
 import pool from "../../../config/database"
+import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
 
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
@@ -40,7 +41,7 @@ function getPgErrorInfo(err: unknown) {
 }
 
 async function ensureDocsDir(): Promise<string> {
-  const baseDir = path.resolve("uploads/docs/asbuilt")
+  const baseDir = ensureDocumentStoragePath("asbuilt")
   await fs.mkdir(baseDir, { recursive: true })
   return baseDir
 }

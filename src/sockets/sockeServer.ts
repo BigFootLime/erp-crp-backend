@@ -29,8 +29,8 @@ function listOnlineUserIds(): number[] {
 }
 
 const staticAllowedOrigins = new Set<string>([
-  "https://crp-systems.croix-rousse-precision.fr",
-  "http://crp-systems.croix-rousse-precision.fr",
+  "https://cerp.croix-rousse-precision.fr",
+  "http://cerp.croix-rousse-precision.fr",
   "http://localhost:5173",
   "http://localhost:5137",
   "http://localhost:4173",
