@@ -34,6 +34,7 @@ const staticAllowedOrigins = new Set<string>([
   "http://127.0.0.1:5173",
   "http://127.0.0.1:5137",
   "http://127.0.0.1:4173",
+  "app://cerp",
 ]);
 
 const envOrigins = (process.env.CORS_ORIGINS ?? "")
@@ -82,6 +83,7 @@ const corsOptionsDelegate: cors.CorsOptionsDelegate = (req, cb) => {
     allowedHeaders: [
       "Content-Type",
       "Authorization",
+      "X-CERP-Database",
       "X-Request-Id",
       "X-Page-Key",
       "X-Client-Session-Id",
