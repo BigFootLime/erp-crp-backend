@@ -38,4 +38,14 @@ describe("auth login validator", () => {
       })
     ).toThrow();
   });
+
+  it("rejects unknown login body fields", () => {
+    expect(() =>
+      loginSchema.parse({
+        username: "admin",
+        password: "secret",
+        unsafe: true,
+      })
+    ).toThrow();
+  });
 });

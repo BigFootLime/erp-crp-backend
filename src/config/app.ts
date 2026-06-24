@@ -85,6 +85,7 @@ const corsOptionsDelegate: cors.CorsOptionsDelegate = (req, cb) => {
       "Authorization",
       "X-CERP-Database",
       "X-Request-Id",
+      "X-CERP-Database",
       "X-Page-Key",
       "X-Client-Session-Id",
       "X-Session-Id",
