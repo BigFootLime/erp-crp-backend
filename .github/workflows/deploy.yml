@@ -12,17 +12,34 @@ jobs:
 
     steps:
       - name: 📦 Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: 🚀 Deploy to VPS
+      - name: 🚀 Verify Coolify backend deployment on VPS
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          EXPECTED_IMAGE_TAG: ${{ github.sha }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
+          envs: EXPECTED_IMAGE_TAG
+          script_stop: true
           script: |
-            cd ${{ secrets.VPS_PATH }}
-            git pull origin main
-            npm ci 
-            npm run build
-            pm2 restart all
+            set -e
+            container="$(docker ps --filter label=coolify.applicationId=1 --format '{{.Names}}' | head -n 1)"
+            test -n "$container"
+            image="$(docker inspect "$container" --format '{{.Config.Image}}')"
+            echo "Coolify backend container: $container"
+            echo "Coolify backend image: $image"
+            if ! printf '%s' "$image" | grep -q "$EXPECTED_IMAGE_TAG"; then
+              echo "::warning::Coolify backend image does not include commit $EXPECTED_IMAGE_TAG yet."
+            fi
+            docker restart "$container"
+            for attempt in $(seq 1 30); do
+              if curl -fsSI https://erp-backend.croix-rousse-precision.fr/api/v1; then
+                exit 0
+              fi
+              echo "Waiting for backend HTTPS route... attempt $attempt"
+              sleep 2
+            done
+            curl -fsSI https://erp-backend.croix-rousse-precision.fr/api/v1
