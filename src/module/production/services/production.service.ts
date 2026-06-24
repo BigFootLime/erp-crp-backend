@@ -68,6 +68,8 @@ export const svcListOrdresFabrication = (filters: ListOfQueryDTO) => repo.repoLi
 export const svcGetOrdreFabrication = (params: { id: number; user_id?: number }) =>
   repo.repoGetOrdreFabrication(params);
 
+export const svcGetOrdreFabricationTree = (params: { id: number }) => repo.repoGetOrdreFabricationTree(params.id);
+
 export const svcCreateOrdreFabrication = (params: { body: CreateOfBodyDTO; audit: repo.AuditContext }) =>
   repo.repoCreateOrdreFabrication(params);
 

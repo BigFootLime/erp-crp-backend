@@ -1,6 +1,4 @@
-import { OpenAPIV3_1 } from 'openapi-types';
-
-export const swaggerSpec: OpenAPIV3_1.Document = {
+export const swaggerSpec = {
   openapi: '3.0.3',
   info: {
     title: 'CERP API',

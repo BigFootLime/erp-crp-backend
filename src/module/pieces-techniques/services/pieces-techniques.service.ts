@@ -22,6 +22,7 @@ import {
   repoDeleteOperation,
   repoDeletePieceTechnique,
   repoDuplicatePieceTechnique,
+  repoGetFabricationTree,
   repoListAffairePieceTechniques,
   repoGetPieceTechniqueDocumentForDownload,
   repoGetPieceTechnique,
@@ -88,6 +89,8 @@ function isValidTransition(from: PieceTechniqueStatut, to: PieceTechniqueStatut)
 export const listPieceTechniquesSVC = (filters: ListPiecesTechniquesQueryDTO) => repoListPieceTechniques(filters);
 
 export const getPieceTechniqueSVC = (id: string, includes: Set<string>) => repoGetPieceTechnique(id, includes);
+
+export const getPieceTechniqueFabricationTreeSVC = (id: string) => repoGetFabricationTree(id);
 
 export async function createPieceTechniqueSVC(body: CreatePieceTechniqueBodyDTO, audit: AuditContext) {
   const statut = body.statut ?? "DRAFT";

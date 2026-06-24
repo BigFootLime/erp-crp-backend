@@ -45,6 +45,7 @@ import {
   deleteOperationSVC,
   deletePieceTechniqueSVC,
   duplicatePieceTechniqueSVC,
+  getPieceTechniqueFabricationTreeSVC,
   getPieceTechniqueSVC,
   listPieceTechniquesSVC,
   reorderAchatsSVC,
@@ -138,6 +139,20 @@ export const getPieceTechnique: RequestHandler = async (req, res, next) => {
     const { id } = idParamSchema.parse({ params: req.params }).params
     const includes = parseIncludeSet(req)
     const out = await getPieceTechniqueSVC(id, includes)
+    if (!out) {
+      res.status(404).json({ error: "Not found" })
+      return
+    }
+    res.json(out)
+  } catch (err) {
+    next(err)
+  }
+}
+
+export const getPieceTechniqueFabricationTree: RequestHandler = async (req, res, next) => {
+  try {
+    const { id } = idParamSchema.parse({ params: req.params }).params
+    const out = await getPieceTechniqueFabricationTreeSVC(id)
     if (!out) {
       res.status(404).json({ error: "Not found" })
       return

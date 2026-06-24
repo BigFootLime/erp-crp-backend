@@ -142,6 +142,355 @@ async function insertAuditLog(tx: Queryable, audit: AuditContext, entry: {
   });
 }
 
+type FabricationGenerationNode = {
+  key: string;
+  parent_key: string | null;
+  bom_line_id: string | null;
+  parent_piece_technique_id: string | null;
+  piece_technique_id: string;
+  article_id: string | null;
+  code_piece: string;
+  designation: string;
+  version_number: number;
+  level: number;
+  ordre_affichage: number;
+  quantite_par_parent: number;
+  quantite_cumulee: number;
+};
+
+async function loadFabricationGenerationTree(
+  tx: Queryable,
+  pieceTechniqueId: string,
+  maxDepth = 50
+): Promise<FabricationGenerationNode[]> {
+  const depth = Math.max(1, Math.min(50, Math.trunc(maxDepth)));
+  const res = await tx.query<FabricationGenerationNode>(
+    `
+      WITH RECURSIVE tree AS (
+        SELECT
+          NULL::uuid AS bom_line_id,
+          NULL::uuid AS parent_piece_technique_id,
+          p.id AS piece_technique_id,
+          p.article_id,
+          p.code_piece,
+          p.designation,
+          p.version_number,
+          0::int AS level,
+          ARRAY[p.id]::uuid[] AS path_ids,
+          ARRAY[0]::int[] AS order_path,
+          0::int AS ordre_affichage,
+          1::numeric AS quantite_par_parent,
+          1::numeric AS quantite_cumulee
+        FROM public.pieces_techniques p
+        WHERE p.id = $1::uuid
+          AND p.deleted_at IS NULL
+
+        UNION ALL
+
+        SELECT
+          n.id AS bom_line_id,
+          n.parent_piece_technique_id,
+          child.id AS piece_technique_id,
+          child.article_id,
+          child.code_piece,
+          child.designation,
+          child.version_number,
+          tree.level + 1 AS level,
+          tree.path_ids || child.id AS path_ids,
+          tree.order_path || n.rang AS order_path,
+          n.rang::int AS ordre_affichage,
+          n.quantite AS quantite_par_parent,
+          tree.quantite_cumulee * n.quantite AS quantite_cumulee
+        FROM tree
+        JOIN public.pieces_techniques_nomenclature n
+          ON n.parent_piece_technique_id = tree.piece_technique_id
+        JOIN public.pieces_techniques child
+          ON child.id = n.child_piece_technique_id
+         AND child.deleted_at IS NULL
+        WHERE tree.level < $2::int
+          AND NOT child.id = ANY(tree.path_ids)
+      )
+      SELECT
+        array_to_string(path_ids::text[], '/') AS key,
+        CASE
+          WHEN array_length(path_ids, 1) > 1
+            THEN array_to_string(path_ids[1:(array_length(path_ids, 1) - 1)]::text[], '/')
+          ELSE NULL
+        END AS parent_key,
+        bom_line_id::text AS bom_line_id,
+        parent_piece_technique_id::text AS parent_piece_technique_id,
+        piece_technique_id::text AS piece_technique_id,
+        article_id::text AS article_id,
+        code_piece,
+        designation,
+        version_number::int AS version_number,
+        level,
+        ordre_affichage,
+        quantite_par_parent::float8 AS quantite_par_parent,
+        quantite_cumulee::float8 AS quantite_cumulee
+      FROM tree
+      ORDER BY order_path ASC, piece_technique_id ASC
+    `,
+    [pieceTechniqueId, depth]
+  );
+
+  return res.rows.map((row) => ({
+    ...row,
+    version_number: Number(row.version_number),
+    level: Number(row.level),
+    ordre_affichage: Number(row.ordre_affichage),
+    quantite_par_parent: Number(row.quantite_par_parent),
+    quantite_cumulee: Number(row.quantite_cumulee),
+  }));
+}
+
+async function allocateOrdreFabricationId(tx: Queryable): Promise<number> {
+  const idRes = await tx.query<{ of_id: string }>(
+    `SELECT nextval(pg_get_serial_sequence('public.ordres_fabrication','id'))::text AS of_id`
+  );
+  return toInt(idRes.rows[0]?.of_id, "ordres_fabrication.id");
+}
+
+async function copyPieceOperationsToOf(tx: Queryable, params: {
+  of_id: number;
+  piece_technique_id: string;
+}): Promise<number> {
+  const operationsInsert = await tx.query(
+    `
+      INSERT INTO public.of_operations (
+        of_id,
+        phase,
+        designation,
+        cf_id,
+        poste_id,
+        machine_id,
+        hourly_rate_applied,
+        tp,
+        tf_unit,
+        qte,
+        coef,
+        temps_total_planned,
+        status,
+        notes,
+        source_piece_operation_id
+      )
+      SELECT
+        $1::bigint AS of_id,
+        pto.phase,
+        pto.designation,
+        pto.cf_id,
+        NULL::uuid AS poste_id,
+        NULL::uuid AS machine_id,
+        COALESCE(pto.taux_horaire, 0)::numeric(12,2) AS hourly_rate_applied,
+        COALESCE(pto.tp, 0)::numeric(12,3) AS tp,
+        COALESCE(pto.tf_unit, 0)::numeric(12,3) AS tf_unit,
+        COALESCE(pto.qte, 1)::numeric(12,3) AS qte,
+        COALESCE(pto.coef, 1)::numeric(10,3) AS coef,
+        ROUND((COALESCE(pto.tp,0) + COALESCE(pto.tf_unit,0) * COALESCE(pto.qte,1)) * COALESCE(pto.coef,1), 3)::numeric(12,3) AS temps_total_planned,
+        'TODO'::of_operation_status AS status,
+        pto.designation_2 AS notes,
+        pto.id AS source_piece_operation_id
+      FROM public.pieces_techniques_operations pto
+      WHERE pto.piece_technique_id = $2::uuid
+      ORDER BY pto.phase ASC, pto.id ASC
+    `,
+    [params.of_id, params.piece_technique_id]
+  );
+
+  return operationsInsert.rowCount ?? 0;
+}
+
+async function createRecursiveOrdresFabrication(tx: Queryable, params: {
+  commande_id: number;
+  commande_numero: string;
+  commande_ligne_id: number;
+  livraison_affaire_id: number;
+  client_id: string;
+  root_article_id: string | null;
+  root_piece_technique_id: string;
+  qty_to_produce: number;
+  user_id: number;
+}): Promise<number[]> {
+  const tree = await loadFabricationGenerationTree(tx, params.root_piece_technique_id);
+  if (!tree.length) {
+    throw new HttpError(
+      422,
+      "PIECE_TECHNIQUE_NOT_FOUND",
+      `Cannot create OF: piece technique ${params.root_piece_technique_id} was not found`
+    );
+  }
+
+  const ofIdByKey = new Map<string, number>();
+  for (const node of tree) {
+    ofIdByKey.set(node.key, await allocateOrdreFabricationId(tx));
+  }
+
+  const rootOfId = ofIdByKey.get(tree[0].key);
+  if (!rootOfId) throw new Error("Failed to allocate root OF id");
+
+  const batchId = crypto.randomUUID();
+  await tx.query(
+    `
+      INSERT INTO public.of_generation_batches (
+        id,
+        source_type,
+        commande_id,
+        commande_ligne_id,
+        root_of_id,
+        root_piece_technique_id,
+        requested_qty,
+        metadata,
+        created_by
+      )
+      VALUES ($1::uuid,'COMMANDE_CLIENT',$2::bigint,$3::bigint,NULL,$4::uuid,$5,$6::jsonb,$7)
+    `,
+    [
+      batchId,
+      params.commande_id,
+      params.commande_ligne_id,
+      params.root_piece_technique_id,
+      params.qty_to_produce,
+      JSON.stringify({ commande_numero: params.commande_numero }),
+      params.user_id,
+    ]
+  );
+
+  const ofIds: number[] = [];
+
+  for (const node of tree) {
+    const ofId = ofIdByKey.get(node.key);
+    if (!ofId) throw new Error(`Missing OF id for fabrication node ${node.key}`);
+
+    const parentOfId = node.parent_key ? ofIdByKey.get(node.parent_key) ?? null : null;
+    if (node.parent_key && !parentOfId) {
+      throw new Error(`Missing parent OF id for fabrication node ${node.key}`);
+    }
+
+    const numero = `OF-${ofId}`;
+    const qtyLancee = Number((params.qty_to_produce * node.quantite_cumulee).toFixed(3));
+    const articleId = node.article_id ?? (node.level === 0 ? params.root_article_id : null);
+    const notePrefix = node.level === 0 ? "piece mere" : "sous-piece";
+
+    await tx.query(
+      `
+        INSERT INTO public.ordres_fabrication (
+          id,
+          numero,
+          affaire_id,
+          commande_id,
+          commande_ligne_id,
+          article_id,
+          client_id,
+          piece_technique_id,
+          parent_of_id,
+          root_of_id,
+          generation_batch_id,
+          generation_level,
+          source_bom_line_id,
+          structure_path,
+          quantity_per_parent,
+          quantity_cumulative,
+          quantite_lancee,
+          statut,
+          priority,
+          notes,
+          created_by,
+          updated_by
+        ) VALUES (
+          $1,$2,$3::bigint,$4::bigint,$5::bigint,$6::uuid,$7,$8::uuid,
+          $9::bigint,$10::bigint,$11::uuid,$12,$13::uuid,$14,$15,$16,
+          $17,'BROUILLON'::of_status,'NORMAL'::of_priority,$18,$19,$19
+        )
+      `,
+      [
+        ofId,
+        numero,
+        params.livraison_affaire_id,
+        params.commande_id,
+        params.commande_ligne_id,
+        articleId,
+        params.client_id,
+        node.piece_technique_id,
+        parentOfId,
+        rootOfId,
+        batchId,
+        node.level,
+        node.bom_line_id,
+        node.key,
+        node.quantite_par_parent,
+        node.quantite_cumulee,
+        qtyLancee,
+        `Generated from commande ${params.commande_numero} line ${params.commande_ligne_id} (${notePrefix} ${node.code_piece})`,
+        params.user_id,
+      ]
+    );
+
+    const operationsCount = await copyPieceOperationsToOf(tx, {
+      of_id: ofId,
+      piece_technique_id: node.piece_technique_id,
+    });
+    if (operationsCount === 0) {
+      throw new HttpError(
+        409,
+        "PIECE_TECHNIQUE_OPERATION_REQUIRED",
+        `Cannot create complete OF: piece technique ${node.code_piece} has no operation for line ${params.commande_ligne_id}`
+      );
+    }
+
+    await tx.query(
+      `
+        INSERT INTO public.of_structure_snapshot (
+          generation_batch_id,
+          root_of_id,
+          parent_of_id,
+          of_id,
+          level,
+          structure_path,
+          source_bom_line_id,
+          parent_piece_technique_id,
+          piece_technique_id,
+          piece_code,
+          piece_designation,
+          piece_version_number,
+          quantite_par_parent,
+          quantite_cumulee,
+          quantite_lancee
+        )
+        VALUES (
+          $1::uuid,$2::bigint,$3::bigint,$4::bigint,$5,$6,$7::uuid,$8::uuid,
+          $9::uuid,$10,$11,$12,$13,$14,$15
+        )
+      `,
+      [
+        batchId,
+        rootOfId,
+        parentOfId,
+        ofId,
+        node.level,
+        node.key,
+        node.bom_line_id,
+        node.parent_piece_technique_id,
+        node.piece_technique_id,
+        node.code_piece,
+        node.designation,
+        node.version_number,
+        node.quantite_par_parent,
+        node.quantite_cumulee,
+        qtyLancee,
+      ]
+    );
+
+    ofIds.push(ofId);
+  }
+
+  await tx.query(
+    `UPDATE public.of_generation_batches SET root_of_id = $2::bigint WHERE id = $1::uuid`,
+    [batchId, rootOfId]
+  );
+
+  return ofIds;
+}
+
 async function insertCommandeEvent(db: Queryable, params: {
   commande_id: number;
   event_type: string;
@@ -3386,95 +3735,18 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
           );
         }
 
-        const idRes = await client.query<{ of_id: string }>(
-          `SELECT nextval(pg_get_serial_sequence('public.ordres_fabrication','id'))::text AS of_id`
-        );
-        const rawId = idRes.rows[0]?.of_id;
-        const ofId = toInt(rawId, "ordres_fabrication.id");
-        const numero = `OF-${ofId}`;
-
-        await client.query(
-          `
-            INSERT INTO public.ordres_fabrication (
-              id,
-              numero,
-              affaire_id,
-              commande_id,
-              commande_ligne_id,
-              article_id,
-              client_id,
-              piece_technique_id,
-              quantite_lancee,
-              statut,
-              priority,
-              notes,
-              created_by,
-              updated_by
-            ) VALUES ($1,$2,$3::bigint,$4::bigint,$5::bigint,$6::uuid,$7,$8::uuid,$9,'BROUILLON'::of_status,'NORMAL'::of_priority,$10,$11,$11)
-          `,
-          [
-            ofId,
-            numero,
-            livraisonAffaireId,
-            commandeId,
-            l.commande_ligne_id,
-            l.article_id,
-            clientId,
-            pieceTechniqueId,
-            qtyToProduce,
-            `Generated from commande ${commande.numero} line ${l.commande_ligne_id}`,
-            audit.user_id,
-          ]
-        );
-
-        const operationsInsert = await client.query(
-          `
-            INSERT INTO public.of_operations (
-              of_id,
-              phase,
-              designation,
-              cf_id,
-              poste_id,
-              machine_id,
-              hourly_rate_applied,
-              tp,
-              tf_unit,
-              qte,
-              coef,
-              temps_total_planned,
-              status,
-              notes
-            )
-            SELECT
-              $1::bigint AS of_id,
-              pto.phase,
-              pto.designation,
-              pto.cf_id,
-              NULL::uuid AS poste_id,
-              NULL::uuid AS machine_id,
-              COALESCE(pto.taux_horaire, 0)::numeric(12,2) AS hourly_rate_applied,
-              COALESCE(pto.tp, 0)::numeric(12,3) AS tp,
-              COALESCE(pto.tf_unit, 0)::numeric(12,3) AS tf_unit,
-              COALESCE(pto.qte, 1)::numeric(12,3) AS qte,
-              COALESCE(pto.coef, 1)::numeric(10,3) AS coef,
-              ROUND((COALESCE(pto.tp,0) + COALESCE(pto.tf_unit,0) * COALESCE(pto.qte,1)) * COALESCE(pto.coef,1), 3)::numeric(12,3) AS temps_total_planned,
-              'TODO'::of_operation_status AS status,
-              pto.designation_2 AS notes
-            FROM public.pieces_techniques_operations pto
-            WHERE pto.piece_technique_id = $2::uuid
-            ORDER BY pto.phase ASC, pto.id ASC
-          `,
-          [ofId, pieceTechniqueId]
-        );
-        if ((operationsInsert.rowCount ?? 0) === 0) {
-          throw new HttpError(
-            409,
-            "PIECE_TECHNIQUE_OPERATION_REQUIRED",
-            `Cannot create complete OF: piece technique ${pieceTechniqueId} has no operation for line ${l.commande_ligne_id}`
-          );
-        }
-
-        ofIds.push(ofId);
+        const generatedIds = await createRecursiveOrdresFabrication(client, {
+          commande_id: commandeId,
+          commande_numero: commande.numero,
+          commande_ligne_id: l.commande_ligne_id,
+          livraison_affaire_id: livraisonAffaireId,
+          client_id: clientId,
+          root_article_id: l.article_id,
+          root_piece_technique_id: pieceTechniqueId,
+          qty_to_produce: qtyToProduce,
+          user_id: audit.user_id,
+        });
+        ofIds.push(...generatedIds);
       }
     }
 
