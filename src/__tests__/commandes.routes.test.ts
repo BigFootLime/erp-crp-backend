@@ -1147,9 +1147,35 @@ describe("/api/v1/commandes", () => {
         return { rows: [{ v: "1" }] };
       }
 
+      if (q.includes("WITH RECURSIVE tree") && q.includes("public.pieces_techniques_nomenclature")) {
+        return {
+          rows: [
+            {
+              key: PIECE_ID,
+              parent_key: null,
+              bom_line_id: null,
+              parent_piece_technique_id: null,
+              piece_technique_id: PIECE_ID,
+              article_id: ARTICLE_ID,
+              code_piece: "PT-001",
+              designation: "Piece test",
+              version_number: 1,
+              level: 0,
+              ordre_affichage: 0,
+              quantite_par_parent: 1,
+              quantite_cumulee: 1,
+            },
+          ],
+        };
+      }
+
       if (q.includes("INSERT INTO affaire")) return { rows: [] };
       if (q.includes("INSERT INTO commande_to_affaire")) return { rows: [] };
+      if (q.includes("INSERT INTO public.of_generation_batches")) return { rows: [] };
+      if (q.includes("INSERT INTO public.ordres_fabrication")) return { rows: [] };
       if (q.includes("INSERT INTO public.of_operations")) return { rows: [], rowCount: 1 };
+      if (q.includes("INSERT INTO public.of_structure_snapshot")) return { rows: [] };
+      if (q.includes("UPDATE public.of_generation_batches")) return { rows: [] };
       if (q.includes("INSERT INTO public.commande_client_event_log")) return { rows: [] };
       if (q.includes("INSERT INTO erp_audit_logs")) return { rows: [{ id: "1", created_at: "2026-01-01T00:00:00.000Z" }] };
       if (q.includes("UPDATE commande_client SET updated_at")) return { rows: [] };
@@ -1172,5 +1198,174 @@ describe("/api/v1/commandes", () => {
       affaire_ids: [7],
       livraison_affaire_id: 7,
     });
+  });
+
+  it("POST /api/v1/commandes/:id/generate-affaires creates recursive OF tree for manufactured sub-pieces", async () => {
+    process.env.JWT_SECRET = "test-secret";
+    const token = jwt.sign(
+      { id: 1, username: "test", email: "test@example.com", role: "admin" },
+      process.env.JWT_SECRET,
+      { expiresIn: "1h" }
+    );
+
+    const MAGASIN_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+    const LOCATION_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+    const ARTICLE_ID = "11111111-1111-1111-1111-111111111111";
+    const ROOT_PIECE_ID = "22222222-2222-2222-2222-222222222222";
+    const CHILD_PIECE_ID = "33333333-3333-3333-3333-333333333333";
+    const BOM_LINE_ID = "44444444-4444-4444-4444-444444444444";
+
+    let ofSeq = 8;
+    const ofInsertCalls: unknown[][] = [];
+
+    mocks.clientQuery.mockImplementation(async (sql: unknown, params?: unknown[]) => {
+      const q = String(sql);
+      const p0 = Array.isArray(params) ? params[0] : undefined;
+
+      if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
+
+      if (q.includes("FROM commande_client") && q.includes("FOR UPDATE") && q.includes("order_type")) {
+        return {
+          rows: [
+            {
+              client_id: "001",
+              type_affaire: "livraison",
+              order_type: "FERME",
+              devis_id: null,
+              numero: "CC-123",
+              dest_stock_magasin_id: null,
+              dest_stock_emplacement_id: null,
+            },
+          ],
+        };
+      }
+
+      if (q.includes("FROM pg_attribute") && q.includes("commande_to_affaire") && q.includes("attname = 'role'")) {
+        return { rows: [{ ok: 1 }] };
+      }
+
+      if (q.includes("FROM commande_to_affaire") && q.includes("WHERE commande_id")) {
+        return { rows: [] };
+      }
+
+      if (q.includes("FROM public.erp_settings") && String(p0) === "stock.default_shipping_location") {
+        return { rows: [{ value_json: { magasin_id: MAGASIN_ID, emplacement_id: 1 } }] };
+      }
+
+      if (q.includes("FROM public.emplacements") && q.includes("SELECT location_id")) {
+        return { rows: [{ location_id: LOCATION_ID }] };
+      }
+
+      if (q.includes("FROM commande_ligne") && q.includes("LEFT JOIN LATERAL")) {
+        return {
+          rows: [
+            {
+              commande_ligne_id: 1,
+              code_piece: "P1",
+              qty_ordered: 2,
+              article_id: ARTICLE_ID,
+              piece_technique_id: ROOT_PIECE_ID,
+            },
+          ],
+        };
+      }
+
+      if (q.includes("FROM public.stock_levels") && q.includes("GROUP BY sl.article_id")) {
+        return { rows: [{ article_id: ARTICLE_ID, qty_available: 0 }] };
+      }
+
+      if (q.includes("nextval('public.affaire_id_seq')")) {
+        return { rows: [{ id: "7" }] };
+      }
+
+      if (q.includes("SELECT client_code FROM public.clients")) {
+        return { rows: [{ client_code: "CLI-001" }] };
+      }
+
+      if (q.includes("public.fn_next_code_value")) {
+        return { rows: [{ v: "1" }] };
+      }
+
+      if (q.includes("WITH RECURSIVE tree") && q.includes("public.pieces_techniques_nomenclature")) {
+        return {
+          rows: [
+            {
+              key: ROOT_PIECE_ID,
+              parent_key: null,
+              bom_line_id: null,
+              parent_piece_technique_id: null,
+              piece_technique_id: ROOT_PIECE_ID,
+              article_id: ARTICLE_ID,
+              code_piece: "ROOT",
+              designation: "Piece mere",
+              version_number: 1,
+              level: 0,
+              ordre_affichage: 0,
+              quantite_par_parent: 1,
+              quantite_cumulee: 1,
+            },
+            {
+              key: `${ROOT_PIECE_ID}/${CHILD_PIECE_ID}`,
+              parent_key: ROOT_PIECE_ID,
+              bom_line_id: BOM_LINE_ID,
+              parent_piece_technique_id: ROOT_PIECE_ID,
+              piece_technique_id: CHILD_PIECE_ID,
+              article_id: null,
+              code_piece: "CHILD",
+              designation: "Sous-piece",
+              version_number: 1,
+              level: 1,
+              ordre_affichage: 10,
+              quantite_par_parent: 3,
+              quantite_cumulee: 3,
+            },
+          ],
+        };
+      }
+
+      if (q.includes("pg_get_serial_sequence") && q.includes("ordres_fabrication")) {
+        ofSeq += 1;
+        return { rows: [{ of_id: String(ofSeq) }] };
+      }
+
+      if (q.includes("INSERT INTO affaire")) return { rows: [] };
+      if (q.includes("INSERT INTO commande_to_affaire")) return { rows: [] };
+      if (q.includes("INSERT INTO public.commande_ligne_affaire_allocation")) return { rows: [] };
+      if (q.includes("INSERT INTO public.of_generation_batches")) return { rows: [] };
+      if (q.includes("INSERT INTO public.ordres_fabrication")) {
+        ofInsertCalls.push(Array.isArray(params) ? params : []);
+        return { rows: [] };
+      }
+      if (q.includes("INSERT INTO public.of_operations")) return { rows: [], rowCount: 1 };
+      if (q.includes("INSERT INTO public.of_structure_snapshot")) return { rows: [] };
+      if (q.includes("UPDATE public.of_generation_batches")) return { rows: [] };
+      if (q.includes("INSERT INTO public.commande_client_event_log")) return { rows: [] };
+      if (q.includes("INSERT INTO erp_audit_logs")) return { rows: [{ id: "1", created_at: "2026-01-01T00:00:00.000Z" }] };
+      if (q.includes("UPDATE commande_client SET updated_at")) return { rows: [] };
+
+      return { rows: [] };
+    });
+
+    const res = await request(app)
+      .post("/api/v1/commandes/123/generate-affaires")
+      .set("Authorization", `Bearer ${token}`)
+      .send({});
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ of_ids: [9, 10] });
+    expect(ofInsertCalls).toHaveLength(2);
+
+    const rootParams = ofInsertCalls[0];
+    const childParams = ofInsertCalls[1];
+    expect(rootParams[0]).toBe(9);
+    expect(rootParams[11]).toBe(0);
+    expect(rootParams[16]).toBe(2);
+    expect(childParams[0]).toBe(10);
+    expect(childParams[8]).toBe(9);
+    expect(childParams[9]).toBe(9);
+    expect(childParams[11]).toBe(1);
+    expect(childParams[14]).toBe(3);
+    expect(childParams[15]).toBe(3);
+    expect(childParams[16]).toBe(6);
   });
 });

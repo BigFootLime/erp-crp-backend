@@ -32,6 +32,7 @@ import {
   svcCreateOrdreFabrication,
   svcCreatePoste,
   svcGetOrdreFabrication,
+  svcGetOrdreFabricationTree,
   svcGetMachine,
   svcGetPoste,
   svcGetOfReceiptContext,
@@ -269,6 +270,16 @@ export const getOrdreFabrication = asyncHandler(async (req, res) => {
   const { id } = ofIdParamSchema.parse({ params: req.params }).params;
   const userId = typeof req.user?.id === "number" ? req.user.id : undefined;
   const out = await svcGetOrdreFabrication({ id, user_id: userId });
+  if (!out) {
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
+  res.json(out);
+});
+
+export const getOrdreFabricationTree = asyncHandler(async (req, res) => {
+  const { id } = ofIdParamSchema.parse({ params: req.params }).params;
+  const out = await svcGetOrdreFabricationTree({ id });
   if (!out) {
     res.status(404).json({ error: "Not found" });
     return;
