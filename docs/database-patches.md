@@ -46,3 +46,21 @@ schema represented by the current patch files.
 - Do not edit a patch file after it has been applied; add a new patch instead.
 - Review `checksum-mismatch` results before continuing.
 - Keep passwords and `DATABASE_URL` out of Git, logs, and tickets.
+
+## Issue #55 - Recursive Fabrication Tree
+
+Patch `20260624_recursive_fabrication_tree_of_hierarchy.sql` adds only new
+structures for recursive OF generation:
+
+- `of_generation_batches` tracks one recursive generation batch from a command
+  line.
+- `ordres_fabrication` gains parent/root/generation metadata for OF trees.
+- `of_structure_snapshot` freezes the fabrication tree context at generation
+  time.
+- `of_operations.source_piece_operation_id` links copied OF operations back to
+  the source routing operation.
+
+This patch does not rename or remove historical tables. The technical table
+`pieces_techniques_nomenclature` remains the manufactured parent/child
+structure, while `pieces_techniques_achats` remains the purchase/procurement
+structure.

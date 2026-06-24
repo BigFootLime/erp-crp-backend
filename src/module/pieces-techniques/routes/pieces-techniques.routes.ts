@@ -16,6 +16,7 @@ import {
   deleteOperation,
   duplicatePieceTechnique,
   downloadPieceTechniqueDocument,
+  getPieceTechniqueFabricationTree,
   getPieceTechnique,
   linkPieceTechniqueAffaire,
   listAffairePieceTechniques,
@@ -87,6 +88,7 @@ router.use(authenticateToken)
 router.post("/", validate(createPieceTechniqueSchema), createPieceTechnique)
 router.get("/", listPieceTechniques)
 router.get("/by-affaire/:affaireId", validate(affaireOnlyParamSchema), listAffairePieceTechniques)
+router.get("/:id/arborescence", validate(idParamSchema), getPieceTechniqueFabricationTree)
 router.get("/:id", validate(idParamSchema), getPieceTechnique)
 router.patch("/:id", validate(idParamSchema), validate(updatePieceTechniqueSchema), updatePieceTechnique)
 router.delete("/:id", requireAdmin, validate(idParamSchema), deletePieceTechnique)

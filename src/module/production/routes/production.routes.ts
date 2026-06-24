@@ -14,6 +14,7 @@ import {
   getOfReceiptContext,
   getOfTraceability,
   getOrdreFabrication,
+  getOrdreFabricationTree,
   getMachine,
   getPoste,
   listOrdresFabrication,
@@ -113,6 +114,7 @@ router.delete("/postes/:id", requireAdmin, archivePoste);
 
 // OF
 router.get("/ofs", listOrdresFabrication);
+router.get("/ofs/:id/tree", getOrdreFabricationTree);
 router.get("/ofs/:id", getOrdreFabrication);
 router.post("/ofs", createOrdreFabrication);
 router.patch("/ofs/:id", updateOrdreFabrication);

@@ -13,6 +13,8 @@ import type {
   Achat,
   AffairePieceTechniqueLink,
   BomLine,
+  FabricationTreeNode,
+  FabricationTreeResponse,
   Operation,
   Paginated,
   PieceTechnique,
@@ -960,6 +962,211 @@ async function repoListBomLines(pieceTechniqueId: string): Promise<BomLine[]> {
   }));
 }
 
+type FabricationTreeRow = {
+  key: string;
+  parent_key: string | null;
+  bom_line_id: string | null;
+  parent_piece_technique_id: string | null;
+  piece_technique_id: string;
+  article_id: string | null;
+  code_piece: string;
+  designation: string;
+  designation_2: string | null;
+  statut: PieceTechniqueStatut;
+  en_fabrication: number;
+  ensemble: boolean;
+  version_number: number;
+  level: number;
+  path_text: string;
+  ordre_affichage: number;
+  quantite_par_parent: number;
+  quantite_cumulee: number;
+  repere: string | null;
+  line_designation: string | null;
+  operations_count: number;
+  operations_temps_total: number;
+  operations_cout_mo: number;
+  achats_count: number;
+  achats_total_ht: number;
+  achats_total_ttc: number;
+};
+
+function mapFabricationTreeRow(row: FabricationTreeRow): FabricationTreeNode {
+  return {
+    key: row.key,
+    bom_line_id: row.bom_line_id,
+    parent_piece_technique_id: row.parent_piece_technique_id,
+    piece_technique_id: row.piece_technique_id,
+    article_id: row.article_id,
+    code_piece: row.code_piece,
+    designation: row.designation,
+    designation_2: row.designation_2,
+    statut: row.statut,
+    en_fabrication: (row.en_fabrication ?? 0) === 1,
+    ensemble: row.ensemble,
+    version_number: row.version_number,
+    level: Number(row.level),
+    path: row.path_text.split("/").filter((part) => part.length > 0),
+    ordre_affichage: Number(row.ordre_affichage),
+    quantite_par_parent: Number(row.quantite_par_parent),
+    quantite_cumulee: Number(row.quantite_cumulee),
+    repere: row.repere,
+    line_designation: row.line_designation,
+    operations_count: Number(row.operations_count),
+    operations_temps_total: Number(row.operations_temps_total),
+    operations_cout_mo: Number(row.operations_cout_mo),
+    achats_count: Number(row.achats_count),
+    achats_total_ht: Number(row.achats_total_ht),
+    achats_total_ttc: Number(row.achats_total_ttc),
+    children: [],
+  };
+}
+
+export async function repoGetFabricationTree(pieceTechniqueId: string, maxDepth = 50): Promise<FabricationTreeResponse | null> {
+  const depth = Math.max(1, Math.min(50, Math.trunc(maxDepth)));
+  const res = await db.query<FabricationTreeRow>(
+    `
+      WITH RECURSIVE tree AS (
+        SELECT
+          NULL::uuid AS bom_line_id,
+          NULL::uuid AS parent_piece_technique_id,
+          p.id AS piece_technique_id,
+          p.article_id,
+          p.code_piece,
+          p.designation,
+          p.designation_2,
+          p.statut,
+          p.en_fabrication,
+          p.ensemble,
+          p.version_number,
+          0::int AS level,
+          ARRAY[p.id]::uuid[] AS path_ids,
+          ARRAY[0]::int[] AS order_path,
+          0::int AS ordre_affichage,
+          1::numeric AS quantite_par_parent,
+          1::numeric AS quantite_cumulee,
+          NULL::text AS repere,
+          NULL::text AS line_designation
+        FROM pieces_techniques p
+        WHERE p.id = $1::uuid
+          AND p.deleted_at IS NULL
+
+        UNION ALL
+
+        SELECT
+          n.id AS bom_line_id,
+          n.parent_piece_technique_id,
+          child.id AS piece_technique_id,
+          child.article_id,
+          child.code_piece,
+          child.designation,
+          child.designation_2,
+          child.statut,
+          child.en_fabrication,
+          child.ensemble,
+          child.version_number,
+          tree.level + 1 AS level,
+          tree.path_ids || child.id AS path_ids,
+          tree.order_path || n.rang AS order_path,
+          n.rang::int AS ordre_affichage,
+          n.quantite AS quantite_par_parent,
+          tree.quantite_cumulee * n.quantite AS quantite_cumulee,
+          n.repere,
+          n.designation AS line_designation
+        FROM tree
+        JOIN pieces_techniques_nomenclature n
+          ON n.parent_piece_technique_id = tree.piece_technique_id
+        JOIN pieces_techniques child
+          ON child.id = n.child_piece_technique_id
+         AND child.deleted_at IS NULL
+        WHERE tree.level < $2::int
+          AND NOT child.id = ANY(tree.path_ids)
+      ),
+      enriched AS (
+        SELECT
+          array_to_string(path_ids::text[], '/') AS key,
+          CASE
+            WHEN array_length(path_ids, 1) > 1
+              THEN array_to_string(path_ids[1:(array_length(path_ids, 1) - 1)]::text[], '/')
+            ELSE NULL
+          END AS parent_key,
+          bom_line_id::text AS bom_line_id,
+          parent_piece_technique_id::text AS parent_piece_technique_id,
+          piece_technique_id::text AS piece_technique_id,
+          article_id::text AS article_id,
+          code_piece,
+          designation,
+          designation_2,
+          statut::text AS statut,
+          en_fabrication::int AS en_fabrication,
+          ensemble,
+          version_number::int AS version_number,
+          level,
+          array_to_string(path_ids::text[], '/') AS path_text,
+          ordre_affichage,
+          quantite_par_parent::float8 AS quantite_par_parent,
+          quantite_cumulee::float8 AS quantite_cumulee,
+          repere,
+          line_designation,
+          order_path
+        FROM tree
+      )
+      SELECT
+        e.*,
+        COALESCE(ops.operations_count, 0)::int AS operations_count,
+        COALESCE(ops.operations_temps_total, 0)::float8 AS operations_temps_total,
+        COALESCE(ops.operations_cout_mo, 0)::float8 AS operations_cout_mo,
+        COALESCE(achats.achats_count, 0)::int AS achats_count,
+        COALESCE(achats.achats_total_ht, 0)::float8 AS achats_total_ht,
+        COALESCE(achats.achats_total_ttc, 0)::float8 AS achats_total_ttc
+      FROM enriched e
+      LEFT JOIN LATERAL (
+        SELECT
+          COUNT(*)::int AS operations_count,
+          COALESCE(SUM(temps_total), 0)::float8 AS operations_temps_total,
+          COALESCE(SUM(cout_mo), 0)::float8 AS operations_cout_mo
+        FROM pieces_techniques_operations op
+        WHERE op.piece_technique_id = e.piece_technique_id::uuid
+      ) ops ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT
+          COUNT(*)::int AS achats_count,
+          COALESCE(SUM(total_achat_ht), 0)::float8 AS achats_total_ht,
+          COALESCE(SUM(total_achat_ttc), 0)::float8 AS achats_total_ttc
+        FROM pieces_techniques_achats achat
+        WHERE achat.piece_technique_id = e.piece_technique_id::uuid
+      ) achats ON TRUE
+      ORDER BY e.order_path ASC, e.piece_technique_id ASC
+    `,
+    [pieceTechniqueId, depth]
+  );
+
+  if (!res.rows.length) return null;
+
+  const nodes = res.rows.map(mapFabricationTreeRow);
+  const byKey = new Map(nodes.map((node) => [node.key, node] as const));
+  let root: FabricationTreeNode | null = null;
+
+  for (const row of res.rows) {
+    const node = byKey.get(row.key);
+    if (!node) continue;
+    if (!row.parent_key) {
+      root = node;
+      continue;
+    }
+    byKey.get(row.parent_key)?.children.push(node);
+  }
+
+  if (!root) return null;
+
+  return {
+    root,
+    nodes,
+    total_nodes: nodes.length,
+    max_depth: nodes.reduce((max, node) => Math.max(max, node.level), 0),
+  };
+}
+
 type OperationRow = {
   id: string;
   phase: number;
@@ -1290,6 +1497,7 @@ async function insertBomLines(client: PoolClient, pieceTechniqueId: string, bom:
   const out: BomLine[] = [];
   for (let i = 0; i < bom.length; i++) {
     const l = bom[i];
+    await ensureBomLinkAllowed(client, pieceTechniqueId, l.child_piece_id);
     const rang = typeof l.rang === "number" ? l.rang : nextRang;
     nextRang = rang + 10;
 
@@ -2082,13 +2290,21 @@ async function wouldCreateBomCycle(client: PoolClient, parentId: string, childId
   const res = await client.query<{ found: number }>(
     `
       WITH RECURSIVE descendants AS (
-        SELECT child_piece_technique_id
+        SELECT
+          child_piece_technique_id,
+          ARRAY[parent_piece_technique_id, child_piece_technique_id]::uuid[] AS path_ids,
+          1::int AS depth
         FROM pieces_techniques_nomenclature
         WHERE parent_piece_technique_id = $1::uuid
         UNION ALL
-        SELECT n.child_piece_technique_id
+        SELECT
+          n.child_piece_technique_id,
+          d.path_ids || n.child_piece_technique_id,
+          d.depth + 1
         FROM pieces_techniques_nomenclature n
         JOIN descendants d ON n.parent_piece_technique_id = d.child_piece_technique_id
+        WHERE d.depth < 50
+          AND NOT n.child_piece_technique_id = ANY(d.path_ids)
       )
       SELECT 1::int AS found
       FROM descendants
@@ -2098,6 +2314,16 @@ async function wouldCreateBomCycle(client: PoolClient, parentId: string, childId
     [childId, parentId]
   );
   return Boolean(res.rows[0]?.found);
+}
+
+async function ensureBomLinkAllowed(client: PoolClient, parentId: string, childId: string): Promise<void> {
+  const childExists = await ensurePieceTechniqueExists(client, childId);
+  if (!childExists) {
+    throw new HttpError(422, "CHILD_PIECE_TECHNIQUE_NOT_FOUND", "Child piece technique not found");
+  }
+
+  const cycle = await wouldCreateBomCycle(client, parentId, childId);
+  if (cycle) throw new HttpError(409, "BOM_CYCLE", "This line would create a fabrication tree cycle");
 }
 
 export async function repoAddBomLine(pieceTechniqueId: string, body: AddBomLineBodyDTO): Promise<BomLine | null> {
@@ -2110,8 +2336,7 @@ export async function repoAddBomLine(pieceTechniqueId: string, body: AddBomLineB
       return null;
     }
 
-    const cycle = await wouldCreateBomCycle(client, pieceTechniqueId, body.child_piece_id);
-    if (cycle) throw new HttpError(409, "BOM_CYCLE", "This line would create a nomenclature cycle");
+    await ensureBomLinkAllowed(client, pieceTechniqueId, body.child_piece_id);
 
     let rang = body.rang;
     if (rang === undefined) {
@@ -2172,8 +2397,7 @@ export async function repoUpdateBomLine(
     await client.query("BEGIN");
 
     if (body.child_piece_id !== undefined) {
-      const cycle = await wouldCreateBomCycle(client, pieceTechniqueId, body.child_piece_id);
-      if (cycle) throw new HttpError(409, "BOM_CYCLE", "This line would create a nomenclature cycle");
+      await ensureBomLinkAllowed(client, pieceTechniqueId, body.child_piece_id);
     }
 
     const sets: string[] = [];

@@ -12,6 +12,8 @@ import type {
   OfTimeLog,
   OrdreFabricationDetail,
   OrdreFabricationListItem,
+  OrdreFabricationTree,
+  OrdreFabricationTreeNode,
   Paginated,
   PosteDetail,
   PosteListItem,
@@ -2109,6 +2111,14 @@ async function selectOfHeader(q: DbQueryer, ofId: number): Promise<Omit<OrdreFab
     numero: string;
     affaire_id: string | null;
     commande_id: string | null;
+    parent_of_id: string | null;
+    root_of_id: string | null;
+    generation_batch_id: string | null;
+    generation_level: number;
+    source_bom_line_id: string | null;
+    structure_path: string | null;
+    quantity_per_parent: number;
+    quantity_cumulative: number;
     client_id: string | null;
     client_company_name: string | null;
     production_group_id: string | null;
@@ -2139,6 +2149,14 @@ async function selectOfHeader(q: DbQueryer, ofId: number): Promise<Omit<OrdreFab
         o.numero,
         o.affaire_id::text AS affaire_id,
         o.commande_id::text AS commande_id,
+        o.parent_of_id::text AS parent_of_id,
+        o.root_of_id::text AS root_of_id,
+        o.generation_batch_id::text AS generation_batch_id,
+        o.generation_level::int AS generation_level,
+        o.source_bom_line_id::text AS source_bom_line_id,
+        o.structure_path,
+        o.quantity_per_parent::float8 AS quantity_per_parent,
+        o.quantity_cumulative::float8 AS quantity_cumulative,
         o.client_id,
         c.company_name AS client_company_name,
         o.production_group_id::text AS production_group_id,
@@ -2178,6 +2196,14 @@ async function selectOfHeader(q: DbQueryer, ofId: number): Promise<Omit<OrdreFab
     numero: row.numero,
     affaire_id: toNullableInt(row.affaire_id, "ordres_fabrication.affaire_id"),
     commande_id: toNullableInt(row.commande_id, "ordres_fabrication.commande_id"),
+    parent_of_id: toNullableInt(row.parent_of_id, "ordres_fabrication.parent_of_id"),
+    root_of_id: toNullableInt(row.root_of_id, "ordres_fabrication.root_of_id"),
+    generation_batch_id: row.generation_batch_id,
+    generation_level: Number(row.generation_level),
+    source_bom_line_id: row.source_bom_line_id,
+    structure_path: row.structure_path,
+    quantity_per_parent: Number(row.quantity_per_parent),
+    quantity_cumulative: Number(row.quantity_cumulative),
     client_id: row.client_id,
     client_company_name: row.client_company_name,
     production_group_id: row.production_group_id,
@@ -2551,6 +2577,14 @@ export async function repoListOrdresFabrication(filters: ListOfQueryDTO): Promis
     numero: string;
     affaire_id: string | null;
     commande_id: string | null;
+    parent_of_id: string | null;
+    root_of_id: string | null;
+    generation_batch_id: string | null;
+    generation_level: number;
+    source_bom_line_id: string | null;
+    structure_path: string | null;
+    quantity_per_parent: number;
+    quantity_cumulative: number;
     client_id: string | null;
     client_company_name: string | null;
     production_group_id: string | null;
@@ -2577,6 +2611,14 @@ export async function repoListOrdresFabrication(filters: ListOfQueryDTO): Promis
         o.numero,
         o.affaire_id::text AS affaire_id,
         o.commande_id::text AS commande_id,
+        o.parent_of_id::text AS parent_of_id,
+        o.root_of_id::text AS root_of_id,
+        o.generation_batch_id::text AS generation_batch_id,
+        o.generation_level::int AS generation_level,
+        o.source_bom_line_id::text AS source_bom_line_id,
+        o.structure_path,
+        o.quantity_per_parent::float8 AS quantity_per_parent,
+        o.quantity_cumulative::float8 AS quantity_cumulative,
         o.client_id,
         c.company_name AS client_company_name,
         o.production_group_id::text AS production_group_id,
@@ -2618,6 +2660,14 @@ export async function repoListOrdresFabrication(filters: ListOfQueryDTO): Promis
     numero: r.numero,
     affaire_id: toNullableInt(r.affaire_id, "ordres_fabrication.affaire_id"),
     commande_id: toNullableInt(r.commande_id, "ordres_fabrication.commande_id"),
+    parent_of_id: toNullableInt(r.parent_of_id, "ordres_fabrication.parent_of_id"),
+    root_of_id: toNullableInt(r.root_of_id, "ordres_fabrication.root_of_id"),
+    generation_batch_id: r.generation_batch_id,
+    generation_level: Number(r.generation_level),
+    source_bom_line_id: r.source_bom_line_id,
+    structure_path: r.structure_path,
+    quantity_per_parent: Number(r.quantity_per_parent),
+    quantity_cumulative: Number(r.quantity_cumulative),
     client_id: r.client_id,
     client_company_name: r.client_company_name,
     production_group_id: r.production_group_id,
@@ -2650,6 +2700,188 @@ export async function repoGetOrdreFabrication(params: {
   const operations = await selectOfOperations(pool, { of_id: params.id, user_id: params.user_id });
 
   return { ...header, operations };
+}
+
+type OfTreeRow = {
+  key: string;
+  parent_key: string | null;
+  id: string;
+  numero: string;
+  affaire_id: string | null;
+  commande_id: string | null;
+  parent_of_id: string | null;
+  root_of_id: string | null;
+  generation_batch_id: string | null;
+  generation_level: number;
+  source_bom_line_id: string | null;
+  structure_path: string | null;
+  quantity_per_parent: number;
+  quantity_cumulative: number;
+  client_id: string | null;
+  client_company_name: string | null;
+  production_group_id: string | null;
+  production_group_code: string | null;
+  piece_technique_id: string;
+  piece_code: string;
+  piece_designation: string;
+  quantite_lancee: number;
+  quantite_bonne: number;
+  quantite_rebut: number;
+  statut: OrdreFabricationListItem["statut"];
+  priority: OrdreFabricationListItem["priority"];
+  date_lancement_prevue: string | null;
+  date_fin_prevue: string | null;
+  updated_at: string;
+  total_ops: number;
+  done_ops: number;
+};
+
+function mapOfTreeRow(row: OfTreeRow): OrdreFabricationTreeNode {
+  return {
+    id: toInt(row.id, "ordres_fabrication.id"),
+    numero: row.numero,
+    affaire_id: toNullableInt(row.affaire_id, "ordres_fabrication.affaire_id"),
+    commande_id: toNullableInt(row.commande_id, "ordres_fabrication.commande_id"),
+    parent_of_id: toNullableInt(row.parent_of_id, "ordres_fabrication.parent_of_id"),
+    root_of_id: toNullableInt(row.root_of_id, "ordres_fabrication.root_of_id"),
+    generation_batch_id: row.generation_batch_id,
+    generation_level: Number(row.generation_level),
+    source_bom_line_id: row.source_bom_line_id,
+    structure_path: row.structure_path,
+    quantity_per_parent: Number(row.quantity_per_parent),
+    quantity_cumulative: Number(row.quantity_cumulative),
+    client_id: row.client_id,
+    client_company_name: row.client_company_name,
+    production_group_id: row.production_group_id,
+    production_group_code: row.production_group_code,
+    piece_technique_id: row.piece_technique_id,
+    piece_code: row.piece_code,
+    piece_designation: row.piece_designation,
+    quantite_lancee: Number(row.quantite_lancee),
+    quantite_bonne: Number(row.quantite_bonne),
+    quantite_rebut: Number(row.quantite_rebut),
+    statut: row.statut,
+    priority: row.priority,
+    date_lancement_prevue: row.date_lancement_prevue,
+    date_fin_prevue: row.date_fin_prevue,
+    updated_at: row.updated_at,
+    total_ops: Number(row.total_ops),
+    done_ops: Number(row.done_ops),
+    children: [],
+  };
+}
+
+export async function repoGetOrdreFabricationTree(id: number): Promise<OrdreFabricationTree | null> {
+  const res = await pool.query<OfTreeRow>(
+    `
+      WITH RECURSIVE root AS (
+        SELECT COALESCE(root_of_id, id)::bigint AS root_id
+        FROM ordres_fabrication
+        WHERE id = $1::bigint
+        LIMIT 1
+      ),
+      tree AS (
+        SELECT
+          o.*,
+          ARRAY[o.id]::bigint[] AS path_ids,
+          0::int AS depth
+        FROM ordres_fabrication o
+        JOIN root r ON r.root_id = o.id
+
+        UNION ALL
+
+        SELECT
+          child.*,
+          tree.path_ids || child.id,
+          tree.depth + 1
+        FROM tree
+        JOIN ordres_fabrication child ON child.parent_of_id = tree.id
+        WHERE tree.depth < 50
+          AND NOT child.id = ANY(tree.path_ids)
+      ),
+      enriched AS (
+        SELECT
+          array_to_string(path_ids::text[], '/') AS key,
+          CASE
+            WHEN array_length(path_ids, 1) > 1
+              THEN array_to_string(path_ids[1:(array_length(path_ids, 1) - 1)]::text[], '/')
+            ELSE NULL
+          END AS parent_key,
+          t.*
+        FROM tree t
+      )
+      SELECT
+        e.key,
+        e.parent_key,
+        e.id::text AS id,
+        e.numero,
+        e.affaire_id::text AS affaire_id,
+        e.commande_id::text AS commande_id,
+        e.parent_of_id::text AS parent_of_id,
+        e.root_of_id::text AS root_of_id,
+        e.generation_batch_id::text AS generation_batch_id,
+        e.generation_level::int AS generation_level,
+        e.source_bom_line_id::text AS source_bom_line_id,
+        e.structure_path,
+        e.quantity_per_parent::float8 AS quantity_per_parent,
+        e.quantity_cumulative::float8 AS quantity_cumulative,
+        e.client_id,
+        c.company_name AS client_company_name,
+        e.production_group_id::text AS production_group_id,
+        pg.code AS production_group_code,
+        e.piece_technique_id::text AS piece_technique_id,
+        pt.code_piece AS piece_code,
+        pt.designation AS piece_designation,
+        e.quantite_lancee::float8 AS quantite_lancee,
+        e.quantite_bonne::float8 AS quantite_bonne,
+        e.quantite_rebut::float8 AS quantite_rebut,
+        e.statut::text AS statut,
+        e.priority::text AS priority,
+        e.date_lancement_prevue::text AS date_lancement_prevue,
+        e.date_fin_prevue::text AS date_fin_prevue,
+        e.updated_at::text AS updated_at,
+        COALESCE(ops.total_ops, 0)::int AS total_ops,
+        COALESCE(ops.done_ops, 0)::int AS done_ops
+      FROM enriched e
+      JOIN pieces_techniques pt ON pt.id = e.piece_technique_id
+      LEFT JOIN clients c ON c.client_id = e.client_id
+      LEFT JOIN production_group pg ON pg.id = e.production_group_id
+      LEFT JOIN LATERAL (
+        SELECT
+          COUNT(*) AS total_ops,
+          COUNT(*) FILTER (WHERE op.status = 'DONE') AS done_ops
+        FROM of_operations op
+        WHERE op.of_id = e.id
+      ) ops ON TRUE
+      ORDER BY e.path_ids ASC
+    `,
+    [id]
+  );
+
+  if (!res.rows.length) return null;
+
+  const nodes = res.rows.map(mapOfTreeRow);
+  const byKey = new Map(nodes.map((node, index) => [res.rows[index].key, node] as const));
+  let root: OrdreFabricationTreeNode | null = null;
+
+  for (const row of res.rows) {
+    const node = byKey.get(row.key);
+    if (!node) continue;
+    if (!row.parent_key) {
+      root = node;
+      continue;
+    }
+    byKey.get(row.parent_key)?.children.push(node);
+  }
+
+  if (!root) return null;
+
+  return {
+    root,
+    nodes,
+    total_nodes: nodes.length,
+    max_depth: nodes.reduce((max, node) => Math.max(max, node.generation_level), 0),
+  };
 }
 
 export async function repoCreateOrdreFabrication(params: {
@@ -2685,6 +2917,12 @@ export async function repoCreateOrdreFabrication(params: {
           numero,
           affaire_id,
           commande_id,
+          parent_of_id,
+          root_of_id,
+          generation_level,
+          structure_path,
+          quantity_per_parent,
+          quantity_cumulative,
           client_id,
           piece_technique_id,
           quantite_lancee,
@@ -2701,6 +2939,12 @@ export async function repoCreateOrdreFabrication(params: {
           $2,
           $3::bigint,
           $4::bigint,
+          NULL::bigint,
+          $1::bigint,
+          0,
+          $1::text,
+          1,
+          1,
           $5,
           $6::uuid,
           $7,
@@ -2750,7 +2994,8 @@ export async function repoCreateOrdreFabrication(params: {
           coef,
           temps_total_planned,
           status,
-          notes
+          notes,
+          source_piece_operation_id
         )
         SELECT
           $1::bigint AS of_id,
@@ -2766,7 +3011,8 @@ export async function repoCreateOrdreFabrication(params: {
           COALESCE(pto.coef, 1)::numeric(10,3) AS coef,
           ROUND((COALESCE(pto.tp,0) + COALESCE(pto.tf_unit,0) * COALESCE(pto.qte,1)) * COALESCE(pto.coef,1), 3)::numeric(12,3) AS temps_total_planned,
           'TODO'::of_operation_status AS status,
-          pto.designation_2 AS notes
+          pto.designation_2 AS notes,
+          pto.id AS source_piece_operation_id
         FROM pieces_techniques_operations pto
         WHERE pto.piece_technique_id = $2::uuid
         ORDER BY pto.phase ASC, pto.id ASC

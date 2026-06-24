@@ -11,6 +11,42 @@ export type BomLine = {
 
 export type PieceTechniqueStatut = "DRAFT" | "ACTIVE" | "IN_FABRICATION" | "OBSOLETE"
 
+export type FabricationTreeNode = {
+  key: string
+  bom_line_id: string | null
+  parent_piece_technique_id: string | null
+  piece_technique_id: string
+  article_id: string | null
+  code_piece: string
+  designation: string
+  designation_2: string | null
+  statut: PieceTechniqueStatut
+  en_fabrication: boolean
+  ensemble: boolean
+  version_number: number
+  level: number
+  path: string[]
+  ordre_affichage: number
+  quantite_par_parent: number
+  quantite_cumulee: number
+  repere: string | null
+  line_designation: string | null
+  operations_count: number
+  operations_temps_total: number
+  operations_cout_mo: number
+  achats_count: number
+  achats_total_ht: number
+  achats_total_ttc: number
+  children: FabricationTreeNode[]
+}
+
+export type FabricationTreeResponse = {
+  root: FabricationTreeNode
+  nodes: FabricationTreeNode[]
+  total_nodes: number
+  max_depth: number
+}
+
 export type PieceTechniqueHistoryEntry = {
   id: string
   date_action: string

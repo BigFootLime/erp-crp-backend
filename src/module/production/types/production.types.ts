@@ -86,6 +86,14 @@ export type OrdreFabricationListItem = {
   numero: string;
   affaire_id: number | null;
   commande_id: number | null;
+  parent_of_id: number | null;
+  root_of_id: number | null;
+  generation_batch_id: string | null;
+  generation_level: number;
+  source_bom_line_id: string | null;
+  structure_path: string | null;
+  quantity_per_parent: number;
+  quantity_cumulative: number;
   client_id: string | null;
   client_company_name: string | null;
   production_group_id: string | null;
@@ -150,6 +158,14 @@ export type OrdreFabricationDetail = {
   numero: string;
   affaire_id: number | null;
   commande_id: number | null;
+  parent_of_id: number | null;
+  root_of_id: number | null;
+  generation_batch_id: string | null;
+  generation_level: number;
+  source_bom_line_id: string | null;
+  structure_path: string | null;
+  quantity_per_parent: number;
+  quantity_cumulative: number;
   client_id: string | null;
   client_company_name: string | null;
   production_group_id: string | null;
@@ -172,4 +188,18 @@ export type OrdreFabricationDetail = {
   created_by: number | null;
   updated_by: number | null;
   operations: OfOperation[];
+};
+
+export type OrdreFabricationTreeNode = Omit<OrdreFabricationListItem, "updated_at" | "total_ops" | "done_ops"> & {
+  updated_at: string;
+  total_ops: number;
+  done_ops: number;
+  children: OrdreFabricationTreeNode[];
+};
+
+export type OrdreFabricationTree = {
+  root: OrdreFabricationTreeNode;
+  nodes: OrdreFabricationTreeNode[];
+  total_nodes: number;
+  max_depth: number;
 };
