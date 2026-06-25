@@ -82,6 +82,15 @@ Env var names observed in code (names only):
   - `src/middlewares/upload.ts` (upload destination selection)
   - `src/utils/checkNetworkDrive.ts` (network path checks)
 - `DATABASE_URL` (PostgreSQL connection string) in `src/config/database.ts`
+- PostgreSQL pool guardrails in `src/config/database.ts`:
+  - `PG_POOL_MAX`
+  - `PG_CONNECTION_TIMEOUT_MS`
+  - `PG_IDLE_TIMEOUT_MS`
+  - `PG_MAX_LIFETIME_SECONDS`
+  - `PG_STATEMENT_TIMEOUT_MS`
+  - `PG_QUERY_TIMEOUT_MS`
+  - `PG_LOCK_TIMEOUT_MS`
+  - `PG_IDLE_TX_TIMEOUT_MS`
 - `JWT_SECRET` (JWT signing/verifying secret) in:
   - `src/module/auth/middlewares/auth.middleware.ts`
   - `src/module/auth/services/auth.service.ts`
@@ -218,6 +227,7 @@ Security guard rails:
 Database:
 
 - Pool is created in `src/config/database.ts` using `process.env.DATABASE_URL`.
+- Pool waits and SQL execution are bounded by env-configurable defaults so database pressure fails before the reverse proxy returns a generic 504. Keep `PG_STATEMENT_TIMEOUT_MS` and `PG_QUERY_TIMEOUT_MS` below the VPS/reverse-proxy timeout.
 - Repositories/services use `pool.query(...)` or `pool.connect()` for transactions.
 - Transaction pattern: `BEGIN` / `COMMIT` / `ROLLBACK` with `finally { client.release() }` (example: `src/module/client/repository/client.repository.ts`).
 
