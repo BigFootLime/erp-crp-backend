@@ -17,7 +17,8 @@ export const affaireIdParamsSchema = z.object({
 });
 
 export const affaireStatutSchema = z.enum(["OUVERTE", "EN_COURS", "SUSPENDUE", "CLOTUREE", "ANNULEE"]);
-export const affaireTypeSchema = z.literal("livraison");
+// livraison = affaire de livraison client (client requis) ; projet = regroupement interne (client optionnel)
+export const affaireTypeSchema = z.enum(["livraison", "projet"]);
 export const affaireCommandCenterSegmentSchema = z.enum([
   "active",
   "production",
@@ -89,7 +90,10 @@ export const createAffaireBodySchema = z.object({
   date_cloture: z.preprocess(emptyStringToNull, isoDate).optional().nullable(),
   commentaire: z.preprocess(emptyStringToNull, z.string().trim().min(1)).optional().nullable(),
 }).superRefine((value, ctx) => {
-  if (!(typeof value.client_id === "string" && value.client_id.trim().length > 0)) {
+  // Client requis pour une affaire de livraison, optionnel pour un projet.
+  const isProjet = value.type_affaire === "projet";
+  const hasClient = typeof value.client_id === "string" && value.client_id.trim().length > 0;
+  if (!isProjet && !hasClient) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: "client_id is required for livraison", path: ["client_id"] });
   }
 });

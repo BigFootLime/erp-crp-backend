@@ -1235,7 +1235,7 @@ export async function repoCreateAffaire(input: CreateAffaireBodyDTO, audit?: Aud
           commande_id: input.commande_id ?? null,
           devis_id: input.devis_id ?? null,
           statut: input.statut,
-          type_affaire: "livraison",
+          type_affaire: input.type_affaire ?? "livraison",
         },
       });
     }
