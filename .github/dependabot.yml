@@ -1,0 +1,16 @@
+version: 2
+# SCA continue (ISO/IEC 27001 A.8.8 gestion des vulnérabilités techniques).
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    labels: ["dependencies", "security"]
+    commit-message:
+      prefix: "chore(deps)"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels: ["ci", "security"]

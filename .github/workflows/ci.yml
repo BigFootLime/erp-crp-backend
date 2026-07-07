@@ -36,3 +36,8 @@ jobs:
 
       - name: Unit & integration tests (vitest)
         run: npm run test:run
+
+      # SCA : bloque le pipeline uniquement sur une vulnérabilité CRITIQUE (A.8.8).
+      # Les niveaux inférieurs sont suivis via Dependabot (.github/dependabot.yml).
+      - name: Dependency audit (fail on critical)
+        run: npm audit --audit-level=critical
