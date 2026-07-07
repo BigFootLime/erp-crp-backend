@@ -8,7 +8,11 @@ import { getClientIp, parseDevice } from "../../../utils/requestMeta";
 export const register = asyncHandler(async (req: Request, res: Response) => {
   const validated = registerSchema.parse(req.body);
 
-  const user = await registerUser(validated);
+  // Sécurité (ISO A.5.15 / A.8.2) : l'inscription publique ne doit JAMAIS permettre
+  // l'auto-attribution d'un rôle. Tout `role` fourni par le client est ignoré et forcé
+  // à "Employee". La création de comptes avec rôle privilégié passe exclusivement par
+  // le module admin (POST /admin/users, protégé par authenticateToken + authorizeRole).
+  const user = await registerUser({ ...validated, role: "Employee" });
 
   return res.status(201).json({
     message: "Utilisateur créé avec succès",
