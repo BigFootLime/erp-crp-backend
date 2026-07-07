@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DEVIS_STATUTS, normalizeDevisStatut } from "../lib/status";
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date (expected YYYY-MM-DD)");
 
@@ -134,7 +135,7 @@ export const createDevisBodySchema = z.object({
   compte_vente_id: z.string().uuid().optional().nullable(),
   date_creation: z.preprocess(emptyStringToNull, isoDate).optional().nullable(),
   date_validite: z.preprocess(emptyStringToNull, isoDate).optional().nullable(),
-  statut: z.preprocess(emptyStringToUndefined, z.string().trim().min(1).max(20)).optional().default("BROUILLON"),
+  statut: z.preprocess(normalizeDevisStatut, z.enum(DEVIS_STATUTS)),
   remise_globale: z.coerce.number().min(0).optional().default(0),
   total_ht: z.coerce.number().min(0).optional().default(0),
   total_ttc: z.coerce.number().min(0).optional().default(0),
@@ -157,7 +158,7 @@ export const updateDevisBodySchema = z.object({
   compte_vente_id: z.string().uuid().optional().nullable(),
   date_creation: z.preprocess(emptyStringToNull, isoDate).optional().nullable(),
   date_validite: z.preprocess(emptyStringToNull, isoDate).optional().nullable(),
-  statut: z.preprocess(emptyStringToUndefined, z.string().trim().min(1).max(20)).optional(),
+  statut: z.preprocess((v) => (v === undefined ? undefined : normalizeDevisStatut(v)), z.enum(DEVIS_STATUTS).optional()),
   remise_globale: z.coerce.number().min(0).optional(),
   total_ht: z.coerce.number().min(0).optional(),
   total_ttc: z.coerce.number().min(0).optional(),
