@@ -253,3 +253,9 @@ export const createClientSchema = z.object({
 });
 
 export type CreateClientDTO = z.infer<typeof createClientSchema>;
+
+// PATCH partiel : tous les champs optionnels, mais les validateurs par champ (email, téléphone,
+// SIRET, TVA, NAF, adresses via addressSchema, etc.) restent appliqués quand le champ est fourni.
+// L'identité `client_id` n'est pas dans le body (route param) -> non patchable.
+export const clientPatchSchema = createClientSchema.partial();
+export type ClientPatchDTO = z.infer<typeof clientPatchSchema>;

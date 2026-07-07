@@ -3,7 +3,7 @@ import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
-import type { CreateClientDTO } from "../validators/client.validators";
+import type { CreateClientDTO, ClientPatchDTO } from "../validators/client.validators";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 import { generateClientCode } from "../../../shared/codes/code-generator.service";
@@ -412,6 +412,159 @@ export async function repoCreateClient(
 }
 
 // EDIT CLIENT 
+
+// PATCH partiel : ne met à jour QUE les champs réellement fournis. Un champ absent n'est
+// jamais écrasé ni supprimé (contrairement à repoUpdateClient qui fait un remplacement complet).
+// La liste des champs fournis (`fields`) vient du contrôleur (clés réellement présentes dans le body).
+export async function repoPatchClient(
+  id: string,
+  patch: ClientPatchDTO,
+  fields: ReadonlySet<string>,
+  audit: AuditContext
+): Promise<void> {
+  const has = (k: string) => fields.has(k);
+  const db = await pool.connect();
+  try {
+    await db.query("BEGIN");
+
+    const current = await db.query(
+      `SELECT client_id, bill_address_id, delivery_address_id, bank_info_id, contact_id AS primary_contact_id
+         FROM clients WHERE client_id = $1 FOR UPDATE`,
+      [id]
+    );
+    if (current.rows.length === 0) {
+      const err = new Error("Client not found");
+      (err as any).status = 404;
+      throw err;
+    }
+    const { bill_address_id, delivery_address_id, bank_info_id, primary_contact_id } = current.rows[0] as {
+      bill_address_id: string | null;
+      delivery_address_id: string | null;
+      bank_info_id: string | null;
+      primary_contact_id: string | null;
+    };
+
+    // 1) Champs scalaires — SET dynamique, uniquement ceux fournis.
+    const sets: string[] = [];
+    const vals: unknown[] = [];
+    const put = (sql: (ph: string) => string, value: unknown) => {
+      vals.push(value);
+      sets.push(sql(`$${vals.length}`));
+    };
+    if (has("company_name")) put((p) => `company_name = ${p}`, patch.company_name);
+    if (has("email")) put((p) => `email = NULLIF(${p}, '')`, patch.email ?? "");
+    if (has("phone")) put((p) => `phone = NULLIF(${p}, '')`, patch.phone ?? "");
+    if (has("website_url")) put((p) => `website_url = NULLIF(${p}, '')`, patch.website_url ?? "");
+    if (has("siret")) put((p) => `siret = NULLIF(${p}, '')`, patch.siret ?? "");
+    if (has("vat_number")) put((p) => `vat_number = NULLIF(${p}, '')`, patch.vat_number ?? "");
+    if (has("naf_code")) put((p) => `naf_code = NULLIF(${p}, '')`, patch.naf_code ?? "");
+    if (has("status")) put((p) => `status = ${p}`, patch.status);
+    if (has("blocked")) put((p) => `blocked = ${p}`, patch.blocked);
+    if (has("reason")) put((p) => `reason = NULLIF(${p}, '')`, patch.reason ?? "");
+    if (has("observations")) put((p) => `observations = NULLIF(${p}, '')`, patch.observations ?? "");
+    if (has("biller_id")) {
+      const biller = typeof patch.biller_id === "string" && patch.biller_id.trim() !== "" ? patch.biller_id : null;
+      put((p) => `biller_id = ${p}`, biller);
+    }
+    if (has("provided_documents_id")) {
+      const docs =
+        typeof patch.provided_documents_id === "string" && patch.provided_documents_id.trim() !== ""
+          ? patch.provided_documents_id
+          : null;
+      put((p) => `provided_documents_id = ${p}`, docs);
+    }
+    if (has("quality_levels")) put((p) => `quality_levels = ${p}::text[]`, patch.quality_levels ?? []);
+    if (has("client_code")) {
+      const provided = (patch.client_code ?? "").trim();
+      if (!provided) throw new HttpError(400, "CLIENT_CODE_REQUIRED", clientCodeRequiredMessage);
+      if (!isValidCode("client", provided)) throw new HttpError(400, "CLIENT_CODE_INVALID", clientCodeInvalidMessage);
+      await ensureClientCodeAvailable(db, provided, id);
+      put((p) => `client_code = ${p}`, provided);
+    }
+
+    if (sets.length > 0) {
+      vals.push(id);
+      try {
+        await db.query(`UPDATE clients SET ${sets.join(", ")} WHERE client_id = $${vals.length}`, vals);
+      } catch (err) {
+        const { code, constraint } = getPgErrorInfo(err);
+        if (code === "23505" && constraint === "clients_client_code_key") {
+          throw new HttpError(409, "CLIENT_CODE_EXISTS", clientCodeExistsMessage);
+        }
+        throw err;
+      }
+    }
+
+    // 2) Adresses — uniquement si fournies.
+    if (has("bill_address") && patch.bill_address && bill_address_id) {
+      const a = patch.bill_address;
+      await db.query(
+        `UPDATE adresse_facturation SET street=$1, house_number=$2, address_complement=$3, postal_code=$4, city=$5, country=$6, name=$7 WHERE bill_address_id=$8`,
+        [a.street, a.house_number ?? null, a.address_complement ?? null, a.postal_code, a.city, a.country, a.name, bill_address_id]
+      );
+    }
+    if (has("delivery_address") && patch.delivery_address && delivery_address_id) {
+      const a = patch.delivery_address;
+      await db.query(
+        `UPDATE adresse_livraison SET street=$1, house_number=$2, address_complement=$3, postal_code=$4, city=$5, country=$6, name=$7 WHERE delivery_address_id=$8`,
+        [a.street, a.house_number ?? null, a.address_complement ?? null, a.postal_code, a.city, a.country, a.name, delivery_address_id]
+      );
+    }
+
+    // 3) Banque — uniquement si fournie.
+    if (has("bank") && patch.bank) {
+      const newBankInfoId = await upsertBank(db, patch.bank);
+      if (!bank_info_id || bank_info_id !== newBankInfoId) {
+        await db.query(`UPDATE clients SET bank_info_id = $1 WHERE client_id = $2`, [newBankInfoId, id]);
+      }
+    }
+
+    // 4) Modes de règlement — uniquement si fournis (remplacement contrôlé).
+    if (has("payment_mode_ids")) {
+      await db.query(`DELETE FROM client_payment_modes WHERE client_id = $1`, [id]);
+      for (const pid of patch.payment_mode_ids ?? []) {
+        await db.query(
+          `INSERT INTO client_payment_modes (client_id, payment_id) VALUES ($1,$2) ON CONFLICT (client_id,payment_id) DO NOTHING`,
+          [id, pid]
+        );
+      }
+    }
+
+    // 5) Contacts — uniquement si fournis : upsert SANS supprimer les absents.
+    if (has("contacts") && Array.isArray(patch.contacts) && patch.contacts.length > 0) {
+      const existing = await fetchExistingContacts(db, id);
+      for (const c of patch.contacts) {
+        const cid = (c as { contact_id?: string }).contact_id;
+        if (cid && existing.includes(cid)) await updateContact(db, cid, c);
+        else await insertContact(db, c, id);
+      }
+    }
+
+    // 6) Contact principal — uniquement si fourni.
+    if (has("primary_contact") && patch.primary_contact) {
+      if (primary_contact_id) {
+        await updateContact(db, primary_contact_id, patch.primary_contact);
+      } else {
+        const newId = await insertPrimaryContact(db, patch.primary_contact, id);
+        await db.query(`UPDATE clients SET contact_id = $1 WHERE client_id = $2`, [newId, id]);
+      }
+    }
+
+    await insertAuditLog(db, audit, {
+      action: "CLIENT_PATCH",
+      entity_type: "client",
+      entity_id: id,
+      details: { fields: Array.from(fields) },
+    });
+
+    await db.query("COMMIT");
+  } catch (e) {
+    await db.query("ROLLBACK");
+    throw e;
+  } finally {
+    db.release();
+  }
+}
 
 export async function repoUpdateClient(id: string, dto: CreateClientDTO, audit: AuditContext): Promise<void> {
   const db = await pool.connect();

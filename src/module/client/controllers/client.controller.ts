@@ -5,8 +5,8 @@ import { getClientIp, parseDevice } from "../../../utils/requestMeta";
 
 import * as clientService from "../services/client.service"; // ✅ namespace import
 import { svcGetClientById, svcListClientAddresses } from "../services/clients.read.service";
-import { createClientSchema, createClientContactBodySchema } from "../validators/client.validators";
-import { type AuditContext, repoArchiveClient, repoCreateClient, repoDeleteClient, repoUpdateClient } from "../repository/client.repository";
+import { createClientSchema, createClientContactBodySchema, clientPatchSchema } from "../validators/client.validators";
+import { type AuditContext, repoArchiveClient, repoCreateClient, repoDeleteClient, repoPatchClient } from "../repository/client.repository";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import path from "node:path";
 // import { LOGO_BASE_DIR } from "../upload/client-logo-upload";
@@ -200,12 +200,19 @@ export const patchClient: RequestHandler = async (req, res, next) => {
     const audit = buildAuditContext(req);
     const id = routeParam(req, "id");
 
-    // on réutilise le même schéma que pour la création
-    const dto = createClientSchema.parse(req.body);
+    // Vrai PATCH partiel : on valide avec un schéma partiel (validateurs par champ préservés),
+    // puis on ne conserve que les champs RÉELLEMENT présents dans le body (les .default() du
+    // schéma réinjectent des tableaux vides qu'il ne faut pas appliquer -> risque d'écrasement).
+    const provided = new Set(Object.keys((req.body ?? {}) as Record<string, unknown>));
+    const dto = clientPatchSchema.parse(req.body);
+    const fields = new Set([...provided].filter((k) => k in dto));
 
-    await repoUpdateClient(id, dto, audit);
+    if (fields.size === 0) {
+      throw new HttpError(400, "EMPTY_PATCH", "Aucun champ à mettre à jour");
+    }
 
-    // pas besoin de body, le frontend n'en attend pas
+    await repoPatchClient(id, dto, fields, audit);
+
     res.status(204).end();
   } catch (e) {
     next(e);
