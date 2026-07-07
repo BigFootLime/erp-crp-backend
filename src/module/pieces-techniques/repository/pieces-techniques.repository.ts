@@ -2353,12 +2353,14 @@ export async function repoAddBomLine(pieceTechniqueId: string, body: AddBomLineB
         INSERT INTO pieces_techniques_nomenclature (
           parent_piece_technique_id,
           child_piece_technique_id,
+          parent_piece_technique_version_id,
+          child_piece_technique_version_id,
           rang,
           quantite,
           repere,
           designation
         )
-        VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6)
+        VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6, $7, $8)
         RETURNING
           id::text AS id,
           child_piece_technique_id::text AS child_piece_id,
@@ -2367,7 +2369,16 @@ export async function repoAddBomLine(pieceTechniqueId: string, body: AddBomLineB
           repere,
           designation
       `,
-      [pieceTechniqueId, body.child_piece_id, rang, body.quantite, body.repere ?? null, body.designation ?? null]
+      [
+        pieceTechniqueId,
+        body.child_piece_id,
+        body.parent_piece_technique_version_id ?? null,
+        body.child_piece_technique_version_id ?? null,
+        rang,
+        body.quantite,
+        body.repere ?? null,
+        body.designation ?? null,
+      ]
     );
     await client.query("COMMIT");
     const r = ins.rows[0];
@@ -2408,6 +2419,10 @@ export async function repoUpdateBomLine(
     };
 
     if (body.child_piece_id !== undefined) sets.push(`child_piece_technique_id = ${push(body.child_piece_id)}::uuid`);
+    if (body.parent_piece_technique_version_id !== undefined)
+      sets.push(`parent_piece_technique_version_id = ${push(body.parent_piece_technique_version_id)}::uuid`);
+    if (body.child_piece_technique_version_id !== undefined)
+      sets.push(`child_piece_technique_version_id = ${push(body.child_piece_technique_version_id)}::uuid`);
     if (body.rang !== undefined) sets.push(`rang = ${push(body.rang)}`);
     if (body.quantite !== undefined) sets.push(`quantite = ${push(body.quantite)}`);
     if (body.repere !== undefined) sets.push(`repere = ${push(body.repere)}`);

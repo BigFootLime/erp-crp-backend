@@ -84,6 +84,9 @@ export type GetPieceTechniqueQueryDTO = z.infer<typeof getPieceTechniqueQuerySch
 
 const bomLineInputSchema = z.object({
   child_piece_id: uuid,
+  // GPAO B2.3 — liens de version (arborescence de fabrication versionnée). Optionnels/additifs.
+  child_piece_technique_version_id: uuid.optional().nullable(),
+  parent_piece_technique_version_id: uuid.optional().nullable(),
   rang: z.coerce.number().int().min(1).optional(),
   quantite: z.coerce.number().positive().optional().default(1),
   repere: z.string().optional().nullable(),
