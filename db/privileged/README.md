@@ -27,3 +27,4 @@ Always take a backup first: `sudo /usr/local/sbin/cerp-pg-backup.sh`.
 | File | Purpose | ISO / CAPA |
 |---|---|---|
 | `20260707_erp_audit_logs_append_only.sql` | Make `erp_audit_logs` append-only for `cerp_app` (ownership off the app role + INSERT/SELECT-only grants + append-only trigger) | A.8.15 / CA-SEC-03 |
+| `20260707_users_view_minimal.sql` | Recreate `users_view` without sensitive columns (drop `password`/`salary`/`national_id`/`date_of_birth`/address/…); keep standard-admin fields + derived `is_minor`; owner→`postgres`, `cerp_app` SELECT-only | A.8.24 / A.5.34 / CA-RGPD-07 |
