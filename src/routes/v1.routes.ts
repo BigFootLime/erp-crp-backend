@@ -1,6 +1,7 @@
 // src/routes/v1.routes.ts
 import { Router } from "express"
 import authRoutes from "../module/auth/routes/auth.routes"
+import { authenticateToken } from "../module/auth/middlewares/auth.middleware"
 import outilRoutes from "../module/outils/routes/outil.routes"
 import bankingInfoRoutes from "../module/banking-info/routes/banking-info.routes"
 import commandeClientRoutes from "../module/commande-client/routes/commande-client.routes"
@@ -39,7 +40,14 @@ import asbuiltRoutes from "../module/asbuilt/routes/asbuilt.routes"
 import locksRoutes from "../module/locks/routes/locks.routes"
 const router = Router()
 
+// --- Routes publiques (avant authentification) ---
 router.use("/auth", authRoutes)
+
+// 🔒 Socle default-deny (ISO/IEC 27001 A.5.15 / A.8.3) : toute route sous /api/v1
+// définie APRÈS cette ligne exige un JWT valide. Les modules conservent en plus leurs
+// gardes authorizeRole plus fines. Tout nouveau module est protégé par défaut.
+router.use(authenticateToken)
+
 router.use("/outils", outilRoutes)
 router.use("/banking-info", bankingInfoRoutes)  
 router.use("/commandes", commandeClientRoutes) // ✅  
