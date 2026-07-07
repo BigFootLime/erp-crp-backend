@@ -39,7 +39,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: 🚀 Verify Coolify backend deployment on VPS
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@v1.2.5
         env:
           EXPECTED_IMAGE_TAG: ${{ github.sha }}
         with:
