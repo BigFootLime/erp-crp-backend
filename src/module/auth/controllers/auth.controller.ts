@@ -27,6 +27,18 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
   const user_agent = req.headers["user-agent"]?.toString() ?? null;
   const device = parseDevice(user_agent);
 
+  // Rate-limit anti-bruteforce (A.8.5) : par IP + identifiant, avant toute vérification.
+  const rateKey = normalizeIdentifier(username);
+  const rateLimited =
+    trackAndCheckRateLimit(loginRateByIp, ip, LOGIN_RATE_LIMIT, LOGIN_RATE_WINDOW_MS) ||
+    trackAndCheckRateLimit(loginRateByUsername, rateKey, LOGIN_RATE_LIMIT, LOGIN_RATE_WINDOW_MS);
+  if (rateLimited) {
+    return res.status(429).json({
+      error: "TOO_MANY_ATTEMPTS",
+      message: "Trop de tentatives de connexion. Réessayez dans quelques minutes.",
+    });
+  }
+
   const data = await loginUser(username, password, {
     ip,
     user_agent,
@@ -54,18 +66,24 @@ const resetRateByIdentifier = new Map<string, RateEntry>();
 const RESET_RATE_LIMIT = 5;
 const RESET_RATE_WINDOW_MS = 60 * 60 * 1000;
 
-function trackAndCheckRateLimit(map: Map<string, RateEntry>, key: string | null): boolean {
+// Anti-bruteforce login (ISO/IEC 27001 A.8.5) : limite les tentatives par IP et par identifiant.
+const loginRateByIp = new Map<string, RateEntry>();
+const loginRateByUsername = new Map<string, RateEntry>();
+const LOGIN_RATE_LIMIT = 10;
+const LOGIN_RATE_WINDOW_MS = 15 * 60 * 1000;
+
+function trackAndCheckRateLimit(map: Map<string, RateEntry>, key: string | null, limit: number, windowMs: number): boolean {
   if (!key) return false;
   const now = Date.now();
   const existing = map.get(key);
   if (!existing || now >= existing.resetAt) {
-    map.set(key, { count: 1, resetAt: now + RESET_RATE_WINDOW_MS });
+    map.set(key, { count: 1, resetAt: now + windowMs });
     return false;
   }
 
   const nextCount = existing.count + 1;
   map.set(key, { count: nextCount, resetAt: existing.resetAt });
-  return nextCount > RESET_RATE_LIMIT;
+  return nextCount > limit;
 }
 
 function normalizeIdentifier(value: string): string {
@@ -82,7 +100,9 @@ export const forgotPassword = asyncHandler(async (req: Request, res: Response) =
   const parsed = forgotPasswordSchema.safeParse(req.body);
   const identifier = parsed.success ? normalizeIdentifier(parsed.data.usernameOrEmail) : null;
 
-  const limited = trackAndCheckRateLimit(resetRateByIp, ip) || trackAndCheckRateLimit(resetRateByIdentifier, identifier);
+  const limited =
+    trackAndCheckRateLimit(resetRateByIp, ip, RESET_RATE_LIMIT, RESET_RATE_WINDOW_MS) ||
+    trackAndCheckRateLimit(resetRateByIdentifier, identifier, RESET_RATE_LIMIT, RESET_RATE_WINDOW_MS);
 
   if (!limited && parsed.success) {
     // Fire-and-forget: we don't want email delivery or DB latency to become an enumeration side-channel.
