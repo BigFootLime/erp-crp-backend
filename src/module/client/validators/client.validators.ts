@@ -196,6 +196,18 @@ export const bankSchema = bankInputSchema.transform((value) => {
   };
 });
 
+export const createClientContactBodySchema = z.object({
+  first_name: requiredText("Prénom requis"),
+  last_name: requiredText("Nom requis"),
+  email: z.string().trim().email("Email invalide"),
+  phone_direct: z.preprocess(emptyStringToUndefined, z.string().trim().optional()),
+  phone_personal: z.preprocess(emptyStringToUndefined, z.string().trim().optional()),
+  role: z.preprocess(emptyStringToUndefined, z.string().trim().optional()),
+  civility: z.preprocess(emptyStringToUndefined, z.enum(CIVILITY_OPTIONS).optional()),
+  set_primary: z.boolean().optional(),
+});
+export type CreateClientContactBodyDTO = z.infer<typeof createClientContactBodySchema>;
+
 export const createClientSchema = z.object({
   client_code: z.preprocess(
     emptyStringToUndefined,

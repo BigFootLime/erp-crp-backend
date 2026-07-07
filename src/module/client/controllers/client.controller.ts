@@ -5,7 +5,7 @@ import { getClientIp, parseDevice } from "../../../utils/requestMeta";
 
 import * as clientService from "../services/client.service"; // ✅ namespace import
 import { svcGetClientById, svcListClientAddresses } from "../services/clients.read.service";
-import { createClientSchema } from "../validators/client.validators";
+import { createClientSchema, createClientContactBodySchema } from "../validators/client.validators";
 import { type AuditContext, repoArchiveClient, repoCreateClient, repoDeleteClient, repoUpdateClient } from "../repository/client.repository";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import path from "node:path";
@@ -126,6 +126,17 @@ export const listClientContacts: RequestHandler = async (req, res, next) => {
     const clientId = routeParam(req, "clientId");
     const rows = await clientService.listClientContacts(clientId);
     res.json(rows);
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const postClientContact: RequestHandler = async (req, res, next) => {
+  try {
+    const clientId = routeParam(req, "clientId");
+    const dto = createClientContactBodySchema.parse(req.body);
+    const created = await clientService.createClientContact(clientId, dto);
+    res.status(201).json(created);
   } catch (e) {
     next(e);
   }

@@ -267,3 +267,50 @@ export async function listClientContacts(clientId: string): Promise<ClientContac
   }));
 }
 
+export type CreateClientContactInput = {
+  first_name: string;
+  last_name: string;
+  email: string;
+  phone_direct?: string | null;
+  phone_personal?: string | null;
+  role?: string | null;
+  civility?: string | null;
+  set_primary?: boolean;
+};
+
+export async function createClientContact(
+  clientId: string,
+  input: CreateClientContactInput
+): Promise<ClientContactRow> {
+  const { rows } = await pool.query<ClientContactRow>(
+    `
+    INSERT INTO contacts (first_name,last_name,civility,role,phone_direct,phone_personal,email,client_id)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+    RETURNING
+      contact_id::text AS contact_id,
+      first_name,
+      last_name,
+      email,
+      phone_direct,
+      phone_personal,
+      role,
+      civility
+    `,
+    [
+      input.first_name,
+      input.last_name,
+      input.civility ?? null,
+      input.role ?? null,
+      input.phone_direct ?? null,
+      input.phone_personal ?? null,
+      input.email,
+      clientId,
+    ]
+  );
+  const row = rows[0];
+  if (input.set_primary) {
+    await pool.query(`UPDATE clients SET contact_id = $1 WHERE client_id = $2`, [row.contact_id, clientId]);
+  }
+  return { ...row, label: `${row.first_name} ${row.last_name} — ${row.email}` };
+}
+

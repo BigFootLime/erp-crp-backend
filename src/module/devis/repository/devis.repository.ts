@@ -5,6 +5,7 @@ import type { PoolClient } from "pg";
 import pool from "../../../config/database";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
+import { computeDevisTotals } from "../lib/totals";
 import type {
   CreateDevisBodyDTO,
   ListDevisQueryDTO,
@@ -1339,6 +1340,9 @@ export async function repoCreateDevis(input: CreateDevisBodyDTO, userId: number,
     const numero = (input.numero ?? `DV-${devisId}`).slice(0, 30);
     const dateCreation = (input.date_creation ?? new Date().toISOString().slice(0, 10)).slice(0, 10);
 
+    // Totaux recalculés côté serveur — les totaux envoyés par le client sont ignorés (ISO A.8.28).
+    const totals = computeDevisTotals(input.lignes, input.remise_globale ?? 0);
+
     const ins = await client.query<{ id: string }>(
       `
       INSERT INTO devis (
@@ -1384,9 +1388,9 @@ export async function repoCreateDevis(input: CreateDevisBodyDTO, userId: number,
         dateCreation,
         input.date_validite ?? null,
         input.statut,
-        input.remise_globale,
-        input.total_ht,
-        input.total_ttc,
+        totals.remise_pct,
+        totals.total_ht,
+        totals.total_ttc,
         input.commentaires ?? null,
         input.conditions_paiement_id ?? null,
         input.biller_id ?? null,
@@ -1591,6 +1595,13 @@ export async function repoReviseDevis(
     const numero = (input.numero ?? computedNumero).slice(0, 30);
     const dateCreation = (input.date_creation ?? new Date().toISOString().slice(0, 10)).slice(0, 10);
 
+    // Totaux recalculés côté serveur. Si de nouvelles lignes sont fournies, on recalcule ;
+    // sinon les lignes sont clonées de la source et on conserve ses totaux (ISO A.8.28).
+    const revisedRemise = input.remise_globale ?? source.remise_globale ?? 0;
+    const revisedTotals = input.lignes
+      ? computeDevisTotals(input.lignes, revisedRemise)
+      : { remise_pct: revisedRemise, total_ht: source.total_ht, total_ttc: source.total_ttc };
+
     const inserted = await client.query<{ id: string }>(
       `
         INSERT INTO devis (
@@ -1636,9 +1647,9 @@ export async function repoReviseDevis(
         dateCreation,
         input.date_validite !== undefined ? input.date_validite : source.date_validite,
         input.statut ?? source.statut,
-        input.remise_globale ?? source.remise_globale,
-        input.total_ht ?? source.total_ht,
-        input.total_ttc ?? source.total_ttc,
+        revisedTotals.remise_pct,
+        revisedTotals.total_ht,
+        revisedTotals.total_ttc,
         input.commentaires !== undefined ? input.commentaires : source.commentaires,
         input.conditions_paiement_id !== undefined ? input.conditions_paiement_id : source.conditions_paiement_id,
         input.biller_id !== undefined ? input.biller_id : source.biller_id,
