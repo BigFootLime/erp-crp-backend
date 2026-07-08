@@ -58,7 +58,9 @@ const GAMME_COLS = `
 const OP_COLS = `
   id::text AS id, piece_technique_id::text AS piece_technique_id, gamme_id::text AS gamme_id, ordre, phase,
   designation, designation_2, type_operation, machine_id::text AS machine_id, poste_id::text AS poste_id,
-  cf_id::text AS cf_id, tp, tf_unit, qte, coef, taux_horaire, prix, temps_total, cout_mo, consignes
+  cf_id::text AS cf_id, tp::float8 AS tp, tf_unit::float8 AS tf_unit, qte::float8 AS qte, coef::float8 AS coef,
+  taux_horaire::float8 AS taux_horaire, prix::float8 AS prix, temps_total::float8 AS temps_total,
+  cout_mo::float8 AS cout_mo, consignes
 `
 
 function computeOperation(input: { tp: number; tf_unit: number; qte: number; coef: number; taux_horaire: number }) {
