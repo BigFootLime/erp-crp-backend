@@ -89,9 +89,11 @@ export const createOrLinkArticleFabrique: RequestHandler = async (req, res, next
       return
     }
 
-    const body = createArticleSchema.parse({
+    const parsed = createArticleSchema.parse({
       body: {
-        code: input.code ?? p.rows[0].code_piece,
+        // Placeholder pour satisfaire min(1) ; remplacé par "" ci-dessous si l'utilisateur ne fournit
+        // pas de code → le backend génère alors le code fabriqué normalisé ({code_piece}-P{plan_index}).
+        code: input.code ?? "AUTO",
         designation: input.designation ?? p.rows[0].designation,
         family_code: input.family_code,
         article_category: "fabrique",
@@ -99,6 +101,7 @@ export const createOrLinkArticleFabrique: RequestHandler = async (req, res, next
         stock_managed: input.stock_managed ?? true,
       },
     }).body
+    const body = input.code ? parsed : { ...parsed, code: "" }
 
     try {
       const article = await createStockArticleSVC(body, audit)
