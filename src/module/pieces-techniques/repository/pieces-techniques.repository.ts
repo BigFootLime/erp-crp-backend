@@ -11,6 +11,7 @@ import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repos
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 import type {
   Achat,
+  TypeAchat,
   AffairePieceTechniqueLink,
   BomLine,
   FabricationTreeNode,
@@ -1224,6 +1225,7 @@ async function repoListOperations(pieceTechniqueId: string): Promise<Operation[]
 type AchatRow = {
   id: string;
   phase: number | null;
+  type_achat: string;
   famille_piece_id: string | null;
   nom: string | null;
   fournisseur_id: string | null;
@@ -1252,6 +1254,7 @@ async function repoListAchats(pieceTechniqueId: string): Promise<Achat[]> {
     SELECT
       id::text AS id,
       phase,
+      type_achat,
       famille_piece_id::text AS famille_piece_id,
       nom,
       fournisseur_id::text AS fournisseur_id,
@@ -1281,6 +1284,7 @@ async function repoListAchats(pieceTechniqueId: string): Promise<Achat[]> {
   return res.rows.map((r) => ({
     id: r.id,
     phase: r.phase,
+    type_achat: (r.type_achat as TypeAchat) ?? "DIVERS",
     famille_piece_id: r.famille_piece_id,
     nom: r.nom,
     fournisseur_id: r.fournisseur_id,
