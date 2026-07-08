@@ -2772,11 +2772,12 @@ export async function repoAddAchat(
         total_achat_ttc,
         designation,
         designation_2,
-        designation_3
+        designation_3,
+        type_achat
       )
       VALUES (
         $1::uuid,$2,$3::uuid,$4,$5::uuid,$6,$7,$8,
-        $9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23
+        $9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24
       )
       RETURNING
         id::text AS id,
@@ -2801,7 +2802,8 @@ export async function repoAddAchat(
         total_achat_ttc::float8 AS total_achat_ttc,
         designation,
         designation_2,
-        designation_3
+        designation_3,
+        type_achat
     `,
     [
       pieceTechniqueId,
@@ -2827,6 +2829,7 @@ export async function repoAddAchat(
       body.designation ?? null,
       body.designation_2 ?? null,
       body.designation_3 ?? null,
+      body.type_achat ?? "DIVERS",
     ]
   );
 
@@ -2834,6 +2837,7 @@ export async function repoAddAchat(
   return {
     id: r.id,
     phase: r.phase,
+    type_achat: (r.type_achat as TypeAchat) ?? "DIVERS",
     famille_piece_id: r.famille_piece_id,
     nom: r.nom,
     fournisseur_id: r.fournisseur_id,
