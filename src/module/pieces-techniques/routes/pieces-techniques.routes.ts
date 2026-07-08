@@ -65,6 +65,7 @@ import {
   updateVersion,
   updateVersionStatus,
 } from "../controllers/versions.controller"
+import { createOrLinkArticleFabrique, getPieceArticlePrincipal } from "../controllers/piece-article.controller"
 import {
   createNextVersionSchema,
   createVersionSchema,
@@ -110,6 +111,10 @@ router.delete("/:id", requireAdmin, validate(idParamSchema), deletePieceTechniqu
 
 router.post("/:id/duplicate", validate(idParamSchema), duplicatePieceTechnique)
 router.post("/:id/status", validate(idParamSchema), validate(pieceTechniqueStatusSchema), updatePieceTechniqueStatus)
+
+// GPAO B5 — article fabriqué principal lié à la pièce
+router.get("/:id/article-principal", validate(idParamSchema), getPieceArticlePrincipal)
+router.post("/:id/create-or-link-article-fabrique", validate(idParamSchema), createOrLinkArticleFabrique)
 
 // Versions / indices (GPAO B2.1) — source de vérité indice/plan/statut.
 router.get("/:id/versions", validate(idParamSchema), listVersions)

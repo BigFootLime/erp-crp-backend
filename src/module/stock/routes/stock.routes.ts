@@ -54,6 +54,11 @@ import {
   updateStockLot,
   updateStockMagasin,
 } from "../controllers/stock.controller";
+import {
+  getArticleDefinitionTechnique,
+  linkArticlePieceTechnique,
+  unlinkArticlePieceTechnique,
+} from "../controllers/article-piece-link.controller";
 
 const router = Router();
 
@@ -90,6 +95,11 @@ router.get("/inventory-sessions/:id", getStockInventorySession);
 router.get("/inventory-sessions/:id/lines", listStockInventorySessionLines);
 router.put("/inventory-sessions/:id/lines", upsertStockInventorySessionLine);
 router.post("/inventory-sessions/:id/close", closeStockInventorySession);
+
+// GPAO B5 — lien Article fabriqué ↔ Pièce technique
+router.get("/articles/:id/definition-technique", getArticleDefinitionTechnique);
+router.post("/articles/:id/link-piece-technique", linkArticlePieceTechnique);
+router.delete("/articles/:id/link-piece-technique", unlinkArticlePieceTechnique);
 
 router.get("/articles/:id/documents", listStockArticleDocuments);
 router.post("/articles/:id/documents", upload.array("documents[]"), attachStockArticleDocuments);
