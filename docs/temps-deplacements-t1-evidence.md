@@ -10,14 +10,17 @@
 | `db/privileged/20260709_hr_time_events_append_only.sql` | Hardening **append-only** de `hr_time_events` (owner→postgres, `cerp_app` INSERT/SELECT, triggers no-update/delete/truncate). Superuser only. |
 | `db/privileged/20260709_hr_time_events_append_only.rollback.sql` | Rollback (restaure owner `cerp_app` + droits, retire triggers/fonction). |
 | `db/privileged/20260709_hr_time_events_append_only.verify.sql` | Verify (fixture + preuves append-only + nettoyage). |
+| `db/privileged/20260709_hr_module_ownership.{sql,rollback,verify}` | **Ownership versionné** : normalise les 14 tables CRUD → `cerp_app` (boucle `DO` idempotente gardée superuser — `OWNER TO` ne supporte pas de liste). Rend la propriété **reproductible** quel que soit le mode d'application. |
 | `src/module/auth/validators/user.validator.ts` | Rôle **`Responsable RH`** ajouté (convention « Responsable X ») ; `roles` exporté. |
 | `src/__tests__/temps-deplacements-t1.test.ts` | 9 tests (vocabulaire RBAC + idempotence migration + structure append-only). |
 
 ## Application sur cerp_test (2026-07-09)
 Appliqué en **direct `psql` (postgres, peer auth)** — **pas** le runner (dont le `.env` pointe cerp_prod) :
 1. Migration additive → cerp_test (seul NOTICE `pgcrypto already exists`).
-2. Propriété : **14 tables CRUD → `cerp_app`** (owner par table) ; **`hr_time_events` → `postgres`** (append-only). Tracé dans `cerp_schema_migrations` (sha256 `2a0911ec…`).
+2. Propriété via `db/privileged/20260709_hr_module_ownership.sql` (**versionné**, plus aucune commande manuelle) : **14 tables CRUD → `cerp_app`** ; **`hr_time_events` → `postgres`** (append-only). Tracé dans `cerp_schema_migrations`.
 3. Hardening append-only appliqué.
+
+**Reproductibilité prouvée** : `DROP` des tables `hr_*` puis **ré-application intégrale depuis les seuls fichiers commités** (additive → ownership → append-only) → état correct vérifié (`crud_not_cerp_app = 0`, `hr_time_events = postgres`, append-only OK). Aucune étape manuelle. Les artefacts (`db/patches` + `db/privileged/*.{sql,rollback,verify}`) suffisent à reconstruire l'état sur toute base (dont cerp_prod en T10).
 
 ## Verify (résultat)
 - owner `hr_time_events` = **postgres** · grants `cerp_app` = **INSERT,SELECT** · **3 triggers** (`no_update/no_delete/no_truncate`).
