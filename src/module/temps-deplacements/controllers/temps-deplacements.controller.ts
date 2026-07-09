@@ -16,7 +16,7 @@ import {
   meWeekQuerySchema,
 } from "../validators/temps-deplacements.validators";
 
-function buildAuditContext(req: Request): AuditContext {
+export function buildAuditContext(req: Request): AuditContext {
   const user = req.user;
   if (!user || typeof user.id !== "number") {
     throw new HttpError(401, "UNAUTHORIZED", "Authentication required");
@@ -44,7 +44,7 @@ function buildAuditContext(req: Request): AuditContext {
   };
 }
 
-function requireUser(req: Request): { id: number; role: string } {
+export function requireUser(req: Request): { id: number; role: string } {
   const user = req.user;
   if (!user || typeof user.id !== "number") throw new HttpError(401, "UNAUTHORIZED", "Authentification requise.");
   return { id: user.id, role: typeof user.role === "string" ? user.role : "" };

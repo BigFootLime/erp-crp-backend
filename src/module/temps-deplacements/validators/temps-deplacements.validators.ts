@@ -46,3 +46,21 @@ export const meAnomaliesQuerySchema = z.object({
   to: dateOnly.optional(),
 });
 export const employeeIdParamsSchema = z.object({ id: z.string().uuid("employee id (uuid) attendu") });
+
+// --- T4 : corrections tracées + validation ---
+export const HR_ADJUSTMENT_TARGETS = ["EVENT", "DAY", "WEEK"] as const;
+
+// Le salarié demande une correction SUR SES PROPRES données (motif OBLIGATOIRE).
+export const createAdjustmentSchema = z
+  .object({
+    target_type: z.enum(HR_ADJUSTMENT_TARGETS),
+    target_id: z.string().uuid("target_id (uuid) attendu"),
+    reason: z.string().trim().min(3, "Motif obligatoire (min 3 caractères)").max(2000),
+    old_value: z.record(z.unknown()).optional(),
+    new_value: z.record(z.unknown()).optional(),
+  })
+  .strict();
+export type CreateAdjustmentBody = z.infer<typeof createAdjustmentSchema>;
+
+export const uuidParamsSchema = z.object({ id: z.string().uuid("id (uuid) attendu") });
+export const teamAnomaliesQuerySchema = z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() });
