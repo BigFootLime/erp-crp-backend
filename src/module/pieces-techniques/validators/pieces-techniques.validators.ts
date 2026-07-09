@@ -84,6 +84,9 @@ export type GetPieceTechniqueQueryDTO = z.infer<typeof getPieceTechniqueQuerySch
 
 const bomLineInputSchema = z.object({
   child_piece_id: uuid,
+  // GPAO B2.3 — liens de version (arborescence de fabrication versionnée). Optionnels/additifs.
+  child_piece_technique_version_id: uuid.optional().nullable(),
+  parent_piece_technique_version_id: uuid.optional().nullable(),
   rang: z.coerce.number().int().min(1).optional(),
   quantite: z.coerce.number().positive().optional().default(1),
   repere: z.string().optional().nullable(),
@@ -105,6 +108,12 @@ const operationInputSchema = z.object({
 
 const achatInputSchema = z.object({
   phase: z.coerce.number().int().optional().nullable(),
+  // GPAO B3.5/B4 — catégorie de nomenclature d'achat (défaut DIVERS). Additif : les payloads
+  // existants sans type_achat restent valides.
+  type_achat: z
+    .enum(["MATIERE", "VISSERIE", "COMPOSANT_CATALOGUE", "TRAITEMENT", "SOUS_TRAITANCE", "CERTIFICAT", "DIVERS"])
+    .optional()
+    .default("DIVERS"),
   famille_piece_id: uuid.optional().nullable(),
   nom: z.string().optional().nullable(),
   article_id: uuid.optional().nullable(),

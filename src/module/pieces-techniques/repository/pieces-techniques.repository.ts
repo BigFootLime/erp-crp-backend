@@ -11,6 +11,7 @@ import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repos
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 import type {
   Achat,
+  TypeAchat,
   AffairePieceTechniqueLink,
   BomLine,
   FabricationTreeNode,
@@ -1224,6 +1225,7 @@ async function repoListOperations(pieceTechniqueId: string): Promise<Operation[]
 type AchatRow = {
   id: string;
   phase: number | null;
+  type_achat: string;
   famille_piece_id: string | null;
   nom: string | null;
   fournisseur_id: string | null;
@@ -1252,6 +1254,7 @@ async function repoListAchats(pieceTechniqueId: string): Promise<Achat[]> {
     SELECT
       id::text AS id,
       phase,
+      type_achat,
       famille_piece_id::text AS famille_piece_id,
       nom,
       fournisseur_id::text AS fournisseur_id,
@@ -1281,6 +1284,7 @@ async function repoListAchats(pieceTechniqueId: string): Promise<Achat[]> {
   return res.rows.map((r) => ({
     id: r.id,
     phase: r.phase,
+    type_achat: (r.type_achat as TypeAchat) ?? "DIVERS",
     famille_piece_id: r.famille_piece_id,
     nom: r.nom,
     fournisseur_id: r.fournisseur_id,
@@ -2353,12 +2357,14 @@ export async function repoAddBomLine(pieceTechniqueId: string, body: AddBomLineB
         INSERT INTO pieces_techniques_nomenclature (
           parent_piece_technique_id,
           child_piece_technique_id,
+          parent_piece_technique_version_id,
+          child_piece_technique_version_id,
           rang,
           quantite,
           repere,
           designation
         )
-        VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6)
+        VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6, $7, $8)
         RETURNING
           id::text AS id,
           child_piece_technique_id::text AS child_piece_id,
@@ -2367,7 +2373,16 @@ export async function repoAddBomLine(pieceTechniqueId: string, body: AddBomLineB
           repere,
           designation
       `,
-      [pieceTechniqueId, body.child_piece_id, rang, body.quantite, body.repere ?? null, body.designation ?? null]
+      [
+        pieceTechniqueId,
+        body.child_piece_id,
+        body.parent_piece_technique_version_id ?? null,
+        body.child_piece_technique_version_id ?? null,
+        rang,
+        body.quantite,
+        body.repere ?? null,
+        body.designation ?? null,
+      ]
     );
     await client.query("COMMIT");
     const r = ins.rows[0];
@@ -2408,6 +2423,10 @@ export async function repoUpdateBomLine(
     };
 
     if (body.child_piece_id !== undefined) sets.push(`child_piece_technique_id = ${push(body.child_piece_id)}::uuid`);
+    if (body.parent_piece_technique_version_id !== undefined)
+      sets.push(`parent_piece_technique_version_id = ${push(body.parent_piece_technique_version_id)}::uuid`);
+    if (body.child_piece_technique_version_id !== undefined)
+      sets.push(`child_piece_technique_version_id = ${push(body.child_piece_technique_version_id)}::uuid`);
     if (body.rang !== undefined) sets.push(`rang = ${push(body.rang)}`);
     if (body.quantite !== undefined) sets.push(`quantite = ${push(body.quantite)}`);
     if (body.repere !== undefined) sets.push(`repere = ${push(body.repere)}`);
@@ -2753,11 +2772,12 @@ export async function repoAddAchat(
         total_achat_ttc,
         designation,
         designation_2,
-        designation_3
+        designation_3,
+        type_achat
       )
       VALUES (
         $1::uuid,$2,$3::uuid,$4,$5::uuid,$6,$7,$8,
-        $9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23
+        $9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24
       )
       RETURNING
         id::text AS id,
@@ -2782,7 +2802,8 @@ export async function repoAddAchat(
         total_achat_ttc::float8 AS total_achat_ttc,
         designation,
         designation_2,
-        designation_3
+        designation_3,
+        type_achat
     `,
     [
       pieceTechniqueId,
@@ -2808,6 +2829,7 @@ export async function repoAddAchat(
       body.designation ?? null,
       body.designation_2 ?? null,
       body.designation_3 ?? null,
+      body.type_achat ?? "DIVERS",
     ]
   );
 
@@ -2815,6 +2837,7 @@ export async function repoAddAchat(
   return {
     id: r.id,
     phase: r.phase,
+    type_achat: (r.type_achat as TypeAchat) ?? "DIVERS",
     famille_piece_id: r.famille_piece_id,
     nom: r.nom,
     fournisseur_id: r.fournisseur_id,

@@ -13,6 +13,7 @@ import { validationErrorMiddleware } from "../module/auth/middlewares/validation
 import { requestIdMiddleware } from "../middlewares/requestId";
 import { requestLogger } from "../middlewares/requestLogger";
 import { getImagesRootPath } from "../utils/imageStorage";
+import pool from "./database";
 
 const app = express();
 
@@ -141,6 +142,34 @@ app.get("/", (_req, res) => {
 
 app.get("/api/v1", (_req, res) => {
   res.send("✅ Backend CERP en ligne en V1 !");
+});
+
+// Environnement runtime (public) — source de vérité pour le badge front.
+// Renvoie la base RÉELLEMENT connectée (SELECT current_database()), impossible à mentir :
+// permet à l'UI d'afficher "cerp_test" quand l'API sert la base de test, et non la sélection front.
+app.get("/api/v1/environment", async (_req, res) => {
+  try {
+    const { rows } = await pool.query<{ database: string }>(
+      "SELECT current_database() AS database"
+    );
+    const database = rows[0]?.database ?? null;
+    const environment =
+      database === "cerp_prod"
+        ? "production"
+        : database === "cerp_test"
+        ? "test"
+        : database
+        ? "other"
+        : "unknown";
+    res.json({
+      database,
+      environment,
+      appEnv: process.env.NODE_ENV ?? null,
+    });
+  } catch {
+    // Base injoignable : on ne ment pas, on répond "unknown" (le badge se masquera).
+    res.status(503).json({ database: null, environment: "unknown", appEnv: process.env.NODE_ENV ?? null });
+  }
 });
 
 // Routes API v1

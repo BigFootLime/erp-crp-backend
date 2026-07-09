@@ -38,6 +38,8 @@ import usersRoutes from "../module/users/routes/users.routes";
 import traceabilityRoutes from "../module/traceability/routes/traceability.routes"
 import asbuiltRoutes from "../module/asbuilt/routes/asbuilt.routes"
 import locksRoutes from "../module/locks/routes/locks.routes"
+import gammesRoutes from "../module/gammes/routes/gammes.routes"
+import pieceTechniqueVersionsRoutes from "../module/gammes/routes/piece-technique-versions.routes"
 const router = Router()
 
 // --- Routes publiques (avant authentification) ---
@@ -57,6 +59,8 @@ router.use("/billers", billerRoutes);
 router.use("/pieces-families", piecesfamiliesRoutes) 
 router.use("/centre-frais", CFRoutes)     
 router.use("/pieces-techniques", piecesTechniquesRoutes)
+router.use("/piece-technique-versions", pieceTechniqueVersionsRoutes) // GPAO B2.2 — gammes par version
+router.use("/gammes", gammesRoutes)                                   // GPAO B2.2 — gammes + opérations
 router.use("/audit-logs", auditLogsRoutes)
 router.use("/admin", adminRoutes);
 router.use("/affaires", affaireRoutes);

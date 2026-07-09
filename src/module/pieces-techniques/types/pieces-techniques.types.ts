@@ -114,9 +114,20 @@ export type Operation = {
   cout_mo: number
 }
 
+export type TypeAchat =
+  | "MATIERE"
+  | "VISSERIE"
+  | "COMPOSANT_CATALOGUE"
+  | "TRAITEMENT"
+  | "SOUS_TRAITANCE"
+  | "CERTIFICAT"
+  | "DIVERS"
+
 export type Achat = {
   id?: string
   phase?: number | null
+  // Catégorie de nomenclature d'achat (B3.5). Défaut 'DIVERS' côté base.
+  type_achat?: TypeAchat
   famille_piece_id?: string | null
   nom?: string | null
   fournisseur_id?: string | null
