@@ -58,6 +58,22 @@ import {
   validate,
 } from "../validators/pieces-techniques.validators"
 
+import {
+  createNextVersion,
+  createVersion,
+  listVersions,
+  updateVersion,
+  updateVersionStatus,
+} from "../controllers/versions.controller"
+import { createOrLinkArticleFabrique, getPieceArticlePrincipal } from "../controllers/piece-article.controller"
+import {
+  createNextVersionSchema,
+  createVersionSchema,
+  updateVersionSchema,
+  versionIdParamSchema,
+  versionStatusSchema,
+} from "../validators/versions.validators"
+
 const router = Router()
 
 function isAdminRole(role: string | undefined): boolean {
@@ -95,6 +111,17 @@ router.delete("/:id", requireAdmin, validate(idParamSchema), deletePieceTechniqu
 
 router.post("/:id/duplicate", validate(idParamSchema), duplicatePieceTechnique)
 router.post("/:id/status", validate(idParamSchema), validate(pieceTechniqueStatusSchema), updatePieceTechniqueStatus)
+
+// GPAO B5 — article fabriqué principal lié à la pièce
+router.get("/:id/article-principal", validate(idParamSchema), getPieceArticlePrincipal)
+router.post("/:id/create-or-link-article-fabrique", validate(idParamSchema), createOrLinkArticleFabrique)
+
+// Versions / indices (GPAO B2.1) — source de vérité indice/plan/statut.
+router.get("/:id/versions", validate(idParamSchema), listVersions)
+router.post("/:id/versions", validate(idParamSchema), validate(createVersionSchema), createVersion)
+router.patch("/:id/versions/:versionId", validate(versionIdParamSchema), validate(updateVersionSchema), updateVersion)
+router.patch("/:id/versions/:versionId/status", validate(versionIdParamSchema), validate(versionStatusSchema), updateVersionStatus)
+router.post("/:id/versions/:versionId/create-next", validate(versionIdParamSchema), validate(createNextVersionSchema), createNextVersion)
 
 router.post("/:id/nomenclature", validate(idParamSchema), validate(addBomLineSchema), addBomLine)
 router.patch("/:id/nomenclature/:lineId", validate(bomLineIdParamSchema), validate(updateBomLineSchema), updateBomLine)
