@@ -2,6 +2,7 @@ import { Router } from "express";
 import * as adm from "../controllers/temps-deplacements-admin.controller";
 import * as cor from "../controllers/temps-deplacements-corrections.controller";
 import * as exp from "../controllers/temps-deplacements-exports.controller";
+import * as km from "../controllers/temps-deplacements-km.controller";
 import * as c from "../controllers/temps-deplacements.controller";
 
 // Monté après le socle authenticateToken (v1.routes.ts) → JWT requis d'office.
@@ -53,5 +54,15 @@ router.delete("/admin/schedules/:id", adm.deleteScheduleHandler);
 router.get("/admin/exports", exp.getExports);
 router.post("/admin/exports", exp.postExport);
 router.get("/admin/exports/:id/download", exp.downloadExport);
+
+// T6 — kilomètres. Salarié : déclare/soumet SES km (anti-IDOR). Responsable : périmètre + validation.
+router.get("/kilometers/vehicles", km.getVehicles);
+router.post("/kilometers", km.postKm);
+router.get("/kilometers/me", km.getMyKm);
+router.patch("/kilometers/:id/submit", km.submitKm);
+router.get("/kilometers/team", km.getTeamKm);
+router.patch("/kilometers/:id/validate", km.validateKm);
+router.patch("/kilometers/:id/reject", km.rejectKm);
+router.post("/admin/vehicles", km.postVehicle);
 
 export default router;
