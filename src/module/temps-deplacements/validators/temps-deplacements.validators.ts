@@ -116,5 +116,12 @@ export const scheduleBodySchema = z
 export type ScheduleBody = z.infer<typeof scheduleBodySchema>;
 
 export const setActiveSchema = z.object({ active: z.boolean() }).strict();
+
+// --- T7 : exports paie ---
+export const HR_EXPORT_FORMATS = ["CSV", "PDF"] as const;
+export const exportBodySchema = z
+  .object({ period_start: dateOnly, period_end: dateOnly, format: z.enum(HR_EXPORT_FORMATS) })
+  .strict();
+export type ExportBody = z.infer<typeof exportBodySchema>;
 export const listContractsQuerySchema = z.object({ employee_id: z.string().uuid().optional() });
 export const listSchedulesQuerySchema = z.object({ employee_id: z.string().uuid("employee_id (uuid) requis") });
