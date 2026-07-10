@@ -24,7 +24,7 @@
     "bcryptjs": "^3.0.2",
     "cors": "^2.8.5",
     "docx": "^9.7.1",
-    "dotenv": "^16.4.7",
+    "dotenv": "^17.4.2",
     "express": "^4.21.2",
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
