@@ -1,13 +1,14 @@
 import { z } from "zod";
 import { isoDate, strictEmail, strongPassword, trimString } from "./_helpers";
 
-const roles = [
+export const roles = [
   "Directeur",
   "Employee",
   "Administrateur Systeme et Reseau",
   "Responsable Qualité",
   "Secretaire",
   "Responsable Programmation",
+  "Responsable RH",
 ] as const;
 
 const genders = ["Male", "Female"] as const;
