@@ -117,6 +117,49 @@ export type ScheduleBody = z.infer<typeof scheduleBodySchema>;
 
 export const setActiveSchema = z.object({ active: z.boolean() }).strict();
 
+// --- T6 : kilomètres ---
+export const HR_KM_TYPES = ["MISSION", "CLIENT", "FOURNISSEUR", "LIVRAISON", "AUTRE"] as const;
+export const HR_KM_STATUSES = ["DRAFT", "SUBMITTED", "VALIDATED", "REJECTED"] as const;
+
+// ANTI-IDOR : aucun employee_id (l'employé vient de req.user).
+export const createKmSchema = z
+  .object({
+    date: dateOnly,
+    type: z.enum(HR_KM_TYPES).default("MISSION"),
+    vehicle_id: z.string().uuid().nullable().default(null),
+    start_location: z.string().trim().max(300).nullable().default(null),
+    end_location: z.string().trim().max(300).nullable().default(null),
+    start_odometer: z.number().min(0).max(9_999_999).nullable().default(null),
+    end_odometer: z.number().min(0).max(9_999_999).nullable().default(null),
+    distance_km: z.number().min(0).max(100_000).default(0),
+    affaire_id: z.number().int().positive().nullable().default(null),
+    client_id: z.number().int().positive().nullable().default(null),
+    fournisseur_id: z.number().int().positive().nullable().default(null),
+    submit: z.boolean().default(false),
+  })
+  .strict()
+  .refine((v) => v.start_odometer == null || v.end_odometer == null || v.end_odometer >= v.start_odometer, {
+    message: "Odomètre d'arrivée < départ.",
+    path: ["end_odometer"],
+  });
+export type CreateKmBody = z.infer<typeof createKmSchema>;
+
+export const myKmQuerySchema = z.object({
+  from: dateOnly.optional(),
+  to: dateOnly.optional(),
+  status: z.enum(HR_KM_STATUSES).optional(),
+});
+export const teamKmQuerySchema = z.object({ status: z.enum(HR_KM_STATUSES).optional() });
+
+export const vehicleBodySchema = z
+  .object({
+    label: z.string().trim().min(1).max(200),
+    plate: z.string().trim().max(20).nullable().default(null),
+    owner_type: z.enum(["COMPANY", "PERSONAL"]).default("COMPANY"),
+  })
+  .strict();
+export type VehicleBody = z.infer<typeof vehicleBodySchema>;
+
 // --- T7 : exports paie ---
 export const HR_EXPORT_FORMATS = ["CSV", "PDF"] as const;
 export const exportBodySchema = z
