@@ -66,8 +66,11 @@ export interface HrWeeklyTimesheet {
   week_end: string;
   worked_minutes: number;
   contract_minutes: number;
-  overtime_minutes: number;
+  overtime_minutes: number; // total HS (= 25 + 50), rétro-compat
+  overtime_25_minutes: number; // T5 — HS taux 1 (règle configurable)
+  overtime_50_minutes: number; // T5 — HS taux 2
   absence_minutes: number;
+  rule_set_name: string | null; // règle appliquée (traçabilité)
   days: HrDailyTimesheet[];
 }
 
