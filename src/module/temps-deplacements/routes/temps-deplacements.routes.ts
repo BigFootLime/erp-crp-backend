@@ -1,4 +1,5 @@
 import { Router } from "express";
+import * as adm from "../controllers/temps-deplacements-admin.controller";
 import * as cor from "../controllers/temps-deplacements-corrections.controller";
 import * as c from "../controllers/temps-deplacements.controller";
 
@@ -31,5 +32,20 @@ router.get("/team/today", cor.getTeamToday); // relevé du jour de l'équipe
 router.get("/team/anomalies", cor.getTeamAnomalies); // anomalies équipe du jour
 router.patch("/days/:id/validate", cor.validateDay); // valide une journée
 router.patch("/weeks/:id/validate", cor.validateWeek); // valide une semaine
+
+// T5 — administration RH (règles / contrats / horaires). Réservé aux rôles privilégiés (service).
+router.get("/admin/employees", adm.getEmployees);
+router.get("/admin/rule-sets", adm.getRuleSets);
+router.post("/admin/rule-sets", adm.postRuleSet);
+router.put("/admin/rule-sets/:id", adm.putRuleSet);
+router.patch("/admin/rule-sets/:id/active", adm.patchRuleSetActive);
+router.get("/admin/contracts", adm.getContracts);
+router.post("/admin/contracts", adm.postContract);
+router.put("/admin/contracts/:id", adm.putContract);
+router.patch("/admin/contracts/:id/active", adm.patchContractActive);
+router.get("/admin/schedules", adm.getSchedules);
+router.post("/admin/schedules", adm.postSchedule);
+router.put("/admin/schedules/:id", adm.putSchedule);
+router.delete("/admin/schedules/:id", adm.deleteScheduleHandler);
 
 export default router;

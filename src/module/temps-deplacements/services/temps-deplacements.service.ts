@@ -2,6 +2,8 @@ import crypto from "node:crypto";
 import { HttpError } from "../../../utils/httpError";
 import * as repo from "../repository/temps-deplacements.repository";
 import type { AuditContext } from "../repository/temps-deplacements.repository";
+import { repoGetEffectiveRuleSet, repoUpsertTimesheetWeek } from "../repository/temps-deplacements-rules.repository";
+import { effectiveDailyWorked, weeklyAggregate } from "./temps-deplacements-rules";
 import type {
   CreateTimeEventInput,
   CreateTimeEventResult,
@@ -168,11 +170,15 @@ export function summarizeDay(events: HrTimeEvent[]): {
 // -------------------------------------------------------------- Relevé journalier
 export async function computeDailyTimesheet(employeeId: string, date: string): Promise<HrDailyTimesheet> {
   const events = await repo.repoListEventsForDay(employeeId, date);
-  const { firstIn, lastOut, breakMinutes: totalBreak, workedMinutes, openBreak } = summarizeDay(events);
+  const { firstIn, lastOut, breakMinutes: totalBreak, workedMinutes: workedRaw, openBreak } = summarizeDay(events);
 
-  const expected = await repo.repoGetDailyTargetMinutes(employeeId, date);
-  const overtime = Math.max(0, workedMinutes - expected);
-  const missing = Math.max(0, expected - workedMinutes);
+  // Règles effectives (contrat couvrant la date + rule_set éventuel) — jamais 35/39 en dur.
+  const ruleSet = await repoGetEffectiveRuleSet(employeeId, date);
+  const expected = ruleSet ? ruleSet.daily_target_minutes : 0;
+  // Pause minimale imposée + arrondi selon la règle (sinon temps brut).
+  const workedMinutes = ruleSet ? effectiveDailyWorked(workedRaw, totalBreak, ruleSet) : workedRaw;
+  const overtime = expected > 0 ? Math.max(0, workedMinutes - expected) : 0;
+  const missing = expected > 0 ? Math.max(0, expected - workedMinutes) : 0;
   const isPastDay = date < todayParis();
 
   const descriptors = detectTimeAnomalies(events, { openBreak, workedMinutes, totalBreak, isPastDay });
@@ -214,15 +220,41 @@ export async function computeWeeklyTimesheet(employeeId: string, weekStart: stri
     days.push(await computeDailyTimesheet(employeeId, addDays(weekStart, i)));
   }
   const worked = days.reduce((s, d) => s + d.worked_minutes, 0);
-  const expected = days.reduce((s, d) => s + d.expected_minutes, 0);
+  const weekEnd = addDays(weekStart, 6);
+
+  // Règles effectives de la semaine (contrat au lundi) → cible hebdo + découpe HS 25/50 configurable.
+  const ruleSet = await repoGetEffectiveRuleSet(employeeId, weekStart);
+  const agg = weeklyAggregate(worked, ruleSet);
+
+  // Persistance de l'agrégat hebdo (nécessaire à la validation T4 ; DRAFT uniquement).
+  try {
+    await repo.withTransaction((client) =>
+      repoUpsertTimesheetWeek(client, {
+        employee_id: employeeId,
+        week_start: weekStart,
+        week_end: weekEnd,
+        contract_minutes: agg.contract_minutes,
+        worked_minutes: worked,
+        overtime_25_minutes: agg.overtime_25_minutes,
+        overtime_50_minutes: agg.overtime_50_minutes,
+        absence_minutes: agg.absence_minutes,
+      })
+    );
+  } catch {
+    /* best-effort : ne bloque jamais la lecture du relevé */
+  }
+
   return {
     employee_id: employeeId,
     week_start: weekStart,
-    week_end: addDays(weekStart, 6),
+    week_end: weekEnd,
     worked_minutes: worked,
-    contract_minutes: expected,
-    overtime_minutes: Math.max(0, worked - expected),
-    absence_minutes: Math.max(0, expected - worked),
+    contract_minutes: agg.contract_minutes,
+    overtime_minutes: agg.overtime_25_minutes + agg.overtime_50_minutes,
+    overtime_25_minutes: agg.overtime_25_minutes,
+    overtime_50_minutes: agg.overtime_50_minutes,
+    absence_minutes: agg.absence_minutes,
+    rule_set_name: agg.rule_set_name,
     days,
   };
 }
