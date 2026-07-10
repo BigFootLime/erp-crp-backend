@@ -98,6 +98,17 @@ export async function patchWorkPackage(actor: Actor, wpId: string, patch: PatchW
     if (!parent || parent.project_id !== before.project_id) {
       throw new HttpError(400, "PO_WP_BAD_PARENT", "Tâche parente invalide pour ce projet.");
     }
+    const byId = new Map((await repoListAllWorkPackages(before.project_id)).map((wp) => [wp.id, wp]));
+    const visited = new Set<string>();
+    let cursor: string | null = patch.parent_id;
+    while (cursor) {
+      if (cursor === wpId) {
+        throw new HttpError(409, "PO_WP_PARENT_CYCLE", "Cette hiérarchie de tâches créerait un cycle.");
+      }
+      if (visited.has(cursor)) break;
+      visited.add(cursor);
+      cursor = byId.get(cursor)?.parent_id ?? null;
+    }
   }
   const nextStart = patch.start_date !== undefined ? patch.start_date : before.start_date;
   const nextDue = patch.due_date !== undefined ? patch.due_date : before.due_date;

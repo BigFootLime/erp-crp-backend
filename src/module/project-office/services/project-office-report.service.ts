@@ -18,6 +18,7 @@ import {
   repoCreateWorkLog,
   repoGetAssetById,
   repoGetEntry,
+  repoGetEntryProjectId,
   repoGetErrorById,
   repoGetReportById,
   repoGetReportExportById,
@@ -41,6 +42,7 @@ import {
   repoSetReportStatus,
 } from "../repository/project-office-report.repository";
 import { repoGetEvidenceById } from "../repository/project-office-registers.repository";
+import { repoGetWorkPackageById } from "../repository/project-office-work.repository";
 import type {
   Actor,
   PoEntryStatus,
@@ -667,8 +669,25 @@ export async function exportReportMarkdown(actor: Actor, reportId: string, audit
 }
 
 // ------------------------------------------------------------------ Journal de travail & erreurs
+async function assertWorkPackageProject(projectId: string, workPackageId: unknown) {
+  if (!workPackageId) return;
+  const workPackage = await repoGetWorkPackageById(String(workPackageId));
+  if (!workPackage || workPackage.project_id !== projectId) {
+    throw new HttpError(400, "PO_WP_BAD_PROJECT", "Tâche invalide pour ce projet.");
+  }
+}
+
+async function assertAssetProject(projectId: string, assetId: unknown) {
+  if (!assetId) return;
+  const asset = await repoGetAssetById(String(assetId));
+  if (!asset || asset.project_id !== projectId) {
+    throw new HttpError(400, "PO_ASSET_BAD_PROJECT", "Capture invalide pour ce projet.");
+  }
+}
+
 export async function createWorkLog(actor: Actor, projectId: string, input: Record<string, unknown>, audit: AuditContext) {
   await requireProjectAccess(actor, projectId, "write");
+  await assertWorkPackageProject(projectId, input.work_package_id);
   return withTransaction(async (tx) => {
     const log = await repoCreateWorkLog(tx, {
       project_id: projectId,
@@ -699,6 +718,8 @@ export async function listWorkLogs(actor: Actor, opts: { project_id: string; act
 
 export async function createErrorRecord(actor: Actor, projectId: string, input: Record<string, unknown>, audit: AuditContext) {
   await requireProjectAccess(actor, projectId, "write");
+  await assertWorkPackageProject(projectId, input.work_package_id);
+  await assertAssetProject(projectId, input.screenshot_asset_id);
   return withTransaction(async (tx) => {
     const rec = await repoCreateErrorRecord(tx, {
       project_id: projectId,
@@ -722,6 +743,7 @@ export async function patchErrorRecord(actor: Actor, errorId: string, patch: Rec
   const before = await repoGetErrorById(errorId);
   if (!before) throw new HttpError(404, "PO_ERROR_NOT_FOUND", "Erreur introuvable.");
   await requireProjectAccess(actor, before.project_id, "write");
+  await assertAssetProject(before.project_id, patch.screenshot_asset_id);
   const effective = { ...patch };
   if (patch.status === "FIXED") {
     if (!patch.fix_summary && !before.fix_summary) {
@@ -758,10 +780,23 @@ export async function createAsset(
   audit: AuditContext
 ) {
   await requireProjectAccess(actor, projectId, "write");
+  if (meta.report_entry_id) {
+    const entryProjectId = await repoGetEntryProjectId(meta.report_entry_id);
+    if (!entryProjectId || entryProjectId !== projectId) {
+      throw new HttpError(400, "PO_REPORT_ENTRY_BAD_PROJECT", "Section de rapport invalide pour ce projet.");
+    }
+  }
   let content: { content_base64: string; checksum: string; mime_type: string } | null = null;
   if (file) {
     if (!ALLOWED_ASSET_MIME.has(file.mimetype)) {
       throw new HttpError(415, "PO_ASSET_BAD_TYPE", "Formats acceptés : PNG, JPEG.");
+    }
+    const isPng = file.buffer.length >= 8
+      && file.buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    const isJpeg = file.buffer.length >= 3
+      && file.buffer[0] === 0xff && file.buffer[1] === 0xd8 && file.buffer[2] === 0xff;
+    if ((file.mimetype === "image/png" && !isPng) || (file.mimetype === "image/jpeg" && !isJpeg)) {
+      throw new HttpError(415, "PO_ASSET_BAD_SIGNATURE", "Le contenu du fichier ne correspond pas au format annoncé.");
     }
     if (file.buffer.length > MAX_ASSET_BYTES) {
       throw new HttpError(413, "PO_ASSET_TOO_LARGE", "Capture trop lourde (max 5 Mo).");

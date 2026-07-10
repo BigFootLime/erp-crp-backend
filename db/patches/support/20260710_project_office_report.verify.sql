@@ -48,3 +48,13 @@ SELECT
 SELECT
   (SELECT count(*) FROM public.project_projects) AS projects,
   (SELECT count(*) FROM public.project_evidence) AS evidence;
+
+\echo '### stockage DB captures/exports (attendu: 3 colonnes du patch report_files)'
+SELECT table_name, column_name, data_type
+FROM information_schema.columns
+WHERE table_schema='public'
+  AND (table_name, column_name) IN (
+    ('project_report_assets', 'content_base64'),
+    ('project_report_assets', 'checksum'),
+    ('project_report_exports', 'file_base64'))
+ORDER BY table_name, column_name;

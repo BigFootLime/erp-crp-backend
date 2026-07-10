@@ -162,6 +162,18 @@ export async function repoGetEntry(reportId: string, sectionId: string, q: DbQue
   return res.rows[0] ? mapEntry(res.rows[0]) : null;
 }
 
+export async function repoGetEntryProjectId(entryId: string, q: DbQueryer = pool): Promise<string | null> {
+  const res = await q.query(
+    `SELECT r.project_id::text AS project_id
+       FROM public.project_report_entries e
+       JOIN public.project_reports r ON r.id = e.report_id
+      WHERE e.id = $1::uuid
+      LIMIT 1`,
+    [entryId]
+  );
+  return res.rows[0]?.project_id ? String(res.rows[0].project_id) : null;
+}
+
 export async function repoPatchEntry(
   tx: DbQueryer,
   reportId: string,

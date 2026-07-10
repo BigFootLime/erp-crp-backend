@@ -33,5 +33,6 @@ DROP TYPE IF EXISTS public.po_report_status;
 DROP TYPE IF EXISTS public.po_report_level;
 
 DELETE FROM public.cerp_schema_migrations WHERE filename='20260710_project_office_report.sql';
+DELETE FROM public.cerp_schema_migrations WHERE filename='20260710_project_office_report_files.sql';
 
 COMMIT;

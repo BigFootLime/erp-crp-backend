@@ -11,6 +11,7 @@ vi.mock("../module/project-office/repository/project-office.repository", async (
 
 import type { NextFunction, Request, Response } from "express";
 import * as baseRepo from "../module/project-office/repository/project-office.repository";
+import { buildAuditContext } from "../module/project-office/controllers/project-office.controller";
 import { requireProjectOfficeAccess } from "../module/project-office/middlewares/require-project-office-access";
 import {
   assertProjectOfficeAccess,
@@ -74,6 +75,23 @@ describe("Middleware requireProjectOfficeAccess", () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(next).toHaveBeenCalledOnce();
     expect(res.statusCode).toBe(0);
+  });
+});
+
+describe("Contexte d'audit Project Office", () => {
+  it("utilise req.ip résolu par Express plutôt que le premier X-Forwarded-For", () => {
+    const req = {
+      user: { id: PILOTE.id, role: PILOTE.role },
+      ip: "203.0.113.42",
+      headers: {
+        "x-forwarded-for": "198.51.100.99, 203.0.113.42",
+        "user-agent": "Mozilla/5.0",
+      },
+      originalUrl: "/api/v1/project-office/projects",
+      socket: { remoteAddress: "127.0.0.1" },
+    } as unknown as Request;
+
+    expect(buildAuditContext(req).ip).toBe("203.0.113.42");
   });
 });
 

@@ -164,6 +164,6 @@ export const getAssetContent = asyncHandler(async (req: Request, res: Response) 
   const { id } = uuidParamsSchema.parse(req.params);
   const { buffer, mime_type } = await svc.getAssetContent(requireUser(req), id);
   res.setHeader("Content-Type", mime_type);
-  res.setHeader("Cache-Control", "private, max-age=300");
+  res.setHeader("Cache-Control", "private, no-store");
   res.send(buffer);
 });

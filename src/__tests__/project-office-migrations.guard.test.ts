@@ -45,10 +45,24 @@ describe("Migrations Project Office — additives et idempotentes", () => {
     ]) {
       expect(fs.existsSync(path.join(support, f)), f).toBe(true);
     }
+    const reportVerify = fs.readFileSync(path.join(support, "20260710_project_office_report.verify.sql"), "utf8");
+    const reportRollback = fs.readFileSync(path.join(support, "20260710_project_office_report.rollback.sql"), "utf8");
+    expect(reportVerify).toMatch(/project_report_assets', 'content_base64'/);
+    expect(reportVerify).toMatch(/project_report_assets', 'checksum'/);
+    expect(reportVerify).toMatch(/project_report_exports', 'file_base64'/);
+    expect(reportRollback).toMatch(/20260710_project_office_report_files\.sql/);
   });
   it("seed enable-test protégé contre cerp_prod", () => {
     const seed = fs.readFileSync(path.resolve(__dirname, "../../db/seeds/project-office-flag-enable-test.sql"), "utf8");
     expect(seed).toMatch(/current_database\(\)\s*=\s*'cerp_prod'/);
     expect(seed).toMatch(/RAISE EXCEPTION/);
+  });
+  it("seed pilote KEENAN cible un user unique sans activer le flag global", () => {
+    const seed = fs.readFileSync(path.resolve(__dirname, "../../db/seeds/project-office-pilot-keenan.sql"), "utf8");
+    expect(seed).toMatch(/upper\(btrim\(username\)\)\s*=\s*'KEENAN'/i);
+    expect(seed).toMatch(/v_user_count\s*<>\s*1/i);
+    expect(seed).toMatch(/app_feature_flag_users/i);
+    expect(seed).not.toMatch(/UPDATE\s+public\.app_feature_flags\s+SET\s+enabled\s*=\s*true/i);
+    expect(seed).toMatch(/project_office_pilot_approved/i);
   });
 });

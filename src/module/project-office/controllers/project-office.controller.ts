@@ -11,9 +11,7 @@ export function requireUser(req: Request): { id: number; role: string } {
 }
 
 function getClientIp(req: Request): string | null {
-  const xff = req.headers["x-forwarded-for"];
-  if (typeof xff === "string" && xff.length) return xff.split(",")[0].trim();
-  return req.socket?.remoteAddress ?? null;
+  return req.ip ?? req.socket?.remoteAddress ?? null;
 }
 
 function parseDevice(userAgent: string | null): { device_type: string | null; os: string | null; browser: string | null } {

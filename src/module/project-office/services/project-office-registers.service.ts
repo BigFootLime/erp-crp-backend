@@ -17,6 +17,7 @@ import {
   repoCreateSpecVersion,
   repoGetActionById,
   repoGetEvidenceById,
+  repoGetExternalEntityProjectId,
   repoGetRiskById,
   repoGetSpecById,
   repoGetSpecVersionById,
@@ -31,6 +32,7 @@ import {
   repoPatchRisk,
   repoSetSpecStatus,
 } from "../repository/project-office-registers.repository";
+import { repoGetWorkPackageById } from "../repository/project-office-work.repository";
 import type { Actor, SpecRow } from "../types/project-office.types";
 import { requireProjectAccess } from "./project-office-access.service";
 
@@ -322,6 +324,12 @@ export async function createEvidence(
   audit: AuditContext
 ) {
   await requireProjectAccess(actor, projectId, "write");
+  if (input.work_package_id) {
+    const workPackage = await repoGetWorkPackageById(input.work_package_id);
+    if (!workPackage || workPackage.project_id !== projectId) {
+      throw new HttpError(400, "PO_WP_BAD_PROJECT", "Tâche invalide pour ce projet.");
+    }
+  }
   return withTransaction(async (tx) => {
     const evidence = await repoCreateEvidence(tx, {
       project_id: projectId, work_package_id: input.work_package_id ?? null, type: input.type,
@@ -353,6 +361,15 @@ export async function createExternalLink(
   audit: AuditContext
 ) {
   await requireProjectAccess(actor, input.project_id, "write");
+  if (input.entity_id) {
+    const entityProjectId = await repoGetExternalEntityProjectId(
+      input.entity_type as "project" | "work_package" | "spec" | "decision" | "risk" | "action",
+      input.entity_id
+    );
+    if (!entityProjectId || entityProjectId !== input.project_id) {
+      throw new HttpError(400, "PO_EXTERNAL_ENTITY_BAD_PROJECT", "Entité externe invalide pour ce projet.");
+    }
+  }
   return withTransaction(async (tx) => {
     const link = await repoCreateExternalLink(tx, {
       project_id: input.project_id, entity_type: input.entity_type, entity_id: input.entity_id ?? null,

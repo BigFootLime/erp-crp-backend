@@ -406,6 +406,28 @@ export async function repoListExternalLinks(projectId: string, q: DbQueryer = po
   return res.rows.map(mapLink);
 }
 
+export async function repoGetExternalEntityProjectId(
+  entityType: "project" | "work_package" | "spec" | "decision" | "risk" | "action",
+  entityId: string,
+  q: DbQueryer = pool
+): Promise<string | null> {
+  const tableByType = {
+    project: "project_projects",
+    work_package: "project_work_packages",
+    spec: "project_specs",
+    decision: "project_decisions",
+    risk: "project_risks",
+    action: "project_corrective_actions",
+  } as const;
+  const table = tableByType[entityType];
+  const projectExpression = entityType === "project" ? "id" : "project_id";
+  const res = await q.query(
+    `SELECT ${projectExpression}::text AS project_id FROM public.${table} WHERE id = $1::uuid LIMIT 1`,
+    [entityId]
+  );
+  return res.rows[0]?.project_id ? String(res.rows[0].project_id) : null;
+}
+
 export async function repoCreateExternalLink(
   tx: DbQueryer,
   input: {

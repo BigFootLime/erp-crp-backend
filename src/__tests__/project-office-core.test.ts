@@ -54,6 +54,7 @@ vi.mock("../module/project-office/repository/project-office-registers.repository
   repoCreateSpecVersion: vi.fn(),
   repoApproveSpecVersion: vi.fn(),
   repoCreateExternalLink: vi.fn(),
+  repoGetExternalEntityProjectId: vi.fn(),
   repoListExternalLinks: vi.fn(),
 }));
 
@@ -169,6 +170,37 @@ describe("Work packages", () => {
     await workSvc.patchWorkPackage(OWNER, WP1, { status: "DONE" }, AUDIT);
     expect(work.repoPatchWorkPackage.mock.calls[0][2]).toMatchObject({ status: "DONE", progress_percent: 100 });
   });
+  it("refuse un parent descendant qui créerait un cycle hiérarchique", async () => {
+    base.repoGetProjectAccess.mockResolvedValue(ownerAccess);
+    work.repoGetWorkPackageById
+      .mockResolvedValueOnce({ id: WP1, project_id: P, parent_id: null, start_date: null, due_date: null } as never)
+      .mockResolvedValueOnce({ id: WP2, project_id: P, parent_id: WP1 } as never);
+    work.repoListAllWorkPackages.mockResolvedValue([
+      { id: WP1, project_id: P, parent_id: null } as never,
+      { id: WP2, project_id: P, parent_id: WP1 } as never,
+    ]);
+    await expect(workSvc.patchWorkPackage(OWNER, WP1, { parent_id: WP2 }, AUDIT))
+      .rejects.toMatchObject({ status: 409, code: "PO_WP_PARENT_CYCLE" });
+  });
+  it("retourne les données Gantt du projet autorisé", async () => {
+    base.repoGetProjectAccess.mockResolvedValue(ownerAccess);
+    work.repoListAllWorkPackages.mockResolvedValue([{ id: WP1, project_id: P } as never]);
+    work.repoListMilestones.mockResolvedValue([{ id: "m1", project_id: P } as never]);
+    work.repoListProjectDependencies.mockResolvedValue([{ id: "d1", source_work_package_id: WP1, target_work_package_id: WP2 } as never]);
+    const gantt = await workSvc.getGanttData(OWNER, P);
+    expect(gantt.work_packages).toHaveLength(1);
+    expect(gantt.milestones).toHaveLength(1);
+    expect(gantt.dependencies).toHaveLength(1);
+  });
+  it("retourne les colonnes Kanban depuis les tâches du projet autorisé", async () => {
+    base.repoGetProjectAccess.mockResolvedValue(ownerAccess);
+    work.repoListAllWorkPackages.mockResolvedValue([
+      { id: WP1, project_id: P, status: "BACKLOG" } as never,
+      { id: WP2, project_id: P, status: "DONE" } as never,
+    ]);
+    const kanban = await workSvc.getKanbanData(OWNER, P);
+    expect(kanban.work_packages.map((wp) => wp.status)).toEqual(["BACKLOG", "DONE"]);
+  });
 });
 
 describe("Registres", () => {
@@ -193,6 +225,20 @@ describe("Registres", () => {
     reg.repoCreateEvidence.mockImplementation(async (_tx, i) => ({ id: "e1", ...i, created_at: "t" }) as never);
     const e = await regSvc.createEvidence({ id: 7, role: "Employee" }, P, { type: "PR", title: "PR #1", url: "https://github.com/x/y/pull/1" }, AUDIT);
     expect(e.created_by).toBe(7);
+  });
+  it("refuse une preuve liée à une tâche d'un autre projet", async () => {
+    base.repoGetProjectAccess.mockResolvedValue(ownerAccess);
+    work.repoGetWorkPackageById.mockResolvedValue({ id: WP2, project_id: "99999999-9999-4999-8999-999999999999" } as never);
+    await expect(regSvc.createEvidence(OWNER, P, { type: "TEST", title: "Suite", work_package_id: WP2 }, AUDIT))
+      .rejects.toMatchObject({ status: 400, code: "PO_WP_BAD_PROJECT" });
+  });
+  it("refuse un lien externe vers une entité d'un autre projet", async () => {
+    base.repoGetProjectAccess.mockResolvedValue(ownerAccess);
+    reg.repoGetExternalEntityProjectId.mockResolvedValue("99999999-9999-4999-8999-999999999999");
+    await expect(regSvc.createExternalLink(OWNER, {
+      project_id: P, entity_type: "work_package", entity_id: WP2,
+      provider: "GITHUB", external_type: "PR", url: "https://github.com/example/repo/pull/1",
+    }, AUDIT)).rejects.toMatchObject({ status: 400, code: "PO_EXTERNAL_ENTITY_BAD_PROJECT" });
   });
   it("action corrective avec preuve d'un autre projet → 400", async () => {
     base.repoGetProjectAccess.mockResolvedValue(ownerAccess);

@@ -70,7 +70,10 @@ router.get("/projects/:id/export.md", registers.getStatusReportMarkdown);
 router.get("/projects/:id/export.pdf", registers.getStatusReportPdf);
 
 // Rapport de projet Bac+5
-const assetUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+const assetUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024, files: 1, fields: 5, fieldSize: 64 * 1024 },
+});
 router.get("/report-templates", report.getTemplates);
 router.get("/projects/:id/reports", report.getReports);
 router.post("/projects/:id/reports", report.postReport);
