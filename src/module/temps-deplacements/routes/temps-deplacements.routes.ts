@@ -1,6 +1,7 @@
 import { Router } from "express";
 import * as adm from "../controllers/temps-deplacements-admin.controller";
 import * as cor from "../controllers/temps-deplacements-corrections.controller";
+import * as exp from "../controllers/temps-deplacements-exports.controller";
 import * as c from "../controllers/temps-deplacements.controller";
 
 // Monté après le socle authenticateToken (v1.routes.ts) → JWT requis d'office.
@@ -47,5 +48,10 @@ router.get("/admin/schedules", adm.getSchedules);
 router.post("/admin/schedules", adm.postSchedule);
 router.put("/admin/schedules/:id", adm.putSchedule);
 router.delete("/admin/schedules/:id", adm.deleteScheduleHandler);
+
+// T7 — exports paie figés (CSV `;`+BOM / PDF) + checksum. Réservé aux rôles privilégiés (service).
+router.get("/admin/exports", exp.getExports);
+router.post("/admin/exports", exp.postExport);
+router.get("/admin/exports/:id/download", exp.downloadExport);
 
 export default router;
