@@ -124,6 +124,28 @@ describe("Work packages", () => {
     expect(wp.reporter_id).toBe(42);
     expect(base.insertAuditLog).toHaveBeenCalled();
   });
+  it("createWorkPackage accepte un code métier explicite normalisé", async () => {
+    base.repoGetProjectAccess.mockResolvedValue(ownerAccess);
+    work.repoCreateWorkPackage.mockImplementation(async (_tx, i) => ({
+      id: WP1, project_id: i.project_id, parent_id: null, code: i.code, title: i.title, description: null,
+      type: i.type, status: i.status, priority: i.priority, assignee_id: null, assignee_username: null,
+      reporter_id: i.reporter_id, start_date: null, due_date: null, progress_percent: 0,
+      estimated_hours: null, spent_hours: null, created_at: "t", updated_at: "t",
+    }) as never);
+    const wp = await workSvc.createWorkPackage(OWNER, {
+      project_id: P, code: "ui-gov-01", title: "Audit UI", type: "AUDIT", status: "IN_PROGRESS", priority: "HIGH",
+    }, AUDIT);
+    expect(wp.code).toBe("UI-GOV-01");
+    expect(work.repoNextWorkPackageCode).not.toHaveBeenCalled();
+  });
+  it("retourne 409 quand un code métier explicite existe déjà", async () => {
+    base.repoGetProjectAccess.mockResolvedValue(ownerAccess);
+    work.repoCreateWorkPackage.mockRejectedValue(Object.assign(new Error("dup"), { code: "23505" }));
+    await expect(workSvc.createWorkPackage(OWNER, {
+      project_id: P, code: "UI-GOV", title: "Gouvernance", type: "EPIC", status: "IN_PROGRESS", priority: "HIGH",
+    }, AUDIT)).rejects.toMatchObject({ status: 409, code: "PO_WP_CODE_TAKEN" });
+    expect(work.repoNextWorkPackageCode).not.toHaveBeenCalled();
+  });
   it("dates incohérentes → 400", async () => {
     base.repoGetProjectAccess.mockResolvedValue(ownerAccess);
     await expect(workSvc.createWorkPackage(OWNER, {

@@ -78,6 +78,7 @@ export const memberParamsSchema = z.object({
 export const createWorkPackageSchema = z.object({
   project_id: z.string().uuid(),
   parent_id: z.string().uuid().nullish(),
+  code: trimmed(64).regex(/^[A-Z0-9][A-Z0-9_-]*$/i, "Code alphanumérique (tirets/underscores autorisés)").optional(),
   title: trimmed(300),
   description: z.string().trim().max(20_000).nullish(),
   type: z.enum(PO_WP_TYPES).default("TASK"),

@@ -5,9 +5,11 @@ This repository is the backend implementation backup for Croix Rousse Precision 
 ## Required reading before edits
 
 1. `INSTRUCTIONS_BACKEND.md`
-2. `docs/frontend_repo_map.md`
-3. `db/patches/`
-4. impacted route, service, repository, and validator files
+2. Canonical Project Office workflow: `../crp-systems-web/docs/ai/AI_PROJECT_OFFICE_WORKFLOW.md`
+   ([GitHub fallback](https://github.com/BigFootLime/crp-systems-web/blob/dev/docs/ai/AI_PROJECT_OFFICE_WORKFLOW.md))
+3. `docs/frontend_repo_map.md`
+4. `db/patches/`
+5. impacted route, service, repository, and validator files
 
 ## Core rules
 
