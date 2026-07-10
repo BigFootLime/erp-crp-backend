@@ -1,6 +1,7 @@
 import { Router } from "express";
 import * as adm from "../controllers/temps-deplacements-admin.controller";
 import * as cor from "../controllers/temps-deplacements-corrections.controller";
+import * as dev from "../controllers/temps-deplacements-devices.controller";
 import * as exp from "../controllers/temps-deplacements-exports.controller";
 import * as km from "../controllers/temps-deplacements-km.controller";
 import * as c from "../controllers/temps-deplacements.controller";
@@ -64,5 +65,14 @@ router.get("/kilometers/team", km.getTeamKm);
 router.patch("/kilometers/:id/validate", km.validateKm);
 router.patch("/kilometers/:id/reject", km.rejectKm);
 router.post("/admin/vehicles", km.postVehicle);
+
+// T8 — bornes & badges (provisioning). Réservé aux rôles privilégiés (service). Token borne renvoyé 1× à la création.
+router.get("/admin/devices", dev.getDevices);
+router.post("/admin/devices", dev.postDevice);
+router.patch("/admin/devices/:id/status", dev.patchDeviceStatus);
+router.post("/admin/devices/:id/rotate-token", dev.postDeviceRotate);
+router.get("/admin/badges", dev.getBadges);
+router.post("/admin/badges", dev.postBadge);
+router.patch("/admin/badges/:id/revoke", dev.revokeBadgeHandler);
 
 export default router;

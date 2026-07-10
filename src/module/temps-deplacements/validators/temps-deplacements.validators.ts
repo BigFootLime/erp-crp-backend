@@ -160,6 +160,29 @@ export const vehicleBodySchema = z
   .strict();
 export type VehicleBody = z.infer<typeof vehicleBodySchema>;
 
+// --- T8 : bornes & badges ---
+export const deviceBodySchema = z
+  .object({
+    name: z.string().trim().min(1).max(200),
+    location: z.string().trim().max(300).nullable().default(null),
+    device_type: z.string().trim().max(100).nullable().default(null),
+  })
+  .strict();
+export type DeviceBody = z.infer<typeof deviceBodySchema>;
+
+export const deviceStatusSchema = z.object({ status: z.enum(["ACTIVE", "DISABLED"]) }).strict();
+
+export const badgeBodySchema = z
+  .object({
+    employee_id: z.string().uuid(),
+    badge_uid: z.string().trim().min(1, "badge_uid requis").max(256),
+    badge_label: z.string().trim().max(200).nullable().default(null),
+  })
+  .strict();
+export type BadgeBody = z.infer<typeof badgeBodySchema>;
+
+export const listBadgesQuerySchema = z.object({ employee_id: z.string().uuid().optional() });
+
 // --- T7 : exports paie ---
 export const HR_EXPORT_FORMATS = ["CSV", "PDF"] as const;
 export const exportBodySchema = z
