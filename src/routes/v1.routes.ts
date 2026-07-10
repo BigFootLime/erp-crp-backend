@@ -39,6 +39,7 @@ import traceabilityRoutes from "../module/traceability/routes/traceability.route
 import asbuiltRoutes from "../module/asbuilt/routes/asbuilt.routes"
 import locksRoutes from "../module/locks/routes/locks.routes"
 import tempsDeplacementsRoutes from "../module/temps-deplacements/routes/temps-deplacements.routes"
+import projectOfficeRoutes from "../module/project-office/routes/project-office.routes"
 import gammesRoutes from "../module/gammes/routes/gammes.routes"
 import pieceTechniqueVersionsRoutes from "../module/gammes/routes/piece-technique-versions.routes"
 const router = Router()
@@ -89,4 +90,5 @@ router.use("/traceability", traceabilityRoutes)
 router.use("/asbuilt", asbuiltRoutes)
 router.use("/locks", locksRoutes)
 router.use("/time-clock", tempsDeplacementsRoutes) // Module « Temps & Déplacements » (RH pointage/kilomètres)
+router.use("/project-office", projectOfficeRoutes) // Module « Project Office » (#130) — feature gate PROJECT_OFFICE fail-closed
 export default router
