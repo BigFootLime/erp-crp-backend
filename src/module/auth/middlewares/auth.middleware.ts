@@ -48,7 +48,7 @@ export const authenticateToken: RequestHandler = (req, res, next) => {
         ...ctx,
       })
     );
-    res.status(403).json({ error: 'Token invalide ou expiré' });
+    res.status(401).json({ error: 'Token invalide ou expiré' });
   }
 };
 
