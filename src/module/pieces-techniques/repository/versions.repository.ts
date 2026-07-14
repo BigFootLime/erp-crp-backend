@@ -3,6 +3,7 @@
 import type { PoolClient } from "pg"
 import db from "../../../config/database"
 import { HttpError } from "../../../utils/httpError"
+import { generatePieceTechniqueBusinessCode } from "../../../shared/codes/code-generator.service"
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
 import type { AuditContext } from "./pieces-techniques.repository"
 import type {
@@ -16,6 +17,11 @@ export type PieceTechniqueVersionRow = {
   id: string
   piece_technique_id: string
   indice: string
+  indice_externe_original: string | null
+  indice_externe_normalise: string | null
+  version_interne: number | null
+  code_metier: string | null
+  code_metier_normalise: string | null
   plan_reference: string | null
   matiere_prevue: string | null
   statut: VersionStatutDTO
@@ -23,11 +29,13 @@ export type PieceTechniqueVersionRow = {
   commentaire_revision: string | null
   type_changement: "EVOLUTION" | "MODIFICATION" | null
   raison_changement: string | null
+  motif_modification: string | null
   impact_interchangeabilite: boolean | null
   impact_parents: string | null
   valide_par: number | null
   date_validation: string | null
   date_application: string | null
+  date_effet: string | null
   commentaire_validation: string | null
   date_revision: string | null
   created_at: string
@@ -37,9 +45,12 @@ export type PieceTechniqueVersionRow = {
 }
 
 const VERSION_COLUMNS = `
-  id::text AS id, piece_technique_id::text AS piece_technique_id, indice, plan_reference, matiere_prevue,
+  id::text AS id, piece_technique_id::text AS piece_technique_id, indice,
+  indice_externe_original, indice_externe_normalise, version_interne, code_metier, code_metier_normalise,
+  plan_reference, matiere_prevue,
   statut, is_current, commentaire_revision, type_changement, raison_changement, impact_interchangeabilite,
-  impact_parents, valide_par, date_validation::text AS date_validation, date_application::text AS date_application,
+  motif_modification, impact_parents, valide_par, date_validation::text AS date_validation, date_application::text AS date_application,
+  date_effet::text AS date_effet,
   commentaire_validation, date_revision::text AS date_revision, created_at::text AS created_at,
   updated_at::text AS updated_at, created_by, updated_by
 `
@@ -77,6 +88,40 @@ async function assertPieceExists(tx: Pick<PoolClient, "query">, pieceId: string)
   if (res.rowCount === 0) throw new HttpError(404, "NOT_FOUND", "Pièce technique introuvable")
 }
 
+export type PieceTechniqueVersionCloneResult = PieceTechniqueVersionRow & {
+  copied: {
+    current_gamme: boolean
+    gamme_operations: number
+    version_nomenclature_lines: number
+  }
+}
+
+async function generateVersionBusinessCode(
+  tx: Pick<PoolClient, "query">,
+  pieceTechniqueId: string,
+  planReference: string | null | undefined,
+  indiceExterne: string
+): Promise<string> {
+  if (!planReference?.trim()) {
+    throw new HttpError(400, "PLAN_REFERENCE_REQUIRED", "La référence plan est requise pour générer le code métier de version.")
+  }
+  const piece = await tx.query<{ client_id: string | null; code_client: string | null }>(
+    `SELECT client_id::text AS client_id, code_client
+       FROM public.pieces_techniques
+      WHERE id = $1 AND deleted_at IS NULL
+      LIMIT 1`,
+    [pieceTechniqueId]
+  )
+  const source = piece.rows[0]
+  if (!source) throw new HttpError(404, "NOT_FOUND", "Pièce technique introuvable")
+  return generatePieceTechniqueBusinessCode(tx, {
+    clientId: source.client_id,
+    clientCode: source.code_client,
+    planReference,
+    indiceExterne,
+  })
+}
+
 export async function repoListVersions(pieceTechniqueId: string): Promise<PieceTechniqueVersionRow[]> {
   await assertPieceExists(db, pieceTechniqueId)
   const res = await db.query<PieceTechniqueVersionRow>(
@@ -105,22 +150,25 @@ export async function repoCreateVersion(
   try {
     await client.query("BEGIN")
     await assertPieceExists(client, pieceTechniqueId)
+    const codeMetier = await generateVersionBusinessCode(client, pieceTechniqueId, body.plan_reference, body.indice)
 
     const res = await client.query<PieceTechniqueVersionRow>(
       `INSERT INTO public.piece_technique_versions
-        (piece_technique_id, indice, plan_reference, matiere_prevue, statut, is_current,
+        (piece_technique_id, indice, indice_externe_original, plan_reference, matiere_prevue, code_metier, motif_modification, date_effet, statut, is_current,
          commentaire_revision, type_changement, raison_changement, impact_interchangeabilite, impact_parents,
          date_revision, created_by, updated_by)
-       VALUES ($1,$2,$3,$4,'BROUILLON',false,$5,$6,$7,$8,$9, now(), $10,$10)
+       VALUES ($1,$2,$2,$3,$4,$5,$8,$9::date,'BROUILLON',false,$6,$7,$8,$10,$11, now(), $12,$12)
        RETURNING ${VERSION_COLUMNS}`,
       [
         pieceTechniqueId,
         body.indice,
         body.plan_reference ?? null,
         body.matiere_prevue ?? null,
+        codeMetier,
         body.commentaire_revision ?? null,
         body.type_changement ?? null,
         body.raison_changement ?? null,
+        body.date_effet ?? null,
         body.impact_interchangeabilite ?? null,
         body.impact_parents ?? null,
         audit.user_id,
@@ -156,8 +204,8 @@ export async function repoUpdateVersion(
   const client = await db.connect()
   try {
     await client.query("BEGIN")
-    const cur = await client.query<{ statut: VersionStatutDTO; updated_at: string }>(
-      `SELECT statut, updated_at::text AS updated_at FROM public.piece_technique_versions
+    const cur = await client.query<{ statut: VersionStatutDTO; updated_at: string; indice: string; plan_reference: string | null }>(
+      `SELECT statut, updated_at::text AS updated_at, indice, plan_reference FROM public.piece_technique_versions
        WHERE id = $1 AND piece_technique_id = $2 FOR UPDATE`,
       [versionId, pieceTechniqueId]
     )
@@ -173,20 +221,31 @@ export async function repoUpdateVersion(
       throw new HttpError(409, "CONCURRENT_MODIFICATION", "La version a été modifiée entre-temps")
     }
 
+    const nextIndice = body.indice ?? current.indice
+    const nextPlanReference = body.plan_reference === undefined ? current.plan_reference : body.plan_reference
+    const codeMetier = body.indice !== undefined || body.plan_reference !== undefined
+      ? await generateVersionBusinessCode(client, pieceTechniqueId, nextPlanReference, nextIndice)
+      : null
+
     const sets: string[] = []
     const values: unknown[] = []
     const push = (col: string, val: unknown) => {
       values.push(val)
       sets.push(`${col} = $${values.length}`)
     }
-    if (body.indice !== undefined) push("indice", body.indice)
+    if (body.indice !== undefined) {
+      push("indice", body.indice)
+      push("indice_externe_original", body.indice)
+    }
     if (body.plan_reference !== undefined) push("plan_reference", body.plan_reference)
+    if (codeMetier) push("code_metier", codeMetier)
     if (body.matiere_prevue !== undefined) push("matiere_prevue", body.matiere_prevue)
     if (body.commentaire_revision !== undefined) push("commentaire_revision", body.commentaire_revision)
     if (body.type_changement !== undefined) push("type_changement", body.type_changement)
     if (body.raison_changement !== undefined) push("raison_changement", body.raison_changement)
     if (body.impact_interchangeabilite !== undefined) push("impact_interchangeabilite", body.impact_interchangeabilite)
     if (body.impact_parents !== undefined) push("impact_parents", body.impact_parents)
+    if (body.date_effet !== undefined) push("date_effet", body.date_effet)
 
     values.push(audit.user_id)
     sets.push(`updated_by = $${values.length}`)
@@ -282,7 +341,7 @@ export async function repoCreateNextVersion(
   sourceVersionId: string,
   body: CreateNextVersionBodyDTO,
   audit: AuditContext
-): Promise<PieceTechniqueVersionRow> {
+): Promise<PieceTechniqueVersionCloneResult> {
   const client = await db.connect()
   try {
     await client.query("BEGIN")
@@ -296,36 +355,98 @@ export async function repoCreateNextVersion(
       throw new HttpError(404, "NOT_FOUND", "Version source introuvable")
     }
     const source = src.rows[0]
+    const planReference = body.plan_reference ?? source.plan_reference
+    const codeMetier = await generateVersionBusinessCode(client, pieceTechniqueId, planReference, body.indice)
 
     const res = await client.query<PieceTechniqueVersionRow>(
       `INSERT INTO public.piece_technique_versions
-        (piece_technique_id, indice, plan_reference, matiere_prevue, statut, is_current,
+        (piece_technique_id, indice, indice_externe_original, plan_reference, matiere_prevue, code_metier, motif_modification, date_effet, statut, is_current,
          commentaire_revision, type_changement, raison_changement, impact_interchangeabilite, impact_parents,
          date_revision, created_by, updated_by)
-       VALUES ($1,$2,$3,$4,'BROUILLON',false,$5,$6,$7,$8,$9, now(), $10,$10)
+       VALUES ($1,$2,$2,$3,$4,$5,$8,$9::date,'BROUILLON',false,$6,$7,$8,$10,$11, now(), $12,$12)
        RETURNING ${VERSION_COLUMNS}`,
       [
         pieceTechniqueId,
         body.indice,
-        body.plan_reference ?? source.plan_reference,
+        planReference,
         body.matiere_prevue ?? source.matiere_prevue,
+        codeMetier,
         body.commentaire_revision ?? null,
         body.type_changement ?? null,
         body.raison_changement ?? null,
+        body.date_effet ?? null,
         body.impact_interchangeabilite ?? null,
         body.impact_parents ?? null,
         audit.user_id,
       ]
     )
     const row = res.rows[0]
+
+    const copied = {
+      current_gamme: false,
+      gamme_operations: 0,
+      version_nomenclature_lines: 0,
+    }
+
+    const sourceGamme = await client.query<{ id: string }>(
+      `SELECT id::text AS id
+         FROM public.gammes
+        WHERE piece_technique_version_id = $1
+          AND is_current = true
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1`,
+      [sourceVersionId]
+    )
+    const sourceGammeId = sourceGamme.rows[0]?.id
+    if (sourceGammeId) {
+      const gamme = await client.query<{ id: string }>(
+        `INSERT INTO public.gammes
+          (piece_technique_version_id, nom, code, designation, commentaire, statut, is_current, created_by, updated_by)
+         SELECT $1, nom, code, designation, commentaire, 'BROUILLON', true, $3, $3
+           FROM public.gammes
+          WHERE id = $2
+         RETURNING id::text AS id`,
+        [row.id, sourceGammeId, audit.user_id]
+      )
+      const copiedGammeId = gamme.rows[0]?.id
+      if (!copiedGammeId) throw new Error("Impossible de copier la gamme courante de la version source")
+      copied.current_gamme = true
+
+      const copiedOperations = await client.query(
+        `INSERT INTO public.pieces_techniques_operations
+          (piece_technique_id, gamme_id, ordre, phase, designation, designation_2, type_operation, machine_id,
+           poste_id, cf_id, tp, tf_unit, qte, coef, taux_horaire, prix, temps_total, cout_mo, consignes)
+         SELECT piece_technique_id, $2::uuid, ordre, phase, designation, designation_2, type_operation, machine_id,
+                poste_id, cf_id, tp, tf_unit, qte, coef, taux_horaire, prix, temps_total, cout_mo, consignes
+           FROM public.pieces_techniques_operations
+          WHERE gamme_id = $1`,
+        [sourceGammeId, copiedGammeId]
+      )
+      copied.gamme_operations = copiedOperations.rowCount ?? 0
+    }
+
+    const copiedBom = await client.query(
+      `INSERT INTO public.pieces_techniques_nomenclature
+        (parent_piece_technique_id, parent_piece_technique_version_id, child_piece_technique_id,
+         child_piece_technique_version_id, child_article_id, rang, quantite, repere, designation)
+       SELECT parent_piece_technique_id, $2::uuid, child_piece_technique_id,
+              child_piece_technique_version_id, child_article_id, rang, quantite, repere, designation
+         FROM public.pieces_techniques_nomenclature
+        WHERE parent_piece_technique_id = $1::uuid
+          AND parent_piece_technique_version_id = $3::uuid`,
+      [pieceTechniqueId, row.id, sourceVersionId]
+    )
+    copied.version_nomenclature_lines = copiedBom.rowCount ?? 0
+
     await insertAudit(client, audit, "pieces-techniques.version.create-next", row.id, {
       piece_technique_id: pieceTechniqueId,
       source_version_id: sourceVersionId,
       indice: row.indice,
       type_changement: row.type_changement,
+      copied,
     })
     await client.query("COMMIT")
-    return row
+    return { ...row, copied }
   } catch (e) {
     await client.query("ROLLBACK").catch(() => {})
     if ((e as { code?: string })?.code === "23505") throw new HttpError(409, "CONFLICT", "Cet indice existe déjà pour cette pièce")

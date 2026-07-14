@@ -1,6 +1,8 @@
 // src/module/pieces-techniques/controllers/pieces-techniques.controller.ts
 import type { Request, RequestHandler } from "express"
 import fs from "node:fs/promises"
+import db from "../../../config/database"
+import { generatePieceTechniqueBusinessCode } from "../../../shared/codes/code-generator.service"
 import { getDocumentStoragePath, isPathInsideDirectory, resolveCerpStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
 import {
@@ -19,6 +21,7 @@ import {
   listPiecesTechniquesQuerySchema,
   operationIdParamSchema,
   pieceTechniqueStatusSchema,
+  pieceTechniqueCodePreviewSchema,
   reorderSchema,
   updateAchatSchema,
   updateBomLineSchema,
@@ -44,7 +47,6 @@ import {
   deleteBomLineSVC,
   deleteOperationSVC,
   deletePieceTechniqueSVC,
-  duplicatePieceTechniqueSVC,
   getPieceTechniqueFabricationTreeSVC,
   getPieceTechniqueSVC,
   listPieceTechniquesSVC,
@@ -114,6 +116,25 @@ export const createPieceTechnique: RequestHandler = async (req, res, next) => {
     const body: CreatePieceTechniqueBodyDTO = createPieceTechniqueSchema.parse({ body: req.body }).body
     const out = await createPieceTechniqueSVC(body, audit)
     res.status(201).json(out)
+  } catch (err) {
+    next(err)
+  }
+}
+
+export const previewPieceTechniqueCode: RequestHandler = async (req, res, next) => {
+  try {
+    const query = pieceTechniqueCodePreviewSchema.parse({ query: req.query }).query
+    const indiceExterne = query.sans_indice === "true" || query.sans_indice === "1" ? "NA" : query.indice_externe
+    if (!indiceExterne) {
+      throw new HttpError(400, "INDEX_REQUIRED", "External index is required unless Sans indice is selected.")
+    }
+    const code = await generatePieceTechniqueBusinessCode(db, {
+      clientId: query.client_id ?? null,
+      clientCode: query.code_client ?? null,
+      planReference: query.plan_reference,
+      indiceExterne,
+    })
+    res.json({ code, authoritative: false, source: "server-preview" })
   } catch (err) {
     next(err)
   }
@@ -196,14 +217,8 @@ export const deletePieceTechnique: RequestHandler = async (req, res, next) => {
 
 export const duplicatePieceTechnique: RequestHandler = async (req, res, next) => {
   try {
-    const { id } = idParamSchema.parse({ params: req.params }).params
-    const userId = req.user?.id ?? null
-    const out = await duplicatePieceTechniqueSVC(id, userId)
-    if (!out) {
-      res.status(404).json({ error: "Not found" })
-      return
-    }
-    res.status(201).json(out)
+    idParamSchema.parse({ params: req.params })
+    throw new HttpError(409, "VERSION_WORKFLOW_REQUIRED", "Créez une nouvelle version plutôt que de dupliquer une pièce technique.")
   } catch (err) {
     next(err)
   }

@@ -7,6 +7,7 @@ import path from "node:path";
 import db from "../../../config/database";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
+import { generatePieceTechniqueBusinessCode } from "../../../shared/codes/code-generator.service";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 import type {
@@ -178,7 +179,18 @@ function buildListWhere(filters: ListPiecesTechniquesQueryDTO) {
   if (filters.q && filters.q.trim().length > 0) {
     const q = `%${filters.q.trim()}%`;
     const p = push(q);
-    where.push(`(p.code_piece ILIKE ${p} OR p.designation ILIKE ${p} OR p.name_piece ILIKE ${p})`);
+    const normalized = `%${filters.q.trim().replace(/[^A-Za-z0-9]+/g, "").toUpperCase()}%`;
+    const pn = push(normalized);
+    where.push(`(
+      p.code_piece ILIKE ${p}
+      OR p.designation ILIKE ${p}
+      OR p.name_piece ILIKE ${p}
+      OR EXISTS (
+        SELECT 1 FROM public.piece_technique_versions pv
+        WHERE pv.piece_technique_id = p.id
+          AND (pv.code_metier ILIKE ${p} OR pv.code_metier_normalise ILIKE ${pn})
+      )
+    )`);
   }
   if (filters.client_id) where.push(`p.client_id = ${push(filters.client_id)}`);
   if (filters.famille_id) where.push(`p.famille_id = ${push(filters.famille_id)}::uuid`);
@@ -236,7 +248,7 @@ export async function repoListPieceTechniques(filters: ListPiecesTechniquesQuery
       p.root_piece_technique_id::text AS root_piece_technique_id,
       p.parent_piece_technique_id::text AS parent_piece_technique_id,
       p.version_number::int AS version_number,
-      p.code_piece,
+      COALESCE(current_version.code_metier, p.code_piece) AS code_piece,
       p.designation,
       p.designation_2,
       p.client_id,
@@ -257,6 +269,14 @@ export async function repoListPieceTechniques(filters: ListPiecesTechniquesQuery
       COALESCE(na.achats_total_ht, 0)::float8 AS achats_total_ht
     FROM pieces_techniques p
     LEFT JOIN pieces_families f ON f.id = p.famille_id
+    LEFT JOIN LATERAL (
+      SELECT v.code_metier
+      FROM public.piece_technique_versions v
+      WHERE v.piece_technique_id = p.id
+        AND v.statut = 'APPLICABLE'
+      ORDER BY v.date_effet DESC NULLS LAST, v.version_interne DESC NULLS LAST, v.created_at DESC
+      LIMIT 1
+    ) current_version ON true
     LEFT JOIN (
       SELECT parent_piece_technique_id, COUNT(*)::int AS bom_count
       FROM pieces_techniques_nomenclature
@@ -1367,6 +1387,19 @@ export async function repoCreatePieceTechnique(
     const clientIdForInsert = body.client_id ?? null;
     const clientNameForInsert =
       body.client_name ?? (clientIdForInsert ? await lookupClientCompanyName(client, clientIdForInsert) : null);
+    const indiceExterne = body.sans_indice ? "NA" : body.indice_externe?.trim() ?? null;
+    const generatedCode = body.plan_reference
+      ? await generatePieceTechniqueBusinessCode(client, {
+          clientId: clientIdForInsert,
+          clientCode: body.code_client,
+          planReference: body.plan_reference,
+          indiceExterne: indiceExterne ?? "NA",
+        })
+      : null;
+
+    if (!generatedCode) {
+      throw new HttpError(400, "TECHNICAL_CODE_INPUT_REQUIRED", "Client, plan reference and external index are required to generate the technical piece code.");
+    }
 
     const insertMainSQL = `
       INSERT INTO pieces_techniques (
@@ -1423,7 +1456,7 @@ export async function repoCreatePieceTechnique(
       updatedBy,
       body.famille_id,
       body.name_piece,
-      body.code_piece,
+      generatedCode,
       body.designation,
       body.designation_2 ?? null,
       body.prix_unitaire,
@@ -1442,6 +1475,28 @@ export async function repoCreatePieceTechnique(
 
     const piece = mapCoreRow(core);
     const pieceId = core.id;
+
+    if (body.plan_reference) {
+      await client.query(
+        `INSERT INTO public.piece_technique_versions (
+           piece_technique_id, indice, plan_reference, indice_externe_original, indice_externe_normalise,
+           version_interne, code_metier, statut, is_current, raison_changement, motif_modification, date_application, date_effet,
+           date_revision, created_by, updated_by
+         )
+         VALUES ($1::uuid, $2, $3, $4, $5, 1, $6, 'BROUILLON', false, $7, $7, $8::date, $8::date, now(), $9, $9)`,
+        [
+          pieceId,
+          indiceExterne ?? "NA",
+          body.plan_reference,
+          body.sans_indice ? null : body.indice_externe ?? null,
+          indiceExterne,
+          generatedCode,
+          body.motif_modification ?? "Création initiale",
+          body.date_effet ?? null,
+          actorUserId,
+        ]
+      );
+    }
 
     piece.bom = await insertBomLines(client, pieceId, body.bom ?? []);
     piece.operations = await insertOperations(client, pieceId, body.operations ?? []);
@@ -1475,7 +1530,7 @@ export async function repoCreatePieceTechnique(
       entity_type: "pieces_techniques",
       entity_id: pieceId,
       details: {
-        code_piece: body.code_piece,
+        code_piece: generatedCode,
         designation: body.designation,
         statut: body.statut,
         bom_count: piece.bom.length,
@@ -1767,7 +1822,6 @@ export async function repoUpdatePieceTechnique(
   if (patch.client_name !== undefined) sets.push(`client_name = ${push(patch.client_name)}`);
   if (patch.famille_id !== undefined) sets.push(`famille_id = ${push(patch.famille_id)}::uuid`);
   if (patch.name_piece !== undefined) sets.push(`name_piece = ${push(patch.name_piece)}`);
-  if (patch.code_piece !== undefined) sets.push(`code_piece = ${push(patch.code_piece)}`);
   if (patch.designation !== undefined) sets.push(`designation = ${push(patch.designation)}`);
   if (patch.designation_2 !== undefined) sets.push(`designation_2 = ${push(patch.designation_2)}`);
   if (patch.prix_unitaire !== undefined) sets.push(`prix_unitaire = ${push(patch.prix_unitaire)}`);

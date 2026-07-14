@@ -61,6 +61,14 @@ router.post("/projects/:id/actions", registers.postAction);
 router.patch("/actions/:id", registers.patchAction);
 router.get("/projects/:id/evidence", registers.getEvidence);
 router.post("/projects/:id/evidence", registers.postEvidence);
+const evidenceFileUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024, files: 1, fields: 12, fieldSize: 64 * 1024 },
+});
+router.post("/projects/:id/evidence/files", evidenceFileUpload.single("file"), registers.postEvidenceFile);
+router.get("/projects/:id/evidence/files", registers.getEvidenceFiles);
+router.get("/projects/:projectId/evidence-files/:id/content", registers.getProjectEvidenceFileContent);
+router.get("/evidence-files/:id/download", registers.getEvidenceFileDownload);
 router.get("/projects/:id/external-links", registers.getExternalLinks);
 router.post("/external-links", registers.postExternalLink);
 

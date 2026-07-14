@@ -1,7 +1,9 @@
 import type { PoolClient } from "pg";
+import crypto from "node:crypto";
 import path from "node:path";
 
 import pool from "../../../config/database";
+import { generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
@@ -2124,6 +2126,9 @@ async function selectOfHeader(q: DbQueryer, ofId: number): Promise<Omit<OrdreFab
     production_group_id: string | null;
     production_group_code: string | null;
     piece_technique_id: string;
+    piece_technique_version_id: string | null;
+    technical_snapshot_sha256: string | null;
+    technical_snapshot_at: string | null;
     piece_code: string;
     piece_designation: string;
     quantite_lancee: number;
@@ -2162,6 +2167,9 @@ async function selectOfHeader(q: DbQueryer, ofId: number): Promise<Omit<OrdreFab
         o.production_group_id::text AS production_group_id,
         pg.code AS production_group_code,
         o.piece_technique_id::text AS piece_technique_id,
+        o.piece_technique_version_id::text AS piece_technique_version_id,
+        o.technical_snapshot_sha256,
+        o.technical_snapshot_at::text AS technical_snapshot_at,
         pt.code_piece AS piece_code,
         pt.designation AS piece_designation,
         o.quantite_lancee::float8 AS quantite_lancee,
@@ -2209,6 +2217,9 @@ async function selectOfHeader(q: DbQueryer, ofId: number): Promise<Omit<OrdreFab
     production_group_id: row.production_group_id,
     production_group_code: row.production_group_code,
     piece_technique_id: row.piece_technique_id,
+    piece_technique_version_id: row.piece_technique_version_id,
+    technical_snapshot_sha256: row.technical_snapshot_sha256,
+    technical_snapshot_at: row.technical_snapshot_at,
     piece_code: row.piece_code,
     piece_designation: row.piece_designation,
     quantite_lancee: Number(row.quantite_lancee),
@@ -2900,6 +2911,64 @@ export async function repoCreateOrdreFabrication(params: {
       throw new HttpError(422, "PIECE_TECHNIQUE_NOT_FOUND", "Piece technique not found");
     }
 
+    const versionRes = await client.query<{
+      id: string;
+      indice: string;
+      version_interne: number | null;
+      plan_reference: string | null;
+      code_metier: string | null;
+      gamme_id: string | null;
+      gamme_code: string | null;
+    }>(
+      `SELECT v.id::text AS id, v.indice, v.version_interne, v.plan_reference, v.code_metier,
+              g.id::text AS gamme_id, g.code AS gamme_code
+         FROM public.piece_technique_versions v
+         LEFT JOIN public.gammes g ON g.piece_technique_version_id = v.id AND g.is_current = true
+        WHERE v.id = $1::uuid
+          AND v.piece_technique_id = $2::uuid
+          AND v.statut = 'APPLICABLE'
+          AND (v.date_effet IS NULL OR v.date_effet <= CURRENT_DATE)
+        LIMIT 1`,
+      [params.body.piece_technique_version_id, params.body.piece_technique_id]
+    );
+    const version = versionRes.rows[0] ?? null;
+    if (!version) {
+      throw new HttpError(422, "VERSION_NOT_APPLICABLE", "The selected technical version is not applicable for this OF.");
+    }
+
+    const snapshotRes = await client.query<{ snapshot: unknown }>(
+      `SELECT jsonb_build_object(
+          'piece', jsonb_build_object('id', pt.id::text, 'code', COALESCE(v.code_metier, pt.code_piece), 'legacy_code', pt.code_piece, 'designation', pt.designation),
+          'version', jsonb_build_object('id', v.id::text, 'indice_externe', v.indice, 'version_interne', v.version_interne, 'plan_reference', v.plan_reference, 'code_metier', v.code_metier),
+          'gamme', CASE WHEN g.id IS NULL THEN NULL ELSE jsonb_build_object('id', g.id::text, 'code', g.code, 'designation', g.designation) END,
+          'operations', COALESCE((
+            SELECT jsonb_agg(jsonb_build_object('id', op.id::text, 'phase', op.phase, 'designation', op.designation, 'tp', op.tp, 'tf_unit', op.tf_unit, 'qte', op.qte, 'coef', op.coef) ORDER BY op.phase, op.id)
+            FROM public.pieces_techniques_operations op
+            WHERE op.piece_technique_id = pt.id
+              AND (op.gamme_id = g.id OR (g.id IS NULL AND op.gamme_id IS NULL))
+          ), '[]'::jsonb),
+          'nomenclature', COALESCE((
+            SELECT jsonb_agg(jsonb_build_object('id', bom.id::text, 'child_piece_technique_id', bom.child_piece_technique_id::text, 'child_piece_technique_version_id', bom.child_piece_technique_version_id::text, 'child_article_id', bom.child_article_id::text, 'quantite', bom.quantite, 'repere', bom.repere) ORDER BY bom.rang, bom.id)
+            FROM public.pieces_techniques_nomenclature bom
+            WHERE bom.parent_piece_technique_id = pt.id
+              AND (bom.parent_piece_technique_version_id = v.id OR bom.parent_piece_technique_version_id IS NULL)
+          ), '[]'::jsonb),
+          'documents', COALESCE((
+            SELECT jsonb_agg(jsonb_build_object('id', doc.id::text, 'name', doc.original_name, 'mime_type', doc.mime_type, 'sha256', doc.sha256) ORDER BY doc.created_at, doc.id)
+            FROM public.pieces_techniques_documents doc
+            WHERE doc.piece_technique_id = pt.id AND doc.removed_at IS NULL
+          ), '[]'::jsonb)
+        ) AS snapshot
+        FROM public.pieces_techniques pt
+        JOIN public.piece_technique_versions v ON v.id = $1::uuid
+        LEFT JOIN public.gammes g ON g.id = $3::uuid
+        WHERE pt.id = $2::uuid`,
+      [version.id, params.body.piece_technique_id, version.gamme_id]
+    );
+    const technicalSnapshot = snapshotRes.rows[0]?.snapshot;
+    if (!technicalSnapshot) throw new HttpError(422, "TECHNICAL_DATA_INCOMPLETE", "Unable to build the technical OF snapshot.");
+    const technicalSnapshotSha256 = crypto.createHash("sha256").update(JSON.stringify(technicalSnapshot)).digest("hex");
+
     const idRes = await client.query<{ of_id: string }>(
       `SELECT nextval(pg_get_serial_sequence('public.ordres_fabrication','id'))::text AS of_id`
     );
@@ -2907,8 +2976,7 @@ export async function repoCreateOrdreFabrication(params: {
     const ofId = toInt(rawId, "ordres_fabrication.id");
 
     const b = params.body;
-    const numero = typeof b.numero === "string" && b.numero.trim().length > 0 ? b.numero.trim() : null;
-    const numeroForInsert = numero ?? `OF-${ofId}`;
+    const numeroForInsert = await generateTransactionalBusinessCode(client, { prefix: "OF" });
 
     const ins = await client.query<{ id: string; numero: string }>(
       `
@@ -2925,6 +2993,10 @@ export async function repoCreateOrdreFabrication(params: {
           quantity_cumulative,
           client_id,
           piece_technique_id,
+          piece_technique_version_id,
+          technical_snapshot,
+          technical_snapshot_sha256,
+          technical_snapshot_at,
           quantite_lancee,
           statut,
           priority,
@@ -2947,14 +3019,18 @@ export async function repoCreateOrdreFabrication(params: {
           1,
           $5,
           $6::uuid,
-          $7,
-          $8::of_status,
-          $9::of_priority,
-          $10::date,
-          $11::date,
-          $12,
-          $13,
-          $13
+          $7::uuid,
+          $8::jsonb,
+          $9,
+          now(),
+          $10,
+          $11::of_status,
+          $12::of_priority,
+          $13::date,
+          $14::date,
+          $15,
+          $16,
+          $16
         )
         RETURNING id::text AS id, numero
       `,
@@ -2965,6 +3041,9 @@ export async function repoCreateOrdreFabrication(params: {
         b.commande_id ?? null,
         b.client_id ?? null,
         b.piece_technique_id,
+        version.id,
+        JSON.stringify(technicalSnapshot),
+        technicalSnapshotSha256,
         b.quantite_lancee,
         b.statut,
         b.priority,
@@ -3015,9 +3094,16 @@ export async function repoCreateOrdreFabrication(params: {
           pto.id AS source_piece_operation_id
         FROM pieces_techniques_operations pto
         WHERE pto.piece_technique_id = $2::uuid
+          AND (pto.gamme_id = $3::uuid OR ($3::uuid IS NULL AND pto.gamme_id IS NULL))
         ORDER BY pto.phase ASC, pto.id ASC
       `,
-      [ofId, b.piece_technique_id]
+      [ofId, b.piece_technique_id, version.gamme_id]
+    );
+
+    await client.query(
+      `INSERT INTO public.of_technical_snapshots (of_id, piece_technique_version_id, snapshot, snapshot_sha256, created_by)
+       VALUES ($1::bigint, $2::uuid, $3::jsonb, $4, $5)`,
+      [ofId, version.id, JSON.stringify(technicalSnapshot), technicalSnapshotSha256, params.audit.user_id]
     );
 
     await insertAuditLog(client, params.audit, {
@@ -3027,6 +3113,8 @@ export async function repoCreateOrdreFabrication(params: {
       details: {
         numero: created.numero,
         piece_technique_id: b.piece_technique_id,
+        piece_technique_version_id: version.id,
+        technical_snapshot_sha256: technicalSnapshotSha256,
         quantite_lancee: b.quantite_lancee,
         operations_count: insOps.rowCount ?? 0,
       },

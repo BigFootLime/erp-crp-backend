@@ -30,6 +30,7 @@ RUN mkdir -p \
   && chown -R node:node /app/data /app/uploads
 USER node
 ENV PORT=5000
+ENV CERP_DOCUMENTS_ROOT=/app/data/documents
 EXPOSE 5000
 # ...
 

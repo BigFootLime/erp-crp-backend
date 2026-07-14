@@ -1,6 +1,7 @@
 import type { Request, RequestHandler, Response } from "express";
 import fs from "node:fs/promises";
 
+import { previewArticleCode } from "../../../shared/codes/code-generator.service";
 import { getDocumentStoragePath, isPathInsideDirectory, resolveCerpStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import {
@@ -418,6 +419,18 @@ export const createStockArticle: RequestHandler = async (req, res, next) => {
     const body: CreateArticleBodyDTO = createArticleSchema.parse({ body: req.body }).body;
     const out = await createStockArticleSVC(body, audit);
     res.status(201).json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const previewStockArticleCode: RequestHandler = async (req, res, next) => {
+  try {
+    const familyCode = typeof req.query.family_code === "string" ? req.query.family_code : "";
+    if (!familyCode.trim()) {
+      throw new HttpError(400, "ARTICLE_FAMILY_REQUIRED", "Article family is required to preview the code.");
+    }
+    res.json({ code: previewArticleCode(familyCode), authoritative: false, source: "server-preview" });
   } catch (err) {
     next(err);
   }

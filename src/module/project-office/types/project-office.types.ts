@@ -17,7 +17,7 @@ export type PoActionSource = "AUDIT" | "BUG" | "RISK" | "SECURITY" | "USER_FEEDB
 export type PoActionStatus = "OPEN" | "IN_PROGRESS" | "DONE" | "CANCELLED";
 export type PoEvidenceType =
   | "PR" | "COMMIT" | "TEST" | "SCREENSHOT" | "AUDIT"
-  | "DEPLOYMENT" | "BACKUP" | "DOCUMENT" | "SECURITY_SCAN" | "OTHER";
+  | "DEPLOYMENT" | "BACKUP" | "DOCUMENT" | "VSM" | "SECURITY_SCAN" | "OTHER";
 export type PoLinkProvider = "GITHUB" | "GITLAB" | "OTHER";
 export type PoExternalType = "PR" | "ISSUE" | "COMMIT" | "PIPELINE" | "RELEASE" | "DOC";
 
@@ -190,6 +190,23 @@ export type EvidenceRow = {
   description: string | null;
   created_by: number;
   created_at: string;
+};
+
+export type EvidenceFileRow = {
+  id: string;
+  evidence_id: string;
+  project_id: string;
+  original_name: string;
+  mime_type: string;
+  size_bytes: number;
+  sha256: string;
+  category: "DOCUMENT" | "VSM";
+  version_number: number;
+  status: "BROUILLON" | "VALIDE" | "OBSOLETE";
+  date_effet: string | null;
+  visibility: "PRIVATE" | "INTERNAL";
+  created_at: string;
+  created_by: number | null;
 };
 
 export type CommentRow = {

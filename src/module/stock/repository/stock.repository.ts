@@ -5,6 +5,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import db from "../../../config/database";
+import { generateArticleBusinessCode, generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
@@ -2015,10 +2016,13 @@ export async function repoCreateArticle(body: CreateArticleBodyDTO, audit: Audit
       piece_technique_id: body.piece_technique_id ?? null,
       stock_managed: body.stock_managed,
       lot_tracking: body.lot_tracking,
-      code: body.code,
+      // The submitted code is non-authoritative. Keep legacy payloads compatible
+      // while the final ART-{FAMILY}-{SEQ6} value is allocated below.
+      code: "",
       designation: body.designation,
       client,
     });
+    const generatedCode = await generateArticleBusinessCode(client, normalized.family_code);
 
     if (normalized.piece_technique_id) {
       await ensurePieceTechniqueExists(client, normalized.piece_technique_id);
@@ -2040,7 +2044,7 @@ export async function repoCreateArticle(body: CreateArticleBodyDTO, audit: Audit
       `,
       [
         articleId,
-        normalized.code,
+        generatedCode,
         body.designation,
         normalized.article_type,
         normalized.article_category,
@@ -2084,7 +2088,7 @@ export async function repoCreateArticle(body: CreateArticleBodyDTO, audit: Audit
       entity_type: "articles",
       entity_id: id,
       details: {
-        code: normalized.code,
+        code: generatedCode,
         designation: body.designation,
         article_type: normalized.article_type,
         article_category: normalized.article_category,
@@ -2180,6 +2184,9 @@ export async function repoUpdateArticle(
       await client.query("ROLLBACK");
       return null;
     }
+    if (patch.code !== undefined) {
+      throw new HttpError(400, "CODE_IMMUTABLE", "Article business codes are server-generated and cannot be supplied on update.");
+    }
 
     const normalized = await normalizeArticleState({
       article_type: patch.article_type ?? current.article_type,
@@ -2193,7 +2200,7 @@ export async function repoUpdateArticle(
       piece_technique_id: patch.piece_technique_id !== undefined ? patch.piece_technique_id : current.piece_technique_id,
       stock_managed: patch.stock_managed ?? current.stock_managed,
       lot_tracking: patch.lot_tracking ?? current.lot_tracking,
-      code: patch.code ?? current.code ?? "",
+      code: current.code ?? "",
       designation: patch.designation ?? current.designation,
       client,
     });
@@ -2202,7 +2209,6 @@ export async function repoUpdateArticle(
       await ensureArticleCanDisableStockManagement(client, id);
     }
 
-    sets.push(`code = ${push(normalized.code)}`);
     if (patch.designation !== undefined) sets.push(`designation = ${push(patch.designation)}`);
     sets.push(`article_type = ${push(normalized.article_type)}`);
     sets.push(`article_category = ${push(normalized.article_category)}`);
@@ -2982,8 +2988,14 @@ export async function repoGetLot(id: string): Promise<StockLotDetail | null> {
 }
 
 export async function repoCreateLot(body: CreateLotBodyDTO, audit: AuditContext): Promise<StockLotDetail> {
+  const client = await db.connect();
   try {
-    const res = await db.query<{ id: string }>(
+    await client.query("BEGIN");
+    if (body.lot_code?.trim()) {
+      throw new HttpError(400, "LOT_CODE_SERVER_MANAGED", "Le numéro de lot interne est attribué automatiquement.");
+    }
+    const lotCode = await generateTransactionalBusinessCode(client, { prefix: "LOT" });
+    const res = await client.query<{ id: string }>(
       `
         INSERT INTO public.lots (
           article_id, lot_code, supplier_lot_code,
@@ -2995,7 +3007,7 @@ export async function repoCreateLot(body: CreateLotBodyDTO, audit: AuditContext)
       `,
       [
         body.article_id,
-        body.lot_code,
+        lotCode,
         body.supplier_lot_code ?? null,
         body.received_at ?? null,
         body.manufactured_at ?? null,
@@ -3007,25 +3019,33 @@ export async function repoCreateLot(body: CreateLotBodyDTO, audit: AuditContext)
     const id = res.rows[0]?.id;
     if (!id) throw new Error("Failed to create lot");
 
-    await insertAuditLog(db, audit, {
+    await insertAuditLog(client, audit, {
       action: "stock.lots.create",
       entity_type: "lots",
       entity_id: id,
-      details: { article_id: body.article_id, lot_code: body.lot_code },
+      details: { article_id: body.article_id, lot_code: lotCode },
     });
+
+    await client.query("COMMIT");
 
     const out = await repoGetLot(id);
     if (!out) throw new Error("Failed to read created lot");
     return out;
   } catch (err) {
+    await client.query("ROLLBACK").catch(() => undefined);
     if (isPgUniqueViolation(err)) {
       throw new HttpError(409, "DUPLICATE", "Lot code already exists for this article");
     }
     throw err;
+  } finally {
+    client.release();
   }
 }
 
 export async function repoUpdateLot(id: string, patch: UpdateLotBodyDTO, audit: AuditContext): Promise<StockLotDetail | null> {
+  if (patch.lot_code !== undefined) {
+    throw new HttpError(400, "LOT_CODE_IMMUTABLE", "Le numéro de lot interne ne peut pas être modifié.");
+  }
   const sets: string[] = [];
   const values: unknown[] = [];
   const push = (v: unknown) => {
@@ -3033,7 +3053,6 @@ export async function repoUpdateLot(id: string, patch: UpdateLotBodyDTO, audit: 
     return `$${values.length}`;
   };
 
-  if (patch.lot_code !== undefined) sets.push(`lot_code = ${push(patch.lot_code)}`);
   if (patch.supplier_lot_code !== undefined) sets.push(`supplier_lot_code = ${push(patch.supplier_lot_code)}`);
   if (patch.received_at !== undefined) sets.push(`received_at = ${push(patch.received_at)}::date`);
   if (patch.manufactured_at !== undefined) sets.push(`manufactured_at = ${push(patch.manufactured_at)}::date`);

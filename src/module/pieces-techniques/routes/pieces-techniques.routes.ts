@@ -10,6 +10,7 @@ import {
   addBomLine,
   addOperation,
   createPieceTechnique,
+  previewPieceTechniqueCode,
   deletePieceTechnique,
   deleteAchat,
   deleteBomLine,
@@ -101,6 +102,7 @@ const upload = multer({
 
 router.use(authenticateToken)
 
+router.get("/code-preview", previewPieceTechniqueCode)
 router.post("/", validate(createPieceTechniqueSchema), createPieceTechnique)
 router.get("/", listPieceTechniques)
 router.get("/by-affaire/:affaireId", validate(affaireOnlyParamSchema), listAffairePieceTechniques)
@@ -120,7 +122,7 @@ router.post("/:id/create-or-link-article-fabrique", validate(idParamSchema), cre
 router.get("/:id/versions", validate(idParamSchema), listVersions)
 router.post("/:id/versions", validate(idParamSchema), validate(createVersionSchema), createVersion)
 router.patch("/:id/versions/:versionId", validate(versionIdParamSchema), validate(updateVersionSchema), updateVersion)
-router.patch("/:id/versions/:versionId/status", validate(versionIdParamSchema), validate(versionStatusSchema), updateVersionStatus)
+router.patch("/:id/versions/:versionId/status", requireAdmin, validate(versionIdParamSchema), validate(versionStatusSchema), updateVersionStatus)
 router.post("/:id/versions/:versionId/create-next", validate(versionIdParamSchema), validate(createNextVersionSchema), createNextVersion)
 
 router.post("/:id/nomenclature", validate(idParamSchema), validate(addBomLineSchema), addBomLine)

@@ -431,6 +431,7 @@ describe("/api/v1/devis", () => {
       }) // load devis FOR UPDATE
       .mockResolvedValueOnce({ rows: [] }) // existing commande
       .mockResolvedValueOnce({ rows: [{ id: "55" }] }) // commande id sequence
+      .mockResolvedValueOnce({ rows: [{ v: "1" }] }) // fn_next_code_value CMD
       .mockResolvedValueOnce({ rows: [] }) // INSERT commande_client
       .mockResolvedValueOnce({ rowCount: 1, rows: [] }) // INSERT commande_ligne from devis_ligne
       .mockResolvedValueOnce({ rows: [] }) // UPDATE articles EN_DEVIS -> VALIDE
@@ -439,7 +440,7 @@ describe("/api/v1/devis", () => {
     const res = await request(app).post("/api/v1/devis/7/convert-to-commande");
 
     expect(res.status).toBe(201);
-    expect(res.body).toMatchObject({ id: 55, numero: "CC-55" });
+    expect(res.body).toMatchObject({ id: 55, numero: "CMD-2026-0001" });
 
     const existingSql = String(
       mocks.clientQuery.mock.calls.find((c) => String(c[0]).includes("FROM commande_client cc"))?.[0] ?? ""
@@ -573,6 +574,7 @@ describe("/api/v1/devis", () => {
     mocks.clientQuery
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
       .mockResolvedValueOnce({ rows: [{ id: "7" }] }) // nextval devis_id_seq
+      .mockResolvedValueOnce({ rows: [{ v: "1" }] }) // fn_next_code_value DEV
       .mockResolvedValueOnce({ rows: [{ id: "7" }] }) // INSERT devis
       .mockResolvedValueOnce({ rows: [{ exists: false }] }) // legacy devis_ligne.code_piece probe
       .mockResolvedValueOnce({ rows: [{ id: "1" }] }) // INSERT devis_ligne (RETURNING id)
