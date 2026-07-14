@@ -5,6 +5,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 
 import db from "../../../config/database"
+import { generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service"
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
@@ -834,20 +835,6 @@ export async function repoCreateLine(receptionId: string, body: CreateLineBodyDT
   }
 }
 
-function formatYyyyMmDd(d: Date): string {
-  const yyyy = String(d.getUTCFullYear())
-  const mm = String(d.getUTCMonth() + 1).padStart(2, "0")
-  const dd = String(d.getUTCDate()).padStart(2, "0")
-  return `${yyyy}${mm}${dd}`
-}
-
-function generateLotCode(receptionNo: string, lineNo: number): string {
-  const date = formatYyyyMmDd(new Date())
-  const suffix = crypto.randomBytes(3).toString("hex")
-  const raw = `MP-${receptionNo}-${lineNo}-${date}-${suffix}`
-  return raw.length <= 80 ? raw : raw.slice(0, 80)
-}
-
 export async function repoCreateLotForLine(
   receptionId: string,
   lineId: string,
@@ -891,7 +878,10 @@ export async function repoCreateLotForLine(
     }
     if (line.lot_id) throw new HttpError(409, "LOT_ALREADY_SET", "Un lot est deja rattache a cette ligne")
 
-    const lotCode = body.lot_code?.trim() ? body.lot_code.trim() : generateLotCode(line.reception_no, line.line_no)
+    if (body.lot_code?.trim()) {
+      throw new HttpError(400, "LOT_CODE_SERVER_MANAGED", "Le numéro de lot interne est attribué automatiquement.")
+    }
+    const lotCode = await generateTransactionalBusinessCode(client, { prefix: "LOT" })
     const supplierLotCode = body.supplier_lot_code ?? line.supplier_lot_code ?? null
 
     let lotId: string

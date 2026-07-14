@@ -64,3 +64,31 @@ This patch does not rename or remove historical tables. The technical table
 `pieces_techniques_nomenclature` remains the manufactured parent/child
 structure, while `pieces_techniques_achats` remains the purchase/procurement
 structure.
+
+## Issue #141 - Codification, versions techniques et VSM
+
+Patch `20260713_codification_versions_of_vsm.sql` is additive and must be
+applied to `cerp_test` before any production decision. It adds:
+
+- the external-index/internal-revision separation and immutability triggers on
+  `piece_technique_versions`;
+- an applicable-version reference and SHA-256 technical snapshot for each OF;
+- controlled VSM/document evidence metadata for Project Office.
+
+Run `db/patches/support/20260713_codification_versions_of_vsm.verify.sql`
+after application.
+
+Before `cerp_test` and again before `cerp_prod`, run the read-only
+`db/patches/support/20260713_codification_versions_of_vsm.preflight.sql`.
+It reports missing/ambiguous client-plan-index mappings, old index collisions,
+OFs already in use, migration state and sequence counters. It never updates
+data and no automatic mapping is permitted for an ambiguous row.
+
+Project Office evidence requires `CERP_DOCUMENTS_ROOT` in production. It must
+be an explicit persistent, shared mount available to every application
+instance; the API refuses evidence storage when production lacks that setting.
+The companion rollback script is deliberately guarded and refuses to remove
+post-migration technical versions/metadata, code allocations, quality-control
+references, retained OF snapshots, or Project Office evidence. The additive
+`po_evidence_type.VSM` enum value remains because PostgreSQL cannot safely
+remove enum values in a transactional rollback.

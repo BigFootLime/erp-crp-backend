@@ -171,6 +171,9 @@ export type OrdreFabricationDetail = {
   production_group_id: string | null;
   production_group_code: string | null;
   piece_technique_id: string;
+  piece_technique_version_id: string | null;
+  technical_snapshot_sha256: string | null;
+  technical_snapshot_at: string | null;
   piece_code: string;
   piece_designation: string;
   quantite_lancee: number;

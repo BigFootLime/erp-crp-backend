@@ -10,6 +10,7 @@ import {
   closeStockInventorySession,
   createStockInventorySession,
   createStockArticle,
+  previewStockArticleCode,
   createStockArticleFamily,
   createStockMatiereEtat,
   createStockMatiereNuance,
@@ -85,6 +86,7 @@ router.get("/matiere-sous-etats", listStockMatiereSousEtats);
 router.post("/matiere-sous-etats", createStockMatiereSousEtat);
 router.get("/articles", listStockArticles);
 router.get("/articles/kpis", getStockArticlesKpis);
+router.get("/articles/code-preview", previewStockArticleCode);
 router.post("/articles", createStockArticle);
 router.get("/articles/:id", getStockArticle);
 router.patch("/articles/:id", updateStockArticle);

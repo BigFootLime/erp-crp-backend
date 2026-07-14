@@ -1,7 +1,7 @@
 import type { PoolClient } from "pg";
-import crypto from "node:crypto";
 
 import pool from "../../../config/database";
+import { generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
@@ -390,20 +390,6 @@ async function ensureStockBatchId(client: Pick<PoolClient, "query">, args: { sto
   return id;
 }
 
-function formatYyyyMmDd(d: Date): string {
-  const yyyy = String(d.getUTCFullYear());
-  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(d.getUTCDate()).padStart(2, "0");
-  return `${yyyy}${mm}${dd}`;
-}
-
-function generateLotCode(ofNumero: string): string {
-  const date = formatYyyyMmDd(new Date());
-  const suffix = crypto.randomBytes(3).toString("hex");
-  const base = `FG-${ofNumero}-${date}-${suffix}`;
-  return base.length <= 80 ? base : base.slice(0, 80);
-}
-
 async function insertMovementEvent(client: Pick<PoolClient, "query">, args: {
   movement_id: string;
   event_type: string;
@@ -634,8 +620,10 @@ export async function repoCreateOfReceipt(params: { of_id: number; body: OfRecei
       lotId = row.id;
       lotCode = row.lot_code;
     } else {
-      const requested = params.body.lot_number?.trim() ? params.body.lot_number.trim() : null;
-      const code = requested ?? generateLotCode(ofRow.numero);
+      if (params.body.lot_number?.trim()) {
+        throw new HttpError(400, "LOT_CODE_SERVER_MANAGED", "Le numéro de lot interne est attribué automatiquement.");
+      }
+      const code = await generateTransactionalBusinessCode(client, { prefix: "LOT" });
       try {
         const ins = await client.query<{ id: string }>(
           `

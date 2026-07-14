@@ -147,7 +147,14 @@ export const createPieceTechniqueSchema = z.object({
     client_name: z.string().trim().min(1).max(200).optional().nullable(),
     famille_id: uuid,
     name_piece: z.string().trim().min(1, "Nom de pièce requis"),
-    code_piece: z.string().trim().min(1, "Code pièce requis"),
+    // Kept only to return a clear compatibility error to legacy callers.  It is
+    // never accepted as the source of a final business code.
+    code_piece: z.string().trim().min(1).optional().nullable(),
+    plan_reference: z.string().trim().min(1).max(160).optional().nullable(),
+    indice_externe: z.string().trim().min(1).max(20).optional().nullable(),
+    sans_indice: z.boolean().optional().default(false),
+    motif_modification: z.string().trim().min(1).max(2000).optional().nullable(),
+    date_effet: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date attendue au format YYYY-MM-DD").optional().nullable(),
     designation: z.string().trim().min(1, "Désignation requise"),
     designation_2: z.string().optional().nullable(),
     prix_unitaire: z.coerce.number().min(0).optional().default(0),
@@ -158,10 +165,30 @@ export const createPieceTechniqueSchema = z.object({
     bom: z.array(bomLineInputSchema).optional().default([]),
     operations: z.array(operationInputSchema).optional().default([]),
     achats: z.array(achatInputSchema).optional().default([]),
+  }).superRefine((body, ctx) => {
+    if (!body.plan_reference) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["plan_reference"], message: "Référence plan requise pour générer le code pièce" })
+    }
+    if (!body.client_id && !body.code_client) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["client_id"], message: "Client requis pour générer le code pièce" })
+    }
+    if (body.plan_reference && !body.sans_indice && !body.indice_externe) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["indice_externe"], message: "Indice externe requis ou cochez Sans indice" })
+    }
   }),
 })
 
 export type CreatePieceTechniqueBodyDTO = z.infer<typeof createPieceTechniqueSchema>["body"]
+
+export const pieceTechniqueCodePreviewSchema = z.object({
+  query: z.object({
+    client_id: z.string().trim().min(1).max(3).optional(),
+    code_client: z.string().trim().min(1).max(80).optional(),
+    plan_reference: z.string().trim().min(1).max(160),
+    indice_externe: z.string().trim().min(1).max(20).optional(),
+    sans_indice: z.enum(["true", "false", "1", "0"]).optional(),
+  }),
+})
 
 export const updatePieceTechniqueSchema = z.object({
   body: z.object({
@@ -175,7 +202,6 @@ export const updatePieceTechniqueSchema = z.object({
     client_name: z.string().trim().min(1).max(200).optional().nullable(),
     famille_id: uuid.optional(),
     name_piece: z.string().trim().min(1).optional(),
-    code_piece: z.string().trim().min(1).optional(),
     designation: z.string().trim().min(1).optional(),
     designation_2: z.string().optional().nullable(),
     prix_unitaire: z.coerce.number().min(0).optional(),

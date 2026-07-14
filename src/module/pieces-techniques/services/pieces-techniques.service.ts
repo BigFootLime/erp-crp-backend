@@ -21,7 +21,6 @@ import {
   repoDeleteBomLine,
   repoDeleteOperation,
   repoDeletePieceTechnique,
-  repoDuplicatePieceTechnique,
   repoGetFabricationTree,
   repoListAffairePieceTechniques,
   repoGetPieceTechniqueDocumentForDownload,
@@ -122,13 +121,16 @@ export async function createPieceTechniqueSVC(body: CreatePieceTechniqueBodyDTO,
     const detail = (err as { detail?: unknown } | null)?.detail;
     if (code === "23505") {
       const msg = typeof detail === "string" && detail.includes("code_piece") ? "Code de pièce déjà utilisé" : "Conflit de contrainte";
-      throw new HttpError(409, "CONFLICT", msg);
+      throw new HttpError(409, "CODE_ALREADY_EXISTS", msg);
     }
     throw err;
   }
 }
 
 export async function updatePieceTechniqueSVC(id: string, body: UpdatePieceTechniqueBodyDTO, audit: AuditContext) {
+  if ("code_piece" in body) {
+    throw new HttpError(400, "CODE_IMMUTABLE", "Le code métier est attribué par le serveur et ne peut pas être modifié.");
+  }
   if (body.statut !== undefined) {
     throw new HttpError(400, "STATUS_FORBIDDEN", "Use /status endpoint to change statut");
   }
@@ -140,8 +142,8 @@ export async function updatePieceTechniqueSVC(id: string, body: UpdatePieceTechn
 
 export const deletePieceTechniqueSVC = (id: string, audit: AuditContext) => repoDeletePieceTechnique(id, audit);
 
-export async function duplicatePieceTechniqueSVC(id: string, userId: number | null) {
-  return repoDuplicatePieceTechnique(id, userId);
+export async function duplicatePieceTechniqueSVC(_id: string, _userId: number | null) {
+  throw new HttpError(409, "VERSION_WORKFLOW_REQUIRED", "Créez une nouvelle version plutôt que de dupliquer une pièce technique.");
 }
 
 export async function updatePieceTechniqueStatusSVC(id: string, body: PieceTechniqueStatusBodyDTO, audit: AuditContext) {
