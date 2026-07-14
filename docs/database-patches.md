@@ -90,5 +90,7 @@ instance; the API refuses evidence storage when production lacks that setting.
 The companion rollback script is deliberately guarded and refuses to remove
 post-migration technical versions/metadata, code allocations, quality-control
 references, retained OF snapshots, or Project Office evidence. The additive
-`po_evidence_type.VSM` enum value remains because PostgreSQL cannot safely
-remove enum values in a transactional rollback.
+The VSM file category is enforced by the dedicated
+`project_evidence_files_category_check` table constraint. The patch deliberately
+does not alter the historical `po_evidence_type` enum, which can be owned by the
+administrative PostgreSQL role while runtime patches are executed by `cerp_app`.

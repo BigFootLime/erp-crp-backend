@@ -462,8 +462,6 @@ CREATE TRIGGER trg_prevent_quality_control_reference_mutation
   FOR EACH ROW EXECUTE FUNCTION public.fn_prevent_quality_control_reference_mutation();
 
 -- Project Office keeps evidence metadata in PostgreSQL and the binary in controlled storage.
-ALTER TYPE public.po_evidence_type ADD VALUE IF NOT EXISTS 'VSM';
-
 CREATE TABLE IF NOT EXISTS public.project_evidence_files (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   evidence_id uuid NOT NULL UNIQUE REFERENCES public.project_evidence(id) ON DELETE CASCADE,
