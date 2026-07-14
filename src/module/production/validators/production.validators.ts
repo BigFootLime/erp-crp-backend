@@ -312,6 +312,7 @@ export const createOfSchema = z.object({
     commande_id: z.coerce.number().int().positive().optional().nullable(),
     client_id: z.string().trim().min(1).max(3).optional().nullable(),
     piece_technique_id: uuid,
+    piece_technique_version_id: uuid,
     quantite_lancee: z.coerce.number().positive().optional().default(1),
     priority: ofPrioritySchema.optional().default("NORMAL"),
     statut: ofStatusSchema.optional().default("BROUILLON"),

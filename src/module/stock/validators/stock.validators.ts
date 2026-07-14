@@ -175,7 +175,9 @@ export type CreateArticleFamilyBodyDTO = z.infer<typeof createArticleFamilySchem
 export const createArticleSchema = z.object({
   body: z
     .object({
-      code: z.string().trim().min(1).max(80),
+      // The backend issues the final code atomically. A legacy client value is
+      // accepted for compatibility but deliberately ignored on creation.
+      code: z.string().trim().min(1).max(80).optional(),
       designation: z.string().trim().min(1).max(400),
       article_type: articleTypeSchema.optional(),
       article_category: articleCategorySchema.optional().default("achat"),
@@ -360,7 +362,7 @@ export const createLotSchema = z.object({
   body: z
     .object({
       article_id: uuid,
-      lot_code: z.string().trim().min(1).max(80),
+      lot_code: z.string().trim().min(1).max(80).optional(),
       supplier_lot_code: z.string().trim().min(1).max(120).optional().nullable(),
       received_at: z.string().trim().optional().nullable(),
       manufactured_at: z.string().trim().optional().nullable(),

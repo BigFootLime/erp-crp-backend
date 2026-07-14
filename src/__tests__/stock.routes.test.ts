@@ -97,6 +97,7 @@ describe("/api/v1/stock", () => {
       if (q.includes("FROM public.affaire") && q.includes("type_affaire = 'projet'")) {
         return { rows: [{ ok: 1 }] };
       }
+    if (q.includes("public.fn_next_issued_code_value")) return { rows: [{ v: "1" }] };
       if (q.includes("INSERT INTO public.articles")) {
         return { rows: [{ id: "11111111-1111-1111-1111-111111111111" }] };
       }
@@ -184,6 +185,7 @@ describe("/api/v1/stock", () => {
     mocks.clientQuery.mockImplementation(async (sql: unknown) => {
       const q = String(sql);
       if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
+    if (q.includes("public.fn_next_issued_code_value")) return { rows: [{ v: "1" }] };
       if (q.includes("INSERT INTO public.articles (") || q.includes("INSERT INTO public.articles\n")) {
         return { rows: [{ id: "11111111-1111-1111-1111-111111111111" }] };
       }

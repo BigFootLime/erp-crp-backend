@@ -5,43 +5,36 @@ export const CODE_FORMATS = {
     hintText: "Format attendu: CLI-001",
   },
   devis: {
-    // Legacy DV-<id> is still accepted for existing data.
-    regex: /^(DEV-CLI-\d{3}-\d{4}-\d{4}|DV-\d+)$/,
-    example: "DEV-CLI-001-2026-0001",
-    hintText: "Format attendu: DEV-CLI-001-2026-0001",
+    regex: /^(DEV-\d{4}-\d{4}(?:-V\d+)?|DV-\d+)$/,
+    example: "DEV-2026-0001",
+    hintText: "Format attendu: DEV-2026-0001",
   },
   commande: {
-    // Legacy CC-<id> is still accepted for existing data.
-    regex: /^(CC-CLI-\d{3}-\d{4}-\d{4}|CC-\d+)$/,
-    example: "CC-CLI-001-2026-0001",
-    hintText: "Format attendu: CC-CLI-001-2026-0001",
+    regex: /^(CMD-\d{4}-\d{4}|CC-\d+)$/,
+    example: "CMD-2026-0001",
+    hintText: "Format attendu: CMD-2026-0001",
   },
   affaire: {
-    // Legacy AFF-<id> is still accepted for existing data.
-    regex: /^(AFF-LIV-CLI-\d{3}-\d{4}-\d{4}|AFF-\d+)$/,
-    example: "AFF-LIV-CLI-001-2026-0001",
-    hintText: "Format attendu: AFF-LIV-CLI-001-2026-0001",
-    },
+    regex: /^(AFF-\d{4}-\d{4}|AFF-LIV-CLI-\d{3}-\d{4}-\d{4}|AFF-\d+)$/,
+    example: "AFF-2026-0001",
+    hintText: "Format attendu: AFF-2026-0001",
+  },
   pieceTechnique: {
-    // Legacy patterns are still accepted for existing data.
-    regex: /^(PCT-CLI-\d{3}-\d{4}|P-\d{3,})$/,
-    example: "PCT-CLI-001-0001",
-    hintText: "Format attendu: PCT-CLI-001-0001",
+    regex: /^(?:[A-Z0-9]+-[A-Z0-9]+-[A-Z0-9]+|P-\d{3,})$/,
+    example: "001-17025950000-C",
+    hintText: "Format attendu: 001-17025950000-C",
   },
   of: {
-    // Legacy OF-<id> is still accepted for existing data.
-    regex: /^(OF-\d{4}-\d{5}|OF-\d+)$/,
-    example: "OF-2026-00001",
-    hintText: "Format attendu: OF-2026-00001",
+    regex: /^(OF-\d{4}-\d{6}|OF-\d{4}-\d{5}|OF-\d+)$/,
+    example: "OF-2026-000001",
+    hintText: "Format attendu: OF-2026-000001",
   },
   bonLivraison: {
-    // Current production format.
     regex: /^BL-\d{8}$/,
     example: "BL-00000001",
     hintText: "Format attendu: BL-00000001",
   },
   reception: {
-    // Current production format.
     regex: /^RF-\d{8}$/,
     example: "RF-00000001",
     hintText: "Format attendu: RF-00000001",
@@ -52,21 +45,19 @@ export const CODE_FORMATS = {
     hintText: "Format attendu: FOU-001",
   },
   article: {
-    regex: /^ART-\d{4}$/,
-    example: "ART-0001",
-    hintText: "Format attendu: ART-0001",
+    regex: /^(ART-[A-Z0-9]+-\d{6}|ART-\d{4})$/,
+    example: "ART-USI-000042",
+    hintText: "Format attendu: ART-USI-000042",
   },
   nonConformity: {
-    // Matches existing generator in DB.
     regex: /^NC-\d{4}-\d{5}$/,
     example: "NC-2026-00001",
     hintText: "Format attendu: NC-2026-00001",
   },
   capa: {
-    // Introduced by db/patches/20260227_nomenclature_codes.sql
-    regex: /^CAP-\d{4}-\d{5}$/,
-    example: "CAP-2026-00001",
-    hintText: "Format attendu: CAP-2026-00001",
+    regex: /^(CAPA|CAP)-\d{4}-\d{5,6}$/,
+    example: "CAPA-2026-000001",
+    hintText: "Format cible: CAPA-2026-000001 (CAP historique accepté)",
   },
 } as const;
 

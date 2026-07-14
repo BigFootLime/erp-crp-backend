@@ -278,6 +278,7 @@ describe("/api/v1/commandes", () => {
     mocks.clientQuery
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
       .mockResolvedValueOnce({ rows: [{ id: "123" }] }) // nextval commande_client_id_seq
+      .mockResolvedValueOnce({ rows: [{ v: "1" }] }) // fn_next_code_value CMD
       .mockResolvedValueOnce({ rows: [{ id: "123" }] }) // INSERT commande_client
       .mockResolvedValueOnce({
         rows: [{
@@ -340,6 +341,7 @@ describe("/api/v1/commandes", () => {
     mocks.clientQuery
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
       .mockResolvedValueOnce({ rows: [{ id: "123" }] }) // nextval commande_client_id_seq
+      .mockResolvedValueOnce({ rows: [{ v: "1" }] }) // fn_next_code_value CMD
       .mockResolvedValueOnce({ rows: [{ id: "123" }] }) // INSERT commande_client
       .mockResolvedValueOnce({ rows: [] }); // ROLLBACK
 
@@ -380,6 +382,8 @@ describe("/api/v1/commandes", () => {
         seq += 1;
         return { rows: [{ id: String(seq) }] };
       }
+
+    if (q.includes("public.fn_next_issued_code_value")) return { rows: [{ v: "1" }] };
 
       if (q.includes("INSERT INTO commande_client")) {
         return { rows: [{ id: String(seq) }] };
@@ -914,6 +918,7 @@ describe("/api/v1/commandes", () => {
         ],
       }) // lignes
       .mockResolvedValueOnce({ rows: [{ id: "456" }] }) // nextval
+      .mockResolvedValueOnce({ rows: [{ v: "1" }] }) // fn_next_code_value CMD
       .mockResolvedValueOnce({ rows: [] }) // insert commande
       .mockResolvedValueOnce({
         rows: [{
@@ -1025,8 +1030,16 @@ describe("/api/v1/commandes", () => {
         return { rows: [{ client_code: "CLI-001" }] };
       }
 
-      if (q.includes("public.fn_next_code_value")) {
+    if (q.includes("public.fn_next_issued_code_value")) {
         return { rows: [{ v: "1" }] };
+      }
+
+      if (q.includes("FROM public.piece_technique_versions v") && q.includes("v.statut = 'APPLICABLE'")) {
+        return { rows: [{ version_id: "55555555-5555-5555-5555-555555555555", gamme_id: null, version_interne: 1 }] };
+      }
+
+      if (q.includes("jsonb_build_object") && q.includes("'piece'")) {
+        return { rows: [{ snapshot: { piece: { id: PIECE_ID, code: "PT-001" }, version: { version_interne: 1 } } }] };
       }
 
       if (q.includes("pg_get_serial_sequence") && q.includes("ordres_fabrication")) {
@@ -1143,8 +1156,16 @@ describe("/api/v1/commandes", () => {
         return { rows: [{ client_code: "CLI-001" }] };
       }
 
-      if (q.includes("public.fn_next_code_value")) {
+    if (q.includes("public.fn_next_issued_code_value")) {
         return { rows: [{ v: "1" }] };
+      }
+
+      if (q.includes("FROM public.piece_technique_versions v") && q.includes("v.statut = 'APPLICABLE'")) {
+        return { rows: [{ version_id: "55555555-5555-5555-5555-555555555555", gamme_id: null, version_interne: 1 }] };
+      }
+
+      if (q.includes("jsonb_build_object") && q.includes("'piece'")) {
+        return { rows: [{ snapshot: { piece: { id: PIECE_ID, code: "PT-001" }, version: { version_interne: 1 } } }] };
       }
 
       if (q.includes("WITH RECURSIVE tree") && q.includes("public.pieces_techniques_nomenclature")) {
@@ -1174,6 +1195,7 @@ describe("/api/v1/commandes", () => {
       if (q.includes("INSERT INTO public.of_generation_batches")) return { rows: [] };
       if (q.includes("INSERT INTO public.ordres_fabrication")) return { rows: [] };
       if (q.includes("INSERT INTO public.of_operations")) return { rows: [], rowCount: 1 };
+      if (q.includes("INSERT INTO public.of_technical_snapshots")) return { rows: [] };
       if (q.includes("INSERT INTO public.of_structure_snapshot")) return { rows: [] };
       if (q.includes("UPDATE public.of_generation_batches")) return { rows: [] };
       if (q.includes("INSERT INTO public.commande_client_event_log")) return { rows: [] };
@@ -1282,8 +1304,16 @@ describe("/api/v1/commandes", () => {
         return { rows: [{ client_code: "CLI-001" }] };
       }
 
-      if (q.includes("public.fn_next_code_value")) {
+    if (q.includes("public.fn_next_issued_code_value")) {
         return { rows: [{ v: "1" }] };
+      }
+
+      if (q.includes("FROM public.piece_technique_versions v") && q.includes("v.statut = 'APPLICABLE'")) {
+        return { rows: [{ version_id: "55555555-5555-5555-5555-555555555555", gamme_id: null, version_interne: 1 }] };
+      }
+
+      if (q.includes("jsonb_build_object") && q.includes("'piece'")) {
+        return { rows: [{ snapshot: { piece: { id: ROOT_PIECE_ID, code: "ROOT" }, version: { version_interne: 1 } } }] };
       }
 
       if (q.includes("WITH RECURSIVE tree") && q.includes("public.pieces_techniques_nomenclature")) {
@@ -1337,6 +1367,7 @@ describe("/api/v1/commandes", () => {
         return { rows: [] };
       }
       if (q.includes("INSERT INTO public.of_operations")) return { rows: [], rowCount: 1 };
+      if (q.includes("INSERT INTO public.of_technical_snapshots")) return { rows: [] };
       if (q.includes("INSERT INTO public.of_structure_snapshot")) return { rows: [] };
       if (q.includes("UPDATE public.of_generation_batches")) return { rows: [] };
       if (q.includes("INSERT INTO public.commande_client_event_log")) return { rows: [] };
@@ -1358,14 +1389,15 @@ describe("/api/v1/commandes", () => {
     const rootParams = ofInsertCalls[0];
     const childParams = ofInsertCalls[1];
     expect(rootParams[0]).toBe(9);
-    expect(rootParams[11]).toBe(0);
-    expect(rootParams[16]).toBe(2);
+    expect(rootParams[8]).toBe("55555555-5555-5555-5555-555555555555");
+    expect(rootParams[14]).toBe(0);
+    expect(rootParams[19]).toBe(2);
     expect(childParams[0]).toBe(10);
-    expect(childParams[8]).toBe(9);
-    expect(childParams[9]).toBe(9);
-    expect(childParams[11]).toBe(1);
-    expect(childParams[14]).toBe(3);
-    expect(childParams[15]).toBe(3);
-    expect(childParams[16]).toBe(6);
+    expect(childParams[11]).toBe(9);
+    expect(childParams[12]).toBe(9);
+    expect(childParams[14]).toBe(1);
+    expect(childParams[17]).toBe(3);
+    expect(childParams[18]).toBe(3);
+    expect(childParams[19]).toBe(6);
   });
 });

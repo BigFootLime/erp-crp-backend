@@ -4,6 +4,7 @@ import type {
   ActionRow,
   DecisionRow,
   EvidenceRow,
+  EvidenceFileRow,
   ExternalLinkRow,
   RiskRow,
   SpecRow,
@@ -375,6 +376,114 @@ export async function repoCreateEvidence(
     [input.project_id, input.work_package_id, input.type, input.title, input.url, input.description, input.created_by]
   );
   return mapEvidence(res.rows[0]);
+}
+
+const EVIDENCE_FILE_RETURNING = `
+  f.id::text, f.evidence_id::text, e.project_id::text, f.original_name, f.mime_type,
+  f.size_bytes::bigint::text AS size_bytes, f.sha256, f.category, f.version_number,
+  f.status, f.date_effet::text AS date_effet, f.visibility, f.created_at::text,
+  f.created_by`;
+
+function mapEvidenceFile(r: Record<string, unknown>): EvidenceFileRow {
+  return {
+    id: String(r.id),
+    evidence_id: String(r.evidence_id),
+    project_id: String(r.project_id),
+    original_name: String(r.original_name),
+    mime_type: String(r.mime_type),
+    size_bytes: Number(r.size_bytes),
+    sha256: String(r.sha256),
+    category: r.category as EvidenceFileRow["category"],
+    version_number: Number(r.version_number),
+    status: r.status as EvidenceFileRow["status"],
+    date_effet: (r.date_effet as string | null) ?? null,
+    visibility: r.visibility as EvidenceFileRow["visibility"],
+    created_at: String(r.created_at),
+    created_by: r.created_by === null || r.created_by === undefined ? null : Number(r.created_by),
+  };
+}
+
+export async function repoFindEvidenceFileByProjectHash(
+  projectId: string,
+  sha256: string,
+  q: DbQueryer = pool
+): Promise<EvidenceFileRow | null> {
+  const res = await q.query(
+    `SELECT ${EVIDENCE_FILE_RETURNING}
+       FROM public.project_evidence_files f
+       JOIN public.project_evidence e ON e.id = f.evidence_id
+      WHERE e.project_id = $1::uuid AND f.sha256 = $2
+      LIMIT 1`,
+    [projectId, sha256]
+  );
+  return res.rows[0] ? mapEvidenceFile(res.rows[0]) : null;
+}
+
+export async function repoCreateEvidenceFile(
+  tx: DbQueryer,
+  input: {
+    evidence_id: string; project_id: string; storage_key: string; original_name: string; sanitized_name: string;
+    mime_type: string; size_bytes: number; sha256: string; category: "DOCUMENT" | "VSM";
+    version_number: number; status: "BROUILLON" | "VALIDE" | "OBSOLETE";
+    date_effet: string | null; visibility: "PRIVATE" | "INTERNAL"; created_by: number;
+  }
+): Promise<EvidenceFileRow> {
+  const res = await tx.query(
+    `INSERT INTO public.project_evidence_files
+       (evidence_id, project_id, storage_key, original_name, sanitized_name, mime_type, size_bytes, sha256,
+        category, version_number, status, date_effet, visibility, created_by)
+     VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::date, $13, $14)
+     RETURNING id::text, evidence_id::text, original_name, mime_type,
+       size_bytes::bigint::text AS size_bytes, sha256, category,
+       version_number, status, date_effet::text AS date_effet, visibility, created_at::text, created_by`,
+    [input.evidence_id, input.project_id, input.storage_key, input.original_name, input.sanitized_name, input.mime_type,
+      input.size_bytes, input.sha256, input.category, input.version_number, input.status,
+      input.date_effet, input.visibility, input.created_by]
+  );
+  return mapEvidenceFile({ ...res.rows[0], project_id: input.project_id });
+}
+
+export async function repoGetEvidenceFileById(id: string, q: DbQueryer = pool): Promise<(EvidenceFileRow & { storage_key: string; sanitized_name: string }) | null> {
+  const res = await q.query(
+    `SELECT ${EVIDENCE_FILE_RETURNING}, f.storage_key, f.sanitized_name
+       FROM public.project_evidence_files f
+       JOIN public.project_evidence e ON e.id = f.evidence_id
+      WHERE f.id = $1::uuid LIMIT 1`,
+    [id]
+  );
+  const row = res.rows[0];
+  return row ? { ...mapEvidenceFile(row), storage_key: String(row.storage_key), sanitized_name: String(row.sanitized_name) } : null;
+}
+
+export async function repoListEvidenceFiles(
+  filter: { project_id: string; category?: "DOCUMENT" | "VSM"; page: number; pageSize: number },
+  q: DbQueryer = pool
+): Promise<{ items: EvidenceFileRow[]; total: number }> {
+  const conditions = ["e.project_id = $1::uuid"];
+  const params: unknown[] = [filter.project_id];
+  if (filter.category) {
+    params.push(filter.category);
+    conditions.push(`f.category = $${params.length}`);
+  }
+  const where = conditions.join(" AND ");
+  const totalRes = await q.query(
+    `SELECT COUNT(*)::int AS n
+       FROM public.project_evidence_files f
+       JOIN public.project_evidence e ON e.id = f.evidence_id
+      WHERE ${where}`,
+    params
+  );
+  params.push(filter.pageSize, (filter.page - 1) * filter.pageSize);
+  const res = await q.query(
+    `SELECT ${EVIDENCE_FILE_RETURNING}
+       FROM public.project_evidence_files f
+       JOIN public.project_evidence e ON e.id = f.evidence_id
+      WHERE ${where}
+      ORDER BY f.created_at DESC, f.id DESC
+      LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    params
+  );
+  return { items: res.rows.map(mapEvidenceFile), total: Number(totalRes.rows[0]?.n ?? 0) };
 }
 
 // -------------------------------------------------------------- Liens externes

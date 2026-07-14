@@ -23,6 +23,7 @@ const versionCoreBody = z.object({
   raison_changement: z.string().max(2000).optional().nullable(),
   impact_interchangeabilite: z.boolean().optional().nullable(),
   impact_parents: z.string().max(2000).optional().nullable(),
+  date_effet: z.string().date().optional().nullable(),
 })
 
 export const createVersionSchema = z.object({ body: versionCoreBody })
@@ -38,7 +39,6 @@ export type UpdateVersionBodyDTO = z.infer<typeof updateVersionSchema>["body"]
 export const versionStatusSchema = z.object({
   body: z.object({
     next_statut: versionStatutSchema,
-    valide_par: z.coerce.number().int().positive().optional().nullable(),
     date_application: z.string().min(1).optional().nullable(),
     commentaire_validation: z.string().max(2000).optional().nullable(),
     expected_updated_at: z.string().min(1).optional(),
