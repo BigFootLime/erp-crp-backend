@@ -49,6 +49,9 @@ Le formulaire multipart accepte `file`, `category` (`VSM` ou `DOCUMENT`), `versi
 La taille maximale est 25 MiB. Sont contrôlés : extension, MIME annoncé, signature réelle, structure
 des archives Bizagi BPM et OOXML, empreinte SHA-256 et doublon dans le projet. Les binaires vivent sous
 `CERP_DOCUMENTS_ROOT`; seuls métadonnées et chemin interne sont en base et ce chemin n'est jamais exposé.
+La catégorie `VSM|DOCUMENT` est contrainte sur `project_evidence_files` et ne modifie pas l'enum
+historique `po_evidence_type`, afin que le patch reste exécutable par le rôle runtime propriétaire
+des tables sans élévation permanente.
 
 ## Erreurs attendues
 

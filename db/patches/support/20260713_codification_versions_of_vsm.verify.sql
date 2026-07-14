@@ -64,7 +64,10 @@ WHERE schemaname = 'public'
   )
 ORDER BY indexname;
 
-SELECT unnest(enum_range(NULL::public.po_evidence_type))::text AS evidence_type;
+SELECT conname, pg_get_constraintdef(oid) AS definition
+FROM pg_constraint
+WHERE conrelid = 'public.project_evidence_files'::regclass
+  AND conname = 'project_evidence_files_category_check';
 
 SELECT last_value, is_called FROM public.cerp_business_code_issue_seq;
 

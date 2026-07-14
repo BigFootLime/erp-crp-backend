@@ -103,8 +103,4 @@ DROP TABLE IF EXISTS public.codification_141_sequence_baseline;
 DROP FUNCTION IF EXISTS public.fn_next_issued_code_value(text);
 DROP SEQUENCE IF EXISTS public.cerp_business_code_issue_seq;
 
--- PostgreSQL enum values cannot be safely removed in a transactional rollback.
--- `po_evidence_type.VSM` is additive and intentionally remains after a safe
--- structural rollback.
-
 COMMIT;
