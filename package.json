@@ -21,7 +21,7 @@
     "@scalar/express-api-reference": "^0.8.22",
     "@types/multer": "^1.4.12",
     "bcrypt": "^6.0.0",
-    "bcryptjs": "^3.0.2",
+    "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "docx": "^9.7.1",
     "dotenv": "^16.4.7",
@@ -40,7 +40,7 @@
   },
   "devDependencies": {
     "@types/bcrypt": "^6.0.0",
-    "@types/bcryptjs": "^2.4.6",
+    "@types/bcryptjs": "^3.0.0",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.1",
     "@types/jsonwebtoken": "^9.0.9",
