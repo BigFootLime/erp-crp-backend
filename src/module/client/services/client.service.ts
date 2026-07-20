@@ -19,6 +19,10 @@ export type ClientRow = {
   provided_documents_id: string | null
   quality_level: string | null;
   quality_levels: string[] | null
+  devise: string | null
+  encours_max: number | null
+  incoterm: string | null
+  langue: string | null
 
    logo_path: string | null
 
@@ -105,6 +109,12 @@ export async function listClients(q = "", limit = 25): Promise<ClientRow[]> {
     c.observations, c.provided_documents_id,
     c.quality_level,
     c.quality_levels,
+    -- Finance structurée (#162) — lecture tolérante tant que le patch
+    -- 20260720_clients_360_hardening n'est pas appliqué partout.
+    NULLIF(btrim(to_jsonb(c)->>'devise'), '') AS devise,
+    NULLIF(btrim(to_jsonb(c)->>'encours_max'), '')::numeric AS encours_max,
+    NULLIF(btrim(to_jsonb(c)->>'incoterm'), '') AS incoterm,
+    NULLIF(btrim(to_jsonb(c)->>'langue'), '') AS langue,
     c.logo_path, 
 
     c.delivery_address_id::text AS delivery_address_id,

@@ -84,6 +84,7 @@ beforeEach(() => {
     if (s.includes("INSERT INTO adresse_livraison")) return Promise.resolve({ rows: [{ delivery_address_id: "d1" }] });
     if (s.includes("INSERT INTO clients")) return Promise.resolve({ rows: [{ client_id: "007" }] });
     if (s.includes("WHERE siret = $1")) return Promise.resolve({ rows: [] });
+    if (s.includes("FROM client_create_idempotency")) return Promise.resolve({ rows: [] });
     if (s.includes("FOR UPDATE")) {
       return Promise.resolve({
         rows: [{ client_id: "001", bill_address_id: "b1", delivery_address_id: "d1", bank_info_id: null, primary_contact_id: null, contact_id: null, company_name: "X", status: "client" }],
@@ -351,6 +352,96 @@ describe("P0-7 — aucune query string dans les logs HTTP", () => {
     }
     const parsed = JSON.parse(httpLines[httpLines.length - 1]);
     expect(parsed.path).toBe("/api/v1/clients");
+  });
+});
+
+describe("Extension 360 — finance structurée, idempotence, archivage horodaté (patch 20260720 requis)", () => {
+  const IDEMPOTENCY_KEY = "b7e00000-1111-4222-8333-444455556666";
+
+  it("POST avec devise/encours/incoterm/langue -> colonnes structurées dans l'INSERT", async () => {
+    const res = await request(app)
+      .post("/api/v1/clients")
+      .set("x-test-role", "Secretaire")
+      .send({ ...VALID_CREATE_PAYLOAD, devise: "chf", encours_max: 25000.5, incoterm: "DAP", langue: "EN" });
+    expect(res.status).toBe(201);
+    const insert = sqls().find((s) => s.includes("INSERT INTO clients"));
+    expect(insert).toBeTruthy();
+    for (const col of ["devise", "encours_max", "incoterm", "langue", "created_by", "updated_by"]) {
+      expect(insert).toContain(col);
+    }
+    const insertCall = mocks.clientQuery.mock.calls.find((c) => String(c[0]).includes("INSERT INTO clients"));
+    const params = (insertCall?.[1] ?? []) as unknown[];
+    expect(params).toContain("CHF"); // devise normalisée majuscules
+    expect(params).toContain(25000.5);
+    expect(params).toContain("DAP");
+    expect(params).toContain("en"); // langue normalisée minuscules
+  });
+
+  it("devise invalide -> 400 de validation", async () => {
+    const res = await request(app)
+      .post("/api/v1/clients")
+      .set("x-test-role", "Secretaire")
+      .send({ ...VALID_CREATE_PAYLOAD, devise: "EURO" });
+    expect(res.status).toBe(400);
+  });
+
+  it("Idempotency-Key malformée -> 400 IDEMPOTENCY_KEY_INVALID", async () => {
+    const res = await request(app)
+      .post("/api/v1/clients")
+      .set("x-test-role", "Secretaire")
+      .set("Idempotency-Key", "pas-un-uuid")
+      .send(VALID_CREATE_PAYLOAD);
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe("IDEMPOTENCY_KEY_INVALID");
+  });
+
+  it("première création avec Idempotency-Key -> 201 + clé enregistrée dans la transaction", async () => {
+    const res = await request(app)
+      .post("/api/v1/clients")
+      .set("x-test-role", "Secretaire")
+      .set("Idempotency-Key", IDEMPOTENCY_KEY)
+      .send(VALID_CREATE_PAYLOAD);
+    expect(res.status).toBe(201);
+    expect(res.body).toEqual({ client_id: "007", client_code: "CLI-007" });
+    expect(sqls().some((s) => s.includes("INSERT INTO client_create_idempotency"))).toBe(true);
+  });
+
+  it("rejeu de la même Idempotency-Key -> 200, même fiche, AUCUNE nouvelle insertion", async () => {
+    mocks.clientQuery.mockImplementation((sql: unknown) => {
+      const s = String(sql);
+      if (s.includes("FROM client_create_idempotency")) {
+        return Promise.resolve({ rows: [{ client_id: "007", client_code: "CLI-007" }] });
+      }
+      return Promise.resolve({ rows: [] });
+    });
+    const res = await request(app)
+      .post("/api/v1/clients")
+      .set("x-test-role", "Secretaire")
+      .set("Idempotency-Key", IDEMPOTENCY_KEY)
+      .send(VALID_CREATE_PAYLOAD);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ client_id: "007", client_code: "CLI-007" });
+    expect(sqls().some((s) => s.includes("INSERT INTO clients"))).toBe(false);
+    expect(sqls().some((s) => s.includes("fn_next_issued_code_value"))).toBe(false);
+  });
+
+  it("DELETE (archivage logique) horodate archived_at avec l'auteur", async () => {
+    const res = await request(app).delete("/api/v1/clients/001").set("x-test-role", "Directeur");
+    expect(res.status).toBe(204);
+    const update = sqls().find((s) => s.includes("SET status = 'inactif'"));
+    expect(update).toContain("archived_at = now()");
+    expect(update).toContain("archived_by = $2");
+  });
+
+  it("PATCH status -> prospect/client efface l'horodatage d'archivage", async () => {
+    const res = await request(app)
+      .patch("/api/v1/clients/001")
+      .set("x-test-role", "Secretaire")
+      .send({ status: "client" });
+    expect(res.status).toBe(204);
+    const update = sqls().find((s) => s.includes("UPDATE clients SET"));
+    expect(update).toContain("archived_at = NULL");
+    expect(update).toContain("updated_by");
   });
 });
 

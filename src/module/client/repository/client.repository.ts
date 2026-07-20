@@ -134,7 +134,8 @@ async function insertClient(
   billAddrId: string,
   delivAddrId: string,
   bankInfoId: string | null,
-  clientCode: string
+  clientCode: string,
+  createdBy: number
 ): Promise<string> {
   const normalizedProvidedDocsId =
     dto.provided_documents_id && dto.provided_documents_id.trim() !== ''
@@ -154,7 +155,9 @@ async function insertClient(
     biller_id,
      delivery_address_id, bill_address_id, bank_info_id,
     observations, provided_documents_id,
-    quality_levels               
+    quality_levels,
+    devise, encours_max, incoterm, langue,
+    created_by, updated_by
   ) VALUES (
     $1,$2,$3,
     NULLIF($4,''), NULLIF($5,''), NULLIF($6,''),
@@ -163,7 +166,9 @@ async function insertClient(
     $14,
     $15, $16, $17,
     NULLIF($18,''), $19,
-    COALESCE($20::text[], '{}')   
+    COALESCE($20::text[], '{}'),
+    NULLIF($21,''), $22, NULLIF($23,''), NULLIF($24,''),
+    $25, $25
   )
   RETURNING client_id
 `;
@@ -178,7 +183,9 @@ async function insertClient(
    normalizedBillerId,
    delivAddrId, billAddrId, bankInfoId,
    dto.observations ?? "", normalizedProvidedDocsId,
-   dto.quality_levels ?? []              // ⬅️ nouveau param
+   dto.quality_levels ?? [],
+   dto.devise ?? "", dto.encours_max ?? null, dto.incoterm ?? "", dto.langue ?? "",
+   createdBy
 ]);
 
   return rows[0].client_id as string;
@@ -328,13 +335,41 @@ async function resolvePaymentIds(db: any, ids: string[]): Promise<string[]> {
 
 
 
+async function findIdempotentReplay(
+  db: DbQueryer,
+  idempotencyKey: string
+): Promise<{ client_id: string; client_code: string } | null> {
+  const existing = await db.query(
+    `SELECT c.client_id::text AS client_id, c.client_code
+       FROM client_create_idempotency k
+       JOIN clients c ON c.client_id::text = k.client_id
+      WHERE k.idempotency_key = $1
+      LIMIT 1`,
+    [idempotencyKey]
+  );
+  const row = (existing.rows as Array<{ client_id: string; client_code: string | null }>)[0];
+  if (!row) return null;
+  return { client_id: row.client_id, client_code: row.client_code ?? "" };
+}
+
 export async function repoCreateClient(
   dto: CreateClientDTO,
-  audit: AuditContext
-): Promise<{ client_id: string; client_code: string }> {
+  audit: AuditContext,
+  idempotencyKey?: string | null
+): Promise<{ client_id: string; client_code: string; replayed: boolean }> {
   const db = await pool.connect();
   try {
     await db.query('BEGIN');
+
+    // Rejeu : la même Idempotency-Key renvoie la fiche déjà créée, sans double
+    // insertion (double clic, retry réseau). Table du patch 20260720.
+    if (idempotencyKey) {
+      const replay = await findIdempotentReplay(db, idempotencyKey);
+      if (replay) {
+        await db.query('ROLLBACK');
+        return { ...replay, replayed: true };
+      }
+    }
 
     // Doublon légal : un même établissement (SIRET) ne peut pas donner deux fiches.
     await ensureSiretAvailable(db, dto.siret);
@@ -351,7 +386,7 @@ export async function repoCreateClient(
     // ✅ récupère l'ID généré par le trigger
     let clientId = "";
     try {
-      clientId = await insertClient(db, dto, billAddrId, delivAddrId, bankInfoId, clientCode);
+      clientId = await insertClient(db, dto, billAddrId, delivAddrId, bankInfoId, clientCode, audit.user_id);
     } catch (err) {
       const { code, constraint } = getPgErrorInfo(err);
       if (code === "23505" && constraint === "clients_client_code_key") {
@@ -383,6 +418,13 @@ export async function repoCreateClient(
 
     await linkPaymentModes(db, clientId, dto.payment_mode_ids);
 
+    if (idempotencyKey) {
+      await db.query(
+        `INSERT INTO client_create_idempotency (idempotency_key, client_id) VALUES ($1, $2)`,
+        [idempotencyKey, clientId]
+      );
+    }
+
     await insertAuditLog(db, audit, {
       action: "CLIENT_CREATE",
       entity_type: "client",
@@ -399,9 +441,16 @@ export async function repoCreateClient(
     });
 
     await db.query('COMMIT');
-    return { client_id: clientId, client_code: clientCode };
+    return { client_id: clientId, client_code: clientCode, replayed: false };
   } catch (e) {
     await db.query('ROLLBACK');
+    // Course entre deux soumissions identiques : le perdant du conflit de clé
+    // renvoie la fiche créée par le gagnant.
+    const { code, constraint } = getPgErrorInfo(e);
+    if (idempotencyKey && code === "23505" && constraint === "client_create_idempotency_pkey") {
+      const replay = await findIdempotentReplay(db, idempotencyKey);
+      if (replay) return { ...replay, replayed: true };
+    }
     throw e;
   } finally {
     db.release();
@@ -471,6 +520,15 @@ export async function repoPatchClient(
       put((p) => `provided_documents_id = ${p}`, docs);
     }
     if (has("quality_levels")) put((p) => `quality_levels = ${p}::text[]`, patch.quality_levels ?? []);
+    if (has("devise")) put((p) => `devise = NULLIF(${p}, '')`, patch.devise ?? "");
+    if (has("encours_max")) put((p) => `encours_max = ${p}`, patch.encours_max ?? null);
+    if (has("incoterm")) put((p) => `incoterm = NULLIF(${p}, '')`, patch.incoterm ?? "");
+    if (has("langue")) put((p) => `langue = NULLIF(${p}, '')`, patch.langue ?? "");
+    // Réactivation : repasser en prospect/client efface l'horodatage d'archivage.
+    if (has("status") && patch.status && patch.status !== "inactif") {
+      sets.push("archived_at = NULL");
+      sets.push("archived_by = NULL");
+    }
     // client_code n'est jamais patchable : code visible immuable, généré serveur
     // (ADR-0013). Toute tentative est rejetée en amont par le contrôleur.
 
@@ -479,6 +537,7 @@ export async function repoPatchClient(
     }
 
     if (sets.length > 0) {
+      put((p) => `updated_by = ${p}`, audit.user_id);
       vals.push(id);
       try {
         await db.query(`UPDATE clients SET ${sets.join(", ")} WHERE client_id = $${vals.length}`, vals);
@@ -591,7 +650,12 @@ export async function repoDeleteClient(id: string, audit: AuditContext): Promise
       throw new HttpError(404, "CLIENT_NOT_FOUND", "Client not found");
     }
 
-    await db.query(`UPDATE clients SET status = 'inactif', blocked = true WHERE client_id = $1`, [id]);
+    await db.query(
+      `UPDATE clients
+          SET status = 'inactif', blocked = true, archived_at = now(), archived_by = $2, updated_by = $2
+        WHERE client_id = $1`,
+      [id, audit.user_id]
+    );
 
     await insertAuditLog(db, audit, {
       action: "CLIENT_DELETE",
@@ -637,7 +701,12 @@ export async function repoArchiveClient(id: string, audit: AuditContext): Promis
     }
 
     if (String(before.status).toLowerCase() !== "inactif") {
-      await db.query(`UPDATE clients SET status = 'inactif' WHERE client_id = $1`, [id]);
+      await db.query(
+        `UPDATE clients
+            SET status = 'inactif', archived_at = now(), archived_by = $2, updated_by = $2
+          WHERE client_id = $1`,
+        [id, audit.user_id]
+      );
     }
 
     await insertAuditLog(db, audit, {

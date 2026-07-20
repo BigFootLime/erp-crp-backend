@@ -71,6 +71,10 @@ export async function repoGetClientById(clientId: string, options: ClientReadOpt
       c.siret, c.vat_number, c.naf_code,
       c.status, c.blocked, c.reason, c.creation_date,
       c.observations, c.provided_documents_id,
+      NULLIF(btrim(to_jsonb(c)->>'devise'), '') AS devise,
+      NULLIF(btrim(to_jsonb(c)->>'encours_max'), '')::numeric AS encours_max,
+      NULLIF(btrim(to_jsonb(c)->>'incoterm'), '') AS incoterm,
+      NULLIF(btrim(to_jsonb(c)->>'langue'), '') AS langue,
 
       -- biller
       f.biller_id, f.biller_name,
@@ -132,6 +136,10 @@ export async function repoGetClientById(clientId: string, options: ClientReadOpt
       creation_date: r.creation_date,
       observations: r.observations ?? null,
       provided_documents_id: r.provided_documents_id ?? null,
+      devise: r.devise ?? null,
+      encours_max: r.encours_max === null || typeof r.encours_max === "undefined" ? null : Number(r.encours_max),
+      incoterm: r.incoterm ?? null,
+      langue: r.langue ?? null,
     },
     biller: r.biller_id
       ? { id: r.biller_id, name: r.biller_name }

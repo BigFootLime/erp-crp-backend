@@ -171,6 +171,8 @@ export const listClientAddresses: RequestHandler = async (req, res, next) => {
   }
 };
 
+const uuidHeaderRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 export const postClient: RequestHandler = async (req, res, next) => {
   try {
     const audit = buildAuditContext(req);
@@ -179,9 +181,17 @@ export const postClient: RequestHandler = async (req, res, next) => {
       "CLIENT_CODE_READONLY",
       "Le code client est généré automatiquement par le serveur."
     );
+
+    // Rejeu sûr (double clic / retry réseau) : même clé -> même fiche, 200.
+    const idempotencyHeader = req.headers["idempotency-key"];
+    const idempotencyKey = typeof idempotencyHeader === "string" ? idempotencyHeader.trim() : "";
+    if (idempotencyKey && !uuidHeaderRe.test(idempotencyKey)) {
+      throw new HttpError(400, "IDEMPOTENCY_KEY_INVALID", "Idempotency-Key doit être un UUID.");
+    }
+
     const dto = createClientSchema.parse(req.body);
-    const created = await repoCreateClient(dto, audit);
-    res.status(201).json(created); // { client_id, client_code }
+    const { replayed, ...created } = await repoCreateClient(dto, audit, idempotencyKey || null);
+    res.status(replayed ? 200 : 201).json(created); // { client_id, client_code }
   } catch (e) {
     next(e);
   }

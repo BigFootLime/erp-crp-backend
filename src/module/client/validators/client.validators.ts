@@ -4,6 +4,10 @@ export const qualityLevels = z.enum(["Certificat MP", "Certificat TR", "Relevé 
 export const QUALITY_LEVELS = ["Certificat MP", "Certificat TR", "Relevé de valeurs"] as const;
 
 const siretRegex = /^\d{14}$/;
+const deviseRegex = /^[A-Za-z]{3}$/;
+const langueRegex = /^[A-Za-z]{2}$/;
+/** Incoterms 2020 — liste officielle ICC. */
+export const INCOTERMS = ["EXW", "FCA", "CPT", "CIP", "DAP", "DPU", "DDP", "FAS", "FOB", "CFR", "CIF"] as const;
 const nafRegex = /^\d{4}[A-Z]$/;
 const frVatRegex = /^FR[0-9A-Z]{2}\s?\d{9}$/i;
 const ibanRegex = /^[A-Z]{2}[0-9A-Z]{13,32}$/i;
@@ -241,6 +245,20 @@ export const createClientSchema = z.object({
     .optional()
     .default([])
     .transform((contacts) => contacts.filter(isDefined)),
+  // Finance / logistique structurés (#162) — patch 20260720_clients_360_hardening requis.
+  devise: z.preprocess(
+    emptyStringToUndefined,
+    z.string().trim().regex(deviseRegex, "Devise ISO 4217 à 3 lettres (ex. EUR)").transform((v) => v.toUpperCase()).optional()
+  ),
+  encours_max: z
+    .number({ invalid_type_error: "Encours maximum invalide" })
+    .nonnegative("L'encours maximum doit être positif")
+    .optional(),
+  incoterm: z.preprocess(emptyStringToUndefined, z.enum(INCOTERMS).optional()),
+  langue: z.preprocess(
+    emptyStringToUndefined,
+    z.string().trim().regex(langueRegex, "Code langue à 2 lettres (ex. fr)").transform((v) => v.toLowerCase()).optional()
+  ),
 });
 
 export type CreateClientDTO = z.infer<typeof createClientSchema>;
