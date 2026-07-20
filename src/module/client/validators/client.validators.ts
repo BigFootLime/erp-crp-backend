@@ -1,7 +1,5 @@
 import { z } from "zod";
 
-import { codeFormatExample, isValidCode } from "../../../shared/codes/code-validator";
-
 export const qualityLevels = z.enum(["Certificat MP", "Certificat TR", "Relevé de valeurs"]);
 export const QUALITY_LEVELS = ["Certificat MP", "Certificat TR", "Relevé de valeurs"] as const;
 
@@ -11,7 +9,6 @@ const frVatRegex = /^FR[0-9A-Z]{2}\s?\d{9}$/i;
 const ibanRegex = /^[A-Z]{2}[0-9A-Z]{13,32}$/i;
 const bicRegex = /^[A-Z0-9]{8}([A-Z0-9]{3})?$/i;
 const CIVILITY_OPTIONS = ["Madame", "Monsieur"] as const;
-const clientCodeFormatMessage = `Le code client doit être au format ${codeFormatExample("client")}.`;
 
 function emptyStringToUndefined(value: unknown) {
   if (typeof value !== "string") return value;
@@ -209,15 +206,9 @@ export const createClientContactBodySchema = z.object({
 export type CreateClientContactBodyDTO = z.infer<typeof createClientContactBodySchema>;
 
 export const createClientSchema = z.object({
-  client_code: z.preprocess(
-    emptyStringToUndefined,
-    z
-      .string()
-      .trim()
-      .max(30, "Code client trop long")
-      .refine((value) => isValidCode("client", value), clientCodeFormatMessage)
-      .optional()
-  ),
+  // client_code volontairement absent : le code visible est généré côté serveur
+  // dans la transaction de création (ADR-0013) et reste immuable. Toute valeur
+  // fournie est rejetée explicitement par le contrôleur (CLIENT_CODE_READONLY).
   company_name: requiredText("Raison sociale requise"),
   email: z.preprocess(emptyStringToUndefined, z.string().trim().email("Email invalide").optional()),
   phone: z.preprocess(emptyStringToUndefined, z.string().trim().optional()),
@@ -259,3 +250,26 @@ export type CreateClientDTO = z.infer<typeof createClientSchema>;
 // L'identité `client_id` n'est pas dans le body (route param) -> non patchable.
 export const clientPatchSchema = createClientSchema.partial();
 export type ClientPatchDTO = z.infer<typeof clientPatchSchema>;
+
+/** PATCH /clients/:id/contact — le contact doit appartenir au client (vérifié en transaction). */
+export const setPrimaryContactSchema = z.object({
+  contact_id: z.string({ required_error: "Identifiant de contact requis" }).uuid("Identifiant de contact invalide"),
+});
+export type SetPrimaryContactDTO = z.infer<typeof setPrimaryContactSchema>;
+
+/**
+ * POST /clients/duplicate-check — corps (jamais de query string : SIRET/TVA/raison
+ * sociale sont des données à ne pas persister dans les logs d'URL).
+ */
+export const duplicateCheckSchema = z
+  .object({
+    siret: z.preprocess(emptyStringToUndefined, z.string().trim().regex(siretRegex, "SIRET invalide").optional()),
+    vat_number: z.preprocess(emptyStringToUndefined, z.string().trim().regex(frVatRegex, "TVA invalide").optional()),
+    company_name: z.preprocess(emptyStringToUndefined, z.string().trim().min(2, "Raison sociale trop courte").optional()),
+    exclude_client_id: z.preprocess(emptyStringToUndefined, z.string().trim().optional()),
+  })
+  .refine(
+    (value) => Boolean(value.siret || value.vat_number || value.company_name),
+    { message: "Au moins un critère (SIRET, TVA ou raison sociale) est requis." }
+  );
+export type DuplicateCheckDTO = z.infer<typeof duplicateCheckSchema>;

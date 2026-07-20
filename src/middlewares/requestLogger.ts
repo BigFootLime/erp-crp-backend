@@ -1,4 +1,5 @@
 import type { RequestHandler } from "express";
+import { stripQueryFromUrl } from "../utils/logPath";
 
 export const requestLogger: RequestHandler = (req, res, next) => {
   const startedAt = Date.now();
@@ -9,7 +10,7 @@ export const requestLogger: RequestHandler = (req, res, next) => {
       type: "http_request",
       requestId: req.requestId ?? null,
       method: req.method,
-      path: req.originalUrl,
+      path: stripQueryFromUrl(req.originalUrl),
       status: res.statusCode,
       durationMs,
       origin: req.headers.origin ?? null,

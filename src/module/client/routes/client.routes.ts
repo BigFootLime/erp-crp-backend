@@ -1,8 +1,9 @@
 // src/module/clients/routes/clients.routes.ts
 import { Router } from "express";
-import { authenticateToken } from "../../auth/middlewares/auth.middleware";
+import { authenticateToken, authorizeRole } from "../../auth/middlewares/auth.middleware";
 import {
   archiveClient,
+  checkClientDuplicates,
   deleteClient,
   getClientById,
   listClientAddresses,
@@ -14,16 +15,25 @@ import {
   postClientContact,
 } from "../controllers/client.controller";
 import { listClientsAnalytics } from "../controllers/clients.analytics.controller"
+import { CLIENT_WRITE_ROLES } from "../client.permissions";
 // import { uploadClientLogoMulter } from "../upload/client-logo-upload";
 
 
 const router = Router();
 
-router.post("/", authenticateToken, postClient);
+// Les fiches clients portent des PII (emails, téléphones, SIRET) et des données
+// bancaires : aucune route n'est publique. Deny by default (#162).
+router.use(authenticateToken);
+
+const requireClientWriteRole = authorizeRole(...CLIENT_WRITE_ROLES);
+
+router.post("/", requireClientWriteRole, postClient);
 router.get("/", listClients);
 router.get("/analytics", listClientsAnalytics);
+// POST (et non GET) : SIRET/TVA/raison sociale ne doivent jamais transiter en query string.
+router.post("/duplicate-check", checkClientDuplicates);
 router.get("/:clientId/contacts", listClientContacts);
-router.post("/:clientId/contacts", authenticateToken, postClientContact);
+router.post("/:clientId/contacts", requireClientWriteRole, postClientContact);
 router.get("/:clientId/addresses", listClientAddresses);
 router.get("/:id", getClientById);
 
@@ -34,15 +44,17 @@ router.get("/:id", getClientById);
 //   uploadClientLogo
 // );
 
-// 🆕 update complet
-router.patch("/:id", authenticateToken, patchClient);
+// 🆕 update partiel
+router.patch("/:id", requireClientWriteRole, patchClient);
 
-router.delete("/:id", authenticateToken, deleteClient);
+// La « suppression » est un archivage logique : aucune destruction physique
+// de client/contacts/modes de paiement (traçabilité industrielle, #162).
+router.delete("/:id", requireClientWriteRole, deleteClient);
 
-router.post("/:id/archive", authenticateToken, archiveClient);
+router.post("/:id/archive", requireClientWriteRole, archiveClient);
 
 // deja existant
-router.patch("/:id/contact", authenticateToken, patchClientPrimaryContact);
+router.patch("/:id/contact", requireClientWriteRole, patchClientPrimaryContact);
 
 
 export default router;

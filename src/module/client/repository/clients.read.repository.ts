@@ -1,5 +1,16 @@
 // src/module/clients/repository/clients.read.repository.ts
 import pool from "../../../config/database";
+import { maskIban } from "../client.permissions";
+
+export type ClientReadOptions = {
+  /**
+   * true uniquement pour les rôles finance/gestion clients (CLIENT_FINANCE_ROLES) :
+   * IBAN/BIC en clair et téléphone personnel du contact. Sinon IBAN masqué
+   * (4 derniers caractères), BIC et phone_personal à null — matrice données
+   * sensibles (#162).
+   */
+  includeSensitiveFinance?: boolean;
+};
 
 type ClientAddressKind = "billing" | "delivery";
 
@@ -47,7 +58,7 @@ function formatAddressInline(address: AddressValue): string {
  *   payment_modes: [{ id, code, type }]
  * }
  */
-export async function repoGetClientById(clientId: string) {
+export async function repoGetClientById(clientId: string, options: ClientReadOptions = {}) {
   const { rows } = await pool.query(
     `
     SELECT
@@ -148,8 +159,9 @@ export async function repoGetClientById(clientId: string) {
     bank: {
       id: r.bank_info_id ?? null,
       bank_name: r.bank_name ?? null,
-      iban: r.iban ?? null,
-      bic: r.bic ?? null,
+      iban: options.includeSensitiveFinance ? (r.iban ?? null) : maskIban(r.iban),
+      bic: options.includeSensitiveFinance ? (r.bic ?? null) : null,
+      iban_masked: !options.includeSensitiveFinance,
     },
     primary_contact: r.contact_id
       ? {
@@ -159,7 +171,7 @@ export async function repoGetClientById(clientId: string) {
           civility: r.civility,
           role: r.role,
           phone_direct: r.phone_direct ?? null,
-          phone_personal: r.phone_personal,
+          phone_personal: options.includeSensitiveFinance ? r.phone_personal : null,
           email: r.contact_email,
         }
       : null,
@@ -267,16 +279,13 @@ export async function repoListClients(q: string, limit = 25) {
       al.city  AS deliv_city,
       al.country AS deliv_country,
 
-      -- Banque
+      -- Banque : nom seul (IBAN/BIC jamais en liste — PII critique)
       ib.name AS bank_name,
-      ib.iban,
-      ib.bic,
 
-      -- Contact principal (aplaties)
+      -- Contact principal (aplaties) — sans phone_personal (PII élevée)
       ct.first_name AS contact_first_name,
       ct.last_name  AS contact_last_name,
       ct.email      AS contact_email,
-      ct.phone_personal AS contact_phone_personal,
       ct.role       AS contact_role,
       ct.civility   AS contact_civility,
 
@@ -335,10 +344,10 @@ export async function repoListClients(q: string, limit = 25) {
     deliv_name: string | null; deliv_street: string | null; deliv_house_number: string | null;
     deliv_postal_code: string | null; deliv_city: string | null; deliv_country: string | null;
 
-    bank_name: string | null; iban: string | null; bic: string | null;
+    bank_name: string | null;
 
     contact_first_name: string | null; contact_last_name: string | null; contact_email: string | null;
-    contact_phone_personal: string | null; contact_role: string | null; contact_civility: string | null;
+    contact_role: string | null; contact_civility: string | null;
 
     payment_mode_ids: string[];
      payment_mode_labels: string[]  
