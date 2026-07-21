@@ -72,28 +72,24 @@ describe("createClientSchema", () => {
       ],
     });
 
-    expect(parsed.client_code).toBeUndefined();
+    expect("client_code" in parsed).toBe(false);
     expect(parsed.primary_contact).toBeUndefined();
     expect(parsed.contacts).toEqual([]);
   });
 
-  it("rejects a client code that does not match CLI-001", () => {
+  it("strips client_code from the parsed payload (server-generated, immutable — #162)", () => {
+    // Le schéma ne connaît plus client_code : le code visible est généré côté
+    // serveur (ADR-0013). Le rejet explicite d'une valeur fournie est testé au
+    // niveau contrôleur (CLIENT_CODE_READONLY / CLIENT_CODE_IMMUTABLE).
     const parsed = createClientSchema.safeParse({
       ...makeValidPayload(),
-      client_code: "CLI-12",
+      client_code: "CLI-012",
     });
 
-    expect(parsed.success).toBe(false);
-    if (parsed.success) return;
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
 
-    expect(parsed.error.issues).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          path: ["client_code"],
-          message: "Le code client doit être au format CLI-001.",
-        }),
-      ])
-    );
+    expect("client_code" in parsed.data).toBe(false);
   });
 
   it("returns explicit French messages for missing required address fields", () => {

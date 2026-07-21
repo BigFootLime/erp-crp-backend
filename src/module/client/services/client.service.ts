@@ -19,6 +19,10 @@ export type ClientRow = {
   provided_documents_id: string | null
   quality_level: string | null;
   quality_levels: string[] | null
+  devise: string | null
+  encours_max: number | null
+  incoterm: string | null
+  langue: string | null
 
    logo_path: string | null
 
@@ -44,17 +48,15 @@ export type ClientRow = {
   deliv_city: string | null
   deliv_country: string | null
 
-  // Bank
+  // Bank — volontairement sans IBAN/BIC : données critiques réservées à la
+  // fiche détail (masquées, RBAC finance). La liste n'en a aucun besoin métier.
   bank_name: string | null
-  iban: string | null
-  bic: string | null
 
-  // Primary contact
+  // Primary contact — phone_personal exclu (PII élevée, jamais en liste).
   contact_first_name: string | null
   contact_last_name: string | null
   contact_email: string | null
   contact_phone_direct: string | null
-  contact_phone_personal: string | null
   contact_role: string | null
   contact_civility: string | null
 
@@ -65,7 +67,6 @@ export type ClientRow = {
    email: string | null
    role: string | null
    phone_direct: string | null
-   phone_personal: string | null
  }>
 
 
@@ -108,6 +109,12 @@ export async function listClients(q = "", limit = 25): Promise<ClientRow[]> {
     c.observations, c.provided_documents_id,
     c.quality_level,
     c.quality_levels,
+    -- Finance structurée (#162) — lecture tolérante tant que le patch
+    -- 20260720_clients_360_hardening n'est pas appliqué partout.
+    NULLIF(btrim(to_jsonb(c)->>'devise'), '') AS devise,
+    NULLIF(btrim(to_jsonb(c)->>'encours_max'), '')::numeric AS encours_max,
+    NULLIF(btrim(to_jsonb(c)->>'incoterm'), '') AS incoterm,
+    NULLIF(btrim(to_jsonb(c)->>'langue'), '') AS langue,
     c.logo_path, 
 
     c.delivery_address_id::text AS delivery_address_id,
@@ -124,15 +131,16 @@ export async function listClients(q = "", limit = 25): Promise<ClientRow[]> {
     al.address_complement AS deliv_address_complement,
     al.postal_code AS deliv_postal_code, al.city AS deliv_city, al.country AS deliv_country,
 
-    -- Banque
-    ib.name AS bank_name, ib.iban, ib.bic,
+    -- Banque : nom seul. Les coordonnées bancaires ne sortent JAMAIS par la
+    -- liste (PII critique, réservées au détail avec masquage + RBAC finance).
+    ib.name AS bank_name,
 
-    -- Contact principal (aplati)
+    -- Contact principal (aplati) — sans téléphone personnel (PII élevée).
     ct.first_name AS contact_first_name, ct.last_name AS contact_last_name,
-    ct.email AS contact_email, ct.phone_direct AS contact_phone_direct, ct.phone_personal AS contact_phone_personal,
+    ct.email AS contact_email, ct.phone_direct AS contact_phone_direct,
     ct.role AS contact_role, ct.civility AS contact_civility,
 
-    -- Tous les contacts du client (pour dropdown)
+    -- Tous les contacts du client (pour dropdown) — sans téléphone personnel.
     COALESCE(
       json_agg(
         DISTINCT jsonb_build_object(
@@ -140,8 +148,7 @@ export async function listClients(q = "", limit = 25): Promise<ClientRow[]> {
           'full_name',       trim(concat(ct2.civility,' ',ct2.first_name,' ',ct2.last_name)),
           'email',           ct2.email,
           'role',            ct2.role,
-          'phone_direct',    ct2.phone_direct,
-          'phone_personal',  ct2.phone_personal
+          'phone_direct',    ct2.phone_direct
         )
       ) FILTER (WHERE ct2.contact_id IS NOT NULL),
       '[]'
@@ -209,27 +216,10 @@ export async function listClients(q = "", limit = 25): Promise<ClientRow[]> {
   const { rows } = await pool.query<ClientRow>(sql, [q, limit]);
   return rows;
 }
-export async function createClient(data: {
-  company_name: string;
-  email?: string;
-  phone?: string;
-  // …the rest of your payload
-}): Promise<ClientRow> {
-  const { rows } = await pool.query<ClientRow>(
-    `INSERT INTO clients (client_id, company_name, email, phone)
-     VALUES (
-       lpad((SELECT COALESCE(MAX(client_id)::int,0)+1 FROM clients)::text, 3, '0'),
-       $1, $2, $3
-     )
-     RETURNING client_id, company_name, email, phone`,
-    [data.company_name, data.email ?? null, data.phone ?? null]
-  );
-  return rows[0];
-}
-
-export async function updateClientPrimaryContact(clientId: string, contactId: string) {
-  await pool.query(`UPDATE clients SET contact_id = $1 WHERE client_id = $2`, [contactId, clientId]);
-}
+// createClient (MAX+1 sur client_id) et updateClientPrimaryContact (sans
+// vérification d'appartenance) ont été supprimés (#162) : la création passe par
+// repoCreateClient (code serveur transactionnel) et la bascule de contact
+// principal par repoSetPrimaryContact (appartenance vérifiée sous transaction).
 
 export type ClientContactRow = {
   contact_id: string;
@@ -243,7 +233,14 @@ export type ClientContactRow = {
   label: string;
 };
 
-export async function listClientContacts(clientId: string): Promise<ClientContactRow[]> {
+/**
+ * Contacts d'un client. phone_personal (PII élevée, matrice données sensibles)
+ * n'est renvoyé qu'aux rôles finance/gestion clients ; masqué à null sinon.
+ */
+export async function listClientContacts(
+  clientId: string,
+  options: { includePersonalPhone?: boolean } = {}
+): Promise<ClientContactRow[]> {
   const { rows } = await pool.query<ClientContactRow>(
     `
     SELECT
@@ -263,6 +260,7 @@ export async function listClientContacts(clientId: string): Promise<ClientContac
   );
   return rows.map((r) => ({
     ...r,
+    phone_personal: options.includePersonalPhone ? r.phone_personal : null,
     label: `${r.first_name} ${r.last_name} — ${r.email}`,
   }));
 }
@@ -278,39 +276,6 @@ export type CreateClientContactInput = {
   set_primary?: boolean;
 };
 
-export async function createClientContact(
-  clientId: string,
-  input: CreateClientContactInput
-): Promise<ClientContactRow> {
-  const { rows } = await pool.query<ClientContactRow>(
-    `
-    INSERT INTO contacts (first_name,last_name,civility,role,phone_direct,phone_personal,email,client_id)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-    RETURNING
-      contact_id::text AS contact_id,
-      first_name,
-      last_name,
-      email,
-      phone_direct,
-      phone_personal,
-      role,
-      civility
-    `,
-    [
-      input.first_name,
-      input.last_name,
-      input.civility ?? null,
-      input.role ?? null,
-      input.phone_direct ?? null,
-      input.phone_personal ?? null,
-      input.email,
-      clientId,
-    ]
-  );
-  const row = rows[0];
-  if (input.set_primary) {
-    await pool.query(`UPDATE clients SET contact_id = $1 WHERE client_id = $2`, [row.contact_id, clientId]);
-  }
-  return { ...row, label: `${row.first_name} ${row.last_name} — ${row.email}` };
-}
+// La création de contact (avec promotion set_primary éventuelle) est désormais
+// transactionnelle et auditée : voir repoCreateClientContact dans le repository.
 

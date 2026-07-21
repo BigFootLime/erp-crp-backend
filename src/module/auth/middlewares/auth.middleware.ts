@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction, RequestHandler } from 'express';
 import jwt from 'jsonwebtoken';
+import { stripQueryFromUrl } from '../../../utils/logPath';
 
 interface JwtPayload {
   id: number;
@@ -24,7 +25,7 @@ export const authenticateToken: RequestHandler = (req, res, next) => {
     requestId: req.requestId ?? null,
     origin: req.headers.origin ?? null,
     method: req.method,
-    path: req.originalUrl,
+    path: stripQueryFromUrl(req.originalUrl),
   };
  
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -63,7 +64,7 @@ export const authorizeRole = (...roles: string[]) => {
             requestId: req.requestId ?? null,
             origin: req.headers.origin ?? null,
             method: req.method,
-            path: req.originalUrl,
+            path: stripQueryFromUrl(req.originalUrl),
           })
         );
         res.status(401).json({ error: 'Utilisateur non authentifié' });
@@ -77,7 +78,7 @@ export const authorizeRole = (...roles: string[]) => {
             requestId: req.requestId ?? null,
             origin: req.headers.origin ?? null,
             method: req.method,
-            path: req.originalUrl,
+            path: stripQueryFromUrl(req.originalUrl),
             userId: req.user.id,
             role: req.user.role,
             allowedRoles: roles,
