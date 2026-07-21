@@ -3,20 +3,25 @@ import { HttpError } from "../../../utils/httpError";
 import { getClientIp, parseDevice } from "../../../utils/requestMeta";
 import {
   affaireIdParamsSchema,
+  archiveAffaireBodySchema,
   createAffaireBodySchema,
   getAffaireQuerySchema,
   listAffairesCommandCenterQuerySchema,
   listAffairesQuerySchema,
+  previewAffaireBodySchema,
+  transitionAffaireBodySchema,
   updateAffaireBodySchema,
 } from "../validators/affaire.validators";
 import type { AuditContext } from "../types/affaire.types";
 import {
+  svcArchiveAffaire,
   svcCreateAffaire,
-  svcDeleteAffaire,
   svcGetAffaire,
   svcGetAffaireOperations,
   svcListAffairesCommandCenter,
   svcListAffaires,
+  svcPreviewAffaire,
+  svcTransitionAffaire,
   svcUpdateAffaire,
 } from "../services/affaire.service";
 
@@ -38,6 +43,7 @@ function buildAuditContext(req: Request): AuditContext {
 
   return {
     user_id: user.id,
+    user_role: typeof user.role === "string" ? user.role : null,
     ip: getClientIp(req),
     user_agent: userAgent,
     device_type: device.device_type,
@@ -101,6 +107,17 @@ export const getAffaireOperations: RequestHandler = async (req, res, next) => {
   }
 };
 
+// Aperçu de création manuelle : lecture seule, aucun effet de bord (ne consomme pas de code).
+export const previewAffaire: RequestHandler = async (req, res, next) => {
+  try {
+    const dto = previewAffaireBodySchema.parse(req.body ?? {});
+    const out = await svcPreviewAffaire(dto);
+    res.status(200).json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
 export const createAffaire: RequestHandler = async (req, res, next) => {
   try {
     const audit = buildAuditContext(req);
@@ -117,7 +134,10 @@ export const updateAffaire: RequestHandler = async (req, res, next) => {
     const audit = buildAuditContext(req);
     const { id } = affaireIdParamsSchema.parse(req.params);
     const dto = updateAffaireBodySchema.parse(req.body);
-    if (Object.keys(dto).length === 0) {
+    // `expected_updated_at` est un jeton de verrou, pas un champ modifiable.
+    const { expected_updated_at, ...mutations } = dto;
+    void expected_updated_at;
+    if (Object.keys(mutations).length === 0) {
       res.status(400).json({ error: "No fields to update" });
       return;
     }
@@ -133,16 +153,35 @@ export const updateAffaire: RequestHandler = async (req, res, next) => {
   }
 };
 
-export const deleteAffaire: RequestHandler = async (req, res, next) => {
+// Transition d'état serveur (machine d'état). Transition interdite -> 422 INVALID_TRANSITION.
+export const transitionAffaire: RequestHandler = async (req, res, next) => {
   try {
     const audit = buildAuditContext(req);
     const { id } = affaireIdParamsSchema.parse(req.params);
-    const ok = await svcDeleteAffaire(id, audit);
-    if (!ok) {
+    const dto = transitionAffaireBodySchema.parse(req.body);
+    const out = await svcTransitionAffaire(id, dto, audit);
+    if (!out) {
       res.status(404).json({ error: "Not found" });
       return;
     }
-    res.status(204).send();
+    res.status(200).json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// Archivage (aucune suppression physique). Remplace l'ancien DELETE.
+export const archiveAffaire: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildAuditContext(req);
+    const { id } = affaireIdParamsSchema.parse(req.params);
+    const dto = archiveAffaireBodySchema.parse(req.body ?? {});
+    const out = await svcArchiveAffaire(id, dto, audit);
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.status(200).json(out);
   } catch (err) {
     next(err);
   }
