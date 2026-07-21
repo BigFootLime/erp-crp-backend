@@ -2,3 +2,9 @@
 .env
 /dist
 /uploads
+
+# Claude Code local tooling (not source)
+.claude/
+
+# Generated Project Office population artifacts (regenerate; do not version)
+/scripts/project-office/out/
