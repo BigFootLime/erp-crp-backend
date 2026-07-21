@@ -33,13 +33,19 @@ vi.mock("../utils/checkNetworkDrive", () => ({
   checkNetworkDrive: vi.fn(() => Promise.resolve()),
 }));
 
+// Auth mock : rôle injecté via l'en-tête `x-test-role` (défaut administrateur) pour tester le RBAC.
 vi.mock("../module/auth/middlewares/auth.middleware", () => ({
-  authenticateToken: (req: { user?: { id: number; username: string; email: string; role: string } }, _res: unknown, next: () => void) => {
+  authenticateToken: (
+    req: { user?: { id: number; username: string; email: string; role: string }; headers: Record<string, unknown> },
+    _res: unknown,
+    next: () => void
+  ) => {
+    const roleHeader = typeof req.headers["x-test-role"] === "string" ? (req.headers["x-test-role"] as string) : "administrateur";
     req.user = {
       id: 1,
       username: "test-admin",
       email: "admin@example.test",
-      role: "administrateur",
+      role: roleHeader,
     };
     next();
   },
@@ -329,87 +335,245 @@ describe("/api/v1/affaires", () => {
     expect(String(mocks.poolQuery.mock.calls[1][0])).toContain("FROM affaire a");
   });
 
-  it("POST /api/v1/affaires generates reference when missing and returns {id}", async () => {
+  // ---------------------------------------------------------------------------
+  // #169 — création : code serveur immuable AFF-AAAA-NNNN, jamais fourni par le client
+  // ---------------------------------------------------------------------------
+  it("POST /api/v1/affaires assigns a server AFF-YYYY-NNNN code and returns {id,reference,updated_at}", async () => {
     mocks.clientQuery
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
-      .mockResolvedValueOnce({ rows: [{ id: "7" }] }) // nextval
-      .mockResolvedValueOnce({ rows: [{ id: "7" }] }) // INSERT
+      .mockResolvedValueOnce({ rows: [{ id: "7" }] }) // nextval(affaire_id_seq)
+      .mockResolvedValueOnce({ rows: [{ v: "1" }] }) // fn_next_issued_code_value (AFF:<year>)
+      .mockResolvedValueOnce({ rows: [{ id: "7", updated_at: "2026-02-02T10:00:00.000Z" }] }) // INSERT
       .mockResolvedValueOnce({ rows: [{ id: "audit-1", created_at: "2026-02-01T10:00:00.000Z" }] }) // audit
-      .mockResolvedValueOnce({ rows: [] }) // notify
+      .mockResolvedValueOnce({ rows: [] }) // pg_notify
       .mockResolvedValueOnce({ rows: [] }); // COMMIT
 
-    const res = await request(app).post("/api/v1/affaires").send({ client_id: "001" });
+    // Le client tente d'imposer une référence : elle DOIT être ignorée (code serveur).
+    const res = await request(app).post("/api/v1/affaires").send({ client_id: "001", reference: "HACK-1" });
 
     expect(res.status).toBe(201);
-    expect(res.body).toMatchObject({ id: 7 });
-    expect(mocks.poolConnect).toHaveBeenCalledTimes(1);
+    expect(res.body.id).toBe(7);
+    expect(res.body.reference).toMatch(/^AFF-\d{4}-0001$/);
+    expect(res.body).toHaveProperty("updated_at", "2026-02-02T10:00:00.000Z");
 
     const insertCall = mocks.clientQuery.mock.calls.find((c) => String(c[0]).includes("INSERT INTO affaire"));
     expect(insertCall).toBeTruthy();
     const params = insertCall?.[1] as unknown[];
     expect(params[0]).toBe(7);
-    expect(params[1]).toBe("AFF-7");
+    expect(String(params[1])).toMatch(/^AFF-\d{4}-0001$/);
+    expect(params[1]).not.toBe("HACK-1"); // le code client est ignoré
   });
 
-  it("POST /api/v1/affaires returns 409 on duplicate reference", async () => {
-    const dup = Object.assign(new Error("duplicate"), {
-      code: "23505",
-      constraint: "affaire_reference_key",
-    });
+  it("POST /api/v1/affaires rejects a livraison without client_id (400 VALIDATION_ERROR)", async () => {
+    const res = await request(app).post("/api/v1/affaires").send({ type_affaire: "livraison" });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("VALIDATION_ERROR");
+    expect((res.body.errors as Array<{ field: string }>).some((e) => e.field === "client_id")).toBe(true);
+    expect(mocks.poolConnect).not.toHaveBeenCalled();
+  });
 
+  it("POST /api/v1/affaires allows a projet without client_id", async () => {
     mocks.clientQuery
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
-      .mockResolvedValueOnce({ rows: [{ id: "8" }] }) // nextval
-      .mockImplementationOnce(() => {
-        throw dup;
-      }) // INSERT
+      .mockResolvedValueOnce({ rows: [{ id: "9" }] }) // nextval
+      .mockResolvedValueOnce({ rows: [{ v: "2" }] }) // code
+      .mockResolvedValueOnce({ rows: [{ id: "9", updated_at: "2026-02-02T10:00:00.000Z" }] }) // INSERT
+      .mockResolvedValueOnce({ rows: [{ id: "audit-1", created_at: "2026-02-01T10:00:00.000Z" }] }) // audit
+      .mockResolvedValueOnce({ rows: [] }) // notify
+      .mockResolvedValueOnce({ rows: [] }); // COMMIT
+
+    const res = await request(app).post("/api/v1/affaires").send({ type_affaire: "projet" });
+    expect(res.status).toBe(201);
+    expect(res.body.id).toBe(9);
+  });
+
+  it("POST /api/v1/affaires is forbidden for a read-only role (403)", async () => {
+    const res = await request(app).post("/api/v1/affaires").set("x-test-role", "lecture").send({ client_id: "001" });
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("FORBIDDEN");
+    expect(mocks.poolConnect).not.toHaveBeenCalled();
+  });
+
+  it("GET /api/v1/affaires is forbidden for an unknown role (403 deny-by-default)", async () => {
+    const res = await request(app).get("/api/v1/affaires").set("x-test-role", "role-inconnu");
+    expect(res.status).toBe(403);
+    expect(mocks.poolQuery).not.toHaveBeenCalled();
+  });
+
+  // ---------------------------------------------------------------------------
+  // #169 — PATCH métadonnées : verrou optimiste, statut/reference non modifiables
+  // ---------------------------------------------------------------------------
+  it("PATCH /api/v1/affaires/:id updates metadata and returns the fresh optimistic token", async () => {
+    mocks.clientQuery
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ before: { id: 7, statut: "EN_COURS" }, updated_at_text: "2026-02-02T10:00:00.000Z" }] }) // lock
+      .mockResolvedValueOnce({ rows: [{ id: "7", statut: "EN_COURS", updated_at: "2026-02-02T11:00:00.000Z" }] }) // update
+      .mockResolvedValueOnce({ rows: [{ id: "audit-1", created_at: "2026-02-01T10:00:00.000Z" }] }) // audit
+      .mockResolvedValueOnce({ rows: [] }) // notify
+      .mockResolvedValueOnce({ rows: [] }); // COMMIT
+
+    const res = await request(app)
+      .patch("/api/v1/affaires/7")
+      .send({ commentaire: "note", expected_updated_at: "2026-02-02T10:00:00.000Z" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ id: 7, statut: "EN_COURS", updated_at: "2026-02-02T11:00:00.000Z" });
+    const updateCall = mocks.clientQuery.mock.calls.find((c) => String(c[0]).includes("UPDATE affaire"));
+    expect(String(updateCall?.[0])).not.toContain("statut =");
+    expect(String(updateCall?.[0])).not.toContain("reference =");
+  });
+
+  it("PATCH /api/v1/affaires/:id returns 409 CONCURRENT_MODIFICATION on a stale token", async () => {
+    mocks.clientQuery
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ before: { id: 7 }, updated_at_text: "2026-02-02T10:00:00.000Z" }] }) // lock
       .mockResolvedValueOnce({ rows: [] }); // ROLLBACK
 
     const res = await request(app)
-      .post("/api/v1/affaires")
-      .send({ reference: "AFF-1", client_id: "001" });
+      .patch("/api/v1/affaires/7")
+      .send({ commentaire: "note", expected_updated_at: "STALE" });
 
     expect(res.status).toBe(409);
-    expect(res.body).toHaveProperty("message");
-    expect(String(res.body.message)).toContain("Reference");
+    expect(res.body.code).toBe("CONCURRENT_MODIFICATION");
+    expect(mocks.clientQuery.mock.calls.some((c) => String(c[0]).includes("UPDATE affaire"))).toBe(false);
     expect(mocks.clientQuery.mock.calls.some((c) => String(c[0]) === "ROLLBACK")).toBe(true);
   });
 
-  it("PATCH /api/v1/affaires/:id sets date_cloture when statut=CLOTUREE and missing date_cloture", async () => {
-    mocks.clientQuery
-      .mockResolvedValueOnce({ rows: [] }) // BEGIN
-      .mockResolvedValueOnce({ rows: [{ before: { id: 7, statut: "EN_COURS" } }] }) // lock before
-      .mockResolvedValueOnce({ rows: [{ id: "7" }] }) // update
-      .mockResolvedValueOnce({ rows: [{ id: "audit-1", created_at: "2026-02-01T10:00:00.000Z" }] }) // audit
-      .mockResolvedValueOnce({ rows: [] }) // notify
-      .mockResolvedValueOnce({ rows: [] }); // COMMIT
-
-    const res = await request(app).patch("/api/v1/affaires/7").send({ statut: "CLOTUREE" });
-
-    expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ id: 7 });
-
-    const updateCall = mocks.clientQuery.mock.calls[2];
-    expect(String(updateCall[0])).toContain("UPDATE affaire");
-    expect(String(updateCall[0])).toContain("date_cloture = COALESCE(date_cloture, CURRENT_DATE)");
-    expect(updateCall[1]).toEqual([7, "CLOTUREE"]);
+  it("PATCH /api/v1/affaires/:id ignores statut/reference (immutable) -> 400 No fields", async () => {
+    const res = await request(app).patch("/api/v1/affaires/7").send({ statut: "CLOTUREE", reference: "AFF-X" });
+    expect(res.status).toBe(400);
+    expect(mocks.poolConnect).not.toHaveBeenCalled();
   });
 
-  it("DELETE /api/v1/affaires/:id deletes successfully", async () => {
+  // ---------------------------------------------------------------------------
+  // #169 — machine d'état : transitions valides / interdites / RBAC / concurrence
+  // ---------------------------------------------------------------------------
+  it("POST /api/v1/affaires/:id/transition performs a legal transition (EN_COURS -> CLOTUREE) and sets date_cloture", async () => {
     mocks.clientQuery
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
-      .mockResolvedValueOnce({ rows: [{ before: { id: 7, reference: "AFF-7" } }] }) // lock before
-      .mockResolvedValueOnce({ rows: [{ count: 1 }] }) // mapping count
-      .mockResolvedValueOnce({ rowCount: 1, rows: [] }) // delete links
-      .mockResolvedValueOnce({ rowCount: 1, rows: [] }) // delete affaire
+      .mockResolvedValueOnce({ rows: [{ statut: "EN_COURS", updated_at_text: "2026-02-02T10:00:00.000Z", before: { id: 7, statut: "EN_COURS" } }] }) // lock
+      .mockResolvedValueOnce({ rows: [{ id: "7", statut: "CLOTUREE", updated_at: "2026-02-02T12:00:00.000Z" }] }) // update
       .mockResolvedValueOnce({ rows: [{ id: "audit-1", created_at: "2026-02-01T10:00:00.000Z" }] }) // audit
       .mockResolvedValueOnce({ rows: [] }) // notify
       .mockResolvedValueOnce({ rows: [] }); // COMMIT
 
-    const res = await request(app).delete("/api/v1/affaires/7");
-    expect(res.status).toBe(204);
+    const res = await request(app).post("/api/v1/affaires/7/transition").send({ to: "CLOTUREE" });
 
-    expect(String(mocks.clientQuery.mock.calls[3][0])).toContain("DELETE FROM commande_to_affaire");
-    expect(String(mocks.clientQuery.mock.calls[4][0])).toContain("DELETE FROM affaire");
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ id: 7, statut: "CLOTUREE" });
+    const updateCall = mocks.clientQuery.mock.calls.find((c) => String(c[0]).includes("UPDATE affaire"));
+    expect(String(updateCall?.[0])).toContain("date_cloture = COALESCE(date_cloture, CURRENT_DATE)");
+    const auditCall = mocks.clientQuery.mock.calls.find((c) => String(c[0]).includes("INSERT INTO erp_audit_logs"));
+    expect((auditCall?.[1] as unknown[])?.[2]).toBe("affaires.transition.close");
+  });
+
+  it("POST /api/v1/affaires/:id/transition rejects an illegal transition (EN_COURS -> OUVERTE) with 422", async () => {
+    mocks.clientQuery
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ statut: "EN_COURS", updated_at_text: "2026-02-02T10:00:00.000Z", before: { id: 7 } }] }) // lock
+      .mockResolvedValueOnce({ rows: [] }); // ROLLBACK
+
+    const res = await request(app).post("/api/v1/affaires/7/transition").send({ to: "OUVERTE" });
+
+    expect(res.status).toBe(422);
+    expect(res.body.code).toBe("INVALID_TRANSITION");
+    expect(res.body.details).toMatchObject({ from: "EN_COURS", to: "OUVERTE" });
+    expect(mocks.clientQuery.mock.calls.some((c) => String(c[0]).includes("UPDATE affaire"))).toBe(false);
+  });
+
+  it("POST /api/v1/affaires/:id/transition requires a reason for ANNULEE (400)", async () => {
+    const res = await request(app).post("/api/v1/affaires/7/transition").send({ to: "ANNULEE" });
+    expect(res.status).toBe(400);
+    expect((res.body.errors as Array<{ field: string }>).some((e) => e.field === "reason")).toBe(true);
+  });
+
+  it("POST /api/v1/affaires/:id/transition forbids CLOTURE for a role lacking 'close' (403 at route)", async () => {
+    const res = await request(app).post("/api/v1/affaires/7/transition").set("x-test-role", "logistique").send({ to: "CLOTUREE" });
+    expect(res.status).toBe(403);
+    expect(mocks.poolConnect).not.toHaveBeenCalled();
+  });
+
+  it("POST /api/v1/affaires/:id/transition forbids reopen for a role lacking 'reopen' (403 in service)", async () => {
+    mocks.clientQuery
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ statut: "CLOTUREE", updated_at_text: "2026-02-02T10:00:00.000Z", before: { id: 7 } }] }) // lock
+      .mockResolvedValueOnce({ rows: [] }); // ROLLBACK
+
+    // commercial : possède 'transition' (passe le middleware) mais pas 'reopen' -> 403 en service
+    const res = await request(app).post("/api/v1/affaires/7/transition").set("x-test-role", "commercial").send({ to: "OUVERTE" });
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("FORBIDDEN");
+    expect(mocks.clientQuery.mock.calls.some((c) => String(c[0]).includes("UPDATE affaire"))).toBe(false);
+  });
+
+  // ---------------------------------------------------------------------------
+  // #169 — archivage : aucune suppression physique, idempotent, RBAC
+  // ---------------------------------------------------------------------------
+  it("POST /api/v1/affaires/:id/archive archives without any physical delete", async () => {
+    mocks.clientQuery
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ statut: "EN_COURS", updated_at_text: "2026-02-02T10:00:00.000Z", before: { id: 7 } }] }) // lock
+      .mockResolvedValueOnce({ rows: [{ id: "7", statut: "ANNULEE", updated_at: "2026-02-02T13:00:00.000Z" }] }) // update
+      .mockResolvedValueOnce({ rows: [{ id: "audit-1", created_at: "2026-02-01T10:00:00.000Z" }] }) // audit
+      .mockResolvedValueOnce({ rows: [] }) // notify
+      .mockResolvedValueOnce({ rows: [] }); // COMMIT
+
+    const res = await request(app).post("/api/v1/affaires/7/archive").send({ reason: "dossier soldé" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ id: 7, statut: "ANNULEE", already_archived: false });
+    expect(mocks.clientQuery.mock.calls.some((c) => String(c[0]).includes("DELETE FROM affaire"))).toBe(false);
+    expect(mocks.clientQuery.mock.calls.some((c) => String(c[0]).includes("DELETE FROM commande_to_affaire"))).toBe(false);
+  });
+
+  it("POST /api/v1/affaires/:id/archive is idempotent for an already-archived affaire", async () => {
+    mocks.clientQuery
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ statut: "ANNULEE", updated_at_text: "2026-02-02T10:00:00.000Z", before: { id: 7 } }] }) // lock
+      .mockResolvedValueOnce({ rows: [] }); // COMMIT
+
+    const res = await request(app).post("/api/v1/affaires/7/archive").send({ reason: "again" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ statut: "ANNULEE", already_archived: true });
+    expect(mocks.clientQuery.mock.calls.some((c) => String(c[0]).includes("UPDATE affaire"))).toBe(false);
+  });
+
+  it("POST /api/v1/affaires/:id/archive is forbidden for a role lacking 'archive' (403)", async () => {
+    const res = await request(app).post("/api/v1/affaires/7/archive").set("x-test-role", "logistique").send({ reason: "x" });
+    expect(res.status).toBe(403);
+    expect(mocks.poolConnect).not.toHaveBeenCalled();
+  });
+
+  // ---------------------------------------------------------------------------
+  // #169 — aperçu de création manuelle : lecture seule, aucun effet de bord
+  // ---------------------------------------------------------------------------
+  it("POST /api/v1/affaires/preview returns code format + linked entities with no side effect", async () => {
+    mocks.poolQuery
+      .mockResolvedValueOnce({ rows: [{ client_id: "001", company_name: "ACME", email: null, phone: null, delivery_address_id: null, bill_address_id: null }] }) // client
+      .mockResolvedValueOnce({ rows: [{ id: "123", numero: "CC-123", client_id: "001", statut: "brouillon" }] }) // commande
+      .mockResolvedValueOnce({ rows: [{ n: 0 }] }); // existing affaire count
+
+    const res = await request(app).post("/api/v1/affaires/preview").send({ client_id: "001", commande_id: 123 });
+
+    expect(res.status).toBe(200);
+    expect(res.body.code_format).toMatch(/^AFF-\d{4}-NNNN$/);
+    expect(res.body.can_create).toBe(true);
+    expect(res.body.client).toMatchObject({ company_name: "ACME" });
+    expect(res.body.commande).toMatchObject({ id: 123, numero: "CC-123" });
+    expect(mocks.poolConnect).not.toHaveBeenCalled(); // aucune transaction, aucun effet de bord
+  });
+
+  it("POST /api/v1/affaires/preview flags COMMANDE_NOT_FOUND as a blocker", async () => {
+    mocks.poolQuery
+      .mockResolvedValueOnce({ rows: [{ client_id: "001", company_name: "ACME", email: null, phone: null, delivery_address_id: null, bill_address_id: null }] }) // client
+      .mockResolvedValueOnce({ rows: [] }); // commande not found
+
+    const res = await request(app).post("/api/v1/affaires/preview").send({ client_id: "001", commande_id: 999 });
+
+    expect(res.status).toBe(200);
+    expect(res.body.can_create).toBe(false);
+    expect(res.body.blockers).toContain("COMMANDE_NOT_FOUND");
   });
 });

@@ -2,12 +2,23 @@ import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
+import { generateAffaireCode } from "../../../shared/codes/code-generator.service";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
+import {
+  classifyTransition,
+  isAllowedTransition,
+  allowedTargetsFrom,
+} from "../domain/affaire-transitions";
+import { capabilityForTransition, roleHasAffaireCapability } from "../domain/affaire-rbac";
 import type {
   ListAffairesCommandCenterQueryDTO,
   ListAffairesQueryDTO,
   CreateAffaireBodyDTO,
   UpdateAffaireBodyDTO,
+  TransitionAffaireBodyDTO,
+  ArchiveAffaireBodyDTO,
+  PreviewAffaireBodyDTO,
+  AffaireStatut,
 } from "../validators/affaire.validators";
 import type {
   Affaire,
@@ -1186,7 +1197,12 @@ export async function repoCreateAffaire(input: CreateAffaireBodyDTO, audit?: Aud
     if (!idRaw) throw new Error("Failed to allocate affaire id");
     const id = toInt(idRaw, "affaire.id");
 
-    const reference = (input.reference ?? `AFF-${id}`).slice(0, 30);
+    // Code métier serveur immuable AFF-AAAA-NNNN — jamais fourni par le client, jamais une FK.
+    // Séquence transactionnelle centrale (cf. shared/codes) ; client_code accepté mais non encodé.
+    const reference = await generateAffaireCode(client, { type: "LIV", client_code: input.client_id ?? "" });
+
+    // Statut initial imposé par le serveur (machine d'état). Toute évolution passe par /transition.
+    const typeAffaire = input.type_affaire ?? "livraison";
 
     const insertSql = `
       INSERT INTO affaire (
@@ -1201,29 +1217,28 @@ export async function repoCreateAffaire(input: CreateAffaireBodyDTO, audit?: Aud
         date_cloture,
         commentaire
       ) VALUES (
-        $1,$2,$3,$4,$5,$6,$7,
-        COALESCE($8::date, CURRENT_DATE),
-        $9::date,
-        $10
+        $1,$2,$3,$4,$5,$6,'OUVERTE',
+        COALESCE($7::date, CURRENT_DATE),
+        NULL,
+        $8
       )
-      RETURNING id::text AS id
+      RETURNING id::text AS id, updated_at::text AS updated_at
     `;
 
-    const ins = await client.query<{ id: string }>(insertSql, [
+    const ins = await client.query<{ id: string; updated_at: string }>(insertSql, [
       id,
       reference,
-      input.client_id,
+      input.client_id ?? null,
       input.commande_id ?? null,
       input.devis_id ?? null,
-      input.type_affaire,
-      input.statut,
+      typeAffaire,
       input.date_ouverture ?? null,
-      input.date_cloture ?? null,
       input.commentaire ?? null,
     ]);
 
     const insertedId = ins.rows[0]?.id;
     const affaireId = insertedId ? toInt(insertedId, "affaire.id") : id;
+    const updatedAt = ins.rows[0]?.updated_at ?? null;
 
     if (audit) {
       await insertAffaireAuditLog(client, audit, {
@@ -1231,22 +1246,23 @@ export async function repoCreateAffaire(input: CreateAffaireBodyDTO, audit?: Aud
         entity_id: String(affaireId),
         details: {
           reference,
-          client_id: input.client_id,
+          client_id: input.client_id ?? null,
           commande_id: input.commande_id ?? null,
           devis_id: input.devis_id ?? null,
-          statut: input.statut,
-          type_affaire: input.type_affaire ?? "livraison",
+          statut: "OUVERTE",
+          type_affaire: typeAffaire,
         },
       });
     }
 
     await client.query("COMMIT");
-    return { id: affaireId };
+    return { id: affaireId, reference, updated_at: updatedAt };
   } catch (err) {
     await client.query("ROLLBACK");
 
     const { code, constraint } = getPgErrorInfo(err);
     if (code === "23505" && constraint === "affaire_reference_key") {
+      // Collision improbable sur un code séquentiel serveur : signalée comme conflit transitoire.
       throw new HttpError(409, "AFFAIRE_REFERENCE_EXISTS", "Reference already exists");
     }
     throw err;
@@ -1255,6 +1271,22 @@ export async function repoCreateAffaire(input: CreateAffaireBodyDTO, audit?: Aud
   }
 }
 
+type MutationResult = { id: number; statut: AffaireStatut; updated_at: string | null };
+
+function assertOptimisticToken(expected: string | undefined, current: string | null) {
+  if (expected && current && expected !== current) {
+    throw new HttpError(
+      409,
+      "CONCURRENT_MODIFICATION",
+      "L'affaire a été modifiée entre-temps. Rechargez la fiche avant de réessayer."
+    );
+  }
+}
+
+/**
+ * PATCH métadonnées uniquement. Le `statut` (machine d'état) et la `reference` (code serveur
+ * immuable) ne sont jamais modifiables ici. Verrou optimiste via `expected_updated_at`.
+ */
 export async function repoUpdateAffaire(id: number, input: UpdateAffaireBodyDTO, audit?: AuditContext) {
   const sets: string[] = [];
   const values: unknown[] = [id];
@@ -1263,42 +1295,12 @@ export async function repoUpdateAffaire(id: number, input: UpdateAffaireBodyDTO,
     return `$${values.length}`;
   };
 
-  if (input.reference !== undefined) {
-    sets.push(`reference = ${push(input.reference)}`);
-  }
-  if (input.client_id !== undefined) {
-    sets.push(`client_id = ${push(input.client_id)}`);
-  }
-  if (input.commande_id !== undefined) {
-    sets.push(`commande_id = ${push(input.commande_id)}::bigint`);
-  }
-  if (input.devis_id !== undefined) {
-    sets.push(`devis_id = ${push(input.devis_id)}::bigint`);
-  }
-  if (input.type_affaire !== undefined) {
-    sets.push(`type_affaire = ${push(input.type_affaire)}`);
-  }
-  if (input.date_ouverture !== undefined) {
-    sets.push(`date_ouverture = ${push(input.date_ouverture)}::date`);
-  }
-  if (input.commentaire !== undefined) {
-    sets.push(`commentaire = ${push(input.commentaire)}`);
-  }
-
-  if (input.statut !== undefined) {
-    sets.push(`statut = ${push(input.statut)}`);
-    if (input.statut === "CLOTUREE") {
-      if (input.date_cloture) {
-        sets.push(`date_cloture = ${push(input.date_cloture)}::date`);
-      } else {
-        sets.push(`date_cloture = COALESCE(date_cloture, CURRENT_DATE)`);
-      }
-    } else if (input.date_cloture !== undefined) {
-      sets.push(`date_cloture = ${push(input.date_cloture)}::date`);
-    }
-  } else if (input.date_cloture !== undefined) {
-    sets.push(`date_cloture = ${push(input.date_cloture)}::date`);
-  }
+  if (input.client_id !== undefined) sets.push(`client_id = ${push(input.client_id)}`);
+  if (input.commande_id !== undefined) sets.push(`commande_id = ${push(input.commande_id)}::bigint`);
+  if (input.devis_id !== undefined) sets.push(`devis_id = ${push(input.devis_id)}::bigint`);
+  if (input.type_affaire !== undefined) sets.push(`type_affaire = ${push(input.type_affaire)}`);
+  if (input.date_ouverture !== undefined) sets.push(`date_ouverture = ${push(input.date_ouverture)}::date`);
+  if (input.commentaire !== undefined) sets.push(`commentaire = ${push(input.commentaire)}`);
 
   if (sets.length === 0) {
     return null;
@@ -1309,24 +1311,115 @@ export async function repoUpdateAffaire(id: number, input: UpdateAffaireBodyDTO,
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const beforeRes = await client.query<Record<string, unknown>>(
-      `SELECT row_to_json(a.*) AS before FROM affaire a WHERE a.id = $1 FOR UPDATE`,
+    const beforeRes = await client.query<{ before: Record<string, unknown> | null; updated_at_text: string | null }>(
+      `SELECT row_to_json(a.*) AS before, a.updated_at::text AS updated_at_text FROM affaire a WHERE a.id = $1 FOR UPDATE`,
       [id]
     );
-    const before = beforeRes.rows[0]?.before ?? null;
-    if (!before) {
+    const beforeRow = beforeRes.rows[0] ?? null;
+    if (!beforeRow || !beforeRow.before) {
       await client.query("ROLLBACK");
       return null;
     }
+
+    assertOptimisticToken(input.expected_updated_at, beforeRow.updated_at_text);
 
     const sql = `
       UPDATE affaire
       SET ${sets.join(", ")}
       WHERE id = $1
-      RETURNING id::text AS id
+      RETURNING id::text AS id, statut, updated_at::text AS updated_at
     `;
 
-    const res = await client.query<{ id: string }>(sql, values);
+    const res = await client.query<{ id: string; statut: AffaireStatut; updated_at: string }>(sql, values);
+    const row = res.rows[0] ?? null;
+    if (!row) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    if (audit) {
+      const { expected_updated_at, ...patch } = input;
+      void expected_updated_at;
+      await insertAffaireAuditLog(client, audit, {
+        action: "affaires.update",
+        entity_id: String(id),
+        details: { before: beforeRow.before, patch },
+      });
+    }
+
+    await client.query("COMMIT");
+    return { id: toInt(row.id, "affaire.id"), statut: row.statut, updated_at: row.updated_at } satisfies MutationResult;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Transition d'état serveur validée par la machine d'état. Transition interdite -> 422
+ * INVALID_TRANSITION ; conflit de version -> 409. Audit transactionnel avec la nature de la
+ * transition (start/suspend/resume/close/reopen/cancel).
+ */
+export async function repoTransitionAffaire(id: number, input: TransitionAffaireBodyDTO, audit?: AuditContext) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const curRes = await client.query<{
+      statut: AffaireStatut;
+      updated_at_text: string | null;
+      before: Record<string, unknown> | null;
+    }>(
+      `SELECT a.statut AS statut, a.updated_at::text AS updated_at_text, row_to_json(a.*) AS before
+       FROM affaire a WHERE a.id = $1 FOR UPDATE`,
+      [id]
+    );
+    const cur = curRes.rows[0] ?? null;
+    if (!cur || !cur.before) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    assertOptimisticToken(input.expected_updated_at, cur.updated_at_text);
+
+    const from = cur.statut;
+    const to = input.to;
+    if (!isAllowedTransition(from, to)) {
+      throw new HttpError(422, "INVALID_TRANSITION", `Transition ${from} → ${to} non autorisée.`, {
+        from,
+        to,
+        allowed: allowedTargetsFrom(from),
+      });
+    }
+    const kind = classifyTransition(from, to);
+
+    // RBAC fin dépendant de l'état (réouverture/clôture/annulation) — vérifié ici où `from`/`to`
+    // sont connus (le middleware de route ne peut pas classifier une réouverture sans l'état courant).
+    const requiredCapability = capabilityForTransition(kind);
+    if (audit && !roleHasAffaireCapability(audit.user_role, requiredCapability)) {
+      throw new HttpError(403, "FORBIDDEN", `Capacité « ${requiredCapability} » requise pour cette transition.`);
+    }
+
+    const sets: string[] = ["statut = $2"];
+    const values: unknown[] = [id, to];
+    if (to === "CLOTUREE") {
+      if (input.date_cloture) {
+        values.push(input.date_cloture);
+        sets.push(`date_cloture = $${values.length}::date`);
+      } else {
+        sets.push(`date_cloture = COALESCE(date_cloture, CURRENT_DATE)`);
+      }
+    } else {
+      // Toute sortie de clôture (réouverture) ou état non clôturé efface la date de clôture.
+      sets.push(`date_cloture = NULL`);
+    }
+    sets.push(`updated_at = now()`);
+
+    const res = await client.query<{ id: string; statut: AffaireStatut; updated_at: string }>(
+      `UPDATE affaire SET ${sets.join(", ")} WHERE id = $1 RETURNING id::text AS id, statut, updated_at::text AS updated_at`,
+      values
+    );
     const row = res.rows[0] ?? null;
     if (!row) {
       await client.query("ROLLBACK");
@@ -1335,69 +1428,150 @@ export async function repoUpdateAffaire(id: number, input: UpdateAffaireBodyDTO,
 
     if (audit) {
       await insertAffaireAuditLog(client, audit, {
-        action: "affaires.update",
+        action: `affaires.transition.${kind}`,
         entity_id: String(id),
-        details: {
-          before,
-          patch: input,
-        },
+        details: { from, to, kind, reason: input.reason ?? null, before: cur.before },
       });
     }
 
     await client.query("COMMIT");
-    return { id: toInt(row.id, "affaire.id") };
+    return { id: toInt(row.id, "affaire.id"), statut: row.statut, updated_at: row.updated_at } satisfies MutationResult;
   } catch (err) {
     await client.query("ROLLBACK");
-    const { code, constraint } = getPgErrorInfo(err);
-    if (code === "23505" && constraint === "affaire_reference_key") {
-      throw new HttpError(409, "AFFAIRE_REFERENCE_EXISTS", "Reference already exists");
-    }
     throw err;
   } finally {
     client.release();
   }
 }
 
-export async function repoDeleteAffaire(id: number, audit?: AuditContext) {
+/**
+ * Archivage : aucune suppression physique (remplace l'ancien hard-delete). L'affaire passe à
+ * ANNULEE, la ligne et les mappings commande↔affaire sont CONSERVÉS (traçabilité). Idempotent :
+ * une affaire déjà ANNULEE renvoie son état sans nouvelle écriture. Verrou optimiste facultatif.
+ */
+export async function repoArchiveAffaire(id: number, input: ArchiveAffaireBodyDTO, audit?: AuditContext) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const beforeRes = await client.query<Record<string, unknown>>(
-      `SELECT row_to_json(a.*) AS before FROM affaire a WHERE a.id = $1 FOR UPDATE`,
+    const curRes = await client.query<{
+      statut: AffaireStatut;
+      updated_at_text: string | null;
+      before: Record<string, unknown> | null;
+    }>(
+      `SELECT a.statut AS statut, a.updated_at::text AS updated_at_text, row_to_json(a.*) AS before
+       FROM affaire a WHERE a.id = $1 FOR UPDATE`,
       [id]
     );
-    const before = beforeRes.rows[0]?.before ?? null;
-    if (!before) {
+    const cur = curRes.rows[0] ?? null;
+    if (!cur || !cur.before) {
       await client.query("ROLLBACK");
-      return false;
+      return null;
     }
 
-    const links = await client.query<{ count: number }>(
-      `SELECT COUNT(*)::int AS count FROM commande_to_affaire WHERE affaire_id = $1`,
+    assertOptimisticToken(input.expected_updated_at, cur.updated_at_text);
+
+    if (audit && !roleHasAffaireCapability(audit.user_role, "archive")) {
+      throw new HttpError(403, "FORBIDDEN", "Capacité « archive » requise pour archiver une affaire.");
+    }
+
+    if (cur.statut === "ANNULEE") {
+      // Déjà archivée : rejeu idempotent, aucune écriture.
+      await client.query("COMMIT");
+      return { id, statut: "ANNULEE", updated_at: cur.updated_at_text, already_archived: true };
+    }
+
+    const res = await client.query<{ id: string; statut: AffaireStatut; updated_at: string }>(
+      `UPDATE affaire SET statut = 'ANNULEE', updated_at = now() WHERE id = $1
+       RETURNING id::text AS id, statut, updated_at::text AS updated_at`,
       [id]
     );
-    const mappingCount = links.rows[0]?.count ?? 0;
+    const row = res.rows[0] ?? null;
+    if (!row) {
+      await client.query("ROLLBACK");
+      return null;
+    }
 
-    await client.query(`DELETE FROM commande_to_affaire WHERE affaire_id = $1`, [id]);
-    const del = await client.query(`DELETE FROM affaire WHERE id = $1`, [id]);
-
-    if ((del.rowCount ?? 0) > 0 && audit) {
+    if (audit) {
       await insertAffaireAuditLog(client, audit, {
-        action: "affaires.delete",
+        action: "affaires.archive",
         entity_id: String(id),
-        details: {
-          before,
-          deleted_commande_mappings: mappingCount,
-        },
+        details: { before: cur.before, from: cur.statut, reason: input.reason ?? null },
       });
     }
 
     await client.query("COMMIT");
-    return (del.rowCount ?? 0) > 0;
+    return { id: toInt(row.id, "affaire.id"), statut: row.statut, updated_at: row.updated_at, already_archived: false };
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;
   } finally {
     client.release();
   }
+}
+
+export type AffairePreviewResult = {
+  code_format: string;
+  type_affaire: "livraison" | "projet";
+  client: ClientLite | null;
+  commande: { id: number; numero: string | null; client_id: string | null; statut: string | null } | null;
+  warnings: string[];
+  blockers: string[];
+  can_create: boolean;
+};
+
+/**
+ * Aperçu de création manuelle SANS effet de bord : ne consomme pas la séquence de code (le
+ * numéro réel est attribué à la confirmation), ne crée rien. Renvoie le format de code attendu,
+ * les entités liées et les avertissements/bloqueurs métier.
+ */
+export async function repoPreviewAffaire(input: PreviewAffaireBodyDTO): Promise<AffairePreviewResult> {
+  const warnings: string[] = [];
+  const blockers: string[] = [];
+
+  let client: ClientLite | null = null;
+  if (input.client_id) {
+    const r = await pool.query<ClientLite>(
+      `SELECT client_id, company_name, email, phone,
+              delivery_address_id::text AS delivery_address_id,
+              bill_address_id::text AS bill_address_id
+       FROM clients WHERE client_id = $1 LIMIT 1`,
+      [input.client_id]
+    );
+    client = r.rows[0] ?? null;
+    if (!client) blockers.push("CLIENT_NOT_FOUND");
+  }
+
+  let commande: AffairePreviewResult["commande"] = null;
+  if (input.commande_id) {
+    const r = await pool.query<{ id: string; numero: string | null; client_id: string | null; statut: string | null }>(
+      `SELECT cc.id::text AS id, cc.numero, cc.client_id,
+              (SELECT ch.nouveau_statut FROM commande_historique ch
+                WHERE ch.commande_id = cc.id ORDER BY ch.date_action DESC, ch.id DESC LIMIT 1) AS statut
+       FROM commande_client cc WHERE cc.id = $1 LIMIT 1`,
+      [input.commande_id]
+    );
+    const found = r.rows[0] ?? null;
+    if (!found) {
+      blockers.push("COMMANDE_NOT_FOUND");
+    } else {
+      commande = { id: toInt(found.id, "commande.id"), numero: found.numero, client_id: found.client_id, statut: found.statut };
+      const existing = await pool.query<{ n: number }>(
+        `SELECT COUNT(*)::int AS n FROM affaire WHERE commande_id = $1`,
+        [input.commande_id]
+      );
+      if ((existing.rows[0]?.n ?? 0) > 0) warnings.push("COMMANDE_ALREADY_HAS_AFFAIRE");
+      if (input.client_id && found.client_id && found.client_id !== input.client_id) warnings.push("CLIENT_MISMATCH");
+    }
+  }
+
+  const year = new Date().getUTCFullYear();
+  return {
+    code_format: `AFF-${year}-NNNN`,
+    type_affaire: input.type_affaire ?? "livraison",
+    client,
+    commande,
+    warnings,
+    blockers,
+    can_create: blockers.length === 0,
+  };
 }
