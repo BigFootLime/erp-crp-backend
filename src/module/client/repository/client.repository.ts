@@ -157,6 +157,7 @@ async function insertClient(
     observations, provided_documents_id,
     quality_levels,
     devise, encours_max, incoterm, langue,
+    compte_tiers, groupe_financier,
     created_by, updated_by
   ) VALUES (
     $1,$2,$3,
@@ -168,7 +169,8 @@ async function insertClient(
     NULLIF($18,''), $19,
     COALESCE($20::text[], '{}'),
     NULLIF($21,''), $22, NULLIF($23,''), NULLIF($24,''),
-    $25, $25
+    NULLIF($25,''), NULLIF($26,''),
+    $27, $27
   )
   RETURNING client_id
 `;
@@ -185,6 +187,7 @@ async function insertClient(
    dto.observations ?? "", normalizedProvidedDocsId,
    dto.quality_levels ?? [],
    dto.devise ?? "", dto.encours_max ?? null, dto.incoterm ?? "", dto.langue ?? "",
+   dto.compte_tiers ?? "", dto.groupe_financier ?? "",
    createdBy
 ]);
 
@@ -524,6 +527,8 @@ export async function repoPatchClient(
     if (has("encours_max")) put((p) => `encours_max = ${p}`, patch.encours_max ?? null);
     if (has("incoterm")) put((p) => `incoterm = NULLIF(${p}, '')`, patch.incoterm ?? "");
     if (has("langue")) put((p) => `langue = NULLIF(${p}, '')`, patch.langue ?? "");
+    if (has("compte_tiers")) put((p) => `compte_tiers = NULLIF(${p}, '')`, patch.compte_tiers ?? "");
+    if (has("groupe_financier")) put((p) => `groupe_financier = NULLIF(${p}, '')`, patch.groupe_financier ?? "");
     // Réactivation : repasser en prospect/client efface l'horodatage d'archivage.
     if (has("status") && patch.status && patch.status !== "inactif") {
       sets.push("archived_at = NULL");

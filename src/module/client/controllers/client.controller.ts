@@ -127,8 +127,11 @@ export const listClients: RequestHandler = async (req, res, next) => {
           ? req.query.limit
           : NaN;
 
-    const limitCandidate = Number.isFinite(limitCandidateRaw) ? limitCandidateRaw : 25;
-    const limit = Math.min(Math.max(limitCandidate, 1), 100);
+    // Défaut relevé (25 -> 2000) et plafond (100 -> 2000) pour que la liste clients
+    // affiche l'intégralité du parc (191 fiches importées depuis Clipper) sans
+    // pagination côté UI. Pagination = évolution ciblée si le parc dépasse ce seuil.
+    const limitCandidate = Number.isFinite(limitCandidateRaw) ? limitCandidateRaw : 2000;
+    const limit = Math.min(Math.max(limitCandidate, 1), 2000);
 
     const rows = await clientService.listClients(q, limit);
     res.json(rows);
