@@ -28,6 +28,7 @@ import stockRoutes from "../module/stock/routes/stock.routes";
 import programmationRoutes from "../module/programmation/routes/programmation.routes";
 import operationDossiersRoutes from "../module/operation-dossiers/routes/operation-dossiers.routes";
 import fournisseursRoutes from "../module/fournisseurs/routes/fournisseurs.routes";
+import commandeFournisseurRoutes from "../module/commande-fournisseur/routes/commande-fournisseur.routes";
 import receptionsRoutes from "../module/receptions/routes/receptions.routes";
 import metrologieRoutes from "../module/metrologie/routes/metrologie.routes";
 import codesRoutes from "../module/codes/routes/codes.routes";
@@ -80,6 +81,7 @@ router.use("/livraisons", livraisonsRoutes);
 router.use("/stock", stockRoutes);
 router.use("/dossiers", operationDossiersRoutes);
 router.use("/fournisseurs", fournisseursRoutes);
+router.use("/commandes-fournisseurs", commandeFournisseurRoutes); // Module « Commandes fournisseurs » (#172) — BCF
 router.use("/receptions", receptionsRoutes);
 router.use("/metrologie", metrologieRoutes);
 router.use("/codes", codesRoutes);

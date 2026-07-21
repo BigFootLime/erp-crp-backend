@@ -55,6 +55,8 @@ export const createReceptionSchema = z.object({
       reception_date: isoDate.optional().nullable(),
       supplier_reference: z.string().trim().min(1).max(120).optional().nullable(),
       commentaire: z.string().trim().min(1).max(5000).optional().nullable(),
+      // #172 — rattachement facultatif à une commande fournisseur (BCF) du même fournisseur.
+      commande_fournisseur_id: uuid.optional().nullable(),
     })
     .strict(),
 })
@@ -83,6 +85,8 @@ export const createLineSchema = z.object({
       unite: z.string().trim().min(1).max(30).optional().nullable(),
       supplier_lot_code: z.string().trim().min(1).max(120).optional().nullable(),
       notes: z.string().trim().min(1).max(5000).optional().nullable(),
+      // #172 — imputation facultative sur une ligne de commande fournisseur (BCF).
+      commande_fournisseur_ligne_id: uuid.optional().nullable(),
     })
     .strict(),
 })

@@ -10,6 +10,8 @@ import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators"
+import { roleHasCommandeFournisseurCapability } from "../../commande-fournisseur/domain/commande-fournisseur-rbac"
+import { repoRefreshCommandeReceptionState } from "../../commande-fournisseur/repository/commande-fournisseur.repository"
 import { repoCreateMovement, repoPostMovement } from "../../stock/repository/stock.repository"
 import type { StockMovementDetail } from "../../stock/types/stock.types"
 import type {
@@ -645,6 +647,32 @@ export async function repoCreateReception(body: CreateReceptionBodyDTO, audit: A
     await client.query("BEGIN")
     const receptionNo = await reserveReceptionNo(client)
 
+    // #172 — rattachement facultatif à une commande fournisseur : même fournisseur, et la
+    // commande doit avoir été réellement envoyée (jamais de réception sur un brouillon).
+    if (body.commande_fournisseur_id) {
+      const cf = await client.query<{ fournisseur_id: string; statut: string; code: string }>(
+        `SELECT fournisseur_id::text AS fournisseur_id, statut, code
+           FROM public.commande_fournisseur WHERE id = $1::uuid`,
+        [body.commande_fournisseur_id]
+      )
+      const cfRow = cf.rows[0]
+      if (!cfRow) throw new HttpError(422, "COMMANDE_FOURNISSEUR_INTROUVABLE", "Commande fournisseur liée introuvable.")
+      if (cfRow.fournisseur_id !== body.fournisseur_id) {
+        throw new HttpError(
+          422,
+          "COMMANDE_FOURNISSEUR_MISMATCH",
+          "La commande liée n'appartient pas à ce fournisseur."
+        )
+      }
+      if (!["ENVOYEE", "ACCUSE_RECU", "PARTIELLEMENT_RECUE"].includes(cfRow.statut)) {
+        throw new HttpError(
+          422,
+          "COMMANDE_FOURNISSEUR_NON_RECEVABLE",
+          `La commande ${cfRow.code} (${cfRow.statut}) n'est pas en attente de réception.`
+        )
+      }
+    }
+
     const ins = await client.query<ReceptionRow>(
       `
         INSERT INTO public.receptions_fournisseurs (
@@ -654,10 +682,11 @@ export async function repoCreateReception(body: CreateReceptionBodyDTO, audit: A
           reception_date,
           supplier_reference,
           commentaire,
+          commande_fournisseur_id,
           created_by,
           updated_by
         )
-        VALUES ($1,$2::uuid,'OPEN',$3::date,$4,$5,$6,$6)
+        VALUES ($1,$2::uuid,'OPEN',$3::date,$4,$5,$6::uuid,$7,$7)
         RETURNING
           id::text AS id,
           reception_no,
@@ -677,6 +706,7 @@ export async function repoCreateReception(body: CreateReceptionBodyDTO, audit: A
         body.reception_date ?? null,
         body.supplier_reference ?? null,
         body.commentaire ?? null,
+        body.commande_fournisseur_id ?? null,
         audit.user_id,
       ]
     )
@@ -784,6 +814,52 @@ export async function repoCreateLine(receptionId: string, body: CreateLineBodyDT
     )
     const lineNo = next.rows[0]?.next_no ?? 1
 
+    // #172 — imputation facultative sur une ligne de commande fournisseur : cohérence
+    // fournisseur/article/état vérifiée, puis recalcul transactionnel de l'état de la
+    // commande (sur-réception bloquée sans la capacité dédiée — motif requis).
+    let commandeIdToRefresh: string | null = null
+    if (body.commande_fournisseur_ligne_id) {
+      const cfl = await client.query<{
+        ligne_id: string
+        commande_id: string
+        statut_ligne: string
+        ligne_article_id: string | null
+        cf_statut: string
+        cf_fournisseur_id: string
+        cf_code: string
+        reception_fournisseur_id: string
+      }>(
+        `SELECT l.id::text AS ligne_id, l.commande_id::text AS commande_id, l.statut_ligne,
+                l.article_id::text AS ligne_article_id,
+                c.statut AS cf_statut, c.fournisseur_id::text AS cf_fournisseur_id, c.code AS cf_code,
+                r.fournisseur_id::text AS reception_fournisseur_id
+           FROM public.commande_fournisseur_ligne l
+           JOIN public.commande_fournisseur c ON c.id = l.commande_id
+           CROSS JOIN (SELECT fournisseur_id FROM public.receptions_fournisseurs WHERE id = $2::uuid) r
+          WHERE l.id = $1::uuid`,
+        [body.commande_fournisseur_ligne_id, receptionId]
+      )
+      const link = cfl.rows[0]
+      if (!link) throw new HttpError(422, "LIGNE_COMMANDE_INTROUVABLE", "Ligne de commande fournisseur introuvable.")
+      if (link.statut_ligne !== "ACTIVE") {
+        throw new HttpError(422, "LIGNE_COMMANDE_ANNULEE", "Impossible d'imputer une ligne de commande annulée.")
+      }
+      if (link.cf_fournisseur_id !== link.reception_fournisseur_id) {
+        throw new HttpError(422, "COMMANDE_FOURNISSEUR_MISMATCH", "La ligne de commande n'appartient pas au fournisseur de cette réception.")
+      }
+      if (!["ENVOYEE", "ACCUSE_RECU", "PARTIELLEMENT_RECUE"].includes(link.cf_statut)) {
+        throw new HttpError(
+          422,
+          "COMMANDE_FOURNISSEUR_NON_RECEVABLE",
+          `La commande ${link.cf_code} (${link.cf_statut}) n'est pas en attente de réception.`
+        )
+      }
+      if (link.ligne_article_id && link.ligne_article_id !== body.article_id) {
+        throw new HttpError(422, "ARTICLE_MISMATCH", "L'article reçu ne correspond pas à la ligne de commande imputée.")
+      }
+      commandeIdToRefresh = link.commande_id
+    }
+
     const ins = await client.query<{ id: string }>(
       `
         INSERT INTO public.reception_fournisseur_lignes (
@@ -795,10 +871,11 @@ export async function repoCreateLine(receptionId: string, body: CreateLineBodyDT
           unite,
           supplier_lot_code,
           notes,
+          commande_fournisseur_ligne_id,
           created_by,
           updated_by
         )
-        VALUES ($1::uuid,$2,$3::uuid,$4,$5,$6,$7,$8,$9,$9)
+        VALUES ($1::uuid,$2,$3::uuid,$4,$5,$6,$7,$8,$9::uuid,$10,$10)
         RETURNING id::text AS id
       `,
       [
@@ -810,6 +887,7 @@ export async function repoCreateLine(receptionId: string, body: CreateLineBodyDT
         body.unite ?? null,
         body.supplier_lot_code ?? null,
         body.notes ?? null,
+        body.commande_fournisseur_ligne_id ?? null,
         audit.user_id,
       ]
     )
@@ -822,6 +900,22 @@ export async function repoCreateLine(receptionId: string, body: CreateLineBodyDT
       entity_id: lineId,
       details: { reception_id: receptionId, line_no: lineNo, article_id: body.article_id, qty_received: body.qty_received },
     })
+
+    if (commandeIdToRefresh) {
+      // Sur-réception : autorisée uniquement si le rôle porte la capacité dédiée ET qu'un
+      // motif est saisi dans les notes de la ligne (permission + motif explicites, #172).
+      const roleRes = await client.query<{ role: string | null }>(
+        `SELECT role FROM public.users WHERE id = $1`,
+        [audit.user_id]
+      )
+      const role = roleRes.rows[0]?.role ?? null
+      const allowOverReceipt =
+        roleHasCommandeFournisseurCapability(role, "over_receipt") && Boolean(body.notes && body.notes.trim().length >= 3)
+      await repoRefreshCommandeReceptionState(client, commandeIdToRefresh, {
+        allowOverReceipt,
+        audit: { ...audit, role },
+      })
+    }
 
     const detail = await selectLineDetail(client, lineId)
 
