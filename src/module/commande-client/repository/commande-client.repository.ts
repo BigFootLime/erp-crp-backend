@@ -3679,12 +3679,14 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       dest_stock_magasin_id: string | null;
       dest_stock_emplacement_id: string | null;
       ar_sent_at: string | null;
+      updated_at: string | null;
     }>(
       `
       SELECT client_id, type_affaire, order_type, devis_id::text AS devis_id, numero,
              dest_stock_magasin_id::text AS dest_stock_magasin_id,
              dest_stock_emplacement_id::bigint::text AS dest_stock_emplacement_id,
-             ar_sent_at::text AS ar_sent_at
+             ar_sent_at::text AS ar_sent_at,
+             updated_at::text AS updated_at
       FROM commande_client
       WHERE id = $1
       FOR UPDATE
@@ -3695,6 +3697,21 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
     if (!commande) {
       await client.query("ROLLBACK");
       return null;
+    }
+
+    // #168 : verrou optimiste — refuse un lancement dont l'aperçu « Vérifier et lancer » est
+    // périmé (la commande a changé entre l'aperçu et la confirmation). Sans jeton, comportement
+    // inchangé.
+    if (
+      body.expected_updated_at &&
+      commande.updated_at &&
+      body.expected_updated_at !== commande.updated_at
+    ) {
+      throw new HttpError(
+        409,
+        "COMMANDE_PREVIEW_STALE",
+        "La commande a été modifiée depuis l'aperçu. Rechargez la commande avant de lancer."
+      );
     }
 
     const orderType = coerceOrderType(commande.order_type);
