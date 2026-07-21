@@ -1450,6 +1450,42 @@ describe("/api/v1/commandes", () => {
     expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO affaire"))).toBe(false);
   });
 
+  it("POST /api/v1/commandes/:id/generate-affaires rejects a stale preview (expected_updated_at mismatch, #168)", async () => {
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const q = String(sql);
+      if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
+      if (q.includes("FROM commande_client") && q.includes("FOR UPDATE") && q.includes("order_type")) {
+        return {
+          rows: [
+            {
+              client_id: "001",
+              type_affaire: "livraison",
+              order_type: "FERME",
+              devis_id: null,
+              numero: "CC-123",
+              dest_stock_magasin_id: null,
+              dest_stock_emplacement_id: null,
+              ar_sent_at: null,
+              updated_at: "2026-01-01T00:00:00.000Z",
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const stale = await request(app)
+      .post("/api/v1/commandes/123/generate-affaires")
+      .set("x-test-role", "Directeur")
+      .send({ decision: null, livraison_count: 1, lines: [], expected_updated_at: "2026-02-02T00:00:00.000Z" });
+
+    expect(stale.status).toBe(409);
+    expect(stale.body).toMatchObject({ code: "COMMANDE_PREVIEW_STALE" });
+    // Aucune affaire ni OF ne doit être créé quand l'aperçu est périmé.
+    expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO affaire"))).toBe(false);
+    expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO ordres_fabrication"))).toBe(false);
+  });
+
   it("POST /api/v1/commandes/:id/generate-affaires requires an internal stock destination", async () => {
     const ARTICLE_ID = "11111111-1111-1111-1111-111111111111";
     const PIECE_ID = "22222222-2222-2222-2222-222222222222";
