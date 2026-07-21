@@ -54,10 +54,12 @@ export async function createWorkPackage(actor: Actor, input: CreateWorkPackageDT
     throw new HttpError(400, "PO_WP_BAD_DATES", "L'échéance précède le début.");
   }
   // Retry court sur collision de code (numérotation concourante).
-  for (let attempt = 0; attempt < 3; attempt++) {
+  const explicitCode = input.code?.trim().toUpperCase();
+  const attempts = explicitCode ? 1 : 3;
+  for (let attempt = 0; attempt < attempts; attempt++) {
     try {
       return await withTransaction(async (tx) => {
-        const code = await repoNextWorkPackageCode(tx, input.project_id);
+        const code = explicitCode ?? await repoNextWorkPackageCode(tx, input.project_id);
         const wp = await repoCreateWorkPackage(tx, {
           project_id: input.project_id,
           parent_id: input.parent_id ?? null,
@@ -84,7 +86,10 @@ export async function createWorkPackage(actor: Actor, input: CreateWorkPackageDT
         return wp;
       });
     } catch (err) {
-      if (!isPgUniqueViolation(err) || attempt === 2) throw err;
+      if (isPgUniqueViolation(err) && explicitCode) {
+        throw new HttpError(409, "PO_WP_CODE_TAKEN", "Ce code de tâche existe déjà dans le projet.");
+      }
+      if (!isPgUniqueViolation(err) || attempt === attempts - 1) throw err;
     }
   }
   throw new HttpError(500, "PO_WP_CODE_RACE", "Impossible d'attribuer un code de tâche.");

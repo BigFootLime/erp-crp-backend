@@ -457,11 +457,19 @@ export async function repoGetFournisseur(id: string): Promise<Fournisseur | null
 }
 
 export async function repoListFournisseurDomaines(): Promise<FournisseurDomaine[]> {
-  const res = await db.query<FournisseurDomaine>(
-    `SELECT id::text AS id, code, label, description, icon, sort_order, is_active
-     FROM public.fournisseur_domaines WHERE is_active = true ORDER BY sort_order ASC, label ASC`
-  )
-  return res.rows.length ? res.rows : DEFAULT_FOURNISSEUR_DOMAINES
+  try {
+    const res = await db.query<FournisseurDomaine>(
+      `SELECT id::text AS id, code, label, description, icon, sort_order, is_active
+       FROM public.fournisseur_domaines WHERE is_active = true ORDER BY sort_order ASC, label ASC`
+    )
+    return res.rows.length ? res.rows : DEFAULT_FOURNISSEUR_DOMAINES
+  } catch (err) {
+    // Before the ecosystem patch (20260616) materializes public.fournisseur_domaines,
+    // fall back to the built-in defaults instead of surfacing a 500 (42P01 = undefined_table).
+    // Any other error is a genuine fault and must still propagate.
+    if ((err as { code?: string } | null)?.code === "42P01") return DEFAULT_FOURNISSEUR_DOMAINES
+    throw err
+  }
 }
 
 export async function repoReplaceFournisseurDomaines(
