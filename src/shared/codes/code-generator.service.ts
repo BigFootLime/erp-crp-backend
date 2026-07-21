@@ -101,10 +101,12 @@ export async function generateArticleBusinessCode(tx: DbQueryer, familyCode: str
 
 export async function generateTransactionalBusinessCode(
   tx: DbQueryer,
-  input: { prefix: "DEV" | "CMD" | "AFF" | "OF" | "LOT" | "MVT" | "CQ" | "NC" | "CAPA" | "BL" | "FACT"; date?: Date; width?: number }
+  input: { prefix: "DEV" | "CMD" | "AFF" | "OF" | "LOT" | "MVT" | "CQ" | "NC" | "CAPA" | "BL" | "FACT" | "BCF"; date?: Date; width?: number }
 ): Promise<string> {
   const year = yearFromDate(input.date ?? new Date());
-  const width = input.width ?? (input.prefix === "DEV" || input.prefix === "CMD" || input.prefix === "AFF" ? 4 : 6);
+  const width =
+    input.width ??
+    (input.prefix === "DEV" || input.prefix === "CMD" || input.prefix === "AFF" || input.prefix === "BCF" ? 4 : 6);
   const seq = await nextCodeValue(tx, `${input.prefix}:${year}`);
   return `${input.prefix}-${year}-${pad(seq, width)}`;
 }
@@ -143,6 +145,11 @@ export async function generateOfCode(tx: DbQueryer, params: { date?: Date }): Pr
 export async function generateFournisseurCode(tx: DbQueryer): Promise<string> {
   const seq = await nextCodeValue(tx, `FOU`);
   return `FOU-${pad(seq, 3)}`;
+}
+
+/** #172 — Bon de commande fournisseur : BCF-AAAA-NNNN, alloué en transaction, immuable. */
+export async function generateCommandeFournisseurCode(tx: DbQueryer, params?: { date?: Date }): Promise<string> {
+  return generateTransactionalBusinessCode(tx, { prefix: "BCF", date: params?.date });
 }
 
 export async function generateArticleCode(_tx: DbQueryer): Promise<string> {

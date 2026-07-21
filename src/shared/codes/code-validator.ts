@@ -44,6 +44,11 @@ export const CODE_FORMATS = {
     example: "FOU-001",
     hintText: "Format attendu: FOU-001",
   },
+  commandeFournisseur: {
+    regex: /^BCF-\d{4}-\d{4}$/,
+    example: "BCF-2026-0001",
+    hintText: "Format attendu: BCF-2026-0001",
+  },
   article: {
     regex: /^(ART-[A-Z0-9]+-\d{6}|ART-\d{4})$/,
     example: "ART-USI-000042",
