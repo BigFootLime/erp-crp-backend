@@ -1,54 +1,53 @@
 // src/module/client/controllers/client.controller.ts
-import { Request, RequestHandler, Response } from "express";
+import { Request, RequestHandler } from "express";
 import { HttpError } from "../../../utils/httpError";
 import { getClientIp, parseDevice } from "../../../utils/requestMeta";
+import { stripQueryFromUrl } from "../../../utils/logPath";
 
 import * as clientService from "../services/client.service"; // ✅ namespace import
 import { svcGetClientById, svcListClientAddresses } from "../services/clients.read.service";
-import { createClientSchema, createClientContactBodySchema, clientPatchSchema } from "../validators/client.validators";
-import { type AuditContext, repoArchiveClient, repoCreateClient, repoDeleteClient, repoPatchClient } from "../repository/client.repository";
-import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
-import path from "node:path";
-// import { LOGO_BASE_DIR } from "../upload/client-logo-upload";
-import { updateClientLogoPath } from "../services/client.service";
+import {
+  createClientSchema,
+  createClientContactBodySchema,
+  clientPatchSchema,
+  duplicateCheckSchema,
+  setPrimaryContactSchema,
+} from "../validators/client.validators";
+import {
+  type AuditContext,
+  repoArchiveClient,
+  repoCheckDuplicates,
+  repoCreateClient,
+  repoCreateClientContact,
+  repoDeleteClient,
+  repoPatchClient,
+  repoSetPrimaryContact,
+} from "../repository/client.repository";
+import { canViewClientFinance } from "../client.permissions";
 
-
+// Upload logo désactivé (CA-APP-05) : la route et ce handler restent commentés
+// tant qu'un upload sécurisé (auth + RBAC + sniffing MIME + taille max + nom
+// serveur) n'est pas spécifié. Réactiver imposera de réimporter node:path,
+// LOGO_BASE_DIR et updateClientLogoPath.
 // export const uploadClientLogo: RequestHandler = async (req, res, next) => {
 //   try {
 //     const clientId = req.params.id;
-
 //     if (!clientId) {
 //       return res.status(400).json({ message: "client_id manquant dans l'URL" });
 //     }
-
 //     const file = (req as any).file as Express.Multer.File | undefined;
-
 //     if (!file) {
 //       return res.status(400).json({ message: "Aucun fichier 'logo' reçu" });
 //     }
-
-//     // chemin absolu sur le VPS (ex: /mnt/crp/CLIENTS/005/LOGOS/005_111225_LOGO.png)
 //     const absolutePath = file.path;
-
-//     // ➜ chemin relatif par rapport à LOGO_BASE_DIR (CLIENTS)
-//     // Exemple: "005/LOGOS/005_111225_LOGO.png"
 //     let relativePath = path.relative(LOGO_BASE_DIR, absolutePath);
-
-//     // normalisation pour éviter les "\" en DB
 //     relativePath = relativePath.replace(/\\/g, "/");
-
-//     // update BDD
 //     await updateClientLogoPath(clientId, relativePath);
-
-//     return res.status(200).json({
-//       client_id: clientId,
-//       logo_path: relativePath, // ce qui est stocké en DB
-//     });
+//     return res.status(200).json({ client_id: clientId, logo_path: relativePath });
 //   } catch (e) {
 //     next(e);
 //   }
 // };
-
 
 function buildAuditContext(req: Request): AuditContext {
   const user = req.user;
@@ -75,7 +74,9 @@ function buildAuditContext(req: Request): AuditContext {
     device_type: device.device_type,
     os: device.os,
     browser: device.browser,
-    path: req.originalUrl ?? null,
+    // Sans query string : les recherches mettent des PII en query (?q=email),
+    // le contexte d'audit n'a besoin que du chemin + page_key.
+    path: stripQueryFromUrl(req.originalUrl),
     page_key: pageKey,
     client_session_id: clientSessionId,
   };
@@ -87,9 +88,24 @@ function routeParam(req: Request, name: string): string {
   throw new HttpError(400, "INVALID_ROUTE_PARAM", `${name} must be a string`);
 }
 
+/**
+ * Le code visible est généré côté serveur et immuable (ADR-0013). Toute valeur
+ * non vide fournie par le client est rejetée explicitement — aucune ambiguïté,
+ * pas d'écrasement silencieux. Les chaînes vides des anciens payloads restent
+ * tolérées (elles signifiaient déjà « laisse le serveur générer »).
+ */
+function rejectClientCodeInBody(body: unknown, code: string, message: string) {
+  if (!body || typeof body !== "object") return;
+  const value = (body as Record<string, unknown>).client_code;
+  if (typeof value === "string" && value.trim() === "") return;
+  if (value === undefined || value === null) return;
+  throw new HttpError(400, code, message);
+}
+
 export const getClientById: RequestHandler = async (req, res, next) => {
   try {
-    const row = await svcGetClientById(routeParam(req, "id"));
+    const includeSensitiveFinance = canViewClientFinance(req.user?.role);
+    const row = await svcGetClientById(routeParam(req, "id"), { includeSensitiveFinance });
     if (!row) {
       res.status(404).json({ message: "Client not found" });
       return;
@@ -124,7 +140,9 @@ export const listClients: RequestHandler = async (req, res, next) => {
 export const listClientContacts: RequestHandler = async (req, res, next) => {
   try {
     const clientId = routeParam(req, "clientId");
-    const rows = await clientService.listClientContacts(clientId);
+    const rows = await clientService.listClientContacts(clientId, {
+      includePersonalPhone: canViewClientFinance(req.user?.role),
+    });
     res.json(rows);
   } catch (e) {
     next(e);
@@ -133,9 +151,10 @@ export const listClientContacts: RequestHandler = async (req, res, next) => {
 
 export const postClientContact: RequestHandler = async (req, res, next) => {
   try {
+    const audit = buildAuditContext(req);
     const clientId = routeParam(req, "clientId");
     const dto = createClientContactBodySchema.parse(req.body);
-    const created = await clientService.createClientContact(clientId, dto);
+    const created = await repoCreateClientContact(clientId, dto, audit);
     res.status(201).json(created);
   } catch (e) {
     next(e);
@@ -152,12 +171,37 @@ export const listClientAddresses: RequestHandler = async (req, res, next) => {
   }
 };
 
+const uuidHeaderRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 export const postClient: RequestHandler = async (req, res, next) => {
   try {
     const audit = buildAuditContext(req);
+    rejectClientCodeInBody(
+      req.body,
+      "CLIENT_CODE_READONLY",
+      "Le code client est généré automatiquement par le serveur."
+    );
+
+    // Rejeu sûr (double clic / retry réseau) : même clé -> même fiche, 200.
+    const idempotencyHeader = req.headers["idempotency-key"];
+    const idempotencyKey = typeof idempotencyHeader === "string" ? idempotencyHeader.trim() : "";
+    if (idempotencyKey && !uuidHeaderRe.test(idempotencyKey)) {
+      throw new HttpError(400, "IDEMPOTENCY_KEY_INVALID", "Idempotency-Key doit être un UUID.");
+    }
+
     const dto = createClientSchema.parse(req.body);
-    const created = await repoCreateClient(dto, audit);
-    res.status(201).json(created); // { client_id }
+    const { replayed, ...created } = await repoCreateClient(dto, audit, idempotencyKey || null);
+    res.status(replayed ? 200 : 201).json(created); // { client_id, client_code }
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const checkClientDuplicates: RequestHandler = async (req, res, next) => {
+  try {
+    const criteria = duplicateCheckSchema.parse(req.body);
+    const candidates = await repoCheckDuplicates(criteria);
+    res.json({ candidates });
   } catch (e) {
     next(e);
   }
@@ -167,28 +211,9 @@ export const patchClientPrimaryContact: RequestHandler = async (req, res, next) 
   try {
     const audit = buildAuditContext(req);
     const clientId = routeParam(req, "id");
-    const { contact_id } = req.body as { contact_id: string };
-    await clientService.updateClientPrimaryContact(clientId, contact_id);
-
-    await repoInsertAuditLog({
-      user_id: audit.user_id,
-      body: {
-        event_type: "ACTION",
-        action: "CLIENT_PRIMARY_CONTACT_SET",
-        page_key: audit.page_key,
-        entity_type: "client",
-        entity_id: clientId,
-        path: audit.path,
-        client_session_id: audit.client_session_id,
-        details: { contact_id },
-      },
-      ip: audit.ip,
-      user_agent: audit.user_agent,
-      device_type: audit.device_type,
-      os: audit.os,
-      browser: audit.browser,
-    });
-
+    const { contact_id } = setPrimaryContactSchema.parse(req.body);
+    // Appartenance au client + affectation + audit sous une même transaction.
+    await repoSetPrimaryContact(clientId, contact_id, audit);
     res.status(204).end();
   } catch (e) {
     next(e);
@@ -199,6 +224,12 @@ export const patchClient: RequestHandler = async (req, res, next) => {
   try {
     const audit = buildAuditContext(req);
     const id = routeParam(req, "id");
+
+    rejectClientCodeInBody(
+      req.body,
+      "CLIENT_CODE_IMMUTABLE",
+      "Le code client est immuable : il ne peut pas être modifié."
+    );
 
     // Vrai PATCH partiel : on valide avec un schéma partiel (validateurs par champ préservés),
     // puis on ne conserve que les champs RÉELLEMENT présents dans le body (les .default() du
@@ -224,6 +255,7 @@ export const deleteClient: RequestHandler = async (req, res, next) => {
     const audit = buildAuditContext(req);
     const id = routeParam(req, "id");
 
+    // Archivage logique — aucune suppression physique (voir repoDeleteClient).
     await repoDeleteClient(id, audit);
     res.status(204).end();
   } catch (e) {
@@ -242,4 +274,3 @@ export const archiveClient: RequestHandler = async (req, res, next) => {
     next(e);
   }
 };
-

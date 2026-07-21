@@ -57,10 +57,14 @@ export type Fournisseur = {
   updated_by: number | null
   domaines: FournisseurDomaineLien[]
   relations: FournisseurRelations
+  adresses: FournisseurAdresse[]
+  homologation: FournisseurHomologationSummary | null
   contacts_count: number
   catalogue_count: number
   documents_count: number
   events_count: number
+  adresses_count: number
+  homologations_count: number
 }
 
 export type FournisseurListItem = Pick<
@@ -79,10 +83,13 @@ export type FournisseurListItem = Pick<
   | "updated_at"
   | "domaines"
   | "relations"
+  | "homologation"
   | "contacts_count"
   | "catalogue_count"
   | "documents_count"
   | "events_count"
+  | "adresses_count"
+  | "homologations_count"
 >
 
 export type FournisseurContact = {
@@ -126,6 +133,12 @@ export type FournisseurCatalogueItem = {
   delai_jours: number | null
   moq: number | null
   conditions: string | null
+  incoterm: string | null
+  prix_multiple: number | null
+  valid_from: string | null
+  valid_to: string | null
+  exigence_qualite: string | null
+  requiert_controle_reception: boolean
   actif: boolean
   created_at: string
   updated_at: string
@@ -133,14 +146,82 @@ export type FournisseurCatalogueItem = {
   updated_by: number | null
 }
 
+export type FournisseurCataloguePrixHistory = {
+  id: string
+  catalogue_id: string
+  prix_unitaire: number | null
+  devise: string | null
+  delai_jours: number | null
+  moq: number | null
+  valid_from: string | null
+  recorded_at: string
+  recorded_by: number | null
+}
+
+export type FournisseurAdresseType = "commande" | "livraison" | "facturation"
+
+export type FournisseurAdresse = {
+  id: string
+  fournisseur_id: string
+  type: FournisseurAdresseType
+  label: string | null
+  ligne1: string | null
+  ligne2: string | null
+  house_no: string | null
+  postcode: string | null
+  city: string | null
+  country: string | null
+  is_primary: boolean
+  actif: boolean
+  notes: string | null
+  created_at: string
+  updated_at: string
+  created_by: number | null
+  updated_by: number | null
+}
+
+export type FournisseurHomologationStatut =
+  | "a_qualifier"
+  | "en_cours"
+  | "homologue"
+  | "sous_reserve"
+  | "suspendu"
+  | "refuse"
+  | "expire"
+
+export type FournisseurHomologation = {
+  id: string
+  fournisseur_id: string
+  domaine_code: string | null
+  statut: FournisseurHomologationStatut
+  reference: string | null
+  organisme: string | null
+  perimetre: string | null
+  valid_from: string | null
+  valid_to: string | null
+  document_id: string | null
+  version: number
+  is_current: boolean
+  notes: string | null
+  created_at: string
+  updated_at: string
+  created_by: number | null
+  updated_by: number | null
+}
+
+export type FournisseurHomologationSummary = {
+  statut: FournisseurHomologationStatut
+  valid_to: string | null
+  domaine_code: string | null
+}
+
+// Client-facing DTO: storage_path and stored_name are intentionally NOT exposed.
 export type FournisseurDocument = {
   id: string
   fournisseur_id: string
   document_type: string
   commentaire: string | null
   original_name: string
-  stored_name: string
-  storage_path: string
   mime_type: string
   size_bytes: number
   sha256: string | null

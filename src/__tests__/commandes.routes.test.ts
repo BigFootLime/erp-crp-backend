@@ -41,8 +41,16 @@ vi.mock("../utils/checkNetworkDrive", () => ({
 }));
 
 vi.mock("../module/auth/middlewares/auth.middleware", () => ({
-  authenticateToken: (req: { user?: { id: number; role: string } }, _res: unknown, next: () => void) => {
-    req.user = { id: 1, role: "Administrateur Systeme et Reseau" };
+  authenticateToken: (
+    req: { user?: { id: number; role: string }; headers?: Record<string, string | string[] | undefined> },
+    _res: unknown,
+    next: () => void
+  ) => {
+    const requestedRole = req.headers?.["x-test-role"];
+    req.user = {
+      id: 1,
+      role: typeof requestedRole === "string" ? requestedRole : "Administrateur Systeme et Reseau",
+    };
     next();
   },
   authorizeRole:
@@ -278,6 +286,7 @@ describe("/api/v1/commandes", () => {
     mocks.clientQuery
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
       .mockResolvedValueOnce({ rows: [{ id: "123" }] }) // nextval commande_client_id_seq
+      .mockResolvedValueOnce({ rows: [{ v: "1" }] }) // fn_next_code_value CMD
       .mockResolvedValueOnce({ rows: [{ id: "123" }] }) // INSERT commande_client
       .mockResolvedValueOnce({
         rows: [{
@@ -340,6 +349,7 @@ describe("/api/v1/commandes", () => {
     mocks.clientQuery
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
       .mockResolvedValueOnce({ rows: [{ id: "123" }] }) // nextval commande_client_id_seq
+      .mockResolvedValueOnce({ rows: [{ v: "1" }] }) // fn_next_code_value CMD
       .mockResolvedValueOnce({ rows: [{ id: "123" }] }) // INSERT commande_client
       .mockResolvedValueOnce({ rows: [] }); // ROLLBACK
 
@@ -380,6 +390,8 @@ describe("/api/v1/commandes", () => {
         seq += 1;
         return { rows: [{ id: String(seq) }] };
       }
+
+    if (q.includes("public.fn_next_issued_code_value")) return { rows: [{ v: "1" }] };
 
       if (q.includes("INSERT INTO commande_client")) {
         return { rows: [{ id: String(seq) }] };
@@ -914,6 +926,7 @@ describe("/api/v1/commandes", () => {
         ],
       }) // lignes
       .mockResolvedValueOnce({ rows: [{ id: "456" }] }) // nextval
+      .mockResolvedValueOnce({ rows: [{ v: "1" }] }) // fn_next_code_value CMD
       .mockResolvedValueOnce({ rows: [] }) // insert commande
       .mockResolvedValueOnce({
         rows: [{
@@ -1025,8 +1038,16 @@ describe("/api/v1/commandes", () => {
         return { rows: [{ client_code: "CLI-001" }] };
       }
 
-      if (q.includes("public.fn_next_code_value")) {
+    if (q.includes("public.fn_next_issued_code_value")) {
         return { rows: [{ v: "1" }] };
+      }
+
+      if (q.includes("FROM public.piece_technique_versions v") && q.includes("v.statut = 'APPLICABLE'")) {
+        return { rows: [{ version_id: "55555555-5555-5555-5555-555555555555", gamme_id: null, version_interne: 1 }] };
+      }
+
+      if (q.includes("jsonb_build_object") && q.includes("'piece'")) {
+        return { rows: [{ snapshot: { piece: { id: PIECE_ID, code: "PT-001" }, version: { version_interne: 1 } } }] };
       }
 
       if (q.includes("pg_get_serial_sequence") && q.includes("ordres_fabrication")) {
@@ -1143,8 +1164,16 @@ describe("/api/v1/commandes", () => {
         return { rows: [{ client_code: "CLI-001" }] };
       }
 
-      if (q.includes("public.fn_next_code_value")) {
+    if (q.includes("public.fn_next_issued_code_value")) {
         return { rows: [{ v: "1" }] };
+      }
+
+      if (q.includes("FROM public.piece_technique_versions v") && q.includes("v.statut = 'APPLICABLE'")) {
+        return { rows: [{ version_id: "55555555-5555-5555-5555-555555555555", gamme_id: null, version_interne: 1 }] };
+      }
+
+      if (q.includes("jsonb_build_object") && q.includes("'piece'")) {
+        return { rows: [{ snapshot: { piece: { id: PIECE_ID, code: "PT-001" }, version: { version_interne: 1 } } }] };
       }
 
       if (q.includes("WITH RECURSIVE tree") && q.includes("public.pieces_techniques_nomenclature")) {
@@ -1174,6 +1203,7 @@ describe("/api/v1/commandes", () => {
       if (q.includes("INSERT INTO public.of_generation_batches")) return { rows: [] };
       if (q.includes("INSERT INTO public.ordres_fabrication")) return { rows: [] };
       if (q.includes("INSERT INTO public.of_operations")) return { rows: [], rowCount: 1 };
+      if (q.includes("INSERT INTO public.of_technical_snapshots")) return { rows: [] };
       if (q.includes("INSERT INTO public.of_structure_snapshot")) return { rows: [] };
       if (q.includes("UPDATE public.of_generation_batches")) return { rows: [] };
       if (q.includes("INSERT INTO public.commande_client_event_log")) return { rows: [] };
@@ -1282,8 +1312,16 @@ describe("/api/v1/commandes", () => {
         return { rows: [{ client_code: "CLI-001" }] };
       }
 
-      if (q.includes("public.fn_next_code_value")) {
+    if (q.includes("public.fn_next_issued_code_value")) {
         return { rows: [{ v: "1" }] };
+      }
+
+      if (q.includes("FROM public.piece_technique_versions v") && q.includes("v.statut = 'APPLICABLE'")) {
+        return { rows: [{ version_id: "55555555-5555-5555-5555-555555555555", gamme_id: null, version_interne: 1 }] };
+      }
+
+      if (q.includes("jsonb_build_object") && q.includes("'piece'")) {
+        return { rows: [{ snapshot: { piece: { id: ROOT_PIECE_ID, code: "ROOT" }, version: { version_interne: 1 } } }] };
       }
 
       if (q.includes("WITH RECURSIVE tree") && q.includes("public.pieces_techniques_nomenclature")) {
@@ -1337,6 +1375,7 @@ describe("/api/v1/commandes", () => {
         return { rows: [] };
       }
       if (q.includes("INSERT INTO public.of_operations")) return { rows: [], rowCount: 1 };
+      if (q.includes("INSERT INTO public.of_technical_snapshots")) return { rows: [] };
       if (q.includes("INSERT INTO public.of_structure_snapshot")) return { rows: [] };
       if (q.includes("UPDATE public.of_generation_batches")) return { rows: [] };
       if (q.includes("INSERT INTO public.commande_client_event_log")) return { rows: [] };
@@ -1358,14 +1397,315 @@ describe("/api/v1/commandes", () => {
     const rootParams = ofInsertCalls[0];
     const childParams = ofInsertCalls[1];
     expect(rootParams[0]).toBe(9);
-    expect(rootParams[11]).toBe(0);
-    expect(rootParams[16]).toBe(2);
+    expect(rootParams[8]).toBe("55555555-5555-5555-5555-555555555555");
+    expect(rootParams[14]).toBe(0);
+    expect(rootParams[19]).toBe(2);
     expect(childParams[0]).toBe(10);
-    expect(childParams[8]).toBe(9);
-    expect(childParams[9]).toBe(9);
-    expect(childParams[11]).toBe(1);
-    expect(childParams[14]).toBe(3);
-    expect(childParams[15]).toBe(3);
-    expect(childParams[16]).toBe(6);
+    expect(childParams[11]).toBe(9);
+    expect(childParams[12]).toBe(9);
+    expect(childParams[14]).toBe(1);
+    expect(childParams[17]).toBe(3);
+    expect(childParams[18]).toBe(3);
+    expect(childParams[19]).toBe(6);
+  });
+
+  it("POST /api/v1/commandes/:id/generate-affaires protects internal-order launch and single-affair invariant", async () => {
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const q = String(sql);
+      if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
+      if (q.includes("FROM commande_client") && q.includes("FOR UPDATE") && q.includes("order_type")) {
+        return {
+          rows: [
+            {
+              client_id: "001",
+              type_affaire: "livraison",
+              order_type: "INTERNE",
+              devis_id: null,
+              numero: "CI-123",
+              dest_stock_magasin_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+              dest_stock_emplacement_id: "1",
+              ar_sent_at: null,
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const forbidden = await request(app)
+      .post("/api/v1/commandes/123/generate-affaires")
+      .set("x-test-role", "Employee")
+      .send({ decision: null, livraison_count: 1, lines: [] });
+
+    expect(forbidden.status).toBe(403);
+    expect(forbidden.body).toMatchObject({ code: "INTERNAL_ORDER_LAUNCH_FORBIDDEN" });
+
+    const split = await request(app)
+      .post("/api/v1/commandes/123/generate-affaires")
+      .set("x-test-role", "Directeur")
+      .send({ decision: null, livraison_count: 2, lines: [] });
+
+    expect(split.status).toBe(400);
+    expect(split.body).toMatchObject({ code: "INTERNAL_ORDER_SINGLE_AFFAIRE_REQUIRED" });
+    expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO affaire"))).toBe(false);
+  });
+
+  it("POST /api/v1/commandes/:id/generate-affaires requires an internal stock destination", async () => {
+    const ARTICLE_ID = "11111111-1111-1111-1111-111111111111";
+    const PIECE_ID = "22222222-2222-2222-2222-222222222222";
+
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const q = String(sql);
+      if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
+      if (q.includes("FROM commande_client") && q.includes("FOR UPDATE") && q.includes("order_type")) {
+        return {
+          rows: [
+            {
+              client_id: "001",
+              type_affaire: "livraison",
+              order_type: "INTERNE",
+              devis_id: null,
+              numero: "CI-123",
+              dest_stock_magasin_id: null,
+              dest_stock_emplacement_id: null,
+              ar_sent_at: null,
+            },
+          ],
+        };
+      }
+      if (q.includes("FROM public.erp_settings")) return { rows: [] };
+      if (q.includes("FROM pg_attribute") && q.includes("commande_to_affaire")) return { rows: [{ ok: 1 }] };
+      if (q.includes("FROM commande_to_affaire") && q.includes("WHERE commande_id")) return { rows: [] };
+      if (q.includes("FROM commande_ligne") && q.includes("LEFT JOIN LATERAL")) {
+        return {
+          rows: [
+            {
+              commande_ligne_id: 1,
+              code_piece: "P1",
+              qty_ordered: 2,
+              article_id: ARTICLE_ID,
+              piece_technique_id: PIECE_ID,
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const res = await request(app)
+      .post("/api/v1/commandes/123/generate-affaires")
+      .set("x-test-role", "Responsable Production")
+      .send({ decision: null, livraison_count: 1, lines: [] });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({ code: "DEST_STOCK_LOCATION_REQUIRED" });
+    expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO affaire"))).toBe(false);
+  });
+
+  it("POST /api/v1/commandes/:id/generate-affaires launches one internal affair with complete OF topology", async () => {
+    const MAGASIN_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+    const LOCATION_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+    const ARTICLE_ID = "11111111-1111-1111-1111-111111111111";
+    const ROOT_PIECE_ID = "22222222-2222-2222-2222-222222222222";
+    const CHILD_PIECE_ID = "33333333-3333-3333-3333-333333333333";
+    const BOM_LINE_ID = "44444444-4444-4444-4444-444444444444";
+    let ofSeq = 8;
+
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const q = String(sql);
+      if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
+      if (q.includes("FROM commande_client") && q.includes("FOR UPDATE") && q.includes("order_type")) {
+        return {
+          rows: [
+            {
+              client_id: "001",
+              type_affaire: "livraison",
+              order_type: "INTERNE",
+              devis_id: null,
+              numero: "CI-123",
+              dest_stock_magasin_id: MAGASIN_ID,
+              dest_stock_emplacement_id: "1",
+              ar_sent_at: null,
+            },
+          ],
+        };
+      }
+      if (q.includes("SELECT id::int AS id, numero, client_id") && q.includes("FROM commande_client")) {
+        return { rows: [{ id: 123, numero: "CI-123", client_id: "001" }] };
+      }
+      if (q.includes("SELECT nouveau_statut") && q.includes("FROM commande_historique")) return { rows: [] };
+      if (q.includes("INSERT INTO commande_historique") && q.includes("RETURNING id::text AS id")) {
+        return { rows: [{ id: "1" }] };
+      }
+      if (q.includes("FROM public.erp_settings")) return { rows: [] };
+      if (q.includes("FROM pg_attribute") && q.includes("commande_to_affaire")) return { rows: [{ ok: 1 }] };
+      if (q.includes("FROM commande_to_affaire") && q.includes("WHERE commande_id")) return { rows: [] };
+      if (q.includes("FROM commande_ligne") && q.includes("LEFT JOIN LATERAL")) {
+        return {
+          rows: [
+            {
+              commande_ligne_id: 1,
+              code_piece: "P1",
+              qty_ordered: 2,
+              article_id: ARTICLE_ID,
+              article_code: "ART-001",
+              article_designation: "Article test",
+              piece_technique_id: ROOT_PIECE_ID,
+              piece_code: "ROOT",
+              piece_designation: "Piece mere",
+            },
+          ],
+        };
+      }
+      if (q.includes("FROM public.emplacements") && q.includes("SELECT location_id")) {
+        return { rows: [{ location_id: LOCATION_ID }] };
+      }
+      if (q.includes("nextval('public.affaire_id_seq')")) return { rows: [{ id: "7" }] };
+      if (q.includes("SELECT client_code FROM public.clients")) return { rows: [{ client_code: "CRP" }] };
+      if (q.includes("public.fn_next_issued_code_value")) return { rows: [{ v: "1" }] };
+      if (q.includes("WITH RECURSIVE tree") && q.includes("public.pieces_techniques_nomenclature")) {
+        return {
+          rows: [
+            {
+              key: ROOT_PIECE_ID,
+              parent_key: null,
+              bom_line_id: null,
+              parent_piece_technique_id: null,
+              piece_technique_id: ROOT_PIECE_ID,
+              article_id: ARTICLE_ID,
+              code_piece: "ROOT",
+              designation: "Piece mere",
+              version_number: 1,
+              level: 0,
+              ordre_affichage: 0,
+              quantite_par_parent: 1,
+              quantite_cumulee: 1,
+            },
+            {
+              key: `${ROOT_PIECE_ID}/${CHILD_PIECE_ID}`,
+              parent_key: ROOT_PIECE_ID,
+              bom_line_id: BOM_LINE_ID,
+              parent_piece_technique_id: ROOT_PIECE_ID,
+              piece_technique_id: CHILD_PIECE_ID,
+              article_id: null,
+              code_piece: "CHILD",
+              designation: "Sous-piece",
+              version_number: 1,
+              level: 1,
+              ordre_affichage: 10,
+              quantite_par_parent: 3,
+              quantite_cumulee: 3,
+            },
+          ],
+        };
+      }
+      if (q.includes("FROM public.piece_technique_versions v") && q.includes("v.statut = 'APPLICABLE'")) {
+        return { rows: [{ version_id: "55555555-5555-5555-5555-555555555555", gamme_id: null, version_interne: 1 }] };
+      }
+      if (q.includes("jsonb_build_object") && q.includes("'piece'")) {
+        return { rows: [{ snapshot: { piece: { id: ROOT_PIECE_ID }, version: { version_interne: 1 } } }] };
+      }
+      if (q.includes("pg_get_serial_sequence") && q.includes("ordres_fabrication")) {
+        ofSeq += 1;
+        return { rows: [{ of_id: String(ofSeq) }] };
+      }
+      if (q.includes("INSERT INTO erp_audit_logs")) {
+        return { rows: [{ id: "1", created_at: "2026-01-01T00:00:00.000Z" }] };
+      }
+      if (q.includes("INSERT INTO public.of_operations")) return { rows: [], rowCount: 1 };
+      return { rows: [] };
+    });
+
+    const res = await request(app)
+      .post("/api/v1/commandes/123/generate-affaires")
+      .set("x-test-role", "Responsable Production")
+      .send({ decision: null, livraison_count: 1, lines: [] });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      affaire_ids: [7],
+      livraison_affaire_id: 7,
+      livraison_affaire_ids: [7],
+      generation_mode: "INTERNAL_ORDER",
+      idempotent_replay: false,
+      workflow_status: "ATTENTE_PLANNING",
+      of_ids: [9, 10],
+      root_of_ids: [9],
+      child_of_ids: [10],
+      warnings: [],
+    });
+    expect(res.body.ofs).toEqual([
+      expect.objectContaining({ id: 9, root_of_id: 9, parent_of_id: null, generation_level: 0 }),
+      expect.objectContaining({ id: 10, root_of_id: 9, parent_of_id: 9, generation_level: 1 }),
+    ]);
+    expect(mocks.clientQuery.mock.calls.filter((call) => String(call[0]).includes("INSERT INTO affaire"))).toHaveLength(1);
+    expect(
+      mocks.clientQuery.mock.calls.some(
+        (call) => String(call[0]).includes("UPDATE public.commande_client_workflow_checkpoint") && String(call[0]).includes("internal_order_flow")
+      )
+    ).toBe(true);
+    expect(
+      mocks.clientQuery.mock.calls.some(
+        (call) => String(call[0]).includes("INSERT INTO public.commande_client_event_log") && call[1]?.[1] === "INTERNAL_ORDER_LAUNCHED"
+      )
+    ).toBe(true);
+  });
+
+  it("POST /api/v1/commandes/:id/generate-affaires replays internal generation with existing OF topology", async () => {
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const q = String(sql);
+      if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
+      if (q.includes("FROM commande_client") && q.includes("FOR UPDATE") && q.includes("order_type")) {
+        return {
+          rows: [
+            {
+              client_id: "001",
+              type_affaire: "livraison",
+              order_type: "INTERNE",
+              devis_id: null,
+              numero: "CI-123",
+              dest_stock_magasin_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+              dest_stock_emplacement_id: "1",
+              ar_sent_at: null,
+            },
+          ],
+        };
+      }
+      if (q.includes("FROM public.erp_settings")) return { rows: [] };
+      if (q.includes("FROM pg_attribute") && q.includes("commande_to_affaire")) return { rows: [{ ok: 1 }] };
+      if (q.includes("FROM commande_to_affaire") && q.includes("WHERE commande_id")) {
+        return { rows: [{ affaire_id: 7, role: "LIVRAISON" }] };
+      }
+      if (q.includes("FROM public.ordres_fabrication") && q.includes("generation_batch_id IS NOT NULL")) {
+        return {
+          rows: [
+            { id: 9, root_of_id: 9, parent_of_id: null, generation_level: 0, commande_ligne_id: 1 },
+            { id: 10, root_of_id: 9, parent_of_id: 9, generation_level: 1, commande_ligne_id: 1 },
+          ],
+        };
+      }
+      if (q.includes("LEFT JOIN LATERAL") && q.includes("FROM commande_client cc")) {
+        return { rows: [{ id: "123", numero: "CI-123", client_id: "001", raw_statut: "ATTENTE_PLANNING" }] };
+      }
+      return { rows: [] };
+    });
+
+    const res = await request(app)
+      .post("/api/v1/commandes/123/generate-affaires")
+      .set("x-test-role", "Directeur")
+      .send({ decision: null, livraison_count: 1, lines: [] });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      affaire_ids: [7],
+      generation_mode: "INTERNAL_ORDER",
+      idempotent_replay: true,
+      workflow_status: "ATTENTE_PLANNING",
+      of_ids: [9, 10],
+      root_of_ids: [9],
+      child_of_ids: [10],
+    });
+    expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO affaire"))).toBe(false);
+    expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO public.ordres_fabrication"))).toBe(false);
   });
 });

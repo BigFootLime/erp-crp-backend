@@ -15,7 +15,7 @@ export const PO_SPEC_STATUSES = ["DRAFT", "REVIEW", "APPROVED", "OBSOLETE"] as c
 export const PO_RISK_STATUSES = ["OPEN", "MITIGATED", "ACCEPTED", "CLOSED"] as const;
 export const PO_ACTION_SOURCES = ["AUDIT", "BUG", "RISK", "SECURITY", "USER_FEEDBACK", "OTHER"] as const;
 export const PO_ACTION_STATUSES = ["OPEN", "IN_PROGRESS", "DONE", "CANCELLED"] as const;
-export const PO_EVIDENCE_TYPES = ["PR", "COMMIT", "TEST", "SCREENSHOT", "AUDIT", "DEPLOYMENT", "BACKUP", "DOCUMENT", "SECURITY_SCAN", "OTHER"] as const;
+export const PO_EVIDENCE_TYPES = ["PR", "COMMIT", "TEST", "SCREENSHOT", "AUDIT", "DEPLOYMENT", "BACKUP", "DOCUMENT", "VSM", "SECURITY_SCAN", "OTHER"] as const;
 export const PO_LINK_PROVIDERS = ["GITHUB", "GITLAB", "OTHER"] as const;
 export const PO_EXTERNAL_TYPES = ["PR", "ISSUE", "COMMIT", "PIPELINE", "RELEASE", "DOC"] as const;
 export const PO_ENTRY_EVIDENCE_RELATIONS = ["SOURCE", "SCREENSHOT", "TEST", "BUG", "FIX", "DECISION", "DEPLOYMENT", "ARCHITECTURE", "UI", "SECURITY"] as const;
@@ -36,6 +36,19 @@ export const paginationQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(200).default(50),
 });
+
+export const evidenceFilesQuerySchema = paginationQuerySchema.extend({
+  category: z.enum(["DOCUMENT", "VSM"]).optional(),
+});
+
+export const projectEvidenceFileContentParamsSchema = z.object({
+  projectId: z.string().uuid(),
+  id: z.string().uuid(),
+}).strict();
+
+export const evidenceFileContentQuerySchema = z.object({
+  disposition: z.enum(["inline", "attachment"]).default("attachment"),
+}).strict();
 
 // ---------------------------------------------------------------- Projets
 export const createProjectSchema = z.object({
@@ -210,6 +223,20 @@ export const createEvidenceSchema = z.object({
   url: httpUrl.nullish(),
   description: z.string().trim().max(10_000).nullish(),
 }).strict();
+
+// Multipart metadata for a controlled evidence file.  The binary itself is
+// accepted only by the dedicated upload route, never by a JSON evidence URL.
+export const createEvidenceFileSchema = z.object({
+  work_package_id: z.string().uuid().nullish(),
+  title: trimmed(300).optional(),
+  description: z.string().trim().max(10_000).nullish(),
+  category: z.enum(["DOCUMENT", "VSM"]).default("DOCUMENT"),
+  version_number: z.coerce.number().int().positive().default(1),
+  status: z.enum(["BROUILLON", "VALIDE", "OBSOLETE"]).default("BROUILLON"),
+  date_effet: isoDate.nullish(),
+  visibility: z.enum(["PRIVATE", "INTERNAL"]).default("INTERNAL"),
+}).strict();
+export type CreateEvidenceFileDTO = z.infer<typeof createEvidenceFileSchema>;
 
 export const createExternalLinkSchema = z.object({
   project_id: z.string().uuid(),

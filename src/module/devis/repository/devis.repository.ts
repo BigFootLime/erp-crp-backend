@@ -5,6 +5,7 @@ import type { PoolClient } from "pg";
 import pool from "../../../config/database";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
+import { generateCommandeCode, generateDevisCode } from "../../../shared/codes/code-generator.service";
 import { computeDevisTotals } from "../lib/totals";
 import type {
   CreateDevisBodyDTO,
@@ -1337,7 +1338,12 @@ export async function repoCreateDevis(input: CreateDevisBodyDTO, userId: number,
     if (!idRaw) throw new Error("Failed to allocate devis id");
     const devisId = toInt(idRaw, "devis.id");
 
-    const numero = (input.numero ?? `DV-${devisId}`).slice(0, 30);
+    // The quote number is allocated atomically by the server.  Incoming values
+    // are display hints only and must not become identifiers.
+    const numero = await generateDevisCode(client, {
+      client_id: input.client_id,
+      date: input.date_creation ? new Date(input.date_creation) : undefined,
+    });
     const dateCreation = (input.date_creation ?? new Date().toISOString().slice(0, 10)).slice(0, 10);
 
     // Totaux recalculés côté serveur — les totaux envoyés par le client sont ignorés (ISO A.8.28).
@@ -1433,7 +1439,16 @@ export async function repoUpdateDevis(
       return `$${values.length}`;
     };
 
-    if (input.numero !== undefined) sets.push(`numero = ${push(input.numero)}`);
+    if (input.numero !== undefined) {
+      const current = await client.query<{ numero: string }>(`SELECT numero FROM devis WHERE id = $1 FOR UPDATE`, [id]);
+      if (!current.rows[0]) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+      if (input.numero !== current.rows[0].numero) {
+        throw new HttpError(409, "DEVIS_CODE_IMMUTABLE", "Le numéro de devis est attribué par le serveur et ne peut pas être modifié.");
+      }
+    }
     if (input.client_id !== undefined) sets.push(`client_id = ${push(input.client_id)}`);
     if (input.contact_id !== undefined) sets.push(`contact_id = ${push(input.contact_id)}::uuid`);
 
@@ -1591,8 +1606,13 @@ export async function repoReviseDevis(
     if (!rawId) throw new Error("Failed to allocate devis id");
     const newDevisId = toInt(rawId, "devis.id");
 
-    const computedNumero = `${source.numero}-V${nextVersion}`.slice(0, 30);
-    const numero = (input.numero ?? computedNumero).slice(0, 30);
+    if (input.numero !== undefined && input.numero !== source.numero) {
+      throw new HttpError(409, "DEVIS_CODE_IMMUTABLE", "Le numéro de devis est attribué par le serveur et ne peut pas être modifié.");
+    }
+    // A revision receives a server-computed suffix because `devis.numero` is
+    // unique.  The client cannot choose that suffix; `version_number` remains
+    // the authoritative revision field.
+    const numero = `${source.numero}-V${nextVersion}`.slice(0, 30);
     const dateCreation = (input.date_creation ?? new Date().toISOString().slice(0, 10)).slice(0, 10);
 
     // Totaux recalculés côté serveur. Si de nouvelles lignes sont fournies, on recalcule ;
@@ -1893,7 +1913,7 @@ export async function repoConvertDevisToCommande(devisId: number) {
     const idRaw = seq.rows[0]?.id;
     if (!idRaw) throw new Error("Failed to allocate commande id");
     const commandeId = toInt(idRaw, "commande_client.id");
-    const commandeNumero = `CC-${commandeId}`.slice(0, 30);
+    const commandeNumero = await generateCommandeCode(client, { client_code: devis.client_id });
 
     await client.query(
       `

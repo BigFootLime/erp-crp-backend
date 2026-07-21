@@ -25,6 +25,19 @@ export function getDocumentsRootPath(...segments: string[]) {
   return path.resolve(root, ...segments.filter(Boolean));
 }
 
+/**
+ * Project Office evidence is a retained record, not a disposable local upload.
+ * Production therefore requires the documents root to be explicitly mounted
+ * (and shared/persistent across application instances) instead of inheriting
+ * the process working directory.
+ */
+export function requirePersistentDocumentsRoot(...segments: string[]) {
+  if (process.env.NODE_ENV === "production" && !clean(process.env.CERP_DOCUMENTS_ROOT)) {
+    throw new Error("CERP_DOCUMENTS_ROOT must be explicitly configured in production for persistent shared document storage.");
+  }
+  return getDocumentsRootPath(...segments);
+}
+
 export function getGeneratedRootPath(...segments: string[]) {
   const root = clean(process.env.CERP_GENERATED_ROOT) ?? getStorageRootPath("generated");
   return path.resolve(root, ...segments.filter(Boolean));

@@ -362,7 +362,7 @@ POST	/api/v1/commandes/:id/affaires/preview	validate(idParamSchema)	validate(idP
 POST	/api/v1/commandes/:id/analyze-stock	authenticateToken, validate(idParamSchema)	validate(idParamSchema)
 GET	/api/v1/commandes/:id/documents/:docId/file	validate(documentIdParamSchema)	validate(documentIdParamSchema)
 POST	/api/v1/commandes/:id/duplicate	validate(idParamSchema)	validate(idParamSchema)
-POST	/api/v1/commandes/:id/generate-affaires	authenticateToken, validate(generateAffairesV3Schema)	validate(generateAffairesV3Schema)
+POST	/api/v1/commandes/:id/generate-affaires	authenticateToken, validate(generateAffairesV3Schema)	validate(generateAffairesV3Schema) + internal-order role/invariant checks in repository
 POST	/api/v1/commandes/:id/generate-affaires/confirm	validate(confirmGenerateAffairesSchema)	validate(confirmGenerateAffairesSchema)
 GET	/api/v1/commandes/:id/releases	validate(idParamSchema)	validate(idParamSchema)
 POST	/api/v1/commandes/:id/releases	validate(idParamSchema)	validate(idParamSchema)
@@ -714,6 +714,7 @@ Foreign keys are defined extensively in patches (hundreds). Examples of central 
   - `requireAdmin` in `src/module/production/routes/production.routes.ts` and `src/module/pieces-techniques/routes/pieces-techniques.routes.ts`
   - `requireProductionOrAdmin` in `src/module/production/routes/production.routes.ts`, `src/module/planning/routes/planning.routes.ts`, `src/module/programmation/routes/programmation.routes.ts`
   - `requireQualityOrAdmin` in `src/module/qualite/routes/qualite.routes.ts`
+  - internal-order launch authorization in `src/module/commande-client/repository/commande-client.repository.ts` after locking and identifying the order type
 
 ### Socket.IO
 

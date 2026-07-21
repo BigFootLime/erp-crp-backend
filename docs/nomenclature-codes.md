@@ -1,12 +1,13 @@
 # Nomenclature des codes (ERP)
 
-Ce document decrit les formats de codes utilises dans l'ERP, la generation automatique (quand le champ est vide), et les regles de validation/controle d'unicite.
+Ce document décrit les formats de codes utilisés dans l'ERP, leur attribution atomique par le backend et les règles de contrôle d'unicité.
 
 ## Principes
 
-- Si le champ code/reference/numero est vide a la creation: le backend genere automatiquement un code conforme.
-- Si un code est fourni par l'utilisateur: le backend le valide via une regex stricte (pas de "presque bon"), puis verifie l'unicite (si contrainte UNIQUE en base).
-- Compatibilite legacy: certains formats historiques restent acceptes pour les donnees deja existantes (ex: `DV-<id>`), mais les nouveaux codes generes suivent le format "nomenclature".
+- Le code visible n'est jamais une clé primaire ou étrangère et n'est jamais analysé pour retrouver une relation métier.
+- Le backend réserve le numéro dans la transaction de création ; un code transmis par l'interface ne devient jamais la référence finale.
+- Les codes attribués sont immuables. Les anciennes références restent lisibles pour la compatibilité historique.
+- Les factures et autres numéros réglementaires conservent leur séquence légale dédiée jusqu'à validation Finance.
 
 ## Endpoint des formats (UI)
 
@@ -28,22 +29,23 @@ Le frontend peut afficher `hintText` + `example` et valider le champ cote client
 Les formats sont declares dans `src/shared/codes/code-validator.ts`.
 
 - Client: `CLI-001`
-- Devis: `DEV-CLI-001-2026-0001` (legacy accepte: `DV-<id>`)
-- Commande client: `CC-CLI-001-2026-0001` (legacy accepte: `CC-<id>`)
-- Affaire:
-  - Livraison: `AFF-LIV-CLI-001-2026-0001`
-  - Production: `AFF-PROD-CLI-001-2026-0001`
-  - (legacy accepte: `AFF-<id>`)
-- OF: `OF-2026-00001` (legacy accepte: `OF-<id>`)
+- Pièce technique: `001-17025950000-C` (client, référence plan, indice externe)
+- Article: `ART-USI-000042` (séquence de six chiffres, famille explicite)
+- Devis: `DEV-2026-0001`
+- Commande client: `CMD-2026-0001`
+- Affaire: `AFF-2026-0001`
+- OF: `OF-2026-000001`
+- Facture : le numéro légal existant `FT-…` est conservé. `FACT-…` est disponible pour une corrélation interne future, sans remplacer le numéro réglementaire.
 - Bon de livraison: `BL-00000001`
 - Reception fournisseur: `RF-00000001`
 - Qualite:
+  - Contrôle: `CQ-2026-000001`
   - NC: `NC-2026-00001`
   - CAPA action: `CAP-2026-00001`
 
 ## Base de donnees (patch)
 
-Patch idempotent:
+Patch historique:
 
 - `db/patches/20260227_nomenclature_codes.sql`
 
@@ -61,7 +63,18 @@ Service centralise:
 
 Points importants:
 
-- Les sequences applicatives (CLI/DEV/CC/AFF/OF/PCT/...) sont gerees via `public.fn_next_code_value`.
+- Depuis l'issue #141, les nouvelles séquences applicatives
+  (CLI/DEV/CMD/AFF/OF/LOT/CQ/ART/...) passent par
+  `public.fn_next_issued_code_value(scope)`, une fonction à périmètre
+  autorisé qui appelle la séquence PostgreSQL native
+  `public.cerp_business_code_issue_seq`. Une allocation consommée lors d'une
+  transaction annulée laisse volontairement un trou et ne peut jamais être
+  réattribuée.
+- Les pièces techniques conservent `pieces_techniques.code_piece` comme
+  référence historique de l'agrégat. Le code de travail d'une version est
+  calculé uniquement à partir de `client + plan + indice externe` et exposé
+  dans `piece_technique_versions.code_metier`; la recherche pièce couvre aussi
+  ce code de version.
 - BL/RF/NC/CAP reutilisent les generateurs/sequence existants en base (formats deja en prod).
 
 ## Smoke

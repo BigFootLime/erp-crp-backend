@@ -55,7 +55,9 @@ export async function updateVersionStatusSVC(
     versionId,
     body.next_statut,
     {
-      valide_par: body.valide_par ?? null,
+      // The authenticated actor is the only valid validation author.  A client
+      // supplied user id would make the audit trail forgeable.
+      valide_par: audit.user_id,
       date_application: body.date_application ?? null,
       commentaire_validation: body.commentaire_validation ?? null,
       expected_updated_at: body.expected_updated_at,

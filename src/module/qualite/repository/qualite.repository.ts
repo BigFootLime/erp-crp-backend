@@ -5,6 +5,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import pool from "../../../config/database";
+import { generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
@@ -188,6 +189,7 @@ function computeControlResult(points: Array<{ result: QualityPointResult | null 
 
 type ControlCoreRow = {
   id: string;
+  reference: string;
   control_type: QualityControlListItem["control_type"];
   status: QualityControlListItem["status"];
   result: QualityControlListItem["result"];
@@ -251,6 +253,7 @@ function mapControlCore(row: ControlCoreRow): Omit<QualityControlDetail, "points
 
   return {
     id: row.id,
+    reference: row.reference,
     control_type: row.control_type,
     status: row.status,
     result: row.result,
@@ -348,6 +351,7 @@ async function selectControlCore(q: DbQueryer, id: string): Promise<Omit<Quality
     `
       SELECT
         qc.id::text AS id,
+        qc.reference,
         qc.control_type::text AS control_type,
         qc.status::text AS status,
         qc.result::text AS result,
@@ -782,7 +786,8 @@ export async function repoListControls(filters: ListControlsQueryDTO): Promise<P
     const q = `%${filters.q.trim()}%`;
     const p = push(q);
     where.push(`(
-      COALESCE(o.numero,'') ILIKE ${p}
+      COALESCE(qc.reference,'') ILIKE ${p}
+      OR COALESCE(o.numero,'') ILIKE ${p}
       OR COALESCE(a.reference,'') ILIKE ${p}
       OR COALESCE(pt.code_piece,'') ILIKE ${p}
       OR COALESCE(pt.designation,'') ILIKE ${p}
@@ -827,6 +832,7 @@ export async function repoListControls(filters: ListControlsQueryDTO): Promise<P
     `
       SELECT
         qc.id::text AS id,
+        qc.reference,
         qc.control_type::text AS control_type,
         qc.status::text AS status,
         qc.result::text AS result,
@@ -907,6 +913,7 @@ export async function repoListControls(filters: ListControlsQueryDTO): Promise<P
     const core = mapControlCore(r);
     return {
       id: core.id,
+      reference: core.reference,
       control_type: core.control_type,
       status: core.status,
       result: core.result,
@@ -1048,9 +1055,11 @@ export async function repoCreateControl(params: { body: CreateControlBodyDTO; au
       await ensureOperationBelongsToOf(client, body.operation_id, body.of_id);
     }
 
+    const reference = await generateTransactionalBusinessCode(client, { prefix: "CQ" });
     const ins = await client.query<{ id: string }>(
       `
         INSERT INTO quality_control (
+          reference,
           affaire_id,
           of_id,
           piece_technique_id,
@@ -1066,10 +1075,11 @@ export async function repoCreateControl(params: { body: CreateControlBodyDTO; au
           created_by,
           updated_by
         )
-        VALUES ($1::bigint,$2::bigint,$3::uuid,$4::uuid,$5::uuid,$6::uuid,$7::quality_control_type,$8::quality_control_status,$9::quality_control_result,$10::timestamptz,$11,$12,$13,$14)
+        VALUES ($1,$2::bigint,$3::bigint,$4::uuid,$5::uuid,$6::uuid,$7::uuid,$8::quality_control_type,$9::quality_control_status,$10::quality_control_result,$11::timestamptz,$12,$13,$14,$15)
         RETURNING id::text AS id
       `,
       [
+        reference,
         body.affaire_id ?? null,
         body.of_id ?? null,
         body.piece_technique_id ?? null,

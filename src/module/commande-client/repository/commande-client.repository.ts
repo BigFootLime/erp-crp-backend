@@ -5,7 +5,7 @@ import type { PoolClient } from "pg";
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
-import { generateAffaireCode, requireClientCode } from "../../../shared/codes/code-generator.service";
+import { generateAffaireCode, generateCommandeCode, generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
 import { emitAppNotificationCreated, emitEntityChanged } from "../../../shared/realtime/realtime.service";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
@@ -62,6 +62,18 @@ function coerceOrderType(value: unknown): CreateCommandeInput["order_type"] {
   return "FERME";
 }
 
+function canLaunchInternalOrder(role: string | null | undefined): boolean {
+  if (!role) return false;
+  const normalized = role.trim().toLowerCase();
+  if (normalized.includes("admin") || normalized.includes("administrateur") || normalized.includes("directeur")) {
+    return true;
+  }
+  const isManager = normalized.includes("responsable") || normalized.includes("chef");
+  const isProduction =
+    normalized.includes("production") || normalized.includes("atelier") || normalized.includes("programmation");
+  return isManager && isProduction;
+}
+
 function sortColumn(sortBy: ListCommandesQueryDTO["sortBy"]) {
   switch (sortBy) {
     case "numero":
@@ -103,6 +115,7 @@ type CommandeLineArticleResolution = {
 
 type AuditContext = {
   user_id: number;
+  user_role: string | null;
   ip: string | null;
   user_agent: string | null;
   device_type: string | null;
@@ -254,6 +267,7 @@ async function allocateOrdreFabricationId(tx: Queryable): Promise<number> {
 async function copyPieceOperationsToOf(tx: Queryable, params: {
   of_id: number;
   piece_technique_id: string;
+  gamme_id: string | null;
 }): Promise<number> {
   const operationsInsert = await tx.query(
     `
@@ -292,13 +306,129 @@ async function copyPieceOperationsToOf(tx: Queryable, params: {
         pto.id AS source_piece_operation_id
       FROM public.pieces_techniques_operations pto
       WHERE pto.piece_technique_id = $2::uuid
+        AND (pto.gamme_id = $3::uuid OR ($3::uuid IS NULL AND pto.gamme_id IS NULL))
       ORDER BY pto.phase ASC, pto.id ASC
     `,
-    [params.of_id, params.piece_technique_id]
+    [params.of_id, params.piece_technique_id, params.gamme_id]
   );
 
   return operationsInsert.rowCount ?? 0;
 }
+
+type ApplicableTechnicalSnapshot = {
+  version_id: string;
+  gamme_id: string | null;
+  version_interne: number | null;
+  snapshot: unknown;
+  sha256: string;
+};
+
+/**
+ * Select the effective released definition once, inside the OF creation
+ * transaction, and freeze all manufacturing-relevant fields into a hashable
+ * snapshot.  This is deliberately shared by the recursive order path: a
+ * commande must not bypass the same version gate as direct OF creation.
+ */
+async function loadApplicableTechnicalSnapshot(
+  tx: Queryable,
+  pieceTechniqueId: string
+): Promise<ApplicableTechnicalSnapshot> {
+  const versionRes = await tx.query<{
+    version_id: string;
+    gamme_id: string | null;
+    version_interne: number | null;
+  }>(
+    `
+      SELECT v.id::text AS version_id,
+             g.id::text AS gamme_id,
+             v.version_interne
+      FROM public.piece_technique_versions v
+      LEFT JOIN public.gammes g
+        ON g.piece_technique_version_id = v.id
+       AND g.is_current = true
+      WHERE v.piece_technique_id = $1::uuid
+        AND v.statut = 'APPLICABLE'
+        AND (v.date_effet IS NULL OR v.date_effet <= CURRENT_DATE)
+      ORDER BY v.date_effet DESC NULLS LAST, v.version_interne DESC NULLS LAST, v.created_at DESC
+      LIMIT 1
+    `,
+    [pieceTechniqueId]
+  );
+  const version = versionRes.rows[0] ?? null;
+  if (!version) {
+    throw new HttpError(
+      422,
+      "VERSION_NOT_APPLICABLE",
+      `La pièce technique ${pieceTechniqueId} ne possède pas de version applicable pour générer un OF.`
+    );
+  }
+
+  const snapshotRes = await tx.query<{ snapshot: unknown }>(
+    `
+      SELECT jsonb_build_object(
+        'piece', jsonb_build_object('id', pt.id::text, 'code', pt.code_piece, 'designation', pt.designation),
+        'version', jsonb_build_object(
+          'id', v.id::text,
+          'indice_externe', v.indice,
+          'version_interne', v.version_interne,
+          'plan_reference', v.plan_reference,
+          'code_metier', v.code_metier
+        ),
+        'gamme', CASE WHEN g.id IS NULL THEN NULL ELSE jsonb_build_object('id', g.id::text, 'code', g.code, 'designation', g.designation) END,
+        'operations', COALESCE((
+          SELECT jsonb_agg(jsonb_build_object(
+            'id', op.id::text, 'phase', op.phase, 'designation', op.designation,
+            'tp', op.tp, 'tf_unit', op.tf_unit, 'qte', op.qte, 'coef', op.coef
+          ) ORDER BY op.phase, op.id)
+          FROM public.pieces_techniques_operations op
+          WHERE op.piece_technique_id = pt.id
+            AND (op.gamme_id = g.id OR (g.id IS NULL AND op.gamme_id IS NULL))
+        ), '[]'::jsonb),
+        'nomenclature', COALESCE((
+          SELECT jsonb_agg(jsonb_build_object(
+            'id', bom.id::text,
+            'child_piece_technique_id', bom.child_piece_technique_id::text,
+            'child_piece_technique_version_id', bom.child_piece_technique_version_id::text,
+            'child_article_id', bom.child_article_id::text,
+            'quantite', bom.quantite,
+            'repere', bom.repere
+          ) ORDER BY bom.rang, bom.id)
+          FROM public.pieces_techniques_nomenclature bom
+          WHERE bom.parent_piece_technique_id = pt.id
+            AND (bom.parent_piece_technique_version_id = v.id OR bom.parent_piece_technique_version_id IS NULL)
+        ), '[]'::jsonb)
+      ) AS snapshot
+      FROM public.pieces_techniques pt
+      JOIN public.piece_technique_versions v ON v.id = $2::uuid
+      LEFT JOIN public.gammes g ON g.id = $3::uuid
+      WHERE pt.id = $1::uuid
+    `,
+    [pieceTechniqueId, version.version_id, version.gamme_id]
+  );
+  const snapshot = snapshotRes.rows[0]?.snapshot;
+  if (!snapshot) {
+    throw new HttpError(422, "TECHNICAL_DATA_INCOMPLETE", "Impossible de figer les données techniques de l'OF.");
+  }
+  return {
+    ...version,
+    snapshot,
+    sha256: crypto.createHash("sha256").update(JSON.stringify(snapshot)).digest("hex"),
+  };
+}
+
+type GeneratedOfRef = {
+  id: number;
+  root_of_id: number;
+  parent_of_id: number | null;
+  generation_level: number;
+  commande_ligne_id: number;
+};
+
+type RecursiveOfGenerationResult = {
+  batch_id: string;
+  root_of_id: number;
+  ofs: GeneratedOfRef[];
+};
 
 async function createRecursiveOrdresFabrication(tx: Queryable, params: {
   commande_id: number;
@@ -310,7 +440,7 @@ async function createRecursiveOrdresFabrication(tx: Queryable, params: {
   root_piece_technique_id: string;
   qty_to_produce: number;
   user_id: number;
-}): Promise<number[]> {
+}): Promise<RecursiveOfGenerationResult> {
   const tree = await loadFabricationGenerationTree(tx, params.root_piece_technique_id);
   if (!tree.length) {
     throw new HttpError(
@@ -355,7 +485,7 @@ async function createRecursiveOrdresFabrication(tx: Queryable, params: {
     ]
   );
 
-  const ofIds: number[] = [];
+  const generatedOfs: GeneratedOfRef[] = [];
 
   for (const node of tree) {
     const ofId = ofIdByKey.get(node.key);
@@ -366,7 +496,8 @@ async function createRecursiveOrdresFabrication(tx: Queryable, params: {
       throw new Error(`Missing parent OF id for fabrication node ${node.key}`);
     }
 
-    const numero = `OF-${ofId}`;
+    const technical = await loadApplicableTechnicalSnapshot(tx, node.piece_technique_id);
+    const numero = await generateTransactionalBusinessCode(tx, { prefix: "OF" });
     const qtyLancee = Number((params.qty_to_produce * node.quantite_cumulee).toFixed(3));
     const articleId = node.article_id ?? (node.level === 0 ? params.root_article_id : null);
     const notePrefix = node.level === 0 ? "piece mere" : "sous-piece";
@@ -382,6 +513,10 @@ async function createRecursiveOrdresFabrication(tx: Queryable, params: {
           article_id,
           client_id,
           piece_technique_id,
+          piece_technique_version_id,
+          technical_snapshot,
+          technical_snapshot_sha256,
+          technical_snapshot_at,
           parent_of_id,
           root_of_id,
           generation_batch_id,
@@ -398,8 +533,9 @@ async function createRecursiveOrdresFabrication(tx: Queryable, params: {
           updated_by
         ) VALUES (
           $1,$2,$3::bigint,$4::bigint,$5::bigint,$6::uuid,$7,$8::uuid,
-          $9::bigint,$10::bigint,$11::uuid,$12,$13::uuid,$14,$15,$16,
-          $17,'BROUILLON'::of_status,'NORMAL'::of_priority,$18,$19,$19
+          $9::uuid,$10::jsonb,$11,now(),
+          $12::bigint,$13::bigint,$14::uuid,$15,$16::uuid,$17,$18,$19,
+          $20,'BROUILLON'::of_status,'NORMAL'::of_priority,$21,$22,$22
         )
       `,
       [
@@ -411,6 +547,9 @@ async function createRecursiveOrdresFabrication(tx: Queryable, params: {
         articleId,
         params.client_id,
         node.piece_technique_id,
+        technical.version_id,
+        JSON.stringify(technical.snapshot),
+        technical.sha256,
         parentOfId,
         rootOfId,
         batchId,
@@ -428,6 +567,7 @@ async function createRecursiveOrdresFabrication(tx: Queryable, params: {
     const operationsCount = await copyPieceOperationsToOf(tx, {
       of_id: ofId,
       piece_technique_id: node.piece_technique_id,
+      gamme_id: technical.gamme_id,
     });
     if (operationsCount === 0) {
       throw new HttpError(
@@ -436,6 +576,15 @@ async function createRecursiveOrdresFabrication(tx: Queryable, params: {
         `Cannot create complete OF: piece technique ${node.code_piece} has no operation for line ${params.commande_ligne_id}`
       );
     }
+
+    await tx.query(
+      `
+        INSERT INTO public.of_technical_snapshots (
+          of_id, piece_technique_version_id, snapshot, snapshot_sha256, created_by
+        ) VALUES ($1::bigint, $2::uuid, $3::jsonb, $4, $5)
+      `,
+      [ofId, technical.version_id, JSON.stringify(technical.snapshot), technical.sha256, params.user_id]
+    );
 
     await tx.query(
       `
@@ -473,14 +622,20 @@ async function createRecursiveOrdresFabrication(tx: Queryable, params: {
         node.piece_technique_id,
         node.code_piece,
         node.designation,
-        node.version_number,
+        technical.version_interne ?? node.version_number,
         node.quantite_par_parent,
         node.quantite_cumulee,
         qtyLancee,
       ]
     );
 
-    ofIds.push(ofId);
+    generatedOfs.push({
+      id: ofId,
+      root_of_id: rootOfId,
+      parent_of_id: parentOfId,
+      generation_level: node.level,
+      commande_ligne_id: params.commande_ligne_id,
+    });
   }
 
   await tx.query(
@@ -488,7 +643,11 @@ async function createRecursiveOrdresFabrication(tx: Queryable, params: {
     [batchId, rootOfId]
   );
 
-  return ofIds;
+  return {
+    batch_id: batchId,
+    root_of_id: rootOfId,
+    ofs: generatedOfs,
+  };
 }
 
 async function insertCommandeEvent(db: Queryable, params: {
@@ -1074,6 +1233,38 @@ async function listCommandeToAffaireMappings(db: Queryable, commandeId: number):
   }));
 }
 
+async function listGeneratedOfRefs(db: Queryable, commandeId: number): Promise<GeneratedOfRef[]> {
+  const res = await db.query<{
+    id: number;
+    root_of_id: number;
+    parent_of_id: number | null;
+    generation_level: number;
+    commande_ligne_id: number;
+  }>(
+    `
+      SELECT
+        id::bigint::int AS id,
+        COALESCE(root_of_id, id)::bigint::int AS root_of_id,
+        parent_of_id::bigint::int AS parent_of_id,
+        generation_level::int AS generation_level,
+        commande_ligne_id::bigint::int AS commande_ligne_id
+      FROM public.ordres_fabrication
+      WHERE commande_id = $1
+        AND generation_batch_id IS NOT NULL
+      ORDER BY generation_level ASC, id ASC
+    `,
+    [commandeId]
+  );
+
+  return res.rows.map((row) => ({
+    id: Number(row.id),
+    root_of_id: Number(row.root_of_id),
+    parent_of_id: row.parent_of_id === null ? null : Number(row.parent_of_id),
+    generation_level: Number(row.generation_level),
+    commande_ligne_id: Number(row.commande_ligne_id),
+  }));
+}
+
 type StockOnHandSource = {
   table: string;
   alias: string;
@@ -1490,6 +1681,69 @@ export async function repoEnsureCommandeWorkflowStatus(params: {
     history_id: ins.rows[0]?.id ? toInt(ins.rows[0].id, "commande_historique.id") : null,
     notifications,
   };
+}
+
+async function advanceInternalOrderWorkflowAfterGeneration(params: {
+  tx: Queryable;
+  commande_id: number;
+  user_id: number;
+  livraison_affaire_id: number;
+  of_ids: number[];
+}) {
+  const transition = await repoEnsureCommandeWorkflowStatus({
+    tx: params.tx,
+    commande_id: params.commande_id,
+    nouveau_statut: "ATTENTE_PLANNING",
+    commentaire: "Commande interne validee et lancee",
+    user_id: params.user_id,
+  });
+
+  await ensureCommandeWorkflowCheckpoints(params.tx, params.commande_id, "ATTENTE_PLANNING");
+  await params.tx.query(
+    `
+      UPDATE public.commande_client_workflow_checkpoint
+      SET
+        status = CASE
+          WHEN checkpoint_code IN ('commercial_review','ar_preparation','ar_sent','invoicing') THEN 'skipped'
+          WHEN checkpoint_code IN ('order_intake','technical_analysis','of_generation') THEN 'done'
+          WHEN checkpoint_code = 'planning_validation' THEN 'active'
+          ELSE status
+        END,
+        completed_at = CASE
+          WHEN checkpoint_code IN (
+            'order_intake','commercial_review','technical_analysis','of_generation',
+            'ar_preparation','ar_sent','invoicing'
+          ) THEN COALESCE(completed_at, now())
+          ELSE completed_at
+        END,
+        completed_by = CASE
+          WHEN checkpoint_code IN (
+            'order_intake','commercial_review','technical_analysis','of_generation',
+            'ar_preparation','ar_sent','invoicing'
+          ) THEN COALESCE(completed_by, $2::int)
+          ELSE completed_by
+        END,
+        metadata = COALESCE(metadata, '{}'::jsonb) || CASE
+          WHEN checkpoint_code = 'of_generation' THEN $3::jsonb
+          WHEN checkpoint_code IN ('commercial_review','ar_preparation','ar_sent','invoicing')
+            THEN '{"skip_reason":"internal_order_flow"}'::jsonb
+          ELSE '{"internal_order_flow":true}'::jsonb
+        END,
+        updated_at = now()
+      WHERE commande_id = $1
+    `,
+    [
+      params.commande_id,
+      params.user_id,
+      JSON.stringify({
+        internal_order_flow: true,
+        livraison_affaire_id: params.livraison_affaire_id,
+        of_ids: params.of_ids,
+      }),
+    ]
+  );
+
+  return transition;
 }
 
 type CommandeWorkflowHeader = {
@@ -1996,7 +2250,8 @@ export async function repoUpdateCommandeWorkflowCheckpoint(
 export async function repoRunCommandeWorkflowAction(
   id: string,
   body: RunCommandeWorkflowActionBodyDTO,
-  userId: number | null
+  userId: number | null,
+  userRole: string | null
 ) {
   const commandeId = toInt(id, "commande_id");
   if (userId === null) throw new HttpError(401, "UNAUTHORIZED", "Authentication required");
@@ -2005,6 +2260,7 @@ export async function repoRunCommandeWorkflowAction(
 
   const workflowAudit: AuditContext = {
     user_id: userId,
+    user_role: userRole,
     ip: null,
     user_agent: null,
     device_type: null,
@@ -2904,8 +3160,12 @@ export async function repoCreateCommande(input: CreateCommandeInput, documents: 
     if (!rawId) throw new Error("Failed to allocate commande id");
     const commandeIdInt = toInt(rawId, "commande_client.id");
 
-    const numero = typeof input.numero === "string" && input.numero.trim().length > 0 ? input.numero.trim() : null;
-    const numeroForInsert = numero ?? `CC-${commandeIdInt}`.slice(0, 30);
+    // The business number is allocated in this transaction.  A client-provided
+    // value is intentionally ignored: it must never become a relational key.
+    const numeroForInsert = await generateCommandeCode(client, {
+      client_code: input.code_client ?? input.client_id ?? "CMD",
+      date: input.date_commande ? new Date(input.date_commande) : undefined,
+    });
 
     const orderType = input.order_type ?? "FERME";
 
@@ -3091,7 +3351,11 @@ export async function repoUpdateCommande(id: string, input: CreateCommandeInput,
       throw new HttpError(409, "COMMANDE_LOCKED_AFTER_AR", "Commande is locked after AR has been sent");
     }
 
-    const numero = typeof input.numero === "string" && input.numero.trim().length > 0 ? input.numero.trim() : existing.numero;
+    if (input.numero !== undefined && input.numero !== existing.numero) {
+      throw new HttpError(409, "COMMANDE_CODE_IMMUTABLE", "Le numéro de commande est attribué par le serveur et ne peut pas être modifié.");
+    }
+
+    const numero = existing.numero;
     const orderType = input.order_type ?? coerceOrderType(existing.order_type);
 
     const clientIdForUpdate = hasOwn(input as object, "client_id") ? (input.client_id ?? null) : existing.client_id;
@@ -3434,6 +3698,32 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
     }
 
     const orderType = coerceOrderType(commande.order_type);
+    const requestedLivraisonCountRaw = typeof body.livraison_count === "number" ? body.livraison_count : 1;
+    const requestedLivraisonCount = Math.max(1, Math.min(10, Math.trunc(requestedLivraisonCountRaw)));
+
+    if (orderType === "INTERNE") {
+      if (!canLaunchInternalOrder(audit.user_role)) {
+        throw new HttpError(
+          403,
+          "INTERNAL_ORDER_LAUNCH_FORBIDDEN",
+          "Production manager or administrator role required to launch an internal order"
+        );
+      }
+      if (requestedLivraisonCount !== 1) {
+        throw new HttpError(
+          400,
+          "INTERNAL_ORDER_SINGLE_AFFAIRE_REQUIRED",
+          "Internal orders generate exactly one delivery affair"
+        );
+      }
+      if (body.decision !== null || (body.lines?.length ?? 0) > 0) {
+        throw new HttpError(
+          400,
+          "INTERNAL_ORDER_STOCK_DECISION_FORBIDDEN",
+          "Internal orders always generate the full manufacturing requirement without a shipping-stock decision"
+        );
+      }
+    }
 
     const internalClientId = orderType === "INTERNE" ? await getInternalClientIdSetting(client) : null;
     const clientId = commande.client_id ?? internalClientId;
@@ -3447,22 +3737,41 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       );
     }
 
-    const requestedLivraisonCountRaw = typeof body.livraison_count === "number" ? body.livraison_count : 1;
-    const requestedLivraisonCount = Math.max(1, Math.min(10, Math.trunc(requestedLivraisonCountRaw)));
-
     // Idempotency + split delivery support: allow multiple LIVRAISON mappings per commande.
     const existingMappings = await listCommandeToAffaireMappings(client, commandeId);
     const existingLivraisons = existingMappings.filter((r) => r.role === "LIVRAISON");
 
     if (existingMappings.length > 0) {
+      if (orderType === "INTERNE" && existingLivraisons.length === 0) {
+        throw new HttpError(
+          409,
+          "INTERNAL_ORDER_AFFAIRE_MAPPING_INVALID",
+          "The existing affair mapping is not identified as a delivery affair"
+        );
+      }
+
       if (existingLivraisons.length >= requestedLivraisonCount) {
         const livraison = existingLivraisons[0]?.affaire_id ?? null;
+        const existingOfs = await listGeneratedOfRefs(client, commandeId);
+        const workflowHeader =
+          orderType === "INTERNE" ? await loadCommandeWorkflowHeaderWithStatus(client, commandeId) : null;
         await client.query("COMMIT");
         return {
           affaire_ids: existingLivraisons.map((r) => r.affaire_id),
           livraison_affaire_id: livraison,
           requires_confirmation: false,
           livraison_affaire_ids: existingLivraisons.map((l) => l.affaire_id),
+          generation_mode: orderType === "INTERNE" ? "INTERNAL_ORDER" : "CUSTOMER_ORDER",
+          idempotent_replay: true,
+          workflow_status: workflowHeader?.statut ?? null,
+          of_ids: existingOfs.map((of) => of.id),
+          root_of_ids: existingOfs.filter((of) => of.parent_of_id === null).map((of) => of.id),
+          child_of_ids: existingOfs.filter((of) => of.parent_of_id !== null).map((of) => of.id),
+          ofs: existingOfs,
+          warnings:
+            orderType === "INTERNE" && existingLivraisons.length > 1
+              ? ["LEGACY_MULTIPLE_DELIVERY_AFFAIRS"]
+              : [],
         };
       }
 
@@ -3502,19 +3811,37 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
     }
 
     const refs = await selectCommandeLineRefs(client, commandeId);
+    if (orderType === "INTERNE") {
+      if (refs.length === 0) {
+        throw new HttpError(400, "INTERNAL_ORDER_LINE_REQUIRED", "An internal order must contain at least one line");
+      }
+      const missingPiece = refs.find((line) => !line.piece_technique_id);
+      if (missingPiece) {
+        throw new HttpError(
+          400,
+          "PIECE_TECHNIQUE_REQUIRED",
+          `Cannot launch internal order: missing piece_technique_id for line ${missingPiece.commande_ligne_id}`
+        );
+      }
+    }
 
     let stockLocationId: string | null = null;
     if (orderType === "INTERNE") {
       const magasinId = commande.dest_stock_magasin_id;
       const emplacementIdRaw = commande.dest_stock_emplacement_id;
       const emplacementId = typeof emplacementIdRaw === "string" && /^\d+$/.test(emplacementIdRaw) ? Number(emplacementIdRaw) : null;
-      if (magasinId && typeof emplacementId === "number" && Number.isFinite(emplacementId)) {
-        stockLocationId = await resolveLocationIdForEmplacement(client, {
-          magasin_id: magasinId,
-          emplacement_id: emplacementId,
-          label: "dest_stock_location",
-        });
+      if (!magasinId || typeof emplacementId !== "number" || !Number.isFinite(emplacementId)) {
+        throw new HttpError(
+          400,
+          "DEST_STOCK_LOCATION_REQUIRED",
+          "dest_stock_magasin_id and dest_stock_emplacement_id are required for internal orders"
+        );
       }
+      stockLocationId = await resolveLocationIdForEmplacement(client, {
+        magasin_id: magasinId,
+        emplacement_id: emplacementId,
+        label: "dest_stock_location",
+      });
     } else {
       try {
         stockLocationId = (await getDefaultShippingLocation(client)).location_id;
@@ -3524,7 +3851,25 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
     }
 
     let analysis: CommandeStockAnalysis | null = null;
-    if (stockLocationId) {
+    if (orderType === "INTERNE") {
+      analysis = {
+        lines: refs.map((ref) => ({
+          commande_ligne_id: ref.commande_ligne_id,
+          code_piece: ref.code_piece,
+          article_id: ref.article_id,
+          article_code: ref.article_code,
+          article_designation: ref.article_designation,
+          piece_technique_id: ref.piece_technique_id,
+          piece_code: ref.piece_code,
+          piece_designation: ref.piece_designation,
+          requested_qty: Number(ref.qty_ordered),
+          available_qty: 0,
+          available_used_qty: 0,
+          shortage_qty: Number(ref.qty_ordered),
+          status: "NONE",
+        })),
+      };
+    } else if (stockLocationId) {
       try {
         analysis = await computeCommandeStockAnalysis(client, { commande_id: commandeId, location_id: stockLocationId });
       } catch {
@@ -3716,7 +4061,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       }
     }
 
-    const ofIds: number[] = [];
+    const generatedOfs: GeneratedOfRef[] = [];
     if (needsProduction) {
       const byLine = new Map<number, CommandeLineRef>(refs.map((r) => [r.commande_ligne_id, r] as const));
 
@@ -3735,7 +4080,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
           );
         }
 
-        const generatedIds = await createRecursiveOrdresFabrication(client, {
+        const generated = await createRecursiveOrdresFabrication(client, {
           commande_id: commandeId,
           commande_numero: commande.numero,
           commande_ligne_id: l.commande_ligne_id,
@@ -3746,8 +4091,34 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
           qty_to_produce: qtyToProduce,
           user_id: audit.user_id,
         });
-        ofIds.push(...generatedIds);
+        generatedOfs.push(...generated.ofs);
       }
+    }
+
+    const ofIds = generatedOfs.map((of) => of.id);
+    let workflowStatus: string | null = null;
+    if (orderType === "INTERNE") {
+      await advanceInternalOrderWorkflowAfterGeneration({
+        tx: client,
+        commande_id: commandeId,
+        user_id: audit.user_id,
+        livraison_affaire_id: livraisonAffaireId,
+        of_ids: ofIds,
+      });
+      workflowStatus = "ATTENTE_PLANNING";
+
+      await insertCommandeEvent(client, {
+        commande_id: commandeId,
+        event_type: "INTERNAL_ORDER_LAUNCHED",
+        new_values: {
+          livraison_affaire_id: livraisonAffaireId,
+          stock_location_id: stockLocationId,
+          root_of_ids: generatedOfs.filter((of) => of.parent_of_id === null).map((of) => of.id),
+          child_of_ids: generatedOfs.filter((of) => of.parent_of_id !== null).map((of) => of.id),
+          workflow_status: workflowStatus,
+        },
+        user_id: audit.user_id,
+      });
     }
 
     await insertCommandeEvent(client, {
@@ -3804,6 +4175,13 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       livraison_affaire_ids: livraisonAffaireIds,
       reservations_created: reservationsCreated,
       of_ids: ofIds,
+      root_of_ids: generatedOfs.filter((of) => of.parent_of_id === null).map((of) => of.id),
+      child_of_ids: generatedOfs.filter((of) => of.parent_of_id !== null).map((of) => of.id),
+      ofs: generatedOfs,
+      generation_mode: orderType === "INTERNE" ? "INTERNAL_ORDER" : "CUSTOMER_ORDER",
+      idempotent_replay: false,
+      workflow_status: workflowStatus,
+      warnings: [],
     };
   } catch (e) {
     await client.query("ROLLBACK");
@@ -3825,10 +4203,9 @@ async function createAffaire(db: PoolClient, input: AffaireCreationInput): Promi
   if (!rawId) throw new Error("Failed to allocate affaire id");
   const id = toInt(rawId, "affaire.id");
 
-  const clientCode = await requireClientCode(db, input.client_id);
   const reference = await generateAffaireCode(db, {
     type: "LIV",
-    client_code: clientCode,
+    client_code: input.client_id,
   });
 
   const typeAffaire = "livraison";
@@ -4585,7 +4962,7 @@ export async function repoDuplicateCommande(id: string) {
     const newId = seq.rows[0]?.id;
     if (!newId) throw new Error("Failed to allocate commande id");
     const newIdInt = toInt(newId, "commande_client.id");
-    const newNumero = `CC-${newIdInt}`.slice(0, 30);
+    const newNumero = await generateCommandeCode(client, { client_code: original.code_client ?? original.client_id ?? "CMD" });
 
     await client.query(
       `

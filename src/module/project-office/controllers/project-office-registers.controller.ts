@@ -6,6 +6,9 @@ import {
   createActionSchema,
   createDecisionSchema,
   createEvidenceSchema,
+  createEvidenceFileSchema,
+  evidenceFileContentQuerySchema,
+  evidenceFilesQuerySchema,
   createExternalLinkSchema,
   createRiskSchema,
   createSpecSchema,
@@ -15,6 +18,7 @@ import {
   patchRiskSchema,
   patchSpecStatusSchema,
   projectIdParamsSchema,
+  projectEvidenceFileContentParamsSchema,
   uuidParamsSchema,
 } from "../validators/project-office.validators";
 import { buildAuditContext, requireUser } from "./project-office.controller";
@@ -112,6 +116,44 @@ export const postEvidence = asyncHandler(async (req: Request, res: Response) => 
   const { id } = projectIdParamsSchema.parse(req.params);
   const body = createEvidenceSchema.parse(req.body);
   res.status(201).json(await reg.createEvidence(requireUser(req), id, body, buildAuditContext(req)));
+});
+
+export const postEvidenceFile = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = projectIdParamsSchema.parse(req.params);
+  const body = createEvidenceFileSchema.parse(req.body);
+  const result = await reg.uploadEvidenceFile(requireUser(req), id, body, req.file, buildAuditContext(req));
+  res.status(201).json({
+    ...result,
+    download_url: `/api/v1/project-office/evidence-files/${result.file.id}/download`,
+    content_url: `/api/v1/project-office/projects/${id}/evidence-files/${result.file.id}/content`,
+  });
+});
+
+export const getEvidenceFiles = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = projectIdParamsSchema.parse(req.params);
+  const { page, pageSize, category } = evidenceFilesQuerySchema.parse(req.query);
+  res.json(await reg.listEvidenceFiles(requireUser(req), { project_id: id, category, page, pageSize }));
+});
+
+export const getProjectEvidenceFileContent = asyncHandler(async (req: Request, res: Response) => {
+  const { projectId, id } = projectEvidenceFileContentParamsSchema.parse(req.params);
+  const { disposition } = evidenceFileContentQuerySchema.parse(req.query);
+  const file = await reg.downloadProjectEvidenceFile(requireUser(req), projectId, id);
+  const safeName = file.original_name.replace(/["\\\r\n]/g, "_");
+  res.setHeader("Content-Type", file.mime_type);
+  res.setHeader("Content-Length", String(file.buffer.byteLength));
+  res.setHeader("Content-Disposition", `${disposition}; filename="${safeName}"`);
+  res.send(file.buffer);
+});
+
+export const getEvidenceFileDownload = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = uuidParamsSchema.parse(req.params);
+  const file = await reg.downloadEvidenceFile(requireUser(req), id);
+  const safeName = file.original_name.replace(/["\\\r\n]/g, "_");
+  res.setHeader("Content-Type", file.mime_type);
+  res.setHeader("Content-Length", String(file.size_bytes));
+  res.setHeader("Content-Disposition", `attachment; filename="${safeName}"`);
+  res.send(file.buffer);
 });
 
 export const getExternalLinks = asyncHandler(async (req: Request, res: Response) => {
