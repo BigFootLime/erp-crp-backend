@@ -2,6 +2,7 @@
 .env
 /dist
 /uploads
+/data
 
 # Claude Code local tooling (not source)
 .claude/
