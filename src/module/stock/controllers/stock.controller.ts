@@ -33,6 +33,11 @@ import {
   magasinIdParamSchema,
   upsertInventoryLineSchema,
   updateArticleSchema,
+  archiveArticleSchema,
+  reactivateArticleSchema,
+  listArticleVersionsQuerySchema,
+  listArticleWhereUsedQuerySchema,
+  articleDocumentMetadataSchema,
   updateEmplacementSchema,
   updateLotSchema,
   updateMagasinSchema,
@@ -52,6 +57,8 @@ import {
   type ListMatiereNuancesQueryDTO,
   type ListMatiereSousEtatsQueryDTO,
   type UpdateArticleBodyDTO,
+  type ArchiveArticleBodyDTO,
+  type ReactivateArticleBodyDTO,
   type UpdateEmplacementBodyDTO,
   type UpdateLotBodyDTO,
   type UpdateMagasinBodyDTO,
@@ -100,6 +107,10 @@ import {
   removeStockArticleDocumentSVC,
   removeStockMovementDocumentSVC,
   updateStockArticleSVC,
+  archiveStockArticleSVC,
+  reactivateStockArticleSVC,
+  listStockArticleVersionsSVC,
+  listStockArticleWhereUsedSVC,
   updateStockEmplacementSVC,
   updateStockLotSVC,
   updateStockMagasinSVC,
@@ -109,6 +120,8 @@ import {
   createStockMatiereNuanceSVC,
   createStockMatiereSousEtatSVC,
 } from "../services/stock.service";
+import { canViewArticleCosts } from "../stock-article.permissions";
+import { removeTemporaryArticleDocuments, validateArticleDocuments } from "../services/article-document-validation";
 
 export const listStockInventorySessions: RequestHandler = async (req, res, next) => {
   try {
@@ -232,6 +245,18 @@ function getMulterFiles(req: Request): Express.Multer.File[] {
   const files = (req as Request & { files?: unknown }).files;
   if (!Array.isArray(files)) return [];
   return files.filter(isMulterFile);
+}
+
+function getRequiredIdempotencyKey(req: Request): string {
+  const value = req.headers["idempotency-key"];
+  if (typeof value !== "string" || value.trim().length < 8 || value.trim().length > 200) {
+    throw new HttpError(400, "IDEMPOTENCY_KEY_REQUIRED", "A valid Idempotency-Key header is required (8 to 200 characters).");
+  }
+  return value.trim();
+}
+
+function includeArticleCosts(req: Request): boolean {
+  return canViewArticleCosts(req.user?.role);
 }
 
 async function sendDocumentFile(
@@ -402,7 +427,7 @@ export const getStockArticlesKpis: RequestHandler = async (_req, res, next) => {
 export const getStockArticle: RequestHandler = async (req, res, next) => {
   try {
     const { id } = idParamSchema.parse({ params: req.params }).params;
-    const out = await getStockArticleSVC(id);
+    const out = await getStockArticleSVC(id, includeArticleCosts(req));
     if (!out) {
       res.status(404).json({ error: "Not found" });
       return;
@@ -417,7 +442,7 @@ export const createStockArticle: RequestHandler = async (req, res, next) => {
   try {
     const audit = buildAuditContext(req);
     const body: CreateArticleBodyDTO = createArticleSchema.parse({ body: req.body }).body;
-    const out = await createStockArticleSVC(body, audit);
+    const out = await createStockArticleSVC(body, audit, getRequiredIdempotencyKey(req), includeArticleCosts(req));
     res.status(201).json(out);
   } catch (err) {
     next(err);
@@ -441,7 +466,69 @@ export const updateStockArticle: RequestHandler = async (req, res, next) => {
     const audit = buildAuditContext(req);
     const { id } = idParamSchema.parse({ params: req.params }).params;
     const body: UpdateArticleBodyDTO = updateArticleSchema.parse({ body: req.body }).body;
-    const out = await updateStockArticleSVC(id, body, audit);
+    const out = await updateStockArticleSVC(id, body, audit, includeArticleCosts(req));
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const archiveStockArticle: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildAuditContext(req);
+    const { id } = idParamSchema.parse({ params: req.params }).params;
+    const body: ArchiveArticleBodyDTO = archiveArticleSchema.parse({ body: req.body }).body;
+    const out = await archiveStockArticleSVC(id, body, audit, includeArticleCosts(req));
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const reactivateStockArticle: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildAuditContext(req);
+    const { id } = idParamSchema.parse({ params: req.params }).params;
+    const body: ReactivateArticleBodyDTO = reactivateArticleSchema.parse({ body: req.body }).body;
+    const out = await reactivateStockArticleSVC(id, body, audit, includeArticleCosts(req));
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const listStockArticleVersions: RequestHandler = async (req, res, next) => {
+  try {
+    const { id } = idParamSchema.parse({ params: req.params }).params;
+    const filters = listArticleVersionsQuerySchema.parse(req.query);
+    const out = await listStockArticleVersionsSVC(id, filters);
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const listStockArticleWhereUsed: RequestHandler = async (req, res, next) => {
+  try {
+    const { id } = idParamSchema.parse({ params: req.params }).params;
+    const filters = listArticleWhereUsedQuerySchema.parse(req.query);
+    const out = await listStockArticleWhereUsedSVC(id, filters);
     if (!out) {
       res.status(404).json({ error: "Not found" });
       return;
@@ -746,17 +833,21 @@ export const listStockArticleDocuments: RequestHandler = async (req, res, next) 
 };
 
 export const attachStockArticleDocuments: RequestHandler = async (req, res, next) => {
+  const files = getMulterFiles(req);
   try {
     const audit = buildAuditContext(req);
     const { id } = idParamSchema.parse({ params: req.params }).params;
-    const files = getMulterFiles(req);
-    const out = await attachStockArticleDocumentsSVC(id, files, audit);
+    await validateArticleDocuments(files);
+    const metadata = articleDocumentMetadataSchema.parse({ body: req.body }).body;
+    const out = await attachStockArticleDocumentsSVC(id, files, metadata, audit);
     if (out === null) {
+      await removeTemporaryArticleDocuments(files);
       res.status(404).json({ error: "Not found" });
       return;
     }
     res.status(201).json(out);
   } catch (err) {
+    await removeTemporaryArticleDocuments(files);
     next(err);
   }
 };

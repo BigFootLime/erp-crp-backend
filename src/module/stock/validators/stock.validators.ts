@@ -93,7 +93,7 @@ export const listArticlesQuerySchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(200).optional().default(20),
   sortBy: z.enum(["updated_at", "created_at", "code", "designation"]).optional().default("updated_at"),
   sortDir: sortDirSchema.optional().default("desc"),
-});
+}).strict();
 
 export type ListArticlesQueryDTO = z.infer<typeof listArticlesQuerySchema>;
 
@@ -172,43 +172,73 @@ export const createArticleFamilySchema = z.object({
 });
 export type CreateArticleFamilyBodyDTO = z.infer<typeof createArticleFamilySchema>["body"];
 
+const articleMatiereSchema = z
+  .object({
+    nuance_id: nullablePositiveInt.optional(),
+    etat_id: nullablePositiveInt.optional(),
+    sous_etat_id: nullablePositiveInt.optional(),
+    barre_a_decouper: z.boolean().optional().default(false),
+    longueur_mm: nullablePositiveInt.optional(),
+    longueur_unitaire_mm: nullablePositiveInt.optional(),
+    largeur_mm: nullablePositiveInt.optional(),
+    hauteur_mm: nullablePositiveInt.optional(),
+    epaisseur_mm: nullablePositiveInt.optional(),
+    diametre_mm: nullablePositiveInt.optional(),
+    largeur_plat_mm: nullablePositiveInt.optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.barre_a_decouper && !value.longueur_unitaire_mm) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "longueur_unitaire_mm is required for cut bars", path: ["longueur_unitaire_mm"] });
+    }
+    if (value.barre_a_decouper && value.longueur_mm) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "longueur_mm is not allowed for cut bars", path: ["longueur_mm"] });
+    }
+    if (!value.barre_a_decouper && value.longueur_unitaire_mm) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "longueur_unitaire_mm requires barre_a_decouper=true", path: ["longueur_unitaire_mm"] });
+    }
+  });
+
+const articleProcurementSchema = z
+  .object({
+    manufacturer_name: z.string().trim().min(1).max(200).optional().nullable(),
+    manufacturer_reference: z.string().trim().min(1).max(200).optional().nullable(),
+    preferred_catalogue_id: uuid.optional().nullable(),
+    packaging: z.string().trim().min(1).max(200).optional().nullable(),
+    process: z.string().trim().min(1).max(200).optional().nullable(),
+    finish: z.string().trim().min(1).max(200).optional().nullable(),
+    requirements: z.string().trim().min(1).max(2000).optional().nullable(),
+    certificate_required: z.boolean().optional().default(false),
+    min_stock: z.coerce.number().min(0).optional().nullable(),
+    max_stock: z.coerce.number().min(0).optional().nullable(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.min_stock != null && value.max_stock != null && value.min_stock > value.max_stock) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "min_stock must be less than or equal to max_stock", path: ["max_stock"] });
+    }
+  });
+
 export const createArticleSchema = z.object({
   body: z
     .object({
-      // The backend issues the final code atomically. A legacy client value is
-      // accepted for compatibility but deliberately ignored on creation.
-      code: z.string().trim().min(1).max(80).optional(),
       designation: z.string().trim().min(1).max(400),
+      designation_secondary: z.string().trim().min(1).max(400).optional().nullable(),
       article_type: articleTypeSchema.optional(),
       article_category: articleCategorySchema.optional().default("achat"),
       article_categories: z.array(articleBusinessCategorySchema).min(1).max(8).optional(),
       family_code: z.string().trim().min(1).max(40),
-      version_number: z.coerce.number().int().positive().optional(),
-      plan_index: z.coerce.number().int().positive().optional().default(1),
       status: articleWorkflowStatusSchema.optional().default("VALIDE"),
       projet_id: z.coerce.number().int().positive().optional().nullable(),
       stock_managed: z.boolean().optional().default(true),
       piece_technique_id: uuid.optional().nullable(),
       unite: z.string().trim().min(1).max(30).optional().nullable(),
       lot_tracking: z.boolean().optional().default(false),
+      is_sold: z.boolean().optional().default(false),
       is_active: z.boolean().optional().default(true),
       notes: z.string().trim().min(1).optional().nullable(),
-      article_matiere: z
-        .object({
-          nuance_id: nullablePositiveInt.optional(),
-          etat_id: nullablePositiveInt.optional(),
-          sous_etat_id: nullablePositiveInt.optional(),
-          barre_a_decouper: z.boolean().optional().default(false),
-          longueur_mm: nullablePositiveInt.optional(),
-          longueur_unitaire_mm: nullablePositiveInt.optional(),
-          largeur_mm: nullablePositiveInt.optional(),
-          hauteur_mm: nullablePositiveInt.optional(),
-          epaisseur_mm: nullablePositiveInt.optional(),
-          diametre_mm: nullablePositiveInt.optional(),
-          largeur_plat_mm: nullablePositiveInt.optional(),
-        })
-        .strict()
-        .optional(),
+      article_matiere: articleMatiereSchema.optional(),
+      procurement: articleProcurementSchema.optional(),
     })
     .strict()
     .superRefine((body, ctx) => {
@@ -239,27 +269,73 @@ export type CreateArticleBodyDTO = z.infer<typeof createArticleSchema>["body"];
 export const updateArticleSchema = z.object({
   body: z
     .object({
-      code: z.string().trim().min(1).max(80).optional(),
+      expected_row_version: positiveInt,
       designation: z.string().trim().min(1).max(400).optional(),
+      designation_secondary: z.string().trim().min(1).max(400).optional().nullable(),
       article_type: articleTypeSchema.optional(),
       article_category: articleCategorySchema.optional(),
       article_categories: z.array(articleBusinessCategorySchema).min(1).max(8).optional(),
       family_code: z.string().trim().min(1).max(40).optional(),
-      version_number: z.coerce.number().int().positive().optional(),
-      plan_index: z.coerce.number().int().positive().optional(),
       status: articleWorkflowStatusSchema.optional(),
       projet_id: z.coerce.number().int().positive().optional().nullable(),
       stock_managed: z.boolean().optional(),
       piece_technique_id: uuid.optional().nullable(),
       unite: z.string().trim().min(1).max(30).optional().nullable(),
       lot_tracking: z.boolean().optional(),
-      is_active: z.boolean().optional(),
+      is_sold: z.boolean().optional(),
       notes: z.string().trim().min(1).optional().nullable(),
+      article_matiere: articleMatiereSchema.optional(),
+      procurement: articleProcurementSchema.optional(),
     })
-    .strict(),
+    .strict()
+    .superRefine((body, ctx) => {
+      if (body.stock_managed === false && body.lot_tracking === true) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "lot_tracking requires stock_managed=true", path: ["lot_tracking"] });
+      }
+      if (body.article_matiere && body.article_category && body.article_category !== "matiere") {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "article_matiere is only allowed for article_category=matiere", path: ["article_matiere"] });
+      }
+    }),
 });
 
 export type UpdateArticleBodyDTO = z.infer<typeof updateArticleSchema>["body"];
+
+export const archiveArticleSchema = z.object({
+  body: z.object({
+    expected_row_version: positiveInt,
+    reason: z.string().trim().min(3).max(500).optional().nullable(),
+  }).strict(),
+});
+export type ArchiveArticleBodyDTO = z.infer<typeof archiveArticleSchema>["body"];
+
+export const reactivateArticleSchema = z.object({
+  body: z.object({ expected_row_version: positiveInt }).strict(),
+});
+export type ReactivateArticleBodyDTO = z.infer<typeof reactivateArticleSchema>["body"];
+
+export const listArticleWhereUsedQuerySchema = z.object({
+  usage_type: z.enum([
+    "PIECE_CURRENT", "PIECE_HISTORICAL", "QUOTE", "CUSTOMER_ORDER", "SUPPLIER_ORDER",
+    "WORK_ORDER", "RECEIPT", "LOT", "STOCK_MOVEMENT", "DELIVERY",
+  ]).optional(),
+  page: z.coerce.number().int().min(1).optional().default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).optional().default(25),
+}).strict();
+export type ListArticleWhereUsedQueryDTO = z.infer<typeof listArticleWhereUsedQuerySchema>;
+
+export const listArticleVersionsQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).optional().default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).optional().default(25),
+}).strict();
+export type ListArticleVersionsQueryDTO = z.infer<typeof listArticleVersionsQuerySchema>;
+
+export const articleDocumentMetadataSchema = z.object({
+  body: z.object({
+    type: z.string().trim().min(1).max(80).optional().nullable(),
+    revision: z.string().trim().min(1).max(80).optional().nullable(),
+  }).strict(),
+});
+export type ArticleDocumentMetadataDTO = z.infer<typeof articleDocumentMetadataSchema>["body"];
 
 export const listMagasinsQuerySchema = z.object({
   q: z.string().trim().optional(),
