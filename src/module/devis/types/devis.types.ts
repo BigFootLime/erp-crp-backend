@@ -31,6 +31,8 @@ export type DevisLine = {
   source_article_devis_id?: string | null;
   source_dossier_devis_id?: string | null;
   code_piece: string | null;
+  /** #167 : ordre métier persisté (1-based, ordre du payload) ; null sur données legacy. */
+  position?: number | null;
   description: string;
   quantite: number;
   unite: string | null;

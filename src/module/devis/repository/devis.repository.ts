@@ -6,7 +6,16 @@ import pool from "../../../config/database";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { generateCommandeCode, generateDevisCode } from "../../../shared/codes/code-generator.service";
-import { computeDevisTotals } from "../lib/totals";
+import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
+import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
+import { computeDevisTotals, computeLineTotals } from "../lib/totals";
+import {
+  DEVIS_STATUT_TRANSITIONS,
+  canTransitionDevisStatut,
+  normalizeDevisStatut,
+  type DevisStatut,
+} from "../lib/status";
+import { capabilityForDevisTransition, roleHasDevisCapability } from "../domain/devis-rbac";
 import type {
   CreateDevisBodyDTO,
   ListDevisQueryDTO,
@@ -143,6 +152,167 @@ export type CommandeDraftFromDevis = {
     source_devis_updated_at: string | null;
   };
 };
+
+/* ----------------------- #167 : audit, idempotence, fraîcheur ----------------------- */
+
+export type AuditContext = {
+  user_id: number;
+  role?: string | null;
+  ip: string | null;
+  user_agent: string | null;
+  device_type: string | null;
+  os: string | null;
+  browser: string | null;
+  path: string | null;
+  page_key: string | null;
+  client_session_id: string | null;
+};
+
+/** Contexte d'écriture optionnel — absent = comportement historique (compatible). */
+export type DevisWriteContext = {
+  idempotency_key?: string;
+  audit?: AuditContext;
+};
+
+type DbQueryer = Pick<PoolClient, "query">;
+
+async function insertDevisAuditLog(
+  tx: DbQueryer,
+  audit: AuditContext | undefined,
+  entry: {
+    action: string;
+    entity_id: string | null;
+    details?: Record<string, unknown> | null;
+  }
+) {
+  if (!audit) return;
+  const body: CreateAuditLogBodyDTO = {
+    event_type: "ACTION",
+    action: entry.action,
+    page_key: audit.page_key,
+    entity_type: "devis",
+    entity_id: entry.entity_id,
+    path: audit.path,
+    client_session_id: audit.client_session_id,
+    details: entry.details ?? null,
+  };
+  await repoInsertAuditLog({
+    user_id: audit.user_id,
+    body,
+    ip: audit.ip,
+    user_agent: audit.user_agent,
+    device_type: audit.device_type,
+    os: audit.os,
+    browser: audit.browser,
+    tx,
+  });
+}
+
+/** Sérialisation stable (clés triées) — miroir du pattern #172, local pour éviter un couplage inter-modules. */
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, v]) => v !== undefined)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`);
+  return `{${entries.join(",")}}`;
+}
+
+function sha256Hex(payload: string): string {
+  return crypto.createHash("sha256").update(payload, "utf8").digest("hex");
+}
+
+export function devisIdempotencyPayloadHash(payload: unknown): string {
+  return sha256Hex(stableStringify(payload));
+}
+
+type DevisIdempotenceAction = "CREATE" | "REVISE" | "CONVERT";
+
+/**
+ * Rejeu idempotent (#167) : même clé + même payload -> même résultat (200) ;
+ * même clé + action différente -> 409 IDEMPOTENCY_KEY_REUSED ;
+ * même clé + payload différent -> 409 IDEMPOTENCY_PAYLOAD_MISMATCH.
+ */
+async function readDevisIdempotentReplay(
+  tx: DbQueryer,
+  key: string,
+  action: DevisIdempotenceAction,
+  payloadHash: string
+): Promise<Record<string, unknown> | null> {
+  const res = await tx.query<{ action: string; payload_hash: string; resultat: Record<string, unknown> }>(
+    `SELECT action, payload_hash, resultat FROM public.devis_idempotence WHERE cle = $1`,
+    [key]
+  );
+  const row = res.rows[0];
+  if (!row) return null;
+  if (row.action !== action) {
+    throw new HttpError(409, "IDEMPOTENCY_KEY_REUSED", "Cette clé d'idempotence a déjà servi à une autre action.");
+  }
+  if (row.payload_hash !== payloadHash) {
+    throw new HttpError(
+      409,
+      "IDEMPOTENCY_PAYLOAD_MISMATCH",
+      "Cette clé d'idempotence a déjà servi avec un contenu différent."
+    );
+  }
+  return { ...row.resultat, idempotent_replay: true };
+}
+
+async function recordDevisIdempotence(
+  tx: DbQueryer,
+  key: string,
+  action: DevisIdempotenceAction,
+  devisId: number | null,
+  payloadHash: string,
+  resultat: Record<string, unknown>
+) {
+  await tx.query(
+    `INSERT INTO public.devis_idempotence (cle, action, devis_id, payload_hash, resultat)
+     VALUES ($1,$2,$3,$4,$5::jsonb) ON CONFLICT (cle) DO NOTHING`,
+    [key, action, devisId, payloadHash, JSON.stringify(resultat)]
+  );
+}
+
+/** La table d'idempotence arrive par patch 20260722 : absence tolérée (comportement historique). */
+async function hasDevisIdempotenceTable(client: DbQueryer): Promise<boolean> {
+  const res = await client.query<{ exists: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1 FROM information_schema.tables
+       WHERE table_schema = 'public' AND table_name = 'devis_idempotence'
+     ) AS exists`
+  );
+  return res.rows[0]?.exists === true;
+}
+
+function timestampsMatch(expected: string, current: string | null): boolean {
+  if (current === null) return false;
+  if (expected === current) return true;
+  const expectedMs = Date.parse(expected);
+  const currentMs = Date.parse(current);
+  return Number.isFinite(expectedMs) && Number.isFinite(currentMs) && expectedMs === currentMs;
+}
+
+/**
+ * Verrou optimiste (#167) : le jeton `expected_updated_at` fourni par le client doit
+ * correspondre au `updated_at` courant (comparaison tolérante aux formats texte/JSONB).
+ * Divergence -> 409, jamais d'écrasement silencieux.
+ */
+function assertDevisFresh(
+  expected: string | null | undefined,
+  current: string | null,
+  code: "DEVIS_STALE" | "DEVIS_DRAFT_STALE" = "DEVIS_STALE"
+) {
+  if (!expected) return;
+  if (!timestampsMatch(expected, current)) {
+    throw new HttpError(
+      409,
+      code,
+      "Le devis a été modifié entre-temps. Rechargez-le pour repartir de la version courante.",
+      { current_updated_at: current }
+    );
+  }
+}
 
 function toInt(value: unknown, label = "id"): number {
   if (typeof value === "number" && Number.isInteger(value)) return value;
@@ -772,8 +942,17 @@ async function insertDevisLines(client: PoolClient, devisId: number, lignes: Cre
   if (!lignes.length) return [] as InsertedDevisLine[];
 
   const hasCodePieceColumn = await hasPublicColumn(client, "devis_ligne", "code_piece");
+  // #167 : la position est persistée (ordre du payload = ordre métier) et les totaux de
+  // ligne sont recalculés serveur. Colonnes gardées (patch 20260722 / schéma legacy).
+  const hasPositionColumn = await hasPublicColumn(client, "devis_ligne", "position");
+  const hasLineTotalsColumns =
+    (await hasPublicColumn(client, "devis_ligne", "total_ht")) &&
+    (await hasPublicColumn(client, "devis_ligne", "total_ttc"));
   const inserted: InsertedDevisLine[] = [];
+  let position = 0;
   for (const line of lignes as DevisLineWithPreparatoryInput[]) {
+    position += 1;
+    const lineTotals = computeLineTotals(line);
     const columns = [
       "devis_id",
       "description",
@@ -785,6 +964,8 @@ async function insertDevisLines(client: PoolClient, devisId: number, lignes: Cre
       "prix_unitaire_ht",
       "remise_ligne",
       "taux_tva",
+      ...(hasPositionColumn ? ["position"] : []),
+      ...(hasLineTotalsColumns ? ["total_ht", "total_ttc"] : []),
     ];
     const values = [
       devisId,
@@ -797,6 +978,8 @@ async function insertDevisLines(client: PoolClient, devisId: number, lignes: Cre
       line.prix_unitaire_ht,
       line.remise_ligne ?? 0,
       line.taux_tva ?? 20,
+      ...(hasPositionColumn ? [position] : []),
+      ...(hasLineTotalsColumns ? [lineTotals.total_ht, lineTotals.total_ttc] : []),
     ];
     const placeholders = values.map((_, idx) => {
       const index = idx + 1;
@@ -930,6 +1113,9 @@ export async function repoGetDevis(id: number, includeValue: string) {
   };
 
   const codePieceSelect = includeLignes ? await devisLineCodePieceSelect(pool) : "NULL::text AS code_piece";
+  const hasLinePositionColumn = includeLignes ? await hasPublicColumn(pool, "devis_ligne", "position") : false;
+  const positionSelect = hasLinePositionColumn ? "dl.position::int AS position" : "NULL::int AS position";
+  const lignesOrderClause = hasLinePositionColumn ? "dl.position ASC NULLS LAST, dl.id ASC" : "dl.id ASC";
   const lignes: DevisLine[] = includeLignes
     ? (
         await pool.query<
@@ -944,6 +1130,7 @@ export async function repoGetDevis(id: number, includeValue: string) {
               ad.id::text AS source_article_devis_id,
               dd.id::text AS source_dossier_devis_id,
               ${codePieceSelect},
+              ${positionSelect},
               dl.description,
               dl.quantite::float8 AS quantite,
               dl.unite,
@@ -958,7 +1145,7 @@ export async function repoGetDevis(id: number, includeValue: string) {
             LEFT JOIN public.articles a ON a.id = dl.article_id
             LEFT JOIN public.pieces_techniques pt ON pt.id = COALESCE(dl.piece_technique_id, a.piece_technique_id, dd.source_official_piece_technique_id)
             WHERE dl.devis_id = $1
-            ORDER BY dl.id ASC
+            ORDER BY ${lignesOrderClause}
             `,
            [id]
          )
@@ -1035,7 +1222,32 @@ export async function repoGetDevis(id: number, includeValue: string) {
       }))
     : [];
 
-  return { devis, lignes: lignesWithPreparatory, documents };
+  // #167 : l'UI reflète l'automate et les liens serveur — elle ne les décide jamais.
+  const statutCourant = normalizeDevisStatut(devis.statut);
+  const flagsRes = await pool.query<{ has_children: boolean; commande_id: string | null; commande_numero: string | null }>(
+    `
+      SELECT
+        EXISTS (SELECT 1 FROM devis child WHERE child.parent_devis_id = d.id) AS has_children,
+        cc.id::text AS commande_id,
+        cc.numero AS commande_numero
+      FROM devis d
+      LEFT JOIN commande_client cc ON cc.devis_id = d.id
+      WHERE d.id = $1
+    `,
+    [id]
+  );
+  const flags = flagsRes.rows[0] ?? { has_children: false, commande_id: null, commande_numero: null };
+  const enrichedDevis = {
+    ...devis,
+    allowed_statut_transitions: [...DEVIS_STATUT_TRANSITIONS[statutCourant]],
+    has_children: flags.has_children,
+    converted_commande:
+      flags.commande_id !== null
+        ? { id: toInt(flags.commande_id, "commande_client.id"), numero: flags.commande_numero ?? "" }
+        : null,
+  };
+
+  return { devis: enrichedDevis, lignes: lignesWithPreparatory, documents };
 }
 
 export type DevisDocumentFileMeta = {
@@ -1328,10 +1540,37 @@ export async function repoGetDevisDocumentFileMeta(devisId: number, docId: strin
   return res.rows[0] ?? null;
 }
 
-export async function repoCreateDevis(input: CreateDevisBodyDTO, userId: number, documents: UploadedDocument[]) {
+export async function repoCreateDevis(
+  input: CreateDevisBodyDTO,
+  userId: number,
+  documents: UploadedDocument[],
+  ctx: DevisWriteContext = {}
+) {
   const client = await pool.connect();
+  const idempotencyPayloadHash = ctx.idempotency_key
+    ? devisIdempotencyPayloadHash({ input, documents: documents.map((d) => d.originalname) })
+    : null;
   try {
     await client.query("BEGIN");
+
+    if (ctx.idempotency_key && idempotencyPayloadHash && (await hasDevisIdempotenceTable(client))) {
+      const replay = await readDevisIdempotentReplay(client, ctx.idempotency_key, "CREATE", idempotencyPayloadHash);
+      if (replay) {
+        await client.query("COMMIT");
+        return replay as { id: number; idempotent_replay: true };
+      }
+    }
+
+    // #167 : l'automate démarre en BROUILLON ; ENVOYE reste accepté (saisie a posteriori
+    // d'une offre déjà partie). Naître ACCEPTE/REFUSE/EXPIRE/ANNULE contournerait l'automate.
+    if (input.statut !== "BROUILLON" && input.statut !== "ENVOYE") {
+      throw new HttpError(
+        422,
+        "DEVIS_INITIAL_STATUT_INVALID",
+        "Un devis se crée en BROUILLON (ou ENVOYE) ; les issues commerciales passent par les transitions.",
+        { statut: input.statut }
+      );
+    }
 
     const seq = await client.query<{ id: string }>(`SELECT nextval('public.devis_id_seq')::bigint::text AS id`);
     const idRaw = seq.rows[0]?.id;
@@ -1406,15 +1645,37 @@ export async function repoCreateDevis(input: CreateDevisBodyDTO, userId: number,
     await insertDevisLines(client, devisId, input.lignes);
     await insertDevisDocuments(client, devisId, documents);
 
-    await client.query("COMMIT");
+    await insertDevisAuditLog(client, ctx.audit, {
+      action: "devis.create",
+      entity_id: String(devisId),
+      details: {
+        numero,
+        client_id: input.client_id,
+        statut: input.statut,
+        nb_lignes: input.lignes.length,
+        nb_documents: documents.length,
+        idempotency_key: ctx.idempotency_key ?? null,
+      },
+    });
 
     const inserted = ins.rows[0]?.id;
-    return { id: inserted ? toInt(inserted, "devis.id") : devisId };
+    const resultat = { id: inserted ? toInt(inserted, "devis.id") : devisId };
+    if (ctx.idempotency_key && idempotencyPayloadHash && (await hasDevisIdempotenceTable(client))) {
+      await recordDevisIdempotence(client, ctx.idempotency_key, "CREATE", resultat.id, idempotencyPayloadHash, resultat);
+    }
+
+    await client.query("COMMIT");
+    return { ...resultat, idempotent_replay: false };
   } catch (err) {
     await client.query("ROLLBACK");
     const { code, constraint } = getPgErrorInfo(err);
     if (code === "23505" && constraint === "devis_numero_key") {
       throw new HttpError(409, "DEVIS_NUMERO_EXISTS", "Numero already exists");
+    }
+    // Course concurrente sur la même clé : l'autre transaction a gagné -> rejouer son résultat.
+    if (ctx.idempotency_key && idempotencyPayloadHash && code === "23505" && constraint === "devis_idempotence_pkey") {
+      const replay = await readDevisIdempotentReplay(pool, ctx.idempotency_key, "CREATE", idempotencyPayloadHash);
+      if (replay) return replay as { id: number; idempotent_replay: true };
     }
     throw err;
   } finally {
@@ -1422,15 +1683,116 @@ export async function repoCreateDevis(input: CreateDevisBodyDTO, userId: number,
   }
 }
 
+/** Champs de contenu commercial : figés dès qu'un devis est engagé (révision obligatoire). */
+const DEVIS_CONTENT_FIELDS = [
+  "client_id",
+  "contact_id",
+  "adresse_facturation_id",
+  "adresse_livraison_id",
+  "mode_reglement_id",
+  "compte_vente_id",
+  "date_creation",
+  "date_validite",
+  "remise_globale",
+  "commentaires",
+  "conditions_paiement_id",
+  "biller_id",
+] as const satisfies readonly (keyof UpdateDevisBodyDTO)[];
+
 export async function repoUpdateDevis(
   id: number,
   input: UpdateDevisBodyDTO,
   userId: number,
-  documents: UploadedDocument[]
+  documents: UploadedDocument[],
+  ctx: DevisWriteContext = {}
 ) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+
+    // #167 : l'écriture démarre TOUJOURS par un verrou de la ligne + lecture de l'état
+    // (statut courant, jeton de fraîcheur, descendance) — l'automate et l'immutabilité
+    // se décident sur l'état verrouillé, pas sur ce que le client croit savoir.
+    const currentRes = await client.query<{
+      id: string;
+      numero: string;
+      statut: string;
+      remise_globale: number;
+      updated_at: string | null;
+      has_children: boolean;
+    }>(
+      `
+        SELECT
+          d.id::text AS id,
+          d.numero,
+          d.statut,
+          d.remise_globale::float8 AS remise_globale,
+          to_jsonb(d)->>'updated_at' AS updated_at,
+          EXISTS (SELECT 1 FROM devis child WHERE child.parent_devis_id = d.id) AS has_children
+        FROM devis d
+        WHERE d.id = $1
+        FOR UPDATE OF d
+      `,
+      [id]
+    );
+    const current = currentRes.rows[0] ?? null;
+    if (!current) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    assertDevisFresh(input.expected_updated_at, current.updated_at);
+
+    if (input.numero !== undefined && input.numero !== current.numero) {
+      throw new HttpError(409, "DEVIS_CODE_IMMUTABLE", "Le numéro de devis est attribué par le serveur et ne peut pas être modifié.");
+    }
+
+    const currentStatut = normalizeDevisStatut(current.statut);
+    const requestedStatut: DevisStatut | undefined = input.statut;
+    const statutChanges = requestedStatut !== undefined && requestedStatut !== currentStatut;
+
+    const hasContentChanges =
+      DEVIS_CONTENT_FIELDS.some((key) => input[key] !== undefined) ||
+      input.lignes !== undefined ||
+      documents.length > 0;
+
+    // Une version remplacée par une révision est immuable et consultable — rien ne s'y écrit.
+    if (current.has_children && (hasContentChanges || statutChanges)) {
+      throw new HttpError(
+        409,
+        "DEVIS_VERSION_SUPERSEDED",
+        "Cette version a été remplacée par une révision : elle est immuable. Ouvrez la dernière version.",
+        { devis_id: id }
+      );
+    }
+
+    // Un devis engagé (non brouillon) ne s'écrase pas : seule une transition de statut
+    // est permise ici ; toute modification de contenu passe par une révision.
+    if (currentStatut !== "BROUILLON" && hasContentChanges) {
+      throw new HttpError(
+        409,
+        "DEVIS_ENGAGED_IMMUTABLE",
+        "Ce devis est engagé : créez une révision au lieu de modifier la version en place.",
+        { statut: currentStatut }
+      );
+    }
+
+    if (statutChanges && !canTransitionDevisStatut(currentStatut, requestedStatut)) {
+      throw new HttpError(
+        409,
+        "DEVIS_INVALID_TRANSITION",
+        `Transition ${currentStatut} → ${requestedStatut} refusée par l'automate devis.`,
+        { from: currentStatut, to: requestedStatut, allowed: DEVIS_STATUT_TRANSITIONS[currentStatut] }
+      );
+    }
+
+    // RBAC fin dépendant de l'état (pattern #172) : re-vérifié ici, l'état source étant connu.
+    if (statutChanges && ctx.audit) {
+      const capability = capabilityForDevisTransition(currentStatut, requestedStatut);
+      if (!roleHasDevisCapability(ctx.audit.role, capability)) {
+        throw new HttpError(403, "FORBIDDEN_TRANSITION", "Votre rôle ne permet pas cette transition de devis.");
+      }
+    }
 
     const sets: string[] = [];
     const values: unknown[] = [id];
@@ -1439,16 +1801,6 @@ export async function repoUpdateDevis(
       return `$${values.length}`;
     };
 
-    if (input.numero !== undefined) {
-      const current = await client.query<{ numero: string }>(`SELECT numero FROM devis WHERE id = $1 FOR UPDATE`, [id]);
-      if (!current.rows[0]) {
-        await client.query("ROLLBACK");
-        return null;
-      }
-      if (input.numero !== current.rows[0].numero) {
-        throw new HttpError(409, "DEVIS_CODE_IMMUTABLE", "Le numéro de devis est attribué par le serveur et ne peut pas être modifié.");
-      }
-    }
     if (input.client_id !== undefined) sets.push(`client_id = ${push(input.client_id)}`);
     if (input.contact_id !== undefined) sets.push(`contact_id = ${push(input.contact_id)}::uuid`);
 
@@ -1466,12 +1818,35 @@ export async function repoUpdateDevis(
     if (input.date_validite !== undefined) sets.push(`date_validite = ${push(input.date_validite)}::date`);
     if (input.statut !== undefined) sets.push(`statut = ${push(input.statut)}`);
     if (input.remise_globale !== undefined) sets.push(`remise_globale = ${push(input.remise_globale)}`);
-    if (input.total_ht !== undefined) sets.push(`total_ht = ${push(input.total_ht)}`);
-    if (input.total_ttc !== undefined) sets.push(`total_ttc = ${push(input.total_ttc)}`);
     if (input.commentaires !== undefined) sets.push(`commentaires = ${push(input.commentaires)}`);
     if (input.conditions_paiement_id !== undefined)
       sets.push(`conditions_paiement_id = ${push(input.conditions_paiement_id)}::int`);
     if (input.biller_id !== undefined) sets.push(`biller_id = ${push(input.biller_id)}::uuid`);
+
+    // Totaux : recalcul serveur systématique (CA-APP-01) — les totaux du client sont ignorés.
+    if (input.lignes !== undefined || input.remise_globale !== undefined) {
+      const remise = input.remise_globale ?? current.remise_globale ?? 0;
+      let effectiveLines: readonly { quantite: number; prix_unitaire_ht: number; remise_ligne?: number | null; taux_tva?: number | null }[];
+      if (input.lignes !== undefined) {
+        effectiveLines = input.lignes;
+      } else {
+        const existingLines = await client.query<{
+          quantite: number;
+          prix_unitaire_ht: number;
+          remise_ligne: number | null;
+          taux_tva: number | null;
+        }>(
+          `SELECT quantite::float8 AS quantite, prix_unitaire_ht::float8 AS prix_unitaire_ht,
+                  remise_ligne::float8 AS remise_ligne, taux_tva::float8 AS taux_tva
+           FROM devis_ligne WHERE devis_id = $1`,
+          [id]
+        );
+        effectiveLines = existingLines.rows;
+      }
+      const totals = computeDevisTotals(effectiveLines, remise);
+      sets.push(`total_ht = ${push(totals.total_ht)}`);
+      sets.push(`total_ttc = ${push(totals.total_ttc)}`);
+    }
 
     if (sets.length === 0 && input.lignes === undefined && documents.length === 0) {
       await client.query("ROLLBACK");
@@ -1515,6 +1890,26 @@ export async function repoUpdateDevis(
 
     await insertDevisDocuments(client, id, documents);
 
+    if (statutChanges) {
+      await insertDevisAuditLog(client, ctx.audit, {
+        action: "devis.statut_transition",
+        entity_id: String(id),
+        details: { numero: current.numero, from: currentStatut, to: requestedStatut },
+      });
+    }
+    if (hasContentChanges) {
+      await insertDevisAuditLog(client, ctx.audit, {
+        action: "devis.update",
+        entity_id: String(id),
+        details: {
+          numero: current.numero,
+          fields: DEVIS_CONTENT_FIELDS.filter((key) => input[key] !== undefined),
+          lignes_remplacees: input.lignes !== undefined,
+          nb_documents: documents.length,
+        },
+      });
+    }
+
     await client.query("COMMIT");
     return { id: updatedId };
   } catch (err) {
@@ -1533,11 +1928,29 @@ export async function repoReviseDevis(
   id: number,
   input: UpdateDevisBodyDTO,
   userId: number,
-  documents: UploadedDocument[]
+  documents: UploadedDocument[],
+  ctx: DevisWriteContext = {}
 ) {
   const client = await pool.connect();
+  const idempotencyPayloadHash = ctx.idempotency_key
+    ? devisIdempotencyPayloadHash({ source_devis_id: id, input, documents: documents.map((d) => d.originalname) })
+    : null;
   try {
     await client.query("BEGIN");
+
+    if (ctx.idempotency_key && idempotencyPayloadHash && (await hasDevisIdempotenceTable(client))) {
+      const replay = await readDevisIdempotentReplay(client, ctx.idempotency_key, "REVISE", idempotencyPayloadHash);
+      if (replay) {
+        await client.query("COMMIT");
+        return replay as {
+          id: number;
+          root_devis_id: number;
+          parent_devis_id: number;
+          version_number: number;
+          idempotent_replay: true;
+        };
+      }
+    }
 
     const sourceRes = await client.query<{
       id: string;
@@ -1557,6 +1970,7 @@ export async function repoReviseDevis(
       commentaires: string | null;
       conditions_paiement_id: number | null;
       biller_id: string | null;
+      updated_at: string | null;
     }>(
       `
         SELECT
@@ -1576,7 +1990,8 @@ export async function repoReviseDevis(
           total_ttc::float8 AS total_ttc,
           commentaires,
           conditions_paiement_id,
-          biller_id::text AS biller_id
+          biller_id::text AS biller_id,
+          to_jsonb(devis)->>'updated_at' AS updated_at
         FROM devis
         WHERE id = $1
         FOR UPDATE
@@ -1589,6 +2004,9 @@ export async function repoReviseDevis(
       await client.query("ROLLBACK");
       return null;
     }
+
+    // #167 : la révision part de la version que l'utilisateur avait sous les yeux.
+    assertDevisFresh(input.expected_updated_at, source.updated_at);
 
     const rootDevisId = source.root_devis_id ? toInt(source.root_devis_id, "devis.root_devis_id") : toInt(source.id, "devis.id");
     const versionRes = await client.query<{ next_version: number }>(
@@ -1614,6 +2032,18 @@ export async function repoReviseDevis(
     // the authoritative revision field.
     const numero = `${source.numero}-V${nextVersion}`.slice(0, 30);
     const dateCreation = (input.date_creation ?? new Date().toISOString().slice(0, 10)).slice(0, 10);
+
+    // #167 : une révision repart dans l'entonnoir commercial (BROUILLON par défaut) ;
+    // seuls BROUILLON/ENVOYE sont admis à la naissance d'une version.
+    const revisionStatut: DevisStatut = input.statut ?? "BROUILLON";
+    if (revisionStatut !== "BROUILLON" && revisionStatut !== "ENVOYE") {
+      throw new HttpError(
+        422,
+        "DEVIS_REVISION_STATUT_INVALID",
+        "Une révision naît en BROUILLON (ou ENVOYE) ; les issues commerciales passent par les transitions.",
+        { statut: revisionStatut }
+      );
+    }
 
     // Totaux recalculés côté serveur. Si de nouvelles lignes sont fournies, on recalcule ;
     // sinon les lignes sont clonées de la source et on conserve ses totaux (ISO A.8.28).
@@ -1666,7 +2096,7 @@ export async function repoReviseDevis(
         input.compte_vente_id !== undefined ? input.compte_vente_id : source.compte_vente_id,
         dateCreation,
         input.date_validite !== undefined ? input.date_validite : source.date_validite,
-        input.statut ?? source.statut,
+        revisionStatut,
         revisedTotals.remise_pct,
         revisedTotals.total_ht,
         revisedTotals.total_ttc,
@@ -1679,6 +2109,21 @@ export async function repoReviseDevis(
     if (input.lignes) {
       await insertDevisLines(client, newDevisId, input.lignes);
     } else {
+      // Clone : la position et les totaux de ligne suivent la source (colonnes gardées —
+      // patch 20260722 / schéma legacy).
+      const hasPositionColumn = await hasPublicColumn(client, "devis_ligne", "position");
+      const hasLineTotalsColumns =
+        (await hasPublicColumn(client, "devis_ligne", "total_ht")) &&
+        (await hasPublicColumn(client, "devis_ligne", "total_ttc"));
+      const extraColumns = [
+        ...(hasPositionColumn ? ["position"] : []),
+        ...(hasLineTotalsColumns ? ["total_ht", "total_ttc"] : []),
+      ];
+      const extraSelects = [
+        ...(hasPositionColumn ? ["dl.position"] : []),
+        ...(hasLineTotalsColumns ? ["dl.total_ht", "dl.total_ttc"] : []),
+      ];
+      const orderClause = hasPositionColumn ? "dl.position ASC NULLS LAST, dl.id ASC" : "dl.id ASC";
       await client.query(
         `
           INSERT INTO devis_ligne (
@@ -1691,7 +2136,7 @@ export async function repoReviseDevis(
             unite,
             prix_unitaire_ht,
             remise_ligne,
-            taux_tva
+            taux_tva${extraColumns.length ? `,\n            ${extraColumns.join(",\n            ")}` : ""}
           )
           SELECT
             $1,
@@ -1703,10 +2148,10 @@ export async function repoReviseDevis(
             dl.unite,
             dl.prix_unitaire_ht,
             dl.remise_ligne,
-            dl.taux_tva
+            dl.taux_tva${extraSelects.length ? `,\n            ${extraSelects.join(",\n            ")}` : ""}
           FROM devis_ligne dl
           WHERE dl.devis_id = $2
-          ORDER BY dl.id ASC
+          ORDER BY ${orderClause}
         `,
         [newDevisId, id]
       );
@@ -1726,19 +2171,52 @@ export async function repoReviseDevis(
 
     await insertDevisDocuments(client, newDevisId, documents);
 
-    await client.query("COMMIT");
     const newId = inserted.rows[0]?.id;
-    return {
+    const resultat = {
       id: newId ? toInt(newId, "devis.id") : newDevisId,
       root_devis_id: rootDevisId,
       parent_devis_id: id,
       version_number: nextVersion,
     };
+
+    await insertDevisAuditLog(client, ctx.audit, {
+      action: "devis.revise",
+      entity_id: String(resultat.id),
+      details: {
+        numero,
+        source_devis_id: id,
+        source_numero: source.numero,
+        root_devis_id: rootDevisId,
+        version_number: nextVersion,
+        statut: revisionStatut,
+        lignes_fournies: input.lignes !== undefined,
+        idempotency_key: ctx.idempotency_key ?? null,
+      },
+    });
+
+    if (ctx.idempotency_key && idempotencyPayloadHash && (await hasDevisIdempotenceTable(client))) {
+      await recordDevisIdempotence(client, ctx.idempotency_key, "REVISE", resultat.id, idempotencyPayloadHash, resultat);
+    }
+
+    await client.query("COMMIT");
+    return { ...resultat, idempotent_replay: false };
   } catch (err) {
     await client.query("ROLLBACK");
     const { code, constraint } = getPgErrorInfo(err);
     if (code === "23505" && constraint === "devis_numero_key") {
       throw new HttpError(409, "DEVIS_NUMERO_EXISTS", "Numero already exists");
+    }
+    if (ctx.idempotency_key && idempotencyPayloadHash && code === "23505" && constraint === "devis_idempotence_pkey") {
+      const replay = await readDevisIdempotentReplay(pool, ctx.idempotency_key, "REVISE", idempotencyPayloadHash);
+      if (replay) {
+        return replay as {
+          id: number;
+          root_devis_id: number;
+          parent_devis_id: number;
+          version_number: number;
+          idempotent_replay: true;
+        };
+      }
     }
     throw err;
   } finally {
@@ -1878,10 +2356,32 @@ export async function repoGetCommandeDraftFromDevis(devisId: number): Promise<Co
   }
 }
 
-export async function repoConvertDevisToCommande(devisId: number) {
+export type ConvertDevisResult = {
+  id: number;
+  numero: string;
+  devis_id: number;
+  already_converted: boolean;
+  idempotent_replay: boolean;
+};
+
+export async function repoConvertDevisToCommande(
+  devisId: number,
+  opts: { expected_updated_at?: string } & DevisWriteContext = {}
+): Promise<ConvertDevisResult | null> {
   const client = await pool.connect();
+  const idempotencyPayloadHash = opts.idempotency_key
+    ? devisIdempotencyPayloadHash({ devis_id: devisId, expected_updated_at: opts.expected_updated_at ?? null })
+    : null;
   try {
     await client.query("BEGIN");
+
+    if (opts.idempotency_key && idempotencyPayloadHash && (await hasDevisIdempotenceTable(client))) {
+      const replay = await readDevisIdempotentReplay(client, opts.idempotency_key, "CONVERT", idempotencyPayloadHash);
+      if (replay) {
+        await client.query("COMMIT");
+        return replay as unknown as ConvertDevisResult;
+      }
+    }
 
     const devis = await loadDevisCommandeHeader(client, devisId, "FOR UPDATE");
     if (!devis) {
@@ -1889,10 +2389,8 @@ export async function repoConvertDevisToCommande(devisId: number) {
       return null;
     }
 
-    if (!isAcceptedStatus(devis.statut)) {
-      throw new HttpError(400, "DEVIS_NOT_ACCEPTED", "Devis must be accepted before conversion");
-    }
-
+    // Idempotence métier AVANT toute autre garde : une commande existe déjà pour ce devis
+    // -> on la retourne et on l'ouvre côté client, jamais de doublon (#167).
     const existing = await client.query<{ id: string; numero: string }>(
       `
       SELECT cc.id::text AS id, cc.numero
@@ -1902,10 +2400,45 @@ export async function repoConvertDevisToCommande(devisId: number) {
       `,
       [devisId]
     );
-    if (existing.rows.length > 0) {
-      const numero = existing.rows[0]?.numero;
-      throw new HttpError(409, "DEVIS_ALREADY_CONVERTED", numero ? `Devis already converted (${numero})` : "Devis already converted");
+    const existingRow = existing.rows[0];
+    if (existingRow) {
+      const resultat: ConvertDevisResult = {
+        id: toInt(existingRow.id, "commande_client.id"),
+        numero: existingRow.numero,
+        devis_id: devisId,
+        already_converted: true,
+        idempotent_replay: false,
+      };
+      if (opts.idempotency_key && idempotencyPayloadHash && (await hasDevisIdempotenceTable(client))) {
+        await recordDevisIdempotence(client, opts.idempotency_key, "CONVERT", devisId, idempotencyPayloadHash, resultat);
+      }
+      await client.query("COMMIT");
+      return resultat;
     }
+
+    if (!isAcceptedStatus(devis.statut)) {
+      throw new HttpError(400, "DEVIS_NOT_ACCEPTED", "Devis must be accepted before conversion");
+    }
+
+    // Verrou de version : la conversion cible exactement la version vue dans l'aperçu.
+    assertDevisFresh(opts.expected_updated_at, devis.updated_at, "DEVIS_DRAFT_STALE");
+
+    // Des données préparatoires exigent le parcours préparé (officialisation explicite
+    // article/dossier) — la voie directe ne doit pas produire une commande incohérente.
+    const prep = await client.query<{ has_prep: boolean }>(
+      `SELECT EXISTS (SELECT 1 FROM public.article_devis ad WHERE ad.devis_id = $1) AS has_prep`,
+      [devisId]
+    );
+    if (prep.rows[0]?.has_prep === true) {
+      throw new HttpError(
+        409,
+        "DEVIS_REQUIRES_PREPARED_CONVERSION",
+        "Ce devis porte des données préparatoires : utilisez « Préparer la commande » (officialisation explicite).",
+        { devis_id: devisId }
+      );
+    }
+
+    const hasLinePositionColumn = await hasPublicColumn(client, "devis_ligne", "position");
 
     const seq = await client.query<{ id: string }>(
       `SELECT nextval('public.commande_client_id_seq')::bigint::text AS id`
@@ -1999,7 +2532,7 @@ export async function repoConvertDevisToCommande(devisId: number) {
       LEFT JOIN public.article_devis ad ON ad.devis_ligne_id = dl.id
       LEFT JOIN public.dossier_technique_piece_devis dd ON dd.article_devis_id = ad.id
       WHERE dl.devis_id = $3
-      ORDER BY dl.id ASC
+      ORDER BY ${hasLinePositionColumn ? "dl.position ASC NULLS LAST, dl.id ASC" : "dl.id ASC"}
       `,
       [commandeId, devis.numero, devisId]
     );
@@ -2024,13 +2557,57 @@ export async function repoConvertDevisToCommande(devisId: number) {
       [commandeId]
     );
 
+    const resultat: ConvertDevisResult = {
+      id: commandeId,
+      numero: commandeNumero,
+      devis_id: devisId,
+      already_converted: false,
+      idempotent_replay: false,
+    };
+
+    await insertDevisAuditLog(client, opts.audit, {
+      action: "devis.convert",
+      entity_id: String(devisId),
+      details: {
+        devis_numero: devis.numero,
+        commande_id: commandeId,
+        commande_numero: commandeNumero,
+        expected_updated_at: opts.expected_updated_at ?? null,
+        idempotency_key: opts.idempotency_key ?? null,
+      },
+    });
+
+    if (opts.idempotency_key && idempotencyPayloadHash && (await hasDevisIdempotenceTable(client))) {
+      await recordDevisIdempotence(client, opts.idempotency_key, "CONVERT", devisId, idempotencyPayloadHash, resultat);
+    }
+
     await client.query("COMMIT");
-    return { id: commandeId, numero: commandeNumero };
+    return resultat;
   } catch (err) {
     await client.query("ROLLBACK");
     const { code, constraint } = getPgErrorInfo(err);
     if (code === "23505" && constraint === "commande_client_devis_id_key") {
+      // Course concurrente : une autre transaction a converti ce devis pendant la nôtre.
+      // Résolution idempotente : retourner la commande gagnante, jamais d'erreur utilisateur.
+      const winner = await pool.query<{ id: string; numero: string }>(
+        `SELECT cc.id::text AS id, cc.numero FROM commande_client cc WHERE cc.devis_id = $1 LIMIT 1`,
+        [devisId]
+      );
+      const row = winner.rows[0];
+      if (row) {
+        return {
+          id: toInt(row.id, "commande_client.id"),
+          numero: row.numero,
+          devis_id: devisId,
+          already_converted: true,
+          idempotent_replay: false,
+        };
+      }
       throw new HttpError(409, "DEVIS_ALREADY_CONVERTED", "Devis already converted");
+    }
+    if (opts.idempotency_key && idempotencyPayloadHash && code === "23505" && constraint === "devis_idempotence_pkey") {
+      const replay = await readDevisIdempotentReplay(pool, opts.idempotency_key, "CONVERT", idempotencyPayloadHash);
+      if (replay) return replay as unknown as ConvertDevisResult;
     }
     throw err;
   } finally {
@@ -2038,7 +2615,147 @@ export async function repoConvertDevisToCommande(devisId: number) {
   }
 }
 
-export async function repoDeleteDevis(id: number) {
-  const { rowCount } = await pool.query(`DELETE FROM devis WHERE id = $1`, [id]);
-  return (rowCount ?? 0) > 0;
+export async function repoDeleteDevis(id: number, ctx: DevisWriteContext = {}) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const currentRes = await client.query<{
+      numero: string;
+      statut: string;
+      has_children: boolean;
+      converted: boolean;
+    }>(
+      `
+        SELECT
+          d.numero,
+          d.statut,
+          EXISTS (SELECT 1 FROM devis child WHERE child.parent_devis_id = d.id) AS has_children,
+          EXISTS (SELECT 1 FROM commande_client cc WHERE cc.devis_id = d.id) AS converted
+        FROM devis d
+        WHERE d.id = $1
+        FOR UPDATE OF d
+      `,
+      [id]
+    );
+    const current = currentRes.rows[0] ?? null;
+    if (!current) {
+      await client.query("ROLLBACK");
+      return false;
+    }
+
+    // #167 : traçabilité d'abord — on ne supprime jamais un maillon de l'historique commercial.
+    if (current.converted) {
+      throw new HttpError(409, "DEVIS_CONVERTED_UNDELETABLE", "Ce devis a été converti en commande : il est conservé pour traçabilité.");
+    }
+    if (current.has_children) {
+      throw new HttpError(409, "DEVIS_HAS_REVISIONS", "Ce devis a des révisions : supprimez d'abord les versions descendantes ou conservez l'historique.");
+    }
+    const statut = normalizeDevisStatut(current.statut);
+    if (statut === "ENVOYE" || statut === "ACCEPTE") {
+      throw new HttpError(409, "DEVIS_ENGAGED_UNDELETABLE", "Un devis engagé (envoyé/accepté) ne se supprime pas : annulez-le d'abord.", { statut });
+    }
+
+    const { rowCount } = await client.query(`DELETE FROM devis WHERE id = $1`, [id]);
+
+    await insertDevisAuditLog(client, ctx.audit, {
+      action: "devis.delete",
+      entity_id: String(id),
+      details: { numero: current.numero, statut },
+    });
+
+    await client.query("COMMIT");
+    return (rowCount ?? 0) > 0;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export type DevisVersionSummary = {
+  id: number;
+  numero: string;
+  version_number: number;
+  parent_devis_id: number | null;
+  statut: string;
+  date_creation: string | null;
+  updated_at: string | null;
+  total_ht: number;
+  total_ttc: number;
+  is_current: boolean;
+  is_latest: boolean;
+  has_commande: boolean;
+  commande_id: number | null;
+  commande_numero: string | null;
+};
+
+/**
+ * #167 : historique des versions d'une racine de devis (V1 → Vn), consultable depuis
+ * n'importe quelle version. Lecture seule — alimente l'onglet Historique du hub.
+ */
+export async function repoListDevisVersions(devisId: number): Promise<DevisVersionSummary[] | null> {
+  const rootRes = await pool.query<{ root_devis_id: string }>(
+    `SELECT COALESCE(root_devis_id, id)::text AS root_devis_id FROM devis WHERE id = $1`,
+    [devisId]
+  );
+  const rootRaw = rootRes.rows[0]?.root_devis_id;
+  if (!rootRaw) return null;
+  const rootId = toInt(rootRaw, "devis.root_devis_id");
+
+  const res = await pool.query<{
+    id: string;
+    numero: string;
+    version_number: number;
+    parent_devis_id: string | null;
+    statut: string;
+    date_creation: string | null;
+    updated_at: string | null;
+    total_ht: number;
+    total_ttc: number;
+    commande_id: string | null;
+    commande_numero: string | null;
+  }>(
+    `
+      SELECT
+        d.id::text AS id,
+        d.numero,
+        d.version_number::int AS version_number,
+        d.parent_devis_id::text AS parent_devis_id,
+        d.statut,
+        d.date_creation::text AS date_creation,
+        to_jsonb(d)->>'updated_at' AS updated_at,
+        d.total_ht::float8 AS total_ht,
+        d.total_ttc::float8 AS total_ttc,
+        cc.id::text AS commande_id,
+        cc.numero AS commande_numero
+      FROM devis d
+      LEFT JOIN commande_client cc ON cc.devis_id = d.id
+      WHERE COALESCE(d.root_devis_id, d.id) = $1
+      ORDER BY d.version_number ASC, d.id ASC
+    `,
+    [rootId]
+  );
+
+  const maxVersion = res.rows.reduce((max, row) => Math.max(max, row.version_number), 0);
+  return res.rows.map((row) => {
+    const idNum = toInt(row.id, "devis.id");
+    return {
+      id: idNum,
+      numero: row.numero,
+      version_number: row.version_number,
+      parent_devis_id: toNullableInt(row.parent_devis_id, "devis.parent_devis_id"),
+      statut: row.statut,
+      date_creation: row.date_creation,
+      updated_at: row.updated_at,
+      total_ht: row.total_ht,
+      total_ttc: row.total_ttc,
+      is_current: idNum === devisId,
+      is_latest: row.version_number === maxVersion,
+      has_commande: row.commande_id !== null,
+      commande_id: toNullableInt(row.commande_id, "commande_client.id"),
+      commande_numero: row.commande_numero,
+    };
+  });
 }
