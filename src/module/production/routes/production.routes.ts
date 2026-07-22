@@ -6,6 +6,7 @@ import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
 import { HttpError } from "../../../utils/httpError";
 import { roleHasMachineCapability, type MachineCapability } from "../domain/machine-rbac";
+import { roleHasOfCapability, type OfCapability } from "../domain/of-rbac";
 import {
   archiveMachine,
   archivePoste,
@@ -14,6 +15,7 @@ import {
   createOfReceipt,
   createOrdreFabrication,
   createPoste,
+  generateOfs,
   getOfReceiptContext,
   getOfTraceability,
   getOrdreFabrication,
@@ -23,6 +25,8 @@ import {
   listOrdresFabrication,
   listMachines,
   listPostes,
+  previewOfGeneration,
+  reorderOfOperations,
   startOfOperationTimeLog,
   stopOfOperationTimeLog,
   updateOrdreFabrication,
@@ -112,6 +116,25 @@ const requireMachineCapability = (capability: MachineCapability): RequestHandler
   next();
 };
 
+// #170 : refus par défaut sur les mutations OF — chaque écriture exige une
+// capacité explicite (la granularité fine transition/édition se rejoue au
+// repository qui connaît le statut courant).
+const requireOfCapability = (capability: OfCapability): RequestHandler => (req, _res, next) => {
+  if (!roleHasOfCapability(req.user?.role, capability)) {
+    next(new HttpError(403, "OF_FORBIDDEN", `OF capability required: ${capability}`));
+    return;
+  }
+  next();
+};
+
+const requireAnyOfCapability = (capabilities: readonly OfCapability[]): RequestHandler => (req, _res, next) => {
+  if (!capabilities.some((capability) => roleHasOfCapability(req.user?.role, capability))) {
+    next(new HttpError(403, "OF_FORBIDDEN", `OF capability required: ${capabilities.join("|")}`));
+    return;
+  }
+  next();
+};
+
 const router = Router();
 const machineDocumentUpload = multer({
   dest: ensureDocumentStoragePath("machines"),
@@ -157,20 +180,24 @@ router.post("/postes", createPoste);
 router.patch("/postes/:id", updatePoste);
 router.delete("/postes/:id", requireAdmin, archivePoste);
 
-// OF
+// OF — lectures au JWT (consommées par planning/commandes/affaires),
+// mutations sous capacités #170 (refus par défaut).
 router.get("/ofs", listOrdresFabrication);
+router.post("/ofs/generate/preview", requireOfCapability("generate"), previewOfGeneration);
+router.post("/ofs/generate", requireOfCapability("generate"), generateOfs);
 router.get("/ofs/:id/tree", getOrdreFabricationTree);
 router.get("/ofs/:id", getOrdreFabrication);
-router.post("/ofs", createOrdreFabrication);
-router.patch("/ofs/:id", updateOrdreFabrication);
-router.patch("/ofs/:id/operations/:opId", updateOrdreFabricationOperation);
-router.post("/ofs/:id/operations/:opId/time-logs/start", startOfOperationTimeLog);
-router.post("/ofs/:id/operations/:opId/time-logs/stop", stopOfOperationTimeLog);
+router.post("/ofs", requireOfCapability("create"), createOrdreFabrication);
+router.patch("/ofs/:id", requireAnyOfCapability(["edit_prelaunch", "launch", "operate", "cancel", "archive"]), updateOrdreFabrication);
+router.patch("/ofs/:id/operations/reorder", requireOfCapability("edit_prelaunch"), reorderOfOperations);
+router.patch("/ofs/:id/operations/:opId", requireAnyOfCapability(["operate", "edit_prelaunch"]), updateOrdreFabricationOperation);
+router.post("/ofs/:id/operations/:opId/time-logs/start", requireOfCapability("operate"), startOfOperationTimeLog);
+router.post("/ofs/:id/operations/:opId/time-logs/stop", requireOfCapability("operate"), stopOfOperationTimeLog);
 
 // Phase 5 - Fin de production -> Entree en stock
 router.get("/ofs/:id/receipt-context", getOfReceiptContext);
-router.post("/ofs/:id/receipt", createOfReceipt);
-router.get("/ofs/:id/traceability", getOfTraceability);
+router.post("/ofs/:id/receipt", requireOfCapability("receipt"), createOfReceipt);
+router.get("/ofs/:id/traceability", requireOfCapability("traceability"), getOfTraceability);
 
 // Production Groups
 router.get("/groups", requireProductionOrAdmin, listProductionGroups);

@@ -3,10 +3,13 @@ import type {
   CreateMachineOnboardingBodyDTO,
   CreateOfBodyDTO,
   CreatePosteBodyDTO,
+  GenerateOfsBodyDTO,
   ListMachinesQueryDTO,
   ListOfQueryDTO,
   ListPostesQueryDTO,
   OfReceiptBodyDTO,
+  PreviewOfGenerationBodyDTO,
+  ReorderOfOperationsBodyDTO,
   StartOfTimeLogBodyDTO,
   UpdateMachineBodyDTO,
   UpdateMachineOnboardingBodyDTO,
@@ -17,6 +20,7 @@ import type {
 } from "../validators/production.validators";
 import * as repo from "../repository/production.repository";
 import * as receiptsRepo from "../repository/production-receipts.repository";
+import * as generationRepo from "../repository/production-generation.repository";
 
 export const svcListMachines = (filters: ListMachinesQueryDTO) => repo.repoListMachines(filters);
 
@@ -98,6 +102,24 @@ export const svcStopOfOperationTimeLog = (params: {
   body: StopOfTimeLogBodyDTO;
   audit: repo.AuditContext;
 }) => repo.repoStopOfOperationTimeLog(params);
+
+// #170 — réordonnancement, aperçu et génération récursive
+export const svcReorderOfOperations = (params: {
+  of_id: number;
+  body: ReorderOfOperationsBodyDTO;
+  audit: repo.AuditContext;
+}) => repo.repoReorderOfOperations(params);
+
+export const svcPreviewOfGeneration = (params: {
+  body: PreviewOfGenerationBodyDTO;
+  audit: repo.AuditContext;
+}) => generationRepo.repoPreviewOfGeneration(params);
+
+export const svcGenerateOfs = (params: {
+  body: GenerateOfsBodyDTO;
+  idempotency_key: string;
+  audit: repo.AuditContext;
+}) => generationRepo.repoGenerateOfs(params);
 
 // -------------------------
 // Phase 5 - OF -> Entree en stock
