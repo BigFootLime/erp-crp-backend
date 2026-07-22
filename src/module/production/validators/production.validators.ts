@@ -350,10 +350,85 @@ export const updateOfSchema = z.object({
     date_lancement_reelle: isoDate.optional().nullable(),
     date_fin_reelle: isoDate.optional().nullable(),
     notes: z.string().trim().min(1).optional().nullable(),
+    // #170 : verrou optimiste — jeton updated_at exact renvoyé par la fiche.
+    expected_updated_at: z.string().datetime({ offset: true }).optional(),
   }),
 });
 
 export type UpdateOfBodyDTO = z.infer<typeof updateOfSchema>["body"];
+
+// #170 — réordonnancement des opérations avant lancement (DnD ou clavier).
+export const reorderOfOperationsSchema = z.object({
+  body: z
+    .object({
+      expected_updated_at: z.string().datetime({ offset: true }),
+      operations: z
+        .array(
+          z.object({
+            op_id: uuid,
+            phase: z.coerce.number().int().min(1).max(9999),
+          }).strict()
+        )
+        .min(1)
+        .max(500),
+    })
+    .strict()
+    .superRefine((body, ctx) => {
+      const phases = new Set<number>();
+      const ops = new Set<string>();
+      for (const item of body.operations) {
+        if (phases.has(item.phase)) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Duplicate phase ${item.phase}` });
+        }
+        if (ops.has(item.op_id)) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Duplicate operation ${item.op_id}` });
+        }
+        phases.add(item.phase);
+        ops.add(item.op_id);
+      }
+    }),
+});
+
+export type ReorderOfOperationsBodyDTO = z.infer<typeof reorderOfOperationsSchema>["body"];
+
+// #170 — génération récursive depuis une affaire ou en manuel autorisé.
+// Le lancement de commande garde son endpoint historique (#168) ; les trois
+// chemins partagent le même moteur de domaine.
+export const ofGenerationSourceSchema = z
+  .object({
+    type: z.enum(["MANUAL", "AFFAIRE"]),
+    affaire_id: z.coerce.number().int().positive().optional().nullable(),
+    client_id: z.string().trim().min(1).max(3).optional().nullable(),
+    piece_technique_id: uuid,
+    piece_technique_version_id: uuid.optional().nullable(),
+    quantity: z.coerce.number().positive().max(1_000_000),
+  })
+  .strict()
+  .superRefine((source, ctx) => {
+    if (source.type === "AFFAIRE" && !source.affaire_id) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "affaire_id is required for AFFAIRE generation" });
+    }
+  });
+
+export type OfGenerationSourceDTO = z.infer<typeof ofGenerationSourceSchema>;
+
+export const previewOfGenerationSchema = z.object({
+  body: z.object({ source: ofGenerationSourceSchema }).strict(),
+});
+
+export type PreviewOfGenerationBodyDTO = z.infer<typeof previewOfGenerationSchema>["body"];
+
+export const generateOfsSchema = z.object({
+  body: z
+    .object({
+      source: ofGenerationSourceSchema,
+      expected_source_hash: z.string().regex(/^[A-Fa-f0-9]{64}$/, "Invalid source hash"),
+      confirm: z.literal(true),
+    })
+    .strict(),
+});
+
+export type GenerateOfsBodyDTO = z.infer<typeof generateOfsSchema>["body"];
 
 export const updateOfOperationSchema = z.object({
   body: z.object({

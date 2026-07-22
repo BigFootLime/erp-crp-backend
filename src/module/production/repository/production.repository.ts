@@ -35,10 +35,26 @@ import type {
   UpdateOfBodyDTO,
   UpdateOfOperationBodyDTO,
   UpdatePosteBodyDTO,
+  ReorderOfOperationsBodyDTO,
 } from "../validators/production.validators";
+import {
+  OF_STATUT_TRANSITIONS,
+  canTransitionOfStatut,
+  canTransitionOfOperationStatus,
+  isOfPrelaunch,
+  ofOperationsAllowReorder,
+  ofStatutAllowsExecution,
+  type OfOperationStatus,
+  type OfStatut,
+} from "../domain/of-status";
+import { capabilityForOfTransition, roleHasOfCapability } from "../domain/of-rbac";
+import { copyPieceOperationsToOf, loadApplicableTechnicalSnapshot } from "../domain/of-generation";
 
 export type AuditContext = {
   user_id: number;
+  // #170 : rôle porté jusqu'au repository pour les capacités fines OF
+  // (transition, édition pré-lancement). Optionnel pour compatibilité.
+  user_role?: string | null;
   ip: string | null;
   user_agent: string | null;
   device_type: string | null;
@@ -2310,7 +2326,10 @@ function ofSortColumn(sortBy: ListOfQueryDTO["sortBy"]): string {
   }
 }
 
-async function selectOfHeader(q: DbQueryer, ofId: number): Promise<Omit<OrdreFabricationDetail, "operations"> | null> {
+async function selectOfHeader(
+  q: DbQueryer,
+  ofId: number
+): Promise<Omit<OrdreFabricationDetail, "operations" | "allowed_statut_transitions"> | null> {
   type Row = {
     id: string;
     numero: string;
@@ -2913,7 +2932,11 @@ export async function repoGetOrdreFabrication(params: {
 
   const operations = await selectOfOperations(pool, { of_id: params.id, user_id: params.user_id });
 
-  return { ...header, operations };
+  // #170 : la fiche expose les transitions licites — l'UI n'invente jamais un statut.
+  const statut = header.statut as OfStatut;
+  const allowed = OF_STATUT_TRANSITIONS[statut] ?? [];
+
+  return { ...header, operations, allowed_statut_transitions: [...allowed] };
 }
 
 type OfTreeRow = {
@@ -3114,63 +3137,13 @@ export async function repoCreateOrdreFabrication(params: {
       throw new HttpError(422, "PIECE_TECHNIQUE_NOT_FOUND", "Piece technique not found");
     }
 
-    const versionRes = await client.query<{
-      id: string;
-      indice: string;
-      version_interne: number | null;
-      plan_reference: string | null;
-      code_metier: string | null;
-      gamme_id: string | null;
-      gamme_code: string | null;
-    }>(
-      `SELECT v.id::text AS id, v.indice, v.version_interne, v.plan_reference, v.code_metier,
-              g.id::text AS gamme_id, g.code AS gamme_code
-         FROM public.piece_technique_versions v
-         LEFT JOIN public.gammes g ON g.piece_technique_version_id = v.id AND g.is_current = true
-        WHERE v.id = $1::uuid
-          AND v.piece_technique_id = $2::uuid
-          AND v.statut = 'APPLICABLE'
-          AND (v.date_effet IS NULL OR v.date_effet <= CURRENT_DATE)
-        LIMIT 1`,
-      [params.body.piece_technique_version_id, params.body.piece_technique_id]
-    );
-    const version = versionRes.rows[0] ?? null;
-    if (!version) {
-      throw new HttpError(422, "VERSION_NOT_APPLICABLE", "The selected technical version is not applicable for this OF.");
-    }
-
-    const snapshotRes = await client.query<{ snapshot: unknown }>(
-      `SELECT jsonb_build_object(
-          'piece', jsonb_build_object('id', pt.id::text, 'code', COALESCE(v.code_metier, pt.code_piece), 'legacy_code', pt.code_piece, 'designation', pt.designation),
-          'version', jsonb_build_object('id', v.id::text, 'indice_externe', v.indice, 'version_interne', v.version_interne, 'plan_reference', v.plan_reference, 'code_metier', v.code_metier),
-          'gamme', CASE WHEN g.id IS NULL THEN NULL ELSE jsonb_build_object('id', g.id::text, 'code', g.code, 'designation', g.designation) END,
-          'operations', COALESCE((
-            SELECT jsonb_agg(jsonb_build_object('id', op.id::text, 'phase', op.phase, 'designation', op.designation, 'tp', op.tp, 'tf_unit', op.tf_unit, 'qte', op.qte, 'coef', op.coef) ORDER BY op.phase, op.id)
-            FROM public.pieces_techniques_operations op
-            WHERE op.piece_technique_id = pt.id
-              AND (op.gamme_id = g.id OR (g.id IS NULL AND op.gamme_id IS NULL))
-          ), '[]'::jsonb),
-          'nomenclature', COALESCE((
-            SELECT jsonb_agg(jsonb_build_object('id', bom.id::text, 'child_piece_technique_id', bom.child_piece_technique_id::text, 'child_piece_technique_version_id', bom.child_piece_technique_version_id::text, 'child_article_id', bom.child_article_id::text, 'quantite', bom.quantite, 'repere', bom.repere) ORDER BY bom.rang, bom.id)
-            FROM public.pieces_techniques_nomenclature bom
-            WHERE bom.parent_piece_technique_id = pt.id
-              AND (bom.parent_piece_technique_version_id = v.id OR bom.parent_piece_technique_version_id IS NULL)
-          ), '[]'::jsonb),
-          'documents', COALESCE((
-            SELECT jsonb_agg(jsonb_build_object('id', doc.id::text, 'name', doc.original_name, 'mime_type', doc.mime_type, 'sha256', doc.sha256) ORDER BY doc.created_at, doc.id)
-            FROM public.pieces_techniques_documents doc
-            WHERE doc.piece_technique_id = pt.id AND doc.removed_at IS NULL
-          ), '[]'::jsonb)
-        ) AS snapshot
-        FROM public.pieces_techniques pt
-        JOIN public.piece_technique_versions v ON v.id = $1::uuid
-        LEFT JOIN public.gammes g ON g.id = $3::uuid
-        WHERE pt.id = $2::uuid`,
-      [version.id, params.body.piece_technique_id, version.gamme_id]
-    );
-    const technicalSnapshot = snapshotRes.rows[0]?.snapshot;
-    if (!technicalSnapshot) throw new HttpError(422, "TECHNICAL_DATA_INCOMPLETE", "Unable to build the technical OF snapshot.");
-    const technicalSnapshotSha256 = crypto.createHash("sha256").update(JSON.stringify(technicalSnapshot)).digest("hex");
+    // #170 : sélection/validation de version et snapshot unifiés avec le moteur
+    // de génération récursive (aucun chemin ne contourne la même porte).
+    const technical = await loadApplicableTechnicalSnapshot(client, params.body.piece_technique_id, {
+      pinned_version_id: params.body.piece_technique_version_id,
+    });
+    const technicalSnapshot = technical.snapshot;
+    const technicalSnapshotSha256 = technical.sha256;
 
     const idRes = await client.query<{ of_id: string }>(
       `SELECT nextval(pg_get_serial_sequence('public.ordres_fabrication','id'))::text AS of_id`
@@ -3244,7 +3217,7 @@ export async function repoCreateOrdreFabrication(params: {
         b.commande_id ?? null,
         b.client_id ?? null,
         b.piece_technique_id,
-        version.id,
+        technical.version_id,
         JSON.stringify(technicalSnapshot),
         technicalSnapshotSha256,
         b.quantite_lancee,
@@ -3260,53 +3233,24 @@ export async function repoCreateOrdreFabrication(params: {
     const created = ins.rows[0];
     if (!created) throw new Error("Failed to create OF");
 
-    const insOps = await client.query(
-      `
-        INSERT INTO of_operations (
-          of_id,
-          phase,
-          designation,
-          cf_id,
-          poste_id,
-          machine_id,
-          hourly_rate_applied,
-          tp,
-          tf_unit,
-          qte,
-          coef,
-          temps_total_planned,
-          status,
-          notes,
-          source_piece_operation_id
-        )
-        SELECT
-          $1::bigint AS of_id,
-          pto.phase,
-          pto.designation,
-          pto.cf_id,
-          NULL::uuid AS poste_id,
-          NULL::uuid AS machine_id,
-          COALESCE(pto.taux_horaire, 0)::numeric(12,2) AS hourly_rate_applied,
-          COALESCE(pto.tp, 0)::numeric(12,3) AS tp,
-          COALESCE(pto.tf_unit, 0)::numeric(12,3) AS tf_unit,
-          COALESCE(pto.qte, 1)::numeric(12,3) AS qte,
-          COALESCE(pto.coef, 1)::numeric(10,3) AS coef,
-          ROUND((COALESCE(pto.tp,0) + COALESCE(pto.tf_unit,0) * COALESCE(pto.qte,1)) * COALESCE(pto.coef,1), 3)::numeric(12,3) AS temps_total_planned,
-          'TODO'::of_operation_status AS status,
-          pto.designation_2 AS notes,
-          pto.id AS source_piece_operation_id
-        FROM pieces_techniques_operations pto
-        WHERE pto.piece_technique_id = $2::uuid
-          AND (pto.gamme_id = $3::uuid OR ($3::uuid IS NULL AND pto.gamme_id IS NULL))
-        ORDER BY pto.phase ASC, pto.id ASC
-      `,
-      [ofId, b.piece_technique_id, version.gamme_id]
-    );
+    const operationsCount = await copyPieceOperationsToOf(client, {
+      of_id: ofId,
+      piece_technique_id: b.piece_technique_id,
+      gamme_id: technical.gamme_id,
+    });
+    // #170 : même refus que la génération récursive — pas d'OF sans gamme/opérations.
+    if (operationsCount === 0) {
+      throw new HttpError(
+        409,
+        "PIECE_TECHNIQUE_OPERATION_REQUIRED",
+        "Impossible de créer l'OF : la pièce technique n'a aucune opération de gamme applicable."
+      );
+    }
 
     await client.query(
       `INSERT INTO public.of_technical_snapshots (of_id, piece_technique_version_id, snapshot, snapshot_sha256, created_by)
        VALUES ($1::bigint, $2::uuid, $3::jsonb, $4, $5)`,
-      [ofId, version.id, JSON.stringify(technicalSnapshot), technicalSnapshotSha256, params.audit.user_id]
+      [ofId, technical.version_id, JSON.stringify(technicalSnapshot), technicalSnapshotSha256, params.audit.user_id]
     );
 
     await insertAuditLog(client, params.audit, {
@@ -3316,10 +3260,10 @@ export async function repoCreateOrdreFabrication(params: {
       details: {
         numero: created.numero,
         piece_technique_id: b.piece_technique_id,
-        piece_technique_version_id: version.id,
+        piece_technique_version_id: technical.version_id,
         technical_snapshot_sha256: technicalSnapshotSha256,
         quantite_lancee: b.quantite_lancee,
-        operations_count: insOps.rowCount ?? 0,
+        operations_count: operationsCount,
       },
     });
 
@@ -3348,11 +3292,18 @@ export async function repoUpdateOrdreFabrication(params: {
   try {
     await client.query("BEGIN");
 
-    const exists = await client.query<{ id: string; commande_id: string | null }>(
+    const exists = await client.query<{
+      id: string;
+      commande_id: string | null;
+      statut: string;
+      updated_at: string | null;
+    }>(
       `
         SELECT
           id::text AS id,
-          commande_id::text AS commande_id
+          commande_id::text AS commande_id,
+          statut::text AS statut,
+          updated_at::text AS updated_at
         FROM ordres_fabrication
         WHERE id = $1::bigint
         FOR UPDATE
@@ -3363,6 +3314,68 @@ export async function repoUpdateOrdreFabrication(params: {
     if (!ofRow?.id) {
       await client.query("ROLLBACK");
       return null;
+    }
+
+    // #170 : verrou optimiste — même mécanique que affaire/devis/machines.
+    if (
+      params.patch.expected_updated_at &&
+      ofRow.updated_at &&
+      params.patch.expected_updated_at !== ofRow.updated_at
+    ) {
+      throw new HttpError(
+        409,
+        "CONCURRENT_MODIFICATION",
+        "L'OF a été modifié par une autre session. Rechargez la fiche avant de réessayer.",
+        { expected_updated_at: params.patch.expected_updated_at, actual_updated_at: ofRow.updated_at }
+      );
+    }
+
+    const currentStatut = ofRow.statut as OfStatut;
+    const requestedStatut = (params.patch.statut ?? currentStatut) as OfStatut;
+    const statutChanges = params.patch.statut !== undefined && requestedStatut !== currentStatut;
+
+    // #170 : machine d'état serveur — aucune transition libre.
+    if (statutChanges && !canTransitionOfStatut(currentStatut, requestedStatut)) {
+      throw new HttpError(
+        409,
+        "OF_INVALID_TRANSITION",
+        `Transition ${currentStatut} → ${requestedStatut} refusée par l'automate OF.`,
+        { from: currentStatut, to: requestedStatut, allowed: OF_STATUT_TRANSITIONS[currentStatut] }
+      );
+    }
+    if (statutChanges && params.audit.user_role !== undefined) {
+      const capability = capabilityForOfTransition(currentStatut, requestedStatut);
+      if (!roleHasOfCapability(params.audit.user_role, capability)) {
+        throw new HttpError(403, "OF_TRANSITION_FORBIDDEN", "Votre rôle ne permet pas cette transition d'OF.", {
+          capability,
+        });
+      }
+    }
+
+    // #170 : un OF lancé n'est plus librement éditable — seule la vie d'atelier
+    // reste ouverte (statut, quantités réalisées, dates réelles, priorité, notes).
+    const lifeFields = new Set<keyof UpdateOfBodyDTO>([
+      "statut",
+      "quantite_bonne",
+      "quantite_rebut",
+      "date_lancement_reelle",
+      "date_fin_reelle",
+      "priority",
+      "notes",
+      "expected_updated_at",
+    ]);
+    const patchKeys = Object.keys(params.patch) as Array<keyof UpdateOfBodyDTO>;
+    const hasStructuralChange = patchKeys.some((k) => !lifeFields.has(k));
+    if (hasStructuralChange && !isOfPrelaunch(currentStatut)) {
+      throw new HttpError(
+        409,
+        "OF_LOCKED_AFTER_LAUNCH",
+        "L'OF est lancé : ses données structurantes (quantité lancée, rattachements, dates prévues) sont verrouillées.",
+        { statut: currentStatut }
+      );
+    }
+    if (hasStructuralChange && params.audit.user_role !== undefined && !roleHasOfCapability(params.audit.user_role, "edit_prelaunch")) {
+      throw new HttpError(403, "OF_EDIT_FORBIDDEN", "Votre rôle ne permet pas de modifier la structure d'un OF.");
     }
 
     const commandeId = ofRow.commande_id ? toInt(ofRow.commande_id, "ordres_fabrication.commande_id") : null;
@@ -3380,6 +3393,7 @@ export async function repoUpdateOrdreFabrication(params: {
           "date_lancement_reelle",
           "date_fin_reelle",
           "notes",
+          "expected_updated_at",
         ]);
         const keys = Object.keys(params.patch) as Array<keyof UpdateOfBodyDTO>;
         const hasDisallowed = keys.some((k) => !allowed.has(k));
@@ -3506,6 +3520,17 @@ export async function repoUpdateOrdreFabricationOperation(params: {
     if (p.poste_id !== undefined) sets.push(`poste_id = ${push(p.poste_id ?? null)}::uuid`);
     if (p.machine_id !== undefined) sets.push(`machine_id = ${push(p.machine_id ?? null)}::uuid`);
     if (p.status !== undefined) {
+      // #170 : transitions d'opération contrôlées par l'automate serveur.
+      const fromStatus = existing.status as OfOperationStatus;
+      const toStatus = p.status as OfOperationStatus;
+      if (!canTransitionOfOperationStatus(fromStatus, toStatus)) {
+        throw new HttpError(
+          409,
+          "OF_OPERATION_INVALID_TRANSITION",
+          `Transition ${fromStatus} → ${toStatus} refusée par l'automate d'opération.`,
+          { from: fromStatus, to: toStatus }
+        );
+      }
       sets.push(`status = ${push(p.status)}::of_operation_status`);
       if (p.status === "RUNNING") sets.push(`started_at = COALESCE(started_at, now())`);
       if (p.status === "DONE") sets.push(`ended_at = COALESCE(ended_at, now())`);
@@ -3566,9 +3591,36 @@ export async function repoStartOfOperationTimeLog(params: {
   try {
     await client.query("BEGIN");
 
-    const op = await client.query<{ id: string; machine_id: string | null }>(
+    // #170 : le pointage verrouille aussi l'OF — la règle d'admissibilité se
+    // joue sur son statut, et le démarrage fait basculer un OF encore
+    // BROUILLON/PLANIFIE en EN_COURS (transition serveur auditée).
+    const ofRes = await client.query<{ id: string; statut: string }>(
       `
-        SELECT id::text AS id, machine_id::text AS machine_id
+        SELECT id::text AS id, statut::text AS statut
+        FROM ordres_fabrication
+        WHERE id = $1::bigint
+        FOR UPDATE
+      `,
+      [params.of_id]
+    );
+    const ofRow = ofRes.rows[0] ?? null;
+    if (!ofRow?.id) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+    const ofStatut = ofRow.statut as OfStatut;
+    if (!ofStatutAllowsExecution(ofStatut)) {
+      throw new HttpError(
+        409,
+        "OF_EXECUTION_NOT_ALLOWED",
+        `Impossible de pointer sur un OF au statut ${ofStatut}.`,
+        { statut: ofStatut }
+      );
+    }
+
+    const op = await client.query<{ id: string; machine_id: string | null; status: string }>(
+      `
+        SELECT id::text AS id, machine_id::text AS machine_id, status::text AS status
         FROM of_operations
         WHERE of_id = $1::bigint AND id = $2::uuid
         FOR UPDATE
@@ -3579,6 +3631,22 @@ export async function repoStartOfOperationTimeLog(params: {
     if (!existing) {
       await client.query("ROLLBACK");
       return null;
+    }
+    if (existing.status === "DONE") {
+      throw new HttpError(
+        409,
+        "OF_OPERATION_ALREADY_DONE",
+        "Cette opération est déclarée terminée : rouvrez-la avant de pointer.",
+        { op_id: params.op_id }
+      );
+    }
+    if (existing.status === "BLOCKED") {
+      throw new HttpError(
+        409,
+        "OF_OPERATION_BLOCKED",
+        "Cette opération est suspendue : débloquez-la avant de pointer.",
+        { op_id: params.op_id }
+      );
     }
 
     const bodyMachineId = params.body.machine_id ?? null;
@@ -3614,8 +3682,17 @@ export async function repoStartOfOperationTimeLog(params: {
       [params.of_id, params.op_id]
     );
 
+    const autoStarted = ofStatut === "BROUILLON" || ofStatut === "PLANIFIE" || ofStatut === "EN_PAUSE";
     await client.query(
-      `UPDATE ordres_fabrication SET updated_at = now(), updated_by = $2 WHERE id = $1::bigint`,
+      `
+        UPDATE ordres_fabrication
+        SET
+          statut = CASE WHEN statut IN ('BROUILLON','PLANIFIE','EN_PAUSE') THEN 'EN_COURS'::of_status ELSE statut END,
+          date_lancement_reelle = CASE WHEN statut IN ('BROUILLON','PLANIFIE') THEN COALESCE(date_lancement_reelle, CURRENT_DATE) ELSE date_lancement_reelle END,
+          updated_at = now(),
+          updated_by = $2
+        WHERE id = $1::bigint
+      `,
       [params.of_id, params.audit.user_id]
     );
 
@@ -3628,6 +3705,8 @@ export async function repoStartOfOperationTimeLog(params: {
         op_id: params.op_id,
         machine_id: machineId,
         type: params.body.type,
+        of_statut_before: ofStatut,
+        of_auto_started: autoStarted,
       },
     });
 
@@ -3739,6 +3818,127 @@ export async function repoStopOfOperationTimeLog(params: {
     await client.query("COMMIT");
 
     return selectOfOperation(pool, { of_id: params.of_id, op_id: params.op_id, user_id: params.audit.user_id });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * #170 — réordonnancement des opérations d'un OF avant lancement.
+ * Licite uniquement quand l'OF est BROUILLON/PLANIFIE, qu'aucune opération n'a
+ * démarré (TODO/READY) et que le jeton optimiste correspond. La séquence est
+ * persistée dans `phase` (renumérotation transactionnelle en deux passes pour
+ * respecter UNIQUE (of_id, phase)). Aucun réordonnancement sur un snapshot :
+ * les snapshots restent la vérité historique, seule la vie de l'OF change.
+ */
+export async function repoReorderOfOperations(params: {
+  of_id: number;
+  body: ReorderOfOperationsBodyDTO;
+  audit: AuditContext;
+}): Promise<OrdreFabricationDetail | null> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const ofRes = await client.query<{ id: string; statut: string; updated_at: string | null }>(
+      `
+        SELECT id::text AS id, statut::text AS statut, updated_at::text AS updated_at
+        FROM ordres_fabrication
+        WHERE id = $1::bigint
+        FOR UPDATE
+      `,
+      [params.of_id]
+    );
+    const ofRow = ofRes.rows[0] ?? null;
+    if (!ofRow?.id) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    if (ofRow.updated_at && params.body.expected_updated_at !== ofRow.updated_at) {
+      throw new HttpError(
+        409,
+        "CONCURRENT_MODIFICATION",
+        "L'OF a été modifié par une autre session. Rechargez la fiche avant de réordonner.",
+        { expected_updated_at: params.body.expected_updated_at, actual_updated_at: ofRow.updated_at }
+      );
+    }
+
+    const statut = ofRow.statut as OfStatut;
+    if (!isOfPrelaunch(statut)) {
+      throw new HttpError(
+        409,
+        "OF_LOCKED_AFTER_LAUNCH",
+        "La séquence d'opérations d'un OF lancé est verrouillée.",
+        { statut }
+      );
+    }
+
+    const opsRes = await client.query<{ id: string; phase: number; status: string }>(
+      `
+        SELECT id::text AS id, phase::int AS phase, status::text AS status
+        FROM of_operations
+        WHERE of_id = $1::bigint
+        ORDER BY phase ASC, id ASC
+        FOR UPDATE
+      `,
+      [params.of_id]
+    );
+    const existingOps = opsRes.rows;
+    const existingIds = new Set(existingOps.map((op) => op.id));
+    const requestedIds = new Set(params.body.operations.map((op) => op.op_id));
+    if (existingIds.size !== requestedIds.size || [...existingIds].some((id) => !requestedIds.has(id))) {
+      throw new HttpError(
+        422,
+        "OF_OPERATION_SET_MISMATCH",
+        "La séquence proposée ne couvre pas exactement les opérations de l'OF.",
+        { expected_count: existingIds.size, received_count: requestedIds.size }
+      );
+    }
+
+    if (!ofOperationsAllowReorder(existingOps.map((op) => op.status))) {
+      throw new HttpError(
+        409,
+        "OF_OPERATION_SEQUENCE_LOCKED",
+        "Une opération a déjà démarré : la séquence ne peut plus être réordonnée.",
+        { statuses: existingOps.map((op) => ({ id: op.id, status: op.status })) }
+      );
+    }
+
+    // Passe 1 : décalage temporaire pour libérer les phases cibles (UNIQUE (of_id, phase)).
+    await client.query(
+      `UPDATE of_operations SET phase = phase + 1000000 WHERE of_id = $1::bigint`,
+      [params.of_id]
+    );
+    // Passe 2 : phases finales.
+    for (const op of params.body.operations) {
+      await client.query(
+        `UPDATE of_operations SET phase = $3::int, updated_at = now() WHERE of_id = $1::bigint AND id = $2::uuid`,
+        [params.of_id, op.op_id, op.phase]
+      );
+    }
+
+    await client.query(
+      `UPDATE ordres_fabrication SET updated_at = now(), updated_by = $2 WHERE id = $1::bigint`,
+      [params.of_id, params.audit.user_id]
+    );
+
+    await insertAuditLog(client, params.audit, {
+      action: "production.of.operations.reorder",
+      entity_type: "ordres_fabrication",
+      entity_id: String(params.of_id),
+      details: {
+        previous: existingOps.map((op) => ({ id: op.id, phase: op.phase })),
+        next: params.body.operations.map((op) => ({ id: op.op_id, phase: op.phase })),
+      },
+    });
+
+    await client.query("COMMIT");
+
+    return repoGetOrdreFabrication({ id: params.of_id, user_id: params.audit.user_id });
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;

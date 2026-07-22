@@ -194,6 +194,8 @@ export type OrdreFabricationDetail = {
   created_by: number | null;
   updated_by: number | null;
   operations: OfOperation[];
+  // #170 : transitions licites depuis le statut courant (automate serveur).
+  allowed_statut_transitions: OfStatusDTO[];
 };
 
 export type OrdreFabricationTreeNode = Omit<OrdreFabricationListItem, "updated_at" | "total_ops" | "done_ops"> & {

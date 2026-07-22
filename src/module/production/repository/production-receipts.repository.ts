@@ -7,6 +7,7 @@ import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repos
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 import type { AuditContext } from "./production.repository";
 import type { OfReceiptBodyDTO } from "../validators/production.validators";
+import { ofStatutAllowsReceipt, type OfStatut } from "../domain/of-status";
 
 export type OfReceiptContext = {
   of: {
@@ -556,6 +557,7 @@ export async function repoCreateOfReceipt(params: { of_id: number; body: OfRecei
       article_id: string | null;
       commande_ligne_id: number | null;
       quantite_bonne: number;
+      statut: string;
     }>(
       `
         SELECT
@@ -563,7 +565,8 @@ export async function repoCreateOfReceipt(params: { of_id: number; body: OfRecei
           piece_technique_id::text AS piece_technique_id,
           article_id::text AS article_id,
           commande_ligne_id::bigint::int AS commande_ligne_id,
-          quantite_bonne::float8 AS quantite_bonne
+          quantite_bonne::float8 AS quantite_bonne,
+          statut::text AS statut
         FROM public.ordres_fabrication
         WHERE id = $1::bigint
         FOR UPDATE
@@ -572,6 +575,35 @@ export async function repoCreateOfReceipt(params: { of_id: number; body: OfRecei
     );
     const ofRow = ofRes.rows[0] ?? null;
     if (!ofRow) throw new HttpError(404, "OF_NOT_FOUND", "Ordre de fabrication introuvable");
+
+    // #170 : pas de réception sur un OF annulé/clôturé/non démarré.
+    const ofStatut = ofRow.statut as OfStatut;
+    if (!ofStatutAllowsReceipt(ofStatut)) {
+      throw new HttpError(
+        409,
+        "OF_RECEIPT_STATUS_INVALID",
+        `Impossible d'enregistrer une réception sur un OF au statut ${ofStatut}.`,
+        { statut: ofStatut }
+      );
+    }
+
+    // #170 : la réception est bornée par la quantité restante, recalculée DANS
+    // la transaction après verrou de l'OF — deux réceptions concurrentes se
+    // sérialisent sur ce verrou et la seconde est refusée si elle déborde.
+    const receivedRes = await client.query<{ received: number }>(
+      `SELECT COALESCE(SUM(qty_ok), 0)::float8 AS received FROM public.of_output_lots WHERE of_id = $1::bigint`,
+      [params.of_id]
+    );
+    const alreadyReceived = Number(receivedRes.rows[0]?.received ?? 0);
+    const receivable = Math.max(0, Number(ofRow.quantite_bonne) - alreadyReceived);
+    if (params.body.qty_ok > receivable + 1e-9) {
+      throw new HttpError(
+        422,
+        "OF_RECEIPT_EXCEEDS_RECEIVABLE",
+        `Quantité reçue (${params.body.qty_ok}) supérieure au restant à réceptionner (${receivable}).`,
+        { requested: params.body.qty_ok, receivable, already_received: alreadyReceived, quantite_bonne: Number(ofRow.quantite_bonne) }
+      );
+    }
 
     const article = ofRow.article_id
       ? {

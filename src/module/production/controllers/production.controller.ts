@@ -9,6 +9,7 @@ import {
   createOfSchema,
   createOfReceiptSchema,
   createPosteSchema,
+  generateOfsSchema,
   listMachinesQuerySchema,
   listOfQuerySchema,
   listPostesQuerySchema,
@@ -16,6 +17,8 @@ import {
   ofIdParamSchema,
   ofOperationIdParamSchema,
   posteIdParamSchema,
+  previewOfGenerationSchema,
+  reorderOfOperationsSchema,
   startOfTimeLogSchema,
   stopOfTimeLogSchema,
   updateMachineSchema,
@@ -31,6 +34,8 @@ import {
   svcCreateMachineOnboarding,
   svcCreateOrdreFabrication,
   svcCreatePoste,
+  svcGenerateOfs,
+  svcGetOfTechnicalSnapshot,
   svcGetOrdreFabrication,
   svcGetOrdreFabricationTree,
   svcGetMachine,
@@ -41,6 +46,8 @@ import {
   svcListMachines,
   svcListPostes,
   svcCreateOfReceipt,
+  svcPreviewOfGeneration,
+  svcReorderOfOperations,
   svcStartOfOperationTimeLog,
   svcStopOfOperationTimeLog,
   svcUpdateOrdreFabrication,
@@ -95,6 +102,7 @@ export function buildAuditContext(req: Request): AuditContext {
 
   return {
     user_id: user.id,
+    user_role: typeof user.role === "string" ? user.role : null,
     ip: ipFromHeader ?? req.ip ?? null,
     user_agent: ua,
     device_type: null,
@@ -389,6 +397,73 @@ export const startOfOperationTimeLog = asyncHandler(async (req, res) => {
   emitOfChanged(req, { ofId: id, action: "updated" });
   res.status(201).json(out);
 });
+
+// #170 — réordonnancement pré-lancement des opérations (DnD/clavier).
+export const reorderOfOperations = asyncHandler(async (req, res) => {
+  const audit = buildAuditContext(req);
+  const { id } = ofIdParamSchema.parse({ params: req.params }).params;
+  const raw = parseBody(req);
+  const body = reorderOfOperationsSchema.parse({ body: raw }).body;
+  const out = await svcReorderOfOperations({ of_id: id, body, audit });
+  if (!out) {
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
+  emitOfChanged(req, { ofId: id, action: "updated" });
+  res.status(200).json(out);
+});
+
+// #170 — aperçu de génération sans effet de bord.
+export const previewOfGeneration = asyncHandler(async (req, res) => {
+  const audit = buildAuditContext(req);
+  const raw = parseBody(req);
+  const body = previewOfGenerationSchema.parse({ body: raw }).body;
+  const out = await withGenerationDependencyGuard(() => svcPreviewOfGeneration({ body, audit }));
+  res.status(200).json(out);
+});
+
+// #170 — génération récursive confirmée (affaire ou manuel), idempotente.
+export const generateOfs = asyncHandler(async (req, res) => {
+  const audit = buildAuditContext(req);
+  const raw = parseBody(req);
+  const body = generateOfsSchema.parse({ body: raw }).body;
+  const idempotencyKey = typeof req.headers["idempotency-key"] === "string" ? req.headers["idempotency-key"].trim() : null;
+  if (!idempotencyKey || idempotencyKey.length < 8 || idempotencyKey.length > 200) {
+    throw new HttpError(400, "IDEMPOTENCY_KEY_REQUIRED", "A stable Idempotency-Key containing 8 to 200 characters is required.");
+  }
+  const out = await withGenerationDependencyGuard(() =>
+    svcGenerateOfs({ body, idempotency_key: idempotencyKey, audit })
+  );
+  if (!out.idempotent_replay && out.root_of_id) {
+    emitOfChanged(req, { ofId: out.root_of_id, action: "created" });
+  }
+  res.status(out.idempotent_replay ? 200 : 201).json(out);
+});
+
+// #170 — contenu figé du snapshot + définition courante (comparaison UI).
+export const getOfTechnicalSnapshot = asyncHandler(async (req, res) => {
+  const { id } = ofIdParamSchema.parse({ params: req.params }).params;
+  const out = await svcGetOfTechnicalSnapshot({ of_id: id });
+  if (!out) {
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
+  res.json(out);
+});
+
+// #170 §11 : une dépendance indisponible (pool PostgreSQL saturé/refusé) est un
+// 503 explicite, pas un 500 générique.
+async function withGenerationDependencyGuard<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    const code = (err as { code?: unknown } | null)?.code;
+    if (code === "ECONNREFUSED" || code === "ETIMEDOUT" || code === "57P01" || code === "53300") {
+      throw new HttpError(503, "DEPENDENCY_UNAVAILABLE", "La base de données est momentanément indisponible. Réessayez.");
+    }
+    throw err;
+  }
+}
 
 // -------------------------
 // Phase 5 - OF -> Entree en stock
