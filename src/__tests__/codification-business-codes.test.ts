@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   generateArticleBusinessCode,
+  generateMachineCode,
   generateTransactionalBusinessCode,
   previewPieceTechniqueCode,
 } from "../shared/codes/code-generator.service";
@@ -42,6 +43,13 @@ describe("Codification métier centralisée", () => {
     await expect(generateTransactionalBusinessCode(sequenceTx(7).tx as never, { prefix: "CMD", date })).resolves.toBe("CMD-2026-0007");
     await expect(generateTransactionalBusinessCode(sequenceTx(7).tx as never, { prefix: "AFF", date })).resolves.toBe("AFF-2026-0007");
     await expect(generateTransactionalBusinessCode(sequenceTx(7).tx as never, { prefix: "OF", date })).resolves.toBe("OF-2026-000007");
+  });
+
+  it("reserve le code machine MCH transactionnellement dans le registre central", async () => {
+    const { tx, calls } = sequenceTx(42);
+    await expect(generateMachineCode(tx as never)).resolves.toBe("MCH-000042");
+    expect(calls[0]?.sql).toContain("fn_next_issued_code_value");
+    expect(calls[0]?.values).toEqual(["MCH"]);
   });
 
   it("expose les formats canoniques tout en gardant les références historiques lisibles", () => {

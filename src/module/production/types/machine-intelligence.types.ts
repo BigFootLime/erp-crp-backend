@@ -106,13 +106,18 @@ export type MachineDocument = {
   machine_model_id: string | null;
   machine_id: string | null;
   title: string;
-  document_type: "OFFICIAL_PAGE" | "BROCHURE_PDF" | "MANUAL" | "IMAGE" | "RESALE_LISTING" | "INTERNAL_NOTE";
+  document_type: "OFFICIAL_PAGE" | "BROCHURE_PDF" | "MANUAL" | "IMAGE" | "RESALE_LISTING" | "INTERNAL_NOTE" | "CERTIFICATE" | "MAINTENANCE" | "PHOTO" | "MODEL_3D";
   url: string | null;
-  storage_path: string | null;
+  revision: string | null;
+  sha256: string | null;
+  mime_type: string | null;
+  size_bytes: number | null;
+  authored_at: string | null;
   source_type: SourceType;
   source_confidence: SourceConfidence;
   source_notes: string | null;
   retrieved_at: string;
+  removed_at: string | null;
 };
 
 export type MachineInstanceLite = {
