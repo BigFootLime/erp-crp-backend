@@ -25,12 +25,14 @@ export const svcGetMachine = (id: string) => repo.repoGetMachine(id);
 export const svcCreateMachine = (params: {
   body: CreateMachineBodyDTO;
   image_path: string | null;
+  idempotency_key?: string | null;
   audit: repo.AuditContext;
 }) => repo.repoCreateMachine(params);
 
 export const svcCreateMachineOnboarding = (params: {
   body: CreateMachineOnboardingBodyDTO;
   image_path: string | null;
+  idempotency_key?: string | null;
   audit: repo.AuditContext;
 }) => repo.repoCreateMachineOnboarding(params);
 

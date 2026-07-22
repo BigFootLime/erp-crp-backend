@@ -94,3 +94,9 @@ The VSM file category is enforced by the dedicated
 `project_evidence_files_category_check` table constraint. The patch deliberately
 does not alter the historical `po_evidence_type` enum, which can be owned by the
 administrative PostgreSQL role while runtime patches are executed by `cerp_app`.
+
+## Issue #165 - Parc machines
+
+Patch `20260722_machine_park_165.sql` is additive and idempotent. It reserves the central `MCH` scope, makes unknown hourly rates nullable with explicit provenance, adds a legacy alias, enforces code immutability, records creation idempotency, links machine unavailability to canonical `planning_events`, and adds maintenance plans/events plus document metadata/removal fields.
+
+Before any application, run `db/patches/support/20260722_machine_park_165.preflight.sql`. Apply only to `cerp_test` after an approved backup, then run `20260722_machine_park_165.verify.sql`. The guarded rollback refuses to drop structures once machine-park business rows exist and intentionally preserves rate provenance/code immutability where reverting would lose traceability. No #165 script is authorized to write `cerp_prod` without a later human production decision.

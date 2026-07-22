@@ -27,7 +27,10 @@ export type MachineListItem = {
   model_name: string | null;
   display_name: string | null;
   status: MachineStatusDTO;
-  hourly_rate: number;
+  hourly_rate: number | null;
+  hourly_rate_source: "INTERNAL_COST" | "POSTE_INHERITED" | "IMPORTED" | "MANUAL_OVERRIDE" | "UNKNOWN" | null;
+  hourly_rate_effective_at: string | null;
+  hourly_rate_is_override: boolean;
   currency: string;
   is_available: boolean;
   image_url: string | null;

@@ -50,6 +50,7 @@ import {
   svcUpdatePoste,
 } from "../services/production.service";
 import { svcGetMachineIntelligence } from "../services/machine-intelligence.service";
+import { roleHasMachineCapability } from "../domain/machine-rbac";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -77,7 +78,7 @@ function isMulterFile(value: unknown): value is Express.Multer.File {
   );
 }
 
-function buildAuditContext(req: Request): AuditContext {
+export function buildAuditContext(req: Request): AuditContext {
   const user = req.user;
   if (!user) throw new HttpError(401, "UNAUTHORIZED", "Authentication required");
 
@@ -130,10 +131,37 @@ function emitOfChanged(req: Request, params: { ofId: number; action: "created" |
   });
 }
 
+function hasMachineCostMutation(value: object): boolean {
+  return ["hourly_rate", "hourly_rate_source", "hourly_rate_effective_at"].some((key) =>
+    Object.prototype.hasOwnProperty.call(value, key)
+  );
+}
+
+function assertMachineRateProvenance(value: {
+  hourly_rate?: number | null;
+  hourly_rate_source?: string | null;
+  hourly_rate_effective_at?: string | null;
+}): void {
+  if (value.hourly_rate == null) return;
+  if (!value.hourly_rate_source || !value.hourly_rate_effective_at) {
+    throw new HttpError(422, "MACHINE_RATE_PROVENANCE_REQUIRED", "A non-null hourly rate requires its source and effective date.");
+  }
+}
+
+function redactMachineCosts<T extends object>(value: T) {
+  return {
+    ...value,
+    hourly_rate: null,
+    hourly_rate_source: null,
+    hourly_rate_effective_at: null,
+    hourly_rate_is_override: false,
+  };
+}
+
 export const listMachines = asyncHandler(async (req, res) => {
   const query = listMachinesQuerySchema.parse(req.query);
   const out = await svcListMachines(query);
-  res.json(out);
+  res.json(roleHasMachineCapability(req.user?.role, "costs") ? out : { ...out, items: out.items.map(redactMachineCosts) });
 });
 
 export const getMachine = asyncHandler(async (req, res) => {
@@ -144,27 +172,40 @@ export const getMachine = asyncHandler(async (req, res) => {
     return;
   }
   const intelligence = await svcGetMachineIntelligence(id);
-  res.json({ ...out, ...(intelligence ?? {}) });
+  const detail = { ...out, ...(intelligence ?? {}) };
+  res.json(roleHasMachineCapability(req.user?.role, "costs") ? detail : redactMachineCosts(detail));
 });
 
 export const createMachine = asyncHandler(async (req, res) => {
   const audit = buildAuditContext(req);
   const raw = parseBody(req);
   const body = createMachineSchema.parse({ body: raw }).body;
+  assertMachineRateProvenance(body);
+  if (hasMachineCostMutation(body) && !roleHasMachineCapability(req.user?.role, "costs")) {
+    throw new HttpError(403, "MACHINE_COST_FORBIDDEN", "Machine cost capability required.");
+  }
   const file = (req as Request & { file?: unknown }).file;
   const imagePath = isMulterFile(file) ? file.path : null;
-  const out = await svcCreateMachine({ body, image_path: imagePath, audit });
-  res.status(201).json(out);
+  const idempotencyKey = typeof req.headers["idempotency-key"] === "string" ? req.headers["idempotency-key"].trim() : null;
+  if (idempotencyKey && (idempotencyKey.length < 8 || idempotencyKey.length > 200)) throw new HttpError(400, "INVALID_IDEMPOTENCY_KEY", "Idempotency-Key must contain 8 to 200 characters.");
+  const out = await svcCreateMachine({ body, image_path: imagePath, idempotency_key: idempotencyKey, audit });
+  res.status(201).json(roleHasMachineCapability(req.user?.role, "costs") ? out : redactMachineCosts(out));
 });
 
 export const createMachineOnboarding = asyncHandler(async (req, res) => {
   const audit = buildAuditContext(req);
   const raw = parseBody(req);
   const body = createMachineOnboardingSchema.parse({ body: raw }).body;
+  assertMachineRateProvenance(body.machine);
+  if (hasMachineCostMutation(body.machine) && !roleHasMachineCapability(req.user?.role, "costs")) {
+    throw new HttpError(403, "MACHINE_COST_FORBIDDEN", "Machine cost capability required.");
+  }
   const file = (req as Request & { file?: unknown }).file;
   const imagePath = isMulterFile(file) ? file.path : null;
-  const out = await svcCreateMachineOnboarding({ body, image_path: imagePath, audit });
-  res.status(201).json(out);
+  const idempotencyKey = typeof req.headers["idempotency-key"] === "string" ? req.headers["idempotency-key"].trim() : null;
+  if (!idempotencyKey || idempotencyKey.length < 8 || idempotencyKey.length > 200) throw new HttpError(400, "IDEMPOTENCY_KEY_REQUIRED", "A stable Idempotency-Key containing 8 to 200 characters is required.");
+  const out = await svcCreateMachineOnboarding({ body, image_path: imagePath, idempotency_key: idempotencyKey, audit });
+  res.status(201).json(roleHasMachineCapability(req.user?.role, "costs") ? out : redactMachineCosts(out));
 });
 
 export const updateMachine = asyncHandler(async (req, res) => {
@@ -172,6 +213,10 @@ export const updateMachine = asyncHandler(async (req, res) => {
   const { id } = machineIdParamSchema.parse({ params: req.params }).params;
   const raw = parseBody(req);
   const patch = updateMachineSchema.parse({ body: raw }).body;
+  assertMachineRateProvenance(patch);
+  if (hasMachineCostMutation(patch) && !roleHasMachineCapability(req.user?.role, "costs")) {
+    throw new HttpError(403, "MACHINE_COST_FORBIDDEN", "Machine cost capability required.");
+  }
   const file = (req as Request & { file?: unknown }).file;
   const imagePath = isMulterFile(file) ? file.path : undefined;
   const out = await svcUpdateMachine({ id, patch, image_path: imagePath, audit });
@@ -179,7 +224,7 @@ export const updateMachine = asyncHandler(async (req, res) => {
     res.status(404).json({ error: "Not found" });
     return;
   }
-  res.status(200).json(out);
+  res.status(200).json(roleHasMachineCapability(req.user?.role, "costs") ? out : redactMachineCosts(out));
 });
 
 export const updateMachineOnboarding = asyncHandler(async (req, res) => {
@@ -187,6 +232,13 @@ export const updateMachineOnboarding = asyncHandler(async (req, res) => {
   const { id } = machineIdParamSchema.parse({ params: req.params }).params;
   const raw = parseBody(req);
   const body = updateMachineOnboardingSchema.parse({ body: raw }).body;
+  assertMachineRateProvenance(body.machine);
+  if (hasMachineCostMutation(body.machine) && !roleHasMachineCapability(req.user?.role, "costs")) {
+    throw new HttpError(403, "MACHINE_COST_FORBIDDEN", "Machine cost capability required.");
+  }
+  if (body.update_shared_model && !roleHasMachineCapability(req.user?.role, "model_update")) {
+    throw new HttpError(403, "MACHINE_MODEL_UPDATE_FORBIDDEN", "Shared machine model update capability required.");
+  }
   const file = (req as Request & { file?: unknown }).file;
   const imagePath = isMulterFile(file) ? file.path : undefined;
   const out = await svcUpdateMachineOnboarding({ id, body, image_path: imagePath, audit });
@@ -194,7 +246,7 @@ export const updateMachineOnboarding = asyncHandler(async (req, res) => {
     res.status(404).json({ error: "Not found" });
     return;
   }
-  res.status(200).json(out);
+  res.status(200).json(roleHasMachineCapability(req.user?.role, "costs") ? out : redactMachineCosts(out));
 });
 
 export const archiveMachine = asyncHandler(async (req, res) => {
