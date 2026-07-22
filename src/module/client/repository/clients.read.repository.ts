@@ -75,6 +75,10 @@ export async function repoGetClientById(clientId: string, options: ClientReadOpt
       NULLIF(btrim(to_jsonb(c)->>'encours_max'), '')::numeric AS encours_max,
       NULLIF(btrim(to_jsonb(c)->>'incoterm'), '') AS incoterm,
       NULLIF(btrim(to_jsonb(c)->>'langue'), '') AS langue,
+      -- Champs compta — lecture défensive : n'échoue pas si le patch
+      -- 20260721_clients_compta_fields n'est pas encore appliqué.
+      NULLIF(btrim(to_jsonb(c)->>'compte_tiers'), '') AS compte_tiers,
+      NULLIF(btrim(to_jsonb(c)->>'groupe_financier'), '') AS groupe_financier,
 
       -- biller
       f.biller_id, f.biller_name,
@@ -140,6 +144,8 @@ export async function repoGetClientById(clientId: string, options: ClientReadOpt
       encours_max: r.encours_max === null || typeof r.encours_max === "undefined" ? null : Number(r.encours_max),
       incoterm: r.incoterm ?? null,
       langue: r.langue ?? null,
+      compte_tiers: r.compte_tiers ?? null,
+      groupe_financier: r.groupe_financier ?? null,
     },
     biller: r.biller_id
       ? { id: r.biller_id, name: r.biller_name }
@@ -270,6 +276,9 @@ export async function repoListClients(q: string, limit = 25) {
       c.siret, c.vat_number, c.naf_code,
       c.status, c.blocked, c.reason, c.creation_date,
       c.observations, c.provided_documents_id,
+      -- Champs compta — lecture défensive (PK client_id → dépendance fonctionnelle OK sous GROUP BY).
+      NULLIF(btrim(to_jsonb(c)->>'compte_tiers'), '') AS compte_tiers,
+      NULLIF(btrim(to_jsonb(c)->>'groupe_financier'), '') AS groupe_financier,
 
       -- Adresse de facturation (aplaties)
       af.name  AS bill_name,
@@ -345,6 +354,7 @@ export async function repoListClients(q: string, limit = 25) {
     creation_date: string;
     observations: string | null;
     provided_documents_id: string | null;
+    compte_tiers: string | null; groupe_financier: string | null;
 
     bill_name: string | null; bill_street: string | null; bill_house_number: string | null;
     bill_postal_code: string | null; bill_city: string | null; bill_country: string | null;
