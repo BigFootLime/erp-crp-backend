@@ -259,6 +259,12 @@ export const createClientSchema = z.object({
     emptyStringToUndefined,
     z.string().trim().regex(langueRegex, "Code langue à 2 lettres (ex. fr)").transform((v) => v.toLowerCase()).optional()
   ),
+  // Champs comptables du référentiel client (patch 20260721_clients_compta_fields requis).
+  // compte_tiers : compte tiers comptable (compte auxiliaire, rapprochement compta).
+  // groupe_financier : groupe de consolidation financière. Validation permissive
+  // (bornes de longueur) : ne jamais rejeter une donnée d'import.
+  compte_tiers: z.preprocess(emptyStringToUndefined, z.string().trim().max(64, "Compte tiers trop long").optional()),
+  groupe_financier: z.preprocess(emptyStringToUndefined, z.string().trim().max(120, "Groupe financier trop long").optional()),
 });
 
 export type CreateClientDTO = z.infer<typeof createClientSchema>;
