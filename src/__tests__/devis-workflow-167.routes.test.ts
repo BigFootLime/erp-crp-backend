@@ -396,6 +396,9 @@ describe("#167 — idempotence création / révision / conversion", () => {
       String(c[0]).includes("INSERT INTO public.devis_idempotence")
     );
     expect(recordCall).toBeTruthy();
+    // CREATE/REVISE record strictly inside the business transaction: a concurrent
+    // duplicate key must roll the whole duplicate write back (never DO NOTHING).
+    expect(String(recordCall?.[0])).not.toContain("ON CONFLICT");
     const [cle, action, , payloadHash, resultat] = recordCall?.[1] as [string, string, unknown, string, string];
     expect(cle).toBe("devis-create-0001");
     expect(action).toBe("CREATE");
@@ -446,7 +449,8 @@ describe("#167 — idempotence création / révision / conversion", () => {
     const recordCall = mocks.poolQuery.mock.calls.find((c) =>
       String(c[0]).includes("INSERT INTO public.devis_idempotence")
     );
-    const [, , , payloadHash, resultat] = recordCall?.[1] as [string, string, unknown, string, string];
+    expect(String(recordCall?.[0])).toContain("ON CONFLICT (cle) DO NOTHING");
+    const [, , payloadHash, resultat] = recordCall?.[1] as [string, unknown, string, string];
 
     state.idemRow = { action: "CONVERT", payload_hash: payloadHash, resultat: JSON.parse(resultat) };
     const replay = await request(app)

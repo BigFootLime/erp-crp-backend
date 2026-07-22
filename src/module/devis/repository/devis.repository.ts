@@ -270,9 +270,38 @@ async function recordDevisIdempotence(
 ) {
   await tx.query(
     `INSERT INTO public.devis_idempotence (cle, action, devis_id, payload_hash, resultat)
-     VALUES ($1,$2,$3,$4,$5::jsonb) ON CONFLICT (cle) DO NOTHING`,
+     VALUES ($1,$2,$3,$4,$5::jsonb)`,
     [key, action, devisId, payloadHash, JSON.stringify(resultat)]
   );
+}
+
+/**
+ * Conversion delegates commande creation to its own transaction. The immutable
+ * commande_client.devis_id uniqueness constraint already elects one winner, so
+ * recording the replay result happens afterwards. A concurrent identical recorder
+ * may therefore win first; validate that row instead of turning a safe replay into
+ * an error. Reusing the key for another action or payload still raises 409.
+ */
+async function recordConvertedDevisIdempotence(
+  tx: DbQueryer,
+  key: string,
+  devisId: number,
+  payloadHash: string,
+  resultat: Record<string, unknown>
+) {
+  const inserted = await tx.query<{ cle: string }>(
+    `INSERT INTO public.devis_idempotence (cle, action, devis_id, payload_hash, resultat)
+     VALUES ($1,'CONVERT',$2,$3,$4::jsonb)
+     ON CONFLICT (cle) DO NOTHING
+     RETURNING cle`,
+    [key, devisId, payloadHash, JSON.stringify(resultat)]
+  );
+  if (inserted.rows[0]) return;
+
+  // On real PostgreSQL, no returned row means a concurrent key already exists.
+  // Lightweight SQL dispatchers used by route tests may not return RETURNING rows;
+  // an absent replay there is harmless because they cannot model the race.
+  await readDevisIdempotentReplay(tx, key, "CONVERT", payloadHash);
 }
 
 /** La table d'idempotence arrive par patch 20260722 : absence tolérée (comportement historique). */
@@ -2412,7 +2441,7 @@ export async function repoConvertDevisToCommande(
 
   const recordConvertIdempotence = async (resultat: ConvertDevisResult) => {
     if (opts.idempotency_key && idempotencyPayloadHash && idempotenceReady) {
-      await recordDevisIdempotence(pool, opts.idempotency_key, "CONVERT", devisId, idempotencyPayloadHash, resultat);
+      await recordConvertedDevisIdempotence(pool, opts.idempotency_key, devisId, idempotencyPayloadHash, resultat);
     }
   };
 
