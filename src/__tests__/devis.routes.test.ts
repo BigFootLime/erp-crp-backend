@@ -39,15 +39,162 @@ vi.mock("../utils/checkNetworkDrive", () => ({
   checkNetworkDrive: vi.fn(() => Promise.resolve()),
 }));
 
+// #167 — la conversion directe DÉLÈGUE au moteur commande (repoCreateCommande) ; on le
+// mocke partiellement ici (ses internes sont couverts par commandes.routes.test.ts) et
+// on vérifie le CONTRAT de délégation (draft, verrou, officialisation).
+const commandeEngine = vi.hoisted(() => ({ repoCreateCommande: vi.fn() }));
+vi.mock("../module/commande-client/repository/commande-client.repository", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../module/commande-client/repository/commande-client.repository")>();
+  return { ...actual, repoCreateCommande: commandeEngine.repoCreateCommande };
+});
+
+// Auth mock : rôle injectable via l'en-tête `x-test-role` (défaut : administrateur).
 vi.mock("../module/auth/middlewares/auth.middleware", () => ({
-  authenticateToken: (req: { user?: { id: number; username: string; email: string; role: string } }, _res: unknown, next: () => void) => {
-    req.user = { id: 1, username: "test-admin", email: "admin@example.test", role: "administrateur" };
+  authenticateToken: (
+    req: { user?: { id: number; username: string; email: string; role: string }; headers: Record<string, unknown> },
+    _res: unknown,
+    next: () => void
+  ) => {
+    const roleHeader =
+      typeof req.headers["x-test-role"] === "string" ? (req.headers["x-test-role"] as string) : "administrateur";
+    req.user = { id: 1, username: "test-admin", email: "admin@example.test", role: roleHeader };
     next();
   },
   authorizeRole: () => (_req: unknown, _res: unknown, next: () => void) => next(),
 }));
 
 import app from "../config/app";
+
+/**
+ * Mock pg robuste par CONTENU de requête (pattern #172) : chaque test configure `state`,
+ * le dispatcher répond selon le SQL — insensible à l'ordre exact des requêtes internes
+ * (probes information_schema, audit transactionnel, idempotence…).
+ */
+const defaultState = () => ({
+  // Colonnes optionnelles sondées par hasPublicColumn (code_piece legacy absent par défaut).
+  columns: { code_piece: false, position: true, total_ht: true, total_ttc: true } as Record<string, boolean>,
+  idempotenceTable: true,
+  idemRow: null as null | { action: string; payload_hash: string; resultat: Record<string, unknown> },
+  listTotal: 1,
+  listRows: [] as Record<string, unknown>[],
+  detailHeader: null as null | Record<string, unknown>,
+  detailLines: [] as Record<string, unknown>[],
+  articleDevisRows: [] as Record<string, unknown>[],
+  dossierDevisRows: [] as Record<string, unknown>[],
+  documentRows: [] as Record<string, unknown>[],
+  flags: { has_children: false, commande_id: null as string | null, commande_numero: null as string | null },
+  commandeHeader: null as null | Record<string, unknown>,
+  draftLines: [] as Record<string, unknown>[],
+  draftArticlesByCode: [] as Record<string, unknown>[],
+  draftPreparatoryByCode: [] as Record<string, unknown>[],
+  updateCurrent: null as null | Record<string, unknown>,
+  deleteCurrent: null as null | Record<string, unknown>,
+  existingCommande: null as null | { id: string; numero: string },
+  hasPrep: false,
+  nextVersion: 2,
+  devisSeqId: "7",
+  insertDevisReturnId: "7",
+  ligneSeq: 1,
+  convertLineCount: 1,
+  docFileMeta: [] as Record<string, unknown>[],
+});
+
+let state = defaultState();
+
+function dispatch(sqlRaw: unknown, params?: unknown[]): { rows: unknown[]; rowCount?: number } {
+  const sql = String(sqlRaw);
+
+  if (/^(BEGIN|COMMIT|ROLLBACK)/.test(sql.trim())) return { rows: [] };
+
+  if (/information_schema\.columns/.test(sql)) {
+    const column = String(params?.[1] ?? "");
+    return { rows: [{ exists: state.columns[column] === true }] };
+  }
+  if (/information_schema\.tables/.test(sql)) return { rows: [{ exists: state.idempotenceTable }] };
+
+  if (/FROM public\.devis_idempotence WHERE cle/.test(sql)) return { rows: state.idemRow ? [state.idemRow] : [] };
+  if (/INSERT INTO public\.devis_idempotence/.test(sql)) return { rows: [] };
+
+  if (/erp_audit_logs/i.test(sql)) return { rows: [{ id: "99", created_at: "2026-07-22T08:00:00.000Z" }] };
+  if (/pg_notify/i.test(sql)) return { rows: [] };
+
+  // Écritures AVANT les matchers de lecture : les INSERT…SELECT contiennent aussi
+  // des fragments de SELECT (FROM devis_ligne dl, source_article_devis_id…).
+  if (/INSERT INTO devis_ligne/.test(sql)) {
+    const id = String(state.ligneSeq);
+    state.ligneSeq += 1;
+    return { rows: [{ id }], rowCount: 1 };
+  }
+  if (/INSERT INTO devis_documents/.test(sql)) return { rows: [] };
+  if (/INSERT INTO documents_clients/.test(sql)) return { rows: [] };
+  if (/INSERT INTO commande_ligne/.test(sql)) return { rows: [], rowCount: state.convertLineCount };
+  if (/INSERT INTO commande_client/.test(sql)) return { rows: [] };
+  if (/INSERT INTO devis\s*\(/.test(sql)) return { rows: [{ id: state.insertDevisReturnId }] };
+  if (/INSERT INTO (public\.)?(article_devis|dossier_technique_piece_devis)/.test(sql)) {
+    return { rows: [{ id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc" }] };
+  }
+  if (/UPDATE public\.articles/.test(sql)) return { rows: [] };
+  if (/UPDATE devis\s+SET/i.test(sql)) return { rows: [{ id: "7" }], rowCount: 1 };
+  if (/DELETE FROM (public\.)?(devis_ligne|article_devis|dossier_technique_piece_devis)/.test(sql)) {
+    return { rows: [], rowCount: 1 };
+  }
+  if (/DELETE FROM devis/.test(sql)) return { rows: [], rowCount: 1 };
+
+  if (/devis_id_seq/.test(sql)) return { rows: [{ id: state.devisSeqId }] };
+  if (/commande_client_id_seq/.test(sql)) return { rows: [{ id: "55" }] };
+  if (/fn_next(_issued)?_code_value/.test(sql)) return { rows: [{ v: "1" }] };
+
+  if (/MAX\(version_number\)/i.test(sql)) return { rows: [{ next_version: state.nextVersion }] };
+
+  // Ligne courante verrouillée : suppression (AS converted) / mise à jour (FOR UPDATE OF d).
+  if (/AS converted/.test(sql)) return { rows: state.deleteCurrent ? [state.deleteCurrent] : [] };
+  if (/FOR UPDATE OF d/.test(sql)) return { rows: state.updateCurrent ? [state.updateCurrent] : [] };
+
+  // Source d'une révision (FROM devis sans alias).
+  if (/FROM devis\s+WHERE id = \$1\s+FOR UPDATE/.test(sql)) {
+    return { rows: state.commandeHeader ? [state.commandeHeader] : [] };
+  }
+  // En-tête conversion / commande-draft (alias d + created_at JSONB).
+  if (/->>'created_at'/.test(sql) && /FROM devis d/.test(sql)) {
+    return { rows: state.commandeHeader ? [state.commandeHeader] : [] };
+  }
+
+  if (/AS has_children/.test(sql)) {
+    return { rows: [{ has_children: state.flags.has_children, commande_id: state.flags.commande_id, commande_numero: state.flags.commande_numero }] };
+  }
+  if (/AS has_prep/.test(sql)) return { rows: [{ has_prep: state.hasPrep }] };
+  if (/FROM commande_client cc\s+WHERE cc\.devis_id/.test(sql)) {
+    return { rows: state.existingCommande ? [state.existingCommande] : [] };
+  }
+
+  if (/AS article_devis_devis_id/.test(sql)) return { rows: state.draftPreparatoryByCode };
+  // Recherches transverses par article / code article-devis (avant les matchers génériques).
+  if (/FROM public\.devis_ligne dl/.test(sql) && /JOIN public\.devis d/.test(sql)) return { rows: state.listRows };
+  if (/FROM public\.article_devis ad/.test(sql) && /JOIN public\.devis d/.test(sql)) return { rows: state.listRows };
+  if (/to_jsonb\(ad\)/.test(sql)) return { rows: state.articleDevisRows };
+  if (/to_jsonb\(dd\)/.test(sql)) return { rows: state.dossierDevisRows };
+  if (/lookup\.lookup_code/.test(sql) && /JOIN public\.articles/.test(sql)) {
+    return { rows: state.draftArticlesByCode };
+  }
+
+  if (/AS position/.test(sql) && /FROM devis_ligne dl/.test(sql)) return { rows: state.detailLines };
+  if (/FROM devis_ligne dl/.test(sql) && /source_article_devis_id/.test(sql)) return { rows: state.draftLines };
+  if (/SELECT quantite/.test(sql) && /FROM devis_ligne/.test(sql)) return { rows: [] };
+
+  if (/jsonb_build_object/.test(sql) && /FROM devis_documents/.test(sql)) return { rows: state.documentRows };
+  if (/JOIN documents_clients dc/.test(sql) && /dd\.document_id = \$2/.test(sql)) return { rows: state.docFileMeta };
+
+  if (/SELECT numero FROM commande_client WHERE id/.test(sql)) return { rows: [{ numero: "CMD-2026-0001" }] };
+
+  if (/count\(\*\)/i.test(sql) && /FROM devis d/.test(sql)) return { rows: [{ total: state.listTotal }] };
+  // En-tête détail (WHERE d.id = $1, pas de verrou) — AVANT le fallback liste.
+  if (/WHERE d\.id = \$1/.test(sql) && /AS parent_devis_id/.test(sql)) {
+    return { rows: state.detailHeader ? [state.detailHeader] : [] };
+  }
+  if (/FROM devis d/.test(sql)) return { rows: state.listRows };
+
+  return { rows: [] };
+}
 
 beforeEach(() => {
   mocks.poolQuery.mockReset();
@@ -59,38 +206,39 @@ beforeEach(() => {
     query: mocks.clientQuery,
     release: mocks.clientRelease,
   });
+  state = defaultState();
+  mocks.poolQuery.mockImplementation(async (sql: unknown, params?: unknown[]) => dispatch(sql, params));
+  mocks.clientQuery.mockImplementation(async (sql: unknown, params?: unknown[]) => dispatch(sql, params));
+  commandeEngine.repoCreateCommande.mockReset();
+  commandeEngine.repoCreateCommande.mockResolvedValue({ id: 55 });
 });
 
 describe("/api/v1/devis", () => {
   it("GET /api/v1/devis returns {items,total} with filters/pagination and include=client", async () => {
-    mocks.poolQuery
-      .mockResolvedValueOnce({ rows: [{ total: 1 }] })
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            id: "7",
-            root_devis_id: "7",
-            parent_devis_id: null,
-            version_number: 1,
-            numero: "DV-7",
-            client_id: "001",
-            date_creation: "2026-02-01T10:00:00.000Z",
-            date_validite: "2026-03-01",
-            statut: "BROUILLON",
-            remise_globale: 0,
-            total_ht: 100,
-            total_ttc: 120,
-            client: {
-              client_id: "001",
-              company_name: "ACME",
-              email: null,
-              phone: null,
-              delivery_address_id: null,
-              bill_address_id: null,
-            },
-          },
-        ],
-      });
+    state.listRows = [
+      {
+        id: "7",
+        root_devis_id: "7",
+        parent_devis_id: null,
+        version_number: 1,
+        numero: "DV-7",
+        client_id: "001",
+        date_creation: "2026-02-01T10:00:00.000Z",
+        date_validite: "2026-03-01",
+        statut: "BROUILLON",
+        remise_globale: 0,
+        total_ht: 100,
+        total_ttc: 120,
+        client: {
+          client_id: "001",
+          company_name: "ACME",
+          email: null,
+          phone: null,
+          delivery_address_id: null,
+          bill_address_id: null,
+        },
+      },
+    ];
 
     const res = await request(app).get("/api/v1/devis").query({
       q: "DV",
@@ -131,123 +279,109 @@ describe("/api/v1/devis", () => {
   });
 
   it("GET /api/v1/devis/:id returns {devis,lignes,documents} with includes", async () => {
-    mocks.poolQuery
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            id: "7",
-            root_devis_id: "7",
-            parent_devis_id: null,
-            version_number: 1,
-            numero: "DV-7",
-            client_id: "001",
-            contact_id: null,
-            user_id: "1",
-            adresse_facturation_id: null,
-            adresse_livraison_id: null,
-            mode_reglement_id: null,
-            compte_vente_id: null,
-            date_creation: "2026-02-01T10:00:00.000Z",
-            date_validite: "2026-03-01",
-            statut: "BROUILLON",
-            remise_globale: 0,
-            total_ht: 100,
-            total_ttc: 120,
-            commentaires: null,
-            conditions_paiement_id: null,
-            biller_id: null,
-            client: {
-              client_id: "001",
-              company_name: "ACME",
-              email: null,
-              phone: null,
-              delivery_address_id: null,
-              bill_address_id: null,
-            },
-          },
-        ],
-      })
-      .mockResolvedValueOnce({
-        rows: [{ exists: false }],
-      })
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            id: "1",
-            devis_id: "7",
-            article_id: null,
-            piece_technique_id: null,
-            source_article_devis_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-            source_dossier_devis_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-            code_piece: "PCT-001",
-            description: "Line",
-            quantite: 1,
-            unite: "u",
-            prix_unitaire_ht: 100,
-            remise_ligne: 0,
-            taux_tva: 20,
-            total_ht: 100,
-            total_ttc: 120,
-          },
-        ],
-      })
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-            devis_id: "7",
-            devis_ligne_id: "1",
-            root_article_devis_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-            parent_article_devis_id: null,
-            version_number: 1,
-            code: "PCT-001",
-            designation: "Line",
-            primary_category: "piece_finie_fabriquee",
-            article_categories: ["piece_finie_fabriquee"],
-            family_code: "PT",
-            plan_index: 1,
-            projet_id: null,
-            source_official_article_id: null,
-            created_at: "2026-02-02T10:00:00.000Z",
-            updated_at: "2026-02-02T10:00:00.000Z",
-          },
-        ],
-      })
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-            article_devis_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-            devis_id: "7",
-            root_dossier_devis_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-            parent_dossier_devis_id: null,
-            version_number: 1,
-            code_piece: "PCT-001",
-            designation: "Line",
-            source_official_piece_technique_id: null,
-            payload: {},
-            created_at: "2026-02-02T10:00:00.000Z",
-            updated_at: "2026-02-02T10:00:00.000Z",
-          },
-        ],
-      })
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            id: "10",
-            devis_id: "7",
-            document_id: "11111111-1111-1111-1111-111111111111",
-            type: "PDF",
-            document: {
-              id: "11111111-1111-1111-1111-111111111111",
-              document_name: "doc.pdf",
-              type: "PDF",
-              creation_date: "2026-02-02T10:00:00.000Z",
-              created_by: "test",
-            },
-          },
-        ],
-      });
+    state.detailHeader = {
+      id: "7",
+      root_devis_id: "7",
+      parent_devis_id: null,
+      version_number: 1,
+      numero: "DV-7",
+      client_id: "001",
+      contact_id: null,
+      user_id: "1",
+      adresse_facturation_id: null,
+      adresse_livraison_id: null,
+      mode_reglement_id: null,
+      compte_vente_id: null,
+      date_creation: "2026-02-01T10:00:00.000Z",
+      updated_at: "2026-02-02T10:00:00.000Z",
+      date_validite: "2026-03-01",
+      statut: "BROUILLON",
+      remise_globale: 0,
+      total_ht: 100,
+      total_ttc: 120,
+      commentaires: null,
+      conditions_paiement_id: null,
+      biller_id: null,
+      client: {
+        client_id: "001",
+        company_name: "ACME",
+        email: null,
+        phone: null,
+        delivery_address_id: null,
+        bill_address_id: null,
+      },
+    };
+    state.detailLines = [
+      {
+        id: "1",
+        devis_id: "7",
+        article_id: null,
+        piece_technique_id: null,
+        source_article_devis_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        source_dossier_devis_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        code_piece: "PCT-001",
+        position: 1,
+        description: "Line",
+        quantite: 1,
+        unite: "u",
+        prix_unitaire_ht: 100,
+        remise_ligne: 0,
+        taux_tva: 20,
+        total_ht: 100,
+        total_ttc: 120,
+      },
+    ];
+    state.articleDevisRows = [
+      {
+        id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        devis_id: "7",
+        devis_ligne_id: "1",
+        root_article_devis_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        parent_article_devis_id: null,
+        version_number: 1,
+        code: "PCT-001",
+        designation: "Line",
+        primary_category: "piece_finie_fabriquee",
+        article_categories: ["piece_finie_fabriquee"],
+        family_code: "PT",
+        plan_index: 1,
+        projet_id: null,
+        source_official_article_id: null,
+        created_at: "2026-02-02T10:00:00.000Z",
+        updated_at: "2026-02-02T10:00:00.000Z",
+      },
+    ];
+    state.dossierDevisRows = [
+      {
+        id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        article_devis_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        devis_id: "7",
+        root_dossier_devis_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        parent_dossier_devis_id: null,
+        version_number: 1,
+        code_piece: "PCT-001",
+        designation: "Line",
+        source_official_piece_technique_id: null,
+        payload: {},
+        created_at: "2026-02-02T10:00:00.000Z",
+        updated_at: "2026-02-02T10:00:00.000Z",
+      },
+    ];
+    state.documentRows = [
+      {
+        id: "10",
+        devis_id: "7",
+        document_id: "11111111-1111-1111-1111-111111111111",
+        type: "PDF",
+        document: {
+          id: "11111111-1111-1111-1111-111111111111",
+          document_name: "doc.pdf",
+          type: "PDF",
+          creation_date: "2026-02-02T10:00:00.000Z",
+          created_by: "test",
+        },
+      },
+    ];
 
     const res = await request(app)
       .get("/api/v1/devis/7")
@@ -258,9 +392,13 @@ describe("/api/v1/devis", () => {
     expect(res.body).toHaveProperty("lignes");
     expect(res.body).toHaveProperty("documents");
     expect(res.body.devis).toMatchObject({ id: 7, numero: "DV-7", client: { company_name: "ACME" } });
+    // #167 : le serveur expose l'automate et l'état de conversion — l'UI ne les invente pas.
+    expect(res.body.devis.allowed_statut_transitions).toEqual(["ENVOYE", "ANNULE"]);
+    expect(res.body.devis).toMatchObject({ has_children: false, converted_commande: null });
     expect(res.body.lignes[0]).toMatchObject({
       id: 1,
       devis_id: 7,
+      position: 1,
       total_ttc: 120,
       source_article_devis_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
       source_dossier_devis_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
@@ -275,85 +413,81 @@ describe("/api/v1/devis", () => {
     const docsCall = mocks.poolQuery.mock.calls.find((c) => String(c[0]).includes("FROM devis_documents"));
     expect(String(docsCall?.[0])).toContain("documents_clients");
     expect(String(docsCall?.[0])).not.toMatch(/JOIN\s+documents\b/);
+
+    // L'ordre des lignes suit la position persistée.
+    const linesCall = mocks.poolQuery.mock.calls.find(
+      (c) => String(c[0]).includes("FROM devis_ligne dl") && String(c[0]).includes("AS position")
+    );
+    expect(String(linesCall?.[0])).toContain("dl.position ASC NULLS LAST");
   });
 
   it("GET /api/v1/devis/:id/commande-draft returns editable commande draft payload", async () => {
-    mocks.clientQuery
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            id: "7",
-            root_devis_id: "7",
-            parent_devis_id: null,
-            version_number: 1,
-            numero: "DV-7",
-            client_id: "001",
-            contact_id: "11111111-1111-1111-1111-111111111111",
-            adresse_facturation_id: "22222222-2222-2222-2222-222222222222",
-            adresse_livraison_id: "33333333-3333-3333-3333-333333333333",
-            mode_reglement_id: null,
-            conditions_paiement_id: 15,
-            biller_id: null,
-            compte_vente_id: null,
-            commentaires: "Depuis devis",
-            remise_globale: 5,
-            total_ht: 100,
-            total_ttc: 120,
-            statut: "ACCEPTE",
-            updated_at: "2026-03-24T10:00:00.000Z",
-            created_at: "2026-03-23T10:00:00.000Z",
-          },
-        ],
-      })
-      .mockResolvedValueOnce({
-        rows: [{ exists: false }],
-      })
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            id: "1",
-            description: "Piece A",
-            code_piece: "PCT-001",
-            quantite: 2,
-            unite: "u",
-            prix_unitaire_ht: 50,
-            remise_ligne: 0,
-            taux_tva: 20,
-          },
-        ],
-      })
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            lookup_code: "PCT-001",
-            article_id: "44444444-4444-4444-4444-444444444444",
-            piece_technique_id: "55555555-5555-5555-5555-555555555555",
-          },
-        ],
-      })
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            lookup_code: "PCT-001",
-            article_devis_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-            article_devis_devis_id: "7",
-            article_code: "PCT-001",
-            article_designation: "Piece A",
-            primary_category: "piece_finie_fabriquee",
-            article_categories: ["piece_finie_fabriquee"],
-            family_code: "PT",
-            plan_index: 1,
-            projet_id: null,
-            source_official_article_id: null,
-            dossier_devis_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-            dossier_devis_devis_id: "7",
-            dossier_code_piece: "PCT-001",
-            dossier_designation: "Piece A",
-            source_official_piece_technique_id: null,
-            dossier_payload: {},
-          },
-        ],
-      });
+    state.commandeHeader = {
+      id: "7",
+      root_devis_id: "7",
+      parent_devis_id: null,
+      version_number: 1,
+      numero: "DV-7",
+      client_id: "001",
+      contact_id: "11111111-1111-1111-1111-111111111111",
+      adresse_facturation_id: "22222222-2222-2222-2222-222222222222",
+      adresse_livraison_id: "33333333-3333-3333-3333-333333333333",
+      mode_reglement_id: null,
+      conditions_paiement_id: 15,
+      biller_id: null,
+      compte_vente_id: null,
+      commentaires: "Depuis devis",
+      remise_globale: 5,
+      total_ht: 100,
+      total_ttc: 120,
+      statut: "ACCEPTE",
+      updated_at: "2026-03-24T10:00:00.000Z",
+      created_at: "2026-03-23T10:00:00.000Z",
+    };
+    state.draftLines = [
+      {
+        id: "1",
+        description: "Piece A",
+        article_id: null,
+        piece_technique_id: null,
+        source_article_devis_id: null,
+        source_dossier_devis_id: null,
+        code_piece: "PCT-001",
+        quantite: 2,
+        unite: "u",
+        prix_unitaire_ht: 50,
+        remise_ligne: 0,
+        taux_tva: 20,
+      },
+    ];
+    state.draftArticlesByCode = [
+      {
+        lookup_code: "PCT-001",
+        article_id: "44444444-4444-4444-4444-444444444444",
+        piece_technique_id: "55555555-5555-5555-5555-555555555555",
+      },
+    ];
+    state.draftPreparatoryByCode = [
+      {
+        lookup_code: "PCT-001",
+        article_devis_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        article_devis_devis_id: "7",
+        article_code: "PCT-001",
+        article_designation: "Piece A",
+        primary_category: "piece_finie_fabriquee",
+        article_categories: ["piece_finie_fabriquee"],
+        family_code: "PT",
+        plan_index: 1,
+        projet_id: null,
+        source_official_article_id: null,
+        dossier_devis_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        dossier_devis_devis_id: "7",
+        dossier_code_piece: "PCT-001",
+        dossier_designation: "Piece A",
+        source_official_piece_technique_id: null,
+        dossier_payload: {},
+      },
+    ];
 
     const res = await request(app).get("/api/v1/devis/7/commande-draft");
 
@@ -404,84 +538,96 @@ describe("/api/v1/devis", () => {
   });
 
   it("POST /api/v1/devis/:id/convert-to-commande creates commande and lines from accepted devis", async () => {
-    mocks.clientQuery
-      .mockResolvedValueOnce({ rows: [] }) // BEGIN
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            id: "7",
-            numero: "DV-7",
-            client_id: "001",
-            contact_id: null,
-            adresse_facturation_id: null,
-            adresse_livraison_id: "33333333-3333-3333-3333-333333333333",
-            mode_reglement_id: null,
-            conditions_paiement_id: 15,
-            biller_id: null,
-            compte_vente_id: null,
-            commentaires: "Depuis devis",
-            remise_globale: 0,
-            total_ht: 100,
-            total_ttc: 120,
-            statut: "ACCEPTE",
-            updated_at: "2026-03-24T10:00:00.000Z",
-            created_at: "2026-03-23T10:00:00.000Z",
-          },
-        ],
-      }) // load devis FOR UPDATE
-      .mockResolvedValueOnce({ rows: [] }) // existing commande
-      .mockResolvedValueOnce({ rows: [{ id: "55" }] }) // commande id sequence
-      .mockResolvedValueOnce({ rows: [{ v: "1" }] }) // fn_next_code_value CMD
-      .mockResolvedValueOnce({ rows: [] }) // INSERT commande_client
-      .mockResolvedValueOnce({ rowCount: 1, rows: [] }) // INSERT commande_ligne from devis_ligne
-      .mockResolvedValueOnce({ rows: [] }) // UPDATE articles EN_DEVIS -> VALIDE
-      .mockResolvedValueOnce({ rows: [] }); // COMMIT
+    state.commandeHeader = {
+      id: "7",
+      numero: "DV-7",
+      client_id: "001",
+      contact_id: null,
+      adresse_facturation_id: null,
+      adresse_livraison_id: "33333333-3333-3333-3333-333333333333",
+      mode_reglement_id: null,
+      conditions_paiement_id: 15,
+      biller_id: null,
+      compte_vente_id: null,
+      commentaires: "Depuis devis",
+      remise_globale: 0,
+      total_ht: 100,
+      total_ttc: 120,
+      statut: "ACCEPTE",
+      updated_at: "2026-03-24T10:00:00.000Z",
+      created_at: "2026-03-23T10:00:00.000Z",
+    };
+
+    state.draftLines = [
+      {
+        id: "1",
+        description: "Piece A",
+        article_id: null,
+        piece_technique_id: null,
+        source_article_devis_id: null,
+        source_dossier_devis_id: null,
+        code_piece: null,
+        quantite: 2,
+        unite: "u",
+        prix_unitaire_ht: 50,
+        remise_ligne: 0,
+        taux_tva: 20,
+      },
+    ]
 
     const res = await request(app).post("/api/v1/devis/7/convert-to-commande");
 
     expect(res.status).toBe(201);
-    expect(res.body).toMatchObject({ id: 55, numero: "CMD-2026-0001" });
+    expect(res.body).toMatchObject({
+      id: 55,
+      numero: "CMD-2026-0001",
+      devis_id: 7,
+      already_converted: false,
+      idempotent_replay: false,
+    });
 
+    // La recherche d'une commande existante précède toute création (idempotence métier).
     const existingSql = String(
-      mocks.clientQuery.mock.calls.find((c) => String(c[0]).includes("FROM commande_client cc"))?.[0] ?? ""
+      mocks.poolQuery.mock.calls.find((c) => String(c[0]).includes("FROM commande_client cc"))?.[0] ?? ""
     );
     expect(existingSql).toContain("cc.id::text AS id");
     expect(existingSql).toContain("WHERE cc.devis_id = $1");
 
-    const insertCommandeSql = String(
-      mocks.clientQuery.mock.calls.find((c) => String(c[0]).includes("INSERT INTO commande_client"))?.[0] ?? ""
-    );
-    expect(insertCommandeSql).toContain("source_devis_version_id");
+    // #167 — délégation au moteur unique : draft serveur + verrou de version.
+    expect(commandeEngine.repoCreateCommande).toHaveBeenCalledTimes(1);
+    const engineInput = commandeEngine.repoCreateCommande.mock.calls[0][0] as Record<string, unknown>;
+    expect(engineInput).toMatchObject({
+      devis_id: 7,
+      source_devis_updated_at: "2026-03-24T10:00:00.000Z",
+      officialize_preparatory_data: false,
+    });
+    expect(Array.isArray(engineInput.lignes)).toBe(true)
 
-    const insertLinesSql = String(
-      mocks.clientQuery.mock.calls.find((c) => String(c[0]).includes("INSERT INTO commande_ligne"))?.[0] ?? ""
-    );
-    expect(insertLinesSql).toContain("ad.id");
-    expect(insertLinesSql).toContain("dd.id");
-    expect(insertLinesSql).not.toMatch(/^\s*id\b/m);
+    // Conversion auditée (action devis.convert).
+    const auditCall = mocks.poolQuery.mock.calls.find((c) => /erp_audit_logs/i.test(String(c[0])));
+    expect(auditCall).toBeTruthy();
+    expect(String((auditCall?.[1] as unknown[])?.[2])).toBe("devis.convert");
   });
 
   it("GET /api/v1/devis/by-article/:articleId returns related devis with versions", async () => {
-    mocks.poolQuery.mockResolvedValueOnce({
-      rows: [
-        {
-          id: "12",
-          root_devis_id: "7",
-          parent_devis_id: "10",
-          version_number: 3,
-          numero: "DV-7-V3",
-          client_id: "001",
-          date_creation: "2026-03-20",
-          updated_at: "2026-03-21T10:00:00.000Z",
-          date_validite: null,
-          statut: "BROUILLON",
-          remise_globale: 0,
-          total_ht: 100,
-          total_ttc: 120,
-          client: null,
-        },
-      ],
-    });
+    state.listRows = [
+      {
+        id: "12",
+        root_devis_id: "7",
+        parent_devis_id: "10",
+        version_number: 3,
+        numero: "DV-7-V3",
+        client_id: "001",
+        date_creation: "2026-03-20",
+        updated_at: "2026-03-21T10:00:00.000Z",
+        date_validite: null,
+        statut: "BROUILLON",
+        remise_globale: 0,
+        total_ht: 100,
+        total_ttc: 120,
+        client: null,
+      },
+    ];
 
     const res = await request(app).get("/api/v1/devis/by-article/11111111-1111-1111-1111-111111111111");
 
@@ -501,26 +647,24 @@ describe("/api/v1/devis", () => {
   });
 
   it("GET /api/v1/devis/by-article-devis-code/:code returns related devis versions", async () => {
-    mocks.poolQuery.mockResolvedValueOnce({
-      rows: [
-        {
-          id: "18",
-          root_devis_id: "7",
-          parent_devis_id: "12",
-          version_number: 4,
-          numero: "DV-7-V4",
-          client_id: "001",
-          date_creation: "2026-03-20",
-          updated_at: "2026-03-26T10:00:00.000Z",
-          date_validite: null,
-          statut: "ACCEPTE",
-          remise_globale: 0,
-          total_ht: 100,
-          total_ttc: 120,
-          client: null,
-        },
-      ],
-    });
+    state.listRows = [
+      {
+        id: "18",
+        root_devis_id: "7",
+        parent_devis_id: "12",
+        version_number: 4,
+        numero: "DV-7-V4",
+        client_id: "001",
+        date_creation: "2026-03-20",
+        updated_at: "2026-03-26T10:00:00.000Z",
+        date_validite: null,
+        statut: "ACCEPTE",
+        remise_globale: 0,
+        total_ht: 100,
+        total_ttc: 120,
+        client: null,
+      },
+    ];
 
     const res = await request(app).get("/api/v1/devis/by-article-devis-code/PCT-001");
 
@@ -546,18 +690,12 @@ describe("/api/v1/devis", () => {
     const filePath = path.join(uploadsDir, `${docId}.pdf`);
     fs.writeFileSync(filePath, "hello");
 
-    mocks.poolQuery.mockResolvedValueOnce({
-      rows: [{ id: docId, document_name: "doc.pdf", type: "PDF" }],
-    });
+    state.docFileMeta = [{ id: docId, document_name: "doc.pdf", type: "PDF" }];
 
     const resInline = await request(app).get(`/api/v1/devis/7/documents/${docId}/file`);
     expect(resInline.status).toBe(200);
     expect(resInline.headers["content-type"]).toContain("application/pdf");
     expect(resInline.headers["content-disposition"]).toContain('inline; filename="doc.pdf"');
-
-    mocks.poolQuery.mockResolvedValueOnce({
-      rows: [{ id: docId, document_name: "doc.pdf", type: "PDF" }],
-    });
 
     const resDownload = await request(app).get(`/api/v1/devis/7/documents/${docId}/file`).query({ download: "true" });
     expect(resDownload.status).toBe(200);
@@ -571,17 +709,6 @@ describe("/api/v1/devis", () => {
     const tmpFile = path.join(tmpDir, "doc.txt");
     fs.writeFileSync(tmpFile, "hello");
 
-    mocks.clientQuery
-      .mockResolvedValueOnce({ rows: [] }) // BEGIN
-      .mockResolvedValueOnce({ rows: [{ id: "7" }] }) // nextval devis_id_seq
-      .mockResolvedValueOnce({ rows: [{ v: "1" }] }) // fn_next_code_value DEV
-      .mockResolvedValueOnce({ rows: [{ id: "7" }] }) // INSERT devis
-      .mockResolvedValueOnce({ rows: [{ exists: false }] }) // legacy devis_ligne.code_piece probe
-      .mockResolvedValueOnce({ rows: [{ id: "1" }] }) // INSERT devis_ligne (RETURNING id)
-      .mockResolvedValueOnce({ rows: [] }) // INSERT documents_clients
-      .mockResolvedValueOnce({ rows: [] }) // INSERT devis_documents
-      .mockResolvedValueOnce({ rows: [] }); // COMMIT
-
     const payload = {
       client_id: "001",
       user_id: 1,
@@ -594,7 +721,7 @@ describe("/api/v1/devis", () => {
       .attach("documents[]", tmpFile);
 
     expect(res.status).toBe(201);
-    expect(res.body).toMatchObject({ id: 7 });
+    expect(res.body).toMatchObject({ id: 7, idempotent_replay: false });
     expect(mocks.poolConnect).toHaveBeenCalledTimes(1);
 
     const insertDocClientCall = mocks.clientQuery.mock.calls.find((c) =>
@@ -612,19 +739,22 @@ describe("/api/v1/devis", () => {
     const docId2 = (insertDevisDocCall?.[1] as unknown[])[1];
     expect(docId2).toBe(docId);
 
+    // #167 : la position est écrite avec la ligne (ordre du payload).
+    const insertLigneCall = mocks.clientQuery.mock.calls.find((c) => String(c[0]).includes("INSERT INTO devis_ligne"));
+    expect(String(insertLigneCall?.[0])).toContain("position");
+
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
   it("PATCH /api/v1/devis/:id supports multipart update (replace lignes)", async () => {
-    mocks.clientQuery
-      .mockResolvedValueOnce({ rows: [] }) // BEGIN
-      .mockResolvedValueOnce({ rows: [{ id: "7" }] }) // UPDATE devis
-      .mockResolvedValueOnce({ rows: [] }) // DELETE dossier_technique_piece_devis
-      .mockResolvedValueOnce({ rows: [] }) // DELETE article_devis
-      .mockResolvedValueOnce({ rows: [] }) // DELETE devis_ligne
-      .mockResolvedValueOnce({ rows: [{ exists: false }] }) // legacy devis_ligne.code_piece probe
-      .mockResolvedValueOnce({ rows: [{ id: "1" }] }) // INSERT devis_ligne (RETURNING id)
-      .mockResolvedValueOnce({ rows: [] }); // COMMIT
+    state.updateCurrent = {
+      id: "7",
+      numero: "DV-7",
+      statut: "BROUILLON",
+      remise_globale: 0,
+      updated_at: "2026-03-24T10:00:00.000Z",
+      has_children: false,
+    };
 
     const payload = {
       statut: "BROUILLON",
@@ -642,41 +772,35 @@ describe("/api/v1/devis", () => {
 
     const deleteLinesCall = mocks.clientQuery.mock.calls.find((c) => String(c[0]).includes("DELETE FROM devis_ligne"));
     expect(deleteLinesCall).toBeTruthy();
+
+    // Totaux recalculés serveur : jamais les totaux du client.
+    const updateSql = String(mocks.clientQuery.mock.calls.find((c) => /UPDATE devis\s+SET/i.test(String(c[0])))?.[0]);
+    expect(updateSql).toContain("total_ht");
   });
 
   it("POST /api/v1/devis/:id/revise clones devis into a new version", async () => {
-    mocks.clientQuery
-      .mockResolvedValueOnce({ rows: [] }) // BEGIN
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            id: "7",
-            root_devis_id: "7",
-            numero: "DV-7",
-            client_id: "001",
-            contact_id: null,
-            adresse_facturation_id: null,
-            adresse_livraison_id: null,
-            mode_reglement_id: null,
-            compte_vente_id: null,
-            date_validite: null,
-            statut: "BROUILLON",
-            remise_globale: 0,
-            total_ht: 100,
-            total_ttc: 120,
-            commentaires: null,
-            conditions_paiement_id: null,
-            biller_id: null,
-          },
-        ],
-      }) // source devis
-      .mockResolvedValueOnce({ rows: [{ next_version: 2 }] }) // next version
-      .mockResolvedValueOnce({ rows: [{ id: "8" }] }) // nextval devis_id_seq
-      .mockResolvedValueOnce({ rows: [{ id: "8" }] }) // insert new devis
-      .mockResolvedValueOnce({ rows: [] }) // copy lignes
-      .mockResolvedValueOnce({ rows: [] }) // source article_devis to clone
-      .mockResolvedValueOnce({ rows: [] }) // copy documents
-      .mockResolvedValueOnce({ rows: [] }); // COMMIT
+    state.commandeHeader = {
+      id: "7",
+      root_devis_id: "7",
+      numero: "DV-7",
+      client_id: "001",
+      contact_id: null,
+      adresse_facturation_id: null,
+      adresse_livraison_id: null,
+      mode_reglement_id: null,
+      compte_vente_id: null,
+      date_validite: null,
+      statut: "BROUILLON",
+      remise_globale: 0,
+      total_ht: 100,
+      total_ttc: 120,
+      commentaires: null,
+      conditions_paiement_id: null,
+      biller_id: null,
+      updated_at: "2026-03-24T10:00:00.000Z",
+    };
+    state.devisSeqId = "8";
+    state.insertDevisReturnId = "8";
 
     const res = await request(app)
       .post("/api/v1/devis/7/revise")
@@ -684,15 +808,24 @@ describe("/api/v1/devis", () => {
 
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({ id: 8, root_devis_id: 7, parent_devis_id: 7, version_number: 2 });
+
+    // Le clone conserve l'ordre persisté des lignes.
+    const cloneSql = String(
+      mocks.clientQuery.mock.calls.find(
+        (c) => String(c[0]).includes("INSERT INTO devis_ligne") && String(c[0]).includes("SELECT")
+      )?.[0] ?? ""
+    );
+    expect(cloneSql).toContain("dl.position");
   });
 
   it("DELETE /api/v1/devis/:id returns 204", async () => {
-    mocks.poolQuery.mockResolvedValueOnce({ rowCount: 1, rows: [] });
+    state.deleteCurrent = { numero: "DV-7", statut: "BROUILLON", has_children: false, converted: false };
+
     const res = await request(app).delete("/api/v1/devis/7");
     expect(res.status).toBe(204);
 
-    const sql = String(mocks.poolQuery.mock.calls[0][0]);
-    expect(sql).toContain("DELETE FROM devis");
-    expect(mocks.poolQuery.mock.calls[0][1]).toEqual([7]);
+    const deleteCall = mocks.clientQuery.mock.calls.find((c) => /DELETE FROM devis\b/.test(String(c[0])));
+    expect(deleteCall).toBeTruthy();
+    expect(deleteCall?.[1]).toEqual([7]);
   });
 });
