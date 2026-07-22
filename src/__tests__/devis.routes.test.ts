@@ -39,6 +39,15 @@ vi.mock("../utils/checkNetworkDrive", () => ({
   checkNetworkDrive: vi.fn(() => Promise.resolve()),
 }));
 
+// #167 — la conversion directe DÉLÈGUE au moteur commande (repoCreateCommande) ; on le
+// mocke partiellement ici (ses internes sont couverts par commandes.routes.test.ts) et
+// on vérifie le CONTRAT de délégation (draft, verrou, officialisation).
+const commandeEngine = vi.hoisted(() => ({ repoCreateCommande: vi.fn() }));
+vi.mock("../module/commande-client/repository/commande-client.repository", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../module/commande-client/repository/commande-client.repository")>();
+  return { ...actual, repoCreateCommande: commandeEngine.repoCreateCommande };
+});
+
 // Auth mock : rôle injectable via l'en-tête `x-test-role` (défaut : administrateur).
 vi.mock("../module/auth/middlewares/auth.middleware", () => ({
   authenticateToken: (
@@ -175,6 +184,8 @@ function dispatch(sqlRaw: unknown, params?: unknown[]): { rows: unknown[]; rowCo
   if (/jsonb_build_object/.test(sql) && /FROM devis_documents/.test(sql)) return { rows: state.documentRows };
   if (/JOIN documents_clients dc/.test(sql) && /dd\.document_id = \$2/.test(sql)) return { rows: state.docFileMeta };
 
+  if (/SELECT numero FROM commande_client WHERE id/.test(sql)) return { rows: [{ numero: "CMD-2026-0001" }] };
+
   if (/count\(\*\)/i.test(sql) && /FROM devis d/.test(sql)) return { rows: [{ total: state.listTotal }] };
   // En-tête détail (WHERE d.id = $1, pas de verrou) — AVANT le fallback liste.
   if (/WHERE d\.id = \$1/.test(sql) && /AS parent_devis_id/.test(sql)) {
@@ -198,6 +209,8 @@ beforeEach(() => {
   state = defaultState();
   mocks.poolQuery.mockImplementation(async (sql: unknown, params?: unknown[]) => dispatch(sql, params));
   mocks.clientQuery.mockImplementation(async (sql: unknown, params?: unknown[]) => dispatch(sql, params));
+  commandeEngine.repoCreateCommande.mockReset();
+  commandeEngine.repoCreateCommande.mockResolvedValue({ id: 55 });
 });
 
 describe("/api/v1/devis", () => {
@@ -545,6 +558,23 @@ describe("/api/v1/devis", () => {
       created_at: "2026-03-23T10:00:00.000Z",
     };
 
+    state.draftLines = [
+      {
+        id: "1",
+        description: "Piece A",
+        article_id: null,
+        piece_technique_id: null,
+        source_article_devis_id: null,
+        source_dossier_devis_id: null,
+        code_piece: null,
+        quantite: 2,
+        unite: "u",
+        prix_unitaire_ht: 50,
+        remise_ligne: 0,
+        taux_tva: 20,
+      },
+    ]
+
     const res = await request(app).post("/api/v1/devis/7/convert-to-commande");
 
     expect(res.status).toBe(201);
@@ -556,28 +586,27 @@ describe("/api/v1/devis", () => {
       idempotent_replay: false,
     });
 
+    // La recherche d'une commande existante précède toute création (idempotence métier).
     const existingSql = String(
-      mocks.clientQuery.mock.calls.find((c) => String(c[0]).includes("FROM commande_client cc"))?.[0] ?? ""
+      mocks.poolQuery.mock.calls.find((c) => String(c[0]).includes("FROM commande_client cc"))?.[0] ?? ""
     );
     expect(existingSql).toContain("cc.id::text AS id");
     expect(existingSql).toContain("WHERE cc.devis_id = $1");
 
-    const insertCommandeSql = String(
-      mocks.clientQuery.mock.calls.find((c) => String(c[0]).includes("INSERT INTO commande_client"))?.[0] ?? ""
-    );
-    expect(insertCommandeSql).toContain("source_devis_version_id");
+    // #167 — délégation au moteur unique : draft serveur + verrou de version.
+    expect(commandeEngine.repoCreateCommande).toHaveBeenCalledTimes(1);
+    const engineInput = commandeEngine.repoCreateCommande.mock.calls[0][0] as Record<string, unknown>;
+    expect(engineInput).toMatchObject({
+      devis_id: 7,
+      source_devis_updated_at: "2026-03-24T10:00:00.000Z",
+      officialize_preparatory_data: false,
+    });
+    expect(Array.isArray(engineInput.lignes)).toBe(true)
 
-    const insertLinesSql = String(
-      mocks.clientQuery.mock.calls.find((c) => String(c[0]).includes("INSERT INTO commande_ligne"))?.[0] ?? ""
-    );
-    expect(insertLinesSql).toContain("ad.id");
-    expect(insertLinesSql).toContain("dd.id");
-    expect(insertLinesSql).toContain("dl.position ASC NULLS LAST");
-    expect(insertLinesSql).not.toMatch(/^\s*id\b/m);
-
-    // Conversion auditée dans la transaction.
-    const auditSql = mocks.clientQuery.mock.calls.find((c) => /erp_audit_logs/i.test(String(c[0])));
-    expect(auditSql).toBeTruthy();
+    // Conversion auditée (action devis.convert).
+    const auditCall = mocks.poolQuery.mock.calls.find((c) => /erp_audit_logs/i.test(String(c[0])));
+    expect(auditCall).toBeTruthy();
+    expect(String((auditCall?.[1] as unknown[])?.[2])).toBe("devis.convert");
   });
 
   it("GET /api/v1/devis/by-article/:articleId returns related devis with versions", async () => {

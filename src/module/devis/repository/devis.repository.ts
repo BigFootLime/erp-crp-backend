@@ -32,6 +32,7 @@ import type {
   UploadedDocument,
 } from "../types/devis.types";
 import type { CreateCommandeInput } from "../../commande-client/types/commande-client.types";
+import { repoCreateCommande } from "../../commande-client/repository/commande-client.repository";
 
 type DevisCommandeHeaderRow = {
   id: string;
@@ -2364,34 +2365,32 @@ export type ConvertDevisResult = {
   idempotent_replay: boolean;
 };
 
+/**
+ * #167 — conversion contrôlée : cette voie DÉLÈGUE la création au moteur unique
+ * `repoCreateCommande` (module commande-client) — mêmes garanties que le parcours
+ * préparé : fraîcheur atomique (DEVIS_DRAFT_STALE), officialisation des entités
+ * préparatoires, échéances, checkpoints de workflow, snapshot et lien source.
+ * L'orchestrateur n'ouvre PAS sa propre transaction : un FOR UPDATE ici bloquerait
+ * le FK KEY SHARE pris par la transaction du moteur sur la ligne devis. L'unicité
+ * `commande_client_devis_id_key` absorbe les courses (double clic / deux onglets
+ * -> la même commande est retournée, jamais un doublon).
+ */
 export async function repoConvertDevisToCommande(
   devisId: number,
   opts: { expected_updated_at?: string } & DevisWriteContext = {}
 ): Promise<ConvertDevisResult | null> {
-  const client = await pool.connect();
   const idempotencyPayloadHash = opts.idempotency_key
     ? devisIdempotencyPayloadHash({ devis_id: devisId, expected_updated_at: opts.expected_updated_at ?? null })
     : null;
-  try {
-    await client.query("BEGIN");
+  const idempotenceReady = Boolean(opts.idempotency_key && idempotencyPayloadHash) && (await hasDevisIdempotenceTable(pool));
 
-    if (opts.idempotency_key && idempotencyPayloadHash && (await hasDevisIdempotenceTable(client))) {
-      const replay = await readDevisIdempotentReplay(client, opts.idempotency_key, "CONVERT", idempotencyPayloadHash);
-      if (replay) {
-        await client.query("COMMIT");
-        return replay as unknown as ConvertDevisResult;
-      }
-    }
+  if (opts.idempotency_key && idempotencyPayloadHash && idempotenceReady) {
+    const replay = await readDevisIdempotentReplay(pool, opts.idempotency_key, "CONVERT", idempotencyPayloadHash);
+    if (replay) return replay as unknown as ConvertDevisResult;
+  }
 
-    const devis = await loadDevisCommandeHeader(client, devisId, "FOR UPDATE");
-    if (!devis) {
-      await client.query("ROLLBACK");
-      return null;
-    }
-
-    // Idempotence métier AVANT toute autre garde : une commande existe déjà pour ce devis
-    // -> on la retourne et on l'ouvre côté client, jamais de doublon (#167).
-    const existing = await client.query<{ id: string; numero: string }>(
+  const findExisting = async (): Promise<ConvertDevisResult | null> => {
+    const existing = await pool.query<{ id: string; numero: string }>(
       `
       SELECT cc.id::text AS id, cc.numero
       FROM commande_client cc
@@ -2400,219 +2399,111 @@ export async function repoConvertDevisToCommande(
       `,
       [devisId]
     );
-    const existingRow = existing.rows[0];
-    if (existingRow) {
-      const resultat: ConvertDevisResult = {
-        id: toInt(existingRow.id, "commande_client.id"),
-        numero: existingRow.numero,
-        devis_id: devisId,
-        already_converted: true,
-        idempotent_replay: false,
-      };
-      if (opts.idempotency_key && idempotencyPayloadHash && (await hasDevisIdempotenceTable(client))) {
-        await recordDevisIdempotence(client, opts.idempotency_key, "CONVERT", devisId, idempotencyPayloadHash, resultat);
-      }
-      await client.query("COMMIT");
-      return resultat;
-    }
-
-    if (!isAcceptedStatus(devis.statut)) {
-      throw new HttpError(400, "DEVIS_NOT_ACCEPTED", "Devis must be accepted before conversion");
-    }
-
-    // Verrou de version : la conversion cible exactement la version vue dans l'aperçu.
-    assertDevisFresh(opts.expected_updated_at, devis.updated_at, "DEVIS_DRAFT_STALE");
-
-    // Des données préparatoires exigent le parcours préparé (officialisation explicite
-    // article/dossier) — la voie directe ne doit pas produire une commande incohérente.
-    const prep = await client.query<{ has_prep: boolean }>(
-      `SELECT EXISTS (SELECT 1 FROM public.article_devis ad WHERE ad.devis_id = $1) AS has_prep`,
-      [devisId]
-    );
-    if (prep.rows[0]?.has_prep === true) {
-      throw new HttpError(
-        409,
-        "DEVIS_REQUIRES_PREPARED_CONVERSION",
-        "Ce devis porte des données préparatoires : utilisez « Préparer la commande » (officialisation explicite).",
-        { devis_id: devisId }
-      );
-    }
-
-    const hasLinePositionColumn = await hasPublicColumn(client, "devis_ligne", "position");
-
-    const seq = await client.query<{ id: string }>(
-      `SELECT nextval('public.commande_client_id_seq')::bigint::text AS id`
-    );
-    const idRaw = seq.rows[0]?.id;
-    if (!idRaw) throw new Error("Failed to allocate commande id");
-    const commandeId = toInt(idRaw, "commande_client.id");
-    const commandeNumero = await generateCommandeCode(client, { client_code: devis.client_id });
-
-    await client.query(
-      `
-      INSERT INTO commande_client (
-        id,
-        numero,
-        client_id,
-        contact_id,
-        destinataire_id,
-        mode_reglement_id,
-        conditions_paiement_id,
-        biller_id,
-        compte_vente_id,
-        commentaire,
-        type_affaire,
-        remise_globale,
-        total_ht,
-        total_ttc,
-        devis_id,
-        source_devis_version_id
-      ) VALUES (
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16
-      )
-      `,
-      [
-        commandeId,
-        commandeNumero,
-        devis.client_id,
-        devis.contact_id ?? null,
-        devis.adresse_livraison_id ?? null,
-        devis.mode_reglement_id ?? null,
-        devis.conditions_paiement_id ?? null,
-        devis.biller_id ?? null,
-        devis.compte_vente_id ?? null,
-        devis.commentaires ?? null,
-        "livraison",
-        devis.remise_globale ?? 0,
-        devis.total_ht ?? 0,
-        devis.total_ttc ?? 0,
-        devisId,
-        devisId,
-      ]
-    );
-
-    const insLines = await client.query(
-      `
-      INSERT INTO commande_ligne (
-        commande_id,
-        article_id,
-        piece_technique_id,
-        designation,
-        code_piece,
-        quantite,
-        unite,
-        prix_unitaire_ht,
-        remise_ligne,
-        taux_tva,
-        delai_client,
-        delai_interne,
-        devis_numero,
-        famille,
-        source_article_devis_id,
-        source_dossier_devis_id
-      )
-      SELECT
-        $1,
-        dl.article_id,
-        dl.piece_technique_id,
-        dl.description,
-        dl.code_piece,
-        dl.quantite,
-        dl.unite,
-        dl.prix_unitaire_ht,
-        dl.remise_ligne,
-        dl.taux_tva,
-        NULL,
-        NULL,
-        $2,
-        NULL,
-        ad.id,
-        dd.id
-      FROM devis_ligne dl
-      LEFT JOIN public.article_devis ad ON ad.devis_ligne_id = dl.id
-      LEFT JOIN public.dossier_technique_piece_devis dd ON dd.article_devis_id = ad.id
-      WHERE dl.devis_id = $3
-      ORDER BY ${hasLinePositionColumn ? "dl.position ASC NULLS LAST, dl.id ASC" : "dl.id ASC"}
-      `,
-      [commandeId, devis.numero, devisId]
-    );
-
-    if ((insLines.rowCount ?? 0) === 0) {
-      throw new HttpError(400, "DEVIS_EMPTY", "Devis has no lines to convert");
-    }
-
-    await client.query(
-      `
-        UPDATE public.articles a
-        SET status = 'VALIDE',
-            updated_at = now()
-        WHERE a.status = 'EN_DEVIS'
-          AND a.id IN (
-            SELECT DISTINCT cl.article_id
-            FROM public.commande_ligne cl
-            WHERE cl.commande_id = $1
-              AND cl.article_id IS NOT NULL
-          )
-      `,
-      [commandeId]
-    );
-
-    const resultat: ConvertDevisResult = {
-      id: commandeId,
-      numero: commandeNumero,
+    const row = existing.rows[0];
+    if (!row) return null;
+    return {
+      id: toInt(row.id, "commande_client.id"),
+      numero: row.numero,
       devis_id: devisId,
-      already_converted: false,
+      already_converted: true,
       idempotent_replay: false,
     };
+  };
 
-    await insertDevisAuditLog(client, opts.audit, {
-      action: "devis.convert",
-      entity_id: String(devisId),
-      details: {
-        devis_numero: devis.numero,
-        commande_id: commandeId,
-        commande_numero: commandeNumero,
-        expected_updated_at: opts.expected_updated_at ?? null,
-        idempotency_key: opts.idempotency_key ?? null,
-      },
-    });
-
-    if (opts.idempotency_key && idempotencyPayloadHash && (await hasDevisIdempotenceTable(client))) {
-      await recordDevisIdempotence(client, opts.idempotency_key, "CONVERT", devisId, idempotencyPayloadHash, resultat);
+  const recordConvertIdempotence = async (resultat: ConvertDevisResult) => {
+    if (opts.idempotency_key && idempotencyPayloadHash && idempotenceReady) {
+      await recordDevisIdempotence(pool, opts.idempotency_key, "CONVERT", devisId, idempotencyPayloadHash, resultat);
     }
+  };
 
-    await client.query("COMMIT");
-    return resultat;
+  const devis = await loadDevisCommandeHeader(pool, devisId);
+  if (!devis) return null;
+
+  // Idempotence métier AVANT toute autre garde : une commande existe déjà pour ce devis
+  // -> on la retourne et on l'ouvre côté client, jamais de doublon (#167).
+  const alreadyConverted = await findExisting();
+  if (alreadyConverted) {
+    await recordConvertIdempotence(alreadyConverted);
+    return alreadyConverted;
+  }
+
+  if (!isAcceptedStatus(devis.statut)) {
+    throw new HttpError(400, "DEVIS_NOT_ACCEPTED", "Devis must be accepted before conversion");
+  }
+
+  // Pré-contrôle rapide de fraîcheur (message immédiat) ; la vérification FAISANT FOI
+  // est rejouée atomiquement dans la transaction du moteur (assertDevisDraftIsFresh).
+  assertDevisFresh(opts.expected_updated_at, devis.updated_at, "DEVIS_DRAFT_STALE");
+
+  // L'aperçu serveur EST la source de la conversion : mêmes lignes, mêmes résolutions
+  // article/pièce, mêmes liens préparatoires que « Préparer la commande ».
+  const draftBundle = await repoGetCommandeDraftFromDevis(devisId);
+  if (!draftBundle) return null;
+  const draft = draftBundle.draft;
+
+  if (!Array.isArray(draft.lignes) || draft.lignes.length === 0) {
+    throw new HttpError(400, "DEVIS_EMPTY", "Devis has no lines to convert");
+  }
+
+  const hasPreparatory = draft.lignes.some((ligne) =>
+    Boolean((ligne as { source_article_devis_id?: string | null }).source_article_devis_id)
+  );
+
+  const input: CreateCommandeInput = {
+    ...draft,
+    date_commande: draft.date_commande ?? new Date().toISOString().slice(0, 10),
+    // Verrou de version : la conversion cible exactement la version vue dans l'aperçu.
+    source_devis_updated_at: opts.expected_updated_at ?? draft.source_devis_updated_at ?? devis.updated_at,
+    // L'officialisation est EXPLICITE : l'aperçu de conversion l'annonce avant confirmation.
+    officialize_preparatory_data: hasPreparatory,
+  };
+
+  let createdId: number;
+  try {
+    const created = await repoCreateCommande(input, []);
+    createdId = created.id;
   } catch (err) {
-    await client.query("ROLLBACK");
-    const { code, constraint } = getPgErrorInfo(err);
-    if (code === "23505" && constraint === "commande_client_devis_id_key") {
+    if (err instanceof HttpError && err.code === "DEVIS_ALREADY_CONVERTED") {
       // Course concurrente : une autre transaction a converti ce devis pendant la nôtre.
-      // Résolution idempotente : retourner la commande gagnante, jamais d'erreur utilisateur.
-      const winner = await pool.query<{ id: string; numero: string }>(
-        `SELECT cc.id::text AS id, cc.numero FROM commande_client cc WHERE cc.devis_id = $1 LIMIT 1`,
-        [devisId]
-      );
-      const row = winner.rows[0];
-      if (row) {
-        return {
-          id: toInt(row.id, "commande_client.id"),
-          numero: row.numero,
-          devis_id: devisId,
-          already_converted: true,
-          idempotent_replay: false,
-        };
+      const winner = await findExisting();
+      if (winner) {
+        await recordConvertIdempotence(winner);
+        return winner;
       }
-      throw new HttpError(409, "DEVIS_ALREADY_CONVERTED", "Devis already converted");
-    }
-    if (opts.idempotency_key && idempotencyPayloadHash && code === "23505" && constraint === "devis_idempotence_pkey") {
-      const replay = await readDevisIdempotentReplay(pool, opts.idempotency_key, "CONVERT", idempotencyPayloadHash);
-      if (replay) return replay as unknown as ConvertDevisResult;
     }
     throw err;
-  } finally {
-    client.release();
   }
+
+  const numeroRes = await pool.query<{ numero: string }>(`SELECT numero FROM commande_client WHERE id = $1 LIMIT 1`, [
+    createdId,
+  ]);
+  const commandeNumero = numeroRes.rows[0]?.numero ?? "";
+
+  const resultat: ConvertDevisResult = {
+    id: createdId,
+    numero: commandeNumero,
+    devis_id: devisId,
+    already_converted: false,
+    idempotent_replay: false,
+  };
+
+  // Audit hors transaction moteur (le moteur journalise déjà historique + événements
+  // commande) ; devis.convert relie devis, commande, clé d'idempotence et jeton de version.
+  await insertDevisAuditLog(pool, opts.audit, {
+    action: "devis.convert",
+    entity_id: String(devisId),
+    details: {
+      devis_numero: devis.numero,
+      commande_id: createdId,
+      commande_numero: commandeNumero,
+      officialized_preparatory: hasPreparatory,
+      expected_updated_at: opts.expected_updated_at ?? null,
+      idempotency_key: opts.idempotency_key ?? null,
+    },
+  });
+
+  await recordConvertIdempotence(resultat);
+  return resultat;
 }
 
 export async function repoDeleteDevis(id: number, ctx: DevisWriteContext = {}) {

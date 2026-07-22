@@ -2,6 +2,7 @@ import request from "supertest";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EventEmitter } from "events";
 import path from "node:path";
+import { HttpError } from "../utils/httpError";
 
 process.env.CERP_DOCUMENTS_ROOT = path.resolve("uploads", "docs");
 
@@ -26,6 +27,13 @@ vi.mock("pg", () => {
 vi.mock("../utils/checkNetworkDrive", () => ({
   checkNetworkDrive: vi.fn(() => Promise.resolve()),
 }));
+
+// #167 — la conversion délègue au moteur commande ; mock partiel (contrat de délégation).
+const commandeEngine = vi.hoisted(() => ({ repoCreateCommande: vi.fn() }));
+vi.mock("../module/commande-client/repository/commande-client.repository", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../module/commande-client/repository/commande-client.repository")>();
+  return { ...actual, repoCreateCommande: commandeEngine.repoCreateCommande };
+});
 
 // RBAC réel testé : le rôle vient de l'en-tête `x-test-role` (défaut : administrateur).
 vi.mock("../module/auth/middlewares/auth.middleware", () => ({
@@ -53,7 +61,9 @@ const defaultState = () => ({
   deleteCurrent: null as null | Record<string, unknown>,
   commandeHeader: null as null | Record<string, unknown>,
   existingCommande: null as null | { id: string; numero: string },
-  hasPrep: false,
+  draftLines: [] as Record<string, unknown>[],
+  draftPreparatoryByCode: [] as Record<string, unknown>[],
+  draftArticlesByCode: [] as Record<string, unknown>[],
   nextVersion: 2,
   devisSeqId: "7",
   insertDevisReturnId: "7",
@@ -115,10 +125,13 @@ function dispatch(sqlRaw: unknown, params?: unknown[]): { rows: unknown[]; rowCo
   if (/->>'created_at'/.test(sql) && /FROM devis d/.test(sql)) {
     return { rows: state.commandeHeader ? [state.commandeHeader] : [] };
   }
-  if (/AS has_prep/.test(sql)) return { rows: [{ has_prep: state.hasPrep }] };
   if (/FROM commande_client cc\s+WHERE cc\.devis_id/.test(sql)) {
     return { rows: state.existingCommande ? [state.existingCommande] : [] };
   }
+  if (/SELECT numero FROM commande_client WHERE id/.test(sql)) return { rows: [{ numero: "CMD-2026-0001" }] };
+  if (/AS article_devis_devis_id/.test(sql)) return { rows: state.draftPreparatoryByCode };
+  if (/lookup\.lookup_code/.test(sql) && /JOIN public\.articles/.test(sql)) return { rows: state.draftArticlesByCode };
+  if (/FROM devis_ligne dl/.test(sql) && /source_article_devis_id/.test(sql)) return { rows: state.draftLines };
   if (/COALESCE\(root_devis_id, id\)/.test(sql)) return { rows: [{ root_devis_id: state.versionRoot }] };
   if (/COALESCE\(d\.root_devis_id, d\.id\)/.test(sql)) return { rows: state.versionRows };
   if (/SELECT quantite/.test(sql) && /FROM devis_ligne/.test(sql)) return { rows: [] };
@@ -135,6 +148,24 @@ beforeEach(() => {
   state = defaultState();
   mocks.poolQuery.mockImplementation(async (sql: unknown, params?: unknown[]) => dispatch(sql, params));
   mocks.clientQuery.mockImplementation(async (sql: unknown, params?: unknown[]) => dispatch(sql, params));
+  commandeEngine.repoCreateCommande.mockReset();
+  commandeEngine.repoCreateCommande.mockResolvedValue({ id: 55 });
+});
+
+const plainDraftLine = (over: Record<string, unknown> = {}) => ({
+  id: "1",
+  description: "Piece A",
+  article_id: null,
+  piece_technique_id: null,
+  source_article_devis_id: null,
+  source_dossier_devis_id: null,
+  code_piece: null,
+  quantite: 2,
+  unite: "u",
+  prix_unitaire_ht: 50,
+  remise_ligne: 0,
+  taux_tva: 20,
+  ...over,
 });
 
 const draftCurrent = (over: Record<string, unknown> = {}) => ({
@@ -403,27 +434,29 @@ describe("#167 — idempotence création / révision / conversion", () => {
 
   it("conversion : rejeu de la même clé → 200 avec le même résultat, sans nouvelle commande", async () => {
     state.commandeHeader = acceptedHeader();
+    state.draftLines = [plainDraftLine()];
     const first = await request(app)
       .post("/api/v1/devis/7/convert-to-commande")
       .set("Idempotency-Key", "devis-convert-0001")
       .send({});
     expect(first.status).toBe(201);
     expect(first.body).toMatchObject({ id: 55, already_converted: false, idempotent_replay: false });
+    expect(commandeEngine.repoCreateCommande).toHaveBeenCalledTimes(1);
 
-    const recordCall = mocks.clientQuery.mock.calls.find((c) =>
+    const recordCall = mocks.poolQuery.mock.calls.find((c) =>
       String(c[0]).includes("INSERT INTO public.devis_idempotence")
     );
     const [, , , payloadHash, resultat] = recordCall?.[1] as [string, string, unknown, string, string];
 
     state.idemRow = { action: "CONVERT", payload_hash: payloadHash, resultat: JSON.parse(resultat) };
-    mocks.clientQuery.mockClear();
     const replay = await request(app)
       .post("/api/v1/devis/7/convert-to-commande")
       .set("Idempotency-Key", "devis-convert-0001")
       .send({});
     expect(replay.status).toBe(200);
     expect(replay.body).toMatchObject({ id: 55, numero: "CMD-2026-0001", idempotent_replay: true });
-    expect(mocks.clientQuery.mock.calls.some((c) => /INSERT INTO commande_client/.test(String(c[0])))).toBe(false);
+    // Le moteur n'est PAS rappelé : même clé + même payload = même résultat.
+    expect(commandeEngine.repoCreateCommande).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -434,7 +467,7 @@ describe("#167 — conversion contrôlée devis → commande", () => {
     const res = await request(app).post("/api/v1/devis/7/convert-to-commande").send({});
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ id: 42, numero: "CMD-2026-0042", already_converted: true });
-    expect(mocks.clientQuery.mock.calls.some((c) => /INSERT INTO commande_client/.test(String(c[0])))).toBe(false);
+    expect(commandeEngine.repoCreateCommande).not.toHaveBeenCalled();
   });
 
   it("version source modifiée depuis l'aperçu → 409 DEVIS_DRAFT_STALE", async () => {
@@ -444,6 +477,7 @@ describe("#167 — conversion contrôlée devis → commande", () => {
       .send({ expected_updated_at: "2026-07-20T00:00:00+00:00" });
     expect(res.status).toBe(409);
     expect(res.body.code).toBe("DEVIS_DRAFT_STALE");
+    expect(commandeEngine.repoCreateCommande).not.toHaveBeenCalled();
   });
 
   it("statut non accepté → 400 DEVIS_NOT_ACCEPTED", async () => {
@@ -451,24 +485,72 @@ describe("#167 — conversion contrôlée devis → commande", () => {
     const res = await request(app).post("/api/v1/devis/7/convert-to-commande").send({});
     expect(res.status).toBe(400);
     expect(res.body.code).toBe("DEVIS_NOT_ACCEPTED");
+    expect(commandeEngine.repoCreateCommande).not.toHaveBeenCalled();
   });
 
-  it("données préparatoires présentes → 409 DEVIS_REQUIRES_PREPARED_CONVERSION (parcours préparé)", async () => {
+  it("données préparatoires → délégation au moteur avec officialisation EXPLICITE", async () => {
     state.commandeHeader = acceptedHeader();
-    state.hasPrep = true;
+    state.draftLines = [plainDraftLine({ code_piece: "PCT-001" })];
+    state.draftPreparatoryByCode = [
+      {
+        lookup_code: "PCT-001",
+        article_devis_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        article_devis_devis_id: "7",
+        article_code: "PCT-001",
+        article_designation: "Piece A",
+        primary_category: "piece_finie_fabriquee",
+        article_categories: ["piece_finie_fabriquee"],
+        family_code: "PT",
+        plan_index: 1,
+        projet_id: null,
+        source_official_article_id: null,
+        dossier_devis_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        dossier_devis_devis_id: "7",
+        dossier_code_piece: "PCT-001",
+        dossier_designation: "Piece A",
+        source_official_piece_technique_id: null,
+        dossier_payload: {},
+      },
+    ];
+
     const res = await request(app).post("/api/v1/devis/7/convert-to-commande").send({});
-    expect(res.status).toBe(409);
-    expect(res.body.code).toBe("DEVIS_REQUIRES_PREPARED_CONVERSION");
+    expect(res.status).toBe(201);
+    expect(commandeEngine.repoCreateCommande).toHaveBeenCalledTimes(1);
+    const engineInput = commandeEngine.repoCreateCommande.mock.calls[0][0] as Record<string, unknown>;
+    expect(engineInput).toMatchObject({ devis_id: 7, officialize_preparatory_data: true });
+    const lignes = engineInput.lignes as Array<Record<string, unknown>>;
+    expect(lignes[0]).toMatchObject({ source_article_devis_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" });
   });
 
-  it("devis sans ligne → 400 DEVIS_EMPTY (transaction annulée)", async () => {
+  it("course concurrente (moteur → DEVIS_ALREADY_CONVERTED) → 200 avec la commande gagnante", async () => {
     state.commandeHeader = acceptedHeader();
-    state.convertLineCount = 0;
+    state.draftLines = [plainDraftLine()];
+    commandeEngine.repoCreateCommande.mockRejectedValueOnce(
+      new HttpError(409, "DEVIS_ALREADY_CONVERTED", "Devis already converted")
+    );
+    // Après l'échec du moteur, la commande gagnante est visible.
+    let raced = false;
+    mocks.poolQuery.mockImplementation(async (sql: unknown, params?: unknown[]) => {
+      if (/FROM commande_client cc\s+WHERE cc\.devis_id/.test(String(sql))) {
+        if (raced) return { rows: [{ id: "77", numero: "CMD-2026-0077" }] };
+        raced = true;
+        return { rows: [] };
+      }
+      return dispatch(sql, params);
+    });
+
+    const res = await request(app).post("/api/v1/devis/7/convert-to-commande").send({});
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ id: 77, numero: "CMD-2026-0077", already_converted: true });
+  });
+
+  it("devis sans ligne → 400 DEVIS_EMPTY, moteur jamais appelé", async () => {
+    state.commandeHeader = acceptedHeader();
+    state.draftLines = [];
     const res = await request(app).post("/api/v1/devis/7/convert-to-commande").send({});
     expect(res.status).toBe(400);
     expect(res.body.code).toBe("DEVIS_EMPTY");
-    const commits = mocks.clientQuery.mock.calls.filter((c) => String(c[0]).trim() === "COMMIT");
-    expect(commits.length).toBe(0);
+    expect(commandeEngine.repoCreateCommande).not.toHaveBeenCalled();
   });
 });
 
