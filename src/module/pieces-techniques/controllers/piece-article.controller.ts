@@ -14,11 +14,10 @@ import { createArticleSchema } from "../../stock/validators/stock.validators"
 
 const uuidSchema = z.string().uuid()
 const createOrLinkSchema = z.object({
-  code: z.string().trim().min(1).max(80).optional(),
   designation: z.string().trim().min(1).max(400).optional(),
   family_code: z.string().trim().min(1).max(40),
   stock_managed: z.boolean().optional(),
-})
+}).strict()
 
 function buildAuditContext(req: Request): AuditContext {
   const user = req.user
@@ -93,7 +92,6 @@ export const createOrLinkArticleFabrique: RequestHandler = async (req, res, next
       body: {
         // Placeholder pour satisfaire min(1) ; remplacé par "" ci-dessous si l'utilisateur ne fournit
         // pas de code → le backend génère alors le code fabriqué normalisé ({code_piece}-P{plan_index}).
-        code: input.code ?? "AUTO",
         designation: input.designation ?? p.rows[0].designation,
         family_code: input.family_code,
         article_category: "fabrique",
@@ -101,10 +99,10 @@ export const createOrLinkArticleFabrique: RequestHandler = async (req, res, next
         stock_managed: input.stock_managed ?? true,
       },
     }).body
-    const body = input.code ? parsed : { ...parsed, code: "" }
+    const body = parsed
 
     try {
-      const article = await createStockArticleSVC(body, audit)
+      const article = await createStockArticleSVC(body, audit, `piece-article-${id}`)
       res.status(201).json({ created: true, article })
     } catch (e) {
       if (isUniqueViolation(e)) {

@@ -35,6 +35,8 @@ import type {
   ListAnalyticsQueryDTO,
   ListInventorySessionsQueryDTO,
   ListArticlesQueryDTO,
+  ListArticleVersionsQueryDTO,
+  ListArticleWhereUsedQueryDTO,
   ListArticleFamiliesQueryDTO,
   ListMatiereEtatsQueryDTO,
   ListMatiereNuancesQueryDTO,
@@ -46,6 +48,9 @@ import type {
   ListMovementsQueryDTO,
   UpsertInventoryLineBodyDTO,
   UpdateArticleBodyDTO,
+  ArchiveArticleBodyDTO,
+  ReactivateArticleBodyDTO,
+  ArticleDocumentMetadataDTO,
   UpdateEmplacementBodyDTO,
   UpdateLotBodyDTO,
   UpdateMagasinBodyDTO,
@@ -96,6 +101,10 @@ import {
   repoRemoveMovementDocument,
   repoUpsertInventoryLine,
   repoUpdateArticle,
+  repoArchiveArticle,
+  repoReactivateArticle,
+  repoListArticleVersions,
+  repoListArticleWhereUsed,
   repoUpdateEmplacement,
   repoUpdateLot,
   repoUpdateMagasin,
@@ -135,8 +144,8 @@ export async function listStockArticlesSVC(filters: ListArticlesQueryDTO) {
   return repoListArticles(filters);
 }
 
-export async function getStockArticleSVC(id: string): Promise<StockArticleDetail | null> {
-  return repoGetArticle(id);
+export async function getStockArticleSVC(id: string, includeCosts = false): Promise<StockArticleDetail | null> {
+  return repoGetArticle(id, includeCosts);
 }
 
 export async function getStockArticlesKpisSVC(): Promise<StockArticleKpis> {
@@ -182,16 +191,48 @@ export async function createStockArticleFamilySVC(
   return repoCreateArticleFamily(body, audit);
 }
 
-export async function createStockArticleSVC(body: CreateArticleBodyDTO, audit: AuditContext): Promise<StockArticleDetail> {
-  return repoCreateArticle(body, audit);
+export async function createStockArticleSVC(
+  body: CreateArticleBodyDTO,
+  audit: AuditContext,
+  idempotencyKey: string,
+  includeCosts = false
+): Promise<StockArticleDetail> {
+  return repoCreateArticle(body, audit, idempotencyKey, includeCosts);
 }
 
 export async function updateStockArticleSVC(
   id: string,
   patch: UpdateArticleBodyDTO,
-  audit: AuditContext
+  audit: AuditContext,
+  includeCosts = false
 ): Promise<StockArticleDetail | null> {
-  return repoUpdateArticle(id, patch, audit);
+  return repoUpdateArticle(id, patch, audit, includeCosts);
+}
+
+export async function archiveStockArticleSVC(
+  id: string,
+  body: ArchiveArticleBodyDTO,
+  audit: AuditContext,
+  includeCosts = false
+): Promise<StockArticleDetail | null> {
+  return repoArchiveArticle(id, body, audit, includeCosts);
+}
+
+export async function reactivateStockArticleSVC(
+  id: string,
+  body: ReactivateArticleBodyDTO,
+  audit: AuditContext,
+  includeCosts = false
+): Promise<StockArticleDetail | null> {
+  return repoReactivateArticle(id, body, audit, includeCosts);
+}
+
+export async function listStockArticleVersionsSVC(id: string, filters: ListArticleVersionsQueryDTO) {
+  return repoListArticleVersions(id, filters);
+}
+
+export async function listStockArticleWhereUsedSVC(id: string, filters: ListArticleWhereUsedQueryDTO) {
+  return repoListArticleWhereUsed(id, filters);
 }
 
 export async function listStockMagasinsSVC(filters: ListMagasinsQueryDTO) {
@@ -297,9 +338,10 @@ export async function listStockArticleDocumentsSVC(articleId: string): Promise<S
 export async function attachStockArticleDocumentsSVC(
   articleId: string,
   documents: Express.Multer.File[],
+  metadata: ArticleDocumentMetadataDTO,
   audit: AuditContext
 ): Promise<StockDocument[] | null> {
-  return repoAttachArticleDocuments(articleId, documents, audit);
+  return repoAttachArticleDocuments(articleId, documents, metadata, audit);
 }
 
 export async function removeStockArticleDocumentSVC(

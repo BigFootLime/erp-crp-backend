@@ -72,6 +72,43 @@ export type ArticleMatierePayload = {
   largeur_plat_mm?: number | null;
 };
 
+export type ArticleTechnicalVersion = {
+  id: string;
+  indice: string;
+  statut: string;
+  plan_reference: string | null;
+  date_application: string | null;
+};
+
+export type ArticleProcurementProfile = {
+  manufacturer_name: string | null;
+  manufacturer_reference: string | null;
+  preferred_catalogue_id: string | null;
+  packaging: string | null;
+  process: string | null;
+  finish: string | null;
+  requirements: string | null;
+  certificate_required: boolean;
+  min_stock: number | null;
+  max_stock: number | null;
+};
+
+export type ArticleSupplierReference = {
+  catalogue_id: string;
+  supplier_id: string;
+  supplier_code: string | null;
+  supplier_name: string;
+  supplier_reference: string | null;
+  unit: string | null;
+  unit_price: number | null;
+  currency: string | null;
+  lead_time_days: number | null;
+  moq: number | null;
+  conditions: string | null;
+  preferred: boolean;
+  active: boolean;
+};
+
 export type StockArticleListItem = {
   id: string;
   root_article_id: string;
@@ -82,6 +119,7 @@ export type StockArticleListItem = {
   projet_id: number | null;
   code: string;
   designation: string;
+  designation_secondary: string | null;
   article_type: ArticleType;
   article_category: ArticleCategory;
   article_categories: ArticleBusinessCategory[];
@@ -92,7 +130,12 @@ export type StockArticleListItem = {
   piece_designation: string | null;
   unite: string | null;
   lot_tracking: boolean;
+  is_sold: boolean;
   is_active: boolean;
+  row_version: number;
+  archived_at: string | null;
+  archive_reason: string | null;
+  applicable_version: ArticleTechnicalVersion | null;
   qty_available: number;
   qty_reserved: number;
   qty_total: number;
@@ -104,6 +147,30 @@ export type StockArticleListItem = {
 export type StockArticleDetail = StockArticleListItem & {
   notes: string | null;
   article_matiere: ArticleMatierePayload | null;
+  procurement: ArticleProcurementProfile | null;
+  suppliers: ArticleSupplierReference[];
+  documents: StockDocument[];
+  costs_redacted: boolean;
+};
+
+export type ArticleWhereUsedType =
+  | "PIECE_CURRENT"
+  | "PIECE_HISTORICAL"
+  | "QUOTE"
+  | "CUSTOMER_ORDER"
+  | "SUPPLIER_ORDER"
+  | "WORK_ORDER"
+  | "RECEIPT"
+  | "LOT"
+  | "STOCK_MOVEMENT"
+  | "DELIVERY";
+
+export type ArticleWhereUsedItem = {
+  usage_type: ArticleWhereUsedType;
+  usage_id: string;
+  parent_id: string | null;
+  label: string;
+  occurred_at: string | null;
 };
 
 export type StockArticleKpis = {
@@ -273,6 +340,15 @@ export type StockDocument = {
   document_id: string;
   document_name: string;
   type: string | null;
+  revision?: string | null;
+  version?: number;
+  mime_type?: string;
+  size_bytes?: number;
+  sha256?: string | null;
+  uploaded_by?: number | null;
+  created_at?: string;
+  updated_at?: string;
+  is_active?: boolean;
 };
 
 export type StockMovementEvent = {

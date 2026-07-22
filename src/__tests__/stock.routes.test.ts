@@ -153,8 +153,8 @@ describe("/api/v1/stock", () => {
     const res = await request(app)
       .post("/api/v1/stock/articles")
       .set("Authorization", "Bearer fake")
+      .set("Idempotency-Key", "test-fabricated-article-001")
       .send({
-        code: "PT-001-P1",
         projet_id: null,
         designation: "Pièce stockée",
         article_category: "fabrique",
@@ -162,7 +162,6 @@ describe("/api/v1/stock", () => {
         family_code: "PT",
         stock_managed: true,
         piece_technique_id: "22222222-2222-2222-2222-222222222222",
-        plan_index: 1,
         lot_tracking: false,
         is_active: true,
       });
@@ -251,8 +250,8 @@ describe("/api/v1/stock", () => {
     const res = await request(app)
       .post("/api/v1/stock/articles")
       .set("Authorization", "Bearer fake")
+      .set("Idempotency-Key", "test-material-article-001")
       .send({
-        code: "MP-PL-ALU-ETAT-50x10x1000",
         designation: "Alu plat",
         article_category: "matiere",
         article_categories: ["matiere_premiere"],
