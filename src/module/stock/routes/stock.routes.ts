@@ -1,7 +1,7 @@
 import { Router } from "express";
 import multer from "multer";
 
-import { authenticateToken } from "../../auth/middlewares/auth.middleware";
+import { authenticateToken, authorizeRole } from "../../auth/middlewares/auth.middleware";
 import { ensureTmpStoragePath } from "../../../utils/cerpStorage";
 import {
   attachStockArticleDocuments,
@@ -51,6 +51,10 @@ import {
   removeStockMovementDocument,
   upsertStockInventorySessionLine,
   updateStockArticle,
+  archiveStockArticle,
+  reactivateStockArticle,
+  listStockArticleVersions,
+  listStockArticleWhereUsed,
   updateStockEmplacement,
   updateStockLot,
   updateStockMagasin,
@@ -60,6 +64,11 @@ import {
   linkArticlePieceTechnique,
   unlinkArticlePieceTechnique,
 } from "../controllers/article-piece-link.controller";
+import {
+  ARTICLE_ARCHIVE_ROLES,
+  ARTICLE_DOCUMENT_WRITE_ROLES,
+  ARTICLE_WRITE_ROLES,
+} from "../stock-article.permissions";
 
 const router = Router();
 
@@ -74,22 +83,30 @@ const upload = multer({
 
 router.use(authenticateToken);
 
+const requireArticleWrite = authorizeRole(...ARTICLE_WRITE_ROLES);
+const requireArticleArchive = authorizeRole(...ARTICLE_ARCHIVE_ROLES);
+const requireArticleDocumentWrite = authorizeRole(...ARTICLE_DOCUMENT_WRITE_ROLES);
+
 router.get("/analytics", getStockAnalytics);
 router.get("/article-categories", listStockArticleCategories);
 router.get("/article-families", listStockArticleFamilies);
-router.post("/article-families", createStockArticleFamily);
+router.post("/article-families", requireArticleWrite, createStockArticleFamily);
 router.get("/matiere-nuances", listStockMatiereNuances);
-router.post("/matiere-nuances", createStockMatiereNuance);
+router.post("/matiere-nuances", requireArticleWrite, createStockMatiereNuance);
 router.get("/matiere-etats", listStockMatiereEtats);
-router.post("/matiere-etats", createStockMatiereEtat);
+router.post("/matiere-etats", requireArticleWrite, createStockMatiereEtat);
 router.get("/matiere-sous-etats", listStockMatiereSousEtats);
-router.post("/matiere-sous-etats", createStockMatiereSousEtat);
+router.post("/matiere-sous-etats", requireArticleWrite, createStockMatiereSousEtat);
 router.get("/articles", listStockArticles);
 router.get("/articles/kpis", getStockArticlesKpis);
 router.get("/articles/code-preview", previewStockArticleCode);
-router.post("/articles", createStockArticle);
+router.post("/articles", requireArticleWrite, createStockArticle);
 router.get("/articles/:id", getStockArticle);
-router.patch("/articles/:id", updateStockArticle);
+router.patch("/articles/:id", requireArticleWrite, updateStockArticle);
+router.post("/articles/:id/archive", requireArticleArchive, archiveStockArticle);
+router.post("/articles/:id/reactivate", requireArticleArchive, reactivateStockArticle);
+router.get("/articles/:id/versions", listStockArticleVersions);
+router.get("/articles/:id/where-used", listStockArticleWhereUsed);
 
 router.get("/inventory-sessions", listStockInventorySessions);
 router.post("/inventory-sessions", createStockInventorySession);
@@ -100,12 +117,12 @@ router.post("/inventory-sessions/:id/close", closeStockInventorySession);
 
 // GPAO B5 — lien Article fabriqué ↔ Pièce technique
 router.get("/articles/:id/definition-technique", getArticleDefinitionTechnique);
-router.post("/articles/:id/link-piece-technique", linkArticlePieceTechnique);
-router.delete("/articles/:id/link-piece-technique", unlinkArticlePieceTechnique);
+router.post("/articles/:id/link-piece-technique", requireArticleWrite, linkArticlePieceTechnique);
+router.delete("/articles/:id/link-piece-technique", requireArticleWrite, unlinkArticlePieceTechnique);
 
 router.get("/articles/:id/documents", listStockArticleDocuments);
-router.post("/articles/:id/documents", upload.array("documents[]"), attachStockArticleDocuments);
-router.delete("/articles/:id/documents/:docId", removeStockArticleDocument);
+router.post("/articles/:id/documents", requireArticleDocumentWrite, upload.array("documents[]", 10), attachStockArticleDocuments);
+router.delete("/articles/:id/documents/:docId", requireArticleDocumentWrite, removeStockArticleDocument);
 router.get("/articles/:id/documents/:docId/file", downloadStockArticleDocument);
 
 router.get("/magasins", listStockMagasins);

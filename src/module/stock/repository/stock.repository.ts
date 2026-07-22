@@ -13,6 +13,8 @@ import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-lo
 import type {
   ArticleCategory,
   ArticleBusinessCategory,
+  ArticleTechnicalVersion,
+  ArticleWhereUsedItem,
   Paginated,
   StockAnalytics,
   StockArticleCategoryOption,
@@ -67,6 +69,11 @@ import type {
   StockMovementTypeDTO,
   UpsertInventoryLineBodyDTO,
   UpdateArticleBodyDTO,
+  ArchiveArticleBodyDTO,
+  ReactivateArticleBodyDTO,
+  ListArticleVersionsQueryDTO,
+  ListArticleWhereUsedQueryDTO,
+  ArticleDocumentMetadataDTO,
   UpdateEmplacementBodyDTO,
   UpdateLotBodyDTO,
   UpdateMagasinBodyDTO,
@@ -1238,6 +1245,66 @@ async function syncArticleSubtypeDetails(
   );
 }
 
+async function syncArticleProcurementProfile(
+  client: Pick<PoolClient, "query">,
+  articleId: string,
+  procurement: CreateArticleBodyDTO["procurement"] | UpdateArticleBodyDTO["procurement"],
+  actorUserId: number
+) {
+  if (!procurement) return;
+
+  if (procurement.preferred_catalogue_id) {
+    const preferred = await client.query<{ ok: number }>(
+      `SELECT 1::int AS ok
+       FROM public.fournisseur_catalogue
+       WHERE id = $1::uuid AND article_id = $2::uuid AND actif = true
+       LIMIT 1`,
+      [procurement.preferred_catalogue_id, articleId]
+    );
+    if (!preferred.rows[0]?.ok) {
+      throw new HttpError(400, "INVALID_PREFERRED_SUPPLIER_REFERENCE", "The preferred supplier catalogue reference must be active and linked to this article.");
+    }
+  }
+
+  await client.query(
+    `
+      INSERT INTO public.article_procurement_profile (
+        article_id, manufacturer_name, manufacturer_reference, preferred_catalogue_id,
+        packaging, process, finish, requirements, certificate_required,
+        min_stock, max_stock, created_by, updated_by
+      )
+      VALUES ($1::uuid,$2,$3,$4::uuid,$5,$6,$7,$8,$9,$10,$11,$12,$12)
+      ON CONFLICT (article_id) DO UPDATE SET
+        manufacturer_name = EXCLUDED.manufacturer_name,
+        manufacturer_reference = EXCLUDED.manufacturer_reference,
+        preferred_catalogue_id = EXCLUDED.preferred_catalogue_id,
+        packaging = EXCLUDED.packaging,
+        process = EXCLUDED.process,
+        finish = EXCLUDED.finish,
+        requirements = EXCLUDED.requirements,
+        certificate_required = EXCLUDED.certificate_required,
+        min_stock = EXCLUDED.min_stock,
+        max_stock = EXCLUDED.max_stock,
+        updated_at = now(),
+        updated_by = EXCLUDED.updated_by
+    `,
+    [
+      articleId,
+      procurement.manufacturer_name ?? null,
+      procurement.manufacturer_reference ?? null,
+      procurement.preferred_catalogue_id ?? null,
+      procurement.packaging ?? null,
+      procurement.process ?? null,
+      procurement.finish ?? null,
+      procurement.requirements ?? null,
+      procurement.certificate_required ?? false,
+      procurement.min_stock ?? null,
+      procurement.max_stock ?? null,
+      actorUserId,
+    ]
+  );
+}
+
 async function getArticleStockSettings(client: Pick<PoolClient, "query">, articleId: string) {
   const res = await client.query<{ stock_managed: boolean; lot_tracking: boolean }>(
     `SELECT stock_managed, lot_tracking FROM public.articles WHERE id = $1::uuid LIMIT 1`,
@@ -1794,6 +1861,27 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
       OR COALESCE(pt.code_piece, '') ILIKE ${p}
       OR COALESCE(pt.designation, '') ILIKE ${p}
       OR COALESCE(pt.designation_2, '') ILIKE ${p}
+      OR EXISTS (
+        SELECT 1 FROM public.article_procurement_profile app
+        WHERE app.article_id = a.id
+          AND (COALESCE(app.manufacturer_name, '') ILIKE ${p} OR COALESCE(app.manufacturer_reference, '') ILIKE ${p})
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM public.fournisseur_catalogue fc
+        JOIN public.fournisseurs f ON f.id = fc.fournisseur_id
+        WHERE fc.article_id = a.id
+          AND (
+            COALESCE(fc.reference_fournisseur, '') ILIKE ${p}
+            OR COALESCE(f.nom, f.raison_sociale, '') ILIKE ${p}
+            OR COALESCE(f.code, f.code_fournisseur, '') ILIKE ${p}
+          )
+      )
+      OR EXISTS (
+        SELECT 1 FROM public.piece_technique_versions ptv_search
+        WHERE ptv_search.piece_technique_id = a.piece_technique_id
+          AND (COALESCE(ptv_search.plan_reference, '') ILIKE ${p} OR COALESCE(ptv_search.indice, '') ILIKE ${p})
+      )
     )`);
   }
   if (filters.article_type) {
@@ -1848,6 +1936,7 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
       a.projet_id::int AS projet_id,
       a.code,
       a.designation,
+      a.designation_secondary,
       CASE WHEN ${normalizedArticleCategorySql("a.article_category")} = 'fabrique' THEN 'PIECE_TECHNIQUE' ELSE 'PURCHASED' END AS article_type,
       ${normalizedArticleCategorySql("a.article_category")} AS article_category,
       COALESCE(ac.categories, ARRAY[${normalizedBusinessCategorySql("a.article_category")}]::text[]) AS article_categories,
@@ -1858,7 +1947,18 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
       pt.designation AS piece_designation,
       a.unite,
       a.lot_tracking,
+      a.is_sold,
       a.is_active,
+      a.row_version::int AS row_version,
+      a.archived_at::text AS archived_at,
+      a.archive_reason,
+      CASE WHEN av.id IS NULL THEN NULL ELSE jsonb_build_object(
+        'id', av.id::text,
+        'indice', av.indice,
+        'statut', av.statut,
+        'plan_reference', av.plan_reference,
+        'date_application', av.date_application
+      ) END AS applicable_version,
       COALESCE(bs.qty_available, 0)::float8 AS qty_available,
       COALESCE(bs.qty_reserved, 0)::float8 AS qty_reserved,
       COALESCE(bs.qty_total, 0)::float8 AS qty_total,
@@ -1868,6 +1968,14 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
     FROM public.articles a
     LEFT JOIN public.pieces_techniques pt
       ON pt.id = a.piece_technique_id
+    LEFT JOIN LATERAL (
+      SELECT v.id, v.indice, v.statut, v.plan_reference, v.date_application::text AS date_application
+      FROM public.piece_technique_versions v
+      WHERE v.piece_technique_id = a.piece_technique_id
+        AND v.statut = 'APPLICABLE'
+      ORDER BY v.date_application DESC NULLS LAST, v.created_at DESC
+      LIMIT 1
+    ) av ON TRUE
     LEFT JOIN (
       SELECT
         article_id::text AS article_id,
@@ -1893,7 +2001,7 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
   return { items: rows.rows, total };
 }
 
-export async function repoGetArticle(id: string): Promise<StockArticleDetail | null> {
+export async function repoGetArticle(id: string, includeCosts = false): Promise<StockArticleDetail | null> {
   const res = await db.query<StockArticleDetail>(
     `
       SELECT
@@ -1906,6 +2014,7 @@ export async function repoGetArticle(id: string): Promise<StockArticleDetail | n
         a.projet_id::int AS projet_id,
         a.code,
         a.designation,
+        a.designation_secondary,
         CASE WHEN ${normalizedArticleCategorySql("a.article_category")} = 'fabrique' THEN 'PIECE_TECHNIQUE' ELSE 'PURCHASED' END AS article_type,
         ${normalizedArticleCategorySql("a.article_category")} AS article_category,
       COALESCE(ac.categories, ARRAY[${normalizedBusinessCategorySql("a.article_category")}]::text[]) AS article_categories,
@@ -1916,7 +2025,18 @@ export async function repoGetArticle(id: string): Promise<StockArticleDetail | n
         pt.designation AS piece_designation,
         a.unite,
          a.lot_tracking,
+         a.is_sold,
          a.is_active,
+         a.row_version::int AS row_version,
+         a.archived_at::text AS archived_at,
+         a.archive_reason,
+         CASE WHEN av.id IS NULL THEN NULL ELSE jsonb_build_object(
+           'id', av.id::text,
+           'indice', av.indice,
+           'statut', av.statut,
+           'plan_reference', av.plan_reference,
+           'date_application', av.date_application
+         ) END AS applicable_version,
          a.notes,
          CASE
            WHEN ${normalizedArticleCategorySql("a.article_category")} <> 'matiere' THEN NULL
@@ -1946,6 +2066,14 @@ export async function repoGetArticle(id: string): Promise<StockArticleDetail | n
          ON pt.id = a.piece_technique_id
        LEFT JOIN public.articles_matiere am
          ON am.article_id = a.id
+       LEFT JOIN LATERAL (
+         SELECT v.id, v.indice, v.statut, v.plan_reference, v.date_application::text AS date_application
+         FROM public.piece_technique_versions v
+         WHERE v.piece_technique_id = a.piece_technique_id
+           AND v.statut = 'APPLICABLE'
+         ORDER BY v.date_application DESC NULLS LAST, v.created_at DESC
+         LIMIT 1
+       ) av ON TRUE
        LEFT JOIN (
          SELECT
            article_id::text AS article_id,
@@ -1965,7 +2093,58 @@ export async function repoGetArticle(id: string): Promise<StockArticleDetail | n
     `,
     [id]
   );
-  return res.rows[0] ?? null;
+  const article = res.rows[0] ?? null;
+  if (!article) return null;
+
+  const [procurementRes, suppliersRes, documents] = await Promise.all([
+    db.query<NonNullable<StockArticleDetail["procurement"]>>(
+      `SELECT
+         manufacturer_name,
+         manufacturer_reference,
+         preferred_catalogue_id::text AS preferred_catalogue_id,
+         packaging,
+         process,
+         finish,
+         requirements,
+         certificate_required,
+         min_stock::float8 AS min_stock,
+         max_stock::float8 AS max_stock
+       FROM public.article_procurement_profile
+       WHERE article_id = $1::uuid`,
+      [id]
+    ),
+    db.query<StockArticleDetail["suppliers"][number]>(
+      `SELECT
+         fc.id::text AS catalogue_id,
+         f.id::text AS supplier_id,
+         COALESCE(f.code, f.code_fournisseur)::text AS supplier_code,
+         COALESCE(f.nom, f.raison_sociale)::text AS supplier_name,
+         fc.reference_fournisseur AS supplier_reference,
+         fc.unite AS unit,
+         CASE WHEN $2::boolean THEN fc.prix_unitaire::float8 ELSE NULL END AS unit_price,
+         CASE WHEN $2::boolean THEN fc.devise ELSE NULL END AS currency,
+         fc.delai_jours::int AS lead_time_days,
+         fc.moq::float8 AS moq,
+         fc.conditions,
+         (app.preferred_catalogue_id = fc.id) AS preferred,
+         fc.actif AS active
+       FROM public.fournisseur_catalogue fc
+       JOIN public.fournisseurs f ON f.id = fc.fournisseur_id
+       LEFT JOIN public.article_procurement_profile app ON app.article_id = fc.article_id
+       WHERE fc.article_id = $1::uuid
+       ORDER BY (app.preferred_catalogue_id = fc.id) DESC, fc.actif DESC, supplier_name ASC`,
+      [id, includeCosts]
+    ),
+    repoListArticleDocuments(id),
+  ]);
+
+  return {
+    ...article,
+    procurement: procurementRes.rows[0] ?? null,
+    suppliers: suppliersRes.rows,
+    documents: documents ?? [],
+    costs_redacted: !includeCosts,
+  };
 }
 
 export async function repoGetArticlesKpis(): Promise<StockArticleKpis> {
@@ -1999,18 +2178,44 @@ export async function repoGetArticlesKpis(): Promise<StockArticleKpis> {
   );
 }
 
-export async function repoCreateArticle(body: CreateArticleBodyDTO, audit: AuditContext): Promise<StockArticleDetail> {
+export async function repoCreateArticle(
+  body: CreateArticleBodyDTO,
+  audit: AuditContext,
+  idempotencyKey?: string | null,
+  includeCosts = false
+): Promise<StockArticleDetail> {
   const client = await db.connect();
+  const requestHash = crypto.createHash("sha256").update(JSON.stringify(body)).digest("hex");
   try {
     await client.query("BEGIN");
+
+    if (idempotencyKey) {
+      const replay = await client.query<{ article_id: string; request_hash: string }>(
+        `SELECT article_id::text AS article_id, request_hash
+         FROM public.article_create_idempotence
+         WHERE idempotency_key = $1
+         FOR UPDATE`,
+        [idempotencyKey]
+      );
+      const existing = replay.rows[0];
+      if (existing) {
+        if (existing.request_hash !== requestHash) {
+          throw new HttpError(409, "IDEMPOTENCY_KEY_REUSED", "Idempotency-Key was reused with a different Article payload.");
+        }
+        await client.query("ROLLBACK");
+        const replayed = await repoGetArticle(existing.article_id, includeCosts);
+        if (!replayed) throw new Error("Failed to read idempotent Article replay");
+        return replayed;
+      }
+    }
 
     const normalized = await normalizeArticleState({
       article_type: body.article_type,
       article_category: body.article_category,
       article_categories: body.article_categories,
       family_code: body.family_code,
-      version_number: body.version_number,
-      plan_index: body.plan_index,
+      version_number: 1,
+      plan_index: 1,
       status: body.status,
       projet_id: body.projet_id ?? null,
       piece_technique_id: body.piece_technique_id ?? null,
@@ -2034,18 +2239,19 @@ export async function repoCreateArticle(body: CreateArticleBodyDTO, audit: Audit
       `
         INSERT INTO public.articles (
           id,
-          code, designation, article_type, article_category, family_code, stock_managed, piece_technique_id, unite,
+          code, designation, designation_secondary, article_type, article_category, family_code, stock_managed, piece_technique_id, unite,
           root_article_id, parent_article_id, version_number, plan_index, status, projet_id,
-          lot_tracking, is_active, notes,
+          lot_tracking, is_sold, is_active, notes,
           created_by, updated_by
         )
-        VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8::uuid,$9,$10::uuid,$11::uuid,$12,$13,$14,$15,$16,$17,$18,$19,$19)
+        VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9::uuid,$10,$11::uuid,$12::uuid,$13,$14,$15,$16,$17,$18,$19,$20,$21,$21)
         RETURNING id::text AS id
       `,
       [
         articleId,
         generatedCode,
         body.designation,
+        body.designation_secondary ?? null,
         normalized.article_type,
         normalized.article_category,
         normalized.family_code,
@@ -2059,6 +2265,7 @@ export async function repoCreateArticle(body: CreateArticleBodyDTO, audit: Audit
         normalized.status,
         normalized.projet_id,
         normalized.lot_tracking,
+        body.is_sold,
         body.is_active,
         body.notes ?? null,
         audit.user_id,
@@ -2082,6 +2289,15 @@ export async function repoCreateArticle(body: CreateArticleBodyDTO, audit: Audit
       piece_technique_id: normalized.piece_technique_id,
       article_matiere: body.article_matiere,
     });
+    await syncArticleProcurementProfile(client, id, body.procurement, audit.user_id);
+
+    if (idempotencyKey) {
+      await client.query(
+        `INSERT INTO public.article_create_idempotence (idempotency_key, request_hash, article_id)
+         VALUES ($1,$2,$3::uuid)`,
+        [idempotencyKey, requestHash, id]
+      );
+    }
 
     await insertAuditLog(client, audit, {
       action: "stock.articles.create",
@@ -2099,17 +2315,34 @@ export async function repoCreateArticle(body: CreateArticleBodyDTO, audit: Audit
         status: normalized.status,
         projet_id: normalized.projet_id,
         stock_managed: normalized.stock_managed,
+        is_sold: body.is_sold,
       },
     });
 
     await client.query("COMMIT");
 
-    const out = await repoGetArticle(id);
+    const out = await repoGetArticle(id, includeCosts);
     if (!out) throw new Error("Failed to read created article");
 
     return out;
   } catch (err) {
     await client.query("ROLLBACK");
+    if (idempotencyKey && isPgUniqueViolation(err)) {
+      const replay = await db.query<{ article_id: string; request_hash: string }>(
+        `SELECT article_id::text AS article_id, request_hash
+         FROM public.article_create_idempotence
+         WHERE idempotency_key = $1`,
+        [idempotencyKey]
+      );
+      const existing = replay.rows[0];
+      if (existing) {
+        if (existing.request_hash !== requestHash) {
+          throw new HttpError(409, "IDEMPOTENCY_KEY_REUSED", "Idempotency-Key was reused with a different Article payload.");
+        }
+        const replayed = await repoGetArticle(existing.article_id, includeCosts);
+        if (replayed) return replayed;
+      }
+    }
     if (isPgUniqueViolation(err)) {
       throw new HttpError(409, "DUPLICATE", "Article code already exists");
     }
@@ -2122,7 +2355,8 @@ export async function repoCreateArticle(body: CreateArticleBodyDTO, audit: Audit
 export async function repoUpdateArticle(
   id: string,
   patch: UpdateArticleBodyDTO,
-  audit: AuditContext
+  audit: AuditContext,
+  includeCosts = false
 ): Promise<StockArticleDetail | null> {
   const client = await db.connect();
   const sets: string[] = [];
@@ -2151,6 +2385,9 @@ export async function repoUpdateArticle(
       piece_technique_id: string | null;
       stock_managed: boolean;
       lot_tracking: boolean;
+      row_version: number;
+      designation_secondary: string | null;
+      is_sold: boolean;
     }>(
       `
         SELECT
@@ -2172,7 +2409,10 @@ export async function repoUpdateArticle(
           family_code,
           piece_technique_id::text AS piece_technique_id,
           stock_managed,
-          lot_tracking
+          lot_tracking,
+          row_version::int AS row_version,
+          designation_secondary,
+          is_sold
         FROM public.articles
         WHERE id = $1::uuid
         FOR UPDATE
@@ -2184,8 +2424,11 @@ export async function repoUpdateArticle(
       await client.query("ROLLBACK");
       return null;
     }
-    if (patch.code !== undefined) {
-      throw new HttpError(400, "CODE_IMMUTABLE", "Article business codes are server-generated and cannot be supplied on update.");
+    if (patch.expected_row_version !== current.row_version) {
+      throw new HttpError(409, "ARTICLE_VERSION_CONFLICT", "The Article changed since it was loaded.", {
+        expected_row_version: patch.expected_row_version,
+        current_row_version: current.row_version,
+      });
     }
 
     const normalized = await normalizeArticleState({
@@ -2193,8 +2436,8 @@ export async function repoUpdateArticle(
       article_category: patch.article_category ?? current.article_category,
       article_categories: patch.article_categories ?? current.article_categories,
       family_code: patch.family_code ?? current.family_code,
-      version_number: patch.version_number ?? current.version_number,
-      plan_index: patch.plan_index ?? current.plan_index,
+      version_number: current.version_number,
+      plan_index: current.plan_index,
       status: patch.status ?? current.status,
       projet_id: patch.projet_id !== undefined ? patch.projet_id : current.projet_id,
       piece_technique_id: patch.piece_technique_id !== undefined ? patch.piece_technique_id : current.piece_technique_id,
@@ -2210,6 +2453,7 @@ export async function repoUpdateArticle(
     }
 
     if (patch.designation !== undefined) sets.push(`designation = ${push(patch.designation)}`);
+    if (patch.designation_secondary !== undefined) sets.push(`designation_secondary = ${push(patch.designation_secondary)}`);
     sets.push(`article_type = ${push(normalized.article_type)}`);
     sets.push(`article_category = ${push(normalized.article_category)}`);
     sets.push(`version_number = ${push(normalized.version_number)}`);
@@ -2221,11 +2465,12 @@ export async function repoUpdateArticle(
     sets.push(`piece_technique_id = ${push(normalized.piece_technique_id)}::uuid`);
     if (patch.unite !== undefined) sets.push(`unite = ${push(patch.unite)}`);
     sets.push(`lot_tracking = ${push(normalized.lot_tracking)}`);
-    if (patch.is_active !== undefined) sets.push(`is_active = ${push(patch.is_active)}`);
+    if (patch.is_sold !== undefined) sets.push(`is_sold = ${push(patch.is_sold)}`);
     if (patch.notes !== undefined) sets.push(`notes = ${push(patch.notes)}`);
 
     sets.push(`updated_at = now()`);
     sets.push(`updated_by = ${push(audit.user_id)}`);
+    sets.push(`row_version = row_version + 1`);
 
     const sql = `
       UPDATE public.articles
@@ -2251,26 +2496,280 @@ export async function repoUpdateArticle(
       category: normalized.article_category,
       family_code: normalized.family_code,
       piece_technique_id: normalized.piece_technique_id,
+      article_matiere: patch.article_matiere,
     });
+    await syncArticleProcurementProfile(client, id, patch.procurement, audit.user_id);
 
     await insertAuditLog(client, audit, {
       action: "stock.articles.update",
       entity_type: "articles",
       entity_id: id,
       details: {
-        patch,
-        normalized,
+        before: current,
+        after: { ...normalized, designation_secondary: patch.designation_secondary ?? current.designation_secondary, is_sold: patch.is_sold ?? current.is_sold },
       },
     });
 
     await client.query("COMMIT");
 
-    return repoGetArticle(id);
+    return repoGetArticle(id, includeCosts);
   } catch (err) {
     await client.query("ROLLBACK");
     if (isPgUniqueViolation(err)) {
       throw new HttpError(409, "DUPLICATE", "Article code already exists");
     }
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function repoListArticleVersions(
+  articleId: string,
+  filters: ListArticleVersionsQueryDTO
+): Promise<Paginated<ArticleTechnicalVersion> | null> {
+  const exists = await db.query<{ piece_technique_id: string | null }>(
+    `SELECT piece_technique_id::text AS piece_technique_id FROM public.articles WHERE id = $1::uuid`,
+    [articleId]
+  );
+  const article = exists.rows[0];
+  if (!article) return null;
+  if (!article.piece_technique_id) return { items: [], total: 0 };
+
+  const page = filters.page ?? 1;
+  const pageSize = filters.pageSize ?? 25;
+  const offset = (page - 1) * pageSize;
+  const count = await db.query<{ total: number }>(
+    `SELECT COUNT(*)::int AS total
+     FROM public.piece_technique_versions
+     WHERE piece_technique_id = $1::uuid`,
+    [article.piece_technique_id]
+  );
+  const rows = await db.query<ArticleTechnicalVersion>(
+    `SELECT
+       id::text AS id,
+       indice,
+       statut,
+       plan_reference,
+       date_application::text AS date_application
+     FROM public.piece_technique_versions
+     WHERE piece_technique_id = $1::uuid
+     ORDER BY date_application DESC NULLS LAST, created_at DESC, id DESC
+     LIMIT $2 OFFSET $3`,
+    [article.piece_technique_id, pageSize, offset]
+  );
+  return { items: rows.rows, total: count.rows[0]?.total ?? 0 };
+}
+
+const ARTICLE_WHERE_USED_CTE = `
+  WITH article_context AS (
+    SELECT id, piece_technique_id
+    FROM public.articles
+    WHERE id = $1::uuid
+  ), usages AS (
+    SELECT
+      CASE WHEN parent_version.statut = 'APPLICABLE' THEN 'PIECE_CURRENT' ELSE 'PIECE_HISTORICAL' END::text AS usage_type,
+      bom.id::text AS usage_id,
+      bom.parent_piece_technique_id::text AS parent_id,
+      concat('Nomenclature ', COALESCE(parent_piece.code_piece, bom.parent_piece_technique_id::text)) AS label,
+      bom.created_at::text AS occurred_at
+    FROM public.pieces_techniques_nomenclature bom
+    JOIN article_context ac ON bom.child_article_id = ac.id
+    LEFT JOIN public.piece_technique_versions parent_version ON parent_version.id = bom.parent_piece_technique_version_id
+    LEFT JOIN public.pieces_techniques parent_piece ON parent_piece.id = bom.parent_piece_technique_id
+
+    UNION ALL
+    SELECT 'QUOTE', dl.id::text, dl.devis_id::text,
+      concat('Devis ', dl.devis_id::text, ' · ligne ', dl.id::text), NULL::text
+    FROM public.devis_ligne dl JOIN article_context ac ON dl.article_id = ac.id
+
+    UNION ALL
+    SELECT 'CUSTOMER_ORDER', cl.id::text, cl.commande_id::text,
+      concat('Commande client ', cl.commande_id::text, ' · ligne ', cl.id::text), NULL::text
+    FROM public.commande_ligne cl JOIN article_context ac ON cl.article_id = ac.id
+
+    UNION ALL
+    SELECT 'SUPPLIER_ORDER', cfl.id::text, cfl.commande_id::text,
+      concat('Commande fournisseur ', cfl.commande_id::text, ' · ligne ', cfl.position::text), cfl.created_at::text
+    FROM public.commande_fournisseur_ligne cfl JOIN article_context ac ON cfl.article_id = ac.id
+
+    UNION ALL
+    SELECT 'WORK_ORDER', ofa.id::text, ofa.id::text,
+      concat('OF ', ofa.numero), ofa.created_at::text
+    FROM public.ordres_fabrication ofa JOIN article_context ac ON ofa.piece_technique_id = ac.piece_technique_id
+    WHERE ac.piece_technique_id IS NOT NULL
+
+    UNION ALL
+    SELECT 'RECEIPT', rfl.id::text, rfl.reception_id::text,
+      concat('Réception ', rfl.reception_id::text, ' · ligne ', rfl.line_no::text), rfl.created_at::text
+    FROM public.reception_fournisseur_lignes rfl JOIN article_context ac ON rfl.article_id = ac.id
+
+    UNION ALL
+    SELECT 'LOT', l.id::text, NULL::text,
+      concat('Lot ', l.lot_code), l.created_at::text
+    FROM public.lots l JOIN article_context ac ON l.article_id::text = ac.id::text
+
+    UNION ALL
+    SELECT 'STOCK_MOVEMENT', sml.id::text, sml.movement_id::text,
+      concat('Mouvement de stock ', sml.movement_id::text, ' · ligne ', sml.line_no::text), sml.created_at::text
+    FROM public.stock_movement_lines sml JOIN article_context ac ON sml.article_id::text = ac.id::text
+
+    UNION ALL
+    SELECT 'DELIVERY', blla.id::text, blla.bon_livraison_ligne_id::text,
+      concat('Livraison · ligne ', blla.bon_livraison_ligne_id::text), blla.created_at::text
+    FROM public.bon_livraison_ligne_allocations blla JOIN article_context ac ON blla.article_id = ac.id
+  )`;
+
+export async function repoListArticleWhereUsed(
+  articleId: string,
+  filters: ListArticleWhereUsedQueryDTO
+): Promise<Paginated<ArticleWhereUsedItem> | null> {
+  const exists = await db.query<{ ok: number }>(`SELECT 1::int AS ok FROM public.articles WHERE id = $1::uuid`, [articleId]);
+  if (!exists.rows[0]?.ok) return null;
+
+  const page = filters.page ?? 1;
+  const pageSize = filters.pageSize ?? 25;
+  const offset = (page - 1) * pageSize;
+  const usageType = filters.usage_type ?? null;
+  const count = await db.query<{ total: number }>(
+    `${ARTICLE_WHERE_USED_CTE}
+     SELECT COUNT(*)::int AS total FROM usages WHERE ($2::text IS NULL OR usage_type = $2)`,
+    [articleId, usageType]
+  );
+  const rows = await db.query<ArticleWhereUsedItem>(
+    `${ARTICLE_WHERE_USED_CTE}
+     SELECT usage_type, usage_id, parent_id, label, occurred_at
+     FROM usages
+     WHERE ($2::text IS NULL OR usage_type = $2)
+     ORDER BY occurred_at DESC NULLS LAST, usage_type ASC, usage_id DESC
+     LIMIT $3 OFFSET $4`,
+    [articleId, usageType, pageSize, offset]
+  );
+  return { items: rows.rows, total: count.rows[0]?.total ?? 0 };
+}
+
+async function countArticleUsages(client: PoolClient, articleId: string): Promise<number> {
+  const result = await client.query<{ total: number }>(
+    `${ARTICLE_WHERE_USED_CTE} SELECT COUNT(*)::int AS total FROM usages`,
+    [articleId]
+  );
+  return result.rows[0]?.total ?? 0;
+}
+
+export async function repoArchiveArticle(
+  articleId: string,
+  body: ArchiveArticleBodyDTO,
+  audit: AuditContext,
+  includeCosts = false
+): Promise<StockArticleDetail | null> {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const currentRes = await client.query<{ code: string; row_version: number; is_active: boolean }>(
+      `SELECT code, row_version::int AS row_version, is_active
+       FROM public.articles WHERE id = $1::uuid FOR UPDATE`,
+      [articleId]
+    );
+    const current = currentRes.rows[0];
+    if (!current) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+    if (body.expected_row_version !== current.row_version) {
+      throw new HttpError(409, "ARTICLE_VERSION_CONFLICT", "The Article changed since it was loaded.", {
+        expected_row_version: body.expected_row_version,
+        current_row_version: current.row_version,
+      });
+    }
+    if (!current.is_active) {
+      await client.query("COMMIT");
+      return repoGetArticle(articleId, includeCosts);
+    }
+    const usageCount = await countArticleUsages(client, articleId);
+    if (usageCount > 0) {
+      throw new HttpError(409, "ARTICLE_IN_USE", "An Article referenced by business records cannot be archived.", {
+        usage_count: usageCount,
+      });
+    }
+    await client.query(
+      `UPDATE public.articles
+       SET is_active = false,
+           archived_at = now(),
+           archived_by = $2,
+           archive_reason = $3,
+           row_version = row_version + 1,
+           updated_at = now(),
+           updated_by = $2
+       WHERE id = $1::uuid`,
+      [articleId, audit.user_id, body.reason ?? null]
+    );
+    await insertAuditLog(client, audit, {
+      action: "stock.articles.archive",
+      entity_type: "articles",
+      entity_id: articleId,
+      details: { code: current.code, before: { is_active: true }, after: { is_active: false, reason: body.reason ?? null } },
+    });
+    await client.query("COMMIT");
+    return repoGetArticle(articleId, includeCosts);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function repoReactivateArticle(
+  articleId: string,
+  body: ReactivateArticleBodyDTO,
+  audit: AuditContext,
+  includeCosts = false
+): Promise<StockArticleDetail | null> {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const currentRes = await client.query<{ code: string; row_version: number; is_active: boolean }>(
+      `SELECT code, row_version::int AS row_version, is_active
+       FROM public.articles WHERE id = $1::uuid FOR UPDATE`,
+      [articleId]
+    );
+    const current = currentRes.rows[0];
+    if (!current) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+    if (body.expected_row_version !== current.row_version) {
+      throw new HttpError(409, "ARTICLE_VERSION_CONFLICT", "The Article changed since it was loaded.", {
+        expected_row_version: body.expected_row_version,
+        current_row_version: current.row_version,
+      });
+    }
+    if (current.is_active) {
+      await client.query("COMMIT");
+      return repoGetArticle(articleId, includeCosts);
+    }
+    await client.query(
+      `UPDATE public.articles
+       SET is_active = true,
+           archived_at = NULL,
+           archived_by = NULL,
+           archive_reason = NULL,
+           row_version = row_version + 1,
+           updated_at = now(),
+           updated_by = $2
+       WHERE id = $1::uuid`,
+      [articleId, audit.user_id]
+    );
+    await insertAuditLog(client, audit, {
+      action: "stock.articles.reactivate",
+      entity_type: "articles",
+      entity_id: articleId,
+      details: { code: current.code, before: { is_active: false }, after: { is_active: true } },
+    });
+    await client.query("COMMIT");
+    return repoGetArticle(articleId, includeCosts);
+  } catch (err) {
+    await client.query("ROLLBACK");
     throw err;
   } finally {
     client.release();
@@ -4235,10 +4734,20 @@ export async function repoListArticleDocuments(articleId: string): Promise<Stock
       SELECT
         sd.id::text AS document_id,
         sd.original_name AS document_name,
-        ad.type
+        ad.type,
+        ad.revision,
+        ad.version::int AS version,
+        sd.mime_type,
+        sd.size_bytes::float8 AS size_bytes,
+        sd.sha256,
+        ad.uploaded_by,
+        ad.created_at::text AS created_at,
+        ad.updated_at::text AS updated_at,
+        ad.is_active
       FROM public.article_documents ad
       JOIN public.stock_documents sd ON sd.id = ad.document_id
       WHERE ad.article_id = $1::uuid
+        AND ad.is_active = true
         AND sd.removed_at IS NULL
       ORDER BY ad.created_at DESC, ad.id DESC
     `,
@@ -4250,6 +4759,7 @@ export async function repoListArticleDocuments(articleId: string): Promise<Stock
 export async function repoAttachArticleDocuments(
   articleId: string,
   documents: UploadedDocument[],
+  metadata: ArticleDocumentMetadataDTO,
   audit: AuditContext
 ): Promise<StockDocument[] | null> {
   const client = await db.connect();
@@ -4270,11 +4780,14 @@ export async function repoAttachArticleDocuments(
     for (const d of inserted) {
       await client.query(
         `
-          INSERT INTO public.article_documents (article_id, document_id, type, version, uploaded_by, created_by, updated_by)
-          VALUES ($1::uuid,$2::uuid,$3,$4,$5,$5,$5)
+          INSERT INTO public.article_documents (
+            article_id, document_id, type, revision, version, is_active,
+            uploaded_by, created_by, updated_by
+          )
+          VALUES ($1::uuid,$2::uuid,$3,$4,$5,true,$6,$6,$6)
           ON CONFLICT DO NOTHING
         `,
-        [articleId, d.id, null, 1, audit.user_id]
+        [articleId, d.id, metadata.type ?? null, metadata.revision ?? null, 1, audit.user_id]
       );
     }
 
@@ -4284,6 +4797,7 @@ export async function repoAttachArticleDocuments(
       entity_id: articleId,
       details: {
         count: inserted.length,
+        metadata,
         documents: inserted.map((d) => ({
           id: d.id,
           original_name: d.original_name,
@@ -4322,19 +4836,22 @@ export async function repoRemoveArticleDocument(
     }
 
     const del = await client.query(
-      `DELETE FROM public.article_documents WHERE article_id = $1::uuid AND document_id = $2::uuid`,
-      [articleId, documentId]
+      `UPDATE public.article_documents
+       SET is_active = false,
+           retired_at = now(),
+           retired_by = $3,
+           updated_at = now(),
+           updated_by = $3
+       WHERE article_id = $1::uuid
+         AND document_id = $2::uuid
+         AND is_active = true`,
+      [articleId, documentId, audit.user_id]
     );
     const removed = (del.rowCount ?? 0) > 0;
     if (!removed) {
       await client.query("ROLLBACK");
       return false;
     }
-
-    await client.query(
-      `UPDATE public.stock_documents SET removed_at = now(), removed_by = $2, updated_at = now(), updated_by = $2 WHERE id = $1::uuid AND removed_at IS NULL`,
-      [documentId, audit.user_id]
-    );
 
     await insertAuditLog(client, audit, {
       action: "stock.articles.documents.remove",
@@ -4368,6 +4885,7 @@ export async function repoGetArticleDocumentForDownload(
       JOIN public.stock_documents sd ON sd.id = ad.document_id
       WHERE ad.article_id = $1::uuid
         AND ad.document_id = $2::uuid
+        AND ad.is_active = true
         AND sd.removed_at IS NULL
       LIMIT 1
     `,
