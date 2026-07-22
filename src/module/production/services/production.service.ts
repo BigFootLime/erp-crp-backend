@@ -121,6 +121,9 @@ export const svcGenerateOfs = (params: {
   audit: repo.AuditContext;
 }) => generationRepo.repoGenerateOfs(params);
 
+export const svcGetOfTechnicalSnapshot = (params: { of_id: number }) =>
+  generationRepo.repoGetOfTechnicalSnapshot(params);
+
 // -------------------------
 // Phase 5 - OF -> Entree en stock
 // -------------------------

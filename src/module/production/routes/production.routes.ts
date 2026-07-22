@@ -17,6 +17,7 @@ import {
   createPoste,
   generateOfs,
   getOfReceiptContext,
+  getOfTechnicalSnapshot,
   getOfTraceability,
   getOrdreFabrication,
   getOrdreFabricationTree,
@@ -186,6 +187,7 @@ router.get("/ofs", listOrdresFabrication);
 router.post("/ofs/generate/preview", requireOfCapability("generate"), previewOfGeneration);
 router.post("/ofs/generate", requireOfCapability("generate"), generateOfs);
 router.get("/ofs/:id/tree", getOrdreFabricationTree);
+router.get("/ofs/:id/technical-snapshot", getOfTechnicalSnapshot);
 router.get("/ofs/:id", getOrdreFabrication);
 router.post("/ofs", requireOfCapability("create"), createOrdreFabrication);
 router.patch("/ofs/:id", requireAnyOfCapability(["edit_prelaunch", "launch", "operate", "cancel", "archive"]), updateOrdreFabrication);

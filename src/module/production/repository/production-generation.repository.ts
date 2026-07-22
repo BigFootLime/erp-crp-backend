@@ -332,6 +332,121 @@ export async function repoPreviewOfGeneration(params: {
   }
 }
 
+export type OfTechnicalSnapshotView = {
+  of_id: number;
+  piece_technique_version_id: string;
+  snapshot: unknown;
+  snapshot_sha256: string;
+  created_at: string;
+  created_by: number | null;
+  // Définition courante de la pièce, pour la comparaison UI « snapshot vs
+  // définition actuelle ». Le snapshot reste la vérité historique ; ceci n'est
+  // qu'une aide de navigation.
+  current: {
+    applicable_version_id: string | null;
+    indice: string | null;
+    version_interne: number | null;
+    date_effet: string | null;
+    gamme_id: string | null;
+    gamme_code: string | null;
+    operations_count: number;
+    nomenclature_count: number;
+    is_same_version: boolean;
+  };
+};
+
+/**
+ * #170 — contenu figé du snapshot technique d'un OF + résumé de la définition
+ * courante pour marquer clairement les écarts. Lecture seule.
+ */
+export async function repoGetOfTechnicalSnapshot(params: { of_id: number }): Promise<OfTechnicalSnapshotView | null> {
+  const snapRes = await pool.query<{
+    of_id: string;
+    piece_technique_version_id: string;
+    snapshot: unknown;
+    snapshot_sha256: string;
+    created_at: string;
+    created_by: number | null;
+    piece_technique_id: string;
+  }>(
+    `
+      SELECT s.of_id::text AS of_id,
+             s.piece_technique_version_id::text AS piece_technique_version_id,
+             s.snapshot,
+             s.snapshot_sha256,
+             s.created_at::text AS created_at,
+             s.created_by,
+             o.piece_technique_id::text AS piece_technique_id
+      FROM public.of_technical_snapshots s
+      JOIN public.ordres_fabrication o ON o.id = s.of_id
+      WHERE s.of_id = $1::bigint
+      LIMIT 1
+    `,
+    [params.of_id]
+  );
+  const snap = snapRes.rows[0] ?? null;
+  if (!snap) return null;
+
+  const currentRes = await pool.query<{
+    version_id: string | null;
+    indice: string | null;
+    version_interne: number | null;
+    date_effet: string | null;
+    gamme_id: string | null;
+    gamme_code: string | null;
+    operations_count: number;
+    nomenclature_count: number;
+  }>(
+    `
+      SELECT v.id::text AS version_id,
+             v.indice,
+             v.version_interne,
+             v.date_effet::text AS date_effet,
+             g.id::text AS gamme_id,
+             g.code AS gamme_code,
+             COALESCE((
+               SELECT count(*)::int FROM public.pieces_techniques_operations op
+               WHERE op.piece_technique_id = $1::uuid
+                 AND (op.gamme_id = g.id OR (g.id IS NULL AND op.gamme_id IS NULL))
+             ), 0) AS operations_count,
+             COALESCE((
+               SELECT count(*)::int FROM public.pieces_techniques_nomenclature bom
+               WHERE bom.parent_piece_technique_id = $1::uuid
+                 AND (bom.parent_piece_technique_version_id = v.id OR bom.parent_piece_technique_version_id IS NULL)
+             ), 0) AS nomenclature_count
+      FROM public.piece_technique_versions v
+      LEFT JOIN public.gammes g ON g.piece_technique_version_id = v.id AND g.is_current = true
+      WHERE v.piece_technique_id = $1::uuid
+        AND v.statut = 'APPLICABLE'
+        AND (v.date_effet IS NULL OR v.date_effet <= CURRENT_DATE)
+      ORDER BY v.date_effet DESC NULLS LAST, v.version_interne DESC NULLS LAST, v.created_at DESC
+      LIMIT 1
+    `,
+    [snap.piece_technique_id]
+  );
+  const current = currentRes.rows[0] ?? null;
+
+  return {
+    of_id: Number(snap.of_id),
+    piece_technique_version_id: snap.piece_technique_version_id,
+    snapshot: snap.snapshot,
+    snapshot_sha256: snap.snapshot_sha256,
+    created_at: snap.created_at,
+    created_by: snap.created_by,
+    current: {
+      applicable_version_id: current?.version_id ?? null,
+      indice: current?.indice ?? null,
+      version_interne: current?.version_interne ?? null,
+      date_effet: current?.date_effet ?? null,
+      gamme_id: current?.gamme_id ?? null,
+      gamme_code: current?.gamme_code ?? null,
+      operations_count: Number(current?.operations_count ?? 0),
+      nomenclature_count: Number(current?.nomenclature_count ?? 0),
+      is_same_version: (current?.version_id ?? null) === snap.piece_technique_version_id,
+    },
+  };
+}
+
 export type OfGenerationResult = {
   batch_id: string;
   root_of_id: number;

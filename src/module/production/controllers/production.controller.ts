@@ -35,6 +35,7 @@ import {
   svcCreateOrdreFabrication,
   svcCreatePoste,
   svcGenerateOfs,
+  svcGetOfTechnicalSnapshot,
   svcGetOrdreFabrication,
   svcGetOrdreFabricationTree,
   svcGetMachine,
@@ -437,6 +438,17 @@ export const generateOfs = asyncHandler(async (req, res) => {
     emitOfChanged(req, { ofId: out.root_of_id, action: "created" });
   }
   res.status(out.idempotent_replay ? 200 : 201).json(out);
+});
+
+// #170 — contenu figé du snapshot + définition courante (comparaison UI).
+export const getOfTechnicalSnapshot = asyncHandler(async (req, res) => {
+  const { id } = ofIdParamSchema.parse({ params: req.params }).params;
+  const out = await svcGetOfTechnicalSnapshot({ of_id: id });
+  if (!out) {
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
+  res.json(out);
 });
 
 // #170 §11 : une dépendance indisponible (pool PostgreSQL saturé/refusé) est un
