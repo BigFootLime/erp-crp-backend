@@ -378,13 +378,18 @@ async function selectDocuments(params: { model_id?: string | null; machine_id?: 
         title,
         document_type,
         url,
-        storage_path,
+        revision,
+        sha256,
+        mime_type,
+        size_bytes::float8 AS size_bytes,
+        authored_at::text AS authored_at,
         source_type,
         source_confidence,
         source_notes,
-        retrieved_at::text AS retrieved_at
+        retrieved_at::text AS retrieved_at,
+        removed_at::text AS removed_at
       FROM public.production_machine_documents
-      WHERE ${where.join(" OR ")}
+      WHERE (${where.join(" OR ")}) AND removed_at IS NULL
       ORDER BY
         CASE document_type
           WHEN 'MANUAL' THEN 1

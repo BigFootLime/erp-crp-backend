@@ -51,10 +51,10 @@ const onboardingTextArraySchema = z.array(z.string().trim().min(1).max(120)).max
 const sourceConfidenceSchema = z.enum(["official", "resale_listing", "estimated", "internal", "unknown"]);
 const sourceTypeSchema = z.enum(["manufacturer_page", "manufacturer_pdf", "resale_listing", "internal_note", "mixed", "unknown"]);
 const capabilityLevelSchema = z.enum(["preferred", "primary", "supported", "limited", "unknown"]);
+const hourlyRateSourceSchema = z.enum(["INTERNAL_COST", "POSTE_INHERITED", "IMPORTED", "MANUAL_OVERRIDE", "UNKNOWN"]);
 
 export const createMachineSchema = z.object({
   body: z.object({
-    code: z.string().trim().min(1).max(50),
     name: z.string().trim().min(1).max(200),
     type: machineTypeSchema.optional().default("OTHER"),
     machine_model_id: uuid.optional().nullable(),
@@ -63,10 +63,11 @@ export const createMachineSchema = z.object({
     model: z.string().trim().min(1).max(120).optional().nullable(),
     serial_number: z.string().trim().min(1).max(120).optional().nullable(),
     commissioned_year: optionalYearSchema,
-    hourly_rate: z.coerce.number().min(0).optional().default(0),
+    hourly_rate: z.coerce.number().min(0).optional().nullable(),
+    hourly_rate_source: hourlyRateSourceSchema.optional().nullable(),
+    hourly_rate_effective_at: z.string().date().optional().nullable(),
     currency: currencySchema,
     status: machineStatusSchema.optional().default("ACTIVE"),
-    is_available: z.boolean().optional().default(true),
     dashboard_color: z.string().trim().min(1).max(40).optional().nullable(),
     model_3d_path: optionalPathSchema,
     documentation_url: optionalUrlSchema,
@@ -76,7 +77,7 @@ export const createMachineSchema = z.object({
     location: z.string().trim().min(1).max(200).optional().nullable(),
     workshop_zone: z.string().trim().min(1).max(200).optional().nullable(),
     notes: z.string().trim().min(1).optional().nullable(),
-  }),
+  }).strict(),
 });
 
 export type CreateMachineBodyDTO = z.infer<typeof createMachineSchema>["body"];
@@ -96,7 +97,7 @@ export const createMachineOnboardingSchema = z.object({
         description: z.string().trim().min(1).max(2000).optional().nullable(),
         source_summary: z.string().trim().min(1).max(2000).optional().nullable(),
         is_active: z.boolean().optional().default(true),
-      })
+      }).strict()
       .optional()
       .nullable(),
     specs: z
@@ -121,8 +122,9 @@ export const createMachineOnboardingSchema = z.object({
         maintenance_notes: optionalMediumTextSchema,
         source_type: sourceTypeSchema.optional().default("internal_note"),
         source_confidence: sourceConfidenceSchema.optional().default("internal"),
+        source_url: optionalUrlSchema,
         source_notes: optionalMediumTextSchema,
-      })
+      }).strict()
       .optional()
       .nullable(),
     capabilities: z
@@ -133,7 +135,7 @@ export const createMachineOnboardingSchema = z.object({
           capability_level: capabilityLevelSchema.optional().default("supported"),
           notes: optionalMediumTextSchema,
           source_confidence: sourceConfidenceSchema.optional().default("internal"),
-        })
+        }).strict()
       )
       .max(80)
       .optional()
@@ -147,22 +149,29 @@ export const createMachineOnboardingSchema = z.object({
           compatible: z.boolean().optional().default(true),
           notes: optionalMediumTextSchema,
           source_confidence: sourceConfidenceSchema.optional().default("internal"),
-        })
+        }).strict()
       )
       .max(80)
       .optional()
       .default([]),
-  }),
+    update_shared_model: z.boolean().optional().default(false),
+    expected_model_updated_at: z.string().datetime({ offset: true }).optional().nullable(),
+  }).strict(),
 });
 
 export type CreateMachineOnboardingBodyDTO = z.infer<typeof createMachineOnboardingSchema>["body"];
 
-export const updateMachineOnboardingSchema = createMachineOnboardingSchema;
-export type UpdateMachineOnboardingBodyDTO = CreateMachineOnboardingBodyDTO;
+export const updateMachineOnboardingSchema = z.object({
+  body: createMachineOnboardingSchema.shape.body.extend({
+    machine: createMachineSchema.shape.body.extend({
+      expected_updated_at: z.string().datetime({ offset: true }),
+    }).strict(),
+  }).strict(),
+});
+export type UpdateMachineOnboardingBodyDTO = z.infer<typeof updateMachineOnboardingSchema>["body"];
 
 export const updateMachineSchema = z.object({
   body: z.object({
-    code: z.string().trim().min(1).max(50).optional(),
     name: z.string().trim().min(1).max(200).optional(),
     type: machineTypeSchema.optional(),
     machine_model_id: uuid.optional().nullable(),
@@ -171,10 +180,11 @@ export const updateMachineSchema = z.object({
     model: z.string().trim().min(1).max(120).optional().nullable(),
     serial_number: z.string().trim().min(1).max(120).optional().nullable(),
     commissioned_year: optionalYearSchema,
-    hourly_rate: z.coerce.number().min(0).optional(),
+    hourly_rate: z.coerce.number().min(0).optional().nullable(),
+    hourly_rate_source: hourlyRateSourceSchema.optional().nullable(),
+    hourly_rate_effective_at: z.string().date().optional().nullable(),
     currency: currencyPatchSchema,
     status: machineStatusSchema.optional(),
-    is_available: z.boolean().optional(),
     dashboard_color: z.string().trim().min(1).max(40).optional().nullable(),
     model_3d_path: optionalPathSchema,
     documentation_url: optionalUrlSchema,
@@ -184,7 +194,8 @@ export const updateMachineSchema = z.object({
     location: z.string().trim().min(1).max(200).optional().nullable(),
     workshop_zone: z.string().trim().min(1).max(200).optional().nullable(),
     notes: z.string().trim().min(1).optional().nullable(),
-  }),
+    expected_updated_at: z.string().datetime({ offset: true }),
+  }).strict(),
 });
 
 export type UpdateMachineBodyDTO = z.infer<typeof updateMachineSchema>["body"];

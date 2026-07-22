@@ -35,7 +35,7 @@ vi.mock("../utils/checkNetworkDrive", () => ({
 
 vi.mock("../module/auth/middlewares/auth.middleware", () => ({
   authenticateToken: (req: { user?: { id: number; role: string } }, _res: unknown, next: () => void) => {
-    req.user = { id: 1, role: "Atelier" };
+    req.user = { id: 1, role: "Administrateur" };
     next();
   },
   authorizeRole:
@@ -162,27 +162,18 @@ describe("/api/v1/production machine intelligence", () => {
     const modelId = "11111111-1111-1111-1111-111111111111";
     const machineId = "33333333-3333-3333-3333-333333333333";
 
-    mocks.clientQuery
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            id: modelId,
-            model_code: "HURCO-VM10",
-            manufacturer: "Hurco",
-            model: "VM10",
-            display_name: "Hurco VM10",
-          },
-        ],
-      })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({
-        rows: [
-          {
+    mocks.clientQuery.mockImplementation(async (statement: unknown) => {
+      const sql = String(statement);
+      if (sql.includes("production_machine_idempotence") && sql.includes("SELECT")) return { rows: [] };
+      if (sql.includes("fn_next_issued_code_value")) return { rows: [{ v: "1" }] };
+      if (sql.includes("production_machine_models") && sql.includes("RETURNING")) {
+        return { rows: [{ id: modelId, model_code: "HURCO-VM10", manufacturer: "Hurco", model: "VM10", display_name: "Hurco VM10", updated_at: "2026-06-15T08:00:00.000Z" }] };
+      }
+      if (sql.includes("INSERT INTO machines")) {
+        return {
+          rows: [{
             id: machineId,
-            code: "VM10-01",
+            code: "MCH-000001",
             name: "Hurco VM10 #1",
             type: "MILLING",
             status: "ACTIVE",
@@ -211,28 +202,26 @@ describe("/api/v1/production machine intelligence", () => {
             updated_by: 1,
             archived_at: null,
             archived_by: null,
-          },
-        ],
-      })
-      .mockResolvedValueOnce({ rows: [{ id: "audit-1", created_at: "2026-06-15T08:00:00.000Z" }] })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] });
+          }],
+        };
+      }
+      if (sql.includes("audit_log")) return { rows: [{ id: "audit-1", created_at: "2026-06-15T08:00:00.000Z" }] };
+      return { rows: [] };
+    });
 
     const res = await request(app)
       .post("/api/v1/production/machines/onboarding")
       .set("Authorization", "Bearer fake")
+      .set("Idempotency-Key", "machine-create-test-001")
       .send({
         machine: {
-          code: "VM10-01",
           name: "Hurco VM10 #1",
           type: "MILLING",
           display_name: "VM10 #1",
           brand: "Hurco",
           model: "VM10",
-          hourly_rate: 0,
           currency: "EUR",
           status: "ACTIVE",
-          is_available: true,
           scheduling_enabled: true,
           outillage_enabled: true,
           location: "Atelier principal",
@@ -265,7 +254,7 @@ describe("/api/v1/production machine intelligence", () => {
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({
       id: machineId,
-      code: "VM10-01",
+      code: "MCH-000001",
       machine_model_id: modelId,
       manufacturer: "Hurco",
       model_name: "VM10",
@@ -287,7 +276,7 @@ describe("/api/v1/production machine intelligence", () => {
     mocks.clientQuery
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({
-        rows: [{ id: machineId, machine_model_id: modelId, archived_at: null }],
+        rows: [{ id: machineId, machine_model_id: modelId, archived_at: null, updated_at: "2026-06-15T08:00:00.000Z" }],
       })
       .mockResolvedValueOnce({
         rows: [
@@ -297,6 +286,7 @@ describe("/api/v1/production machine intelligence", () => {
             manufacturer: "Hurco",
             model: "VM10",
             display_name: "Hurco VM10",
+            updated_at: "2026-06-15T08:00:00.000Z",
           },
         ],
       })
@@ -362,17 +352,15 @@ describe("/api/v1/production machine intelligence", () => {
       .set("Authorization", "Bearer fake")
       .send({
         machine: {
-          code: "VM10-01",
           name: "Hurco VM10 cellule 1",
           type: "MILLING",
           machine_model_id: modelId,
           display_name: "VM10 cellule 1",
           brand: "Hurco",
           model: "VM10",
-          hourly_rate: 0,
           currency: "EUR",
           status: "ACTIVE",
-          is_available: true,
+          expected_updated_at: "2026-06-15T08:00:00.000Z",
           model_3d_path: "/models/machines/cnc-01.glb",
           scheduling_enabled: true,
           outillage_enabled: true,
@@ -394,6 +382,8 @@ describe("/api/v1/production machine intelligence", () => {
         },
         capabilities: [{ process_type: "Fraisage 3 axes", material_family: "Aluminium", capability_level: "preferred" }],
         tooling: [{ holder_type: "CAT 40", spindle_taper: "CAT 40", compatible: true }],
+        update_shared_model: true,
+        expected_model_updated_at: "2026-06-15T08:00:00.000Z",
       });
 
     expect(res.status).toBe(200);

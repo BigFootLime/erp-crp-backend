@@ -147,6 +147,12 @@ export async function generateFournisseurCode(tx: DbQueryer): Promise<string> {
   return `FOU-${pad(seq, 3)}`;
 }
 
+/** #165 — Physical machine: MCH-NNNNNN, allocated server-side in the creation transaction. */
+export async function generateMachineCode(tx: DbQueryer): Promise<string> {
+  const seq = await nextCodeValue(tx, "MCH");
+  return `MCH-${pad(seq, 6)}`;
+}
+
 /** #172 — Bon de commande fournisseur : BCF-AAAA-NNNN, alloué en transaction, immuable. */
 export async function generateCommandeFournisseurCode(tx: DbQueryer, params?: { date?: Date }): Promise<string> {
   return generateTransactionalBusinessCode(tx, { prefix: "BCF", date: params?.date });

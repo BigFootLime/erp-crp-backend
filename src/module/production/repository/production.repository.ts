@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import path from "node:path";
 
 import pool from "../../../config/database";
-import { generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
+import { generateMachineCode, generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
@@ -145,6 +145,7 @@ type MachineModelMini = {
   manufacturer: string;
   model: string;
   display_name: string;
+  updated_at?: string;
 };
 
 type MachineOnboardingSpecInput = NonNullable<CreateMachineOnboardingBodyDTO["specs"]>;
@@ -159,7 +160,8 @@ async function selectMachineModelMini(tx: DbQueryer, id: string): Promise<Machin
         model_code,
         manufacturer,
         model,
-        display_name
+        display_name,
+        updated_at::text AS updated_at
       FROM public.production_machine_models
       WHERE id = $1::uuid
       LIMIT 1
@@ -198,40 +200,42 @@ async function upsertMachineSpecs(
         compatible_holders,
         operations_notes,
         maintenance_notes,
+        source_url,
         source_type,
         source_confidence,
         source_notes
       )
       VALUES (
-        $1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::text[],$18,$19,$20,$21,$22
+        $1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::text[],$18,$19,$20,$21,$22,$23
       )
       ON CONFLICT (machine_model_id) DO UPDATE
       SET
-        x_travel_mm = CASE WHEN $23::boolean THEN EXCLUDED.x_travel_mm ELSE COALESCE(EXCLUDED.x_travel_mm, public.production_machine_specs.x_travel_mm) END,
-        y_travel_mm = CASE WHEN $23::boolean THEN EXCLUDED.y_travel_mm ELSE COALESCE(EXCLUDED.y_travel_mm, public.production_machine_specs.y_travel_mm) END,
-        z_travel_mm = CASE WHEN $23::boolean THEN EXCLUDED.z_travel_mm ELSE COALESCE(EXCLUDED.z_travel_mm, public.production_machine_specs.z_travel_mm) END,
-        table_length_mm = CASE WHEN $23::boolean THEN EXCLUDED.table_length_mm ELSE COALESCE(EXCLUDED.table_length_mm, public.production_machine_specs.table_length_mm) END,
-        table_width_mm = CASE WHEN $23::boolean THEN EXCLUDED.table_width_mm ELSE COALESCE(EXCLUDED.table_width_mm, public.production_machine_specs.table_width_mm) END,
-        max_table_load_kg = CASE WHEN $23::boolean THEN EXCLUDED.max_table_load_kg ELSE COALESCE(EXCLUDED.max_table_load_kg, public.production_machine_specs.max_table_load_kg) END,
-        spindle_taper = CASE WHEN $23::boolean THEN EXCLUDED.spindle_taper ELSE COALESCE(EXCLUDED.spindle_taper, public.production_machine_specs.spindle_taper) END,
-        spindle_speed_max_rpm = CASE WHEN $23::boolean THEN EXCLUDED.spindle_speed_max_rpm ELSE COALESCE(EXCLUDED.spindle_speed_max_rpm, public.production_machine_specs.spindle_speed_max_rpm) END,
-        spindle_power_kw = CASE WHEN $23::boolean THEN EXCLUDED.spindle_power_kw ELSE COALESCE(EXCLUDED.spindle_power_kw, public.production_machine_specs.spindle_power_kw) END,
-        spindle_torque_nm = CASE WHEN $23::boolean THEN EXCLUDED.spindle_torque_nm ELSE COALESCE(EXCLUDED.spindle_torque_nm, public.production_machine_specs.spindle_torque_nm) END,
-        tool_magazine_capacity = CASE WHEN $23::boolean THEN EXCLUDED.tool_magazine_capacity ELSE COALESCE(EXCLUDED.tool_magazine_capacity, public.production_machine_specs.tool_magazine_capacity) END,
-        max_tool_diameter_mm = CASE WHEN $23::boolean THEN EXCLUDED.max_tool_diameter_mm ELSE COALESCE(EXCLUDED.max_tool_diameter_mm, public.production_machine_specs.max_tool_diameter_mm) END,
-        max_tool_length_mm = CASE WHEN $23::boolean THEN EXCLUDED.max_tool_length_mm ELSE COALESCE(EXCLUDED.max_tool_length_mm, public.production_machine_specs.max_tool_length_mm) END,
-        max_tool_weight_kg = CASE WHEN $23::boolean THEN EXCLUDED.max_tool_weight_kg ELSE COALESCE(EXCLUDED.max_tool_weight_kg, public.production_machine_specs.max_tool_weight_kg) END,
-        tool_change_time_sec = CASE WHEN $23::boolean THEN EXCLUDED.tool_change_time_sec ELSE COALESCE(EXCLUDED.tool_change_time_sec, public.production_machine_specs.tool_change_time_sec) END,
+        x_travel_mm = CASE WHEN $24::boolean THEN EXCLUDED.x_travel_mm ELSE COALESCE(EXCLUDED.x_travel_mm, public.production_machine_specs.x_travel_mm) END,
+        y_travel_mm = CASE WHEN $24::boolean THEN EXCLUDED.y_travel_mm ELSE COALESCE(EXCLUDED.y_travel_mm, public.production_machine_specs.y_travel_mm) END,
+        z_travel_mm = CASE WHEN $24::boolean THEN EXCLUDED.z_travel_mm ELSE COALESCE(EXCLUDED.z_travel_mm, public.production_machine_specs.z_travel_mm) END,
+        table_length_mm = CASE WHEN $24::boolean THEN EXCLUDED.table_length_mm ELSE COALESCE(EXCLUDED.table_length_mm, public.production_machine_specs.table_length_mm) END,
+        table_width_mm = CASE WHEN $24::boolean THEN EXCLUDED.table_width_mm ELSE COALESCE(EXCLUDED.table_width_mm, public.production_machine_specs.table_width_mm) END,
+        max_table_load_kg = CASE WHEN $24::boolean THEN EXCLUDED.max_table_load_kg ELSE COALESCE(EXCLUDED.max_table_load_kg, public.production_machine_specs.max_table_load_kg) END,
+        spindle_taper = CASE WHEN $24::boolean THEN EXCLUDED.spindle_taper ELSE COALESCE(EXCLUDED.spindle_taper, public.production_machine_specs.spindle_taper) END,
+        spindle_speed_max_rpm = CASE WHEN $24::boolean THEN EXCLUDED.spindle_speed_max_rpm ELSE COALESCE(EXCLUDED.spindle_speed_max_rpm, public.production_machine_specs.spindle_speed_max_rpm) END,
+        spindle_power_kw = CASE WHEN $24::boolean THEN EXCLUDED.spindle_power_kw ELSE COALESCE(EXCLUDED.spindle_power_kw, public.production_machine_specs.spindle_power_kw) END,
+        spindle_torque_nm = CASE WHEN $24::boolean THEN EXCLUDED.spindle_torque_nm ELSE COALESCE(EXCLUDED.spindle_torque_nm, public.production_machine_specs.spindle_torque_nm) END,
+        tool_magazine_capacity = CASE WHEN $24::boolean THEN EXCLUDED.tool_magazine_capacity ELSE COALESCE(EXCLUDED.tool_magazine_capacity, public.production_machine_specs.tool_magazine_capacity) END,
+        max_tool_diameter_mm = CASE WHEN $24::boolean THEN EXCLUDED.max_tool_diameter_mm ELSE COALESCE(EXCLUDED.max_tool_diameter_mm, public.production_machine_specs.max_tool_diameter_mm) END,
+        max_tool_length_mm = CASE WHEN $24::boolean THEN EXCLUDED.max_tool_length_mm ELSE COALESCE(EXCLUDED.max_tool_length_mm, public.production_machine_specs.max_tool_length_mm) END,
+        max_tool_weight_kg = CASE WHEN $24::boolean THEN EXCLUDED.max_tool_weight_kg ELSE COALESCE(EXCLUDED.max_tool_weight_kg, public.production_machine_specs.max_tool_weight_kg) END,
+        tool_change_time_sec = CASE WHEN $24::boolean THEN EXCLUDED.tool_change_time_sec ELSE COALESCE(EXCLUDED.tool_change_time_sec, public.production_machine_specs.tool_change_time_sec) END,
         compatible_holders = CASE
-          WHEN $23::boolean THEN EXCLUDED.compatible_holders
+          WHEN $24::boolean THEN EXCLUDED.compatible_holders
           WHEN array_length(EXCLUDED.compatible_holders, 1) IS NULL THEN public.production_machine_specs.compatible_holders
           ELSE EXCLUDED.compatible_holders
         END,
-        operations_notes = CASE WHEN $23::boolean THEN EXCLUDED.operations_notes ELSE COALESCE(EXCLUDED.operations_notes, public.production_machine_specs.operations_notes) END,
-        maintenance_notes = CASE WHEN $23::boolean THEN EXCLUDED.maintenance_notes ELSE COALESCE(EXCLUDED.maintenance_notes, public.production_machine_specs.maintenance_notes) END,
+        operations_notes = CASE WHEN $24::boolean THEN EXCLUDED.operations_notes ELSE COALESCE(EXCLUDED.operations_notes, public.production_machine_specs.operations_notes) END,
+        maintenance_notes = CASE WHEN $24::boolean THEN EXCLUDED.maintenance_notes ELSE COALESCE(EXCLUDED.maintenance_notes, public.production_machine_specs.maintenance_notes) END,
+        source_url = CASE WHEN $24::boolean THEN EXCLUDED.source_url ELSE COALESCE(EXCLUDED.source_url, public.production_machine_specs.source_url) END,
         source_type = EXCLUDED.source_type,
         source_confidence = EXCLUDED.source_confidence,
-        source_notes = CASE WHEN $23::boolean THEN EXCLUDED.source_notes ELSE COALESCE(EXCLUDED.source_notes, public.production_machine_specs.source_notes) END,
+        source_notes = CASE WHEN $24::boolean THEN EXCLUDED.source_notes ELSE COALESCE(EXCLUDED.source_notes, public.production_machine_specs.source_notes) END,
         updated_at = now()
     `,
     [
@@ -254,6 +258,7 @@ async function upsertMachineSpecs(
       specs.compatible_holders ?? [],
       textOrNull(specs.operations_notes),
       textOrNull(specs.maintenance_notes),
+      textOrNull(specs.source_url),
       specs.source_type ?? "internal_note",
       specs.source_confidence ?? "internal",
       textOrNull(specs.source_notes),
@@ -419,7 +424,10 @@ export async function repoListMachines(filters: ListMachinesQueryDTO): Promise<P
     model_name: string | null;
     display_name: string | null;
     status: MachineListItem["status"];
-    hourly_rate: number;
+    hourly_rate: number | null;
+    hourly_rate_source: MachineListItem["hourly_rate_source"];
+    hourly_rate_effective_at: string | null;
+    hourly_rate_is_override: boolean;
     currency: string;
     is_available: boolean;
     image_path: string | null;
@@ -447,6 +455,9 @@ export async function repoListMachines(filters: ListMachinesQueryDTO): Promise<P
         m.display_name,
         m.status::text AS status,
         m.hourly_rate::float8 AS hourly_rate,
+        m.hourly_rate_source,
+        m.hourly_rate_effective_at::text AS hourly_rate_effective_at,
+        m.hourly_rate_is_override,
         m.currency,
         m.is_available,
         m.image_path,
@@ -479,7 +490,10 @@ export async function repoListMachines(filters: ListMachinesQueryDTO): Promise<P
     model_name: r.model_name,
     display_name: r.display_name,
     status: r.status,
-    hourly_rate: Number(r.hourly_rate),
+    hourly_rate: r.hourly_rate === null ? null : Number(r.hourly_rate),
+    hourly_rate_source: r.hourly_rate_source,
+    hourly_rate_effective_at: r.hourly_rate_effective_at,
+    hourly_rate_is_override: r.hourly_rate_is_override,
     currency: r.currency,
     is_available: r.is_available,
     image_url: imageUrl(r.image_path),
@@ -513,7 +527,10 @@ export async function repoGetMachine(id: string): Promise<MachineDetail | null> 
     serial_number: string | null;
     commissioned_year: number | null;
     image_path: string | null;
-    hourly_rate: number;
+    hourly_rate: number | null;
+    hourly_rate_source: MachineDetail["hourly_rate_source"];
+    hourly_rate_effective_at: string | null;
+    hourly_rate_is_override: boolean;
     currency: string;
     is_available: boolean;
     dashboard_color: string | null;
@@ -552,6 +569,9 @@ export async function repoGetMachine(id: string): Promise<MachineDetail | null> 
         m.commissioned_year,
         m.image_path,
         m.hourly_rate::float8 AS hourly_rate,
+        m.hourly_rate_source,
+        m.hourly_rate_effective_at::text AS hourly_rate_effective_at,
+        m.hourly_rate_is_override,
         m.currency,
         m.is_available,
         m.dashboard_color,
@@ -590,7 +610,10 @@ export async function repoGetMachine(id: string): Promise<MachineDetail | null> 
     model_name: row.model_name,
     display_name: row.display_name,
     status: row.status,
-    hourly_rate: Number(row.hourly_rate),
+    hourly_rate: row.hourly_rate === null ? null : Number(row.hourly_rate),
+    hourly_rate_source: row.hourly_rate_source,
+    hourly_rate_effective_at: row.hourly_rate_effective_at,
+    hourly_rate_is_override: row.hourly_rate_is_override,
     currency: row.currency,
     is_available: row.is_available,
     image_url: imageUrl(row.image_path),
@@ -620,6 +643,7 @@ export async function repoGetMachine(id: string): Promise<MachineDetail | null> 
 export async function repoCreateMachine(params: {
   body: CreateMachineBodyDTO;
   image_path: string | null;
+  idempotency_key?: string | null;
   audit: AuditContext;
 }): Promise<MachineDetail> {
   const client = await pool.connect();
@@ -639,7 +663,10 @@ export async function repoCreateMachine(params: {
       serial_number: string | null;
       commissioned_year: number | null;
       image_path: string | null;
-      hourly_rate: number;
+      hourly_rate: number | null;
+      hourly_rate_source: MachineDetail["hourly_rate_source"];
+      hourly_rate_effective_at: string | null;
+      hourly_rate_is_override: boolean;
       currency: string;
       is_available: boolean;
       dashboard_color: string | null;
@@ -662,6 +689,21 @@ export async function repoCreateMachine(params: {
     const createdBy = params.audit.user_id;
     const updatedBy = params.audit.user_id;
     const b = params.body;
+    const requestHash = crypto.createHash("sha256").update(JSON.stringify(b)).digest("hex");
+    if (params.idempotency_key) {
+      const replay = await client.query<{ machine_id: string; request_hash: string }>(
+        `SELECT machine_id::text AS machine_id, request_hash FROM public.production_machine_idempotence WHERE idempotency_key = $1 FOR UPDATE`,
+        [params.idempotency_key]
+      );
+      if (replay.rows[0]) {
+        if (replay.rows[0].request_hash !== requestHash) throw new HttpError(409, "IDEMPOTENCY_KEY_REUSED", "Idempotency key was reused with a different payload.");
+        await client.query("COMMIT");
+        const existing = await repoGetMachine(replay.rows[0].machine_id);
+        if (!existing) throw new Error("Idempotent machine no longer exists");
+        return existing;
+      }
+    }
+    const code = await generateMachineCode(client);
 
     const ins = await client.query<Row>(
       `
@@ -677,6 +719,9 @@ export async function repoCreateMachine(params: {
           commissioned_year,
           image_path,
           hourly_rate,
+          hourly_rate_source,
+          hourly_rate_effective_at,
+          hourly_rate_is_override,
           currency,
           status,
           is_available,
@@ -694,7 +739,7 @@ export async function repoCreateMachine(params: {
         )
         VALUES (
           $1,$2,$3::machine_type,$4::uuid,$5,$6,$7,$8,$9,$10,
-          $11,$12,$13::machine_status,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25
+          $11,$12,$13,$14,$15,$16::machine_status,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28
         )
         RETURNING
           id::text AS id,
@@ -710,6 +755,9 @@ export async function repoCreateMachine(params: {
           commissioned_year,
           image_path,
           hourly_rate::float8 AS hourly_rate,
+          hourly_rate_source,
+          hourly_rate_effective_at::text AS hourly_rate_effective_at,
+          hourly_rate_is_override,
           currency,
           is_available,
           dashboard_color,
@@ -729,7 +777,7 @@ export async function repoCreateMachine(params: {
           archived_by
       `,
       [
-        b.code,
+        code,
         b.name,
         b.type,
         b.machine_model_id ?? null,
@@ -740,9 +788,12 @@ export async function repoCreateMachine(params: {
         b.commissioned_year ?? null,
         params.image_path,
         b.hourly_rate,
+        b.hourly_rate_source ?? null,
+        b.hourly_rate_effective_at ?? null,
+        b.hourly_rate_source === "MANUAL_OVERRIDE",
         b.currency,
         b.status,
-        b.is_available,
+        b.status === "ACTIVE",
         b.dashboard_color ?? null,
         b.model_3d_path ?? null,
         b.documentation_url ?? null,
@@ -759,6 +810,13 @@ export async function repoCreateMachine(params: {
 
     const row = ins.rows[0];
     if (!row) throw new Error("Failed to create machine");
+
+    if (params.idempotency_key) {
+      await client.query(
+        `INSERT INTO public.production_machine_idempotence (idempotency_key, request_hash, machine_id) VALUES ($1,$2,$3::uuid)`,
+        [params.idempotency_key, requestHash, row.id]
+      );
+    }
 
     await insertAuditLog(client, params.audit, {
       action: "production.machines.create",
@@ -785,7 +843,10 @@ export async function repoCreateMachine(params: {
       model_name: null,
       display_name: row.display_name,
       status: row.status,
-      hourly_rate: Number(row.hourly_rate),
+      hourly_rate: row.hourly_rate === null ? null : Number(row.hourly_rate),
+      hourly_rate_source: row.hourly_rate_source,
+      hourly_rate_effective_at: row.hourly_rate_effective_at,
+      hourly_rate_is_override: row.hourly_rate_is_override,
       currency: row.currency,
       is_available: row.is_available,
       image_url: imageUrl(row.image_path),
@@ -824,6 +885,7 @@ export async function repoCreateMachine(params: {
 export async function repoCreateMachineOnboarding(params: {
   body: CreateMachineOnboardingBodyDTO;
   image_path: string | null;
+  idempotency_key?: string | null;
   audit: AuditContext;
 }): Promise<MachineDetail> {
   const client = await pool.connect();
@@ -831,6 +893,20 @@ export async function repoCreateMachineOnboarding(params: {
     await client.query("BEGIN");
 
     const b = params.body;
+    const requestHash = crypto.createHash("sha256").update(JSON.stringify(b)).digest("hex");
+    if (params.idempotency_key) {
+      const replay = await client.query<{ machine_id: string; request_hash: string }>(
+        `SELECT machine_id::text AS machine_id, request_hash FROM public.production_machine_idempotence WHERE idempotency_key = $1 FOR UPDATE`,
+        [params.idempotency_key]
+      );
+      if (replay.rows[0]) {
+        if (replay.rows[0].request_hash !== requestHash) throw new HttpError(409, "IDEMPOTENCY_KEY_REUSED", "Idempotency key was reused with a different payload.");
+        await client.query("COMMIT");
+        const replayMachine = await repoGetMachine(replay.rows[0].machine_id);
+        if (!replayMachine) throw new Error("Idempotent machine no longer exists");
+        return replayMachine;
+      }
+    }
     const modelInput = b.machine_model ?? null;
     const explicitMachineModelId = b.machine.machine_model_id ?? null;
     const explicitDraftModelId = modelInput?.id ?? null;
@@ -946,7 +1022,10 @@ export async function repoCreateMachineOnboarding(params: {
       serial_number: string | null;
       commissioned_year: number | null;
       image_path: string | null;
-      hourly_rate: number;
+      hourly_rate: number | null;
+      hourly_rate_source: MachineDetail["hourly_rate_source"];
+      hourly_rate_effective_at: string | null;
+      hourly_rate_is_override: boolean;
       currency: string;
       is_available: boolean;
       dashboard_color: string | null;
@@ -967,6 +1046,7 @@ export async function repoCreateMachineOnboarding(params: {
     };
 
     const machine = b.machine;
+    const code = await generateMachineCode(client);
     const ins = await client.query<Row>(
       `
         INSERT INTO machines (
@@ -981,6 +1061,9 @@ export async function repoCreateMachineOnboarding(params: {
           commissioned_year,
           image_path,
           hourly_rate,
+          hourly_rate_source,
+          hourly_rate_effective_at,
+          hourly_rate_is_override,
           currency,
           status,
           is_available,
@@ -998,7 +1081,7 @@ export async function repoCreateMachineOnboarding(params: {
         )
         VALUES (
           $1,$2,$3::machine_type,$4::uuid,$5,$6,$7,$8,$9,$10,
-          $11,$12,$13::machine_status,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25
+          $11,$12,$13,$14,$15,$16::machine_status,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28
         )
         RETURNING
           id::text AS id,
@@ -1014,6 +1097,9 @@ export async function repoCreateMachineOnboarding(params: {
           commissioned_year,
           image_path,
           hourly_rate::float8 AS hourly_rate,
+          hourly_rate_source,
+          hourly_rate_effective_at::text AS hourly_rate_effective_at,
+          hourly_rate_is_override,
           currency,
           is_available,
           dashboard_color,
@@ -1033,7 +1119,7 @@ export async function repoCreateMachineOnboarding(params: {
           archived_by
       `,
       [
-        machine.code,
+        code,
         machine.name,
         machine.type,
         resolvedModelId,
@@ -1044,9 +1130,12 @@ export async function repoCreateMachineOnboarding(params: {
         machine.commissioned_year ?? null,
         params.image_path,
         machine.hourly_rate,
+        machine.hourly_rate_source ?? null,
+        machine.hourly_rate_effective_at ?? null,
+        machine.hourly_rate_source === "MANUAL_OVERRIDE",
         machine.currency,
         machine.status,
-        machine.is_available,
+        machine.status === "ACTIVE",
         machine.dashboard_color ?? null,
         machine.model_3d_path ?? null,
         machine.documentation_url ?? null,
@@ -1063,6 +1152,13 @@ export async function repoCreateMachineOnboarding(params: {
 
     const row = ins.rows[0];
     if (!row) throw new Error("Failed to create machine from onboarding");
+
+    if (params.idempotency_key) {
+      await client.query(
+        `INSERT INTO public.production_machine_idempotence (idempotency_key, request_hash, machine_id) VALUES ($1,$2,$3::uuid)`,
+        [params.idempotency_key, requestHash, row.id]
+      );
+    }
 
     await insertAuditLog(client, params.audit, {
       action: "production.machines.onboarding.create",
@@ -1093,7 +1189,10 @@ export async function repoCreateMachineOnboarding(params: {
       model_name: resolvedModel?.model ?? null,
       display_name: row.display_name,
       status: row.status,
-      hourly_rate: Number(row.hourly_rate),
+      hourly_rate: row.hourly_rate === null ? null : Number(row.hourly_rate),
+      hourly_rate_source: row.hourly_rate_source,
+      hourly_rate_effective_at: row.hourly_rate_effective_at,
+      hourly_rate_is_override: row.hourly_rate_is_override,
       currency: row.currency,
       is_available: row.is_available,
       image_url: imageUrl(row.image_path),
@@ -1149,12 +1248,34 @@ export async function repoUpdateMachineOnboarding(params: {
   try {
     await client.query("BEGIN");
 
-    const existingMachine = await client.query<{ id: string; machine_model_id: string | null; archived_at: string | null }>(
+    const existingMachine = await client.query<{
+      id: string;
+      code: string;
+      name: string;
+      type: string;
+      status: string;
+      machine_model_id: string | null;
+      serial_number: string | null;
+      commissioned_year: number | null;
+      location: string | null;
+      workshop_zone: string | null;
+      archived_at: string | null;
+      updated_at: string;
+    }>(
       `
         SELECT
           id::text AS id,
+          code,
+          name,
+          type::text AS type,
+          status::text AS status,
           machine_model_id::text AS machine_model_id,
-          archived_at::text AS archived_at
+          serial_number,
+          commissioned_year,
+          location,
+          workshop_zone,
+          archived_at::text AS archived_at,
+          updated_at::text AS updated_at
         FROM machines
         WHERE id = $1::uuid
         FOR UPDATE
@@ -1169,6 +1290,9 @@ export async function repoUpdateMachineOnboarding(params: {
     if (existing.archived_at) {
       throw new HttpError(409, "MACHINE_ARCHIVED", "Archived machine cannot be edited");
     }
+    if (existing.updated_at !== params.body.machine.expected_updated_at) {
+      throw new HttpError(409, "CONCURRENT_MODIFICATION", "Machine has been modified by another user.");
+    }
 
     const b = params.body;
     const machine = b.machine;
@@ -1182,6 +1306,7 @@ export async function repoUpdateMachineOnboarding(params: {
     }
 
     let resolvedModel: MachineModelMini | null = null;
+    let sharedModelBeforeAudit: MachineModelMini | null = null;
     let resolvedModelId =
       explicitMachineModelId !== undefined
         ? explicitMachineModelId
@@ -1194,6 +1319,13 @@ export async function repoUpdateMachineOnboarding(params: {
       }
 
       if (hasModelDraft(modelInput)) {
+        sharedModelBeforeAudit = currentModel;
+        if (!b.update_shared_model) {
+          throw new HttpError(422, "SHARED_MODEL_CONFIRMATION_REQUIRED", "Explicit confirmation is required before updating a shared machine model.");
+        }
+        if (!b.expected_model_updated_at || currentModel.updated_at !== b.expected_model_updated_at) {
+          throw new HttpError(409, "CONCURRENT_MODEL_MODIFICATION", "The shared machine model has changed. Reload before saving.");
+        }
         const manufacturer = textOrNull(modelInput.manufacturer) ?? currentModel.manufacturer ?? textOrNull(machine.brand);
         const modelName = textOrNull(modelInput.model) ?? currentModel.model ?? textOrNull(machine.model);
         if (!manufacturer || !modelName) {
@@ -1214,13 +1346,14 @@ export async function repoUpdateMachineOnboarding(params: {
               source_summary = COALESCE($9, source_summary),
               is_active = COALESCE($10, is_active),
               updated_at = now()
-            WHERE id = $1::uuid
+            WHERE id = $1::uuid AND updated_at::text = $11
             RETURNING
               id::text AS id,
               model_code,
               manufacturer,
               model,
-              display_name
+              display_name,
+              updated_at::text AS updated_at
           `,
           [
             resolvedModelId,
@@ -1233,9 +1366,13 @@ export async function repoUpdateMachineOnboarding(params: {
             textOrNull(modelInput.description),
             textOrNull(modelInput.source_summary),
             modelInput.is_active ?? null,
+            b.expected_model_updated_at,
           ]
         );
-        resolvedModel = updatedModel.rows[0] ?? currentModel;
+        resolvedModel = updatedModel.rows[0] ?? null;
+        if (!resolvedModel) {
+          throw new HttpError(409, "CONCURRENT_MODEL_MODIFICATION", "The shared machine model has changed. Reload before saving.");
+        }
       } else {
         resolvedModel = currentModel;
       }
@@ -1302,6 +1439,19 @@ export async function repoUpdateMachineOnboarding(params: {
       throw new HttpError(422, "MACHINE_MODEL_REQUIRED_FOR_INTELLIGENCE", "A machine model is required to persist specs, capabilities or tooling");
     }
 
+    const sharedDataMutationRequested = hasSpecDraft(b.specs) || (b.capabilities ?? []).length > 0 || (b.tooling ?? []).length > 0;
+    if (existing.machine_model_id && sharedDataMutationRequested && !b.update_shared_model) {
+      throw new HttpError(422, "SHARED_MODEL_CONFIRMATION_REQUIRED", "Explicit confirmation is required before updating shared specifications, capabilities or tooling.");
+    }
+    if (
+      existing.machine_model_id &&
+      sharedDataMutationRequested &&
+      !hasModelDraft(modelInput) &&
+      (!b.expected_model_updated_at || resolvedModel?.updated_at !== b.expected_model_updated_at)
+    ) {
+      throw new HttpError(409, "CONCURRENT_MODEL_MODIFICATION", "The shared machine model has changed. Reload before saving.");
+    }
+
     if (resolvedModelId && hasSpecDraft(b.specs)) {
       await upsertMachineSpecs(client, resolvedModelId, b.specs, "replace");
     }
@@ -1318,7 +1468,6 @@ export async function repoUpdateMachineOnboarding(params: {
       return `$${values.length}`;
     };
 
-    sets.push(`code = ${push(machine.code)}`);
     sets.push(`name = ${push(machine.name)}`);
     sets.push(`type = ${push(machine.type)}::machine_type`);
     sets.push(`machine_model_id = ${push(resolvedModelId)}::uuid`);
@@ -1328,9 +1477,12 @@ export async function repoUpdateMachineOnboarding(params: {
     sets.push(`serial_number = ${push(machine.serial_number ?? null)}`);
     sets.push(`commissioned_year = ${push(machine.commissioned_year ?? null)}`);
     sets.push(`hourly_rate = ${push(machine.hourly_rate)}`);
+    sets.push(`hourly_rate_source = ${push(machine.hourly_rate_source ?? null)}`);
+    sets.push(`hourly_rate_effective_at = ${push(machine.hourly_rate_effective_at ?? null)}::date`);
+    sets.push(`hourly_rate_is_override = ${push(machine.hourly_rate_source === "MANUAL_OVERRIDE")}`);
     sets.push(`currency = ${push(machine.currency)}`);
     sets.push(`status = ${push(machine.status)}::machine_status`);
-    sets.push(`is_available = ${push(machine.is_available)}`);
+    sets.push(`is_available = ${push(machine.status === "ACTIVE")}`);
     sets.push(`dashboard_color = ${push(machine.dashboard_color ?? null)}`);
     sets.push(`model_3d_path = ${push(machine.model_3d_path ?? null)}`);
     sets.push(`documentation_url = ${push(machine.documentation_url ?? null)}`);
@@ -1346,37 +1498,71 @@ export async function repoUpdateMachineOnboarding(params: {
     sets.push(`updated_by = ${push(params.audit.user_id)}`);
     sets.push(`updated_at = now()`);
 
-    const upd = await client.query<{ id: string; code: string; name: string; type: string; status: string }>(
+    const upd = await client.query<{
+      id: string;
+      code: string;
+      name: string;
+      type: string;
+      status: string;
+      machine_model_id: string | null;
+      serial_number: string | null;
+      commissioned_year: number | null;
+      location: string | null;
+      workshop_zone: string | null;
+    }>(
       `
         UPDATE machines
         SET ${sets.join(", ")}
         WHERE id = ${push(params.id)}::uuid
+          AND updated_at::text = ${push(machine.expected_updated_at)}
         RETURNING
           id::text AS id,
           code,
           name,
           type::text AS type,
-          status::text AS status
+          status::text AS status,
+          machine_model_id::text AS machine_model_id,
+          serial_number,
+          commissioned_year,
+          location,
+          workshop_zone
       `,
       values
     );
 
     const row = upd.rows[0] ?? null;
-    if (!row) {
-      await client.query("ROLLBACK");
-      return null;
-    }
+    if (!row) throw new HttpError(409, "CONCURRENT_MODIFICATION", "Machine has been modified by another user.");
 
     await insertAuditLog(client, params.audit, {
       action: "production.machines.onboarding.update",
       entity_type: "machines",
       entity_id: row.id,
       details: {
-        code: row.code,
-        name: row.name,
-        type: row.type,
-        status: row.status,
-        machine_model_id: resolvedModelId,
+        before: {
+          code: existing.code,
+          name: existing.name,
+          type: existing.type,
+          status: existing.status,
+          machine_model_id: existing.machine_model_id,
+          serial_number: existing.serial_number,
+          commissioned_year: existing.commissioned_year,
+          location: existing.location,
+          workshop_zone: existing.workshop_zone,
+        },
+        after: {
+          code: row.code,
+          name: row.name,
+          type: row.type,
+          status: row.status,
+          machine_model_id: row.machine_model_id,
+          serial_number: row.serial_number,
+          commissioned_year: row.commissioned_year,
+          location: row.location,
+          workshop_zone: row.workshop_zone,
+        },
+        shared_model_before: sharedModelBeforeAudit,
+        shared_model_after: sharedModelBeforeAudit ? resolvedModel : null,
+        redacted_fields: ["hourly_rate", "hourly_rate_source", "hourly_rate_effective_at", "notes"],
         model_updated: hasModelDraft(modelInput),
         specs_written: hasSpecDraft(b.specs),
         capabilities_count: b.capabilities?.length ?? 0,
@@ -1423,8 +1609,8 @@ export async function repoUpdateMachine(params: {
   try {
     await client.query("BEGIN");
 
-    const before = await client.query<{ id: string; archived_at: string | null }>(
-      `SELECT id::text AS id, archived_at::text AS archived_at FROM machines WHERE id = $1::uuid FOR UPDATE`,
+    const before = await client.query<{ id: string; archived_at: string | null; updated_at: string }>(
+      `SELECT id::text AS id, archived_at::text AS archived_at, updated_at::text AS updated_at FROM machines WHERE id = $1::uuid FOR UPDATE`,
       [params.id]
     );
     const existing = before.rows[0];
@@ -1435,6 +1621,9 @@ export async function repoUpdateMachine(params: {
     if (existing.archived_at) {
       throw new HttpError(409, "MACHINE_ARCHIVED", "Archived machine cannot be edited");
     }
+    if (existing.updated_at !== params.patch.expected_updated_at) {
+      throw new HttpError(409, "CONCURRENT_MODIFICATION", "Machine has been modified by another user.");
+    }
 
     const sets: string[] = [];
     const values: unknown[] = [];
@@ -1444,7 +1633,6 @@ export async function repoUpdateMachine(params: {
     };
 
     const p = params.patch;
-    if (p.code !== undefined) sets.push(`code = ${push(p.code)}`);
     if (p.name !== undefined) sets.push(`name = ${push(p.name)}`);
     if (p.type !== undefined) sets.push(`type = ${push(p.type)}::machine_type`);
     if (p.machine_model_id !== undefined) sets.push(`machine_model_id = ${push(p.machine_model_id ?? null)}::uuid`);
@@ -1454,9 +1642,14 @@ export async function repoUpdateMachine(params: {
     if (p.serial_number !== undefined) sets.push(`serial_number = ${push(p.serial_number ?? null)}`);
     if (p.commissioned_year !== undefined) sets.push(`commissioned_year = ${push(p.commissioned_year ?? null)}`);
     if (p.hourly_rate !== undefined) sets.push(`hourly_rate = ${push(p.hourly_rate)}`);
+    if (p.hourly_rate_source !== undefined) {
+      sets.push(`hourly_rate_source = ${push(p.hourly_rate_source)}`);
+      sets.push(`hourly_rate_is_override = ${push(p.hourly_rate_source === "MANUAL_OVERRIDE")}`);
+    }
+    if (p.hourly_rate_effective_at !== undefined) sets.push(`hourly_rate_effective_at = ${push(p.hourly_rate_effective_at)}::date`);
     if (p.currency !== undefined) sets.push(`currency = ${push(p.currency)}`);
     if (p.status !== undefined) sets.push(`status = ${push(p.status)}::machine_status`);
-    if (p.is_available !== undefined) sets.push(`is_available = ${push(p.is_available)}`);
+    if (p.status !== undefined) sets.push(`is_available = ${push(p.status === "ACTIVE")}`);
     if (p.dashboard_color !== undefined) sets.push(`dashboard_color = ${push(p.dashboard_color ?? null)}`);
     if (p.model_3d_path !== undefined) sets.push(`model_3d_path = ${push(p.model_3d_path ?? null)}`);
     if (p.documentation_url !== undefined) sets.push(`documentation_url = ${push(p.documentation_url ?? null)}`);
@@ -1487,7 +1680,10 @@ export async function repoUpdateMachine(params: {
       serial_number: string | null;
       commissioned_year: number | null;
       image_path: string | null;
-      hourly_rate: number;
+      hourly_rate: number | null;
+      hourly_rate_source: MachineDetail["hourly_rate_source"];
+      hourly_rate_effective_at: string | null;
+      hourly_rate_is_override: boolean;
       currency: string;
       is_available: boolean;
       dashboard_color: string | null;
@@ -1512,6 +1708,7 @@ export async function repoUpdateMachine(params: {
         UPDATE machines
         SET ${sets.join(", ")}
         WHERE id = ${push(params.id)}::uuid
+          AND updated_at::text = ${push(p.expected_updated_at)}
         RETURNING
           id::text AS id,
           code,
@@ -1526,6 +1723,9 @@ export async function repoUpdateMachine(params: {
           commissioned_year,
           image_path,
           hourly_rate::float8 AS hourly_rate,
+          hourly_rate_source,
+          hourly_rate_effective_at::text AS hourly_rate_effective_at,
+          hourly_rate_is_override,
           currency,
           is_available,
           dashboard_color,
@@ -1576,7 +1776,10 @@ export async function repoUpdateMachine(params: {
       model_name: null,
       display_name: row.display_name,
       status: row.status,
-      hourly_rate: Number(row.hourly_rate),
+      hourly_rate: row.hourly_rate === null ? null : Number(row.hourly_rate),
+      hourly_rate_source: row.hourly_rate_source,
+      hourly_rate_effective_at: row.hourly_rate_effective_at,
+      hourly_rate_is_override: row.hourly_rate_is_override,
       currency: row.currency,
       is_available: row.is_available,
       image_url: imageUrl(row.image_path),
