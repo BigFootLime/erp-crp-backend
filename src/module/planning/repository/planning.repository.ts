@@ -11,6 +11,7 @@ import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repos
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 import { repoEnsureCommandeWorkflowStatus } from "../../commande-client/repository/commande-client.repository";
 import type { AppNotification } from "../../notifications/types/notifications.types";
+import { roleCanForcePlanningOverlap } from "../domain/planning-rbac";
 import type {
   Paginated,
   PlanningEventComment,
@@ -182,15 +183,6 @@ function machineBlockedReason(params: {
   if (params.is_available === false) return "Machine en panne / indisponible";
   if (params.scheduling_enabled === false) return "Machine non planifiable";
   return null;
-}
-
-function canForcePlanningOverlap(role: string | null | undefined): boolean {
-  const r = String(role ?? "").trim().toLowerCase();
-  if (!r) return false;
-  if (r.includes("admin") || r.includes("administrateur")) return true;
-  if (r.includes("responsable") && r.includes("atelier")) return true;
-  if (r.includes("chef") && r.includes("atelier")) return true;
-  return false;
 }
 
 async function assertResourceSchedulable(
@@ -947,13 +939,40 @@ export async function repoValidatePlanningForAr(params: {
         continue;
       }
 
-      const transition = await repoEnsureCommandeWorkflowStatus({
-        tx: client,
-        commande_id: commandeId,
-        nouveau_statut: "AR_PRET",
-        commentaire,
-        user_id: params.audit.user_id,
-      });
+      if (row.planning_validated_at) {
+        skipped.push({
+          commande_id: commandeId,
+          numero: row.numero,
+          reason: "ALREADY_READY",
+          message: "Planning deja valide; AR pret.",
+        });
+        continue;
+      }
+
+      await client.query("SAVEPOINT planning_validate_commande");
+      let transition;
+      try {
+        transition = await repoEnsureCommandeWorkflowStatus({
+          tx: client,
+          commande_id: commandeId,
+          nouveau_statut: "AR_PRET",
+          commentaire,
+          user_id: params.audit.user_id,
+        });
+      } catch (err) {
+        await client.query("ROLLBACK TO SAVEPOINT planning_validate_commande");
+        if (err instanceof HttpError && err.status >= 400 && err.status < 500) {
+          skipped.push({
+            commande_id: commandeId,
+            numero: row.numero,
+            reason: "WORKFLOW_NOT_ADVANCED",
+            message: err.message,
+          });
+          continue;
+        }
+        throw err;
+      }
+      await client.query("RELEASE SAVEPOINT planning_validate_commande");
       notifications.push(...transition.notifications);
 
       await client.query(
@@ -1282,8 +1301,9 @@ export async function repoListPlanningEvents(filters: ListPlanningEventsQueryDTO
       LEFT JOIN public.users u ON u.id = e.operator_id
       ${whereSql}
       ORDER BY e.start_ts ASC, e.id ASC
+      LIMIT $${values.length + 1} OFFSET $${values.length + 2}
     `,
-    values
+    [...values, filters.limit, filters.offset]
   );
 
   const items: PlanningEventListItem[] = dataRes.rows.map((row) => ({
@@ -1550,7 +1570,7 @@ export async function repoCreatePlanningEvent(params: {
 
     await assertResourceSchedulable(client, resource);
 
-    if (b.allow_overlap && !canForcePlanningOverlap(params.audit.role)) {
+    if (b.allow_overlap && !roleCanForcePlanningOverlap(params.audit.role)) {
       throw new HttpError(403, "PLANNING_FORCE_OVERLAP_FORBIDDEN", "Only admin or responsable atelier can force overlaps");
     }
 
@@ -1821,7 +1841,7 @@ export async function repoPatchPlanningEvent(params: {
     }
 
     const nextAllowOverlap = p.allow_overlap !== undefined ? p.allow_overlap : before.allow_overlap;
-    if (nextAllowOverlap && !canForcePlanningOverlap(params.audit.role)) {
+    if (nextAllowOverlap && !roleCanForcePlanningOverlap(params.audit.role)) {
       throw new HttpError(403, "PLANNING_FORCE_OVERLAP_FORBIDDEN", "Only admin or responsable atelier can force overlaps");
     }
 
@@ -1882,7 +1902,11 @@ export async function repoPatchPlanningEvent(params: {
 
     const updated = upd.rows[0];
     if (!updated) {
-      throw new HttpError(409, "PLANNING_STALE", "Event has been modified by another user");
+      throw new HttpError(409, "PLANNING_STALE", "Event has been modified by another user", {
+        event_id: params.id,
+        expected_updated_at: p.expected_updated_at ?? null,
+        current_updated_at: before.updated_at,
+      });
     }
 
     const beforeDurationMinutes = durationMinutes(before.start_ts, before.end_ts);
@@ -2097,6 +2121,159 @@ export async function repoArchivePlanningEvent(params: { id: string; audit: Audi
     return true;
   } catch (err) {
     await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function repoRestorePlanningEvent(params: {
+  id: string;
+  audit: AuditContext;
+}): Promise<PlanningEventListItem | false | null> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const beforeRes = await client.query<{
+      id: string;
+      archived_at: string | null;
+      of_id: string | null;
+      of_operation_id: string | null;
+      machine_id: string | null;
+      poste_id: string | null;
+      start_ts: string;
+      end_ts: string;
+      allow_overlap: boolean;
+    }>(
+      `
+        SELECT
+          id::text AS id,
+          archived_at::text AS archived_at,
+          of_id::text AS of_id,
+          of_operation_id::text AS of_operation_id,
+          machine_id::text AS machine_id,
+          poste_id::text AS poste_id,
+          start_ts::text AS start_ts,
+          end_ts::text AS end_ts,
+          allow_overlap
+        FROM public.planning_events
+        WHERE id = $1::uuid
+        FOR UPDATE
+      `,
+      [params.id]
+    );
+
+    const before = beforeRes.rows[0];
+    if (!before) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+    if (!before.archived_at) {
+      await client.query("ROLLBACK");
+      return false;
+    }
+
+    if (before.of_operation_id) {
+      await ensurePlanningOperationTransitionAllowed({
+        tx: client,
+        of_operation_id: before.of_operation_id,
+        target_status: "PLANNED",
+      });
+    }
+
+    let synchronizedOfId = toNullableInt(before.of_id, "planning_events.of_id");
+    if (synchronizedOfId === null && before.of_operation_id) {
+      const op = await selectOfOperationDefaults(client, before.of_operation_id);
+      synchronizedOfId = op?.of_id ?? null;
+    }
+
+    if (typeof synchronizedOfId === "number") {
+      const lock = await client.query<{ ar_sent_at: string | null }>(
+        `
+          SELECT cc.ar_sent_at::text AS ar_sent_at
+          FROM public.ordres_fabrication o
+          LEFT JOIN public.commande_client cc ON cc.id = o.commande_id
+          WHERE o.id = $1::bigint
+          LIMIT 1
+        `,
+        [synchronizedOfId]
+      );
+      if (lock.rows[0]?.ar_sent_at) {
+        throw new HttpError(409, "PLANNING_LOCKED_AFTER_AR", "Planning is locked after AR has been sent");
+      }
+    }
+
+    const resource = { machine_id: before.machine_id, poste_id: before.poste_id };
+    await assertResourceSchedulable(client, resource);
+
+    const conflicts = await selectPlanningEventConflicts(client, {
+      start_ts: before.start_ts,
+      end_ts: before.end_ts,
+      machine_id: before.machine_id,
+      poste_id: before.poste_id,
+      exclude_id: params.id,
+    });
+    if (conflicts.length && !before.allow_overlap) {
+      throw new HttpError(409, "PLANNING_CONFLICT", "Resource has conflicting events", { conflicts });
+    }
+
+    await client.query(
+      `
+        UPDATE public.planning_events
+        SET
+          archived_at = NULL,
+          archived_by = NULL,
+          status = 'PLANNED'::planning_event_status,
+          updated_at = now(),
+          updated_by = $2
+        WHERE id = $1::uuid
+      `,
+      [params.id, params.audit.user_id]
+    );
+
+    await insertAuditLog(client, params.audit, {
+      action: "planning.events.restore",
+      entity_type: "planning_events",
+      entity_id: params.id,
+      details: { restored_status: "PLANNED", archived_at: before.archived_at },
+    });
+
+    let notifications: AppNotification[] = [];
+    if (before.of_operation_id) {
+      const sync = await syncLinkedOfOperationFromPlanning({
+        tx: client,
+        of_operation_id: before.of_operation_id,
+        user_id: params.audit.user_id,
+      });
+      synchronizedOfId = sync.of_id ?? synchronizedOfId;
+      notifications = sync.notifications;
+    }
+
+    const commandeId =
+      typeof synchronizedOfId === "number" ? await loadCommandeIdForOf(client, synchronizedOfId) : null;
+
+    await client.query("COMMIT");
+
+    for (const notification of notifications) {
+      emitAppNotificationCreated(notification.user_id, notification);
+    }
+    emitPlanningRealtime({
+      event_id: params.id,
+      of_id: synchronizedOfId,
+      commande_id: commandeId,
+      action: "updated",
+      user_id: params.audit.user_id,
+    });
+
+    const out = await selectPlanningEventListItemById(pool, params.id);
+    if (!out) throw new Error("Failed to reload restored planning event");
+    return out;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    if (isPgExclusionViolation(err)) {
+      throw new HttpError(409, "PLANNING_CONFLICT", "Resource has conflicting events");
+    }
     throw err;
   } finally {
     client.release();

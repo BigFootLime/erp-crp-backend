@@ -28,6 +28,7 @@ import {
   svcListPlanningEvents,
   svcListPlanningResources,
   svcPatchPlanningEvent,
+  svcRestorePlanningEvent,
   svcUploadPlanningEventDocuments,
   svcValidatePlanningForAr,
 } from "../services/planning.service";
@@ -189,6 +190,43 @@ export const archivePlanningEvent: RequestHandler = asyncHandler(async (req, res
   }
   res.status(204).send();
 });
+
+export const restorePlanningEvent: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildAuditContext(req);
+    const { id } = planningEventIdParamSchema.parse({ params: req.params }).params;
+    const out = await svcRestorePlanningEvent({ id, audit });
+    if (out === null) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    if (out === false) {
+      res.status(409).json({
+        success: false,
+        code: "PLANNING_NOT_ARCHIVED",
+        message: "Event is not archived",
+        path: req.originalUrl,
+      });
+      return;
+    }
+    res.json(out);
+  } catch (err) {
+    if (
+      err instanceof HttpError &&
+      ["PLANNING_CONFLICT", "PLANNING_LOCKED_AFTER_AR", "PLANNING_RESOURCE_BLOCKED"].includes(err.code)
+    ) {
+      res.status(err.status).json({
+        success: false,
+        message: err.message,
+        code: err.code,
+        path: req.originalUrl,
+        details: err.details ?? null,
+      });
+      return;
+    }
+    next(err);
+  }
+};
 
 export const createPlanningEventComment: RequestHandler = asyncHandler(async (req, res) => {
   const audit = buildAuditContext(req);

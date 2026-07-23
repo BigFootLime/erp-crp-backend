@@ -13,8 +13,14 @@ function parseBoolean(value: unknown): boolean | undefined {
   return undefined;
 }
 
-function isValidDateTime(value: string): boolean {
-  const t = Date.parse(value);
+const ISO_DATETIME_WITH_TIMEZONE =
+  /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}(?::?\d{2})?)$/;
+
+export function isValidPlanningDateTime(value: string): boolean {
+  const normalized = value.trim();
+  if (!ISO_DATETIME_WITH_TIMEZONE.test(normalized)) return false;
+  const parseable = normalized.replace(/([+-]\d{2})$/, "$1:00");
+  const t = Date.parse(parseable);
   return Number.isFinite(t);
 }
 
@@ -36,7 +42,10 @@ const dateTimeString = z
   .string()
   .trim()
   .min(1)
-  .refine(isValidDateTime, "Invalid datetime (expected ISO string)");
+  .refine(
+    isValidPlanningDateTime,
+    "Invalid datetime: expected ISO-8601 with timezone offset (for example 2026-07-23T08:00:00+02:00 or 2026-07-23T06:00:00Z)"
+  );
 
 export const listPlanningEventsQuerySchema = z
   .object({
@@ -50,6 +59,8 @@ export const listPlanningEventsQuerySchema = z
     status: planningEventStatusSchema.optional(),
     priority: planningPrioritySchema.optional(),
     include_archived: z.preprocess(parseBoolean, z.boolean().optional()).default(false),
+    limit: z.coerce.number().int().min(1).max(5000).optional().default(2000),
+    offset: z.coerce.number().int().min(0).optional().default(0),
   })
   .superRefine((v, ctx) => {
     const from = Date.parse(v.from);
@@ -99,6 +110,7 @@ export const createPlanningEventSchema = z
         end_ts: dateTimeString,
         allow_overlap: z.boolean().optional().default(false),
       })
+      .strict()
       .superRefine((v, ctx) => {
         if (v.machine_id && v.poste_id) {
           ctx.addIssue({
@@ -197,9 +209,11 @@ export const patchPlanningEventSchema = z
 export type PatchPlanningEventBodyDTO = z.infer<typeof patchPlanningEventSchema>["body"]["patch"];
 
 export const createPlanningEventCommentSchema = z.object({
-  body: z.object({
-    body: z.string().trim().min(1).max(4000),
-  }),
+  body: z
+    .object({
+      body: z.string().trim().min(1).max(4000),
+    })
+    .strict(),
 });
 
 export type CreatePlanningEventCommentBodyDTO = z.infer<typeof createPlanningEventCommentSchema>["body"];

@@ -3,6 +3,7 @@ import multer from "multer";
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
+import { roleHasPlanningAccess } from "../domain/planning-rbac";
 import {
   archivePlanningEvent,
   autoPlanPlanning,
@@ -14,25 +15,14 @@ import {
   listPlanningEvents,
   listPlanningResources,
   patchPlanningEvent,
+  restorePlanningEvent,
   uploadPlanningEventDocuments,
   validatePlanningForAr,
 } from "../controllers/planning.controller";
 
-function isAdminRole(role: string | undefined): boolean {
-  if (!role) return false;
-  const r = role.trim().toLowerCase();
-  return r.includes("admin") || r.includes("administrateur");
-}
-
-function isProductionRole(role: string | undefined): boolean {
-  if (!role) return false;
-  const r = role.trim().toLowerCase();
-  return r.includes("production") || r.includes("atelier") || r.includes("secretaire") || r.includes("secretariat");
-}
-
 const requireProductionOrAdmin: RequestHandler = (req, _res, next) => {
   const role = req.user?.role;
-  if (!isAdminRole(role) && !isProductionRole(role)) {
+  if (!roleHasPlanningAccess(role)) {
     next(new HttpError(403, "FORBIDDEN", "Production, atelier, secretariat or admin role required"));
     return;
   }
@@ -56,6 +46,7 @@ router.post("/events", createPlanningEvent);
 router.get("/events/:id", getPlanningEvent);
 router.patch("/events/:id", patchPlanningEvent);
 router.delete("/events/:id", archivePlanningEvent);
+router.post("/events/:id/restore", restorePlanningEvent);
 router.post("/events/:id/comments", createPlanningEventComment);
 
 router.post("/events/:id/documents", uploadDocs.array("documents[]"), uploadPlanningEventDocuments);
