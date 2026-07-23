@@ -49,7 +49,7 @@ function normalizeBlockingEvents(events: AutoplanBlockingEvent[]): Array<{ start
   return out;
 }
 
-function overlaps(aStart: number, aEnd: number, bStart: number, bEnd: number): boolean {
+export function overlaps(aStart: number, aEnd: number, bStart: number, bEnd: number): boolean {
   // [start, end) overlap
   return aStart < bEnd && bStart < aEnd;
 }
@@ -58,13 +58,14 @@ function findNextNonOverlappingStart(params: {
   startMs: number;
   durationMs: number;
   blocks: Array<{ startMs: number; endMs: number }>;
+  stepMinutes: number;
 }): number {
-  let start = params.startMs;
+  let start = ceilToStepMinutes(params.startMs, params.stepMinutes);
   let end = start + params.durationMs;
 
   for (const b of params.blocks) {
     if (!overlaps(start, end, b.startMs, b.endMs)) continue;
-    start = b.endMs;
+    start = ceilToStepMinutes(b.endMs, params.stepMinutes);
     end = start + params.durationMs;
   }
   return start;
@@ -88,8 +89,12 @@ export function autoplanGreedySequential(params: {
   for (const t of params.tasks) {
     const durationMinutes = clampPositiveInt(t.duration_minutes, 1);
     const durationMs = durationMinutes * 60_000;
-    const startMs = findNextNonOverlappingStart({ startMs: cursor, durationMs, blocks });
-    const roundedStartMs = ceilToStepMinutes(startMs, stepMinutes);
+    const roundedStartMs = findNextNonOverlappingStart({
+      startMs: cursor,
+      durationMs,
+      blocks,
+      stepMinutes,
+    });
     const endMs = roundedStartMs + durationMs;
 
     planned.push({
