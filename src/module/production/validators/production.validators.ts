@@ -278,18 +278,45 @@ export const ofOperationIdParamSchema = z.object({
 // Phase 5 - OF -> Entree en stock
 // -------------------------
 
+export const ofReceiptQualityStatusSchema = z.enum(["LIBERE", "QUARANTAINE", "BLOQUE"]);
+export type OfReceiptQualityStatusDTO = z.infer<typeof ofReceiptQualityStatusSchema>;
+
 export const ofReceiptBodySchema = z
   .object({
     article_id: uuid.optional(),
     qty_ok: z.coerce.number().positive(),
+    qty_scrap: z.coerce.number().min(0).optional().default(0),
+    qty_rework: z.coerce.number().min(0).optional().default(0),
     unite: z.string().trim().min(1).max(30).optional().nullable(),
     location_id: uuid,
     lot_mode: z.enum(["NEW", "EXISTING"]),
     lot_id: uuid.optional().nullable(),
     lot_number: z.string().trim().min(1).max(80).optional().nullable(),
+    quality_status: ofReceiptQualityStatusSchema,
+    quality_reason: z.string().trim().min(3).max(1000).optional().nullable(),
+    expected_of_updated_at: z.string().datetime({ offset: true }),
     commentaire: z.string().trim().min(1).max(2000).optional().nullable(),
   })
-  .strict();
+  .strict()
+  .superRefine((body, ctx) => {
+    if (body.lot_mode === "EXISTING" && !body.lot_id) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["lot_id"], message: "Un lot existant doit etre selectionne." });
+    }
+    if (body.lot_mode === "NEW" && body.lot_id) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["lot_id"],
+        message: "Un nouveau lot ne peut pas reutiliser un identifiant existant.",
+      });
+    }
+    if (body.quality_status !== "LIBERE" && !body.quality_reason?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["quality_reason"],
+        message: "Un motif qualite est requis pour un lot en quarantaine ou bloque.",
+      });
+    }
+  });
 
 export const createOfReceiptSchema = z.object({
   body: ofReceiptBodySchema,

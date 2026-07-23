@@ -100,3 +100,19 @@ administrative PostgreSQL role while runtime patches are executed by `cerp_app`.
 Patch `20260722_machine_park_165.sql` is additive and idempotent. It reserves the central `MCH` scope, makes unknown hourly rates nullable with explicit provenance, adds a legacy alias, enforces code immutability, records creation idempotency, links machine unavailability to canonical `planning_events`, and adds maintenance plans/events plus document metadata/removal fields.
 
 Before any application, run `db/patches/support/20260722_machine_park_165.preflight.sql`. Apply only to `cerp_test` after an approved backup, then run `20260722_machine_park_165.verify.sql`. The guarded rollback refuses to drop structures once machine-park business rows exist and intentionally preserves rate provenance/code immutability where reverting would lose traceability. No #165 script is authorized to write `cerp_prod` without a later human production decision.
+
+## Issue #223 - Réceptions de production
+
+Patch `20260723_production_receipts_223.sql` adds an immutable, actor-scoped
+idempotency ledger (`of_receipts`), explicit lot links on stock batches and
+reservations, and the read model `v_stock_lot_availability`. Physical on-hand,
+quarantine, blocked, reserved and available quantities remain distinct.
+
+Run the matching `preflight` and `verify` scripts from `db/patches/support`.
+The rollback is restricted to `cerp_test` and refuses to continue once a
+receipt or lot-level reservation exists. Validation on 2026-07-23 used the
+isolated `cerp_test` clone first. After explicit human approval, production was
+backed up to `cerp_prod_pre_223_20260723_145750.backup` (SHA-256
+`9a037c37563e1bbc57fa34b7e8c3fd2aaa1cca09e0b994628e5f0d4e9ab83dc1`),
+then the patch was applied, verified and recorded in
+`public.cerp_schema_migrations`.
