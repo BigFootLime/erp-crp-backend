@@ -225,6 +225,10 @@ export type StockEmplacementListItem = {
   name: string | null;
   is_scrap: boolean;
   is_active: boolean;
+  location_type: "RECEIVING" | "PRODUCTION" | "QUARANTINE" | "SCRAP" | "SHIPPING" | "STORAGE";
+  allow_inbound: boolean;
+  allow_outbound: boolean;
+  restrictions: Record<string, unknown>;
   updated_at: string;
   created_at: string;
 };
@@ -235,6 +239,8 @@ export type StockLotListItem = {
   article_code: string;
   article_designation: string;
   lot_code: string;
+  lot_status: "LIBERE" | "EN_ATTENTE" | "QUARANTAINE" | "BLOQUE";
+  lot_status_note: string | null;
   supplier_lot_code: string | null;
   received_at: string | null;
   manufactured_at: string | null;
@@ -245,6 +251,30 @@ export type StockLotListItem = {
 
 export type StockLotDetail = StockLotListItem & {
   notes: string | null;
+};
+
+export type StockLotGenealogyEdge = {
+  id: string;
+  parent_lot_id: string;
+  parent_lot_code: string;
+  parent_article_id: string;
+  parent_article_code: string;
+  child_lot_id: string;
+  child_lot_code: string;
+  child_article_id: string;
+  child_article_code: string;
+  operation_type: "SPLIT" | "MERGE" | "TRANSFORM";
+  qty_contributed: number;
+  unit_code: string;
+  stock_movement_id: string | null;
+  correlation_id: string;
+  created_at: string;
+};
+
+export type StockLotGenealogy = {
+  lot: StockLotDetail;
+  ancestors: StockLotGenealogyEdge[];
+  descendants: StockLotGenealogyEdge[];
 };
 
 // This endpoint now reflects stock_levels (via v_stock_current).
@@ -271,7 +301,12 @@ export type StockBalanceRow = {
   managed_in_stock: boolean;
   qty_on_hand: number;
   qty_reserved: number;
+  qty_depreciated: number;
+  qty_quarantine: number;
+  qty_blocked: number;
   qty_available: number;
+  qty_scrap_recorded: number;
+  lot_status: "LIBERE" | "EN_ATTENTE" | "QUARANTAINE" | "BLOQUE" | null;
   updated_at: string;
 };
 
@@ -302,6 +337,8 @@ export type StockMovementListItem = {
   source_document_type: string | null;
   source_document_id: string | null;
   reason_code: string | null;
+  correlation_id: string | null;
+  reversal_of_id: string | null;
   updated_at: string;
   created_at: string;
   lines_count: number;
@@ -376,6 +413,8 @@ export type StockMovementDetail = {
     source_document_type: string | null;
     source_document_id: string | null;
     reason_code: string | null;
+    correlation_id: string | null;
+    reversal_of_id: string | null;
     notes: string | null;
     created_at: string;
     updated_at: string;
@@ -388,6 +427,62 @@ export type StockMovementDetail = {
   events: StockMovementEvent[];
 };
 
+export type StockMovementCompensationPreview = {
+  original_movement_id: string;
+  original_movement_no: string | null;
+  compensable: boolean;
+  blockers: Array<{ code: string; message: string }>;
+  proposed_movement: {
+    movement_type: StockMovementType;
+    source_document_type: "STOCK_COMPENSATION";
+    source_document_id: string;
+    reason_code: "COMPENSATION";
+    notes: string;
+    lines: Array<{
+      article_id: string;
+      lot_id: string | null;
+      qty: number;
+      unite: string | null;
+      src_magasin_id: string | null;
+      src_emplacement_id: number | null;
+      dst_magasin_id: string | null;
+      dst_emplacement_id: number | null;
+      direction?: "IN" | "OUT";
+    }>;
+  } | null;
+};
+
+export type StockMovementImpactPreview = {
+  authoritative: true;
+  as_of: string;
+  movement_type: StockMovementType;
+  qty_total: number;
+  can_post: boolean;
+  blockers: Array<{ code: string; message: string }>;
+  impacts: Array<{
+    side: "SOURCE" | "DESTINATION";
+    magasin_id: string;
+    emplacement_id: number;
+    lot_id: string | null;
+    before: {
+      qty_on_hand: number;
+      qty_reserved: number;
+      qty_depreciated: number;
+      qty_quarantine: number;
+      qty_blocked: number;
+      qty_available: number;
+    };
+    after: {
+      qty_on_hand: number;
+      qty_reserved: number;
+      qty_depreciated: number;
+      qty_quarantine: number;
+      qty_blocked: number;
+      qty_available: number;
+    };
+  }>;
+};
+
 export type StockMovementKpis = {
   movements_total: number;
   movements_posted: number;
@@ -397,12 +492,25 @@ export type StockMovementKpis = {
 };
 
 export type StockAnalytics = {
+  authoritative: true;
+  as_of: string;
+  scope: {
+    magasin_id: string | null;
+    from: string | null;
+    to: string | null;
+  };
   kpis: {
     articles_count: number;
     stock_managed_articles: number;
     qty_on_hand: number;
     qty_available: number;
     qty_reserved: number;
+    ruptures_count: number;
+    below_minimum_count: number;
+    at_risk_reservations_count: number;
+    quarantine_lots_count: number;
+    active_inventory_count: number;
+    discrepancies_to_review_count: number;
   };
   magasins: Array<{
     id: string;
@@ -432,13 +540,25 @@ export type StockAnalytics = {
   };
 };
 
-export type StockInventorySessionStatus = "OPEN" | "CLOSED";
+export type StockInventorySessionStatus = "DRAFT" | "OPEN" | "APPROVED" | "CLOSED" | "CANCELLED";
 
 export type StockInventorySessionListItem = {
   id: string;
   session_no: string;
   status: StockInventorySessionStatus;
-  started_at: string;
+  scope_magasin_id: string | null;
+  scope_emplacement_id: number | null;
+  scope_article_id: string | null;
+  scope_article_category: ArticleCategory | null;
+  blind_count: boolean;
+  requires_second_count: boolean;
+  snapshot_at: string | null;
+  approved_at: string | null;
+  cancelled_at: string | null;
+  cancellation_reason: string | null;
+  row_version: number;
+  correlation_id: string | null;
+  started_at: string | null;
   closed_at: string | null;
   notes: string | null;
   updated_at: string;
@@ -449,6 +569,7 @@ export type StockInventorySessionListItem = {
 
 export type StockInventorySessionLine = {
   id: string;
+  snapshot_line_id: string;
   session_id: string;
   line_no: number;
   article_id: string;
@@ -462,9 +583,11 @@ export type StockInventorySessionLine = {
   emplacement_name: string | null;
   lot_id: string | null;
   lot_code: string | null;
-  counted_qty: number;
-  qty_on_hand: number;
-  delta_qty: number;
+  counted_qty: number | null;
+  qty_on_hand: number | null;
+  delta_qty: number | null;
+  count_round: 1 | 2 | null;
+  reason_code: string | null;
   note: string | null;
   updated_at: string;
   created_at: string;

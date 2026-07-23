@@ -13,6 +13,7 @@ import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-lo
 import { roleHasCommandeFournisseurCapability } from "../../commande-fournisseur/domain/commande-fournisseur-rbac"
 import { repoRefreshCommandeReceptionState } from "../../commande-fournisseur/repository/commande-fournisseur.repository"
 import { repoCreateMovement, repoPostMovement } from "../../stock/repository/stock.repository"
+import { hashStockCommand } from "../../stock/domain/stock-command"
 import type { StockMovementDetail } from "../../stock/types/stock.types"
 import type {
   AddMeasurementBodyDTO,
@@ -1684,7 +1685,8 @@ export async function repoCreateStockReceipt(
   receptionId: string,
   lineId: string,
   body: StockReceiptBodyDTO,
-  audit: AuditContext
+  audit: AuditContext,
+  idempotencyKey: string
 ): Promise<{ stock_movement_id: string; movement_no: string | null; posted: StockMovementDetail } | null> {
   const lineRes = await db.query<{
     id: string
@@ -1727,6 +1729,10 @@ export async function repoCreateStockReceipt(
     throw new HttpError(409, "OVER_RECEIPT", "Quantite superieure a la quantite restante a mettre en stock")
   }
 
+  const stockCommandKey = hashStockCommand("RECEPTION_STOCK_KEY", {
+    actor_user_id: audit.user_id,
+    idempotency_key: idempotencyKey,
+  })
   const created = await repoCreateMovement(
     {
       movement_type: "IN",
@@ -1735,7 +1741,7 @@ export async function repoCreateStockReceipt(
       source_document_id: receptionId,
       reason_code: "RECEPTION_FOURNISSEUR",
       notes: body.notes ?? `Reception ${line.reception_no}`,
-      idempotency_key: null,
+      idempotency_key: `rf-create-${stockCommandKey}`,
       lines: [
         {
           article_id: line.article_id,
@@ -1752,10 +1758,16 @@ export async function repoCreateStockReceipt(
         },
       ],
     },
-    audit
+    audit,
+    { trusted_source_flow: true }
   )
 
-  const posted = await repoPostMovement(created.movement.id, audit)
+  const posted = await repoPostMovement(
+    created.movement.id,
+    {},
+    audit,
+    `rf-post-${stockCommandKey}`
+  )
   if (!posted) throw new Error("Failed to post stock movement")
 
   await db.query(

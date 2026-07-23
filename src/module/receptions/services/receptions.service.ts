@@ -48,5 +48,10 @@ export const addIncomingMeasurementSVC = (receptionId: string, lineId: string, b
 export const decideIncomingInspectionSVC = (receptionId: string, lineId: string, body: DecideInspectionBodyDTO, audit: AuditContext) =>
   repo.repoDecideInspection(receptionId, lineId, body, audit)
 
-export const createReceptionStockReceiptSVC = (receptionId: string, lineId: string, body: StockReceiptBodyDTO, audit: AuditContext) =>
-  repo.repoCreateStockReceipt(receptionId, lineId, body, audit)
+export const createReceptionStockReceiptSVC = (
+  receptionId: string,
+  lineId: string,
+  body: StockReceiptBodyDTO,
+  audit: AuditContext,
+  idempotencyKey: string
+) => repo.repoCreateStockReceipt(receptionId, lineId, body, audit, idempotencyKey)

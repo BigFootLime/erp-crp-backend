@@ -67,6 +67,16 @@ describe("/api/v1/stock", () => {
   it("GET /api/v1/stock/analytics returns analytics payload", async () => {
     mocks.poolQuery
       .mockResolvedValueOnce({ rows: [{ articles_count: 12, stock_managed_articles: 9, qty_on_hand: 120, qty_available: 100, qty_reserved: 20 }] })
+      .mockResolvedValueOnce({
+        rows: [{
+          ruptures_count: 2,
+          below_minimum_count: 3,
+          at_risk_reservations_count: 1,
+          quarantine_lots_count: 1,
+          active_inventory_count: 1,
+          discrepancies_to_review_count: 4,
+        }],
+      })
       .mockResolvedValueOnce({ rows: [{ id: "mag-1", code: "MAT", name: "Matières" }] })
       .mockResolvedValueOnce({ rows: [{ article_category: "matiere", articles_count: 5, stock_managed_count: 5 }] })
       .mockResolvedValueOnce({ rows: [{ date: "2026-03-13", qty_in: 10, qty_out: 3, net_qty: 7 }] })
@@ -78,7 +88,13 @@ describe("/api/v1/stock", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({
-      kpis: { articles_count: 12, stock_managed_articles: 9 },
+      authoritative: true,
+      kpis: {
+        articles_count: 12,
+        stock_managed_articles: 9,
+        ruptures_count: 2,
+        discrepancies_to_review_count: 4,
+      },
       magasins: [{ code: "MAT" }],
       category_counts: [{ article_category: "matiere" }],
     });
@@ -295,6 +311,7 @@ describe("/api/v1/stock", () => {
     const res = await request(app)
       .post("/api/v1/stock/movements")
       .set("Authorization", "Bearer fake")
+      .set("Idempotency-Key", "test-lot-required-movement-001")
       .send({
         movement_type: "IN",
         lines: [
