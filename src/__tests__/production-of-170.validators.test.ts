@@ -173,7 +173,13 @@ runMatrix("generateOfsSchema", generateCases, (value) => generateOfsSchema.safeP
 // ---------------------------------------------------------------------------
 // ofReceiptBodySchema — 18 combinaisons
 // ---------------------------------------------------------------------------
-const receiptBase = { qty_ok: 5, location_id: UUID, lot_mode: "NEW" };
+const receiptBase = {
+  qty_ok: 5,
+  location_id: UUID,
+  lot_mode: "NEW",
+  quality_status: "LIBERE",
+  expected_of_updated_at: ISO_TS,
+};
 const receiptCases: Case[] = [
   { name: "réception nominale (nouveau lot serveur)", value: receiptBase, ok: true },
   { name: "réception partielle décimale", value: { ...receiptBase, qty_ok: 0.5 }, ok: true },

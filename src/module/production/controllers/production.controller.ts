@@ -58,6 +58,7 @@ import {
 } from "../services/production.service";
 import { svcGetMachineIntelligence } from "../services/machine-intelligence.service";
 import { roleHasMachineCapability } from "../domain/machine-rbac";
+import { roleHasOfCapability } from "../domain/of-rbac";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -472,7 +473,15 @@ async function withGenerationDependencyGuard<T>(fn: () => Promise<T>): Promise<T
 export const getOfReceiptContext = asyncHandler(async (req, res) => {
   const { id } = ofIdParamSchema.parse({ params: req.params }).params;
   const out = await svcGetOfReceiptContext({ of_id: id });
-  res.json(out);
+  const canDecideQuality = roleHasOfCapability(req.user?.role, "quality_decision");
+  res.json({
+    ...out,
+    permissions: {
+      can_receive: true,
+      can_release: canDecideQuality,
+      allowed_quality_statuses: canDecideQuality ? ["LIBERE", "QUARANTAINE", "BLOQUE"] : ["QUARANTAINE"],
+    },
+  });
 });
 
 export const createOfReceipt = asyncHandler(async (req, res) => {
@@ -480,9 +489,22 @@ export const createOfReceipt = asyncHandler(async (req, res) => {
   const { id } = ofIdParamSchema.parse({ params: req.params }).params;
   const raw = parseBody(req);
   const body = createOfReceiptSchema.parse({ body: raw }).body;
-  const out = await svcCreateOfReceipt({ of_id: id, body, audit });
-  emitOfChanged(req, { ofId: id, action: "status_changed" });
-  res.status(201).json(out);
+  const idempotencyKey = typeof req.headers["idempotency-key"] === "string" ? req.headers["idempotency-key"].trim() : null;
+  if (!idempotencyKey || idempotencyKey.length < 8 || idempotencyKey.length > 200) {
+    throw new HttpError(400, "IDEMPOTENCY_KEY_REQUIRED", "Une cle Idempotency-Key stable de 8 a 200 caracteres est requise.");
+  }
+  if (body.quality_status !== "QUARANTAINE" && !roleHasOfCapability(req.user?.role, "quality_decision")) {
+    throw new HttpError(
+      403,
+      "OF_QUALITY_DECISION_FORBIDDEN",
+      "Votre role peut receptionner en quarantaine, mais pas liberer ou bloquer le lot."
+    );
+  }
+  const out = await svcCreateOfReceipt({ of_id: id, body, idempotency_key: idempotencyKey, audit });
+  if (!out.idempotent_replay) {
+    emitOfChanged(req, { ofId: id, action: "status_changed" });
+  }
+  res.status(out.idempotent_replay ? 200 : 201).json(out);
 });
 
 export const getOfTraceability = asyncHandler(async (req, res) => {

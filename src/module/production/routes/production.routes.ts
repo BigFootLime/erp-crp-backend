@@ -197,7 +197,7 @@ router.post("/ofs/:id/operations/:opId/time-logs/start", requireOfCapability("op
 router.post("/ofs/:id/operations/:opId/time-logs/stop", requireOfCapability("operate"), stopOfOperationTimeLog);
 
 // Phase 5 - Fin de production -> Entree en stock
-router.get("/ofs/:id/receipt-context", getOfReceiptContext);
+router.get("/ofs/:id/receipt-context", requireOfCapability("receipt"), getOfReceiptContext);
 router.post("/ofs/:id/receipt", requireOfCapability("receipt"), createOfReceipt);
 router.get("/ofs/:id/traceability", requireOfCapability("traceability"), getOfTraceability);
 
