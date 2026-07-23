@@ -28,6 +28,7 @@ import {
   repoListPlanningEvents,
   repoListPlanningResources,
   repoPatchPlanningEvent,
+  repoRestorePlanningEvent,
   repoUploadPlanningEventDocuments,
   repoValidatePlanningForAr,
 } from "../repository/planning.repository";
@@ -80,11 +81,24 @@ export async function svcAutoPlanPlanning(params: {
   }>;
   skipped_operations: Array<{
     of_id: number;
-    of_operation_id: string;
-    reason: "ALREADY_PLANNED" | "MISSING_RESOURCE" | "FAILED";
+    of_operation_id: string | null;
+    reason:
+      | "ALREADY_PLANNED"
+      | "MISSING_RESOURCE"
+      | "RESOURCE_BLOCKED"
+      | "LOCKED_AFTER_AR"
+      | "NO_OPERATIONS"
+      | "NO_SLOT"
+      | "FAILED";
     existing_event_id?: string | null;
     message?: string;
   }>;
+  summary: {
+    requested_ofs: number;
+    created: number;
+    skipped: number;
+    partial: boolean;
+  };
 }> {
   const stepMinutes = clampPositiveInt(params.body.step_minutes ?? 15, 15);
   const baseStartRaw = params.body.start_ts ? Date.parse(params.body.start_ts) : Date.now();
@@ -118,14 +132,30 @@ export async function svcAutoPlanPlanning(params: {
   }> = [];
   const skipped_operations: Array<{
     of_id: number;
-    of_operation_id: string;
-    reason: "ALREADY_PLANNED" | "MISSING_RESOURCE" | "FAILED";
+    of_operation_id: string | null;
+    reason:
+      | "ALREADY_PLANNED"
+      | "MISSING_RESOURCE"
+      | "RESOURCE_BLOCKED"
+      | "LOCKED_AFTER_AR"
+      | "NO_OPERATIONS"
+      | "NO_SLOT"
+      | "FAILED";
     existing_event_id?: string | null;
     message?: string;
   }> = [];
 
   for (const ofId of params.body.of_ids) {
     const ops = byOf.get(ofId) ?? [];
+    if (ops.length === 0) {
+      skipped_operations.push({
+        of_id: ofId,
+        of_operation_id: null,
+        reason: "NO_OPERATIONS",
+        message: "Aucune opération planifiable pour cet OF.",
+      });
+      continue;
+    }
     let cursorMs = baseStartMs;
 
     for (const op of ops) {
@@ -222,6 +252,28 @@ export async function svcAutoPlanPlanning(params: {
             continue;
           }
 
+          if (httpErr && httpErr.code === "PLANNING_RESOURCE_BLOCKED") {
+            skipped_operations.push({
+              of_id: op.of_id,
+              of_operation_id: op.of_operation_id,
+              reason: "RESOURCE_BLOCKED",
+              message: typeof httpErr.message === "string" ? httpErr.message : undefined,
+            });
+            skipped = true;
+            break;
+          }
+
+          if (httpErr && httpErr.code === "PLANNING_LOCKED_AFTER_AR") {
+            skipped_operations.push({
+              of_id: op.of_id,
+              of_operation_id: op.of_operation_id,
+              reason: "LOCKED_AFTER_AR",
+              message: typeof httpErr.message === "string" ? httpErr.message : undefined,
+            });
+            skipped = true;
+            break;
+          }
+
           skipped_operations.push({
             of_id: op.of_id,
             of_operation_id: op.of_operation_id,
@@ -237,14 +289,23 @@ export async function svcAutoPlanPlanning(params: {
         skipped_operations.push({
           of_id: op.of_id,
           of_operation_id: op.of_operation_id,
-          reason: "FAILED",
+          reason: "NO_SLOT",
           message: "Too many conflicts; try a different start time or resource availability.",
         });
       }
     }
   }
 
-  return { created_events, skipped_operations };
+  return {
+    created_events,
+    skipped_operations,
+    summary: {
+      requested_ofs: params.body.of_ids.length,
+      created: created_events.length,
+      skipped: skipped_operations.length,
+      partial: created_events.length > 0 && skipped_operations.length > 0,
+    },
+  };
 }
 
 export async function svcValidatePlanningForAr(params: {
@@ -264,6 +325,13 @@ export async function svcPatchPlanningEvent(params: {
 
 export async function svcArchivePlanningEvent(params: { id: string; audit: AuditContext }): Promise<boolean | null> {
   return repoArchivePlanningEvent(params);
+}
+
+export async function svcRestorePlanningEvent(params: {
+  id: string;
+  audit: AuditContext;
+}): Promise<PlanningEventListItem | false | null> {
+  return repoRestorePlanningEvent(params);
 }
 
 export async function svcCreatePlanningEventComment(params: {
