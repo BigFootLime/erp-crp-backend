@@ -130,7 +130,12 @@ export const svcGetOfTechnicalSnapshot = (params: { of_id: number }) =>
 
 export const svcGetOfReceiptContext = (params: { of_id: number }) => receiptsRepo.repoGetOfReceiptContext(params);
 
-export const svcCreateOfReceipt = (params: { of_id: number; body: OfReceiptBodyDTO; audit: repo.AuditContext }) =>
+export const svcCreateOfReceipt = (params: {
+  of_id: number;
+  body: OfReceiptBodyDTO;
+  idempotency_key: string;
+  audit: repo.AuditContext;
+}) =>
   receiptsRepo.repoCreateOfReceipt(params);
 
 export const svcGetOfTraceability = (params: { of_id: number }) => receiptsRepo.repoGetOfTraceability(params);

@@ -12,6 +12,7 @@ export type OfCapability =
   | "launch"
   | "operate"
   | "receipt"
+  | "quality_decision"
   | "cancel"
   | "archive"
   | "traceability";
@@ -23,7 +24,8 @@ const NEEDLES: Record<OfCapability, readonly string[]> = {
   edit_prelaunch: ["admin", "administrateur", "directeur", "production", "method"],
   launch: ["admin", "administrateur", "directeur", "production"],
   operate: ["admin", "administrateur", "directeur", "production", "atelier"],
-  receipt: ["admin", "administrateur", "directeur", "production", "atelier", "logisti"],
+  receipt: ["admin", "administrateur", "directeur", "production", "atelier", "logisti", "qualit"],
+  quality_decision: ["admin", "administrateur", "directeur", "production", "qualit"],
   cancel: ["admin", "administrateur", "directeur", "production"],
   archive: ["admin", "administrateur", "directeur"],
   traceability: ["admin", "administrateur", "directeur", "production", "atelier", "qualit", "method", "logisti"],

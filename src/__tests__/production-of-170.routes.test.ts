@@ -739,6 +739,16 @@ describe("#170 recursive generation (POST /production/ofs/generate)", () => {
 });
 
 describe("#170 bounded production receipt", () => {
+  const receiptBody = {
+    qty_ok: 1,
+    qty_scrap: 0,
+    qty_rework: 0,
+    location_id: "88888888-8888-8888-8888-888888888888",
+    lot_mode: "NEW",
+    quality_status: "LIBERE",
+    expected_of_updated_at: OF_UPDATED_AT,
+  } as const;
+
   function installReceiptMocks(params: { statut: string; quantite_bonne: number; already: number }) {
     mocks.clientQuery.mockImplementation(async (sql: unknown) => {
       const q = String(sql);
@@ -750,9 +760,11 @@ describe("#170 bounded production receipt", () => {
               numero: "OF-2026-000005",
               piece_technique_id: PIECE_ROOT,
               article_id: "11111111-1111-1111-1111-111111111111",
+              affaire_id: null,
               commande_ligne_id: null,
               quantite_bonne: params.quantite_bonne,
               statut: params.statut,
+              updated_at: OF_UPDATED_AT,
             },
           ],
         };
@@ -769,7 +781,8 @@ describe("#170 bounded production receipt", () => {
     const res = await request(app)
       .post("/api/v1/production/ofs/5/receipt")
       .set("x-test-role", "Responsable Production")
-      .send({ qty_ok: 5, location_id: "88888888-8888-8888-8888-888888888888", lot_mode: "NEW" });
+      .set("Idempotency-Key", "receipt-223-overflow")
+      .send({ ...receiptBody, qty_ok: 5 });
     expect(res.status).toBe(422);
     expect(res.body).toMatchObject({ code: "OF_RECEIPT_EXCEEDS_RECEIVABLE" });
   });
@@ -779,7 +792,8 @@ describe("#170 bounded production receipt", () => {
     const res = await request(app)
       .post("/api/v1/production/ofs/5/receipt")
       .set("x-test-role", "Responsable Production")
-      .send({ qty_ok: 1, location_id: "88888888-8888-8888-8888-888888888888", lot_mode: "NEW" });
+      .set("Idempotency-Key", "receipt-223-cancelled")
+      .send(receiptBody);
     expect(res.status).toBe(409);
     expect(res.body).toMatchObject({ code: "OF_RECEIPT_STATUS_INVALID" });
   });
@@ -788,8 +802,37 @@ describe("#170 bounded production receipt", () => {
     const res = await request(app)
       .post("/api/v1/production/ofs/5/receipt")
       .set("x-test-role", "Comptabilite")
-      .send({ qty_ok: 1, location_id: "88888888-8888-8888-8888-888888888888", lot_mode: "NEW" });
+      .send(receiptBody);
     expect(res.status).toBe(403);
+  });
+
+  it("requires an idempotency key before writing", async () => {
+    const res = await request(app)
+      .post("/api/v1/production/ofs/5/receipt")
+      .set("x-test-role", "Responsable Production")
+      .send(receiptBody);
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({ code: "IDEMPOTENCY_KEY_REQUIRED" });
+  });
+
+  it("allows workshop receipt only in quarantine, not direct release", async () => {
+    const res = await request(app)
+      .post("/api/v1/production/ofs/5/receipt")
+      .set("x-test-role", "Operateur Atelier")
+      .set("Idempotency-Key", "receipt-223-workshop")
+      .send(receiptBody);
+    expect(res.status).toBe(403);
+    expect(res.body).toMatchObject({ code: "OF_QUALITY_DECISION_FORBIDDEN" });
+  });
+
+  it("does not let workshop block a lot through a crafted receipt request", async () => {
+    const res = await request(app)
+      .post("/api/v1/production/ofs/5/receipt")
+      .set("x-test-role", "Operateur Atelier")
+      .set("Idempotency-Key", "receipt-223-workshop-block")
+      .send({ ...receiptBody, quality_status: "BLOQUE", quality_reason: "Blocage qualite requis" });
+    expect(res.status).toBe(403);
+    expect(res.body).toMatchObject({ code: "OF_QUALITY_DECISION_FORBIDDEN" });
   });
 
   it("gates traceability behind the traceability capability", async () => {
