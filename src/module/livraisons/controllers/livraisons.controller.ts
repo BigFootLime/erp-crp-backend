@@ -12,11 +12,17 @@ import {
   livraisonLineIdParamsSchema,
   livraisonLineAllocationIdParamsSchema,
   livraisonStatusBodySchema,
+  livraisonProofBodySchema,
+  shipLivraisonBodySchema,
   updateLivraisonBodySchema,
   updateLivraisonLineBodySchema,
 } from "../validators/livraisons.validators"
 import * as service from "../services/livraisons.service"
 import * as pdfService from "../services/pdf.service"
+import {
+  removeTemporaryLivraisonDocuments,
+  validateLivraisonDocuments,
+} from "../services/livraisons-document-validation"
 import { repoFindDocumentFilePath, repoGetDocumentName, repoIsLivraisonDocumentLinked } from "../repository/livraisons.repository"
 import { emitEntityChanged } from "../../../shared/realtime/realtime.service"
 
@@ -34,6 +40,18 @@ function getUserId(req: Express.Request): number {
   const userId = typeof req.user?.id === "number" ? req.user.id : null
   if (!userId) throw new HttpError(401, "UNAUTHORIZED", "Authentication required")
   return userId
+}
+
+function getRequiredIdempotencyKey(req: Request): string {
+  const value = req.headers["idempotency-key"]
+  if (typeof value !== "string" || value.trim().length < 8 || value.trim().length > 200) {
+    throw new HttpError(
+      400,
+      "IDEMPOTENCY_KEY_REQUIRED",
+      "A valid Idempotency-Key header is required (8 to 200 characters)."
+    )
+  }
+  return value.trim()
 }
 
 function routeParam(req: Request, name: string): string {
@@ -233,16 +251,55 @@ export const updateLivraisonStatus: RequestHandler = async (req, res, next) => {
   }
 }
 
+export const getLivraisonShipmentPreview: RequestHandler = async (req, res, next) => {
+  try {
+    getUserId(req)
+    const { id } = livraisonIdParamsSchema.parse(req.params)
+    const out = await service.svcGetLivraisonShipmentPreview(id)
+    res.status(200).json(out)
+  } catch (e) {
+    next(e)
+  }
+}
+
+export const shipLivraison: RequestHandler = async (req, res, next) => {
+  try {
+    const userId = getUserId(req)
+    const { id } = livraisonIdParamsSchema.parse(req.params)
+    const body = shipLivraisonBodySchema.parse(req.body)
+    const out = await service.svcShipLivraison(
+      id,
+      body,
+      userId,
+      getRequiredIdempotencyKey(req)
+    )
+    emitLivraisonChanged(req, { entityId: id, action: "status_changed" })
+    res.status(200).json(out)
+  } catch (e) {
+    next(e)
+  }
+}
+
+export const createLivraisonProof: RequestHandler = async (req, res, next) => {
+  try {
+    const userId = getUserId(req)
+    const { id } = livraisonIdParamsSchema.parse(req.params)
+    const body = livraisonProofBodySchema.parse(req.body)
+    const out = await service.svcCreateLivraisonProof(id, body, userId)
+    emitLivraisonChanged(req, { entityId: id, action: "updated" })
+    res.status(201).json(out)
+  } catch (e) {
+    next(e)
+  }
+}
+
 export const uploadLivraisonDocuments: RequestHandler = async (req, res, next) => {
+  const files = (req.files ?? []) as Express.Multer.File[]
   try {
     const userId = getUserId(req)
     const { id } = livraisonIdParamsSchema.parse(req.params)
 
-    const files = (req.files ?? []) as Express.Multer.File[]
-    if (!files.length) {
-      res.status(400).json({ error: "No documents uploaded" })
-      return
-    }
+    await validateLivraisonDocuments(files)
 
     const body = req.body
     const type =
@@ -254,7 +311,12 @@ export const uploadLivraisonDocuments: RequestHandler = async (req, res, next) =
         : null
     const out = await service.svcAttachLivraisonDocuments({
       bonLivraisonId: id,
-      documents: files.map((f) => ({ originalname: f.originalname, path: f.path, mimetype: f.mimetype })),
+      documents: files.map((f) => ({
+        originalname: f.originalname,
+        path: f.path,
+        mimetype: f.mimetype,
+        size: f.size,
+      })),
       type,
       userId,
     })
@@ -262,6 +324,7 @@ export const uploadLivraisonDocuments: RequestHandler = async (req, res, next) =
     emitLivraisonChanged(req, { entityId: id, action: "updated" })
     res.status(201).json({ documents: out })
   } catch (e) {
+    await removeTemporaryLivraisonDocuments(files)
     next(e)
   }
 }

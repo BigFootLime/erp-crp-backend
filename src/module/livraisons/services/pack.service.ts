@@ -205,6 +205,8 @@ export async function svcGenerateLivraisonPack(params: {
     })
 
     const checksum = crypto.createHash("sha256").update(blPdf).update(cofcPdf).digest("hex")
+    const blChecksum = crypto.createHash("sha256").update(blPdf).digest("hex")
+    const cofcChecksum = crypto.createHash("sha256").update(cofcPdf).digest("hex")
 
     await fs.writeFile(blPath, blPdf)
     await fs.writeFile(cofcPath, cofcPdf)
@@ -226,22 +228,56 @@ export async function svcGenerateLivraisonPack(params: {
 
       const blRow = await db.query<{ id: string }>(
         `
-          INSERT INTO public.bon_livraison_documents (bon_livraison_id, document_id, type, version, uploaded_by)
-          VALUES ($1::uuid, $2::uuid, $3, $4, $5)
+          INSERT INTO public.bon_livraison_documents (
+            bon_livraison_id,
+            document_id,
+            type,
+            version,
+            uploaded_by,
+            checksum_sha256,
+            file_size_bytes,
+            mime_type
+          )
+          VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, 'application/pdf')
           RETURNING id::text AS id
         `,
-        [params.bonLivraisonId, blDocumentId, "GENERATED_BL_PDF", version, params.actorUserId]
+        [
+          params.bonLivraisonId,
+          blDocumentId,
+          "GENERATED_BL_PDF",
+          version,
+          params.actorUserId,
+          blChecksum,
+          blPdf.byteLength,
+        ]
       )
       const blDocRowId = blRow.rows[0]?.id
       if (!blDocRowId) throw new Error("Failed to create bon_livraison_documents row for BL PDF")
 
       const cofcRow = await db.query<{ id: string }>(
         `
-          INSERT INTO public.bon_livraison_documents (bon_livraison_id, document_id, type, version, uploaded_by)
-          VALUES ($1::uuid, $2::uuid, $3, $4, $5)
+          INSERT INTO public.bon_livraison_documents (
+            bon_livraison_id,
+            document_id,
+            type,
+            version,
+            uploaded_by,
+            checksum_sha256,
+            file_size_bytes,
+            mime_type
+          )
+          VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, 'application/pdf')
           RETURNING id::text AS id
         `,
-        [params.bonLivraisonId, cofcDocumentId, "GENERATED_COFC_PDF", version, params.actorUserId]
+        [
+          params.bonLivraisonId,
+          cofcDocumentId,
+          "GENERATED_COFC_PDF",
+          version,
+          params.actorUserId,
+          cofcChecksum,
+          cofcPdf.byteLength,
+        ]
       )
       const cofcDocRowId = cofcRow.rows[0]?.id
       if (!cofcDocRowId) throw new Error("Failed to create bon_livraison_documents row for CofC PDF")

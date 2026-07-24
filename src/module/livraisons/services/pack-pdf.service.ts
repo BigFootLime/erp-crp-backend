@@ -205,14 +205,25 @@ export async function svcRenderPackBonLivraisonPdf(args: { preview: LivraisonPac
     const table = renderBlLinesTable(doc, {
       startY: doc.y,
       pageNoStart: 1,
-      lines: lines.map((l) => ({
-        ordre: l.ordre,
-        designation: l.designation,
-        code_piece: l.code_piece,
-        quantite: l.quantite,
-        unite: l.unite,
-        delai_client: l.delai_client,
-      })),
+      lines: lines.map((line) => {
+        const lots = Array.from(
+          new Set(
+            (line.allocations ?? [])
+              .map((allocation) => allocation.lot?.lot_code ?? null)
+              .filter((lotCode): lotCode is string => Boolean(lotCode))
+          )
+        )
+        return {
+          ordre: line.ordre,
+          designation: lots.length
+            ? `${line.designation}\nLot(s) : ${lots.join(", ")}`
+            : line.designation,
+          code_piece: line.code_piece,
+          quantite: line.quantite,
+          unite: line.unite,
+          delai_client: line.delai_client,
+        }
+      }),
     })
 
     const boxY = Math.min(table.y + 10, doc.page.height - doc.page.margins.bottom - 70)
