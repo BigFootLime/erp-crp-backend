@@ -52,6 +52,8 @@ describe("#225 migration guards", () => {
     expect(patch).toContain("qty_blocked");
     expect(patch).toContain("qty_available");
     expect(patch).toContain("row.lot_status IS NULL OR row.lot_status = 'LIBERE'");
+    expect(patch).toContain("level.updated_at");
+    expect(patch).not.toContain("batch.updated_at");
   });
 
   it("restricts support scripts and refuses a lossy rollback", () => {
@@ -59,6 +61,10 @@ describe("#225 migration guards", () => {
       expect(script).toContain("current_database() <> 'cerp_test'");
     }
     expect(preflight).toContain("required stock columns");
+    expect(preflight).toContain("%/36 required stock columns");
+    expect(preflight).toMatch(
+      /table_name = 'stock_levels'[\s\S]*?'updated_at'/
+    );
     expect(preflight).toContain(
       "table_name = 'stock_movement_event_log' AND column_name IN ('id', 'stock_movement_id', 'event_type')"
     );
