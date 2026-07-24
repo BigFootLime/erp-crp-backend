@@ -160,7 +160,22 @@ export async function svcGenerateLivraisonPdf(bonLivraisonId: string, userId: nu
     doc.moveDown(1)
     const afterLinesY = renderLines(
       doc,
-      detail.lignes.map((l) => ({ designation: l.designation, quantite: l.quantite, unite: l.unite })),
+      detail.lignes.map((line) => {
+        const lots = Array.from(
+          new Set(
+            line.allocations
+              .map((allocation) => allocation.lot_code)
+              .filter((lotCode): lotCode is string => Boolean(lotCode))
+          )
+        )
+        const code = line.code_piece ? `${line.code_piece} — ` : ""
+        const lotLabel = lots.length ? `\nLot(s) : ${lots.join(", ")}` : ""
+        return {
+          designation: `${code}${line.designation}${lotLabel}`,
+          quantite: line.quantite,
+          unite: line.unite,
+        }
+      }),
       doc.y
     )
 
@@ -173,19 +188,39 @@ export async function svcGenerateLivraisonPdf(bonLivraisonId: string, userId: nu
     doc.moveDown(0.5)
     doc.text("Date:")
   })
+  const pdfBytes = await fs.readFile(filePath)
+  const checksumSha256 = crypto.createHash("sha256").update(pdfBytes).digest("hex")
 
   const db = await pool.connect()
   try {
     await db.query("BEGIN")
     await db.query(`INSERT INTO documents_clients (id, document_name, type) VALUES ($1, $2, $3)`, [documentId, fileName, "PDF"])
     await db.query(
-      `INSERT INTO bon_livraison_documents (bon_livraison_id, document_id, type, version, uploaded_by) VALUES ($1, $2, $3, $4, $5)`,
-      [bonLivraisonId, documentId, "PDF", version, userId]
+      `
+        INSERT INTO bon_livraison_documents (
+          bon_livraison_id,
+          document_id,
+          type,
+          version,
+          uploaded_by,
+          checksum_sha256,
+          file_size_bytes,
+          mime_type
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, 'application/pdf')
+      `,
+      [bonLivraisonId, documentId, "PDF", version, userId, checksumSha256, pdfBytes.byteLength]
     )
     await db.query(
       `INSERT INTO bon_livraison_event_log (bon_livraison_id, event_type, old_values, new_values, user_id)
        VALUES ($1, $2, $3::jsonb, $4::jsonb, $5)`,
-      [bonLivraisonId, "PDF_GENERATED", null, JSON.stringify({ document_id: documentId, version }), userId]
+      [
+        bonLivraisonId,
+        "PDF_GENERATED",
+        null,
+        JSON.stringify({ document_id: documentId, version, checksum_sha256: checksumSha256 }),
+        userId,
+      ]
     )
     await db.query(`UPDATE bon_livraison SET updated_at = now(), updated_by = $2 WHERE id = $1::uuid`, [bonLivraisonId, userId])
     await db.query("COMMIT")

@@ -8,6 +8,18 @@ import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
 
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
+import { isLivraisonTransitionAllowed } from "../domain/livraisons-policy"
+import {
+  assertStockConsumptionAllowed,
+  getEmplacementMapping as getStockEmplacementMapping,
+  lockStockStates,
+  stockTargetKey,
+} from "../../stock/repository/stock.repository"
+import {
+  prepareLivraisonInTransaction,
+  releaseLivraisonReservationsInTransaction,
+  repoListLivraisonProofs,
+} from "./livraisons-shipment.repository"
 
 import type {
   AdresseLivraisonLite,
@@ -18,6 +30,7 @@ import type {
   BonLivraisonLigne,
   BonLivraisonLigneAllocation,
   BonLivraisonListItem,
+  BonLivraisonListSummary,
   BonLivraisonStatut,
   Paginated,
   UploadedDocument,
@@ -409,7 +422,9 @@ function buildListWhere(filters: ListLivraisonsQueryDTO): ListWhere {
   }
 }
 
-export async function repoListLivraisons(filters: ListLivraisonsQueryDTO): Promise<Paginated<BonLivraisonListItem>> {
+export async function repoListLivraisons(
+  filters: ListLivraisonsQueryDTO
+): Promise<Paginated<BonLivraisonListItem> & { summary: BonLivraisonListSummary }> {
   const page = filters.page ?? 1
   const pageSize = filters.pageSize ?? 50
   const offset = (page - 1) * pageSize
@@ -427,6 +442,30 @@ export async function repoListLivraisons(filters: ListLivraisonsQueryDTO): Promi
   `
   const countRes = await pool.query<{ total: number }>(countSql, values)
   const total = countRes.rows[0]?.total ?? 0
+  const summaryRes = await pool.query<BonLivraisonListSummary>(
+    `
+      SELECT
+        COUNT(*)::int AS total,
+        COUNT(*) FILTER (WHERE bl.statut = 'DRAFT')::int AS draft,
+        COUNT(*) FILTER (WHERE bl.statut = 'READY')::int AS ready,
+        COUNT(*) FILTER (WHERE bl.statut = 'SHIPPED')::int AS shipped,
+        COUNT(*) FILTER (WHERE bl.statut = 'DELIVERED')::int AS delivered,
+        COUNT(*) FILTER (WHERE bl.statut = 'CANCELLED')::int AS cancelled
+      FROM public.bon_livraison bl
+      JOIN public.clients c ON c.client_id = bl.client_id
+      LEFT JOIN public.commande_client cc ON cc.id = bl.commande_id
+      ${whereSql}
+    `,
+    values
+  )
+  const summary = summaryRes.rows[0] ?? {
+    total: 0,
+    draft: 0,
+    ready: 0,
+    shipped: 0,
+    delivered: 0,
+    cancelled: 0,
+  }
 
   type Row = {
     id: string
@@ -489,7 +528,7 @@ export async function repoListLivraisons(filters: ListLivraisonsQueryDTO): Promi
     updated_at: r.updated_at,
   }))
 
-  return { items, total }
+  return { items, total, summary }
 }
 
 type HeaderRow = {
@@ -518,6 +557,7 @@ type HeaderRow = {
   commentaire_client: string | null
   reception_nom_signataire: string | null
   reception_date_signature: string | null
+  row_version: number
   created_at: string
   updated_at: string
   created_by_id: number | null
@@ -559,6 +599,7 @@ async function getHeader(client: PoolClient, id: string, opts?: { forUpdate?: bo
       bl.commentaire_client,
       bl.reception_nom_signataire,
       bl.reception_date_signature::text AS reception_date_signature,
+      bl.row_version::int AS row_version,
       bl.created_at::text AS created_at,
       bl.updated_at::text AS updated_at,
       cb.id AS created_by_id,
@@ -643,6 +684,7 @@ export async function repoGetLivraisonDetail(id: string): Promise<BonLivraisonDe
       commentaire_client: headerRow.commentaire_client,
       reception_nom_signataire: headerRow.reception_nom_signataire,
       reception_date_signature: headerRow.reception_date_signature,
+      row_version: headerRow.row_version,
       created_at: headerRow.created_at,
       updated_at: headerRow.updated_at,
       created_by: createdBy,
@@ -738,6 +780,17 @@ export async function repoGetLivraisonDetail(id: string): Promise<BonLivraisonDe
       bon_livraison_ligne_id: string
       article_id: string
       lot_id: string | null
+      lot_code: string | null
+      lot_status: string | null
+      magasin_id: string | null
+      magasin_code: string | null
+      emplacement_id: number | null
+      emplacement_code: string | null
+      location_id: string | null
+      stock_level_id: string | null
+      stock_batch_id: string | null
+      reservation_id: string | null
+      reservation_status: string | null
       stock_movement_line_id: string | null
       quantite: string | number
       unite: string | null
@@ -760,6 +813,17 @@ export async function repoGetLivraisonDetail(id: string): Promise<BonLivraisonDe
         a.bon_livraison_ligne_id::text AS bon_livraison_ligne_id,
         a.article_id::text AS article_id,
         a.lot_id::text AS lot_id,
+        lot.lot_code,
+        lot.lot_status,
+        a.magasin_id::text AS magasin_id,
+        COALESCE(magasin.code, magasin.code_magasin)::text AS magasin_code,
+        a.emplacement_id::int AS emplacement_id,
+        emplacement.code AS emplacement_code,
+        a.location_id::text AS location_id,
+        a.stock_level_id::text AS stock_level_id,
+        a.stock_batch_id::text AS stock_batch_id,
+        a.reservation_id::text AS reservation_id,
+        reservation.status AS reservation_status,
         a.stock_movement_line_id::text AS stock_movement_line_id,
         a.quantite,
         a.unite,
@@ -775,6 +839,10 @@ export async function repoGetLivraisonDetail(id: string): Promise<BonLivraisonDe
         ub.surname AS updated_by_surname
       FROM public.bon_livraison_ligne_allocations a
       JOIN public.bon_livraison_ligne l ON l.id = a.bon_livraison_ligne_id
+      LEFT JOIN public.lots lot ON lot.id = a.lot_id
+      LEFT JOIN public.magasins magasin ON magasin.id = a.magasin_id
+      LEFT JOIN public.emplacements emplacement ON emplacement.id = a.emplacement_id
+      LEFT JOIN public.stock_reservations reservation ON reservation.id = a.reservation_id
       LEFT JOIN users cb ON cb.id = a.created_by
       LEFT JOIN users ub ON ub.id = a.updated_by
       WHERE l.bon_livraison_id = $1::uuid
@@ -789,6 +857,17 @@ export async function repoGetLivraisonDetail(id: string): Promise<BonLivraisonDe
         bon_livraison_ligne_id: r.bon_livraison_ligne_id,
         article_id: r.article_id,
         lot_id: r.lot_id,
+        lot_code: r.lot_code,
+        lot_status: r.lot_status,
+        magasin_id: r.magasin_id,
+        magasin_code: r.magasin_code,
+        emplacement_id: r.emplacement_id,
+        emplacement_code: r.emplacement_code,
+        location_id: r.location_id,
+        stock_level_id: r.stock_level_id,
+        stock_batch_id: r.stock_batch_id,
+        reservation_id: r.reservation_id,
+        reservation_status: r.reservation_status,
         stock_movement_line_id: r.stock_movement_line_id,
         quantite: toFloat(r.quantite, "bon_livraison_ligne_allocations.quantite"),
         unite: r.unite,
@@ -826,6 +905,9 @@ export async function repoGetLivraisonDetail(id: string): Promise<BonLivraisonDe
       uploaded_by_surname: string | null
       document_name: string | null
       document_type: string | null
+      checksum_sha256: string | null
+      file_size_bytes: number | null
+      mime_type: string | null
     }
 
     const docsRes = await db.query<DocRow>(
@@ -842,7 +924,10 @@ export async function repoGetLivraisonDetail(id: string): Promise<BonLivraisonDe
         u.name AS uploaded_by_name,
         u.surname AS uploaded_by_surname,
         dc.document_name,
-        dc.type AS document_type
+        dc.type AS document_type,
+        d.checksum_sha256,
+        d.file_size_bytes::float8 AS file_size_bytes,
+        d.mime_type
       FROM bon_livraison_documents d
       LEFT JOIN documents_clients dc ON dc.id = d.document_id
       LEFT JOIN users u ON u.id = d.uploaded_by
@@ -866,6 +951,9 @@ export async function repoGetLivraisonDetail(id: string): Promise<BonLivraisonDe
       }),
       document_name: r.document_name,
       document_type: r.document_type,
+      checksum_sha256: r.checksum_sha256,
+      file_size_bytes: r.file_size_bytes,
+      mime_type: r.mime_type,
     }))
 
     // Events
@@ -913,7 +1001,9 @@ export async function repoGetLivraisonDetail(id: string): Promise<BonLivraisonDe
       created_at: r.created_at,
     }))
 
-    return { bon_livraison, lignes, documents, events }
+    const proofs = await repoListLivraisonProofs(id, db)
+
+    return { bon_livraison, lignes, documents, proofs, events }
   } finally {
     db.release()
   }
@@ -1088,6 +1178,13 @@ export async function repoUpdateLivraisonHeader(id: string, patch: UpdateLivrais
       await db.query("ROLLBACK")
       return null
     }
+    if (current.statut !== "DRAFT" && current.statut !== "READY") {
+      throw new HttpError(
+        409,
+        "LOCKED",
+        `Update is not allowed when statut=${current.statut}`
+      )
+    }
 
     const fields: string[] = []
     const values: unknown[] = []
@@ -1190,6 +1287,9 @@ export async function repoAddLivraisonLine(
     await db.query("BEGIN")
     const current = await getHeader(db, bonLivraisonId, { forUpdate: true })
     if (!current) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
+    if (current.statut !== "DRAFT") {
+      throw new HttpError(409, "LOCKED", "Add line is only allowed when statut=DRAFT")
+    }
 
     const ordreRes = await db.query<{ next_ordre: number }>(
       `SELECT COALESCE(MAX(ordre), 0)::int + 1 AS next_ordre FROM bon_livraison_ligne WHERE bon_livraison_id = $1::uuid`,
@@ -1261,6 +1361,9 @@ export async function repoUpdateLivraisonLine(
     if (!header) {
       await db.query("ROLLBACK")
       return null
+    }
+    if (header.statut !== "DRAFT") {
+      throw new HttpError(409, "LOCKED", "Update line is only allowed when statut=DRAFT")
     }
 
     const currentRes = await db.query<{
@@ -1384,6 +1487,9 @@ export async function repoDeleteLivraisonLine(bonLivraisonId: string, lineId: st
       await db.query("ROLLBACK")
       return false
     }
+    if (header.statut !== "DRAFT") {
+      throw new HttpError(409, "LOCKED", "Delete line is only allowed when statut=DRAFT")
+    }
 
     const delRes = await db.query(`DELETE FROM bon_livraison_ligne WHERE bon_livraison_id = $1::uuid AND id = $2::uuid`, [bonLivraisonId, lineId])
     const ok = (delRes.rowCount ?? 0) > 0
@@ -1419,17 +1525,78 @@ export async function repoCreateLivraisonLineAllocation(
     await db.query("BEGIN")
     const header = await getHeader(db, bonLivraisonId, { forUpdate: true })
     if (!header) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
+    if (header.statut !== "DRAFT") {
+      throw new HttpError(409, "ALLOCATION_LOCKED", "Les allocations ne sont modifiables qu’au statut DRAFT.")
+    }
 
-    const lineRes = await db.query<{ id: string }>(
-      `SELECT id::text AS id FROM bon_livraison_ligne WHERE bon_livraison_id = $1::uuid AND id = $2::uuid FOR UPDATE`,
+    const lineRes = await db.query<{
+      id: string
+      quantite: number
+      commande_article_id: string | null
+    }>(
+      `
+        SELECT
+          line.id::text AS id,
+          line.quantite::float8 AS quantite,
+          commande_line.article_id::text AS commande_article_id
+        FROM public.bon_livraison_ligne line
+        LEFT JOIN public.commande_ligne commande_line ON commande_line.id = line.commande_ligne_id
+        WHERE line.bon_livraison_id = $1::uuid
+          AND line.id = $2::uuid
+        FOR UPDATE OF line
+      `,
       [bonLivraisonId, lineId]
     )
     const line = lineRes.rows[0] ?? null
     if (!line) throw new HttpError(404, "LINE_NOT_FOUND", "Bon de livraison line not found")
+    const allocated = await db.query<{ quantity: number }>(
+      `
+        SELECT COALESCE(SUM(quantite), 0)::float8 AS quantity
+        FROM public.bon_livraison_ligne_allocations
+        WHERE bon_livraison_ligne_id = $1::uuid
+      `,
+      [lineId]
+    )
+    const allocatedQuantity = Number(allocated.rows[0]?.quantity ?? 0)
+    if (
+      line.commande_article_id &&
+      line.commande_article_id !== input.article_id
+    ) {
+      throw new HttpError(
+        409,
+        "LINE_ARTICLE_MISMATCH",
+        "L’article alloué ne correspond pas à l’article de la ligne de commande."
+      )
+    }
+    if (allocatedQuantity + input.quantite > line.quantite + 1e-9) {
+      throw new HttpError(
+        409,
+        "ALLOCATION_EXCEEDS_LINE",
+        "La quantité allouée dépasserait la quantité de la ligne."
+      )
+    }
 
-    const articleOk = await db.query<{ ok: number }>(`SELECT 1::int AS ok FROM public.articles WHERE id = $1::uuid LIMIT 1`, [input.article_id])
-    if (!articleOk.rows[0]?.ok) {
+    const article = await db.query<{
+      stock_managed: boolean
+      lot_tracking: boolean
+    }>(
+      `
+        SELECT stock_managed, lot_tracking
+        FROM public.articles
+        WHERE id = $1::uuid
+        LIMIT 1
+      `,
+      [input.article_id]
+    )
+    const articleSettings = article.rows[0] ?? null
+    if (!articleSettings) {
       throw new HttpError(400, "INVALID_ARTICLE", "Unknown article_id")
+    }
+    if (!articleSettings.stock_managed) {
+      throw new HttpError(409, "ARTICLE_NOT_STOCK_MANAGED", "Cet article n’est pas géré en stock.")
+    }
+    if (articleSettings.lot_tracking && !input.lot_id) {
+      throw new HttpError(409, "LOT_REQUIRED", "Un lot est obligatoire pour cet article.")
     }
 
     if (input.lot_id) {
@@ -1452,21 +1619,112 @@ export async function repoCreateLivraisonLineAllocation(
       }
     }
 
+    const source = await getStockEmplacementMapping(
+      db,
+      input.magasin_id,
+      input.emplacement_id,
+      "src"
+    )
+    const stockLevel = await db.query<{ id: string }>(
+      `
+        SELECT id::text AS id
+        FROM public.stock_levels
+        WHERE article_id = $1::uuid
+          AND location_id = $2::uuid
+        LIMIT 1
+      `,
+      [input.article_id, source.location_id]
+    )
+    const stockLevelId = stockLevel.rows[0]?.id
+    if (!stockLevelId) {
+      throw new HttpError(
+        409,
+        "STOCK_LEVEL_MISSING",
+        "Aucun stock n’existe pour cet article sur l’emplacement choisi."
+      )
+    }
+
+    let stockBatchId: string | null = null
+    if (input.lot_id) {
+      const stockBatch = await db.query<{ id: string }>(
+        `
+          SELECT batch.id::text AS id
+          FROM public.stock_batches batch
+          JOIN public.lots lot ON lot.id = batch.lot_id
+          WHERE batch.stock_level_id = $1::uuid
+            AND batch.lot_id = $2::uuid
+            AND lot.article_id = $3::uuid
+          LIMIT 1
+        `,
+        [stockLevelId, input.lot_id, input.article_id]
+      )
+      stockBatchId = stockBatch.rows[0]?.id ?? null
+      if (!stockBatchId) {
+        throw new HttpError(
+          409,
+          "STOCK_BATCH_MISSING",
+          "Le lot ne possède pas de stock sur l’emplacement choisi."
+        )
+      }
+    }
+
+    const states = await lockStockStates(db, [
+      { stock_level_id: stockLevelId, stock_batch_id: stockBatchId },
+    ])
+    const state = states.get(
+      stockTargetKey({ stock_level_id: stockLevelId, stock_batch_id: stockBatchId })
+    )
+    if (!state) throw new Error("Locked allocation stock state missing")
+    assertStockConsumptionAllowed(state, { movement_type: "RESERVE", qty: input.quantite })
+
     const ins = await db.query<{ id: string }>(
       `
         INSERT INTO public.bon_livraison_ligne_allocations (
           bon_livraison_ligne_id,
           article_id,
           lot_id,
+          magasin_id,
+          emplacement_id,
+          location_id,
+          stock_level_id,
+          stock_batch_id,
+          reservation_id,
           stock_movement_line_id,
           quantite,
           unite,
           created_by,
           updated_by
-        ) VALUES ($1::uuid,$2::uuid,$3::uuid,NULL,$4,$5,$6,$6)
+        ) VALUES (
+          $1::uuid,
+          $2::uuid,
+          $3::uuid,
+          $4::uuid,
+          $5::bigint,
+          $6::uuid,
+          $7::uuid,
+          $8::uuid,
+          NULL,
+          NULL,
+          $9,
+          $10,
+          $11,
+          $11
+        )
         RETURNING id::text AS id
       `,
-      [lineId, input.article_id, input.lot_id ?? null, input.quantite, input.unite ?? null, userId]
+      [
+        lineId,
+        input.article_id,
+        input.lot_id ?? null,
+        input.magasin_id,
+        input.emplacement_id,
+        source.location_id,
+        stockLevelId,
+        stockBatchId,
+        input.quantite,
+        input.unite ?? null,
+        userId,
+      ]
     )
     const allocationId = ins.rows[0]?.id
     if (!allocationId) throw new Error("Failed to insert allocation")
@@ -1482,6 +1740,11 @@ export async function repoCreateLivraisonLineAllocation(
         line_id: lineId,
         article_id: input.article_id,
         lot_id: input.lot_id ?? null,
+        magasin_id: input.magasin_id,
+        emplacement_id: input.emplacement_id,
+        location_id: source.location_id,
+        stock_level_id: stockLevelId,
+        stock_batch_id: stockBatchId,
         quantite: input.quantite,
         unite: input.unite ?? null,
       },
@@ -1510,6 +1773,13 @@ export async function repoDeleteLivraisonLineAllocation(
     if (!header) {
       await db.query("ROLLBACK")
       return false
+    }
+    if (header.statut !== "DRAFT") {
+      throw new HttpError(
+        409,
+        "LOCKED",
+        "Delete allocation is only allowed when statut=DRAFT"
+      )
     }
 
     const lockRes = await db.query<{ stock_movement_line_id: string | null }>(
@@ -1559,7 +1829,7 @@ export async function repoDeleteLivraisonLineAllocation(
   }
 }
 
-export async function repoUpdateLivraisonStatus(
+async function repoUpdateLivraisonStatusLegacy(
   bonLivraisonId: string,
   statut: BonLivraisonStatut,
   userId: number,
@@ -1903,6 +2173,115 @@ export async function repoUpdateLivraisonStatus(
   }
 }
 
+export async function repoUpdateLivraisonStatus(
+  bonLivraisonId: string,
+  statut: BonLivraisonStatut,
+  userId: number,
+  meta?: { commentaire?: string | null }
+): Promise<{ id: string; statut: BonLivraisonStatut }> {
+  if (statut === "SHIPPED") {
+    throw new HttpError(
+      409,
+      "SHIPMENT_CONFIRMATION_REQUIRED",
+      "Utilisez la confirmation d’expédition avec aperçu et Idempotency-Key."
+    )
+  }
+
+  const db = await pool.connect()
+  try {
+    await db.query("BEGIN")
+    const current = await getHeader(db, bonLivraisonId, { forUpdate: true })
+    if (!current) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
+    if (current.statut === statut) {
+      await db.query("COMMIT")
+      return { id: bonLivraisonId, statut }
+    }
+    if (!isLivraisonTransitionAllowed(current.statut, statut)) {
+      throw new HttpError(
+        409,
+        "INVALID_TRANSITION",
+        `Invalid transition from ${current.statut} to ${statut}`
+      )
+    }
+    if (
+      current.statut === "READY" &&
+      statut === "CANCELLED" &&
+      !meta?.commentaire?.trim()
+    ) {
+      throw new HttpError(
+        422,
+        "CANCELLATION_REASON_REQUIRED",
+        "Un motif est obligatoire pour annuler une préparation READY."
+      )
+    }
+
+    if (current.statut === "DRAFT" && statut === "READY") {
+      await prepareLivraisonInTransaction(db, bonLivraisonId, userId)
+      await db.query("COMMIT")
+      return { id: bonLivraisonId, statut: "READY" }
+    }
+
+    if (current.statut === "READY" && statut === "CANCELLED") {
+      await releaseLivraisonReservationsInTransaction(
+        db,
+        bonLivraisonId,
+        userId,
+        meta?.commentaire ?? "Annulation du bon de livraison"
+      )
+    }
+    if (current.statut === "SHIPPED" && statut === "DELIVERED") {
+      const proof = await db.query<{ count: number }>(
+        `
+          SELECT COUNT(*)::int AS count
+          FROM public.bon_livraison_delivery_proofs
+          WHERE bon_livraison_id = $1::uuid
+        `,
+        [bonLivraisonId]
+      )
+      if (!proof.rows[0]?.count) {
+        throw new HttpError(
+          422,
+          "DELIVERY_PROOF_REQUIRED",
+          "Une preuve de livraison est obligatoire avant de déclarer le BL livré."
+        )
+      }
+    }
+
+    const updated = await db.query(
+      `
+        UPDATE public.bon_livraison
+        SET statut = $2,
+            date_livraison = CASE
+              WHEN $2 = 'DELIVERED' THEN COALESCE(date_livraison, CURRENT_DATE)
+              ELSE date_livraison
+            END,
+            updated_at = now(),
+            updated_by = $3
+        WHERE id = $1::uuid
+          AND statut = $4
+      `,
+      [bonLivraisonId, statut, userId, current.statut]
+    )
+    if ((updated.rowCount ?? 0) !== 1) {
+      throw new HttpError(409, "CONCURRENT_MODIFICATION", "Le statut du BL a changé.")
+    }
+    await insertEvent(db, {
+      bon_livraison_id: bonLivraisonId,
+      event_type: "STATUS_CHANGED",
+      user_id: userId,
+      old_values: { statut: current.statut },
+      new_values: { statut, commentaire: meta?.commentaire ?? null },
+    })
+    await db.query("COMMIT")
+    return { id: bonLivraisonId, statut }
+  } catch (error) {
+    await db.query("ROLLBACK")
+    throw error
+  } finally {
+    db.release()
+  }
+}
+
 export async function repoCreateLivraisonFromCommande(commandeId: number, userId: number): Promise<{ id: string }> {
   const db = await pool.connect()
   try {
@@ -1988,14 +2367,30 @@ export async function repoCreateLivraisonFromCommande(commandeId: number, userId
       delai_client: string | null
     }>(
       `
-      SELECT id, designation, code_piece, quantite::float8 AS quantite, unite, delai_client
-      FROM commande_ligne
-      WHERE commande_id = $1
-      ORDER BY id ASC
+      SELECT
+        line.id,
+        line.designation,
+        line.code_piece,
+        remainder.quantite_restante::float8 AS quantite,
+        line.unite,
+        line.delai_client
+      FROM public.commande_ligne line
+      JOIN public.v_bon_livraison_reliquats_226 remainder
+        ON remainder.commande_ligne_id = line.id
+      WHERE line.commande_id = $1
+        AND remainder.quantite_restante > 0
+      ORDER BY line.id ASC
       `,
       [commandeId]
     )
     const lignes = lignesRes.rows
+    if (!lignes.length) {
+      throw new HttpError(
+        409,
+        "NO_DELIVERABLE_REMAINDER",
+        "Cette commande ne possède plus de reliquat livrable."
+      )
+    }
     const outLines: InsertLineInput[] = lignes.map((l, idx) => ({
       ordre: idx + 1,
       designation: l.designation,
@@ -2039,10 +2434,18 @@ export async function repoAttachLivraisonDocuments(params: {
 }): Promise<BonLivraisonDocument[]> {
   const db = await pool.connect()
   const docsDir = await ensureDocsDir()
+  const storedPaths: string[] = []
   try {
     await db.query("BEGIN")
     const header = await getHeader(db, params.bonLivraisonId, { forUpdate: true })
     if (!header) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
+    if (header.statut === "DELIVERED" || header.statut === "CANCELLED") {
+      throw new HttpError(
+        409,
+        "LOCKED",
+        `Document upload is not allowed when statut=${header.statut}`
+      )
+    }
 
     const insertedDocIds: string[] = []
 
@@ -2050,6 +2453,10 @@ export async function repoAttachLivraisonDocuments(params: {
       const documentId = crypto.randomUUID()
       const isPdf = doc.originalname.toLowerCase().endsWith(".pdf")
       const docType = isPdf ? "PDF" : doc.mimetype
+      const checksumSha256 = crypto
+        .createHash("sha256")
+        .update(await fs.readFile(doc.path))
+        .digest("hex")
 
       const extCandidate = path.extname(doc.originalname).toLowerCase()
       const safeExt = /^\.[a-z0-9]+$/.test(extCandidate) && extCandidate.length <= 10 ? extCandidate : ""
@@ -2061,6 +2468,7 @@ export async function repoAttachLivraisonDocuments(params: {
         await fs.copyFile(doc.path, finalPath)
         await fs.unlink(doc.path)
       }
+      storedPaths.push(finalPath)
 
       await db.query(`INSERT INTO documents_clients (id, document_name, type) VALUES ($1, $2, $3)`, [
         documentId,
@@ -2069,10 +2477,27 @@ export async function repoAttachLivraisonDocuments(params: {
       ])
       await db.query(
         `
-        INSERT INTO bon_livraison_documents (bon_livraison_id, document_id, type, version, uploaded_by)
-        VALUES ($1, $2, $3, 1, $4)
+        INSERT INTO bon_livraison_documents (
+          bon_livraison_id,
+          document_id,
+          type,
+          version,
+          uploaded_by,
+          checksum_sha256,
+          file_size_bytes,
+          mime_type
+        )
+        VALUES ($1, $2, $3, 1, $4, $5, $6, $7)
         `,
-        [params.bonLivraisonId, documentId, params.type ?? (isPdf ? "PDF" : null), params.userId]
+        [
+          params.bonLivraisonId,
+          documentId,
+          params.type ?? (isPdf ? "PDF" : null),
+          params.userId,
+          checksumSha256,
+          doc.size,
+          doc.mimetype,
+        ]
       )
 
       insertedDocIds.push(documentId)
@@ -2097,6 +2522,9 @@ export async function repoAttachLivraisonDocuments(params: {
         created_at: string
         document_name: string | null
         document_type: string | null
+        checksum_sha256: string | null
+        file_size_bytes: number | null
+        mime_type: string | null
       }>(
         `
         SELECT
@@ -2107,7 +2535,10 @@ export async function repoAttachLivraisonDocuments(params: {
           d.version,
           d.created_at::text AS created_at,
           dc.document_name,
-          dc.type AS document_type
+          dc.type AS document_type,
+          d.checksum_sha256,
+          d.file_size_bytes::float8 AS file_size_bytes,
+          d.mime_type
         FROM bon_livraison_documents d
         LEFT JOIN documents_clients dc ON dc.id = d.document_id
         WHERE d.bon_livraison_id = $1::uuid
@@ -2126,6 +2557,9 @@ export async function repoAttachLivraisonDocuments(params: {
         uploaded_by: null,
         document_name: r.document_name,
         document_type: r.document_type,
+        checksum_sha256: r.checksum_sha256,
+        file_size_bytes: r.file_size_bytes,
+        mime_type: r.mime_type,
       }))
     }
 
@@ -2133,6 +2567,7 @@ export async function repoAttachLivraisonDocuments(params: {
     return docsOut
   } catch (err) {
     await db.query("ROLLBACK")
+    await Promise.all(storedPaths.map((filePath) => fs.unlink(filePath).catch(() => undefined)))
     throw err
   } finally {
     db.release()
@@ -2151,6 +2586,13 @@ export async function repoRemoveLivraisonDocument(params: {
     if (!header) {
       await db.query("ROLLBACK")
       return false
+    }
+    if (header.statut !== "DRAFT") {
+      throw new HttpError(
+        409,
+        "DOCUMENT_IMMUTABLE",
+        "Un document ne peut être retiré qu’au statut DRAFT."
+      )
     }
 
     const delRes = await db.query(
