@@ -300,11 +300,12 @@ async function reserveProducedQtyForCommandeLine(
       `
         UPDATE public.stock_reservations
         SET qty_reserved = qty_reserved + $2,
+            commande_ligne_id = COALESCE(commande_ligne_id, $4::bigint),
             updated_at = now(),
             updated_by = $3
         WHERE id = $1::uuid
       `,
-      [existingId, qtyToReserve, args.actor_user_id]
+      [existingId, qtyToReserve, args.actor_user_id, args.commande_ligne_id]
     );
     return { reservation_id: existingId, qty_reserved: qtyToReserve };
   }
@@ -317,12 +318,13 @@ async function reserveProducedQtyForCommandeLine(
         qty_reserved,
         source_type,
         source_id,
+        commande_ligne_id,
         status,
         lot_id,
         stock_batch_id,
         created_by,
         updated_by
-      ) VALUES ($1::uuid,$2::uuid,$3,'COMMANDE_LIGNE',$4,'ACTIVE',$5::uuid,$6::uuid,$7,$7)
+      ) VALUES ($1::uuid,$2::uuid,$3,'COMMANDE_LIGNE',$4,$4::bigint,'ACTIVE',$5::uuid,$6::uuid,$7,$7)
       RETURNING id::text AS id
     `,
     [

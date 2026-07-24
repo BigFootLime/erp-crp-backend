@@ -387,6 +387,9 @@ export const listEmplacementsQuerySchema = z.object({
   magasin_id: uuid.optional(),
   is_active: z.preprocess(parseBoolean, z.boolean().optional()),
   is_scrap: z.preprocess(parseBoolean, z.boolean().optional()),
+  location_type: z
+    .enum(["RECEIVING", "PRODUCTION", "QUARANTINE", "SCRAP", "SHIPPING", "STORAGE"])
+    .optional(),
   page: z.coerce.number().int().min(1).optional().default(1),
   pageSize: z.coerce.number().int().min(1).max(200).optional().default(50),
   sortBy: z.enum(["updated_at", "created_at", "code"]).optional().default("updated_at"),
@@ -395,6 +398,15 @@ export const listEmplacementsQuerySchema = z.object({
 
 export type ListEmplacementsQueryDTO = z.infer<typeof listEmplacementsQuerySchema>;
 
+export const stockLocationTypeSchema = z.enum([
+  "RECEIVING",
+  "PRODUCTION",
+  "QUARANTINE",
+  "SCRAP",
+  "SHIPPING",
+  "STORAGE",
+]);
+
 export const createEmplacementSchema = z.object({
   body: z
     .object({
@@ -402,9 +414,36 @@ export const createEmplacementSchema = z.object({
       name: z.string().trim().min(1).max(200).optional().nullable(),
       is_scrap: z.boolean().optional().default(false),
       is_active: z.boolean().optional().default(true),
+      location_type: stockLocationTypeSchema.optional().default("STORAGE"),
+      allow_inbound: z.boolean().optional().default(true),
+      allow_outbound: z.boolean().optional().default(true),
+      restrictions: z.record(z.unknown()).optional().default({}),
       notes: z.string().trim().min(1).optional().nullable(),
     })
-    .strict(),
+    .strict()
+    .superRefine((body, ctx) => {
+      if (body.is_scrap && body.location_type !== "SCRAP") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["location_type"],
+          message: "A scrap emplacement must use location_type SCRAP",
+        });
+      }
+      if (body.location_type === "SCRAP" && !body.is_scrap) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["is_scrap"],
+          message: "A SCRAP location must be marked as scrap",
+        });
+      }
+      if (body.location_type === "SCRAP" && body.allow_outbound) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["allow_outbound"],
+          message: "A SCRAP location cannot provide stock",
+        });
+      }
+    }),
 });
 
 export type CreateEmplacementBodyDTO = z.infer<typeof createEmplacementSchema>["body"];
@@ -416,6 +455,10 @@ export const updateEmplacementSchema = z.object({
       name: z.string().trim().min(1).max(200).optional().nullable(),
       is_scrap: z.boolean().optional(),
       is_active: z.boolean().optional(),
+      location_type: stockLocationTypeSchema.optional(),
+      allow_inbound: z.boolean().optional(),
+      allow_outbound: z.boolean().optional(),
+      restrictions: z.record(z.unknown()).optional(),
       notes: z.string().trim().min(1).optional().nullable(),
     })
     .strict(),
@@ -426,6 +469,7 @@ export type UpdateEmplacementBodyDTO = z.infer<typeof updateEmplacementSchema>["
 export const listLotsQuerySchema = z.object({
   q: z.string().trim().optional(),
   article_id: uuid.optional(),
+  lot_status: z.enum(["LIBERE", "EN_ATTENTE", "QUARANTAINE", "BLOQUE"]).optional(),
   page: z.coerce.number().int().min(1).optional().default(1),
   pageSize: z.coerce.number().int().min(1).max(200).optional().default(50),
   sortBy: z.enum(["updated_at", "created_at", "lot_code", "received_at"]).optional().default("updated_at"),
@@ -465,11 +509,78 @@ export const updateLotSchema = z.object({
 
 export type UpdateLotBodyDTO = z.infer<typeof updateLotSchema>["body"];
 
+export const updateLotQualitySchema = z.object({
+  body: z
+    .object({
+      lot_status: z.enum(["LIBERE", "EN_ATTENTE", "QUARANTAINE", "BLOQUE"]),
+      reason: z.string().trim().min(3).max(500),
+      expected_updated_at: z.string().datetime({ offset: true }),
+    })
+    .strict(),
+});
+
+export type UpdateLotQualityBodyDTO = z.infer<typeof updateLotQualitySchema>["body"];
+
+const lotGenealogyContributionSchema = z
+  .object({
+    lot_id: uuid,
+    qty: z.coerce.number().positive().max(1_000_000_000),
+  })
+  .strict();
+
+export const createLotGenealogySchema = z.object({
+  body: z
+    .object({
+      operation_type: z.enum(["SPLIT", "MERGE", "TRANSFORM"]),
+      parents: z.array(lotGenealogyContributionSchema).min(1).max(100),
+      children: z.array(lotGenealogyContributionSchema).min(1).max(100),
+      unit_code: z.string().trim().min(1).max(30),
+      stock_movement_id: uuid,
+    })
+    .strict()
+    .superRefine((body, ctx) => {
+      if (body.operation_type === "SPLIT" && (body.parents.length !== 1 || body.children.length < 2)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["children"],
+          message: "SPLIT requires exactly one parent and at least two children",
+        });
+      }
+      if (body.operation_type === "MERGE" && (body.parents.length < 2 || body.children.length !== 1)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["parents"],
+          message: "MERGE requires at least two parents and exactly one child",
+        });
+      }
+      if (body.operation_type === "TRANSFORM" && (body.parents.length !== 1 || body.children.length !== 1)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["parents"],
+          message: "TRANSFORM requires exactly one parent and one child",
+        });
+      }
+      const allIds = [...body.parents, ...body.children].map((item) => item.lot_id);
+      if (new Set(allIds).size !== allIds.length) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["children"],
+          message: "A lot cannot appear twice or on both sides of one genealogy operation",
+        });
+      }
+    }),
+});
+
+export type CreateLotGenealogyBodyDTO = z.infer<typeof createLotGenealogySchema>["body"];
+
 export const listBalancesQuerySchema = z.object({
+  q: z.string().trim().max(120).optional(),
   article_id: uuid.optional(),
   magasin_id: uuid.optional(),
   emplacement_id: z.coerce.number().int().positive().optional(),
   lot_id: uuid.optional(),
+  lot_status: z.enum(["LIBERE", "EN_ATTENTE", "QUARANTAINE", "BLOQUE"]).optional(),
+  only_available: z.preprocess(parseBoolean, z.boolean().optional()),
   warehouse_id: uuid.optional(),
   location_id: uuid.optional(),
   page: z.coerce.number().int().min(1).optional().default(1),
@@ -596,7 +707,43 @@ export const createMovementSchema = z.object({
 
 export type CreateMovementBodyDTO = z.infer<typeof createMovementSchema>["body"];
 
-export const stockInventorySessionStatusSchema = z.enum(["OPEN", "CLOSED"]);
+export const compensateMovementSchema = z.object({
+  body: z
+    .object({
+      reason: z.string().trim().min(3).max(500),
+      notes: z.string().trim().min(1).max(2_000).optional().nullable(),
+      expected_posted_at: z.string().datetime({ offset: true }),
+    })
+    .strict(),
+});
+
+export type CompensateMovementBodyDTO = z.infer<typeof compensateMovementSchema>["body"];
+
+export const postMovementSchema = z.object({
+  body: z
+    .object({
+      negative_stock_override: z
+        .object({
+          maximum_negative_qty: z.coerce.number().positive().max(1_000_000),
+          reason: z.string().trim().min(10).max(500),
+        })
+        .strict()
+        .optional(),
+    })
+    .strict()
+    .optional()
+    .default({}),
+});
+
+export type PostMovementBodyDTO = z.infer<typeof postMovementSchema>["body"];
+
+export const stockInventorySessionStatusSchema = z.enum([
+  "DRAFT",
+  "OPEN",
+  "APPROVED",
+  "CLOSED",
+  "CANCELLED",
+]);
 export type StockInventorySessionStatusDTO = z.infer<typeof stockInventorySessionStatusSchema>;
 
 export const listInventorySessionsQuerySchema = z.object({
@@ -614,8 +761,35 @@ export const createInventorySessionSchema = z.object({
   body: z
     .object({
       notes: z.string().trim().min(1).optional().nullable(),
+      scope_magasin_id: uuid.optional().nullable(),
+      scope_emplacement_id: z.coerce.number().int().positive().optional().nullable(),
+      scope_article_id: uuid.optional().nullable(),
+      scope_article_category: articleCategorySchema.optional().nullable(),
+      blind_count: z.boolean().optional().default(false),
+      requires_second_count: z.boolean().optional().default(false),
     })
-    .strict(),
+    .strict()
+    .superRefine((body, ctx) => {
+      if (
+        !body.scope_magasin_id &&
+        !body.scope_emplacement_id &&
+        !body.scope_article_id &&
+        !body.scope_article_category
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["scope_magasin_id"],
+          message: "Inventory scope must include a magasin, emplacement, article or category",
+        });
+      }
+      if (body.scope_emplacement_id && !body.scope_magasin_id) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["scope_magasin_id"],
+          message: "scope_magasin_id is required with scope_emplacement_id",
+        });
+      }
+    }),
 });
 
 export type CreateInventorySessionBodyDTO = z.infer<typeof createInventorySessionSchema>["body"];
@@ -628,9 +802,34 @@ export const upsertInventoryLineSchema = z.object({
       emplacement_id: z.coerce.number().int().positive(),
       lot_id: uuid.optional().nullable(),
       counted_qty: z.coerce.number().min(0),
+      count_round: z.coerce.number().int().min(1).max(2).optional().default(1),
+      reason_code: z.string().trim().min(2).max(80).optional().nullable(),
+      expected_session_version: z.coerce.number().int().positive(),
       note: z.string().trim().min(1).optional().nullable(),
     })
     .strict(),
 });
 
 export type UpsertInventoryLineBodyDTO = z.infer<typeof upsertInventoryLineSchema>["body"];
+
+export const inventorySessionActionSchema = z.object({
+  body: z
+    .object({
+      expected_version: z.coerce.number().int().positive(),
+      reason: z.string().trim().min(3).max(500).optional().nullable(),
+    })
+    .strict(),
+});
+
+export type InventorySessionActionBodyDTO = z.infer<typeof inventorySessionActionSchema>["body"];
+
+export const cancelInventorySessionSchema = z.object({
+  body: z
+    .object({
+      expected_version: z.coerce.number().int().positive(),
+      reason: z.string().trim().min(3).max(500),
+    })
+    .strict(),
+});
+
+export type CancelInventorySessionBodyDTO = z.infer<typeof cancelInventorySessionSchema>["body"];

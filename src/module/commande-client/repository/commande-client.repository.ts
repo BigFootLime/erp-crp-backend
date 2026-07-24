@@ -3579,10 +3579,11 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
               qty_reserved,
               source_type,
               source_id,
+              commande_ligne_id,
               status,
               created_by,
               updated_by
-            ) VALUES ($1::uuid,$2::uuid,$3,'COMMANDE_LIGNE',$4,'ACTIVE',$5,$5)
+            ) VALUES ($1::uuid,$2::uuid,$3,'COMMANDE_LIGNE',$4,$4::bigint,'ACTIVE',$5,$5)
             RETURNING id::text AS id
           `,
           [articleId, stockLocationId, it.qty, String(it.line.commande_ligne_id), audit.user_id]
