@@ -59,6 +59,12 @@ describe("#225 migration guards", () => {
       expect(script).toContain("current_database() <> 'cerp_test'");
     }
     expect(preflight).toContain("required stock columns");
+    expect(preflight).toContain(
+      "table_name = 'stock_movement_event_log' AND column_name IN ('id', 'stock_movement_id', 'event_type')"
+    );
+    expect(preflight).not.toContain(
+      "table_name = 'stock_movement_event_log' AND column_name IN ('id', 'movement_id', 'event_type')"
+    );
     expect(rollback).toContain(
       "#225 rollback refused: immutable stock evidence exists"
     );
