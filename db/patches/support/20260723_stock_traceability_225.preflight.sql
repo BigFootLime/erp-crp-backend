@@ -51,7 +51,7 @@ WHERE table_schema = 'public'
       'user_id'
     ))
     OR (table_name = 'stock_movement_lines' AND column_name IN ('id', 'movement_id'))
-    OR (table_name = 'stock_movement_event_log' AND column_name IN ('id', 'movement_id', 'event_type'))
+    OR (table_name = 'stock_movement_event_log' AND column_name IN ('id', 'stock_movement_id', 'event_type'))
     OR (table_name = 'stock_levels' AND column_name IN ('id', 'qty_total', 'qty_reserved', 'qty_depreciated'))
     OR (table_name = 'stock_batches' AND column_name IN ('id', 'lot_id', 'qty_total', 'qty_reserved', 'qty_depreciated'))
     OR (table_name = 'stock_inventory_sessions' AND column_name IN ('id', 'status', 'started_at'))
@@ -91,7 +91,7 @@ BEGIN
         'user_id'
       ))
       OR (table_name = 'stock_movement_lines' AND column_name IN ('id', 'movement_id'))
-      OR (table_name = 'stock_movement_event_log' AND column_name IN ('id', 'movement_id', 'event_type'))
+      OR (table_name = 'stock_movement_event_log' AND column_name IN ('id', 'stock_movement_id', 'event_type'))
       OR (table_name = 'stock_levels' AND column_name IN ('id', 'qty_total', 'qty_reserved', 'qty_depreciated'))
       OR (table_name = 'stock_batches' AND column_name IN ('id', 'lot_id', 'qty_total', 'qty_reserved', 'qty_depreciated'))
       OR (table_name = 'stock_inventory_sessions' AND column_name IN ('id', 'status', 'started_at'))
