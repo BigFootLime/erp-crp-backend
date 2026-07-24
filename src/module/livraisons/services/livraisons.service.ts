@@ -1,12 +1,15 @@
 import { HttpError } from "../../../utils/httpError"
 
 import type { BonLivraisonStatut } from "../types/livraisons.types"
+import { isLivraisonTransitionAllowed } from "../domain/livraisons-policy"
 import type {
   CreateLivraisonBodyDTO,
   CreateLivraisonAllocationBodyDTO,
   CreateLivraisonLineBodyDTO,
   ListLivraisonsQueryDTO,
   LivraisonStatusBodyDTO,
+  LivraisonProofBodyDTO,
+  ShipLivraisonBodyDTO,
   UpdateLivraisonBodyDTO,
   UpdateLivraisonLineBodyDTO,
 } from "../validators/livraisons.validators"
@@ -27,23 +30,24 @@ import {
   repoUpdateLivraisonLine,
   repoUpdateLivraisonStatus,
 } from "../repository/livraisons.repository"
+import {
+  repoCreateLivraisonProof,
+  repoGetLivraisonShipmentPreview,
+  repoShipLivraison,
+} from "../repository/livraisons-shipment.repository"
 
 function assertEditable(statut: BonLivraisonStatut, action: string) {
   if (statut === "DRAFT" || statut === "READY") return
   throw new HttpError(409, "LOCKED", `${action} is not allowed when statut=${statut}`)
 }
 
-function assertAllowedTransition(from: BonLivraisonStatut, to: BonLivraisonStatut) {
-  const allowed: Record<BonLivraisonStatut, BonLivraisonStatut[]> = {
-    DRAFT: ["READY", "CANCELLED"],
-    READY: ["SHIPPED", "CANCELLED"],
-    SHIPPED: ["DELIVERED"],
-    DELIVERED: [],
-    CANCELLED: [],
-  }
+function assertDraft(statut: BonLivraisonStatut, action: string) {
+  if (statut === "DRAFT") return
+  throw new HttpError(409, "LOCKED", `${action} is only allowed when statut=DRAFT`)
+}
 
-  if (from === to) return
-  if (allowed[from].includes(to)) return
+function assertAllowedTransition(from: BonLivraisonStatut, to: BonLivraisonStatut) {
+  if (isLivraisonTransitionAllowed(from, to)) return
   throw new HttpError(409, "INVALID_TRANSITION", `Invalid transition from ${from} to ${to}`)
 }
 
@@ -67,53 +71,42 @@ export async function svcUpdateLivraisonHeader(id: string, patch: UpdateLivraiso
   const statut = await repoGetLivraisonStatut(id)
   if (!statut) return null
 
-  // Allow only reception signature fields when delivered.
-  if (statut === "DELIVERED") {
-    const keys = Object.keys(patch) as Array<keyof UpdateLivraisonBodyDTO>
-    const allowedKeys: Array<keyof UpdateLivraisonBodyDTO> = ["reception_nom_signataire", "reception_date_signature"]
-    const forbidden = keys.filter((k) => !allowedKeys.includes(k))
-    if (forbidden.length) {
-      throw new HttpError(409, "LOCKED", `Only reception fields can be updated when statut=${statut}`)
-    }
-  } else {
-    assertEditable(statut, "Update")
-  }
-
+  assertEditable(statut, "Update")
   return repoUpdateLivraisonHeader(id, patch, userId)
 }
 
 export async function svcAddLivraisonLine(id: string, dto: CreateLivraisonLineBodyDTO, userId: number) {
   const statut = await repoGetLivraisonStatut(id)
   if (!statut) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
-  assertEditable(statut, "Add line")
+  assertDraft(statut, "Add line")
   return repoAddLivraisonLine(id, dto, userId)
 }
 
 export async function svcUpdateLivraisonLine(id: string, lineId: string, patch: UpdateLivraisonLineBodyDTO, userId: number) {
   const statut = await repoGetLivraisonStatut(id)
   if (!statut) return null
-  assertEditable(statut, "Update line")
+  assertDraft(statut, "Update line")
   return repoUpdateLivraisonLine(id, lineId, patch, userId)
 }
 
 export async function svcDeleteLivraisonLine(id: string, lineId: string, userId: number) {
   const statut = await repoGetLivraisonStatut(id)
   if (!statut) return false
-  assertEditable(statut, "Delete line")
+  assertDraft(statut, "Delete line")
   return repoDeleteLivraisonLine(id, lineId, userId)
 }
 
 export async function svcCreateLivraisonLineAllocation(id: string, lineId: string, dto: CreateLivraisonAllocationBodyDTO, userId: number) {
   const statut = await repoGetLivraisonStatut(id)
   if (!statut) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
-  assertEditable(statut, "Allocate line")
+  assertDraft(statut, "Allocate line")
   return repoCreateLivraisonLineAllocation(id, lineId, dto, userId)
 }
 
 export async function svcDeleteLivraisonLineAllocation(id: string, lineId: string, allocationId: string, userId: number) {
   const statut = await repoGetLivraisonStatut(id)
   if (!statut) return false
-  assertEditable(statut, "Delete allocation")
+  assertDraft(statut, "Delete allocation")
   return repoDeleteLivraisonLineAllocation(id, lineId, allocationId, userId)
 }
 
@@ -121,15 +114,56 @@ export async function svcUpdateLivraisonStatus(id: string, body: LivraisonStatus
   const current = await repoGetLivraisonStatut(id)
   if (!current) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
   assertAllowedTransition(current, body.statut)
+  if (
+    current === "READY" &&
+    body.statut === "CANCELLED" &&
+    !body.commentaire?.trim()
+  ) {
+    throw new HttpError(
+      422,
+      "CANCELLATION_REASON_REQUIRED",
+      "Un motif est obligatoire pour annuler une préparation READY."
+    )
+  }
   return repoUpdateLivraisonStatus(id, body.statut, userId, { commentaire: body.commentaire ?? null })
+}
+
+export async function svcGetLivraisonShipmentPreview(id: string) {
+  const preview = await repoGetLivraisonShipmentPreview(id)
+  if (!preview) {
+    throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
+  }
+  return preview
+}
+
+export function svcShipLivraison(
+  id: string,
+  body: ShipLivraisonBodyDTO,
+  userId: number,
+  idempotencyKey: string
+) {
+  return repoShipLivraison(id, body, userId, idempotencyKey)
+}
+
+export function svcCreateLivraisonProof(
+  id: string,
+  body: LivraisonProofBodyDTO,
+  userId: number
+) {
+  return repoCreateLivraisonProof(id, body, userId)
 }
 
 export async function svcAttachLivraisonDocuments(params: {
   bonLivraisonId: string
-  documents: Array<{ originalname: string; path: string; mimetype: string }>
+  documents: Array<{ originalname: string; path: string; mimetype: string; size: number }>
   type?: string | null
   userId: number
 }) {
+  const statut = await repoGetLivraisonStatut(params.bonLivraisonId)
+  if (!statut) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
+  if (statut === "DELIVERED" || statut === "CANCELLED") {
+    throw new HttpError(409, "LOCKED", `Document upload is not allowed when statut=${statut}`)
+  }
   return repoAttachLivraisonDocuments({
     bonLivraisonId: params.bonLivraisonId,
     documents: params.documents,
@@ -139,5 +173,10 @@ export async function svcAttachLivraisonDocuments(params: {
 }
 
 export async function svcRemoveLivraisonDocument(params: { bonLivraisonId: string; documentId: string; userId: number }) {
+  const statut = await repoGetLivraisonStatut(params.bonLivraisonId)
+  if (!statut) return false
+  if (statut !== "DRAFT") {
+    throw new HttpError(409, "DOCUMENT_IMMUTABLE", "Un document ne peut être retiré qu’au statut DRAFT.")
+  }
   return repoRemoveLivraisonDocument(params)
 }
