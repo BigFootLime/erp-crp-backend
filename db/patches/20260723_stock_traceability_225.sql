@@ -766,7 +766,7 @@ batch_rows AS (
     batch.qty_total,
     batch.qty_reserved,
     batch.qty_depreciated,
-    batch.updated_at
+    level.updated_at
   FROM public.stock_batches batch
   JOIN public.stock_levels level ON level.id = batch.stock_level_id
   LEFT JOIN public.lots lot ON lot.id = batch.lot_id

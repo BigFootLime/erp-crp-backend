@@ -52,7 +52,13 @@ WHERE table_schema = 'public'
     ))
     OR (table_name = 'stock_movement_lines' AND column_name IN ('id', 'movement_id'))
     OR (table_name = 'stock_movement_event_log' AND column_name IN ('id', 'stock_movement_id', 'event_type'))
-    OR (table_name = 'stock_levels' AND column_name IN ('id', 'qty_total', 'qty_reserved', 'qty_depreciated'))
+    OR (table_name = 'stock_levels' AND column_name IN (
+      'id',
+      'qty_total',
+      'qty_reserved',
+      'qty_depreciated',
+      'updated_at'
+    ))
     OR (table_name = 'stock_batches' AND column_name IN ('id', 'lot_id', 'qty_total', 'qty_reserved', 'qty_depreciated'))
     OR (table_name = 'stock_inventory_sessions' AND column_name IN ('id', 'status', 'started_at'))
     OR (table_name = 'stock_inventory_lines' AND column_name IN (
@@ -92,7 +98,13 @@ BEGIN
       ))
       OR (table_name = 'stock_movement_lines' AND column_name IN ('id', 'movement_id'))
       OR (table_name = 'stock_movement_event_log' AND column_name IN ('id', 'stock_movement_id', 'event_type'))
-      OR (table_name = 'stock_levels' AND column_name IN ('id', 'qty_total', 'qty_reserved', 'qty_depreciated'))
+      OR (table_name = 'stock_levels' AND column_name IN (
+        'id',
+        'qty_total',
+        'qty_reserved',
+        'qty_depreciated',
+        'updated_at'
+      ))
       OR (table_name = 'stock_batches' AND column_name IN ('id', 'lot_id', 'qty_total', 'qty_reserved', 'qty_depreciated'))
       OR (table_name = 'stock_inventory_sessions' AND column_name IN ('id', 'status', 'started_at'))
       OR (table_name = 'stock_inventory_lines' AND column_name IN (
@@ -110,8 +122,8 @@ BEGIN
       OR (table_name = 'stock_reservations' AND column_name IN ('lot_id', 'stock_batch_id'))
     );
 
-  IF required_columns_count <> 35 THEN
-    RAISE EXCEPTION '#225 preflight found %/35 required stock columns', required_columns_count;
+  IF required_columns_count <> 36 THEN
+    RAISE EXCEPTION '#225 preflight found %/36 required stock columns', required_columns_count;
   END IF;
 
   IF NOT EXISTS (
