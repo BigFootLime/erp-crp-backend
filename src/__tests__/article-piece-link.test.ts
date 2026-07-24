@@ -11,7 +11,7 @@ describe("B5 — cohérence article fabriqué ↔ pièce technique (schéma de c
   it("rejette un article 'fabrique' SANS piece_technique_id", () => {
     expect(() =>
       createArticleSchema.parse({
-        body: { code: "PT-X", designation: "Test", family_code: "FAB", article_category: "fabrique" },
+        body: { designation: "Test", family_code: "FAB", article_category: "fabrique" },
       })
     ).toThrow()
   })
@@ -19,7 +19,6 @@ describe("B5 — cohérence article fabriqué ↔ pièce technique (schéma de c
   it("accepte un article 'fabrique' AVEC piece_technique_id", () => {
     const r = createArticleSchema.parse({
       body: {
-        code: "PT-X",
         designation: "Test",
         family_code: "FAB",
         article_category: "fabrique",
@@ -34,7 +33,6 @@ describe("B5 — cohérence article fabriqué ↔ pièce technique (schéma de c
     expect(() =>
       createArticleSchema.parse({
         body: {
-          code: "ACH-X",
           designation: "Test",
           family_code: "ACH",
           article_category: "achat",

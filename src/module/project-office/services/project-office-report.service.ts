@@ -83,6 +83,7 @@ export function suggestSectionsForEvidenceType(type: PoEvidenceType): string[] {
     DEPLOYMENT: ["15.1"],
     BACKUP: ["14.2"],
     DOCUMENT: ["16.1"],
+    VSM: ["4.2", "16.1"],
     SECURITY_SCAN: ["11.4"],
     OTHER: [],
   };

@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from "express";
 import { HttpError } from "../utils/httpError";
 import { ApiError } from "../utils/apiError";
+import { stripQueryFromUrl } from "../utils/logPath";
 
 // Message générique renvoyé au client pour toute erreur serveur (5xx) ou inconnue.
 // CA-SEC-04 : ne jamais fuiter d'internes (message d'exception brut, nom de colonne/table,
@@ -22,11 +23,21 @@ export function errorHandler(err: any, req: Request, res: Response, _next: NextF
   const message =
     isKnown && status < 500 ? (err.message ?? GENERIC_SERVER_ERROR_MESSAGE) : GENERIC_SERVER_ERROR_MESSAGE;
 
+  // Path sans query string : les recherches métier mettent des PII en query
+  // (?q=email, ?siret=...) ; ni la réponse ni les logs ne doivent les rejouer.
+  const safePath = stripQueryFromUrl(req.originalUrl);
+
+  // details : uniquement pour les erreurs 4xx construites volontairement (HttpError/ApiError
+  // avec details explicites, ex. 409 doublon SIRET -> { client_id, company_name }). Jamais pour
+  // les 5xx/erreurs inconnues (CA-SEC-04 : aucune fuite d'internes).
   const payload = {
     success: false,
     message,
     code,
-    path: req.originalUrl,
+    path: safePath,
+    ...(err instanceof HttpError && status < 500 && typeof err.details !== "undefined"
+      ? { details: err.details }
+      : {}),
   };
 
   // logs détaillés côté serveur (JAMAIS renvoyés au client) — inclut le message réel + la stack.
@@ -36,7 +47,7 @@ export function errorHandler(err: any, req: Request, res: Response, _next: NextF
     message: err?.message ?? null,
     clientMessage: message,
     method: req.method,
-    path: req.originalUrl,
+    path: safePath,
     requestId: req.requestId ?? null,
     details: err?.details,
     stack: err?.stack,

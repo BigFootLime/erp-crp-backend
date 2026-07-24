@@ -27,7 +27,10 @@ export type MachineListItem = {
   model_name: string | null;
   display_name: string | null;
   status: MachineStatusDTO;
-  hourly_rate: number;
+  hourly_rate: number | null;
+  hourly_rate_source: "INTERNAL_COST" | "POSTE_INHERITED" | "IMPORTED" | "MANUAL_OVERRIDE" | "UNKNOWN" | null;
+  hourly_rate_effective_at: string | null;
+  hourly_rate_is_override: boolean;
   currency: string;
   is_available: boolean;
   image_url: string | null;
@@ -171,6 +174,9 @@ export type OrdreFabricationDetail = {
   production_group_id: string | null;
   production_group_code: string | null;
   piece_technique_id: string;
+  piece_technique_version_id: string | null;
+  technical_snapshot_sha256: string | null;
+  technical_snapshot_at: string | null;
   piece_code: string;
   piece_designation: string;
   quantite_lancee: number;
@@ -188,6 +194,8 @@ export type OrdreFabricationDetail = {
   created_by: number | null;
   updated_by: number | null;
   operations: OfOperation[];
+  // #170 : transitions licites depuis le statut courant (automate serveur).
+  allowed_statut_transitions: OfStatusDTO[];
 };
 
 export type OrdreFabricationTreeNode = Omit<OrdreFabricationListItem, "updated_at" | "total_ops" | "done_ops"> & {

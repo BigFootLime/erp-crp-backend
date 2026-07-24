@@ -5,7 +5,7 @@ import type { PoolClient } from "pg";
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
-import { generateAffaireCode, requireClientCode } from "../../../shared/codes/code-generator.service";
+import { generateAffaireCode, generateCommandeCode, generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
 import { emitAppNotificationCreated, emitEntityChanged } from "../../../shared/realtime/realtime.service";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
@@ -36,6 +36,10 @@ import {
   type CommandeCheckpointStatus,
   type CommandeWorkflowStatus,
 } from "../workflow/commande-client-workflow.definition";
+import {
+  createRecursiveOrdresFabrication,
+  type GeneratedOfRef,
+} from "../../production/domain/of-generation";
 
 function normalizeStoredPath(filePath: string) {
   const rel = path.isAbsolute(filePath) ? path.relative(process.cwd(), filePath) : filePath;
@@ -60,6 +64,18 @@ function coerceOrderType(value: unknown): CreateCommandeInput["order_type"] {
     if (v === "FERME" || v === "CADRE" || v === "INTERNE") return v as CreateCommandeInput["order_type"];
   }
   return "FERME";
+}
+
+function canLaunchInternalOrder(role: string | null | undefined): boolean {
+  if (!role) return false;
+  const normalized = role.trim().toLowerCase();
+  if (normalized.includes("admin") || normalized.includes("administrateur") || normalized.includes("directeur")) {
+    return true;
+  }
+  const isManager = normalized.includes("responsable") || normalized.includes("chef");
+  const isProduction =
+    normalized.includes("production") || normalized.includes("atelier") || normalized.includes("programmation");
+  return isManager && isProduction;
 }
 
 function sortColumn(sortBy: ListCommandesQueryDTO["sortBy"]) {
@@ -103,6 +119,7 @@ type CommandeLineArticleResolution = {
 
 type AuditContext = {
   user_id: number;
+  user_role: string | null;
   ip: string | null;
   user_agent: string | null;
   device_type: string | null;
@@ -142,354 +159,10 @@ async function insertAuditLog(tx: Queryable, audit: AuditContext, entry: {
   });
 }
 
-type FabricationGenerationNode = {
-  key: string;
-  parent_key: string | null;
-  bom_line_id: string | null;
-  parent_piece_technique_id: string | null;
-  piece_technique_id: string;
-  article_id: string | null;
-  code_piece: string;
-  designation: string;
-  version_number: number;
-  level: number;
-  ordre_affichage: number;
-  quantite_par_parent: number;
-  quantite_cumulee: number;
-};
-
-async function loadFabricationGenerationTree(
-  tx: Queryable,
-  pieceTechniqueId: string,
-  maxDepth = 50
-): Promise<FabricationGenerationNode[]> {
-  const depth = Math.max(1, Math.min(50, Math.trunc(maxDepth)));
-  const res = await tx.query<FabricationGenerationNode>(
-    `
-      WITH RECURSIVE tree AS (
-        SELECT
-          NULL::uuid AS bom_line_id,
-          NULL::uuid AS parent_piece_technique_id,
-          p.id AS piece_technique_id,
-          p.article_id,
-          p.code_piece,
-          p.designation,
-          p.version_number,
-          0::int AS level,
-          ARRAY[p.id]::uuid[] AS path_ids,
-          ARRAY[0]::int[] AS order_path,
-          0::int AS ordre_affichage,
-          1::numeric AS quantite_par_parent,
-          1::numeric AS quantite_cumulee
-        FROM public.pieces_techniques p
-        WHERE p.id = $1::uuid
-          AND p.deleted_at IS NULL
-
-        UNION ALL
-
-        SELECT
-          n.id AS bom_line_id,
-          n.parent_piece_technique_id,
-          child.id AS piece_technique_id,
-          child.article_id,
-          child.code_piece,
-          child.designation,
-          child.version_number,
-          tree.level + 1 AS level,
-          tree.path_ids || child.id AS path_ids,
-          tree.order_path || n.rang AS order_path,
-          n.rang::int AS ordre_affichage,
-          n.quantite AS quantite_par_parent,
-          tree.quantite_cumulee * n.quantite AS quantite_cumulee
-        FROM tree
-        JOIN public.pieces_techniques_nomenclature n
-          ON n.parent_piece_technique_id = tree.piece_technique_id
-        JOIN public.pieces_techniques child
-          ON child.id = n.child_piece_technique_id
-         AND child.deleted_at IS NULL
-        WHERE tree.level < $2::int
-          AND NOT child.id = ANY(tree.path_ids)
-      )
-      SELECT
-        array_to_string(path_ids::text[], '/') AS key,
-        CASE
-          WHEN array_length(path_ids, 1) > 1
-            THEN array_to_string(path_ids[1:(array_length(path_ids, 1) - 1)]::text[], '/')
-          ELSE NULL
-        END AS parent_key,
-        bom_line_id::text AS bom_line_id,
-        parent_piece_technique_id::text AS parent_piece_technique_id,
-        piece_technique_id::text AS piece_technique_id,
-        article_id::text AS article_id,
-        code_piece,
-        designation,
-        version_number::int AS version_number,
-        level,
-        ordre_affichage,
-        quantite_par_parent::float8 AS quantite_par_parent,
-        quantite_cumulee::float8 AS quantite_cumulee
-      FROM tree
-      ORDER BY order_path ASC, piece_technique_id ASC
-    `,
-    [pieceTechniqueId, depth]
-  );
-
-  return res.rows.map((row) => ({
-    ...row,
-    version_number: Number(row.version_number),
-    level: Number(row.level),
-    ordre_affichage: Number(row.ordre_affichage),
-    quantite_par_parent: Number(row.quantite_par_parent),
-    quantite_cumulee: Number(row.quantite_cumulee),
-  }));
-}
-
-async function allocateOrdreFabricationId(tx: Queryable): Promise<number> {
-  const idRes = await tx.query<{ of_id: string }>(
-    `SELECT nextval(pg_get_serial_sequence('public.ordres_fabrication','id'))::text AS of_id`
-  );
-  return toInt(idRes.rows[0]?.of_id, "ordres_fabrication.id");
-}
-
-async function copyPieceOperationsToOf(tx: Queryable, params: {
-  of_id: number;
-  piece_technique_id: string;
-}): Promise<number> {
-  const operationsInsert = await tx.query(
-    `
-      INSERT INTO public.of_operations (
-        of_id,
-        phase,
-        designation,
-        cf_id,
-        poste_id,
-        machine_id,
-        hourly_rate_applied,
-        tp,
-        tf_unit,
-        qte,
-        coef,
-        temps_total_planned,
-        status,
-        notes,
-        source_piece_operation_id
-      )
-      SELECT
-        $1::bigint AS of_id,
-        pto.phase,
-        pto.designation,
-        pto.cf_id,
-        NULL::uuid AS poste_id,
-        NULL::uuid AS machine_id,
-        COALESCE(pto.taux_horaire, 0)::numeric(12,2) AS hourly_rate_applied,
-        COALESCE(pto.tp, 0)::numeric(12,3) AS tp,
-        COALESCE(pto.tf_unit, 0)::numeric(12,3) AS tf_unit,
-        COALESCE(pto.qte, 1)::numeric(12,3) AS qte,
-        COALESCE(pto.coef, 1)::numeric(10,3) AS coef,
-        ROUND((COALESCE(pto.tp,0) + COALESCE(pto.tf_unit,0) * COALESCE(pto.qte,1)) * COALESCE(pto.coef,1), 3)::numeric(12,3) AS temps_total_planned,
-        'TODO'::of_operation_status AS status,
-        pto.designation_2 AS notes,
-        pto.id AS source_piece_operation_id
-      FROM public.pieces_techniques_operations pto
-      WHERE pto.piece_technique_id = $2::uuid
-      ORDER BY pto.phase ASC, pto.id ASC
-    `,
-    [params.of_id, params.piece_technique_id]
-  );
-
-  return operationsInsert.rowCount ?? 0;
-}
-
-async function createRecursiveOrdresFabrication(tx: Queryable, params: {
-  commande_id: number;
-  commande_numero: string;
-  commande_ligne_id: number;
-  livraison_affaire_id: number;
-  client_id: string;
-  root_article_id: string | null;
-  root_piece_technique_id: string;
-  qty_to_produce: number;
-  user_id: number;
-}): Promise<number[]> {
-  const tree = await loadFabricationGenerationTree(tx, params.root_piece_technique_id);
-  if (!tree.length) {
-    throw new HttpError(
-      422,
-      "PIECE_TECHNIQUE_NOT_FOUND",
-      `Cannot create OF: piece technique ${params.root_piece_technique_id} was not found`
-    );
-  }
-
-  const ofIdByKey = new Map<string, number>();
-  for (const node of tree) {
-    ofIdByKey.set(node.key, await allocateOrdreFabricationId(tx));
-  }
-
-  const rootOfId = ofIdByKey.get(tree[0].key);
-  if (!rootOfId) throw new Error("Failed to allocate root OF id");
-
-  const batchId = crypto.randomUUID();
-  await tx.query(
-    `
-      INSERT INTO public.of_generation_batches (
-        id,
-        source_type,
-        commande_id,
-        commande_ligne_id,
-        root_of_id,
-        root_piece_technique_id,
-        requested_qty,
-        metadata,
-        created_by
-      )
-      VALUES ($1::uuid,'COMMANDE_CLIENT',$2::bigint,$3::bigint,NULL,$4::uuid,$5,$6::jsonb,$7)
-    `,
-    [
-      batchId,
-      params.commande_id,
-      params.commande_ligne_id,
-      params.root_piece_technique_id,
-      params.qty_to_produce,
-      JSON.stringify({ commande_numero: params.commande_numero }),
-      params.user_id,
-    ]
-  );
-
-  const ofIds: number[] = [];
-
-  for (const node of tree) {
-    const ofId = ofIdByKey.get(node.key);
-    if (!ofId) throw new Error(`Missing OF id for fabrication node ${node.key}`);
-
-    const parentOfId = node.parent_key ? ofIdByKey.get(node.parent_key) ?? null : null;
-    if (node.parent_key && !parentOfId) {
-      throw new Error(`Missing parent OF id for fabrication node ${node.key}`);
-    }
-
-    const numero = `OF-${ofId}`;
-    const qtyLancee = Number((params.qty_to_produce * node.quantite_cumulee).toFixed(3));
-    const articleId = node.article_id ?? (node.level === 0 ? params.root_article_id : null);
-    const notePrefix = node.level === 0 ? "piece mere" : "sous-piece";
-
-    await tx.query(
-      `
-        INSERT INTO public.ordres_fabrication (
-          id,
-          numero,
-          affaire_id,
-          commande_id,
-          commande_ligne_id,
-          article_id,
-          client_id,
-          piece_technique_id,
-          parent_of_id,
-          root_of_id,
-          generation_batch_id,
-          generation_level,
-          source_bom_line_id,
-          structure_path,
-          quantity_per_parent,
-          quantity_cumulative,
-          quantite_lancee,
-          statut,
-          priority,
-          notes,
-          created_by,
-          updated_by
-        ) VALUES (
-          $1,$2,$3::bigint,$4::bigint,$5::bigint,$6::uuid,$7,$8::uuid,
-          $9::bigint,$10::bigint,$11::uuid,$12,$13::uuid,$14,$15,$16,
-          $17,'BROUILLON'::of_status,'NORMAL'::of_priority,$18,$19,$19
-        )
-      `,
-      [
-        ofId,
-        numero,
-        params.livraison_affaire_id,
-        params.commande_id,
-        params.commande_ligne_id,
-        articleId,
-        params.client_id,
-        node.piece_technique_id,
-        parentOfId,
-        rootOfId,
-        batchId,
-        node.level,
-        node.bom_line_id,
-        node.key,
-        node.quantite_par_parent,
-        node.quantite_cumulee,
-        qtyLancee,
-        `Generated from commande ${params.commande_numero} line ${params.commande_ligne_id} (${notePrefix} ${node.code_piece})`,
-        params.user_id,
-      ]
-    );
-
-    const operationsCount = await copyPieceOperationsToOf(tx, {
-      of_id: ofId,
-      piece_technique_id: node.piece_technique_id,
-    });
-    if (operationsCount === 0) {
-      throw new HttpError(
-        409,
-        "PIECE_TECHNIQUE_OPERATION_REQUIRED",
-        `Cannot create complete OF: piece technique ${node.code_piece} has no operation for line ${params.commande_ligne_id}`
-      );
-    }
-
-    await tx.query(
-      `
-        INSERT INTO public.of_structure_snapshot (
-          generation_batch_id,
-          root_of_id,
-          parent_of_id,
-          of_id,
-          level,
-          structure_path,
-          source_bom_line_id,
-          parent_piece_technique_id,
-          piece_technique_id,
-          piece_code,
-          piece_designation,
-          piece_version_number,
-          quantite_par_parent,
-          quantite_cumulee,
-          quantite_lancee
-        )
-        VALUES (
-          $1::uuid,$2::bigint,$3::bigint,$4::bigint,$5,$6,$7::uuid,$8::uuid,
-          $9::uuid,$10,$11,$12,$13,$14,$15
-        )
-      `,
-      [
-        batchId,
-        rootOfId,
-        parentOfId,
-        ofId,
-        node.level,
-        node.key,
-        node.bom_line_id,
-        node.parent_piece_technique_id,
-        node.piece_technique_id,
-        node.code_piece,
-        node.designation,
-        node.version_number,
-        node.quantite_par_parent,
-        node.quantite_cumulee,
-        qtyLancee,
-      ]
-    );
-
-    ofIds.push(ofId);
-  }
-
-  await tx.query(
-    `UPDATE public.of_generation_batches SET root_of_id = $2::bigint WHERE id = $1::uuid`,
-    [batchId, rootOfId]
-  );
-
-  return ofIds;
-}
+// Le moteur récursif de génération des OF (arbre, snapshots, batch) vit désormais
+// dans src/module/production/domain/of-generation.ts (#170) : service de domaine
+// unique partagé par le lancement de commande, la génération depuis une affaire
+// et l'endpoint manuel autorisé. Aucun second moteur.
 
 async function insertCommandeEvent(db: Queryable, params: {
   commande_id: number;
@@ -1074,6 +747,38 @@ async function listCommandeToAffaireMappings(db: Queryable, commandeId: number):
   }));
 }
 
+async function listGeneratedOfRefs(db: Queryable, commandeId: number): Promise<GeneratedOfRef[]> {
+  const res = await db.query<{
+    id: number;
+    root_of_id: number;
+    parent_of_id: number | null;
+    generation_level: number;
+    commande_ligne_id: number;
+  }>(
+    `
+      SELECT
+        id::bigint::int AS id,
+        COALESCE(root_of_id, id)::bigint::int AS root_of_id,
+        parent_of_id::bigint::int AS parent_of_id,
+        generation_level::int AS generation_level,
+        commande_ligne_id::bigint::int AS commande_ligne_id
+      FROM public.ordres_fabrication
+      WHERE commande_id = $1
+        AND generation_batch_id IS NOT NULL
+      ORDER BY generation_level ASC, id ASC
+    `,
+    [commandeId]
+  );
+
+  return res.rows.map((row) => ({
+    id: Number(row.id),
+    root_of_id: Number(row.root_of_id),
+    parent_of_id: row.parent_of_id === null ? null : Number(row.parent_of_id),
+    generation_level: Number(row.generation_level),
+    commande_ligne_id: Number(row.commande_ligne_id),
+  }));
+}
+
 type StockOnHandSource = {
   table: string;
   alias: string;
@@ -1490,6 +1195,69 @@ export async function repoEnsureCommandeWorkflowStatus(params: {
     history_id: ins.rows[0]?.id ? toInt(ins.rows[0].id, "commande_historique.id") : null,
     notifications,
   };
+}
+
+async function advanceInternalOrderWorkflowAfterGeneration(params: {
+  tx: Queryable;
+  commande_id: number;
+  user_id: number;
+  livraison_affaire_id: number;
+  of_ids: number[];
+}) {
+  const transition = await repoEnsureCommandeWorkflowStatus({
+    tx: params.tx,
+    commande_id: params.commande_id,
+    nouveau_statut: "ATTENTE_PLANNING",
+    commentaire: "Commande interne validee et lancee",
+    user_id: params.user_id,
+  });
+
+  await ensureCommandeWorkflowCheckpoints(params.tx, params.commande_id, "ATTENTE_PLANNING");
+  await params.tx.query(
+    `
+      UPDATE public.commande_client_workflow_checkpoint
+      SET
+        status = CASE
+          WHEN checkpoint_code IN ('commercial_review','ar_preparation','ar_sent','invoicing') THEN 'skipped'
+          WHEN checkpoint_code IN ('order_intake','technical_analysis','of_generation') THEN 'done'
+          WHEN checkpoint_code = 'planning_validation' THEN 'active'
+          ELSE status
+        END,
+        completed_at = CASE
+          WHEN checkpoint_code IN (
+            'order_intake','commercial_review','technical_analysis','of_generation',
+            'ar_preparation','ar_sent','invoicing'
+          ) THEN COALESCE(completed_at, now())
+          ELSE completed_at
+        END,
+        completed_by = CASE
+          WHEN checkpoint_code IN (
+            'order_intake','commercial_review','technical_analysis','of_generation',
+            'ar_preparation','ar_sent','invoicing'
+          ) THEN COALESCE(completed_by, $2::int)
+          ELSE completed_by
+        END,
+        metadata = COALESCE(metadata, '{}'::jsonb) || CASE
+          WHEN checkpoint_code = 'of_generation' THEN $3::jsonb
+          WHEN checkpoint_code IN ('commercial_review','ar_preparation','ar_sent','invoicing')
+            THEN '{"skip_reason":"internal_order_flow"}'::jsonb
+          ELSE '{"internal_order_flow":true}'::jsonb
+        END,
+        updated_at = now()
+      WHERE commande_id = $1
+    `,
+    [
+      params.commande_id,
+      params.user_id,
+      JSON.stringify({
+        internal_order_flow: true,
+        livraison_affaire_id: params.livraison_affaire_id,
+        of_ids: params.of_ids,
+      }),
+    ]
+  );
+
+  return transition;
 }
 
 type CommandeWorkflowHeader = {
@@ -1996,7 +1764,8 @@ export async function repoUpdateCommandeWorkflowCheckpoint(
 export async function repoRunCommandeWorkflowAction(
   id: string,
   body: RunCommandeWorkflowActionBodyDTO,
-  userId: number | null
+  userId: number | null,
+  userRole: string | null
 ) {
   const commandeId = toInt(id, "commande_id");
   if (userId === null) throw new HttpError(401, "UNAUTHORIZED", "Authentication required");
@@ -2005,6 +1774,7 @@ export async function repoRunCommandeWorkflowAction(
 
   const workflowAudit: AuditContext = {
     user_id: userId,
+    user_role: userRole,
     ip: null,
     user_agent: null,
     device_type: null,
@@ -2904,8 +2674,12 @@ export async function repoCreateCommande(input: CreateCommandeInput, documents: 
     if (!rawId) throw new Error("Failed to allocate commande id");
     const commandeIdInt = toInt(rawId, "commande_client.id");
 
-    const numero = typeof input.numero === "string" && input.numero.trim().length > 0 ? input.numero.trim() : null;
-    const numeroForInsert = numero ?? `CC-${commandeIdInt}`.slice(0, 30);
+    // The business number is allocated in this transaction.  A client-provided
+    // value is intentionally ignored: it must never become a relational key.
+    const numeroForInsert = await generateCommandeCode(client, {
+      client_code: input.code_client ?? input.client_id ?? "CMD",
+      date: input.date_commande ? new Date(input.date_commande) : undefined,
+    });
 
     const orderType = input.order_type ?? "FERME";
 
@@ -3091,7 +2865,11 @@ export async function repoUpdateCommande(id: string, input: CreateCommandeInput,
       throw new HttpError(409, "COMMANDE_LOCKED_AFTER_AR", "Commande is locked after AR has been sent");
     }
 
-    const numero = typeof input.numero === "string" && input.numero.trim().length > 0 ? input.numero.trim() : existing.numero;
+    if (input.numero !== undefined && input.numero !== existing.numero) {
+      throw new HttpError(409, "COMMANDE_CODE_IMMUTABLE", "Le numéro de commande est attribué par le serveur et ne peut pas être modifié.");
+    }
+
+    const numero = existing.numero;
     const orderType = input.order_type ?? coerceOrderType(existing.order_type);
 
     const clientIdForUpdate = hasOwn(input as object, "client_id") ? (input.client_id ?? null) : existing.client_id;
@@ -3415,12 +3193,14 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       dest_stock_magasin_id: string | null;
       dest_stock_emplacement_id: string | null;
       ar_sent_at: string | null;
+      updated_at: string | null;
     }>(
       `
       SELECT client_id, type_affaire, order_type, devis_id::text AS devis_id, numero,
              dest_stock_magasin_id::text AS dest_stock_magasin_id,
              dest_stock_emplacement_id::bigint::text AS dest_stock_emplacement_id,
-             ar_sent_at::text AS ar_sent_at
+             ar_sent_at::text AS ar_sent_at,
+             updated_at::text AS updated_at
       FROM commande_client
       WHERE id = $1
       FOR UPDATE
@@ -3433,7 +3213,48 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       return null;
     }
 
+    // #168 : verrou optimiste — refuse un lancement dont l'aperçu « Vérifier et lancer » est
+    // périmé (la commande a changé entre l'aperçu et la confirmation). Sans jeton, comportement
+    // inchangé.
+    if (
+      body.expected_updated_at &&
+      commande.updated_at &&
+      body.expected_updated_at !== commande.updated_at
+    ) {
+      throw new HttpError(
+        409,
+        "COMMANDE_PREVIEW_STALE",
+        "La commande a été modifiée depuis l'aperçu. Rechargez la commande avant de lancer."
+      );
+    }
+
     const orderType = coerceOrderType(commande.order_type);
+    const requestedLivraisonCountRaw = typeof body.livraison_count === "number" ? body.livraison_count : 1;
+    const requestedLivraisonCount = Math.max(1, Math.min(10, Math.trunc(requestedLivraisonCountRaw)));
+
+    if (orderType === "INTERNE") {
+      if (!canLaunchInternalOrder(audit.user_role)) {
+        throw new HttpError(
+          403,
+          "INTERNAL_ORDER_LAUNCH_FORBIDDEN",
+          "Production manager or administrator role required to launch an internal order"
+        );
+      }
+      if (requestedLivraisonCount !== 1) {
+        throw new HttpError(
+          400,
+          "INTERNAL_ORDER_SINGLE_AFFAIRE_REQUIRED",
+          "Internal orders generate exactly one delivery affair"
+        );
+      }
+      if (body.decision !== null || (body.lines?.length ?? 0) > 0) {
+        throw new HttpError(
+          400,
+          "INTERNAL_ORDER_STOCK_DECISION_FORBIDDEN",
+          "Internal orders always generate the full manufacturing requirement without a shipping-stock decision"
+        );
+      }
+    }
 
     const internalClientId = orderType === "INTERNE" ? await getInternalClientIdSetting(client) : null;
     const clientId = commande.client_id ?? internalClientId;
@@ -3447,22 +3268,41 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       );
     }
 
-    const requestedLivraisonCountRaw = typeof body.livraison_count === "number" ? body.livraison_count : 1;
-    const requestedLivraisonCount = Math.max(1, Math.min(10, Math.trunc(requestedLivraisonCountRaw)));
-
     // Idempotency + split delivery support: allow multiple LIVRAISON mappings per commande.
     const existingMappings = await listCommandeToAffaireMappings(client, commandeId);
     const existingLivraisons = existingMappings.filter((r) => r.role === "LIVRAISON");
 
     if (existingMappings.length > 0) {
+      if (orderType === "INTERNE" && existingLivraisons.length === 0) {
+        throw new HttpError(
+          409,
+          "INTERNAL_ORDER_AFFAIRE_MAPPING_INVALID",
+          "The existing affair mapping is not identified as a delivery affair"
+        );
+      }
+
       if (existingLivraisons.length >= requestedLivraisonCount) {
         const livraison = existingLivraisons[0]?.affaire_id ?? null;
+        const existingOfs = await listGeneratedOfRefs(client, commandeId);
+        const workflowHeader =
+          orderType === "INTERNE" ? await loadCommandeWorkflowHeaderWithStatus(client, commandeId) : null;
         await client.query("COMMIT");
         return {
           affaire_ids: existingLivraisons.map((r) => r.affaire_id),
           livraison_affaire_id: livraison,
           requires_confirmation: false,
           livraison_affaire_ids: existingLivraisons.map((l) => l.affaire_id),
+          generation_mode: orderType === "INTERNE" ? "INTERNAL_ORDER" : "CUSTOMER_ORDER",
+          idempotent_replay: true,
+          workflow_status: workflowHeader?.statut ?? null,
+          of_ids: existingOfs.map((of) => of.id),
+          root_of_ids: existingOfs.filter((of) => of.parent_of_id === null).map((of) => of.id),
+          child_of_ids: existingOfs.filter((of) => of.parent_of_id !== null).map((of) => of.id),
+          ofs: existingOfs,
+          warnings:
+            orderType === "INTERNE" && existingLivraisons.length > 1
+              ? ["LEGACY_MULTIPLE_DELIVERY_AFFAIRS"]
+              : [],
         };
       }
 
@@ -3502,19 +3342,37 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
     }
 
     const refs = await selectCommandeLineRefs(client, commandeId);
+    if (orderType === "INTERNE") {
+      if (refs.length === 0) {
+        throw new HttpError(400, "INTERNAL_ORDER_LINE_REQUIRED", "An internal order must contain at least one line");
+      }
+      const missingPiece = refs.find((line) => !line.piece_technique_id);
+      if (missingPiece) {
+        throw new HttpError(
+          400,
+          "PIECE_TECHNIQUE_REQUIRED",
+          `Cannot launch internal order: missing piece_technique_id for line ${missingPiece.commande_ligne_id}`
+        );
+      }
+    }
 
     let stockLocationId: string | null = null;
     if (orderType === "INTERNE") {
       const magasinId = commande.dest_stock_magasin_id;
       const emplacementIdRaw = commande.dest_stock_emplacement_id;
       const emplacementId = typeof emplacementIdRaw === "string" && /^\d+$/.test(emplacementIdRaw) ? Number(emplacementIdRaw) : null;
-      if (magasinId && typeof emplacementId === "number" && Number.isFinite(emplacementId)) {
-        stockLocationId = await resolveLocationIdForEmplacement(client, {
-          magasin_id: magasinId,
-          emplacement_id: emplacementId,
-          label: "dest_stock_location",
-        });
+      if (!magasinId || typeof emplacementId !== "number" || !Number.isFinite(emplacementId)) {
+        throw new HttpError(
+          400,
+          "DEST_STOCK_LOCATION_REQUIRED",
+          "dest_stock_magasin_id and dest_stock_emplacement_id are required for internal orders"
+        );
       }
+      stockLocationId = await resolveLocationIdForEmplacement(client, {
+        magasin_id: magasinId,
+        emplacement_id: emplacementId,
+        label: "dest_stock_location",
+      });
     } else {
       try {
         stockLocationId = (await getDefaultShippingLocation(client)).location_id;
@@ -3524,7 +3382,25 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
     }
 
     let analysis: CommandeStockAnalysis | null = null;
-    if (stockLocationId) {
+    if (orderType === "INTERNE") {
+      analysis = {
+        lines: refs.map((ref) => ({
+          commande_ligne_id: ref.commande_ligne_id,
+          code_piece: ref.code_piece,
+          article_id: ref.article_id,
+          article_code: ref.article_code,
+          article_designation: ref.article_designation,
+          piece_technique_id: ref.piece_technique_id,
+          piece_code: ref.piece_code,
+          piece_designation: ref.piece_designation,
+          requested_qty: Number(ref.qty_ordered),
+          available_qty: 0,
+          available_used_qty: 0,
+          shortage_qty: Number(ref.qty_ordered),
+          status: "NONE",
+        })),
+      };
+    } else if (stockLocationId) {
       try {
         analysis = await computeCommandeStockAnalysis(client, { commande_id: commandeId, location_id: stockLocationId });
       } catch {
@@ -3703,10 +3579,11 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
               qty_reserved,
               source_type,
               source_id,
+              commande_ligne_id,
               status,
               created_by,
               updated_by
-            ) VALUES ($1::uuid,$2::uuid,$3,'COMMANDE_LIGNE',$4,'ACTIVE',$5,$5)
+            ) VALUES ($1::uuid,$2::uuid,$3,'COMMANDE_LIGNE',$4,$4::bigint,'ACTIVE',$5,$5)
             RETURNING id::text AS id
           `,
           [articleId, stockLocationId, it.qty, String(it.line.commande_ligne_id), audit.user_id]
@@ -3716,7 +3593,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       }
     }
 
-    const ofIds: number[] = [];
+    const generatedOfs: GeneratedOfRef[] = [];
     if (needsProduction) {
       const byLine = new Map<number, CommandeLineRef>(refs.map((r) => [r.commande_ligne_id, r] as const));
 
@@ -3735,7 +3612,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
           );
         }
 
-        const generatedIds = await createRecursiveOrdresFabrication(client, {
+        const generated = await createRecursiveOrdresFabrication(client, {
           commande_id: commandeId,
           commande_numero: commande.numero,
           commande_ligne_id: l.commande_ligne_id,
@@ -3746,8 +3623,34 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
           qty_to_produce: qtyToProduce,
           user_id: audit.user_id,
         });
-        ofIds.push(...generatedIds);
+        generatedOfs.push(...generated.ofs);
       }
+    }
+
+    const ofIds = generatedOfs.map((of) => of.id);
+    let workflowStatus: string | null = null;
+    if (orderType === "INTERNE") {
+      await advanceInternalOrderWorkflowAfterGeneration({
+        tx: client,
+        commande_id: commandeId,
+        user_id: audit.user_id,
+        livraison_affaire_id: livraisonAffaireId,
+        of_ids: ofIds,
+      });
+      workflowStatus = "ATTENTE_PLANNING";
+
+      await insertCommandeEvent(client, {
+        commande_id: commandeId,
+        event_type: "INTERNAL_ORDER_LAUNCHED",
+        new_values: {
+          livraison_affaire_id: livraisonAffaireId,
+          stock_location_id: stockLocationId,
+          root_of_ids: generatedOfs.filter((of) => of.parent_of_id === null).map((of) => of.id),
+          child_of_ids: generatedOfs.filter((of) => of.parent_of_id !== null).map((of) => of.id),
+          workflow_status: workflowStatus,
+        },
+        user_id: audit.user_id,
+      });
     }
 
     await insertCommandeEvent(client, {
@@ -3804,6 +3707,13 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       livraison_affaire_ids: livraisonAffaireIds,
       reservations_created: reservationsCreated,
       of_ids: ofIds,
+      root_of_ids: generatedOfs.filter((of) => of.parent_of_id === null).map((of) => of.id),
+      child_of_ids: generatedOfs.filter((of) => of.parent_of_id !== null).map((of) => of.id),
+      ofs: generatedOfs,
+      generation_mode: orderType === "INTERNE" ? "INTERNAL_ORDER" : "CUSTOMER_ORDER",
+      idempotent_replay: false,
+      workflow_status: workflowStatus,
+      warnings: [],
     };
   } catch (e) {
     await client.query("ROLLBACK");
@@ -3825,10 +3735,9 @@ async function createAffaire(db: PoolClient, input: AffaireCreationInput): Promi
   if (!rawId) throw new Error("Failed to allocate affaire id");
   const id = toInt(rawId, "affaire.id");
 
-  const clientCode = await requireClientCode(db, input.client_id);
   const reference = await generateAffaireCode(db, {
     type: "LIV",
-    client_code: clientCode,
+    client_code: input.client_id,
   });
 
   const typeAffaire = "livraison";
@@ -4585,7 +4494,7 @@ export async function repoDuplicateCommande(id: string) {
     const newId = seq.rows[0]?.id;
     if (!newId) throw new Error("Failed to allocate commande id");
     const newIdInt = toInt(newId, "commande_client.id");
-    const newNumero = `CC-${newIdInt}`.slice(0, 30);
+    const newNumero = await generateCommandeCode(client, { client_code: original.code_client ?? original.client_id ?? "CMD" });
 
     await client.query(
       `

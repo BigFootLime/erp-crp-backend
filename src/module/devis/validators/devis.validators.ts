@@ -149,6 +149,9 @@ export type CreateDevisBodyDTO = z.infer<typeof createDevisBodySchema>;
 
 export const updateDevisBodySchema = z.object({
   numero: z.preprocess(emptyStringToUndefined, z.string().trim().min(1).max(30)).optional(),
+  // Verrou optimiste (#167) : jeton `updated_at` lu par le client. Fourni -> comparé
+  // au `updated_at` courant sous FOR UPDATE ; divergence -> 409 DEVIS_STALE.
+  expected_updated_at: z.preprocess(emptyStringToUndefined, z.string().trim().min(1)).optional(),
   client_id: z.string().trim().min(1).optional(),
   contact_id: z.string().uuid().optional().nullable(),
   user_id: z.coerce.number().int().positive().optional(),
@@ -169,3 +172,17 @@ export const updateDevisBodySchema = z.object({
 });
 
 export type UpdateDevisBodyDTO = z.infer<typeof updateDevisBodySchema>;
+
+/**
+ * Corps JSON (optionnel) de la conversion contrôlée (#167).
+ * `expected_updated_at` verrouille la version source vue dans l'aperçu ;
+ * l'Idempotency-Key transite par l'en-tête HTTP standard.
+ */
+export const convertDevisBodySchema = z
+  .object({
+    expected_updated_at: z.preprocess(emptyStringToUndefined, z.string().trim().min(1)).optional(),
+  })
+  .optional()
+  .default({});
+
+export type ConvertDevisBodyDTO = z.infer<typeof convertDevisBodySchema>;

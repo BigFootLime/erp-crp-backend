@@ -51,10 +51,10 @@ const onboardingTextArraySchema = z.array(z.string().trim().min(1).max(120)).max
 const sourceConfidenceSchema = z.enum(["official", "resale_listing", "estimated", "internal", "unknown"]);
 const sourceTypeSchema = z.enum(["manufacturer_page", "manufacturer_pdf", "resale_listing", "internal_note", "mixed", "unknown"]);
 const capabilityLevelSchema = z.enum(["preferred", "primary", "supported", "limited", "unknown"]);
+const hourlyRateSourceSchema = z.enum(["INTERNAL_COST", "POSTE_INHERITED", "IMPORTED", "MANUAL_OVERRIDE", "UNKNOWN"]);
 
 export const createMachineSchema = z.object({
   body: z.object({
-    code: z.string().trim().min(1).max(50),
     name: z.string().trim().min(1).max(200),
     type: machineTypeSchema.optional().default("OTHER"),
     machine_model_id: uuid.optional().nullable(),
@@ -63,10 +63,11 @@ export const createMachineSchema = z.object({
     model: z.string().trim().min(1).max(120).optional().nullable(),
     serial_number: z.string().trim().min(1).max(120).optional().nullable(),
     commissioned_year: optionalYearSchema,
-    hourly_rate: z.coerce.number().min(0).optional().default(0),
+    hourly_rate: z.coerce.number().min(0).optional().nullable(),
+    hourly_rate_source: hourlyRateSourceSchema.optional().nullable(),
+    hourly_rate_effective_at: z.string().date().optional().nullable(),
     currency: currencySchema,
     status: machineStatusSchema.optional().default("ACTIVE"),
-    is_available: z.boolean().optional().default(true),
     dashboard_color: z.string().trim().min(1).max(40).optional().nullable(),
     model_3d_path: optionalPathSchema,
     documentation_url: optionalUrlSchema,
@@ -76,7 +77,7 @@ export const createMachineSchema = z.object({
     location: z.string().trim().min(1).max(200).optional().nullable(),
     workshop_zone: z.string().trim().min(1).max(200).optional().nullable(),
     notes: z.string().trim().min(1).optional().nullable(),
-  }),
+  }).strict(),
 });
 
 export type CreateMachineBodyDTO = z.infer<typeof createMachineSchema>["body"];
@@ -96,7 +97,7 @@ export const createMachineOnboardingSchema = z.object({
         description: z.string().trim().min(1).max(2000).optional().nullable(),
         source_summary: z.string().trim().min(1).max(2000).optional().nullable(),
         is_active: z.boolean().optional().default(true),
-      })
+      }).strict()
       .optional()
       .nullable(),
     specs: z
@@ -121,8 +122,9 @@ export const createMachineOnboardingSchema = z.object({
         maintenance_notes: optionalMediumTextSchema,
         source_type: sourceTypeSchema.optional().default("internal_note"),
         source_confidence: sourceConfidenceSchema.optional().default("internal"),
+        source_url: optionalUrlSchema,
         source_notes: optionalMediumTextSchema,
-      })
+      }).strict()
       .optional()
       .nullable(),
     capabilities: z
@@ -133,7 +135,7 @@ export const createMachineOnboardingSchema = z.object({
           capability_level: capabilityLevelSchema.optional().default("supported"),
           notes: optionalMediumTextSchema,
           source_confidence: sourceConfidenceSchema.optional().default("internal"),
-        })
+        }).strict()
       )
       .max(80)
       .optional()
@@ -147,22 +149,29 @@ export const createMachineOnboardingSchema = z.object({
           compatible: z.boolean().optional().default(true),
           notes: optionalMediumTextSchema,
           source_confidence: sourceConfidenceSchema.optional().default("internal"),
-        })
+        }).strict()
       )
       .max(80)
       .optional()
       .default([]),
-  }),
+    update_shared_model: z.boolean().optional().default(false),
+    expected_model_updated_at: z.string().datetime({ offset: true }).optional().nullable(),
+  }).strict(),
 });
 
 export type CreateMachineOnboardingBodyDTO = z.infer<typeof createMachineOnboardingSchema>["body"];
 
-export const updateMachineOnboardingSchema = createMachineOnboardingSchema;
-export type UpdateMachineOnboardingBodyDTO = CreateMachineOnboardingBodyDTO;
+export const updateMachineOnboardingSchema = z.object({
+  body: createMachineOnboardingSchema.shape.body.extend({
+    machine: createMachineSchema.shape.body.extend({
+      expected_updated_at: z.string().datetime({ offset: true }),
+    }).strict(),
+  }).strict(),
+});
+export type UpdateMachineOnboardingBodyDTO = z.infer<typeof updateMachineOnboardingSchema>["body"];
 
 export const updateMachineSchema = z.object({
   body: z.object({
-    code: z.string().trim().min(1).max(50).optional(),
     name: z.string().trim().min(1).max(200).optional(),
     type: machineTypeSchema.optional(),
     machine_model_id: uuid.optional().nullable(),
@@ -171,10 +180,11 @@ export const updateMachineSchema = z.object({
     model: z.string().trim().min(1).max(120).optional().nullable(),
     serial_number: z.string().trim().min(1).max(120).optional().nullable(),
     commissioned_year: optionalYearSchema,
-    hourly_rate: z.coerce.number().min(0).optional(),
+    hourly_rate: z.coerce.number().min(0).optional().nullable(),
+    hourly_rate_source: hourlyRateSourceSchema.optional().nullable(),
+    hourly_rate_effective_at: z.string().date().optional().nullable(),
     currency: currencyPatchSchema,
     status: machineStatusSchema.optional(),
-    is_available: z.boolean().optional(),
     dashboard_color: z.string().trim().min(1).max(40).optional().nullable(),
     model_3d_path: optionalPathSchema,
     documentation_url: optionalUrlSchema,
@@ -184,7 +194,8 @@ export const updateMachineSchema = z.object({
     location: z.string().trim().min(1).max(200).optional().nullable(),
     workshop_zone: z.string().trim().min(1).max(200).optional().nullable(),
     notes: z.string().trim().min(1).optional().nullable(),
-  }),
+    expected_updated_at: z.string().datetime({ offset: true }),
+  }).strict(),
 });
 
 export type UpdateMachineBodyDTO = z.infer<typeof updateMachineSchema>["body"];
@@ -267,18 +278,45 @@ export const ofOperationIdParamSchema = z.object({
 // Phase 5 - OF -> Entree en stock
 // -------------------------
 
+export const ofReceiptQualityStatusSchema = z.enum(["LIBERE", "QUARANTAINE", "BLOQUE"]);
+export type OfReceiptQualityStatusDTO = z.infer<typeof ofReceiptQualityStatusSchema>;
+
 export const ofReceiptBodySchema = z
   .object({
     article_id: uuid.optional(),
     qty_ok: z.coerce.number().positive(),
+    qty_scrap: z.coerce.number().min(0).optional().default(0),
+    qty_rework: z.coerce.number().min(0).optional().default(0),
     unite: z.string().trim().min(1).max(30).optional().nullable(),
     location_id: uuid,
     lot_mode: z.enum(["NEW", "EXISTING"]),
     lot_id: uuid.optional().nullable(),
     lot_number: z.string().trim().min(1).max(80).optional().nullable(),
+    quality_status: ofReceiptQualityStatusSchema,
+    quality_reason: z.string().trim().min(3).max(1000).optional().nullable(),
+    expected_of_updated_at: z.string().datetime({ offset: true }),
     commentaire: z.string().trim().min(1).max(2000).optional().nullable(),
   })
-  .strict();
+  .strict()
+  .superRefine((body, ctx) => {
+    if (body.lot_mode === "EXISTING" && !body.lot_id) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["lot_id"], message: "Un lot existant doit etre selectionne." });
+    }
+    if (body.lot_mode === "NEW" && body.lot_id) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["lot_id"],
+        message: "Un nouveau lot ne peut pas reutiliser un identifiant existant.",
+      });
+    }
+    if (body.quality_status !== "LIBERE" && !body.quality_reason?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["quality_reason"],
+        message: "Un motif qualite est requis pour un lot en quarantaine ou bloque.",
+      });
+    }
+  });
 
 export const createOfReceiptSchema = z.object({
   body: ofReceiptBodySchema,
@@ -312,6 +350,7 @@ export const createOfSchema = z.object({
     commande_id: z.coerce.number().int().positive().optional().nullable(),
     client_id: z.string().trim().min(1).max(3).optional().nullable(),
     piece_technique_id: uuid,
+    piece_technique_version_id: uuid,
     quantite_lancee: z.coerce.number().positive().optional().default(1),
     priority: ofPrioritySchema.optional().default("NORMAL"),
     statut: ofStatusSchema.optional().default("BROUILLON"),
@@ -338,10 +377,85 @@ export const updateOfSchema = z.object({
     date_lancement_reelle: isoDate.optional().nullable(),
     date_fin_reelle: isoDate.optional().nullable(),
     notes: z.string().trim().min(1).optional().nullable(),
+    // #170 : verrou optimiste — jeton updated_at exact renvoyé par la fiche.
+    expected_updated_at: z.string().datetime({ offset: true }).optional(),
   }),
 });
 
 export type UpdateOfBodyDTO = z.infer<typeof updateOfSchema>["body"];
+
+// #170 — réordonnancement des opérations avant lancement (DnD ou clavier).
+export const reorderOfOperationsSchema = z.object({
+  body: z
+    .object({
+      expected_updated_at: z.string().datetime({ offset: true }),
+      operations: z
+        .array(
+          z.object({
+            op_id: uuid,
+            phase: z.coerce.number().int().min(1).max(9999),
+          }).strict()
+        )
+        .min(1)
+        .max(500),
+    })
+    .strict()
+    .superRefine((body, ctx) => {
+      const phases = new Set<number>();
+      const ops = new Set<string>();
+      for (const item of body.operations) {
+        if (phases.has(item.phase)) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Duplicate phase ${item.phase}` });
+        }
+        if (ops.has(item.op_id)) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Duplicate operation ${item.op_id}` });
+        }
+        phases.add(item.phase);
+        ops.add(item.op_id);
+      }
+    }),
+});
+
+export type ReorderOfOperationsBodyDTO = z.infer<typeof reorderOfOperationsSchema>["body"];
+
+// #170 — génération récursive depuis une affaire ou en manuel autorisé.
+// Le lancement de commande garde son endpoint historique (#168) ; les trois
+// chemins partagent le même moteur de domaine.
+export const ofGenerationSourceSchema = z
+  .object({
+    type: z.enum(["MANUAL", "AFFAIRE"]),
+    affaire_id: z.coerce.number().int().positive().optional().nullable(),
+    client_id: z.string().trim().min(1).max(3).optional().nullable(),
+    piece_technique_id: uuid,
+    piece_technique_version_id: uuid.optional().nullable(),
+    quantity: z.coerce.number().positive().max(1_000_000),
+  })
+  .strict()
+  .superRefine((source, ctx) => {
+    if (source.type === "AFFAIRE" && !source.affaire_id) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "affaire_id is required for AFFAIRE generation" });
+    }
+  });
+
+export type OfGenerationSourceDTO = z.infer<typeof ofGenerationSourceSchema>;
+
+export const previewOfGenerationSchema = z.object({
+  body: z.object({ source: ofGenerationSourceSchema }).strict(),
+});
+
+export type PreviewOfGenerationBodyDTO = z.infer<typeof previewOfGenerationSchema>["body"];
+
+export const generateOfsSchema = z.object({
+  body: z
+    .object({
+      source: ofGenerationSourceSchema,
+      expected_source_hash: z.string().regex(/^[A-Fa-f0-9]{64}$/, "Invalid source hash"),
+      confirm: z.literal(true),
+    })
+    .strict(),
+});
+
+export type GenerateOfsBodyDTO = z.infer<typeof generateOfsSchema>["body"];
 
 export const updateOfOperationSchema = z.object({
   body: z.object({

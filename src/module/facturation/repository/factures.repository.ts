@@ -437,6 +437,9 @@ async function insertFactureLines(client: PoolClient, factureId: number, lignes:
 }
 
 export async function repoCreateFacture(input: CreateFactureBodyDTO) {
+  if (input.numero !== undefined) {
+    throw new HttpError(400, "FACTURE_NUMERO_SERVER_MANAGED", "Le numéro légal de facture est attribué automatiquement.");
+  }
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -446,7 +449,7 @@ export async function repoCreateFacture(input: CreateFactureBodyDTO) {
     if (!idRaw) throw new Error("Failed to allocate facture id");
     const factureId = toInt(idRaw, "facture.id");
 
-    const numero = (input.numero ?? `FT-${factureId}`).slice(0, 30);
+    const numero = `FT-${factureId}`;
     const totals = computeDocumentTotals(input.lignes, input.remise_globale);
 
     const ins = await client.query<{ id: string }>(
@@ -509,6 +512,9 @@ export async function repoCreateFacture(input: CreateFactureBodyDTO) {
 }
 
 export async function repoUpdateFacture(id: number, input: UpdateFactureBodyDTO) {
+  if (input.numero !== undefined) {
+    throw new HttpError(400, "FACTURE_NUMERO_IMMUTABLE", "Le numéro légal de facture ne peut pas être modifié.");
+  }
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -577,7 +583,6 @@ export async function repoUpdateFacture(id: number, input: UpdateFactureBodyDTO)
       return `$${values.length}`;
     };
 
-    if (input.numero !== undefined) sets.push(`numero = ${push(input.numero)}`);
     if (input.client_id !== undefined) sets.push(`client_id = ${push(input.client_id)}`);
     if (input.devis_id !== undefined) sets.push(`devis_id = ${push(input.devis_id)}::bigint`);
     if (input.commande_id !== undefined) sets.push(`commande_id = ${push(input.commande_id)}::bigint`);

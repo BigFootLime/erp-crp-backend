@@ -1,12 +1,14 @@
 import type { PoolClient } from "pg";
-import crypto from "node:crypto";
+import { createHash, randomUUID } from "crypto";
 
 import pool from "../../../config/database";
+import { generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 import type { AuditContext } from "./production.repository";
 import type { OfReceiptBodyDTO } from "../validators/production.validators";
+import { ofStatutAllowsReceipt, type OfStatut } from "../domain/of-status";
 
 export type OfReceiptContext = {
   of: {
@@ -17,6 +19,11 @@ export type OfReceiptContext = {
     piece_designation: string;
     quantite_lancee: number;
     quantite_bonne: number;
+    statut: string;
+    updated_at: string;
+    affaire_id: number | null;
+    commande_id: number | null;
+    commande_ligne_id: number | null;
   };
   article_id: string;
   unite: string | null;
@@ -26,7 +33,17 @@ export type OfReceiptContext = {
   output_lots: Array<{
     lot_id: string;
     lot_code: string;
+    lot_status: string;
     qty_ok: number;
+    qty_scrap: number;
+    qty_rework: number;
+    updated_at: string;
+  }>;
+  existing_lots: Array<{
+    lot_id: string;
+    lot_code: string;
+    lot_status: string;
+    qty_on_hand: number;
     updated_at: string;
   }>;
   locations: {
@@ -36,21 +53,35 @@ export type OfReceiptContext = {
 };
 
 export type OfReceiptResult = {
+  receipt_id: string;
   lot_id: string;
   lot_code: string;
   stock_movement_id: string;
   movement_no: string;
   qty_ok: number;
+  qty_scrap: number;
+  qty_rework: number;
+  quality_status: string;
+  reservation_id: string | null;
+  reserved_qty: number;
+  non_conformity_id: string | null;
+  idempotent_replay: boolean;
 };
 
 export type OfTraceability = {
   output_lots: OfReceiptContext["output_lots"];
   receipts: Array<{
+    receipt_id: string | null;
     stock_movement_id: string;
     movement_no: string | null;
     status: string;
     posted_at: string | null;
     qty: number;
+    qty_scrap: number;
+    qty_rework: number;
+    quality_status: string | null;
+    reservation_id: string | null;
+    non_conformity_id: string | null;
     lot_id: string | null;
     lot_code: string | null;
     magasin_id: string | null;
@@ -65,6 +96,22 @@ export type OfTraceability = {
 function movementNoFromSeq(n: number): string {
   const padded = String(n).padStart(8, "0");
   return `SM-${padded}`;
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function receiptRequestHash(ofId: number, body: OfReceiptBodyDTO): string {
+  return createHash("sha256").update(canonicalJson({ of_id: ofId, ...body })).digest("hex");
 }
 
 async function reserveMovementNo(client: Pick<PoolClient, "query">): Promise<string> {
@@ -131,6 +178,8 @@ async function reserveProducedQtyForCommandeLine(
     article_id: string;
     location_id: string;
     stock_level_id: string;
+    stock_batch_id: string;
+    lot_id: string;
     qty_ok: number;
     actor_user_id: number;
   }
@@ -144,7 +193,7 @@ async function reserveProducedQtyForCommandeLine(
         article_id::text AS article_id
       FROM public.commande_ligne
       WHERE id = $1::bigint
-      LIMIT 1
+      FOR UPDATE
     `,
     [args.commande_ligne_id]
   );
@@ -201,6 +250,32 @@ async function reserveProducedQtyForCommandeLine(
     [args.stock_level_id, qtyToReserve, args.actor_user_id]
   );
 
+  const stockBatchRes = await client.query<{ qty_total: number; qty_reserved: number }>(
+    `
+      SELECT qty_total::float8 AS qty_total, qty_reserved::float8 AS qty_reserved
+      FROM public.stock_batches
+      WHERE id = $1::uuid AND lot_id = $2::uuid
+      FOR UPDATE
+    `,
+    [args.stock_batch_id, args.lot_id]
+  );
+  const stockBatch = stockBatchRes.rows[0] ?? null;
+  if (!stockBatch) {
+    throw new HttpError(409, "STOCK_BATCH_NOT_FOUND", "Lot de stock introuvable pour la reservation automatique");
+  }
+  const batchAvailableQty = Number(stockBatch.qty_total) - Number(stockBatch.qty_reserved);
+  if (batchAvailableQty + 1e-9 < qtyToReserve) {
+    throw new HttpError(409, "INSUFFICIENT_LOT_STOCK", "Le lot produit n'est pas disponible pour la reservation automatique");
+  }
+  await client.query(
+    `
+      UPDATE public.stock_batches
+      SET qty_reserved = qty_reserved + $2
+      WHERE id = $1::uuid
+    `,
+    [args.stock_batch_id, qtyToReserve]
+  );
+
   const existingReservation = await client.query<{ id: string }>(
     `
       SELECT id::text AS id
@@ -209,12 +284,14 @@ async function reserveProducedQtyForCommandeLine(
         AND location_id = $2::uuid
         AND source_type = 'COMMANDE_LIGNE'
         AND source_id = $3
+        AND lot_id = $4::uuid
+        AND stock_batch_id = $5::uuid
         AND status = 'ACTIVE'
       ORDER BY created_at ASC
       LIMIT 1
       FOR UPDATE
     `,
-    [args.article_id, args.location_id, String(args.commande_ligne_id)]
+    [args.article_id, args.location_id, String(args.commande_ligne_id), args.lot_id, args.stock_batch_id]
   );
 
   const existingId = existingReservation.rows[0]?.id ?? null;
@@ -223,11 +300,12 @@ async function reserveProducedQtyForCommandeLine(
       `
         UPDATE public.stock_reservations
         SET qty_reserved = qty_reserved + $2,
+            commande_ligne_id = COALESCE(commande_ligne_id, $4::bigint),
             updated_at = now(),
             updated_by = $3
         WHERE id = $1::uuid
       `,
-      [existingId, qtyToReserve, args.actor_user_id]
+      [existingId, qtyToReserve, args.actor_user_id, args.commande_ligne_id]
     );
     return { reservation_id: existingId, qty_reserved: qtyToReserve };
   }
@@ -240,13 +318,24 @@ async function reserveProducedQtyForCommandeLine(
         qty_reserved,
         source_type,
         source_id,
+        commande_ligne_id,
         status,
+        lot_id,
+        stock_batch_id,
         created_by,
         updated_by
-      ) VALUES ($1::uuid,$2::uuid,$3,'COMMANDE_LIGNE',$4,'ACTIVE',$5,$5)
+      ) VALUES ($1::uuid,$2::uuid,$3,'COMMANDE_LIGNE',$4,$4::bigint,'ACTIVE',$5::uuid,$6::uuid,$7,$7)
       RETURNING id::text AS id
     `,
-    [args.article_id, args.location_id, qtyToReserve, String(args.commande_ligne_id), args.actor_user_id]
+    [
+      args.article_id,
+      args.location_id,
+      qtyToReserve,
+      String(args.commande_ligne_id),
+      args.lot_id,
+      args.stock_batch_id,
+      args.actor_user_id,
+    ]
   );
 
   const reservationId = insertReservation.rows[0]?.id ?? null;
@@ -374,34 +463,30 @@ async function ensureStockBatchId(client: Pick<PoolClient, "query">, args: { sto
 
   await client.query(
     `
-      INSERT INTO public.stock_batches (stock_level_id, batch_code)
-      VALUES ($1::uuid,$2)
+      INSERT INTO public.stock_batches (stock_level_id, batch_code, lot_id)
+      VALUES ($1::uuid,$2,$3::uuid)
       ON CONFLICT (stock_level_id, batch_code) DO NOTHING
     `,
-    [args.stock_level_id, lotCode]
+    [args.stock_level_id, lotCode, args.lot_id]
   );
 
-  const b = await client.query<{ id: string }>(
-    `SELECT id::text AS id FROM public.stock_batches WHERE stock_level_id = $1::uuid AND batch_code = $2`,
+  const b = await client.query<{ id: string; lot_id: string | null }>(
+    `SELECT id::text AS id, lot_id::text AS lot_id
+     FROM public.stock_batches
+     WHERE stock_level_id = $1::uuid AND batch_code = $2
+     FOR UPDATE`,
     [args.stock_level_id, lotCode]
   );
-  const id = b.rows[0]?.id;
+  const row = b.rows[0] ?? null;
+  const id = row?.id;
   if (!id) throw new Error("Failed to ensure stock batch");
+  if (row.lot_id && row.lot_id !== args.lot_id) {
+    throw new HttpError(409, "STOCK_BATCH_LOT_MISMATCH", "Le lot de stock est deja rattache a un autre lot interne");
+  }
+  if (!row.lot_id) {
+    await client.query(`UPDATE public.stock_batches SET lot_id = $2::uuid WHERE id = $1::uuid`, [id, args.lot_id]);
+  }
   return id;
-}
-
-function formatYyyyMmDd(d: Date): string {
-  const yyyy = String(d.getUTCFullYear());
-  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(d.getUTCDate()).padStart(2, "0");
-  return `${yyyy}${mm}${dd}`;
-}
-
-function generateLotCode(ofNumero: string): string {
-  const date = formatYyyyMmDd(new Date());
-  const suffix = crypto.randomBytes(3).toString("hex");
-  const base = `FG-${ofNumero}-${date}-${suffix}`;
-  return base.length <= 80 ? base : base.slice(0, 80);
 }
 
 async function insertMovementEvent(client: Pick<PoolClient, "query">, args: {
@@ -438,6 +523,11 @@ export async function repoGetOfReceiptContext(params: { of_id: number }): Promis
     piece_designation: string;
     quantite_lancee: number;
     quantite_bonne: number;
+    statut: string;
+    updated_at: string;
+    affaire_id: number | null;
+    commande_id: number | null;
+    commande_ligne_id: number | null;
   };
 
   const ofRes = await pool.query<OfRow>(
@@ -450,7 +540,12 @@ export async function repoGetOfReceiptContext(params: { of_id: number }): Promis
         pt.code AS piece_code,
         pt.designation AS piece_designation,
         o.quantite_lancee::float8 AS quantite_lancee,
-        o.quantite_bonne::float8 AS quantite_bonne
+        o.quantite_bonne::float8 AS quantite_bonne,
+        o.statut::text AS statut,
+        o.updated_at::text AS updated_at,
+        o.affaire_id::bigint::int AS affaire_id,
+        o.commande_id::bigint::int AS commande_id,
+        o.commande_ligne_id::bigint::int AS commande_ligne_id
       FROM public.ordres_fabrication o
       JOIN public.pieces_techniques pt ON pt.id = o.piece_technique_id
       WHERE o.id = $1::bigint
@@ -472,12 +567,23 @@ export async function repoGetOfReceiptContext(params: { of_id: number }): Promis
         ).rows[0]?.unite ?? null,
       }
     : await resolveArticleForPieceTechnique(pool, ofRow.piece_technique_id);
-  const outputLotsRes = await pool.query<{ lot_id: string; lot_code: string; qty_ok: number; updated_at: string }>(
+  const outputLotsRes = await pool.query<{
+    lot_id: string;
+    lot_code: string;
+    lot_status: string;
+    qty_ok: number;
+    qty_scrap: number;
+    qty_rework: number;
+    updated_at: string;
+  }>(
     `
       SELECT
         ool.lot_id::text AS lot_id,
         l.lot_code,
+        l.lot_status,
         ool.qty_ok::float8 AS qty_ok,
+        ool.qty_scrap::float8 AS qty_scrap,
+        ool.qty_rework::float8 AS qty_rework,
         ool.updated_at::text AS updated_at
       FROM public.of_output_lots ool
       JOIN public.lots l ON l.id = ool.lot_id
@@ -485,6 +591,29 @@ export async function repoGetOfReceiptContext(params: { of_id: number }): Promis
       ORDER BY ool.updated_at DESC, ool.id DESC
     `,
     [params.of_id]
+  );
+  const existingLotsRes = await pool.query<{
+    lot_id: string;
+    lot_code: string;
+    lot_status: string;
+    qty_on_hand: number;
+    updated_at: string;
+  }>(
+    `
+      SELECT
+        l.id::text AS lot_id,
+        l.lot_code,
+        l.lot_status,
+        COALESCE(SUM(sb.qty_total), 0)::float8 AS qty_on_hand,
+        l.updated_at::text AS updated_at
+      FROM public.lots l
+      LEFT JOIN public.stock_batches sb ON sb.lot_id = l.id
+      WHERE l.article_id = $1::uuid
+      GROUP BY l.id, l.lot_code, l.lot_status, l.updated_at
+      ORDER BY l.updated_at DESC, l.lot_code ASC
+      LIMIT 200
+    `,
+    [article.id]
   );
 
   const receivedQty = outputLotsRes.rows.reduce((acc, r) => acc + (Number.isFinite(r.qty_ok) ? r.qty_ok : 0), 0);
@@ -534,6 +663,11 @@ export async function repoGetOfReceiptContext(params: { of_id: number }): Promis
       piece_designation: ofRow.piece_designation,
       quantite_lancee: Number(ofRow.quantite_lancee),
       quantite_bonne: Number(ofRow.quantite_bonne),
+      statut: ofRow.statut,
+      updated_at: ofRow.updated_at,
+      affaire_id: ofRow.affaire_id === null ? null : Number(ofRow.affaire_id),
+      commande_id: ofRow.commande_id === null ? null : Number(ofRow.commande_id),
+      commande_ligne_id: ofRow.commande_ligne_id === null ? null : Number(ofRow.commande_ligne_id),
     },
     article_id: article.id,
     unite: article.unite,
@@ -543,7 +677,17 @@ export async function repoGetOfReceiptContext(params: { of_id: number }): Promis
     output_lots: outputLotsRes.rows.map((r) => ({
       lot_id: r.lot_id,
       lot_code: r.lot_code,
+      lot_status: r.lot_status,
       qty_ok: Number(r.qty_ok),
+      qty_scrap: Number(r.qty_scrap),
+      qty_rework: Number(r.qty_rework),
+      updated_at: r.updated_at,
+    })),
+    existing_lots: existingLotsRes.rows.map((r) => ({
+      lot_id: r.lot_id,
+      lot_code: r.lot_code,
+      lot_status: r.lot_status,
+      qty_on_hand: Number(r.qty_on_hand),
       updated_at: r.updated_at,
     })),
     locations: {
@@ -559,25 +703,63 @@ export async function repoGetOfReceiptContext(params: { of_id: number }): Promis
   };
 }
 
-export async function repoCreateOfReceipt(params: { of_id: number; body: OfReceiptBodyDTO; audit: AuditContext }): Promise<OfReceiptResult> {
+export async function repoCreateOfReceipt(params: {
+  of_id: number;
+  body: OfReceiptBodyDTO;
+  idempotency_key: string;
+  audit: AuditContext;
+}): Promise<OfReceiptResult> {
   const client = await pool.connect();
+  const requestHash = receiptRequestHash(params.of_id, params.body);
   try {
     await client.query("BEGIN");
+    await client.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
+      `of-receipt:${params.audit.user_id}:${params.idempotency_key}`,
+    ]);
+
+    const replayRes = await client.query<{ request_hash: string; result_payload: OfReceiptResult }>(
+      `
+        SELECT request_hash, result_payload
+        FROM public.of_receipts
+        WHERE actor_user_id = $1
+          AND idempotency_key = $2
+        LIMIT 1
+      `,
+      [params.audit.user_id, params.idempotency_key]
+    );
+    const replay = replayRes.rows[0] ?? null;
+    if (replay) {
+      if (replay.request_hash !== requestHash) {
+        throw new HttpError(
+          409,
+          "IDEMPOTENCY_KEY_REUSED",
+          "Cette cle d'idempotence a deja ete utilisee avec un contenu different."
+        );
+      }
+      await client.query("COMMIT");
+      return { ...replay.result_payload, idempotent_replay: true };
+    }
 
     const ofRes = await client.query<{
       numero: string;
       piece_technique_id: string;
       article_id: string | null;
+      affaire_id: number | null;
       commande_ligne_id: number | null;
       quantite_bonne: number;
+      statut: string;
+      updated_at: string;
     }>(
       `
         SELECT
           numero,
           piece_technique_id::text AS piece_technique_id,
           article_id::text AS article_id,
+          affaire_id::bigint::int AS affaire_id,
           commande_ligne_id::bigint::int AS commande_ligne_id,
-          quantite_bonne::float8 AS quantite_bonne
+          quantite_bonne::float8 AS quantite_bonne,
+          statut::text AS statut,
+          updated_at::text AS updated_at
         FROM public.ordres_fabrication
         WHERE id = $1::bigint
         FOR UPDATE
@@ -586,6 +768,44 @@ export async function repoCreateOfReceipt(params: { of_id: number; body: OfRecei
     );
     const ofRow = ofRes.rows[0] ?? null;
     if (!ofRow) throw new HttpError(404, "OF_NOT_FOUND", "Ordre de fabrication introuvable");
+
+    if (Date.parse(ofRow.updated_at) !== Date.parse(params.body.expected_of_updated_at)) {
+      throw new HttpError(
+        409,
+        "CONCURRENT_MODIFICATION",
+        "L'OF a ete modifie depuis l'apercu. Rechargez les donnees avant de confirmer.",
+        { expected: params.body.expected_of_updated_at, actual: ofRow.updated_at }
+      );
+    }
+
+    // #170 : pas de réception sur un OF annulé/clôturé/non démarré.
+    const ofStatut = ofRow.statut as OfStatut;
+    if (!ofStatutAllowsReceipt(ofStatut)) {
+      throw new HttpError(
+        409,
+        "OF_RECEIPT_STATUS_INVALID",
+        `Impossible d'enregistrer une réception sur un OF au statut ${ofStatut}.`,
+        { statut: ofStatut }
+      );
+    }
+
+    // #170 : la réception est bornée par la quantité restante, recalculée DANS
+    // la transaction après verrou de l'OF — deux réceptions concurrentes se
+    // sérialisent sur ce verrou et la seconde est refusée si elle déborde.
+    const receivedRes = await client.query<{ received: number }>(
+      `SELECT COALESCE(SUM(qty_ok), 0)::float8 AS received FROM public.of_output_lots WHERE of_id = $1::bigint`,
+      [params.of_id]
+    );
+    const alreadyReceived = Number(receivedRes.rows[0]?.received ?? 0);
+    const receivable = Math.max(0, Number(ofRow.quantite_bonne) - alreadyReceived);
+    if (params.body.qty_ok > receivable + 1e-9) {
+      throw new HttpError(
+        422,
+        "OF_RECEIPT_EXCEEDS_RECEIVABLE",
+        `Quantité reçue (${params.body.qty_ok}) supérieure au restant à réceptionner (${receivable}).`,
+        { requested: params.body.qty_ok, receivable, already_received: alreadyReceived, quantite_bonne: Number(ofRow.quantite_bonne) }
+      );
+    }
 
     const article = ofRow.article_id
       ? {
@@ -627,23 +847,38 @@ export async function repoCreateOfReceipt(params: { of_id: number; body: OfRecei
       if (!row) throw new HttpError(400, "INVALID_LOT", "Lot introuvable pour cet article");
 
       const lotStatus = row.lot_status ?? "LIBERE";
-      if (lotStatus === "BLOQUE" || lotStatus === "EN_ATTENTE" || lotStatus === "QUARANTAINE") {
-        throw new HttpError(409, "LOT_NOT_CONSUMABLE", `Ce lot n'est pas consommable (statut: ${lotStatus})`);
+      if (lotStatus !== params.body.quality_status) {
+        throw new HttpError(
+          409,
+          "LOT_QUALITY_STATUS_MISMATCH",
+          `Le lot existant est au statut ${lotStatus}; la reception demandee est ${params.body.quality_status}.`
+        );
       }
 
       lotId = row.id;
       lotCode = row.lot_code;
     } else {
-      const requested = params.body.lot_number?.trim() ? params.body.lot_number.trim() : null;
-      const code = requested ?? generateLotCode(ofRow.numero);
+      if (params.body.lot_number?.trim()) {
+        throw new HttpError(400, "LOT_CODE_SERVER_MANAGED", "Le numéro de lot interne est attribué automatiquement.");
+      }
+      const code = await generateTransactionalBusinessCode(client, { prefix: "LOT" });
       try {
         const ins = await client.query<{ id: string }>(
           `
-            INSERT INTO public.lots (article_id, lot_code, notes, created_by, updated_by)
-            VALUES ($1::uuid,$2,$3,$4,$4)
+            INSERT INTO public.lots (
+              article_id, lot_code, lot_status, lot_status_note, notes, created_by, updated_by
+            )
+            VALUES ($1::uuid,$2,$3,$4,$5,$6,$6)
             RETURNING id::text AS id
           `,
-          [article.id, code, params.body.commentaire ?? null, params.audit.user_id]
+          [
+            article.id,
+            code,
+            params.body.quality_status,
+            params.body.quality_reason ?? null,
+            params.body.commentaire ?? null,
+            params.audit.user_id,
+          ]
         );
         const id = ins.rows[0]?.id;
         if (!id) throw new Error("Failed to create lot");
@@ -678,6 +913,7 @@ export async function repoCreateOfReceipt(params: { of_id: number; body: OfRecei
           source_document_type,
           source_document_id,
           reason_code,
+          idempotency_key,
           created_by,
           updated_by
         )
@@ -696,12 +932,23 @@ export async function repoCreateOfReceipt(params: { of_id: number; body: OfRecei
           'OF',
           $8,
           'OF_RECEIPT',
+          $9,
           $6,
           $6
         )
         RETURNING id::text AS id
       `,
-      [article.id, stockLevelId, stockBatchId, params.body.qty_ok, params.body.commentaire ?? null, params.audit.user_id, movementNo, String(params.of_id)]
+      [
+        article.id,
+        stockLevelId,
+        stockBatchId,
+        params.body.qty_ok,
+        params.body.commentaire ?? null,
+        params.audit.user_id,
+        movementNo,
+        String(params.of_id),
+        `of-receipt:${params.audit.user_id}:${params.idempotency_key}`,
+      ]
     );
     const movementId = movementIns.rows[0]?.id;
     if (!movementId) throw new Error("Failed to create stock movement");
@@ -777,27 +1024,164 @@ export async function repoCreateOfReceipt(params: { of_id: number; body: OfRecei
           created_by,
           updated_by
         )
-        VALUES ($1::bigint,$2::uuid,$3,0,0,$4,$4)
+        VALUES ($1::bigint,$2::uuid,$3,$4,$5,$6,$6)
         ON CONFLICT (of_id, lot_id)
         DO UPDATE SET
           qty_ok = public.of_output_lots.qty_ok + EXCLUDED.qty_ok,
+          qty_scrap = public.of_output_lots.qty_scrap + EXCLUDED.qty_scrap,
+          qty_rework = public.of_output_lots.qty_rework + EXCLUDED.qty_rework,
           updated_at = now(),
           updated_by = EXCLUDED.updated_by
       `,
-      [params.of_id, lotId, params.body.qty_ok, params.audit.user_id]
+      [
+        params.of_id,
+        lotId,
+        params.body.qty_ok,
+        params.body.qty_scrap,
+        params.body.qty_rework,
+        params.audit.user_id,
+      ]
     );
 
+    let nonConformityId: string | null = null;
+    if (params.body.quality_status === "BLOQUE" || params.body.qty_scrap > 0 || params.body.qty_rework > 0) {
+      const ncRes = await client.query<{ id: string }>(
+        `
+          INSERT INTO public.non_conformity (
+            affaire_id,
+            of_id,
+            piece_technique_id,
+            lot_id,
+            description,
+            severity,
+            status,
+            detected_by,
+            created_by,
+            updated_by
+          )
+          VALUES (
+            $1::bigint,
+            $2::bigint,
+            $3::uuid,
+            $4::uuid,
+            $5,
+            $6::public.quality_nc_severity,
+            'OPEN'::public.quality_nc_status,
+            $7,
+            $7,
+            $7
+          )
+          RETURNING id::text AS id
+        `,
+        [
+          ofRow.affaire_id,
+          params.of_id,
+          ofRow.piece_technique_id,
+          lotId,
+          params.body.quality_reason ??
+            `Ecart constate a la reception de production: rebut ${params.body.qty_scrap}, retouche ${params.body.qty_rework}.`,
+          params.body.quality_status === "BLOQUE" ? "MAJOR" : "MINOR",
+          params.audit.user_id,
+        ]
+      );
+      nonConformityId = ncRes.rows[0]?.id ?? null;
+      if (!nonConformityId) throw new Error("Failed to create production non-conformity");
+    }
+
     const autoReservation =
-      typeof ofRow.commande_ligne_id === "number"
+      params.body.quality_status === "LIBERE" && typeof ofRow.commande_ligne_id === "number"
         ? await reserveProducedQtyForCommandeLine(client, {
             commande_ligne_id: ofRow.commande_ligne_id,
             article_id: article.id,
             location_id: map.location_id,
             stock_level_id: stockLevelId,
+            stock_batch_id: stockBatchId,
+            lot_id: lotId,
             qty_ok: params.body.qty_ok,
             actor_user_id: params.audit.user_id,
           })
         : null;
+
+    const receiptId = randomUUID();
+    const receiptResult: OfReceiptResult = {
+      receipt_id: receiptId,
+      lot_id: lotId,
+      lot_code: lotCode,
+      stock_movement_id: movementId,
+      movement_no: movementNo,
+      qty_ok: params.body.qty_ok,
+      qty_scrap: params.body.qty_scrap,
+      qty_rework: params.body.qty_rework,
+      quality_status: params.body.quality_status,
+      reservation_id: autoReservation?.reservation_id ?? null,
+      reserved_qty: autoReservation?.qty_reserved ?? 0,
+      non_conformity_id: nonConformityId,
+      idempotent_replay: false,
+    };
+
+    await client.query(
+      `
+        UPDATE public.ordres_fabrication
+        SET updated_at = clock_timestamp(),
+            updated_by = $2
+        WHERE id = $1::bigint
+      `,
+      [params.of_id, params.audit.user_id]
+    );
+
+    await client.query(
+      `
+        INSERT INTO public.of_receipts (
+          id,
+          of_id,
+          actor_user_id,
+          idempotency_key,
+          request_hash,
+          request_payload,
+          result_payload,
+          expected_of_updated_at,
+          qty_ok,
+          qty_scrap,
+          qty_rework,
+          quality_status,
+          quality_reason,
+          location_id,
+          lot_id,
+          stock_level_id,
+          stock_batch_id,
+          stock_movement_id,
+          reservation_id,
+          non_conformity_id
+        )
+        VALUES (
+          $1::uuid,$2::bigint,$3,$4,$5,$6::jsonb,$7::jsonb,$8::timestamptz,
+          $9,$10,$11,$12,$13,$14::uuid,$15::uuid,$16::uuid,$17::uuid,$18::uuid,
+          $19::uuid,$20::uuid
+        )
+      `,
+      [
+        receiptId,
+        params.of_id,
+        params.audit.user_id,
+        params.idempotency_key,
+        requestHash,
+        params.body,
+        receiptResult,
+        params.body.expected_of_updated_at,
+        params.body.qty_ok,
+        params.body.qty_scrap,
+        params.body.qty_rework,
+        params.body.quality_status,
+        params.body.quality_reason ?? null,
+        map.location_id,
+        lotId,
+        stockLevelId,
+        stockBatchId,
+        movementId,
+        autoReservation?.reservation_id ?? null,
+        nonConformityId,
+      ]
+    );
 
     await insertAuditLog(client, params.audit, {
       action: "production.of.receipt",
@@ -807,24 +1191,25 @@ export async function repoCreateOfReceipt(params: { of_id: number; body: OfRecei
         lot_id: lotId,
         lot_code: lotCode,
         qty_ok: params.body.qty_ok,
+        qty_scrap: params.body.qty_scrap,
+        qty_rework: params.body.qty_rework,
+        quality_status: params.body.quality_status,
+        quality_reason: params.body.quality_reason ?? null,
         location_id: map.location_id,
+        receipt_id: receiptId,
         stock_movement_id: movementId,
         movement_no: movementNo,
         commande_ligne_id: ofRow.commande_ligne_id ?? null,
         article_id: article.id,
         auto_reservation_id: autoReservation?.reservation_id ?? null,
         auto_reserved_qty: autoReservation?.qty_reserved ?? 0,
+        non_conformity_id: nonConformityId,
+        idempotency_key: params.idempotency_key,
       },
     });
 
     await client.query("COMMIT");
-    return {
-      lot_id: lotId,
-      lot_code: lotCode,
-      stock_movement_id: movementId,
-      movement_no: movementNo,
-      qty_ok: params.body.qty_ok,
-    };
+    return receiptResult;
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;
@@ -834,12 +1219,23 @@ export async function repoCreateOfReceipt(params: { of_id: number; body: OfRecei
 }
 
 export async function repoGetOfTraceability(params: { of_id: number }): Promise<OfTraceability> {
-  const outputLotsRes = await pool.query<{ lot_id: string; lot_code: string; qty_ok: number; updated_at: string }>(
+  const outputLotsRes = await pool.query<{
+    lot_id: string;
+    lot_code: string;
+    lot_status: string;
+    qty_ok: number;
+    qty_scrap: number;
+    qty_rework: number;
+    updated_at: string;
+  }>(
     `
       SELECT
         ool.lot_id::text AS lot_id,
         l.lot_code,
+        l.lot_status,
         ool.qty_ok::float8 AS qty_ok,
+        ool.qty_scrap::float8 AS qty_scrap,
+        ool.qty_rework::float8 AS qty_rework,
         ool.updated_at::text AS updated_at
       FROM public.of_output_lots ool
       JOIN public.lots l ON l.id = ool.lot_id
@@ -850,11 +1246,17 @@ export async function repoGetOfTraceability(params: { of_id: number }): Promise<
   );
 
   const receiptsRes = await pool.query<{
+    receipt_id: string | null;
     stock_movement_id: string;
     movement_no: string | null;
     status: string;
     posted_at: string | null;
     qty: number;
+    qty_scrap: number;
+    qty_rework: number;
+    quality_status: string | null;
+    reservation_id: string | null;
+    non_conformity_id: string | null;
     lot_id: string | null;
     lot_code: string | null;
     magasin_id: string | null;
@@ -866,11 +1268,17 @@ export async function repoGetOfTraceability(params: { of_id: number }): Promise<
   }>(
     `
       SELECT
+        r.id::text AS receipt_id,
         m.id::text AS stock_movement_id,
         m.movement_no,
         m.status,
         m.posted_at::text AS posted_at,
         m.qty::float8 AS qty,
+        COALESCE(r.qty_scrap, 0)::float8 AS qty_scrap,
+        COALESCE(r.qty_rework, 0)::float8 AS qty_rework,
+        r.quality_status,
+        r.reservation_id::text AS reservation_id,
+        r.non_conformity_id::text AS non_conformity_id,
         ml.lot_id::text AS lot_id,
         l.lot_code,
         ml.dst_magasin_id::text AS magasin_id,
@@ -880,6 +1288,7 @@ export async function repoGetOfTraceability(params: { of_id: number }): Promise<
         e.code AS emplacement_code,
         e.location_id::text AS location_id
       FROM public.stock_movements m
+      LEFT JOIN public.of_receipts r ON r.stock_movement_id = m.id
       JOIN public.stock_movement_lines ml ON ml.movement_id = m.id
       LEFT JOIN public.lots l ON l.id = ml.lot_id
       LEFT JOIN public.emplacements e ON e.id = ml.dst_emplacement_id
@@ -897,15 +1306,24 @@ export async function repoGetOfTraceability(params: { of_id: number }): Promise<
     output_lots: outputLotsRes.rows.map((r) => ({
       lot_id: r.lot_id,
       lot_code: r.lot_code,
+      lot_status: r.lot_status,
       qty_ok: Number(r.qty_ok),
+      qty_scrap: Number(r.qty_scrap),
+      qty_rework: Number(r.qty_rework),
       updated_at: r.updated_at,
     })),
     receipts: receiptsRes.rows.map((r) => ({
+      receipt_id: r.receipt_id,
       stock_movement_id: r.stock_movement_id,
       movement_no: r.movement_no,
       status: r.status,
       posted_at: r.posted_at,
       qty: Number(r.qty),
+      qty_scrap: Number(r.qty_scrap),
+      qty_rework: Number(r.qty_rework),
+      quality_status: r.quality_status,
+      reservation_id: r.reservation_id,
+      non_conformity_id: r.non_conformity_id,
       lot_id: r.lot_id,
       lot_code: r.lot_code,
       magasin_id: r.magasin_id,

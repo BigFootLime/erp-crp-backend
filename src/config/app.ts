@@ -13,6 +13,7 @@ import { validationErrorMiddleware } from "../module/auth/middlewares/validation
 import { requestIdMiddleware } from "../middlewares/requestId";
 import { requestLogger } from "../middlewares/requestLogger";
 import { getImagesRootPath } from "../utils/imageStorage";
+import { stripQueryFromUrl } from "../utils/logPath";
 import pool from "./database";
 
 const app = express();
@@ -58,12 +59,13 @@ const corsOptionsDelegate: cors.CorsOptionsDelegate = (req, cb) => {
     typeof (req as unknown as { requestId?: unknown }).requestId === "string"
       ? ((req as unknown as { requestId?: string }).requestId ?? null)
       : null;
-  const reqPath =
+  const reqPath = stripQueryFromUrl(
     typeof (req as unknown as { originalUrl?: unknown }).originalUrl === "string"
       ? (req as unknown as { originalUrl: string }).originalUrl
       : typeof (req as unknown as { url?: unknown }).url === "string"
         ? (req as unknown as { url: string }).url
-        : null;
+        : null
+  );
 
   if (origin && !allowed) {
     console.warn(
@@ -101,8 +103,13 @@ app.options("*", cors(corsOptionsDelegate));
 
 app.use(requestLogger);
 
-// Logger
-if (process.env.NODE_ENV === "development") app.use(morgan("dev"));
+// Logger — format "dev" mais avec l'URL débarrassée de sa query string :
+// morgan(":url") rejouerait les PII des recherches (?q=email, ?siret=...) dans
+// la console, y compris en prod où NODE_ENV vaut "development" (cf. errorHandler).
+morgan.token("pathname", (req) => stripQueryFromUrl((req as { originalUrl?: string }).originalUrl) ?? "-");
+if (process.env.NODE_ENV === "development") {
+  app.use(morgan(":method :pathname :status :res[content-length] - :response-time ms"));
+}
 
 /* --------- 2) Parsers: JSON + urlencoded (sans casser multipart) --------- */
 

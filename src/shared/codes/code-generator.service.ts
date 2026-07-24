@@ -4,6 +4,8 @@ import { HttpError } from "../../utils/httpError";
 
 type DbQueryer = Pick<PoolClient, "query">;
 
+const ASCII_SEGMENT = /[^A-Z0-9]+/g;
+
 function pad(n: number, width: number): string {
   return String(n).padStart(width, "0");
 }
@@ -14,9 +16,32 @@ function yearFromDate(d: Date): number {
   return y;
 }
 
+function normalizeSegment(value: string, field: string): string {
+  const normalized = value
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toUpperCase()
+    .replace(ASCII_SEGMENT, "");
+
+  if (!normalized) {
+    throw new HttpError(400, "INVALID_CODE_SEGMENT", `${field} is required to build the business code.`);
+  }
+  return normalized;
+}
+
+function normalizeClientSegment(value: string): string {
+  const normalized = normalizeSegment(value, "Client").replace(/^CLI/, "");
+  if (!normalized) {
+    throw new HttpError(400, "INVALID_CLIENT_CODE", "Client code is invalid for business code generation.");
+  }
+  return /^\d+$/.test(normalized) ? normalized.padStart(3, "0") : normalized;
+}
+
 async function nextCodeValue(tx: DbQueryer, key: string): Promise<number> {
   const res = await tx.query<{ v: string }>(
-    `SELECT public.fn_next_code_value($1)::bigint::text AS v`,
+    // `nextval` is deliberately non-transactional: a number consumed by a
+    // failed create is never silently re-issued on the next attempt.
+    `SELECT public.fn_next_issued_code_value($1)::bigint::text AS v`,
     [key]
   );
   const raw = res.rows[0]?.v;
@@ -37,50 +62,84 @@ export async function requireClientCode(tx: DbQueryer, clientId: string): Promis
   return code;
 }
 
+export function previewPieceTechniqueCode(input: {
+  clientCode: string;
+  planReference: string;
+  indiceExterne: string;
+}): string {
+  return [
+    normalizeClientSegment(input.clientCode),
+    normalizeSegment(input.planReference, "Plan reference"),
+    normalizeSegment(input.indiceExterne, "External index"),
+  ].join("-");
+}
+
+export async function generatePieceTechniqueBusinessCode(
+  tx: DbQueryer,
+  input: { clientId?: string | null; clientCode?: string | null; planReference: string; indiceExterne: string }
+): Promise<string> {
+  const clientCode = input.clientId ? await requireClientCode(tx, input.clientId) : input.clientCode;
+  if (!clientCode) {
+    throw new HttpError(400, "CLIENT_CODE_REQUIRED", "Client code is required to generate the technical piece code.");
+  }
+  return previewPieceTechniqueCode({
+    clientCode,
+    planReference: input.planReference,
+    indiceExterne: input.indiceExterne,
+  });
+}
+
+export function previewArticleCode(familyCode: string): string {
+  return `ART-${normalizeSegment(familyCode, "Article family")}-000000`;
+}
+
+export async function generateArticleBusinessCode(tx: DbQueryer, familyCode: string): Promise<string> {
+  const family = normalizeSegment(familyCode, "Article family");
+  const seq = await nextCodeValue(tx, `ART:${family}`);
+  return `ART-${family}-${pad(seq, 6)}`;
+}
+
+export async function generateTransactionalBusinessCode(
+  tx: DbQueryer,
+  input: { prefix: "DEV" | "CMD" | "AFF" | "OF" | "LOT" | "MVT" | "CQ" | "NC" | "CAPA" | "BL" | "FACT" | "BCF"; date?: Date; width?: number }
+): Promise<string> {
+  const year = yearFromDate(input.date ?? new Date());
+  const width =
+    input.width ??
+    (input.prefix === "DEV" || input.prefix === "CMD" || input.prefix === "AFF" || input.prefix === "BCF" ? 4 : 6);
+  const seq = await nextCodeValue(tx, `${input.prefix}:${year}`);
+  return `${input.prefix}-${year}-${pad(seq, width)}`;
+}
+
 export async function generateClientCode(tx: DbQueryer): Promise<string> {
   const n = await nextCodeValue(tx, "CLI");
   return `CLI-${pad(n, 3)}`;
 }
 
 export async function generateDevisCode(tx: DbQueryer, params: { client_id: string; date?: Date }): Promise<string> {
-  const date = params.date ?? new Date();
-  const y = yearFromDate(date);
-  const clientCode = await requireClientCode(tx, params.client_id);
-  const seq = await nextCodeValue(tx, `DEV:${y}`);
-  return `DEV-${clientCode}-${y}-${pad(seq, 4)}`;
+  return generateTransactionalBusinessCode(tx, { prefix: "DEV", date: params.date });
 }
 
 export async function generateCommandeCode(tx: DbQueryer, params: { client_code: string; date?: Date }): Promise<string> {
-  const date = params.date ?? new Date();
-  const y = yearFromDate(date);
-  const seq = await nextCodeValue(tx, `CC:${y}`);
-  return `CC-${params.client_code}-${y}-${pad(seq, 4)}`;
+  return generateTransactionalBusinessCode(tx, { prefix: "CMD", date: params.date });
 }
 
 export async function generateAffaireCode(
   tx: DbQueryer,
   params: { type: "LIV"; client_code: string; date?: Date }
 ): Promise<string> {
-  const date = params.date ?? new Date();
-  const y = yearFromDate(date);
-  const seq = await nextCodeValue(tx, `AFF-${params.type}:${y}`);
-  return `AFF-${params.type}-${params.client_code}-${y}-${pad(seq, 4)}`;
+  return generateTransactionalBusinessCode(tx, { prefix: "AFF", date: params.date });
 }
 
 export async function generatePieceTechniqueCode(
-  tx: DbQueryer,
-  params: { client_id: string; date?: Date }
+  _tx: DbQueryer,
+  _params: { client_id: string; date?: Date }
 ): Promise<string> {
-  const clientCode = await requireClientCode(tx, params.client_id);
-  const seq = await nextCodeValue(tx, `PCT:${clientCode}`);
-  return `PCT-${clientCode}-${pad(seq, 4)}`;
+  throw new HttpError(400, "TECHNICAL_CODE_CONTEXT_REQUIRED", "Use plan reference and external index to generate a technical piece code.");
 }
 
 export async function generateOfCode(tx: DbQueryer, params: { date?: Date }): Promise<string> {
-  const date = params.date ?? new Date();
-  const y = yearFromDate(date);
-  const seq = await nextCodeValue(tx, `OF:${y}`);
-  return `OF-${y}-${pad(seq, 5)}`;
+  return generateTransactionalBusinessCode(tx, { prefix: "OF", date: params.date });
 }
 
 export async function generateFournisseurCode(tx: DbQueryer): Promise<string> {
@@ -88,9 +147,19 @@ export async function generateFournisseurCode(tx: DbQueryer): Promise<string> {
   return `FOU-${pad(seq, 3)}`;
 }
 
-export async function generateArticleCode(tx: DbQueryer): Promise<string> {
-  const seq = await nextCodeValue(tx, `ART`);
-  return `ART-${pad(seq, 4)}`;
+/** #165 — Physical machine: MCH-NNNNNN, allocated server-side in the creation transaction. */
+export async function generateMachineCode(tx: DbQueryer): Promise<string> {
+  const seq = await nextCodeValue(tx, "MCH");
+  return `MCH-${pad(seq, 6)}`;
+}
+
+/** #172 — Bon de commande fournisseur : BCF-AAAA-NNNN, alloué en transaction, immuable. */
+export async function generateCommandeFournisseurCode(tx: DbQueryer, params?: { date?: Date }): Promise<string> {
+  return generateTransactionalBusinessCode(tx, { prefix: "BCF", date: params?.date });
+}
+
+export async function generateArticleCode(_tx: DbQueryer): Promise<string> {
+  throw new HttpError(400, "ARTICLE_FAMILY_REQUIRED", "Use an article family to generate an article code.");
 }
 
 export async function generateBlCode(tx: DbQueryer): Promise<string> {

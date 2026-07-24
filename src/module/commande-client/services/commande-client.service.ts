@@ -48,6 +48,7 @@ import type {
 
 export type CommandesAuditContext = {
   user_id: number;
+  user_role: string | null;
   ip: string | null;
   user_agent: string | null;
   device_type: string | null;
@@ -80,8 +81,9 @@ export const updateCommandeWorkflowCheckpointSVC = (
 export const runCommandeWorkflowActionSVC = (
   id: string,
   body: RunCommandeWorkflowActionBodyDTO,
-  userId: number | null
-) => repoRunCommandeWorkflowAction(id, body, userId);
+  userId: number | null,
+  userRole: string | null
+) => repoRunCommandeWorkflowAction(id, body, userId, userRole);
 
 export const getCommandeDocumentFileMetaSVC = (commandeId: string, docId: string) =>
   repoGetCommandeDocumentFileMeta(commandeId, docId);

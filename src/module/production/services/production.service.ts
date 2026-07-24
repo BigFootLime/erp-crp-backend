@@ -3,10 +3,13 @@ import type {
   CreateMachineOnboardingBodyDTO,
   CreateOfBodyDTO,
   CreatePosteBodyDTO,
+  GenerateOfsBodyDTO,
   ListMachinesQueryDTO,
   ListOfQueryDTO,
   ListPostesQueryDTO,
   OfReceiptBodyDTO,
+  PreviewOfGenerationBodyDTO,
+  ReorderOfOperationsBodyDTO,
   StartOfTimeLogBodyDTO,
   UpdateMachineBodyDTO,
   UpdateMachineOnboardingBodyDTO,
@@ -17,6 +20,7 @@ import type {
 } from "../validators/production.validators";
 import * as repo from "../repository/production.repository";
 import * as receiptsRepo from "../repository/production-receipts.repository";
+import * as generationRepo from "../repository/production-generation.repository";
 
 export const svcListMachines = (filters: ListMachinesQueryDTO) => repo.repoListMachines(filters);
 
@@ -25,12 +29,14 @@ export const svcGetMachine = (id: string) => repo.repoGetMachine(id);
 export const svcCreateMachine = (params: {
   body: CreateMachineBodyDTO;
   image_path: string | null;
+  idempotency_key?: string | null;
   audit: repo.AuditContext;
 }) => repo.repoCreateMachine(params);
 
 export const svcCreateMachineOnboarding = (params: {
   body: CreateMachineOnboardingBodyDTO;
   image_path: string | null;
+  idempotency_key?: string | null;
   audit: repo.AuditContext;
 }) => repo.repoCreateMachineOnboarding(params);
 
@@ -97,13 +103,39 @@ export const svcStopOfOperationTimeLog = (params: {
   audit: repo.AuditContext;
 }) => repo.repoStopOfOperationTimeLog(params);
 
+// #170 — réordonnancement, aperçu et génération récursive
+export const svcReorderOfOperations = (params: {
+  of_id: number;
+  body: ReorderOfOperationsBodyDTO;
+  audit: repo.AuditContext;
+}) => repo.repoReorderOfOperations(params);
+
+export const svcPreviewOfGeneration = (params: {
+  body: PreviewOfGenerationBodyDTO;
+  audit: repo.AuditContext;
+}) => generationRepo.repoPreviewOfGeneration(params);
+
+export const svcGenerateOfs = (params: {
+  body: GenerateOfsBodyDTO;
+  idempotency_key: string;
+  audit: repo.AuditContext;
+}) => generationRepo.repoGenerateOfs(params);
+
+export const svcGetOfTechnicalSnapshot = (params: { of_id: number }) =>
+  generationRepo.repoGetOfTechnicalSnapshot(params);
+
 // -------------------------
 // Phase 5 - OF -> Entree en stock
 // -------------------------
 
 export const svcGetOfReceiptContext = (params: { of_id: number }) => receiptsRepo.repoGetOfReceiptContext(params);
 
-export const svcCreateOfReceipt = (params: { of_id: number; body: OfReceiptBodyDTO; audit: repo.AuditContext }) =>
+export const svcCreateOfReceipt = (params: {
+  of_id: number;
+  body: OfReceiptBodyDTO;
+  idempotency_key: string;
+  audit: repo.AuditContext;
+}) =>
   receiptsRepo.repoCreateOfReceipt(params);
 
 export const svcGetOfTraceability = (params: { of_id: number }) => receiptsRepo.repoGetOfTraceability(params);

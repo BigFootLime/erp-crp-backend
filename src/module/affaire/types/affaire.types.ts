@@ -208,6 +208,7 @@ export type AffaireUpsertPayload = {
 
 export type AuditContext = {
   user_id: number;
+  user_role: string | null;
   ip: string | null;
   user_agent: string | null;
   device_type: string | null;

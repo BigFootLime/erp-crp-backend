@@ -5,41 +5,58 @@ import { getDocumentStoragePath, isPathInsideDirectory, resolveCerpStoragePath }
 import { HttpError } from "../../../utils/httpError"
 import type { AuditContext } from "../repository/fournisseurs.repository"
 import {
+  adresseIdParamSchema,
+  archiveFournisseurSchema,
   attachDocumentsBodySchema,
   catalogueIdParamSchema,
   contactIdParamSchema,
+  createAdresseSchema,
   createCatalogueSchema,
   createContactSchema,
   createFournisseurSchema,
+  createHomologationSchema,
   docIdParamSchema,
+  doublonQuerySchema,
   fournisseurIdParamSchema,
+  homologationIdParamSchema,
   listCatalogueQuerySchema,
   listFournisseursQuerySchema,
   putFournisseurDomainesSchema,
+  updateAdresseSchema,
   updateCatalogueSchema,
   updateContactSchema,
   updateFournisseurSchema,
+  updateHomologationSchema,
 } from "../validators/fournisseurs.validators"
 import {
+  archiveFournisseurSVC,
   attachFournisseurDocumentsSVC,
+  createFournisseurAdresseSVC,
   createFournisseurCatalogueItemSVC,
   createFournisseurContactSVC,
+  createFournisseurHomologationSVC,
   createFournisseurSVC,
   deactivateFournisseurSVC,
+  deleteFournisseurAdresseSVC,
   deleteFournisseurCatalogueItemSVC,
   deleteFournisseurContactSVC,
   downloadFournisseurDocumentSVC,
+  findDoublonsSVC,
   getFournisseurSVC,
+  listFournisseurAdressesSVC,
   listFournisseurCatalogueSVC,
   listFournisseurContactsSVC,
   listFournisseurDocumentsSVC,
   listFournisseurDomainesSVC,
   listFournisseurEventsSVC,
+  listFournisseurHomologationsSVC,
   listFournisseursSVC,
   removeFournisseurDocumentSVC,
   replaceFournisseurDomainesSVC,
+  updateFournisseurAdresseSVC,
   updateFournisseurCatalogueItemSVC,
   updateFournisseurContactSVC,
+  updateFournisseurHomologationSVC,
   updateFournisseurSVC,
 } from "../services/fournisseurs.service"
 
@@ -93,10 +110,8 @@ async function sendDocumentFile(
   if (!isPathInsideDirectory(baseDir, absPath)) {
     throw new HttpError(400, "INVALID_STORAGE_PATH", "Invalid document storage path")
   }
-
   await fs.access(absPath)
   res.setHeader("Content-Type", doc.mime_type)
-
   const rawDownload = (req.query as { download?: unknown } | undefined)?.download
   const download = rawDownload === true || rawDownload === "true" || rawDownload === "1" || rawDownload === 1
   res.setHeader(
@@ -113,8 +128,20 @@ export const listFournisseurs: RequestHandler = async (req, res, next) => {
       res.status(400).json({ error: parsed.error.issues?.[0]?.message ?? "Invalid query" })
       return
     }
-    const out = await listFournisseursSVC(parsed.data)
-    res.json(out)
+    res.json(await listFournisseursSVC(parsed.data))
+  } catch (err) {
+    next(err)
+  }
+}
+
+export const findDoublons: RequestHandler = async (req, res, next) => {
+  try {
+    const parsed = doublonQuerySchema.safeParse(req.query)
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues?.[0]?.message ?? "Invalid query" })
+      return
+    }
+    res.json(await findDoublonsSVC(parsed.data))
   } catch (err) {
     next(err)
   }
@@ -124,8 +151,7 @@ export const createFournisseur: RequestHandler = async (req, res, next) => {
   try {
     const audit = buildAuditContext(req)
     const body = createFournisseurSchema.parse({ body: req.body }).body
-    const out = await createFournisseurSVC(body, audit)
-    res.status(201).json(out)
+    res.status(201).json(await createFournisseurSVC(body, audit))
   } catch (err) {
     next(err)
   }
@@ -147,8 +173,7 @@ export const getFournisseur: RequestHandler = async (req, res, next) => {
 
 export const listFournisseurDomaines: RequestHandler = async (_req, res, next) => {
   try {
-    const out = await listFournisseurDomainesSVC()
-    res.json(out)
+    res.json(await listFournisseurDomainesSVC())
   } catch (err) {
     next(err)
   }
@@ -190,8 +215,12 @@ export const updateFournisseur: RequestHandler = async (req, res, next) => {
     const { id } = fournisseurIdParamSchema.parse({ params: req.params }).params
     const body = updateFournisseurSchema.parse({ body: req.body }).body
     const out = await updateFournisseurSVC(id, body, audit)
-    if (!out) {
+    if (out === null) {
       res.status(404).json({ error: "Not found" })
+      return
+    }
+    if (out === "conflict") {
+      res.status(409).json({ error: "Le fournisseur a été modifié entre-temps. Rechargez avant de réenregistrer." })
       return
     }
     res.json(out)
@@ -210,6 +239,22 @@ export const deactivateFournisseur: RequestHandler = async (req, res, next) => {
       return
     }
     res.status(204).send()
+  } catch (err) {
+    next(err)
+  }
+}
+
+export const archiveFournisseur: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildAuditContext(req)
+    const { id } = fournisseurIdParamSchema.parse({ params: req.params }).params
+    const body = archiveFournisseurSchema.parse({ body: req.body ?? {} }).body
+    const out = await archiveFournisseurSVC(id, body?.motif ?? null, audit)
+    if (out === null) {
+      res.status(404).json({ error: "Not found" })
+      return
+    }
+    res.json({ archived: true })
   } catch (err) {
     next(err)
   }
@@ -266,15 +311,118 @@ export const deleteFournisseurContact: RequestHandler = async (req, res, next) =
     const audit = buildAuditContext(req)
     const { id, contactId } = contactIdParamSchema.parse({ params: req.params }).params
     const out = await deleteFournisseurContactSVC(id, contactId, audit)
-    if (out === null) {
-      res.status(404).json({ error: "Not found" })
-      return
-    }
     if (!out) {
       res.status(404).json({ error: "Not found" })
       return
     }
     res.status(204).send()
+  } catch (err) {
+    next(err)
+  }
+}
+
+export const listFournisseurAdresses: RequestHandler = async (req, res, next) => {
+  try {
+    const { id } = fournisseurIdParamSchema.parse({ params: req.params }).params
+    const out = await listFournisseurAdressesSVC(id)
+    if (out === null) {
+      res.status(404).json({ error: "Not found" })
+      return
+    }
+    res.json(out)
+  } catch (err) {
+    next(err)
+  }
+}
+
+export const createFournisseurAdresse: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildAuditContext(req)
+    const { id } = fournisseurIdParamSchema.parse({ params: req.params }).params
+    const body = createAdresseSchema.parse({ body: req.body }).body
+    const out = await createFournisseurAdresseSVC(id, body, audit)
+    if (out === null) {
+      res.status(404).json({ error: "Not found" })
+      return
+    }
+    res.status(201).json(out)
+  } catch (err) {
+    next(err)
+  }
+}
+
+export const updateFournisseurAdresse: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildAuditContext(req)
+    const { id, adresseId } = adresseIdParamSchema.parse({ params: req.params }).params
+    const body = updateAdresseSchema.parse({ body: req.body }).body
+    const out = await updateFournisseurAdresseSVC(id, adresseId, body, audit)
+    if (out === null || out === false) {
+      res.status(404).json({ error: "Not found" })
+      return
+    }
+    res.json(out)
+  } catch (err) {
+    next(err)
+  }
+}
+
+export const deleteFournisseurAdresse: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildAuditContext(req)
+    const { id, adresseId } = adresseIdParamSchema.parse({ params: req.params }).params
+    const out = await deleteFournisseurAdresseSVC(id, adresseId, audit)
+    if (!out) {
+      res.status(404).json({ error: "Not found" })
+      return
+    }
+    res.status(204).send()
+  } catch (err) {
+    next(err)
+  }
+}
+
+export const listFournisseurHomologations: RequestHandler = async (req, res, next) => {
+  try {
+    const { id } = fournisseurIdParamSchema.parse({ params: req.params }).params
+    const out = await listFournisseurHomologationsSVC(id)
+    if (out === null) {
+      res.status(404).json({ error: "Not found" })
+      return
+    }
+    res.json(out)
+  } catch (err) {
+    next(err)
+  }
+}
+
+export const createFournisseurHomologation: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildAuditContext(req)
+    const { id } = fournisseurIdParamSchema.parse({ params: req.params }).params
+    const body = createHomologationSchema.parse({ body: req.body }).body
+    const out = await createFournisseurHomologationSVC(id, body, audit)
+    if (out === null) {
+      res.status(404).json({ error: "Not found" })
+      return
+    }
+    res.status(201).json(out)
+  } catch (err) {
+    next(err)
+  }
+}
+
+export const updateFournisseurHomologation: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildAuditContext(req)
+    const { id, homologationId } = homologationIdParamSchema.parse({ params: req.params }).params
+    const body = updateHomologationSchema.parse({ body: req.body }).body
+    const out = await updateFournisseurHomologationSVC(id, homologationId, body, audit)
+    if (out === null || out === false) {
+      res.status(404).json({ error: "Not found" })
+      return
+    }
+    res.json(out)
   } catch (err) {
     next(err)
   }
@@ -336,10 +484,6 @@ export const deleteFournisseurCatalogueItem: RequestHandler = async (req, res, n
     const audit = buildAuditContext(req)
     const { id, catalogueId } = catalogueIdParamSchema.parse({ params: req.params }).params
     const out = await deleteFournisseurCatalogueItemSVC(id, catalogueId, audit)
-    if (out === null) {
-      res.status(404).json({ error: "Not found" })
-      return
-    }
     if (!out) {
       res.status(404).json({ error: "Not found" })
       return
@@ -390,10 +534,6 @@ export const removeFournisseurDocument: RequestHandler = async (req, res, next) 
     const audit = buildAuditContext(req)
     const { id, docId } = docIdParamSchema.parse({ params: req.params }).params
     const out = await removeFournisseurDocumentSVC(id, docId, audit)
-    if (out === null) {
-      res.status(404).json({ error: "Not found" })
-      return
-    }
     if (!out) {
       res.status(404).json({ error: "Not found" })
       return

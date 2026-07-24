@@ -1,3 +1,13 @@
+import crypto from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
+
+import {
+  ensureDocumentStoragePath,
+  getDocumentStoragePath,
+  isPathInsideDirectory,
+  requirePersistentDocumentsRoot,
+} from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import {
   insertAuditLog,
@@ -11,12 +21,15 @@ import {
   repoCreateAction,
   repoCreateDecision,
   repoCreateEvidence,
+  repoCreateEvidenceFile,
   repoCreateExternalLink,
   repoCreateRisk,
   repoCreateSpec,
   repoCreateSpecVersion,
   repoGetActionById,
   repoGetEvidenceById,
+  repoGetEvidenceFileById,
+  repoListEvidenceFiles,
   repoGetExternalEntityProjectId,
   repoGetRiskById,
   repoGetSpecById,
@@ -31,9 +44,10 @@ import {
   repoPatchAction,
   repoPatchRisk,
   repoSetSpecStatus,
+  repoFindEvidenceFileByProjectHash,
 } from "../repository/project-office-registers.repository";
 import { repoGetWorkPackageById } from "../repository/project-office-work.repository";
-import type { Actor, SpecRow } from "../types/project-office.types";
+import type { Actor, EvidenceFileRow, SpecRow } from "../types/project-office.types";
 import { requireProjectAccess } from "./project-office-access.service";
 
 // -------------------------------------------------------------- Cahier des charges versionné
@@ -345,6 +359,261 @@ export async function createEvidence(
     });
     return evidence;
   });
+}
+
+const EVIDENCE_FILES_DIRECTORY = "project-office-evidence";
+const MAX_EVIDENCE_FILE_SIZE = 25 * 1024 * 1024;
+type EvidenceFileKind = "pdf" | "png" | "jpeg" | "webp" | "pptx" | "xlsx" | "docx" | "bizagi-bpm";
+
+const EVIDENCE_FILE_PROFILES: Record<EvidenceFileKind, { mime: string; extensions: readonly string[] }> = {
+  pdf: { mime: "application/pdf", extensions: [".pdf"] },
+  png: { mime: "image/png", extensions: [".png"] },
+  jpeg: { mime: "image/jpeg", extensions: [".jpg", ".jpeg"] },
+  webp: { mime: "image/webp", extensions: [".webp"] },
+  pptx: { mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation", extensions: [".pptx"] },
+  xlsx: { mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", extensions: [".xlsx"] },
+  docx: { mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", extensions: [".docx"] },
+  "bizagi-bpm": { mime: "application/xml", extensions: [".bpm"] },
+};
+
+const BPM_BIZAGI_MIME_TYPES = new Set([
+  "application/xml",
+  "text/xml",
+  "application/zip",
+  "application/x-zip-compressed",
+  "application/octet-stream",
+]);
+const ALLOWED_EVIDENCE_MIME_TYPES = new Set([
+  ...Object.values(EVIDENCE_FILE_PROFILES).map((profile) => profile.mime),
+  "text/xml",
+  "application/zip",
+  "application/x-zip-compressed",
+  "application/octet-stream",
+]);
+
+function sanitizeEvidenceFilename(originalName: string): string {
+  const basename = path.basename(originalName || "evidence");
+  const normalized = basename
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[-.]+|[-.]+$/g, "");
+  return normalized.slice(0, 180) || "evidence";
+}
+
+function evidenceExtension(sanitizedName: string): string {
+  const ext = path.extname(sanitizedName).toLowerCase();
+  return /^\.[a-z0-9]{1,10}$/.test(ext) ? ext : "";
+}
+
+function fileKindForMimeAndExtension(mimeType: string, extension: string): EvidenceFileKind | null {
+  for (const [kind, profile] of Object.entries(EVIDENCE_FILE_PROFILES) as Array<[EvidenceFileKind, { mime: string; extensions: readonly string[] }]>) {
+    const mimeMatches = kind === "bizagi-bpm" ? BPM_BIZAGI_MIME_TYPES.has(mimeType) : profile.mime === mimeType;
+    if (mimeMatches && profile.extensions.includes(extension)) return kind;
+  }
+  return null;
+}
+
+function hasZipMagic(buffer: Buffer): boolean {
+  return buffer.length >= 4
+    && ((buffer[0] === 0x50 && buffer[1] === 0x4b && buffer[2] === 0x03 && buffer[3] === 0x04)
+      || (buffer[0] === 0x50 && buffer[1] === 0x4b && buffer[2] === 0x05 && buffer[3] === 0x06));
+}
+
+function hasOoxmlPackageEntries(buffer: Buffer, expectedFolder: string): boolean {
+  // Uploads are capped at 25 MiB. Scanning the complete ZIP payload also covers
+  // archives whose central directory is located beyond the first 512 KiB.
+  const probe = buffer.toString("latin1");
+  return probe.includes("[Content_Types].xml") && probe.includes(expectedFolder);
+}
+
+function hasBizagiBpmPackageEntries(buffer: Buffer): boolean {
+  const probe = buffer.toString("latin1");
+  return probe.includes("ModelInfo.xml") && probe.includes(".diag");
+}
+
+export function assertAcceptedEvidenceFile(
+  file: Express.Multer.File | undefined
+): asserts file is Express.Multer.File {
+  if (!file || !Buffer.isBuffer(file.buffer)) {
+    throw new HttpError(400, "PO_EVIDENCE_FILE_REQUIRED", "Un fichier de preuve est requis.");
+  }
+  if (file.size <= 0 || file.size > MAX_EVIDENCE_FILE_SIZE) {
+    throw new HttpError(413, "PO_EVIDENCE_FILE_SIZE", "Le fichier doit peser entre 1 octet et 25 Mo.");
+  }
+  if (!ALLOWED_EVIDENCE_MIME_TYPES.has(file.mimetype)) {
+    throw new HttpError(415, "PO_EVIDENCE_FILE_TYPE", "Type de fichier non autorisé pour une preuve.");
+  }
+
+  const sanitizedName = sanitizeEvidenceFilename(file.originalname || "evidence");
+  const extension = evidenceExtension(sanitizedName);
+  const kind = fileKindForMimeAndExtension(file.mimetype, extension);
+  if (!kind) {
+    throw new HttpError(415, "PO_EVIDENCE_FILE_TYPE", "Le MIME, l'extension ou la catégorie ne sont pas autorisés.");
+  }
+
+  const buffer = file.buffer;
+  const startsWith = (...bytes: number[]) => bytes.every((byte, index) => buffer[index] === byte);
+  const validSignature = (() => {
+    switch (kind) {
+      case "pdf": return startsWith(0x25, 0x50, 0x44, 0x46, 0x2d);
+      case "png": return startsWith(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a);
+      case "jpeg": return startsWith(0xff, 0xd8, 0xff);
+      case "webp": return startsWith(0x52, 0x49, 0x46, 0x46) && buffer.subarray(8, 12).toString("ascii") === "WEBP";
+      case "pptx": return hasZipMagic(buffer) && hasOoxmlPackageEntries(buffer, "ppt/");
+      case "xlsx": return hasZipMagic(buffer) && hasOoxmlPackageEntries(buffer, "xl/");
+      case "docx": return hasZipMagic(buffer) && hasOoxmlPackageEntries(buffer, "word/");
+      case "bizagi-bpm": {
+        if (hasZipMagic(buffer)) return hasBizagiBpmPackageEntries(buffer);
+        const xml = buffer.subarray(0, Math.min(buffer.length, 256 * 1024)).toString("utf8").replace(/^\uFEFF/, "").trimStart();
+        return (xml.startsWith("<?xml") || xml.startsWith("<")) && /bizagi/i.test(xml);
+      }
+    }
+  })();
+  if (!validSignature) {
+    throw new HttpError(415, "PO_EVIDENCE_FILE_SIGNATURE", "La signature binaire ne correspond pas au type annoncé.");
+  }
+}
+
+function evidenceStorageRoot(): string {
+  try {
+    requirePersistentDocumentsRoot();
+    return ensureDocumentStoragePath(EVIDENCE_FILES_DIRECTORY);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : "Document storage unavailable";
+    throw new HttpError(503, "PO_EVIDENCE_STORAGE_UNAVAILABLE", detail);
+  }
+}
+
+export async function uploadEvidenceFile(
+  actor: Actor,
+  projectId: string,
+  input: {
+    work_package_id?: string | null; title?: string; description?: string | null;
+    category: "DOCUMENT" | "VSM"; version_number: number;
+    status: "BROUILLON" | "VALIDE" | "OBSOLETE"; date_effet?: string | null;
+    visibility: "PRIVATE" | "INTERNAL";
+  },
+  file: Express.Multer.File | undefined,
+  audit: AuditContext
+): Promise<{ evidence: Awaited<ReturnType<typeof repoCreateEvidence>>; file: EvidenceFileRow }> {
+  await requireProjectAccess(actor, projectId, "write");
+  assertAcceptedEvidenceFile(file);
+  if (input.work_package_id) {
+    const workPackage = await repoGetWorkPackageById(input.work_package_id);
+    if (!workPackage || workPackage.project_id !== projectId) {
+      throw new HttpError(400, "PO_WP_BAD_PROJECT", "Tâche invalide pour ce projet.");
+    }
+  }
+
+  const sha256 = crypto.createHash("sha256").update(file.buffer).digest("hex");
+  const duplicate = await repoFindEvidenceFileByProjectHash(projectId, sha256);
+  if (duplicate) {
+    throw new HttpError(409, "PO_EVIDENCE_FILE_DUPLICATE", "Ce fichier est déjà enregistré dans ce projet.");
+  }
+
+  const originalName = file.originalname || "evidence";
+  const sanitizedName = sanitizeEvidenceFilename(originalName);
+  const storageName = `${crypto.randomUUID()}${evidenceExtension(sanitizedName)}`;
+  const storageKey = `${EVIDENCE_FILES_DIRECTORY}/${storageName}`;
+  const storageRoot = evidenceStorageRoot();
+  const destination = getDocumentStoragePath(storageKey);
+  if (!isPathInsideDirectory(storageRoot, destination)) {
+    throw new HttpError(400, "PO_EVIDENCE_FILE_PATH", "Chemin de stockage invalide.");
+  }
+
+  let written = false;
+  try {
+    await fs.writeFile(destination, file.buffer, { flag: "wx" });
+    written = true;
+    return await withTransaction(async (tx) => {
+      const evidence = await repoCreateEvidence(tx, {
+        project_id: projectId,
+        work_package_id: input.work_package_id ?? null,
+        type: input.category === "VSM" ? "VSM" : "DOCUMENT",
+        title: input.title?.trim() || sanitizedName,
+        url: null,
+        description: input.description ?? null,
+        created_by: actor.id,
+      });
+      const evidenceFile = await repoCreateEvidenceFile(tx, {
+        evidence_id: evidence.id,
+        project_id: projectId,
+        storage_key: storageKey,
+        original_name: originalName,
+        sanitized_name: storageName,
+        mime_type: file.mimetype,
+        size_bytes: file.size,
+        sha256,
+        category: input.category,
+        version_number: input.version_number,
+        status: input.status,
+        date_effet: input.date_effet ?? null,
+        visibility: input.visibility,
+        created_by: actor.id,
+      });
+      await insertProjectActivity(tx, {
+        project_id: projectId, entity_type: "evidence", entity_id: evidence.id, action: "file-upload",
+        actor_id: actor.id,
+        after_json: { file_id: evidenceFile.id, category: input.category, sha256, size_bytes: file.size },
+      });
+      await insertAuditLog(tx, audit, {
+        action: "project-office.evidence.file-upload", entity_type: "project_evidence_files", entity_id: evidenceFile.id,
+        details: { project_id: projectId, evidence_id: evidence.id, category: input.category, sha256, size_bytes: file.size },
+      });
+      return { evidence, file: evidenceFile };
+    });
+  } catch (err) {
+    if (written) await fs.unlink(destination).catch(() => undefined);
+    if (isPgUniqueViolation(err)) {
+      throw new HttpError(409, "PO_EVIDENCE_FILE_DUPLICATE", "Ce fichier est déjà enregistré dans ce projet.");
+    }
+    throw err;
+  }
+}
+
+export async function downloadEvidenceFile(actor: Actor, fileId: string): Promise<EvidenceFileRow & { buffer: Buffer }> {
+  const file = await repoGetEvidenceFileById(fileId);
+  if (!file) throw new HttpError(404, "PO_EVIDENCE_FILE_NOT_FOUND", "Fichier de preuve introuvable.");
+  await requireProjectAccess(actor, file.project_id, "read");
+  const storageRoot = evidenceStorageRoot();
+  const source = getDocumentStoragePath(file.storage_key);
+  if (!isPathInsideDirectory(storageRoot, source)) {
+    throw new HttpError(404, "PO_EVIDENCE_FILE_NOT_FOUND", "Fichier de preuve introuvable.");
+  }
+  try {
+    const buffer = await fs.readFile(source);
+    const sha256 = crypto.createHash("sha256").update(buffer).digest("hex");
+    if (buffer.byteLength !== file.size_bytes || sha256 !== file.sha256) {
+      throw new HttpError(409, "PO_EVIDENCE_FILE_INTEGRITY", "L'intégrité du fichier de preuve ne peut pas être vérifiée.");
+    }
+    return { ...file, buffer };
+  } catch (err) {
+    if (err instanceof HttpError) throw err;
+    throw new HttpError(404, "PO_EVIDENCE_FILE_NOT_FOUND", "Fichier de preuve introuvable.");
+  }
+}
+
+export async function downloadProjectEvidenceFile(
+  actor: Actor,
+  projectId: string,
+  fileId: string
+): Promise<EvidenceFileRow & { buffer: Buffer }> {
+  await requireProjectAccess(actor, projectId, "read");
+  const file = await downloadEvidenceFile(actor, fileId);
+  if (file.project_id !== projectId) {
+    throw new HttpError(404, "PO_EVIDENCE_FILE_NOT_FOUND", "Fichier de preuve introuvable.");
+  }
+  return file;
+}
+
+export async function listEvidenceFiles(
+  actor: Actor,
+  opts: { project_id: string; category?: "DOCUMENT" | "VSM"; page: number; pageSize: number }
+) {
+  await requireProjectAccess(actor, opts.project_id, "read");
+  return repoListEvidenceFiles(opts);
 }
 
 export async function listExternalLinks(actor: Actor, projectId: string) {

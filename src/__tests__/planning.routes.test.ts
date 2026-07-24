@@ -331,6 +331,33 @@ describe("/api/v1/planning", () => {
     });
   });
 
+  it("POST /api/v1/planning/autoplan reports an OF with no plannable operations", async () => {
+    mocks.poolQuery.mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app)
+      .post("/api/v1/planning/autoplan")
+      .set("Authorization", "Bearer fake")
+      .send({
+        of_ids: [7],
+        start_ts: "2026-02-14T08:00:00.000Z",
+        step_minutes: 15,
+        skip_planned: true,
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({
+      created_events: [],
+      skipped_operations: [
+        {
+          of_id: 7,
+          of_operation_id: null,
+          reason: "NO_OPERATIONS",
+        },
+      ],
+      summary: { requested_ofs: 1, created: 0, skipped: 1, partial: false },
+    });
+  });
+
   it("POST /api/v1/planning/events promotes commande to PLANIFIEE and creates notifications", async () => {
     mocks.poolQuery.mockResolvedValueOnce({
       rows: [

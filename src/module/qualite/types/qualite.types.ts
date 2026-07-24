@@ -122,6 +122,7 @@ export type QualityEventLog = {
 
 export type QualityControlListItem = {
   id: string;
+  reference: string;
   control_type: QualityControlType;
   status: QualityControlStatus;
   result: QualityControlResult | null;

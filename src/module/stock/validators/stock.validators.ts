@@ -93,7 +93,7 @@ export const listArticlesQuerySchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(200).optional().default(20),
   sortBy: z.enum(["updated_at", "created_at", "code", "designation"]).optional().default("updated_at"),
   sortDir: sortDirSchema.optional().default("desc"),
-});
+}).strict();
 
 export type ListArticlesQueryDTO = z.infer<typeof listArticlesQuerySchema>;
 
@@ -172,41 +172,73 @@ export const createArticleFamilySchema = z.object({
 });
 export type CreateArticleFamilyBodyDTO = z.infer<typeof createArticleFamilySchema>["body"];
 
+const articleMatiereSchema = z
+  .object({
+    nuance_id: nullablePositiveInt.optional(),
+    etat_id: nullablePositiveInt.optional(),
+    sous_etat_id: nullablePositiveInt.optional(),
+    barre_a_decouper: z.boolean().optional().default(false),
+    longueur_mm: nullablePositiveInt.optional(),
+    longueur_unitaire_mm: nullablePositiveInt.optional(),
+    largeur_mm: nullablePositiveInt.optional(),
+    hauteur_mm: nullablePositiveInt.optional(),
+    epaisseur_mm: nullablePositiveInt.optional(),
+    diametre_mm: nullablePositiveInt.optional(),
+    largeur_plat_mm: nullablePositiveInt.optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.barre_a_decouper && !value.longueur_unitaire_mm) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "longueur_unitaire_mm is required for cut bars", path: ["longueur_unitaire_mm"] });
+    }
+    if (value.barre_a_decouper && value.longueur_mm) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "longueur_mm is not allowed for cut bars", path: ["longueur_mm"] });
+    }
+    if (!value.barre_a_decouper && value.longueur_unitaire_mm) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "longueur_unitaire_mm requires barre_a_decouper=true", path: ["longueur_unitaire_mm"] });
+    }
+  });
+
+const articleProcurementSchema = z
+  .object({
+    manufacturer_name: z.string().trim().min(1).max(200).optional().nullable(),
+    manufacturer_reference: z.string().trim().min(1).max(200).optional().nullable(),
+    preferred_catalogue_id: uuid.optional().nullable(),
+    packaging: z.string().trim().min(1).max(200).optional().nullable(),
+    process: z.string().trim().min(1).max(200).optional().nullable(),
+    finish: z.string().trim().min(1).max(200).optional().nullable(),
+    requirements: z.string().trim().min(1).max(2000).optional().nullable(),
+    certificate_required: z.boolean().optional().default(false),
+    min_stock: z.coerce.number().min(0).optional().nullable(),
+    max_stock: z.coerce.number().min(0).optional().nullable(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.min_stock != null && value.max_stock != null && value.min_stock > value.max_stock) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "min_stock must be less than or equal to max_stock", path: ["max_stock"] });
+    }
+  });
+
 export const createArticleSchema = z.object({
   body: z
     .object({
-      code: z.string().trim().min(1).max(80),
       designation: z.string().trim().min(1).max(400),
+      designation_secondary: z.string().trim().min(1).max(400).optional().nullable(),
       article_type: articleTypeSchema.optional(),
       article_category: articleCategorySchema.optional().default("achat"),
       article_categories: z.array(articleBusinessCategorySchema).min(1).max(8).optional(),
       family_code: z.string().trim().min(1).max(40),
-      version_number: z.coerce.number().int().positive().optional(),
-      plan_index: z.coerce.number().int().positive().optional().default(1),
       status: articleWorkflowStatusSchema.optional().default("VALIDE"),
       projet_id: z.coerce.number().int().positive().optional().nullable(),
       stock_managed: z.boolean().optional().default(true),
       piece_technique_id: uuid.optional().nullable(),
       unite: z.string().trim().min(1).max(30).optional().nullable(),
       lot_tracking: z.boolean().optional().default(false),
+      is_sold: z.boolean().optional().default(false),
       is_active: z.boolean().optional().default(true),
       notes: z.string().trim().min(1).optional().nullable(),
-      article_matiere: z
-        .object({
-          nuance_id: nullablePositiveInt.optional(),
-          etat_id: nullablePositiveInt.optional(),
-          sous_etat_id: nullablePositiveInt.optional(),
-          barre_a_decouper: z.boolean().optional().default(false),
-          longueur_mm: nullablePositiveInt.optional(),
-          longueur_unitaire_mm: nullablePositiveInt.optional(),
-          largeur_mm: nullablePositiveInt.optional(),
-          hauteur_mm: nullablePositiveInt.optional(),
-          epaisseur_mm: nullablePositiveInt.optional(),
-          diametre_mm: nullablePositiveInt.optional(),
-          largeur_plat_mm: nullablePositiveInt.optional(),
-        })
-        .strict()
-        .optional(),
+      article_matiere: articleMatiereSchema.optional(),
+      procurement: articleProcurementSchema.optional(),
     })
     .strict()
     .superRefine((body, ctx) => {
@@ -237,27 +269,73 @@ export type CreateArticleBodyDTO = z.infer<typeof createArticleSchema>["body"];
 export const updateArticleSchema = z.object({
   body: z
     .object({
-      code: z.string().trim().min(1).max(80).optional(),
+      expected_row_version: positiveInt,
       designation: z.string().trim().min(1).max(400).optional(),
+      designation_secondary: z.string().trim().min(1).max(400).optional().nullable(),
       article_type: articleTypeSchema.optional(),
       article_category: articleCategorySchema.optional(),
       article_categories: z.array(articleBusinessCategorySchema).min(1).max(8).optional(),
       family_code: z.string().trim().min(1).max(40).optional(),
-      version_number: z.coerce.number().int().positive().optional(),
-      plan_index: z.coerce.number().int().positive().optional(),
       status: articleWorkflowStatusSchema.optional(),
       projet_id: z.coerce.number().int().positive().optional().nullable(),
       stock_managed: z.boolean().optional(),
       piece_technique_id: uuid.optional().nullable(),
       unite: z.string().trim().min(1).max(30).optional().nullable(),
       lot_tracking: z.boolean().optional(),
-      is_active: z.boolean().optional(),
+      is_sold: z.boolean().optional(),
       notes: z.string().trim().min(1).optional().nullable(),
+      article_matiere: articleMatiereSchema.optional(),
+      procurement: articleProcurementSchema.optional(),
     })
-    .strict(),
+    .strict()
+    .superRefine((body, ctx) => {
+      if (body.stock_managed === false && body.lot_tracking === true) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "lot_tracking requires stock_managed=true", path: ["lot_tracking"] });
+      }
+      if (body.article_matiere && body.article_category && body.article_category !== "matiere") {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "article_matiere is only allowed for article_category=matiere", path: ["article_matiere"] });
+      }
+    }),
 });
 
 export type UpdateArticleBodyDTO = z.infer<typeof updateArticleSchema>["body"];
+
+export const archiveArticleSchema = z.object({
+  body: z.object({
+    expected_row_version: positiveInt,
+    reason: z.string().trim().min(3).max(500).optional().nullable(),
+  }).strict(),
+});
+export type ArchiveArticleBodyDTO = z.infer<typeof archiveArticleSchema>["body"];
+
+export const reactivateArticleSchema = z.object({
+  body: z.object({ expected_row_version: positiveInt }).strict(),
+});
+export type ReactivateArticleBodyDTO = z.infer<typeof reactivateArticleSchema>["body"];
+
+export const listArticleWhereUsedQuerySchema = z.object({
+  usage_type: z.enum([
+    "PIECE_CURRENT", "PIECE_HISTORICAL", "QUOTE", "CUSTOMER_ORDER", "SUPPLIER_ORDER",
+    "WORK_ORDER", "RECEIPT", "LOT", "STOCK_MOVEMENT", "DELIVERY",
+  ]).optional(),
+  page: z.coerce.number().int().min(1).optional().default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).optional().default(25),
+}).strict();
+export type ListArticleWhereUsedQueryDTO = z.infer<typeof listArticleWhereUsedQuerySchema>;
+
+export const listArticleVersionsQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).optional().default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).optional().default(25),
+}).strict();
+export type ListArticleVersionsQueryDTO = z.infer<typeof listArticleVersionsQuerySchema>;
+
+export const articleDocumentMetadataSchema = z.object({
+  body: z.object({
+    type: z.string().trim().min(1).max(80).optional().nullable(),
+    revision: z.string().trim().min(1).max(80).optional().nullable(),
+  }).strict(),
+});
+export type ArticleDocumentMetadataDTO = z.infer<typeof articleDocumentMetadataSchema>["body"];
 
 export const listMagasinsQuerySchema = z.object({
   q: z.string().trim().optional(),
@@ -309,6 +387,9 @@ export const listEmplacementsQuerySchema = z.object({
   magasin_id: uuid.optional(),
   is_active: z.preprocess(parseBoolean, z.boolean().optional()),
   is_scrap: z.preprocess(parseBoolean, z.boolean().optional()),
+  location_type: z
+    .enum(["RECEIVING", "PRODUCTION", "QUARANTINE", "SCRAP", "SHIPPING", "STORAGE"])
+    .optional(),
   page: z.coerce.number().int().min(1).optional().default(1),
   pageSize: z.coerce.number().int().min(1).max(200).optional().default(50),
   sortBy: z.enum(["updated_at", "created_at", "code"]).optional().default("updated_at"),
@@ -317,6 +398,15 @@ export const listEmplacementsQuerySchema = z.object({
 
 export type ListEmplacementsQueryDTO = z.infer<typeof listEmplacementsQuerySchema>;
 
+export const stockLocationTypeSchema = z.enum([
+  "RECEIVING",
+  "PRODUCTION",
+  "QUARANTINE",
+  "SCRAP",
+  "SHIPPING",
+  "STORAGE",
+]);
+
 export const createEmplacementSchema = z.object({
   body: z
     .object({
@@ -324,9 +414,36 @@ export const createEmplacementSchema = z.object({
       name: z.string().trim().min(1).max(200).optional().nullable(),
       is_scrap: z.boolean().optional().default(false),
       is_active: z.boolean().optional().default(true),
+      location_type: stockLocationTypeSchema.optional().default("STORAGE"),
+      allow_inbound: z.boolean().optional().default(true),
+      allow_outbound: z.boolean().optional().default(true),
+      restrictions: z.record(z.unknown()).optional().default({}),
       notes: z.string().trim().min(1).optional().nullable(),
     })
-    .strict(),
+    .strict()
+    .superRefine((body, ctx) => {
+      if (body.is_scrap && body.location_type !== "SCRAP") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["location_type"],
+          message: "A scrap emplacement must use location_type SCRAP",
+        });
+      }
+      if (body.location_type === "SCRAP" && !body.is_scrap) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["is_scrap"],
+          message: "A SCRAP location must be marked as scrap",
+        });
+      }
+      if (body.location_type === "SCRAP" && body.allow_outbound) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["allow_outbound"],
+          message: "A SCRAP location cannot provide stock",
+        });
+      }
+    }),
 });
 
 export type CreateEmplacementBodyDTO = z.infer<typeof createEmplacementSchema>["body"];
@@ -338,6 +455,10 @@ export const updateEmplacementSchema = z.object({
       name: z.string().trim().min(1).max(200).optional().nullable(),
       is_scrap: z.boolean().optional(),
       is_active: z.boolean().optional(),
+      location_type: stockLocationTypeSchema.optional(),
+      allow_inbound: z.boolean().optional(),
+      allow_outbound: z.boolean().optional(),
+      restrictions: z.record(z.unknown()).optional(),
       notes: z.string().trim().min(1).optional().nullable(),
     })
     .strict(),
@@ -348,6 +469,7 @@ export type UpdateEmplacementBodyDTO = z.infer<typeof updateEmplacementSchema>["
 export const listLotsQuerySchema = z.object({
   q: z.string().trim().optional(),
   article_id: uuid.optional(),
+  lot_status: z.enum(["LIBERE", "EN_ATTENTE", "QUARANTAINE", "BLOQUE"]).optional(),
   page: z.coerce.number().int().min(1).optional().default(1),
   pageSize: z.coerce.number().int().min(1).max(200).optional().default(50),
   sortBy: z.enum(["updated_at", "created_at", "lot_code", "received_at"]).optional().default("updated_at"),
@@ -360,7 +482,7 @@ export const createLotSchema = z.object({
   body: z
     .object({
       article_id: uuid,
-      lot_code: z.string().trim().min(1).max(80),
+      lot_code: z.string().trim().min(1).max(80).optional(),
       supplier_lot_code: z.string().trim().min(1).max(120).optional().nullable(),
       received_at: z.string().trim().optional().nullable(),
       manufactured_at: z.string().trim().optional().nullable(),
@@ -387,11 +509,78 @@ export const updateLotSchema = z.object({
 
 export type UpdateLotBodyDTO = z.infer<typeof updateLotSchema>["body"];
 
+export const updateLotQualitySchema = z.object({
+  body: z
+    .object({
+      lot_status: z.enum(["LIBERE", "EN_ATTENTE", "QUARANTAINE", "BLOQUE"]),
+      reason: z.string().trim().min(3).max(500),
+      expected_updated_at: z.string().datetime({ offset: true }),
+    })
+    .strict(),
+});
+
+export type UpdateLotQualityBodyDTO = z.infer<typeof updateLotQualitySchema>["body"];
+
+const lotGenealogyContributionSchema = z
+  .object({
+    lot_id: uuid,
+    qty: z.coerce.number().positive().max(1_000_000_000),
+  })
+  .strict();
+
+export const createLotGenealogySchema = z.object({
+  body: z
+    .object({
+      operation_type: z.enum(["SPLIT", "MERGE", "TRANSFORM"]),
+      parents: z.array(lotGenealogyContributionSchema).min(1).max(100),
+      children: z.array(lotGenealogyContributionSchema).min(1).max(100),
+      unit_code: z.string().trim().min(1).max(30),
+      stock_movement_id: uuid,
+    })
+    .strict()
+    .superRefine((body, ctx) => {
+      if (body.operation_type === "SPLIT" && (body.parents.length !== 1 || body.children.length < 2)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["children"],
+          message: "SPLIT requires exactly one parent and at least two children",
+        });
+      }
+      if (body.operation_type === "MERGE" && (body.parents.length < 2 || body.children.length !== 1)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["parents"],
+          message: "MERGE requires at least two parents and exactly one child",
+        });
+      }
+      if (body.operation_type === "TRANSFORM" && (body.parents.length !== 1 || body.children.length !== 1)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["parents"],
+          message: "TRANSFORM requires exactly one parent and one child",
+        });
+      }
+      const allIds = [...body.parents, ...body.children].map((item) => item.lot_id);
+      if (new Set(allIds).size !== allIds.length) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["children"],
+          message: "A lot cannot appear twice or on both sides of one genealogy operation",
+        });
+      }
+    }),
+});
+
+export type CreateLotGenealogyBodyDTO = z.infer<typeof createLotGenealogySchema>["body"];
+
 export const listBalancesQuerySchema = z.object({
+  q: z.string().trim().max(120).optional(),
   article_id: uuid.optional(),
   magasin_id: uuid.optional(),
   emplacement_id: z.coerce.number().int().positive().optional(),
   lot_id: uuid.optional(),
+  lot_status: z.enum(["LIBERE", "EN_ATTENTE", "QUARANTAINE", "BLOQUE"]).optional(),
+  only_available: z.preprocess(parseBoolean, z.boolean().optional()),
   warehouse_id: uuid.optional(),
   location_id: uuid.optional(),
   page: z.coerce.number().int().min(1).optional().default(1),
@@ -518,7 +707,43 @@ export const createMovementSchema = z.object({
 
 export type CreateMovementBodyDTO = z.infer<typeof createMovementSchema>["body"];
 
-export const stockInventorySessionStatusSchema = z.enum(["OPEN", "CLOSED"]);
+export const compensateMovementSchema = z.object({
+  body: z
+    .object({
+      reason: z.string().trim().min(3).max(500),
+      notes: z.string().trim().min(1).max(2_000).optional().nullable(),
+      expected_posted_at: z.string().datetime({ offset: true }),
+    })
+    .strict(),
+});
+
+export type CompensateMovementBodyDTO = z.infer<typeof compensateMovementSchema>["body"];
+
+export const postMovementSchema = z.object({
+  body: z
+    .object({
+      negative_stock_override: z
+        .object({
+          maximum_negative_qty: z.coerce.number().positive().max(1_000_000),
+          reason: z.string().trim().min(10).max(500),
+        })
+        .strict()
+        .optional(),
+    })
+    .strict()
+    .optional()
+    .default({}),
+});
+
+export type PostMovementBodyDTO = z.infer<typeof postMovementSchema>["body"];
+
+export const stockInventorySessionStatusSchema = z.enum([
+  "DRAFT",
+  "OPEN",
+  "APPROVED",
+  "CLOSED",
+  "CANCELLED",
+]);
 export type StockInventorySessionStatusDTO = z.infer<typeof stockInventorySessionStatusSchema>;
 
 export const listInventorySessionsQuerySchema = z.object({
@@ -536,8 +761,35 @@ export const createInventorySessionSchema = z.object({
   body: z
     .object({
       notes: z.string().trim().min(1).optional().nullable(),
+      scope_magasin_id: uuid.optional().nullable(),
+      scope_emplacement_id: z.coerce.number().int().positive().optional().nullable(),
+      scope_article_id: uuid.optional().nullable(),
+      scope_article_category: articleCategorySchema.optional().nullable(),
+      blind_count: z.boolean().optional().default(false),
+      requires_second_count: z.boolean().optional().default(false),
     })
-    .strict(),
+    .strict()
+    .superRefine((body, ctx) => {
+      if (
+        !body.scope_magasin_id &&
+        !body.scope_emplacement_id &&
+        !body.scope_article_id &&
+        !body.scope_article_category
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["scope_magasin_id"],
+          message: "Inventory scope must include a magasin, emplacement, article or category",
+        });
+      }
+      if (body.scope_emplacement_id && !body.scope_magasin_id) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["scope_magasin_id"],
+          message: "scope_magasin_id is required with scope_emplacement_id",
+        });
+      }
+    }),
 });
 
 export type CreateInventorySessionBodyDTO = z.infer<typeof createInventorySessionSchema>["body"];
@@ -550,9 +802,34 @@ export const upsertInventoryLineSchema = z.object({
       emplacement_id: z.coerce.number().int().positive(),
       lot_id: uuid.optional().nullable(),
       counted_qty: z.coerce.number().min(0),
+      count_round: z.coerce.number().int().min(1).max(2).optional().default(1),
+      reason_code: z.string().trim().min(2).max(80).optional().nullable(),
+      expected_session_version: z.coerce.number().int().positive(),
       note: z.string().trim().min(1).optional().nullable(),
     })
     .strict(),
 });
 
 export type UpsertInventoryLineBodyDTO = z.infer<typeof upsertInventoryLineSchema>["body"];
+
+export const inventorySessionActionSchema = z.object({
+  body: z
+    .object({
+      expected_version: z.coerce.number().int().positive(),
+      reason: z.string().trim().min(3).max(500).optional().nullable(),
+    })
+    .strict(),
+});
+
+export type InventorySessionActionBodyDTO = z.infer<typeof inventorySessionActionSchema>["body"];
+
+export const cancelInventorySessionSchema = z.object({
+  body: z
+    .object({
+      expected_version: z.coerce.number().int().positive(),
+      reason: z.string().trim().min(3).max(500),
+    })
+    .strict(),
+});
+
+export type CancelInventorySessionBodyDTO = z.infer<typeof cancelInventorySessionSchema>["body"];

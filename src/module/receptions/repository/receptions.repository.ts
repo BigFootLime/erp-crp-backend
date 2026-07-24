@@ -5,11 +5,15 @@ import fs from "node:fs/promises"
 import path from "node:path"
 
 import db from "../../../config/database"
+import { generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service"
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators"
+import { roleHasCommandeFournisseurCapability } from "../../commande-fournisseur/domain/commande-fournisseur-rbac"
+import { repoRefreshCommandeReceptionState } from "../../commande-fournisseur/repository/commande-fournisseur.repository"
 import { repoCreateMovement, repoPostMovement } from "../../stock/repository/stock.repository"
+import { hashStockCommand } from "../../stock/domain/stock-command"
 import type { StockMovementDetail } from "../../stock/types/stock.types"
 import type {
   AddMeasurementBodyDTO,
@@ -644,6 +648,32 @@ export async function repoCreateReception(body: CreateReceptionBodyDTO, audit: A
     await client.query("BEGIN")
     const receptionNo = await reserveReceptionNo(client)
 
+    // #172 — rattachement facultatif à une commande fournisseur : même fournisseur, et la
+    // commande doit avoir été réellement envoyée (jamais de réception sur un brouillon).
+    if (body.commande_fournisseur_id) {
+      const cf = await client.query<{ fournisseur_id: string; statut: string; code: string }>(
+        `SELECT fournisseur_id::text AS fournisseur_id, statut, code
+           FROM public.commande_fournisseur WHERE id = $1::uuid`,
+        [body.commande_fournisseur_id]
+      )
+      const cfRow = cf.rows[0]
+      if (!cfRow) throw new HttpError(422, "COMMANDE_FOURNISSEUR_INTROUVABLE", "Commande fournisseur liée introuvable.")
+      if (cfRow.fournisseur_id !== body.fournisseur_id) {
+        throw new HttpError(
+          422,
+          "COMMANDE_FOURNISSEUR_MISMATCH",
+          "La commande liée n'appartient pas à ce fournisseur."
+        )
+      }
+      if (!["ENVOYEE", "ACCUSE_RECU", "PARTIELLEMENT_RECUE"].includes(cfRow.statut)) {
+        throw new HttpError(
+          422,
+          "COMMANDE_FOURNISSEUR_NON_RECEVABLE",
+          `La commande ${cfRow.code} (${cfRow.statut}) n'est pas en attente de réception.`
+        )
+      }
+    }
+
     const ins = await client.query<ReceptionRow>(
       `
         INSERT INTO public.receptions_fournisseurs (
@@ -653,10 +683,11 @@ export async function repoCreateReception(body: CreateReceptionBodyDTO, audit: A
           reception_date,
           supplier_reference,
           commentaire,
+          commande_fournisseur_id,
           created_by,
           updated_by
         )
-        VALUES ($1,$2::uuid,'OPEN',$3::date,$4,$5,$6,$6)
+        VALUES ($1,$2::uuid,'OPEN',$3::date,$4,$5,$6::uuid,$7,$7)
         RETURNING
           id::text AS id,
           reception_no,
@@ -676,6 +707,7 @@ export async function repoCreateReception(body: CreateReceptionBodyDTO, audit: A
         body.reception_date ?? null,
         body.supplier_reference ?? null,
         body.commentaire ?? null,
+        body.commande_fournisseur_id ?? null,
         audit.user_id,
       ]
     )
@@ -783,6 +815,52 @@ export async function repoCreateLine(receptionId: string, body: CreateLineBodyDT
     )
     const lineNo = next.rows[0]?.next_no ?? 1
 
+    // #172 — imputation facultative sur une ligne de commande fournisseur : cohérence
+    // fournisseur/article/état vérifiée, puis recalcul transactionnel de l'état de la
+    // commande (sur-réception bloquée sans la capacité dédiée — motif requis).
+    let commandeIdToRefresh: string | null = null
+    if (body.commande_fournisseur_ligne_id) {
+      const cfl = await client.query<{
+        ligne_id: string
+        commande_id: string
+        statut_ligne: string
+        ligne_article_id: string | null
+        cf_statut: string
+        cf_fournisseur_id: string
+        cf_code: string
+        reception_fournisseur_id: string
+      }>(
+        `SELECT l.id::text AS ligne_id, l.commande_id::text AS commande_id, l.statut_ligne,
+                l.article_id::text AS ligne_article_id,
+                c.statut AS cf_statut, c.fournisseur_id::text AS cf_fournisseur_id, c.code AS cf_code,
+                r.fournisseur_id::text AS reception_fournisseur_id
+           FROM public.commande_fournisseur_ligne l
+           JOIN public.commande_fournisseur c ON c.id = l.commande_id
+           CROSS JOIN (SELECT fournisseur_id FROM public.receptions_fournisseurs WHERE id = $2::uuid) r
+          WHERE l.id = $1::uuid`,
+        [body.commande_fournisseur_ligne_id, receptionId]
+      )
+      const link = cfl.rows[0]
+      if (!link) throw new HttpError(422, "LIGNE_COMMANDE_INTROUVABLE", "Ligne de commande fournisseur introuvable.")
+      if (link.statut_ligne !== "ACTIVE") {
+        throw new HttpError(422, "LIGNE_COMMANDE_ANNULEE", "Impossible d'imputer une ligne de commande annulée.")
+      }
+      if (link.cf_fournisseur_id !== link.reception_fournisseur_id) {
+        throw new HttpError(422, "COMMANDE_FOURNISSEUR_MISMATCH", "La ligne de commande n'appartient pas au fournisseur de cette réception.")
+      }
+      if (!["ENVOYEE", "ACCUSE_RECU", "PARTIELLEMENT_RECUE"].includes(link.cf_statut)) {
+        throw new HttpError(
+          422,
+          "COMMANDE_FOURNISSEUR_NON_RECEVABLE",
+          `La commande ${link.cf_code} (${link.cf_statut}) n'est pas en attente de réception.`
+        )
+      }
+      if (link.ligne_article_id && link.ligne_article_id !== body.article_id) {
+        throw new HttpError(422, "ARTICLE_MISMATCH", "L'article reçu ne correspond pas à la ligne de commande imputée.")
+      }
+      commandeIdToRefresh = link.commande_id
+    }
+
     const ins = await client.query<{ id: string }>(
       `
         INSERT INTO public.reception_fournisseur_lignes (
@@ -794,10 +872,11 @@ export async function repoCreateLine(receptionId: string, body: CreateLineBodyDT
           unite,
           supplier_lot_code,
           notes,
+          commande_fournisseur_ligne_id,
           created_by,
           updated_by
         )
-        VALUES ($1::uuid,$2,$3::uuid,$4,$5,$6,$7,$8,$9,$9)
+        VALUES ($1::uuid,$2,$3::uuid,$4,$5,$6,$7,$8,$9::uuid,$10,$10)
         RETURNING id::text AS id
       `,
       [
@@ -809,6 +888,7 @@ export async function repoCreateLine(receptionId: string, body: CreateLineBodyDT
         body.unite ?? null,
         body.supplier_lot_code ?? null,
         body.notes ?? null,
+        body.commande_fournisseur_ligne_id ?? null,
         audit.user_id,
       ]
     )
@@ -822,6 +902,22 @@ export async function repoCreateLine(receptionId: string, body: CreateLineBodyDT
       details: { reception_id: receptionId, line_no: lineNo, article_id: body.article_id, qty_received: body.qty_received },
     })
 
+    if (commandeIdToRefresh) {
+      // Sur-réception : autorisée uniquement si le rôle porte la capacité dédiée ET qu'un
+      // motif est saisi dans les notes de la ligne (permission + motif explicites, #172).
+      const roleRes = await client.query<{ role: string | null }>(
+        `SELECT role FROM public.users WHERE id = $1`,
+        [audit.user_id]
+      )
+      const role = roleRes.rows[0]?.role ?? null
+      const allowOverReceipt =
+        roleHasCommandeFournisseurCapability(role, "over_receipt") && Boolean(body.notes && body.notes.trim().length >= 3)
+      await repoRefreshCommandeReceptionState(client, commandeIdToRefresh, {
+        allowOverReceipt,
+        audit: { ...audit, role },
+      })
+    }
+
     const detail = await selectLineDetail(client, lineId)
 
     await client.query("COMMIT")
@@ -832,20 +928,6 @@ export async function repoCreateLine(receptionId: string, body: CreateLineBodyDT
   } finally {
     client.release()
   }
-}
-
-function formatYyyyMmDd(d: Date): string {
-  const yyyy = String(d.getUTCFullYear())
-  const mm = String(d.getUTCMonth() + 1).padStart(2, "0")
-  const dd = String(d.getUTCDate()).padStart(2, "0")
-  return `${yyyy}${mm}${dd}`
-}
-
-function generateLotCode(receptionNo: string, lineNo: number): string {
-  const date = formatYyyyMmDd(new Date())
-  const suffix = crypto.randomBytes(3).toString("hex")
-  const raw = `MP-${receptionNo}-${lineNo}-${date}-${suffix}`
-  return raw.length <= 80 ? raw : raw.slice(0, 80)
 }
 
 export async function repoCreateLotForLine(
@@ -891,7 +973,10 @@ export async function repoCreateLotForLine(
     }
     if (line.lot_id) throw new HttpError(409, "LOT_ALREADY_SET", "Un lot est deja rattache a cette ligne")
 
-    const lotCode = body.lot_code?.trim() ? body.lot_code.trim() : generateLotCode(line.reception_no, line.line_no)
+    if (body.lot_code?.trim()) {
+      throw new HttpError(400, "LOT_CODE_SERVER_MANAGED", "Le numéro de lot interne est attribué automatiquement.")
+    }
+    const lotCode = await generateTransactionalBusinessCode(client, { prefix: "LOT" })
     const supplierLotCode = body.supplier_lot_code ?? line.supplier_lot_code ?? null
 
     let lotId: string
@@ -1600,7 +1685,8 @@ export async function repoCreateStockReceipt(
   receptionId: string,
   lineId: string,
   body: StockReceiptBodyDTO,
-  audit: AuditContext
+  audit: AuditContext,
+  idempotencyKey: string
 ): Promise<{ stock_movement_id: string; movement_no: string | null; posted: StockMovementDetail } | null> {
   const lineRes = await db.query<{
     id: string
@@ -1643,6 +1729,10 @@ export async function repoCreateStockReceipt(
     throw new HttpError(409, "OVER_RECEIPT", "Quantite superieure a la quantite restante a mettre en stock")
   }
 
+  const stockCommandKey = hashStockCommand("RECEPTION_STOCK_KEY", {
+    actor_user_id: audit.user_id,
+    idempotency_key: idempotencyKey,
+  })
   const created = await repoCreateMovement(
     {
       movement_type: "IN",
@@ -1651,7 +1741,7 @@ export async function repoCreateStockReceipt(
       source_document_id: receptionId,
       reason_code: "RECEPTION_FOURNISSEUR",
       notes: body.notes ?? `Reception ${line.reception_no}`,
-      idempotency_key: null,
+      idempotency_key: `rf-create-${stockCommandKey}`,
       lines: [
         {
           article_id: line.article_id,
@@ -1668,10 +1758,16 @@ export async function repoCreateStockReceipt(
         },
       ],
     },
-    audit
+    audit,
+    { trusted_source_flow: true }
   )
 
-  const posted = await repoPostMovement(created.movement.id, audit)
+  const posted = await repoPostMovement(
+    created.movement.id,
+    {},
+    audit,
+    `rf-post-${stockCommandKey}`
+  )
   if (!posted) throw new Error("Failed to post stock movement")
 
   await db.query(

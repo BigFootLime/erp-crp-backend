@@ -466,6 +466,9 @@ export const generateAffairesV3Schema = z
     body: z
       .object({
         decision: commandesStockDecisionSchema.nullable().optional().default(null),
+        // #168 : jeton d'aperçu optionnel. Si fourni, doit égaler commande_client.updated_at,
+        // sinon 409 COMMANDE_PREVIEW_STALE (l'aperçu « Vérifier et lancer » est périmé).
+        expected_updated_at: z.string().min(1).optional(),
         livraison_count: z.coerce.number().int().min(1).max(10).optional().default(1),
         lines: z
           .array(

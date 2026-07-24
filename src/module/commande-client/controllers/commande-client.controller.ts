@@ -105,6 +105,7 @@ function routeParam(req: Request, name: string): string {
 function buildAudit(req: Request) {
   return {
     user_id: getUserId(req),
+    user_role: typeof req.user?.role === "string" ? req.user.role : null,
     ip: null,
     user_agent: typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : null,
     device_type: null,
@@ -232,7 +233,12 @@ export const runCommandeWorkflowAction: RequestHandler = async (req, res, next) 
       return;
     }
     const userId = typeof req.user?.id === "number" ? req.user.id : null;
-    const out = await runCommandeWorkflowActionSVC(routeParam(req, "id"), parsed.data, userId);
+    const out = await runCommandeWorkflowActionSVC(
+      routeParam(req, "id"),
+      parsed.data,
+      userId,
+      typeof req.user?.role === "string" ? req.user.role : null
+    );
     if (!out) {
       res.status(404).json({ error: "Not found" });
       return;

@@ -30,3 +30,38 @@ curl -sS -X PATCH "http://localhost:5000/api/v1/devis/7" \
 # DELETE
 curl -sS -X DELETE "http://localhost:5000/api/v1/devis/7" \
   -H "Accept: application/json"
+
+# ------------------------------------------------------------------
+# #167 — workflow durci (automate, verrou optimiste, idempotence)
+# ------------------------------------------------------------------
+
+# TRANSITION DE STATUT (PATCH statut seul + verrou optimiste)
+# 409 DEVIS_INVALID_TRANSITION si l automate refuse ; 409 DEVIS_STALE si jeton perime.
+curl -sS -X PATCH "http://localhost:5000/api/v1/devis/7" \
+  -H "Accept: application/json" \
+  -F 'data={"statut":"ENVOYE","user_id":1,"expected_updated_at":"2026-07-22T08:00:00+00:00"}'
+
+# CREATION IDEMPOTENTE (rejeu de la meme cle + meme payload -> 200 idempotent_replay)
+curl -sS -X POST "http://localhost:5000/api/v1/devis" \
+  -H "Accept: application/json" \
+  -H "Idempotency-Key: devis-create-2026-0001" \
+  -F 'data={"client_id":"001","user_id":1,"statut":"BROUILLON","lignes":[{"description":"Line","quantite":1,"prix_unitaire_ht":100}]}'
+
+# REVISION (nouvelle version ; nait BROUILLON ; verrou + idempotence)
+curl -sS -X POST "http://localhost:5000/api/v1/devis/7/revise" \
+  -H "Accept: application/json" \
+  -H "Idempotency-Key: devis-revise-2026-0001" \
+  -F 'data={"user_id":1,"expected_updated_at":"2026-07-22T08:00:00+00:00"}'
+
+# HISTORIQUE DES VERSIONS (lignee V1 -> Vn de la racine)
+curl -sS "http://localhost:5000/api/v1/devis/7/versions" \
+  -H "Accept: application/json"
+
+# CONVERSION CONTROLEE (aperçu = GET /commande-draft ; confirmation ci-dessous)
+# 201 = commande creee ; 200 already_converted = commande existante retournee ;
+# 409 DEVIS_DRAFT_STALE = version source modifiee depuis l aperçu.
+curl -sS -X POST "http://localhost:5000/api/v1/devis/7/convert-to-commande" \
+  -H "Accept: application/json" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: devis-convert-2026-0001" \
+  -d '{"expected_updated_at":"2026-07-22T08:00:00+00:00"}'

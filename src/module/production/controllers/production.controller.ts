@@ -9,6 +9,7 @@ import {
   createOfSchema,
   createOfReceiptSchema,
   createPosteSchema,
+  generateOfsSchema,
   listMachinesQuerySchema,
   listOfQuerySchema,
   listPostesQuerySchema,
@@ -16,6 +17,8 @@ import {
   ofIdParamSchema,
   ofOperationIdParamSchema,
   posteIdParamSchema,
+  previewOfGenerationSchema,
+  reorderOfOperationsSchema,
   startOfTimeLogSchema,
   stopOfTimeLogSchema,
   updateMachineSchema,
@@ -31,6 +34,8 @@ import {
   svcCreateMachineOnboarding,
   svcCreateOrdreFabrication,
   svcCreatePoste,
+  svcGenerateOfs,
+  svcGetOfTechnicalSnapshot,
   svcGetOrdreFabrication,
   svcGetOrdreFabricationTree,
   svcGetMachine,
@@ -41,6 +46,8 @@ import {
   svcListMachines,
   svcListPostes,
   svcCreateOfReceipt,
+  svcPreviewOfGeneration,
+  svcReorderOfOperations,
   svcStartOfOperationTimeLog,
   svcStopOfOperationTimeLog,
   svcUpdateOrdreFabrication,
@@ -50,6 +57,8 @@ import {
   svcUpdatePoste,
 } from "../services/production.service";
 import { svcGetMachineIntelligence } from "../services/machine-intelligence.service";
+import { roleHasMachineCapability } from "../domain/machine-rbac";
+import { roleHasOfCapability } from "../domain/of-rbac";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -77,7 +86,7 @@ function isMulterFile(value: unknown): value is Express.Multer.File {
   );
 }
 
-function buildAuditContext(req: Request): AuditContext {
+export function buildAuditContext(req: Request): AuditContext {
   const user = req.user;
   if (!user) throw new HttpError(401, "UNAUTHORIZED", "Authentication required");
 
@@ -94,6 +103,7 @@ function buildAuditContext(req: Request): AuditContext {
 
   return {
     user_id: user.id,
+    user_role: typeof user.role === "string" ? user.role : null,
     ip: ipFromHeader ?? req.ip ?? null,
     user_agent: ua,
     device_type: null,
@@ -130,10 +140,37 @@ function emitOfChanged(req: Request, params: { ofId: number; action: "created" |
   });
 }
 
+function hasMachineCostMutation(value: object): boolean {
+  return ["hourly_rate", "hourly_rate_source", "hourly_rate_effective_at"].some((key) =>
+    Object.prototype.hasOwnProperty.call(value, key)
+  );
+}
+
+function assertMachineRateProvenance(value: {
+  hourly_rate?: number | null;
+  hourly_rate_source?: string | null;
+  hourly_rate_effective_at?: string | null;
+}): void {
+  if (value.hourly_rate == null) return;
+  if (!value.hourly_rate_source || !value.hourly_rate_effective_at) {
+    throw new HttpError(422, "MACHINE_RATE_PROVENANCE_REQUIRED", "A non-null hourly rate requires its source and effective date.");
+  }
+}
+
+function redactMachineCosts<T extends object>(value: T) {
+  return {
+    ...value,
+    hourly_rate: null,
+    hourly_rate_source: null,
+    hourly_rate_effective_at: null,
+    hourly_rate_is_override: false,
+  };
+}
+
 export const listMachines = asyncHandler(async (req, res) => {
   const query = listMachinesQuerySchema.parse(req.query);
   const out = await svcListMachines(query);
-  res.json(out);
+  res.json(roleHasMachineCapability(req.user?.role, "costs") ? out : { ...out, items: out.items.map(redactMachineCosts) });
 });
 
 export const getMachine = asyncHandler(async (req, res) => {
@@ -144,27 +181,40 @@ export const getMachine = asyncHandler(async (req, res) => {
     return;
   }
   const intelligence = await svcGetMachineIntelligence(id);
-  res.json({ ...out, ...(intelligence ?? {}) });
+  const detail = { ...out, ...(intelligence ?? {}) };
+  res.json(roleHasMachineCapability(req.user?.role, "costs") ? detail : redactMachineCosts(detail));
 });
 
 export const createMachine = asyncHandler(async (req, res) => {
   const audit = buildAuditContext(req);
   const raw = parseBody(req);
   const body = createMachineSchema.parse({ body: raw }).body;
+  assertMachineRateProvenance(body);
+  if (hasMachineCostMutation(body) && !roleHasMachineCapability(req.user?.role, "costs")) {
+    throw new HttpError(403, "MACHINE_COST_FORBIDDEN", "Machine cost capability required.");
+  }
   const file = (req as Request & { file?: unknown }).file;
   const imagePath = isMulterFile(file) ? file.path : null;
-  const out = await svcCreateMachine({ body, image_path: imagePath, audit });
-  res.status(201).json(out);
+  const idempotencyKey = typeof req.headers["idempotency-key"] === "string" ? req.headers["idempotency-key"].trim() : null;
+  if (idempotencyKey && (idempotencyKey.length < 8 || idempotencyKey.length > 200)) throw new HttpError(400, "INVALID_IDEMPOTENCY_KEY", "Idempotency-Key must contain 8 to 200 characters.");
+  const out = await svcCreateMachine({ body, image_path: imagePath, idempotency_key: idempotencyKey, audit });
+  res.status(201).json(roleHasMachineCapability(req.user?.role, "costs") ? out : redactMachineCosts(out));
 });
 
 export const createMachineOnboarding = asyncHandler(async (req, res) => {
   const audit = buildAuditContext(req);
   const raw = parseBody(req);
   const body = createMachineOnboardingSchema.parse({ body: raw }).body;
+  assertMachineRateProvenance(body.machine);
+  if (hasMachineCostMutation(body.machine) && !roleHasMachineCapability(req.user?.role, "costs")) {
+    throw new HttpError(403, "MACHINE_COST_FORBIDDEN", "Machine cost capability required.");
+  }
   const file = (req as Request & { file?: unknown }).file;
   const imagePath = isMulterFile(file) ? file.path : null;
-  const out = await svcCreateMachineOnboarding({ body, image_path: imagePath, audit });
-  res.status(201).json(out);
+  const idempotencyKey = typeof req.headers["idempotency-key"] === "string" ? req.headers["idempotency-key"].trim() : null;
+  if (!idempotencyKey || idempotencyKey.length < 8 || idempotencyKey.length > 200) throw new HttpError(400, "IDEMPOTENCY_KEY_REQUIRED", "A stable Idempotency-Key containing 8 to 200 characters is required.");
+  const out = await svcCreateMachineOnboarding({ body, image_path: imagePath, idempotency_key: idempotencyKey, audit });
+  res.status(201).json(roleHasMachineCapability(req.user?.role, "costs") ? out : redactMachineCosts(out));
 });
 
 export const updateMachine = asyncHandler(async (req, res) => {
@@ -172,6 +222,10 @@ export const updateMachine = asyncHandler(async (req, res) => {
   const { id } = machineIdParamSchema.parse({ params: req.params }).params;
   const raw = parseBody(req);
   const patch = updateMachineSchema.parse({ body: raw }).body;
+  assertMachineRateProvenance(patch);
+  if (hasMachineCostMutation(patch) && !roleHasMachineCapability(req.user?.role, "costs")) {
+    throw new HttpError(403, "MACHINE_COST_FORBIDDEN", "Machine cost capability required.");
+  }
   const file = (req as Request & { file?: unknown }).file;
   const imagePath = isMulterFile(file) ? file.path : undefined;
   const out = await svcUpdateMachine({ id, patch, image_path: imagePath, audit });
@@ -179,7 +233,7 @@ export const updateMachine = asyncHandler(async (req, res) => {
     res.status(404).json({ error: "Not found" });
     return;
   }
-  res.status(200).json(out);
+  res.status(200).json(roleHasMachineCapability(req.user?.role, "costs") ? out : redactMachineCosts(out));
 });
 
 export const updateMachineOnboarding = asyncHandler(async (req, res) => {
@@ -187,6 +241,13 @@ export const updateMachineOnboarding = asyncHandler(async (req, res) => {
   const { id } = machineIdParamSchema.parse({ params: req.params }).params;
   const raw = parseBody(req);
   const body = updateMachineOnboardingSchema.parse({ body: raw }).body;
+  assertMachineRateProvenance(body.machine);
+  if (hasMachineCostMutation(body.machine) && !roleHasMachineCapability(req.user?.role, "costs")) {
+    throw new HttpError(403, "MACHINE_COST_FORBIDDEN", "Machine cost capability required.");
+  }
+  if (body.update_shared_model && !roleHasMachineCapability(req.user?.role, "model_update")) {
+    throw new HttpError(403, "MACHINE_MODEL_UPDATE_FORBIDDEN", "Shared machine model update capability required.");
+  }
   const file = (req as Request & { file?: unknown }).file;
   const imagePath = isMulterFile(file) ? file.path : undefined;
   const out = await svcUpdateMachineOnboarding({ id, body, image_path: imagePath, audit });
@@ -194,7 +255,7 @@ export const updateMachineOnboarding = asyncHandler(async (req, res) => {
     res.status(404).json({ error: "Not found" });
     return;
   }
-  res.status(200).json(out);
+  res.status(200).json(roleHasMachineCapability(req.user?.role, "costs") ? out : redactMachineCosts(out));
 });
 
 export const archiveMachine = asyncHandler(async (req, res) => {
@@ -338,6 +399,73 @@ export const startOfOperationTimeLog = asyncHandler(async (req, res) => {
   res.status(201).json(out);
 });
 
+// #170 — réordonnancement pré-lancement des opérations (DnD/clavier).
+export const reorderOfOperations = asyncHandler(async (req, res) => {
+  const audit = buildAuditContext(req);
+  const { id } = ofIdParamSchema.parse({ params: req.params }).params;
+  const raw = parseBody(req);
+  const body = reorderOfOperationsSchema.parse({ body: raw }).body;
+  const out = await svcReorderOfOperations({ of_id: id, body, audit });
+  if (!out) {
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
+  emitOfChanged(req, { ofId: id, action: "updated" });
+  res.status(200).json(out);
+});
+
+// #170 — aperçu de génération sans effet de bord.
+export const previewOfGeneration = asyncHandler(async (req, res) => {
+  const audit = buildAuditContext(req);
+  const raw = parseBody(req);
+  const body = previewOfGenerationSchema.parse({ body: raw }).body;
+  const out = await withGenerationDependencyGuard(() => svcPreviewOfGeneration({ body, audit }));
+  res.status(200).json(out);
+});
+
+// #170 — génération récursive confirmée (affaire ou manuel), idempotente.
+export const generateOfs = asyncHandler(async (req, res) => {
+  const audit = buildAuditContext(req);
+  const raw = parseBody(req);
+  const body = generateOfsSchema.parse({ body: raw }).body;
+  const idempotencyKey = typeof req.headers["idempotency-key"] === "string" ? req.headers["idempotency-key"].trim() : null;
+  if (!idempotencyKey || idempotencyKey.length < 8 || idempotencyKey.length > 200) {
+    throw new HttpError(400, "IDEMPOTENCY_KEY_REQUIRED", "A stable Idempotency-Key containing 8 to 200 characters is required.");
+  }
+  const out = await withGenerationDependencyGuard(() =>
+    svcGenerateOfs({ body, idempotency_key: idempotencyKey, audit })
+  );
+  if (!out.idempotent_replay && out.root_of_id) {
+    emitOfChanged(req, { ofId: out.root_of_id, action: "created" });
+  }
+  res.status(out.idempotent_replay ? 200 : 201).json(out);
+});
+
+// #170 — contenu figé du snapshot + définition courante (comparaison UI).
+export const getOfTechnicalSnapshot = asyncHandler(async (req, res) => {
+  const { id } = ofIdParamSchema.parse({ params: req.params }).params;
+  const out = await svcGetOfTechnicalSnapshot({ of_id: id });
+  if (!out) {
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
+  res.json(out);
+});
+
+// #170 §11 : une dépendance indisponible (pool PostgreSQL saturé/refusé) est un
+// 503 explicite, pas un 500 générique.
+async function withGenerationDependencyGuard<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    const code = (err as { code?: unknown } | null)?.code;
+    if (code === "ECONNREFUSED" || code === "ETIMEDOUT" || code === "57P01" || code === "53300") {
+      throw new HttpError(503, "DEPENDENCY_UNAVAILABLE", "La base de données est momentanément indisponible. Réessayez.");
+    }
+    throw err;
+  }
+}
+
 // -------------------------
 // Phase 5 - OF -> Entree en stock
 // -------------------------
@@ -345,7 +473,15 @@ export const startOfOperationTimeLog = asyncHandler(async (req, res) => {
 export const getOfReceiptContext = asyncHandler(async (req, res) => {
   const { id } = ofIdParamSchema.parse({ params: req.params }).params;
   const out = await svcGetOfReceiptContext({ of_id: id });
-  res.json(out);
+  const canDecideQuality = roleHasOfCapability(req.user?.role, "quality_decision");
+  res.json({
+    ...out,
+    permissions: {
+      can_receive: true,
+      can_release: canDecideQuality,
+      allowed_quality_statuses: canDecideQuality ? ["LIBERE", "QUARANTAINE", "BLOQUE"] : ["QUARANTAINE"],
+    },
+  });
 });
 
 export const createOfReceipt = asyncHandler(async (req, res) => {
@@ -353,9 +489,22 @@ export const createOfReceipt = asyncHandler(async (req, res) => {
   const { id } = ofIdParamSchema.parse({ params: req.params }).params;
   const raw = parseBody(req);
   const body = createOfReceiptSchema.parse({ body: raw }).body;
-  const out = await svcCreateOfReceipt({ of_id: id, body, audit });
-  emitOfChanged(req, { ofId: id, action: "status_changed" });
-  res.status(201).json(out);
+  const idempotencyKey = typeof req.headers["idempotency-key"] === "string" ? req.headers["idempotency-key"].trim() : null;
+  if (!idempotencyKey || idempotencyKey.length < 8 || idempotencyKey.length > 200) {
+    throw new HttpError(400, "IDEMPOTENCY_KEY_REQUIRED", "Une cle Idempotency-Key stable de 8 a 200 caracteres est requise.");
+  }
+  if (body.quality_status !== "QUARANTAINE" && !roleHasOfCapability(req.user?.role, "quality_decision")) {
+    throw new HttpError(
+      403,
+      "OF_QUALITY_DECISION_FORBIDDEN",
+      "Votre role peut receptionner en quarantaine, mais pas liberer ou bloquer le lot."
+    );
+  }
+  const out = await svcCreateOfReceipt({ of_id: id, body, idempotency_key: idempotencyKey, audit });
+  if (!out.idempotent_replay) {
+    emitOfChanged(req, { ofId: id, action: "status_changed" });
+  }
+  res.status(out.idempotent_replay ? 200 : 201).json(out);
 });
 
 export const getOfTraceability = asyncHandler(async (req, res) => {

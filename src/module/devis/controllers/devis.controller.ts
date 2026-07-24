@@ -4,6 +4,7 @@ import path from "node:path";
 import { getDocumentStoragePath, isPathInsideDirectory } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import {
+  convertDevisBodySchema,
   devisArticleParamsSchema,
   devisArticleDevisCodeParamsSchema,
   devisByArticleQuerySchema,
@@ -15,6 +16,7 @@ import {
   type UpdateDevisBodyDTO,
 } from "../validators/devis.validators";
 import type { UploadedDocument } from "../types/devis.types";
+import type { AuditContext } from "../repository/devis.repository";
 import {
   svcConvertDevisToCommande,
   svcCreateDevis,
@@ -25,9 +27,47 @@ import {
   svcGetDevis,
   svcGetDevisDocumentFileMeta,
   svcListDevis,
+  svcListDevisVersions,
   svcReviseDevis,
   svcUpdateDevis,
 } from "../services/devis.service";
+
+/** Contexte d'audit transactionnel (#167) — même construction que #172, sans PII superflue. */
+function buildAuditContext(req: Request): AuditContext {
+  const user = req.user;
+  if (!user) throw new HttpError(401, "UNAUTHORIZED", "Authentication required");
+
+  const forwardedFor = req.headers["x-forwarded-for"];
+  const ipFromHeader = typeof forwardedFor === "string" ? forwardedFor.split(",")[0]?.trim() : null;
+  const ua = typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : null;
+  const pageKey = typeof req.headers["x-page-key"] === "string" ? req.headers["x-page-key"] : null;
+  const clientSessionId =
+    typeof req.headers["x-client-session-id"] === "string"
+      ? req.headers["x-client-session-id"]
+      : typeof req.headers["x-session-id"] === "string"
+        ? req.headers["x-session-id"]
+        : null;
+
+  return {
+    user_id: user.id,
+    role: user.role ?? null,
+    ip: ipFromHeader ?? req.ip ?? null,
+    user_agent: ua,
+    device_type: null,
+    os: null,
+    browser: null,
+    path: req.originalUrl ?? null,
+    page_key: pageKey,
+    client_session_id: clientSessionId,
+  };
+}
+
+/** Clé d'idempotence : en-tête HTTP standard uniquement (≥ 8 caractères, tronquée à 120). */
+function idempotencyKeyFrom(req: Request): string | undefined {
+  const header = req.headers["idempotency-key"];
+  if (typeof header === "string" && header.trim().length >= 8) return header.trim().slice(0, 120);
+  return undefined;
+}
 
 function resolveMimeType(value: string | null | undefined): string {
   const t = String(value ?? "").trim().toLowerCase();
@@ -96,8 +136,11 @@ export const createDevis: RequestHandler = async (req, res, next) => {
     if (!userId) throw new HttpError(422, "USER_ID_REQUIRED", "user_id is required");
 
     const documents = getUploadedDocuments(req);
-    const out = await svcCreateDevis(dto as CreateDevisBodyDTO, userId, documents);
-    res.status(201).json(out);
+    const out = await svcCreateDevis(dto as CreateDevisBodyDTO, userId, documents, {
+      idempotency_key: idempotencyKeyFrom(req),
+      audit: buildAuditContext(req),
+    });
+    res.status(out.idempotent_replay ? 200 : 201).json(out);
   } catch (err) {
     next(err);
   }
@@ -113,7 +156,9 @@ export const updateDevis: RequestHandler = async (req, res, next) => {
     if (!userId) throw new HttpError(422, "USER_ID_REQUIRED", "user_id is required");
 
     const documents = getUploadedDocuments(req);
-    const out = await svcUpdateDevis(id, dto as UpdateDevisBodyDTO, userId, documents);
+    const out = await svcUpdateDevis(id, dto as UpdateDevisBodyDTO, userId, documents, {
+      audit: buildAuditContext(req),
+    });
     if (!out) {
       res.status(404).json({ error: "Not found" });
       return;
@@ -127,7 +172,7 @@ export const updateDevis: RequestHandler = async (req, res, next) => {
 export const deleteDevis: RequestHandler = async (req, res, next) => {
   try {
     const { id } = devisIdParamsSchema.parse(req.params);
-    const ok = await svcDeleteDevis(id);
+    const ok = await svcDeleteDevis(id, { audit: buildAuditContext(req) });
     if (!ok) {
       res.status(404).json({ error: "Not found" });
       return;
@@ -141,9 +186,29 @@ export const deleteDevis: RequestHandler = async (req, res, next) => {
 export const convertDevisToCommande: RequestHandler = async (req, res, next) => {
   try {
     const { id } = devisIdParamsSchema.parse(req.params);
-    const out = await svcConvertDevisToCommande(id);
+    const body = convertDevisBodySchema.parse(req.body ?? {});
+    const out = await svcConvertDevisToCommande(id, {
+      expected_updated_at: body?.expected_updated_at,
+      idempotency_key: idempotencyKeyFrom(req),
+      audit: buildAuditContext(req),
+    });
     if (!out) throw new HttpError(404, "DEVIS_NOT_FOUND", "Devis not found");
-    res.status(201).json(out);
+    // 201 = commande créée par CET appel ; 200 = résultat idempotent (rejeu ou commande existante).
+    res.status(out.already_converted || out.idempotent_replay ? 200 : 201).json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const listDevisVersions: RequestHandler = async (req, res, next) => {
+  try {
+    const { id } = devisIdParamsSchema.parse(req.params);
+    const out = await svcListDevisVersions(id);
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.json({ items: out, total: out.length });
   } catch (err) {
     next(err);
   }
@@ -159,12 +224,15 @@ export const reviseDevis: RequestHandler = async (req, res, next) => {
     if (!userId) throw new HttpError(422, "USER_ID_REQUIRED", "user_id is required");
 
     const documents = getUploadedDocuments(req);
-    const out = await svcReviseDevis(id, dto as UpdateDevisBodyDTO, userId, documents);
+    const out = await svcReviseDevis(id, dto as UpdateDevisBodyDTO, userId, documents, {
+      idempotency_key: idempotencyKeyFrom(req),
+      audit: buildAuditContext(req),
+    });
     if (!out) {
       res.status(404).json({ error: "Not found" });
       return;
     }
-    res.status(201).json(out);
+    res.status(out.idempotent_replay ? 200 : 201).json(out);
   } catch (err) {
     next(err);
   }
