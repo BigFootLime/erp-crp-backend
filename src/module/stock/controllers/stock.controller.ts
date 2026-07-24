@@ -13,8 +13,11 @@ import {
   createMatiereSousEtatSchema,
   createEmplacementSchema,
   createLotSchema,
+  createLotGenealogySchema,
   createMagasinSchema,
   createMovementSchema,
+  compensateMovementSchema,
+  postMovementSchema,
   docIdParamSchema,
   emplacementIdParamSchema,
   idParamSchema,
@@ -32,6 +35,8 @@ import {
   listMovementsQuerySchema,
   magasinIdParamSchema,
   upsertInventoryLineSchema,
+  inventorySessionActionSchema,
+  cancelInventorySessionSchema,
   updateArticleSchema,
   archiveArticleSchema,
   reactivateArticleSchema,
@@ -40,6 +45,7 @@ import {
   articleDocumentMetadataSchema,
   updateEmplacementSchema,
   updateLotSchema,
+  updateLotQualitySchema,
   updateMagasinSchema,
   type CreateInventorySessionBodyDTO,
   type CreateArticleBodyDTO,
@@ -49,8 +55,11 @@ import {
   type CreateMatiereSousEtatBodyDTO,
   type CreateEmplacementBodyDTO,
   type CreateLotBodyDTO,
+  type CreateLotGenealogyBodyDTO,
   type CreateMagasinBodyDTO,
   type CreateMovementBodyDTO,
+  type CompensateMovementBodyDTO,
+  type PostMovementBodyDTO,
   type ListAnalyticsQueryDTO,
   type ListBalancesQueryDTO,
   type ListMatiereEtatsQueryDTO,
@@ -61,12 +70,19 @@ import {
   type ReactivateArticleBodyDTO,
   type UpdateEmplacementBodyDTO,
   type UpdateLotBodyDTO,
+  type UpdateLotQualityBodyDTO,
   type UpdateMagasinBodyDTO,
   type UpsertInventoryLineBodyDTO,
+  type InventorySessionActionBodyDTO,
+  type CancelInventorySessionBodyDTO,
 } from "../validators/stock.validators";
+import { roleHasStockCapability } from "../domain/stock-rbac";
 import type { AuditContext } from "../repository/stock.repository";
 import {
   closeStockInventorySessionSVC,
+  startStockInventorySessionSVC,
+  approveStockInventorySessionSVC,
+  cancelStockInventorySessionSVC,
   createStockInventorySessionSVC,
   createStockArticleFamilySVC,
   getStockInventorySessionSVC,
@@ -80,8 +96,12 @@ import {
   createStockArticleSVC,
   createStockEmplacementSVC,
   createStockLotSVC,
+  createStockLotGenealogySVC,
   createStockMagasinSVC,
   createStockMovementSVC,
+  previewStockMovementSVC,
+  compensateStockMovementSVC,
+  previewStockMovementCompensationSVC,
   getStockArticleDocumentForDownloadSVC,
   getStockArticleSVC,
   getStockArticlesKpisSVC,
@@ -91,6 +111,7 @@ import {
   listStockMatiereNuancesSVC,
   listStockMatiereSousEtatsSVC,
   getStockLotSVC,
+  getStockLotGenealogySVC,
   getStockMagasinSVC,
   getStockMagasinsKpisSVC,
   getStockMovementDocumentForDownloadSVC,
@@ -113,6 +134,7 @@ import {
   listStockArticleWhereUsedSVC,
   updateStockEmplacementSVC,
   updateStockLotSVC,
+  updateStockLotQualitySVC,
   updateStockMagasinSVC,
   deactivateStockMagasinSVC,
   activateStockMagasinSVC,
@@ -141,7 +163,7 @@ export const createStockInventorySession: RequestHandler = async (req, res, next
   try {
     const audit = buildAuditContext(req);
     const body: CreateInventorySessionBodyDTO = createInventorySessionSchema.parse({ body: req.body }).body;
-    const out = await createStockInventorySessionSVC(body, audit);
+    const out = await createStockInventorySessionSVC(body, audit, getRequiredIdempotencyKey(req));
     res.status(201).json(out);
   } catch (err) {
     next(err);
@@ -181,7 +203,12 @@ export const upsertStockInventorySessionLine: RequestHandler = async (req, res, 
     const audit = buildAuditContext(req);
     const { id } = idParamSchema.parse({ params: req.params }).params;
     const body: UpsertInventoryLineBodyDTO = upsertInventoryLineSchema.parse({ body: req.body }).body;
-    const out = await upsertStockInventorySessionLineSVC(id, body, audit);
+    const out = await upsertStockInventorySessionLineSVC(
+      id,
+      body,
+      audit,
+      getRequiredIdempotencyKey(req)
+    );
     if (!out) {
       res.status(404).json({ error: "Not found" });
       return;
@@ -196,7 +223,15 @@ export const closeStockInventorySession: RequestHandler = async (req, res, next)
   try {
     const audit = buildAuditContext(req);
     const { id } = idParamSchema.parse({ params: req.params }).params;
-    const out = await closeStockInventorySessionSVC(id, audit);
+    const body: InventorySessionActionBodyDTO = inventorySessionActionSchema.parse({
+      body: req.body,
+    }).body;
+    const out = await closeStockInventorySessionSVC(
+      id,
+      body,
+      audit,
+      getRequiredIdempotencyKey(req)
+    );
     if (!out) {
       res.status(404).json({ error: "Not found" });
       return;
@@ -734,6 +769,125 @@ export const updateStockLot: RequestHandler = async (req, res, next) => {
   }
 };
 
+export const updateStockLotQuality: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildAuditContext(req);
+    const { id } = idParamSchema.parse({ params: req.params }).params;
+    const body: UpdateLotQualityBodyDTO = updateLotQualitySchema.parse({ body: req.body }).body;
+    const out = await updateStockLotQualitySVC(
+      id,
+      body,
+      audit,
+      getRequiredIdempotencyKey(req)
+    );
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const startStockInventorySession: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildAuditContext(req);
+    const { id } = idParamSchema.parse({ params: req.params }).params;
+    const body: InventorySessionActionBodyDTO = inventorySessionActionSchema.parse({
+      body: req.body,
+    }).body;
+    const out = await startStockInventorySessionSVC(
+      id,
+      body,
+      audit,
+      getRequiredIdempotencyKey(req)
+    );
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const approveStockInventorySession: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildAuditContext(req);
+    const { id } = idParamSchema.parse({ params: req.params }).params;
+    const body: InventorySessionActionBodyDTO = inventorySessionActionSchema.parse({
+      body: req.body,
+    }).body;
+    const out = await approveStockInventorySessionSVC(
+      id,
+      body,
+      audit,
+      getRequiredIdempotencyKey(req)
+    );
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const cancelStockInventorySession: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildAuditContext(req);
+    const { id } = idParamSchema.parse({ params: req.params }).params;
+    const body: CancelInventorySessionBodyDTO = cancelInventorySessionSchema.parse({
+      body: req.body,
+    }).body;
+    const out = await cancelStockInventorySessionSVC(
+      id,
+      body,
+      audit,
+      getRequiredIdempotencyKey(req)
+    );
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const getStockLotGenealogy: RequestHandler = async (req, res, next) => {
+  try {
+    const { id } = idParamSchema.parse({ params: req.params }).params;
+    const out = await getStockLotGenealogySVC(id);
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const createStockLotGenealogy: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildAuditContext(req);
+    const body: CreateLotGenealogyBodyDTO = createLotGenealogySchema.parse({ body: req.body }).body;
+    const out = await createStockLotGenealogySVC(
+      body,
+      audit,
+      getRequiredIdempotencyKey(req)
+    );
+    res.status(201).json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
 export const listStockBalances: RequestHandler = async (req, res, next) => {
   try {
     const parsed = listBalancesQuerySchema.safeParse(req.query);
@@ -780,8 +934,58 @@ export const getStockMovement: RequestHandler = async (req, res, next) => {
 export const createStockMovement: RequestHandler = async (req, res, next) => {
   try {
     const audit = buildAuditContext(req);
-    const body: CreateMovementBodyDTO = createMovementSchema.parse({ body: req.body }).body;
+    const parsedBody: CreateMovementBodyDTO = createMovementSchema.parse({ body: req.body }).body;
+    const body: CreateMovementBodyDTO = {
+      ...parsedBody,
+      idempotency_key: getRequiredIdempotencyKey(req),
+    };
     const out = await createStockMovementSVC(body, audit);
+    res.status(201).json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const previewStockMovement: RequestHandler = async (req, res, next) => {
+  try {
+    const body: CreateMovementBodyDTO = createMovementSchema.parse({ body: req.body }).body;
+    const out = await previewStockMovementSVC(body);
+    res.json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const previewStockMovementCompensation: RequestHandler = async (req, res, next) => {
+  try {
+    const { id } = idParamSchema.parse({ params: req.params }).params;
+    const body: CompensateMovementBodyDTO = compensateMovementSchema.parse({ body: req.body }).body;
+    const out = await previewStockMovementCompensationSVC(id, body);
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const compensateStockMovement: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildAuditContext(req);
+    const { id } = idParamSchema.parse({ params: req.params }).params;
+    const body: CompensateMovementBodyDTO = compensateMovementSchema.parse({ body: req.body }).body;
+    const out = await compensateStockMovementSVC(
+      id,
+      body,
+      audit,
+      getRequiredIdempotencyKey(req)
+    );
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
     res.status(201).json(out);
   } catch (err) {
     next(err);
@@ -792,7 +996,23 @@ export const postStockMovement: RequestHandler = async (req, res, next) => {
   try {
     const audit = buildAuditContext(req);
     const { id } = idParamSchema.parse({ params: req.params }).params;
-    const out = await postStockMovementSVC(id, audit);
+    const body: PostMovementBodyDTO = postMovementSchema.parse({ body: req.body }).body;
+    if (
+      body.negative_stock_override &&
+      !roleHasStockCapability(req.user?.role, "negative_stock_override")
+    ) {
+      throw new HttpError(
+        403,
+        "NEGATIVE_STOCK_OVERRIDE_FORBIDDEN",
+        "Negative-stock override capability is required"
+      );
+    }
+    const out = await postStockMovementSVC(
+      id,
+      body,
+      audit,
+      getRequiredIdempotencyKey(req)
+    );
     if (!out) {
       res.status(404).json({ error: "Not found" });
       return;
@@ -807,7 +1027,7 @@ export const cancelStockMovement: RequestHandler = async (req, res, next) => {
   try {
     const audit = buildAuditContext(req);
     const { id } = idParamSchema.parse({ params: req.params }).params;
-    const out = await cancelStockMovementSVC(id, audit);
+    const out = await cancelStockMovementSVC(id, audit, getRequiredIdempotencyKey(req));
     if (!out) {
       res.status(404).json({ error: "Not found" });
       return;

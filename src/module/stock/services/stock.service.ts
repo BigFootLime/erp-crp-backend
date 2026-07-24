@@ -14,11 +14,14 @@ import type {
   StockInventorySessionLine,
   StockInventorySessionListItem,
   StockLotDetail,
+  StockLotGenealogy,
   StockLotListItem,
   StockMagasinDetail,
   StockMagasinKpis,
   StockMagasinListItem,
   StockMovementDetail,
+  StockMovementCompensationPreview,
+  StockMovementImpactPreview,
   StockMovementListItem,
 } from "../types/stock.types";
 import type {
@@ -32,6 +35,8 @@ import type {
   CreateLotBodyDTO,
   CreateMagasinBodyDTO,
   CreateMovementBodyDTO,
+  CompensateMovementBodyDTO,
+  PostMovementBodyDTO,
   ListAnalyticsQueryDTO,
   ListInventorySessionsQueryDTO,
   ListArticlesQueryDTO,
@@ -47,17 +52,24 @@ import type {
   ListMagasinsQueryDTO,
   ListMovementsQueryDTO,
   UpsertInventoryLineBodyDTO,
+  InventorySessionActionBodyDTO,
+  CancelInventorySessionBodyDTO,
   UpdateArticleBodyDTO,
   ArchiveArticleBodyDTO,
   ReactivateArticleBodyDTO,
   ArticleDocumentMetadataDTO,
   UpdateEmplacementBodyDTO,
   UpdateLotBodyDTO,
+  UpdateLotQualityBodyDTO,
+  CreateLotGenealogyBodyDTO,
   UpdateMagasinBodyDTO,
 } from "../validators/stock.validators";
 import type { AuditContext } from "../repository/stock.repository";
 import {
   repoCloseInventorySession,
+  repoStartInventorySession,
+  repoApproveInventorySession,
+  repoCancelInventorySession,
   repoCreateInventorySession,
   repoCreateArticleFamily,
   repoCreateMatiereEtat,
@@ -71,6 +83,9 @@ import {
   repoCreateLot,
   repoCreateMagasin,
   repoCreateMovement,
+  repoPreviewMovement,
+  repoCompensateMovement,
+  repoPreviewMovementCompensation,
   repoGetInventorySession,
   repoGetStockAnalytics,
   repoGetArticle,
@@ -107,6 +122,9 @@ import {
   repoListArticleWhereUsed,
   repoUpdateEmplacement,
   repoUpdateLot,
+  repoUpdateLotQuality,
+  repoGetLotGenealogy,
+  repoCreateLotGenealogy,
   repoUpdateMagasin,
   repoDeactivateMagasin,
   repoActivateMagasin,
@@ -116,8 +134,12 @@ export async function listStockInventorySessionsSVC(filters: ListInventorySessio
   return repoListInventorySessions(filters);
 }
 
-export async function createStockInventorySessionSVC(body: CreateInventorySessionBodyDTO, audit: AuditContext): Promise<StockInventorySessionListItem> {
-  return repoCreateInventorySession(body, audit);
+export async function createStockInventorySessionSVC(
+  body: CreateInventorySessionBodyDTO,
+  audit: AuditContext,
+  idempotencyKey: string
+): Promise<StockInventorySessionListItem> {
+  return repoCreateInventorySession(body, audit, idempotencyKey);
 }
 
 export async function getStockInventorySessionSVC(id: string): Promise<StockInventorySessionDetail | null> {
@@ -131,13 +153,46 @@ export async function listStockInventorySessionLinesSVC(id: string): Promise<Sto
 export async function upsertStockInventorySessionLineSVC(
   sessionId: string,
   body: UpsertInventoryLineBodyDTO,
-  audit: AuditContext
+  audit: AuditContext,
+  idempotencyKey: string
 ): Promise<StockInventorySessionLine | null> {
-  return repoUpsertInventoryLine(sessionId, body, audit);
+  return repoUpsertInventoryLine(sessionId, body, audit, idempotencyKey);
 }
 
-export async function closeStockInventorySessionSVC(id: string, audit: AuditContext): Promise<StockInventorySessionDetail | null> {
-  return repoCloseInventorySession(id, audit);
+export async function startStockInventorySessionSVC(
+  id: string,
+  body: InventorySessionActionBodyDTO,
+  audit: AuditContext,
+  idempotencyKey: string
+): Promise<StockInventorySessionDetail | null> {
+  return repoStartInventorySession(id, body, audit, idempotencyKey);
+}
+
+export async function approveStockInventorySessionSVC(
+  id: string,
+  body: InventorySessionActionBodyDTO,
+  audit: AuditContext,
+  idempotencyKey: string
+): Promise<StockInventorySessionDetail | null> {
+  return repoApproveInventorySession(id, body, audit, idempotencyKey);
+}
+
+export async function cancelStockInventorySessionSVC(
+  id: string,
+  body: CancelInventorySessionBodyDTO,
+  audit: AuditContext,
+  idempotencyKey: string
+): Promise<StockInventorySessionDetail | null> {
+  return repoCancelInventorySession(id, body, audit, idempotencyKey);
+}
+
+export async function closeStockInventorySessionSVC(
+  id: string,
+  body: InventorySessionActionBodyDTO,
+  audit: AuditContext,
+  idempotencyKey: string
+): Promise<StockInventorySessionDetail | null> {
+  return repoCloseInventorySession(id, body, audit, idempotencyKey);
 }
 
 export async function listStockArticlesSVC(filters: ListArticlesQueryDTO) {
@@ -303,6 +358,27 @@ export async function updateStockLotSVC(id: string, patch: UpdateLotBodyDTO, aud
   return repoUpdateLot(id, patch, audit);
 }
 
+export async function updateStockLotQualitySVC(
+  id: string,
+  body: UpdateLotQualityBodyDTO,
+  audit: AuditContext,
+  idempotencyKey: string
+): Promise<StockLotDetail | null> {
+  return repoUpdateLotQuality(id, body, audit, idempotencyKey);
+}
+
+export async function getStockLotGenealogySVC(id: string): Promise<StockLotGenealogy | null> {
+  return repoGetLotGenealogy(id);
+}
+
+export async function createStockLotGenealogySVC(
+  body: CreateLotGenealogyBodyDTO,
+  audit: AuditContext,
+  idempotencyKey: string
+) {
+  return repoCreateLotGenealogy(body, audit, idempotencyKey);
+}
+
 export async function listStockBalancesSVC(filters: ListBalancesQueryDTO) {
   return repoListBalances(filters);
 }
@@ -323,12 +399,43 @@ export async function createStockMovementSVC(body: CreateMovementBodyDTO, audit:
   return repoCreateMovement(body, audit);
 }
 
-export async function postStockMovementSVC(id: string, audit: AuditContext): Promise<StockMovementDetail | null> {
-  return repoPostMovement(id, audit);
+export async function previewStockMovementSVC(
+  body: CreateMovementBodyDTO
+): Promise<StockMovementImpactPreview> {
+  return repoPreviewMovement(body);
 }
 
-export async function cancelStockMovementSVC(id: string, audit: AuditContext): Promise<StockMovementDetail | null> {
-  return repoCancelMovement(id, audit);
+export async function previewStockMovementCompensationSVC(
+  id: string,
+  body: CompensateMovementBodyDTO
+): Promise<StockMovementCompensationPreview | null> {
+  return repoPreviewMovementCompensation(id, body);
+}
+
+export async function compensateStockMovementSVC(
+  id: string,
+  body: CompensateMovementBodyDTO,
+  audit: AuditContext,
+  idempotencyKey: string
+): Promise<StockMovementDetail | null> {
+  return repoCompensateMovement(id, body, audit, idempotencyKey);
+}
+
+export async function postStockMovementSVC(
+  id: string,
+  body: PostMovementBodyDTO,
+  audit: AuditContext,
+  idempotencyKey: string
+): Promise<StockMovementDetail | null> {
+  return repoPostMovement(id, body, audit, idempotencyKey);
+}
+
+export async function cancelStockMovementSVC(
+  id: string,
+  audit: AuditContext,
+  idempotencyKey: string
+): Promise<StockMovementDetail | null> {
+  return repoCancelMovement(id, audit, idempotencyKey);
 }
 
 export async function listStockArticleDocumentsSVC(articleId: string): Promise<StockDocument[] | null> {

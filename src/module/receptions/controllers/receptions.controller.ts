@@ -71,6 +71,18 @@ function getUserRef(req: Request): { id: number; name: string } {
   return { id: user.id, name }
 }
 
+function getRequiredIdempotencyKey(req: Request): string {
+  const value = req.headers["idempotency-key"]
+  if (typeof value !== "string" || value.trim().length < 8 || value.trim().length > 200) {
+    throw new HttpError(
+      400,
+      "IDEMPOTENCY_KEY_REQUIRED",
+      "A valid Idempotency-Key header is required (8 to 200 characters)."
+    )
+  }
+  return value.trim()
+}
+
 function emitReceptionChanged(
   req: Request,
   params: { receptionId: string; action: "created" | "updated" | "deleted" | "status_changed" }
@@ -327,7 +339,7 @@ export const createReceptionStockReceipt: RequestHandler = async (req, res, next
     const audit = buildAuditContext(req)
     const { id, lineId } = lineIdParamSchema.parse({ params: req.params }).params
     const body = stockReceiptSchema.parse({ body: req.body }).body
-    const out = await createReceptionStockReceiptSVC(id, lineId, body, audit)
+    const out = await createReceptionStockReceiptSVC(id, lineId, body, audit, getRequiredIdempotencyKey(req))
     if (!out) {
       res.status(404).json({ error: "Not found" })
       return

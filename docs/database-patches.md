@@ -116,3 +116,24 @@ backed up to `cerp_prod_pre_223_20260723_145750.backup` (SHA-256
 `9a037c37563e1bbc57fa34b7e8c3fd2aaa1cca09e0b994628e5f0d4e9ab83dc1`),
 then the patch was applied, verified and recorded in
 `public.cerp_schema_migrations`.
+
+## Issue #225 - Stock, lots, mouvements, magasins et inventaires
+
+Patch `20260723_stock_traceability_225.sql` extends the existing stock ledger
+with actor-scoped immutable command receipts, correlated reversals/transfers,
+quality-aware availability, source-backed reservations, lot genealogy and
+versioned inventory snapshots/count events. Posted and cancelled industrial
+evidence cannot be rewritten.
+
+Run `20260723_stock_traceability_225.preflight.sql` before applying the patch
+and `20260723_stock_traceability_225.verify.sql` afterwards. The #225 support
+scripts are restricted to `cerp_test`; the guarded rollback refuses to drop
+structures once #225 evidence exists. Patch application itself remains under
+the migration runner, backup policy and explicit human environment gate. The
+preflight also checks the cross-module users, units, warehouses, locations,
+orders, OF, BL, affairs, lot and batch prerequisites inherited from the active
+schema.
+
+No `DATABASE_URL` for `cerp_test` was configured in the #225 workspace on
+2026-07-23, so the patch was not applied or registered on any database.
+`cerp_prod` was not modified.
