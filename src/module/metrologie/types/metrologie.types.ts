@@ -57,7 +57,14 @@ export type MetrologieCertificat = {
   organisme: string | null;
   commentaire: string | null;
   file_original_name: string | null;
-  storage_path: string | null;
+  /**
+   * #229 — `storage_path` N'EST PLUS exposé : un chemin de stockage privé dans
+   * un DTO est une fuite (il fuite l'arborescence serveur et invite au path
+   * traversal). Le frontend n'en avait besoin que pour savoir si un fichier
+   * existe : c'est exactement ce que dit `has_file`. Le téléchargement passe
+   * par l'endpoint authentifié dédié.
+   */
+  has_file: boolean;
   mime_type: string | null;
   size_bytes: number | null;
   sha256: string | null;

@@ -43,6 +43,7 @@ import {
   computeExecutionVerdict,
   evaluateSample,
   requiredSampleCount,
+  resolveCharacteristicBounds,
   selectApplicablePlan,
   type ApplicabilityContext,
   type PlanCandidate,
@@ -54,16 +55,21 @@ import {
   assertSourceRef,
   derogationStatusAfterConsumption,
   evaluateDerogationUsage,
-  evaluateInstrumentUsage,
   evaluateQualityEligibility,
   evaluateReleaseRequest,
   releasableQty,
   type DerogationState,
   type EligibilityTarget,
-  type InstrumentState,
   type QualityEligibilityPurpose,
   type QuantityLedger,
 } from "../domain/quality-release";
+// #229 — Source de vérité unique de l'éligibilité d'un instrument : le module
+// Métrologie. Le module Qualité la consomme, il ne la ré-implémente pas.
+import { repoBuildInstrumentSnapshot } from "../../metrologie/repository/metrology-registry.repository";
+import type {
+  MetrologyInstrumentSnapshot,
+  MetrologyUsageRequirement,
+} from "../../metrologie/domain/metrology-eligibility";
 import type {
   ConsumeDerogationBodyDTO,
   CreateDerogationBodyDTO,
@@ -88,8 +94,6 @@ import type { AuditContext } from "./qualite.repository";
 type DbQueryer = Pick<PoolClient, "query">;
 
 export type QualityActor = AuditContext & { role: string | null; request_id: string | null };
-
-const METROLOGY_SETTING_KEY = "metrologie.block_on_overdue_critical";
 
 /* ========================================================================== */
 /* Helpers transversaux                                                       */
@@ -259,19 +263,11 @@ function sortDirection(dir: "asc" | "desc"): "ASC" | "DESC" {
   return dir === "asc" ? "ASC" : "DESC";
 }
 
-async function metrologyPolicy(q: DbQueryer): Promise<{ block_on_overdue_critical: boolean }> {
-  try {
-    const res = await q.query<{ value_json: unknown }>(
-      `SELECT value_json FROM public.erp_settings WHERE key = $1`,
-      [METROLOGY_SETTING_KEY]
-    );
-    const raw = res.rows[0]?.value_json ?? null;
-    const enabled = Boolean(raw && typeof raw === "object" && (raw as { enabled?: unknown }).enabled === true);
-    return { block_on_overdue_critical: enabled };
-  } catch {
-    return { block_on_overdue_critical: false };
-  }
-}
+// #229 — La lecture du réglage `metrologie.block_on_overdue_critical` a migré
+// dans `module/metrologie/repository/metrology-shared.repository.ts`
+// (`loadMetrologyPolicy`). Elle est appliquée à l'instrument réellement utilisé,
+// jamais en verrou global : garder une seconde lecture ici ferait diverger deux
+// interprétations du même réglage.
 
 /* ========================================================================== */
 /* Plans de contrôle                                                          */
@@ -1397,38 +1393,88 @@ function legacyControlType(trigger: string): "IN_PROCESS" | "FINAL" | "RECEPTION
   }
 }
 
-async function loadInstrument(q: DbQueryer, instrumentId: string): Promise<InstrumentState | null> {
-  const res = await q.query<{
-    id: string;
-    code: string | null;
-    designation: string;
-    statut: string;
-    criticite: string;
-    categorie: string | null;
-    deleted_at: string | null;
-    next_due_date: string | null;
-  }>(
-    `
-      SELECT e.id, e.code, e.designation, e.statut, e.criticite, e.categorie, e.deleted_at,
-             (SELECT MIN(p.next_due_date)::text
-                FROM public.metrologie_plan p
-               WHERE p.equipement_id = e.id AND p.deleted_at IS NULL AND p.statut = 'EN_COURS') AS next_due_date
-      FROM public.metrologie_equipements e
-      WHERE e.id = $1::uuid
-    `,
-    [instrumentId]
-  );
-  const row = res.rows[0];
-  if (!row) return null;
+/**
+ * #229 — L'éligibilité d'un instrument est décidée par le MOTEUR DE MÉTROLOGIE,
+ * pas ici. La règle vivait à deux endroits (une lecture SQL locale + une
+ * évaluation partielle) ; elle vit désormais dans
+ * `module/metrologie/domain/metrology-eligibility.ts` et le module Qualité s'y
+ * adresse. Cela apporte, sans changer un seul contrat consommateur :
+ *   - la quarantaine et le hors tolérance (états #229) ;
+ *   - la compatibilité méthode / unité / plage / résolution ;
+ *   - l'exigence de certificat valide ;
+ *   - la stratégie de blocage portée par la version de plan applicable.
+ */
+async function evaluateInstrumentForCharacteristic(
+  q: DbQueryer,
+  params: {
+    spec: QualityCharacteristicSpec;
+    instrumentId: string | null;
+    at: Date;
+  }
+): Promise<{
+  allowed: boolean;
+  severity: "OK" | "WARNING" | "BLOCKING";
+  code: string;
+  message: string;
+  snapshot: MetrologyInstrumentSnapshot | null;
+}> {
+  const { spec } = params;
+  const bounds = resolveCharacteristicBounds(spec);
+  const requirement: MetrologyUsageRequirement = {
+    characteristic_key: spec.key,
+    requires_instrument: spec.requires_instrument,
+    instrument_category: spec.instrument_category,
+    method: spec.method,
+    unit: spec.unit,
+    nominal: spec.nominal,
+    tolerance_min: bounds.min,
+    tolerance_max: bounds.max,
+    // Une caractéristique critique exige une preuve documentaire opposable.
+    requires_certificate: spec.criticality === "CRITICAL",
+  };
+
+  if (!spec.requires_instrument && !params.instrumentId) {
+    return {
+      allowed: true,
+      severity: "OK",
+      code: "OK",
+      message: "Aucun moyen de contrôle requis.",
+      snapshot: null,
+    };
+  }
+
+  if (!params.instrumentId) {
+    return {
+      allowed: false,
+      severity: "BLOCKING",
+      code: "INSTRUMENT_REQUIRED",
+      message: `La caractéristique ${spec.key} exige l'instrument réellement utilisé.`,
+      snapshot: null,
+    };
+  }
+
+  const evaluation = await repoBuildInstrumentSnapshot({
+    q,
+    instrumentId: params.instrumentId,
+    requirement,
+    at: params.at,
+  });
+  if (!evaluation) {
+    return {
+      allowed: false,
+      severity: "BLOCKING",
+      code: "INSTRUMENT_UNKNOWN",
+      message: "Instrument de métrologie inconnu.",
+      snapshot: null,
+    };
+  }
+
   return {
-    id: row.id,
-    code: row.code,
-    designation: row.designation,
-    statut: row.statut,
-    criticite: row.criticite,
-    categorie: row.categorie,
-    next_due_date: row.next_due_date,
-    deleted: row.deleted_at !== null,
+    allowed: evaluation.eligibility.eligible,
+    severity: evaluation.eligibility.severity,
+    code: evaluation.eligibility.code,
+    message: evaluation.eligibility.message,
+    snapshot: evaluation.snapshot,
   };
 }
 
@@ -1463,7 +1509,6 @@ export async function repoRecordMeasurements(params: {
 
     const specs = characteristicsFromSnapshot(before.plan_snapshot);
     const specByKey = new Map(specs.map((spec) => [spec.key, spec]));
-    const policy = await metrologyPolicy(client);
     const now = new Date();
     const warnings: Array<{ characteristic_key: string; code: string; message: string }> = [];
 
@@ -1486,19 +1531,18 @@ export async function repoRecordMeasurements(params: {
         );
       }
 
-      let instrumentSnapshot: InstrumentState | null = null;
-      if (measurement.instrument_id) {
-        instrumentSnapshot = await loadInstrument(client, measurement.instrument_id);
-        if (!instrumentSnapshot) {
-          throw new HttpError(422, "INSTRUMENT_UNKNOWN", "Instrument de métrologie inconnu.");
-        }
-      }
-      const instrumentCheck = evaluateInstrumentUsage({
-        characteristic: spec,
-        instrument: instrumentSnapshot,
+      // #229 — Le serveur arbitre l'emploi de l'instrument et fige un snapshot
+      // immuable : une modification future du registre, du plan ou du
+      // certificat ne réécrira pas ce contrôle déjà exécuté.
+      const instrumentCheck = await evaluateInstrumentForCharacteristic(client, {
+        spec,
+        instrumentId: measurement.instrument_id ?? null,
         at: now,
-        policy,
       });
+      const instrumentSnapshot = instrumentCheck.snapshot;
+      if (instrumentCheck.code === "INSTRUMENT_UNKNOWN") {
+        throw new HttpError(422, "INSTRUMENT_UNKNOWN", "Instrument de métrologie inconnu.");
+      }
       if (!instrumentCheck.allowed) {
         throw new HttpError(409, instrumentCheck.code, instrumentCheck.message, {
           characteristic: spec.key,

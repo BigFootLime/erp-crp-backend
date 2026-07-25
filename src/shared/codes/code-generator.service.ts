@@ -117,7 +117,10 @@ export async function generateTransactionalBusinessCode(
       | "BCF"
       // #228: plans de contrôle et dérogations qualité.
       | "PC"
-      | "DER";
+      | "DER"
+      // #229: exécutions métrologiques et dossiers d'analyse d'impact.
+      | "MEX"
+      | "MIA";
     date?: Date;
     width?: number;
   }
@@ -170,6 +173,34 @@ export async function generateFournisseurCode(tx: DbQueryer): Promise<string> {
 export async function generateMachineCode(tx: DbQueryer): Promise<string> {
   const seq = await nextCodeValue(tx, "MCH");
   return `MCH-${pad(seq, 6)}`;
+}
+
+/**
+ * #229 — Équipement de métrologie : MET-NNNNNN.
+ *
+ * Le code visible est alloué par le SERVEUR dans la transaction de création. Un
+ * code proposé par l'interface n'est jamais retenu, et le code attribué est
+ * ensuite immuable (trigger `fn_protect_metrologie_equipement_229`).
+ */
+export async function generateMetrologieEquipementCode(tx: DbQueryer): Promise<string> {
+  const seq = await nextCodeValue(tx, "MET");
+  return `MET-${pad(seq, 6)}`;
+}
+
+/** #229 — Exécution métrologique (étalonnage/vérification) : MEX-AAAA-NNNNNN. */
+export async function generateMetrologieExecutionCode(
+  tx: DbQueryer,
+  params?: { date?: Date }
+): Promise<string> {
+  return generateTransactionalBusinessCode(tx, { prefix: "MEX", date: params?.date, width: 6 });
+}
+
+/** #229 — Dossier d'analyse d'impact métrologique : MIA-AAAA-NNNNN. */
+export async function generateMetrologieImpactCode(
+  tx: DbQueryer,
+  params?: { date?: Date }
+): Promise<string> {
+  return generateTransactionalBusinessCode(tx, { prefix: "MIA", date: params?.date, width: 5 });
 }
 
 /** #172 — Bon de commande fournisseur : BCF-AAAA-NNNN, alloué en transaction, immuable. */
