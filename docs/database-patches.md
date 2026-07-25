@@ -186,6 +186,31 @@ derogation consumption, a measurement revision, a plan snapshot, an extended NC
 status or any new column value exists; enum values added by #228 cannot be
 removed by PostgreSQL and stay in place.
 
-No `DATABASE_URL` for `cerp_test` was configured in the #228 workspace on
-2026-07-25, so the patch was **not** applied or registered on any database.
-`cerp_prod` was not modified.
+Le patch #228 a été appliqué et vérifié le 2026-07-25 sur `cerp_test`, puis sur
+`cerp_prod` après sauvegarde. L'application par le rôle administratif a révélé
+un écart d'ownership sur huit tables : le schéma était présent, mais les
+connexions runtime `cerp_app` recevaient des erreurs de permission. Le correctif
+#132 ci-dessous ferme cet écart sans modifier de donnée métier.
+
+### Issue #132 - Runtime access for Qualite 360
+
+Patch `20260725_qualite_360_228_runtime_access.sql` corrects the ownership of
+the eight tables introduced by #228. When the #228 patch is executed by the
+administrative PostgreSQL role, those tables otherwise remain owned by
+`postgres` and API connections using `cerp_app` receive permission errors.
+
+The corrective patch is transactional and idempotent. It changes no business
+row and hands only the #228 tables to the existing runtime owner `cerp_app`.
+Run the matching preflight and verification scripts on `cerp_test` first. The
+rollback is also restricted to `cerp_test` and only restores the previous
+`postgres` owner; it never drops schema or business data.
+
+Validation du 2026-07-25 :
+
+- tests de garde du patch : 23/23 ;
+- préflight, application et vérification sur `cerp_test` ;
+- sauvegarde `cerp_prod` exécutée avant changement ;
+- application transactionnelle sur `cerp_prod` ;
+- les huit tables sont possédées par `cerp_app` et
+  `has_table_privilege(..., 'SELECT,INSERT,UPDATE')` retourne vrai ;
+- le Centre Qualité de production recharge sans erreur API v2.
