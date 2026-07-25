@@ -1,6 +1,4 @@
-import { Router, type RequestHandler } from "express";
-import { authenticateToken } from "../../auth/middlewares/auth.middleware";
-import { HttpError } from "../../../utils/httpError";
+import { Router } from "express";
 import {
   createFacture,
   deleteFacture,
@@ -10,39 +8,43 @@ import {
   listFactures,
   updateFacture,
 } from "../controllers/factures.controller";
+import {
+  createFactureDraftWorkflow,
+  issueFactureWorkflow,
+  listEligibleFactureSources,
+  previewFacture,
+  requestFactureValidation,
+  validateFactureWorkflow,
+} from "../controllers/facture-workflow.controller";
+import { requireFinanceCapability } from "../middlewares/finance-authorization.middleware";
 
 const router = Router();
 
-function hasAnyRole(role: string | undefined, needles: string[]): boolean {
-  if (!role) return false;
-  const normalized = role.trim().toLowerCase();
-  return needles.some((needle) => normalized.includes(needle));
-}
+router.get(
+  "/workflow/eligible-sources",
+  requireFinanceCapability("read"),
+  listEligibleFactureSources
+);
+router.post("/workflow/preview", requireFinanceCapability("draft_write"), previewFacture);
+router.post("/workflow/drafts", requireFinanceCapability("draft_write"), createFactureDraftWorkflow);
+router.post(
+  "/workflow/:id/request-validation",
+  requireFinanceCapability("request_validation"),
+  requestFactureValidation
+);
+router.post(
+  "/workflow/:id/validate",
+  requireFinanceCapability("validate"),
+  validateFactureWorkflow
+);
+router.post("/workflow/:id/issue", requireFinanceCapability("issue"), issueFactureWorkflow);
 
-const requireFacturationWrite: RequestHandler = (req, _res, next) => {
-  if (hasAnyRole(req.user?.role, ["admin", "administrateur", "directeur", "compt", "secr", "secret"])) {
-    next();
-    return;
-  }
-  next(new HttpError(403, "FORBIDDEN", "Facturation role required"));
-};
-
-const requireFacturationAdmin: RequestHandler = (req, _res, next) => {
-  if (hasAnyRole(req.user?.role, ["admin", "administrateur", "directeur"])) {
-    next();
-    return;
-  }
-  next(new HttpError(403, "FORBIDDEN", "Facturation admin role required"));
-};
-
-router.use(authenticateToken);
-
-router.get("/", listFactures);
-router.get("/:id", getFacture);
-router.get("/:id/pdf", getFacturePdf);
-router.post("/", requireFacturationWrite, createFacture);
-router.post("/:id/pdf", requireFacturationWrite, generateFacturePdf);
-router.patch("/:id", requireFacturationWrite, updateFacture);
-router.delete("/:id", requireFacturationAdmin, deleteFacture);
+router.get("/", requireFinanceCapability("read"), listFactures);
+router.get("/:id", requireFinanceCapability("read"), getFacture);
+router.get("/:id/pdf", requireFinanceCapability("documents_read"), getFacturePdf);
+router.post("/", requireFinanceCapability("draft_write"), createFacture);
+router.post("/:id/pdf", requireFinanceCapability("draft_write"), generateFacturePdf);
+router.patch("/:id", requireFinanceCapability("draft_write"), updateFacture);
+router.delete("/:id", requireFinanceCapability("settings_manage"), deleteFacture);
 
 export default router;

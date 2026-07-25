@@ -522,9 +522,10 @@ export async function repoUpdateFacture(id: number, input: UpdateFactureBodyDTO)
     const baseRes = await client.query<{
       id: string;
       remise_globale: number;
+      statut: string;
     }>(
       `
-      SELECT id::text AS id, remise_globale::float8 AS remise_globale
+      SELECT id::text AS id, remise_globale::float8 AS remise_globale, statut
       FROM facture
       WHERE id = $1
       FOR UPDATE
@@ -535,6 +536,20 @@ export async function repoUpdateFacture(id: number, input: UpdateFactureBodyDTO)
     if (!base) {
       await client.query("ROLLBACK");
       return null;
+    }
+    if (!["DRAFT", "brouillon"].includes(base.statut)) {
+      throw new HttpError(
+        409,
+        "FACTURE_IMMUTABLE",
+        "Seul un brouillon peut être modifié. Un document émis se corrige par avoir."
+      );
+    }
+    if (input.statut !== undefined && !["DRAFT", "brouillon"].includes(input.statut)) {
+      throw new HttpError(
+        409,
+        "FACTURE_WORKFLOW_REQUIRED",
+        "Les changements de statut passent par les commandes du workflow Finance."
+      );
     }
 
     const hasAnyFieldUpdate = Object.keys(input).length > 0;
@@ -631,6 +646,19 @@ export async function repoUpdateFacture(id: number, input: UpdateFactureBodyDTO)
 }
 
 export async function repoDeleteFacture(id: number) {
-  const { rowCount } = await pool.query(`DELETE FROM facture WHERE id = $1`, [id]);
+  const { rowCount } = await pool.query(
+    `DELETE FROM facture WHERE id = $1 AND statut IN ('DRAFT', 'brouillon')`,
+    [id]
+  );
+  if ((rowCount ?? 0) === 0) {
+    const exists = await pool.query(`SELECT 1 FROM facture WHERE id = $1`, [id]);
+    if ((exists.rowCount ?? 0) > 0) {
+      throw new HttpError(
+        409,
+        "FACTURE_IMMUTABLE",
+        "Un document financier émis ne peut pas être supprimé."
+      );
+    }
+  }
   return (rowCount ?? 0) > 0;
 }
