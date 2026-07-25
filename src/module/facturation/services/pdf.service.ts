@@ -118,6 +118,13 @@ async function writePdfToFile(
 export async function svcGenerateFacturePdf(factureId: number): Promise<{ document_id: string }> {
   const detail = await repoGetFacture(factureId, "client,lignes");
   if (!detail) throw new HttpError(404, "FACTURE_NOT_FOUND", "Facture not found");
+  if (["ISSUED", "PARTIALLY_PAID", "PAID"].includes(detail.facture.statut)) {
+    throw new HttpError(
+      409,
+      "FACTURE_DOCUMENT_IMMUTABLE",
+      "Le PDF légal émis est immuable et ne peut pas être régénéré."
+    );
+  }
 
   const docsDir = await ensureDocsDir();
   const documentId = crypto.randomUUID();
@@ -190,6 +197,13 @@ export async function svcGenerateFacturePdf(factureId: number): Promise<{ docume
 export async function svcGenerateAvoirPdf(avoirId: number): Promise<{ document_id: string }> {
   const detail = await repoGetAvoir(avoirId, "client,lignes,facture");
   if (!detail) throw new HttpError(404, "AVOIR_NOT_FOUND", "Avoir not found");
+  if (detail.avoir.statut === "ISSUED") {
+    throw new HttpError(
+      409,
+      "AVOIR_DOCUMENT_IMMUTABLE",
+      "Le PDF légal émis est immuable et ne peut pas être régénéré."
+    );
+  }
 
   const docsDir = await ensureDocsDir();
   const documentId = crypto.randomUUID();
