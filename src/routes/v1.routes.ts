@@ -22,6 +22,7 @@ import tarificationRoutes from "../module/facturation/routes/tarification.routes
 import reportingRoutes from "../module/facturation/routes/reporting.routes";
 import productionRoutes from "../module/production/routes/production.routes";
 import qualiteRoutes from "../module/qualite/routes/qualite.routes";
+import quality360Routes from "../module/qualite/routes/quality-360.routes";
 import livraisonsRoutes from "../module/livraisons/routes/livraisons.routes";
 import planningRoutes from "../module/planning/routes/planning.routes";
 import stockRoutes from "../module/stock/routes/stock.routes";
@@ -76,6 +77,9 @@ router.use("/reporting", reportingRoutes);
 router.use("/production", productionRoutes);
 router.use("/planning", planningRoutes);
 router.use("/programmations", programmationRoutes);
+// Qualité 360 (#228) monté AVANT le routeur historique : ses routes déclarent
+// des capacités fines et ne doivent pas hériter du garde global hérité.
+router.use("/qualite/v2", quality360Routes);
 router.use("/qualite", qualiteRoutes);
 router.use("/livraisons", livraisonsRoutes);
 router.use("/stock", stockRoutes);
