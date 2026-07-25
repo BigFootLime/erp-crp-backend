@@ -32,6 +32,7 @@ import fournisseursRoutes from "../module/fournisseurs/routes/fournisseurs.route
 import commandeFournisseurRoutes from "../module/commande-fournisseur/routes/commande-fournisseur.routes";
 import receptionsRoutes from "../module/receptions/routes/receptions.routes";
 import metrologieRoutes from "../module/metrologie/routes/metrologie.routes";
+import metrology360Routes from "../module/metrologie/routes/metrology-360.routes";
 import codesRoutes from "../module/codes/routes/codes.routes";
 import notificationsRoutes from "../module/notifications/routes/notifications.routes";
 import chatRoutes from "../module/chat/routes/chat.routes";
@@ -87,6 +88,10 @@ router.use("/dossiers", operationDossiersRoutes);
 router.use("/fournisseurs", fournisseursRoutes);
 router.use("/commandes-fournisseurs", commandeFournisseurRoutes); // Module « Commandes fournisseurs » (#172) — BCF
 router.use("/receptions", receptionsRoutes);
+// Métrologie 360 (#229) monté AVANT le routeur historique : ses routes
+// déclarent des capacités fines (refus par défaut) et ne partagent pas les
+// chemins hérités, qui restent inchangés pour les écrans en production.
+router.use("/metrologie/v2", metrology360Routes);
 router.use("/metrologie", metrologieRoutes);
 router.use("/codes", codesRoutes);
 router.use("/notifications", notificationsRoutes);
