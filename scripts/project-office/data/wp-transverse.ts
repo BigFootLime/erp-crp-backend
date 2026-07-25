@@ -24,8 +24,14 @@ export const WP_TRANSVERSE: WorkPackageDef[] = [
   },
   {
     code: "LOT-08.3", parent: "EPIC-08", title: "Métrologie et moyens de mesure", type: "LOT",
-    status: "IN_PROGRESS", start: "2026-02-01", due: "2026-12-18", progress: 50,
-    description: "Module métrologie (2026-02) ; gestion complète des moyens de mesure (étalonnage, échéances) à compléter. Sources : GIT_COMMIT 2026-02, note du 25/06 — réalisé VALIDÉ, reste À PLANIFIER (2026-T4).",
+    status: "IN_PROGRESS", start: "2026-02-01", due: "2026-12-18", progress: 80,
+    description: "Module métrologie (2026-02) puis Métrologie 360 (#229, 2026-07-26) : registre qualifié, plans versionnés, étalonnages/vérifications, certificats privés, quarantaine et analyse d'impact. Sources : GIT_COMMIT 2026-02, GITHUB_PR crp-systems-web#229, note du 25/06 — réalisé VALIDÉ, recette navigateur et application DB À VALIDER.",
+  },
+  {
+    code: "TSK-08.3.1", parent: "LOT-08.3", title: "Métrologie 360 (#229) : plans versionnés, verdicts, quarantaine, impact qualité", type: "TASK",
+    status: "IN_PROGRESS", priority: "HIGH", start: "2026-07-26", due: "2026-08-29", progress: 85,
+    description:
+      "Consolidation du module métrologie existant (aucun second module concurrent) : référentiel de catégories, spécifications structurées conditionnant l'éligibilité, plans versionnés DRAFT→ACTIVE→ARCHIVED avec échéance dérivée serveur, exécutions étalonnage/vérification/ajustage, verdict calculé + aperçu à empreinte, certificats privés (extension/MIME/signature/SHA-256), quarantaine ciblée et analyse d'impact BORNÉE depuis la dernière preuve conforme — sans aucune action automatique sur contrôles, OF, lots, BL, factures ou expéditions. Corrige trois risques préexistants : routeur historique seulement authentifié, `storage_path` exposé dans les DTO, périmètre MCH perdu dans `fn_next_issued_code_value`. Sources : GITHUB_PR crp-systems-web#229, docs/http/metrologie-229.md, docs/security/metrologie-229.md, docs/testing/metrologie-360-229-matrix.md — code et tests VALIDÉS (1938 backend + 793 frontend) ; patch DB `20260726_metrologie_360_229.sql` NON APPLIQUÉ (ni cerp_test ni cerp_prod) et recette navigateur À VALIDER.",
   },
   {
     code: "LOT-08.4", parent: "EPIC-08", title: "Traçabilité : lots, rebut, généalogie", type: "LOT",
