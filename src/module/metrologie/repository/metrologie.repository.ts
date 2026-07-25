@@ -571,7 +571,8 @@ function mapCertRow(r: CertRow): MetrologieCertificat {
     organisme: r.organisme,
     commentaire: r.commentaire,
     file_original_name: r.file_original_name,
-    storage_path: r.storage_path,
+    // Le chemin de stockage reste strictement interne (#229).
+    has_file: r.storage_path !== null && r.storage_path !== undefined,
     mime_type: r.mime_type,
     size_bytes: r.size_bytes !== null && r.size_bytes !== undefined ? Number(r.size_bytes) : null,
     sha256: r.sha256,
@@ -1498,7 +1499,7 @@ export async function repoGetCertificatForDownload(params: {
   equipement_id: string;
   certificat_id: string;
   audit: AuditContext;
-}): Promise<Pick<MetrologieCertificat, "storage_path" | "mime_type" | "file_original_name"> | null> {
+}): Promise<{ storage_path: string | null; mime_type: string | null; file_original_name: string | null } | null> {
   const { equipement_id, certificat_id, audit } = params;
   const client = await pool.connect();
   try {
