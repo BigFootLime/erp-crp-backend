@@ -76,6 +76,17 @@ function buildListWhere(filters: ListPaiementsQueryDTO, includeClientInSearch: b
     where.push(`p.facture_id = ${p}::bigint`);
   }
 
+  // #126 — Filtre serveur sur l'etat d'affectation, pour alimenter une file
+  // « reglements a affecter » sans calcul cote interface.
+  if (filters.status && filters.status.trim().length > 0) {
+    const p = push(filters.status.trim());
+    where.push(`p.status = ${p}`);
+  }
+
+  if (filters.unallocated === true) {
+    where.push(`p.facture_id IS NULL`);
+  }
+
   if (filters.from) {
     const p = push(filters.from);
     where.push(`p.date_paiement >= ${p}::date`);
@@ -102,7 +113,10 @@ export async function repoListPaiements(filters: ListPaiementsQueryDTO): Promise
   const pageSize = filters.pageSize ?? 20;
   const offset = (page - 1) * pageSize;
 
-  const joinFactureSql = "JOIN facture f ON f.id = p.facture_id";
+  // #126 — LEFT JOIN obligatoire : `paiement.facture_id` est nullable (un reglement est
+  // d'abord enregistre `RECORDED`/`UNALLOCATED` puis affecte). Un INNER JOIN faisait
+  // disparaitre silencieusement de la liste ET du comptage tout reglement non affecte.
+  const joinFactureSql = "LEFT JOIN facture f ON f.id = p.facture_id";
   const joinClientSql = joinClient ? "LEFT JOIN clients c ON c.client_id = p.client_id" : "";
 
   const clientSelectSql = includeClient
@@ -116,12 +130,13 @@ export async function repoListPaiements(filters: ListPaiementsQueryDTO): Promise
       ) END AS client`
     : "NULL AS client";
 
+  // Le reglement peut n'avoir aucune facture : on renvoie alors `null`, pas un objet vide.
   const factureSelectSql = includeFacture
-    ? `jsonb_build_object(
+    ? `CASE WHEN f.id IS NULL THEN NULL ELSE jsonb_build_object(
         'id', f.id,
         'numero', f.numero,
         'client_id', f.client_id
-      ) AS facture`
+      ) END AS facture`
     : "NULL AS facture";
 
   const { whereSql, values } = buildListWhere(filters, joinClient);
@@ -147,6 +162,8 @@ export async function repoListPaiements(filters: ListPaiementsQueryDTO): Promise
       p.montant::float8 AS montant,
       p.mode,
       p.reference,
+      p.status,
+      p.workflow_status,
       p.updated_at::text AS updated_at,
       ${clientSelectSql},
       ${factureSelectSql}
@@ -162,7 +179,7 @@ export async function repoListPaiements(filters: ListPaiementsQueryDTO): Promise
 
   type Row = Omit<PaiementListItem, "id" | "facture_id" | "client" | "facture"> & {
     id: string;
-    facture_id: string;
+    facture_id: string | null;
     client: ClientLite | null;
     facture: { id: number; numero: string; client_id: string } | null;
   };
@@ -171,7 +188,7 @@ export async function repoListPaiements(filters: ListPaiementsQueryDTO): Promise
   const items: PaiementListItem[] = dataRes.rows.map((r) => ({
     ...r,
     id: toInt(r.id, "paiement.id"),
-    facture_id: toInt(r.facture_id, "paiement.facture_id"),
+    facture_id: r.facture_id === null ? null : toInt(r.facture_id, "paiement.facture_id"),
     client: includeClient ? r.client : undefined,
     facture: includeFacture ? r.facture : undefined,
   }));
@@ -184,7 +201,8 @@ export async function repoGetPaiement(id: number, includeValue: string): Promise
   const includeClient = includes.has("client");
   const includeFacture = includes.has("facture");
 
-  const joinFactureSql = includeFacture ? "JOIN facture f ON f.id = p.facture_id" : "";
+  // #126 — LEFT JOIN : sinon la lecture d'un reglement non affecte renvoyait 404.
+  const joinFactureSql = includeFacture ? "LEFT JOIN facture f ON f.id = p.facture_id" : "";
   const joinClientSql = includeClient ? "LEFT JOIN clients c ON c.client_id = p.client_id" : "";
 
   const clientSelectSql = includeClient
@@ -199,11 +217,11 @@ export async function repoGetPaiement(id: number, includeValue: string): Promise
     : "NULL AS client";
 
   const factureSelectSql = includeFacture
-    ? `jsonb_build_object(
+    ? `CASE WHEN f.id IS NULL THEN NULL ELSE jsonb_build_object(
         'id', f.id,
         'numero', f.numero,
         'client_id', f.client_id
-      ) AS facture`
+      ) END AS facture`
     : "NULL AS facture";
 
   const sql = `
@@ -216,6 +234,8 @@ export async function repoGetPaiement(id: number, includeValue: string): Promise
       p.mode,
       p.reference,
       p.commentaire,
+      p.status,
+      p.workflow_status,
       p.created_at::text AS created_at,
       p.updated_at::text AS updated_at,
       ${clientSelectSql},
@@ -228,7 +248,7 @@ export async function repoGetPaiement(id: number, includeValue: string): Promise
 
   type Row = Omit<Paiement, "id" | "facture_id" | "client" | "facture"> & {
     id: string;
-    facture_id: string;
+    facture_id: string | null;
     client: ClientLite | null;
     facture: { id: number; numero: string; client_id: string } | null;
   };
@@ -240,7 +260,7 @@ export async function repoGetPaiement(id: number, includeValue: string): Promise
   return {
     ...row,
     id: toInt(row.id, "paiement.id"),
-    facture_id: toInt(row.facture_id, "paiement.facture_id"),
+    facture_id: row.facture_id === null ? null : toInt(row.facture_id, "paiement.facture_id"),
     client: includeClient ? row.client : undefined,
     facture: includeFacture ? row.facture : undefined,
   };

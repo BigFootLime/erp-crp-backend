@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { PAIEMENT_STATUSES } from "../types/paiements.types";
+
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date (expected YYYY-MM-DD)");
 
 function emptyStringToUndefined(value: unknown) {
@@ -20,6 +22,16 @@ export const listPaiementsQuerySchema = z.object({
   q: z.string().optional(),
   client_id: z.string().optional(),
   facture_id: z.coerce.number().int().positive().optional(),
+  // #126 — Etat d'affectation expose et filtrable (contrainte `paiement_status_227_ck`).
+  status: z.enum(PAIEMENT_STATUSES).optional(),
+  /** Raccourci « reglements sans facture rattachee » (file a affecter). */
+  unallocated: z
+    .preprocess((value) => {
+      if (value === "true" || value === true) return true;
+      if (value === "false" || value === false) return false;
+      return undefined;
+    }, z.boolean())
+    .optional(),
   from: isoDate.optional(),
   to: isoDate.optional(),
   page: z.coerce.number().int().min(1).optional().default(1),
