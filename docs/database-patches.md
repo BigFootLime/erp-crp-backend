@@ -137,3 +137,55 @@ schema.
 No `DATABASE_URL` for `cerp_test` was configured in the #225 workspace on
 2026-07-23, so the patch was not applied or registered on any database.
 `cerp_prod` was not modified.
+
+## Issue #228 - Qualite industrielle 360 : plans, controles, liberation, NC, derogations et CAPA
+
+Patch `20260725_qualite_360_228.sql` adds the governance layer the Qualite
+module was missing: versioned control plans with an immutable published state,
+a canonical plan snapshot with its SHA-256 fingerprint frozen on each control
+execution, a quantity ledger enforced by CHECK constraints (controlled <=
+population, conforming <= controlled, released <= conforming, consumed <=
+released, dispositions <= population), append-only release decisions, a
+derogation/concession registry with immutable consumptions, a bounded 5 Why /
+8D structure, and actor-scoped idempotency receipts.
+
+The patch is **additive, idempotent, transactional and inactive**: it creates
+no plan, no derogation, no release decision and no disposition, it never
+touches `public.lots` statuses and it never writes a stock movement. Historical
+enums are **extended, never duplicated** — `quality_nc_status` gains `DRAFT`,
+`DISPOSITION`, `VERIFICATION` and `CANCELLED`; `quality_entity_type` gains
+`PLAN`, `DEROGATION` and `RELEASE`; the disposition CHECK list gains `RECHECK`.
+The new enum values are deliberately not consumed inside the same transaction,
+per the documented PostgreSQL 12+ restriction on `ALTER TYPE ... ADD VALUE`.
+
+Codification: `public.fn_next_issued_code_value` gains the `PC` (control plans)
+and `DER` (derogations) scopes, exactly as `#172` added `BCF`. The function body
+is otherwise identical; only the whitelist regex changes.
+
+Guard triggers installed by the patch:
+
+- `trg_protect_quality_plan_228` / `trg_protect_quality_plan_char_228` — a
+  published or archived plan and its characteristics are immutable.
+- `trg_protect_quality_snapshot_228` — the applied plan snapshot, its hash, the
+  population, the unit and the source of a validated control cannot be rewritten.
+- `trg_protect_quality_measurement_228` — a measurement of a validated control
+  requires an audited revision and can never be deleted.
+- `trg_quality_*_append_only_228` — event log, measurement revisions, release
+  decisions, derogation consumptions and command receipts are append-only.
+- `trg_protect_quality_derogation_228` / `trg_check_quality_derogation_cap_228`
+  — an approved derogation keeps its scope, deviation and caps, consumption
+  never decreases, and consumptions cannot exceed the approved maximum.
+- `trg_protect_quality_documents_228` — quality documents are removed logically
+  only, a decision-evidence document cannot be removed, and the file identity
+  (hash, storage path) is immutable.
+
+Run `db/patches/support/20260725_qualite_360_228.preflight.sql` before applying
+and `...verify.sql` afterwards. All three support scripts are restricted to
+`cerp_test`. The rollback refuses to continue once a release decision, a
+derogation consumption, a measurement revision, a plan snapshot, an extended NC
+status or any new column value exists; enum values added by #228 cannot be
+removed by PostgreSQL and stay in place.
+
+No `DATABASE_URL` for `cerp_test` was configured in the #228 workspace on
+2026-07-25, so the patch was **not** applied or registered on any database.
+`cerp_prod` was not modified.
