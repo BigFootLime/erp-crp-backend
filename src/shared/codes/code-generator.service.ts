@@ -101,7 +101,26 @@ export async function generateArticleBusinessCode(tx: DbQueryer, familyCode: str
 
 export async function generateTransactionalBusinessCode(
   tx: DbQueryer,
-  input: { prefix: "DEV" | "CMD" | "AFF" | "OF" | "LOT" | "MVT" | "CQ" | "NC" | "CAPA" | "BL" | "FACT" | "BCF"; date?: Date; width?: number }
+  input: {
+    prefix:
+      | "DEV"
+      | "CMD"
+      | "AFF"
+      | "OF"
+      | "LOT"
+      | "MVT"
+      | "CQ"
+      | "NC"
+      | "CAPA"
+      | "BL"
+      | "FACT"
+      | "BCF"
+      // #228: plans de contrôle et dérogations qualité.
+      | "PC"
+      | "DER";
+    date?: Date;
+    width?: number;
+  }
 ): Promise<string> {
   const year = yearFromDate(input.date ?? new Date());
   const width =

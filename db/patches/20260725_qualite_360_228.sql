@@ -30,7 +30,34 @@ BEGIN
   IF to_regclass('public.users') IS NULL THEN
     RAISE EXCEPTION '#228 requires public.users';
   END IF;
+  IF to_regprocedure('public.fn_next_issued_code_value(text)') IS NULL THEN
+    RAISE EXCEPTION '#228: public.fn_next_issued_code_value(text) is missing — apply 20260713_codification_versions_of_vsm.sql first';
+  END IF;
 END $$;
+
+/* -------------------------------------------------------------------------- */
+/* 0) Codification : ajoute les périmètres PC et DER à l'allocateur whitelisté */
+/*    Corps identique à 20260713/20260721 — SEUL le regex gagne |PC|DER.       */
+/* -------------------------------------------------------------------------- */
+
+CREATE OR REPLACE FUNCTION public.fn_next_issued_code_value(p_scope text)
+RETURNS bigint
+LANGUAGE plpgsql
+VOLATILE
+AS $$
+DECLARE
+  v_scope text := upper(btrim(COALESCE(p_scope, '')));
+BEGIN
+  IF v_scope !~ '^(CLI|FOU|ART:[A-Z0-9]{1,48}|(DEV|CMD|AFF|OF|LOT|MVT|CQ|NC|CAPA|BL|FACT|BCF|PC|DER):[0-9]{4})$' THEN
+    RAISE EXCEPTION 'Unsupported business-code sequence scope: %', p_scope
+      USING ERRCODE = '22023';
+  END IF;
+  RETURN nextval('public.cerp_business_code_issue_seq'::regclass);
+END;
+$$;
+
+COMMENT ON FUNCTION public.fn_next_issued_code_value(text) IS
+  'Whitelisted, non-reusable business-code allocator backed by a native PostgreSQL sequence. #228 adds the PC (plans de contrôle) and DER (dérogations) scopes.';
 
 /* -------------------------------------------------------------------------- */
 /* 1) Extension additive des enums historiques                                */

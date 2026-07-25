@@ -64,6 +64,17 @@ export const CODE_FORMATS = {
     example: "CAPA-2026-000001",
     hintText: "Format cible: CAPA-2026-000001 (CAP historique accepté)",
   },
+  // #228 — plans de contrôle versionnés et dérogations/concessions qualité.
+  controlPlan: {
+    regex: /^PC-\d{4}-\d{6}$/,
+    example: "PC-2026-000001",
+    hintText: "Format attendu: PC-2026-000001",
+  },
+  derogation: {
+    regex: /^DER-\d{4}-\d{6}$/,
+    example: "DER-2026-000001",
+    hintText: "Format attendu: DER-2026-000001",
+  },
 } as const;
 
 export type CodeFormatKey = keyof typeof CODE_FORMATS;
