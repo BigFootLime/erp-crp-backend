@@ -311,3 +311,25 @@ Aucune trace SQL ni pile d'appel ne remonte au client.
   idempotence et verrou optimiste.
 - `src/__tests__/metrologie-360-229.routes.test.ts` — 32 cas : RBAC refusé par
   défaut, validation stricte, non-fuite de `storage_path`, éligibilité.
+
+---
+
+## 10. Ordre de déploiement PostgreSQL
+
+Le patch fonctionnel et le durcissement privilégié sont deux étapes
+obligatoires, dans cet ordre :
+
+1. `db/patches/20260726_metrologie_360_229.sql`
+2. `db/privileged/20260726_metrologie_360_229_runtime_grants.sql`
+3. `db/privileged/20260726_metrologie_360_229_runtime_grants.verify.sql`
+
+La deuxième étape rend le résultat identique quel que soit le rôle ayant
+appliqué le premier patch. Les tables de workflow restent détenues par
+`postgres` avec `SELECT/INSERT/UPDATE` pour `cerp_app`. Les preuves
+`metrologie_event_log`, `metrologie_measurement_revision` et
+`metrologie_command_receipts` sont détenues par `postgres` et limitées à
+`SELECT/INSERT` pour le rôle applicatif.
+
+Une sauvegarde restaurable est requise avant toute application sur
+`cerp_prod`. Le script `verify.sql` est en lecture seule et doit terminer avec
+`metrologie_360_229_runtime_grants_ok`.
