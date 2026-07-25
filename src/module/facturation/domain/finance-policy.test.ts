@@ -91,12 +91,30 @@ describe("issue #227 — RBAC fail-closed", () => {
     ["Comptable", "payment_allocate", true],
     ["Directeur", "credit_issue", true],
     ["Administrateur Systeme et Reseau", "settings_manage", true],
-    ["Administrateur Systeme et Reseau", "issue", false],
+    ["Administrateur Systeme et Reseau", "issue", true],
     ["Responsable Comptabilite", "issue", false],
     ["admin", "settings_manage", false],
     ["", "read", false],
   ] as const)("%s / %s", (role, capability, expected) => {
     expect(roleHasFinanceCapability(role, capability)).toBe(expected);
+  });
+
+  it.each([
+    "read",
+    "draft_write",
+    "request_validation",
+    "validate",
+    "issue",
+    "credit_write",
+    "credit_issue",
+    "payment_register",
+    "payment_allocate",
+    "documents_read",
+    "audit_read",
+    "reporting_read",
+    "settings_manage",
+  ] as const)("accorde la capacité %s à l'administrateur système", (capability) => {
+    expect(roleHasFinanceCapability("Administrateur Systeme et Reseau", capability)).toBe(true);
   });
 });
 

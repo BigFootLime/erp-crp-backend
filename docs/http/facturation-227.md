@@ -4,6 +4,11 @@ Préfixe : `/api/v1`. Toutes les routes sont authentifiées et protégées par u
 capacité Finance exacte. Toutes les mutations de workflow exigent
 `Idempotency-Key` (8 à 200 caractères).
 
+Le rôle `Administrateur Systeme et Reseau` dispose de toutes les capacités
+Finance. Les autres rôles restent évalués par capacité et les rôles inconnus
+sont refusés. Cette autorisation ne désactive ni la séparation des tâches sur
+un même document ni les écritures d'audit.
+
 ## Facture
 
 - `GET /factures/workflow/eligible-sources`
