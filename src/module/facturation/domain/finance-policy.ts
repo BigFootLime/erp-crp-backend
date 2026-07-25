@@ -78,7 +78,9 @@ export function roleHasFinanceCapability(
   capability: FinanceCapability
 ): boolean {
   if (typeof role !== "string" || !role.trim()) return false;
-  return CAPABILITY_ROLES[capability].has(role.trim());
+  const normalizedRole = role.trim();
+  if (normalizedRole === ROLES.administrator) return true;
+  return CAPABILITY_ROLES[capability].has(normalizedRole);
 }
 
 const FACTURE_TRANSITIONS: Readonly<Record<FactureWorkflowStatus, readonly FactureWorkflowStatus[]>> = {
