@@ -242,3 +242,28 @@ Validation du 2026-07-25 :
 - les huit tables sont possédées par `cerp_app` et
   `has_table_privilege(..., 'SELECT,INSERT,UPDATE')` retourne vrai ;
 - le Centre Qualité de production recharge sans erreur API v2.
+
+## Release industrielle 360 du 2026-07-26
+
+Avant toute écriture, `cerp_prod` a été sauvegardée dans
+`/var/backups/cerp/cerp_prod_release_20260726-1615.dump`. Le fichier mesure
+37 706 913 octets et son catalogue `pg_restore --list` contient 3 146 entrées.
+
+Les préflights ont été exécutés en lecture seule, puis les patches ont été
+appliqués transactionnellement et vérifiés dans cet ordre :
+
+1. `20260726_production_execution_274.sql` : schéma déjà présent et conforme ;
+   enregistrement de l'état vérifié dans `cerp_schema_migrations` ;
+2. `20260726_tracabilite_360_142.sql` : table de consommation matière,
+   contraintes, trigger append-only, index, durcissement as-built et ownership
+   `cerp_app`, sans backfill déduit ;
+3. `20260726_fix_facturation_child_trigger_227.sql` : création d'une ligne de
+   facture prouvée, immutabilité après émission prouvée avec SQLSTATE `55000`,
+   transaction de test annulée et zéro résidu ;
+4. `20260726_reporting_commercial_360_275.sql` : 17 index présents, valides et
+   prêts, lisibilité applicative confirmée ;
+5. `20260726_pieces_techniques_landing_146.sql` : 6 index présents, valides et
+   prêts.
+
+Les cinq lignes du registre portent les empreintes SHA-256 exactes des fichiers
+versionnés. Aucun jeu de données de recette n'a été conservé dans `cerp_prod`.

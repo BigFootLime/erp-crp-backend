@@ -66,9 +66,14 @@ du mouvement à `POSTED`.
 Support : `.preflight.sql`, `.verify.sql`, `.rollback.sql` (gardé : refuse de s'exécuter dès
 qu'une consommation existe).
 
-Appliqué et vérifié sur **`cerp_test` uniquement** le 2026-07-26, enregistré dans
-`cerp_schema_migrations`. **`cerp_prod` non modifié** — l'application en production exige une
-validation humaine explicite.
+Appliqué et vérifié sur `cerp_test`, puis sur **`cerp_prod`** le 2026-07-26 après la
+sauvegarde vérifiée
+`/var/backups/cerp/cerp_prod_release_20260726-1615.dump` (37 706 913 octets).
+La vérification production confirme les 19 colonnes, 14 contraintes, 15 index,
+le trigger append-only, l'ownership et la lecture par `cerp_app`, avec zéro
+backfill déduit. La migration est enregistrée dans `cerp_schema_migrations`
+avec l'empreinte
+`d4d8efdbf54855008956c1e5b0081d77cc38a10ce6feeb779ae4812f09f716d3`.
 
 Rappel du runbook HYPERBOX2 : le patch réassigne explicitement
 `of_material_consumptions` à `cerp_app`, sans quoi le rôle applicatif reçoit un `42501` qui
