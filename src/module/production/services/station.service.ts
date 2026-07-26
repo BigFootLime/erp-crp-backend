@@ -87,6 +87,18 @@ import type {
 
 export type Actor = { id: number; role: string | null };
 
+/**
+ * Chemin de téléchargement d'un document de pièce technique.
+ *
+ * Il pointe vers la route EXISTANTE du module Pièces techniques, qui applique
+ * ses propres contrôles d'accès. Le poste ne réimplémente pas la distribution
+ * de fichiers et n'expose jamais de chemin disque.
+ */
+function documentDownloadPath(pieceTechniqueId: string | null | undefined, documentId: string): string | null {
+  if (!pieceTechniqueId) return null;
+  return `/pieces-techniques/${pieceTechniqueId}/documents/${documentId}/file`;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Bootstrap                                                                  */
 /* -------------------------------------------------------------------------- */
@@ -930,6 +942,11 @@ export async function svcDossier(params: {
             mime_type: planResolution.document.mime_type,
             size_bytes: planResolution.document.size_bytes,
             sha256: planResolution.document.sha256,
+            // Chemin de téléchargement CONSTRUIT PAR LE SERVEUR. Le client
+            // n'assemble jamais un chemin de fichier lui-même, et la route
+            // cible applique ses propres contrôles d'accès. Ce n'est pas un
+            // chemin disque : `storage_path` ne sort jamais d'ici.
+            download_path: documentDownloadPath(core.piece_technique_id, planResolution.document.id),
           }
         : null,
       matches_snapshot: planResolution.matches_snapshot,
@@ -944,6 +961,7 @@ export async function svcDossier(params: {
       size_bytes: Number(d.size_bytes ?? 0),
       sha256: d.sha256,
       created_at: d.created_at,
+      download_path: documentDownloadPath(core.piece_technique_id, d.id),
     })),
 
     instructions: {
