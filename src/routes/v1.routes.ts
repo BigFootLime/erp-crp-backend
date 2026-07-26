@@ -22,6 +22,7 @@ import tarificationRoutes from "../module/facturation/routes/tarification.routes
 import reportingRoutes from "../module/facturation/routes/reporting.routes";
 import productionRoutes from "../module/production/routes/production.routes";
 import productionExecutionRoutes from "../module/production/routes/production-execution.routes";
+import productionStationRoutes from "../module/production/routes/station.routes";
 import qualiteRoutes from "../module/qualite/routes/qualite.routes";
 import quality360Routes from "../module/qualite/routes/quality-360.routes";
 import livraisonsRoutes from "../module/livraisons/routes/livraisons.routes";
@@ -81,6 +82,10 @@ router.use("/reporting", reportingRoutes);
 // ses routes déclarent des capacités fines (refus par défaut) et exigent une
 // clé d'idempotence. Le routeur hérité reste inchangé pour les écrans existants.
 router.use("/production/execution", productionExecutionRoutes);
+// Poste opérateur tablette (#159) monté AVANT le routeur historique. Il ne
+// duplique aucune commande d'exécution : il ajoute appareil, session, file de
+// travail, dossier OF numérique et transmission de poste.
+router.use("/production/station", productionStationRoutes);
 router.use("/production", productionRoutes);
 router.use("/planning", planningRoutes);
 router.use("/programmations", programmationRoutes);

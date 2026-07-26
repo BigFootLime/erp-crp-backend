@@ -2,6 +2,16 @@ import type { Server as HttpServer } from "http";
 import jwt from "jsonwebtoken";
 import { Server as SocketIOServer, type Socket } from "socket.io";
 
+import {
+  canSubscribeStationRoom,
+  parseStationRoom,
+  type StationRoom,
+} from "../module/production/domain/station";
+import {
+  repoStationAudit,
+  repoUserRealtimeScope,
+} from "../module/production/repository/station.repository";
+
 type JwtUser = {
   id: number;
   username: string;
@@ -80,6 +90,40 @@ function parseUserRoomId(room: string): number | null {
   if (!Number.isFinite(n)) return null;
   const i = Math.trunc(n);
   return i > 0 ? i : null;
+}
+
+/**
+ * Autorise un salon de poste (#159).
+ *
+ * Le périmètre d'écoute est calculé côté serveur à partir des sessions vivantes
+ * et des pointages en cours de l'utilisateur ; la supervision élargit ce
+ * périmètre, rien d'autre. Un refus est audité : une tentative d'écoute d'un
+ * atelier voisin doit laisser une trace.
+ */
+async function authorizeStationRoom(room: StationRoom, user: JwtUser): Promise<boolean> {
+  const scope = await repoUserRealtimeScope(user.id);
+  const allowed = canSubscribeStationRoom({
+    room,
+    actorUserId: user.id,
+    actorRole: user.role ?? null,
+    ownMachineIds: scope.machineIds,
+    ownOfIds: scope.ofIds,
+    ownDeviceIds: scope.deviceIds,
+  });
+
+  if (!allowed) {
+    void repoStationAudit({
+      event_type: "ROOM_SUBSCRIPTION_DENIED",
+      outcome: "DENIED",
+      reason_code: room.kind,
+      user_id: user.id,
+      machine_id: room.kind === "MACHINE" ? room.machineId : null,
+      of_id: room.kind === "OF" ? room.ofId : null,
+      device_id: room.kind === "STATION" ? room.deviceId : null,
+    });
+  }
+
+  return allowed;
 }
 
 export const initSocketServer = (server: HttpServer) => {
@@ -163,30 +207,55 @@ export const initSocketServer = (server: HttpServer) => {
     }
 
     socket.on("room:join", (payload: unknown, cb?: (r: { ok: boolean; error?: string }) => void) => {
-      const room =
-        typeof (payload as { room?: unknown } | null)?.room === "string" ? (payload as { room: string }).room.trim() : "";
+      void (async () => {
+        const room =
+          typeof (payload as { room?: unknown } | null)?.room === "string"
+            ? (payload as { room: string }).room.trim()
+            : "";
 
-      if (!room || !isValidRoom(room)) {
-        cb?.({ ok: false, error: "invalid_room" });
-        return;
-      }
-
-      const requestedUserId = parseUserRoomId(room);
-      if (requestedUserId !== null) {
-        const authedUser = socket.data.user as JwtUser | undefined;
-        if (!authedUser || authedUser.id !== requestedUserId) {
-          cb?.({ ok: false, error: "forbidden" });
+        if (!room || !isValidRoom(room)) {
+          cb?.({ ok: false, error: "invalid_room" });
           return;
         }
-      }
 
-      if (socket.rooms.size >= 64) {
-        cb?.({ ok: false, error: "too_many_rooms" });
-        return;
-      }
+        const authedUser = socket.data.user as JwtUser | undefined;
 
-      socket.join(room);
-      cb?.({ ok: true });
+        const requestedUserId = parseUserRoomId(room);
+        if (requestedUserId !== null) {
+          if (!authedUser || authedUser.id !== requestedUserId) {
+            cb?.({ ok: false, error: "forbidden" });
+            return;
+          }
+        }
+
+        // #159 — Autorisation SERVEUR des salons de poste. Jusqu'ici, seul
+        // `USER:` était contrôlé : n'importe quel compte authentifié pouvait
+        // écouter `OF:<n>` ou `MACHINE:<uuid>` et observer l'atelier entier.
+        // Un nom de salon envoyé par le client n'est plus accordé tel quel.
+        const stationRoom = parseStationRoom(room);
+        if (stationRoom && stationRoom.kind !== "USER") {
+          if (!authedUser) {
+            cb?.({ ok: false, error: "forbidden" });
+            return;
+          }
+          const allowed = await authorizeStationRoom(stationRoom, authedUser);
+          if (!allowed) {
+            cb?.({ ok: false, error: "forbidden" });
+            return;
+          }
+        }
+
+        if (socket.rooms.size >= 64) {
+          cb?.({ ok: false, error: "too_many_rooms" });
+          return;
+        }
+
+        socket.join(room);
+        cb?.({ ok: true });
+      })().catch(() => {
+        // Une erreur d'autorisation ne devient jamais une autorisation.
+        cb?.({ ok: false, error: "forbidden" });
+      });
     });
   });
 };
