@@ -1,3 +1,10 @@
+import type {
+  AsBuiltCoverageWarning,
+  AsBuiltEnrichment,
+} from "../repository/asbuilt-enrichment.repository"
+
+export type { AsBuiltCoverageWarning, AsBuiltEnrichment }
+
 export type AsBuiltLotHeader = {
   id: string
   article_id: string
@@ -77,6 +84,18 @@ export type AsBuiltPreview = {
     has_of_link: boolean
     has_shipping_link: boolean
   }
+  /**
+   * Sections de preuve ajoutées par #142 : version technique figée, lots
+   * matière réellement consommés, opérations et machines, réception de
+   * production, mouvements, contrôles et mesures avec instrument et
+   * certificat, décisions de libération, dérogations, allocations et preuves
+   * de livraison.
+   */
+  enrichment?: AsBuiltEnrichment
+  /** Ce qui MANQUE au dossier, explicitement. Un dossier muet est un faux. */
+  coverage_warnings?: AsBuiltCoverageWarning[]
+  /** `true` si les identités d'opérateurs ont été pseudonymisées (RGPD). */
+  personal_data_masked?: boolean
 }
 
 export type AsBuiltGenerateResult = {
