@@ -49,6 +49,9 @@ DROP FUNCTION IF EXISTS public.fn_production_recompute_operation_real_time(uuid)
 DROP FUNCTION IF EXISTS public.fn_production_operation_real_hours(uuid);
 
 -- Compatibilité of_time_logs (la colonne seulement, jamais les lignes)
+DROP TRIGGER IF EXISTS production_mirror_legacy_time_log
+  ON public.of_time_logs;
+DROP FUNCTION IF EXISTS public.tg_production_mirror_legacy_time_log();
 DROP INDEX IF EXISTS public.of_time_logs_pointage_id_uniq;
 ALTER TABLE public.of_time_logs DROP COLUMN IF EXISTS pointage_id;
 

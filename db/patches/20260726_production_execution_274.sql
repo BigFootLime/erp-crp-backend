@@ -15,7 +15,7 @@
 --   * Réversible : `db/patches/support/20260726_production_execution_274.rollback.sql`
 --     (restreint à cerp_test, refuse de s'exécuter sur des données réelles).
 --
--- DÉCISION D'ARCHITECTURE (ADR-0017) : `production_pointages` devient la SOURCE
+-- DÉCISION D'ARCHITECTURE (ADR-0027) : `production_pointages` devient la SOURCE
 -- DE VÉRITÉ du temps de production. `of_time_logs` est conservé intact et
 -- devient un miroir de compatibilité : chaque ligne écrite par l'adaptateur
 -- porte désormais `pointage_id`, ce qui permet à la fonction de recalcul
@@ -476,6 +476,219 @@ CREATE UNIQUE INDEX IF NOT EXISTS of_time_logs_pointage_id_uniq
   ON public.of_time_logs (pointage_id)
   WHERE pointage_id IS NOT NULL;
 
+-- Adaptateur transactionnel des routes historiques.
+--
+-- Les contrôleurs legacy continuent d'insérer/arrêter `of_time_logs`, donc leur
+-- contrat HTTP et leur vue `open_time_log` restent inchangés. Le trigger crée
+-- ou ferme le pointage canonique DANS LA MÊME TRANSACTION. Si l'une des deux
+-- écritures échoue, PostgreSQL annule l'ensemble : aucun miroir orphelin, aucun
+-- pointage invisible et aucun double comptage.
+CREATE OR REPLACE FUNCTION public.tg_production_mirror_legacy_time_log()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_pointage_id uuid;
+  v_session_id uuid;
+  v_of_id bigint;
+  v_affaire_id bigint;
+  v_piece_technique_id uuid;
+  v_poste_id uuid;
+  v_activity_code text;
+  v_time_type production_pointage_time_type;
+BEGIN
+  IF TG_OP = 'INSERT' AND NEW.pointage_id IS NULL THEN
+    SELECT
+      op.of_id,
+      o.affaire_id,
+      o.piece_technique_id,
+      op.poste_id
+    INTO
+      v_of_id,
+      v_affaire_id,
+      v_piece_technique_id,
+      v_poste_id
+    FROM public.of_operations op
+    JOIN public.ordres_fabrication o ON o.id = op.of_id
+    WHERE op.id = NEW.of_operation_id;
+
+    IF v_of_id IS NULL THEN
+      RAISE EXCEPTION 'OF operation % not found for legacy time log', NEW.of_operation_id
+        USING ERRCODE = '23503';
+    END IF;
+
+    v_activity_code := CASE NEW.type
+      WHEN 'SETUP'       THEN 'SETUP'
+      WHEN 'PROGRAMMING' THEN 'PROGRAMMING'
+      WHEN 'CONTROL'     THEN 'CONTROL'
+      WHEN 'MAINTENANCE' THEN 'MAINTENANCE'
+      ELSE 'PRODUCTION'
+    END;
+
+    v_time_type := CASE NEW.type
+      WHEN 'PROGRAMMING' THEN 'PROGRAMMATION'::production_pointage_time_type
+      WHEN 'MAINTENANCE' THEN 'MACHINE'::production_pointage_time_type
+      ELSE 'OPERATEUR'::production_pointage_time_type
+    END;
+
+    v_session_id := gen_random_uuid();
+
+    INSERT INTO public.production_pointages (
+      of_id,
+      affaire_id,
+      piece_technique_id,
+      operation_id,
+      machine_id,
+      poste_id,
+      operator_user_id,
+      time_type,
+      activity_code,
+      start_ts,
+      end_ts,
+      status,
+      comment,
+      session_id,
+      segment_index,
+      source,
+      context_snapshot,
+      created_by,
+      updated_by
+    )
+    VALUES (
+      v_of_id,
+      v_affaire_id,
+      v_piece_technique_id,
+      NEW.of_operation_id,
+      NEW.machine_id,
+      v_poste_id,
+      NEW.user_id,
+      v_time_type,
+      v_activity_code,
+      NEW.started_at,
+      NEW.ended_at,
+      CASE
+        WHEN NEW.ended_at IS NULL THEN 'RUNNING'::production_pointage_status
+        ELSE 'DONE'::production_pointage_status
+      END,
+      NEW.comment,
+      v_session_id,
+      1,
+      'LEGACY_TIME_LOG',
+      jsonb_build_object(
+        'captured_at', now(),
+        'operation_id', NEW.of_operation_id,
+        'activity_code', v_activity_code,
+        'legacy_time_log_type', NEW.type
+      ),
+      NEW.user_id,
+      NEW.user_id
+    )
+    RETURNING id INTO v_pointage_id;
+
+    NEW.pointage_id := v_pointage_id;
+
+    INSERT INTO public.production_pointage_events (
+      pointage_id,
+      event_type,
+      new_values,
+      user_id,
+      note
+    )
+    VALUES (
+      v_pointage_id,
+      'START',
+      jsonb_build_object(
+        'of_id', v_of_id,
+        'operation_id', NEW.of_operation_id,
+        'machine_id', NEW.machine_id,
+        'activity_code', v_activity_code,
+        'operator_user_id', NEW.user_id,
+        'source', 'LEGACY_TIME_LOG'
+      ),
+      NEW.user_id,
+      NEW.comment
+    );
+
+    IF NEW.ended_at IS NOT NULL THEN
+      NEW.duration_minutes := GREATEST(
+        0,
+        ROUND(EXTRACT(EPOCH FROM (NEW.ended_at - NEW.started_at)) / 60.0)::int
+      );
+
+      INSERT INTO public.production_pointage_events (
+        pointage_id,
+        event_type,
+        old_values,
+        new_values,
+        user_id,
+        note
+      )
+      VALUES (
+        v_pointage_id,
+        'STOP',
+        '{"status":"RUNNING"}'::jsonb,
+        jsonb_build_object('status', 'DONE', 'duration_minutes', NEW.duration_minutes),
+        NEW.user_id,
+        NEW.comment
+      );
+    END IF;
+
+    RETURN NEW;
+  END IF;
+
+  IF TG_OP = 'UPDATE'
+     AND NEW.pointage_id IS NOT NULL
+     AND OLD.ended_at IS NULL
+     AND NEW.ended_at IS NOT NULL THEN
+    NEW.duration_minutes := GREATEST(
+      0,
+      ROUND(EXTRACT(EPOCH FROM (NEW.ended_at - NEW.started_at)) / 60.0)::int
+    );
+
+    UPDATE public.production_pointages
+    SET
+      status = 'DONE'::production_pointage_status,
+      end_ts = NEW.ended_at,
+      comment = COALESCE(NEW.comment, comment),
+      updated_at = now(),
+      updated_by = NEW.user_id
+    WHERE id = NEW.pointage_id
+      AND status = 'RUNNING';
+
+    IF FOUND THEN
+      INSERT INTO public.production_pointage_events (
+        pointage_id,
+        event_type,
+        old_values,
+        new_values,
+        user_id,
+        note
+      )
+      VALUES (
+        NEW.pointage_id,
+        'STOP',
+        '{"status":"RUNNING"}'::jsonb,
+        jsonb_build_object('status', 'DONE', 'duration_minutes', NEW.duration_minutes),
+        NEW.user_id,
+        NEW.comment
+      );
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS production_mirror_legacy_time_log
+  ON public.of_time_logs;
+CREATE TRIGGER production_mirror_legacy_time_log
+  BEFORE INSERT OR UPDATE OF ended_at, comment
+  ON public.of_time_logs
+  FOR EACH ROW
+  EXECUTE FUNCTION public.tg_production_mirror_legacy_time_log();
+
 /* -------------------------------------------------------------------------- */
 /* 6) Recalcul unique et autoritaire de `of_operations.temps_total_real`      */
 /* -------------------------------------------------------------------------- */
@@ -596,5 +809,49 @@ COMMENT ON TABLE public.production_execution_idempotency IS
   '#274 — Rejeu idempotent des commandes à effet du suivi de production. Stocke une empreinte, jamais la charge utile.';
 COMMENT ON COLUMN public.of_time_logs.pointage_id IS
   '#274 — Corrélation vers le pointage canonique. NULL = ligne historique, comptée comme avant. Non NULL = déjà comptée côté canonique, exclue du total pour éviter le double comptage.';
+
+/* -------------------------------------------------------------------------- */
+/* 9) Privilèges runtime minimaux                                             */
+/* -------------------------------------------------------------------------- */
+-- Les migrations sont généralement appliquées par `postgres`, alors que l'API
+-- s'exécute avec `cerp_app`. Sans ces droits explicites, un patch valide en
+-- recette échouerait au premier appel runtime.
+REVOKE ALL ON FUNCTION public.tg_production_mirror_legacy_time_log() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.fn_production_operation_real_hours(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.fn_production_recompute_operation_real_time(uuid) FROM PUBLIC;
+
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'cerp_app') THEN
+    GRANT SELECT, INSERT, UPDATE
+      ON public.production_pointages
+      TO cerp_app;
+    GRANT SELECT, INSERT
+      ON public.production_pointage_events
+      TO cerp_app;
+    GRANT SELECT
+      ON public.production_activity_categories
+      TO cerp_app;
+    GRANT SELECT, INSERT
+      ON public.production_quantity_declarations
+      TO cerp_app;
+    GRANT SELECT, INSERT, UPDATE
+      ON public.production_execution_idempotency
+      TO cerp_app;
+    GRANT SELECT, INSERT, UPDATE
+      ON public.of_time_logs
+      TO cerp_app;
+    GRANT SELECT
+      ON public.v_production_active_executions
+      TO cerp_app;
+    GRANT USAGE, SELECT
+      ON SEQUENCE public.production_pointage_events_id_seq
+      TO cerp_app;
+    GRANT EXECUTE
+      ON FUNCTION public.fn_production_operation_real_hours(uuid),
+                  public.fn_production_recompute_operation_real_time(uuid)
+      TO cerp_app;
+  END IF;
+END$$;
 
 COMMIT;

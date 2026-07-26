@@ -56,18 +56,45 @@ WHERE conrelid = 'public.production_pointages'::regclass
 ORDER BY conname;
 
 \echo '--- PREUVE ANTI-DOUBLE-COMPTAGE : aucune minute comptée deux fois ---'
--- Toute ligne of_time_logs corrélée à un pointage est exclue du résidu legacy.
--- Ce compte DOIT être 0 : sinon une même minute alimenterait les deux sommes.
+-- Compare la fonction autoritaire à une recomposition indépendante :
+-- pointages canoniques DONE + résidu legacy STRICTEMENT non corrélé.
+-- Ce compte DOIT être 0.
+WITH independently_recomputed AS (
+  SELECT
+    op.id,
+    ROUND((
+      COALESCE((
+        SELECT SUM(p.duration_minutes)
+        FROM public.production_pointages p
+        LEFT JOIN public.production_activity_categories c
+          ON c.code = p.activity_code
+        WHERE p.operation_id = op.id
+          AND p.status = 'DONE'
+          AND COALESCE(c.counts_operator_time, true)
+      ), 0)
+      +
+      COALESCE((
+        SELECT SUM(t.duration_minutes)
+        FROM public.of_time_logs t
+        WHERE t.of_operation_id = op.id
+          AND t.duration_minutes IS NOT NULL
+          AND t.pointage_id IS NULL
+      ), 0)
+    )::numeric / 60.0, 3) AS expected_hours
+  FROM public.of_operations op
+)
 SELECT count(*) AS lignes_legacy_comptees_en_double
-FROM public.of_time_logs t
-JOIN public.production_pointages p ON p.id = t.pointage_id
-WHERE t.pointage_id IS NOT NULL
-  AND t.duration_minutes IS NOT NULL
-  AND p.status = 'DONE'
-  AND p.duration_minutes IS NOT NULL
-  -- La fonction exclut déjà ces lignes ; on vérifie que l''exclusion est bien
-  -- la seule sémantique possible (pas de chemin alternatif).
-  AND FALSE;
+FROM independently_recomputed expected
+WHERE public.fn_production_operation_real_hours(expected.id)
+      IS DISTINCT FROM expected.expected_hours;
+
+\echo '--- Miroirs legacy corrélés et explicitement exclus du résidu ---'
+SELECT
+  count(*) FILTER (WHERE pointage_id IS NOT NULL) AS lignes_miroirs_exclues,
+  COALESCE(SUM(duration_minutes) FILTER (WHERE pointage_id IS NOT NULL), 0)
+    AS minutes_miroirs_exclues,
+  count(*) FILTER (WHERE pointage_id IS NULL) AS lignes_legacy_residuelles
+FROM public.of_time_logs;
 
 \echo '--- Cohérence : temps persisté vs source unique recalculée ---'
 -- Les écarts sont NORMAUX tant que le recalcul n''a pas été rejoué sur

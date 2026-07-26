@@ -43,7 +43,7 @@ describe("#274 patch — additif et non destructif", () => {
   });
 
   it("n'insère que des données de référentiel, jamais de données métier", () => {
-    const inserts = sql.match(/INSERT\s+INTO\s+public\.(\w+)/gi) ?? [];
+    const inserts = executedStatements.match(/INSERT\s+INTO\s+public\.(\w+)/gi) ?? [];
     for (const insert of inserts) {
       expect(insert.toLowerCase()).toContain("production_activity_categories");
     }
@@ -89,6 +89,14 @@ describe("#274 patch — garantie anti-double-comptage", () => {
   it("exclut du résidu legacy toute ligne déjà comptée côté canonique", () => {
     // C'est LA ligne qui empêche la double comptabilisation.
     expect(sql).toMatch(/FROM public\.of_time_logs t[\s\S]*?t\.pointage_id IS NULL/);
+  });
+
+  it("miroite les routes legacy dans la même transaction PostgreSQL", () => {
+    expect(sql).toMatch(/CREATE OR REPLACE FUNCTION public\.tg_production_mirror_legacy_time_log/);
+    expect(sql).toMatch(/CREATE TRIGGER production_mirror_legacy_time_log/);
+    expect(sql).toMatch(/BEFORE INSERT OR UPDATE OF ended_at, comment/);
+    expect(sql).toMatch(/NEW\.pointage_id := v_pointage_id/);
+    expect(sql).toMatch(/'LEGACY_TIME_LOG'/);
   });
 
   it("ne compte côté canonique que les segments réellement terminés", () => {
@@ -200,11 +208,22 @@ describe("#274 patch — référentiel d'activités", () => {
 });
 
 describe("#274 patch — fichiers d'accompagnement", () => {
-  it("fournit preflight, verify et rollback", () => {
-    for (const suffix of ["preflight", "verify", "rollback"]) {
+  it("fournit preflight, verify, smoke, recalcul historique et rollback", () => {
+    for (const suffix of ["preflight", "verify", "smoke", "recompute-history", "rollback"]) {
       const file = path.join(SUPPORT, `20260726_production_execution_274.${suffix}.sql`);
       expect(fs.existsSync(file), `${suffix} manquant`).toBe(true);
     }
+  });
+
+  it("borne le recalcul historique à la base explicitement nommée", () => {
+    const recompute = fs.readFileSync(
+      path.join(SUPPORT, "20260726_production_execution_274.recompute-history.sql"),
+      "utf8"
+    );
+    expect(recompute).toMatch(/expected_database/);
+    expect(recompute).toMatch(/current_database\(\) = :'expected_database'/);
+    expect(recompute).toMatch(/SET\s+temps_total_real = preview\.target_hours/);
+    expect(recompute).not.toMatch(/\b(DELETE|TRUNCATE|DROP TABLE)\b/i);
   });
 
   it("le rollback refuse de s'exécuter sur une base de production", () => {
@@ -242,5 +261,6 @@ describe("#274 patch — fichiers d'accompagnement", () => {
     );
     expect(verify).toMatch(/lignes_legacy_comptees_en_double/);
     expect(verify).toMatch(/fn_production_operation_real_hours/);
+    expect(verify).not.toMatch(/AND FALSE/i);
   });
 });

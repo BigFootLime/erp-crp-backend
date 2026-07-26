@@ -20,7 +20,6 @@ import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repos
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 
 import {
-  activityToLegacyTimeLogType,
   assertActivityUsable,
   assertExecutionTransition,
   assertFiniteQuantities,
@@ -34,7 +33,6 @@ import {
   assertWithinRemaining,
   computeDurationMinutes,
   fingerprintPayload,
-  LEGACY_TIME_LOG_TO_ACTIVITY,
   LONG_RUNNING_ALERT_MINUTES,
   type ActivityCategory,
   type ExecutionEventType,
@@ -2407,105 +2405,3 @@ export async function repoCorrectExecution(params: {
     client.release();
   }
 }
-
-/* -------------------------------------------------------------------------- */
-/* Adaptateur de compatibilité `of_time_logs`                                 */
-/* -------------------------------------------------------------------------- */
-
-/**
- * Les routes historiques `POST /production/ofs/:ofId/operations/:opId/time-logs/start|stop`
- * continuent de fonctionner à l'identique pour leurs appelants, mais écrivent
- * désormais dans le moteur canonique. La ligne `of_time_logs` est toujours
- * écrite (les écrans et tests legacy la lisent) et porte `pointage_id`, ce qui
- * l'exclut du calcul de `temps_total_real` : la minute n'est comptée qu'une
- * fois, côté canonique.
- */
-export async function repoLegacyStartTimeLog(params: {
-  of_id: number;
-  op_id: string;
-  type: string;
-  machine_id: string | null;
-  comment: string | null;
-  audit: AuditContext;
-}): Promise<{ pointage_id: string; time_log_id: string | null }> {
-  const activityCode = LEGACY_TIME_LOG_TO_ACTIVITY[params.type] ?? "PRODUCTION";
-
-  const started = await repoStartExecution({
-    body: {
-      of_id: params.of_id,
-      operation_id: params.op_id,
-      machine_id: params.machine_id,
-      activity_code: activityCode,
-      comment: params.comment,
-    } as StartExecutionBodyDTO,
-    operatorUserId: params.audit.user_id,
-    // Clé dérivée et stable : deux appels legacy identiques rapprochés ne
-    // créent qu'un seul pointage.
-    idempotencyKey: `legacy:start:${params.op_id}:${params.audit.user_id}:${params.type}`,
-    audit: params.audit,
-    source: "LEGACY_TIME_LOG",
-  });
-
-  const mirror = await pool.query<{ id: string }>(
-    `
-      INSERT INTO public.of_time_logs
-        (of_operation_id, user_id, machine_id, started_at, type, comment, pointage_id)
-      SELECT $1::uuid, $2::int, $3::uuid, p.start_ts, $4::of_time_log_type, $5, p.id
-      FROM public.production_pointages p WHERE p.id = $6::uuid
-      ON CONFLICT DO NOTHING
-      RETURNING id::text AS id
-    `,
-    [params.op_id, params.audit.user_id, params.machine_id, params.type, params.comment, started.id]
-  );
-
-  return { pointage_id: started.id, time_log_id: mirror.rows[0]?.id ?? null };
-}
-
-export async function repoLegacyStopTimeLog(params: {
-  of_id: number;
-  op_id: string;
-  comment: string | null;
-  actorRole: string | null | undefined;
-  audit: AuditContext;
-}): Promise<{ pointage_id: string; duration_minutes: number | null }> {
-  const open = await pool.query<{ id: string }>(
-    `
-      SELECT id::text AS id
-      FROM public.production_pointages
-      WHERE operation_id = $1::uuid AND operator_user_id = $2::int AND status = 'RUNNING'
-      ORDER BY start_ts DESC LIMIT 1
-    `,
-    [params.op_id, params.audit.user_id]
-  );
-  const pointageId = open.rows[0]?.id;
-  if (!pointageId) {
-    throw new HttpError(409, "OF_NO_OPEN_TIME_LOG", "Aucun pointage en cours sur cette opération.");
-  }
-
-  const stopped = await repoStopExecution({
-    id: pointageId,
-    body: { comment: params.comment } as StopExecutionBodyDTO,
-    idempotencyKey: `legacy:stop:${pointageId}`,
-    actorRole: params.actorRole,
-    audit: params.audit,
-  });
-
-  // Miroir legacy fermé avec la MÊME durée que le canonique : les deux vues
-  // racontent la même histoire, une seule est comptée.
-  await pool.query(
-    `
-      UPDATE public.of_time_logs t
-      SET ended_at = p.end_ts,
-          duration_minutes = p.duration_minutes,
-          comment = COALESCE($2, t.comment)
-      FROM public.production_pointages p
-      WHERE t.pointage_id = $1::uuid AND p.id = $1::uuid AND t.ended_at IS NULL
-    `,
-    [pointageId, params.comment]
-  );
-
-  return { pointage_id: pointageId, duration_minutes: stopped.duration_minutes };
-}
-
-/** Fonction exposée pour les tests et la migration : mapping canonique → legacy. */
-export { activityToLegacyTimeLogType };
