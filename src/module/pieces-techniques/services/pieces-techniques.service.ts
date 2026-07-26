@@ -28,6 +28,7 @@ import {
   repoListPieceTechniqueAffaires,
   repoListPieceTechniqueDocuments,
   repoListPieceTechniques,
+  repoPieceTechniquesSummary,
   repoReorderAchats,
   repoReorderBom,
   repoReorderOperations,
@@ -86,6 +87,10 @@ function isValidTransition(from: PieceTechniqueStatut, to: PieceTechniqueStatut)
 }
 
 export const listPieceTechniquesSVC = (filters: ListPiecesTechniquesQueryDTO) => repoListPieceTechniques(filters);
+
+/** #146 — Synthèse de la landing : même périmètre que la liste, aucune écriture. */
+export const pieceTechniquesSummarySVC = (filters: ListPiecesTechniquesQueryDTO) =>
+  repoPieceTechniquesSummary(filters);
 
 export const getPieceTechniqueSVC = (id: string, includes: Set<string>) => repoGetPieceTechnique(id, includes);
 

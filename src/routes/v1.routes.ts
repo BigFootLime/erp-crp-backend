@@ -40,6 +40,7 @@ import chatRoutes from "../module/chat/routes/chat.routes";
 import usersRoutes from "../module/users/routes/users.routes";
 
 import traceabilityRoutes from "../module/traceability/routes/traceability.routes"
+import traceability360Routes from "../module/traceability/routes/traceability-360.routes"
 import asbuiltRoutes from "../module/asbuilt/routes/asbuilt.routes"
 import locksRoutes from "../module/locks/routes/locks.routes"
 import tempsDeplacementsRoutes from "../module/temps-deplacements/routes/temps-deplacements.routes"
@@ -102,6 +103,9 @@ router.use("/codes", codesRoutes);
 router.use("/notifications", notificationsRoutes);
 router.use("/chat", chatRoutes);
 router.use("/users", usersRoutes);
+// Traçabilité 360 (#142) : la surface étendue est montée AVANT le routeur
+// historique pour que `/traceability/v2/...` ne soit jamais capté par lui.
+router.use("/traceability/v2", traceability360Routes)
 router.use("/traceability", traceabilityRoutes)
 router.use("/asbuilt", asbuiltRoutes)
 router.use("/locks", locksRoutes)

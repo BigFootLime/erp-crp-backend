@@ -47,6 +47,12 @@ export type FinanceCapability =
   | "documents_read"
   | "audit_read"
   | "reporting_read"
+  // #275 — Reporting commercial 360. `reporting_read` reste la porte d'entrée
+  // (synthèse, volumes, taux) ; les trois suivantes ouvrent des surfaces plus
+  // sensibles et sont refusées par défaut comme toutes les autres.
+  | "reporting_financial"
+  | "reporting_client_detail"
+  | "reporting_export"
   | "settings_manage";
 
 const ROLES = {
@@ -70,6 +76,14 @@ const CAPABILITY_ROLES: Record<FinanceCapability, ReadonlySet<string>> = {
   documents_read: new Set(Object.values(ROLES)),
   audit_read: new Set([ROLES.accounting, ROLES.accountant, ROLES.director, ROLES.administrator]),
   reporting_read: new Set([ROLES.secretary, ROLES.accounting, ROLES.accountant, ROLES.director]),
+  // Montants d'encours, balance âgée, trop-perçus : réservé à la Comptabilité et
+  // à la Direction. La Secrétaire garde `reporting_read` (volumes, taux, délais)
+  // mais ne voit pas la position financière client.
+  reporting_financial: new Set([ROLES.accounting, ROLES.accountant, ROLES.director]),
+  // Détail nominatif par client (classements, fiches, drill-down).
+  reporting_client_detail: new Set([ROLES.accounting, ROLES.accountant, ROLES.director]),
+  // Extraction de données hors de l'ERP : trace obligatoire, périmètre le plus étroit.
+  reporting_export: new Set([ROLES.accounting, ROLES.accountant, ROLES.director]),
   settings_manage: new Set([ROLES.director, ROLES.administrator]),
 };
 

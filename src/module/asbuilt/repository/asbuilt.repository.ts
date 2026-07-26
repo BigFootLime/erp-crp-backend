@@ -272,14 +272,28 @@ export async function repoListPackVersions(lotId: string): Promise<AsBuiltPackVe
   })
 }
 
-export async function repoComputeNextAsbuiltVersion(lotId: string): Promise<number> {
-  const res = await pool.query<{ version: string | number }>(
-    `SELECT COALESCE(MAX(version), 0) + 1 AS version FROM public.asbuilt_pack_versions WHERE lot_fg_id = $1::uuid`,
+/**
+ * Numéro de version — allocation SANS COURSE (#142).
+ *
+ * `MAX(version) + 1` hors transaction est une course : deux générations
+ * simultanées lisent le même maximum, calculent le même numéro, et l'une des
+ * deux échoue sur l'index unique (ou pire, la seconde écrase la première si
+ * l'index venait à manquer). Ici, un verrou consultatif de TRANSACTION,
+ * dérivé de l'identifiant du lot, sérialise les générations concurrentes du
+ * MÊME lot sans bloquer les autres. Le verrou est relâché automatiquement au
+ * COMMIT ou au ROLLBACK — aucune fuite possible.
+ */
+export async function repoAllocateAsbuiltVersionTx(tx: DbQueryer, lotId: string): Promise<number> {
+  await tx.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [`asbuilt:${lotId}`])
+  const res = await tx.query<{ version: string | number }>(
+    `SELECT COALESCE(MAX(version), 0) + 1 AS version
+       FROM public.asbuilt_pack_versions
+      WHERE lot_fg_id = $1::uuid`,
     [lotId]
   )
   const raw = res.rows[0]?.version
   const n = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : NaN
-  if (!Number.isInteger(n) || n <= 0) throw new Error("Failed to compute asbuilt version")
+  if (!Number.isInteger(n) || n <= 0) throw new Error("Failed to allocate asbuilt version")
   return n
 }
 
@@ -319,6 +333,11 @@ export async function repoInsertAsbuiltPackVersionTx(
     commentaire: string | null
     pdfDocumentId: string
     summaryJson: unknown
+    /** Empreinte du PDF réellement écrit, calculée AVANT cette transaction. */
+    pdfSha256?: string | null
+    pdfSizeBytes?: number | null
+    asOf?: string | null
+    scopeJson?: unknown
   }
 ): Promise<string> {
   const ins = await tx.query<{ id: string }>(
@@ -332,10 +351,14 @@ export async function repoInsertAsbuiltPackVersionTx(
         commentaire,
         pdf_document_id,
         summary_json,
+        pdf_sha256,
+        pdf_size_bytes,
+        as_of,
+        scope_json,
         created_by,
         updated_by
       )
-      VALUES ($1::uuid,$2,'GENERATED',$3,$4,$5,$6::uuid,$7::jsonb,$3,$3)
+      VALUES ($1::uuid,$2,'GENERATED',$3,$4,$5,$6::uuid,$7::jsonb,$8,$9::bigint,$10::timestamptz,$11::jsonb,$3,$3)
       RETURNING id::text AS id
     `,
     [
@@ -346,6 +369,10 @@ export async function repoInsertAsbuiltPackVersionTx(
       params.commentaire,
       params.pdfDocumentId,
       JSON.stringify(params.summaryJson ?? {}),
+      params.pdfSha256 ?? null,
+      params.pdfSizeBytes ?? null,
+      params.asOf ?? null,
+      JSON.stringify(params.scopeJson ?? {}),
     ]
   )
   const id = ins.rows[0]?.id
