@@ -21,11 +21,15 @@ function getUserId(req: Express.Request): number {
   return userId
 }
 
+function getRole(req: Express.Request): string | null {
+  return (req.user?.role as string | undefined) ?? null
+}
+
 export const getAsbuiltPreview: RequestHandler = async (req, res, next) => {
   try {
     getUserId(req)
     const { lotId } = asbuiltLotParamsSchema.parse(req.params)
-    const out = await svcGetAsbuiltPreview(lotId)
+    const out = await svcGetAsbuiltPreview(lotId, { role: getRole(req) })
     res.json(out)
   } catch (e) {
     next(e)
@@ -37,7 +41,7 @@ export const generateAsbuiltPack: RequestHandler = async (req, res, next) => {
     const actorUserId = getUserId(req)
     const { lotId } = asbuiltLotParamsSchema.parse(req.params)
     const body = asbuiltGenerateBodySchema.parse(req.body)
-    const out = await svcGenerateAsbuiltPack({ lotId, actorUserId, body })
+    const out = await svcGenerateAsbuiltPack({ lotId, actorUserId, body, role: getRole(req) })
     res.status(201).json(out)
   } catch (e) {
     next(e)
