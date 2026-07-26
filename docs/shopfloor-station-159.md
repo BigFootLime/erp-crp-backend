@@ -1,8 +1,8 @@
 # Poste opérateur tablette — socle serveur (#159)
 
-- **Statut** : code implémenté en local, **non déployé**. Patch appliqué sur **cerp_test**
-  puis, le 2026-07-26 à 20:09 et **hors de l'intervention qui a produit ce lot**, sur
-  **cerp_prod** (même empreinte, `verify` 9/9 sur les deux bases, tables vides).
+- **Statut** : code prêt à livrer. Patch appliqué sur **cerp_test** puis, le
+  2026-07-26 à 20:09, sur **cerp_prod** après sauvegarde restaurable vérifiée
+  (même empreinte, `verify` 9/9 sur les deux bases, tables vides).
 - **Frontend** : [crp-systems-web#289](https://github.com/BigFootLime/crp-systems-web/issues/289)
 - **Décisions** : `crp-systems-web/docs/adr/ADR-0030-shopfloor-operator-station.md`,
   `ADR-0031-ot-it-gateway-dnc-telemetry.md`
@@ -12,6 +12,10 @@
 
 La couche **appareil / session / dossier** qui manquait pour qu'une tablette d'atelier
 remplace le dossier papier posé sur chaque machine.
+
+Le dossier expose aussi une identité client minimale — identifiant, code, raison sociale
+et `logo_url` publique — afin que l'interface montre le bon donneur d'ordre sans jamais
+renvoyer `logo_path`.
 
 ## Ce que ce module n'ajoute PAS
 
@@ -119,11 +123,11 @@ Résultat du 26 juillet 2026 sur `cerp_test` : appliqué, **rejoué sans erreur*
 `station_audit_events` refuse `UPDATE` et `DELETE`, et qu'une tablette `FIXED` sans
 machine est rejetée par la base. Aucune donnée de sonde persistée.
 
-Le même patch a été appliqué sur `cerp_prod` à 20:09 le même jour, **hors de
-l'intervention qui a produit ce lot**. Le `verify` y passe également **9/9**, propriétés
-et droits `cerp_app` compris, et les cinq tables sont **vides**. Le schéma est donc en
-avance sur le code — l'ordre normal d'un déploiement, sans effet tant que rien ne
-l'interroge.
+Le même patch a été appliqué sur `cerp_prod` à 20:09 le même jour, après la sauvegarde
+restaurable `cerp_prod_20260726-200750.dump` (39 239 411 octets), dont le catalogue
+`pg_restore -l` a été vérifié. Le `verify` y passe également **9/9**, propriétés et
+droits `cerp_app` compris, et les cinq tables sont **vides**. La migration est enregistrée
+dans `cerp_schema_migrations` avec le SHA-256 ci-dessous.
 
 **Deux points de vigilance quand le code sera déployé :**
 
