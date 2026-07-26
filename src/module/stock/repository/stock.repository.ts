@@ -10,6 +10,7 @@ import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
+import { recordMaterialConsumptionOnPost } from "../../traceability/services/material-consumption.automation";
 import {
   calculateStockAvailability,
   evaluateNegativeStockOverride,
@@ -6334,6 +6335,16 @@ export async function repoPostMovement(
       user_id: audit.user_id,
     });
 
+    // Traçabilité #142 : une sortie matière comptabilisée pour un OF écrit sa
+    // consommation DANS CETTE TRANSACTION. Pas de consommation sans mouvement
+    // comptabilisé, pas de mouvement comptabilisé sans sa preuve de
+    // consommation. Idempotent : rejouer la comptabilisation ne duplique rien.
+    const consumption = await recordMaterialConsumptionOnPost(client, {
+      movementId: id,
+      actorUserId: audit.user_id ?? null,
+      correlationId: command.correlation_id,
+    });
+
     await insertAuditLog(client, audit, {
       action: "stock.movements.post",
       entity_type: "stock_movements",
@@ -6342,6 +6353,8 @@ export async function repoPostMovement(
         movement_no: m.movement_no,
         movement_type: m.movement_type,
         negative_stock_override: body.negative_stock_override ?? null,
+        traceability_consumptions_recorded: consumption.recorded,
+        traceability_consumptions_compensated: consumption.compensated,
       },
     });
 

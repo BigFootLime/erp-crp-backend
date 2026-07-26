@@ -89,6 +89,15 @@ export type QualityControlPoint = {
   updated_at: string;
 };
 
+/**
+ * DTO PUBLIC d'un document qualité.
+ *
+ * #142 : `storage_path` et `stored_name` ne font PAS partie du contrat public.
+ * Un chemin de stockage serveur n'est pas une donnée métier : le divulguer
+ * révèle l'arborescence de l'hôte et facilite une tentative d'accès direct.
+ * Le téléchargement passe par une route qui vérifie le rattachement de
+ * l'objet, pas par un chemin transmis au navigateur.
+ */
 export type QualityDocument = {
   id: string;
   entity_type: QualityEntityType;
@@ -96,8 +105,6 @@ export type QualityDocument = {
   document_type: QualityDocumentType;
   version: number;
   original_name: string;
-  stored_name: string;
-  storage_path: string;
   mime_type: string;
   size_bytes: number;
   sha256: string | null;
@@ -107,6 +114,15 @@ export type QualityDocument = {
   uploaded_by: number | null;
   removed_at: string | null;
   removed_by: number | null;
+};
+
+/**
+ * Vue INTERNE, réservée à la résolution de fichier côté serveur. Elle ne doit
+ * jamais être sérialisée dans une réponse HTTP.
+ */
+export type QualityDocumentInternal = QualityDocument & {
+  stored_name: string;
+  storage_path: string;
 };
 
 export type QualityEventLog = {

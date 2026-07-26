@@ -42,6 +42,7 @@ import type {
   QualityControlPoint,
   QualityControlResult,
   QualityDocument,
+  QualityDocumentInternal,
   QualityEntityType,
   QualityEventLog,
   QualityKpis,
@@ -533,6 +534,8 @@ async function selectDocuments(q: DbQueryer, entityType: QualityEntityType, enti
     [entityType, entityId]
   );
 
+  // #142 : le chemin de stockage est LU pour l'usage interne mais n'est jamais
+  // recopié dans le DTO public. Un chemin serveur n'est pas une donnée métier.
   return res.rows.map((r) => ({
     id: r.id,
     entity_type: r.entity_type,
@@ -540,8 +543,6 @@ async function selectDocuments(q: DbQueryer, entityType: QualityEntityType, enti
     document_type: r.document_type,
     version: r.version,
     original_name: r.original_name,
-    stored_name: r.stored_name,
-    storage_path: r.storage_path,
     mime_type: r.mime_type,
     size_bytes: Number(r.size_bytes),
     sha256: r.sha256,
@@ -1533,8 +1534,6 @@ export async function repoAttachDocuments(params: {
         document_type: row.document_type,
         version: row.version,
         original_name: row.original_name,
-        stored_name: row.stored_name,
-        storage_path: row.storage_path,
         mime_type: row.mime_type,
         size_bytes: Number(row.size_bytes),
         sha256: row.sha256,
@@ -1654,7 +1653,9 @@ export async function repoGetDocumentForDownload(params: {
   entity_id: string;
   doc_id: string;
   audit: AuditContext;
-}): Promise<QualityDocument | null> {
+  // Vue interne : le chemin de stockage sert à résoudre le fichier côté
+  // serveur et ne doit jamais être sérialisé dans une réponse HTTP.
+}): Promise<QualityDocumentInternal | null> {
   const { entity_type, entity_id, doc_id, audit } = params;
   const client = await pool.connect();
   try {
