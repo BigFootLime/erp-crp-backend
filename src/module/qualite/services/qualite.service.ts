@@ -26,6 +26,7 @@ import type {
   QualityControlDetail,
   QualityControlListItem,
   QualityDocument,
+  QualityDocumentInternal,
   QualityKpis,
   QualityUserLite,
 } from "../types/qualite.types";
@@ -136,6 +137,6 @@ export const svcGetDocumentForDownload = (params: {
   entity_id: string;
   doc_id: string;
   audit: AuditContext;
-}): Promise<QualityDocument | null> => repoGetDocumentForDownload(params);
+}): Promise<QualityDocumentInternal | null> => repoGetDocumentForDownload(params);
 
 export const svcQualityDocumentBaseDir = (): string => qualityDocumentBaseDir();
