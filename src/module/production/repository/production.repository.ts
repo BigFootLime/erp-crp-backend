@@ -3783,21 +3783,16 @@ export async function repoStopOfOperationTimeLog(params: {
     );
     const durationMinutes = stopped.rows[0]?.duration_minutes ?? null;
 
-    await client.query(
-      `
-        UPDATE of_operations op
-        SET
-          temps_total_real = ROUND(COALESCE((
-            SELECT SUM(t.duration_minutes) / 60.0
-            FROM of_time_logs t
-            WHERE t.of_operation_id = op.id
-              AND t.duration_minutes IS NOT NULL
-          ), 0)::numeric, 3),
-          updated_at = now()
-        WHERE op.of_id = $1::bigint AND op.id = $2::uuid
-      `,
-      [params.of_id, params.op_id]
-    );
+    // #274 — Source UNIQUE du temps réel. Cet UPDATE ne somme plus `of_time_logs`
+    // tout seul : il déléguait à une formule locale qui ignorait complètement le
+    // temps saisi via `production_pointages`, si bien que `temps_total_real`
+    // sous-comptait silencieusement dès qu'un opérateur pointait depuis l'écran
+    // Pointages. La fonction additionne le moteur canonique et le résidu legacy
+    // non migré (`of_time_logs.pointage_id IS NULL`), donc aucune minute n'est
+    // ni perdue ni comptée deux fois.
+    await client.query(`SELECT public.fn_production_recompute_operation_real_time($1::uuid)`, [
+      params.op_id,
+    ]);
 
     await client.query(
       `UPDATE ordres_fabrication SET updated_at = now(), updated_by = $2 WHERE id = $1::bigint`,
