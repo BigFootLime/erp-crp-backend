@@ -1,7 +1,7 @@
 # Reporting commercial 360 — contrat d'API (#275 / back #141)
 
 Base : `/api/v1/reporting/commercial/v2` · Décision :
-`crp-systems-web/docs/adr/ADR-0028-reporting-commercial-360.md`
+`crp-systems-web/docs/adr/ADR-0029-reporting-commercial-360.md`
 
 Toutes les routes sont en lecture seule, authentifiées, non mises en cache
 (`Cache-Control: no-store, private`) et refusées par défaut.
@@ -153,6 +153,13 @@ encaissements et dates d'imputation.
 
 Support : `.preflight.sql` (lecture seule), `.verify.sql` (17/17 + lisibilité `cerp_app`),
 `.rollback.sql`, `.invariants.sql` (banc de réconciliation en transaction annulée).
+
+Appliqué et vérifié sur `cerp_test`, puis sur **`cerp_prod`** le 2026-07-26 après la
+sauvegarde vérifiée
+`/var/backups/cerp/cerp_prod_release_20260726-1615.dump` (37 706 913 octets).
+Les 17 index sont présents, valides et prêts, le rôle `cerp_app` lit les huit
+relations couvertes et la migration est enregistrée avec l'empreinte
+`c3d443105dba289bb21f615ae29c83a13e1b6366616d35c5eb257291df0a5ef1`.
 
 ---
 
