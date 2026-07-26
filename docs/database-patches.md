@@ -138,6 +138,34 @@ No `DATABASE_URL` for `cerp_test` was configured in the #225 workspace on
 2026-07-23, so the patch was not applied or registered on any database.
 `cerp_prod` was not modified.
 
+## Issue #274 - Suivi et pointage de production 360
+
+Patch `20260726_production_execution_274.sql` consolidates
+`production_pointages` and `of_time_logs` without deleting or rewriting either
+history. `production_pointages` is canonical; correlated legacy rows carry
+`pointage_id` and are excluded from the residual term of
+`fn_production_operation_real_hours`, so a minute is counted exactly once.
+
+The compatibility adapter is a PostgreSQL trigger on `of_time_logs`. It mirrors
+legacy START/STOP into the canonical pointage inside the same transaction,
+preserving the historical HTTP contract and preventing partial state.
+
+Support files:
+
+- `preflight.sql`: read-only prerequisites, volumes and overlap detection;
+- `verify.sql`: structure, categories, constraints and independent
+  anti-double-counting proof;
+- `smoke.sql`: runs as `cerp_app`, exercises START/double START/STOP and rolls
+  back all fixtures;
+- `recompute-history.sql`: updates only derived `temps_total_real`, guarded by
+  an explicit `expected_database`;
+- `rollback.sql`: test-only and refuses to remove structures carrying evidence.
+
+On 2026-07-26, `cerp_test` was backed up, migrated, verified, replayed and
+smoke-tested successfully. Preflight found no overlaps and no historical gap;
+the recompute changed zero operations. The production application remains a
+separate backup/preflight/verify gate.
+
 ## Issue #228 - Qualite industrielle 360 : plans, controles, liberation, NC, derogations et CAPA
 
 Patch `20260725_qualite_360_228.sql` adds the governance layer the Qualite
