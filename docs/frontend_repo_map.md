@@ -768,5 +768,5 @@ Foreign keys are defined extensively in patches (hundreds). Examples of central 
 ### Deployment
 
 - `Dockerfile` (build TS -> runtime image; healthcheck)
-- `.github/workflows/deploy.yml` (SSH deploy)
+- GitHub Actions disabled; no tracked workflow and no deployment triggered by a merge
 - `.cz.toml` (commit message schema)
