@@ -21,6 +21,7 @@ import paiementsRoutes from "../module/facturation/routes/paiements.routes";
 import tarificationRoutes from "../module/facturation/routes/tarification.routes";
 import reportingRoutes from "../module/facturation/routes/reporting.routes";
 import productionRoutes from "../module/production/routes/production.routes";
+import productionExecutionRoutes from "../module/production/routes/production-execution.routes";
 import qualiteRoutes from "../module/qualite/routes/qualite.routes";
 import quality360Routes from "../module/qualite/routes/quality-360.routes";
 import livraisonsRoutes from "../module/livraisons/routes/livraisons.routes";
@@ -39,6 +40,7 @@ import chatRoutes from "../module/chat/routes/chat.routes";
 import usersRoutes from "../module/users/routes/users.routes";
 
 import traceabilityRoutes from "../module/traceability/routes/traceability.routes"
+import traceability360Routes from "../module/traceability/routes/traceability-360.routes"
 import asbuiltRoutes from "../module/asbuilt/routes/asbuilt.routes"
 import locksRoutes from "../module/locks/routes/locks.routes"
 import tempsDeplacementsRoutes from "../module/temps-deplacements/routes/temps-deplacements.routes"
@@ -75,6 +77,10 @@ router.use("/avoirs", avoirsRoutes);
 router.use("/paiements", paiementsRoutes);
 router.use("/tarification", tarificationRoutes);
 router.use("/reporting", reportingRoutes);
+// Suivi et pointage de production 360 (#274) monté AVANT le routeur historique :
+// ses routes déclarent des capacités fines (refus par défaut) et exigent une
+// clé d'idempotence. Le routeur hérité reste inchangé pour les écrans existants.
+router.use("/production/execution", productionExecutionRoutes);
 router.use("/production", productionRoutes);
 router.use("/planning", planningRoutes);
 router.use("/programmations", programmationRoutes);
@@ -97,6 +103,9 @@ router.use("/codes", codesRoutes);
 router.use("/notifications", notificationsRoutes);
 router.use("/chat", chatRoutes);
 router.use("/users", usersRoutes);
+// Traçabilité 360 (#142) : la surface étendue est montée AVANT le routeur
+// historique pour que `/traceability/v2/...` ne soit jamais capté par lui.
+router.use("/traceability/v2", traceability360Routes)
 router.use("/traceability", traceabilityRoutes)
 router.use("/asbuilt", asbuiltRoutes)
 router.use("/locks", locksRoutes)

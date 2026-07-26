@@ -20,15 +20,73 @@ vi.mock("../module/auth/middlewares/auth.middleware", () => ({
   authorizeRole: (..._roles: string[]) => (_req: unknown, _res: unknown, next: () => void) => next(),
 }))
 
-vi.mock("../module/traceability/services/traceability.service", () => ({
-  svcGetTraceabilityChain: vi.fn(async () => ({
-    seed: { type: "lot", id: lotId },
-    nodes: [{ node_id: `lot:${lotId}`, type: "lot", id: lotId, label: "Lot TEST", meta: null }],
-    edges: [],
-    highlights: [],
-    truncated: { maxDepthReached: false, maxNodesReached: false, maxEdgesReached: false },
-  })),
-}))
+// #142 : le moteur est désormais `traceability-360.service`. Le contrat de
+// `GET /traceability/chain` est inchangé — c'est précisément ce que ce test
+// verrouille. `toLegacyChainResult` reste l'implémentation réelle : c'est elle
+// qui garantit la compatibilité, la mocker ne prouverait rien.
+vi.mock("../module/traceability/services/traceability-360.service", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("../module/traceability/services/traceability-360.service")
+  >()
+  return {
+    ...actual,
+    svcGetTraceabilityChain: vi.fn(async () => ({
+      seed: {
+        node_id: `lot:${lotId}`,
+        type: "lot",
+        type_label: "Lot",
+        family: "stock",
+        id: lotId,
+        code: "LOT-TEST",
+        label: "Lot TEST",
+        status: "AVAILABLE",
+        date: null,
+        qty: null,
+        unit: null,
+        route: `/stock/lots/${lotId}`,
+        masked: false,
+        meta: null,
+      },
+      as_of: new Date().toISOString(),
+      generated_at: new Date().toISOString(),
+      scope: {
+        direction: "both",
+        max_depth: 4,
+        max_nodes: 120,
+        max_edges: 400,
+        node_types: null,
+        relations: null,
+        period_from: null,
+        period_to: null,
+      },
+      capabilities: {},
+      nodes: [],
+      edges: [],
+      paths: {},
+      summary: { by_type: [], node_count: 1, edge_count: 0, upstream_count: 0, downstream_count: 0 },
+      coverage: {
+        complete: true,
+        visited_nodes: 1,
+        expanded_nodes: 0,
+        frontier_pending: 0,
+        hidden_by_permission: 0,
+        filtered_out: 0,
+        proof_levels: { proven: 0, declared: 0, unknown: 0 },
+        state: "COMPLETE",
+        state_label: "Chaîne complète",
+      },
+      data_quality_issues: [],
+      sources: [],
+      truncated: {
+        depth_reached: false,
+        node_budget_reached: false,
+        edge_budget_reached: false,
+        branches: [],
+      },
+      next_cursor: null,
+    })),
+  }
+})
 
 let tmpPdfPath: string | null = null
 
