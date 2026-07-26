@@ -96,11 +96,13 @@ Env var names observed in code (names only):
   - `src/module/auth/services/auth.service.ts`
 - `BACKEND_URL` (base URL used to build public image URLs) in `src/module/outils/repository/outil.repository.ts`
 
-GitHub Actions is disabled at repository level and no workflow remains under
-`.github/workflows` (issue #162, frontend governance ADR-0032). Typecheck and
-tests must be run locally before merge. A merge to `main` does not deploy the
-backend. Any production deployment requires separate human approval and must
-keep VPS or provider credentials outside the repository.
+GitHub Actions and automated Dependabot updates are disabled at repository
+level. No workflow remains under `.github/workflows` and
+`.github/dependabot.yml` is intentionally absent (issue #162, frontend
+governance ADR-0032). Typecheck and tests must be run locally before merge. A
+merge to `main` does not deploy the backend. Any production deployment requires
+separate human approval and must keep VPS or provider credentials outside the
+repository.
 
 ## 7) Project Structure (Conventions)
 
