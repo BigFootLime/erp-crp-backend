@@ -147,9 +147,9 @@ pas un rollback.
 | Suite | Cas |
 | --- | ---: |
 | `shopfloor-station-159.domain.test.ts` | 63 |
-| `shopfloor-station-159.routes.test.ts` | 51 |
+| `shopfloor-station-159.routes.test.ts` | 52 |
 | `shopfloor-station-159.migration-guards.test.ts` | 21 |
-| **Suite complète** | **2 609 verts** |
+| **Suite complète** | **2 631 verts** |
 
 Frontières vérifiées par test sur les requêtes SQL réellement émises pendant un parcours
 complet : aucune écriture vers `hr_*`, `stock_movements`, `stock_reservations`, `lots`,
