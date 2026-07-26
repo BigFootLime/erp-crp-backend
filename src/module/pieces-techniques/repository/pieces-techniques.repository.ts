@@ -165,6 +165,52 @@ function includesSetForCreate(): Set<string> {
   return new Set(["nomenclature", "operations", "achats", "history"]);
 }
 
+/* -------------------------------------------------------------------------------------- */
+/* #146 — Prédicats de complétude, partagés par la liste, les filtres et la synthèse.       */
+/*                                                                                          */
+/* Ces expressions SQL sont la SOURCE UNIQUE de « ce qui manque au dossier ». Elles sont     */
+/* volontairement de niveau LISTE : présence d'une version applicable, d'une gamme, d'une    */
+/* nomenclature, d'un article, de documents. Ce n'est PAS le verdict de préparation de       */
+/* `dossier-readiness`, qui exige l'arborescence complète et les lignes d'achat — on ne le    */
+/* duplique pas, on ne prétend pas le remplacer.                                             */
+/* -------------------------------------------------------------------------------------- */
+
+const HAS_APPLICABLE_VERSION_SQL = `EXISTS (
+  SELECT 1 FROM public.piece_technique_versions v
+  WHERE v.piece_technique_id = p.id AND v.statut = 'APPLICABLE'
+)`;
+
+const HAS_GAMME_SQL = `EXISTS (
+  SELECT 1 FROM public.pieces_techniques_operations o WHERE o.piece_technique_id = p.id
+)`;
+
+const HAS_NOMENCLATURE_SQL = `EXISTS (
+  SELECT 1 FROM public.pieces_techniques_nomenclature n WHERE n.parent_piece_technique_id = p.id
+)`;
+
+const HAS_ACHATS_SQL = `EXISTS (
+  SELECT 1 FROM public.pieces_techniques_achats a WHERE a.piece_technique_id = p.id
+)`;
+
+const HAS_ARTICLE_SQL = `(p.article_id IS NOT NULL)`;
+
+const HAS_DOCUMENTS_SQL = `EXISTS (
+  SELECT 1 FROM public.pieces_techniques_documents d
+  WHERE d.piece_technique_id = p.id AND d.removed_at IS NULL
+)`;
+
+/**
+ * Un dossier est « à compléter » dès qu'il lui manque l'un des quatre éléments dont
+ * l'absence empêche concrètement de lancer la fabrication : version applicable, gamme,
+ * structure (nomenclature ou achats) et article lié.
+ */
+const TO_COMPLETE_SQL = `(
+  NOT ${HAS_APPLICABLE_VERSION_SQL}
+  OR NOT ${HAS_GAMME_SQL}
+  OR NOT (${HAS_NOMENCLATURE_SQL} OR ${HAS_ACHATS_SQL})
+  OR NOT ${HAS_ARTICLE_SQL}
+)`;
+
 function buildListWhere(filters: ListPiecesTechniquesQueryDTO) {
   const where: string[] = [];
   const values: unknown[] = [];
@@ -181,20 +227,81 @@ function buildListWhere(filters: ListPiecesTechniquesQueryDTO) {
     const p = push(q);
     const normalized = `%${filters.q.trim().replace(/[^A-Za-z0-9]+/g, "").toUpperCase()}%`;
     const pn = push(normalized);
+    // #146 — La recherche couvre désormais les champs réellement utilisés au poste
+    // méthodes : désignation secondaire, client, référence de plan, indice et famille.
+    // Retrouver une pièce par son plan est le geste le plus fréquent ; il n'était pas servi.
     where.push(`(
       p.code_piece ILIKE ${p}
       OR p.designation ILIKE ${p}
+      OR p.designation_2 ILIKE ${p}
       OR p.name_piece ILIKE ${p}
+      OR p.client_name ILIKE ${p}
+      OR p.code_client ILIKE ${p}
+      OR EXISTS (
+        SELECT 1 FROM public.pieces_families pf
+        WHERE pf.id = p.famille_id AND (pf.code ILIKE ${p} OR pf.designation ILIKE ${p})
+      )
       OR EXISTS (
         SELECT 1 FROM public.piece_technique_versions pv
         WHERE pv.piece_technique_id = p.id
-          AND (pv.code_metier ILIKE ${p} OR pv.code_metier_normalise ILIKE ${pn})
+          AND (
+            pv.code_metier ILIKE ${p}
+            OR pv.code_metier_normalise ILIKE ${pn}
+            OR pv.plan_reference ILIKE ${p}
+            OR pv.indice ILIKE ${p}
+            OR pv.indice_externe_original ILIKE ${p}
+          )
       )
     )`);
   }
   if (filters.client_id) where.push(`p.client_id = ${push(filters.client_id)}`);
   if (filters.famille_id) where.push(`p.famille_id = ${push(filters.famille_id)}::uuid`);
   if (filters.statut) where.push(`p.statut = ${push(filters.statut)}`);
+
+  // --- Filtres de complétude (#146). `undefined` = pas de filtre. ---
+  const presence = (value: boolean | undefined, sql: string) => {
+    if (value === undefined) return;
+    where.push(value ? sql : `NOT ${sql}`);
+  };
+  presence(filters.has_applicable_version, HAS_APPLICABLE_VERSION_SQL);
+  presence(filters.has_gamme, HAS_GAMME_SQL);
+  presence(filters.has_nomenclature, `(${HAS_NOMENCLATURE_SQL} OR ${HAS_ACHATS_SQL})`);
+  presence(filters.has_article, HAS_ARTICLE_SQL);
+  presence(filters.has_documents, HAS_DOCUMENTS_SQL);
+  if (filters.ensemble !== undefined) {
+    where.push(filters.ensemble ? `p.ensemble` : `NOT p.ensemble`);
+  }
+  if (filters.updated_within_days !== undefined) {
+    where.push(`p.updated_at >= now() - (${push(filters.updated_within_days)}::int * INTERVAL '1 day')`);
+  }
+
+  // --- Segment : raccourci nommé vers une combinaison de filtres serveur (#280). ---
+  switch (filters.segment) {
+    case "to_complete":
+      where.push(TO_COMPLETE_SQL);
+      break;
+    case "no_applicable_version":
+      where.push(`NOT ${HAS_APPLICABLE_VERSION_SQL}`);
+      break;
+    case "no_gamme":
+      where.push(`NOT ${HAS_GAMME_SQL}`);
+      break;
+    case "no_nomenclature":
+      where.push(`NOT (${HAS_NOMENCLATURE_SQL} OR ${HAS_ACHATS_SQL})`);
+      break;
+    case "no_article":
+      where.push(`NOT ${HAS_ARTICLE_SQL}`);
+      break;
+    case "ensembles":
+      where.push(`p.ensemble`);
+      break;
+    case "recent":
+      where.push(`p.updated_at >= now() - INTERVAL '30 days'`);
+      break;
+    case "all":
+    default:
+      break;
+  }
 
   return {
     whereSql: where.length ? `WHERE ${where.join(" AND ")}` : "",
@@ -266,11 +373,24 @@ export async function repoListPieceTechniques(filters: ListPiecesTechniquesQuery
       COALESCE(no.operations_count, 0)::int AS operations_count,
       COALESCE(na.achats_count, 0)::int AS achats_count,
       COALESCE(no.cout_mo_total, 0)::float8 AS cout_mo_total,
-      COALESCE(na.achats_total_ht, 0)::float8 AS achats_total_ht
+      COALESCE(na.achats_total_ht, 0)::float8 AS achats_total_ht,
+      -- #146 — Complétude de niveau liste. Additif : aucun champ existant n'est touché.
+      current_version.indice AS applicable_indice,
+      current_version.plan_reference AS applicable_plan_reference,
+      current_version.date_effet::text AS applicable_date_effet,
+      current_version.version_interne::int AS applicable_version_interne,
+      ${HAS_APPLICABLE_VERSION_SQL} AS has_applicable_version,
+      ${HAS_GAMME_SQL} AS has_gamme,
+      (${HAS_NOMENCLATURE_SQL} OR ${HAS_ACHATS_SQL}) AS has_structure,
+      ${HAS_ARTICLE_SQL} AS has_article,
+      ${HAS_DOCUMENTS_SQL} AS has_documents,
+      ${TO_COMPLETE_SQL} AS to_complete
     FROM pieces_techniques p
     LEFT JOIN pieces_families f ON f.id = p.famille_id
     LEFT JOIN LATERAL (
-      SELECT v.code_metier
+      -- #146 : la version applicable porte aussi l'indice et la référence de plan, deux
+      -- informations que le préparateur cherchait jusqu'ici en ouvrant chaque fiche.
+      SELECT v.code_metier, v.indice, v.plan_reference, v.date_effet, v.version_interne
       FROM public.piece_technique_versions v
       WHERE v.piece_technique_id = p.id
         AND v.statut = 'APPLICABLE'
@@ -308,6 +428,100 @@ export async function repoListPieceTechniques(filters: ListPiecesTechniquesQuery
   };
   const dataRes = await db.query<Row>(dataSql, [...values, pageSize, offset]);
   return { items: dataRes.rows, total };
+}
+
+/* -------------------------------------------------------------------------------------- */
+/* #146 — Agrégat de synthèse de la landing.                                                */
+/*                                                                                          */
+/* La landing calculait ses indicateurs sur les 20 lignes affichées : trois cartes sur       */
+/* quatre changeaient de valeur en tournant la page. Cet agrégat porte sur EXACTEMENT le     */
+/* même périmètre que la liste — même `WHERE`, mêmes paramètres — donc son total est, par    */
+/* construction, celui de la liste.                                                          */
+/* -------------------------------------------------------------------------------------- */
+
+export type PieceTechniqueSummary = {
+  as_of: string;
+  total: number;
+  by_statut: Array<{ statut: string; count: number }>;
+  ensembles: number;
+  pieces: number;
+  to_complete: number;
+  without_applicable_version: number;
+  without_gamme: number;
+  without_structure: number;
+  without_article: number;
+  without_documents: number;
+  updated_last_30_days: number;
+  filters_applied: Record<string, unknown>;
+  coverage: { total_rows: number; source_empty: boolean };
+};
+
+export async function repoPieceTechniquesSummary(
+  filters: ListPiecesTechniquesQueryDTO
+): Promise<PieceTechniqueSummary> {
+  const { whereSql, values } = buildListWhere(filters);
+
+  const summarySql = `
+    SELECT
+      COUNT(*)::int AS total,
+      COUNT(*) FILTER (WHERE p.ensemble)::int AS ensembles,
+      COUNT(*) FILTER (WHERE NOT p.ensemble)::int AS pieces,
+      COUNT(*) FILTER (WHERE ${TO_COMPLETE_SQL})::int AS to_complete,
+      COUNT(*) FILTER (WHERE NOT ${HAS_APPLICABLE_VERSION_SQL})::int AS without_applicable_version,
+      COUNT(*) FILTER (WHERE NOT ${HAS_GAMME_SQL})::int AS without_gamme,
+      COUNT(*) FILTER (WHERE NOT (${HAS_NOMENCLATURE_SQL} OR ${HAS_ACHATS_SQL}))::int AS without_structure,
+      COUNT(*) FILTER (WHERE NOT ${HAS_ARTICLE_SQL})::int AS without_article,
+      COUNT(*) FILTER (WHERE NOT ${HAS_DOCUMENTS_SQL})::int AS without_documents,
+      COUNT(*) FILTER (WHERE p.updated_at >= now() - INTERVAL '30 days')::int AS updated_last_30_days
+    FROM pieces_techniques p
+    ${whereSql}
+  `;
+
+  const statusSql = `
+    SELECT p.statut::text AS statut, COUNT(*)::int AS count
+    FROM pieces_techniques p
+    ${whereSql}
+    GROUP BY p.statut
+    ORDER BY p.statut
+  `;
+
+  // Couverture : une base sans aucune pièce n'est pas « tout est complet », c'est une base
+  // vide. Le compte total du module, hors filtres, tranche la question.
+  const coverageSql = `SELECT COUNT(*)::int AS total_rows FROM pieces_techniques p WHERE p.deleted_at IS NULL`;
+
+  const [summaryRes, statusRes, coverageRes] = await Promise.all([
+    db.query<Record<string, number>>(summarySql, values),
+    db.query<{ statut: string; count: number }>(statusSql, values),
+    db.query<{ total_rows: number }>(coverageSql),
+  ]);
+
+  const row = summaryRes.rows[0] ?? {};
+  const int = (value: unknown) => (typeof value === "number" ? value : Number(value ?? 0) || 0);
+  const totalRows = int(coverageRes.rows[0]?.total_rows);
+
+  const filtersApplied: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(filters)) {
+    if (["page", "pageSize", "sortBy", "sortDir"].includes(key)) continue;
+    if (value === undefined || value === null || value === "") continue;
+    filtersApplied[key] = value;
+  }
+
+  return {
+    as_of: new Date().toISOString(),
+    total: int(row.total),
+    by_statut: statusRes.rows.map((r) => ({ statut: String(r.statut), count: int(r.count) })),
+    ensembles: int(row.ensembles),
+    pieces: int(row.pieces),
+    to_complete: int(row.to_complete),
+    without_applicable_version: int(row.without_applicable_version),
+    without_gamme: int(row.without_gamme),
+    without_structure: int(row.without_structure),
+    without_article: int(row.without_article),
+    without_documents: int(row.without_documents),
+    updated_last_30_days: int(row.updated_last_30_days),
+    filters_applied: filtersApplied,
+    coverage: { total_rows: totalRows, source_empty: totalRows === 0 },
+  };
 }
 
 export async function repoGetPieceTechnique(id: string, includes: Set<string>): Promise<PieceTechnique | null> {
