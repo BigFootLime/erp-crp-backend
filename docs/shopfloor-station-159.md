@@ -1,7 +1,8 @@
 # Poste opérateur tablette — socle serveur (#159)
 
-- **Statut** : implémenté en local, non déployé. Patch appliqué sur **cerp_test**
-  uniquement. **`cerp_prod` non modifié.**
+- **Statut** : code implémenté en local, **non déployé**. Patch appliqué sur **cerp_test**
+  puis, le 2026-07-26 à 20:09 et **hors de l'intervention qui a produit ce lot**, sur
+  **cerp_prod** (même empreinte, `verify` 9/9 sur les deux bases, tables vides).
 - **Frontend** : [crp-systems-web#289](https://github.com/BigFootLime/crp-systems-web/issues/289)
 - **Décisions** : `crp-systems-web/docs/adr/ADR-0030-shopfloor-operator-station.md`,
   `ADR-0031-ot-it-gateway-dnc-telemetry.md`
@@ -117,6 +118,20 @@ Résultat du 26 juillet 2026 sur `cerp_test` : appliqué, **rejoué sans erreur*
 `verify` **9/9**, dont la preuve sous le rôle `cerp_app` réel que
 `station_audit_events` refuse `UPDATE` et `DELETE`, et qu'une tablette `FIXED` sans
 machine est rejetée par la base. Aucune donnée de sonde persistée.
+
+Le même patch a été appliqué sur `cerp_prod` à 20:09 le même jour, **hors de
+l'intervention qui a produit ce lot**. Le `verify` y passe également **9/9**, propriétés
+et droits `cerp_app` compris, et les cinq tables sont **vides**. Le schéma est donc en
+avance sur le code — l'ordre normal d'un déploiement, sans effet tant que rien ne
+l'interroge.
+
+**Deux points de vigilance quand le code sera déployé :**
+
+1. `STATION_BADGE_PEPPER` doit être provisionné **avant** que `/atelier` soit
+   atteignable, sinon l'identification par badge est refusée ;
+2. la correction d'autorisation des salons Socket.IO voyage **avec le code**, pas avec le
+   patch : tant que le backend n'est pas déployé, `room:join` reste permissif en
+   production.
 
 SHA-256 du patch : `5425761780d1950f71585e6a160e879457444fa000e7931e9290654a3280d43a`
 
