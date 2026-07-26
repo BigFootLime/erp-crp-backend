@@ -21,6 +21,7 @@ import paiementsRoutes from "../module/facturation/routes/paiements.routes";
 import tarificationRoutes from "../module/facturation/routes/tarification.routes";
 import reportingRoutes from "../module/facturation/routes/reporting.routes";
 import productionRoutes from "../module/production/routes/production.routes";
+import productionExecutionRoutes from "../module/production/routes/production-execution.routes";
 import qualiteRoutes from "../module/qualite/routes/qualite.routes";
 import quality360Routes from "../module/qualite/routes/quality-360.routes";
 import livraisonsRoutes from "../module/livraisons/routes/livraisons.routes";
@@ -76,6 +77,10 @@ router.use("/avoirs", avoirsRoutes);
 router.use("/paiements", paiementsRoutes);
 router.use("/tarification", tarificationRoutes);
 router.use("/reporting", reportingRoutes);
+// Suivi et pointage de production 360 (#274) monté AVANT le routeur historique :
+// ses routes déclarent des capacités fines (refus par défaut) et exigent une
+// clé d'idempotence. Le routeur hérité reste inchangé pour les écrans existants.
+router.use("/production/execution", productionExecutionRoutes);
 router.use("/production", productionRoutes);
 router.use("/planning", planningRoutes);
 router.use("/programmations", programmationRoutes);
