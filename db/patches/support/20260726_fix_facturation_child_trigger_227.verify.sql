@@ -37,8 +37,25 @@ VALUES (9990001, 1, 'Ligne de verification #275', 1, 10, 0, 20, 10, 12);
 SELECT 'facture_ligne creee' AS resultat, count(*) AS lignes
 FROM public.facture_ligne WHERE facture_id = 9990001;
 
-\echo '--- immutabilite toujours active : la meme ligne sur une facture emise doit echouer ---'
+\echo '--- immutabilite toujours active : la meme ligne sur une facture emise est bloquee ---'
 UPDATE public.facture SET statut = 'emise' WHERE id = 9990001;
+
+DO $verify$
+BEGIN
+  BEGIN
+    UPDATE public.facture_ligne
+    SET designation = 'Modification interdite'
+    WHERE facture_id = 9990001;
+
+    RAISE EXCEPTION USING
+      ERRCODE = '23514',
+      MESSAGE = 'Echec verification #227 : la ligne emise est restée modifiable';
+  EXCEPTION
+    WHEN SQLSTATE '55000' THEN
+      RAISE NOTICE 'Immutabilite confirmee : le trigger a retourne SQLSTATE 55000';
+  END;
+END
+$verify$;
 
 ROLLBACK;
 
