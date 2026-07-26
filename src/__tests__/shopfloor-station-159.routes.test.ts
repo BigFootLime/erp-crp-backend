@@ -341,6 +341,97 @@ describe("#159 — identification", () => {
   });
 });
 
+describe("#159 - client identity in the operator dossier", () => {
+  beforeEach(() => {
+    withLiveSession();
+    on(/UPDATE public\.operator_device_sessions\s*\n\s*SET last_activity_at/i, []);
+    on(/INSERT INTO public\.station_audit_events/i, []);
+  });
+
+  it("returns the minimal client visual identity without a storage path", async () => {
+    on(/WITH base AS[\s\S]*FROM base b/i, [
+      {
+        of_core: {
+          of_id: 1,
+          numero: "OF-2026-0042",
+          statut: "LANCE",
+          priority: "NORMAL",
+          quantite_lancee: 40,
+          quantite_bonne: 12,
+          quantite_rebut: 0,
+          date_lancement_prevue: null,
+          date_fin_prevue: null,
+          piece_technique_id: "11111111-1111-1111-1111-111111111111",
+          piece_technique_version_id: "22222222-2222-2222-2222-222222222222",
+          technical_snapshot_sha256: "a".repeat(64),
+          technical_snapshot_at: NOW,
+          operation_id: OPERATION_ID,
+          phase: 20,
+          operation_designation: "Tournage finition",
+          operation_status: "READY",
+          temps_total_planned: 2,
+          temps_total_real: 0.5,
+          notes: null,
+          operation_notes: null,
+        },
+        technical_snapshot: {},
+        piece: {
+          code_piece: "P-1042-B",
+          designation: "Axe de renvoi",
+          designation_2: null,
+          ensemble: false,
+        },
+        piece_version: {
+          indice: "B",
+          plan_reference: "PL-1042",
+          matiere_prevue: "42CrMo4",
+          statut: "VALIDE",
+          date_application: "2026-06-14",
+        },
+        client: {
+          id: "33333333-3333-3333-3333-333333333333",
+          code: "CLI-0042",
+          company_name: "ACME Aero",
+          logo_path: "clients/acme-aero.svg",
+        },
+        affaire: null,
+        machine: { id: MACHINE_ID, code: "TOUR-01", name: "Tour CN" },
+        poste: null,
+        documents: [],
+        dossier_documents: [],
+        instructions: [],
+        materials: [],
+        characteristics: [],
+        controls: [],
+        instruments: [],
+        machine_documents: [],
+        children: [],
+        parent: null,
+        active_execution: null,
+        declarations: {
+          qty_good: 12,
+          qty_scrap: 0,
+          qty_rework: 0,
+          qty_pending_control: 0,
+        },
+        pending_handover: null,
+        latest_indice: "B",
+      },
+    ]);
+
+    const res = await station(request(app).get(`${BASE}/dossier/1/${OPERATION_ID}`));
+
+    expect(res.status).toBe(200);
+    expect(res.body.identity.client).toMatchObject({
+      id: "33333333-3333-3333-3333-333333333333",
+      code: "CLI-0042",
+      company_name: "ACME Aero",
+    });
+    expect(res.body.identity.client.logo_url).toMatch(/\/images\/clients\/acme-aero\.svg$/);
+    expect(res.body.identity.client).not.toHaveProperty("logo_path");
+  });
+});
+
 /* -------------------------------------------------------------------------- */
 describe("#159 — garde de session", () => {
   it("refuse toute route de poste sans jeton", async () => {

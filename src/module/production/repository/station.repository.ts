@@ -1201,6 +1201,7 @@ export async function repoWorklist(params: {
 export type DossierRaw = {
   of: Record<string, unknown>;
   operation: Record<string, unknown>;
+  client: Record<string, unknown> | null;
   documents: Array<Record<string, unknown>>;
   instructions: Array<Record<string, unknown>>;
   materials: Array<Record<string, unknown>>;
@@ -1252,6 +1253,18 @@ export async function repoDossier(params: {
       to_jsonb(pt) AS piece,
       to_jsonb(ptv) AS piece_version,
       to_jsonb(a) AS affaire,
+      CASE
+        WHEN c.client_id IS NULL THEN NULL
+        ELSE jsonb_build_object(
+          'id', c.client_id::text,
+          'code', COALESCE(
+            NULLIF(btrim(to_jsonb(c)->>'client_code'), ''),
+            NULLIF(btrim(to_jsonb(c)->>'code_client'), '')
+          ),
+          'company_name', c.company_name,
+          'logo_path', c.logo_path
+        )
+      END AS client,
       to_jsonb(m) AS machine,
       to_jsonb(po) AS poste,
 
@@ -1459,6 +1472,7 @@ export async function repoDossier(params: {
     LEFT JOIN public.pieces_techniques pt ON pt.id = b.piece_technique_id
     LEFT JOIN public.piece_technique_versions ptv ON ptv.id = b.piece_technique_version_id
     LEFT JOIN public.affaire a ON a.id = b.affaire_id
+    LEFT JOIN public.clients c ON c.client_id = b.client_id
     LEFT JOIN public.machines m ON m.id = b.machine_id
     LEFT JOIN public.postes po ON po.id = b.poste_id
     `,

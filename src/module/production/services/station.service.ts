@@ -12,6 +12,7 @@
 //   * envoyer quoi que ce soit vers une commande numérique.
 
 import { HttpError } from "../../../utils/httpError";
+import { buildPublicImageUrl } from "../../../utils/imageStorage";
 import { evaluateInstrumentUsage, type InstrumentState } from "../../qualite/domain/quality-release";
 
 import {
@@ -909,6 +910,14 @@ export async function svcDossier(params: {
               matiere_prevue: pieceVersion.matiere_prevue,
               statut: pieceVersion.statut,
               date_application: pieceVersion.date_application,
+            }
+          : null,
+        client: r.client
+          ? {
+              id: String(r.client.id),
+              code: r.client.code ?? null,
+              company_name: r.client.company_name,
+              logo_url: buildPublicImageUrl(r.client.logo_path),
             }
           : null,
         affaire: r.affaire ? { id: Number(r.affaire.id), reference: r.affaire.reference } : null,
