@@ -1,7 +1,7 @@
 # Reporting commercial 360 — contrat d'API (#275 / back #141)
 
 Base : `/api/v1/reporting/commercial/v2` · Décision :
-`crp-systems-web/docs/adr/ADR-0027-reporting-commercial-360.md`
+`crp-systems-web/docs/adr/ADR-0028-reporting-commercial-360.md`
 
 Toutes les routes sont en lecture seule, authentifiées, non mises en cache
 (`Cache-Control: no-store, private`) et refusées par défaut.
