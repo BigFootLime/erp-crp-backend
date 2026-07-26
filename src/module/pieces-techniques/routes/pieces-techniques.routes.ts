@@ -23,6 +23,7 @@ import {
   listAffairePieceTechniques,
   listPieceTechniqueAffaires,
   listPieceTechniques,
+  getPieceTechniquesSummary,
   listPieceTechniqueDocuments,
   attachPieceTechniqueDocuments,
   unlinkPieceTechniqueAffaire,
@@ -104,6 +105,9 @@ router.use(authenticateToken)
 
 router.get("/code-preview", previewPieceTechniqueCode)
 router.post("/", validate(createPieceTechniqueSchema), createPieceTechnique)
+// #146 — Déclarée AVANT `/:id`, sinon Express interpréterait « summary » comme un
+// identifiant de pièce et renverrait un 400 de validation UUID.
+router.get("/summary", getPieceTechniquesSummary)
 router.get("/", listPieceTechniques)
 router.get("/by-affaire/:affaireId", validate(affaireOnlyParamSchema), listAffairePieceTechniques)
 router.get("/:id/arborescence", validate(idParamSchema), getPieceTechniqueFabricationTree)

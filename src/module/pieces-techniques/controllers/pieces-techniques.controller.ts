@@ -50,6 +50,7 @@ import {
   getPieceTechniqueFabricationTreeSVC,
   getPieceTechniqueSVC,
   listPieceTechniquesSVC,
+  pieceTechniquesSummarySVC,
   reorderAchatsSVC,
   reorderBomSVC,
   reorderOperationsSVC,
@@ -149,6 +150,29 @@ export const listPieceTechniques: RequestHandler = async (req, res, next) => {
     }
 
     const out = await listPieceTechniquesSVC(parsed.data)
+    res.json(out)
+  } catch (err) {
+    next(err)
+  }
+}
+
+/**
+ * #146 — Agrégat de synthèse de la landing, en LECTURE SEULE.
+ *
+ * Répond au défaut central de l'ancien écran : des indicateurs calculés sur les vingt
+ * lignes affichées et présentés comme des totaux. Ici, le périmètre est exactement celui
+ * de la liste — mêmes filtres, même `WHERE` — donc `summary.total` est le total de la
+ * liste, par construction et non par espoir.
+ */
+export const getPieceTechniquesSummary: RequestHandler = async (req, res, next) => {
+  try {
+    const parsed = listPiecesTechniquesQuerySchema.safeParse(req.query)
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues?.[0]?.message ?? "Invalid query" })
+      return
+    }
+
+    const out = await pieceTechniquesSummarySVC(parsed.data)
     res.json(out)
   } catch (err) {
     next(err)

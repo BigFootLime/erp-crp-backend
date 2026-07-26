@@ -229,6 +229,26 @@ export type PieceTechniqueListItem = Pick<
 
   famille_code?: string | null
   famille_designation?: string | null
+
+  // --- #146 : complétude de niveau liste, strictement additive. ---
+  /** Indice de la version APPLICABLE, `null` s'il n'y en a pas. */
+  applicable_indice?: string | null
+  /** Référence de plan de la version applicable — le champ le plus recherché au poste. */
+  applicable_plan_reference?: string | null
+  applicable_date_effet?: string | null
+  applicable_version_interne?: number | null
+  has_applicable_version?: boolean
+  has_gamme?: boolean
+  /** Nomenclature OU nomenclature d'achat : l'une des deux suffit à structurer le dossier. */
+  has_structure?: boolean
+  has_article?: boolean
+  has_documents?: boolean
+  /**
+   * Il manque au moins un des quatre éléments qui empêchent concrètement de lancer la
+   * fabrication. Ce n'est PAS le verdict de `dossier-readiness`, qui exige l'arborescence
+   * complète : c'est une couverture de niveau liste, nommée comme telle.
+   */
+  to_complete?: boolean
 }
 
 export type Paginated<T> = {

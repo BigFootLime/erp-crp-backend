@@ -52,11 +52,52 @@ export const linkAffaireSchema = z.object({
 
 export type LinkAffaireBodyDTO = z.infer<typeof linkAffaireSchema>["body"]
 
+/**
+ * #146 — Tri-état pour un filtre de présence. `undefined` = pas de filtre, ce qui garde
+ * le comportement historique de la liste : ajouter un défaut casserait les huit modules
+ * consommateurs.
+ */
+const presenceFilter = z
+  .preprocess((value) => {
+    if (value === undefined || value === null || value === "") return undefined
+    if (typeof value === "boolean") return value
+    const raw = String(value).trim().toLowerCase()
+    if (raw === "true" || raw === "1" || raw === "yes") return true
+    if (raw === "false" || raw === "0" || raw === "no") return false
+    return undefined
+  }, z.boolean().optional())
+  .optional()
+
+/**
+ * Segments du Command Center (#280). Chacun est un vrai filtre serveur : il modifie le
+ * total renvoyé. Un segment qui filtrerait la page courante annoncerait un faux compte.
+ */
+export const PIECE_TECHNIQUE_SEGMENTS = [
+  "all",
+  "to_complete",
+  "no_applicable_version",
+  "no_gamme",
+  "no_nomenclature",
+  "no_article",
+  "ensembles",
+  "recent",
+] as const
+
 export const listPiecesTechniquesQuerySchema = z.object({
   q: z.string().optional(),
   client_id: z.string().trim().min(1).max(3).optional(),
   famille_id: uuid.optional(),
   statut: pieceTechniqueStatutSchema.optional(),
+  // --- Filtres serveur additifs (#146) : tous optionnels, aucun défaut. ---
+  segment: z.enum(PIECE_TECHNIQUE_SEGMENTS).optional(),
+  ensemble: presenceFilter,
+  has_article: presenceFilter,
+  has_gamme: presenceFilter,
+  has_nomenclature: presenceFilter,
+  has_applicable_version: presenceFilter,
+  has_documents: presenceFilter,
+  /** Nombre de jours d'activité récente (`updated_at`), pour le segment « récent ». */
+  updated_within_days: z.coerce.number().int().min(1).max(3650).optional(),
   page: z.coerce.number().int().min(1).optional().default(1),
   pageSize: z.coerce.number().int().min(1).max(200).optional().default(20),
   sortBy: z
