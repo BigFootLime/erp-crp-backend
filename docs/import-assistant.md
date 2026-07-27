@@ -28,6 +28,10 @@ Toutes les routes sont sous `/api/v1/import-assistant` et réservées aux rôles
   mappés sont écrits, sans listes vides implicites.
 - Contacts clients rattachés par le crosswalk du client parent, avec clé
   d’idempotence propre et validation obligatoire du prénom, nom et courriel.
+- Un même courriel peut appartenir à des contacts de clients différents
+  (adresse d’achats, de comptabilité ou de groupe partagée). L’unicité est
+  contrôlée sans tenir compte de la casse ni des espaces, par client actif ;
+  aucun courriel source ne doit être falsifié pour contourner un doublon.
 - Le rattachement conserve le contrat historique `clients.client_id` /
   `contacts.client_id` en `varchar(3)` ; seul `contacts.contact_id` est un UUID.
   La reprise idempotente ne doit donc jamais convertir l’identifiant client en
@@ -44,7 +48,10 @@ Patches :
 
 - `db/patches/20260726_import_assistant_167.sql` pour le socle ;
 - `db/patches/20260727_import_clients_enrichment_306.sql` pour
-  `CLIENT_ENRICHISSEMENT`, `CLIENT_CONTACT` et l’idempotence des contacts.
+  `CLIENT_ENRICHISSEMENT`, `CLIENT_CONTACT` et l’idempotence des contacts ;
+- `db/patches/20260727_contacts_email_scope_187.sql` pour remplacer, uniquement
+  dans `cerp_test`, l’unicité globale historique du courriel par une unicité
+  normalisée au sein d’un même client actif.
 
 Avant toute application, exécuter le preflight sur `cerp_test`, appliquer par le mécanisme de patches existant, puis lancer le script `verify`. Le rollback automatique est volontairement bloqué dès que des preuves ou correspondances peuvent exister.
 
