@@ -24,6 +24,17 @@ Toutes les routes sont sous `/api/v1/import-assistant` et réservées aux rôles
 - SHA-256 du fichier et unicité du lot par source, domaine, empreinte et feuille.
 - Simulation par les schémas Zod existants.
 - Création par les services métier existants et codes générés par CERP.
+- Le stock d’ouverture exige un article déjà présent dans le crosswalk, un
+  article actif et géré en stock, ainsi qu’un magasin et un emplacement CERP
+  actifs, non ambigus, reliés au référentiel physique et autorisant les
+  entrées.
+- Chaque solde strictement positif crée puis comptabilise un mouvement
+  `ADJUSTMENT/IN` par article via le service stock normal. Le lot conserve la
+  date de cut-off, la provenance CLIPPER, la méthode de calcul et deux clés
+  d’idempotence distinctes pour la création et la comptabilisation.
+- Les soldes nuls ne sont pas importés. Les articles absents, inactifs, non
+  gérés en stock ou sans emplacement valide bloquent la simulation avant toute
+  écriture.
 - Enrichissement client par PATCH parcimonieux : seuls les champs réellement
   mappés sont écrits, sans listes vides implicites.
 - Contacts clients rattachés par le crosswalk du client parent, avec clé
@@ -65,10 +76,15 @@ Le patch est additif et n’importe aucune donnée métier.
 ## Ordre de reprise
 
 Les lots sont exécutés dans l’ordre : clients complets, contacts clients,
-fournisseurs, commandes fournisseurs, articles et matières achetés, machines et
-référentiels, puis pièces techniques. Une pièce technique ne doit pas être
-confirmée tant que ses clients, fournisseurs, matières et flux d’achat ne sont
-pas validés.
+fournisseurs, commandes fournisseurs, articles et matières achetés, stock
+d’ouverture, machines et référentiels, puis pièces techniques. Une pièce
+technique ne doit pas être confirmée tant que ses clients, fournisseurs,
+matières, flux d’achat et stocks de départ ne sont pas validés.
+
+Pour la reprise CLIPPER du 24 juillet 2026, le solde d’ouverture retenu est la
+somme chronologique `entrées + retours − sorties`. Les mouvements annulés sont
+ignorés. La colonne historique `ARTICLEM.COL_081` n’est pas un stock et ne doit
+jamais alimenter un mouvement d’ouverture.
 
 Le choix affiché par le frontend n’est jamais utilisé comme preuve. Le service
 API dédié à l’import doit disposer de son propre pool PostgreSQL vers

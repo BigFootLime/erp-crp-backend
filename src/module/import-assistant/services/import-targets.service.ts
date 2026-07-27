@@ -19,8 +19,16 @@ import { createPieceTechniqueSVC } from "../../pieces-techniques/services/pieces
 import type { CreatePieceTechniqueBodyDTO } from "../../pieces-techniques/validators/pieces-techniques.validators";
 import { svcCreateMachine } from "../../production/services/production.service";
 import type { CreateMachineBodyDTO } from "../../production/validators/production.validators";
-import { createStockArticleSVC } from "../../stock/services/stock.service";
-import type { CreateArticleBodyDTO } from "../../stock/validators/stock.validators";
+import {
+  createStockArticleSVC,
+  createStockMovementSVC,
+  postStockMovementSVC,
+  resolveStockOpeningReferencesSVC,
+} from "../../stock/services/stock.service";
+import type {
+  CreateArticleBodyDTO,
+  CreateMovementBodyDTO,
+} from "../../stock/validators/stock.validators";
 import { HttpError } from "../../../utils/httpError";
 import type {
   ImportAuditContext,
@@ -131,6 +139,78 @@ export async function createImportTarget(params: {
         false
       );
       return { id: result.id, code: result.code };
+    }
+    case "STOCK_INITIAL": {
+      if (!params.parent_target_id) {
+        throw new HttpError(
+          409,
+          "IMPORT_ARTICLE_TARGET_MISSING",
+          "L’article CERP du stock d’ouverture est introuvable."
+        );
+      }
+      const data = params.normalized_data as {
+        article_legacy_code: string;
+        quantity: number;
+        magasin_code: string;
+        emplacement_code: string;
+        cutoff_date: string;
+        unite?: string;
+        notes?: string;
+      };
+      const references = await resolveStockOpeningReferencesSVC([{
+        key: "stock-opening",
+        article_id: params.parent_target_id,
+        magasin_code: data.magasin_code,
+        emplacement_code: data.emplacement_code,
+      }]);
+      const reference = references.get("stock-opening");
+      if (!reference || reference.issue || !reference.magasin_id || !reference.emplacement_id) {
+        throw new HttpError(
+          409,
+          reference?.issue?.code ?? "STOCK_REFERENCE_UNRESOLVED",
+          reference?.issue?.message ?? "Le magasin ou l’emplacement CERP n’a pas pu être validé."
+        );
+      }
+
+      const provenance = [
+        `Migration CLIPPER — stock d’ouverture au ${data.cutoff_date}.`,
+        "Solde reconstitué : entrées + retours − sorties ; mouvements annulés ignorés.",
+        `Article source : ${data.article_legacy_code}.`,
+        data.notes,
+      ].filter(Boolean).join(" ");
+      const movementBody: CreateMovementBodyDTO = {
+        movement_type: "ADJUSTMENT",
+        effective_at: `${data.cutoff_date}T23:59:59Z`,
+        source_document_type: "CLIPPER_STOCK_OPENING",
+        source_document_id: `${data.article_legacy_code}|${data.cutoff_date}`.slice(0, 120),
+        reason_code: "OPENING_BALANCE",
+        notes: provenance,
+        idempotency_key: `${params.idempotency_key}:create`,
+        lines: [{
+          article_id: params.parent_target_id,
+          qty: data.quantity,
+          ...(data.unite ? { unite: data.unite } : {}),
+          dst_magasin_id: reference.magasin_id,
+          dst_emplacement_id: reference.emplacement_id,
+          direction: "IN",
+          note: `Stock d’ouverture CLIPPER — ${data.cutoff_date}`,
+        }],
+      };
+      const draft = await createStockMovementSVC(movementBody, params.audit);
+      const posted = await postStockMovementSVC(
+        draft.movement.id,
+        {},
+        params.audit,
+        `${params.idempotency_key}:post`
+      );
+      if (!posted) {
+        throw new HttpError(
+          409,
+          "STOCK_OPENING_POST_FAILED",
+          "Le mouvement d’ouverture n’a pas pu être comptabilisé."
+        );
+      }
+      return { id: posted.movement.id, code: posted.movement.movement_no };
     }
     case "PIECE_TECHNIQUE": {
       const result = await createPieceTechniqueSVC(
