@@ -28,6 +28,10 @@ Toutes les routes sont sous `/api/v1/import-assistant` et réservées aux rôles
   mappés sont écrits, sans listes vides implicites.
 - Contacts clients rattachés par le crosswalk du client parent, avec clé
   d’idempotence propre et validation obligatoire du prénom, nom et courriel.
+- Le rattachement conserve le contrat historique `clients.client_id` /
+  `contacts.client_id` en `varchar(3)` ; seul `contacts.contact_id` est un UUID.
+  La reprise idempotente ne doit donc jamais convertir l’identifiant client en
+  UUID.
 - Crosswalk stable entre clé CLIPPER et fiche CERP.
 - Reprise par lots de 25 lignes avec verrouillage `SKIP LOCKED`.
 - Confirmation et création idempotentes.
