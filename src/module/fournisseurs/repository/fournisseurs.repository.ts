@@ -595,7 +595,10 @@ export async function repoCreateFournisseur(
       `INSERT INTO public.fournisseurs (
          code, code_fournisseur, nom, raison_sociale, actif, status, type_principal,
          tva, siret, email, telephone, site_web, nom_commercial, logo, notes, created_by, updated_by
-       ) VALUES ($1,$1,$2,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$14) RETURNING id::text AS id`,
+       ) VALUES (
+         $1::text,$1::varchar(30),$2::text,$2::varchar(255),
+         $3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$14
+       ) RETURNING id::text AS id`,
       [code, body.nom, body.actif ?? true, body.status ?? "actif", body.type_principal ?? null,
        body.tva ?? null, body.siret ?? null, body.email ?? null, body.telephone ?? null, body.site_web ?? null,
        body.nom_commercial ?? null, body.logo ?? null, body.notes ?? null, audit.user_id]

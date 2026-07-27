@@ -113,4 +113,71 @@ describe("/api/v1/fournisseurs", () => {
       ])
     )
   })
+
+  it("POST /api/v1/fournisseurs explicitly types duplicated SQL parameters", async () => {
+    const token = makeToken()
+    const fournisseurId = "22222222-2222-4222-8222-222222222222"
+
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const query = String(sql)
+      if (query.includes("fn_next_issued_code_value")) {
+        return { rows: [{ v: "1" }] }
+      }
+      if (query.includes("INSERT INTO public.fournisseurs")) {
+        return { rows: [{ id: fournisseurId }] }
+      }
+      return { rows: [] }
+    })
+    mocks.poolQuery.mockResolvedValueOnce({
+      rows: [{
+        id: fournisseurId,
+        code: "FOU-001",
+        nom: "Fournisseur pilote",
+        actif: true,
+        status: "actif",
+        type_principal: null,
+        tva: null,
+        siret: null,
+        email: null,
+        telephone: null,
+        site_web: null,
+        adresse_ligne: null,
+        house_no: null,
+        postcode: null,
+        city: null,
+        country: null,
+        nom_commercial: null,
+        logo: null,
+        notes: null,
+        archived_at: null,
+        created_at: "2026-07-27T00:00:00.000Z",
+        updated_at: "2026-07-27T00:00:00.000Z",
+        created_by: 1,
+        updated_by: 1,
+        domaines: [],
+        relations: null,
+        homologation: null,
+        adresses: [],
+        contacts_count: 0,
+        catalogue_count: 0,
+        documents_count: 0,
+        events_count: 0,
+        adresses_count: 0,
+        homologations_count: 0,
+      }],
+    })
+
+    const res = await request(app)
+      .post("/api/v1/fournisseurs")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ nom: "Fournisseur pilote" })
+
+    expect(res.status).toBe(201)
+    const insertCall = mocks.clientQuery.mock.calls.find(([sql]) =>
+      String(sql).includes("INSERT INTO public.fournisseurs")
+    )
+    expect(insertCall).toBeDefined()
+    expect(String(insertCall?.[0])).toContain("$1::text,$1::varchar(30)")
+    expect(String(insertCall?.[0])).toContain("$2::text,$2::varchar(255)")
+  })
 })
