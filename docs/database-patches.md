@@ -359,13 +359,25 @@ adresse, date de naissance et NIR restent `NULL` plutôt que d'être remplacés
 par des valeurs fictives. Les contraintes `UNIQUE` restent en place et
 s'appliquent dès qu'une valeur réelle est renseignée.
 
-Le patch est transactionnel et idempotent. Son script de vérification contrôle
-la présence des trois tables, le catalogue actif et l'absence de compte sans
-affectation de son rôle principal. Le rollback de support supprime uniquement
-les trois nouvelles tables ; il ne modifie aucune ligne de `users`.
+Le patch est transactionnel et idempotent. Il accorde explicitement au rôle
+applicatif de moindre privilège `cerp_app` la lecture du catalogue, la gestion
+des affectations et uniquement la lecture/ajout du journal append-only. Son
+script de vérification contrôle la présence des trois tables, le catalogue
+actif, l'absence de compte sans affectation de son rôle principal et ces
+privilèges applicatifs, y compris l'absence de droit `UPDATE`/`DELETE` sur le
+journal. Le rollback de support supprime uniquement les trois nouvelles
+tables ; il ne modifie aucune ligne de `users`.
 
 Ordre obligatoire : exécuter
 `support/20260727_user_multi_roles_315.preflight.sql`, appliquer les deux
 patches sur `cerp_test`, exécuter leurs vérifications, puis réaliser la recette
 des sessions mono-rôle et multi-rôles. Une validation humaine explicite reste
 obligatoire avant toute application sur `cerp_prod`.
+
+Validation d'exploitation du 2026-07-27 : sauvegarde `cerp_test` vérifiée,
+application des deux patches et recette des sessions multi-rôles sur l'API
+isolée ; sauvegarde `cerp_prod` vérifiée par catalogue et SHA-256 avant
+application identique. Les deux bases exposent 33 rôles actifs, aucun compte
+sans rôle principal et des privilèges applicatifs conformes. La recette a
+couvert 17 comptes provisionnés, 64 affectations et six profils d'accès
+représentatifs, sans modifier le compte administrateur existant.
