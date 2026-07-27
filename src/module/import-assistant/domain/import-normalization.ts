@@ -6,6 +6,10 @@ import {
   createClientContactBodySchema,
   createClientSchema,
 } from "../../client/validators/client.validators";
+import {
+  createCommandeSchema,
+  ligneInputSchema,
+} from "../../commande-fournisseur/validators/commande-fournisseur.validators";
 import { createFournisseurSchema } from "../../fournisseurs/validators/fournisseurs.validators";
 import { createPieceTechniqueSchema } from "../../pieces-techniques/validators/pieces-techniques.validators";
 import { createMachineSchema } from "../../production/validators/production.validators";
@@ -34,6 +38,18 @@ const clientContactImportSchema = z.object({
   client_legacy_code: z.string().trim().min(1, "Code client CLIPPER requis"),
   ...createClientContactBodySchema.shape,
 });
+
+const fournisseurCommandeImportSchema = createCommandeSchema.shape.body
+  .omit({ fournisseur_id: true, idempotency_key: true })
+  .extend({
+    fournisseur_legacy_code: z.string().trim().min(1, "Code fournisseur CLIPPER requis"),
+    date_commande_source: z.string().regex(
+      /^\d{4}-\d{2}-\d{2}$/,
+      "Date de commande CLIPPER attendue au format AAAA-MM-JJ"
+    ),
+    lignes: z.array(ligneInputSchema).min(1, "Une commande importée doit contenir au moins une ligne.").max(200),
+  })
+  .strict();
 
 function hasOwn(record: Record<string, unknown>, key: string) {
   return Object.prototype.hasOwnProperty.call(record, key);
@@ -132,6 +148,8 @@ function entitySchema(entityType: ImportEntityType): { schema: ZodTypeAny; wrapp
       return { schema: clientContactImportSchema, wrapped: false };
     case "FOURNISSEUR":
       return { schema: createFournisseurSchema, wrapped: true };
+    case "FOURNISSEUR_COMMANDE":
+      return { schema: fournisseurCommandeImportSchema, wrapped: false };
     case "ARTICLE":
       return { schema: createArticleSchema, wrapped: true };
     case "PIECE_TECHNIQUE":
@@ -143,7 +161,12 @@ function entitySchema(entityType: ImportEntityType): { schema: ZodTypeAny; wrapp
   }
 }
 
-function postProcess(entityType: ImportEntityType, draft: Record<string, unknown>) {
+function postProcess(
+  entityType: ImportEntityType,
+  draft: Record<string, unknown>,
+  legacyKey: string,
+  issues: ImportIssue[]
+) {
   if (entityType === "FOURNISSEUR") {
     const domaines = draft.domaines;
     if (Array.isArray(domaines)) {
@@ -168,6 +191,28 @@ function postProcess(entityType: ImportEntityType, draft: Record<string, unknown
     draft.payment_mode_ids = [];
     draft.quality_levels = [];
     draft.contacts = [];
+  }
+  if (entityType === "FOURNISSEUR_COMMANDE") {
+    const rawLines = draft.lignes_json;
+    delete draft.lignes_json;
+    if (typeof rawLines === "string") {
+      try {
+        const parsed = JSON.parse(rawLines);
+        if (!Array.isArray(parsed)) throw new Error("Le JSON doit contenir un tableau.");
+        draft.lignes = parsed;
+      } catch {
+        issues.push({
+          code: "INVALID_LINES_JSON",
+          message: "Les lignes de commande ne forment pas un tableau JSON valide.",
+          field: "lignes_json",
+          source_value: "[MASQUÉ]",
+        });
+      }
+    }
+    const provenance = `Migration CLIPPER — BC ${legacyKey} du ${String(draft.date_commande_source ?? "")}`;
+    draft.note_interne = draft.note_interne
+      ? `${provenance}\n${String(draft.note_interne)}`
+      : provenance;
   }
 }
 
@@ -212,7 +257,7 @@ export function normalizeImportRow(
     const value = normalizeValue(sourceValue(row, mapping, targetField), targetField.kind);
     if (value !== undefined) setPath(draft, targetField.key, value);
   }
-  postProcess(entityType, draft);
+  postProcess(entityType, draft, legacyKey, issues);
 
   const schemaDefinition = entitySchema(entityType);
   if (!schemaDefinition) {

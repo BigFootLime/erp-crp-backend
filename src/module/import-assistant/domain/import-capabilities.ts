@@ -14,6 +14,7 @@ const DECISIONS: Record<string, ImportDecisionGate> = {
   "DEC-14": { id: "DEC-14", label: "Champs CLIPPER absents de CERP", responsible: "Product Owner", evidence: "Backlog extension ou archive" },
   "DEC-15": { id: "DEC-15", label: "Spécification de l’assistant d’import", responsible: "Product + Architecture + Sécurité", evidence: "Issues #301 et #167" },
   "DEC-16": { id: "DEC-16", label: "Flux article fabriqué vers réception et stock", responsible: "Production + Qualité + Stock", evidence: "Test E2E pilote" },
+  "DEC-17": { id: "DEC-17", label: "Commandes fournisseurs CLIPPER réellement ouvertes", responsible: "Achats", evidence: "Solde des lignes, dates et fournisseurs rapprochés vérifiés" },
 };
 
 const field = (
@@ -137,6 +138,24 @@ const FOURNISSEUR_FIELDS: ImportTargetField[] = [
   field("adresse.country", "Pays", "text"),
 ];
 
+const FOURNISSEUR_COMMANDE_FIELDS: ImportTargetField[] = [
+  field("fournisseur_legacy_code", "Code fournisseur CLIPPER", "text", {
+    required: true,
+    hint: "Le fournisseur doit avoir été rapproché avant sa commande",
+  }),
+  field("date_commande_source", "Date de commande CLIPPER", "date", { required: true }),
+  field("devise", "Devise ISO", "text", { required: true }),
+  field("conditions_paiement", "Conditions de paiement", "text"),
+  field("date_besoin", "Date de besoin", "date"),
+  field("commentaire_public", "Commentaire fournisseur", "text", { sensitive: true }),
+  field("note_interne", "Note interne", "text", { sensitive: true }),
+  field("lignes_json", "Lignes de commande contrôlées", "text", {
+    required: true,
+    sensitive: true,
+    hint: "Tableau JSON préparé depuis DETAILBC ; 200 lignes maximum",
+  }),
+];
+
 const ARTICLE_FIELDS: ImportTargetField[] = [
   field("designation", "Désignation", "text", { required: true }),
   field("designation_secondary", "Désignation secondaire", "text"),
@@ -192,6 +211,7 @@ export const IMPORT_CAPABILITIES: ImportEntityCapability[] = [
   { entity_type: "CLIENT_ENRICHISSEMENT", label: "1B — Clients (compléter les fiches)", order: 11, confirm_enabled: true, unavailable_reason: null, fields: CLIENT_ENRICHISSEMENT_FIELDS, decisions: [DECISIONS["DEC-04"], DECISIONS["DEC-14"], DECISIONS["DEC-15"]] },
   { entity_type: "CLIENT_CONTACT", label: "1C — Contacts clients", order: 12, confirm_enabled: true, unavailable_reason: null, fields: CLIENT_CONTACT_FIELDS, decisions: [DECISIONS["DEC-04"], DECISIONS["DEC-14"], DECISIONS["DEC-15"]] },
   { entity_type: "FOURNISSEUR", label: "2 — Fournisseurs", order: 20, confirm_enabled: true, unavailable_reason: null, fields: FOURNISSEUR_FIELDS, decisions: [DECISIONS["DEC-03"], DECISIONS["DEC-14"], DECISIONS["DEC-15"]] },
+  { entity_type: "FOURNISSEUR_COMMANDE", label: "3 — Commandes fournisseurs ouvertes", order: 30, confirm_enabled: true, unavailable_reason: null, fields: FOURNISSEUR_COMMANDE_FIELDS, decisions: [DECISIONS["DEC-03"], DECISIONS["DEC-14"], DECISIONS["DEC-15"], DECISIONS["DEC-17"]] },
   { entity_type: "ARTICLE", label: "4 — Articles et matières achetés", order: 40, confirm_enabled: true, unavailable_reason: null, fields: ARTICLE_FIELDS, decisions: [DECISIONS["DEC-01"], DECISIONS["DEC-14"], DECISIONS["DEC-15"], DECISIONS["DEC-16"]] },
   { entity_type: "MACHINE", label: "5 — Machines CNC", order: 50, confirm_enabled: true, unavailable_reason: null, fields: MACHINE_FIELDS, decisions: [DECISIONS["DEC-07"], DECISIONS["DEC-14"], DECISIONS["DEC-15"]] },
   { entity_type: "STOCK_INITIAL", label: "6 — Stock d’ouverture", order: 60, confirm_enabled: false, unavailable_reason: "Le stock doit passer par un inventaire ou des mouvements d’ouverture contrôlés ; les magasins, emplacements et le cut-off doivent être renseignés.", fields: [], decisions: [DECISIONS["DEC-05"], DECISIONS["DEC-06"], DECISIONS["DEC-15"], DECISIONS["DEC-16"]] },

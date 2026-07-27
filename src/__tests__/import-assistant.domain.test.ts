@@ -302,12 +302,14 @@ describe("Assistant d’import CLIPPER", () => {
     const clientEnrichment = ordered.findIndex((item) => item.entity_type === "CLIENT_ENRICHISSEMENT");
     const clientContacts = ordered.findIndex((item) => item.entity_type === "CLIENT_CONTACT");
     const suppliers = ordered.findIndex((item) => item.entity_type === "FOURNISSEUR");
+    const supplierOrders = ordered.findIndex((item) => item.entity_type === "FOURNISSEUR_COMMANDE");
     const articles = ordered.findIndex((item) => item.entity_type === "ARTICLE");
     const pieces = ordered.findIndex((item) => item.entity_type === "PIECE_TECHNIQUE");
 
     expect(clientEnrichment).toBeLessThan(clientContacts);
     expect(clientContacts).toBeLessThan(suppliers);
-    expect(suppliers).toBeLessThan(articles);
+    expect(suppliers).toBeLessThan(supplierOrders);
+    expect(supplierOrders).toBeLessThan(articles);
     expect(articles).toBeLessThan(pieces);
   });
 
@@ -348,6 +350,93 @@ describe("Assistant d’import CLIPPER", () => {
         is_primary: true,
       }],
     });
+  });
+
+  it("normalise une commande fournisseur ouverte avec ses lignes contrôlées", () => {
+    const mapping: ImportMapping = {
+      legacy_key_column: "BC",
+      columns: {
+        fournisseur_legacy_code: "FOURNISSEUR",
+        date_commande_source: "DATE_COMMANDE",
+        devise: "DEVISE",
+        date_besoin: "DATE_BESOIN",
+        note_interne: "NOTE",
+        lignes_json: "LIGNES_JSON",
+      },
+      constants: {},
+      approved_decisions: ["DEC-03", "DEC-14", "DEC-15", "DEC-17"],
+      duplicate_strategy: "REVIEW",
+    };
+    const result = normalizeImportRow(
+      "FOURNISSEUR_COMMANDE",
+      {
+        BC: "4542",
+        FOURNISSEUR: "F272",
+        DATE_COMMANDE: "22/07/2026",
+        DEVISE: "EUR",
+        DATE_BESOIN: "29/07/2026",
+        NOTE: "Commande ouverte au cut-off.",
+        LIGNES_JSON: JSON.stringify([{
+          type: "PRESTATION",
+          reference_fournisseur: "TS-45",
+          designation: "SHERARDISATION 45µM",
+          unite: "PC",
+          quantite: 12,
+          prix_unitaire_ht: 4.5,
+          tva_pct: 20,
+          date_besoin: "2026-07-29",
+          exigences_qualite: [],
+          documents_attendus: [],
+          besoins: [],
+        }]),
+      },
+      mapping
+    );
+
+    expect(result.issues).toEqual([]);
+    expect(result.normalized_data).toMatchObject({
+      fournisseur_legacy_code: "F272",
+      date_commande_source: "2026-07-22",
+      devise: "EUR",
+      date_besoin: "2026-07-29",
+      note_interne: "Migration CLIPPER — BC 4542 du 2026-07-22\nCommande ouverte au cut-off.",
+      lignes: [{
+        type: "PRESTATION",
+        designation: "SHERARDISATION 45µM",
+        quantite: 12,
+      }],
+    });
+    expect(result.normalized_data).not.toHaveProperty("lignes_json");
+  });
+
+  it("bloque une commande fournisseur dont les lignes JSON sont invalides", () => {
+    const mapping: ImportMapping = {
+      legacy_key_column: "BC",
+      columns: {
+        fournisseur_legacy_code: "FOURNISSEUR",
+        date_commande_source: "DATE_COMMANDE",
+        devise: "DEVISE",
+        lignes_json: "LIGNES_JSON",
+      },
+      constants: {},
+      approved_decisions: ["DEC-03", "DEC-14", "DEC-15", "DEC-17"],
+      duplicate_strategy: "REVIEW",
+    };
+    const result = normalizeImportRow(
+      "FOURNISSEUR_COMMANDE",
+      {
+        BC: "4542",
+        FOURNISSEUR: "F272",
+        DATE_COMMANDE: "2026-07-22",
+        DEVISE: "EUR",
+        LIGNES_JSON: "{invalide",
+      },
+      mapping
+    );
+
+    expect(result.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "INVALID_LINES_JSON", field: "lignes_json" }),
+    ]));
   });
 
   it("garde stock, BL et RH visibles mais impossibles à confirmer", () => {
@@ -393,6 +482,17 @@ describe("Assistant d’import CLIPPER", () => {
     expect(patch).toContain("'CLIENT_CONTACT'");
     expect(patch).toContain("client_contact_create_idempotency");
     expect(patch).not.toMatch(/\bDROP\s+(TABLE|COLUMN|SCHEMA)\b/i);
+  });
+
+  it("ouvre les commandes fournisseurs uniquement via le patch cerp_test", () => {
+    const patch = fs.readFileSync(
+      path.resolve(process.cwd(), "db/patches/20260727_import_supplier_orders_312.sql"),
+      "utf8"
+    );
+
+    expect(patch).toContain("current_database() <> 'cerp_test'");
+    expect(patch).toContain("'FOURNISSEUR_COMMANDE'");
+    expect(patch).not.toMatch(/\b(UPDATE|DELETE|TRUNCATE)\b/i);
   });
 
   it("porte l'unicité du courriel de contact au niveau du client actif", () => {
