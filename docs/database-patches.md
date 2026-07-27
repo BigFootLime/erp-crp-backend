@@ -286,3 +286,21 @@ appliqués transactionnellement et vérifiés dans cet ordre :
 
 Les cinq lignes du registre portent les empreintes SHA-256 exactes des fichiers
 versionnés. Aucun jeu de données de recette n'a été conservé dans `cerp_prod`.
+
+## Issue #169 - Validation des références vers les articles fabriqués
+
+Patch `20260727_validate_article_fabrique_references_169.sql` valide les trois
+clés étrangères historiques de `commande_ligne`,
+`commande_cadre_release_ligne` et `ordres_fabrication` vers
+`articles_fabrique`. Elles avaient été créées avec `NOT VALID` par
+`20260319_articles_domain_subtypes.sql`.
+
+Le préflight prouve d'abord que chaque référence non nulle possède sa cible.
+Le patch est transactionnel, idempotent, limité à `cerp_test` et `cerp_prod`,
+et ne modifie aucune ligne métier. La procédure et le rollback test-only sont
+documentés dans `docs/article-fabrique-fk-validation-169.md`.
+
+Validation du 2026-07-27 : cycle complet avec rollback sur `cerp_test`,
+sauvegarde production vérifiée, trois contraintes validées sur `cerp_prod`,
+zéro référence invalide, toutes les clés étrangères publiques validées et
+empreintes des 302 tables métier inchangées.
