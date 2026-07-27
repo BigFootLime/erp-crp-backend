@@ -381,3 +381,63 @@ application identique. Les deux bases exposent 33 rôles actifs, aucun compte
 sans rôle principal et des privilèges applicatifs conformes. La recette a
 couvert 17 comptes provisionnés, 64 affectations et six profils d'accès
 représentatifs, sans modifier le compte administrateur existant.
+
+## Issue #326 - Tour de contrôle des accès
+
+Le patch `20260727_admin_access_tower_326.sql` installe le socle du filtrage
+module par compte : la colonne marqueur `users.is_superadmin`, le catalogue
+`app_modules`, les décisions explicites `app_module_user_access` et le journal
+append-only `app_module_access_events`, protégé par le même mécanisme de trigger
+que `user_role_assignment_events` (#315).
+
+Le patch est transactionnel, idempotent et strictement additif. Il ne pose
+aucune restriction : les vingt modules du catalogue naissent avec
+`enabled_by_default = true`, et une restriction ne peut résulter que d'une
+décision explicite tracée. La réapplication met à jour le libellé, la
+description, la catégorie, les préfixes d'API, les clés de navigation et l'ordre
+d'affichage, mais **jamais** `enabled_by_default` ni `is_active` : une décision
+d'exploitation déjà prise ne doit pas être effacée par une migration. Seule
+exception assumée, le drapeau `is_protected` du module `administration` est
+réaffirmé, et les éventuelles restrictions posées sur un module protégé sont
+supprimées — c'est ce qui garantit qu'aucune décision ne peut rendre l'ERP
+inadministrable.
+
+Le journal ne porte volontairement aucune clé étrangère : le trigger append-only
+interdit tout `UPDATE`, donc un `ON DELETE SET NULL` sur `user_id` ferait échouer
+la suppression d'un compte. Le journal doit survivre à la disparition de l'acteur
+comme de la cible.
+
+Le patch accorde à `cerp_app` le strict nécessaire : lecture du catalogue et
+`UPDATE` limité aux seules colonnes `enabled_by_default` et `updated_at`, gestion
+complète des décisions utilisateur, lecture et ajout seulement sur le journal.
+Le script de vérification contrôle ces privilèges, y compris l'absence de droit
+`INSERT`/`DELETE` sur le catalogue, l'absence de droit `UPDATE` sur `module_key`
+et l'absence de droit `UPDATE`/`DELETE` sur le journal. Il vérifie aussi que les
+vingt clés de module attendues sont présentes : une clé manquante ferait
+silencieusement tomber le gate serveur en mode ouvert sur le module concerné.
+
+Le statut superadmin n'est accordé par **aucune API**. `is_superadmin` est exposé
+en lecture seule par `/admin/users` et `/admin/users/:id` ; le fournir dans le
+corps d'un `PATCH` est un rejet de validation, pas une ignorance silencieuse. Le
+seul chemin d'octroi est le seed gardé
+`db/seeds/access-tower-superadmin-keenan.sql`, qui refuse de s'exécuter sur
+`cerp_prod` sans `SET cerp.access_tower_superadmin_approved = 'KEENAN'`, refuse
+si la colonne n'existe pas encore, et refuse si le nom d'utilisateur ne
+correspond pas exactement à un compte unique.
+
+Ordre obligatoire : exécuter
+`support/20260727_admin_access_tower_326.preflight.sql`, appliquer le patch sur
+`cerp_test`, exécuter la vérification, appliquer le seed superadmin sur
+`cerp_test`, puis réaliser la recette navigateur de la tour de contrôle. Une
+validation humaine explicite reste obligatoire avant toute application sur
+`cerp_prod`. Le rollback de support supprime les trois tables, le trigger, sa
+fonction et la colonne ajoutée ; il ne modifie aucune ligne de `users`.
+
+Le socle serveur tolère l'absence de ce patch : une erreur PostgreSQL `42P01`
+fait passer le gate en mode ouvert avec un avertissement journalisé, et
+`/api/v1/auth/access-profile` répond `{ "is_superadmin": false, "modules": [] }`
+en 200. Briquer l'ERP entier serait pire que ne pas filtrer. Dès que
+l'infrastructure existe, la décision redevient fermée par défaut.
+
+État au 2026-07-27 : patch, scripts de support et seed **écrits et versionnés,
+appliqués sur aucune base**. Ni `cerp_test` ni `cerp_prod` n'ont été modifiés.
