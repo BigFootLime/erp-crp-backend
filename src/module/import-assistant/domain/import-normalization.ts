@@ -222,12 +222,30 @@ export function importRowDedupeKeys(entityType: ImportEntityType, normalized: Re
   };
   switch (entityType) {
     case "CLIENT":
-      return { siret: stringAt("siret"), secondary: stringAt("vat_number") };
+      return {
+        siret: stringAt("siret"),
+        secondary: stringAt("vat_number"),
+        name: normalizeImportName(stringAt("company_name")),
+      };
     case "FOURNISSEUR":
-      return { siret: stringAt("siret"), secondary: stringAt("tva") };
+      return {
+        siret: stringAt("siret"),
+        secondary: stringAt("tva"),
+        name: normalizeImportName(stringAt("nom")),
+      };
     case "MACHINE":
-      return { siret: null, secondary: stringAt("serial_number") };
+      return { siret: null, secondary: stringAt("serial_number"), name: null };
     default:
-      return { siret: null, secondary: null };
+      return { siret: null, secondary: null, name: null };
   }
+}
+
+export function normalizeImportName(value: unknown): string | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const normalized = value
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toUpperCase()
+    .replace(/[^0-9A-Z]/g, "");
+  return normalized || null;
 }
