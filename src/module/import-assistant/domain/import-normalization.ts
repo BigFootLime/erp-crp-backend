@@ -136,7 +136,12 @@ function postProcess(entityType: ImportEntityType, draft: Record<string, unknown
     const address = draft.adresse;
     if (address && typeof address === "object" && !Array.isArray(address)) {
       const values = Object.values(address as Record<string, unknown>).filter((value) => value !== undefined);
-      if (values.length > 0) draft.adresses = [address];
+      if (values.length > 0) {
+        draft.adresses = [{
+          ...(address as Record<string, unknown>),
+          is_primary: true,
+        }];
+      }
       delete draft.adresse;
     }
   }
