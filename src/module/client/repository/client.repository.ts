@@ -906,7 +906,7 @@ async function findClientContactIdempotentReplay(
      FROM client_contact_create_idempotency k
      JOIN contacts c ON c.contact_id = k.contact_id
      WHERE k.idempotency_key = $1
-       AND c.client_id = $2::uuid
+       AND c.client_id::text = $2::text
      LIMIT 1`,
     [idempotencyKey, clientId]
   );
