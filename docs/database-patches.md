@@ -47,6 +47,25 @@ schema represented by the current patch files.
 - Review `checksum-mismatch` results before continuing.
 - Keep passwords and `DATABASE_URL` out of Git, logs, and tickets.
 
+## Issue #168 - Réparation des catégories Article orphelines
+
+Patch `20260727_repair_article_category_orphans_168.sql` répare deux liens
+résiduels laissés par un Article de recette supprimé. La reconstruction de
+l’Article est interdite car sa Pièce technique et son Affaire n’existent plus.
+
+La réparation est bornée par l’identité et les SHA-256 des preuves, rescane
+toutes les références Article, copie les lignes originales dans
+`erp_audit_logs`, retire uniquement les deux liens puis valide la clé étrangère.
+Le preflight est en lecture seule. Le rollback est limité à `cerp_test` et
+restaure exclusivement les lignes conservées dans l’audit.
+
+Voir `docs/data-integrity-repair-168.md`.
+
+Validation du 2026-07-27 : cycle complet avec rollback sur `cerp_test`,
+sauvegarde production vérifiée, correction appliquée et enregistrée sur
+`cerp_prod`, puis comparaison canonique des 300 tables non concernées sans
+aucune différence.
+
 ## Issue #55 - Recursive Fabrication Tree
 
 Patch `20260624_recursive_fabrication_tree_of_hierarchy.sql` adds only new
