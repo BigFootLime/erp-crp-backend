@@ -25,6 +25,74 @@ function uploadFile(name: string, body: string) {
   } as Express.Multer.File;
 }
 
+function storedZip(entries: Array<{ name: string; body: string }>): Buffer {
+  const localParts: Buffer[] = [];
+  const centralParts: Buffer[] = [];
+  let localOffset = 0;
+
+  for (const entry of entries) {
+    const name = Buffer.from(entry.name, "utf8");
+    const body = Buffer.from(entry.body, "utf8");
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt32LE(body.length, 18);
+    local.writeUInt32LE(body.length, 22);
+    local.writeUInt16LE(name.length, 26);
+    localParts.push(local, name, body);
+
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt32LE(body.length, 20);
+    central.writeUInt32LE(body.length, 24);
+    central.writeUInt16LE(name.length, 28);
+    central.writeUInt32LE(localOffset, 42);
+    centralParts.push(central, name);
+    localOffset += local.length + name.length + body.length;
+  }
+
+  const centralDirectory = Buffer.concat(centralParts);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(entries.length, 8);
+  eocd.writeUInt16LE(entries.length, 10);
+  eocd.writeUInt32LE(centralDirectory.length, 12);
+  eocd.writeUInt32LE(localOffset, 16);
+  return Buffer.concat([...localParts, centralDirectory, eocd]);
+}
+
+function namespacedXlsxFile(worksheetTarget = "/xl/worksheets/sheet1.xml"): Express.Multer.File {
+  const serial = Math.round(
+    (Date.UTC(2026, 6, 27) - Date.UTC(1899, 11, 30)) / 86_400_000
+  );
+  const buffer = storedZip([
+    {
+      name: "xl/workbook.xml",
+      body: `<?xml version="1.0"?><x:workbook xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><x:sheets><x:sheet name="Pilote" sheetId="1" r:id="R1" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/></x:sheets></x:workbook>`,
+    },
+    {
+      name: "xl/_rels/workbook.xml.rels",
+      body: `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="${worksheetTarget}" Id="R1"/></Relationships>`,
+    },
+    {
+      name: "xl/styles.xml",
+      body: `<?xml version="1.0"?><x:styleSheet xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><x:cellXfs count="2"><x:xf numFmtId="0"/><x:xf numFmtId="14"/></x:cellXfs></x:styleSheet>`,
+    },
+    {
+      name: "xl/worksheets/sheet1.xml",
+      body: `<?xml version="1.0"?><x:worksheet xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><x:sheetData><x:row r="1"><x:c r="A1" t="str"><x:v>legacy_code</x:v></x:c><x:c r="B1" t="str"><x:v>email</x:v></x:c><x:c r="C1" t="str"><x:v>siret</x:v></x:c><x:c r="D1" t="str"><x:v>creation_date</x:v></x:c></x:row><x:row r="2"><x:c r="A2" t="str"><x:v>001</x:v></x:c><x:c r="B2"/><x:c r="C2" t="str"><x:v>10539713700016</x:v></x:c><x:c r="D2" s="1"><x:v>${serial}</x:v></x:c></x:row></x:sheetData></x:worksheet>`,
+    },
+  ]);
+  return {
+    originalname: "pilote-prefixe.xlsx",
+    mimetype: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    buffer,
+    size: buffer.length,
+  } as Express.Multer.File;
+}
+
 describe("Assistant d’import CLIPPER", () => {
   it("lit les CSV français avec guillemets, séparateurs et lignes vides", () => {
     const parsed = parseTabularFile(uploadFile(
@@ -42,6 +110,31 @@ describe("Assistant d’import CLIPPER", () => {
   it("refuse un format qui ne passe pas par le parseur contrôlé", () => {
     expect(() => parseTabularFile(uploadFile("legacy.xls", "CODE\tNOM"))).toThrow(
       "Format refusé"
+    );
+  });
+
+  it("lit les XLSX avec espaces de noms préfixés et relations de partie absolues", () => {
+    const parsed = parseTabularFile(namespacedXlsxFile());
+
+    expect(parsed.sheets).toEqual([
+      {
+        name: "Pilote",
+        headers: ["legacy_code", "email", "siret", "creation_date"],
+        rows: [
+          {
+            legacy_code: "001",
+            email: null,
+            siret: "10539713700016",
+            creation_date: "2026-07-27",
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("continue de refuser une relation XLSX qui sort de l’archive", () => {
+    expect(() => parseTabularFile(namespacedXlsxFile("/../outside.xml"))).toThrow(
+      "Chemin de feuille XLSX interdit"
     );
   });
 

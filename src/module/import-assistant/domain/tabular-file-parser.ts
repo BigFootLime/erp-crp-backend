@@ -115,8 +115,9 @@ function uniqueHeaders(values: unknown[]): string[] {
 
 function parseSharedStrings(xml: string): string[] {
   const values: string[] = [];
-  for (const match of xml.matchAll(/<si\b[^>]*>([\s\S]*?)<\/si>/g)) {
-    const parts = [...match[1].matchAll(/<t\b[^>]*>([\s\S]*?)<\/t>/g)].map((part) => decodeXml(part[1]));
+  for (const match of xml.matchAll(/<(?:[A-Za-z_][\w.-]*:)?si\b[^>]*>([\s\S]*?)<\/(?:[A-Za-z_][\w.-]*:)?si>/g)) {
+    const parts = [...match[1].matchAll(/<(?:[A-Za-z_][\w.-]*:)?t\b[^>]*>([\s\S]*?)<\/(?:[A-Za-z_][\w.-]*:)?t>/g)]
+      .map((part) => decodeXml(part[1]));
     values.push(parts.join(""));
   }
   return values;
@@ -125,13 +126,14 @@ function parseSharedStrings(xml: string): string[] {
 function parseDateStyleIndexes(stylesXml: string | null): Set<number> {
   if (!stylesXml) return new Set();
   const customFormats = new Map<number, string>();
-  for (const match of stylesXml.matchAll(/<numFmt\b[^>]*numFmtId="(\d+)"[^>]*formatCode="([^"]*)"[^>]*\/?>/g)) {
+  for (const match of stylesXml.matchAll(/<(?:[A-Za-z_][\w.-]*:)?numFmt\b[^>]*numFmtId="(\d+)"[^>]*formatCode="([^"]*)"[^>]*\/?>/g)) {
     customFormats.set(Number(match[1]), decodeXml(match[2]));
   }
   const dateStyles = new Set<number>();
-  const cellXfs = /<cellXfs\b[^>]*>([\s\S]*?)<\/cellXfs>/.exec(stylesXml)?.[1] ?? "";
+  const cellXfs = /<(?:[A-Za-z_][\w.-]*:)?cellXfs\b[^>]*>([\s\S]*?)<\/(?:[A-Za-z_][\w.-]*:)?cellXfs>/
+    .exec(stylesXml)?.[1] ?? "";
   let index = 0;
-  for (const match of cellXfs.matchAll(/<xf\b([^>]*)\/?>/g)) {
+  for (const match of cellXfs.matchAll(/<(?:[A-Za-z_][\w.-]*:)?xf\b([^>]*)\/?>/g)) {
     const numFmtId = Number(/numFmtId="(\d+)"/.exec(match[1])?.[1] ?? 0);
     const format = customFormats.get(numFmtId) ?? "";
     if ((numFmtId >= 14 && numFmtId <= 22) || /[ymdhis]/i.test(format.replace(/\[[^\]]+\]/g, ""))) {
@@ -154,22 +156,28 @@ function parseSheetXml(
   dateStyles: Set<number>
 ): ParsedTabularSheet {
   const matrix: unknown[][] = [];
-  for (const rowMatch of xml.matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g)) {
+  for (const rowMatch of xml.matchAll(/<(?:[A-Za-z_][\w.-]*:)?row\b[^>]*>([\s\S]*?)<\/(?:[A-Za-z_][\w.-]*:)?row>/g)) {
     if (matrix.length >= MAX_ROWS + 1) throw new HttpError(413, "TOO_MANY_ROWS", `La feuille ${name} dépasse ${MAX_ROWS} lignes.`);
     const row: unknown[] = [];
-    for (const cellMatch of rowMatch[1].matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/g)) {
+    for (const cellMatch of rowMatch[1].matchAll(
+      /<(?:[A-Za-z_][\w.-]*:)?c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/(?:[A-Za-z_][\w.-]*:)?c>)/g
+    )) {
       const attrs = cellMatch[1];
-      const content = cellMatch[2];
+      const content = cellMatch[2] ?? "";
       const ref = /\br="([^"]+)"/.exec(attrs)?.[1] ?? `A${matrix.length + 1}`;
       const index = columnIndex(ref);
       if (index >= MAX_COLUMNS) throw new HttpError(413, "TOO_MANY_COLUMNS", `La feuille ${name} dépasse ${MAX_COLUMNS} colonnes.`);
       const type = /\bt="([^"]+)"/.exec(attrs)?.[1] ?? "n";
       const styleIndex = Number(/\bs="(\d+)"/.exec(attrs)?.[1] ?? -1);
-      const raw = /<v\b[^>]*>([\s\S]*?)<\/v>/.exec(content)?.[1] ?? "";
-      const inline = /<is\b[^>]*>([\s\S]*?)<\/is>/.exec(content)?.[1] ?? "";
+      const raw = /<(?:[A-Za-z_][\w.-]*:)?v\b[^>]*>([\s\S]*?)<\/(?:[A-Za-z_][\w.-]*:)?v>/.exec(content)?.[1] ?? "";
+      const inline = /<(?:[A-Za-z_][\w.-]*:)?is\b[^>]*>([\s\S]*?)<\/(?:[A-Za-z_][\w.-]*:)?is>/.exec(content)?.[1] ?? "";
       let value: unknown = null;
       if (type === "s") value = sharedStrings[Number(raw)] ?? "";
-      else if (type === "inlineStr") value = [...inline.matchAll(/<t\b[^>]*>([\s\S]*?)<\/t>/g)].map((m) => decodeXml(m[1])).join("");
+      else if (type === "inlineStr") {
+        value = [...inline.matchAll(/<(?:[A-Za-z_][\w.-]*:)?t\b[^>]*>([\s\S]*?)<\/(?:[A-Za-z_][\w.-]*:)?t>/g)]
+          .map((m) => decodeXml(m[1]))
+          .join("");
+      }
       else if (type === "b") value = raw === "1";
       else if (type === "str" || type === "e") value = decodeXml(raw);
       else if (raw !== "") {
@@ -189,7 +197,11 @@ function parseSheetXml(
 }
 
 function resolvePart(base: string, target: string): string {
-  const normalized = path.posix.normalize(path.posix.join(path.posix.dirname(base), target));
+  const portableTarget = target.replace(/\\/g, "/");
+  const candidate = portableTarget.startsWith("/")
+    ? portableTarget.replace(/^\/+/, "")
+    : path.posix.join(path.posix.dirname(base), portableTarget);
+  const normalized = path.posix.normalize(candidate);
   if (normalized.startsWith("../") || normalized.startsWith("/")) throw new HttpError(400, "INVALID_XLSX_PATH", "Chemin de feuille XLSX interdit.");
   return normalized;
 }
@@ -202,7 +214,7 @@ function parseXlsx(buffer: Buffer): ParsedTabularFile {
   const relsPath = "xl/_rels/workbook.xml.rels";
   const relsXml = readZipEntry(buffer, entries, relsPath).toString("utf8");
   const rels = new Map<string, string>();
-  for (const match of relsXml.matchAll(/<Relationship\b([^>]*)\/?>/g)) {
+  for (const match of relsXml.matchAll(/<(?:[A-Za-z_][\w.-]*:)?Relationship\b([^>]*)\/?>/g)) {
     const id = /\bId="([^"]+)"/.exec(match[1])?.[1];
     const target = /\bTarget="([^"]+)"/.exec(match[1])?.[1];
     if (id && target) rels.set(id, resolvePart(workbookPath, decodeXml(target)));
@@ -215,7 +227,7 @@ function parseXlsx(buffer: Buffer): ParsedTabularFile {
     entries.has("xl/styles.xml") ? readZipEntry(buffer, entries, "xl/styles.xml").toString("utf8") : null
   );
   const sheets: ParsedTabularSheet[] = [];
-  for (const match of workbookXml.matchAll(/<sheet\b([^>]*)\/?>/g)) {
+  for (const match of workbookXml.matchAll(/<(?:[A-Za-z_][\w.-]*:)?sheet\b([^>]*)\/?>/g)) {
     if (sheets.length >= MAX_SHEETS) throw new HttpError(413, "TOO_MANY_SHEETS", `Le classeur dépasse ${MAX_SHEETS} feuilles.`);
     const name = decodeXml(/\bname="([^"]+)"/.exec(match[1])?.[1] ?? `Feuille ${sheets.length + 1}`);
     const relationId = /\br:id="([^"]+)"/.exec(match[1])?.[1];
