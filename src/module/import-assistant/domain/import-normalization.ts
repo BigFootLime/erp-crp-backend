@@ -1,6 +1,11 @@
 import type { ZodIssue, ZodTypeAny } from "zod";
+import { z } from "zod";
 
-import { createClientSchema } from "../../client/validators/client.validators";
+import {
+  clientPatchSchema,
+  createClientContactBodySchema,
+  createClientSchema,
+} from "../../client/validators/client.validators";
 import { createFournisseurSchema } from "../../fournisseurs/validators/fournisseurs.validators";
 import { createPieceTechniqueSchema } from "../../pieces-techniques/validators/pieces-techniques.validators";
 import { createMachineSchema } from "../../production/validators/production.validators";
@@ -19,6 +24,16 @@ type NormalizedResult = {
   normalized_data: Record<string, unknown> | null;
   issues: ImportIssue[];
 };
+
+const clientEnrichmentSchema = clientPatchSchema
+  .refine((value) => Object.keys(value).length > 0, {
+    message: "Au moins une donnée client doit être fournie.",
+  });
+
+const clientContactImportSchema = z.object({
+  client_legacy_code: z.string().trim().min(1, "Code client CLIPPER requis"),
+  ...createClientContactBodySchema.shape,
+});
 
 function hasOwn(record: Record<string, unknown>, key: string) {
   return Object.prototype.hasOwnProperty.call(record, key);
@@ -111,6 +126,10 @@ function entitySchema(entityType: ImportEntityType): { schema: ZodTypeAny; wrapp
   switch (entityType) {
     case "CLIENT":
       return { schema: createClientSchema, wrapped: false };
+    case "CLIENT_ENRICHISSEMENT":
+      return { schema: clientEnrichmentSchema, wrapped: false };
+    case "CLIENT_CONTACT":
+      return { schema: clientContactImportSchema, wrapped: false };
     case "FOURNISSEUR":
       return { schema: createFournisseurSchema, wrapped: true };
     case "ARTICLE":
@@ -222,6 +241,12 @@ export function importRowDedupeKeys(entityType: ImportEntityType, normalized: Re
   };
   switch (entityType) {
     case "CLIENT":
+      return {
+        siret: stringAt("siret"),
+        secondary: stringAt("vat_number"),
+        name: normalizeImportName(stringAt("company_name")),
+      };
+    case "CLIENT_ENRICHISSEMENT":
       return {
         siret: stringAt("siret"),
         secondary: stringAt("vat_number"),

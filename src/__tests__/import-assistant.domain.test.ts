@@ -210,6 +210,107 @@ describe("Assistant d’import CLIPPER", () => {
     });
   });
 
+  it("enrichit un client sans injecter de listes vides ni effacer les champs absents", () => {
+    const mapping: ImportMapping = {
+      legacy_key_column: "CODE",
+      columns: {
+        company_name: "NOM",
+        email: "EMAIL",
+        compte_tiers: "COMPTE",
+      },
+      constants: {},
+      approved_decisions: ["DEC-04", "DEC-14", "DEC-15"],
+      duplicate_strategy: "LINK_EXACT",
+    };
+
+    const result = normalizeImportRow(
+      "CLIENT_ENRICHISSEMENT",
+      {
+        CODE: "C00042",
+        NOM: "Client enrichi",
+        EMAIL: "contact@example.fr",
+        COMPTE: "411C00042",
+      },
+      mapping
+    );
+
+    expect(result.issues).toEqual([]);
+    expect(result.normalized_data).toEqual({
+      company_name: "Client enrichi",
+      email: "contact@example.fr",
+      compte_tiers: "411C00042",
+    });
+    expect(result.normalized_data).not.toHaveProperty("contacts");
+    expect(result.normalized_data).not.toHaveProperty("payment_mode_ids");
+    expect(result.normalized_data).not.toHaveProperty("quality_levels");
+  });
+
+  it("valide un contact client avec sa clé parent et bloque les coordonnées incomplètes", () => {
+    const mapping: ImportMapping = {
+      legacy_key_column: "CONTACT_KEY",
+      columns: {
+        client_legacy_code: "CLIENT_CODE",
+        first_name: "PRENOM",
+        last_name: "NOM",
+        email: "EMAIL",
+        set_primary: "PRINCIPAL",
+      },
+      constants: {},
+      approved_decisions: ["DEC-04", "DEC-14", "DEC-15"],
+      duplicate_strategy: "REVIEW",
+    };
+
+    const valid = normalizeImportRow(
+      "CLIENT_CONTACT",
+      {
+        CONTACT_KEY: "C00042|1",
+        CLIENT_CODE: "C00042",
+        PRENOM: "Alice",
+        NOM: "Martin",
+        EMAIL: "alice.martin@example.fr",
+        PRINCIPAL: "oui",
+      },
+      mapping
+    );
+    const blocked = normalizeImportRow(
+      "CLIENT_CONTACT",
+      {
+        CONTACT_KEY: "C00042|2",
+        CLIENT_CODE: "C00042",
+        PRENOM: "",
+        NOM: "Martin",
+        EMAIL: "",
+      },
+      mapping
+    );
+
+    expect(valid.issues).toEqual([]);
+    expect(valid.normalized_data).toMatchObject({
+      client_legacy_code: "C00042",
+      first_name: "Alice",
+      last_name: "Martin",
+      email: "alice.martin@example.fr",
+      set_primary: true,
+    });
+    expect(blocked.issues.map((issue) => issue.field)).toEqual(
+      expect.arrayContaining(["first_name", "email"])
+    );
+  });
+
+  it("présente les pièces techniques après les référentiels et les flux d'achat", () => {
+    const ordered = [...IMPORT_CAPABILITIES].sort((a, b) => a.order - b.order);
+    const clientEnrichment = ordered.findIndex((item) => item.entity_type === "CLIENT_ENRICHISSEMENT");
+    const clientContacts = ordered.findIndex((item) => item.entity_type === "CLIENT_CONTACT");
+    const suppliers = ordered.findIndex((item) => item.entity_type === "FOURNISSEUR");
+    const articles = ordered.findIndex((item) => item.entity_type === "ARTICLE");
+    const pieces = ordered.findIndex((item) => item.entity_type === "PIECE_TECHNIQUE");
+
+    expect(clientEnrichment).toBeLessThan(clientContacts);
+    expect(clientContacts).toBeLessThan(suppliers);
+    expect(suppliers).toBeLessThan(articles);
+    expect(articles).toBeLessThan(pieces);
+  });
+
   it("marque l’adresse fournisseur importée comme adresse principale", () => {
     const mapping: ImportMapping = {
       legacy_key_column: "CODE",
@@ -279,6 +380,18 @@ describe("Assistant d’import CLIPPER", () => {
     expect(patch).toContain("data_import_confirm_idempotency");
     expect(patch).toContain("fn_purge_expired_import_staging");
     expect(patch).toContain("retention_until date NOT NULL DEFAULT (CURRENT_DATE + 90)");
+    expect(patch).not.toMatch(/\bDROP\s+(TABLE|COLUMN|SCHEMA)\b/i);
+  });
+
+  it("ajoute les imports clients spécialisés et l'idempotence des contacts", () => {
+    const patch = fs.readFileSync(
+      path.resolve(process.cwd(), "db/patches/20260727_import_clients_enrichment_306.sql"),
+      "utf8"
+    );
+
+    expect(patch).toContain("'CLIENT_ENRICHISSEMENT'");
+    expect(patch).toContain("'CLIENT_CONTACT'");
+    expect(patch).toContain("client_contact_create_idempotency");
     expect(patch).not.toMatch(/\bDROP\s+(TABLE|COLUMN|SCHEMA)\b/i);
   });
 });

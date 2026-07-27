@@ -24,6 +24,10 @@ Toutes les routes sont sous `/api/v1/import-assistant` et réservées aux rôles
 - SHA-256 du fichier et unicité du lot par source, domaine, empreinte et feuille.
 - Simulation par les schémas Zod existants.
 - Création par les services métier existants et codes générés par CERP.
+- Enrichissement client par PATCH parcimonieux : seuls les champs réellement
+  mappés sont écrits, sans listes vides implicites.
+- Contacts clients rattachés par le crosswalk du client parent, avec clé
+  d’idempotence propre et validation obligatoire du prénom, nom et courriel.
 - Crosswalk stable entre clé CLIPPER et fiche CERP.
 - Reprise par lots de 25 lignes avec verrouillage `SKIP LOCKED`.
 - Confirmation et création idempotentes.
@@ -32,11 +36,23 @@ Toutes les routes sont sous `/api/v1/import-assistant` et réservées aux rôles
 
 ## Base de données
 
-Patch : `db/patches/20260726_import_assistant_167.sql`.
+Patches :
+
+- `db/patches/20260726_import_assistant_167.sql` pour le socle ;
+- `db/patches/20260727_import_clients_enrichment_306.sql` pour
+  `CLIENT_ENRICHISSEMENT`, `CLIENT_CONTACT` et l’idempotence des contacts.
 
 Avant toute application, exécuter le preflight sur `cerp_test`, appliquer par le mécanisme de patches existant, puis lancer le script `verify`. Le rollback automatique est volontairement bloqué dès que des preuves ou correspondances peuvent exister.
 
 Le patch est additif et n’importe aucune donnée métier.
+
+## Ordre de reprise
+
+Les lots sont exécutés dans l’ordre : clients complets, contacts clients,
+fournisseurs, commandes fournisseurs, articles et matières achetés, machines et
+référentiels, puis pièces techniques. Une pièce technique ne doit pas être
+confirmée tant que ses clients, fournisseurs, matières et flux d’achat ne sont
+pas validés.
 
 Le choix affiché par le frontend n’est jamais utilisé comme preuve. Le service
 API dédié à l’import doit disposer de son propre pool PostgreSQL vers

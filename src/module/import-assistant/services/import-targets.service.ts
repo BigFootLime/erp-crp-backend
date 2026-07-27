@@ -1,7 +1,16 @@
 import crypto from "node:crypto";
 
-import { repoCreateClient, type AuditContext as ClientAuditContext } from "../../client/repository/client.repository";
-import type { CreateClientDTO } from "../../client/validators/client.validators";
+import {
+  repoCreateClient,
+  repoCreateClientContact,
+  repoPatchClient,
+  type AuditContext as ClientAuditContext,
+} from "../../client/repository/client.repository";
+import type {
+  ClientPatchDTO,
+  CreateClientContactBodyDTO,
+  CreateClientDTO,
+} from "../../client/validators/client.validators";
 import { createFournisseurSVC } from "../../fournisseurs/services/fournisseurs.service";
 import type { CreateFournisseurBodyDTO } from "../../fournisseurs/validators/fournisseurs.validators";
 import { createPieceTechniqueSVC } from "../../pieces-techniques/services/pieces-techniques.service";
@@ -37,6 +46,8 @@ export async function createImportTarget(params: {
   entity_type: ImportEntityType;
   normalized_data: Record<string, unknown>;
   idempotency_key: string;
+  parent_target_id?: string | null;
+  parent_target_code?: string | null;
   audit: ImportAuditContext;
 }): Promise<ImportTargetResult> {
   const audit = params.audit as ClientAuditContext;
@@ -48,6 +59,33 @@ export async function createImportTarget(params: {
         params.idempotency_key
       );
       return { id: result.client_id, code: result.client_code };
+    }
+    case "CLIENT_ENRICHISSEMENT": {
+      if (!params.parent_target_id) {
+        throw new HttpError(409, "IMPORT_CLIENT_TARGET_MISSING", "Le client CERP à enrichir est introuvable.");
+      }
+      const patch = params.normalized_data as ClientPatchDTO;
+      await repoPatchClient(
+        params.parent_target_id,
+        patch,
+        new Set(Object.keys(patch)),
+        audit
+      );
+      return { id: params.parent_target_id, code: params.parent_target_code ?? null };
+    }
+    case "CLIENT_CONTACT": {
+      if (!params.parent_target_id) {
+        throw new HttpError(409, "IMPORT_CLIENT_TARGET_MISSING", "Le client CERP du contact est introuvable.");
+      }
+      const { client_legacy_code: _clientLegacyCode, ...contact } = params.normalized_data as
+        CreateClientContactBodyDTO & { client_legacy_code: string };
+      const result = await repoCreateClientContact(
+        params.parent_target_id,
+        contact,
+        audit,
+        params.idempotency_key
+      );
+      return { id: result.contact_id, code: null };
     }
     case "FOURNISSEUR": {
       const result = await createFournisseurSVC(

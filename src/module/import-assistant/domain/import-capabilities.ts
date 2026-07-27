@@ -62,6 +62,58 @@ const CLIENT_FIELDS: ImportTargetField[] = [
   field("langue", "Langue ISO", "text"),
 ];
 
+const CLIENT_ENRICHISSEMENT_FIELDS: ImportTargetField[] = [
+  field("company_name", "Raison sociale", "text", {
+    required: true,
+    hint: "Sert aussi au rapprochement exact si la correspondance CLIPPER historique manque",
+  }),
+  commonOptional.email,
+  commonOptional.phone,
+  field("website_url", "Site internet", "text"),
+  field("siret", "SIRET", "text"),
+  field("vat_number", "N° TVA", "text"),
+  field("naf_code", "Code NAF", "text"),
+  field("status", "Statut", "enum", { values: ["prospect", "client", "inactif"] }),
+  field("blocked", "Bloqué", "boolean"),
+  field("reason", "Motif de blocage", "text"),
+  field("bill_address.name", "Nom adresse de facturation", "text"),
+  field("bill_address.street", "Rue de facturation", "text"),
+  field("bill_address.house_number", "N° de facturation", "text"),
+  field("bill_address.address_complement", "Complément de facturation", "text"),
+  field("bill_address.postal_code", "Code postal de facturation", "text"),
+  field("bill_address.city", "Ville de facturation", "text"),
+  field("bill_address.country", "Pays de facturation", "text"),
+  field("delivery_address.name", "Nom adresse de livraison", "text"),
+  field("delivery_address.street", "Rue de livraison", "text"),
+  field("delivery_address.house_number", "N° de livraison", "text"),
+  field("delivery_address.address_complement", "Complément de livraison", "text"),
+  field("delivery_address.postal_code", "Code postal de livraison", "text"),
+  field("delivery_address.city", "Ville de livraison", "text"),
+  field("delivery_address.country", "Pays de livraison", "text"),
+  field("observations", "Observations", "text", { sensitive: true }),
+  field("devise", "Devise ISO", "text"),
+  field("encours_max", "Encours maximum", "number", { sensitive: true }),
+  field("incoterm", "Incoterm", "enum", { values: ["EXW", "FCA", "CPT", "CIP", "DAP", "DPU", "DDP", "FAS", "FOB", "CFR", "CIF"] }),
+  field("langue", "Langue ISO", "text"),
+  field("compte_tiers", "Compte tiers", "text"),
+  field("groupe_financier", "Groupe financier", "text"),
+];
+
+const CLIENT_CONTACT_FIELDS: ImportTargetField[] = [
+  field("client_legacy_code", "Code client CLIPPER", "text", {
+    required: true,
+    hint: "Le client doit avoir été rapproché avant ses contacts",
+  }),
+  field("first_name", "Prénom", "text", { required: true }),
+  field("last_name", "Nom", "text", { required: true }),
+  field("email", "E-mail", "text", { required: true, sensitive: true }),
+  field("phone_direct", "Téléphone direct", "text", { sensitive: true }),
+  field("phone_personal", "Téléphone secondaire", "text", { sensitive: true }),
+  field("role", "Fonction", "text"),
+  field("civility", "Civilité", "enum", { values: ["Madame", "Monsieur"] }),
+  field("set_primary", "Contact principal", "boolean"),
+];
+
 const FOURNISSEUR_FIELDS: ImportTargetField[] = [
   field("nom", "Raison sociale", "text", { required: true }),
   field("actif", "Actif", "boolean"),
@@ -136,14 +188,16 @@ const MACHINE_FIELDS: ImportTargetField[] = [
 ];
 
 export const IMPORT_CAPABILITIES: ImportEntityCapability[] = [
-  { entity_type: "CLIENT", label: "Clients", order: 10, confirm_enabled: true, unavailable_reason: null, fields: CLIENT_FIELDS, decisions: [DECISIONS["DEC-04"], DECISIONS["DEC-14"], DECISIONS["DEC-15"]] },
-  { entity_type: "FOURNISSEUR", label: "Fournisseurs", order: 20, confirm_enabled: true, unavailable_reason: null, fields: FOURNISSEUR_FIELDS, decisions: [DECISIONS["DEC-03"], DECISIONS["DEC-14"], DECISIONS["DEC-15"]] },
-  { entity_type: "PIECE_TECHNIQUE", label: "Pièces techniques", order: 30, confirm_enabled: true, unavailable_reason: null, fields: PIECE_FIELDS, decisions: [DECISIONS["DEC-02"], DECISIONS["DEC-14"], DECISIONS["DEC-15"]] },
-  { entity_type: "ARTICLE", label: "Articles", order: 40, confirm_enabled: true, unavailable_reason: null, fields: ARTICLE_FIELDS, decisions: [DECISIONS["DEC-01"], DECISIONS["DEC-14"], DECISIONS["DEC-15"], DECISIONS["DEC-16"]] },
-  { entity_type: "MACHINE", label: "Machines CNC", order: 50, confirm_enabled: true, unavailable_reason: null, fields: MACHINE_FIELDS, decisions: [DECISIONS["DEC-07"], DECISIONS["DEC-14"], DECISIONS["DEC-15"]] },
-  { entity_type: "STOCK_INITIAL", label: "Stock d’ouverture", order: 60, confirm_enabled: false, unavailable_reason: "Le stock doit passer par un inventaire ou des mouvements d’ouverture contrôlés ; les magasins, emplacements et le cut-off doivent être renseignés.", fields: [], decisions: [DECISIONS["DEC-05"], DECISIONS["DEC-06"], DECISIONS["DEC-15"], DECISIONS["DEC-16"]] },
-  { entity_type: "BL_HISTORIQUE", label: "BL historiques", order: 70, confirm_enabled: false, unavailable_reason: "Le sort des BL ouverts et historiques doit être décidé avant toute écriture.", fields: [], decisions: [DECISIONS["DEC-13"], DECISIONS["DEC-14"], DECISIONS["DEC-15"]] },
-  { entity_type: "EMPLOYE", label: "Salariés", order: 80, confirm_enabled: false, unavailable_reason: "L’import RH reste fermé tant que le périmètre, les correspondances utilisateurs et la rétention ne sont pas documentés.", fields: [], decisions: [DECISIONS["DEC-09"], DECISIONS["DEC-12"], DECISIONS["DEC-15"]] },
+  { entity_type: "CLIENT", label: "1A — Clients (création)", order: 10, confirm_enabled: true, unavailable_reason: null, fields: CLIENT_FIELDS, decisions: [DECISIONS["DEC-04"], DECISIONS["DEC-14"], DECISIONS["DEC-15"]] },
+  { entity_type: "CLIENT_ENRICHISSEMENT", label: "1B — Clients (compléter les fiches)", order: 11, confirm_enabled: true, unavailable_reason: null, fields: CLIENT_ENRICHISSEMENT_FIELDS, decisions: [DECISIONS["DEC-04"], DECISIONS["DEC-14"], DECISIONS["DEC-15"]] },
+  { entity_type: "CLIENT_CONTACT", label: "1C — Contacts clients", order: 12, confirm_enabled: true, unavailable_reason: null, fields: CLIENT_CONTACT_FIELDS, decisions: [DECISIONS["DEC-04"], DECISIONS["DEC-14"], DECISIONS["DEC-15"]] },
+  { entity_type: "FOURNISSEUR", label: "2 — Fournisseurs", order: 20, confirm_enabled: true, unavailable_reason: null, fields: FOURNISSEUR_FIELDS, decisions: [DECISIONS["DEC-03"], DECISIONS["DEC-14"], DECISIONS["DEC-15"]] },
+  { entity_type: "ARTICLE", label: "4 — Articles et matières achetés", order: 40, confirm_enabled: true, unavailable_reason: null, fields: ARTICLE_FIELDS, decisions: [DECISIONS["DEC-01"], DECISIONS["DEC-14"], DECISIONS["DEC-15"], DECISIONS["DEC-16"]] },
+  { entity_type: "MACHINE", label: "5 — Machines CNC", order: 50, confirm_enabled: true, unavailable_reason: null, fields: MACHINE_FIELDS, decisions: [DECISIONS["DEC-07"], DECISIONS["DEC-14"], DECISIONS["DEC-15"]] },
+  { entity_type: "STOCK_INITIAL", label: "6 — Stock d’ouverture", order: 60, confirm_enabled: false, unavailable_reason: "Le stock doit passer par un inventaire ou des mouvements d’ouverture contrôlés ; les magasins, emplacements et le cut-off doivent être renseignés.", fields: [], decisions: [DECISIONS["DEC-05"], DECISIONS["DEC-06"], DECISIONS["DEC-15"], DECISIONS["DEC-16"]] },
+  { entity_type: "BL_HISTORIQUE", label: "7 — BL historiques", order: 70, confirm_enabled: false, unavailable_reason: "Le sort des BL ouverts et historiques doit être décidé avant toute écriture.", fields: [], decisions: [DECISIONS["DEC-13"], DECISIONS["DEC-14"], DECISIONS["DEC-15"]] },
+  { entity_type: "EMPLOYE", label: "8 — Salariés", order: 80, confirm_enabled: false, unavailable_reason: "L’import RH reste fermé tant que le périmètre, les correspondances utilisateurs et la rétention ne sont pas documentés.", fields: [], decisions: [DECISIONS["DEC-09"], DECISIONS["DEC-12"], DECISIONS["DEC-15"]] },
+  { entity_type: "PIECE_TECHNIQUE", label: "9 — Pièces techniques (dernière étape)", order: 90, confirm_enabled: true, unavailable_reason: null, fields: PIECE_FIELDS, decisions: [DECISIONS["DEC-02"], DECISIONS["DEC-14"], DECISIONS["DEC-15"]] },
 ];
 
 export function getImportCapability(entityType: string): ImportEntityCapability | null {
