@@ -188,6 +188,45 @@ describe("Assistant d’import CLIPPER", () => {
     });
   });
 
+  it("marque l’adresse fournisseur importée comme adresse principale", () => {
+    const mapping: ImportMapping = {
+      legacy_key_column: "CODE",
+      columns: {
+        nom: "NOM",
+        "adresse.type": "ADRESSE_TYPE",
+        "adresse.label": "ADRESSE_LABEL",
+        "adresse.city": "VILLE",
+        "adresse.country": "PAYS",
+      },
+      constants: {},
+      approved_decisions: ["DEC-03", "DEC-14", "DEC-15"],
+      duplicate_strategy: "REVIEW",
+    };
+    const result = normalizeImportRow(
+      "FOURNISSEUR",
+      {
+        CODE: "F001",
+        NOM: "Fournisseur pilote",
+        ADRESSE_TYPE: "commande",
+        ADRESSE_LABEL: "Fournisseur pilote",
+        VILLE: "Lyon",
+        PAYS: "France",
+      },
+      mapping
+    );
+
+    expect(result.issues).toEqual([]);
+    expect(result.normalized_data).toMatchObject({
+      adresses: [{
+        type: "commande",
+        label: "Fournisseur pilote",
+        city: "Lyon",
+        country: "France",
+        is_primary: true,
+      }],
+    });
+  });
+
   it("garde stock, BL et RH visibles mais impossibles à confirmer", () => {
     const gated = IMPORT_CAPABILITIES.filter((capability) =>
       ["STOCK_INITIAL", "BL_HISTORIQUE", "EMPLOYE"].includes(capability.entity_type)
