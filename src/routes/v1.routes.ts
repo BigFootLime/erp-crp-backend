@@ -46,6 +46,7 @@ import asbuiltRoutes from "../module/asbuilt/routes/asbuilt.routes"
 import locksRoutes from "../module/locks/routes/locks.routes"
 import tempsDeplacementsRoutes from "../module/temps-deplacements/routes/temps-deplacements.routes"
 import projectOfficeRoutes from "../module/project-office/routes/project-office.routes"
+import gedRoutes from "../module/ged/routes/ged.routes"
 import gammesRoutes from "../module/gammes/routes/gammes.routes"
 import pieceTechniqueVersionsRoutes from "../module/gammes/routes/piece-technique-versions.routes"
 import importAssistantRoutes from "../module/import-assistant/routes/import-assistant.routes"
@@ -127,5 +128,9 @@ router.use("/asbuilt", asbuiltRoutes)
 router.use("/locks", locksRoutes)
 router.use("/time-clock", tempsDeplacementsRoutes) // Module « Temps & Déplacements » (RH pointage/kilomètres)
 router.use("/project-office", projectOfficeRoutes) // Module « Project Office » (#130) — feature gate PROJECT_OFFICE fail-closed
+// GED centrale (ADR-0037). Additif : aucun module existant n'est rebranché.
+// Si le patch 20260727_ged_core n'est pas appliqué, ces routes répondent
+// 503 GED_NOT_INSTALLED sans affecter le reste de l'API.
+router.use("/ged", gedRoutes)
 router.use("/import-assistant", importAssistantRoutes) // CLIPPER -> CERP staged import assistant (#167)
 export default router
