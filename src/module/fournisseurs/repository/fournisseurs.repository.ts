@@ -563,16 +563,42 @@ async function insertAdresse(tx: DbQueryer, fournisseurId: string, body: CreateA
   return res.rows[0]?.id ?? null
 }
 
-export async function repoCreateFournisseur(body: CreateFournisseurBodyDTO, audit: AuditContext): Promise<Fournisseur> {
+export async function repoCreateFournisseur(
+  body: CreateFournisseurBodyDTO,
+  audit: AuditContext,
+  idempotencyKey?: string | null
+): Promise<Fournisseur> {
   const client = await db.connect()
+  const requestHash = crypto.createHash("sha256").update(JSON.stringify(body)).digest("hex")
   try {
     await client.query("BEGIN")
+    if (idempotencyKey) {
+      const replay = await client.query<{ fournisseur_id: string; request_hash: string }>(
+        `SELECT fournisseur_id::text AS fournisseur_id, request_hash
+         FROM public.fournisseur_create_idempotence
+         WHERE idempotency_key = $1
+         FOR UPDATE`,
+        [idempotencyKey]
+      )
+      if (replay.rows[0]) {
+        if (replay.rows[0].request_hash !== requestHash) {
+          throw new HttpError(409, "IDEMPOTENCY_KEY_REUSED", "Cette clé d’idempotence a déjà servi avec un autre fournisseur.")
+        }
+        await client.query("ROLLBACK")
+        const existing = await repoGetFournisseur(replay.rows[0].fournisseur_id)
+        if (!existing) throw new Error("Idempotent fournisseur no longer exists")
+        return existing
+      }
+    }
     const code = await generateFournisseurCode(client)
     const ins = await client.query<{ id: string }>(
       `INSERT INTO public.fournisseurs (
          code, code_fournisseur, nom, raison_sociale, actif, status, type_principal,
          tva, siret, email, telephone, site_web, nom_commercial, logo, notes, created_by, updated_by
-       ) VALUES ($1,$1,$2,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$14) RETURNING id::text AS id`,
+       ) VALUES (
+         $1::text,$1::varchar(30),$2::text,$2::varchar(255),
+         $3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$14
+       ) RETURNING id::text AS id`,
       [code, body.nom, body.actif ?? true, body.status ?? "actif", body.type_principal ?? null,
        body.tva ?? null, body.siret ?? null, body.email ?? null, body.telephone ?? null, body.site_web ?? null,
        body.nom_commercial ?? null, body.logo ?? null, body.notes ?? null, audit.user_id]
@@ -596,6 +622,14 @@ export async function repoCreateFournisseur(body: CreateFournisseurBodyDTO, audi
       for (const a of body.adresses) await insertAdresse(client, id, a, audit.user_id)
       await syncPrimaryAddressCache(client, id, audit.user_id)
     }
+    if (idempotencyKey) {
+      await client.query(
+        `INSERT INTO public.fournisseur_create_idempotence
+           (idempotency_key, request_hash, fournisseur_id)
+         VALUES ($1,$2,$3::uuid)`,
+        [idempotencyKey, requestHash, id]
+      )
+    }
 
     await insertEvent(client, id, audit.user_id, { event_type: "created", title: `Fournisseur ${code} créé` })
     await insertAuditLog(client, audit, {
@@ -608,6 +642,18 @@ export async function repoCreateFournisseur(body: CreateFournisseurBodyDTO, audi
     return created
   } catch (err) {
     await client.query("ROLLBACK")
+    const code = (err as { code?: unknown } | null)?.code
+    if (idempotencyKey && code === "23505") {
+      const replay = await db.query<{ fournisseur_id: string; request_hash: string }>(
+        `SELECT fournisseur_id::text AS fournisseur_id, request_hash
+         FROM public.fournisseur_create_idempotence WHERE idempotency_key = $1`,
+        [idempotencyKey]
+      )
+      if (replay.rows[0]?.request_hash === requestHash) {
+        const existing = await repoGetFournisseur(replay.rows[0].fournisseur_id)
+        if (existing) return existing
+      }
+    }
     throw err
   } finally {
     client.release()

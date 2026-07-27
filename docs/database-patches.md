@@ -47,6 +47,64 @@ schema represented by the current patch files.
 - Review `checksum-mismatch` results before continuing.
 - Keep passwords and `DATABASE_URL` out of Git, logs, and tickets.
 
+## Issue #167 - Assistant d’import CLIPPER
+
+Patch `20260726_import_assistant_167.sql` ajoute le staging reprenable, le
+crosswalk CLIPPER vers CERP, l’idempotence de confirmation et l’idempotence de
+création fournisseur/pièce. Il n’importe aucune donnée métier.
+
+Les routes de l’assistant sont en plus verrouillées sur l’identité réelle du
+pool PostgreSQL : `SELECT current_database()` doit retourner exactement
+`cerp_test`, sinon l’API répond `409 IMPORT_TEST_DATABASE_REQUIRED`. Le routage
+HTTP ne constitue donc pas à lui seul une autorisation d’import.
+
+Ordre obligatoire sur `cerp_test` :
+
+1. exécuter `support/20260726_import_assistant_167.preflight.sql` ;
+2. appliquer le patch par le mécanisme normal ;
+3. exécuter `support/20260726_import_assistant_167.verify.sql` ;
+4. réaliser la recette pilote documentée dans `docs/import-assistant.md`.
+
+Les contenus source et normalisés de staging sont purgés après 90 jours par
+`fn_purge_expired_import_staging()`. Le crosswalk et la preuve minimale restent
+conservés. Le rollback automatique est volontairement bloqué dès qu’une preuve
+ou correspondance pourrait être perdue.
+
+Validation du 2026-07-27 :
+
+- défauts de données #168 et de validation de contraintes #169 corrigés et
+  vérifiés avant la reprise ;
+- `cerp_test` recréée depuis le dump vérifié
+  `/var/backups/cerp/cerp_prod_20260727-020006.dump` ;
+- ancienne base préservée sous
+  `cerp_test_pre_import_167_168_169_20260727_0200`, connexions désactivées ;
+- volumes et empreintes des 303 tables identiques avant patch ;
+- patch #167 appliqué avec les objets possédés par `cerp_app` ;
+- preflight, verify, accès runtime et smoke transactionnel réussis ;
+- zéro résidu du smoke test, zéro lien de catégorie orphelin et toutes les clés
+  étrangères publiques validées ;
+- assistant d’import présent uniquement dans `cerp_test`, aucune table de
+  staging #167 créée dans `cerp_prod`.
+
+## Issue #168 - Réparation des catégories Article orphelines
+
+Patch `20260727_repair_article_category_orphans_168.sql` répare deux liens
+résiduels laissés par un Article de recette supprimé. La reconstruction de
+l’Article est interdite car sa Pièce technique et son Affaire n’existent plus.
+
+La réparation est bornée par l’identité et les SHA-256 des preuves, rescane
+toutes les références Article, copie les lignes originales dans
+`erp_audit_logs`, retire uniquement les deux liens puis valide la clé étrangère.
+Le preflight est en lecture seule. Le rollback est limité à `cerp_test` et
+restaure exclusivement les lignes conservées dans l’audit.
+
+Voir `docs/data-integrity-repair-168.md`.
+
+Validation du 2026-07-27 : cycle complet avec rollback sur `cerp_test`,
+sauvegarde production vérifiée, correction appliquée et enregistrée sur
+`cerp_prod`, puis comparaison canonique des 300 tables non concernées sans
+aucune différence.
+
 ## Issue #55 - Recursive Fabrication Tree
 
 Patch `20260624_recursive_fabrication_tree_of_hierarchy.sql` adds only new
@@ -267,3 +325,21 @@ appliqués transactionnellement et vérifiés dans cet ordre :
 
 Les cinq lignes du registre portent les empreintes SHA-256 exactes des fichiers
 versionnés. Aucun jeu de données de recette n'a été conservé dans `cerp_prod`.
+
+## Issue #169 - Validation des références vers les articles fabriqués
+
+Patch `20260727_validate_article_fabrique_references_169.sql` valide les trois
+clés étrangères historiques de `commande_ligne`,
+`commande_cadre_release_ligne` et `ordres_fabrication` vers
+`articles_fabrique`. Elles avaient été créées avec `NOT VALID` par
+`20260319_articles_domain_subtypes.sql`.
+
+Le préflight prouve d'abord que chaque référence non nulle possède sa cible.
+Le patch est transactionnel, idempotent, limité à `cerp_test` et `cerp_prod`,
+et ne modifie aucune ligne métier. La procédure et le rollback test-only sont
+documentés dans `docs/article-fabrique-fk-validation-169.md`.
+
+Validation du 2026-07-27 : cycle complet avec rollback sur `cerp_test`,
+sauvegarde production vérifiée, trois contraintes validées sur `cerp_prod`,
+zéro référence invalide, toutes les clés étrangères publiques validées et
+empreintes des 302 tables métier inchangées.
