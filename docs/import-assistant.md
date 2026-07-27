@@ -28,10 +28,12 @@ Toutes les routes sont sous `/api/v1/import-assistant` et réservées aux rôles
   mappés sont écrits, sans listes vides implicites.
 - Contacts clients rattachés par le crosswalk du client parent, avec clé
   d’idempotence propre et validation obligatoire du prénom, nom et courriel.
-- Un même courriel peut appartenir à des contacts de clients différents
-  (adresse d’achats, de comptabilité ou de groupe partagée). L’unicité est
-  contrôlée sans tenir compte de la casse ni des espaces, par client actif ;
-  aucun courriel source ne doit être falsifié pour contourner un doublon.
+- Un même courriel peut appartenir à des contacts de clients différents ou à
+  plusieurs personnes distinctes d’un même client (adresse d’achats, de
+  comptabilité ou de groupe partagée). L’unicité est contrôlée sans tenir compte
+  de la casse ni des espaces sur le client, le courriel, le prénom et le nom du
+  contact actif ; aucun courriel source ne doit être falsifié pour contourner un
+  doublon.
 - Le rattachement conserve le contrat historique `clients.client_id` /
   `contacts.client_id` en `varchar(3)` ; seul `contacts.contact_id` est un UUID.
   La reprise idempotente ne doit donc jamais convertir l’identifiant client en
@@ -51,7 +53,10 @@ Patches :
   `CLIENT_ENRICHISSEMENT`, `CLIENT_CONTACT` et l’idempotence des contacts ;
 - `db/patches/20260727_contacts_email_scope_187.sql` pour remplacer, uniquement
   dans `cerp_test`, l’unicité globale historique du courriel par une unicité
-  normalisée au sein d’un même client actif.
+  normalisée au sein d’un même client actif ;
+- `db/patches/20260727_contacts_shared_email_identity_190.sql` pour affiner cette
+  règle, uniquement dans `cerp_test`, et autoriser des personnes distinctes
+  partageant une adresse fonctionnelle tout en bloquant le doublon exact actif.
 
 Avant toute application, exécuter le preflight sur `cerp_test`, appliquer par le mécanisme de patches existant, puis lancer le script `verify`. Le rollback automatique est volontairement bloqué dès que des preuves ou correspondances peuvent exister.
 

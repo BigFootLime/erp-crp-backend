@@ -408,4 +408,19 @@ describe("Assistant d’import CLIPPER", () => {
     expect(patch).toContain("archived_at IS NULL");
     expect(patch).not.toMatch(/\b(UPDATE|DELETE|TRUNCATE)\b/i);
   });
+
+  it("autorise un courriel fonctionnel partagé par des personnes distinctes du même client", () => {
+    const patch = fs.readFileSync(
+      path.resolve(process.cwd(), "db/patches/20260727_contacts_shared_email_identity_190.sql"),
+      "utf8"
+    );
+
+    expect(patch).toContain("current_database() <> 'cerp_test'");
+    expect(patch).toContain("DROP INDEX IF EXISTS public.contacts_client_email_active_key");
+    expect(patch).toContain("CREATE UNIQUE INDEX IF NOT EXISTS contacts_client_email_identity_active_key");
+    expect(patch).toContain("lower(btrim(coalesce(first_name, '')))");
+    expect(patch).toContain("lower(btrim(coalesce(last_name, '')))");
+    expect(patch).toContain("archived_at IS NULL");
+    expect(patch).not.toMatch(/\b(UPDATE|DELETE|TRUNCATE)\b/i);
+  });
 });
