@@ -15,6 +15,9 @@ export type AdminUserListRow = {
   status: string | null;
   last_login: string | null;
   profile_incomplete: boolean;
+  // Marqueur de compte exposé en LECTURE SEULE : aucune route admin ne l'écrit,
+  // il ne s'obtient que par le seed SQL gardé de la tour de contrôle (#326).
+  is_superadmin: boolean;
 };
 
 export type AdminUserDetailRow = {
@@ -43,6 +46,7 @@ export type AdminUserDetailRow = {
   created_at: string | null;
   social_security_number: string | null;
   profile_incomplete: boolean;
+  is_superadmin: boolean;
 };
 
 export type AdminRoleRow = {
@@ -130,7 +134,26 @@ async function replaceUserRoles(
   }
 }
 
+/**
+ * `users.is_superadmin` arrive avec le patch #326. Le lire à part garde l'écran des
+ * comptes fonctionnel sur une base qui ne l'a pas encore (`42703`), plutôt que de
+ * transformer une migration en attente en erreur 500.
+ */
+async function readSuperadminIds(): Promise<Set<number>> {
+  try {
+    const { rows } = await pool.query<{ id: number }>(
+      `SELECT id::int AS id FROM public.users WHERE is_superadmin`
+    );
+    return new Set(rows.map((row) => row.id));
+  } catch (err) {
+    const code = (err as { code?: unknown } | null)?.code;
+    if (code === "42703" || code === "42P01") return new Set<number>();
+    throw err;
+  }
+}
+
 export async function repoListUsers(): Promise<AdminUserListRow[]> {
+  const superadminIds = await readSuperadminIds();
   const { rows } = await pool.query<AdminUserListRow>(
     `
       SELECT
@@ -157,10 +180,11 @@ export async function repoListUsers(): Promise<AdminUserListRow[]> {
       ORDER BY u.created_at DESC NULLS LAST, u.id DESC
     `
   );
-  return rows;
+  return rows.map((row) => ({ ...row, is_superadmin: superadminIds.has(row.id) }));
 }
 
 export async function repoGetUserById(userId: number): Promise<AdminUserDetailRow | null> {
+  const superadminIds = await readSuperadminIds();
   const { rows } = await pool.query<AdminUserDetailRow>(
     `
       SELECT
@@ -207,7 +231,8 @@ export async function repoGetUserById(userId: number): Promise<AdminUserDetailRo
     `,
     [userId]
   );
-  return rows[0] ?? null;
+  const row = rows[0];
+  return row ? { ...row, is_superadmin: superadminIds.has(row.id) } : null;
 }
 
 export async function repoCreateUser(input: {
