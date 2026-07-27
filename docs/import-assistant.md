@@ -32,6 +32,12 @@ Toutes les routes sont sous `/api/v1/import-assistant` et réservées aux rôles
   `ADJUSTMENT/IN` par article via le service stock normal. Le lot conserve la
   date de cut-off, la provenance CLIPPER, la méthode de calcul et deux clés
   d’idempotence distinctes pour la création et la comptabilisation.
+- Les quantités de mouvement, de ligne et de niveau de stock partagent une
+  précision canonique de six décimales. Le patch #198 élargit
+  `stock_movement_lines.qty` de `NUMERIC(18,3)` à `NUMERIC(18,6)` et réconcilie
+  uniquement les résidus d’arrondi inférieurs à `0,0005` des mouvements
+  d’ouverture CLIPPER à ligne unique. Chaque correction produit un événement
+  de stock auditable.
 - Les soldes nuls ne sont pas importés. Les articles absents, inactifs, non
   gérés en stock ou sans emplacement valide bloquent la simulation avant toute
   écriture.
@@ -68,6 +74,9 @@ Patches :
 - `db/patches/20260727_contacts_shared_email_identity_190.sql` pour affiner cette
   règle, uniquement dans `cerp_test`, et autoriser des personnes distinctes
   partageant une adresse fonctionnelle tout en bloquant le doublon exact actif.
+- `db/patches/20260727_stock_import_precision_198.sql` pour aligner, uniquement
+  dans `cerp_test`, la précision des lignes de mouvement sur le grand livre
+  stock à six décimales et réparer les seuls résidus d’arrondi prouvés.
 
 Avant toute application, exécuter le preflight sur `cerp_test`, appliquer par le mécanisme de patches existant, puis lancer le script `verify`. Le rollback automatique est volontairement bloqué dès que des preuves ou correspondances peuvent exister.
 
