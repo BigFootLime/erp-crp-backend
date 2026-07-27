@@ -1586,11 +1586,32 @@ export async function repoCreatePieceTechnique(
     operations: (AddOperationBodyDTO & { temps_total: number; cout_mo: number })[];
     achats: (AddAchatBodyDTO & { total_achat_ht: number; total_achat_ttc: number })[];
   },
-  audit: AuditContext
+  audit: AuditContext,
+  idempotencyKey?: string | null
 ): Promise<PieceTechnique> {
   const client = await db.connect();
+  const requestHash = crypto.createHash("sha256").update(JSON.stringify(body)).digest("hex");
   try {
     await client.query("BEGIN");
+
+    if (idempotencyKey) {
+      const replay = await client.query<{ piece_technique_id: string; request_hash: string }>(
+        `SELECT piece_technique_id::text AS piece_technique_id, request_hash
+         FROM public.piece_technique_create_idempotence
+         WHERE idempotency_key = $1
+         FOR UPDATE`,
+        [idempotencyKey]
+      );
+      if (replay.rows[0]) {
+        if (replay.rows[0].request_hash !== requestHash) {
+          throw new HttpError(409, "IDEMPOTENCY_KEY_REUSED", "Cette clé d’idempotence a déjà servi avec une autre pièce technique.");
+        }
+        await client.query("ROLLBACK");
+        const existing = await repoGetPieceTechnique(replay.rows[0].piece_technique_id, new Set());
+        if (!existing) throw new Error("Idempotent piece technique no longer exists");
+        return existing;
+      }
+    }
 
     const actorUserId = audit.user_id;
     const createdBy = actorUserId;
@@ -1752,11 +1773,31 @@ export async function repoCreatePieceTechnique(
         achats_count: piece.achats.length,
       },
     });
+    if (idempotencyKey) {
+      await client.query(
+        `INSERT INTO public.piece_technique_create_idempotence
+           (idempotency_key, request_hash, piece_technique_id)
+         VALUES ($1,$2,$3::uuid)`,
+        [idempotencyKey, requestHash, pieceId]
+      );
+    }
 
     await client.query("COMMIT");
     return piece;
   } catch (err) {
     await client.query("ROLLBACK");
+    const code = (err as { code?: unknown } | null)?.code;
+    if (idempotencyKey && code === "23505") {
+      const replay = await db.query<{ piece_technique_id: string; request_hash: string }>(
+        `SELECT piece_technique_id::text AS piece_technique_id, request_hash
+         FROM public.piece_technique_create_idempotence WHERE idempotency_key = $1`,
+        [idempotencyKey]
+      );
+      if (replay.rows[0]?.request_hash === requestHash) {
+        const existing = await repoGetPieceTechnique(replay.rows[0].piece_technique_id, new Set());
+        if (existing) return existing;
+      }
+    }
     throw err;
   } finally {
     client.release();

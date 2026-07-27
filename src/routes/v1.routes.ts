@@ -48,6 +48,7 @@ import tempsDeplacementsRoutes from "../module/temps-deplacements/routes/temps-d
 import projectOfficeRoutes from "../module/project-office/routes/project-office.routes"
 import gammesRoutes from "../module/gammes/routes/gammes.routes"
 import pieceTechniqueVersionsRoutes from "../module/gammes/routes/piece-technique-versions.routes"
+import importAssistantRoutes from "../module/import-assistant/routes/import-assistant.routes"
 const router = Router()
 
 // --- Routes publiques (avant authentification) ---
@@ -116,4 +117,5 @@ router.use("/asbuilt", asbuiltRoutes)
 router.use("/locks", locksRoutes)
 router.use("/time-clock", tempsDeplacementsRoutes) // Module « Temps & Déplacements » (RH pointage/kilomètres)
 router.use("/project-office", projectOfficeRoutes) // Module « Project Office » (#130) — feature gate PROJECT_OFFICE fail-closed
+router.use("/import-assistant", importAssistantRoutes) // CLIPPER -> CERP staged import assistant (#167)
 export default router

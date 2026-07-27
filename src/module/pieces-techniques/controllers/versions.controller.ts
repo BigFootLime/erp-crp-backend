@@ -43,9 +43,17 @@ function buildAuditContext(req: Request): AuditContext {
   }
 }
 
+function routeParam(req: Request, name: string): string {
+  const value = req.params[name]
+  if (typeof value !== "string" || value.length === 0) {
+    throw new HttpError(400, "INVALID_ROUTE_PARAM", `Paramètre de route invalide : ${name}`)
+  }
+  return value
+}
+
 export const listVersions: RequestHandler = async (req, res, next) => {
   try {
-    const items = await listVersionsSVC(req.params.id)
+    const items = await listVersionsSVC(routeParam(req, "id"))
     res.json(items)
   } catch (err) {
     next(err)
@@ -56,7 +64,7 @@ export const createVersion: RequestHandler = async (req, res, next) => {
   try {
     const audit = buildAuditContext(req)
     const body = createVersionSchema.parse({ body: req.body }).body
-    const out = await createVersionSVC(req.params.id, body, audit)
+    const out = await createVersionSVC(routeParam(req, "id"), body, audit)
     res.status(201).json(out)
   } catch (err) {
     next(err)
@@ -67,7 +75,12 @@ export const updateVersion: RequestHandler = async (req, res, next) => {
   try {
     const audit = buildAuditContext(req)
     const body = updateVersionSchema.parse({ body: req.body }).body
-    const out = await updateVersionSVC(req.params.id, req.params.versionId, body, audit)
+    const out = await updateVersionSVC(
+      routeParam(req, "id"),
+      routeParam(req, "versionId"),
+      body,
+      audit
+    )
     if (!out) throw new HttpError(404, "NOT_FOUND", "Version introuvable")
     res.json(out)
   } catch (err) {
@@ -79,7 +92,12 @@ export const updateVersionStatus: RequestHandler = async (req, res, next) => {
   try {
     const audit = buildAuditContext(req)
     const body = versionStatusSchema.parse({ body: req.body }).body
-    const out = await updateVersionStatusSVC(req.params.id, req.params.versionId, body, audit)
+    const out = await updateVersionStatusSVC(
+      routeParam(req, "id"),
+      routeParam(req, "versionId"),
+      body,
+      audit
+    )
     if (!out) throw new HttpError(404, "NOT_FOUND", "Version introuvable")
     res.json(out)
   } catch (err) {
@@ -91,7 +109,12 @@ export const createNextVersion: RequestHandler = async (req, res, next) => {
   try {
     const audit = buildAuditContext(req)
     const body = createNextVersionSchema.parse({ body: req.body }).body
-    const out = await createNextVersionSVC(req.params.id, req.params.versionId, body, audit)
+    const out = await createNextVersionSVC(
+      routeParam(req, "id"),
+      routeParam(req, "versionId"),
+      body,
+      audit
+    )
     res.status(201).json(out)
   } catch (err) {
     next(err)

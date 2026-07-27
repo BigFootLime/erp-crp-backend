@@ -96,7 +96,11 @@ export const getPieceTechniqueSVC = (id: string, includes: Set<string>) => repoG
 
 export const getPieceTechniqueFabricationTreeSVC = (id: string) => repoGetFabricationTree(id);
 
-export async function createPieceTechniqueSVC(body: CreatePieceTechniqueBodyDTO, audit: AuditContext) {
+export async function createPieceTechniqueSVC(
+  body: CreatePieceTechniqueBodyDTO,
+  audit: AuditContext,
+  idempotencyKey?: string | null
+) {
   const statut = body.statut ?? "DRAFT";
   const enFabrication = statut === "IN_FABRICATION";
 
@@ -118,7 +122,8 @@ export async function createPieceTechniqueSVC(body: CreatePieceTechniqueBodyDTO,
         operations,
         achats,
       },
-      audit
+      audit,
+      idempotencyKey
     );
   } catch (err: unknown) {
     // pg unique violation

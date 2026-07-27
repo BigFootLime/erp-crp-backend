@@ -30,9 +30,13 @@ export const findDoublonsSVC = (filters: DoublonQueryDTO) => repo.repoFindDoublo
 
 const SIRET_TVA_CONFLICT = "Un fournisseur avec ce SIRET ou cette TVA existe déjà"
 
-export async function createFournisseurSVC(body: CreateFournisseurBodyDTO, audit: AuditContext) {
+export async function createFournisseurSVC(
+  body: CreateFournisseurBodyDTO,
+  audit: AuditContext,
+  idempotencyKey?: string | null
+) {
   try {
-    return await repo.repoCreateFournisseur(body, audit)
+    return await repo.repoCreateFournisseur(body, audit, idempotencyKey)
   } catch (err) {
     repo.assertNoUniqueViolation(err, SIRET_TVA_CONFLICT)
     throw err
