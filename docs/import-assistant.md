@@ -24,6 +24,23 @@ Toutes les routes sont sous `/api/v1/import-assistant` et réservées aux rôles
 - SHA-256 du fichier et unicité du lot par source, domaine, empreinte et feuille.
 - Simulation par les schémas Zod existants.
 - Création par les services métier existants et codes générés par CERP.
+- Le stock d’ouverture exige un article déjà présent dans le crosswalk, un
+  article actif et géré en stock, ainsi qu’un magasin et un emplacement CERP
+  actifs, non ambigus, reliés au référentiel physique et autorisant les
+  entrées.
+- Chaque solde strictement positif crée puis comptabilise un mouvement
+  `ADJUSTMENT/IN` par article via le service stock normal. Le lot conserve la
+  date de cut-off, la provenance CLIPPER, la méthode de calcul et deux clés
+  d’idempotence distinctes pour la création et la comptabilisation.
+- Les quantités de mouvement, de ligne et de niveau de stock partagent une
+  précision canonique de six décimales. Le patch #198 élargit
+  `stock_movement_lines.qty` de `NUMERIC(18,3)` à `NUMERIC(18,6)` et réconcilie
+  uniquement les résidus d’arrondi inférieurs à `0,0005` des mouvements
+  d’ouverture CLIPPER à ligne unique. Chaque correction produit un événement
+  de stock auditable.
+- Les soldes nuls ne sont pas importés. Les articles absents, inactifs, non
+  gérés en stock ou sans emplacement valide bloquent la simulation avant toute
+  écriture.
 - Enrichissement client par PATCH parcimonieux : seuls les champs réellement
   mappés sont écrits, sans listes vides implicites.
 - Contacts clients rattachés par le crosswalk du client parent, avec clé
@@ -57,6 +74,9 @@ Patches :
 - `db/patches/20260727_contacts_shared_email_identity_190.sql` pour affiner cette
   règle, uniquement dans `cerp_test`, et autoriser des personnes distinctes
   partageant une adresse fonctionnelle tout en bloquant le doublon exact actif.
+- `db/patches/20260727_stock_import_precision_198.sql` pour aligner, uniquement
+  dans `cerp_test`, la précision des lignes de mouvement sur le grand livre
+  stock à six décimales et réparer les seuls résidus d’arrondi prouvés.
 
 Avant toute application, exécuter le preflight sur `cerp_test`, appliquer par le mécanisme de patches existant, puis lancer le script `verify`. Le rollback automatique est volontairement bloqué dès que des preuves ou correspondances peuvent exister.
 
@@ -65,10 +85,15 @@ Le patch est additif et n’importe aucune donnée métier.
 ## Ordre de reprise
 
 Les lots sont exécutés dans l’ordre : clients complets, contacts clients,
-fournisseurs, commandes fournisseurs, articles et matières achetés, machines et
-référentiels, puis pièces techniques. Une pièce technique ne doit pas être
-confirmée tant que ses clients, fournisseurs, matières et flux d’achat ne sont
-pas validés.
+fournisseurs, commandes fournisseurs, articles et matières achetés, stock
+d’ouverture, machines et référentiels, puis pièces techniques. Une pièce
+technique ne doit pas être confirmée tant que ses clients, fournisseurs,
+matières, flux d’achat et stocks de départ ne sont pas validés.
+
+Pour la reprise CLIPPER du 24 juillet 2026, le solde d’ouverture retenu est la
+somme chronologique `entrées + retours − sorties`. Les mouvements annulés sont
+ignorés. La colonne historique `ARTICLEM.COL_081` n’est pas un stock et ne doit
+jamais alimenter un mouvement d’ouverture.
 
 Le choix affiché par le frontend n’est jamais utilisé comme preuve. Le service
 API dédié à l’import doit disposer de son propre pool PostgreSQL vers

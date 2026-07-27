@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
+import { resolveStockOpeningReferencesSVC } from "../../stock/services/stock.service";
 import { HttpError } from "../../../utils/httpError";
 import { getImportCapability, IMPORT_CAPABILITIES } from "../domain/import-capabilities";
 import { importRowDedupeKeys, normalizeImportRow, validateMapping } from "../domain/import-normalization";
@@ -189,6 +190,40 @@ export async function previewImportBatch(params: {
       legacy_keys: supplierLegacyKeys,
     })
     : new Map();
+  const stockArticleLegacyKeys = batch.entity_type === "STOCK_INITIAL"
+    ? normalized
+      .map((row) => row.result.normalized_data?.article_legacy_code)
+      .filter((value): value is string => typeof value === "string" && value.length > 0)
+    : [];
+  const stockArticleCrosswalk = stockArticleLegacyKeys.length > 0
+    ? await repo.repoFindCrosswalks({
+      source_system: batch.source_system,
+      entity_type: "ARTICLE",
+      legacy_keys: stockArticleLegacyKeys,
+    })
+    : new Map();
+  const stockOpeningReferences = batch.entity_type === "STOCK_INITIAL"
+    ? await resolveStockOpeningReferencesSVC(normalized.flatMap(({ stored, result }) => {
+      const data = result.normalized_data;
+      const articleLegacyCode = data?.article_legacy_code;
+      const magasinCode = data?.magasin_code;
+      const emplacementCode = data?.emplacement_code;
+      const article = typeof articleLegacyCode === "string"
+        ? stockArticleCrosswalk.get(articleLegacyCode)
+        : null;
+      if (
+        !article
+        || typeof magasinCode !== "string"
+        || typeof emplacementCode !== "string"
+      ) return [];
+      return [{
+        key: stored.id,
+        article_id: article.id,
+        magasin_code: magasinCode,
+        emplacement_code: emplacementCode,
+      }];
+    }))
+    : new Map();
   const dedupeEntity = batch.entity_type === "CLIENT_ENRICHISSEMENT"
     ? "CLIENT"
     : batch.entity_type;
@@ -315,6 +350,59 @@ export async function previewImportBatch(params: {
         issues: [],
         target_id: supplier.id,
         target_code: supplier.code,
+      };
+    }
+    if (batch.entity_type === "STOCK_INITIAL") {
+      const articleLegacyCode = result.normalized_data.article_legacy_code;
+      const article = typeof articleLegacyCode === "string"
+        ? stockArticleCrosswalk.get(articleLegacyCode)
+        : null;
+      if (!article) {
+        return {
+          id: stored.id,
+          legacy_key: result.legacy_key,
+          normalized_data: result.normalized_data,
+          status: "BLOCKED",
+          action: "SKIP",
+          issues: [{
+            code: "ARTICLE_CROSSWALK_MISSING",
+            message: "L’article CLIPPER doit être importé ou rapproché avant son stock d’ouverture.",
+            field: "article_legacy_code",
+          }],
+          target_id: null,
+          target_code: null,
+        };
+      }
+      const reference = stockOpeningReferences.get(stored.id);
+      if (!reference || reference.issue || !reference.magasin_id || !reference.emplacement_id) {
+        return {
+          id: stored.id,
+          legacy_key: result.legacy_key,
+          normalized_data: result.normalized_data,
+          status: "BLOCKED",
+          action: "SKIP",
+          issues: [{
+            code: reference?.issue?.code ?? "STOCK_REFERENCE_UNRESOLVED",
+            message: reference?.issue?.message ?? "Le magasin ou l’emplacement CERP n’a pas pu être validé.",
+            field: reference?.issue?.code.includes("MAGASIN")
+              ? "magasin_code"
+              : reference?.issue?.code.includes("EMPLACEMENT")
+                ? "emplacement_code"
+                : "article_legacy_code",
+          }],
+          target_id: null,
+          target_code: null,
+        };
+      }
+      return {
+        id: stored.id,
+        legacy_key: result.legacy_key,
+        normalized_data: result.normalized_data,
+        status: "VALID",
+        action: "CREATE",
+        issues: [],
+        target_id: article.id,
+        target_code: article.code,
       };
     }
     const duplicate = strongDedupe.get(result.legacy_key);

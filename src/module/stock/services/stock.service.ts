@@ -65,6 +65,10 @@ import type {
   UpdateMagasinBodyDTO,
 } from "../validators/stock.validators";
 import type { AuditContext } from "../repository/stock.repository";
+import type {
+  StockOpeningReferenceInput,
+  StockOpeningReferenceResolution,
+} from "../repository/stock.repository";
 import {
   repoCloseInventorySession,
   repoStartInventorySession,
@@ -118,6 +122,7 @@ import {
   repoUpdateArticle,
   repoArchiveArticle,
   repoReactivateArticle,
+  repoResolveStockOpeningReferences,
   repoListArticleVersions,
   repoListArticleWhereUsed,
   repoUpdateEmplacement,
@@ -129,6 +134,12 @@ import {
   repoDeactivateMagasin,
   repoActivateMagasin,
 } from "../repository/stock.repository";
+
+export async function resolveStockOpeningReferencesSVC(
+  inputs: StockOpeningReferenceInput[]
+): Promise<Map<string, StockOpeningReferenceResolution>> {
+  return repoResolveStockOpeningReferences(inputs);
+}
 
 export async function listStockInventorySessionsSVC(filters: ListInventorySessionsQueryDTO) {
   return repoListInventorySessions(filters);
