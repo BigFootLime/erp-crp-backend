@@ -163,13 +163,30 @@ export async function previewImportBatch(params: {
     entity_type: batch.entity_type,
     legacy_keys: legacyKeys,
   });
+  const clientLegacyKeys = batch.entity_type === "CLIENT_CONTACT"
+    ? normalized
+      .map((row) => row.result.normalized_data?.client_legacy_code)
+      .filter((value): value is string => typeof value === "string" && value.length > 0)
+    : batch.entity_type === "CLIENT_ENRICHISSEMENT"
+      ? legacyKeys
+      : [];
+  const clientCrosswalk = clientLegacyKeys.length > 0
+    ? await repo.repoFindCrosswalks({
+      source_system: batch.source_system,
+      entity_type: "CLIENT",
+      legacy_keys: clientLegacyKeys,
+    })
+    : new Map();
+  const dedupeEntity = batch.entity_type === "CLIENT_ENRICHISSEMENT"
+    ? "CLIENT"
+    : batch.entity_type;
   const strongDedupe = await repo.repoFindStrongDuplicates(
-    batch.entity_type,
+    dedupeEntity,
     normalized
       .filter((row) => row.result.legacy_key && row.result.normalized_data)
       .map((row) => ({
         legacy_key: row.result.legacy_key!,
-        ...importRowDedupeKeys(batch.entity_type, row.result.normalized_data!),
+        ...importRowDedupeKeys(dedupeEntity, row.result.normalized_data!),
       }))
   );
 
@@ -197,6 +214,65 @@ export async function previewImportBatch(params: {
         issues: result.issues,
         target_id: null,
         target_code: null,
+      };
+    }
+    if (batch.entity_type === "CLIENT_ENRICHISSEMENT") {
+      const client = clientCrosswalk.get(result.legacy_key) ?? strongDedupe.get(result.legacy_key);
+      if (!client) {
+        return {
+          id: stored.id,
+          legacy_key: result.legacy_key,
+          normalized_data: result.normalized_data,
+          status: "BLOCKED",
+          action: "SKIP",
+          issues: [{
+            code: "CLIENT_TARGET_NOT_FOUND",
+            message: "Aucun client CERP rapproché de façon certaine pour ce code CLIPPER.",
+            field: "legacy_key",
+          }],
+          target_id: null,
+          target_code: null,
+        };
+      }
+      return {
+        id: stored.id,
+        legacy_key: result.legacy_key,
+        normalized_data: result.normalized_data,
+        status: "VALID",
+        action: "CREATE",
+        issues: [],
+        target_id: client.id,
+        target_code: client.code,
+      };
+    }
+    if (batch.entity_type === "CLIENT_CONTACT") {
+      const parentKey = result.normalized_data.client_legacy_code;
+      const client = typeof parentKey === "string" ? clientCrosswalk.get(parentKey) : null;
+      if (!client) {
+        return {
+          id: stored.id,
+          legacy_key: result.legacy_key,
+          normalized_data: result.normalized_data,
+          status: "BLOCKED",
+          action: "SKIP",
+          issues: [{
+            code: "CLIENT_CROSSWALK_MISSING",
+            message: "Le client CLIPPER doit être importé ou rapproché avant son contact.",
+            field: "client_legacy_code",
+          }],
+          target_id: null,
+          target_code: null,
+        };
+      }
+      return {
+        id: stored.id,
+        legacy_key: result.legacy_key,
+        normalized_data: result.normalized_data,
+        status: "VALID",
+        action: "CREATE",
+        issues: [],
+        target_id: client.id,
+        target_code: client.code,
       };
     }
     const duplicate = strongDedupe.get(result.legacy_key);
@@ -314,8 +390,22 @@ async function processBatch(batchId: string, audit: ImportAuditContext) {
             entity_type: batch.entity_type,
             normalized_data: row.normalized_data,
             idempotency_key: idempotencyKey,
+            parent_target_id: row.target_id,
+            parent_target_code: row.target_code,
             audit,
           });
+          if (batch.entity_type === "CLIENT_ENRICHISSEMENT") {
+            await repo.repoUpsertCrosswalk({
+              source_system: batch.source_system,
+              entity_type: "CLIENT",
+              legacy_key: row.legacy_key,
+              target_id: target.id,
+              target_code: target.code,
+              batch_id: batch.id,
+              row_id: row.id,
+              linked_by: audit.user_id,
+            });
+          }
           await repo.repoUpsertCrosswalk({
             source_system: batch.source_system,
             entity_type: batch.entity_type,

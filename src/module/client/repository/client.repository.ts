@@ -800,11 +800,20 @@ export async function repoSetPrimaryContact(
 export async function repoCreateClientContact(
   clientId: string,
   input: CreateClientContactInput,
-  audit: AuditContext
+  audit: AuditContext,
+  idempotencyKey?: string | null
 ): Promise<ClientContactRow> {
   const db = await pool.connect();
   try {
     await db.query("BEGIN");
+
+    if (idempotencyKey) {
+      const replay = await findClientContactIdempotentReplay(db, idempotencyKey, clientId);
+      if (replay) {
+        await db.query("ROLLBACK");
+        return replay;
+      }
+    }
 
     const clientRes = await db.query(
       `SELECT 1 FROM clients WHERE client_id = $1 FOR UPDATE`,
@@ -845,6 +854,14 @@ export async function repoCreateClientContact(
       await db.query(`UPDATE clients SET contact_id = $1 WHERE client_id = $2`, [row.contact_id, clientId]);
     }
 
+    if (idempotencyKey) {
+      await db.query(
+        `INSERT INTO client_contact_create_idempotency (idempotency_key, contact_id)
+         VALUES ($1, $2::uuid)`,
+        [idempotencyKey, row.contact_id]
+      );
+    }
+
     await insertAuditLog(db, audit, {
       action: "CLIENT_CONTACT_CREATE",
       entity_type: "client",
@@ -856,10 +873,47 @@ export async function repoCreateClientContact(
     return { ...row, label: `${row.first_name} ${row.last_name} — ${row.email}` };
   } catch (err) {
     await db.query("ROLLBACK");
+    const { code, constraint } = getPgErrorInfo(err);
+    if (
+      idempotencyKey
+      && code === "23505"
+      && constraint === "client_contact_create_idempotency_pkey"
+    ) {
+      const replay = await findClientContactIdempotentReplay(db, idempotencyKey, clientId);
+      if (replay) return replay;
+    }
     throw err;
   } finally {
     db.release();
   }
+}
+
+async function findClientContactIdempotentReplay(
+  db: DbQueryer,
+  idempotencyKey: string,
+  clientId: string
+): Promise<ClientContactRow | null> {
+  const replay = await db.query(
+    `SELECT
+       c.contact_id::text AS contact_id,
+       c.first_name,
+       c.last_name,
+       c.email,
+       c.phone_direct,
+       c.phone_personal,
+       c.role,
+       c.civility
+     FROM client_contact_create_idempotency k
+     JOIN contacts c ON c.contact_id = k.contact_id
+     WHERE k.idempotency_key = $1
+       AND c.client_id = $2::uuid
+     LIMIT 1`,
+    [idempotencyKey, clientId]
+  );
+  const row = replay.rows[0] as Omit<ClientContactRow, "label"> | undefined;
+  return row
+    ? { ...row, label: `${row.first_name} ${row.last_name} — ${row.email}` }
+    : null;
 }
 
 /**
