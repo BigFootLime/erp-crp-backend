@@ -394,4 +394,18 @@ describe("Assistant d’import CLIPPER", () => {
     expect(patch).toContain("client_contact_create_idempotency");
     expect(patch).not.toMatch(/\bDROP\s+(TABLE|COLUMN|SCHEMA)\b/i);
   });
+
+  it("porte l'unicité du courriel de contact au niveau du client actif", () => {
+    const patch = fs.readFileSync(
+      path.resolve(process.cwd(), "db/patches/20260727_contacts_email_scope_187.sql"),
+      "utf8"
+    );
+
+    expect(patch).toContain("current_database() <> 'cerp_test'");
+    expect(patch).toContain("DROP CONSTRAINT IF EXISTS contacts_email_key");
+    expect(patch).toContain("CREATE UNIQUE INDEX IF NOT EXISTS contacts_client_email_active_key");
+    expect(patch).toContain("client_id, lower(btrim(email))");
+    expect(patch).toContain("archived_at IS NULL");
+    expect(patch).not.toMatch(/\b(UPDATE|DELETE|TRUNCATE)\b/i);
+  });
 });
