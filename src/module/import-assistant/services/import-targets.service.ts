@@ -11,6 +11,8 @@ import type {
   CreateClientContactBodyDTO,
   CreateClientDTO,
 } from "../../client/validators/client.validators";
+import { createCommandeFournisseurSVC } from "../../commande-fournisseur/services/commande-fournisseur.service";
+import type { CreateCommandeBodyDTO } from "../../commande-fournisseur/validators/commande-fournisseur.validators";
 import { createFournisseurSVC } from "../../fournisseurs/services/fournisseurs.service";
 import type { CreateFournisseurBodyDTO } from "../../fournisseurs/validators/fournisseurs.validators";
 import { createPieceTechniqueSVC } from "../../pieces-techniques/services/pieces-techniques.service";
@@ -94,6 +96,32 @@ export async function createImportTarget(params: {
         params.idempotency_key
       );
     return { id: result.id, code: result.code ?? null };
+    }
+    case "FOURNISSEUR_COMMANDE": {
+      if (!params.parent_target_id) {
+        throw new HttpError(
+          409,
+          "IMPORT_FOURNISSEUR_TARGET_MISSING",
+          "Le fournisseur CERP de la commande est introuvable."
+        );
+      }
+      const {
+        fournisseur_legacy_code: _fournisseurLegacyCode,
+        date_commande_source: _dateCommandeSource,
+        ...commande
+      } = params.normalized_data as CreateCommandeBodyDTO & {
+        fournisseur_legacy_code: string;
+        date_commande_source: string;
+      };
+      const result = await createCommandeFournisseurSVC(
+        {
+          ...commande,
+          fournisseur_id: params.parent_target_id,
+          idempotency_key: params.idempotency_key,
+        },
+        audit
+      );
+      return { id: result.id, code: result.code };
     }
     case "ARTICLE": {
       const result = await createStockArticleSVC(
