@@ -206,6 +206,24 @@ const MACHINE_FIELDS: ImportTargetField[] = [
   commonOptional.notes,
 ];
 
+const STOCK_INITIAL_FIELDS: ImportTargetField[] = [
+  field("article_legacy_code", "Code article CLIPPER", "text", {
+    required: true,
+    hint: "L’article doit avoir été importé ou rapproché avant son stock d’ouverture",
+  }),
+  field("quantity", "Quantité d’ouverture", "number", {
+    required: true,
+    hint: "Solde strictement positif au cut-off ; les soldes nuls ne créent aucun mouvement",
+  }),
+  field("magasin_code", "Code magasin CERP", "text", { required: true }),
+  field("emplacement_code", "Code emplacement CERP", "text", { required: true }),
+  field("cutoff_date", "Date de cut-off", "date", { required: true }),
+  field("unite", "Unité CERP", "text", {
+    hint: "Laisser vide pour utiliser l’unité déjà définie sur l’article",
+  }),
+  field("notes", "Justification et provenance", "text", { sensitive: true }),
+];
+
 export const IMPORT_CAPABILITIES: ImportEntityCapability[] = [
   { entity_type: "CLIENT", label: "1A — Clients (création)", order: 10, confirm_enabled: true, unavailable_reason: null, fields: CLIENT_FIELDS, decisions: [DECISIONS["DEC-04"], DECISIONS["DEC-14"], DECISIONS["DEC-15"]] },
   { entity_type: "CLIENT_ENRICHISSEMENT", label: "1B — Clients (compléter les fiches)", order: 11, confirm_enabled: true, unavailable_reason: null, fields: CLIENT_ENRICHISSEMENT_FIELDS, decisions: [DECISIONS["DEC-04"], DECISIONS["DEC-14"], DECISIONS["DEC-15"]] },
@@ -214,7 +232,7 @@ export const IMPORT_CAPABILITIES: ImportEntityCapability[] = [
   { entity_type: "FOURNISSEUR_COMMANDE", label: "3 — Commandes fournisseurs ouvertes", order: 30, confirm_enabled: true, unavailable_reason: null, fields: FOURNISSEUR_COMMANDE_FIELDS, decisions: [DECISIONS["DEC-03"], DECISIONS["DEC-14"], DECISIONS["DEC-15"], DECISIONS["DEC-17"]] },
   { entity_type: "ARTICLE", label: "4 — Articles et matières achetés", order: 40, confirm_enabled: true, unavailable_reason: null, fields: ARTICLE_FIELDS, decisions: [DECISIONS["DEC-01"], DECISIONS["DEC-14"], DECISIONS["DEC-15"], DECISIONS["DEC-16"]] },
   { entity_type: "MACHINE", label: "5 — Machines CNC", order: 50, confirm_enabled: true, unavailable_reason: null, fields: MACHINE_FIELDS, decisions: [DECISIONS["DEC-07"], DECISIONS["DEC-14"], DECISIONS["DEC-15"]] },
-  { entity_type: "STOCK_INITIAL", label: "6 — Stock d’ouverture", order: 60, confirm_enabled: false, unavailable_reason: "Le stock doit passer par un inventaire ou des mouvements d’ouverture contrôlés ; les magasins, emplacements et le cut-off doivent être renseignés.", fields: [], decisions: [DECISIONS["DEC-05"], DECISIONS["DEC-06"], DECISIONS["DEC-15"], DECISIONS["DEC-16"]] },
+  { entity_type: "STOCK_INITIAL", label: "6 — Stock d’ouverture", order: 60, confirm_enabled: true, unavailable_reason: null, fields: STOCK_INITIAL_FIELDS, decisions: [DECISIONS["DEC-05"], DECISIONS["DEC-06"], DECISIONS["DEC-15"], DECISIONS["DEC-16"]] },
   { entity_type: "BL_HISTORIQUE", label: "7 — BL historiques", order: 70, confirm_enabled: false, unavailable_reason: "Le sort des BL ouverts et historiques doit être décidé avant toute écriture.", fields: [], decisions: [DECISIONS["DEC-13"], DECISIONS["DEC-14"], DECISIONS["DEC-15"]] },
   { entity_type: "EMPLOYE", label: "8 — Salariés", order: 80, confirm_enabled: false, unavailable_reason: "L’import RH reste fermé tant que le périmètre, les correspondances utilisateurs et la rétention ne sont pas documentés.", fields: [], decisions: [DECISIONS["DEC-09"], DECISIONS["DEC-12"], DECISIONS["DEC-15"]] },
   { entity_type: "PIECE_TECHNIQUE", label: "9 — Pièces techniques (dernière étape)", order: 90, confirm_enabled: true, unavailable_reason: null, fields: PIECE_FIELDS, decisions: [DECISIONS["DEC-02"], DECISIONS["DEC-14"], DECISIONS["DEC-15"]] },
