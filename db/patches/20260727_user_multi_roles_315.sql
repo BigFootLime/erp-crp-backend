@@ -123,4 +123,23 @@ WHERE NOT EXISTS (
     AND event.source = 'migration-315'
 );
 
+-- Les patches sont appliqués par le rôle système `postgres`, tandis que l'API
+-- s'exécute avec le rôle de moindre privilège `cerp_app`. PostgreSQL ne propage
+-- pas automatiquement les droits des tables existantes vers les nouvelles
+-- tables : accorder explicitement le minimum nécessaire évite un login 500
+-- après migration, sans rendre le journal append-only modifiable.
+DO $grants$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'cerp_app') THEN
+    GRANT SELECT ON TABLE public.app_roles TO cerp_app;
+    GRANT SELECT, INSERT, UPDATE, DELETE
+      ON TABLE public.user_role_assignments
+      TO cerp_app;
+    GRANT SELECT, INSERT
+      ON TABLE public.user_role_assignment_events
+      TO cerp_app;
+  END IF;
+END
+$grants$;
+
 COMMIT;
