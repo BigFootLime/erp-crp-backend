@@ -16,6 +16,7 @@ import type {
   ImportStoredRow,
   ImportTargetResult,
 } from "../types/import-assistant.types";
+import { normalizeImportName } from "../domain/import-normalization";
 
 type DbQueryer = Pick<PoolClient, "query">;
 
@@ -300,43 +301,76 @@ export async function repoFindCrosswalks(params: {
   return new Map(result.rows.map((row) => [row.legacy_key, { id: row.target_id, code: row.target_code }]));
 }
 
-export type StrongDedupeInput = { legacy_key: string; siret: string | null; secondary: string | null };
+export type StrongDedupeInput = {
+  legacy_key: string;
+  siret: string | null;
+  secondary: string | null;
+  name: string | null;
+};
 
 export async function repoFindStrongDuplicates(
   entityType: ImportEntityType,
   inputs: StrongDedupeInput[]
 ): Promise<Map<string, ImportTargetResult>> {
-  const strong = inputs.filter((input) => input.siret || input.secondary);
+  const strong = inputs.filter((input) => input.siret || input.secondary || input.name);
   if (strong.length === 0) return new Map();
   const sirets = [...new Set(strong.map((input) => input.siret).filter((value): value is string => Boolean(value)))];
   const secondary = [...new Set(strong.map((input) => input.secondary?.toUpperCase()).filter((value): value is string => Boolean(value)))];
-  let rows: Array<{ target_id: string; target_code: string | null; siret: string | null; secondary: string | null }> = [];
+  const names = [...new Set(strong.map((input) => input.name).filter((value): value is string => Boolean(value)))];
+  let rows: Array<{
+    target_id: string;
+    target_code: string | null;
+    siret: string | null;
+    secondary: string | null;
+    name: string | null;
+    name_count: string | number;
+  }> = [];
 
   if (entityType === "CLIENT") {
     const result = await db.query(
-      `SELECT c.client_id::text AS target_id,
+      `WITH candidates AS (
+         SELECT c.*,
+                regexp_replace(
+                  translate(upper(c.company_name), 'ÀÁÂÃÄÅÇÈÉÊËÌÍÎÏÑÒÓÔÕÖÙÚÛÜÝŸ', 'AAAAAACEEEEIIIINOOOOOUUUUYY'),
+                  '[^0-9A-Z]', '', 'g'
+                ) AS normalized_name
+         FROM public.clients c
+       )
+       SELECT c.client_id::text AS target_id,
               COALESCE(NULLIF(btrim(to_jsonb(c)->>'client_code'), ''), NULLIF(btrim(to_jsonb(c)->>'code_client'), '')) AS target_code,
-              c.siret, upper(c.vat_number) AS secondary
-       FROM public.clients c
+              c.siret, upper(c.vat_number) AS secondary, c.normalized_name AS name,
+              count(*) OVER (PARTITION BY c.normalized_name) AS name_count
+       FROM candidates c
        WHERE ($1::text[] <> '{}' AND c.siret = ANY($1::text[]))
-          OR ($2::text[] <> '{}' AND upper(c.vat_number) = ANY($2::text[]))`,
-      [sirets, secondary]
+          OR ($2::text[] <> '{}' AND upper(c.vat_number) = ANY($2::text[]))
+          OR ($3::text[] <> '{}' AND c.normalized_name = ANY($3::text[]))`,
+      [sirets, secondary, names]
     );
     rows = result.rows;
   } else if (entityType === "FOURNISSEUR") {
     const result = await db.query(
-      `SELECT f.id::text AS target_id, COALESCE(f.code, f.code_fournisseur) AS target_code,
-              f.siret, upper(f.tva) AS secondary
-       FROM public.fournisseurs f
+      `WITH candidates AS (
+         SELECT f.*,
+                regexp_replace(
+                  translate(upper(COALESCE(f.nom, f.raison_sociale)), 'ÀÁÂÃÄÅÇÈÉÊËÌÍÎÏÑÒÓÔÕÖÙÚÛÜÝŸ', 'AAAAAACEEEEIIIINOOOOOUUUUYY'),
+                  '[^0-9A-Z]', '', 'g'
+                ) AS normalized_name
+         FROM public.fournisseurs f
+       )
+       SELECT f.id::text AS target_id, COALESCE(f.code, f.code_fournisseur) AS target_code,
+              f.siret, upper(f.tva) AS secondary, f.normalized_name AS name,
+              count(*) OVER (PARTITION BY f.normalized_name) AS name_count
+       FROM candidates f
        WHERE ($1::text[] <> '{}' AND f.siret = ANY($1::text[]))
-          OR ($2::text[] <> '{}' AND upper(f.tva) = ANY($2::text[]))`,
-      [sirets, secondary]
+          OR ($2::text[] <> '{}' AND upper(f.tva) = ANY($2::text[]))
+          OR ($3::text[] <> '{}' AND f.normalized_name = ANY($3::text[]))`,
+      [sirets, secondary, names]
     );
     rows = result.rows;
   } else if (entityType === "MACHINE") {
     const result = await db.query(
       `SELECT m.id::text AS target_id, m.code AS target_code, NULL::text AS siret,
-              upper(m.serial_number) AS secondary
+              upper(m.serial_number) AS secondary, NULL::text AS name, 0::int AS name_count
        FROM public.machines m
        WHERE $1::text[] <> '{}' AND upper(m.serial_number) = ANY($1::text[])`,
       [secondary]
@@ -349,6 +383,11 @@ export async function repoFindStrongDuplicates(
     const target = rows.find((row) =>
       (input.siret && row.siret === input.siret)
       || (input.secondary && row.secondary === input.secondary.toUpperCase())
+      || (
+        input.name
+        && normalizeImportName(row.name) === input.name
+        && Number(row.name_count) === 1
+      )
     );
     if (target) matches.set(input.legacy_key, { id: target.target_id, code: target.target_code });
   }

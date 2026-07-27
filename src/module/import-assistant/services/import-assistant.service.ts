@@ -210,7 +210,7 @@ export async function previewImportBatch(params: {
         action: link ? "LINK" : "SKIP",
         issues: link ? [] : [{
           code: "EXACT_DUPLICATE_REVIEW",
-          message: "Une fiche CERP porte déjà le même identifiant fort. Vérifiez-la avant de choisir le rapprochement automatique.",
+          message: "Une fiche CERP correspond déjà au même identifiant fort ou au même nom normalisé. Vérifiez-la avant de choisir le rapprochement automatique.",
           field: null,
         }],
         target_id: duplicate.id,

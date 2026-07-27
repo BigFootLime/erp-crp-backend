@@ -185,6 +185,28 @@ describe("Assistant d’import CLIPPER", () => {
     expect(importRowDedupeKeys("MACHINE", result.normalized_data!)).toEqual({
       siret: null,
       secondary: "SN-00012",
+      name: null,
+    });
+  });
+
+  it("normalise le nom métier comme dédoublonnage exact de revue", () => {
+    expect(importRowDedupeKeys("CLIENT", {
+      company_name: "Électro Méca Gonin",
+      siret: null,
+      vat_number: null,
+    })).toEqual({
+      siret: null,
+      secondary: null,
+      name: "ELECTROMECAGONIN",
+    });
+    expect(importRowDedupeKeys("FOURNISSEUR", {
+      nom: "Aciéries & Rives",
+      siret: null,
+      tva: null,
+    })).toEqual({
+      siret: null,
+      secondary: null,
+      name: "ACIERIESRIVES",
     });
   });
 
