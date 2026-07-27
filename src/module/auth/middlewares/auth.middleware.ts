@@ -1,12 +1,15 @@
 import { Request, Response, NextFunction, RequestHandler } from 'express';
 import jwt from 'jsonwebtoken';
 import { stripQueryFromUrl } from '../../../utils/logPath';
+import { hasAnyAssignedRole, normalizeAssignedRoles } from '../domain/roles';
 
 interface JwtPayload {
   id: number;
   username: string;
   email: string;
   role: string;
+  primary_role?: string;
+  roles?: string[];
 }
 
 // 🔧 Ajout de `req.user` pour tout Express
@@ -71,7 +74,9 @@ export const authorizeRole = (...roles: string[]) => {
         return;
       }
   
-      if (!roles.includes(req.user.role)) {
+      const primaryRole = req.user.primary_role ?? req.user.role;
+      const assignedRoles = normalizeAssignedRoles(primaryRole, req.user.roles);
+      if (!hasAnyAssignedRole(primaryRole, assignedRoles, roles)) {
         console.warn(
           JSON.stringify({
             type: "auth_forbidden",
@@ -80,7 +85,8 @@ export const authorizeRole = (...roles: string[]) => {
             method: req.method,
             path: stripQueryFromUrl(req.originalUrl),
             userId: req.user.id,
-            role: req.user.role,
+            role: primaryRole,
+            roles: assignedRoles,
             allowedRoles: roles,
           })
         );
