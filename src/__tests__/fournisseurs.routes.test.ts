@@ -42,6 +42,13 @@ vi.mock("../module/auth/middlewares/auth.middleware", () => ({
   authorizeRole: () => (_req: unknown, _res: unknown, next: () => void) => next(),
 }));
 
+// Le gate d'accès module (#326) est monté globalement dans v1.routes.ts. Ce fichier
+// ne teste pas le filtrage par module : on le neutralise pour qu'il ne consomme pas
+// une réponse de `pool.query` destinée à la route sous test.
+vi.mock("../module/access-control/middlewares/module-access-gate", () => ({
+  moduleAccessGate: (_req: unknown, _res: unknown, next: () => void) => next(),
+}));
+
 import app from "../config/app"
 
 beforeEach(() => {
