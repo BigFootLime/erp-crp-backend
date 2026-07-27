@@ -18,6 +18,9 @@ Toutes les routes sont sous `/api/v1/import-assistant` et réservées aux rôles
   `IMPORT_TEST_DATABASE_REQUIRED` si le processus n’est pas réellement connecté
   à `cerp_test`.
 - CSV/XLSX uniquement, 25 Mo côté upload et 64 Mo décompressés.
+- XLSX OOXML standard accepté avec ou sans préfixe d’espace de noms XML, y
+  compris les noms de parties absolus internes comme `/xl/worksheets/sheet1.xml`.
+  Les chemins relatifs sortants et les entrées ZIP dangereuses restent refusés.
 - SHA-256 du fichier et unicité du lot par source, domaine, empreinte et feuille.
 - Simulation par les schémas Zod existants.
 - Création par les services métier existants et codes générés par CERP.
