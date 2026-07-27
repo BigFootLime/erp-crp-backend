@@ -1,16 +1,20 @@
 // src/module/admin/repository/admin.repository.ts
 import pool from "../../../config/database";
 import crypto from "node:crypto";
+import type { PoolClient } from "pg";
 
 import { HttpError } from "../../../utils/httpError";
+import { normalizeAssignedRoles } from "../../auth/domain/roles";
 
 export type AdminUserListRow = {
   id: number;
   username: string;
   email: string;
   role: string;
+  roles: string[];
   status: string | null;
   last_login: string | null;
+  profile_incomplete: boolean;
 };
 
 export type AdminUserDetailRow = {
@@ -19,16 +23,17 @@ export type AdminUserDetailRow = {
   name: string;
   surname: string;
   email: string;
-  tel_no: string;
+  tel_no: string | null;
   role: string;
-  gender: string;
-  address: string;
-  lane: string;
-  house_no: string;
-  postcode: string;
+  roles: string[];
+  gender: string | null;
+  address: string | null;
+  lane: string | null;
+  house_no: string | null;
+  postcode: string | null;
   country: string | null;
   salary: number | null;
-  date_of_birth: string;
+  date_of_birth: string | null;
   employment_date: string | null;
   employment_end_date: string | null;
   national_id: string | null;
@@ -36,7 +41,14 @@ export type AdminUserDetailRow = {
   last_login: string | null;
   status: string | null;
   created_at: string | null;
-  social_security_number: string;
+  social_security_number: string | null;
+  profile_incomplete: boolean;
+};
+
+export type AdminRoleRow = {
+  role_key: string;
+  category: "PRIMARY" | "ORGANIZATION";
+  description: string;
 };
 
 type PgErrorLike = { code?: unknown; constraint?: unknown };
@@ -54,18 +66,95 @@ function pgConstraint(err: unknown): string | null {
   return typeof v === "string" && v.trim() ? v.trim() : null;
 }
 
+async function replaceUserRoles(
+  client: PoolClient,
+  params: {
+    userId: number;
+    primaryRole: string;
+    roles: readonly string[];
+    assignedBy: number | null;
+  }
+): Promise<void> {
+  const roles = normalizeAssignedRoles(params.primaryRole, params.roles);
+  const existing = await client.query<{ role_key: string }>(
+    `SELECT role_key FROM public.user_role_assignments WHERE user_id = $1`,
+    [params.userId]
+  );
+  const previous = new Set(existing.rows.map((row) => row.role_key));
+  const next = new Set(roles);
+  const assigned = roles.filter((role) => !previous.has(role));
+  const revoked = [...previous].filter((role) => !next.has(role));
+
+  await client.query(
+    `
+      DELETE FROM public.user_role_assignments
+      WHERE user_id = $1
+        AND NOT (role_key = ANY($2::text[]))
+    `,
+    [params.userId, roles]
+  );
+  await client.query(
+    `
+      INSERT INTO public.user_role_assignments (user_id, role_key, assigned_by)
+      SELECT $1, role_key, $3
+      FROM unnest($2::text[]) AS assigned(role_key)
+      ON CONFLICT (user_id, role_key) DO UPDATE
+      SET assigned_by = COALESCE(EXCLUDED.assigned_by, public.user_role_assignments.assigned_by)
+    `,
+    [params.userId, roles, params.assignedBy]
+  );
+
+  if (assigned.length > 0) {
+    await client.query(
+      `
+        INSERT INTO public.user_role_assignment_events (
+          user_id, role_key, event_type, actor_user_id, source
+        )
+        SELECT $1, role_key, 'ASSIGNED', $3, 'admin-api'
+        FROM unnest($2::text[]) AS assigned_role(role_key)
+      `,
+      [params.userId, assigned, params.assignedBy]
+    );
+  }
+  if (revoked.length > 0) {
+    await client.query(
+      `
+        INSERT INTO public.user_role_assignment_events (
+          user_id, role_key, event_type, actor_user_id, source
+        )
+        SELECT $1, role_key, 'REVOKED', $3, 'admin-api'
+        FROM unnest($2::text[]) AS revoked_role(role_key)
+      `,
+      [params.userId, revoked, params.assignedBy]
+    );
+  }
+}
+
 export async function repoListUsers(): Promise<AdminUserListRow[]> {
   const { rows } = await pool.query<AdminUserListRow>(
     `
       SELECT
-        id::int AS id,
-        username,
-        email,
-        role,
-        status,
-        last_login::text AS last_login
-      FROM public.users
-      ORDER BY created_at DESC NULLS LAST, id DESC
+        u.id::int AS id,
+        u.username,
+        u.email,
+        u.role,
+        COALESCE(
+          array_agg(ura.role_key ORDER BY (ura.role_key = u.role) DESC, ura.role_key)
+            FILTER (WHERE ura.role_key IS NOT NULL),
+          ARRAY[u.role]::text[]
+        ) AS roles,
+        u.status,
+        u.last_login::text AS last_login,
+        (
+          u.tel_no IS NULL
+          OR u.address IS NULL
+          OR u.date_of_birth IS NULL
+          OR u.social_security_number IS NULL
+        ) AS profile_incomplete
+      FROM public.users u
+      LEFT JOIN public.user_role_assignments ura ON ura.user_id = u.id
+      GROUP BY u.id
+      ORDER BY u.created_at DESC NULLS LAST, u.id DESC
     `
   );
   return rows;
@@ -75,31 +164,45 @@ export async function repoGetUserById(userId: number): Promise<AdminUserDetailRo
   const { rows } = await pool.query<AdminUserDetailRow>(
     `
       SELECT
-        id::int AS id,
-        username,
-        name,
-        surname,
-        email,
-        tel_no,
-        role,
-        gender,
-        address,
-        lane,
-        house_no,
-        postcode,
-        country,
-        salary::float AS salary,
-        date_of_birth::text AS date_of_birth,
-        employment_date::text AS employment_date,
-        employment_end_date::text AS employment_end_date,
-        national_id,
-        profile_picture,
-        last_login::text AS last_login,
-        status,
-        created_at::text AS created_at,
-        social_security_number
-      FROM public.users
-      WHERE id = $1
+        u.id::int AS id,
+        u.username,
+        u.name,
+        u.surname,
+        u.email,
+        u.tel_no,
+        u.role,
+        COALESCE(
+          (
+            SELECT array_agg(ura.role_key ORDER BY (ura.role_key = u.role) DESC, ura.role_key)
+            FROM public.user_role_assignments ura
+            WHERE ura.user_id = u.id
+          ),
+          ARRAY[u.role]::text[]
+        ) AS roles,
+        u.gender,
+        u.address,
+        u.lane,
+        u.house_no,
+        u.postcode,
+        u.country,
+        u.salary::float AS salary,
+        u.date_of_birth::text AS date_of_birth,
+        u.employment_date::text AS employment_date,
+        u.employment_end_date::text AS employment_end_date,
+        u.national_id,
+        u.profile_picture,
+        u.last_login::text AS last_login,
+        u.status,
+        u.created_at::text AS created_at,
+        u.social_security_number,
+        (
+          u.tel_no IS NULL
+          OR u.address IS NULL
+          OR u.date_of_birth IS NULL
+          OR u.social_security_number IS NULL
+        ) AS profile_incomplete
+      FROM public.users u
+      WHERE u.id = $1
       LIMIT 1
     `,
     [userId]
@@ -113,24 +216,28 @@ export async function repoCreateUser(input: {
   name: string;
   surname: string;
   email: string;
-  tel_no: string;
+  tel_no: string | null;
   role: string;
-  gender: string;
-  address: string;
-  lane: string;
-  house_no: string;
-  postcode: string;
+  roles: string[];
+  assignedBy: number | null;
+  gender: string | null;
+  address: string | null;
+  lane: string | null;
+  house_no: string | null;
+  postcode: string | null;
   country: string | null;
   salary: number | null;
-  date_of_birth: string;
+  date_of_birth: string | null;
   employment_date: string | null;
   employment_end_date: string | null;
   national_id: string | null;
   status: string | null;
-  social_security_number: string;
+  social_security_number: string | null;
 }): Promise<AdminUserDetailRow> {
+  const client = await pool.connect();
   try {
-    const { rows } = await pool.query<AdminUserDetailRow>(
+    await client.query("BEGIN");
+    const { rows } = await client.query<{ id: number }>(
       `
         INSERT INTO public.users (
           username,
@@ -175,30 +282,7 @@ export async function repoCreateUser(input: {
           COALESCE(NULLIF($19, ''), 'Active'),
           $20
         )
-        RETURNING
-          id::int AS id,
-          username,
-          name,
-          surname,
-          email,
-          tel_no,
-          role,
-          gender,
-          address,
-          lane,
-          house_no,
-          postcode,
-          country,
-          salary::float AS salary,
-          date_of_birth::text AS date_of_birth,
-          employment_date::text AS employment_date,
-          employment_end_date::text AS employment_end_date,
-          national_id,
-          profile_picture,
-          last_login::text AS last_login,
-          status,
-          created_at::text AS created_at,
-          social_security_number
+        RETURNING id::int AS id
       `,
       [
         input.username,
@@ -226,8 +310,22 @@ export async function repoCreateUser(input: {
 
     const row = rows[0];
     if (!row) throw new Error("Failed to create user");
-    return row;
+    await replaceUserRoles(client, {
+      userId: row.id,
+      primaryRole: input.role,
+      roles: input.roles,
+      assignedBy: input.assignedBy,
+    });
+    await client.query("COMMIT");
+
+    const created = await repoGetUserById(row.id);
+    if (!created) throw new Error("Failed to reload created user");
+    return created;
   } catch (err) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+    }
     if (isPgUniqueViolation(err)) {
       const constraint = pgConstraint(err);
       if (constraint === "users_username_key") throw new HttpError(409, "USERNAME_EXISTS", "Username already exists");
@@ -239,7 +337,21 @@ export async function repoCreateUser(input: {
       throw new HttpError(409, "DUPLICATE", "User already exists");
     }
     throw err;
+  } finally {
+    client.release();
   }
+}
+
+export async function repoListRoles(): Promise<AdminRoleRow[]> {
+  const { rows } = await pool.query<AdminRoleRow>(
+    `
+      SELECT role_key, category, description
+      FROM public.app_roles
+      WHERE is_active = true
+      ORDER BY category, role_key
+    `
+  );
+  return rows;
 }
 
 export async function repoUpdateUser(
@@ -249,21 +361,23 @@ export async function repoUpdateUser(
     name: string;
     surname: string;
     email: string;
-    tel_no: string;
+    tel_no: string | null;
     role: string;
-    gender: string;
-    address: string;
-    lane: string;
-    house_no: string;
-    postcode: string;
+    roles: string[];
+    assignedBy: number | null;
+    gender: string | null;
+    address: string | null;
+    lane: string | null;
+    house_no: string | null;
+    postcode: string | null;
     country: string | null;
     salary: number | null;
-    date_of_birth: string;
+    date_of_birth: string | null;
     employment_date: string | null;
     employment_end_date: string | null;
     national_id: string | null;
     status: string | null;
-    social_security_number: string;
+    social_security_number: string | null;
   }>
 ): Promise<AdminUserDetailRow | null> {
   const sets: string[] = [];
@@ -293,16 +407,49 @@ export async function repoUpdateUser(
   if (patch.status !== undefined) sets.push(`status = ${push(patch.status)}`);
   if (patch.social_security_number !== undefined) sets.push(`social_security_number = ${push(patch.social_security_number)}`);
 
-  if (!sets.length) return repoGetUserById(userId);
+  if (!sets.length && patch.roles === undefined) return repoGetUserById(userId);
 
-  const sql = `UPDATE public.users SET ${sets.join(", ")} WHERE id = ${push(userId)} RETURNING id::int AS id`;
-
+  const client = await pool.connect();
   try {
-    const res = await pool.query<{ id: number }>(sql, values);
-    const rowId = res.rows[0]?.id;
-    if (!rowId) return null;
-    return repoGetUserById(rowId);
+    await client.query("BEGIN");
+    const current = await client.query<{ role: string }>(
+      `SELECT role FROM public.users WHERE id = $1 FOR UPDATE`,
+      [userId]
+    );
+    const currentRole = current.rows[0]?.role;
+    if (!currentRole) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    if (sets.length) {
+      values.push(userId);
+      await client.query(
+        `UPDATE public.users SET ${sets.join(", ")} WHERE id = $${values.length}`,
+        values
+      );
+    }
+
+    if (patch.roles !== undefined || patch.role !== undefined) {
+      const existing = await client.query<{ role_key: string }>(
+        `SELECT role_key FROM public.user_role_assignments WHERE user_id = $1 ORDER BY role_key`,
+        [userId]
+      );
+      await replaceUserRoles(client, {
+        userId,
+        primaryRole: patch.role ?? currentRole,
+        roles: patch.roles ?? existing.rows.map((row) => row.role_key),
+        assignedBy: patch.assignedBy ?? null,
+      });
+    }
+
+    await client.query("COMMIT");
+    return repoGetUserById(userId);
   } catch (err) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+    }
     if (isPgUniqueViolation(err)) {
       const constraint = pgConstraint(err);
       if (constraint === "users_username_key") throw new HttpError(409, "USERNAME_EXISTS", "Username already exists");
@@ -314,6 +461,8 @@ export async function repoUpdateUser(
       throw new HttpError(409, "DUPLICATE", "User already exists");
     }
     throw err;
+  } finally {
+    client.release();
   }
 }
 

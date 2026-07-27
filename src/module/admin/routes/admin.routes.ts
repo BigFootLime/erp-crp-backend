@@ -6,6 +6,7 @@ import {
   createUserAdmin,
   deleteUserAdmin,
   getUserAdmin,
+  listRolesAdmin,
   listUsersAdmin,
   listLoginLogsAdmin,
   resetUserPasswordAdmin,
@@ -19,6 +20,7 @@ router.use(authenticateToken);
 router.use(authorizeRole("Administrateur Systeme et Reseau", "Directeur"));
 
 router.get("/users", listUsersAdmin);
+router.get("/roles", listRolesAdmin);
 router.get("/users/:id", getUserAdmin);
 router.post("/users", createUserAdmin);
 router.patch("/users/:id", patchUserAdmin);

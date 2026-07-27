@@ -8,6 +8,10 @@ export async function listUsers() {
   return adminRepo.repoListUsers();
 }
 
+export async function listRoles() {
+  return adminRepo.repoListRoles();
+}
+
 export async function getUser(userId: number) {
   return adminRepo.repoGetUserById(userId);
 }
@@ -18,21 +22,23 @@ export async function createUserByAdmin(input: {
   name: string;
   surname: string;
   email: string;
-  tel_no: string;
+  tel_no: string | null;
   role: string;
-  gender: string;
-  address: string;
-  lane: string;
-  house_no: string;
-  postcode: string;
+  roles: string[];
+  assignedBy: number | null;
+  gender: string | null;
+  address: string | null;
+  lane: string | null;
+  house_no: string | null;
+  postcode: string | null;
   country: string | null;
   salary: number | null;
-  date_of_birth: string;
+  date_of_birth: string | null;
   employment_date: string | null;
   employment_end_date: string | null;
   national_id: string | null;
   status: string | null;
-  social_security_number: string;
+  social_security_number: string | null;
 }) {
   const hash = await bcrypt.hash(input.password, 12);
   return adminRepo.repoCreateUser({
@@ -43,6 +49,8 @@ export async function createUserByAdmin(input: {
     email: input.email,
     tel_no: input.tel_no,
     role: input.role,
+    roles: input.roles,
+    assignedBy: input.assignedBy,
     gender: input.gender,
     address: input.address,
     lane: input.lane,
@@ -59,9 +67,16 @@ export async function createUserByAdmin(input: {
   });
 }
 
-export async function updateUserByAdmin(userId: number, patch: Record<string, unknown>) {
+export async function updateUserByAdmin(
+  userId: number,
+  patch: Record<string, unknown>,
+  assignedBy: number | null
+) {
   // Controller/validator ensures correct shape; keep narrow casting here.
-  return adminRepo.repoUpdateUser(userId, patch as Parameters<typeof adminRepo.repoUpdateUser>[1]);
+  return adminRepo.repoUpdateUser(userId, {
+    ...(patch as Parameters<typeof adminRepo.repoUpdateUser>[1]),
+    assignedBy,
+  });
 }
 
 export async function deleteUserByAdmin(userId: number) {

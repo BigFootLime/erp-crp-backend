@@ -1,3 +1,5 @@
+import { effectiveRoleHasAny } from "../auth/domain/roles";
+
 /**
  * RBAC clients — rôles existants uniquement (contrainte users_role_check,
  * db/patches/20260710_hr_users_role_responsable_rh.sql). Deny by default :
@@ -19,7 +21,7 @@ export const CLIENT_WRITE_ROLES = [
 export const CLIENT_FINANCE_ROLES = CLIENT_WRITE_ROLES;
 
 export function canViewClientFinance(role: string | undefined | null): boolean {
-  return typeof role === "string" && (CLIENT_FINANCE_ROLES as readonly string[]).includes(role);
+  return effectiveRoleHasAny(role, CLIENT_FINANCE_ROLES);
 }
 
 /** Keep the last 4 characters visible: enough to recognise the account, useless to replay. */

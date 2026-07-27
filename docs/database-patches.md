@@ -343,3 +343,29 @@ Validation du 2026-07-27 : cycle complet avec rollback sur `cerp_test`,
 sauvegarde production vérifiée, trois contraintes validées sur `cerp_prod`,
 zéro référence invalide, toutes les clés étrangères publiques validées et
 empreintes des 302 tables métier inchangées.
+
+## Issue #315 - RBAC multi-rôles
+
+Le patch `20260727_user_multi_roles_315.sql` crée un catalogue de rôles
+applicatifs et les affectations plusieurs-à-plusieurs entre utilisateurs et
+rôles. Il conserve `users.role` comme rôle principal de compatibilité et
+reprend chaque compte existant dans `user_role_assignments`. Les attributions,
+révocations et reprises sont conservées dans le journal append-only
+`user_role_assignment_events`, avec l'acteur lorsqu'il est connu.
+
+Le patch préalable `20260727_user_account_profile_optional_315.sql` permet de
+créer le compte ERP avant de connaître les données RH sensibles. Téléphone,
+adresse, date de naissance et NIR restent `NULL` plutôt que d'être remplacés
+par des valeurs fictives. Les contraintes `UNIQUE` restent en place et
+s'appliquent dès qu'une valeur réelle est renseignée.
+
+Le patch est transactionnel et idempotent. Son script de vérification contrôle
+la présence des trois tables, le catalogue actif et l'absence de compte sans
+affectation de son rôle principal. Le rollback de support supprime uniquement
+les trois nouvelles tables ; il ne modifie aucune ligne de `users`.
+
+Ordre obligatoire : exécuter
+`support/20260727_user_multi_roles_315.preflight.sql`, appliquer les deux
+patches sur `cerp_test`, exécuter leurs vérifications, puis réaliser la recette
+des sessions mono-rôle et multi-rôles. Une validation humaine explicite reste
+obligatoire avant toute application sur `cerp_prod`.

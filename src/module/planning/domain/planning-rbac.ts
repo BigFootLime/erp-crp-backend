@@ -1,3 +1,5 @@
+import { effectiveRoleParts } from "../../auth/domain/roles";
+
 function normalizeRole(role: string | null | undefined): string {
   return String(role ?? "")
     .trim()
@@ -34,9 +36,9 @@ const FORCE_OVERLAP_ROLES = new Set([
 ]);
 
 export function roleHasPlanningAccess(role: string | null | undefined): boolean {
-  return PLANNING_ACCESS_ROLES.has(normalizeRole(role));
+  return effectiveRoleParts(role).some((part) => PLANNING_ACCESS_ROLES.has(normalizeRole(part)));
 }
 
 export function roleCanForcePlanningOverlap(role: string | null | undefined): boolean {
-  return FORCE_OVERLAP_ROLES.has(normalizeRole(role));
+  return effectiveRoleParts(role).some((part) => FORCE_OVERLAP_ROLES.has(normalizeRole(part)));
 }

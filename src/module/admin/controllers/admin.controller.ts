@@ -15,6 +15,11 @@ export const listUsersAdmin: RequestHandler = asyncHandler(async (_req, res) => 
   res.json(rows);
 });
 
+export const listRolesAdmin: RequestHandler = asyncHandler(async (_req, res) => {
+  const rows = await adminService.listRoles();
+  res.json(rows);
+});
+
 export const listLoginLogsAdmin: RequestHandler = asyncHandler(async (req, res) => {
   const from = (req.query as { from?: unknown }).from;
   const to = (req.query as { to?: unknown }).to;
@@ -63,21 +68,23 @@ export const createUserAdmin: RequestHandler = asyncHandler(async (req, res) => 
     name: dto.body.name,
     surname: dto.body.surname,
     email: dto.body.email,
-    tel_no: dto.body.tel_no,
+    tel_no: dto.body.tel_no ?? null,
     role: dto.body.role,
-    gender: dto.body.gender,
-    address: dto.body.address,
-    lane: dto.body.lane,
-    house_no: dto.body.house_no,
-    postcode: dto.body.postcode,
+    roles: dto.body.roles,
+    assignedBy: req.user?.id ?? null,
+    gender: dto.body.gender ?? null,
+    address: dto.body.address ?? null,
+    lane: dto.body.lane ?? null,
+    house_no: dto.body.house_no ?? null,
+    postcode: dto.body.postcode ?? null,
     country: dto.body.country ?? "France",
     salary: dto.body.salary === undefined ? null : dto.body.salary,
-    date_of_birth: dto.body.date_of_birth,
+    date_of_birth: dto.body.date_of_birth ?? null,
     employment_date: dto.body.employment_date ?? null,
     employment_end_date: dto.body.employment_end_date ?? null,
     national_id: dto.body.national_id ?? null,
     status: dto.body.status ?? null,
-    social_security_number: dto.body.social_security_number,
+    social_security_number: dto.body.social_security_number ?? null,
   });
   res.status(201).json({ user });
 });
@@ -85,7 +92,7 @@ export const createUserAdmin: RequestHandler = asyncHandler(async (req, res) => 
 export const patchUserAdmin: RequestHandler = asyncHandler(async (req, res) => {
   const dto = adminUpdateUserSchema.parse({ params: req.params, body: req.body });
   const userId = Number(dto.params.id);
-  const user = await adminService.updateUserByAdmin(userId, dto.body);
+  const user = await adminService.updateUserByAdmin(userId, dto.body, req.user?.id ?? null);
   if (!user) throw new HttpError(404, "USER_NOT_FOUND", "User not found");
   res.json({ user });
 });
