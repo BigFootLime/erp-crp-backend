@@ -177,6 +177,18 @@ export async function previewImportBatch(params: {
       legacy_keys: clientLegacyKeys,
     })
     : new Map();
+  const supplierLegacyKeys = batch.entity_type === "FOURNISSEUR_COMMANDE"
+    ? normalized
+      .map((row) => row.result.normalized_data?.fournisseur_legacy_code)
+      .filter((value): value is string => typeof value === "string" && value.length > 0)
+    : [];
+  const supplierCrosswalk = supplierLegacyKeys.length > 0
+    ? await repo.repoFindCrosswalks({
+      source_system: batch.source_system,
+      entity_type: "FOURNISSEUR",
+      legacy_keys: supplierLegacyKeys,
+    })
+    : new Map();
   const dedupeEntity = batch.entity_type === "CLIENT_ENRICHISSEMENT"
     ? "CLIENT"
     : batch.entity_type;
@@ -273,6 +285,36 @@ export async function previewImportBatch(params: {
         issues: [],
         target_id: client.id,
         target_code: client.code,
+      };
+    }
+    if (batch.entity_type === "FOURNISSEUR_COMMANDE") {
+      const parentKey = result.normalized_data.fournisseur_legacy_code;
+      const supplier = typeof parentKey === "string" ? supplierCrosswalk.get(parentKey) : null;
+      if (!supplier) {
+        return {
+          id: stored.id,
+          legacy_key: result.legacy_key,
+          normalized_data: result.normalized_data,
+          status: "BLOCKED",
+          action: "SKIP",
+          issues: [{
+            code: "FOURNISSEUR_CROSSWALK_MISSING",
+            message: "Le fournisseur CLIPPER doit être importé ou rapproché avant sa commande.",
+            field: "fournisseur_legacy_code",
+          }],
+          target_id: null,
+          target_code: null,
+        };
+      }
+      return {
+        id: stored.id,
+        legacy_key: result.legacy_key,
+        normalized_data: result.normalized_data,
+        status: "VALID",
+        action: "CREATE",
+        issues: [],
+        target_id: supplier.id,
+        target_code: supplier.code,
       };
     }
     const duplicate = strongDedupe.get(result.legacy_key);
