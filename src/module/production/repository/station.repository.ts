@@ -720,7 +720,19 @@ export async function repoFindSessionByToken(token: string): Promise<
 > {
   const { rows } = await pool.query(
     `SELECT ${SESSION_COLUMNS},
-            u.username, u.name, u.surname, u.role
+            u.username,
+            u.name,
+            u.surname,
+            concat_ws(
+              ' | ',
+              u.role,
+              (
+                SELECT string_agg(ura.role_key, ' | ' ORDER BY ura.role_key)
+                FROM public.user_role_assignments ura
+                WHERE ura.user_id = u.id
+                  AND ura.role_key <> u.role
+              )
+            ) AS role
        FROM public.operator_device_sessions s
        JOIN public.users u ON u.id = s.user_id
       WHERE s.session_token_hash = $1`,

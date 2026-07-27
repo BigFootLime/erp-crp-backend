@@ -1,3 +1,5 @@
+import { effectiveRoleHasAny } from "../auth/domain/roles";
+
 export const ARTICLE_WRITE_ROLES = [
   "Directeur",
   "Administrateur Systeme et Reseau",
@@ -20,5 +22,5 @@ export const ARTICLE_COST_ROLES = [
 ] as const;
 
 export function canViewArticleCosts(role: string | null | undefined): boolean {
-  return typeof role === "string" && (ARTICLE_COST_ROLES as readonly string[]).includes(role);
+  return effectiveRoleHasAny(role, ARTICLE_COST_ROLES);
 }

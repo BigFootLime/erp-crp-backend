@@ -6,6 +6,7 @@ import {
   } from '../middlewares/auth.middleware';
 import {asyncHandler} from '../../../utils/asyncHandler';
 import { getProfile } from '../controllers/user.controller';
+import { getAccessProfile } from '../../access-control/controllers/access-control.controller';
 
 const router: Router = Router();
 
@@ -19,6 +20,10 @@ router.get(
   authorizeRole('Administrateur Systeme et Reseau', 'Directeur'),
   getProfile
 );
-  
+
+// Profil d'accès module (#326) — volontairement SANS authorizeRole : chaque compte,
+// opérateur compris, doit pouvoir charger la navigation à laquelle il a droit.
+router.get('/access-profile', authenticateToken, getAccessProfile);
+
 
 export default router;

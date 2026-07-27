@@ -20,6 +20,7 @@ import {
 
 import { sendPasswordResetEmail } from "./password-reset-email.service";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
+import { authorizationRole, normalizeAssignedRoles } from "../domain/roles";
 
 export const registerUser = async (data: CreateUserDTO) => {
   // 🔐 Hash du mot de passe
@@ -72,8 +73,17 @@ export const loginUser = async (
     throw new ApiError(401, "AUTH_INVALID", invalidMsg);
   }
 
+  const assignedRoles = normalizeAssignedRoles(user.role, user.roles);
+  const effectiveRole = authorizationRole(user.role, assignedRoles);
   const token = jwt.sign(
-    { id: user.id, username: user.username, email: user.email, role: user.role },
+    {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      role: effectiveRole,
+      primary_role: user.role,
+      roles: assignedRoles,
+    },
     process.env.JWT_SECRET as string,
     { expiresIn: "1d" }
   );
@@ -88,7 +98,14 @@ export const loginUser = async (
 
   return {
     token,
-    user: { id: user.id, username: user.username, email: user.email, role: user.role },
+    user: {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      role: effectiveRole,
+      primary_role: user.role,
+      roles: assignedRoles,
+    },
   };
 };
 

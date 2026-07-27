@@ -439,12 +439,72 @@ describe("Assistant d’import CLIPPER", () => {
     ]));
   });
 
-  it("garde stock, BL et RH visibles mais impossibles à confirmer", () => {
-    const gated = IMPORT_CAPABILITIES.filter((capability) =>
-      ["STOCK_INITIAL", "BL_HISTORIQUE", "EMPLOYE"].includes(capability.entity_type)
+  it("normalise un stock d’ouverture positif avec un cut-off explicite", () => {
+    const mapping: ImportMapping = {
+      legacy_key_column: "ARTICLE",
+      columns: {
+        article_legacy_code: "ARTICLE",
+        quantity: "SOLDE",
+        magasin_code: "MAGASIN",
+        emplacement_code: "EMPLACEMENT",
+        cutoff_date: "CUT_OFF",
+      },
+      constants: {},
+      approved_decisions: ["DEC-05", "DEC-06", "DEC-15", "DEC-16"],
+      duplicate_strategy: "REVIEW",
+    };
+
+    const valid = normalizeImportRow(
+      "STOCK_INITIAL",
+      {
+        ARTICLE: "RO*303*ETIRE*22*1",
+        SOLDE: "738 000,00",
+        MAGASIN: "MAG-PRINCIPAL",
+        EMPLACEMENT: "STOCK-GENERAL",
+        CUT_OFF: "24/07/2026",
+      },
+      mapping
+    );
+    const blocked = normalizeImportRow(
+      "STOCK_INITIAL",
+      {
+        ARTICLE: "ARTICLE-VIDE",
+        SOLDE: "0",
+        MAGASIN: "MAG-PRINCIPAL",
+        EMPLACEMENT: "STOCK-GENERAL",
+        CUT_OFF: "2026-07-24",
+      },
+      mapping
     );
 
-    expect(gated).toHaveLength(3);
+    expect(valid.issues).toEqual([]);
+    expect(valid.normalized_data).toEqual({
+      article_legacy_code: "RO*303*ETIRE*22*1",
+      quantity: 738000,
+      magasin_code: "MAG-PRINCIPAL",
+      emplacement_code: "STOCK-GENERAL",
+      cutoff_date: "2026-07-24",
+    });
+    expect(blocked.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ field: "quantity" }),
+    ]));
+  });
+
+  it("ouvre le stock initial mais garde BL et RH impossibles à confirmer", () => {
+    const stock = IMPORT_CAPABILITIES.find((capability) => capability.entity_type === "STOCK_INITIAL");
+    const gated = IMPORT_CAPABILITIES.filter((capability) =>
+      ["BL_HISTORIQUE", "EMPLOYE"].includes(capability.entity_type)
+    );
+
+    expect(stock?.confirm_enabled).toBe(true);
+    expect(stock?.fields.map((field) => field.key)).toEqual(expect.arrayContaining([
+      "article_legacy_code",
+      "quantity",
+      "magasin_code",
+      "emplacement_code",
+      "cutoff_date",
+    ]));
+    expect(gated).toHaveLength(2);
     expect(gated.every((capability) => !capability.confirm_enabled)).toBe(true);
     expect(gated.every((capability) => capability.unavailable_reason)).toBe(true);
   });

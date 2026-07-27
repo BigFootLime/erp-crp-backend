@@ -109,6 +109,21 @@ export type AuditContext = {
   client_session_id: string | null;
 };
 
+export type StockOpeningReferenceInput = {
+  key: string;
+  article_id: string;
+  magasin_code: string;
+  emplacement_code: string;
+};
+
+export type StockOpeningReferenceResolution = {
+  key: string;
+  article_id: string;
+  magasin_id: string | null;
+  emplacement_id: number | null;
+  issue: { code: string; message: string } | null;
+};
+
 export type StockCommandType =
   | "MOVEMENT_CREATE"
   | "MOVEMENT_POST"
@@ -1774,6 +1789,127 @@ export async function getEmplacementMapping(
     location_type: row.location_type,
     restrictions: row.restrictions ?? {},
   };
+}
+
+export async function repoResolveStockOpeningReferences(
+  inputs: StockOpeningReferenceInput[]
+): Promise<Map<string, StockOpeningReferenceResolution>> {
+  if (inputs.length === 0) return new Map();
+
+  const result = await db.query<{
+    key: string;
+    article_id: string;
+    article_found: boolean;
+    article_active: boolean | null;
+    stock_managed: boolean | null;
+    magasin_id: string | null;
+    magasin_matches: number | string | null;
+    magasin_active: boolean | null;
+    emplacement_id: number | null;
+    emplacement_matches: number | string | null;
+    emplacement_active: boolean | null;
+    allow_inbound: boolean | null;
+    location_id: string | null;
+    warehouse_id: string | null;
+  }>(
+    `
+      WITH requested AS (
+        SELECT
+          item.key,
+          item.article_id::uuid AS article_id,
+          item.magasin_code,
+          item.emplacement_code
+        FROM jsonb_to_recordset($1::jsonb) AS item(
+          key text,
+          article_id text,
+          magasin_code text,
+          emplacement_code text
+        )
+      )
+      SELECT
+        requested.key,
+        requested.article_id::text AS article_id,
+        (article.id IS NOT NULL) AS article_found,
+        article.is_active AS article_active,
+        article.stock_managed,
+        magasin.id::text AS magasin_id,
+        COALESCE(magasin.matches, 0) AS magasin_matches,
+        magasin.is_active AS magasin_active,
+        emplacement.id::int AS emplacement_id,
+        COALESCE(emplacement.matches, 0) AS emplacement_matches,
+        emplacement.is_active AS emplacement_active,
+        emplacement.allow_inbound,
+        emplacement.location_id::text AS location_id,
+        location.warehouse_id::text AS warehouse_id
+      FROM requested
+      LEFT JOIN public.articles article ON article.id = requested.article_id
+      LEFT JOIN LATERAL (
+        SELECT
+          candidate.id,
+          COALESCE(candidate.is_active, candidate.actif, false) AS is_active,
+          count(*) OVER ()::int AS matches
+        FROM public.magasins candidate
+        WHERE upper(btrim(COALESCE(candidate.code, candidate.code_magasin))) =
+              upper(btrim(requested.magasin_code))
+        ORDER BY candidate.id
+        LIMIT 1
+      ) magasin ON true
+      LEFT JOIN LATERAL (
+        SELECT
+          candidate.id,
+          candidate.is_active,
+          candidate.allow_inbound,
+          candidate.location_id,
+          count(*) OVER ()::int AS matches
+        FROM public.emplacements candidate
+        WHERE candidate.magasin_id = magasin.id
+          AND upper(btrim(candidate.code)) = upper(btrim(requested.emplacement_code))
+        ORDER BY candidate.id
+        LIMIT 1
+      ) emplacement ON true
+      LEFT JOIN public.locations location ON location.id = emplacement.location_id
+      ORDER BY requested.key
+    `,
+    [JSON.stringify(inputs)]
+  );
+
+  return new Map(result.rows.map((row) => {
+    let issue: StockOpeningReferenceResolution["issue"] = null;
+    const magasinMatches = Number(row.magasin_matches ?? 0);
+    const emplacementMatches = Number(row.emplacement_matches ?? 0);
+
+    if (!row.article_found) {
+      issue = { code: "STOCK_ARTICLE_NOT_FOUND", message: "L’article CERP rapproché est introuvable." };
+    } else if (!row.article_active) {
+      issue = { code: "STOCK_ARTICLE_INACTIVE", message: "L’article CERP rapproché est inactif." };
+    } else if (!row.stock_managed) {
+      issue = { code: "STOCK_ARTICLE_NOT_MANAGED", message: "L’article CERP n’est pas géré en stock." };
+    } else if (magasinMatches === 0) {
+      issue = { code: "STOCK_MAGASIN_NOT_FOUND", message: "Le code magasin CERP est introuvable." };
+    } else if (magasinMatches > 1) {
+      issue = { code: "STOCK_MAGASIN_AMBIGUOUS", message: "Le code magasin CERP correspond à plusieurs magasins." };
+    } else if (!row.magasin_active) {
+      issue = { code: "STOCK_MAGASIN_INACTIVE", message: "Le magasin CERP est inactif." };
+    } else if (emplacementMatches === 0) {
+      issue = { code: "STOCK_EMPLACEMENT_NOT_FOUND", message: "Le code emplacement CERP est introuvable dans ce magasin." };
+    } else if (emplacementMatches > 1) {
+      issue = { code: "STOCK_EMPLACEMENT_AMBIGUOUS", message: "Le code emplacement CERP correspond à plusieurs emplacements." };
+    } else if (!row.emplacement_active) {
+      issue = { code: "STOCK_EMPLACEMENT_INACTIVE", message: "L’emplacement CERP est inactif." };
+    } else if (!row.allow_inbound) {
+      issue = { code: "STOCK_EMPLACEMENT_INBOUND_REFUSED", message: "L’emplacement CERP refuse les entrées de stock." };
+    } else if (!row.location_id || !row.warehouse_id) {
+      issue = { code: "STOCK_EMPLACEMENT_NOT_MAPPED", message: "L’emplacement CERP n’est pas relié au référentiel physique de stock." };
+    }
+
+    return [row.key, {
+      key: row.key,
+      article_id: row.article_id,
+      magasin_id: row.magasin_id,
+      emplacement_id: row.emplacement_id,
+      issue,
+    }];
+  }));
 }
 
 export async function ensureStockLevel(

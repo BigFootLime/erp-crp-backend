@@ -51,6 +51,28 @@ const fournisseurCommandeImportSchema = createCommandeSchema.shape.body
   })
   .strict();
 
+const stockInitialImportSchema = z
+  .object({
+    article_legacy_code: z.string().trim().min(1, "Code article CLIPPER requis").max(200),
+    quantity: z.number().positive("La quantité d’ouverture doit être strictement positive").max(1_000_000_000_000),
+    magasin_code: z.string().trim().min(1, "Code magasin CERP requis").max(80),
+    emplacement_code: z.string().trim().min(1, "Code emplacement CERP requis").max(80),
+    cutoff_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date de cut-off attendue au format AAAA-MM-JJ"),
+    unite: z.string().trim().min(1).max(30).optional(),
+    notes: z.string().trim().min(1).max(2_000).optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    const parsed = new Date(`${value.cutoff_date}T00:00:00Z`);
+    if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value.cutoff_date) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "La date de cut-off est invalide.",
+        path: ["cutoff_date"],
+      });
+    }
+  });
+
 function hasOwn(record: Record<string, unknown>, key: string) {
   return Object.prototype.hasOwnProperty.call(record, key);
 }
@@ -156,6 +178,8 @@ function entitySchema(entityType: ImportEntityType): { schema: ZodTypeAny; wrapp
       return { schema: createPieceTechniqueSchema, wrapped: true };
     case "MACHINE":
       return { schema: createMachineSchema, wrapped: true };
+    case "STOCK_INITIAL":
+      return { schema: stockInitialImportSchema, wrapped: false };
     default:
       return null;
   }

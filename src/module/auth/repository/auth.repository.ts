@@ -35,7 +35,20 @@ export const findUserByUsername = async (username: string) => {
   const client = await pool.connect();
   try {
     const result = await client.query(
-      'SELECT * FROM users WHERE username = $1 LIMIT 1',
+      `
+        SELECT
+          u.*,
+          COALESCE(
+            array_agg(ura.role_key ORDER BY (ura.role_key = u.role) DESC, ura.role_key)
+              FILTER (WHERE ura.role_key IS NOT NULL),
+            ARRAY[u.role]::text[]
+          ) AS roles
+        FROM public.users u
+        LEFT JOIN public.user_role_assignments ura ON ura.user_id = u.id
+        WHERE u.username = $1
+        GROUP BY u.id
+        LIMIT 1
+      `,
       [username]
     );
     return result.rows[0]; // undefined si pas trouvé

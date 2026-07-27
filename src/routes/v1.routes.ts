@@ -49,6 +49,8 @@ import projectOfficeRoutes from "../module/project-office/routes/project-office.
 import gammesRoutes from "../module/gammes/routes/gammes.routes"
 import pieceTechniqueVersionsRoutes from "../module/gammes/routes/piece-technique-versions.routes"
 import importAssistantRoutes from "../module/import-assistant/routes/import-assistant.routes"
+import accessControlRoutes from "../module/access-control/routes/access-control.routes"
+import { moduleAccessGate } from "../module/access-control/middlewares/module-access-gate"
 const router = Router()
 
 // --- Routes publiques (avant authentification) ---
@@ -58,6 +60,11 @@ router.use("/auth", authRoutes)
 // définie APRÈS cette ligne exige un JWT valide. Les modules conservent en plus leurs
 // gardes authorizeRole plus fines. Tout nouveau module est protégé par défaut.
 router.use(authenticateToken)
+
+// 🔒 Tour de contrôle des accès (#326) : filtrage module par compte, monté avant tout
+// module métier pour qu'aucune surface future n'y échappe par oubli. Il n'ôte aucun
+// garde existant — les authorizeRole des modules s'appliquent toujours ensuite.
+router.use(moduleAccessGate)
 
 router.use("/outils", outilRoutes)
 router.use("/banking-info", bankingInfoRoutes)  
@@ -71,6 +78,9 @@ router.use("/pieces-techniques", piecesTechniquesRoutes)
 router.use("/piece-technique-versions", pieceTechniqueVersionsRoutes) // GPAO B2.2 — gammes par version
 router.use("/gammes", gammesRoutes)                                   // GPAO B2.2 — gammes + opérations
 router.use("/audit-logs", auditLogsRoutes)
+// Tour de contrôle des accès (#326) montée AVANT le routeur admin historique : elle
+// est gardée par le statut superadmin et ne doit pas hériter de son authorizeRole.
+router.use("/admin/access", accessControlRoutes);
 router.use("/admin", adminRoutes);
 router.use("/affaires", affaireRoutes);
 router.use("/devis", devisRoutes);

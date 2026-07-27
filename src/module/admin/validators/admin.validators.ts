@@ -1,6 +1,10 @@
 // src/module/admin/validators/admin.validators.ts
 import { z } from "zod";
 import { isoDate, strictEmail, trimString } from "../../auth/validators/_helpers";
+import {
+  ASSIGNABLE_USER_ROLES,
+  PRIMARY_USER_ROLES,
+} from "../../auth/domain/roles";
 
 const userIdParam = z
   .string({ required_error: "ID utilisateur requis", invalid_type_error: "ID utilisateur invalide" })
@@ -44,16 +48,25 @@ const userCoreObject = z
     name: trimString(2, "Nom requis (min 2 caractères)"),
     surname: trimString(2, "Prénom requis (min 2 caractères)"),
     email: strictEmail,
-    tel_no: phoneFR,
-    role: trimString(2, "Rôle requis"),
-    gender: z.enum(genders, { errorMap: () => ({ message: "Le genre doit être 'Male' ou 'Female'" }) }),
-    address: trimString(3, "Adresse requise"),
-    lane: trimString(2, "Rue requise"),
-    house_no: z.string({ required_error: "Numéro de voie requis" }).trim().min(1, "Numéro de voie requis"),
+    tel_no: phoneFR.optional().nullable(),
+    role: z.enum(PRIMARY_USER_ROLES, { errorMap: () => ({ message: "Rôle principal non autorisé" }) }),
+    roles: z
+      .array(z.enum(ASSIGNABLE_USER_ROLES))
+      .min(1, "Au moins un rôle est requis")
+      .max(20, "Trop de rôles attribués"),
+    gender: z
+      .enum(genders, { errorMap: () => ({ message: "Le genre doit être 'Male' ou 'Female'" }) })
+      .optional()
+      .nullable(),
+    address: trimString(3, "Adresse invalide (min 3 caractères)").optional().nullable(),
+    lane: trimString(2, "Rue invalide (min 2 caractères)").optional().nullable(),
+    house_no: z.string().trim().min(1, "Numéro de voie invalide").optional().nullable(),
     postcode: z
-      .string({ required_error: "Code postal requis" })
+      .string()
       .trim()
-      .regex(/^\d{5}$/, "Le code postal doit contenir 5 chiffres"),
+      .regex(/^\d{5}$/, "Le code postal doit contenir 5 chiffres")
+      .optional()
+      .nullable(),
     country: z.string().trim().min(1).optional().default("France"),
     salary: z
       .union([
@@ -64,22 +77,34 @@ const userCoreObject = z
         z.null(),
       ])
       .optional(),
-    date_of_birth: isoDate("Date de naissance").refine(
-      (v) => new Date(v) <= new Date(),
-      "La date de naissance ne peut pas être dans le futur"
-    ),
+    date_of_birth: isoDate("Date de naissance")
+      .refine((v) => new Date(v) <= new Date(), "La date de naissance ne peut pas être dans le futur")
+      .optional()
+      .nullable(),
     employment_date: isoDate("Date d'embauche").optional().nullable(),
     employment_end_date: isoDate("Date de fin d'emploi").optional().nullable(),
     national_id: z.string().trim().min(1).optional().nullable(),
     status: z.enum(statuses).optional(),
-    social_security_number: nir,
+    social_security_number: nir.optional().nullable(),
   })
   .strict();
 
 function refineEmploymentDates(
-  data: { employment_date?: string | null; employment_end_date?: string | null },
+  data: {
+    role?: string;
+    roles?: readonly string[];
+    employment_date?: string | null;
+    employment_end_date?: string | null;
+  },
   ctx: z.RefinementCtx
 ) {
+  if (data.role && data.roles && !data.roles.includes(data.role)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["roles"],
+      message: "Le rôle principal doit aussi figurer dans les rôles attribués",
+    });
+  }
   if (data.employment_date && data.employment_end_date) {
     const start = new Date(data.employment_date);
     const end = new Date(data.employment_end_date);

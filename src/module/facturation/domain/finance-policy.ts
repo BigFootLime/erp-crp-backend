@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 
 import { HttpError } from "../../../utils/httpError";
+import { effectiveRoleHasAny } from "../../auth/domain/roles";
 
 export const FACTURE_WORKFLOW_STATUSES = [
   "DRAFT",
@@ -91,10 +92,8 @@ export function roleHasFinanceCapability(
   role: string | null | undefined,
   capability: FinanceCapability
 ): boolean {
-  if (typeof role !== "string" || !role.trim()) return false;
-  const normalizedRole = role.trim();
-  if (normalizedRole === ROLES.administrator) return true;
-  return CAPABILITY_ROLES[capability].has(normalizedRole);
+  if (effectiveRoleHasAny(role, [ROLES.administrator])) return true;
+  return effectiveRoleHasAny(role, [...CAPABILITY_ROLES[capability]]);
 }
 
 const FACTURE_TRANSITIONS: Readonly<Record<FactureWorkflowStatus, readonly FactureWorkflowStatus[]>> = {

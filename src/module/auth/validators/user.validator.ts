@@ -1,15 +1,8 @@
 import { z } from "zod";
 import { isoDate, strictEmail, strongPassword, trimString } from "./_helpers";
+import { PRIMARY_USER_ROLES } from "../domain/roles";
 
-export const roles = [
-  "Directeur",
-  "Employee",
-  "Administrateur Systeme et Reseau",
-  "Responsable Qualité",
-  "Secretaire",
-  "Responsable Programmation",
-  "Responsable RH",
-] as const;
+export const roles = PRIMARY_USER_ROLES;
 
 const genders = ["Male", "Female"] as const;
 const statuses = ["Active", "Inactive", "Suspended"] as const;
