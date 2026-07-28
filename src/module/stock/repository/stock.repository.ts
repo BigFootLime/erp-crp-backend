@@ -2732,6 +2732,146 @@ export async function repoGetArticlesKpis(): Promise<StockArticleKpis> {
   );
 }
 
+export type CreatedArticleSummary = {
+  id: string;
+  code: string;
+  article_type: "PIECE_TECHNIQUE" | "PURCHASED";
+  article_category: ArticleCategory;
+  article_categories: ArticleBusinessCategory[];
+  family_code: string;
+  stock_managed: boolean;
+  lot_tracking: boolean;
+};
+
+/**
+ * Création d'article DANS une transaction déjà ouverte par l'appelant.
+ *
+ * C'est le SEUL chemin de création d'article : `repoCreateArticle` s'appuie
+ * dessus, et les modules qui doivent créer un article à l'intérieur de leur
+ * propre commande transactionnelle (#210 — finitions) l'appellent directement
+ * au lieu de dupliquer la normalisation, la codification et les liaisons.
+ *
+ * L'appelant reste responsable du BEGIN/COMMIT/ROLLBACK et de l'idempotence.
+ */
+export async function repoCreateArticleTx(
+  client: PoolClient,
+  body: CreateArticleBodyDTO,
+  audit: AuditContext
+): Promise<CreatedArticleSummary> {
+  const normalized = await normalizeArticleState({
+    article_type: body.article_type,
+    article_category: body.article_category,
+    article_categories: body.article_categories,
+    family_code: body.family_code,
+    version_number: 1,
+    plan_index: 1,
+    status: body.status,
+    projet_id: body.projet_id ?? null,
+    piece_technique_id: body.piece_technique_id ?? null,
+    stock_managed: body.stock_managed,
+    lot_tracking: body.lot_tracking,
+    // The submitted code is non-authoritative. Keep legacy payloads compatible
+    // while the final ART-{FAMILY}-{SEQ6} value is allocated below.
+    code: "",
+    designation: body.designation,
+    client,
+  });
+  const generatedCode = await generateArticleBusinessCode(client, normalized.family_code);
+
+  if (normalized.piece_technique_id) {
+    await ensurePieceTechniqueExists(client, normalized.piece_technique_id);
+  }
+
+  const articleId = crypto.randomUUID();
+
+  const res = await client.query<{ id: string }>(
+    `
+      INSERT INTO public.articles (
+        id,
+        code, designation, designation_secondary, article_type, article_category, family_code, stock_managed, piece_technique_id, unite,
+        root_article_id, parent_article_id, version_number, plan_index, status, projet_id,
+        lot_tracking, is_sold, is_active, notes,
+        created_by, updated_by
+      )
+      VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9::uuid,$10,$11::uuid,$12::uuid,$13,$14,$15,$16,$17,$18,$19,$20,$21,$21)
+      RETURNING id::text AS id
+    `,
+    [
+      articleId,
+      generatedCode,
+      body.designation,
+      body.designation_secondary ?? null,
+      normalized.article_type,
+      normalized.article_category,
+      normalized.family_code,
+      normalized.stock_managed,
+      normalized.piece_technique_id,
+      body.unite ?? null,
+      articleId,
+      null,
+      normalized.version_number,
+      normalized.plan_index,
+      normalized.status,
+      normalized.projet_id,
+      normalized.lot_tracking,
+      body.is_sold,
+      body.is_active,
+      body.notes ?? null,
+      audit.user_id,
+    ]
+  );
+
+  const id = res.rows[0]?.id;
+  if (!id) throw new Error("Failed to create article");
+  await syncArticleCategories(client, id, normalized.article_categories, audit.user_id);
+
+  await syncPieceTechniqueArticleLink(client, {
+    article_id: id,
+    previous_piece_technique_id: null,
+    next_piece_technique_id: normalized.piece_technique_id,
+  });
+
+  await syncArticleSubtypeDetails(client, {
+    article_id: id,
+    category: normalized.article_category,
+    family_code: normalized.family_code,
+    piece_technique_id: normalized.piece_technique_id,
+    article_matiere: body.article_matiere,
+  });
+  await syncArticleProcurementProfile(client, id, body.procurement, audit.user_id);
+
+  await insertAuditLog(client, audit, {
+    action: "stock.articles.create",
+    entity_type: "articles",
+    entity_id: id,
+    details: {
+      code: generatedCode,
+      designation: body.designation,
+      article_type: normalized.article_type,
+      article_category: normalized.article_category,
+      article_categories: normalized.article_categories,
+      family_code: normalized.family_code,
+      version_number: normalized.version_number,
+      plan_index: normalized.plan_index,
+      status: normalized.status,
+      projet_id: normalized.projet_id,
+      stock_managed: normalized.stock_managed,
+      is_sold: body.is_sold,
+    },
+  });
+
+  return {
+    id,
+    code: generatedCode,
+    article_type: normalized.article_type,
+    article_category: normalized.article_category,
+    article_categories: normalized.article_categories,
+    family_code: normalized.family_code,
+    stock_managed: normalized.stock_managed,
+    lot_tracking: normalized.lot_tracking,
+  };
+}
+
 export async function repoCreateArticle(
   body: CreateArticleBodyDTO,
   audit: AuditContext,
@@ -2763,87 +2903,8 @@ export async function repoCreateArticle(
       }
     }
 
-    const normalized = await normalizeArticleState({
-      article_type: body.article_type,
-      article_category: body.article_category,
-      article_categories: body.article_categories,
-      family_code: body.family_code,
-      version_number: 1,
-      plan_index: 1,
-      status: body.status,
-      projet_id: body.projet_id ?? null,
-      piece_technique_id: body.piece_technique_id ?? null,
-      stock_managed: body.stock_managed,
-      lot_tracking: body.lot_tracking,
-      // The submitted code is non-authoritative. Keep legacy payloads compatible
-      // while the final ART-{FAMILY}-{SEQ6} value is allocated below.
-      code: "",
-      designation: body.designation,
-      client,
-    });
-    const generatedCode = await generateArticleBusinessCode(client, normalized.family_code);
-
-    if (normalized.piece_technique_id) {
-      await ensurePieceTechniqueExists(client, normalized.piece_technique_id);
-    }
-
-    const articleId = crypto.randomUUID();
-
-    const res = await client.query<{ id: string }>(
-      `
-        INSERT INTO public.articles (
-          id,
-          code, designation, designation_secondary, article_type, article_category, family_code, stock_managed, piece_technique_id, unite,
-          root_article_id, parent_article_id, version_number, plan_index, status, projet_id,
-          lot_tracking, is_sold, is_active, notes,
-          created_by, updated_by
-        )
-        VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9::uuid,$10,$11::uuid,$12::uuid,$13,$14,$15,$16,$17,$18,$19,$20,$21,$21)
-        RETURNING id::text AS id
-      `,
-      [
-        articleId,
-        generatedCode,
-        body.designation,
-        body.designation_secondary ?? null,
-        normalized.article_type,
-        normalized.article_category,
-        normalized.family_code,
-        normalized.stock_managed,
-        normalized.piece_technique_id,
-        body.unite ?? null,
-        articleId,
-        null,
-        normalized.version_number,
-        normalized.plan_index,
-        normalized.status,
-        normalized.projet_id,
-        normalized.lot_tracking,
-        body.is_sold,
-        body.is_active,
-        body.notes ?? null,
-        audit.user_id,
-      ]
-    );
-
-    const id = res.rows[0]?.id;
-    if (!id) throw new Error("Failed to create article");
-    await syncArticleCategories(client, id, normalized.article_categories, audit.user_id);
-
-    await syncPieceTechniqueArticleLink(client, {
-      article_id: id,
-      previous_piece_technique_id: null,
-      next_piece_technique_id: normalized.piece_technique_id,
-    });
-
-    await syncArticleSubtypeDetails(client, {
-      article_id: id,
-      category: normalized.article_category,
-      family_code: normalized.family_code,
-      piece_technique_id: normalized.piece_technique_id,
-      article_matiere: body.article_matiere,
-    });
-    await syncArticleProcurementProfile(client, id, body.procurement, audit.user_id);
+    const created = await repoCreateArticleTx(client, body, audit);
+    const id = created.id;
 
     if (idempotencyKey) {
       await client.query(
@@ -2852,26 +2913,6 @@ export async function repoCreateArticle(
         [idempotencyKey, requestHash, id]
       );
     }
-
-    await insertAuditLog(client, audit, {
-      action: "stock.articles.create",
-      entity_type: "articles",
-      entity_id: id,
-      details: {
-        code: generatedCode,
-        designation: body.designation,
-        article_type: normalized.article_type,
-        article_category: normalized.article_category,
-        article_categories: normalized.article_categories,
-        family_code: normalized.family_code,
-        version_number: normalized.version_number,
-        plan_index: normalized.plan_index,
-        status: normalized.status,
-        projet_id: normalized.projet_id,
-        stock_managed: normalized.stock_managed,
-        is_sold: body.is_sold,
-      },
-    });
 
     await client.query("COMMIT");
 
