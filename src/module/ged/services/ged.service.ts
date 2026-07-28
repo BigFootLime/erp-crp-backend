@@ -51,6 +51,21 @@ export type GedActor = { id: number; role: string | null };
 
 type UploadedFile = { buffer?: Buffer; originalname?: string; mimetype?: string; size?: number };
 
+/**
+ * Relit un document APRÈS le commit.
+ *
+ * `repoGetDocumentDetail` ouvre sa propre connexion : appelé à l'intérieur d'une
+ * transaction encore ouverte, il ne verrait rien de ce qu'elle vient d'écrire.
+ * Défaut constaté au premier dépôt réel le 2026-07-28.
+ */
+async function readDetailOrFail(documentId: string): Promise<GedDocumentDetail> {
+  const detail = await repoGetDocumentDetail(documentId);
+  if (!detail) {
+    throw new HttpError(500, "GED_DOCUMENT_NOT_FOUND", "Document enregistré mais illisible.");
+  }
+  return detail;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Lecture                                                                    */
 /* -------------------------------------------------------------------------- */
@@ -144,8 +159,9 @@ export async function uploadDocument(
   //    et se nettoie ; une métadonnée sans fichier est un mensonge durable.
   const written = await writeBlob(accepted.buffer);
 
+  let documentId: string;
   try {
-    return await withGedTransaction(async (tx: PoolClient) => {
+    documentId = await withGedTransaction(async (tx: PoolClient) => {
       const duplicate = await repoFindDocumentByBlobHash(tx, written.sha256);
       if (duplicate) {
         throw new HttpError(
@@ -198,15 +214,17 @@ export async function uploadDocument(
         },
       });
 
-      const detail = await repoGetDocumentDetail(created.document_id);
-      if (!detail) throw new HttpError(500, "GED_DOCUMENT_NOT_FOUND", "Document créé mais illisible.");
-      return detail;
+      return created.document_id;
     });
   } catch (err) {
     // Compensation : uniquement si le blob venait d'être créé par ce dépôt.
     if (!written.deduplicated) await removeBlobIfOrphan(written.storage_key);
     throw err;
   }
+
+  // Relecture APRÈS le commit : `repoGetDocumentDetail` ouvre sa propre
+  // connexion et ne verrait rien d'une transaction encore ouverte.
+  return readDetailOrFail(documentId);
 }
 
 export async function uploadNewVersion(
@@ -245,7 +263,7 @@ export async function uploadNewVersion(
   const written = await writeBlob(accepted.buffer);
 
   try {
-    return await withGedTransaction(async (tx: PoolClient) => {
+    await withGedTransaction(async (tx: PoolClient) => {
       const blob = await repoUpsertBlob(tx, {
         sha256: written.sha256,
         size_bytes: written.size_bytes,
@@ -270,14 +288,14 @@ export async function uploadNewVersion(
         details: { version_number: version.version_number, sha256: written.sha256, size_bytes: written.size_bytes },
       });
 
-      const detail = await repoGetDocumentDetail(documentId);
-      if (!detail) throw new HttpError(500, "GED_DOCUMENT_NOT_FOUND", "Document illisible après ajout de version.");
-      return detail;
     });
   } catch (err) {
     if (!written.deduplicated) await removeBlobIfOrphan(written.storage_key);
     throw err;
   }
+
+  // Relecture APRÈS le commit, pour la même raison que dans `uploadDocument`.
+  return readDetailOrFail(documentId);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -290,7 +308,7 @@ async function transitionVersion(
   target: GedVersionStatus,
   options: { comment?: string | null; requireDistinctApprover?: boolean }
 ): Promise<GedDocumentDetail> {
-  return withGedTransaction(async (tx) => {
+  const documentId = await withGedTransaction(async (tx) => {
     const version = await repoGetVersionForUpdate(tx, versionId);
     if (!version) throw new HttpError(404, "GED_VERSION_NOT_FOUND", "Version introuvable.");
 
@@ -334,10 +352,11 @@ async function transitionVersion(
       details: { from: version.status, to: target, version_number: version.version_number },
     });
 
-    const detail = await repoGetDocumentDetail(version.document_id);
-    if (!detail) throw new HttpError(500, "GED_DOCUMENT_NOT_FOUND", "Document illisible après transition.");
-    return detail;
+    return version.document_id;
   });
+
+  // Relecture APRÈS le commit, pour la même raison que dans `uploadDocument`.
+  return readDetailOrFail(documentId);
 }
 
 export async function submitVersion(actor: GedActor, versionId: string, comment: string | null) {
