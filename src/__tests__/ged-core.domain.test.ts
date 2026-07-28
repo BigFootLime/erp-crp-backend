@@ -257,3 +257,38 @@ describe("GED — clé de coffre", () => {
     expect(() => storageKeyForSha256("../../escape")).toThrowError(HttpError);
   });
 });
+
+/*
+ * Régressions constatées en conditions réelles le 2026-07-28, lors du premier
+ * dépôt de bout en bout sur HyperBox2. Les deux étaient invisibles en test
+ * unitaire mocké : elles ne se manifestent que contre un vrai PostgreSQL avec
+ * le rôle applicatif de moindre privilège.
+ */
+describe("GED — régressions SQL constatées en production", () => {
+  it("n'utilise jamais ON CONFLICT DO UPDATE sur ged_blobs", async () => {
+    // `cerp_app` n'a que SELECT et INSERT sur ged_blobs : un DO UPDATE, même
+    // sans effet, exige le privilège UPDATE et échoue en 42501.
+    const source = await import("node:fs/promises").then((fs) =>
+      fs.readFile(new URL("../module/ged/repository/ged.repository.ts", import.meta.url), "utf8")
+    );
+    const blobInsert = source.slice(
+      source.indexOf("INSERT INTO public.ged_blobs"),
+      source.indexOf("INSERT INTO public.ged_blobs") + 400
+    );
+    expect(blobInsert).toContain("ON CONFLICT (sha256) DO NOTHING");
+    expect(blobInsert).not.toContain("DO UPDATE");
+  });
+
+  it("ne combine jamais FOR UPDATE avec une fonction d'agrégat", async () => {
+    // PostgreSQL refuse « FOR UPDATE is not allowed with aggregate functions ».
+    const source = await import("node:fs/promises").then((fs) =>
+      fs.readFile(new URL("../module/ged/repository/ged.repository.ts", import.meta.url), "utf8")
+    );
+    const codeQuery = source.slice(
+      source.indexOf("async function nextDocumentCode"),
+      source.indexOf("export async function repoCreateDocumentWithVersion")
+    );
+    expect(codeQuery).toContain("pg_advisory_xact_lock");
+    expect(codeQuery).not.toMatch(/MAX\([\s\S]*FOR UPDATE/);
+  });
+});

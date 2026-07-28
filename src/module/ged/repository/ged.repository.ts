@@ -198,14 +198,29 @@ export async function repoUpsertBlob(
 ): Promise<{ id: string }> {
   // Le contenu étant adressé par empreinte, un dépôt identique réutilise le
   // blob existant au lieu d'en créer un second.
-  const res = await tx.query(
+  //
+  // `DO NOTHING` et non `DO UPDATE` : un blob n'est JAMAIS modifié, et le rôle
+  // applicatif ne dispose volontairement que de SELECT et INSERT sur cette table.
+  // Un `DO UPDATE`, même sans effet réel, exigerait le privilège UPDATE et
+  // échouerait en 42501 — constaté en conditions réelles le 2026-07-28.
+  const inserted = await tx.query(
     `INSERT INTO public.ged_blobs (sha256, size_bytes, mime_type, storage_key, created_by)
      VALUES ($1, $2, $3, $4, $5)
-     ON CONFLICT (sha256) DO UPDATE SET sha256 = EXCLUDED.sha256
+     ON CONFLICT (sha256) DO NOTHING
      RETURNING id::text AS id`,
     [input.sha256, input.size_bytes, input.mime_type, input.storage_key, input.created_by]
   );
-  return { id: String(res.rows[0].id) };
+  if (inserted.rows[0]) return { id: String(inserted.rows[0].id) };
+
+  // Conflit : le contenu existe déjà, on réutilise son identité.
+  const existing = await tx.query(
+    `SELECT id::text AS id FROM public.ged_blobs WHERE sha256 = $1`,
+    [input.sha256]
+  );
+  if (!existing.rows[0]) {
+    throw new HttpError(500, "GED_BLOB_LOOKUP", "Blob introuvable après conflit d'insertion.");
+  }
+  return { id: String(existing.rows[0].id) };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -213,14 +228,20 @@ export async function repoUpsertBlob(
 /* -------------------------------------------------------------------------- */
 
 async function nextDocumentCode(tx: Pick<PoolClient, "query">, domain: string): Promise<string> {
-  // Séquence portée par la base et non par un MAX()+1 applicatif : deux dépôts
-  // simultanés ne peuvent pas produire le même code.
   const prefix = formatDocumentCode(domain, 1).split("-")[0];
+
+  // Verrou consultatif de transaction, porté par le préfixe de domaine : deux
+  // dépôts simultanés dans le même domaine ne peuvent pas produire le même code.
+  //
+  // `FOR UPDATE` serait le réflexe, mais PostgreSQL l'interdit avec une fonction
+  // d'agrégat — constaté en conditions réelles le 2026-07-28. Le verrou consultatif
+  // sérialise la génération sans verrouiller de ligne.
+  await tx.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`ged_code:${prefix}`]);
+
   const res = await tx.query(
     `SELECT COALESCE(MAX(NULLIF(regexp_replace(code, '^[A-Z]+-', ''), '')::bigint), 0) + 1 AS next
        FROM public.ged_documents
-      WHERE code LIKE $1 || '-%'
-      FOR UPDATE`,
+      WHERE code LIKE $1 || '-%'`,
     [prefix]
   );
   return formatDocumentCode(domain, Number(res.rows[0].next));
