@@ -48,6 +48,8 @@ import tempsDeplacementsRoutes from "../module/temps-deplacements/routes/temps-d
 import projectOfficeRoutes from "../module/project-office/routes/project-office.routes"
 import gedRoutes from "../module/ged/routes/ged.routes"
 import gammesRoutes from "../module/gammes/routes/gammes.routes"
+import surfaceFinishRoutes from "../module/surface-finish/routes/surface-finish.routes"
+import surfaceFinishGammeRoutes from "../module/surface-finish/routes/surface-finish-gamme.routes"
 import pieceTechniqueVersionsRoutes from "../module/gammes/routes/piece-technique-versions.routes"
 import importAssistantRoutes from "../module/import-assistant/routes/import-assistant.routes"
 import accessControlRoutes from "../module/access-control/routes/access-control.routes"
@@ -77,7 +79,13 @@ router.use("/pieces-families", piecesfamiliesRoutes)
 router.use("/centre-frais", CFRoutes)     
 router.use("/pieces-techniques", piecesTechniquesRoutes)
 router.use("/piece-technique-versions", pieceTechniqueVersionsRoutes) // GPAO B2.2 — gammes par version
+// Bibliothèque de finitions (#210) : la configuration de la finition d'une
+// opération est montée AVANT le routeur historique des gammes pour déclarer ses
+// capacités fines sans hériter des gardes hérités. Le routeur historique reste
+// inchangé pour les écrans en production.
+router.use("/gammes", surfaceFinishGammeRoutes)
 router.use("/gammes", gammesRoutes)                                   // GPAO B2.2 — gammes + opérations
+router.use("/finitions", surfaceFinishRoutes)                         // #210 — bibliothèque de finitions
 router.use("/audit-logs", auditLogsRoutes)
 // Tour de contrôle des accès (#326) montée AVANT le routeur admin historique : elle
 // est gardée par le statut superadmin et ne doit pas hériter de son authorizeRole.
