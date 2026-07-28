@@ -54,6 +54,12 @@ export const CODE_FORMATS = {
     example: "ART-USI-000042",
     hintText: "Format attendu: ART-USI-000042",
   },
+  // #210 — Finition de surface : code alloué par le serveur, puis immuable.
+  surfaceFinish: {
+    regex: /^FIN-\d{6}$/,
+    example: "FIN-000042",
+    hintText: "Format attendu: FIN-000042",
+  },
   nonConformity: {
     regex: /^NC-\d{4}-\d{5}$/,
     example: "NC-2026-00001",

@@ -108,9 +108,11 @@ export const MODULE_CATALOG: readonly ModuleCatalogEntry[] = [
   {
     module_key: "pieces-techniques",
     label: "Données techniques",
-    description: "Pièces techniques, versions, gammes et dossiers d’opération.",
+    description: "Pièces techniques, versions, gammes, finitions et dossiers d’opération.",
     category: "Production",
-    api_prefixes: ["/pieces-techniques", "/piece-technique-versions", "/gammes", "/dossiers"],
+    // `/finitions` (#210) rejoint le module Données techniques : la bibliothèque
+    // de finitions est un référentiel Méthodes, pas un module d'accès distinct.
+    api_prefixes: ["/pieces-techniques", "/piece-technique-versions", "/gammes", "/finitions", "/dossiers"],
     nav_page_keys: ["pieces-techniques"],
     is_protected: false,
     sort_order: 100,

@@ -203,6 +203,18 @@ export async function generateMetrologieImpactCode(
   return generateTransactionalBusinessCode(tx, { prefix: "MIA", date: params?.date, width: 5 });
 }
 
+/**
+ * #210 — Finition de surface : FIN-NNNNNN.
+ *
+ * Le code visible est alloué par le SERVEUR dans la transaction de création ;
+ * un code proposé par l'interface n'est jamais retenu, et le code attribué est
+ * ensuite immuable (trigger `fn_protect_surface_finish_code_210`).
+ */
+export async function generateSurfaceFinishCode(tx: DbQueryer): Promise<string> {
+  const seq = await nextCodeValue(tx, "FIN");
+  return `FIN-${pad(seq, 6)}`;
+}
+
 /** #172 — Bon de commande fournisseur : BCF-AAAA-NNNN, alloué en transaction, immuable. */
 export async function generateCommandeFournisseurCode(tx: DbQueryer, params?: { date?: Date }): Promise<string> {
   return generateTransactionalBusinessCode(tx, { prefix: "BCF", date: params?.date });
