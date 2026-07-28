@@ -13,11 +13,17 @@
 --   and non_conformity_dispositions.
 --
 -- FIX
---   Give ownership of every public application table back to cerp_app, EXCEPT the two
---   deliberately append-only tables (erp_audit_logs, hr_time_events) which MUST stay
---   postgres-owned with only SELECT,INSERT granted to cerp_app — a table owner bypasses
---   REVOKE and can DISABLE TRIGGER, so immutability requires ownership off the app role
---   (see 20260707_erp_audit_logs_append_only.sql, 20260709_hr_time_events_append_only.sql).
+--   Give ownership of every public application table back to cerp_app, EXCEPT the
+--   deliberately append-only tables (erp_audit_logs, hr_time_events,
+--   surface_finish_command_receipts) which MUST stay postgres-owned with only
+--   SELECT,INSERT granted to cerp_app — a table owner bypasses REVOKE and can
+--   DISABLE TRIGGER, so immutability requires ownership off the app role
+--   (see 20260707_erp_audit_logs_append_only.sql, 20260709_hr_time_events_append_only.sql,
+--   20260728_surface_finish_library_210.sql).
+--
+-- 2026-07-28 (#210) — `surface_finish_command_receipts` rejoint la liste : un reçu
+--   d'idempotence qui peut être réécrit ne prouve plus rien. Le rendre cerp_app-owned
+--   annulerait silencieusement le REVOKE UPDATE, DELETE posé par son patch.
 --
 -- PROPERTIES
 --   Idempotent. Non-destructive (no row is inserted/updated/deleted). Re-runnable.
@@ -34,7 +40,7 @@ BEGIN
   FOR r IN
     SELECT tablename FROM pg_tables
     WHERE schemaname = 'public' AND tableowner = 'postgres'
-      AND tablename NOT IN ('erp_audit_logs', 'hr_time_events')
+      AND tablename NOT IN ('erp_audit_logs', 'hr_time_events', 'surface_finish_command_receipts')
   LOOP
     EXECUTE format('ALTER TABLE public.%I OWNER TO cerp_app', r.tablename);
     RAISE NOTICE 'owner -> cerp_app: %', r.tablename;
@@ -56,13 +62,22 @@ END $$;
 DO $$
 DECLARE t text; v_seq text;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['erp_audit_logs', 'hr_time_events'] LOOP
+  FOREACH t IN ARRAY ARRAY['erp_audit_logs', 'hr_time_events', 'surface_finish_command_receipts'] LOOP
     IF to_regclass('public.' || t) IS NOT NULL THEN
       EXECUTE format('ALTER TABLE public.%I OWNER TO postgres', t);
       EXECUTE format('REVOKE ALL ON public.%I FROM cerp_app', t);
       EXECUTE format('REVOKE UPDATE, DELETE, TRUNCATE ON public.%I FROM PUBLIC', t);
       EXECUTE format('GRANT SELECT, INSERT ON public.%I TO cerp_app', t);
-      SELECT pg_get_serial_sequence('public.' || t, 'id') INTO v_seq;
+      -- `pg_get_serial_sequence` LÈVE une erreur si la colonne n'existe pas, elle ne
+      -- renvoie pas NULL. Une table append-only sans colonne `id` (clé naturelle,
+      -- ex. surface_finish_command_receipts) faisait donc échouer TOUT le script.
+      v_seq := NULL;
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = t AND column_name = 'id'
+      ) THEN
+        SELECT pg_get_serial_sequence('public.' || t, 'id') INTO v_seq;
+      END IF;
       IF v_seq IS NOT NULL THEN
         EXECUTE format('ALTER SEQUENCE %s OWNER TO postgres', v_seq);
         EXECUTE format('GRANT USAGE, SELECT ON SEQUENCE %s TO cerp_app', v_seq);
