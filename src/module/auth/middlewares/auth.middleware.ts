@@ -1,7 +1,11 @@
 import { Request, Response, NextFunction, RequestHandler } from 'express';
 import jwt from 'jsonwebtoken';
 import { stripQueryFromUrl } from '../../../utils/logPath';
-import { hasAnyAssignedRole, normalizeAssignedRoles } from '../domain/roles';
+import {
+  effectiveRoleHasAny,
+  hasAnyAssignedRole,
+  normalizeAssignedRoles,
+} from '../domain/roles';
 
 interface JwtPayload {
   id: number;
@@ -76,7 +80,13 @@ export const authorizeRole = (...roles: string[]) => {
   
       const primaryRole = req.user.primary_role ?? req.user.role;
       const assignedRoles = normalizeAssignedRoles(primaryRole, req.user.roles);
-      if (!hasAnyAssignedRole(primaryRole, assignedRoles, roles)) {
+      // Multi-role sessions expose both the raw assignments and the explicit
+      // authorization aliases in `role`. Exact guards must understand both:
+      // e.g. `Assistante polyvalente` is deliberately aliased to `Secretaire`,
+      // while `Directeur Technique` is not aliased to the global `Directeur`.
+      const hasAssignedMatch = hasAnyAssignedRole(primaryRole, assignedRoles, roles);
+      const hasEffectiveMatch = effectiveRoleHasAny(req.user.role, roles);
+      if (!hasAssignedMatch && !hasEffectiveMatch) {
         console.warn(
           JSON.stringify({
             type: "auth_forbidden",
