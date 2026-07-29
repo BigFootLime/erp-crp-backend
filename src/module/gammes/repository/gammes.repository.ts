@@ -3,6 +3,7 @@
 import type { PoolClient } from "pg"
 import db from "../../../config/database"
 import { HttpError } from "../../../utils/httpError"
+import { resolveGammeName } from "../domain/gamme-naming"
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
 import type { AuditContext } from "../../pieces-techniques/repository/pieces-techniques.repository"
 import type {
@@ -113,11 +114,48 @@ export async function repoListGammesByVersion(versionId: string): Promise<GammeR
   return res.rows
 }
 
+/**
+ * #227 — éléments de nommage automatique d'une gamme : code métier et désignation de la
+ * pièce, indice de la version, rang de la gamme sur cet indice. Le nom d'une gamme est
+ * une conséquence, pas une opinion : c'est le serveur qui le calcule.
+ */
+async function readGammeNamingContext(
+  tx: Pick<PoolClient, "query">,
+  versionId: string
+): Promise<{ codePiece: string | null; designation: string | null; indice: string | null; rank: number }> {
+  const res = await tx.query<{
+    code_piece: string | null
+    designation: string | null
+    indice: string | null
+    existing: string
+  }>(
+    `SELECT p.code_piece,
+            p.designation,
+            v.indice,
+            (SELECT count(*) FROM public.gammes g WHERE g.piece_technique_version_id = v.id)::text AS existing
+       FROM public.piece_technique_versions v
+       JOIN public.pieces_techniques p ON p.id = v.piece_technique_id
+      WHERE v.id = $1`,
+    [versionId]
+  )
+  const row = res.rows[0]
+  return {
+    codePiece: row?.code_piece ?? null,
+    designation: row?.designation ?? null,
+    indice: row?.indice ?? null,
+    rank: Number(row?.existing ?? "0") + 1,
+  }
+}
+
 export async function repoCreateGamme(versionId: string, body: CreateGammeBodyDTO, audit: AuditContext): Promise<GammeRow> {
   const client = await db.connect()
   try {
     await client.query("BEGIN")
     await assertVersionExists(client, versionId)
+
+    const naming = await readGammeNamingContext(client, versionId)
+    const nom = resolveGammeName(body.nom, naming)
+
     // une seule gamme courante par version
     if (body.is_current) {
       await client.query(
@@ -133,7 +171,7 @@ export async function repoCreateGamme(versionId: string, body: CreateGammeBodyDT
        RETURNING ${GAMME_COLS}`,
       [
         versionId,
-        body.nom,
+        nom,
         body.code ?? null,
         body.designation ?? null,
         body.commentaire ?? null,
