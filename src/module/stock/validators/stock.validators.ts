@@ -97,6 +97,28 @@ export const listArticlesQuerySchema = z.object({
 
 export type ListArticlesQueryDTO = z.infer<typeof listArticlesQuerySchema>;
 
+/**
+ * #226 — Détection d'articles similaires AVANT création.
+ *
+ * « Article manquant » veut dire ABSENT DU RÉFÉRENTIEL, jamais « stock à zéro » :
+ * cette recherche ignore donc totalement les quantités et interroge la seule
+ * table `articles`. Les articles archivés ou inactifs SONT retournés — « il
+ * existe déjà mais il a été archivé » est précisément ce qu'il faut savoir
+ * avant d'en créer un second.
+ */
+export const similarArticlesQuerySchema = z
+  .object({
+    designation: z.string().trim().min(2, "Deux caractères au minimum.").max(300),
+    article_category: articleCategorySchema.optional(),
+    /** CAT métier (`article_category_link`), plus fine que la catégorie primaire. */
+    business_category: z.string().trim().min(1).max(60).optional(),
+    family_code: z.string().trim().min(1).max(40).optional(),
+    piece_technique_id: z.string().uuid().optional(),
+    limit: z.coerce.number().int().min(1).max(20).optional().default(8),
+  })
+  .strict();
+export type SimilarArticlesQueryDTO = z.infer<typeof similarArticlesQuerySchema>;
+
 export const listArticleFamiliesQuerySchema = z.object({
   category: articleCategorySchema.optional(),
 });

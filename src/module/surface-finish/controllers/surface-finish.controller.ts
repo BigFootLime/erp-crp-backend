@@ -8,25 +8,34 @@ import type { Request, RequestHandler } from "express";
 import { HttpError } from "../../../utils/httpError";
 import type { AuditContext } from "../../pieces-techniques/repository/pieces-techniques.repository";
 import {
+  archiveFinishSVC,
   attachRevisionDocumentSVC,
   capabilitiesSVC,
   confirmOperationFinishSVC,
   createFinishDraftSVC,
   createRevisionSVC,
   detachOperationFinishSVC,
+  findSimilarFinishesSVC,
   getFinishSVC,
   getOperationFinishSVC,
   listFinishesSVC,
   listFinishFamiliesSVC,
+  listFinishHistorySVC,
   listRevisionDocumentsSVC,
   previewOperationFinishSVC,
+  reactivateFinishSVC,
   revisionImpactSVC,
+  setFinishFavoriteSVC,
   transitionRevisionSVC,
   updateFinishDraftSVC,
   updateRevisionSVC,
   type Actor,
 } from "../services/surface-finish.service";
-import type { ListFinishesQueryDTO } from "../validators/surface-finish.validators";
+import type {
+  FinishHistoryQueryDTO,
+  ListFinishesQueryDTO,
+  SimilarFinishesQueryDTO,
+} from "../validators/surface-finish.validators";
 
 function requireUser(req: Request): { id: number; role: string | null } {
   const user = req.user;
@@ -96,7 +105,8 @@ export const listFinishFamilies: RequestHandler = async (_req, res, next) => {
 
 export const listFinishes: RequestHandler = async (req, res, next) => {
   try {
-    res.json(await listFinishesSVC(req.query as unknown as ListFinishesQueryDTO));
+    // L'identité du lecteur vient du jeton : c'est elle qui décide de `favori`.
+    res.json(await listFinishesSVC(req.query as unknown as ListFinishesQueryDTO, requireUser(req).id));
   } catch (err) {
     next(err);
   }
@@ -104,7 +114,65 @@ export const listFinishes: RequestHandler = async (req, res, next) => {
 
 export const getFinish: RequestHandler = async (req, res, next) => {
   try {
-    res.json(await getFinishSVC(routeParam(req, "finishId")));
+    res.json(await getFinishSVC(routeParam(req, "finishId"), requireUser(req).id));
+  } catch (err) {
+    next(err);
+  }
+};
+
+/* -------------------------------------------------------------------------- */
+/* #226 — Doublons, favoris, archivage, historique                            */
+/* -------------------------------------------------------------------------- */
+
+export const listSimilarFinishes: RequestHandler = async (req, res, next) => {
+  try {
+    res.json(await findSimilarFinishesSVC(req.query as unknown as SimilarFinishesQueryDTO));
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const addFinishFavorite: RequestHandler = async (req, res, next) => {
+  try {
+    res.json(await setFinishFavoriteSVC(routeParam(req, "finishId"), actorOf(req), true));
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const removeFinishFavorite: RequestHandler = async (req, res, next) => {
+  try {
+    res.json(await setFinishFavoriteSVC(routeParam(req, "finishId"), actorOf(req), false));
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const archiveFinish: RequestHandler = async (req, res, next) => {
+  try {
+    res.json(await archiveFinishSVC(routeParam(req, "finishId"), req.body, actorOf(req), buildAuditContext(req)));
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const reactivateFinish: RequestHandler = async (req, res, next) => {
+  try {
+    res.json(await reactivateFinishSVC(routeParam(req, "finishId"), req.body, actorOf(req), buildAuditContext(req)));
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const listFinishHistory: RequestHandler = async (req, res, next) => {
+  try {
+    res.json(
+      await listFinishHistorySVC(
+        routeParam(req, "finishId"),
+        req.query as unknown as FinishHistoryQueryDTO,
+        actorOf(req)
+      )
+    );
   } catch (err) {
     next(err);
   }

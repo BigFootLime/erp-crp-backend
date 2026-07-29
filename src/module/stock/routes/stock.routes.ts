@@ -46,6 +46,7 @@ import {
   listStockInventorySessions,
   listStockArticleDocuments,
   listStockArticles,
+  listSimilarStockArticles,
   listStockBalances,
   listStockEmplacements,
   listStockLots,
@@ -126,6 +127,9 @@ router.post("/matiere-sous-etats", requireArticleWrite, createStockMatiereSousEt
 router.get("/articles", requireStockCapability("read"), listStockArticles);
 router.get("/articles/kpis", requireStockCapability("read"), getStockArticlesKpis);
 router.get("/articles/code-preview", requireStockCapability("read"), previewStockArticleCode);
+// #226 — Déclarée AVANT `/articles/:id` : sans cela, « similaires » serait lu
+// comme un identifiant d'article.
+router.get("/articles/similaires", requireStockCapability("read"), listSimilarStockArticles);
 router.post("/articles", requireArticleWrite, createStockArticle);
 router.get("/articles/:id", requireStockCapability("read"), getStockArticle);
 router.patch("/articles/:id", requireArticleWrite, updateStockArticle);

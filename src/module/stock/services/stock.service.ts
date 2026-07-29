@@ -40,6 +40,7 @@ import type {
   ListAnalyticsQueryDTO,
   ListInventorySessionsQueryDTO,
   ListArticlesQueryDTO,
+  SimilarArticlesQueryDTO,
   ListArticleVersionsQueryDTO,
   ListArticleWhereUsedQueryDTO,
   ListArticleFamiliesQueryDTO,
@@ -134,6 +135,10 @@ import {
   repoDeactivateMagasin,
   repoActivateMagasin,
 } from "../repository/stock.repository";
+import {
+  repoFindSimilarArticles,
+  type SimilarArticleMatch,
+} from "../repository/stock-article-similarity.repository";
 
 export async function resolveStockOpeningReferencesSVC(
   inputs: StockOpeningReferenceInput[]
@@ -208,6 +213,11 @@ export async function closeStockInventorySessionSVC(
 
 export async function listStockArticlesSVC(filters: ListArticlesQueryDTO) {
   return repoListArticles(filters);
+}
+
+/** #226 — Consultatif : ne crée rien, ne verrouille rien, ne bloque rien. */
+export async function findSimilarStockArticlesSVC(query: SimilarArticlesQueryDTO): Promise<SimilarArticleMatch[]> {
+  return repoFindSimilarArticles(query);
 }
 
 export async function getStockArticleSVC(id: string, includeCosts = false): Promise<StockArticleDetail | null> {
