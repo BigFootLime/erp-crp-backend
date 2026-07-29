@@ -11,10 +11,14 @@ import {
   createCostCenter,
   createMachineFamily,
   getCostCenter,
+  getMachineQualification,
   listCostCenterRates,
   listCostCenters,
   listMachineFamilies,
   listMachineOptions,
+  listMachinesForQualification,
+  previewMachineQualification,
+  qualifyMachine,
   readMethodesCapabilities,
   updateCostCenter,
   updateMachineFamily,
@@ -26,6 +30,9 @@ import {
   listCostCentersQuerySchema,
   listFamiliesQuerySchema,
   listMachineOptionsQuerySchema,
+  listMachinesQualificationQuerySchema,
+  machineIdParamSchema,
+  previewMachineQualificationQuerySchema,
   validate,
 } from "../validators/methodes.validators";
 
@@ -89,6 +96,39 @@ router.get(
   requireMethodesCapability("referentiel_read"),
   validate(listMachineOptionsQuerySchema, "query"),
   listMachineOptions
+);
+
+/* Qualification du parc machine (#233).
+ * Déclaré APRÈS `/machines` et sur des chemins distincts : `/machines/parc` ne
+ * peut pas être capturé comme un identifiant puisqu'il n'est pas un UUID, mais
+ * l'ordre reste explicite pour qui relira ce fichier.
+ * LIRE le parc relève du référentiel ; le QUALIFIER est un acte Méthodes
+ * (`referentiel_write`), au même titre que créer une famille. */
+router.get(
+  "/machines/parc",
+  requireMethodesCapability("referentiel_read"),
+  validate(listMachinesQualificationQuerySchema, "query"),
+  listMachinesForQualification
+);
+router.get(
+  "/machines/:machineId/qualification",
+  requireMethodesCapability("referentiel_read"),
+  validate(machineIdParamSchema, "params"),
+  getMachineQualification
+);
+// Aperçu d'impact AVANT décision : lecture seule, jamais d'écriture.
+router.get(
+  "/machines/:machineId/qualification/impact",
+  requireMethodesCapability("referentiel_read"),
+  validate(machineIdParamSchema, "params"),
+  validate(previewMachineQualificationQuerySchema, "query"),
+  previewMachineQualification
+);
+router.patch(
+  "/machines/:machineId/qualification",
+  requireMethodesCapability("referentiel_write"),
+  validate(machineIdParamSchema, "params"),
+  qualifyMachine
 );
 
 export default router;

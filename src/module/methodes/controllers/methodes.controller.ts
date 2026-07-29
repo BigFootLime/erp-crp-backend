@@ -9,10 +9,14 @@ import {
   createCostCenterSVC,
   createMachineFamilySVC,
   getCostCenterSVC,
+  getMachineQualificationSVC,
   listCostCenterRatesSVC,
   listCostCentersSVC,
   listMachineFamiliesSVC,
   listMachineOptionsSVC,
+  listMachinesForQualificationSVC,
+  previewMachineQualificationSVC,
+  qualifyMachineSVC,
   updateCostCenterSVC,
   updateMachineFamilySVC,
 } from "../services/methodes.service";
@@ -24,6 +28,9 @@ import {
   listCostCentersQuerySchema,
   listFamiliesQuerySchema,
   listMachineOptionsQuerySchema,
+  listMachinesQualificationQuerySchema,
+  previewMachineQualificationQuerySchema,
+  qualifyMachineSchema,
   updateCostCenterSchema,
   updateFamilySchema,
   validatedQuery,
@@ -185,6 +192,70 @@ export const listMachineOptions: RequestHandler = async (req, res, next) => {
         include_unselectable: query.include_unselectable,
       })
     );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/* -------------------------------------------------------------------------- */
+/* Qualification du parc machine (#233)                                       */
+/* -------------------------------------------------------------------------- */
+
+export const listMachinesForQualification: RequestHandler = async (req, res, next) => {
+  try {
+    const query = validatedQuery<ReturnType<(typeof listMachinesQualificationQuerySchema)["parse"]>>(req);
+    res.json(
+      await listMachinesForQualificationSVC({
+        search: query.search ?? null,
+        only_unqualified: query.only_unqualified,
+        include_archived: query.include_archived,
+      })
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getMachineQualification: RequestHandler = async (req, res, next) => {
+  try {
+    const out = await getMachineQualificationSVC(req.params.machineId);
+    if (!out) throw new HttpError(404, "NOT_FOUND", "Machine introuvable");
+    res.json(out);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** Aperçu d'impact : lecture seule, appelée avant de confirmer une décision. */
+export const previewMachineQualification: RequestHandler = async (req, res, next) => {
+  try {
+    const query = validatedQuery<ReturnType<(typeof previewMachineQualificationQuerySchema)["parse"]>>(req);
+    const out = await previewMachineQualificationSVC(req.params.machineId, query.machine_family_code ?? null);
+    if (!out) throw new HttpError(404, "NOT_FOUND", "Machine introuvable");
+    res.json(out);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const qualifyMachine: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildMethodesAuditContext(req);
+    const body = qualifyMachineSchema.parse(req.body);
+    const out = await qualifyMachineSVC(
+      req.params.machineId,
+      {
+        machine_family_code: body.machine_family_code,
+        cf_id: body.cf_id,
+        valid_from: body.valid_from ?? null,
+        valid_to: body.valid_to ?? null,
+        motif: body.motif,
+        expected_updated_at: body.expected_updated_at,
+      },
+      audit
+    );
+    if (!out) throw new HttpError(404, "NOT_FOUND", "Machine introuvable");
+    res.json(out);
   } catch (error) {
     next(error);
   }
