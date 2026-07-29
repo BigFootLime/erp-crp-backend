@@ -32,21 +32,28 @@ describe("Gammes — validators", () => {
 })
 
 describe("Gammes — opérations", () => {
-  it("exige une désignation ; défauts temps/coef ; type_operation optionnel", () => {
+  // Refonte éditeur de gamme : `numero_operation`, `qte` et `coef` n'ont plus de
+  // valeur par défaut CÔTÉ VALIDATOR. Le serveur les résout (phase = max+10,
+  // quantité et coefficient hérités ou 1), pour que « non fourni » et « fourni à
+  // la valeur par défaut » restent distinguables lors d'une modification partielle.
+  it("accepte une opération minimale ; type_operation optionnel", () => {
     const ok = addGammeOperationSchema.safeParse({ body: { designation: "Tournage ébauche", type_operation: "TOURNAGE" } })
     expect(ok.success).toBe(true)
     if (ok.success) {
-      expect(ok.data.body.qte).toBe(1)
-      expect(ok.data.body.coef).toBe(1)
-      expect(ok.data.body.numero_operation).toBe(10)
+      expect(ok.data.body.qte).toBeUndefined()
+      expect(ok.data.body.coef).toBeUndefined()
+      expect(ok.data.body.numero_operation).toBeUndefined()
     }
-    expect(addGammeOperationSchema.safeParse({ body: {} }).success).toBe(false)
+    // La désignation est désormais optionnelle à la SAISIE : le centre de frais
+    // peut la générer. La publication, elle, exige une désignation figée.
+    expect(addGammeOperationSchema.safeParse({ body: {} }).success).toBe(true)
   })
 
-  it("découpage usinage — types d'opération attendus", () => {
+  it("découpage usinage — types d'opération attendus, DECOUPE incluse", () => {
     expect(operationTypeSchema.options).toEqual([
       "TOURNAGE",
       "FRAISAGE",
+      "DECOUPE",
       "REPRISE",
       "CONTROLE",
       "LAVAGE",
