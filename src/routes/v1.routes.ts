@@ -23,6 +23,7 @@ import reportingRoutes from "../module/facturation/routes/reporting.routes";
 import productionRoutes from "../module/production/routes/production.routes";
 import productionExecutionRoutes from "../module/production/routes/production-execution.routes";
 import productionStationRoutes from "../module/production/routes/station.routes";
+import ofVersioningRoutes from "../module/production/routes/of-versioning.routes";
 import qualiteRoutes from "../module/qualite/routes/qualite.routes";
 import quality360Routes from "../module/qualite/routes/quality-360.routes";
 import livraisonsRoutes from "../module/livraisons/routes/livraisons.routes";
@@ -110,6 +111,11 @@ router.use("/production/execution", productionExecutionRoutes);
 // duplique aucune commande d'exécution : il ajoute appareil, session, file de
 // travail, dossier OF numérique et transmission de poste.
 router.use("/production/station", productionStationRoutes);
+// Versioning d'OF, replanification, AR client et document (#370), monté AVANT le
+// routeur historique. Il ne duplique aucune commande existante : il ajoute les
+// révisions, le VISA de phase, la dérive de temps, le brouillon de planning, le
+// dossier d'AR à recaler et le document d'OF figé.
+router.use("/production/of-versioning", ofVersioningRoutes);
 router.use("/production", productionRoutes);
 router.use("/planning", planningRoutes);
 router.use("/programmations", programmationRoutes);
