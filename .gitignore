@@ -9,3 +9,6 @@
 
 # Generated Project Office population artifacts (regenerate; do not version)
 /scripts/project-office/out/
+
+# Rendus PDF de verification (CERP_PDF_PREVIEW=1), regenerables
+/outputs/
