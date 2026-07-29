@@ -75,6 +75,7 @@ import {
   versionIdParamSchema,
   versionStatusSchema,
 } from "../validators/versions.validators"
+import { canApprovePieceTechniqueVersion } from "../domain/pieces-techniques-rbac"
 
 const router = Router()
 
@@ -87,6 +88,14 @@ function isAdminRole(role: string | undefined): boolean {
 const requireAdmin: RequestHandler = (req, _res, next) => {
   if (!isAdminRole(req.user?.role)) {
     next(new HttpError(403, "FORBIDDEN", "Admin role required"))
+    return
+  }
+  next()
+}
+
+const requireVersionApproval: RequestHandler = (req, _res, next) => {
+  if (!canApprovePieceTechniqueVersion(req.user?.role)) {
+    next(new HttpError(403, "PIECE_VERSION_APPROVAL_FORBIDDEN", "Technical definition approval role required"))
     return
   }
   next()
@@ -126,7 +135,7 @@ router.post("/:id/create-or-link-article-fabrique", validate(idParamSchema), cre
 router.get("/:id/versions", validate(idParamSchema), listVersions)
 router.post("/:id/versions", validate(idParamSchema), validate(createVersionSchema), createVersion)
 router.patch("/:id/versions/:versionId", validate(versionIdParamSchema), validate(updateVersionSchema), updateVersion)
-router.patch("/:id/versions/:versionId/status", requireAdmin, validate(versionIdParamSchema), validate(versionStatusSchema), updateVersionStatus)
+router.patch("/:id/versions/:versionId/status", requireVersionApproval, validate(versionIdParamSchema), validate(versionStatusSchema), updateVersionStatus)
 router.post("/:id/versions/:versionId/create-next", validate(versionIdParamSchema), validate(createNextVersionSchema), createNextVersion)
 
 router.post("/:id/nomenclature", validate(idParamSchema), validate(addBomLineSchema), addBomLine)

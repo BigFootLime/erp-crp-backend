@@ -11,6 +11,7 @@ export const CLIENT_WRITE_ROLES = [
   "Directeur",
   "Administrateur Systeme et Reseau",
   "Secretaire",
+  "Commercial",
 ] as const;
 
 /**
@@ -18,7 +19,12 @@ export const CLIENT_WRITE_ROLES = [
  * IBAN/BIC = critique, masqué par défaut, complet uniquement pour compta/admin.
  * Faute de rôle comptabilité dédié, ce sont les rôles de gestion clients.
  */
-export const CLIENT_FINANCE_ROLES = CLIENT_WRITE_ROLES;
+export const CLIENT_FINANCE_ROLES = [
+  "Directeur",
+  "Administrateur Systeme et Reseau",
+  "Secretaire",
+  "Comptabilite",
+] as const;
 
 export function canViewClientFinance(role: string | undefined | null): boolean {
   return effectiveRoleHasAny(role, CLIENT_FINANCE_ROLES);

@@ -37,7 +37,7 @@ import {
 
 // RBAC capability tiers (validated with the business). Reads are open to any
 // authenticated internal user; writes and sensitive actions are role-gated.
-const WRITE: string[] = ["Directeur", "Administrateur Systeme et Reseau", "Secretaire", "Responsable Programmation", "Responsable Qualité"]
+const WRITE: string[] = ["Directeur", "Administrateur Systeme et Reseau", "Secretaire", "Responsable Programmation", "Responsable Qualité", "Achat"]
 const QUALIF: string[] = ["Directeur", "Administrateur Systeme et Reseau", "Responsable Qualité"]
 const ARCHIVE: string[] = ["Directeur", "Administrateur Systeme et Reseau"]
 
