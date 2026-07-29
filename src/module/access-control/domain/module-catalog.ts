@@ -112,8 +112,19 @@ export const MODULE_CATALOG: readonly ModuleCatalogEntry[] = [
     category: "Production",
     // `/finitions` (#210) rejoint le module Données techniques : la bibliothèque
     // de finitions est un référentiel Méthodes, pas un module d'accès distinct.
-    api_prefixes: ["/pieces-techniques", "/piece-technique-versions", "/gammes", "/finitions", "/dossiers"],
-    nav_page_keys: ["pieces-techniques"],
+    // Idem `/methodes` : familles machine, centres de frais tarifés et sélecteur
+    // de machines sont les référentiels de la gamme, pas un module à part.
+    api_prefixes: [
+      "/pieces-techniques",
+      "/piece-technique-versions",
+      "/gammes",
+      "/finitions",
+      "/dossiers",
+      "/methodes",
+    ],
+    // `methodes-centres-frais` est une page de CE module : sans elle dans la
+    // liste, l'entrée de navigation disparaîtrait pour tout compte filtré.
+    nav_page_keys: ["pieces-techniques", "methodes-centres-frais"],
     is_protected: false,
     sort_order: 100,
   },
