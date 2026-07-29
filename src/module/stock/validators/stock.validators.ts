@@ -89,6 +89,19 @@ export const listArticlesQuerySchema = z.object({
   is_active: z.preprocess(parseBoolean, z.boolean().optional()),
   lot_tracking: z.preprocess(parseBoolean, z.boolean().optional()),
   stock_managed: z.preprocess(parseBoolean, z.boolean().optional()),
+  /**
+   * #395 — Ne renvoyer que les articles VENDABLES en commande client.
+   *
+   * `article_category` n'accepte qu'UNE catégorie : il ne peut donc pas exprimer « les cinq
+   * catégories vendables ». Ce drapeau délègue la question au référentiel
+   * (`commande_client_selectable`), qui reste ainsi le seul endroit à modifier pour élargir
+   * ou restreindre — écran de création ET recherche de ligne suivent ensemble.
+   *
+   * ATTENTION : ce schéma est `.strict()`. Un frontend qui envoie ce paramètre à un backend
+   * qui ne le connaît pas encore reçoit un 400, pas un filtre ignoré. Les deux dépôts se
+   * déploient donc ensemble, backend d'abord.
+   */
+  commande_client_selectable: z.preprocess(parseBoolean, z.boolean().optional()),
   page: z.coerce.number().int().min(1).optional().default(1),
   pageSize: z.coerce.number().int().min(1).max(200).optional().default(20),
   sortBy: z.enum(["updated_at", "created_at", "code", "designation"]).optional().default("updated_at"),
