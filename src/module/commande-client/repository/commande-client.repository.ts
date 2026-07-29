@@ -40,6 +40,7 @@ import {
   createRecursiveOrdresFabrication,
   type GeneratedOfRef,
 } from "../../production/domain/of-generation";
+import { canLaunchInternalOrder } from "../domain/commande-client-rbac";
 
 function normalizeStoredPath(filePath: string) {
   const rel = path.isAbsolute(filePath) ? path.relative(process.cwd(), filePath) : filePath;
@@ -64,18 +65,6 @@ function coerceOrderType(value: unknown): CreateCommandeInput["order_type"] {
     if (v === "FERME" || v === "CADRE" || v === "INTERNE") return v as CreateCommandeInput["order_type"];
   }
   return "FERME";
-}
-
-function canLaunchInternalOrder(role: string | null | undefined): boolean {
-  if (!role) return false;
-  const normalized = role.trim().toLowerCase();
-  if (normalized.includes("admin") || normalized.includes("administrateur") || normalized.includes("directeur")) {
-    return true;
-  }
-  const isManager = normalized.includes("responsable") || normalized.includes("chef");
-  const isProduction =
-    normalized.includes("production") || normalized.includes("atelier") || normalized.includes("programmation");
-  return isManager && isProduction;
 }
 
 function sortColumn(sortBy: ListCommandesQueryDTO["sortBy"]) {

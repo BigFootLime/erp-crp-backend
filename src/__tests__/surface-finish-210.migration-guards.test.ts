@@ -10,7 +10,8 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const root = process.cwd();
-const read = (relative: string) => readFileSync(resolve(root, relative), "utf8");
+const read = (relative: string) =>
+  readFileSync(resolve(root, relative), "utf8").replace(/\r\n?/g, "\n");
 
 // Un script « lecture seule » ne doit contenir aucune INSTRUCTION d'écriture.
 // On ancre en début de ligne : `SELECT,INSERT,UPDATE` dans has_table_privilege()

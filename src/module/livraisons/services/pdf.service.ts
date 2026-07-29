@@ -5,6 +5,8 @@ import crypto from "node:crypto"
 import pool from "../../../config/database"
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
+import { readIssuerParty } from "../../../shared/documents/issuer-identity.repository"
+import { pickMention } from "../../../shared/pdf/legal-mentions"
 import { repoGetLivraisonDetail, repoGetDocumentName } from "../repository/livraisons.repository"
 
 import { renderBonLivraisonDocument } from "./bon-livraison-document"
@@ -24,13 +26,8 @@ async function ensureDocsDir(): Promise<string> {
   return uploadDir
 }
 
-async function getCompanyHeader(): Promise<string | null> {
-  const res = await pool.query<{ biller_name: string }>(
-    `SELECT biller_name FROM factureur ORDER BY biller_id ASC LIMIT 1`
-  )
-  const name = res.rows[0]?.biller_name
-  return typeof name === "string" && name.trim() ? name.trim() : null
-}
+// L'emetteur n'est plus reduit a sa raison sociale : `readIssuerParty` remonte aussi son
+// identite legale et ses mentions obligatoires, que le bon de livraison doit porter.
 
 export async function svcGetLatestLivraisonPdfDocument(id: string): Promise<{ document_id: string; version: number } | null> {
   const res = await pool.query<{ document_id: string; version: number }>(
@@ -64,11 +61,15 @@ export async function svcGenerateLivraisonPdf(bonLivraisonId: string, userId: nu
   const fileName = `Bon_livraison_${detail.bon_livraison.numero}.pdf`
   const filePath = path.join(docsDir, `${documentId}.pdf`)
 
+  const issuer = await readIssuerParty({
+    at: detail.bon_livraison.date_expedition ?? detail.bon_livraison.date_creation,
+  })
   const pdfBytes = await renderBonLivraisonDocument({
     header: detail.bon_livraison,
     lignes: detail.lignes,
     version,
-    company: await getCompanyHeader(),
+    company: pickMention(issuer, "company_name"),
+    issuer,
   })
   await fs.mkdir(path.dirname(filePath), { recursive: true })
   await fs.writeFile(filePath, pdfBytes)

@@ -13,9 +13,14 @@ import {
 // verify SQL sur cerp_test.)
 
 describe("Gammes — validators", () => {
-  it("exige un nom de gamme", () => {
+  // #227 — le nom n'est plus exigé du client : le serveur le calcule depuis la pièce et
+  // l'indice (module/gammes/domain/gamme-naming.ts, éprouvé par gamme-naming-227.test.ts).
+  // Un intitulé explicite reste accepté ; un nom VIDE reste refusé, car il signalerait une
+  // saisie perdue plutôt qu'une délégation au serveur.
+  it("accepte une création sans nom et laisse le serveur nommer", () => {
     expect(createGammeSchema.safeParse({ body: { nom: "Gamme principale" } }).success).toBe(true)
-    expect(createGammeSchema.safeParse({ body: {} }).success).toBe(false)
+    expect(createGammeSchema.safeParse({ body: {} }).success).toBe(true)
+    expect(createGammeSchema.safeParse({ body: { nom: "" } }).success).toBe(false)
   })
 
   it("statut par défaut BROUILLON + enum aligné sur la version", () => {
@@ -32,21 +37,28 @@ describe("Gammes — validators", () => {
 })
 
 describe("Gammes — opérations", () => {
-  it("exige une désignation ; défauts temps/coef ; type_operation optionnel", () => {
+  // Refonte éditeur de gamme : `numero_operation`, `qte` et `coef` n'ont plus de
+  // valeur par défaut CÔTÉ VALIDATOR. Le serveur les résout (phase = max+10,
+  // quantité et coefficient hérités ou 1), pour que « non fourni » et « fourni à
+  // la valeur par défaut » restent distinguables lors d'une modification partielle.
+  it("accepte une opération minimale ; type_operation optionnel", () => {
     const ok = addGammeOperationSchema.safeParse({ body: { designation: "Tournage ébauche", type_operation: "TOURNAGE" } })
     expect(ok.success).toBe(true)
     if (ok.success) {
-      expect(ok.data.body.qte).toBe(1)
-      expect(ok.data.body.coef).toBe(1)
-      expect(ok.data.body.numero_operation).toBe(10)
+      expect(ok.data.body.qte).toBeUndefined()
+      expect(ok.data.body.coef).toBeUndefined()
+      expect(ok.data.body.numero_operation).toBeUndefined()
     }
-    expect(addGammeOperationSchema.safeParse({ body: {} }).success).toBe(false)
+    // La désignation est désormais optionnelle à la SAISIE : le centre de frais
+    // peut la générer. La publication, elle, exige une désignation figée.
+    expect(addGammeOperationSchema.safeParse({ body: {} }).success).toBe(true)
   })
 
-  it("découpage usinage — types d'opération attendus", () => {
+  it("découpage usinage — types d'opération attendus, DECOUPE incluse", () => {
     expect(operationTypeSchema.options).toEqual([
       "TOURNAGE",
       "FRAISAGE",
+      "DECOUPE",
       "REPRISE",
       "CONTROLE",
       "LAVAGE",

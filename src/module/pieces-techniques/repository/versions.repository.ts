@@ -5,6 +5,7 @@ import db from "../../../config/database"
 import { HttpError } from "../../../utils/httpError"
 import { generatePieceTechniqueBusinessCode } from "../../../shared/codes/code-generator.service"
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
+import { freezePieceVersionRequirements } from "../services/document-policy.service"
 import type { AuditContext } from "./pieces-techniques.repository"
 import type {
   CreateNextVersionBodyDTO,
@@ -320,10 +321,27 @@ export async function repoUpdateVersionStatus(
       [versionId, toStatut, isCurrent, extra.valide_par ?? audit.user_id, extra.date_application ?? null, extra.commentaire_validation ?? null, audit.user_id]
     )
     const row = res.rows[0]
+
+    // #227 — GEL des exigences documentaires au moment où l'indice devient applicable.
+    // Dans la MÊME transaction que la publication : une version publiée sans son
+    // instantané serait une version dont on ne saurait plus ce qu'elle exigeait.
+    // Idempotent côté service : un indice déjà gelé n'est jamais réécrit, donc une
+    // modification ultérieure de la politique du client ne remonte pas dans l'histoire.
+    let frozen: Awaited<ReturnType<typeof freezePieceVersionRequirements>> = null
+    if (toStatut === "APPLICABLE") {
+      frozen = await freezePieceVersionRequirements(client, {
+        pieceTechniqueId,
+        versionId,
+        userId: audit.user_id,
+      })
+    }
+
     await insertAudit(client, audit, "pieces-techniques.version.status", versionId, {
       piece_technique_id: pieceTechniqueId,
       from: current.statut,
       to: toStatut,
+      document_requirements_frozen: frozen ? !frozen.already_frozen : false,
+      document_requirements_count: frozen?.frozen_count ?? null,
     })
     await client.query("COMMIT")
     return row

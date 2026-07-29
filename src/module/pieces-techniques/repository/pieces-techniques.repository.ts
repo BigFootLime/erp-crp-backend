@@ -918,10 +918,44 @@ export async function repoListPieceTechniqueDocuments(pieceTechniqueId: string):
   return res.rows.map(mapDocRow);
 }
 
+/** Le référentiel #227 est-il installé sur cette base ? */
+async function hasDocumentTypeReferential(tx: Pick<PoolClient, "query">): Promise<boolean> {
+  const res = await tx.query<{ present: boolean }>(
+    `SELECT to_regclass('public.piece_document_types') IS NOT NULL AS present`
+  );
+  return res.rows[0]?.present === true;
+}
+
+/** Indice qui fait foi au moment du dépôt (applicable en priorité, sinon le plus récent). */
+async function currentVersionIdFor(tx: Pick<PoolClient, "query">, pieceTechniqueId: string): Promise<string | null> {
+  try {
+    const res = await tx.query<{ id: string }>(
+      `SELECT id::text AS id
+         FROM public.piece_technique_versions
+        WHERE piece_technique_id = $1::uuid
+        ORDER BY is_current DESC,
+                 CASE statut WHEN 'APPLICABLE' THEN 0 WHEN 'EN_VALIDATION' THEN 1 WHEN 'BROUILLON' THEN 2 ELSE 3 END,
+                 created_at DESC
+        LIMIT 1`,
+      [pieceTechniqueId]
+    );
+    return res.rows[0]?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function repoAttachPieceTechniqueDocuments(
   pieceTechniqueId: string,
   documents: UploadedDocument[],
-  audit: AuditContext
+  audit: AuditContext,
+  /**
+   * #227 — type de document du référentiel (`piece_document_types.code`). Sans lui, un
+   * dépôt reste un fichier anonyme que l'exigence documentaire ne peut pas satisfaire :
+   * l'écran continuerait d'afficher « Absent » à côté d'un fichier bien présent.
+   * `null` reste accepté (dépôt libre, comportement historique).
+   */
+  options: { documentTypeCode?: string | null } = {}
 ): Promise<PieceTechniqueDocument[] | null> {
   const client = await db.connect();
   const docsDirRel = ensureDocumentStoragePath("pieces-techniques");
@@ -942,6 +976,26 @@ export async function repoAttachPieceTechniqueDocuments(
     }
 
     await fs.mkdir(docsDirAbs, { recursive: true });
+
+    // Le type est vérifié une fois : un code inconnu doit refuser le dépôt, pas le
+    // stocker en silence sous une étiquette qui n'existe pas.
+    const documentTypeCode = (options.documentTypeCode ?? "").trim() || null;
+    // L'ordre compte : `to_regclass` d'abord (il ne peut pas échouer), la table ensuite.
+    // Interroger une table absente DEPUIS la transaction l'avorterait, et tous les inserts
+    // qui suivent repartiraient en 25P02 — le dépôt échouerait pour une raison invisible.
+    if (documentTypeCode && (await hasDocumentTypeReferential(client))) {
+      const known = await client.query<{ code: string }>(
+        `SELECT code FROM public.piece_document_types WHERE code = $1`,
+        [documentTypeCode]
+      );
+      if (known.rows.length === 0) {
+        throw new HttpError(400, "UNKNOWN_DOCUMENT_TYPE", `Type de document inconnu : ${documentTypeCode}.`);
+      }
+    }
+
+    // L'indice courant au moment du dépôt : c'est lui qui rendra le document « obsolète »
+    // dès qu'un indice suivant deviendra applicable.
+    const currentVersionId = await currentVersionIdFor(client, pieceTechniqueId);
 
     const inserted: PieceTechniqueDocument[] = [];
     for (const doc of documents) {
@@ -972,9 +1026,11 @@ export async function repoAttachPieceTechniqueDocuments(
             size_bytes,
             sha256,
             label,
-            uploaded_by
+            uploaded_by,
+            document_type_code,
+            piece_technique_version_id
           )
-          VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9)
+          VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::uuid)
           RETURNING
             id::text AS id,
             piece_technique_id::text AS piece_technique_id,
@@ -1001,6 +1057,8 @@ export async function repoAttachPieceTechniqueDocuments(
           hash,
           null,
           audit.user_id,
+          documentTypeCode,
+          currentVersionId,
         ]
       );
 

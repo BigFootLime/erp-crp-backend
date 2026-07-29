@@ -1,7 +1,12 @@
 // src/module/pieces-techniques/controllers/pieces-techniques.controller.ts
 import type { Request, RequestHandler } from "express"
+import crypto from "node:crypto"
 import fs from "node:fs/promises"
 import db from "../../../config/database"
+import {
+  repoFindIdempotentPieceCreate,
+  repoRecordIdempotentPieceCreate,
+} from "../repository/create-drafts.repository"
 import { generatePieceTechniqueBusinessCode } from "../../../shared/codes/code-generator.service"
 import { getDocumentStoragePath, isPathInsideDirectory, resolveCerpStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
@@ -111,11 +116,56 @@ function buildAuditContext(req: Request): AuditContext {
   }
 }
 
+const IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9._:-]{8,128}$/
+
+/**
+ * #227 — clé d'idempotence de création. Un double-clic, un « Continuer » rejoué après une
+ * coupure réseau ou un retour arrière ne doivent pas produire deux pièces techniques.
+ * Le client génère la clé une fois par parcours ; le serveur renvoie la même pièce.
+ * Sans en-tête, le comportement reste celui d'avant : la création se fait, sans filet.
+ */
 export const createPieceTechnique: RequestHandler = async (req, res, next) => {
   try {
     const audit = buildAuditContext(req)
     const body: CreatePieceTechniqueBodyDTO = createPieceTechniqueSchema.parse({ body: req.body }).body
+
+    const rawKey = req.headers["idempotency-key"]
+    const idempotencyKey = typeof rawKey === "string" ? rawKey.trim() : ""
+    if (idempotencyKey && !IDEMPOTENCY_KEY_RE.test(idempotencyKey)) {
+      throw new HttpError(
+        400,
+        "IDEMPOTENCY_KEY_INVALID",
+        "Idempotency-Key doit faire 8 à 128 caractères alphanumériques (., :, -, _ admis)."
+      )
+    }
+
+    if (!idempotencyKey) {
+      const out = await createPieceTechniqueSVC(body, audit)
+      res.status(201).json(out)
+      return
+    }
+
+    const requestHash = crypto.createHash("sha256").update(JSON.stringify(body)).digest("hex")
+    const replay = await repoFindIdempotentPieceCreate(idempotencyKey)
+    if (replay) {
+      // Même clé, charge différente : c'est une erreur d'appelant, pas un rejeu. On refuse
+      // plutôt que de renvoyer une pièce qui ne correspond pas à ce qui vient d'être envoyé.
+      if (replay.request_hash !== requestHash) {
+        throw new HttpError(
+          409,
+          "IDEMPOTENCY_KEY_REUSED",
+          "Cette clé d'idempotence a déjà servi pour une autre pièce. Relancez la création avec une nouvelle clé."
+        )
+      }
+      const existing = await getPieceTechniqueSVC(replay.piece_technique_id, new Set(["nomenclature", "operations", "achats"]))
+      if (existing) {
+        res.status(200).json(existing)
+        return
+      }
+    }
+
     const out = await createPieceTechniqueSVC(body, audit)
+    await repoRecordIdempotentPieceCreate(idempotencyKey, requestHash, out.id)
     res.status(201).json(out)
   } catch (err) {
     next(err)
@@ -295,7 +345,11 @@ export const attachPieceTechniqueDocuments: RequestHandler = async (req, res, ne
     const { id } = idParamSchema.parse({ params: req.params }).params
     const audit = buildAuditContext(req)
     const files = getMulterFiles(req)
-    const out = await attachPieceTechniqueDocumentsSVC(id, files, audit)
+    // Le type arrive en champ de formulaire multipart : il voyage avec les fichiers,
+    // dans la même requête, donc un dépôt ne peut pas atterrir non typé par accident.
+    const rawType = (req.body as Record<string, unknown> | undefined)?.document_type_code
+    const documentTypeCode = typeof rawType === "string" && rawType.trim() ? rawType.trim() : null
+    const out = await attachPieceTechniqueDocumentsSVC(id, files, audit, { documentTypeCode })
     if (out === null) {
       res.status(404).json({ error: "Not found" })
       return

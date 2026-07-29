@@ -6,15 +6,23 @@ import type { AuditContext } from "../../pieces-techniques/repository/pieces-tec
 import {
   addGammeOperationSchema,
   createGammeSchema,
+  deleteGammeOperationSchema,
+  publishGammeSchema,
   reorderOperationsSchema,
+  updateGammeOperationSchema,
   updateGammeSchema,
 } from "../validators/gammes.validators"
 import {
   addGammeOperationSVC,
   createGammeSVC,
+  deleteGammeOperationSVC,
+  gammePublicationReadinessSVC,
   listGammeOperationsSVC,
   listGammesByVersionSVC,
+  nextPhaseSVC,
+  publishGammeSVC,
   reorderGammeOperationsSVC,
+  updateGammeOperationSVC,
   updateGammeSVC,
 } from "../services/gammes.service"
 
@@ -104,12 +112,76 @@ export const addGammeOperation: RequestHandler = async (req, res, next) => {
   }
 }
 
+export const updateGammeOperation: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildAuditContext(req)
+    const body = updateGammeOperationSchema.parse({ body: req.body }).body
+    const out = await updateGammeOperationSVC(
+      routeParam(req, "gammeId"),
+      routeParam(req, "operationId"),
+      body,
+      audit
+    )
+    res.json(out)
+  } catch (err) {
+    next(err)
+  }
+}
+
+export const deleteGammeOperation: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildAuditContext(req)
+    const body = deleteGammeOperationSchema.parse({ body: req.body }).body
+    await deleteGammeOperationSVC(
+      routeParam(req, "gammeId"),
+      routeParam(req, "operationId"),
+      body.expected_updated_at,
+      audit
+    )
+    res.status(204).send()
+  } catch (err) {
+    next(err)
+  }
+}
+
+/**
+ * Prochain numéro de phase. `max(phase) + 10` par défaut ; un entier libre entre
+ * deux phases avec `after_operation_id`. Le serveur reste autoritaire : l'interface
+ * AFFICHE cette proposition, elle ne la recalcule pas dans son coin.
+ */
+export const nextGammeOperationPhase: RequestHandler = async (req, res, next) => {
+  try {
+    const after = typeof req.query.after_operation_id === "string" ? req.query.after_operation_id : null
+    res.json(await nextPhaseSVC(routeParam(req, "gammeId"), after))
+  } catch (err) {
+    next(err)
+  }
+}
+
 export const reorderGammeOperations: RequestHandler = async (req, res, next) => {
   try {
     const audit = buildAuditContext(req)
     const body = reorderOperationsSchema.parse({ body: req.body }).body
     const out = await reorderGammeOperationsSVC(routeParam(req, "gammeId"), body.order, audit)
     res.json(out)
+  } catch (err) {
+    next(err)
+  }
+}
+
+export const readGammePublicationReadiness: RequestHandler = async (req, res, next) => {
+  try {
+    res.json(await gammePublicationReadinessSVC(routeParam(req, "gammeId")))
+  } catch (err) {
+    next(err)
+  }
+}
+
+export const publishGamme: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildAuditContext(req)
+    const body = publishGammeSchema.parse({ body: req.body }).body
+    res.json(await publishGammeSVC(routeParam(req, "gammeId"), body.expected_updated_at, audit))
   } catch (err) {
     next(err)
   }

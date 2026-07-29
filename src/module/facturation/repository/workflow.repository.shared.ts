@@ -277,6 +277,93 @@ export async function allocateLegalNumber(params: {
   return { legalNumber, periodKey, sequenceValue };
 }
 
+/**
+ * Instantane de l'entite emettrice, mentions legales **en vigueur a la date donnee**.
+ *
+ * Partage par la facture et l'avoir : les deux sont des pieces fiscales et doivent porter
+ * exactement les memes mentions obligatoires, resolues selon la meme regle.
+ *
+ * La date est celle de l'**emission** du document, jamais « aujourd'hui » : c'est elle qui
+ * determine quelle version de `finance_legal_mentions` fait foi. Le resultat est destine a
+ * etre fige tel quel dans `issuer_snapshot`, qui devient alors autoportant — un document
+ * retrouve dans dix ans se relit sans la base.
+ *
+ * Renvoie `null` quand l'entite est inconnue ; l'appelant decide si c'est une erreur.
+ */
+export async function issuerSnapshotAt(
+  queryer: DbQueryer,
+  entityCode: string,
+  at: string
+): Promise<Record<string, unknown> | null> {
+  const result = await queryer.query<{ snapshot: Record<string, unknown> | null }>(
+    `
+      SELECT COALESCE(public.fn_finance_issuer_snapshot(f.biller_id, $2::date), '{}'::jsonb)
+             || jsonb_build_object('entity_code', $1::text) AS snapshot
+      FROM public.factureur f
+      WHERE f.biller_id::text = $1
+      LIMIT 1
+    `,
+    [entityCode, at]
+  );
+  const snapshot = result.rows[0]?.snapshot;
+  return snapshot && typeof snapshot === "object" ? (snapshot as Record<string, unknown>) : null;
+}
+
+const REQUIRED_FINANCE_LEGAL_MENTION_KEYS = [
+  "company_name",
+  "legal_mentions_version",
+  "legal_form",
+  "share_capital",
+  "share_capital_currency",
+  "rcs_city",
+  "rcs_number",
+  "siret",
+  "vat_number",
+  "late_penalty_rate",
+  "late_penalty_basis",
+  "recovery_indemnity",
+] as const;
+
+function hasSnapshotValue(snapshot: Record<string, unknown>, key: string): boolean {
+  const value = snapshot[key];
+  return value !== null && value !== undefined && (typeof value !== "string" || value.trim().length > 0);
+}
+
+/**
+ * Resolve the issuer snapshot required to issue a fiscal document.
+ *
+ * Drafts may remain readable while the legal reference data is being deployed. Issuance is
+ * different: a missing legal version or mandatory field must fail before a legal number is
+ * allocated, otherwise the server would knowingly create a non-compliant immutable document.
+ */
+export async function requireFinanceIssuerSnapshotAt(
+  queryer: DbQueryer,
+  entityCode: string,
+  at: string
+): Promise<Record<string, unknown>> {
+  const snapshot = await issuerSnapshotAt(queryer, entityCode, at);
+  if (!snapshot) {
+    throw new HttpError(
+      503,
+      "FINANCE_ISSUER_NOT_CONFIGURED",
+      "L'entité émettrice de la politique Finance est introuvable."
+    );
+  }
+
+  const missing = REQUIRED_FINANCE_LEGAL_MENTION_KEYS.filter(
+    (key) => !hasSnapshotValue(snapshot, key)
+  );
+  if (missing.length) {
+    throw new HttpError(
+      503,
+      "FINANCE_LEGAL_MENTIONS_NOT_CONFIGURED",
+      "Les mentions légales obligatoires de l'entité émettrice ne sont pas configurées pour la date d'émission.",
+      { missing }
+    );
+  }
+  return snapshot;
+}
+
 export function newCorrelationId(): string {
   return crypto.randomUUID();
 }
