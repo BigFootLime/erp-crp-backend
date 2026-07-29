@@ -1,7 +1,7 @@
 -- 20260729_methodes_gamme_referentials.sql
 --
 -- Méthodes : familles machine, centres de frais tarifés, parc machine et éditeur de gamme.
--- ADR : crp-systems-web/docs/adr/ADR-0044-methodes-referentiels-gamme.md
+-- ADR : crp-systems-web/docs/adr/ADR-0046-methodes-referentiels-gamme.md
 -- Audit préalable : crp-systems-web/docs/architecture/methodes-gamme-audit-2026-07-29.md
 --
 -- ADDITIF, IDEMPOTENT, NON DESTRUCTIF :

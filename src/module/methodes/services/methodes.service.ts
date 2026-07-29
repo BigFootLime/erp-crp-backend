@@ -23,6 +23,15 @@ import {
   type UpdateCostCenterInput,
   type UpdateMachineFamilyInput,
 } from "../repository/methodes.repository";
+import {
+  repoGetMachineQualification,
+  repoListMachinesForQualification,
+  repoPreviewMachineQualification,
+  repoQualifyMachine,
+  type MachineQualificationDTO,
+  type MachineQualificationImpactDTO,
+  type QualifyMachineInput,
+} from "../repository/machine-qualification.repository";
 import type {
   AuditContext,
   CostCenterDTO,
@@ -99,4 +108,39 @@ export async function addCostCenterRateSVC(
 export async function listMachineOptionsSVC(params: ListMachineOptionsParams): Promise<MachineOptionDTO[]> {
   await assertFamilyUsable(params.machine_family_code);
   return repoListMachineOptions(params);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Qualification du parc machine (#233)                                       */
+/* -------------------------------------------------------------------------- */
+
+export const listMachinesForQualificationSVC = (params: {
+  search: string | null;
+  only_unqualified: boolean;
+  include_archived: boolean;
+}): Promise<MachineQualificationDTO[]> => repoListMachinesForQualification(params);
+
+export const getMachineQualificationSVC = (machineId: string): Promise<MachineQualificationDTO | null> =>
+  repoGetMachineQualification(machineId);
+
+export async function previewMachineQualificationSVC(
+  machineId: string,
+  candidateFamily: string | null
+): Promise<MachineQualificationImpactDTO | null> {
+  await assertFamilyUsable(candidateFamily);
+  return repoPreviewMachineQualification(machineId, candidateFamily);
+}
+
+/**
+ * La famille est revalidée ICI en plus du repository : le service voit le
+ * référentiel complet (libellé, `programme_requis`) et rend un refus lisible
+ * avant même d'ouvrir une transaction.
+ */
+export async function qualifyMachineSVC(
+  machineId: string,
+  input: QualifyMachineInput,
+  audit: AuditContext
+): Promise<MachineQualificationDTO | null> {
+  await assertFamilyUsable(input.machine_family_code);
+  return repoQualifyMachine(machineId, input, audit);
 }
