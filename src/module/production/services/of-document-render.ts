@@ -1,4 +1,11 @@
-// Rendu serveur du document d'OF — « Gamme de fabrication ».
+// Rendu serveur du document d'OF — « ORDRE DE FABRICATION — GAMME APPLICABLE ».
+//
+// La pièce est un ORDRE DE FABRICATION. Ce n'est pas une gamme de fabrication :
+// une gamme est la définition technique d'une pièce, réutilisable d'un OF à
+// l'autre ; un ordre de fabrication est l'ordre de LANCER une quantité donnée,
+// pour une commande donnée, à une date donnée. Il EMBARQUE la gamme applicable —
+// la section « Gamme applicable » — mais il ne s'y réduit pas, et le titre du
+// document ne doit pas laisser croire le contraire (issue #370).
 //
 // Le document est **opposable** : il accompagne la fabrication, il est haché,
 // versé à la GED et réimprimable à l'identique. Il est donc rendu par le serveur
@@ -106,7 +113,7 @@ export async function renderOfDocument(payload: OfDocumentPayload): Promise<OfDo
 
   const buffer = await renderCerpDocument(
     {
-      documentType: "Gamme de fabrication",
+      documentType: "Ordre de fabrication",
       name: payload.ofNumero,
       code: payload.revisionCode,
       subtitle: buildSubtitle(payload),
@@ -121,7 +128,7 @@ export async function renderOfDocument(payload: OfDocumentPayload): Promise<OfDo
       // gabarits différents ne sont pas le même document, et une réimpression
       // doit pouvoir le prouver sans ouvrir la base.
       footerNote: `${payload.ofNumero} ${payload.revisionCode} — instantané ${payload.snapshotId} — empreinte ${payload.snapshotSha256.slice(0, 16)} — gabarit ${payload.templateVersion}`,
-      title: `Gamme de fabrication ${payload.ofNumero} ${payload.revisionCode}`,
+      title: `Ordre de fabrication ${payload.ofNumero} ${payload.revisionCode}`,
       subject: `OF ${payload.ofNumero} révision ${payload.revisionCode}`,
       creationDate: generatedAt,
     },
@@ -334,7 +341,9 @@ function millimetres(value: number | null, decimals: number): string {
 // ---------------------------------------------------------------------------
 
 function renderGamme(ctx: CerpDocumentContext, payload: OfDocumentPayload): void {
-  ctx.section("Gamme de fabrication", { cohesion: TABLE_SECTION_COHESION });
+  // « Gamme APPLICABLE » : celle qui s'applique à CET OF, figée par sa révision.
+  // Pas « la gamme de la pièce », qui a pu bouger depuis le lancement.
+  ctx.section("Gamme applicable", { cohesion: TABLE_SECTION_COHESION });
 
   ctx.linesTable({
     columns: GAMME_COLUMNS,

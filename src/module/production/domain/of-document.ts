@@ -1,4 +1,4 @@
-// Read-model du document d'OF — « Gamme de fabrication ».
+// Read-model du document d'OF — « ORDRE DE FABRICATION — GAMME APPLICABLE ».
 //
 // Un seul payload alimente l'aperçu écran ET le PDF serveur. Il est figé dans
 // `of_documents` : une réimpression rejoue l'instantané et reproduit le même
@@ -30,8 +30,11 @@ export const OF_DOCUMENT_SCHEMA = "of-document/1" as const;
  * dessin du document — colonne ajoutée, libellé changé, marge retouchée — doit
  * l'incrémenter : deux PDF de même contenu produits par deux gabarits différents
  * ne sont pas le même document, et une réimpression doit pouvoir le prouver.
+ *
+ * Renommé et incrémenté le 2026-07-29 : la pièce est un ORDRE DE FABRICATION, pas
+ * une gamme de fabrication. Le libellé du document a changé, donc le binaire aussi.
  */
-export const OF_DOCUMENT_TEMPLATE_VERSION = "of-gamme/1.1" as const;
+export const OF_DOCUMENT_TEMPLATE_VERSION = "of-ordre-fabrication/1.2" as const;
 
 // ---------------------------------------------------------------------------
 // Formatage

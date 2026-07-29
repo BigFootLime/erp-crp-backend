@@ -256,11 +256,22 @@ describe("#374 E — rendu serveur", () => {
       "CF00042720 1",
       "AIRBUS HELICOPTERS",
       "45 252 966 B",
-      "GAMME DE FABRICATION",
+      // La pièce est un ORDRE DE FABRICATION. Une gamme est la définition
+      // technique d'une pièce, réutilisable d'un OF à l'autre ; un OF est l'ordre
+      // de lancer une quantité, pour une commande, à une date. Il EMBARQUE la
+      // gamme applicable, il ne s'y réduit pas.
+      "ORDRE DE FABRICATION",
+      // Les titres de section sont rendus en capitales par le socle document.
+      "GAMME APPLICABLE",
       "71 h",
     ]) {
       expect(text).toContain(expected);
     }
+
+    // Garde anti-régression : le mauvais titre ne doit pas revenir. Un document
+    // intitulé « gamme de fabrication » ferait passer un ordre de lancement pour
+    // une fiche technique.
+    expect(text).not.toContain("GAMME DE FABRICATION");
   });
 
   it("réimprime le même binaire et la même empreinte", async () => {
