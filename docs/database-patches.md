@@ -441,3 +441,68 @@ l'infrastructure existe, la décision redevient fermée par défaut.
 
 État au 2026-07-27 : patch, scripts de support et seed **écrits et versionnés,
 appliqués sur aucune base**. Ni `cerp_test` ni `cerp_prod` n'ont été modifiés.
+
+## Mentions légales obligatoires de l'entité émettrice
+
+Le patch `20260729_finance_legal_mentions.sql` fait suite au rendu unique des pièces
+financières (#216). Il crée la table versionnée `finance_legal_mentions` et la fonction de
+résolution `fn_finance_issuer_snapshot(biller_id, date)`, puis amorce l'entité émettrice.
+Le correctif additif `20260729_finance_legal_mentions_hardening_221.sql` interdit les
+chevauchements de périodes, sérialise les écritures concurrentes par émetteur et rend la
+résolution explicitement déterministe. Le patch initial avait déjà été appliqué sur
+`cerp_test` avant la revue #221 ; conformément à la règle d'immutabilité des patches
+exécutés, il n'a pas été modifié.
+
+Constat relevé le 2026-07-29 sur `cerp_test` **et** `cerp_prod` :
+
+- `public.factureur` ne porte **aucune** colonne légale — ni `siret`, ni `siren`, ni `rcs`,
+  ni `vat_number`, ni `capital_social`. Le serveur filtrait pourtant `to_jsonb(factureur)`
+  sur exactement cette liste (`ISSUER_LEGAL_FIELDS`) : le filtre ne retenait jamais rien et
+  aucune mention obligatoire n'était imprimée ;
+- `public.factureur` est **vide** sur les deux bases, comme `finance_billing_policies` et
+  `facture`. Aucune facture n'a jamais été émise par ce chemin, donc **aucun exemplaire
+  immuable à préserver**.
+
+Le versionnement n'est pas décoratif : une facture émise porte les mentions **en vigueur à
+sa date d'émission** et ne se régénère jamais. Des colonnes posées sur `factureur` seraient
+réécrites en place et falsifieraient rétroactivement l'historique ; une nouvelle version
+laisse les instantanés déjà figés résoudre la leur. Un index unique partiel garantit au plus
+une version ouverte par émetteur, sans quoi la résolution à une date donnée ne serait pas
+déterministe.
+
+Valeurs amorcées pour CROIX ROUSSE PRECISION, et leur source :
+
+- registre national des entreprises (INPI) via `annuaire-entreprises.data.gouv.fr`, SIREN
+  380569012, consulté le 2026-07-29 : forme juridique SARL (catégorie INSEE 5499), capital
+  21 000,00 € fixe, TVA `FR73 380 569 012`, siège 530 rue de la Dombes, Les Échets,
+  01700 Miribel, immatriculation du 28/01/1991 ;
+- facture papier CERP n° 5256 du 24/07/2026 : pénalités 12,50 % annuel, escompte 1,50 %
+  mensuel, réserve de propriété, TVA acquittée sur les encaissements, coordonnées bancaires.
+
+Deux numéros de TVA figurent sur cette facture papier. Les deux clés de contrôle sont
+valides mais portent sur des SIREN différents : seul `FR73 380 569 012` est cohérent avec le
+SIRET `380 569 012 00020`. `FR40 800 163 065` est celui du client, pas de l'émetteur.
+
+Deux mentions ont été **ajoutées** parce qu'elles manquaient à la facture papier et sont
+obligatoires : l'indemnité forfaitaire de recouvrement de 40 € (art. D441-5, décret
+2012-1115) et la ville du RCS — Miribel relève de l'Ain, dont le ressort unique est le
+greffe de Bourg-en-Bresse. « RCS : 380569012 » sans ville est incomplet au regard de
+l'art. R123-237.
+
+`effective_from` est fixé au 1er janvier 2026 : c'est la période la plus large que l'on
+puisse couvrir sans affirmer ce qui était en vigueur les années précédentes. Aucune facture
+n'existant en base, aucune pièce ne se retrouve hors période.
+
+Ordre obligatoire : exécuter `support/20260729_finance_legal_mentions.preflight.sql`,
+appliquer les deux patches dans l'ordre sur `cerp_test`, exécuter la vérification. Le
+rollback est restreint à `cerp_test` et refuse de s'exécuter dès qu'une pièce porte un
+instantané d'émetteur. Une validation humaine explicite reste obligatoire avant toute
+application sur `cerp_prod`.
+
+Validation du 2026-07-29 : sauvegarde `cerp_prod_20260729-110843.dump` (50 642 473 o)
+vérifiée avant toute écriture ; préflight en lecture seule confirmant 0 factureur,
+0 politique et 0 facture ; patch appliqué et enregistré dans `cerp_schema_migrations`
+(SHA-256 `814dcc7dbb51dd13eb3ce2a3656ce729716b8d7e7f66ac473d31e79e0e461a4d`) ; vérification
+complète réussie — 11 contraintes, une seule version en vigueur, instantané portant les
+treize clés obligatoires, résolution hors période rendant l'identité **sans** mentions, et
+`finance_legal_mentions` possédée par `cerp_app`. **`cerp_prod` n'a pas été modifiée.**

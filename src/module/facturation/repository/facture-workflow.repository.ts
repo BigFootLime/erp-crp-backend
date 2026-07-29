@@ -36,8 +36,10 @@ import {
   insertFinanceEvent,
   insertFinanceOutbox,
   insertGlobalFinanceAudit,
+  issuerSnapshotAt,
   newCorrelationId,
   nextLegacyId,
+  requireFinanceIssuerSnapshotAt,
   saveFinanceReceipt,
 } from "./workflow.repository.shared";
 
@@ -503,29 +505,32 @@ async function clientSnapshot(queryer: DbQueryer, clientId: string): Promise<Rec
   return snapshot as Record<string, unknown>;
 }
 
-async function issuerSnapshot(queryer: DbQueryer, entityCode: string): Promise<Record<string, unknown>> {
-  const result = await queryer.query<Record<string, unknown>>(
-    `
-      SELECT jsonb_build_object(
-        'entity_code', $1::text,
-        'biller_id', f.biller_id,
-        'biller_name', f.biller_name
-      ) AS snapshot
-      FROM public.factureur f
-      WHERE f.biller_id::text = $1
-      LIMIT 1
-    `,
-    [entityCode]
-  );
-  const snapshot = result.rows[0]?.snapshot;
-  if (!snapshot || typeof snapshot !== "object") {
+/**
+ * Instantane de l'entite emettrice, mentions legales **en vigueur a la date donnee**.
+ *
+ * L'ancienne version ne figeait que `biller_id` et `biller_name`. Le document sortant ne
+ * pouvait donc porter ni SIRET, ni RCS, ni numero de TVA, ni capital, ni taux de penalite —
+ * toutes mentions obligatoires. `fn_finance_issuer_snapshot` resout l'identite complete et
+ * la version de mentions applicable a `at`, et le resultat est fige tel quel : c'est lui qui
+ * fera foi si la facture est contestee dans cinq ans.
+ *
+ * `at` est la date **d'emission**, pas la date du jour. Les deux different des qu'un
+ * brouillon est emis un autre jour que celui ou il a ete cree.
+ */
+async function issuerSnapshot(
+  queryer: DbQueryer,
+  entityCode: string,
+  at: string
+): Promise<Record<string, unknown>> {
+  const snapshot = await issuerSnapshotAt(queryer, entityCode, at);
+  if (!snapshot) {
     throw new HttpError(
       503,
       "FINANCE_ISSUER_NOT_CONFIGURED",
       "L'entité émettrice de la politique Finance est introuvable."
     );
   }
-  return snapshot as Record<string, unknown>;
+  return snapshot;
 }
 
 function ensurePreviewUsable(preview: FacturePreview, expectedHash: string): void {
@@ -575,7 +580,10 @@ export async function repoCreateFactureDraft(params: {
     const year = new Date().getUTCFullYear();
     const draftReference = `DFT-${year}-${String(factureId).padStart(6, "0")}`;
     const clientData = await clientSnapshot(client, params.input.client_id);
-    const issuerData = await issuerSnapshot(client, policy.legal_entity_code);
+    // Brouillon : les mentions du jour. Elles seront **re-resolues a l'emission**, seul
+    // moment ou la loi les fige (cf. svcIssueFacture).
+    const draftDate = new Date().toISOString().slice(0, 10);
+    const issuerData = await issuerSnapshot(client, policy.legal_entity_code, draftDate);
     const commandeIds = [...new Set(sources.map((row) => row.commande_id).filter(Boolean))];
     const affaireIds = [...new Set(sources.map((row) => row.affaire_id).filter(Boolean))];
     const dueDate = [...params.input.due_dates].sort((a, b) => a.due_date.localeCompare(b.due_date)).at(-1);
@@ -1112,6 +1120,13 @@ export async function repoIssueFacture(params: {
     }
     assertFactureTransition(facture.statut, "ISSUED");
     const issueDate = new Date().toISOString().slice(0, 10);
+    // Fail before consuming a legal sequence value: an immutable fiscal document must never
+    // be issued without the complete legal version applicable on its issue date.
+    const issuerAtIssue = await requireFinanceIssuerSnapshotAt(
+      client,
+      facture.legal_entity_code,
+      issueDate
+    );
     const legal = await allocateLegalNumber({
       client,
       documentType: "FACTURE",
@@ -1123,6 +1138,9 @@ export async function repoIssueFacture(params: {
       label: due.label,
       amount: due.amount,
     }));
+    // Les mentions legales sont figees **a l'emission**, pas a la creation du brouillon.
+    // Un brouillon peut vivre des semaines ; si le taux de penalite ou le capital change
+    // entre-temps, la facture doit porter ce qui est en vigueur le jour ou elle est emise.
     const snapshot: FinanceDocumentSnapshot = {
       document_type: "FACTURE",
       uuid: facture.uuid,
@@ -1132,7 +1150,7 @@ export async function repoIssueFacture(params: {
       due_dates: dueDates,
       currency: facture.currency,
       client_snapshot: facture.client_snapshot,
-      issuer_snapshot: facture.issuer_snapshot,
+      issuer_snapshot: issuerAtIssue,
       lines: preview.lines,
       totals: preview.totals,
       internal_comment: facture.commentaires,
@@ -1165,6 +1183,7 @@ export async function repoIssueFacture(params: {
             issued_by = $6,
             immutable_snapshot = $7::jsonb,
             document_checksum_sha256 = $8,
+            issuer_snapshot = $9::jsonb,
             row_version = row_version + 1,
             updated_at = now()
         WHERE id = $1
@@ -1179,6 +1198,10 @@ export async function repoIssueFacture(params: {
         params.actor.userId,
         JSON.stringify(snapshot),
         artifact.checksumSha256,
+        // La ligne conserve les mentions reellement imprimees, et non celles du brouillon :
+        // sans cela, `facture.issuer_snapshot` et le PDF emis diraient deux choses
+        // differentes sur la meme piece.
+        JSON.stringify(issuerAtIssue),
       ]
     );
     await client.query(

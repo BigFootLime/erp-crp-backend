@@ -15,9 +15,43 @@ import { inflateSync } from "node:zlib"
 
 import { describe, expect, it, vi } from "vitest"
 
-// Le service lit la raison sociale de l'emetteur en base : la seule dependance a isoler.
+/**
+ * Instantane de l'emetteur, tel que le renvoie `fn_finance_issuer_snapshot`.
+ *
+ * Le service ne lit plus la seule raison sociale : un bon de livraison est un document
+ * commercial et doit porter l'identite legale de son emetteur (art. R123-237 C. com.).
+ * `vi.hoisted` est indispensable — `vi.mock` est remonte au-dessus des declarations.
+ */
+const ISSUER = vi.hoisted(() => ({
+  company_name: "CROIX ROUSSE PRECISION",
+  address_line_1: "530 Rue de la Dombes",
+  postal_code: "01700",
+  city: "MIRIBEL LES ECHETS",
+  country: "France",
+  phone: "04 72 00 26 25",
+  legal_form: "SARL",
+  share_capital: "21000.00",
+  share_capital_currency: "EUR",
+  rcs_city: "Bourg-en-Bresse",
+  rcs_number: "380 569 012",
+  siren: "380 569 012",
+  siret: "380 569 012 00020",
+  vat_number: "FR73 380 569 012",
+  late_penalty_rate: "12.500",
+  late_penalty_basis: "ANNUEL",
+  recovery_indemnity: "40.00",
+  early_discount_rate: "1.500",
+  early_discount_basis: "MENSUEL",
+  vat_on_receipts: true,
+  retention_of_title:
+    "Nous nous réservons la propriété des marchandises jusqu'au paiement intégral du prix par l'acheteur.",
+  legal_mentions_version: 1,
+  legal_mentions_effective_from: "2026-01-01",
+}))
+
+// Le service lit l'instantane de l'emetteur en base : la seule dependance a isoler.
 vi.mock("../../../config/database", () => ({
-  default: { query: vi.fn().mockResolvedValue({ rows: [{ biller_name: "CROIX ROUSSE PRECISION" }] }) },
+  default: { query: vi.fn().mockResolvedValue({ rows: [{ party: ISSUER }] }) },
 }))
 
 import { renderBonLivraisonDocument } from "./bon-livraison-document"
@@ -332,9 +366,65 @@ describe("bon de livraison PDF — rendu reel", () => {
       lignes: p.lignes,
       version: 1,
       company: "CROIX ROUSSE PRECISION",
+      issuer: ISSUER,
     })
     expect(viaSimple.equals(viaPack)).toBe(true)
   }, 60_000)
+
+  it("porte l'identite legale et les mentions obligatoires de l'emetteur", async () => {
+    // Un bon de livraison est un document commercial : il doit porter l'identite legale de
+    // son emetteur au meme titre qu'une facture. Il ne portait qu'une raison sociale.
+    const bytes = await svcRenderPackBonLivraisonPdf({ preview: preview(), version: 1 })
+    keep("57-bl-mentions-legales", bytes)
+
+    const text = drawnText(bytes)
+    expect(text).toContain("SARL au capital de 21 000,00 €")
+    expect(text).toContain("RCS Bourg-en-Bresse 380 569 012")
+    expect(text).toContain("SIRET 380 569 012 00020")
+    expect(text).toContain("TVA FR73 380 569 012")
+    expect(text).toContain("Pénalités de retard : 12,5 % l'an")
+    expect(text).toContain("40,00 € par facture")
+    expect(text).toContain("Escompte pour paiement anticipé : 1,5 % par mois")
+    // La reserve de propriete a sa portee la plus forte au moment de la livraison.
+    expect(text).toContain("Nous nous réservons la propriété des marchandises")
+  }, 60_000)
+
+  it("les mentions ne coutent aucune page et ne repoussent pas le cadre de réception", async () => {
+    // Les mentions vivent dans la bande de pied, pas dans le flux : placees a la suite du
+    // contenu, elles poussaient ce bon de deux lignes sur une seconde page qui ne portait
+    // qu'elles. Le cadre de reception reste entier sur la premiere page.
+    const bytes = await svcRenderPackBonLivraisonPdf({ preview: preview(), version: 1 })
+    expect(countPages(bytes)).toBe(1)
+
+    const pages = drawnPages(bytes)
+    expect(pages).toHaveLength(1)
+    expect(pages[0]).toContain("RÉCEPTION")
+    expect(pages[0]).toContain("Pénalités de retard")
+  }, 60_000)
+
+  it("répète l'identité légale et les mentions sur chaque page", async () => {
+    // Une page detachee doit rester rattachable a son emetteur et rester opposable : la
+    // mention obligatoire figure donc sur toutes les pages, pas seulement la derniere.
+    const p = preview()
+    const bytes = await svcRenderPackBonLivraisonPdf({
+      preview: {
+        ...p,
+        lignes: Array.from({ length: 40 }, (_, index) => ({
+          ...p.lignes[0]!,
+          ordre: index + 1,
+          designation: `Composant usiné référence ${index + 1} — plan 46${index}-A indice B`,
+        })),
+      },
+      version: 1,
+    })
+
+    const pages = drawnPages(bytes)
+    expect(pages.length).toBeGreaterThan(1)
+    for (const page of pages) {
+      expect(page).toContain("SIRET 380 569 012 00020")
+      expect(page).toContain("Pénalités de retard")
+    }
+  }, 90_000)
 
   it("scenario 4 (aucune ligne) : le document le dit au lieu d'afficher une table vide", async () => {
     const p = preview()

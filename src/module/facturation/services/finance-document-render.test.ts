@@ -16,6 +16,8 @@ import { inflateSync } from "node:zlib";
 
 import { describe, expect, it } from "vitest";
 
+import { issuerIdentityLine, issuerLegalMentions } from "../../../shared/pdf/legal-mentions";
+
 import {
   money,
   percent,
@@ -408,4 +410,266 @@ describe("facture et avoir partagent la meme grammaire", () => {
       expect(text).toContain("MONTANT TVA");
     }
   }, 90_000);
+});
+
+/**
+ * Mentions legales obligatoires de l'emetteur.
+ *
+ * Le referentiel ne les portait pas : `factureur` n'a aucune colonne legale et etait vide
+ * sur les deux bases. Elles viennent desormais de `finance_legal_mentions`, versionnee, et
+ * sont figees dans l'instantane a la date d'emission.
+ *
+ * Elles sont verifiees **dans le texte reellement dessine**, pas sur l'objet d'entree : une
+ * mention presente dans l'instantane mais absente du PDF est juridiquement absente.
+ */
+
+/** Instantane complet, tel que le renvoie `fn_finance_issuer_snapshot`. */
+const ISSUER_MENTIONS = {
+  company_name: "CROIX ROUSSE PRECISION",
+  address_line_1: "530 Rue de la Dombes",
+  postal_code: "01700",
+  city: "MIRIBEL LES ECHETS",
+  country: "France",
+  phone: "04 72 00 26 25",
+  legal_form: "SARL",
+  share_capital: "21000.00",
+  share_capital_currency: "EUR",
+  rcs_city: "Bourg-en-Bresse",
+  rcs_number: "380 569 012",
+  siren: "380 569 012",
+  siret: "380 569 012 00020",
+  vat_number: "FR73 380 569 012",
+  late_penalty_rate: "12.500",
+  late_penalty_basis: "ANNUEL",
+  recovery_indemnity: "40.00",
+  early_discount_rate: "1.500",
+  early_discount_basis: "MENSUEL",
+  vat_on_receipts: true,
+  retention_of_title:
+    "Nous nous réservons la propriété des marchandises jusqu'au paiement intégral du prix par l'acheteur.",
+  iban: "FR76 3000 3024 9100 0200 0775 958",
+  bic: "SOGEFRPP",
+  bank_name: "SG LYON CROIX-ROUSSE",
+  legal_mentions_version: 1,
+  legal_mentions_effective_from: "2026-01-01",
+};
+
+const FACTURE_MENTIONS: FinanceDocumentInput = { ...FACTURE, issuer: ISSUER_MENTIONS };
+
+describe("identite legale de l'emetteur", () => {
+  it("compose la ligne portee par le pied de page", () => {
+    // Art. R123-237 C. com. : forme juridique, capital, RCS **et ville**, SIRET, TVA.
+    expect(issuerIdentityLine(ISSUER_MENTIONS)).toBe(
+      "SARL au capital de 21 000,00 € · RCS Bourg-en-Bresse 380 569 012 · " +
+        "SIRET 380 569 012 00020 · TVA FR73 380 569 012"
+    );
+  });
+
+  it("n'invente pas la ville du RCS quand elle manque", () => {
+    // La facture papier imprimait « RCS : 380569012 », sans ville : la mention etait
+    // incomplete. On ne la complete pas d'office — on affiche ce qu'on a.
+    const line = issuerIdentityLine({ ...ISSUER_MENTIONS, rcs_city: undefined });
+    expect(line).toContain("RCS 380 569 012");
+    expect(line).not.toContain("Bourg-en-Bresse");
+  });
+
+  it("prefere le SIRET au SIREN, qu'il contient deja", () => {
+    const line = issuerIdentityLine(ISSUER_MENTIONS) as string;
+    expect(line).toContain("SIRET 380 569 012 00020");
+    expect(line).not.toContain("SIREN");
+  });
+
+  it("ne rend aucune ligne quand rien n'est parametre", () => {
+    expect(issuerIdentityLine({})).toBeNull();
+    expect(issuerIdentityLine({ company_name: "CROIX ROUSSE PRECISION" })).toBeNull();
+  });
+
+  it("degrade proprement sur une identite partielle", () => {
+    // Une forme juridique sans capital reste une mention valable ; on ne tait pas tout
+    // parce qu'une piece manque.
+    expect(issuerIdentityLine({ legal_form: "SARL" })).toBe("SARL");
+    expect(issuerIdentityLine({ share_capital: "21000.00" })).toBe("Capital social 21 000,00 €");
+  });
+
+  it("n'est plus repetee dans la carte « Émetteur »", () => {
+    // L'identite legale vit dans le pied, sur toutes les pages. La reprendre dans la carte
+    // la ferait figurer deux fois sur la meme page.
+    const lines = partyLines(ISSUER_MENTIONS, { identifiers: false });
+    expect(lines).toContain("CROIX ROUSSE PRECISION");
+    expect(lines).toContain("Tél. 04 72 00 26 25");
+    expect(lines.join("\n")).not.toContain("SIRET");
+    expect(lines.join("\n")).not.toContain("TVA");
+  });
+});
+
+describe("mentions de reglement", () => {
+  it("porte les cinq mentions obligatoires", () => {
+    const mentions = issuerLegalMentions(ISSUER_MENTIONS).join("\n");
+    expect(mentions).toContain("Pénalités de retard : 12,5 % l'an");
+    expect(mentions).toContain("art. L441-10 du code de commerce");
+    expect(mentions).toContain("Indemnité forfaitaire pour frais de recouvrement : 40,00 € par facture");
+    expect(mentions).toContain("art. D441-5 du code de commerce");
+    expect(mentions).toContain("Escompte pour paiement anticipé : 1,5 % par mois");
+    expect(mentions).toContain("TVA acquittée sur les encaissements");
+    expect(mentions).toContain("Réserve de propriété : Nous nous réservons la propriété");
+  });
+
+  it("dit explicitement qu'aucun escompte n'est accordé", () => {
+    // L'escompte est une mention obligatoire **meme en son absence** (art. L441-9). Un taux
+    // vide ne doit pas se traduire par un silence.
+    const mentions = issuerLegalMentions({
+      ...ISSUER_MENTIONS,
+      early_discount_rate: undefined,
+      early_discount_basis: undefined,
+    }).join("\n");
+    expect(mentions).toContain("Escompte pour paiement anticipé : aucun escompte n'est accordé");
+  });
+
+  it("ne parle pas d'escompte quand aucune version de mentions n'est résolue", () => {
+    // Hors periode de validite, on ne sait rien : ecrire « aucun escompte » serait une
+    // affirmation inventee, pas une mention.
+    const mentions = issuerLegalMentions({ company_name: "CROIX ROUSSE PRECISION" });
+    expect(mentions).toEqual([]);
+  });
+
+  it("porte la franchise en base quand elle s'applique", () => {
+    const mentions = issuerLegalMentions({
+      ...ISSUER_MENTIONS,
+      vat_on_receipts: undefined,
+      vat_exempt_293b: true,
+    }).join("\n");
+    expect(mentions).toContain("TVA non applicable, article 293 B du code général des impôts");
+    expect(mentions).not.toContain("TVA acquittée sur les encaissements");
+  });
+
+  it("supprime les zéros décimaux inutiles d'un taux", () => {
+    // `numeric(6,3)` stocke `12.500` : la precision de stockage n'a pas a transparaitre.
+    const mentions = issuerLegalMentions({ ...ISSUER_MENTIONS, late_penalty_rate: "12.000" }).join("\n");
+    expect(mentions).toContain("Pénalités de retard : 12 % l'an");
+  });
+
+  it("reprend les mentions libres additionnelles", () => {
+    const mentions = issuerLegalMentions({
+      ...ISSUER_MENTIONS,
+      extra_mentions: ["Membre d'une association agréée, le règlement par chèque est accepté."],
+    });
+    expect(mentions.at(-1)).toBe("Membre d'une association agréée, le règlement par chèque est accepté.");
+  });
+});
+
+/** Texte dessine, espaces normalises : un retour a la ligne coupe les chaines longues. */
+function flat(bytes: Buffer): string {
+  return drawnText(bytes).replace(/\s+/g, " ");
+}
+
+describe("mentions legales — rendu reel", () => {
+  it("scenario 7 (facture avec mentions) : toutes portees", async () => {
+    const bytes = await renderFinanceDocument(FACTURE_MENTIONS);
+    keep("66-facture-mentions-legales", bytes);
+
+    const text = flat(bytes);
+    expect(text).toContain("SARL au capital de 21 000,00 €");
+    expect(text).toContain("RCS Bourg-en-Bresse 380 569 012");
+    expect(text).toContain("SIRET 380 569 012 00020");
+    expect(text).toContain("TVA FR73 380 569 012");
+    expect(text).toContain("Pénalités de retard : 12,5 % l'an");
+    expect(text).toContain("Indemnité forfaitaire pour frais de recouvrement : 40,00 € par facture");
+    expect(text).toContain("Escompte pour paiement anticipé : 1,5 % par mois");
+    expect(text).toContain("TVA acquittée sur les encaissements");
+    expect(text).toContain("Nous nous réservons la propriété des marchandises");
+  }, 60_000);
+
+  it("scenario 8 (facture courte) : les mentions tiennent sans ouvrir de page", async () => {
+    // Les mentions vivent dans la bande de pied, pas dans le flux : sur un document qui a
+    // de la place, elles ne coutent aucune page. Sur un document deja au bord — comme le
+    // gabarit `FACTURE`, a moins de 10 pt de la limite avant meme ce changement — la
+    // seconde page vient du contenu, pas des mentions.
+    const bytes = await renderFinanceDocument({
+      ...FACTURE_MENTIONS,
+      lines: [ligne()],
+      dueDates: [{ dueDate: "2026-08-21", label: "30 jours net", amount: "8755.20" }],
+      customerText: null,
+    });
+    keep("69-facture-mentions-courte", bytes);
+
+    expect(drawnPages(bytes)).toHaveLength(1);
+    const text = flat(bytes);
+    expect(text).toContain("SARL au capital de 21 000,00 €");
+    expect(text).toContain("Pénalités de retard : 12,5 % l'an");
+    expect(text).toContain("Nous nous réservons la propriété des marchandises");
+  }, 60_000);
+
+  it("porte les coordonnées de règlement, qui permettent au client de payer", async () => {
+    const text = flat(await renderFinanceDocument(FACTURE_MENTIONS));
+    expect(text).toContain("RIB : FR76 3000 3024 9100 0200 0775 958");
+    expect(text).toContain("BIC : SOGEFRPP");
+  }, 60_000);
+
+  it("n'affiche pas de coordonnées bancaires sur un avoir", async () => {
+    // Un avoir ne se regle pas : y afficher un RIB serait une invitation a payer.
+    const text = drawnText(await renderFinanceDocument({ ...AVOIR, issuer: ISSUER_MENTIONS }));
+    expect(text).not.toContain("FR76 3000 3024 9100 0200 0775 958");
+    // Les mentions obligatoires, elles, restent : un avoir est une piece fiscale.
+    expect(text).toContain("SIRET 380 569 012 00020");
+    expect(text).toContain("Pénalités de retard : 12,5 % l'an");
+  }, 60_000);
+
+  it("répète identité et mentions sur chacune des pages", async () => {
+    // Une page detachee doit rester rattachable a son emetteur et rester opposable.
+    const bytes = await renderFinanceDocument({
+      ...FACTURE_MENTIONS,
+      lines: Array.from({ length: 40 }, (_, index) =>
+        ligne({ designation: `Composant usiné référence ${index + 1} — plan 46${index}-A indice B` })
+      ),
+    });
+    keep("67-facture-mentions-volume", bytes);
+
+    const pages = drawnPages(bytes);
+    expect(pages.length).toBeGreaterThan(1);
+    for (const page of pages) {
+      expect(page).toContain("SIRET 380 569 012 00020");
+      expect(page).toContain("Pénalités de retard : 12,5 % l'an");
+      expect(page).toContain("Indemnité forfaitaire");
+    }
+  }, 90_000);
+
+  it("le texte des mentions reste extractible du PDF", async () => {
+    // Les mentions sont rendues fer a gauche et non justifiees : pdfkit justifie en
+    // positionnant les mots, ce qui fait ressortir « Penalitesderetard:12,5% » a
+    // l'extraction. Une mention legale doit rester lisible par une machine.
+    const text = drawnText(await renderFinanceDocument(FACTURE_MENTIONS));
+    expect(text).toContain("Pénalités de retard : 12,5 % l'an, exigibles de plein droit");
+    expect(text).not.toMatch(/Pénalitésderetard/);
+  }, 60_000);
+
+  it("l'instantané fige fait foi, pas le paramétrage courant", async () => {
+    // Une facture emise porte les mentions **en vigueur a son emission**. Rendue depuis un
+    // instantane ancien, elle doit afficher l'ancien taux — sinon le versionnement ne sert
+    // a rien et l'historique se retrouve reecrit.
+    const bytes = await renderFinanceDocument({
+      ...FACTURE_MENTIONS,
+      issuer: { ...ISSUER_MENTIONS, late_penalty_rate: "9.750", legal_mentions_version: 0 },
+    });
+    const text = drawnText(bytes);
+    expect(text).toContain("Pénalités de retard : 9,75 % l'an");
+    expect(text).not.toContain("12,5 %");
+  }, 60_000);
+
+  it("n'invente aucune mention quand le référentiel n'en porte pas", async () => {
+    // Etat d'avant le patch : ni identite legale, ni mentions. Le document doit rester
+    // lisible et muet, jamais approximatif.
+    const bytes = await renderFinanceDocument({
+      ...FACTURE,
+      issuer: { company_name: "CROIX ROUSSE PRECISION" },
+    });
+    keep("68-facture-sans-mentions", bytes);
+
+    const text = drawnText(bytes);
+    expect(text).toContain("CROIX ROUSSE PRECISION");
+    expect(text).not.toContain("Pénalités de retard");
+    expect(text).not.toContain("Indemnité forfaitaire");
+    expect(text).not.toContain("Escompte");
+    expect(text).not.toContain("au capital de");
+    expect(drawnPages(bytes)).toHaveLength(1);
+  }, 60_000);
 });

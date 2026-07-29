@@ -1,4 +1,5 @@
 import { renderCerpDocument, type CerpAddressCard, type CerpLineRow } from "../../../shared/pdf/cerp-document"
+import { issuerIdentityLine, issuerLegalMentions, type LegalParty } from "../../../shared/pdf/legal-mentions"
 
 import type { BonLivraisonHeader, BonLivraisonLigne, BonLivraisonLigneAllocation } from "../types/livraisons.types"
 
@@ -20,6 +21,14 @@ export type BonLivraisonDocumentInput = {
   version: number
   /** Raison sociale de l'emetteur, lue en base. */
   company: string | null
+  /**
+   * Instantane de l'emetteur : identite legale et mentions obligatoires.
+   *
+   * Un bon de livraison est un document commercial : il doit porter l'identite legale de
+   * celui qui l'emet (art. R123-237 C. com.), au meme titre qu'une facture. Il ne portait
+   * jusqu'ici qu'une raison sociale.
+   */
+  issuer?: LegalParty
 }
 
 export function formatDateFR(iso: string | null | undefined): string {
@@ -83,6 +92,7 @@ export function addressLines(label: string | null | undefined): string[] | null 
 
 export async function renderBonLivraisonDocument(input: BonLivraisonDocumentInput): Promise<Buffer> {
   const { header: bl, company, version } = input
+  const issuer = input.issuer ?? {}
   const clientName = clean(bl.client.company_name) ?? "Client"
 
   // Le referentiel expose l'identifiant technique du client ; il n'a rien a faire sur un
@@ -125,6 +135,11 @@ export async function renderBonLivraisonDocument(input: BonLivraisonDocumentInpu
       generatedBy: null,
       title: `Bon de livraison ${bl.numero}`,
       subject: "Bon de livraison CERP",
+      legalIdentity: issuerIdentityLine(issuer),
+      // La reserve de propriete a ici sa portee la plus forte : c'est a la livraison que se
+      // joue le transfert de possession, et la clause n'a d'effet que si l'acheteur en a eu
+      // connaissance au plus tard a ce moment-la.
+      legalMentions: issuerLegalMentions(issuer),
       creationDate: toUtcMidnightFromIso(bl.date_expedition ?? bl.date_creation),
     },
     (ctx) => {
