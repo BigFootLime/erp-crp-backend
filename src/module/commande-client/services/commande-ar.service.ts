@@ -1,4 +1,3 @@
-import PDFDocument from "pdfkit";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -6,6 +5,13 @@ import { HttpError } from "../../../utils/httpError";
 import { getDocumentStoragePath } from "../../../utils/cerpStorage";
 import { emitAppNotificationCreated, emitEntityChanged } from "../../../shared/realtime/realtime.service";
 import { sendTransactionalEmail, type ResendSendResult } from "../../../shared/email/resend.service";
+import { readIssuerParty } from "../../../shared/documents/issuer-identity.repository";
+import {
+  CONTENT_WIDTH,
+  renderCerpDocument,
+  type CerpLineRow,
+} from "../../../shared/pdf/cerp-document";
+import { issuerIdentityLine, issuerLegalMentions, type LegalParty } from "../../../shared/pdf/legal-mentions";
 import type {
   CommandeArDraft,
   CommandeArRecipientSuggestion,
@@ -101,10 +107,11 @@ function isResendSendError(result: Extract<ResendSendResult, { ok: false }>): re
   return "error" in result;
 }
 
-async function buildPdfBuffer(params: {
+export async function buildCommandeArPdfBuffer(params: {
   draftNumber: string;
   companyName: string | null;
   dateCommande: string;
+  generatedAt: Date;
   statut: string | null;
   totalHt: number;
   totalTtc: number;
@@ -122,77 +129,101 @@ async function buildPdfBuffer(params: {
     taux_tva: number | null;
     total_ttc: number;
   }>;
+  /**
+   * Instantane de l'emetteur : identite legale et mentions obligatoires.
+   *
+   * L'accuse de reception est un document commercial envoye au client par courriel : il
+   * doit porter l'identite legale de son emetteur au meme titre que la facture et le bon de
+   * livraison (art. R123-237 C. com.). Il ne portait aucune mention.
+   */
+  issuer: LegalParty;
 }): Promise<Buffer> {
-  return new Promise<Buffer>((resolve, reject) => {
-    const doc = new PDFDocument({ size: "A4", margin: 40 });
-    const chunks: Buffer[] = [];
-    doc.on("data", (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
-    doc.on("error", reject);
+  const clientName = params.companyName?.trim() || "Client";
+  const rows: CerpLineRow[] = params.lines.map((line) => ({
+    cells: {
+      designation: line.designation,
+      code_piece: line.code_piece ?? "—",
+      quantite: String(line.quantite),
+      unite: line.unite ?? "—",
+      prix_unitaire_ht: formatCurrencyEUR(line.prix_unitaire_ht),
+      taux_tva: `${line.taux_tva ?? 0} %`,
+      total_ttc: formatCurrencyEUR(line.total_ttc),
+    },
+    metaColumn: "designation",
+  }));
 
-    doc.fontSize(20).text("Accuse de reception", { align: "left" });
-    doc.moveDown(0.5);
-    doc.fontSize(11).fillColor("#475569").text(`Commande ${params.draftNumber}`);
-    doc.text(`Date commande: ${formatDateFR(params.dateCommande)}`);
-    doc.text(`Statut: ${params.statut ?? "PLANIFIEE"}`);
-    doc.fillColor("black");
-    doc.moveDown();
+  return renderCerpDocument(
+    {
+      documentType: "Accusé de réception",
+      name: clientName,
+      code: params.draftNumber,
+      subtitle: `Commande ${params.draftNumber}`,
+      status: params.statut ?? "PLANIFIEE",
+      monogramName: clientName,
+      generatedAt: formatDateFR(params.generatedAt.toISOString()),
+      title: `Accusé de réception ${params.draftNumber}`,
+      subject: "Accusé de réception de commande CERP",
+      legalIdentity: issuerIdentityLine(params.issuer),
+      legalMentions: issuerLegalMentions(params.issuer),
+      creationDate: params.generatedAt,
+    },
+    (ctx) => {
+      ctx.legalStrip([
+        { label: "Commande", value: params.draftNumber },
+        { label: "Date commande", value: formatDateFR(params.dateCommande) },
+        { label: "Statut", value: params.statut ?? "PLANIFIEE" },
+        { label: "Total TTC", value: formatCurrencyEUR(params.totalTtc) },
+      ]);
 
-    doc.fontSize(13).text("Client");
-    doc.fontSize(10);
-    doc.text(params.companyName ?? "-");
-    doc.text(`Email: ${params.clientEmail ?? "-"}`);
-    doc.text(`Telephone: ${params.clientPhone ?? "-"}`);
-    doc.moveDown();
+      ctx.section("Client et adresses", { cohesion: 100 });
+      ctx.addressCards([
+        {
+          caption: "Facturation",
+          lines: addressLines(params.billAddress),
+          accent: true,
+        },
+        {
+          caption: "Livraison",
+          lines: addressLines(params.deliveryAddress),
+        },
+      ]);
 
-    doc.fontSize(13).text("Adresse de facturation");
-    doc.fontSize(10);
-    for (const line of addressLines(params.billAddress)) doc.text(line);
-    doc.moveDown(0.5);
-    doc.fontSize(13).text("Adresse de livraison");
-    doc.fontSize(10);
-    for (const line of addressLines(params.deliveryAddress)) doc.text(line);
-    doc.moveDown();
+      ctx.section("Contact", { cohesion: 36 });
+      const half = CONTENT_WIDTH / 2 - 8;
+      const emailBottom = ctx.field("Email", params.clientEmail, 38, half);
+      const phoneBottom = ctx.field("Téléphone", params.clientPhone, 38 + half + 16, half);
+      ctx.y = Math.max(emailBottom, phoneBottom);
 
-    doc.fontSize(13).text("Lignes");
-    doc.moveDown(0.5);
-    doc.fontSize(9).fillColor("#475569");
-    doc.text("Designation", 40, doc.y, { width: 230 });
-    doc.text("Qte", 275, doc.y, { width: 40, align: "right" });
-    doc.text("PU HT", 320, doc.y, { width: 80, align: "right" });
-    doc.text("TVA", 405, doc.y, { width: 50, align: "right" });
-    doc.text("Total TTC", 460, doc.y, { width: 95, align: "right" });
-    doc.moveDown(0.4);
-    doc.fillColor("black");
-    doc.moveTo(40, doc.y).lineTo(555, doc.y).strokeColor("#cbd5e1").stroke();
-    doc.moveDown(0.4);
+      ctx.section("Lignes de commande", { cohesion: 84 });
+      ctx.linesTable({
+        columns: [
+          { key: "designation", label: "Désignation", flex: 4.5 },
+          { key: "code_piece", label: "Code pièce", flex: 1.8 },
+          { key: "quantite", label: "Qté", flex: 1, align: "right" },
+          { key: "unite", label: "Unité", flex: 1 },
+          { key: "prix_unitaire_ht", label: "PU HT", flex: 1.8, align: "right" },
+          { key: "taux_tva", label: "TVA", flex: 1.2, align: "right" },
+          { key: "total_ttc", label: "Total TTC", flex: 2, align: "right" },
+        ],
+        rows,
+        emptyLabel: "Aucune ligne sur cette commande.",
+      });
 
-    for (const line of params.lines) {
-      const startY = doc.y;
-      doc.fontSize(10).fillColor("black");
-      doc.text(line.designation, 40, startY, { width: 230 });
-      if (line.code_piece) {
-        doc.fontSize(8).fillColor("#64748b").text(line.code_piece, 40, doc.y, { width: 230 });
+      ctx.section("Totaux", { cohesion: 32 });
+      const totalHtBottom = ctx.field("Total HT", formatCurrencyEUR(params.totalHt), 38, half);
+      const totalTtcBottom = ctx.field(
+        "Total TTC",
+        formatCurrencyEUR(params.totalTtc),
+        38 + half + 16,
+        half
+      );
+      ctx.y = Math.max(totalHtBottom, totalTtcBottom);
+
+      if (params.commentaire?.trim()) {
+        ctx.notesSection("Notes", params.commentaire.trim());
       }
-      doc.fontSize(10).fillColor("black");
-      doc.text(String(line.quantite), 275, startY, { width: 40, align: "right" });
-      doc.text(formatCurrencyEUR(line.prix_unitaire_ht), 320, startY, { width: 80, align: "right" });
-      doc.text(`${line.taux_tva ?? 0}%`, 405, startY, { width: 50, align: "right" });
-      doc.text(formatCurrencyEUR(line.total_ttc), 460, startY, { width: 95, align: "right" });
-      doc.moveDown(0.8);
     }
-
-    doc.moveDown();
-    doc.fontSize(11).text(`Total HT: ${formatCurrencyEUR(params.totalHt)}`, { align: "right" });
-    doc.text(`Total TTC: ${formatCurrencyEUR(params.totalTtc)}`, { align: "right" });
-    if (params.commentaire?.trim()) {
-      doc.moveDown();
-      doc.fontSize(11).text("Notes");
-      doc.fontSize(10).text(params.commentaire.trim());
-    }
-
-    doc.end();
-  });
+  );
 }
 
 export async function svcGenerateCommandeAr(params: {
@@ -213,10 +244,17 @@ export async function svcGenerateCommandeAr(params: {
       companyName: data.header.client_company_name,
     });
 
-    const pdfBuffer = await buildPdfBuffer({
+    const generatedAt = new Date();
+    // An acknowledgement is fixed by the generated PDF. It carries the legal version in
+    // force when that artifact is created, not the possibly much older order date.
+    const issuer = await readIssuerParty({ at: generatedAt.toISOString().slice(0, 10) });
+
+    const pdfBuffer = await buildCommandeArPdfBuffer({
+      issuer,
       draftNumber: data.header.numero,
       companyName: data.header.client_company_name,
       dateCommande: data.header.date_commande,
+      generatedAt,
       statut: data.header.statut,
       totalHt: data.header.total_ht,
       totalTtc: data.header.total_ttc,

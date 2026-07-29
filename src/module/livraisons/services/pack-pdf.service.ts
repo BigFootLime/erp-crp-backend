@@ -1,5 +1,6 @@
-import pool from "../../../config/database"
+import { readIssuerParty } from "../../../shared/documents/issuer-identity.repository"
 import { CONTENT_WIDTH, renderCerpDocument, type CerpLineRow } from "../../../shared/pdf/cerp-document"
+import { issuerIdentityLine, issuerLegalMentions, pickMention } from "../../../shared/pdf/legal-mentions"
 
 import { clean, formatDateFR, lotCodesOf, renderBonLivraisonDocument, toUtcMidnightFromIso } from "./bon-livraison-document"
 
@@ -17,11 +18,8 @@ import type { LivraisonPackPreview } from "../types/pack.types"
  * donnee opposable, et aucun vocabulaire interne.
  */
 
-async function getCompanyHeader(): Promise<string | null> {
-  const res = await pool.query<{ biller_name: string }>(`SELECT biller_name FROM factureur ORDER BY biller_id ASC LIMIT 1`)
-  const name = res.rows[0]?.biller_name
-  return typeof name === "string" && name.trim() ? name.trim() : null
-}
+// L'emetteur n'est plus reduit a sa raison sociale : ces documents partent chez le client,
+// ils doivent porter l'identite legale complete (art. R123-237 C. com.).
 
 /**
  * Vocabulaire interne des mouvements de stock, traduit pour un lecteur externe.
@@ -54,11 +52,14 @@ function labelOf(dictionary: Record<string, string>, code: string | null | undef
 }
 
 export async function svcRenderPackBonLivraisonPdf(args: { preview: LivraisonPackPreview; version: number }): Promise<Buffer> {
+  const bl = args.preview.bon_livraison
+  const issuer = await readIssuerParty({ at: bl.date_expedition ?? bl.date_creation })
   return renderBonLivraisonDocument({
-    header: args.preview.bon_livraison,
+    header: bl,
     lignes: args.preview.lignes,
     version: args.version,
-    company: await getCompanyHeader(),
+    company: pickMention(issuer, "company_name"),
+    issuer,
   })
 }
 
@@ -69,9 +70,10 @@ export async function svcRenderPackCofcPdf(args: {
   commentairePack: string | null
   includeDocuments: boolean
 }): Promise<Buffer> {
-  const company = await getCompanyHeader()
   const p = args.preview
   const bl = p.bon_livraison
+  const issuer = await readIssuerParty({ at: bl.date_expedition ?? bl.date_creation })
+  const company = pickMention(issuer, "company_name")
   const clientName = clean(bl.client.company_name) ?? "Client"
 
   const rows: CerpLineRow[] = p.lignes.map((line) => {
@@ -100,6 +102,8 @@ export async function svcRenderPackCofcPdf(args: {
       generatedBy: clean(args.signataireLabel),
       title: `Certificat de conformité ${bl.numero}`,
       subject: "Certificat de conformité CERP",
+      legalIdentity: issuerIdentityLine(issuer),
+      legalMentions: issuerLegalMentions(issuer),
       creationDate: toUtcMidnightFromIso(bl.date_expedition ?? bl.date_creation),
     },
     (ctx) => {

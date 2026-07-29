@@ -5,6 +5,12 @@ import {
   type CerpDocumentContext,
   type CerpLineRow,
 } from "../../../shared/pdf/cerp-document";
+import { formatDateFR, money, percent } from "../../../shared/pdf/format-fr";
+import { issuerIdentityLine, issuerLegalMentions, issuerPaymentDetails } from "../../../shared/pdf/legal-mentions";
+
+// Reexportes : la mise en forme francaise est desormais partagee avec le bon de livraison
+// et l'accuse de reception, qui portent les memes mentions legales.
+export { formatDateFR, money, percent };
 
 /**
  * Rendu unique des documents financiers CERP : facture et avoir.
@@ -88,43 +94,6 @@ function pick(source: FinanceParty, ...keys: string[]): string | null {
   return null;
 }
 
-export function formatDateFR(iso: string | null | undefined): string {
-  if (!iso) return "-";
-  const raw = String(iso);
-  const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (m) return `${m[3]}/${m[2]}/${m[1]}`;
-  return raw;
-}
-
-/** Pourcentage a la francaise : `20,00 %`. Meme regle que `money` — aucun chiffre change. */
-export function percent(value: string): string {
-  const raw = String(value ?? "").trim();
-  if (!/^-?\d+(?:[.,]\d+)?$/.test(raw)) return `${raw} %`.trim();
-  return `${raw.replace(".", ",")} %`;
-}
-
-/**
- * Montant au format francais : `10 465,20 €`.
- *
- * Le referentiel fournit des chaines a point decimal (`10465.20`) et le document les sortait
- * telles quelles, avec le code ISO — sur une facture francaise, et alors que les documents
- * rendus dans le navigateur affichent deja `10 465,20 €` pour la meme entreprise.
- *
- * **Aucun chiffre n'est modifie** : seuls les separateurs changent. Une chaine qui n'est pas un
- * nombre est rendue telle quelle plutot que d'etre perdue.
- */
-export function money(amount: string, currency: string): string {
-  const raw = String(amount ?? "").trim();
-  const symbol = currency === "EUR" ? "€" : currency;
-
-  const match = raw.match(/^(-?)(\d+)(?:[.,](\d+))?$/);
-  if (!match) return `${raw} ${symbol}`.trim();
-
-  const [, sign, whole, decimals] = match;
-  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, " ");
-  return `${sign}${grouped}${decimals ? `,${decimals}` : ""} ${symbol}`;
-}
-
 /**
  * Identite d'une partie, en lignes.
  *
@@ -132,8 +101,20 @@ export function money(amount: string, currency: string): string {
  * **obligatoires** : denomination, adresse, SIRET, numero de TVA intracommunautaire. On lit
  * l'instantane de facon defensive — sa forme appartient au referentiel — et on n'affiche que
  * ce qui existe reellement. Une mention absente n'est jamais remplacee par un substitut.
+ *
+ * ## Emetteur et client ne portent pas leur identite au meme endroit
+ *
+ * L'acheteur n'a qu'un seul emplacement sur le document : sa carte. Ses identifiants y
+ * figurent donc.
+ *
+ * Le vendeur, lui, porte son identite legale dans le **pied de page**, sur toutes les pages
+ * — forme juridique, capital, RCS et ville, SIRET, TVA. C'est la disposition de la facture
+ * papier de l'entreprise, et c'est la seule qui garantisse la mention sur une page detachee.
+ * La repeter dans la carte « Emetteur » la ferait apparaitre deux fois sur la meme page.
+ * D'ou `identifiers: false` pour l'emetteur, pose par `partyCards()`.
  */
-export function partyLines(party: FinanceParty): string[] {
+export function partyLines(party: FinanceParty, options: { identifiers?: boolean } = {}): string[] {
+  const withIdentifiers = options.identifiers ?? true;
   const nested =
     party.billing_address && typeof party.billing_address === "object"
       ? (party.billing_address as FinanceParty)
@@ -147,23 +128,31 @@ export function partyLines(party: FinanceParty): string[] {
     .filter(Boolean)
     .join(" ");
 
+  const phone = pick(party, "phone", "telephone");
   const identity = [
     pick(party, "company_name", "name", "raison_sociale", "biller_name"),
     pick(party, "address_line_1", "address", "adresse") ?? (streetFromNested || null),
     pick(party, "address_line_2", "adresse_complement") ?? pick(nested, "address_complement"),
     cityLine || null,
     pick(party, "country", "pays") ?? pick(nested, "country"),
+    phone ? `Tél. ${phone}` : null,
   ];
 
-  const legal = [
-    pick(party, "siret") ? `SIRET ${pick(party, "siret")}` : null,
-    pick(party, "siren") ? `SIREN ${pick(party, "siren")}` : null,
-    pick(party, "rcs") ? `RCS ${pick(party, "rcs")}` : null,
-    pick(party, "vat_number", "numero_tva", "tva_intracommunautaire")
-      ? `TVA ${pick(party, "vat_number", "numero_tva", "tva_intracommunautaire")}`
-      : null,
-    pick(party, "capital_social") ? `Capital ${pick(party, "capital_social")}` : null,
-  ];
+  const legal = withIdentifiers
+    ? [
+        pick(party, "siret") ? `SIRET ${pick(party, "siret")}` : null,
+        pick(party, "siren") ? `SIREN ${pick(party, "siren")}` : null,
+        pick(party, "rcs_number", "rcs")
+          ? pick(party, "rcs_city")
+            ? `RCS ${pick(party, "rcs_city")} ${pick(party, "rcs_number", "rcs")}`
+            : `RCS ${pick(party, "rcs_number", "rcs")}`
+          : null,
+        pick(party, "vat_number", "numero_tva", "tva_intracommunautaire")
+          ? `TVA ${pick(party, "vat_number", "numero_tva", "tva_intracommunautaire")}`
+          : null,
+        pick(party, "capital_social") ? `Capital ${pick(party, "capital_social")}` : null,
+      ]
+    : [];
 
   return [...identity, ...legal].filter((line): line is string => Boolean(line));
 }
@@ -290,7 +279,13 @@ function summaryBlock(
 
 function partyCards(input: FinanceDocumentInput): CerpAddressCard[] {
   return [
-    { caption: "Émetteur", lines: partyLines(input.issuer), accent: true, emptyLabel: "Non renseigné" },
+    {
+      caption: "Émetteur",
+      // Les identifiants legaux de l'emetteur sont dans le pied, sur toutes les pages.
+      lines: partyLines(input.issuer, { identifiers: false }),
+      accent: true,
+      emptyLabel: "Non renseigné",
+    },
     {
       caption: input.kind === "AVOIR" ? "Client crédité" : "Client facturé",
       lines: partyLines(input.client),
@@ -356,6 +351,23 @@ export async function renderFinanceDocument(input: FinanceDocumentInput): Promis
       // Tracabilite de l'exemplaire, portee par toutes les pages : c'est ce qui permet de
       // rattacher un PDF retrouve chez le client a l'instantane immuable conserve.
       footerNote: traceabilityNote(input),
+      // Identite legale de l'emetteur : mention obligatoire, portee par toutes les pages.
+      // Elle est lue dans l'instantane fige, donc elle reflete ce qui etait en vigueur a
+      // l'emission — pas ce qui est parametre aujourd'hui.
+      legalIdentity: issuerIdentityLine(input.issuer),
+      // Penalites de retard, indemnite forfaitaire de recouvrement, escompte, regime de TVA
+      // et reserve de propriete. Dans la bande de pied, comme sur la facture papier : elles
+      // ne doivent jamais couter une page au contenu.
+      //
+      // Les coordonnees bancaires ferment la bande. Ce n'est pas une mention obligatoire,
+      // mais c'est ce qui permet au client de payer, et un avoir ne se regle pas — y
+      // afficher un RIB serait une invitation a payer. En section titree dans le flux,
+      // elles coutaient 54 pt et faisaient basculer une facture de deux lignes sur une
+      // seconde page ; ici, une ligne suffit.
+      legalMentions: [
+        ...issuerLegalMentions(input.issuer),
+        ...(isAvoir ? [] : [issuerPaymentDetails(input.issuer)].filter((line): line is string => Boolean(line))),
+      ],
       creationDate: new Date(`${input.issueDate.slice(0, 10)}T12:00:00.000Z`),
     },
     (ctx) => {
@@ -449,6 +461,7 @@ export async function renderFinanceDocument(input: FinanceDocumentInput): Promis
       if (clean(input.customerText)) {
         ctx.notesSection("Informations client", input.customerText as string);
       }
+
     }
   );
 }

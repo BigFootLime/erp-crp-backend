@@ -32,12 +32,93 @@ const MARGIN_TOP = 34
 /** Bande reservee au pied de page fixe. */
 const MARGIN_BOTTOM = 54
 
+/**
+ * Geometrie du pied de page, mesuree pour un document donne.
+ *
+ * ## Pourquoi les mentions vivent dans le pied et non dans le flux
+ *
+ * Placees a la suite du contenu, elles poussaient un bon de livraison de deux lignes sur une
+ * seconde page qui ne portait qu'elles : le cadre de reception occupe deja le bas de la
+ * page. Une mention obligatoire ne doit jamais couter une page, et elle a d'autant plus de
+ * valeur qu'elle figure sur **chaque** page — une page detachee reste opposable.
+ *
+ * C'est aussi la disposition de la facture papier de l'entreprise : penalites, escompte et
+ * reserve de propriete en petit corps au-dessus du filet, identite legale en dessous.
+ *
+ * ## Reserve
+ *
+ * La bande n'a pas de hauteur fixe : elle est **mesuree** sur le texte reel. Une reserve
+ * forfaitaire ferait chevaucher les mentions et la derniere ligne du contenu des que la
+ * clause de reserve de propriete depasse une ligne — et une mention illisible est une
+ * mention absente.
+ */
+type FooterGeometry = {
+  reserve: number
+  identity: string | null
+  mentions: string | null
+  mentionsHeight: number
+  mentionsY: number
+  noteY: number
+}
+
+function measureFooter(header: CerpDocumentHeader): FooterGeometry {
+  const identity = header.legalIdentity && header.legalIdentity.trim() ? toPdfSafeText(header.legalIdentity.trim()) : null
+  const usable = (header.legalMentions ?? []).map((line) => line.trim()).filter(Boolean)
+  // Les mentions sont fondues en un seul paragraphe separe par des points medians : sur une
+  // bande de pied, un paragraphe par mention gaspillerait la moitie de la hauteur en
+  // interlignes.
+  const mentions = usable.length ? toPdfSafeText(usable.join("  ·  ")) : null
+
+  if (!identity && !mentions) {
+    // Aucun contenu legal : on conserve exactement la geometrie anterieure.
+    return {
+      reserve: MARGIN_BOTTOM,
+      identity: null,
+      mentions: null,
+      mentionsHeight: 0,
+      mentionsY: 0,
+      noteY: FOOTER_BASELINE - 17,
+    }
+  }
+
+  let mentionsHeight = 0
+  if (mentions) {
+    // Instance jetable : `heightOfString` ne depend que de la police, du corps et de la
+    // largeur, et le document reel doit connaitre sa marge basse des sa construction.
+    const ruler = new PDFDocument({ size: "A4" })
+    ruler.font("Helvetica").fontSize(LEGAL_MENTIONS_SIZE)
+    mentionsHeight = ruler.heightOfString(mentions, { width: CONTENT_WIDTH, lineGap: 0.3 })
+    ruler.end()
+  }
+
+  // Interlignes serres : chaque point rendu a la bande est un point rendu au contenu, et
+  // ces trois elements sont du petit corps qui n'a pas besoin de respirer.
+  const identityY = FOOTER_BASELINE - 16
+  const mentionsY = identityY - 2 - mentionsHeight
+  const noteY = (mentions ? mentionsY : identityY) - 8
+  const contentBottom = (header.footerNote && header.footerNote.trim() ? noteY : mentionsY) - 5
+
+  return {
+    reserve: Math.max(MARGIN_BOTTOM, PAGE_HEIGHT - contentBottom),
+    identity,
+    mentions,
+    mentionsHeight,
+    mentionsY,
+    noteY,
+  }
+}
+
 const PAGE_WIDTH = 595.28
 const PAGE_HEIGHT = 841.89
 export const CONTENT_WIDTH = PAGE_WIDTH - MARGIN_X * 2
 
 const BODY_SIZE = 9.5
 const LOGO_WIDTH = 148
+
+/** Ligne de base du pied : « CROIX ROUSSE PRECISION — Genere le … — Page X / Y ». */
+const FOOTER_BASELINE = PAGE_HEIGHT - 30
+const LEGAL_IDENTITY_SIZE = 6.2
+const LEGAL_MENTIONS_SIZE = 5.8
 
 /**
  * Caracteres absents de WinAnsi, seul encodage des polices standard PDF.
@@ -117,6 +198,30 @@ export type CerpDocumentHeader = {
    * detachable, une page isolee doit pouvoir etre rattachee a son exemplaire d'origine.
    */
   footerNote?: string | null
+  /**
+   * Identite legale de l'emetteur, portee par **toutes** les pages : forme juridique,
+   * capital social, RCS et ville d'immatriculation, SIRET, numero de TVA.
+   *
+   * Mention **obligatoire** (art. R123-237 C. com.) sur tout document commercial — facture,
+   * avoir, bon de livraison, accuse de reception. Elle vit dans le pied et non dans le flux,
+   * comme sur la facture papier de l'entreprise : le bloc « Emetteur » en tete porte
+   * l'adresse, le pied porte l'identite legale.
+   *
+   * Construite par `issuerIdentityLine()` (`shared/pdf/legal-mentions.ts`) a partir de
+   * l'instantane fige — jamais recomposee par un appelant.
+   */
+  legalIdentity?: string | null
+  /**
+   * Mentions legales de reglement et clauses, portees par **toutes** les pages.
+   *
+   * Penalites de retard (art. L441-10 C. com.), indemnite forfaitaire de recouvrement
+   * (art. D441-5), escompte (art. L441-9, obligatoire meme en son absence), regime de TVA
+   * et reserve de propriete.
+   *
+   * Construites par `issuerLegalMentions()` a partir de l'instantane fige. Elles vivent dans
+   * la bande de pied et non dans le flux : voir `measureFooter`.
+   */
+  legalMentions?: string[] | null
   /** Metadonnees PDF. */
   title: string
   subject: string
@@ -153,10 +258,13 @@ export type CerpAddressCard = {
 export class CerpDocumentContext {
   readonly doc: PDFKit.PDFDocument
   private cursor: number
+  /** Bande reservee au pied, variable selon les mentions qu'il porte. */
+  private readonly reserve: number
 
-  constructor(doc: PDFKit.PDFDocument, startY: number) {
+  constructor(doc: PDFKit.PDFDocument, startY: number, reserve: number = MARGIN_BOTTOM) {
     this.doc = doc
     this.cursor = startY
+    this.reserve = reserve
   }
 
   get y(): number {
@@ -168,7 +276,7 @@ export class CerpDocumentContext {
   }
 
   private get bottomLimit(): number {
-    return PAGE_HEIGHT - MARGIN_BOTTOM
+    return PAGE_HEIGHT - this.reserve
   }
 
   /** Ouvre une page si `height` ne tient pas dans ce qui reste. */
@@ -370,7 +478,7 @@ export class CerpDocumentContext {
         rowHeight += 1 + this.doc.heightOfString(toPdfSafeText(row.meta), { width: metaWidth })
       }
 
-      if (this.cursor + rowHeight + 12 > PAGE_HEIGHT - MARGIN_BOTTOM) {
+      if (this.cursor + rowHeight + 12 > this.bottomLimit) {
         this.doc.addPage()
         this.cursor = MARGIN_TOP
         drawHead()
@@ -482,6 +590,7 @@ export class CerpDocumentContext {
     this.cursor += height
     this.doc.fillColor(CERP_DOC_COLORS.ink)
   }
+
 }
 
 function drawMasthead(doc: PDFKit.PDFDocument, header: CerpDocumentHeader): number {
@@ -584,14 +693,55 @@ function drawRunningHead(doc: PDFKit.PDFDocument, header: CerpDocumentHeader): v
   doc.fillColor(CERP_DOC_COLORS.ink)
 }
 
-function drawFooter(doc: PDFKit.PDFDocument, header: CerpDocumentHeader, pageNumber: number, totalPages: number): void {
-  const y = PAGE_HEIGHT - 30
+function drawFooter(
+  doc: PDFKit.PDFDocument,
+  header: CerpDocumentHeader,
+  geometry: FooterGeometry,
+  pageNumber: number,
+  totalPages: number
+): void {
+  const y = FOOTER_BASELINE
+
+  // Le pied vit **sous** la marge basse : c'est sa raison d'etre. pdfkit, lui, ouvre une
+  // page des qu'un texte susceptible de revenir a la ligne depasse `maxY()` — un bloc de
+  // mentions de trois lignes suffisait a ajouter une page vide a chaque document. Les
+  // lignes uniques y echappent via `lineBreak: false` ; un paragraphe justifie, non. On
+  // suspend donc la marge le temps de dessiner le pied, puis on la retablit.
+  const savedBottomMargin = doc.page.margins.bottom
+  doc.page.margins.bottom = 0
+
+  // Mentions de reglement et clauses, au-dessus de l'identite legale.
+  if (geometry.mentions) {
+    doc.font("Helvetica").fontSize(LEGAL_MENTIONS_SIZE).fillColor(CERP_DOC_COLORS.steel)
+    // Fer a gauche, jamais justifie : pdfkit justifie en **positionnant** les mots plutot
+    // qu'en ecrivant les espaces, et le texte extrait du PDF revient alors colle
+    // (« Penalitesderetard:12,5% »). Une mention legale doit rester lisible par une
+    // machine — copier-coller, indexation, controle automatise.
+    doc.text(geometry.mentions, MARGIN_X, geometry.mentionsY, {
+      width: CONTENT_WIDTH,
+      lineGap: 0.3,
+    })
+  }
+
+  // Identite legale : mention obligatoire, placee au plus pres du filet de pied et repetee
+  // sur chaque page.
+  if (geometry.identity) {
+    doc.font("Helvetica").fontSize(LEGAL_IDENTITY_SIZE).fillColor(CERP_DOC_COLORS.graphite)
+    const legalWidth = doc.widthOfString(geometry.identity)
+    // Une identite trop longue pour une ligne est laissee au retour a la ligne plutot que
+    // rognee : une mention obligatoire tronquee ne vaut pas mieux qu'une mention absente.
+    if (legalWidth <= CONTENT_WIDTH) {
+      doc.text(geometry.identity, MARGIN_X + (CONTENT_WIDTH - legalWidth) / 2, y - 17, { lineBreak: false })
+    } else {
+      doc.text(geometry.identity, MARGIN_X, y - 17, { width: CONTENT_WIDTH, align: "center" })
+    }
+  }
 
   const note = header.footerNote && header.footerNote.trim() ? toPdfSafeText(header.footerNote.trim()) : null
   if (note) {
     doc.font("Helvetica").fontSize(6.5).fillColor(CERP_DOC_COLORS.steel)
     const noteWidth = doc.widthOfString(note)
-    doc.text(note, MARGIN_X + (CONTENT_WIDTH - noteWidth) / 2, y - 17, { lineBreak: false })
+    doc.text(note, MARGIN_X + (CONTENT_WIDTH - noteWidth) / 2, geometry.noteY, { lineBreak: false })
   }
 
   doc.save()
@@ -613,6 +763,7 @@ function drawFooter(doc: PDFKit.PDFDocument, header: CerpDocumentHeader, pageNum
   const pageWidth = doc.widthOfString(page)
   doc.text(page, MARGIN_X + CONTENT_WIDTH - pageWidth, y, { lineBreak: false })
 
+  doc.page.margins.bottom = savedBottomMargin
   doc.fillColor(CERP_DOC_COLORS.ink)
 }
 
@@ -626,10 +777,11 @@ export async function renderCerpDocument(
   header: CerpDocumentHeader,
   render: (ctx: CerpDocumentContext) => void
 ): Promise<Buffer> {
+  const geometry = measureFooter(header)
   const doc = new PDFDocument({
     size: "A4",
     bufferPages: true,
-    margins: { top: MARGIN_TOP, bottom: MARGIN_BOTTOM, left: MARGIN_X, right: MARGIN_X },
+    margins: { top: MARGIN_TOP, bottom: geometry.reserve, left: MARGIN_X, right: MARGIN_X },
     info: {
       Title: toPdfSafeText(header.title),
       Author: "Croix Rousse Precision",
@@ -646,13 +798,13 @@ export async function renderCerpDocument(
   const afterMasthead = drawMasthead(doc, header)
   const afterIdentity = drawIdentity(doc, header, afterMasthead)
 
-  render(new CerpDocumentContext(doc, afterIdentity))
+  render(new CerpDocumentContext(doc, afterIdentity, geometry.reserve))
 
   const range = doc.bufferedPageRange()
   for (let index = 0; index < range.count; index += 1) {
     doc.switchToPage(range.start + index)
     if (index > 0) drawRunningHead(doc, header)
-    drawFooter(doc, header, index + 1, range.count)
+    drawFooter(doc, header, geometry, index + 1, range.count)
   }
 
   doc.end()

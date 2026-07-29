@@ -34,6 +34,7 @@ import {
   insertGlobalFinanceAudit,
   newCorrelationId,
   nextLegacyId,
+  requireFinanceIssuerSnapshotAt,
   saveFinanceReceipt,
 } from "./workflow.repository.shared";
 
@@ -773,6 +774,14 @@ export async function repoIssueAvoir(params: {
       );
     }
     const issueDate = new Date().toISOString().slice(0, 10);
+    // An avoir is itself a fiscal document. Resolve and validate its own legal version before
+    // consuming a legal sequence value; inheriting the corrected invoice's older mentions
+    // would rewrite the issue-date truth.
+    const issuerAtIssue = await requireFinanceIssuerSnapshotAt(
+      client,
+      avoir.legal_entity_code,
+      issueDate
+    );
     const legal = await allocateLegalNumber({
       client,
       documentType: "AVOIR",
@@ -789,7 +798,7 @@ export async function repoIssueAvoir(params: {
       facture_number: preview.facture_number,
       currency: preview.currency,
       client_snapshot: avoir.client_snapshot,
-      issuer_snapshot: avoir.issuer_snapshot,
+      issuer_snapshot: issuerAtIssue,
       reason_code: preview.reason_code,
       reason: preview.reason,
       lines: preview.lines,
@@ -822,6 +831,7 @@ export async function repoIssueAvoir(params: {
             issued_by = $6,
             immutable_snapshot = $7::jsonb,
             document_checksum_sha256 = $8,
+            issuer_snapshot = $9::jsonb,
             row_version = row_version + 1,
             updated_at = now()
         WHERE id = $1
@@ -836,6 +846,7 @@ export async function repoIssueAvoir(params: {
         params.actor.userId,
         JSON.stringify(snapshot),
         artifact.checksumSha256,
+        JSON.stringify(issuerAtIssue),
       ]
     );
     await client.query(
