@@ -34,8 +34,16 @@ vi.mock("../utils/checkNetworkDrive", () => ({
 }));
 
 vi.mock("../module/auth/middlewares/auth.middleware", () => ({
-  authenticateToken: (req: { user?: { id: number; role: string } }, _res: unknown, next: () => void) => {
-    req.user = { id: 1, role: "Administrateur Systeme et Reseau" };
+  authenticateToken: (
+    req: { user?: { id: number; role: string }; headers?: Record<string, string | string[] | undefined> },
+    _res: unknown,
+    next: () => void
+  ) => {
+    const requestedRole = req.headers?.["x-test-role"];
+    req.user = {
+      id: 1,
+      role: typeof requestedRole === "string" ? requestedRole : "Administrateur Systeme et Reseau",
+    };
     next();
   },
   authorizeRole:
@@ -67,6 +75,35 @@ beforeEach(() => {
 });
 
 describe("/api/v1/pieces-techniques", () => {
+  it.each([
+    "Employee | Method",
+    "Employee | Responsable Programmation",
+  ])("lets an authorized multi-role marker reach technical-version approval (%s)", async (role) => {
+    const pieceId = "11111111-1111-4111-8111-111111111111";
+    const versionId = "22222222-2222-4222-8222-222222222222";
+
+    const res = await request(app)
+      .patch(`/api/v1/pieces-techniques/${pieceId}/versions/${versionId}/status`)
+      .set("x-test-role", role)
+      .send({ next_statut: "APPLICABLE" });
+
+    expect(res.status).toBe(404);
+    expect(res.body).toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("keeps technical-version approval closed to an unprivileged operator", async () => {
+    const pieceId = "11111111-1111-4111-8111-111111111111";
+    const versionId = "22222222-2222-4222-8222-222222222222";
+
+    const res = await request(app)
+      .patch(`/api/v1/pieces-techniques/${pieceId}/versions/${versionId}/status`)
+      .set("x-test-role", "Employee | Opérateur atelier")
+      .send({ next_statut: "APPLICABLE" });
+
+    expect(res.status).toBe(403);
+    expect(res.body).toMatchObject({ code: "PIECE_VERSION_APPROVAL_FORBIDDEN" });
+  });
+
   it("rejects a manufactured child relation that would create a fabrication cycle", async () => {
     const parentId = "11111111-1111-4111-8111-111111111111";
     const childId = "22222222-2222-4222-8222-222222222222";
