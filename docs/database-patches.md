@@ -47,6 +47,30 @@ schema represented by the current patch files.
 - Review `checksum-mismatch` results before continuing.
 - Keep passwords and `DATABASE_URL` out of Git, logs, and tickets.
 
+## Issue #164 - Règles Articles / matière / Stock restantes
+
+`20260729_articles_164_remaining_rules.sql` ajoute les sept profils matière
+canoniques, le propriétaire du brut client, les longueurs industrielles
+distinctes, la quantité linéaire par Article/lot et la base de prix fournisseur
+`NONE`/`KG`/`M`.
+
+La densité publique devient le kg/m³ dans une nouvelle colonne
+`stock_nuances.densite_kg_m3`. La colonne historique `densite` reste en kg/dm³
+et est synchronisée pour assurer la compatibilité ; la reprise applique
+exactement `kg/m³ = kg/dm³ × 1 000`. L'audit du 2026-07-29 n'a trouvé aucune
+densité renseignée dans `cerp_test` ou `cerp_prod`.
+
+Ordre obligatoire : préflight, sauvegarde, patch sur `cerp_test`, verify,
+rollback test-only, réapplication et recette. Le rollback refuse toute base
+autre que `cerp_test` et toute nouvelle donnée utilisant les champs. Aucune
+application automatique à `cerp_prod` n'est autorisée.
+
+Validation du 2026-07-29 : sauvegarde `cerp_test` vérifiée, préflight vert,
+application/verify/rollback/réapplication/verify réussis, patch enregistré sous
+le SHA-256 `ecf89b47af9d62fe96642c232aad75a64f6414071fad7d3e5b4416d8658e1236`.
+Les volumes sont restés 272 Articles matière, 0 lot, 233 lignes de mouvement et
+0 prix fournisseur. `cerp_prod` n'a pas reçu ce patch.
+
 ## Issue #167 - Assistant d’import CLIPPER
 
 Patch `20260726_import_assistant_167.sql` ajoute le staging reprenable, le

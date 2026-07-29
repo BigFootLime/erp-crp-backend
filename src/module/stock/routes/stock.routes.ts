@@ -46,6 +46,7 @@ import {
   listStockInventorySessions,
   listStockArticleDocuments,
   listStockArticles,
+  exportStockArticles,
   listSimilarStockArticles,
   listStockBalances,
   listStockEmplacements,
@@ -61,6 +62,7 @@ import {
   removeStockMovementDocument,
   upsertStockInventorySessionLine,
   updateStockArticle,
+  validateStockArticle,
   archiveStockArticle,
   reactivateStockArticle,
   listStockArticleVersions,
@@ -84,6 +86,7 @@ import {
 } from "../controllers/stock-reservation.controller";
 import {
   ARTICLE_ARCHIVE_ROLES,
+  ARTICLE_APPROVE_ROLES,
   ARTICLE_DOCUMENT_WRITE_ROLES,
   ARTICLE_WRITE_ROLES,
 } from "../stock-article.permissions";
@@ -104,6 +107,7 @@ router.use(authenticateToken);
 
 const requireArticleWrite = authorizeRole(...ARTICLE_WRITE_ROLES);
 const requireArticleArchive = authorizeRole(...ARTICLE_ARCHIVE_ROLES);
+const requireArticleApprove = authorizeRole(...ARTICLE_APPROVE_ROLES);
 const requireArticleDocumentWrite = authorizeRole(...ARTICLE_DOCUMENT_WRITE_ROLES);
 
 const requireStockCapability = (capability: StockCapability): RequestHandler => (req, _res, next) => {
@@ -127,12 +131,14 @@ router.post("/matiere-sous-etats", requireArticleWrite, createStockMatiereSousEt
 router.get("/articles", requireStockCapability("read"), listStockArticles);
 router.get("/articles/kpis", requireStockCapability("read"), getStockArticlesKpis);
 router.get("/articles/code-preview", requireStockCapability("read"), previewStockArticleCode);
+router.get("/articles/export.csv", requireStockCapability("read"), exportStockArticles);
 // #226 — Déclarée AVANT `/articles/:id` : sans cela, « similaires » serait lu
 // comme un identifiant d'article.
 router.get("/articles/similaires", requireStockCapability("read"), listSimilarStockArticles);
 router.post("/articles", requireArticleWrite, createStockArticle);
 router.get("/articles/:id", requireStockCapability("read"), getStockArticle);
 router.patch("/articles/:id", requireArticleWrite, updateStockArticle);
+router.post("/articles/:id/validate", requireArticleApprove, validateStockArticle);
 router.post("/articles/:id/archive", requireArticleArchive, archiveStockArticle);
 router.post("/articles/:id/reactivate", requireArticleArchive, reactivateStockArticle);
 router.get("/articles/:id/versions", requireStockCapability("read"), listStockArticleVersions);

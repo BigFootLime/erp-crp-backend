@@ -39,6 +39,7 @@ import {
   inventorySessionActionSchema,
   cancelInventorySessionSchema,
   updateArticleSchema,
+  validateArticleSchema,
   archiveArticleSchema,
   reactivateArticleSchema,
   listArticleVersionsQuerySchema,
@@ -67,6 +68,7 @@ import {
   type ListMatiereNuancesQueryDTO,
   type ListMatiereSousEtatsQueryDTO,
   type UpdateArticleBodyDTO,
+  type ValidateArticleBodyDTO,
   type ArchiveArticleBodyDTO,
   type ReactivateArticleBodyDTO,
   type UpdateEmplacementBodyDTO,
@@ -119,6 +121,7 @@ import {
   getStockMovementSVC,
   listStockArticleDocumentsSVC,
   listStockArticlesSVC,
+  exportStockArticlesSVC,
   findSimilarStockArticlesSVC,
   listStockBalancesSVC,
   listStockEmplacementsSVC,
@@ -130,6 +133,7 @@ import {
   removeStockArticleDocumentSVC,
   removeStockMovementDocumentSVC,
   updateStockArticleSVC,
+  validateStockArticleSVC,
   archiveStockArticleSVC,
   reactivateStockArticleSVC,
   listStockArticleVersionsSVC,
@@ -333,6 +337,56 @@ export const listStockArticles: RequestHandler = async (req, res, next) => {
   }
 };
 
+function csvCell(value: unknown): string {
+  const raw = value === null || value === undefined ? "" : String(value);
+  const formulaSafe = /^[=+\-@]/.test(raw) ? `'${raw}` : raw;
+  return `"${formulaSafe.replace(/"/g, '""')}"`;
+}
+
+export const exportStockArticles: RequestHandler = async (req, res, next) => {
+  try {
+    const parsed = listArticlesQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues?.[0]?.message ?? "Invalid query" });
+      return;
+    }
+    const out = await exportStockArticlesSVC(parsed.data);
+    const headers = [
+      "Code",
+      "Désignation",
+      "Profil matière",
+      "Catégorie",
+      "Statut",
+      "Unité",
+      "Stock disponible",
+      "Stock réservé",
+      "Gestion par lot",
+      "Actif",
+    ];
+    const lines = out.items.map((item) => [
+      item.code,
+      item.designation,
+      item.family_code,
+      item.article_category,
+      item.status,
+      item.unite,
+      item.qty_available,
+      item.qty_reserved,
+      item.lot_tracking ? "Oui" : "Non",
+      item.is_active ? "Oui" : "Non",
+    ].map(csvCell).join(";"));
+    const metadata = out.truncated
+      ? `\r\n${csvCell("Export limité à 10 000 lignes")};${csvCell(`${out.total} articles correspondent aux filtres`)}`
+      : "";
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", 'attachment; filename="articles-stock.csv"');
+    res.send(`\uFEFF${headers.map(csvCell).join(";")}\r\n${lines.join("\r\n")}${metadata}`);
+  } catch (err) {
+    next(err);
+  }
+};
+
 /**
  * #226 — « Existe-t-il déjà un article comme celui-ci ? » posée AVANT création.
  * Lecture pure : `requireStockCapability("read")` suffit, et aucune écriture
@@ -523,6 +577,22 @@ export const updateStockArticle: RequestHandler = async (req, res, next) => {
     const { id } = idParamSchema.parse({ params: req.params }).params;
     const body: UpdateArticleBodyDTO = updateArticleSchema.parse({ body: req.body }).body;
     const out = await updateStockArticleSVC(id, body, audit, includeArticleCosts(req));
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const validateStockArticle: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildAuditContext(req);
+    const { id } = idParamSchema.parse({ params: req.params }).params;
+    const body: ValidateArticleBodyDTO = validateArticleSchema.parse({ body: req.body }).body;
+    const out = await validateStockArticleSVC(id, body, audit, includeArticleCosts(req));
     if (!out) {
       res.status(404).json({ error: "Not found" });
       return;

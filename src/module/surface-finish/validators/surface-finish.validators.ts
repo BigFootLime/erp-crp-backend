@@ -385,6 +385,28 @@ export const confirmFinishBodySchema = z.object({
 });
 export type ConfirmFinishBodyDTO = z.infer<typeof confirmFinishBodySchema>;
 
+/**
+ * Depuis Stock, la PT et sa version sont explicites. Depuis une nomenclature
+ * de PT, elles restent dérivées du contexte de gamme et ne sont jamais
+ * redemandées : les deux routes conservent donc des contrats séparés.
+ */
+export const stockArticleFinishPreviewBodySchema = z.object({
+  piece_technique_id: uuid,
+  piece_technique_version_id: uuid,
+  finish_revision_id: uuid,
+  overrides: operationOverridesSchema.optional().default(operationOverridesSchema.parse({})),
+});
+export type StockArticleFinishPreviewBodyDTO = z.infer<typeof stockArticleFinishPreviewBodySchema>;
+
+export const stockArticleFinishConfirmBodySchema = stockArticleFinishPreviewBodySchema.extend({
+  decision: articleDecisionSchema,
+  article_id: z.union([uuid, z.null()]).optional().transform((value) => value ?? null),
+  justification: optionalText(1000),
+  preview_hash: z.string().regex(/^[0-9a-f]{64}$/, "Aperçu invalide."),
+  spec_fingerprint: z.string().regex(/^[0-9a-f]{64}$/, "Empreinte invalide."),
+});
+export type StockArticleFinishConfirmBodyDTO = z.infer<typeof stockArticleFinishConfirmBodySchema>;
+
 export const detachFinishBodySchema = z.object({
   motif: mediumText,
   expected_updated_at: z.string().min(1),

@@ -36,6 +36,8 @@ import {
   repoDetachOperationFinish,
   repoGetOperationFinish,
   repoPreviewOperationFinish,
+  repoPreviewStockFinishArticle,
+  repoConfirmStockFinishArticle,
 } from "../repository/surface-finish-resolution.repository";
 import type {
   ArchiveFinishBodyDTO,
@@ -49,6 +51,8 @@ import type {
   ReactivateFinishBodyDTO,
   RevisionPayloadDTO,
   SimilarFinishesQueryDTO,
+  StockArticleFinishConfirmBodyDTO,
+  StockArticleFinishPreviewBodyDTO,
   TransitionRevisionBodyDTO,
   UpdateFinishBodyDTO,
   UpdateRevisionBodyDTO,
@@ -64,6 +68,7 @@ import type {
   SurfaceFinishPreview,
   SurfaceFinishRevisionDetail,
   SurfaceFinishSimilarMatch,
+  StockFinishArticleResult,
 } from "../types/surface-finish.types";
 
 export type Actor = { user_id: number; role: string | null };
@@ -243,6 +248,29 @@ export async function confirmOperationFinishSVC(
 ): Promise<ConfirmFinishResult> {
   const idempotencyKey = normalizeIdempotencyKey(rawIdempotencyKey);
   return repoConfirmOperationFinish(gammeId, operationId, body, audit, actor, idempotencyKey);
+}
+
+export async function previewStockFinishArticleSVC(
+  body: StockArticleFinishPreviewBodyDTO,
+  actor: Actor
+): Promise<SurfaceFinishPreview> {
+  assertSurfaceFinishCapability(actor.role, "article_preview");
+  return repoPreviewStockFinishArticle(body, actor);
+}
+
+export async function confirmStockFinishArticleSVC(
+  body: StockArticleFinishConfirmBodyDTO,
+  audit: AuditContext,
+  actor: Actor,
+  rawIdempotencyKey: string | null | undefined
+): Promise<StockFinishArticleResult> {
+  assertSurfaceFinishCapability(actor.role, "article_resolve");
+  return repoConfirmStockFinishArticle(
+    body,
+    audit,
+    actor,
+    normalizeIdempotencyKey(rawIdempotencyKey)
+  );
 }
 
 export async function detachOperationFinishSVC(

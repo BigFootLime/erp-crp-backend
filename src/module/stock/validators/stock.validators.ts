@@ -135,8 +135,16 @@ export const createMatiereNuanceSchema = z.object({
   body: z
     .object({
       code: z.string().trim().min(1).max(40),
-      designation: z.string().trim().min(1).max(160),
-      densite: nullablePositiveNumber.optional(),
+      designation: z
+        .union([z.string().trim().max(160), z.null()])
+        .optional()
+        .transform((value) => (value && value.length > 0 ? value : null)),
+      /**
+       * Unité canonique #164 : kg/m³. La colonne historique `densite`
+       * reste convertie à la frontière du repository tant que le patch
+       * additif n'a pas créé `densite_kg_m3`.
+       */
+      densite: z.coerce.number().min(100).max(30_000).optional().nullable(),
       etat_ids: z.array(positiveInt).optional().default([]),
       is_active: z.boolean().optional().default(true),
     })
@@ -199,7 +207,16 @@ const articleMatiereSchema = z
     nuance_id: nullablePositiveInt.optional(),
     etat_id: nullablePositiveInt.optional(),
     sous_etat_id: nullablePositiveInt.optional(),
+    client_proprietaire_id: z.string().trim().regex(/^[0-9]{3}$/).optional().nullable(),
     barre_a_decouper: z.boolean().optional().default(false),
+    longueur_barre_source_mm: nullablePositiveInt.optional(),
+    longueur_coupe_mm: nullablePositiveInt.optional(),
+    longueur_brut_mm: nullablePositiveInt.optional(),
+    quantite_lineaire_totale_mm: nullablePositiveNumber.optional(),
+    /**
+     * Champs historiques conservés pendant la transition. Ils ne portent plus
+     * l'invariant erroné « barre à découper => longueur théorique obligatoire ».
+     */
     longueur_mm: nullablePositiveInt.optional(),
     longueur_unitaire_mm: nullablePositiveInt.optional(),
     largeur_mm: nullablePositiveInt.optional(),
@@ -208,18 +225,7 @@ const articleMatiereSchema = z
     diametre_mm: nullablePositiveInt.optional(),
     largeur_plat_mm: nullablePositiveInt.optional(),
   })
-  .strict()
-  .superRefine((value, ctx) => {
-    if (value.barre_a_decouper && !value.longueur_unitaire_mm) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "longueur_unitaire_mm is required for cut bars", path: ["longueur_unitaire_mm"] });
-    }
-    if (value.barre_a_decouper && value.longueur_mm) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "longueur_mm is not allowed for cut bars", path: ["longueur_mm"] });
-    }
-    if (!value.barre_a_decouper && value.longueur_unitaire_mm) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "longueur_unitaire_mm requires barre_a_decouper=true", path: ["longueur_unitaire_mm"] });
-    }
-  });
+  .strict();
 
 const articleProcurementSchema = z
   .object({
@@ -247,7 +253,7 @@ export const createArticleSchema = z.object({
       designation: z.string().trim().min(1).max(400),
       designation_secondary: z.string().trim().min(1).max(400).optional().nullable(),
       article_type: articleTypeSchema.optional(),
-      article_category: articleCategorySchema.optional().default("achat"),
+      article_category: articleCategorySchema,
       article_categories: z.array(articleBusinessCategorySchema).min(1).max(8).optional(),
       family_code: z.string().trim().min(1).max(40),
       status: articleWorkflowStatusSchema.optional().default("VALIDE"),
@@ -281,6 +287,17 @@ export const createArticleSchema = z.object({
           code: z.ZodIssueCode.custom,
           message: "article_matiere is only allowed for article_category=matiere",
           path: ["article_matiere"],
+        });
+      }
+      if (
+        body.article_category === "matiere"
+        && /^(BRUTCL|BRUT-CL|BRUT-CLIENT)$/.test(body.family_code.trim().toUpperCase())
+        && !body.article_matiere?.client_proprietaire_id
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Le client propriétaire est obligatoire pour un brut client.",
+          path: ["article_matiere", "client_proprietaire_id"],
         });
       }
     }),
@@ -321,6 +338,13 @@ export const updateArticleSchema = z.object({
 });
 
 export type UpdateArticleBodyDTO = z.infer<typeof updateArticleSchema>["body"];
+
+export const validateArticleSchema = z.object({
+  body: z.object({
+    expected_row_version: positiveInt,
+  }).strict(),
+});
+export type ValidateArticleBodyDTO = z.infer<typeof validateArticleSchema>["body"];
 
 export const archiveArticleSchema = z.object({
   body: z.object({
@@ -509,6 +533,7 @@ export const createLotSchema = z.object({
       received_at: z.string().trim().optional().nullable(),
       manufactured_at: z.string().trim().optional().nullable(),
       expiry_at: z.string().trim().optional().nullable(),
+      quantite_lineaire_totale_mm: nullablePositiveNumber.optional(),
       notes: z.string().trim().min(1).optional().nullable(),
     })
     .strict(),
@@ -524,6 +549,7 @@ export const updateLotSchema = z.object({
       received_at: z.string().trim().optional().nullable(),
       manufactured_at: z.string().trim().optional().nullable(),
       expiry_at: z.string().trim().optional().nullable(),
+      quantite_lineaire_totale_mm: nullablePositiveNumber.optional(),
       notes: z.string().trim().min(1).optional().nullable(),
     })
     .strict(),
