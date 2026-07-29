@@ -51,6 +51,7 @@ import gammesRoutes from "../module/gammes/routes/gammes.routes"
 import surfaceFinishRoutes from "../module/surface-finish/routes/surface-finish.routes"
 import surfaceFinishGammeRoutes from "../module/surface-finish/routes/surface-finish-gamme.routes"
 import pieceTechniqueVersionsRoutes from "../module/gammes/routes/piece-technique-versions.routes"
+import methodesRoutes from "../module/methodes/routes/methodes.routes"
 import importAssistantRoutes from "../module/import-assistant/routes/import-assistant.routes"
 import accessControlRoutes from "../module/access-control/routes/access-control.routes"
 import { moduleAccessGate } from "../module/access-control/middlewares/module-access-gate"
@@ -85,6 +86,9 @@ router.use("/piece-technique-versions", pieceTechniqueVersionsRoutes) // GPAO B2
 // inchangé pour les écrans en production.
 router.use("/gammes", surfaceFinishGammeRoutes)
 router.use("/gammes", gammesRoutes)                                   // GPAO B2.2 — gammes + opérations
+// Référentiels Méthodes : familles machine, centres de frais tarifés, sélecteur
+// de machines. Rattaché au module d'accès « Données techniques » (#326).
+router.use("/methodes", methodesRoutes)
 router.use("/finitions", surfaceFinishRoutes)                         // #210 — bibliothèque de finitions
 router.use("/audit-logs", auditLogsRoutes)
 // Tour de contrôle des accès (#326) montée AVANT le routeur admin historique : elle

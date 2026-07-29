@@ -1,15 +1,16 @@
 // src/module/gammes/repository/gammes.repository.ts
-// GPAO B2.2 — repository des gammes + opérations de gamme.
+// GPAO B2.2 — repository de l'ENTÊTE de gamme (identité, statut, gamme courante).
+// Les OPÉRATIONS vivent dans `gamme-operations.repository.ts` : elles portent la
+// numérotation des phases, les référentiels Méthodes, le calcul des temps et le
+// gel du tarif, qui n'ont rien à faire dans la gestion de l'entête.
 import type { PoolClient } from "pg"
 import db from "../../../config/database"
 import { HttpError } from "../../../utils/httpError"
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
 import type { AuditContext } from "../../pieces-techniques/repository/pieces-techniques.repository"
 import type {
-  AddGammeOperationBodyDTO,
   CreateGammeBodyDTO,
   GammeStatutDTO,
-  OperationTypeDTO,
   UpdateGammeBodyDTO,
 } from "../validators/gammes.validators"
 
@@ -28,48 +29,10 @@ export type GammeRow = {
   updated_by: number | null
 }
 
-export type GammeOperationRow = {
-  id: string
-  piece_technique_id: string
-  gamme_id: string | null
-  ordre: number | null
-  phase: number | null
-  designation: string
-  designation_2: string | null
-  type_operation: OperationTypeDTO | null
-  machine_id: string | null
-  poste_id: string | null
-  cf_id: string | null
-  tp: number | null
-  tf_unit: number | null
-  qte: number | null
-  coef: number | null
-  taux_horaire: number | null
-  prix: number | null
-  temps_total: number | null
-  cout_mo: number | null
-  consignes: string | null
-}
-
 const GAMME_COLS = `
   id::text AS id, piece_technique_version_id::text AS piece_technique_version_id, nom, code, designation,
   commentaire, statut, is_current, created_at::text AS created_at, updated_at::text AS updated_at, created_by, updated_by
 `
-const OP_COLS = `
-  id::text AS id, piece_technique_id::text AS piece_technique_id, gamme_id::text AS gamme_id, ordre, phase,
-  designation, designation_2, type_operation, machine_id::text AS machine_id, poste_id::text AS poste_id,
-  cf_id::text AS cf_id, tp::float8 AS tp, tf_unit::float8 AS tf_unit, qte::float8 AS qte, coef::float8 AS coef,
-  taux_horaire::float8 AS taux_horaire, prix::float8 AS prix, temps_total::float8 AS temps_total,
-  cout_mo::float8 AS cout_mo, consignes
-`
-
-function computeOperation(input: { tp: number; tf_unit: number; qte: number; coef: number; taux_horaire: number }) {
-  const round = (v: number, d: number) => (Number.isFinite(v) ? Math.round(v * 10 ** d) / 10 ** d : 0)
-  const tempsTotal = round((input.tp + input.tf_unit * input.qte) * input.coef, 3)
-  const coutMo = round(tempsTotal * input.taux_horaire, 2)
-  return { temps_total: tempsTotal, cout_mo: coutMo }
-}
-
 async function insertAudit(
   tx: Pick<PoolClient, "query">,
   audit: AuditContext,
@@ -207,125 +170,6 @@ export async function repoUpdateGamme(gammeId: string, body: UpdateGammeBodyDTO,
     await insertAudit(client, audit, "gammes.update", "gamme", gammeId, null)
     await client.query("COMMIT")
     return row
-  } catch (e) {
-    await client.query("ROLLBACK").catch(() => {})
-    throw e
-  } finally {
-    client.release()
-  }
-}
-
-export async function repoListGammeOperations(gammeId: string): Promise<GammeOperationRow[]> {
-  const gamme = await db.query(`SELECT 1 FROM public.gammes WHERE id = $1`, [gammeId])
-  if (gamme.rowCount === 0) throw new HttpError(404, "NOT_FOUND", "Gamme introuvable")
-  const res = await db.query<GammeOperationRow>(
-    `SELECT ${OP_COLS} FROM public.pieces_techniques_operations
-     WHERE gamme_id = $1 ORDER BY ordre NULLS LAST, phase NULLS LAST, id`,
-    [gammeId]
-  )
-  return res.rows
-}
-
-export async function repoAddGammeOperation(
-  gammeId: string,
-  body: AddGammeOperationBodyDTO,
-  audit: AuditContext
-): Promise<GammeOperationRow> {
-  const client = await db.connect()
-  try {
-    await client.query("BEGIN")
-    // gamme -> version -> pièce (piece_technique_id NOT NULL sur la table opérations)
-    const link = await client.query<{ piece_technique_id: string }>(
-      `SELECT ptv.piece_technique_id::text AS piece_technique_id
-       FROM public.gammes g JOIN public.piece_technique_versions ptv ON ptv.id = g.piece_technique_version_id
-       WHERE g.id = $1`,
-      [gammeId]
-    )
-    if (link.rowCount === 0) {
-      await client.query("ROLLBACK").catch(() => {})
-      throw new HttpError(404, "NOT_FOUND", "Gamme introuvable")
-    }
-    const pieceTechniqueId = link.rows[0].piece_technique_id
-
-    const nextOrdre = await client.query<{ next_ordre: number }>(
-      `SELECT COALESCE(MAX(ordre), 0) + 10 AS next_ordre FROM public.pieces_techniques_operations WHERE gamme_id = $1`,
-      [gammeId]
-    )
-    const ordre = nextOrdre.rows[0]?.next_ordre ?? 10
-
-    const tp = body.temps_preparation ?? 0
-    const tfUnit = body.temps_cycle ?? 0
-    const qte = body.qte ?? 1
-    const coef = body.coef ?? 1
-    const tauxHoraire = body.taux_horaire ?? 0
-    const { temps_total, cout_mo } = computeOperation({ tp, tf_unit: tfUnit, qte, coef, taux_horaire: tauxHoraire })
-
-    const res = await client.query<GammeOperationRow>(
-      `INSERT INTO public.pieces_techniques_operations
-        (piece_technique_id, gamme_id, ordre, phase, designation, designation_2, type_operation, machine_id,
-         poste_id, cf_id, tp, tf_unit, qte, coef, taux_horaire, prix, temps_total, cout_mo, consignes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
-       RETURNING ${OP_COLS}`,
-      [
-        pieceTechniqueId,
-        gammeId,
-        ordre,
-        body.numero_operation ?? 10,
-        body.designation,
-        body.designation_2 ?? null,
-        body.type_operation ?? null,
-        body.machine_id ?? null,
-        body.poste_id ?? null,
-        body.cf_id ?? null,
-        tp,
-        tfUnit,
-        qte,
-        coef,
-        tauxHoraire,
-        body.prix ?? 0,
-        temps_total,
-        cout_mo,
-        body.consignes ?? null,
-      ]
-    )
-    const row = res.rows[0]
-    await insertAudit(client, audit, "gammes.operations.add", "gamme_operation", row.id, {
-      gamme_id: gammeId,
-      type_operation: row.type_operation,
-    })
-    await client.query("COMMIT")
-    return row
-  } catch (e) {
-    await client.query("ROLLBACK").catch(() => {})
-    throw e
-  } finally {
-    client.release()
-  }
-}
-
-// Réordonne via `ordre` — NE TOUCHE PAS à `phase` (numéro d'opération métier).
-export async function repoReorderGammeOperations(gammeId: string, order: string[], audit: AuditContext): Promise<GammeOperationRow[]> {
-  const client = await db.connect()
-  try {
-    await client.query("BEGIN")
-    const gamme = await client.query(`SELECT 1 FROM public.gammes WHERE id = $1 FOR UPDATE`, [gammeId])
-    if (gamme.rowCount === 0) {
-      await client.query("ROLLBACK").catch(() => {})
-      throw new HttpError(404, "NOT_FOUND", "Gamme introuvable")
-    }
-    for (let i = 0; i < order.length; i += 1) {
-      await client.query(
-        `UPDATE public.pieces_techniques_operations SET ordre = $1, updated_at = now() WHERE id = $2 AND gamme_id = $3`,
-        [(i + 1) * 10, order[i], gammeId]
-      )
-    }
-    await insertAudit(client, audit, "gammes.operations.reorder", "gamme", gammeId, { count: order.length })
-    const res = await client.query<GammeOperationRow>(
-      `SELECT ${OP_COLS} FROM public.pieces_techniques_operations WHERE gamme_id = $1 ORDER BY ordre NULLS LAST, phase NULLS LAST, id`,
-      [gammeId]
-    )
-    await client.query("COMMIT")
-    return res.rows
   } catch (e) {
     await client.query("ROLLBACK").catch(() => {})
     throw e
