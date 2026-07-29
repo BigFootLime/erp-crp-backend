@@ -224,10 +224,37 @@ export async function copyPieceOperationsToOf(tx: Queryable, params: {
   piece_technique_id: string;
   gamme_id: string | null;
 }): Promise<number> {
+  // RÉVISION R00 — créée AVANT les opérations (#370).
+  //
+  // `of_operations.revision_id` est NOT NULL depuis le versioning d'OF : toute
+  // opération appartient à une révision. Sans cette R00, la génération d'OF
+  // échouerait en 23502 sur la première insertion d'opération.
+  //
+  // `WHERE NOT EXISTS` plutôt que `ON CONFLICT` : l'unicité d'une révision ACTIVE
+  // est portée par un index PARTIEL (`of_revisions_active_uq … WHERE statut =
+  // 'ACTIVE'`), sur lequel `ON CONFLICT` ne peut pas s'appuyer. La garde rend la
+  // fonction rejouable sans créer de seconde R00.
+  await tx.query(
+    `
+      INSERT INTO public.of_revisions (
+        of_id, revision_rank, revision_code, statut, snapshot, snapshot_sha256, activated_at
+      )
+      SELECT $1::bigint, 0, 'R00', 'ACTIVE',
+             jsonb_build_object('origin', 'GENERATION', 'of_id', $1::bigint),
+             encode(digest(('generation:' || $1::text), 'sha256'), 'hex'),
+             now()
+       WHERE NOT EXISTS (
+         SELECT 1 FROM public.of_revisions WHERE of_id = $1::bigint
+       )
+    `,
+    [params.of_id]
+  );
+
   const operationsInsert = await tx.query(
     `
       INSERT INTO public.of_operations (
         of_id,
+        revision_id,
         phase,
         designation,
         cf_id,
@@ -252,6 +279,10 @@ export async function copyPieceOperationsToOf(tx: Queryable, params: {
       )
       SELECT
         $1::bigint AS of_id,
+        -- Révision ACTIVE de cet OF, résolue en SQL : pas de valeur remontée puis
+        -- réinjectée, donc pas de fenêtre où l'une des deux écritures manquerait.
+        (SELECT r.id FROM public.of_revisions r
+          WHERE r.of_id = $1::bigint AND r.statut = 'ACTIVE') AS revision_id,
         pto.phase,
         pto.designation,
         pto.cf_id,
