@@ -109,6 +109,14 @@ export type CerpDocumentHeader = {
   monogramName?: string | null
   generatedAt: string
   generatedBy?: string | null
+  /**
+   * Mention de tracabilite portee par **toutes** les pages, juste au-dessus du pied de page.
+   *
+   * Elle vit dans la bande reservee au pied, jamais dans le flux : une note de 7 pt placee a
+   * la suite du contenu suffit a ouvrir une page entiere presque vide. Et sur un document
+   * detachable, une page isolee doit pouvoir etre rattachee a son exemplaire d'origine.
+   */
+  footerNote?: string | null
   /** Metadonnees PDF. */
   title: string
   subject: string
@@ -398,6 +406,22 @@ export class CerpDocumentContext {
     this.doc.fillColor(CERP_DOC_COLORS.ink)
   }
 
+  /**
+   * Titre de section suivi d'un paragraphe, la reserve de cohesion etant **mesuree sur le
+   * paragraphe** au lieu d'etre forfaitaire.
+   *
+   * `section()` reserve 52 pt par defaut pour ne pas orpheliner son titre. Devant une note
+   * courte, cette reserve depasse la hauteur reelle du bloc et provoque un saut de page
+   * injustifie — une facture de deux lignes basculait sur une seconde page pour 1,1 pt.
+   */
+  notesSection(title: string, text: string): void {
+    const inner = CONTENT_WIDTH - 26
+    this.doc.font("Helvetica").fontSize(9.2)
+    const height = this.doc.heightOfString(toPdfSafeText(text), { width: inner }) + 22
+    this.section(title, { cohesion: Math.min(height, 64) })
+    this.notes(text)
+  }
+
   /** Paragraphe sur fond gris, pour un texte long. */
   notes(text: string): void {
     const inner = CONTENT_WIDTH - 26
@@ -562,6 +586,13 @@ function drawRunningHead(doc: PDFKit.PDFDocument, header: CerpDocumentHeader): v
 
 function drawFooter(doc: PDFKit.PDFDocument, header: CerpDocumentHeader, pageNumber: number, totalPages: number): void {
   const y = PAGE_HEIGHT - 30
+
+  const note = header.footerNote && header.footerNote.trim() ? toPdfSafeText(header.footerNote.trim()) : null
+  if (note) {
+    doc.font("Helvetica").fontSize(6.5).fillColor(CERP_DOC_COLORS.steel)
+    const noteWidth = doc.widthOfString(note)
+    doc.text(note, MARGIN_X + (CONTENT_WIDTH - noteWidth) / 2, y - 17, { lineBreak: false })
+  }
 
   doc.save()
   doc.lineWidth(0.8).strokeColor(CERP_DOC_COLORS.hairline)

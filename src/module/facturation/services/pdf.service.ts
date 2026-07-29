@@ -1,30 +1,30 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
-import PDFDocument from "pdfkit";
 import pool from "../../../config/database";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { repoGetAvoir } from "../repository/avoirs.repository";
 import { repoGetFacture } from "../repository/factures.repository";
 
-function formatCurrencyEUR(amount: number): string {
-  const n = Number.isFinite(amount) ? amount : 0;
-  return `${n.toFixed(2)} EUR`;
-}
+import { renderFinanceDocument, type FinanceDocumentLine, type FinanceParty } from "./finance-document-render";
 
-function formatDateFR(iso: string | null | undefined): string {
-  if (!iso) return "-";
-  const raw = String(iso);
-  const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (m) return `${m[3]}/${m[2]}/${m[1]}`;
+/**
+ * Facture et avoir a l'etat de **brouillon**.
+ *
+ * Le rendu vit dans `finance-document-render.ts`, partage avec les exemplaires legaux
+ * immuables : trois chemins dessinaient auparavant leur propre mise en page, dont deux pour la
+ * seule facture. Un client pouvait recevoir un brouillon et une facture d'aspect completement
+ * different pour le meme montant.
+ *
+ * Ces deux fonctions **refusent de s'executer sur un document emis** : l'exemplaire legal est
+ * ecrit une seule fois, par le workflow, et ne se regenere pas.
+ */
 
-  const d = new Date(raw);
-  if (Number.isNaN(d.getTime())) return raw;
-  const dd = String(d.getDate()).padStart(2, "0");
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const yyyy = d.getFullYear();
-  return `${dd}/${mm}/${yyyy}`;
+/** Montant du referentiel (nombre) vers la chaine a deux decimales attendue par le rendu. */
+function amount(value: number | null | undefined): string {
+  const n = typeof value === "number" && Number.isFinite(value) ? value : 0;
+  return n.toFixed(2);
 }
 
 async function ensureDocsDir(): Promise<string> {
@@ -33,86 +33,90 @@ async function ensureDocsDir(): Promise<string> {
   return uploadDir;
 }
 
-function renderTableHeader(doc: PDFKit.PDFDocument, x: number, y: number, widths: number[]) {
-  const [wDesc, wQty, wPu, wTva, wTotal] = widths;
-  doc.fontSize(9).fillColor("#111111").font("Helvetica-Bold");
-  doc.text("Designation", x, y, { width: wDesc });
-  doc.text("Qte", x + wDesc, y, { width: wQty, align: "right" });
-  doc.text("PU HT", x + wDesc + wQty, y, { width: wPu, align: "right" });
-  doc.text("TVA", x + wDesc + wQty + wPu, y, { width: wTva, align: "right" });
-  doc.text("Total TTC", x + wDesc + wQty + wPu + wTva, y, { width: wTotal, align: "right" });
-  doc.moveTo(x, y + 14).lineTo(x + widths.reduce((a, b) => a + b, 0), y + 14).strokeColor("#e5e7eb").stroke();
-  doc.font("Helvetica").fillColor("#111111");
-}
+/**
+ * Identite de l'emetteur, lue en base.
+ *
+ * `to_jsonb` remonte la ligne entiere et on ne retient qu'une **liste blanche** de champs
+ * d'identite fiscale : la table `factureur` est historique et sa forme exacte n'appartient pas
+ * a ce module. Un champ absent reste absent — aucune mention n'est inventee.
+ */
+const ISSUER_LEGAL_FIELDS = [
+  "company_name",
+  "biller_name",
+  "name",
+  "raison_sociale",
+  "address_line_1",
+  "address_line_2",
+  "address",
+  "adresse",
+  "adresse_complement",
+  "postal_code",
+  "code_postal",
+  "city",
+  "ville",
+  "country",
+  "pays",
+  "siret",
+  "siren",
+  "rcs",
+  "vat_number",
+  "numero_tva",
+  "tva_intracommunautaire",
+  "capital_social",
+] as const;
 
-function renderLines(
-  doc: PDFKit.PDFDocument,
-  lines: Array<{ designation: string; quantite: number; prix_unitaire_ht: number; taux_tva: number; total_ttc: number }>,
-  startY: number
-) {
-  const marginX = doc.page.margins.left;
-  const maxY = doc.page.height - doc.page.margins.bottom - 80;
-  const widths = [280, 45, 70, 45, 80];
-  let y = startY;
+async function getIssuerParty(): Promise<FinanceParty> {
+  const res = await pool.query<{ row: Record<string, unknown> }>(
+    `SELECT to_jsonb(f) AS row FROM factureur f ORDER BY f.biller_id ASC LIMIT 1`
+  );
+  const row = res.rows[0]?.row;
+  if (!row || typeof row !== "object") return {};
 
-  renderTableHeader(doc, marginX, y, widths);
-  y += 22;
-
-  doc.fontSize(9).fillColor("#111111");
-
-  for (const l of lines) {
-    const desc = l.designation ?? "";
-    const rowHeight = Math.max(14, doc.heightOfString(desc, { width: widths[0] }));
-    if (y + rowHeight > maxY) {
-      doc.addPage();
-      y = doc.page.margins.top;
-      renderTableHeader(doc, marginX, y, widths);
-      y += 22;
-    }
-
-    doc.text(desc, marginX, y, { width: widths[0] });
-    doc.text(String(l.quantite ?? 0), marginX + widths[0], y, { width: widths[1], align: "right" });
-    doc.text(formatCurrencyEUR(l.prix_unitaire_ht ?? 0), marginX + widths[0] + widths[1], y, {
-      width: widths[2],
-      align: "right",
-    });
-    doc.text(`${Number(l.taux_tva ?? 0).toFixed(0)}%`, marginX + widths[0] + widths[1] + widths[2], y, {
-      width: widths[3],
-      align: "right",
-    });
-    doc.text(formatCurrencyEUR(l.total_ttc ?? 0), marginX + widths[0] + widths[1] + widths[2] + widths[3], y, {
-      width: widths[4],
-      align: "right",
-    });
-
-    y += rowHeight + 6;
-    doc.moveTo(marginX, y).lineTo(marginX + widths.reduce((a, b) => a + b, 0), y).strokeColor("#f1f5f9").stroke();
-    y += 6;
+  const party: FinanceParty = {};
+  for (const key of ISSUER_LEGAL_FIELDS) {
+    if (row[key] !== undefined && row[key] !== null) party[key] = row[key];
   }
-
-  return y;
+  return party;
 }
 
-async function writePdfToFile(
-  filePath: string,
-  render: (doc: PDFKit.PDFDocument) => void
-): Promise<void> {
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
+/**
+ * Identite du client telle que connue du referentiel de facturation.
+ *
+ * ⚠️ `client_id` est un identifiant technique : il n'entre pas dans la partie. L'ancienne
+ * version l'imprimait sous la raison sociale, sur un document adresse au client.
+ */
+function clientParty(client: { company_name?: string | null } | null | undefined): FinanceParty {
+  const name = typeof client?.company_name === "string" ? client.company_name.trim() : "";
+  return name ? { company_name: name } : {};
+}
 
-  const doc = new PDFDocument({ size: "A4", margin: 40 });
-  const chunks: Buffer[] = [];
-  doc.on("data", (c) => chunks.push(c as Buffer));
-
-  render(doc);
-  doc.end();
-
-  await new Promise<void>((resolve, reject) => {
-    doc.on("end", () => resolve());
-    doc.on("error", (err) => reject(err));
-  });
-
-  const buf = Buffer.concat(chunks);
-  await fs.writeFile(filePath, buf);
+function draftLines(
+  lignes: Array<{
+    designation: string;
+    code_piece: string | null;
+    quantite: number;
+    unite: string | null;
+    prix_unitaire_ht: number;
+    remise_ligne: number;
+    taux_tva: number;
+    total_ht: number;
+    total_ttc: number;
+  }>
+): FinanceDocumentLine[] {
+  return lignes.map((line) => ({
+    designation: line.designation,
+    codePiece: line.code_piece,
+    quantity: String(line.quantite ?? 0),
+    unit: line.unite,
+    unitPriceExTax: amount(line.prix_unitaire_ht),
+    discountPercent: amount(line.remise_ligne),
+    taxRatePercent: amount(line.taux_tva),
+    totalExTax: amount(line.total_ht),
+    // Le referentiel du brouillon ne stocke pas la taxe par ligne : elle se deduit des deux
+    // totaux deja calcules, sans jamais reappliquer un taux nous-memes.
+    taxAmount: amount((line.total_ttc ?? 0) - (line.total_ht ?? 0)),
+    totalInclTax: amount(line.total_ttc),
+  }));
 }
 
 export async function svcGenerateFacturePdf(factureId: number): Promise<{ document_id: string }> {
@@ -131,44 +135,30 @@ export async function svcGenerateFacturePdf(factureId: number): Promise<{ docume
   const fileName = `Facture_${detail.facture.numero}.pdf`;
   const filePath = path.join(docsDir, `${documentId}.pdf`);
 
-  await writePdfToFile(filePath, (doc) => {
-    const f = detail.facture;
-    const clientName = f.client?.company_name ?? f.client_id;
-
-    doc.font("Helvetica-Bold").fontSize(20).fillColor("#111111").text("FACTURE", { align: "right" });
-    doc.moveDown(0.5);
-    doc.font("Helvetica").fontSize(11).text(`Numero: ${f.numero}`, { align: "right" });
-    doc.text(`Date: ${formatDateFR(f.date_emission)}`, { align: "right" });
-    doc.text(`Echeance: ${formatDateFR(f.date_echeance)}`, { align: "right" });
-
-    doc.moveDown(1);
-    doc.font("Helvetica-Bold").fontSize(11).text("Client");
-    doc.font("Helvetica").fontSize(11).text(clientName);
-    doc.fillColor("#6b7280").fontSize(9).text(`ID: ${f.client_id}`);
-    doc.fillColor("#111111");
-
-    doc.moveDown(1);
-    const lines = detail.lignes.map((l) => ({
-      designation: l.designation,
-      quantite: l.quantite,
-      prix_unitaire_ht: l.prix_unitaire_ht,
-      taux_tva: l.taux_tva ?? 0,
-      total_ttc: l.total_ttc,
-    }));
-    const afterLinesY = renderLines(doc, lines, doc.y);
-
-    const boxY = Math.min(afterLinesY + 10, doc.page.height - doc.page.margins.bottom - 70);
-    doc.font("Helvetica-Bold").fontSize(11).text("Totaux", doc.page.margins.left, boxY);
-    doc.font("Helvetica").fontSize(11);
-    doc.text(`Total HT: ${formatCurrencyEUR(f.total_ht)}`, { align: "right" });
-    doc.text(`Total TTC: ${formatCurrencyEUR(f.total_ttc)}`, { align: "right" });
-
-    if (f.commentaires) {
-      doc.moveDown(1);
-      doc.font("Helvetica-Bold").fontSize(10).text("Notes");
-      doc.font("Helvetica").fontSize(10).text(String(f.commentaires));
-    }
+  const f = detail.facture;
+  const pdf = await renderFinanceDocument({
+    kind: "FACTURE",
+    number: f.numero,
+    draft: true,
+    issueDate: f.date_emission,
+    currency: "EUR",
+    issuer: await getIssuerParty(),
+    client: clientParty(f.client),
+    lines: draftLines(detail.lignes),
+    totals: {
+      subtotalExTax: amount(f.total_ht),
+      globalDiscountPercent: amount(f.remise_globale),
+      globalDiscountAmount: "0.00",
+      totalExTax: amount(f.total_ht),
+      totalTax: amount((f.total_ttc ?? 0) - (f.total_ht ?? 0)),
+      totalInclTax: amount(f.total_ttc),
+    },
+    dueDates: f.date_echeance ? [{ dueDate: f.date_echeance, label: "Échéance", amount: amount(f.total_ttc) }] : [],
+    customerText: f.commentaires,
+    draftReference: f.numero,
   });
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, pdf);
 
   const db = await pool.connect();
   try {
@@ -210,46 +200,31 @@ export async function svcGenerateAvoirPdf(avoirId: number): Promise<{ document_i
   const fileName = `Avoir_${detail.avoir.numero}.pdf`;
   const filePath = path.join(docsDir, `${documentId}.pdf`);
 
-  await writePdfToFile(filePath, (doc) => {
-    const a = detail.avoir;
-    const clientName = a.client?.company_name ?? a.client_id;
-
-    doc.font("Helvetica-Bold").fontSize(20).fillColor("#111111").text("AVOIR", { align: "right" });
-    doc.moveDown(0.5);
-    doc.font("Helvetica").fontSize(11).text(`Numero: ${a.numero}`, { align: "right" });
-    doc.text(`Date: ${formatDateFR(a.date_emission)}`, { align: "right" });
-    if (a.facture?.numero) {
-      doc.text(`Facture: ${a.facture.numero}`, { align: "right" });
-    }
-
-    doc.moveDown(1);
-    doc.font("Helvetica-Bold").fontSize(11).text("Client");
-    doc.font("Helvetica").fontSize(11).text(clientName);
-    doc.fillColor("#6b7280").fontSize(9).text(`ID: ${a.client_id}`);
-    doc.fillColor("#111111");
-
-    if (a.motif) {
-      doc.moveDown(0.5);
-      doc.font("Helvetica-Bold").fontSize(10).text("Motif");
-      doc.font("Helvetica").fontSize(10).text(String(a.motif));
-    }
-
-    doc.moveDown(1);
-    const lines = detail.lignes.map((l) => ({
-      designation: l.designation,
-      quantite: l.quantite,
-      prix_unitaire_ht: l.prix_unitaire_ht,
-      taux_tva: l.taux_tva ?? 0,
-      total_ttc: l.total_ttc,
-    }));
-    const afterLinesY = renderLines(doc, lines, doc.y);
-
-    const boxY = Math.min(afterLinesY + 10, doc.page.height - doc.page.margins.bottom - 70);
-    doc.font("Helvetica-Bold").fontSize(11).text("Totaux", doc.page.margins.left, boxY);
-    doc.font("Helvetica").fontSize(11);
-    doc.text(`Total HT: ${formatCurrencyEUR(a.total_ht)}`, { align: "right" });
-    doc.text(`Total TTC: ${formatCurrencyEUR(a.total_ttc)}`, { align: "right" });
+  const a = detail.avoir;
+  const pdf = await renderFinanceDocument({
+    kind: "AVOIR",
+    number: a.numero,
+    draft: true,
+    issueDate: a.date_emission,
+    currency: "EUR",
+    issuer: await getIssuerParty(),
+    client: clientParty(a.client),
+    lines: draftLines(detail.lignes),
+    totals: {
+      subtotalExTax: amount(a.total_ht),
+      globalDiscountPercent: "0.00",
+      globalDiscountAmount: "0.00",
+      totalExTax: amount(a.total_ht),
+      totalTax: amount((a.total_ttc ?? 0) - (a.total_ht ?? 0)),
+      totalInclTax: amount(a.total_ttc),
+    },
+    dueDates: [],
+    correctedInvoice: a.facture?.numero ?? null,
+    reason: a.motif,
+    draftReference: a.numero,
   });
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, pdf);
 
   const db = await pool.connect();
   try {
