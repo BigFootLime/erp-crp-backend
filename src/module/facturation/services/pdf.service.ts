@@ -7,6 +7,8 @@ import { HttpError } from "../../../utils/httpError";
 import { repoGetAvoir } from "../repository/avoirs.repository";
 import { repoGetFacture } from "../repository/factures.repository";
 
+import { readIssuerParty } from "../../../shared/documents/issuer-identity.repository";
+
 import { renderFinanceDocument, type FinanceDocumentLine, type FinanceParty } from "./finance-document-render";
 
 /**
@@ -34,49 +36,19 @@ async function ensureDocsDir(): Promise<string> {
 }
 
 /**
- * Identite de l'emetteur, lue en base.
+ * Identite de l'emetteur, mentions legales comprises.
  *
- * `to_jsonb` remonte la ligne entiere et on ne retient qu'une **liste blanche** de champs
- * d'identite fiscale : la table `factureur` est historique et sa forme exacte n'appartient pas
- * a ce module. Un champ absent reste absent — aucune mention n'est inventee.
+ * L'ancienne version lisait `to_jsonb(factureur)` et filtrait sur une liste blanche
+ * comprenant `siret`, `siren`, `rcs`, `vat_number` et `capital_social`. **Aucune de ces
+ * colonnes n'existe** dans `factureur` : le filtre ne retenait donc jamais la moindre
+ * mention legale, et la table etait de surcroit vide sur les deux bases. Le bloc
+ * « Emetteur » sortait vide et aucune mention obligatoire n'etait imprimee.
+ *
+ * La lecture passe desormais par `readIssuerParty()`, qui joint la table versionnee des
+ * mentions et resout celles **en vigueur a la date d'emission** du document.
  */
-const ISSUER_LEGAL_FIELDS = [
-  "company_name",
-  "biller_name",
-  "name",
-  "raison_sociale",
-  "address_line_1",
-  "address_line_2",
-  "address",
-  "adresse",
-  "adresse_complement",
-  "postal_code",
-  "code_postal",
-  "city",
-  "ville",
-  "country",
-  "pays",
-  "siret",
-  "siren",
-  "rcs",
-  "vat_number",
-  "numero_tva",
-  "tva_intracommunautaire",
-  "capital_social",
-] as const;
-
-async function getIssuerParty(): Promise<FinanceParty> {
-  const res = await pool.query<{ row: Record<string, unknown> }>(
-    `SELECT to_jsonb(f) AS row FROM factureur f ORDER BY f.biller_id ASC LIMIT 1`
-  );
-  const row = res.rows[0]?.row;
-  if (!row || typeof row !== "object") return {};
-
-  const party: FinanceParty = {};
-  for (const key of ISSUER_LEGAL_FIELDS) {
-    if (row[key] !== undefined && row[key] !== null) party[key] = row[key];
-  }
-  return party;
+async function getIssuerParty(issueDate: string | null): Promise<FinanceParty> {
+  return readIssuerParty({ at: issueDate }) as Promise<FinanceParty>;
 }
 
 /**
@@ -142,7 +114,7 @@ export async function svcGenerateFacturePdf(factureId: number): Promise<{ docume
     draft: true,
     issueDate: f.date_emission,
     currency: "EUR",
-    issuer: await getIssuerParty(),
+    issuer: await getIssuerParty(f.date_emission),
     client: clientParty(f.client),
     lines: draftLines(detail.lignes),
     totals: {
@@ -207,7 +179,7 @@ export async function svcGenerateAvoirPdf(avoirId: number): Promise<{ document_i
     draft: true,
     issueDate: a.date_emission,
     currency: "EUR",
-    issuer: await getIssuerParty(),
+    issuer: await getIssuerParty(a.date_emission),
     client: clientParty(a.client),
     lines: draftLines(detail.lignes),
     totals: {
