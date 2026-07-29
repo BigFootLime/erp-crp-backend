@@ -1,22 +1,21 @@
-import PDFDocument from "pdfkit"
-
 import pool from "../../../config/database"
+import { CONTENT_WIDTH, renderCerpDocument, type CerpLineRow } from "../../../shared/pdf/cerp-document"
+
+import { clean, formatDateFR, lotCodesOf, renderBonLivraisonDocument, toUtcMidnightFromIso } from "./bon-livraison-document"
 
 import type { LivraisonPackPreview } from "../types/pack.types"
 
-function formatDateFR(iso: string | null | undefined): string {
-  if (!iso) return "-"
-  const raw = String(iso)
-  const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})/)
-  if (m) return `${m[3]}/${m[2]}/${m[1]}`
-
-  const d = new Date(raw)
-  if (Number.isNaN(d.getTime())) return raw
-  const dd = String(d.getDate()).padStart(2, "0")
-  const mm = String(d.getMonth() + 1).padStart(2, "0")
-  const yyyy = d.getFullYear()
-  return `${dd}/${mm}/${yyyy}`
-}
+/**
+ * Pack d'expedition : bon de livraison et certificat de conformite.
+ *
+ * Rendus sur le socle `shared/pdf/cerp-document`, qui porte cote serveur la grammaire arretee
+ * par ADR-0039 et ADR-0040 : logo officiel, accent unique, bandeau d'identifiants, sections
+ * titrees, cartes d'adresse, table paginee, pied de page « Page X / Y ».
+ *
+ * Ces deux documents **partent chez le client** et sont **figes** : le pack les hache
+ * (SHA-256), les archive dans la GED et permet de les revoquer. Ils ne portent donc que de la
+ * donnee opposable, et aucun vocabulaire interne.
+ */
 
 async function getCompanyHeader(): Promise<string | null> {
   const res = await pool.query<{ biller_name: string }>(`SELECT biller_name FROM factureur ORDER BY biller_id ASC LIMIT 1`)
@@ -24,217 +23,43 @@ async function getCompanyHeader(): Promise<string | null> {
   return typeof name === "string" && name.trim() ? name.trim() : null
 }
 
-function toUtcMidnightFromIso(iso: string | null | undefined): Date {
-  const raw = typeof iso === "string" ? iso : ""
-  const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})/)
-  if (m) {
-    const yyyy = Number(m[1])
-    const mm = Number(m[2]) - 1
-    const dd = Number(m[3])
-    if (Number.isFinite(yyyy) && Number.isFinite(mm) && Number.isFinite(dd)) {
-      return new Date(Date.UTC(yyyy, mm, dd, 0, 0, 0))
-    }
-  }
-
-  const d = new Date(raw)
-  if (!Number.isNaN(d.getTime())) return d
-  return new Date("1970-01-01T00:00:00.000Z")
+/**
+ * Vocabulaire interne des mouvements de stock, traduit pour un lecteur externe.
+ *
+ * Un certificat qui part chez le client ne doit pas afficher `OUT` ni `POSTED`. Un code
+ * inconnu est rendu tel quel : mieux vaut un libelle brut qu'une traduction inventee.
+ */
+const MOVEMENT_TYPE_LABELS: Record<string, string> = {
+  IN: "Entrée",
+  OUT: "Sortie",
+  TRANSFER: "Transfert",
+  ADJUST: "Ajustement",
+  ADJUSTMENT: "Ajustement",
+  RESERVE: "Réservation",
+  UNRESERVE: "Levée de réservation",
+  DEPRECIATE: "Dépréciation",
+  SCRAP: "Rebut",
 }
 
-async function renderPdfToBuffer(args: { creationDate: Date; render: (doc: PDFKit.PDFDocument) => void }): Promise<Buffer> {
-  const doc = new PDFDocument({ size: "A4", margin: 40, info: { CreationDate: args.creationDate } })
-  const chunks: Buffer[] = []
-  doc.on("data", (c) => chunks.push(c as Buffer))
-  args.render(doc)
-  doc.end()
-
-  await new Promise<void>((resolve, reject) => {
-    doc.on("end", () => resolve())
-    doc.on("error", (err) => reject(err))
-  })
-
-  return Buffer.concat(chunks)
+const MOVEMENT_STATUS_LABELS: Record<string, string> = {
+  DRAFT: "Brouillon",
+  POSTED: "Comptabilisé",
+  CANCELLED: "Annulé",
 }
 
-function drawKeyValue(doc: PDFKit.PDFDocument, key: string, value: string) {
-  doc.font("Helvetica-Bold").text(key, { continued: true })
-  doc.font("Helvetica").text(` ${value}`)
-}
-
-function renderBlLinesTable(
-  doc: PDFKit.PDFDocument,
-  args: {
-    lines: Array<{
-      ordre: number
-      designation: string
-      code_piece: string | null
-      quantite: number
-      unite: string | null
-      delai_client: string | null
-    }>
-    startY: number
-    pageNoStart: number
-  }
-): { y: number; pageNo: number } {
-  const marginX = doc.page.margins.left
-  const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right
-  const maxY = doc.page.height - doc.page.margins.bottom - 90
-  const widths = {
-    ordre: 28,
-    designation: Math.max(220, pageWidth - (28 + 90 + 70 + 70 + 70)),
-    code_piece: 90,
-    quantite: 70,
-    unite: 70,
-    delai: 70,
-  }
-
-  let y = args.startY
-  let pageNo = args.pageNoStart
-
-  const renderHeader = () => {
-    doc.fontSize(9).fillColor("#111111").font("Helvetica-Bold")
-    doc.text("N°", marginX, y, { width: widths.ordre })
-    doc.text("Designation", marginX + widths.ordre, y, { width: widths.designation })
-    doc.text("Code piece", marginX + widths.ordre + widths.designation, y, { width: widths.code_piece })
-    doc.text("Qte", marginX + widths.ordre + widths.designation + widths.code_piece, y, { width: widths.quantite, align: "right" })
-    doc.text(
-      "Unite",
-      marginX + widths.ordre + widths.designation + widths.code_piece + widths.quantite,
-      y,
-      { width: widths.unite, align: "right" }
-    )
-    doc.text(
-      "Delai",
-      marginX + widths.ordre + widths.designation + widths.code_piece + widths.quantite + widths.unite,
-      y,
-      { width: widths.delai, align: "right" }
-    )
-    doc.moveTo(marginX, y + 14).lineTo(marginX + pageWidth, y + 14).strokeColor("#e5e7eb").stroke()
-    doc.font("Helvetica").fillColor("#111111")
-  }
-
-  const renderFooter = () => {
-    const bottomY = doc.page.height - doc.page.margins.bottom + 20
-    doc.fontSize(9).fillColor("#6b7280").font("Helvetica")
-    doc.text(`Page ${pageNo}`, marginX, bottomY, { width: pageWidth, align: "right" })
-    doc.fillColor("#111111")
-  }
-
-  renderHeader()
-  y += 22
-
-  doc.fontSize(9).fillColor("#111111")
-
-  for (const l of args.lines) {
-    const desc = String(l.designation ?? "")
-    const descHeight = doc.heightOfString(desc, { width: widths.designation })
-    const rowHeight = Math.max(14, descHeight)
-
-    if (y + rowHeight > maxY) {
-      renderFooter()
-      doc.addPage()
-      pageNo++
-      y = doc.page.margins.top
-      renderHeader()
-      y += 22
-    }
-
-    doc.text(String(l.ordre ?? ""), marginX, y, { width: widths.ordre })
-    doc.text(desc, marginX + widths.ordre, y, { width: widths.designation })
-    doc.text(String(l.code_piece ?? ""), marginX + widths.ordre + widths.designation, y, { width: widths.code_piece })
-    doc.text(String(l.quantite ?? 0), marginX + widths.ordre + widths.designation + widths.code_piece, y, {
-      width: widths.quantite,
-      align: "right",
-    })
-    doc.text(String(l.unite ?? ""), marginX + widths.ordre + widths.designation + widths.code_piece + widths.quantite, y, {
-      width: widths.unite,
-      align: "right",
-    })
-    doc.text(String(l.delai_client ?? ""), marginX + widths.ordre + widths.designation + widths.code_piece + widths.quantite + widths.unite, y, {
-      width: widths.delai,
-      align: "right",
-    })
-
-    y += rowHeight + 6
-    doc.moveTo(marginX, y).lineTo(marginX + pageWidth, y).strokeColor("#f1f5f9").stroke()
-    y += 6
-  }
-
-  renderFooter()
-  return { y, pageNo }
+function labelOf(dictionary: Record<string, string>, code: string | null | undefined): string {
+  const raw = clean(code)
+  if (!raw) return "—"
+  return dictionary[raw.toUpperCase()] ?? raw
 }
 
 export async function svcRenderPackBonLivraisonPdf(args: { preview: LivraisonPackPreview; version: number }): Promise<Buffer> {
-  const company = await getCompanyHeader()
-  const p = args.preview
-  const bl = p.bon_livraison
-  const lines = p.lignes
-  const creationDate = toUtcMidnightFromIso(bl.date_expedition ?? bl.date_creation)
-  
-  return renderPdfToBuffer({ creationDate, render: (doc) => {
-    doc.font("Helvetica-Bold").fontSize(20).fillColor("#111111").text("BON DE LIVRAISON", { align: "right" })
-    doc.font("Helvetica").fontSize(10).fillColor("#6b7280").text(`Version V${args.version}`, { align: "right" })
-    doc.fillColor("#111111")
-    doc.moveDown(0.5)
-
-    doc.fontSize(11)
-    drawKeyValue(doc, "Numero:", bl.numero)
-    drawKeyValue(doc, "Date:", formatDateFR(bl.date_creation))
-    drawKeyValue(doc, "Date expedition:", formatDateFR(bl.date_expedition))
-    if (bl.transporteur) drawKeyValue(doc, "Transporteur:", bl.transporteur)
-    if (bl.tracking_number) drawKeyValue(doc, "Suivi:", bl.tracking_number)
-
-    doc.moveDown(1)
-
-    if (company) {
-      doc.font("Helvetica-Bold").fontSize(11).text(company)
-      doc.moveDown(0.5)
-    }
-
-    doc.font("Helvetica-Bold").fontSize(11).text("Client")
-    doc.font("Helvetica").fontSize(11).text(bl.client.company_name)
-    doc.fillColor("#6b7280").fontSize(9).text(`ID: ${bl.client.client_id}`)
-    doc.fillColor("#111111")
-
-    doc.moveDown(0.75)
-    doc.font("Helvetica-Bold").fontSize(11).text("Adresse de livraison")
-    doc.font("Helvetica").fontSize(11).text(bl.adresse_livraison?.label ?? "-")
-
-    doc.moveDown(1)
-
-    const table = renderBlLinesTable(doc, {
-      startY: doc.y,
-      pageNoStart: 1,
-      lines: lines.map((line) => {
-        const lots = Array.from(
-          new Set(
-            (line.allocations ?? [])
-              .map((allocation) => allocation.lot?.lot_code ?? null)
-              .filter((lotCode): lotCode is string => Boolean(lotCode))
-          )
-        )
-        return {
-          ordre: line.ordre,
-          designation: lots.length
-            ? `${line.designation}\nLot(s) : ${lots.join(", ")}`
-            : line.designation,
-          code_piece: line.code_piece,
-          quantite: line.quantite,
-          unite: line.unite,
-          delai_client: line.delai_client,
-        }
-      }),
-    })
-
-    const boxY = Math.min(table.y + 10, doc.page.height - doc.page.margins.bottom - 70)
-    doc.moveTo(doc.page.margins.left, boxY).lineTo(doc.page.width - doc.page.margins.right, boxY).strokeColor("#e5e7eb").stroke()
-    doc.moveDown(1)
-    doc.font("Helvetica-Bold").fontSize(11).text("Reception")
-    doc.font("Helvetica").fontSize(10)
-    doc.text("Nom / Signature:")
-    doc.moveDown(0.5)
-    doc.text("Date:")
-  }})
+  return renderBonLivraisonDocument({
+    header: args.preview.bon_livraison,
+    lignes: args.preview.lignes,
+    version: args.version,
+    company: await getCompanyHeader(),
+  })
 }
 
 export async function svcRenderPackCofcPdf(args: {
@@ -247,132 +72,108 @@ export async function svcRenderPackCofcPdf(args: {
   const company = await getCompanyHeader()
   const p = args.preview
   const bl = p.bon_livraison
-  const creationDate = toUtcMidnightFromIso(bl.date_expedition ?? bl.date_creation)
-  
-  const lines = p.lignes.map((l) => {
-    const lotCodes = Array.from(
-      new Set(
-        (l.allocations ?? [])
-          .map((a) => a.lot?.lot_code ?? null)
-          .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
-      )
-    )
+  const clientName = clean(bl.client.company_name) ?? "Client"
+
+  const rows: CerpLineRow[] = p.lignes.map((line) => {
+    const lots = lotCodesOf(line.allocations)
     return {
-      designation: l.designation,
-      code_piece: l.code_piece,
-      quantite: l.quantite,
-      unite: l.unite,
-      lots: lotCodes,
+      cells: {
+        designation: line.designation,
+        code_piece: clean(line.code_piece) ?? "—",
+        quantite: String(line.quantite ?? 0),
+        lots: lots.length ? lots.join(", ") : "—",
+      },
+      metaColumn: "designation",
+      meta: null,
     }
   })
 
-  const movements = p.stock_movements
-  
-  return renderPdfToBuffer({ creationDate, render: (doc) => {
-    doc.font("Helvetica-Bold").fontSize(20).fillColor("#111111").text("CERTIFICAT DE CONFORMITE", { align: "right" })
-    doc.font("Helvetica").fontSize(10).fillColor("#6b7280").text(`BL ${bl.numero} • Version V${args.version}`, { align: "right" })
-    doc.fillColor("#111111")
-    doc.moveDown(0.75)
+  return renderCerpDocument(
+    {
+      documentType: "Certificat de conformité",
+      name: bl.numero,
+      code: `Version ${args.version}`,
+      subtitle: clientName,
+      status: "Conforme",
+      monogramName: clientName,
+      generatedAt: formatDateFR(bl.date_expedition ?? bl.date_creation),
+      generatedBy: clean(args.signataireLabel),
+      title: `Certificat de conformité ${bl.numero}`,
+      subject: "Certificat de conformité CERP",
+      creationDate: toUtcMidnightFromIso(bl.date_expedition ?? bl.date_creation),
+    },
+    (ctx) => {
+      ctx.legalStrip([
+        { label: "Bon de livraison", value: bl.numero },
+        { label: "Date", value: formatDateFR(bl.date_expedition ?? bl.date_creation) },
+        { label: "Commande", value: clean(bl.commande?.numero) },
+        { label: "Affaire", value: clean(bl.affaire?.reference) },
+      ])
 
-    if (company) {
-      doc.font("Helvetica-Bold").fontSize(11).text(company)
-      doc.moveDown(0.5)
-    }
+      ctx.section("Attestation", { cohesion: 70 })
+      ctx.notes(
+        `${company ?? "Croix Rousse Precision"} certifie que les pièces livrées au titre du bon de livraison ` +
+          `${bl.numero} sont conformes aux exigences contractuelles et aux contrôles réalisés.`
+      )
 
-    doc.font("Helvetica").fontSize(11)
-    drawKeyValue(doc, "Client:", bl.client.company_name)
-    drawKeyValue(doc, "Date:", formatDateFR(bl.date_expedition ?? bl.date_creation))
-    if (bl.commande?.numero) drawKeyValue(doc, "Commande:", bl.commande.numero)
-    if (bl.affaire?.reference) drawKeyValue(doc, "Affaire:", bl.affaire.reference)
-
-    doc.moveDown(1)
-    doc.font("Helvetica").fontSize(11)
-    doc.text(
-      "Nous certifions que les pieces livrees sont conformes aux exigences contractuelles et aux controles realises.",
-      { align: "left" }
-    )
-    doc.moveDown(0.5)
-
-    if (args.commentairePack && args.commentairePack.trim()) {
-      doc.font("Helvetica-Bold").fontSize(10).text("Commentaire")
-      doc.font("Helvetica").fontSize(10).text(args.commentairePack.trim())
-      doc.moveDown(0.75)
-    }
-
-    const marginX = doc.page.margins.left
-    const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right
-    const maxY = doc.page.height - doc.page.margins.bottom - 120
-    const widths = {
-      designation: Math.max(240, pageWidth - (80 + 70 + 160)),
-      code: 80,
-      qte: 70,
-      lots: 160,
-    }
-
-    const renderHeader = (y: number) => {
-      doc.fontSize(9).fillColor("#111111").font("Helvetica-Bold")
-      doc.text("Designation", marginX, y, { width: widths.designation })
-      doc.text("Code", marginX + widths.designation, y, { width: widths.code })
-      doc.text("Qte", marginX + widths.designation + widths.code, y, { width: widths.qte, align: "right" })
-      doc.text("Lots expedies", marginX + widths.designation + widths.code + widths.qte, y, { width: widths.lots })
-      doc.moveTo(marginX, y + 14).lineTo(marginX + pageWidth, y + 14).strokeColor("#e5e7eb").stroke()
-      doc.font("Helvetica").fillColor("#111111")
-    }
-
-    let y = doc.y
-    renderHeader(y)
-    y += 22
-
-    doc.fontSize(9).fillColor("#111111")
-    for (const l of lines) {
-      const desc = String(l.designation ?? "")
-      const lots = l.lots.length ? l.lots.join(", ") : "-"
-      const rowHeight = Math.max(14, doc.heightOfString(desc, { width: widths.designation }), doc.heightOfString(lots, { width: widths.lots }))
-
-      if (y + rowHeight > maxY) {
-        doc.addPage()
-        y = doc.page.margins.top
-        renderHeader(y)
-        y += 22
+      if (clean(args.commentairePack)) {
+        ctx.section("Observations")
+        ctx.notes(args.commentairePack as string)
       }
 
-      doc.text(desc, marginX, y, { width: widths.designation })
-      doc.text(String(l.code_piece ?? ""), marginX + widths.designation, y, { width: widths.code })
-      doc.text(String(l.quantite ?? 0), marginX + widths.designation + widths.code, y, { width: widths.qte, align: "right" })
-      doc.text(lots, marginX + widths.designation + widths.code + widths.qte, y, { width: widths.lots })
-      y += rowHeight + 6
-      doc.moveTo(marginX, y).lineTo(marginX + pageWidth, y).strokeColor("#f1f5f9").stroke()
-      y += 6
-    }
+      ctx.section("Pièces et lots expédiés", { cohesion: 104 })
+      ctx.linesTable({
+        columns: [
+          { key: "designation", label: "Désignation", flex: 5 },
+          { key: "code_piece", label: "Code pièce", flex: 1.8 },
+          { key: "quantite", label: "Quantité", flex: 1.2, align: "right" },
+          { key: "lots", label: "Lots expédiés", flex: 3 },
+        ],
+        rows,
+        emptyLabel: "Aucune pièce sur ce certificat.",
+      })
 
-    doc.moveDown(1)
-    if (movements.length) {
-      doc.font("Helvetica-Bold").fontSize(10).text("Resume tracabilite")
-      doc.font("Helvetica").fontSize(10)
-      for (const m of movements) {
-        const label = `${m.movement_no ?? m.id} • ${m.status} • ${formatDateFR(m.posted_at)}`
-        doc.text(label)
+      // La tracabilite est ce qui rend le certificat opposable : elle reste au document.
+      if (p.stock_movements.length) {
+        ctx.section("Traçabilité des mouvements")
+        ctx.linesTable({
+          columns: [
+            { key: "movement", label: "Mouvement", flex: 3 },
+            { key: "type", label: "Type", flex: 3 },
+            { key: "statut", label: "Statut", flex: 2.5 },
+            { key: "date", label: "Date", flex: 2 },
+          ],
+          rows: p.stock_movements.map((movement) => ({
+            // Le numero de mouvement est ce qui permet de remonter la piste : c'est lui qu'on
+            // met en avant, pas son type.
+            metaColumn: "movement",
+            cells: {
+              movement: clean(movement.movement_no) ?? movement.id,
+              type: labelOf(MOVEMENT_TYPE_LABELS, movement.movement_type),
+              statut: labelOf(MOVEMENT_STATUS_LABELS, movement.status),
+              date: formatDateFR(movement.posted_at),
+            },
+          })),
+          emptyLabel: "Aucun mouvement de stock rattaché.",
+        })
       }
-      doc.moveDown(0.5)
-    }
 
-    if (args.includeDocuments) {
-      doc.font("Helvetica-Bold").fontSize(10).text("Documents associes")
-      doc.font("Helvetica").fontSize(10)
-      const docs = p.documents_attached
-      if (docs.length) {
-        for (const d of docs) {
-          doc.text(`- ${d.document_name ?? d.document_id}`)
-        }
-      } else {
-        doc.text("- Aucun")
+      if (args.includeDocuments) {
+        ctx.section("Documents joints")
+        ctx.linesTable({
+          columns: [{ key: "nom", label: "Document", flex: 1 }],
+          rows: p.documents_attached.map((document) => ({
+            cells: { nom: clean(document.document_name) ?? document.document_id },
+          })),
+          emptyLabel: "Aucun document joint.",
+        })
       }
-      doc.moveDown(0.5)
-    }
 
-    doc.font("Helvetica-Bold").fontSize(11).text("Etabli par")
-    doc.font("Helvetica").fontSize(11).text(args.signataireLabel)
-    doc.fontSize(10).fillColor("#6b7280").text(`Date: ${formatDateFR(bl.date_expedition ?? bl.date_creation)}`)
-    doc.fillColor("#111111")
-  }})
+      ctx.section("Établi par", { cohesion: 40 })
+      const half = CONTENT_WIDTH / 2 - 12
+      const bottom = ctx.field("Signataire", clean(args.signataireLabel), 38, half)
+      ctx.field("Date", formatDateFR(bl.date_expedition ?? bl.date_creation), 38 + half + 24, half)
+      ctx.y = bottom
+    }
+  )
 }
