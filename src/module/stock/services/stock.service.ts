@@ -56,6 +56,7 @@ import type {
   InventorySessionActionBodyDTO,
   CancelInventorySessionBodyDTO,
   UpdateArticleBodyDTO,
+  ValidateArticleBodyDTO,
   ArchiveArticleBodyDTO,
   ReactivateArticleBodyDTO,
   ArticleDocumentMetadataDTO,
@@ -121,6 +122,7 @@ import {
   repoRemoveMovementDocument,
   repoUpsertInventoryLine,
   repoUpdateArticle,
+  repoValidateArticle,
   repoArchiveArticle,
   repoReactivateArticle,
   repoResolveStockOpeningReferences,
@@ -215,6 +217,23 @@ export async function listStockArticlesSVC(filters: ListArticlesQueryDTO) {
   return repoListArticles(filters);
 }
 
+export async function exportStockArticlesSVC(filters: ListArticlesQueryDTO) {
+  const items: Awaited<ReturnType<typeof repoListArticles>>["items"] = [];
+  const pageSize = 200;
+  const maxRows = 10_000;
+  let page = 1;
+  let total = 0;
+
+  do {
+    const result = await repoListArticles({ ...filters, page, pageSize });
+    total = result.total;
+    items.push(...result.items);
+    page += 1;
+  } while (items.length < total && items.length < maxRows);
+
+  return { items: items.slice(0, maxRows), total, truncated: total > maxRows };
+}
+
 /** #226 — Consultatif : ne crée rien, ne verrouille rien, ne bloque rien. */
 export async function findSimilarStockArticlesSVC(query: SimilarArticlesQueryDTO): Promise<SimilarArticleMatch[]> {
   return repoFindSimilarArticles(query);
@@ -283,6 +302,15 @@ export async function updateStockArticleSVC(
   includeCosts = false
 ): Promise<StockArticleDetail | null> {
   return repoUpdateArticle(id, patch, audit, includeCosts);
+}
+
+export async function validateStockArticleSVC(
+  id: string,
+  body: ValidateArticleBodyDTO,
+  audit: AuditContext,
+  includeCosts = false
+): Promise<StockArticleDetail | null> {
+  return repoValidateArticle(id, body, audit, includeCosts);
 }
 
 export async function archiveStockArticleSVC(

@@ -46,3 +46,55 @@ La migration n’a pas été exécutée depuis ce workspace : aucun `DATABASE_UR
 ## Couverture automatisée
 
 `article-master-data-164.test.ts` couvre 125 scénarios de validation, auxquels s’ajoutent les tests de routes stock et de lien Article/Pièce. Le build TypeScript constitue le contrôle de contrat transversal.
+
+## Complément — règles matière et Stock restantes (2026-07-29)
+
+Le patch additif `20260729_articles_164_remaining_rules.sql` complète le
+référentiel existant sans créer de table Article ni de moteur de finitions
+parallèle :
+
+- profils matière canoniques `PL`, `RO`, `U`, `FOND`, `TUBE`, `PROFIL`,
+  `BRUTCL`, avec normalisation des liens historiques ;
+- propriétaire du brut client ;
+- longueurs distinctes de barre source, de coupe et de brut, plus quantité
+  linéaire totale au niveau Article et lot ;
+- prix fournisseur qualifié par une base exclusive `NONE`, `KG` ou `M` dans
+  `fournisseur_catalogue` et son historique ;
+- densité publique et canonique en kg/m³ dans `densite_kg_m3`, tout en
+  maintenant la colonne historique `densite` en kg/dm³ par synchronisation
+  (`7,85 × 1 000 = 7 850`).
+
+L'audit en lecture seule n'a trouvé aucune densité historique renseignée :
+une nuance sans densité dans `cerp_test`, aucune nuance dans `cerp_prod`.
+Le choix additif évite néanmoins qu'un ancien consommateur interprète une
+valeur convertie dans la mauvaise unité.
+
+Le chemin Stock pour un Article de traitement réutilise
+`surface-finish-resolution.repository.ts`, la spécification canonique, la
+génération de textes et l'idempotence de #210. Il exige PT et version, crée
+uniquement un Article `EN_DEVIS`, n'écrit ni achat, ni gamme, ni mouvement de
+stock, puis laisse la validation/mise en production à une capacité séparée.
+
+Scripts d'exploitation :
+
+1. `support/20260729_articles_164_remaining_rules.preflight.sql` ;
+2. `20260729_articles_164_remaining_rules.sql` ;
+3. `support/20260729_articles_164_remaining_rules.verify.sql` ;
+4. rollback structurel uniquement sur `cerp_test`, avant toute utilisation des
+   nouveaux champs.
+
+Validation du 29 juillet 2026 sur `cerp_test` :
+
+- sauvegarde dédiée
+  `/var/backups/cerp/cerp_test_pre_164_20260729-2253.dump`, 38 752 526 octets,
+  3 780 entrées de catalogue, SHA-256
+  `d37779782eb82476c8f1bf8818e016b61d3963b0313e24933748063007bf2b01` ;
+- préflight entièrement vert ;
+- application, verify, rollback protégé, réapplication et second verify réussis ;
+- 272 Articles matière, 0 lot, 233 lignes de mouvement et 0 prix fournisseur
+  avant/après ;
+- patch enregistré avec le SHA-256
+  `ecf89b47af9d62fe96642c232aad75a64f6414071fad7d3e5b4416d8658e1236`.
+
+La migration de production reste une décision humaine distincte. Le patch n'a
+pas été appliqué à `cerp_prod`.

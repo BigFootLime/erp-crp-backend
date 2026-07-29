@@ -430,6 +430,16 @@ const familyCodeAliasMap: Record<string, string> = {
   PROFIL: "PR",
 };
 
+const materialFamilyCanonicalMap: Record<string, string> = {
+  PLAT: "PL",
+  ROND: "RO",
+  FONDERI: "FOND",
+  FONDERIE: "FOND",
+  PROFI: "PROFIL",
+  "BRUT-CL": "BRUTCL",
+  "BRUT-CLIENT": "BRUTCL",
+};
+
 function normalizeFamilyCode(value: string | null | undefined, fallback: string): string {
   const raw = typeof value === "string" ? value.trim().toUpperCase() : "";
   const normalized = raw.replace(/[^A-Z0-9]+/g, "-").replace(/^-+|-+$/g, "");
@@ -613,7 +623,10 @@ async function normalizeArticleState(args: {
   const article_category = derivePrimaryCategoryFromBusinessCategories(article_categories);
   const article_type = inferArticleType(article_category);
   const piece_technique_id = article_category === "fabrique" ? args.piece_technique_id : null;
-  const family_code = normalizeFamilyCode(args.family_code, defaultFamilyCodeForCategory(article_category));
+  const requestedFamilyCode = normalizeFamilyCode(args.family_code, defaultFamilyCodeForCategory(article_category));
+  const family_code = article_category === "matiere"
+    ? materialFamilyCanonicalMap[requestedFamilyCode] ?? requestedFamilyCode
+    : requestedFamilyCode;
   const version_number = typeof args.version_number === "number" && Number.isFinite(args.version_number) ? Math.max(1, Math.trunc(args.version_number)) : 1;
   const plan_index = typeof args.plan_index === "number" && Number.isFinite(args.plan_index) ? Math.max(1, Math.trunc(args.plan_index)) : 1;
   const status = normalizeArticleWorkflowStatus(args.status);
@@ -879,7 +892,7 @@ export async function repoListMatiereNuances(filters: ListMatiereNuancesQueryDTO
   if (filters.q) {
     const q = `%${filters.q.trim()}%`;
     const p = push(q);
-    where.push(`(n.code ILIKE ${p} OR n.designation ILIKE ${p})`);
+    where.push(`(n.code ILIKE ${p} OR COALESCE(n.designation, '') ILIKE ${p})`);
   }
   if (typeof filters.is_active === "boolean") {
     where.push(`n.is_active = ${push(filters.is_active)}`);
@@ -894,7 +907,7 @@ export async function repoListMatiereNuances(filters: ListMatiereNuancesQueryDTO
   const res = await db.query<{
     id: number;
     code: string;
-    designation: string;
+    designation: string | null;
     densite: string | number | null;
     is_active: boolean;
     etat_ids: number[];
@@ -904,7 +917,10 @@ export async function repoListMatiereNuances(filters: ListMatiereNuancesQueryDTO
         n.id::int AS id,
         n.code,
         n.designation,
-        n.densite,
+        COALESCE(
+          NULLIF(to_jsonb(n) ->> 'densite_kg_m3', '')::numeric,
+          n.densite * 1000
+        ) AS densite,
         n.is_active,
         COALESCE(
           array_agg(ne.etat_id::int ORDER BY ne.etat_id) FILTER (WHERE ne.etat_id IS NOT NULL),
@@ -922,7 +938,7 @@ export async function repoListMatiereNuances(filters: ListMatiereNuancesQueryDTO
   return res.rows.map((row) => ({
     id: row.id,
     code: row.code,
-    designation: row.designation,
+    designation: row.designation && row.designation.trim() ? row.designation : null,
     densite: row.densite === null ? null : typeof row.densite === "number" ? row.densite : Number(row.densite),
     is_active: row.is_active,
     etat_ids: Array.isArray(row.etat_ids) ? row.etat_ids.filter((v) => typeof v === "number") : [],
@@ -931,8 +947,11 @@ export async function repoListMatiereNuances(filters: ListMatiereNuancesQueryDTO
 
 export async function repoCreateMatiereNuance(body: CreateMatiereNuanceBodyDTO, audit: AuditContext): Promise<StockMatiereNuance> {
   const code = normalizeStockReferentialCode(body.code, "Nuance");
-  const designation = body.designation.trim();
+  // Compatibilité pré-patch : la colonne historique est NOT NULL et stocke
+  // des kg/dm³. L'API, elle, est désormais exclusivement en kg/m³.
+  const designation = body.designation?.trim() || "";
   const densite = body.densite ?? null;
+  const legacyDensiteKgDm3 = densite === null ? null : densite / 1000;
   const is_active = body.is_active;
   const etat_ids = uniqPositiveInts(body.etat_ids);
 
@@ -948,7 +967,7 @@ export async function repoCreateMatiereNuance(body: CreateMatiereNuanceBodyDTO, 
           VALUES ($1,$2,$3,$4)
           RETURNING id::int AS id
         `,
-        [code, designation, densite, is_active]
+        [code, designation, legacyDensiteKgDm3, is_active]
       );
     } catch (err) {
       if (isPgUniqueViolation(err)) {
@@ -981,7 +1000,7 @@ export async function repoCreateMatiereNuance(body: CreateMatiereNuanceBodyDTO, 
         entity_id: String(nuanceId),
         path: audit.path,
         client_session_id: audit.client_session_id,
-        details: { code, designation, densite, is_active, etat_ids },
+        details: { code, designation: designation || null, densite_kg_m3: densite, is_active, etat_ids },
       },
       ip: audit.ip,
       user_agent: audit.user_agent,
@@ -996,7 +1015,7 @@ export async function repoCreateMatiereNuance(body: CreateMatiereNuanceBodyDTO, 
     return {
       id: nuanceId,
       code,
-      designation,
+      designation: designation || null,
       densite: densite === null ? null : Number(densite),
       is_active,
       etat_ids,
@@ -1323,6 +1342,28 @@ async function syncArticleSubtypeDetails(
 
   if (args.category === "matiere" && args.article_matiere) {
     const m = args.article_matiere;
+    const remainingColumnsAvailable = await tableColumnExists(
+      client,
+      "articles_matiere",
+      "longueur_coupe_mm"
+    );
+    if (
+      !remainingColumnsAvailable
+      && (
+        m.client_proprietaire_id
+        || m.longueur_coupe_mm
+        || m.quantite_lineaire_totale_mm
+        || (m.barre_a_decouper && !(m.longueur_barre_source_mm ?? m.longueur_unitaire_mm))
+      )
+    ) {
+      throw new HttpError(
+        503,
+        "STOCK_SCHEMA_UPGRADE_REQUIRED",
+        "Le patch additif #164 doit être appliqué sur cet environnement avant d'enregistrer ces règles matière."
+      );
+    }
+    const legacyLongueur = m.longueur_brut_mm ?? m.longueur_mm ?? null;
+    const legacyLongueurUnitaire = m.longueur_barre_source_mm ?? m.longueur_unitaire_mm ?? null;
     await client.query(
       `
         INSERT INTO public.articles_matiere (
@@ -1377,8 +1418,8 @@ async function syncArticleSubtypeDetails(
         m.etat_id ?? null,
         m.sous_etat_id ?? null,
         m.barre_a_decouper ?? false,
-        m.longueur_mm ?? null,
-        m.longueur_unitaire_mm ?? null,
+        legacyLongueur,
+        legacyLongueurUnitaire,
         m.largeur_mm ?? null,
         m.hauteur_mm ?? null,
         m.epaisseur_mm ?? null,
@@ -1386,6 +1427,26 @@ async function syncArticleSubtypeDetails(
         m.largeur_plat_mm ?? null,
       ]
     );
+    if (remainingColumnsAvailable) {
+      await client.query(
+        `UPDATE public.articles_matiere
+         SET client_proprietaire_id = $2,
+             longueur_barre_source_mm = $3::int,
+             longueur_coupe_mm = $4::int,
+             longueur_brut_mm = $5::int,
+             quantite_lineaire_totale_mm = $6::numeric,
+             updated_at = now()
+         WHERE article_id = $1::uuid`,
+        [
+          args.article_id,
+          m.client_proprietaire_id ?? null,
+          m.longueur_barre_source_mm ?? m.longueur_unitaire_mm ?? null,
+          m.longueur_coupe_mm ?? null,
+          m.longueur_brut_mm ?? m.longueur_mm ?? null,
+          m.quantite_lineaire_totale_mm ?? null,
+        ]
+      );
+    }
     return;
   }
 
@@ -1400,6 +1461,24 @@ async function syncArticleSubtypeDetails(
     `,
     [args.article_id, args.family_code]
   );
+}
+
+async function tableColumnExists(
+  queryer: Pick<PoolClient, "query">,
+  tableName: string,
+  columnName: string
+): Promise<boolean> {
+  const result = await queryer.query<{ present: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1
+       FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = $1
+         AND column_name = $2
+     ) AS present`,
+    [tableName, columnName]
+  );
+  return result.rows[0]?.present === true;
 }
 
 async function syncArticleProcurementProfile(
@@ -2599,7 +2678,15 @@ export async function repoGetArticle(id: string, includeCosts = false): Promise<
              'nuance_id', am.nuance_id,
              'etat_id', am.etat_id,
              'sous_etat_id', am.sous_etat_id,
+             'client_proprietaire_id', to_jsonb(am) ->> 'client_proprietaire_id',
              'barre_a_decouper', am.barre_a_decouper,
+             'longueur_barre_source_mm', NULLIF(to_jsonb(am) ->> 'longueur_barre_source_mm', '')::int,
+             'longueur_coupe_mm', NULLIF(to_jsonb(am) ->> 'longueur_coupe_mm', '')::int,
+             'longueur_brut_mm', COALESCE(
+               NULLIF(to_jsonb(am) ->> 'longueur_brut_mm', '')::int,
+               am.longueur_mm
+             ),
+             'quantite_lineaire_totale_mm', NULLIF(to_jsonb(am) ->> 'quantite_lineaire_totale_mm', '')::float8,
              'longueur_mm', am.longueur_mm,
              'longueur_unitaire_mm', am.longueur_unitaire_mm,
              'largeur_mm', am.largeur_mm,
@@ -2676,6 +2763,7 @@ export async function repoGetArticle(id: string, includeCosts = false): Promise<
          fc.reference_fournisseur AS supplier_reference,
          fc.unite AS unit,
          CASE WHEN $2::boolean THEN fc.prix_unitaire::float8 ELSE NULL END AS unit_price,
+         COALESCE(to_jsonb(fc) ->> 'pricing_basis', 'NONE') AS pricing_basis,
          CASE WHEN $2::boolean THEN fc.devise ELSE NULL END AS currency,
          fc.delai_jours::int AS lead_time_days,
          fc.moq::float8 AS moq,
@@ -3114,6 +3202,96 @@ export async function repoUpdateArticle(
       throw new HttpError(409, "DUPLICATE", "Article code already exists");
     }
     throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function repoValidateArticle(
+  id: string,
+  body: { expected_row_version: number },
+  audit: AuditContext,
+  includeCosts = false
+): Promise<StockArticleDetail | null> {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const currentResult = await client.query<{
+      status: string;
+      row_version: number;
+      article_category: string;
+      finish_revision_id: string | null;
+      piece_technique_id: string | null;
+      piece_technique_version_id: string | null;
+      generated_designation: string | null;
+      generated_comment: string | null;
+    }>(
+      `SELECT
+         a.status,
+         a.row_version::int AS row_version,
+         ${normalizedArticleCategorySql("a.article_category")} AS article_category,
+         t.finish_revision_id::text AS finish_revision_id,
+         t.piece_technique_id::text AS piece_technique_id,
+         t.piece_technique_version_id::text AS piece_technique_version_id,
+         t.generated_designation,
+         t.generated_comment
+       FROM public.articles a
+       LEFT JOIN public.articles_traitement t ON t.article_id = a.id
+       WHERE a.id = $1::uuid
+       FOR UPDATE OF a`,
+      [id]
+    );
+    const current = currentResult.rows[0];
+    if (!current) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+    if (current.row_version !== body.expected_row_version) {
+      throw new HttpError(409, "ARTICLE_VERSION_CONFLICT", "L'article a été modifié depuis son chargement.");
+    }
+    if (current.status !== "EN_DEVIS") {
+      throw new HttpError(409, "ARTICLE_NOT_DRAFT", "Seul un article brouillon peut être validé et mis en production.");
+    }
+    if (
+      current.article_category === "traitement"
+      && (
+        !current.finish_revision_id
+        || !current.piece_technique_id
+        || !current.piece_technique_version_id
+        || !current.generated_designation
+        || !current.generated_comment
+      )
+    ) {
+      throw new HttpError(
+        422,
+        "SURFACE_FINISH_ARTICLE_INCOMPLETE",
+        "L'article de traitement doit conserver la finition, la PT/version et les textes générés avant sa mise en production."
+      );
+    }
+
+    await client.query(
+      `UPDATE public.articles
+       SET status = 'VALIDE',
+           row_version = row_version + 1,
+           updated_at = now(),
+           updated_by = $2
+       WHERE id = $1::uuid`,
+      [id, audit.user_id]
+    );
+    await insertAuditLog(client, audit, {
+      action: "stock.articles.validate-and-release",
+      entity_type: "articles",
+      entity_id: id,
+      details: {
+        before: { status: current.status, row_version: current.row_version },
+        after: { status: "VALIDE", row_version: current.row_version + 1 },
+      },
+    });
+    await client.query("COMMIT");
+    return repoGetArticle(id, includeCosts);
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
   } finally {
     client.release();
   }
@@ -4139,6 +4317,7 @@ export async function repoListLots(filters: ListLotsQueryDTO): Promise<Paginated
       l.received_at::text AS received_at,
       l.manufactured_at::text AS manufactured_at,
       l.expiry_at::text AS expiry_at,
+      NULLIF(to_jsonb(l) ->> 'quantite_lineaire_totale_mm', '')::float8 AS quantite_lineaire_totale_mm,
       l.updated_at::text AS updated_at,
       l.created_at::text AS created_at
     FROM public.lots l
@@ -4168,6 +4347,7 @@ export async function repoGetLot(id: string): Promise<StockLotDetail | null> {
         l.received_at::text AS received_at,
         l.manufactured_at::text AS manufactured_at,
         l.expiry_at::text AS expiry_at,
+        NULLIF(to_jsonb(l) ->> 'quantite_lineaire_totale_mm', '')::float8 AS quantite_lineaire_totale_mm,
         l.notes,
         l.updated_at::text AS updated_at,
         l.created_at::text AS created_at
@@ -4211,6 +4391,21 @@ export async function repoCreateLot(body: CreateLotBodyDTO, audit: AuditContext)
     );
     const id = res.rows[0]?.id;
     if (!id) throw new Error("Failed to create lot");
+    if (body.quantite_lineaire_totale_mm !== undefined) {
+      if (!(await tableColumnExists(client, "lots", "quantite_lineaire_totale_mm"))) {
+        throw new HttpError(
+          503,
+          "STOCK_SCHEMA_UPGRADE_REQUIRED",
+          "Le patch additif #164 doit être appliqué avant d'enregistrer une quantité linéaire de lot."
+        );
+      }
+      await client.query(
+        `UPDATE public.lots
+         SET quantite_lineaire_totale_mm = $2::numeric
+         WHERE id = $1::uuid`,
+        [id, body.quantite_lineaire_totale_mm ?? null]
+      );
+    }
 
     await insertAuditLog(client, audit, {
       action: "stock.lots.create",
@@ -4250,6 +4445,16 @@ export async function repoUpdateLot(id: string, patch: UpdateLotBodyDTO, audit: 
   if (patch.received_at !== undefined) sets.push(`received_at = ${push(patch.received_at)}::date`);
   if (patch.manufactured_at !== undefined) sets.push(`manufactured_at = ${push(patch.manufactured_at)}::date`);
   if (patch.expiry_at !== undefined) sets.push(`expiry_at = ${push(patch.expiry_at)}::date`);
+  if (patch.quantite_lineaire_totale_mm !== undefined) {
+    if (!(await tableColumnExists(db, "lots", "quantite_lineaire_totale_mm"))) {
+      throw new HttpError(
+        503,
+        "STOCK_SCHEMA_UPGRADE_REQUIRED",
+        "Le patch additif #164 doit être appliqué avant d'enregistrer une quantité linéaire de lot."
+      );
+    }
+    sets.push(`quantite_lineaire_totale_mm = ${push(patch.quantite_lineaire_totale_mm)}::numeric`);
+  }
   if (patch.notes !== undefined) sets.push(`notes = ${push(patch.notes)}`);
   sets.push(`updated_at = now()`);
   sets.push(`updated_by = ${push(audit.user_id)}`);

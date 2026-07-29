@@ -286,3 +286,20 @@ export type ConfirmFinishResult = {
   };
   next_actions: Array<{ key: string; label: string; href: string }>;
 };
+
+export type StockFinishArticleResult = {
+  result: "CREATED" | "REUSED";
+  article: {
+    id: string;
+    code: string;
+    designation: string;
+    status: string;
+    article_type: string;
+    article_category: string;
+    article_categories: string[];
+    family_code: string;
+    stock_managed: boolean;
+    lot_tracking: boolean;
+  };
+  next_actions: Array<{ key: string; label: string; href: string }>;
+};

@@ -187,6 +187,17 @@ function installQueryRouter(scenario: Scenario = {}) {
     if (/surface_finish_command_receipts/.test(sql) && /^\s*SELECT/i.test(sql)) {
       return scenario.receipt ? one(scenario.receipt as Row) : empty;
     }
+    if (/FROM public\.pieces_techniques pt/.test(sql) && /JOIN public\.piece_technique_versions ptv/.test(sql)) {
+      return one({
+        piece_technique_id: PIECE_ID,
+        code_piece: "CAP-100",
+        designation_piece: "Capot moteur",
+        piece_technique_version_id: VERSION_ID,
+        indice: "C",
+        plan_reference: "PL-4521",
+        version_updated_at: "2026-07-28T08:00:00.000Z",
+      });
+    }
     if (/FROM public\.gammes g/.test(sql)) {
       return one(scenario.context ?? contextRow());
     }
@@ -227,6 +238,17 @@ async function fetchPreview(): Promise<{ status: number; body: Record<string, un
   const res = await request(app)
     .post(`${OP_BASE}/preview`)
     .send({ finish_revision_id: REVISION_ID, quantite: 1 });
+  return { status: res.status, body: res.body };
+}
+
+async function fetchStockPreview(): Promise<{ status: number; body: Record<string, unknown> }> {
+  const res = await request(app)
+    .post(`${FIN_BASE}/stock-article/preview`)
+    .send({
+      piece_technique_id: PIECE_ID,
+      piece_technique_version_id: VERSION_ID,
+      finish_revision_id: REVISION_ID,
+    });
   return { status: res.status, body: res.body };
 }
 
@@ -332,6 +354,114 @@ describe("#210 validation d'entrée", () => {
       .post(`${FIN_BASE}/revisions/${REVISION_ID}/documents`)
       .send({ libelle: "Spécification client" });
     expect(res.status).toBe(422);
+  });
+});
+
+describe("#164 création d'un article de traitement depuis Stock", () => {
+  it("exige la PT et sa version dans le contrat Stock", async () => {
+    const withoutPt = await request(app)
+      .post(`${FIN_BASE}/stock-article/preview`)
+      .send({ finish_revision_id: REVISION_ID });
+    expect(withoutPt.status).toBe(422);
+
+    const withoutVersion = await request(app)
+      .post(`${FIN_BASE}/stock-article/preview`)
+      .send({ piece_technique_id: PIECE_ID, finish_revision_id: REVISION_ID });
+    expect(withoutVersion.status).toBe(422);
+  });
+
+  it("réutilise le moteur canonique et génère les textes côté serveur sans écrire pendant l'aperçu", async () => {
+    const preview = await fetchStockPreview();
+    expect(preview.status).toBe(200);
+    expect(preview.body.spec_fingerprint).toMatch(/^[0-9a-f]{64}$/);
+    expect(preview.body.generated_designation).toBe(
+      "ST — CAP-100 ind. C — Anodisation noire RAL 9005 20 µm cl. AA20"
+    );
+    expect(String(preview.body.generated_comment)).toContain("Norme / spécification : ISO 7599");
+    expect(mocks.poolConnect).not.toHaveBeenCalled();
+    expect(sqlLog.some((sql) => /\b(INSERT|UPDATE|DELETE)\b/i.test(sql))).toBe(false);
+  });
+
+  it("crée un brouillon sans ligne d'achat, mouvement ou mutation de gamme", async () => {
+    const { body: preview } = await fetchStockPreview();
+    sqlLog = [];
+    const result = await request(app)
+      .post(`${FIN_BASE}/stock-article/confirm`)
+      .set("Idempotency-Key", "stock-finish-confirm-164-0001")
+      .send({
+        piece_technique_id: PIECE_ID,
+        piece_technique_version_id: VERSION_ID,
+        finish_revision_id: REVISION_ID,
+        decision: "CREATE",
+        preview_hash: preview.preview_hash,
+        spec_fingerprint: preview.spec_fingerprint,
+      });
+
+    expect(result.status).toBe(201);
+    expect(result.body.result).toBe("CREATED");
+    expect(result.body.article.status).toBe("EN_DEVIS");
+    expect(result.body.article.article_category).toBe("traitement");
+    expect(sqlLog.some((sql) => /UPDATE public\.articles_traitement/.test(sql))).toBe(true);
+    expect(sqlLog.some((sql) => /INSERT INTO public\.pieces_techniques_achats/.test(sql))).toBe(false);
+    expect(sqlLog.some((sql) => /gamme_operation_finitions/.test(sql))).toBe(false);
+    expect(sqlLog.some((sql) => /stock_movement/i.test(sql))).toBe(false);
+  });
+
+  it("refuse la confirmation Stock à un rôle qui n'a que le droit de prévisualiser", async () => {
+    mocks.currentRole.value = "Responsable Achats";
+    const { body: preview } = await fetchStockPreview();
+    const result = await request(app)
+      .post(`${FIN_BASE}/stock-article/confirm`)
+      .set("Idempotency-Key", "stock-finish-confirm-164-0002")
+      .send({
+        piece_technique_id: PIECE_ID,
+        piece_technique_version_id: VERSION_ID,
+        finish_revision_id: REVISION_ID,
+        decision: "CREATE",
+        preview_hash: preview.preview_hash,
+        spec_fingerprint: preview.spec_fingerprint,
+      });
+    expect(result.status).toBe(403);
+  });
+
+  it("rejoue une double soumission identique sans recréer d'article", async () => {
+    const { body: preview } = await fetchStockPreview();
+    const payload = {
+      piece_technique_id: PIECE_ID,
+      piece_technique_version_id: VERSION_ID,
+      finish_revision_id: REVISION_ID,
+      decision: "CREATE",
+      preview_hash: preview.preview_hash,
+      spec_fingerprint: preview.spec_fingerprint,
+    };
+    await request(app)
+      .post(`${FIN_BASE}/stock-article/confirm`)
+      .set("Idempotency-Key", "stock-finish-confirm-164-0003")
+      .send(payload);
+    const receiptInsert = mocks.clientQuery.mock.calls.find(([sql]) =>
+      /INSERT INTO public\.surface_finish_command_receipts/.test(String(sql))
+    );
+    expect(receiptInsert).toBeDefined();
+    const storedHash = String((receiptInsert as unknown as [string, unknown[]])[1][2]);
+    const stored = {
+      result: "CREATED",
+      article: {
+        id: ARTICLE_ID,
+        code: "ART-TRT-000123",
+        designation: "Traitement",
+        status: "EN_DEVIS",
+      },
+      next_actions: [],
+    };
+    installQueryRouter({ receipt: { request_hash: storedHash, result: stored } });
+    sqlLog = [];
+    const replay = await request(app)
+      .post(`${FIN_BASE}/stock-article/confirm`)
+      .set("Idempotency-Key", "stock-finish-confirm-164-0003")
+      .send(payload);
+    expect(replay.status).toBe(201);
+    expect(replay.body).toEqual(stored);
+    expect(sqlLog.some((sql) => /INSERT INTO public\.articles\b/.test(sql))).toBe(false);
   });
 });
 

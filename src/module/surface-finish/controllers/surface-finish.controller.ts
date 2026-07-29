@@ -23,6 +23,8 @@ import {
   listFinishHistorySVC,
   listRevisionDocumentsSVC,
   previewOperationFinishSVC,
+  previewStockFinishArticleSVC,
+  confirmStockFinishArticleSVC,
   reactivateFinishSVC,
   revisionImpactSVC,
   setFinishFavoriteSVC,
@@ -288,6 +290,29 @@ export const confirmOperationFinish: RequestHandler = async (req, res, next) => 
     const result = await confirmOperationFinishSVC(
       routeParam(req, "gammeId"),
       routeParam(req, "operationId"),
+      req.body,
+      buildAuditContext(req),
+      actorOf(req),
+      headerValue(req, "idempotency-key")
+    );
+    res.status(result.result === "CREATED" ? 201 : 200).json(result);
+  } catch (err) {
+    next(err);
+  }
+};
+
+/** Stock exige une PT/version explicite ; le moteur génère toujours les textes côté serveur. */
+export const previewStockFinishArticle: RequestHandler = async (req, res, next) => {
+  try {
+    res.json(await previewStockFinishArticleSVC(req.body, actorOf(req)));
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const confirmStockFinishArticle: RequestHandler = async (req, res, next) => {
+  try {
+    const result = await confirmStockFinishArticleSVC(
       req.body,
       buildAuditContext(req),
       actorOf(req),
