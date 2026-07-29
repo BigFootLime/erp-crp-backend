@@ -1,10 +1,42 @@
 // src/module/pieces-techniques/routes/pieces-techniques.routes.ts
-import { Router, type RequestHandler } from "express"
+import { Router } from "express"
 import multer from "multer"
 
-import { authenticateToken } from "../../auth/middlewares/auth.middleware"
+import { authenticateToken, authorizeRole } from "../../auth/middlewares/auth.middleware"
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
-import { HttpError } from "../../../utils/httpError"
+import {
+  PIECE_DOCUMENT_POLICY_ROLES,
+  PIECE_TECHNIQUE_DELETE_ROLES,
+  PIECE_TECHNIQUE_VALIDATE_ROLES,
+} from "../pieces-techniques.permissions"
+import {
+  abandonPieceDraft,
+  createDocumentType,
+  createPieceDraft,
+  downloadPieceDocumentDossierPdf,
+  getClientDocumentPolicy,
+  getPieceDocumentDossier,
+  getPieceDraft,
+  getPieceTechniquePermissions,
+  listDocumentTypes,
+  listPieceDrafts,
+  listVersionFrozenRequirements,
+  setClientDocumentPolicy,
+  setPieceCritique,
+  updateDocumentType,
+  updatePieceDraft,
+} from "../controllers/document-policy.controller"
+import {
+  clientIdParamSchema,
+  createDocumentTypeSchema,
+  documentTypeCodeParamSchema,
+  draftIdParamSchema,
+  saveDraftSchema,
+  setClientDocumentPolicySchema,
+  setPieceCritiqueSchema,
+  updateDocumentTypeSchema,
+  versionIdOnlyParamSchema,
+} from "../validators/document-policy.validators"
 import {
   addAchat,
   addBomLine,
@@ -75,31 +107,17 @@ import {
   versionIdParamSchema,
   versionStatusSchema,
 } from "../validators/versions.validators"
-import { canApprovePieceTechniqueVersion } from "../domain/pieces-techniques-rbac"
 
 const router = Router()
 
-function isAdminRole(role: string | undefined): boolean {
-  if (!role) return false
-  const r = role.trim().toLowerCase()
-  return r.includes("admin") || r.includes("administrateur")
-}
-
-const requireAdmin: RequestHandler = (req, _res, next) => {
-  if (!isAdminRole(req.user?.role)) {
-    next(new HttpError(403, "FORBIDDEN", "Admin role required"))
-    return
-  }
-  next()
-}
-
-const requireVersionApproval: RequestHandler = (req, _res, next) => {
-  if (!canApprovePieceTechniqueVersion(req.user?.role)) {
-    next(new HttpError(403, "PIECE_VERSION_APPROVAL_FORBIDDEN", "Technical definition approval role required"))
-    return
-  }
-  next()
-}
+// #227 — RBAC explicite. L'ancien garde testait `role.includes("admin")` : il refusait le
+// Directeur, le Responsable Qualité et le Responsable Programmation (le fameux « accès
+// refusé » à la validation d'un indice), acceptait tout futur rôle contenant « admin »,
+// et ignorait le multi-rôles #315. Les listes vivent dans pieces-techniques.permissions.ts
+// et sont comparées aux rôles réellement assignés.
+const requireValidateRole = authorizeRole(...PIECE_TECHNIQUE_VALIDATE_ROLES)
+const requireDeleteRole = authorizeRole(...PIECE_TECHNIQUE_DELETE_ROLES)
+const requireDocumentPolicyRole = authorizeRole(...PIECE_DOCUMENT_POLICY_ROLES)
 
 const docsBaseDir = ensureDocumentStoragePath("pieces-techniques")
 
@@ -117,12 +135,42 @@ router.post("/", validate(createPieceTechniqueSchema), createPieceTechnique)
 // #146 — Déclarée AVANT `/:id`, sinon Express interpréterait « summary » comme un
 // identifiant de pièce et renverrait un 400 de validation UUID.
 router.get("/summary", getPieceTechniquesSummary)
+
+// #227 — Toutes ces routes littérales DOIVENT rester au-dessus de `/:id`.
+router.get("/permissions", getPieceTechniquePermissions)
+router.get("/document-types", listDocumentTypes)
+router.post("/document-types", requireDocumentPolicyRole, validate(createDocumentTypeSchema), createDocumentType)
+router.patch(
+  "/document-types/:code",
+  requireDocumentPolicyRole,
+  validate(documentTypeCodeParamSchema),
+  validate(updateDocumentTypeSchema),
+  updateDocumentType
+)
+router.get("/document-policy/:clientId", validate(clientIdParamSchema), getClientDocumentPolicy)
+router.put(
+  "/document-policy/:clientId",
+  requireDocumentPolicyRole,
+  validate(clientIdParamSchema),
+  validate(setClientDocumentPolicySchema),
+  setClientDocumentPolicy
+)
+router.get("/drafts", listPieceDrafts)
+router.post("/drafts", validate(saveDraftSchema), createPieceDraft)
+router.get("/drafts/:draftId", validate(draftIdParamSchema), getPieceDraft)
+router.put("/drafts/:draftId", validate(draftIdParamSchema), validate(saveDraftSchema), updatePieceDraft)
+router.delete("/drafts/:draftId", validate(draftIdParamSchema), abandonPieceDraft)
+router.get("/versions/:versionId/document-requirements", validate(versionIdOnlyParamSchema), listVersionFrozenRequirements)
+
 router.get("/", listPieceTechniques)
 router.get("/by-affaire/:affaireId", validate(affaireOnlyParamSchema), listAffairePieceTechniques)
 router.get("/:id/arborescence", validate(idParamSchema), getPieceTechniqueFabricationTree)
+router.get("/:id/document-dossier", validate(idParamSchema), getPieceDocumentDossier)
+router.get("/:id/document-dossier/pdf", validate(idParamSchema), downloadPieceDocumentDossierPdf)
+router.post("/:id/piece-critique", validate(idParamSchema), validate(setPieceCritiqueSchema), setPieceCritique)
 router.get("/:id", validate(idParamSchema), getPieceTechnique)
 router.patch("/:id", validate(idParamSchema), validate(updatePieceTechniqueSchema), updatePieceTechnique)
-router.delete("/:id", requireAdmin, validate(idParamSchema), deletePieceTechnique)
+router.delete("/:id", requireDeleteRole, validate(idParamSchema), deletePieceTechnique)
 
 router.post("/:id/duplicate", validate(idParamSchema), duplicatePieceTechnique)
 router.post("/:id/status", validate(idParamSchema), validate(pieceTechniqueStatusSchema), updatePieceTechniqueStatus)
@@ -135,7 +183,7 @@ router.post("/:id/create-or-link-article-fabrique", validate(idParamSchema), cre
 router.get("/:id/versions", validate(idParamSchema), listVersions)
 router.post("/:id/versions", validate(idParamSchema), validate(createVersionSchema), createVersion)
 router.patch("/:id/versions/:versionId", validate(versionIdParamSchema), validate(updateVersionSchema), updateVersion)
-router.patch("/:id/versions/:versionId/status", requireVersionApproval, validate(versionIdParamSchema), validate(versionStatusSchema), updateVersionStatus)
+router.patch("/:id/versions/:versionId/status", requireValidateRole, validate(versionIdParamSchema), validate(versionStatusSchema), updateVersionStatus)
 router.post("/:id/versions/:versionId/create-next", validate(versionIdParamSchema), validate(createNextVersionSchema), createNextVersion)
 
 router.post("/:id/nomenclature", validate(idParamSchema), validate(addBomLineSchema), addBomLine)

@@ -27,7 +27,10 @@ export const versionIdParamSchema = z.object({ params: z.object({ versionId: uui
 export const gammeIdParamSchema = z.object({ params: z.object({ gammeId: uuid }) })
 
 const gammeCore = z.object({
-  nom: z.string().trim().min(1, "Nom de gamme requis").max(200),
+  // #227 — le nom devient OPTIONNEL : le serveur le calcule depuis la pièce et l'indice
+  // (domain/gamme-naming.ts). Un intitulé explicitement fourni reste respecté — reprise
+  // de données, import, renommage volontaire — mais l'UI de création n'en envoie plus.
+  nom: z.string().trim().min(1, "Nom de gamme vide").max(200).optional().nullable(),
   code: z.string().trim().max(80).optional().nullable(),
   designation: z.string().trim().max(200).optional().nullable(),
   commentaire: z.string().max(2000).optional().nullable(),

@@ -13,9 +13,14 @@ import {
 // verify SQL sur cerp_test.)
 
 describe("Gammes — validators", () => {
-  it("exige un nom de gamme", () => {
+  // #227 — le nom n'est plus exigé du client : le serveur le calcule depuis la pièce et
+  // l'indice (module/gammes/domain/gamme-naming.ts, éprouvé par gamme-naming-227.test.ts).
+  // Un intitulé explicite reste accepté ; un nom VIDE reste refusé, car il signalerait une
+  // saisie perdue plutôt qu'une délégation au serveur.
+  it("accepte une création sans nom et laisse le serveur nommer", () => {
     expect(createGammeSchema.safeParse({ body: { nom: "Gamme principale" } }).success).toBe(true)
-    expect(createGammeSchema.safeParse({ body: {} }).success).toBe(false)
+    expect(createGammeSchema.safeParse({ body: {} }).success).toBe(true)
+    expect(createGammeSchema.safeParse({ body: { nom: "" } }).success).toBe(false)
   })
 
   it("statut par défaut BROUILLON + enum aligné sur la version", () => {

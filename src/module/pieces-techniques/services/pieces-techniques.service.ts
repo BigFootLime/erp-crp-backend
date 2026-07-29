@@ -172,8 +172,13 @@ export async function listPieceTechniqueDocumentsSVC(pieceTechniqueId: string) {
   return repoListPieceTechniqueDocuments(pieceTechniqueId);
 }
 
-export async function attachPieceTechniqueDocumentsSVC(pieceTechniqueId: string, documents: UploadedDocument[], audit: AuditContext) {
-  return repoAttachPieceTechniqueDocuments(pieceTechniqueId, documents, audit);
+export async function attachPieceTechniqueDocumentsSVC(
+  pieceTechniqueId: string,
+  documents: UploadedDocument[],
+  audit: AuditContext,
+  options: { documentTypeCode?: string | null } = {}
+) {
+  return repoAttachPieceTechniqueDocuments(pieceTechniqueId, documents, audit, options);
 }
 
 export async function removePieceTechniqueDocumentSVC(pieceTechniqueId: string, docId: string, audit: AuditContext) {
