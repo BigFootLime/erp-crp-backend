@@ -20,6 +20,16 @@ export const ARTICLE_ARCHIVE_ROLES = [
   "Administrateur Systeme et Reseau",
 ] as const;
 
+/** La création d'un brouillon et sa mise en production sont deux droits distincts. */
+export const ARTICLE_APPROVE_ROLES = [
+  "Directeur",
+  "Administrateur Systeme et Reseau",
+  "Responsable Programmation",
+  "Responsable Qualité",
+  "Method",
+  "Achat",
+] as const;
+
 export const ARTICLE_DOCUMENT_WRITE_ROLES = ARTICLE_WRITE_ROLES;
 
 export const ARTICLE_COST_ROLES = [

@@ -129,6 +129,7 @@ export type FournisseurCatalogueItem = {
   reference_fournisseur: string | null
   unite: string | null
   prix_unitaire: number | null
+  pricing_basis: "NONE" | "KG" | "M"
   devise: string | null
   delai_jours: number | null
   moq: number | null
@@ -150,6 +151,7 @@ export type FournisseurCataloguePrixHistory = {
   id: string
   catalogue_id: string
   prix_unitaire: number | null
+  pricing_basis: "NONE" | "KG" | "M"
   devise: string | null
   delai_jours: number | null
   moq: number | null

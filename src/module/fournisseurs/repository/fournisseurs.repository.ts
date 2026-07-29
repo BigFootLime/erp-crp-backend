@@ -1203,6 +1203,7 @@ export async function repoUpdateFournisseurHomologation(
 type CatalogueRow = {
   id: string; fournisseur_id: string; type: string; article_id: string | null; designation: string
   reference_fournisseur: string | null; unite: string | null; prix_unitaire: number | null; devise: string | null
+  pricing_basis: "NONE" | "KG" | "M"
   delai_jours: number | null; moq: number | null; conditions: string | null
   incoterm: string | null; prix_multiple: number | null; valid_from: string | null; valid_to: string | null
   exigence_qualite: string | null; requiert_controle_reception: boolean; actif: boolean
@@ -1210,7 +1211,9 @@ type CatalogueRow = {
 }
 const CATALOGUE_SELECT = `
   id::text AS id, fournisseur_id::text AS fournisseur_id, type, article_id::text AS article_id, designation,
-  reference_fournisseur, unite, prix_unitaire::float8 AS prix_unitaire, devise, delai_jours, moq::float8 AS moq, conditions,
+  reference_fournisseur, unite, prix_unitaire::float8 AS prix_unitaire,
+  COALESCE(to_jsonb(public.fournisseur_catalogue) ->> 'pricing_basis', 'NONE') AS pricing_basis,
+  devise, delai_jours, moq::float8 AS moq, conditions,
   incoterm, prix_multiple::float8 AS prix_multiple, valid_from::text AS valid_from, valid_to::text AS valid_to,
   exigence_qualite, requiert_controle_reception, actif,
   created_at::text AS created_at, updated_at::text AS updated_at, created_by, updated_by`
@@ -1222,7 +1225,9 @@ function mapCatalogueRow(r: CatalogueRow): FournisseurCatalogueItem {
   return {
     id: r.id, fournisseur_id: r.fournisseur_id, type, article_id: r.article_id, designation: r.designation,
     reference_fournisseur: r.reference_fournisseur, unite: r.unite,
-    prix_unitaire: r.prix_unitaire === null ? null : Number(r.prix_unitaire), devise: r.devise,
+    prix_unitaire: r.prix_unitaire === null ? null : Number(r.prix_unitaire),
+    pricing_basis: r.pricing_basis ?? "NONE",
+    devise: r.devise,
     delai_jours: r.delai_jours === null ? null : Number(r.delai_jours),
     moq: r.moq === null ? null : Number(r.moq), conditions: r.conditions,
     incoterm: r.incoterm, prix_multiple: r.prix_multiple === null ? null : Number(r.prix_multiple),
@@ -1250,11 +1255,37 @@ export async function repoListFournisseurCatalogue(
 }
 
 async function recordCataloguePrice(tx: DbQueryer, catalogueId: string, row: CatalogueRow, userId: number) {
+  const supportsPricingBasis = await tableColumnExists(tx, "fournisseur_catalogue_prix_history", "pricing_basis")
+  if (supportsPricingBasis) {
+    await tx.query(
+      `INSERT INTO public.fournisseur_catalogue_prix_history
+         (catalogue_id, prix_unitaire, pricing_basis, devise, delai_jours, moq, valid_from, recorded_by)
+       VALUES ($1::uuid,$2,$3,$4,$5,$6,$7::date,$8)`,
+      [catalogueId, row.prix_unitaire, row.pricing_basis, row.devise, row.delai_jours, row.moq, row.valid_from, userId]
+    )
+    return
+  }
   await tx.query(
-    `INSERT INTO public.fournisseur_catalogue_prix_history (catalogue_id, prix_unitaire, devise, delai_jours, moq, valid_from, recorded_by)
+    `INSERT INTO public.fournisseur_catalogue_prix_history
+       (catalogue_id, prix_unitaire, devise, delai_jours, moq, valid_from, recorded_by)
      VALUES ($1::uuid,$2,$3,$4,$5,$6::date,$7)`,
     [catalogueId, row.prix_unitaire, row.devise, row.delai_jours, row.moq, row.valid_from, userId]
   )
+}
+
+async function tableColumnExists(
+  queryer: DbQueryer,
+  tableName: string,
+  columnName: string
+): Promise<boolean> {
+  const result = await queryer.query<{ present: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2
+     ) AS present`,
+    [tableName, columnName]
+  )
+  return result.rows[0]?.present === true
 }
 
 export async function repoCreateFournisseurCatalogueItem(
@@ -1278,6 +1309,23 @@ export async function repoCreateFournisseurCatalogueItem(
     )
     const row = ins.rows[0]
     if (!row) throw new Error("Failed to create catalogue item")
+    if (body.pricing_basis !== "NONE") {
+      if (!(await tableColumnExists(client, "fournisseur_catalogue", "pricing_basis"))) {
+        throw new HttpError(
+          503,
+          "SUPPLIER_PRICING_SCHEMA_UPGRADE_REQUIRED",
+          "Le patch additif #164 doit être appliqué avant d'enregistrer une base de prix."
+        )
+      }
+      const priced = await client.query<CatalogueRow>(
+        `UPDATE public.fournisseur_catalogue
+         SET pricing_basis = $2, updated_at = now(), updated_by = $3
+         WHERE id = $1::uuid
+         RETURNING ${CATALOGUE_SELECT}`,
+        [row.id, body.pricing_basis, audit.user_id]
+      )
+      Object.assign(row, priced.rows[0])
+    }
     if (row.prix_unitaire !== null) await recordCataloguePrice(client, row.id, row, audit.user_id)
     await insertAuditLog(client, audit, {
       action: "fournisseurs.catalogue.create", entity_type: "FOURNISSEUR", entity_id: fournisseurId,
@@ -1321,6 +1369,16 @@ export async function repoUpdateFournisseurCatalogueItem(
   sets.push(`updated_by = ${push(audit.user_id)}`)
   try {
     await client.query("BEGIN")
+    if (patch.pricing_basis !== undefined) {
+      if (!(await tableColumnExists(client, "fournisseur_catalogue", "pricing_basis"))) {
+        throw new HttpError(
+          503,
+          "SUPPLIER_PRICING_SCHEMA_UPGRADE_REQUIRED",
+          "Le patch additif #164 doit être appliqué avant d'enregistrer une base de prix."
+        )
+      }
+      sets.unshift(`pricing_basis = ${push(patch.pricing_basis)}`)
+    }
     if (!(await ensureFournisseurExists(client, fournisseurId))) { await client.query("ROLLBACK"); return null }
     const res = await client.query<CatalogueRow>(
       `UPDATE public.fournisseur_catalogue SET ${sets.join(", ")}
@@ -1329,7 +1387,7 @@ export async function repoUpdateFournisseurCatalogueItem(
     )
     const row = res.rows[0] ?? null
     if (!row) { await client.query("ROLLBACK"); return false }
-    const priceTouched = patch.prix_unitaire !== undefined || patch.delai_jours !== undefined || patch.moq !== undefined || patch.devise !== undefined
+    const priceTouched = patch.prix_unitaire !== undefined || patch.pricing_basis !== undefined || patch.delai_jours !== undefined || patch.moq !== undefined || patch.devise !== undefined
     if (priceTouched && row.prix_unitaire !== null) await recordCataloguePrice(client, row.id, row, audit.user_id)
     await insertAuditLog(client, audit, {
       action: "fournisseurs.catalogue.update", entity_type: "FOURNISSEUR_CATALOGUE", entity_id: catalogueId,

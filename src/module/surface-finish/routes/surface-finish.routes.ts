@@ -20,6 +20,8 @@ import {
   removeFinishFavorite,
   revisionImpact,
   transitionRevision,
+  previewStockFinishArticle,
+  confirmStockFinishArticle,
   updateFinish,
   updateRevision,
 } from "../controllers/surface-finish.controller";
@@ -34,6 +36,8 @@ import {
   reactivateFinishBodySchema,
   similarFinishesQuerySchema,
   transitionRevisionBodySchema,
+  stockArticleFinishConfirmBodySchema,
+  stockArticleFinishPreviewBodySchema,
   updateFinishBodySchema,
   updateRevisionBodySchema,
   validate,
@@ -68,6 +72,20 @@ router.post(
   requireSurfaceFinishCapability("library_draft_create"),
   validate(createFinishBodySchema),
   createFinish
+);
+
+router.post(
+  "/stock-article/preview",
+  requireSurfaceFinishCapability("article_preview"),
+  validate(stockArticleFinishPreviewBodySchema),
+  previewStockFinishArticle
+);
+
+router.post(
+  "/stock-article/confirm",
+  requireSurfaceFinishCapability("article_resolve"),
+  validate(stockArticleFinishConfirmBodySchema),
+  confirmStockFinishArticle
 );
 
 router.get("/:finishId", requireSurfaceFinishCapability("library_read"), getFinish);
