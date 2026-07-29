@@ -193,6 +193,32 @@ export async function allocateOrdreFabricationId(tx: Queryable): Promise<number>
   return toInt(idRes.rows[0]?.of_id, "ordres_fabrication.id");
 }
 
+/**
+ * Recopie les opérations de la gamme applicable dans l'OF (#384).
+ *
+ * SNAPSHOT, PAS RÉFÉRENCE. Chaque valeur de gamme est FIGÉE dans la ligne d'OF :
+ * famille machine, machine, numéro de programme, centre de frais (id ET code
+ * lisible), tarif retenu (`cf_rate_id`), provenance et date d'effet du taux.
+ * Le code du centre de frais est recopié en clair (`cf_code_snapshot`) pour que
+ * l'archivage ultérieur d'un centre n'efface pas la trace.
+ *
+ * LE TAUX N'EST PAS RÉSOLU À NOUVEAU AU LANCEMENT : on recopie celui que la
+ * gamme porte déjà (gelé à la saisie depuis `production_cost_center_rates`).
+ * Re-résoudre ferait diverger le coût de l'OF de la gamme publiée que les
+ * Méthodes ont validée, sans que personne ne l'ait décidé. Un tarif posé APRÈS
+ * le lancement ne touche donc rien — c'est l'invariant demandé.
+ *
+ * FORMULE ALIGNÉE SUR `methodes-policy.computeOperationTimes` :
+ *   temps_fabrication = tf_unit × qte × coef
+ *   temps_final       = tp + temps_fabrication
+ * L'implémentation précédente calculait `(tp + tf_unit × qte) × coef`, ce qui
+ * appliquait le coefficient AUSSI au temps de préparation : l'OF affichait alors
+ * un temps différent de la gamme dès que `coef ≠ 1` et `tp ≠ 0`.
+ *
+ * `qte` est la QUANTITÉ DE BASE de la gamme, jamais la quantité de l'OF : la
+ * multiplication par la quantité lancée appartient au calcul de charge, pas au
+ * temps unitaire figé. Aucune double multiplication ici.
+ */
 export async function copyPieceOperationsToOf(tx: Queryable, params: {
   of_id: number;
   piece_technique_id: string;
@@ -205,13 +231,20 @@ export async function copyPieceOperationsToOf(tx: Queryable, params: {
         phase,
         designation,
         cf_id,
+        cf_code_snapshot,
+        cf_rate_id,
         poste_id,
         machine_id,
+        machine_family_code,
+        numero_programme,
         hourly_rate_applied,
+        hourly_rate_source,
+        hourly_rate_effective_at,
         tp,
         tf_unit,
         qte,
         coef,
+        temps_fabrication_planned,
         temps_total_planned,
         status,
         notes,
@@ -222,18 +255,31 @@ export async function copyPieceOperationsToOf(tx: Queryable, params: {
         pto.phase,
         pto.designation,
         pto.cf_id,
+        cf.code AS cf_code_snapshot,
+        pto.cf_rate_id,
         NULL::uuid AS poste_id,
-        NULL::uuid AS machine_id,
+        pto.machine_id,
+        pto.machine_family_code,
+        pto.numero_programme,
         COALESCE(pto.taux_horaire, 0)::numeric(12,2) AS hourly_rate_applied,
+        pto.taux_horaire_source AS hourly_rate_source,
+        pto.taux_horaire_effective_at AS hourly_rate_effective_at,
         COALESCE(pto.tp, 0)::numeric(12,3) AS tp,
         COALESCE(pto.tf_unit, 0)::numeric(12,3) AS tf_unit,
         COALESCE(pto.qte, 1)::numeric(12,3) AS qte,
         COALESCE(pto.coef, 1)::numeric(10,3) AS coef,
-        ROUND((COALESCE(pto.tp,0) + COALESCE(pto.tf_unit,0) * COALESCE(pto.qte,1)) * COALESCE(pto.coef,1), 3)::numeric(12,3) AS temps_total_planned,
+        ROUND(COALESCE(pto.tf_unit,0) * COALESCE(pto.qte,1) * COALESCE(pto.coef,1), 4)::numeric(12,4)
+          AS temps_fabrication_planned,
+        ROUND(
+          COALESCE(pto.tp,0)
+          + ROUND(COALESCE(pto.tf_unit,0) * COALESCE(pto.qte,1) * COALESCE(pto.coef,1), 4),
+          3
+        )::numeric(12,3) AS temps_total_planned,
         'TODO'::of_operation_status AS status,
         pto.designation_2 AS notes,
         pto.id AS source_piece_operation_id
       FROM public.pieces_techniques_operations pto
+      LEFT JOIN public.centres_frais cf ON cf.id = pto.cf_id
       WHERE pto.piece_technique_id = $2::uuid
         AND (pto.gamme_id = $3::uuid OR ($3::uuid IS NULL AND pto.gamme_id IS NULL))
       ORDER BY pto.phase ASC, pto.id ASC
@@ -316,14 +362,43 @@ export async function loadApplicableTechnicalSnapshot(
           'code_metier', v.code_metier,
           'date_effet', v.date_effet
         ),
-        'gamme', CASE WHEN g.id IS NULL THEN NULL ELSE jsonb_build_object('id', g.id::text, 'code', g.code, 'designation', g.designation) END,
+        'gamme', CASE WHEN g.id IS NULL THEN NULL ELSE jsonb_build_object(
+          'id', g.id::text, 'nom', g.nom, 'code', g.code, 'designation', g.designation,
+          'statut', g.statut, 'is_current', g.is_current, 'updated_at', g.updated_at
+        ) END,
+        -- Preuve figée d'une opération (#384). Les référentiels sont recopiés en
+        -- CLAIR (code famille, code et libellé du centre de frais, code et nom
+        -- machine) : renommer ou archiver un référentiel plus tard ne doit pas
+        -- rendre le snapshot illisible. La clé unite_temps est explicite pour
+        -- qu'un lecteur futur n'ait pas à deviner l'unité (heures décimales).
         'operations', COALESCE((
           SELECT jsonb_agg(jsonb_build_object(
-            'id', op.id::text, 'phase', op.phase, 'designation', op.designation,
-            'cf_id', op.cf_id::text, 'taux_horaire', op.taux_horaire,
-            'tp', op.tp, 'tf_unit', op.tf_unit, 'qte', op.qte, 'coef', op.coef
+            'id', op.id::text, 'phase', op.phase, 'ordre', op.ordre,
+            'designation', op.designation, 'type_operation', op.type_operation,
+            'machine_family_code', op.machine_family_code,
+            'machine_family_libelle', fam.libelle,
+            'machine_id', op.machine_id::text,
+            'machine_code', mac.code,
+            'machine_nom', COALESCE(mac.display_name, mac.name),
+            'numero_programme', op.numero_programme,
+            'cf_id', op.cf_id::text,
+            'cf_code', ccf.code,
+            'cf_designation', ccf.designation,
+            'cf_rate_id', op.cf_rate_id::text,
+            'taux_horaire', op.taux_horaire,
+            'taux_horaire_source', op.taux_horaire_source,
+            'taux_horaire_effective_at', op.taux_horaire_effective_at,
+            'devise', COALESCE(ccf.devise, 'EUR'),
+            'unite_temps', 'HEURES_DECIMALES',
+            'tp', op.tp, 'tf_unit', op.tf_unit, 'qte', op.qte, 'coef', op.coef,
+            'temps_fabrication', op.temps_fabrication, 'temps_total', op.temps_total,
+            'cout_mo', op.cout_mo,
+            'consignes', op.consignes
           ) ORDER BY op.phase, op.id)
           FROM public.pieces_techniques_operations op
+          LEFT JOIN public.production_machine_families fam ON fam.code = op.machine_family_code
+          LEFT JOIN public.machines mac ON mac.id = op.machine_id
+          LEFT JOIN public.centres_frais ccf ON ccf.id = op.cf_id
           WHERE op.piece_technique_id = pt.id
             AND (op.gamme_id = g.id OR (g.id IS NULL AND op.gamme_id IS NULL))
         ), '[]'::jsonb),
