@@ -54,6 +54,11 @@ export type GedDocumentLink = {
   created_at: string;
 };
 
+export type GedAccessScope = {
+  entity_type: string;
+  entity_id: string;
+};
+
 export type GedRetentionHold = {
   id: string;
   hold_type: "QUALITE" | "LEGAL" | "RETENTION";
@@ -77,6 +82,7 @@ export type GedDocumentSummary = {
   created_at: string;
   updated_at: string;
   archived_at: string | null;
+  access_scope: GedAccessScope | null;
 };
 
 export type GedDocumentDetail = GedDocumentSummary & {

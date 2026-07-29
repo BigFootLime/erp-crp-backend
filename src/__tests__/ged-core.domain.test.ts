@@ -13,12 +13,12 @@ import {
 } from "../module/ged/domain/ged-content";
 import {
   assertDistinctApprover,
-  assertGedCapability,
+  assertGedCapabilityGranted,
   assertVersionMutable,
   assertVersionTransition,
   formatDocumentCode,
+  gedRoleKeys,
   isVersionFrozen,
-  roleHasGedCapability,
   sanitizeOriginalName,
 } from "../module/ged/domain/ged-policy";
 import { storageKeyForSha256 } from "../module/ged/services/ged-vault.service";
@@ -46,38 +46,36 @@ function pdfFile(overrides: Record<string, unknown> = {}) {
 }
 
 describe("GED — capacités RBAC", () => {
-  it("refuse par défaut un rôle inconnu ou vide", () => {
-    expect(roleHasGedCapability(null, "read")).toBe(false);
-    expect(roleHasGedCapability("", "read")).toBe(false);
-    expect(roleHasGedCapability("stagiaire-externe", "read")).toBe(false);
+  it("refuse par défaut l'absence de rôle attribué", () => {
+    expect(gedRoleKeys(null)).toEqual([]);
+    expect(gedRoleKeys({ role: "" })).toEqual([]);
   });
 
-  it("accorde la lecture aux rôles opérationnels", () => {
-    expect(roleHasGedCapability("Methodes", "read")).toBe(true);
-    expect(roleHasGedCapability("Qualite", "read")).toBe(true);
-    expect(roleHasGedCapability("Atelier", "read")).toBe(true);
+  it("conserve uniquement les rôles exacts réellement attribués", () => {
+    expect(
+      gedRoleKeys({
+        role: "Production | Atelier | Method",
+        primary_role: "Directeur Technique",
+        roles: ["Directeur Technique", "Études-Méthodes"],
+      })
+    ).toEqual(["Directeur Technique", "Études-Méthodes"]);
   });
 
-  it("garde l'approbation et la publication étroites", () => {
-    expect(roleHasGedCapability("Atelier", "approve")).toBe(false);
-    expect(roleHasGedCapability("Magasinier", "publish")).toBe(false);
-    expect(roleHasGedCapability("Responsable Qualite", "approve")).toBe(true);
-    expect(roleHasGedCapability("Administrateur", "publish")).toBe(true);
+  it("ne découpe pas une chaîne effective sans rôle principal", () => {
+    expect(gedRoleKeys({ role: "Production | Atelier | Method" })).toEqual([
+      "Production | Atelier | Method",
+    ]);
   });
 
-  it("distingue export et download", () => {
-    expect(roleHasGedCapability("Magasinier", "download")).toBe(true);
-    expect(roleHasGedCapability("Magasinier", "export")).toBe(false);
-  });
-
-  it("lève une 403 explicite", () => {
-    expect(() => assertGedCapability("Atelier", "approve")).toThrowError(HttpError);
+  it("lève une 403 explicite quand la base refuse la capacité", () => {
+    expect(() => assertGedCapabilityGranted(false, "approve")).toThrowError(HttpError);
     try {
-      assertGedCapability("Atelier", "approve");
+      assertGedCapabilityGranted(false, "approve");
     } catch (err) {
       expect((err as HttpError).status).toBe(403);
       expect((err as HttpError).code).toBe("GED_CAPABILITY_REQUIRED");
     }
+    expect(() => assertGedCapabilityGranted(true, "approve")).not.toThrow();
   });
 });
 

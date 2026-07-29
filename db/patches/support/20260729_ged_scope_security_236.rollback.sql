@@ -1,0 +1,9 @@
+\set ON_ERROR_STOP on
+
+BEGIN;
+
+DROP TABLE IF EXISTS public.ged_class_capabilities;
+
+COMMIT;
+
+SELECT 'GED_SCOPE_SECURITY_236_ROLLBACK_OK' AS result;

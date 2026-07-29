@@ -3,8 +3,11 @@
 import type { NextFunction, Request, Response } from "express";
 
 import { HttpError } from "../../../utils/httpError";
+import { gedRoleKeys } from "../domain/ged-policy";
 import * as service from "../services/ged.service";
+import type { GedAccessScope } from "../types/ged.types";
 import {
+  accessScopeQuerySchema,
   listQuerySchema,
   newVersionBodySchema,
   transitionBodySchema,
@@ -17,7 +20,7 @@ function actorFrom(req: Request): service.GedActor {
   if (!user || typeof user.id !== "number") {
     throw new HttpError(401, "UNAUTHORIZED", "Authentification requise.");
   }
-  return { id: user.id, role: (user.role as string | null) ?? null };
+  return { id: user.id, role_keys: gedRoleKeys(user) };
 }
 
 function parseUuid(value: unknown, label: string): string {
@@ -38,6 +41,28 @@ function parseMultipartBody(req: Request) {
     throw new HttpError(400, "VALIDATION_ERROR", "Champs invalides.", parsed.error.flatten());
   }
   return parsed.data;
+}
+
+function scopeFrom(value: {
+  entity_type?: string | null;
+  entity_id?: string | null;
+}): GedAccessScope | null {
+  return value.entity_type && value.entity_id
+    ? { entity_type: value.entity_type, entity_id: value.entity_id }
+    : null;
+}
+
+function parseAccessScope(req: Request): GedAccessScope | null {
+  const parsed = accessScopeQuerySchema.safeParse(req.query ?? {});
+  if (!parsed.success) {
+    throw new HttpError(
+      400,
+      "VALIDATION_ERROR",
+      "Périmètre documentaire invalide.",
+      parsed.error.flatten()
+    );
+  }
+  return scopeFrom(parsed.data);
 }
 
 export async function getClasses(req: Request, res: Response, next: NextFunction) {
@@ -91,7 +116,7 @@ export async function listDocuments(req: Request, res: Response, next: NextFunct
 export async function getDocument(req: Request, res: Response, next: NextFunction) {
   try {
     const id = parseUuid(req.params.id, "Identifiant de document");
-    res.json({ data: await service.getDocument(actorFrom(req), id) });
+    res.json({ data: await service.getDocument(actorFrom(req), id, parseAccessScope(req)) });
   } catch (err) {
     next(err);
   }
@@ -100,7 +125,9 @@ export async function getDocument(req: Request, res: Response, next: NextFunctio
 export async function getDocumentHistory(req: Request, res: Response, next: NextFunction) {
   try {
     const id = parseUuid(req.params.id, "Identifiant de document");
-    res.json({ data: await service.listDocumentHistory(actorFrom(req), id) });
+    res.json({
+      data: await service.listDocumentHistory(actorFrom(req), id, parseAccessScope(req)),
+    });
   } catch (err) {
     next(err);
   }
@@ -138,7 +165,13 @@ export async function postDocumentVersion(req: Request, res: Response, next: Nex
     if (!parsed.success) {
       throw new HttpError(400, "VALIDATION_ERROR", "Un motif de révision est requis.", parsed.error.flatten());
     }
-    const detail = await service.uploadNewVersion(actorFrom(req), id, parsed.data, req.file);
+    const detail = await service.uploadNewVersion(
+      actorFrom(req),
+      id,
+      { change_reason: parsed.data.change_reason },
+      req.file,
+      scopeFrom(parsed.data)
+    );
     res.status(201).json({ data: detail });
   } catch (err) {
     next(err);
@@ -146,7 +179,12 @@ export async function postDocumentVersion(req: Request, res: Response, next: Nex
 }
 
 function transitionHandler(
-  action: (actor: service.GedActor, versionId: string, comment: string | null) => Promise<unknown>
+  action: (
+    actor: service.GedActor,
+    versionId: string,
+    comment: string | null,
+    scope: GedAccessScope | null
+  ) => Promise<unknown>
 ) {
   return async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -155,21 +193,39 @@ function transitionHandler(
       if (!parsed.success) {
         throw new HttpError(400, "VALIDATION_ERROR", "Commentaire invalide.", parsed.error.flatten());
       }
-      res.json({ data: await action(actorFrom(req), versionId, parsed.data.comment ?? null) });
+      res.json({
+        data: await action(
+          actorFrom(req),
+          versionId,
+          parsed.data.comment ?? null,
+          scopeFrom(parsed.data)
+        ),
+      });
     } catch (err) {
       next(err);
     }
   };
 }
 
-export const submitVersion = transitionHandler((a, v, c) => service.submitVersion(a, v, c));
-export const approveVersion = transitionHandler((a, v, c) => service.approveVersion(a, v, c));
-export const obsoleteVersion = transitionHandler((a, v, c) => service.obsoleteVersion(a, v, c));
+export const submitVersion = transitionHandler((a, v, c, s) => service.submitVersion(a, v, c, s));
+export const approveVersion = transitionHandler((a, v, c, s) => service.approveVersion(a, v, c, s));
+export const obsoleteVersion = transitionHandler((a, v, c, s) => service.obsoleteVersion(a, v, c, s));
 
 export async function publishVersion(req: Request, res: Response, next: NextFunction) {
   try {
     const versionId = parseUuid(req.params.versionId, "Identifiant de version");
-    res.json({ data: await service.publishVersion(actorFrom(req), versionId) });
+    const parsed = transitionBodySchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      throw new HttpError(
+        400,
+        "VALIDATION_ERROR",
+        "Périmètre documentaire invalide.",
+        parsed.error.flatten()
+      );
+    }
+    res.json({
+      data: await service.publishVersion(actorFrom(req), versionId, scopeFrom(parsed.data)),
+    });
   } catch (err) {
     next(err);
   }
@@ -178,7 +234,11 @@ export async function publishVersion(req: Request, res: Response, next: NextFunc
 export async function downloadVersion(req: Request, res: Response, next: NextFunction) {
   try {
     const versionId = parseUuid(req.params.versionId, "Identifiant de version");
-    const result = await service.downloadVersion(actorFrom(req), versionId);
+    const result = await service.downloadVersion(
+      actorFrom(req),
+      versionId,
+      parseAccessScope(req)
+    );
 
     // `attachment` + `nosniff` : un document n'est jamais interprété par le
     // navigateur, quel que soit son type déclaré.

@@ -12,16 +12,19 @@ import { HttpError } from "../../../utils/httpError";
 import { assertAcceptedFile } from "../domain/ged-content";
 import {
   assertDistinctApprover,
-  assertGedCapability,
+  assertGedCapabilityGranted,
   assertVersionTransition,
+  type GedCapability,
   type GedVersionStatus,
 } from "../domain/ged-policy";
 import {
   repoAddLink,
   repoAddVersion,
+  repoActorHasAnyCapability,
+  repoActorHasClassCapability,
   repoCreateDocumentWithVersion,
   repoFindDocumentByBlobHash,
-  repoGetClass,
+  repoGetClassForActor,
   repoGetDocumentDetail,
   repoGetTree,
   repoGetVersionForUpdate,
@@ -30,6 +33,7 @@ import {
   repoListAccessEvents,
   repoListClasses,
   repoListDocuments,
+  repoLinkTargetExists,
   repoLogAccess,
   repoObsoletePreviousApplicable,
   repoSetCurrentVersion,
@@ -38,6 +42,7 @@ import {
   withGedTransaction,
 } from "../repository/ged.repository";
 import type {
+  GedAccessScope,
   GedAccessEvent,
   GedDocumentClass,
   GedDocumentDetail,
@@ -47,7 +52,7 @@ import type {
 } from "../types/ged.types";
 import { checkVaultHealth, readBlob, removeBlobIfOrphan, writeBlob } from "./ged-vault.service";
 
-export type GedActor = { id: number; role: string | null };
+export type GedActor = { id: number; role_keys: string[] };
 
 type UploadedFile = { buffer?: Buffer; originalname?: string; mimetype?: string; size?: number };
 
@@ -58,8 +63,31 @@ type UploadedFile = { buffer?: Buffer; originalname?: string; mimetype?: string;
  * transaction encore ouverte, il ne verrait rien de ce qu'elle vient d'écrire.
  * Défaut constaté au premier dépôt réel le 2026-07-28.
  */
-async function readDetailOrFail(documentId: string): Promise<GedDocumentDetail> {
-  const detail = await repoGetDocumentDetail(documentId);
+function authorization(
+  actor: GedActor,
+  capability: GedCapability,
+  scope: GedAccessScope | null = null
+) {
+  return { role_keys: actor.role_keys, capability, scope };
+}
+
+async function assertAnyCapability(actor: GedActor, capability: GedCapability): Promise<void> {
+  assertGedCapabilityGranted(
+    await repoActorHasAnyCapability(actor.role_keys, capability),
+    capability
+  );
+}
+
+async function readDetailOrFail(
+  actor: GedActor,
+  documentId: string,
+  capability: GedCapability,
+  scope: GedAccessScope | null = null
+): Promise<GedDocumentDetail> {
+  const detail = await repoGetDocumentDetail(
+    documentId,
+    authorization(actor, capability, scope)
+  );
   if (!detail) {
     throw new HttpError(500, "GED_DOCUMENT_NOT_FOUND", "Document enregistré mais illisible.");
   }
@@ -71,27 +99,40 @@ async function readDetailOrFail(documentId: string): Promise<GedDocumentDetail> 
 /* -------------------------------------------------------------------------- */
 
 export async function listClasses(actor: GedActor): Promise<GedDocumentClass[]> {
-  assertGedCapability(actor.role, "read");
-  return repoListClasses();
+  await assertAnyCapability(actor, "read");
+  return repoListClasses(actor.role_keys, "read");
 }
 
 export async function listDocuments(actor: GedActor, filters: GedListFilters): Promise<GedListResult> {
-  assertGedCapability(actor.role, "read");
-  return repoListDocuments(filters);
+  await assertAnyCapability(actor, "read");
+  return repoListDocuments(filters, authorization(actor, "read"));
 }
 
-export async function getDocument(actor: GedActor, documentId: string): Promise<GedDocumentDetail> {
-  assertGedCapability(actor.role, "read");
-  const detail = await repoGetDocumentDetail(documentId);
+export async function getDocument(
+  actor: GedActor,
+  documentId: string,
+  scope: GedAccessScope | null = null
+): Promise<GedDocumentDetail> {
+  const detail = await repoGetDocumentDetail(
+    documentId,
+    authorization(actor, "read", scope)
+  );
   if (!detail) {
     throw new HttpError(404, "GED_DOCUMENT_NOT_FOUND", "Document introuvable.");
   }
+  await repoLogAccess(pool, {
+    document_id: documentId,
+    version_id: detail.current_version?.id ?? null,
+    event_type: "READ",
+    actor_id: actor.id,
+    details: { surface: "DOCUMENT_DETAIL" },
+  });
   return detail;
 }
 
 export async function getTree(actor: GedActor): Promise<GedTreeNode[]> {
-  assertGedCapability(actor.role, "read");
-  const rows = await repoGetTree();
+  await assertAnyCapability(actor, "read");
+  const rows = await repoGetTree(authorization(actor, "read"));
 
   // L'arborescence est CALCULÉE à partir du référentiel et des liens. Elle
   // n'existe nulle part sur le disque : renommer une classe ne déplace rien.
@@ -114,13 +155,23 @@ export async function getTree(actor: GedActor): Promise<GedTreeNode[]> {
   return [...byDomain.values()];
 }
 
-export async function listDocumentHistory(actor: GedActor, documentId: string): Promise<GedAccessEvent[]> {
-  assertGedCapability(actor.role, "read");
-  return repoListAccessEvents(documentId);
+export async function listDocumentHistory(
+  actor: GedActor,
+  documentId: string,
+  scope: GedAccessScope | null = null
+): Promise<GedAccessEvent[]> {
+  const detail = await repoGetDocumentDetail(
+    documentId,
+    authorization(actor, "read", scope)
+  );
+  if (!detail) {
+    throw new HttpError(404, "GED_DOCUMENT_NOT_FOUND", "Document introuvable.");
+  }
+  return repoListAccessEvents(documentId, authorization(actor, "read", scope));
 }
 
 export async function getVaultStatus(actor: GedActor) {
-  assertGedCapability(actor.role, "read");
+  await assertAnyCapability(actor, "read");
   return checkVaultHealth();
 }
 
@@ -141,11 +192,23 @@ export async function uploadDocument(
   input: UploadDocumentInput,
   file: UploadedFile | undefined
 ): Promise<GedDocumentDetail> {
-  assertGedCapability(actor.role, "upload");
-
-  const documentClass = await repoGetClass(input.class_key);
+  const documentClass = await repoGetClassForActor(
+    input.class_key,
+    authorization(actor, "upload")
+  );
   if (!documentClass) {
-    throw new HttpError(400, "GED_CLASS_UNKNOWN", `Classe documentaire inconnue : ${input.class_key}.`);
+    throw new HttpError(
+      403,
+      "GED_CAPABILITY_REQUIRED",
+      "Dépôt interdit pour cette classe documentaire."
+    );
+  }
+
+  if (
+    input.link &&
+    !(await repoLinkTargetExists(input.link.entity_type, input.link.entity_id))
+  ) {
+    throw new HttpError(404, "GED_LINK_TARGET_NOT_FOUND", "Parent documentaire introuvable.");
   }
 
   const accepted = assertAcceptedFile(file, {
@@ -167,7 +230,7 @@ export async function uploadDocument(
         throw new HttpError(
           409,
           "GED_FILE_DUPLICATE",
-          `Ce fichier est déjà présent dans la GED sous le code ${duplicate.code}.`
+          "Ce fichier est déjà présent dans la GED."
         );
       }
 
@@ -224,18 +287,20 @@ export async function uploadDocument(
 
   // Relecture APRÈS le commit : `repoGetDocumentDetail` ouvre sa propre
   // connexion et ne verrait rien d'une transaction encore ouverte.
-  return readDetailOrFail(documentId);
+  return readDetailOrFail(actor, documentId, "upload", input.link ?? null);
 }
 
 export async function uploadNewVersion(
   actor: GedActor,
   documentId: string,
   input: { change_reason: string },
-  file: UploadedFile | undefined
+  file: UploadedFile | undefined,
+  scope: GedAccessScope | null = null
 ): Promise<GedDocumentDetail> {
-  assertGedCapability(actor.role, "upload");
-
-  const existing = await repoGetDocumentDetail(documentId);
+  const existing = await repoGetDocumentDetail(
+    documentId,
+    authorization(actor, "upload", scope)
+  );
   if (!existing) throw new HttpError(404, "GED_DOCUMENT_NOT_FOUND", "Document introuvable.");
   if (existing.archived_at) {
     throw new HttpError(409, "GED_DOCUMENT_ARCHIVED", "Un document archivé ne reçoit plus de version.");
@@ -248,7 +313,10 @@ export async function uploadNewVersion(
     );
   }
 
-  const documentClass = await repoGetClass(existing.class_key);
+  const documentClass = await repoGetClassForActor(
+    existing.class_key,
+    authorization(actor, "upload")
+  );
   if (!documentClass) {
     throw new HttpError(400, "GED_CLASS_UNKNOWN", "Classe documentaire inconnue.");
   }
@@ -295,7 +363,7 @@ export async function uploadNewVersion(
   }
 
   // Relecture APRÈS le commit, pour la même raison que dans `uploadDocument`.
-  return readDetailOrFail(documentId);
+  return readDetailOrFail(actor, documentId, "upload", scope);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -306,10 +374,19 @@ async function transitionVersion(
   actor: GedActor,
   versionId: string,
   target: GedVersionStatus,
-  options: { comment?: string | null; requireDistinctApprover?: boolean }
+  capability: GedCapability,
+  options: {
+    comment?: string | null;
+    requireDistinctApprover?: boolean;
+    scope?: GedAccessScope | null;
+  }
 ): Promise<GedDocumentDetail> {
   const documentId = await withGedTransaction(async (tx) => {
-    const version = await repoGetVersionForUpdate(tx, versionId);
+    const version = await repoGetVersionForUpdate(
+      tx,
+      versionId,
+      authorization(actor, capability, options.scope ?? null)
+    );
     if (!version) throw new HttpError(404, "GED_VERSION_NOT_FOUND", "Version introuvable.");
 
     assertVersionTransition(version.status, target);
@@ -356,27 +433,49 @@ async function transitionVersion(
   });
 
   // Relecture APRÈS le commit, pour la même raison que dans `uploadDocument`.
-  return readDetailOrFail(documentId);
+  return readDetailOrFail(actor, documentId, capability, options.scope ?? null);
 }
 
-export async function submitVersion(actor: GedActor, versionId: string, comment: string | null) {
-  assertGedCapability(actor.role, "submit");
-  return transitionVersion(actor, versionId, "EN_REVUE", { comment });
+export async function submitVersion(
+  actor: GedActor,
+  versionId: string,
+  comment: string | null,
+  scope: GedAccessScope | null = null
+) {
+  return transitionVersion(actor, versionId, "EN_REVUE", "submit", { comment, scope });
 }
 
-export async function approveVersion(actor: GedActor, versionId: string, comment: string | null) {
-  assertGedCapability(actor.role, "approve");
-  return transitionVersion(actor, versionId, "APPROUVE", { comment, requireDistinctApprover: true });
+export async function approveVersion(
+  actor: GedActor,
+  versionId: string,
+  comment: string | null,
+  scope: GedAccessScope | null = null
+) {
+  return transitionVersion(actor, versionId, "APPROUVE", "approve", {
+    comment,
+    requireDistinctApprover: true,
+    scope,
+  });
 }
 
-export async function publishVersion(actor: GedActor, versionId: string) {
-  assertGedCapability(actor.role, "publish");
-  return transitionVersion(actor, versionId, "APPLICABLE", {});
+export async function publishVersion(
+  actor: GedActor,
+  versionId: string,
+  scope: GedAccessScope | null = null
+) {
+  return transitionVersion(actor, versionId, "APPLICABLE", "publish", { scope });
 }
 
-export async function obsoleteVersion(actor: GedActor, versionId: string, reason: string | null) {
-  assertGedCapability(actor.role, "obsolete");
-  return transitionVersion(actor, versionId, "OBSOLETE", { comment: reason });
+export async function obsoleteVersion(
+  actor: GedActor,
+  versionId: string,
+  reason: string | null,
+  scope: GedAccessScope | null = null
+) {
+  return transitionVersion(actor, versionId, "OBSOLETE", "obsolete", {
+    comment: reason,
+    scope,
+  });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -390,16 +489,28 @@ export type DownloadResult = {
   sha256: string;
 };
 
-export async function downloadVersion(actor: GedActor, versionId: string): Promise<DownloadResult> {
-  assertGedCapability(actor.role, "download");
-
-  const ref = await repoInternalGetVersionContentRef(versionId);
+export async function downloadVersion(
+  actor: GedActor,
+  versionId: string,
+  scope: GedAccessScope | null = null
+): Promise<DownloadResult> {
+  const ref = await repoInternalGetVersionContentRef(
+    versionId,
+    authorization(actor, "download", scope)
+  );
   if (!ref) throw new HttpError(404, "GED_VERSION_NOT_FOUND", "Version introuvable.");
 
   // Un brouillon n'est jamais servi à qui n'a pas le droit de le voir : il n'est
   // pas encore un document opposable.
   if (ref.status === "BROUILLON") {
-    assertGedCapability(actor.role, "upload");
+    const canUpload = await repoActorHasClassCapability(
+      ref.class_key,
+      actor.role_keys,
+      "upload"
+    );
+    if (!canUpload) {
+      throw new HttpError(404, "GED_VERSION_NOT_FOUND", "Version introuvable.");
+    }
   }
 
   let buffer: Buffer;
@@ -421,14 +532,15 @@ export async function downloadVersion(actor: GedActor, versionId: string): Promi
     throw err;
   }
 
-  // Le journal ne doit jamais faire échouer un téléchargement légitime.
+  // Un téléchargement non audité n'est pas un téléchargement légitime : on
+  // écrit la trace avant d'envoyer le contenu au contrôleur.
   await repoLogAccess(pool, {
     document_id: ref.document_id,
     version_id: ref.version_id,
     event_type: "DOWNLOAD",
     actor_id: actor.id,
     details: { size_bytes: buffer.byteLength },
-  }).catch(() => undefined);
+  });
 
   return {
     buffer,

@@ -15,8 +15,13 @@ import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
-import { formatDocumentCode, type GedVersionStatus } from "../domain/ged-policy";
+import {
+  formatDocumentCode,
+  type GedCapability,
+  type GedVersionStatus,
+} from "../domain/ged-policy";
 import type {
+  GedAccessScope,
   GedAccessEvent,
   GedDocumentClass,
   GedDocumentDetail,
@@ -30,6 +35,52 @@ import type {
 
 const UNDEFINED_TABLE = "42P01";
 
+export type GedAuthorization = {
+  role_keys: readonly string[];
+  capability: GedCapability;
+  scope?: GedAccessScope | null;
+};
+
+function classCapabilityPredicate(
+  classExpression: string,
+  roleKeysParameter: string,
+  capabilityParameter: string
+): string {
+  return `EXISTS (
+    SELECT 1
+      FROM public.ged_class_capabilities cap
+     WHERE cap.class_key = ${classExpression}
+       AND cap.role_key = ANY(${roleKeysParameter}::text[])
+       AND cap.capability IN (${capabilityParameter}, 'admin')
+  )`;
+}
+
+function documentScopePredicate(
+  documentExpression: string,
+  classExpression: string,
+  roleKeysParameter: string,
+  scopeTypeParameter: string,
+  scopeIdParameter: string
+): string {
+  return `(
+    ${classCapabilityPredicate(classExpression, roleKeysParameter, "'admin'")}
+    OR NOT EXISTS (
+      SELECT 1 FROM public.ged_document_links scope_any
+       WHERE scope_any.document_id = ${documentExpression}
+    )
+    OR (
+      ${scopeTypeParameter}::text IS NOT NULL
+      AND ${scopeIdParameter}::text IS NOT NULL
+      AND EXISTS (
+        SELECT 1 FROM public.ged_document_links scope_match
+         WHERE scope_match.document_id = ${documentExpression}
+           AND scope_match.entity_type = ${scopeTypeParameter}
+           AND scope_match.entity_id = ${scopeIdParameter}
+      )
+    )
+  )`;
+}
+
 export function isGedSchemaMissing(err: unknown): boolean {
   return (err as { code?: string } | null)?.code === UNDEFINED_TABLE;
 }
@@ -40,7 +91,7 @@ function rethrowGed(err: unknown): never {
     throw new HttpError(
       503,
       "GED_NOT_INSTALLED",
-      "Le module GED n'est pas encore installé sur cette base (patch 20260727_ged_core non appliqué)."
+      "Le module GED n'est pas complètement installé sur cette base (patches GED requis)."
     );
   }
   throw err;
@@ -126,15 +177,62 @@ function mapVersion(r: VersionRow): GedDocumentVersion {
 /* Classes documentaires                                                      */
 /* -------------------------------------------------------------------------- */
 
-export async function repoListClasses(): Promise<GedDocumentClass[]> {
+export async function repoActorHasAnyCapability(
+  roleKeys: readonly string[],
+  capability: GedCapability
+): Promise<boolean> {
+  if (roleKeys.length === 0) return false;
   try {
     const res = await pool.query(
-      `SELECT class_key, domain, label, nature, allowed_mime_types, allowed_extensions,
-              max_size_bytes::bigint::text AS max_size_bytes, approvals_required::int AS approvals_required,
-              retention_months::int AS retention_months, hold_on_publish, is_active
-         FROM public.ged_document_classes
-        WHERE is_active
-        ORDER BY domain, label`
+      `SELECT EXISTS (
+         SELECT 1
+           FROM public.ged_class_capabilities cap
+          WHERE cap.role_key = ANY($1::text[])
+            AND cap.capability IN ($2, 'admin')
+       ) AS granted`,
+      [roleKeys, capability]
+    );
+    return Boolean(res.rows[0]?.granted);
+  } catch (err) {
+    return rethrowGed(err);
+  }
+}
+
+export async function repoActorHasClassCapability(
+  classKey: string,
+  roleKeys: readonly string[],
+  capability: GedCapability,
+  tx?: Pick<PoolClient, "query">
+): Promise<boolean> {
+  if (roleKeys.length === 0) return false;
+  const db = tx ?? pool;
+  try {
+    const res = await db.query(
+      `SELECT ${classCapabilityPredicate("$1", "$2", "$3")} AS granted`,
+      [classKey, roleKeys, capability]
+    );
+    return Boolean(res.rows[0]?.granted);
+  } catch (err) {
+    return rethrowGed(err);
+  }
+}
+
+export async function repoListClasses(
+  roleKeys: readonly string[],
+  capability: GedCapability = "read"
+): Promise<GedDocumentClass[]> {
+  try {
+    const res = await pool.query(
+      `SELECT c.class_key, c.domain, c.label, c.nature, c.allowed_mime_types, c.allowed_extensions,
+              c.max_size_bytes::bigint::text AS max_size_bytes,
+              c.approvals_required::int AS approvals_required,
+              c.retention_months::int AS retention_months,
+              c.hold_on_publish, c.is_active
+         FROM public.ged_document_classes c
+        WHERE c.is_active
+          AND ${classCapabilityPredicate("c.class_key", "$1", "$2")}
+        ORDER BY c.domain, c.label`,
+      [roleKeys, capability]
     );
     return res.rows.map((r) => ({
       class_key: String(r.class_key),
@@ -186,6 +284,22 @@ export async function repoGetClass(
   } catch (err) {
     return rethrowGed(err);
   }
+}
+
+export async function repoGetClassForActor(
+  classKey: string,
+  authorization: GedAuthorization,
+  tx?: Pick<PoolClient, "query">
+): Promise<GedDocumentClass | null> {
+  if (authorization.role_keys.length === 0) return null;
+  const granted = await repoActorHasClassCapability(
+    classKey,
+    authorization.role_keys,
+    authorization.capability,
+    tx
+  );
+  if (!granted) return null;
+  return repoGetClass(classKey, tx);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -318,17 +432,27 @@ export async function repoAddVersion(
 
 export async function repoGetVersionForUpdate(
   tx: Pick<PoolClient, "query">,
-  versionId: string
+  versionId: string,
+  authorization: GedAuthorization
 ): Promise<{
   id: string; document_id: string; status: GedVersionStatus; created_by: number | null; version_number: number;
 } | null> {
   const res = await tx.query(
-    `SELECT id::text AS id, document_id::text AS document_id, status::text AS status,
-            created_by, version_number::int AS version_number
-       FROM public.ged_document_versions
-      WHERE id = $1::uuid
+    `SELECT v.id::text AS id, v.document_id::text AS document_id, v.status::text AS status,
+            v.created_by, v.version_number::int AS version_number
+       FROM public.ged_document_versions v
+       JOIN public.ged_documents d ON d.id = v.document_id
+      WHERE v.id = $1::uuid
+        AND ${classCapabilityPredicate("d.class_key", "$2", "$3")}
+        AND ${documentScopePredicate("d.id", "d.class_key", "$2", "$4", "$5")}
       FOR UPDATE`,
-    [versionId]
+    [
+      versionId,
+      authorization.role_keys,
+      authorization.capability,
+      authorization.scope?.entity_type ?? null,
+      authorization.scope?.entity_id ?? null,
+    ]
   );
   const r = res.rows[0];
   if (!r) return null;
@@ -412,6 +536,28 @@ export async function repoAddLink(
   );
 }
 
+export async function repoLinkTargetExists(
+  entityType: string,
+  entityId: string,
+  tx?: Pick<PoolClient, "query">
+): Promise<boolean> {
+  const db = tx ?? pool;
+  try {
+    if (entityType !== "PIECE_TECHNIQUE_VERSION") return false;
+    const res = await db.query(
+      `SELECT EXISTS (
+         SELECT 1
+           FROM public.piece_technique_versions v
+          WHERE v.id = $1::uuid
+       ) AS found`,
+      [entityId]
+    );
+    return Boolean(res.rows[0]?.found);
+  } catch (err) {
+    return rethrowGed(err);
+  }
+}
+
 /* -------------------------------------------------------------------------- */
 /* Journal d'accès                                                            */
 /* -------------------------------------------------------------------------- */
@@ -440,17 +586,31 @@ export async function repoLogAccess(
   );
 }
 
-export async function repoListAccessEvents(documentId: string, limit = 100): Promise<GedAccessEvent[]> {
+export async function repoListAccessEvents(
+  documentId: string,
+  authorization: GedAuthorization,
+  limit = 100
+): Promise<GedAccessEvent[]> {
   try {
     const res = await pool.query(
       `SELECT e.id::text AS id, e.event_type, e.occurred_at::text AS occurred_at, e.details,
               u.id AS u_id, u.username AS u_username, u.name AS u_name, u.surname AS u_surname
          FROM public.ged_access_events e
+         JOIN public.ged_documents d ON d.id = e.document_id
          LEFT JOIN public.users u ON u.id = e.actor_id
         WHERE e.document_id = $1::uuid
+          AND ${classCapabilityPredicate("d.class_key", "$2", "$3")}
+          AND ${documentScopePredicate("d.id", "d.class_key", "$2", "$4", "$5")}
         ORDER BY e.occurred_at DESC
-        LIMIT $2`,
-      [documentId, limit]
+        LIMIT $6`,
+      [
+        documentId,
+        authorization.role_keys,
+        authorization.capability,
+        authorization.scope?.entity_type ?? null,
+        authorization.scope?.entity_id ?? null,
+        limit,
+      ]
     );
     return res.rows.map((r) => ({
       id: String(r.id),
@@ -475,7 +635,9 @@ const SUMMARY_SELECT = `
   cv.status::text        AS current_version_status,
   (SELECT COUNT(*) FROM public.ged_document_versions vv WHERE vv.document_id = d.id)::int AS versions_count,
   EXISTS (SELECT 1 FROM public.ged_retention_holds h WHERE h.document_id = d.id AND h.released_at IS NULL) AS has_active_hold,
-  d.created_at::text AS created_at, d.updated_at::text AS updated_at, d.archived_at::text AS archived_at
+  d.created_at::text AS created_at, d.updated_at::text AS updated_at, d.archived_at::text AS archived_at,
+  scope.entity_type AS access_scope_entity_type,
+  scope.entity_id AS access_scope_entity_id
 `;
 
 function mapSummary(r: Record<string, unknown>): GedDocumentSummary {
@@ -494,13 +656,29 @@ function mapSummary(r: Record<string, unknown>): GedDocumentSummary {
     created_at: String(r.created_at),
     updated_at: String(r.updated_at),
     archived_at: (r.archived_at as string | null) ?? null,
+    access_scope:
+      r.access_scope_entity_type && r.access_scope_entity_id
+        ? {
+            entity_type: String(r.access_scope_entity_type),
+            entity_id: String(r.access_scope_entity_id),
+          }
+        : null,
   };
 }
 
-export async function repoListDocuments(filters: GedListFilters): Promise<GedListResult> {
+export async function repoListDocuments(
+  filters: GedListFilters,
+  authorization: GedAuthorization
+): Promise<GedListResult> {
   const where: string[] = [];
   const params: unknown[] = [];
   const push = (value: unknown) => `$${params.push(value)}`;
+
+  const roleKeysParameter = push(authorization.role_keys);
+  const capabilityParameter = push(authorization.capability);
+  let preferredScopeTypeParameter = "NULL";
+  let preferredScopeIdParameter = "NULL";
+  where.push(classCapabilityPredicate("d.class_key", roleKeysParameter, capabilityParameter));
 
   if (!filters.include_archived) where.push("d.archived_at IS NULL");
   if (filters.class_key) where.push(`d.class_key = ${push(filters.class_key)}`);
@@ -511,10 +689,12 @@ export async function repoListDocuments(filters: GedListFilters): Promise<GedLis
     where.push(`(lower(d.title) LIKE ${push(like)} OR lower(d.code) LIKE ${push(like)})`);
   }
   if (filters.entity_type && filters.entity_id) {
+    preferredScopeTypeParameter = push(filters.entity_type);
+    preferredScopeIdParameter = push(filters.entity_id);
     where.push(
       `EXISTS (SELECT 1 FROM public.ged_document_links l
-                WHERE l.document_id = d.id AND l.entity_type = ${push(filters.entity_type)}
-                  AND l.entity_id = ${push(filters.entity_id)})`
+                WHERE l.document_id = d.id AND l.entity_type = ${preferredScopeTypeParameter}
+                  AND l.entity_id = ${preferredScopeIdParameter})`
     );
   }
 
@@ -523,6 +703,17 @@ export async function repoListDocuments(filters: GedListFilters): Promise<GedLis
     FROM public.ged_documents d
     JOIN public.ged_document_classes c ON c.class_key = d.class_key
     LEFT JOIN public.ged_document_versions cv ON cv.id = d.current_version_id
+    LEFT JOIN LATERAL (
+      SELECT l.entity_type, l.entity_id
+        FROM public.ged_document_links l
+       WHERE l.document_id = d.id
+       ORDER BY
+         (l.entity_type = ${preferredScopeTypeParameter}::text
+          AND l.entity_id = ${preferredScopeIdParameter}::text) DESC,
+         l.created_at,
+         l.id
+       LIMIT 1
+    ) scope ON true
   `;
 
   try {
@@ -548,15 +739,36 @@ export async function repoListDocuments(filters: GedListFilters): Promise<GedLis
   }
 }
 
-export async function repoGetDocumentDetail(documentId: string): Promise<GedDocumentDetail | null> {
+export async function repoGetDocumentDetail(
+  documentId: string,
+  authorization: GedAuthorization
+): Promise<GedDocumentDetail | null> {
   try {
     const docRes = await pool.query(
       `SELECT ${SUMMARY_SELECT}
          FROM public.ged_documents d
          JOIN public.ged_document_classes c ON c.class_key = d.class_key
          LEFT JOIN public.ged_document_versions cv ON cv.id = d.current_version_id
-        WHERE d.id = $1::uuid`,
-      [documentId]
+         LEFT JOIN LATERAL (
+           SELECT l.entity_type, l.entity_id
+             FROM public.ged_document_links l
+            WHERE l.document_id = d.id
+            ORDER BY
+              (l.entity_type = $4::text AND l.entity_id = $5::text) DESC,
+              l.created_at,
+              l.id
+            LIMIT 1
+         ) scope ON true
+        WHERE d.id = $1::uuid
+          AND ${classCapabilityPredicate("d.class_key", "$2", "$3")}
+          AND ${documentScopePredicate("d.id", "d.class_key", "$2", "$4", "$5")}`,
+      [
+        documentId,
+        authorization.role_keys,
+        authorization.capability,
+        authorization.scope?.entity_type ?? null,
+        authorization.scope?.entity_id ?? null,
+      ]
     );
     const docRow = docRes.rows[0];
     if (!docRow) return null;
@@ -639,9 +851,13 @@ export async function repoGetDocumentDetail(documentId: string): Promise<GedDocu
  * INTERNE : remonte la clé de stockage pour le téléchargement.
  * Le retour de cette fonction ne doit JAMAIS être sérialisé vers un client.
  */
-export async function repoInternalGetVersionContentRef(versionId: string): Promise<{
+export async function repoInternalGetVersionContentRef(
+  versionId: string,
+  authorization: GedAuthorization
+): Promise<{
   version_id: string;
   document_id: string;
+  class_key: string;
   status: GedVersionStatus;
   original_name: string;
   mime_type: string;
@@ -651,17 +867,27 @@ export async function repoInternalGetVersionContentRef(versionId: string): Promi
   try {
     const res = await pool.query(
       `SELECT v.id::text AS version_id, v.document_id::text AS document_id, v.status::text AS status,
-              v.original_name, b.mime_type, b.sha256, b.storage_key
+              d.class_key, v.original_name, b.mime_type, b.sha256, b.storage_key
          FROM public.ged_document_versions v
+         JOIN public.ged_documents d ON d.id = v.document_id
          JOIN public.ged_blobs b ON b.id = v.blob_id
-        WHERE v.id = $1::uuid`,
-      [versionId]
+        WHERE v.id = $1::uuid
+          AND ${classCapabilityPredicate("d.class_key", "$2", "$3")}
+          AND ${documentScopePredicate("d.id", "d.class_key", "$2", "$4", "$5")}`,
+      [
+        versionId,
+        authorization.role_keys,
+        authorization.capability,
+        authorization.scope?.entity_type ?? null,
+        authorization.scope?.entity_id ?? null,
+      ]
     );
     const r = res.rows[0];
     if (!r) return null;
     return {
       version_id: String(r.version_id),
       document_id: String(r.document_id),
+      class_key: String(r.class_key),
       status: r.status as GedVersionStatus,
       original_name: String(r.original_name),
       mime_type: String(r.mime_type),
@@ -673,7 +899,9 @@ export async function repoInternalGetVersionContentRef(versionId: string): Promi
   }
 }
 
-export async function repoGetTree(): Promise<{ domain: string; class_key: string; class_label: string; documents_count: number }[]> {
+export async function repoGetTree(
+  authorization: GedAuthorization
+): Promise<{ domain: string; class_key: string; class_label: string; documents_count: number }[]> {
   try {
     const res = await pool.query(
       `SELECT c.domain, c.class_key, c.label AS class_label,
@@ -681,8 +909,10 @@ export async function repoGetTree(): Promise<{ domain: string; class_key: string
          FROM public.ged_document_classes c
          LEFT JOIN public.ged_documents d ON d.class_key = c.class_key AND d.archived_at IS NULL
         WHERE c.is_active
+          AND ${classCapabilityPredicate("c.class_key", "$1", "$2")}
         GROUP BY c.domain, c.class_key, c.label
-        ORDER BY c.domain, c.label`
+        ORDER BY c.domain, c.label`,
+      [authorization.role_keys, authorization.capability]
     );
     return res.rows.map((r) => ({
       domain: String(r.domain),
@@ -698,9 +928,9 @@ export async function repoGetTree(): Promise<{ domain: string; class_key: string
 export async function repoFindDocumentByBlobHash(
   tx: Pick<PoolClient, "query">,
   sha256: string
-): Promise<{ document_id: string; code: string } | null> {
+): Promise<boolean> {
   const res = await tx.query(
-    `SELECT d.id::text AS document_id, d.code
+    `SELECT 1
        FROM public.ged_blobs b
        JOIN public.ged_document_versions v ON v.blob_id = b.id
        JOIN public.ged_documents d ON d.id = v.document_id
@@ -708,6 +938,5 @@ export async function repoFindDocumentByBlobHash(
       LIMIT 1`,
     [sha256]
   );
-  const r = res.rows[0];
-  return r ? { document_id: String(r.document_id), code: String(r.code) } : null;
+  return Boolean(res.rows[0]);
 }

@@ -7,7 +7,8 @@
 import type { RequestHandler } from "express";
 
 import { HttpError } from "../../../utils/httpError";
-import { roleHasGedCapability, type GedCapability } from "../domain/ged-policy";
+import { gedRoleKeys, type GedCapability } from "../domain/ged-policy";
+import { repoActorHasAnyCapability } from "../repository/ged.repository";
 
 export function requireGedCapability(capability: GedCapability): RequestHandler {
   return (req, _res, next) => {
@@ -15,12 +16,21 @@ export function requireGedCapability(capability: GedCapability): RequestHandler 
       next(new HttpError(401, "UNAUTHORIZED", "Authentification requise."));
       return;
     }
-    if (!roleHasGedCapability(req.user.role, capability)) {
-      next(
-        new HttpError(403, "GED_CAPABILITY_REQUIRED", `La capacité GED '${capability}' est requise.`)
-      );
-      return;
-    }
-    next();
+    const roleKeys = gedRoleKeys(req.user);
+    void repoActorHasAnyCapability(roleKeys, capability)
+      .then((granted) => {
+        if (!granted) {
+          next(
+            new HttpError(
+              403,
+              "GED_CAPABILITY_REQUIRED",
+              `La capacité GED '${capability}' est requise.`
+            )
+          );
+          return;
+        }
+        next();
+      })
+      .catch(next);
   };
 }
