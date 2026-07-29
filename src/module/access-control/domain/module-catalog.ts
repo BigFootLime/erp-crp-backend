@@ -122,9 +122,10 @@ export const MODULE_CATALOG: readonly ModuleCatalogEntry[] = [
       "/dossiers",
       "/methodes",
     ],
-    // `methodes-centres-frais` est une page de CE module : sans elle dans la
-    // liste, l'entrée de navigation disparaîtrait pour tout compte filtré.
-    nav_page_keys: ["pieces-techniques", "methodes-centres-frais"],
+    // `methodes-centres-frais` et `methodes-parc-machines` sont des pages de CE
+    // module : sans elles dans la liste, leurs entrées de navigation
+    // disparaîtraient pour tout compte filtré.
+    nav_page_keys: ["pieces-techniques", "methodes-centres-frais", "methodes-parc-machines"],
     is_protected: false,
     sort_order: 100,
   },
