@@ -742,7 +742,24 @@ async function maybePromoteOfAndCommandeAfterPlanning(params: {
             )
         ) AS active_events
       FROM public.ordres_fabrication o
-      LEFT JOIN public.of_operations op ON op.of_id = o.id
+      -- Opérations de la révision APPLICABLE uniquement (#370).
+      --
+      -- Depuis le versioning d'OF, un OF peut porter plusieurs jeux d'opérations :
+      -- un par révision. Joindre sur le seul of_id compterait R00 ET R01, et
+      -- l'avancement afficherait « 6 phases sur 12 » sur un OF qui n'en a que 6.
+      -- Le repli sur revision_id IS NULL couvre les lignes historiques que le
+      -- backfill n'aurait pas rattachées.
+      -- (Pas de guillemet oblique dans ce commentaire : le SQL vit dans un
+      --  gabarit JavaScript, un backtick y terminerait la chaîne.)
+      LEFT JOIN public.of_operations op
+             ON op.of_id = o.id
+            AND (
+              op.revision_id IS NULL
+              OR op.revision_id = (
+                SELECT r.id FROM public.of_revisions r
+                 WHERE r.of_id = o.id AND r.statut = 'ACTIVE'
+              )
+            )
       WHERE o.id = $1::bigint
       GROUP BY o.id, o.statut, o.commande_id, o.numero
       LIMIT 1

@@ -222,6 +222,14 @@ export type CerpDocumentHeader = {
    * la bande de pied et non dans le flux : voir `measureFooter`.
    */
   legalMentions?: string[] | null
+  /**
+   * Filigrane porte par **toutes** les pages : « BROUILLON », « OBSOLETE ».
+   *
+   * Il n'est pas decoratif. Un document de travail ou une revision perimee qui
+   * ressemblerait a l'exemplaire officiel ferait fabriquer d'apres la mauvaise
+   * definition. Le filigrane est la garantie de lecture, pas un ornement.
+   */
+  watermark?: string | null
   /** Metadonnees PDF. */
   title: string
   subject: string
@@ -693,6 +701,42 @@ function drawRunningHead(doc: PDFKit.PDFDocument, header: CerpDocumentHeader): v
   doc.fillColor(CERP_DOC_COLORS.ink)
 }
 
+/**
+ * Filigrane en diagonale, au centre de la page.
+ *
+ * Dessine dans la passe finale, donc **au-dessus** du contenu, avec une opacite
+ * faible : sous le texte il disparaitrait derriere les aplats gris des sections,
+ * et un filigrane invisible ne protege de rien. L'opacite est choisie assez basse
+ * pour rester lisible en noir et blanc sans masquer un chiffre.
+ */
+function drawWatermark(doc: PDFKit.PDFDocument, label: string): void {
+  const text = toPdfSafeText(label.toUpperCase())
+
+  doc.save()
+  doc.opacity(0.1)
+  doc.font("Helvetica-Bold").fillColor(CERP_DOC_COLORS.brand)
+
+  // Taille ajustee pour occuper environ 80 % de la diagonale, quel que soit le mot.
+  const target = Math.hypot(PAGE_WIDTH, PAGE_HEIGHT) * 0.8
+  doc.fontSize(100)
+  const widthAt100 = doc.widthOfString(text, { characterSpacing: 8 })
+  const size = Math.max(28, Math.min(160, (target / widthAt100) * 100))
+  doc.fontSize(size)
+
+  const width = doc.widthOfString(text, { characterSpacing: 8 })
+  const height = doc.currentLineHeight()
+
+  doc.rotate(-38, { origin: [PAGE_WIDTH / 2, PAGE_HEIGHT / 2] })
+  doc.text(text, PAGE_WIDTH / 2 - width / 2, PAGE_HEIGHT / 2 - height / 2, {
+    lineBreak: false,
+    characterSpacing: 8,
+  })
+  doc.restore()
+
+  doc.opacity(1)
+  doc.fillColor(CERP_DOC_COLORS.ink)
+}
+
 function drawFooter(
   doc: PDFKit.PDFDocument,
   header: CerpDocumentHeader,
@@ -800,9 +844,12 @@ export async function renderCerpDocument(
 
   render(new CerpDocumentContext(doc, afterIdentity, geometry.reserve))
 
+  const watermark = header.watermark && header.watermark.trim() ? header.watermark.trim() : null
+
   const range = doc.bufferedPageRange()
   for (let index = 0; index < range.count; index += 1) {
     doc.switchToPage(range.start + index)
+    if (watermark) drawWatermark(doc, watermark)
     if (index > 0) drawRunningHead(doc, header)
     drawFooter(doc, header, geometry, index + 1, range.count)
   }
