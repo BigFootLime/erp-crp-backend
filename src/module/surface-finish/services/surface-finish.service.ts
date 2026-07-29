@@ -25,19 +25,30 @@ import {
   type RevisionImpact,
 } from "../repository/surface-finish-library.repository";
 import {
+  repoArchiveFinish,
+  repoFindSimilarFinishes,
+  repoListFinishHistory,
+  repoReactivateFinish,
+  repoSetFinishFavorite,
+} from "../repository/surface-finish-admin.repository";
+import {
   repoConfirmOperationFinish,
   repoDetachOperationFinish,
   repoGetOperationFinish,
   repoPreviewOperationFinish,
 } from "../repository/surface-finish-resolution.repository";
 import type {
+  ArchiveFinishBodyDTO,
   AttachDocumentBodyDTO,
   ConfirmFinishBodyDTO,
   CreateFinishBodyDTO,
   DetachFinishBodyDTO,
+  FinishHistoryQueryDTO,
   ListFinishesQueryDTO,
   PreviewFinishBodyDTO,
+  ReactivateFinishBodyDTO,
   RevisionPayloadDTO,
+  SimilarFinishesQueryDTO,
   TransitionRevisionBodyDTO,
   UpdateFinishBodyDTO,
   UpdateRevisionBodyDTO,
@@ -48,9 +59,11 @@ import type {
   SurfaceFinishDetail,
   SurfaceFinishDocument,
   SurfaceFinishFamily,
+  SurfaceFinishHistoryEntry,
   SurfaceFinishListResult,
   SurfaceFinishPreview,
   SurfaceFinishRevisionDetail,
+  SurfaceFinishSimilarMatch,
 } from "../types/surface-finish.types";
 
 export type Actor = { user_id: number; role: string | null };
@@ -59,14 +72,67 @@ export async function listFinishFamiliesSVC(): Promise<SurfaceFinishFamily[]> {
   return repoListFinishFamilies();
 }
 
-export async function listFinishesSVC(filters: ListFinishesQueryDTO): Promise<SurfaceFinishListResult> {
-  return repoListFinishes(filters);
+export async function listFinishesSVC(
+  filters: ListFinishesQueryDTO,
+  viewerUserId: number
+): Promise<SurfaceFinishListResult> {
+  return repoListFinishes(filters, viewerUserId);
 }
 
-export async function getFinishSVC(finishId: string): Promise<SurfaceFinishDetail> {
-  const finish = await repoGetFinish(finishId);
+export async function getFinishSVC(finishId: string, viewerUserId: number): Promise<SurfaceFinishDetail> {
+  const finish = await repoGetFinish(finishId, viewerUserId);
   if (!finish) throw new HttpError(404, "NOT_FOUND", "Finition introuvable.");
   return finish;
+}
+
+/* -------------------------------------------------------------------------- */
+/* #226 — Doublons, favoris, archivage, historique                            */
+/* -------------------------------------------------------------------------- */
+
+export async function findSimilarFinishesSVC(query: SimilarFinishesQueryDTO): Promise<SurfaceFinishSimilarMatch[]> {
+  return repoFindSimilarFinishes(query);
+}
+
+/** Un favori est personnel : l'identité vient du jeton, jamais du corps. */
+export async function setFinishFavoriteSVC(
+  finishId: string,
+  actor: Actor,
+  favorite: boolean
+): Promise<{ finish_id: string; favori: boolean }> {
+  return repoSetFinishFavorite(finishId, actor.user_id, favorite);
+}
+
+/**
+ * Archiver et réactiver exigent `library_retire` — une capacité déclarée depuis
+ * #210 mais que rien n'avait encore imposée, faute de chemin d'archivage.
+ */
+export async function archiveFinishSVC(
+  finishId: string,
+  body: ArchiveFinishBodyDTO,
+  actor: Actor,
+  audit: AuditContext
+): Promise<SurfaceFinishDetail> {
+  assertSurfaceFinishCapability(actor.role, "library_retire");
+  return repoArchiveFinish(finishId, body, audit);
+}
+
+export async function reactivateFinishSVC(
+  finishId: string,
+  body: ReactivateFinishBodyDTO,
+  actor: Actor,
+  audit: AuditContext
+): Promise<SurfaceFinishDetail> {
+  assertSurfaceFinishCapability(actor.role, "library_retire");
+  return repoReactivateFinish(finishId, body, audit);
+}
+
+export async function listFinishHistorySVC(
+  finishId: string,
+  query: FinishHistoryQueryDTO,
+  actor: Actor
+): Promise<SurfaceFinishHistoryEntry[]> {
+  assertSurfaceFinishCapability(actor.role, "audit_read");
+  return repoListFinishHistory(finishId, query);
 }
 
 export async function createFinishDraftSVC(body: CreateFinishBodyDTO, audit: AuditContext): Promise<SurfaceFinishDetail> {

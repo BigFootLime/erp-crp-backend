@@ -5,6 +5,7 @@
 import type {
   CanonicalFinishSpec,
   FinishScope,
+  SimilarityLevel,
   SurfaceFinishCapability,
   SurfaceFinishStatus,
 } from "../domain/surface-finish-policy";
@@ -72,12 +73,46 @@ export type SurfaceFinishSummary = {
   statut: SurfaceFinishStatus;
   current_revision: SurfaceFinishRevisionSummary | null;
   updated_at: string;
+  /** #226 — Favori de l'utilisateur qui interroge, jamais un favori partagé. */
+  favori: boolean;
+  archived_at: string | null;
+  archive_reason: string | null;
 };
 
 export type SurfaceFinishDetail = SurfaceFinishSummary & {
   description: string | null;
   created_at: string;
   revisions: SurfaceFinishRevisionDetail[];
+};
+
+/* #226 — Contrôle des doublons du référentiel. */
+export type SurfaceFinishSimilarMatch = {
+  id: string;
+  code: string;
+  family_code: string;
+  family_label: string | null;
+  procede: string;
+  designation_courte: string;
+  designation_longue: string | null;
+  synonymes: string[];
+  statut: SurfaceFinishStatus;
+  score: number;
+  level: SimilarityLevel;
+  /** Ce qui a déclenché le rapprochement, pour que l'écran puisse l'expliquer. */
+  reasons: string[];
+  current_revision: SurfaceFinishRevisionSummary | null;
+};
+
+/* #226 — Historique lu depuis erp_audit_logs, jamais reconstitué. */
+export type SurfaceFinishHistoryEntry = {
+  id: number;
+  created_at: string;
+  action: string;
+  entity_type: string;
+  entity_id: string;
+  user_id: number | null;
+  user_label: string | null;
+  details: Record<string, unknown> | null;
 };
 
 export type SurfaceFinishListResult = {
