@@ -101,13 +101,6 @@ SELECT
   (SELECT COUNT(*) FROM public.machines WHERE machine_family_code IS NOT NULL)
                                                                             AS machines_famille_renseignee_attendu_0,
 
-  -- 8bis) Catalogue d'accès (#326) : /methodes et la page « Centres de frais »
-  --       rejoignent « Données techniques ». `NULL` si le patch #326 est absent.
-  (SELECT '/methodes' = ANY (api_prefixes) FROM public.access_modules
-    WHERE module_key = 'pieces-techniques')                                 AS access_prefix_methodes,
-  (SELECT 'methodes-centres-frais' = ANY (nav_page_keys) FROM public.access_modules
-    WHERE module_key = 'pieces-techniques')                                 AS access_nav_centres_frais,
-
   -- 9) Propriétaire applicatif (piège 42501 si appliqué en `postgres`).
   (SELECT pg_get_userbyid(relowner)::text FROM pg_class
    WHERE relname='production_machine_families')                             AS owner_families,
@@ -118,3 +111,24 @@ SELECT
 SELECT code, libelle, programme_requis, est_favori, ordre_affichage, actif
 FROM public.production_machine_families
 ORDER BY ordre_affichage, code;
+
+-- 11) Catalogue d'accès (#326) : il est optionnel, comme dans le patch.
+-- Le SQL dynamique évite toute référence parse-time à la table si #326 n'est
+-- pas encore appliqué dans l'environnement vérifié.
+DO $$
+DECLARE
+  v_prefix boolean;
+  v_nav boolean;
+BEGIN
+  IF to_regclass('public.access_modules') IS NULL THEN
+    RAISE NOTICE 'access_modules absent: contrôle #326 non applicable';
+  ELSE
+    EXECUTE $query$
+      SELECT '/methodes' = ANY(api_prefixes),
+             'methodes-centres-frais' = ANY(nav_page_keys)
+      FROM public.access_modules
+      WHERE module_key = 'pieces-techniques'
+    $query$ INTO v_prefix, v_nav;
+    RAISE NOTICE 'catalogue #326: /methodes=%, centres-frais=%', v_prefix, v_nav;
+  END IF;
+END $$;
