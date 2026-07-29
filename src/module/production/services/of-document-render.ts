@@ -41,10 +41,17 @@ import {
  */
 const GAMME_COLUMNS: CerpLineColumn[] = [
   { key: "phase", label: "Ph.", flex: 0.5 },
-  { key: "famille", label: "Fam.", flex: 0.8 },
-  { key: "centre", label: "Centre", flex: 0.78 },
+  // « DECOUPE » est le plus long code de famille (7 caractères) : la colonne doit
+  // le tenir sur UNE ligne. Un code replié en « DECOUP / E » n'est plus un code —
+  // une désignation peut se replier, un identifiant de référentiel non.
+  // Largeur mesurée sur le rendu, pas estimée.
+  { key: "famille", label: "Fam.", flex: 1.28 },
+  // « CF » et non « Centre » : à 6,9 pt avec interlettrage, « Centre » déborde et
+  // se replie en « CENTR / E » par-dessus le filet de tête. « CF » est le terme
+  // maison (centres_frais) et tient largement.
+  { key: "centre", label: "CF", flex: 0.7 },
   { key: "machine", label: "Machine", flex: 1.0 },
-  { key: "designation", label: "Désignation", flex: 1.94 },
+  { key: "designation", label: "Désignation", flex: 1.54 },
   { key: "tunit", label: "T unit.", flex: 0.85, align: "right" },
   { key: "preparation", label: "Prépa.", flex: 0.79, align: "right" },
   { key: "fabrication", label: "Fabric.", flex: 1.18, align: "right" },
@@ -60,16 +67,19 @@ const GAMME_COLUMNS: CerpLineColumn[] = [
  * rendraient illisible à 6,9 pt. La solidarité phase/VISA est préservée : chaque
  * phase reste UNE ligne, et `linesTable` ne coupe jamais une ligne en deux.
  */
+// Libellés volontairement courts et sur UNE ligne : « Qté bonne », « Qté rebut »
+// et « V. ctrl » se replient à 6,9 pt et viennent rayer le filet de tête. Un
+// en-tête abrégé et lisible vaut mieux qu'un en-tête complet et cassé.
 const VISA_COLUMNS: CerpLineColumn[] = [
   { key: "phase", label: "Ph.", flex: 0.5 },
   { key: "statut", label: "Statut", flex: 1.0 },
-  { key: "operateur", label: "Opérateur", flex: 1.5 },
-  { key: "date", label: "Date / heure", flex: 1.35 },
-  { key: "bonne", label: "Qté bonne", flex: 0.9, align: "right" },
-  { key: "rebut", label: "Qté rebut", flex: 0.9, align: "right" },
-  { key: "motif", label: "Motif rebut", flex: 1.85 },
-  { key: "visaOp", label: "V. op.", flex: 0.62 },
-  { key: "visaCtrl", label: "V. ctrl", flex: 0.62 },
+  { key: "operateur", label: "Opérateur", flex: 1.45 },
+  { key: "date", label: "Date", flex: 1.35 },
+  { key: "bonne", label: "Bonnes", flex: 0.92, align: "right" },
+  { key: "rebut", label: "Rebuts", flex: 0.92, align: "right" },
+  { key: "motif", label: "Motif rebut", flex: 1.8 },
+  { key: "visaOp", label: "Op.", flex: 0.62 },
+  { key: "visaCtrl", label: "Ctrl", flex: 0.62 },
 ];
 
 /** Réserve de cohésion d'une section ouverte par une table (ADR-0040 §5). */
@@ -151,13 +161,18 @@ function buildSubtitle(payload: OfDocumentPayload): string | null {
 
 function renderCoverHalf(ctx: CerpDocumentContext, payload: OfDocumentPayload): void {
   // En-tête documentaire (#370). Les trois statuts sont distincts et affichés
-  // séparément : fabrication, définition technique, pièce documentaire.
+  // séparément : fabrication (badge d'identité), définition technique (révision)
+  // et pièce documentaire (« Statut doc. »).
+  //
+  // Cinq cellules et non six : le numéro d'OF est déjà le titre de la page, et le
+  // répéter ici volait la largeur aux autres libellés — « STATUT DOCUMENTAIRE »
+  // et « VERSION DE GAMME » se repliaient alors par-dessus leur propre valeur.
+  // Les libellés sont courts pour tenir sur UNE ligne à cette largeur.
   ctx.legalStrip(
     [
-      { label: "Ordre de fabrication", value: payload.ofNumero },
       { label: "Révision", value: `${payload.revisionCode} — ${payload.revisionStatut}` },
-      { label: "Statut documentaire", value: payload.documentStatut },
-      { label: "Version de gamme", value: formatGammeVersion(payload) },
+      { label: "Statut doc.", value: payload.documentStatut },
+      { label: "Gamme", value: formatGammeVersion(payload) },
       { label: "Commande", value: payload.commandeNumero },
       { label: "Client", value: payload.clientNom ?? payload.clientCode },
     ],
