@@ -24,6 +24,7 @@ import {
   listAnalyticsQuerySchema,
   listInventorySessionsQuerySchema,
   listArticlesQuerySchema,
+  similarArticlesQuerySchema,
   listArticleFamiliesQuerySchema,
   listMatiereEtatsQuerySchema,
   listMatiereNuancesQuerySchema,
@@ -118,6 +119,7 @@ import {
   getStockMovementSVC,
   listStockArticleDocumentsSVC,
   listStockArticlesSVC,
+  findSimilarStockArticlesSVC,
   listStockBalancesSVC,
   listStockEmplacementsSVC,
   listStockLotsSVC,
@@ -326,6 +328,25 @@ export const listStockArticles: RequestHandler = async (req, res, next) => {
     }
     const out = await listStockArticlesSVC(parsed.data);
     res.json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * #226 — « Existe-t-il déjà un article comme celui-ci ? » posée AVANT création.
+ * Lecture pure : `requireStockCapability("read")` suffit, et aucune écriture
+ * n'est émise.
+ */
+export const listSimilarStockArticles: RequestHandler = async (req, res, next) => {
+  try {
+    const parsed = similarArticlesQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues?.[0]?.message ?? "Invalid query" });
+      return;
+    }
+    const items = await findSimilarStockArticlesSVC(parsed.data);
+    res.json({ items, total: items.length });
   } catch (err) {
     next(err);
   }
