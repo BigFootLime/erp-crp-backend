@@ -514,6 +514,7 @@ describe("/api/v1/commandes", () => {
 
     expect(pieceCreateCalls.length).toBe(1);
     expect(articleCreateCalls.length).toBe(1);
+    expect(pieceCreateCalls[0]?.[1]).not.toContain("33333333-3333-3333-3333-333333333333");
   });
 
   it("PATCH /api/v1/commandes/:id works and replaces lignes", async () => {
