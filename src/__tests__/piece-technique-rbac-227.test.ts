@@ -46,6 +46,12 @@ describe("#227 — validation d'un indice : le défaut « accès refusé » est 
     expect(canValidatePieceTechnique(user("Employee", ["Livraison"]))).toBe(false);
   });
 
+  it("reconnaît les marqueurs effectifs Méthodes sans ouvrir les rôles atelier", () => {
+    expect(canValidatePieceTechnique(user("Employee | Method"))).toBe(true);
+    expect(canValidatePieceTechnique(user("Employee | Responsable Programmation"))).toBe(true);
+    expect(canValidatePieceTechnique(user("Employee | Opérateur atelier"))).toBe(false);
+  });
+
   it("aucune autorisation par sous-chaîne : un rôle inventé contenant « admin » est refusé", () => {
     expect(canValidatePieceTechnique(user("Stagiaire admin"))).toBe(false);
     expect(canValidatePieceTechnique(user("admin"))).toBe(false);

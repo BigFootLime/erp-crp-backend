@@ -133,6 +133,30 @@ describe("/api/v1/clients", () => {
     });
   });
 
+  it.each([
+    ["1", "CLI-001"],
+    ["001", "CLI-001"],
+    ["CLI-001", "CLI-001"],
+  ])("GET /api/v1/clients uses an exact normalized code lookup for %s", async (q, expectedCode) => {
+    const res = await request(app).get("/api/v1/clients").query({ q });
+
+    expect(res.status).toBe(200);
+    expect(mocks.poolQuery).toHaveBeenCalledOnce();
+    const [sql, values] = mocks.poolQuery.mock.calls[0] as [string, [string, number, string | null]];
+    expect(values).toEqual([q, 2000, expectedCode]);
+    expect(sql).toContain("WHEN $3::text IS NOT NULL THEN");
+    expect(sql).toContain("REGEXP_REPLACE");
+  });
+
+  it("GET /api/v1/clients keeps generic text search for a non-code query", async () => {
+    const res = await request(app).get("/api/v1/clients").query({ q: "CLAYENS", limit: "25" });
+
+    expect(res.status).toBe(200);
+    const [sql, values] = mocks.poolQuery.mock.calls[0] as [string, [string, number, string | null]];
+    expect(values).toEqual(["CLAYENS", 25, null]);
+    expect(sql).toContain("c.siret ILIKE replace('%' || $1 || '%',' ','')");
+  });
+
   it("GET /api/v1/clients/:id returns client.client_code in detail payload", async () => {
     mocks.poolQuery
       .mockResolvedValueOnce({
