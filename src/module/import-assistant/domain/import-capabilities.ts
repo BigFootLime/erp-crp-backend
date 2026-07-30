@@ -174,7 +174,11 @@ const ARTICLE_FIELDS: ImportTargetField[] = [
 
 const PIECE_FIELDS: ImportTargetField[] = [
   field("client_id", "Code client CERP", "text", { required: true }),
-  field("famille_id", "Famille de pièce CERP", "uuid", { required: true }),
+  // #413 — Kept solely to accept historical CLIPPER files. It is optional and
+  // ignored when the technical piece is persisted.
+  field("famille_id", "Famille de pièce historique (ignorée)", "uuid", {
+    hint: "Optionnel pour les imports hérités ; cette valeur n'est pas appliquée à la pièce technique.",
+  }),
   field("name_piece", "Nom de pièce", "text", { required: true }),
   field("designation", "Désignation", "text", { required: true }),
   field("designation_2", "Désignation secondaire", "text"),
