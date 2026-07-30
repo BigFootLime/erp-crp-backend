@@ -313,6 +313,14 @@ describe("Assistant d’import CLIPPER", () => {
     expect(articles).toBeLessThan(pieces);
   });
 
+  it("does not require a family for technical-piece imports", () => {
+    const pieceCapability = IMPORT_CAPABILITIES.find((item) => item.entity_type === "PIECE_TECHNIQUE");
+    const family = pieceCapability?.fields.find((item) => item.key === "famille_id");
+
+    expect(family?.required).not.toBe(true);
+    expect(family?.label).toMatch(/ignorée/i);
+  });
+
   it("marque l’adresse fournisseur importée comme adresse principale", () => {
     const mapping: ImportMapping = {
       legacy_key_column: "CODE",
