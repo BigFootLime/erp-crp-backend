@@ -1,6 +1,7 @@
 import type { RequestHandler } from "express";
 
 import { HttpError } from "../../../utils/httpError";
+import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import {
   roleHasSurfaceFinishCapability,
   type SurfaceFinishCapability,
@@ -19,7 +20,10 @@ export function requireSurfaceFinishCapability(capability: SurfaceFinishCapabili
       next(new HttpError(401, "UNAUTHORIZED", "Authentification requise."));
       return;
     }
-    if (!roleHasSurfaceFinishCapability(req.user.role, capability)) {
+    if (
+      !requestHasGrantedAccountModuleAccess(req) &&
+      !roleHasSurfaceFinishCapability(req.user.role, capability)
+    ) {
       next(
         new HttpError(
           403,

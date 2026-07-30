@@ -1,5 +1,6 @@
 // src/module/pieces-techniques/routes/pieces-techniques.routes.ts
 import { Router, type RequestHandler } from "express"
+import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import multer from "multer"
 
 import { authenticateToken, authorizeRole } from "../../auth/middlewares/auth.middleware"
@@ -119,7 +120,10 @@ const router = Router()
 const requireDeleteRole = authorizeRole(...PIECE_TECHNIQUE_DELETE_ROLES)
 const requireDocumentPolicyRole = authorizeRole(...PIECE_DOCUMENT_POLICY_ROLES)
 const requireVersionApproval: RequestHandler = (req, _res, next) => {
-  if (!canValidatePieceTechnique(req.user)) {
+  if (
+    !requestHasGrantedAccountModuleAccess(req) &&
+    !canValidatePieceTechnique(req.user)
+  ) {
     next(
       new HttpError(
         403,

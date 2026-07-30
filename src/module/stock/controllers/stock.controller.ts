@@ -1,4 +1,5 @@
 import type { Request, RequestHandler, Response } from "express";
+import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import fs from "node:fs/promises";
 
 import { previewArticleCode } from "../../../shared/codes/code-generator.service";
@@ -1090,6 +1091,7 @@ export const postStockMovement: RequestHandler = async (req, res, next) => {
     const body: PostMovementBodyDTO = postMovementSchema.parse({ body: req.body }).body;
     if (
       body.negative_stock_override &&
+      !requestHasGrantedAccountModuleAccess(req) &&
       !roleHasStockCapability(req.user?.role, "negative_stock_override")
     ) {
       throw new HttpError(

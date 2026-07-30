@@ -1,4 +1,5 @@
 import { Router, type RequestHandler } from "express";
+import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import multer from "multer";
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
@@ -22,7 +23,10 @@ import {
 
 const requireProductionOrAdmin: RequestHandler = (req, _res, next) => {
   const role = req.user?.role;
-  if (!roleHasPlanningAccess(role)) {
+  if (
+    !requestHasGrantedAccountModuleAccess(req) &&
+    !roleHasPlanningAccess(role)
+  ) {
     next(new HttpError(403, "FORBIDDEN", "Production, atelier, secretariat or admin role required"));
     return;
   }

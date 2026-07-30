@@ -6,6 +6,7 @@
 import type { RequestHandler } from "express";
 
 import { HttpError } from "../../../utils/httpError";
+import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import { roleHasOfCapability, type OfCapability } from "../domain/of-rbac";
 
 export function requireOfCapability(capability: OfCapability): RequestHandler {
@@ -14,7 +15,10 @@ export function requireOfCapability(capability: OfCapability): RequestHandler {
       next(new HttpError(401, "UNAUTHORIZED", "Authentification requise."));
       return;
     }
-    if (!roleHasOfCapability(req.user.role, capability)) {
+    if (
+      !requestHasGrantedAccountModuleAccess(req) &&
+      !roleHasOfCapability(req.user.role, capability)
+    ) {
       next(
         new HttpError(
           403,

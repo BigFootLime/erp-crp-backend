@@ -1,4 +1,5 @@
 import { Router, type RequestHandler } from "express";
+import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import multer from "multer";
 
 import { authenticateToken, authorizeRole } from "../../auth/middlewares/auth.middleware";
@@ -111,7 +112,10 @@ const requireArticleApprove = authorizeRole(...ARTICLE_APPROVE_ROLES);
 const requireArticleDocumentWrite = authorizeRole(...ARTICLE_DOCUMENT_WRITE_ROLES);
 
 const requireStockCapability = (capability: StockCapability): RequestHandler => (req, _res, next) => {
-  if (!roleHasStockCapability(req.user?.role, capability)) {
+  if (
+    !requestHasGrantedAccountModuleAccess(req) &&
+    !roleHasStockCapability(req.user?.role, capability)
+  ) {
     next(new HttpError(403, "STOCK_FORBIDDEN", `Stock capability required: ${capability}`));
     return;
   }

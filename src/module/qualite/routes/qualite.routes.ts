@@ -1,7 +1,10 @@
 import { Router, type RequestHandler } from "express";
 import multer from "multer";
 
-import { hasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
+import {
+  hasGrantedAccountModuleAccess,
+  requestHasGrantedAccountModuleAccess,
+} from "../../access-control/context/account-module-access.context";
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
@@ -53,7 +56,10 @@ function isQualityRole(role: string | undefined): boolean {
 }
 
 const requireQualityOrAdmin: RequestHandler = (req, _res, next) => {
-  if (hasGrantedAccountModuleAccess()) {
+  if (
+    requestHasGrantedAccountModuleAccess(req) ||
+    hasGrantedAccountModuleAccess()
+  ) {
     next();
     return;
   }

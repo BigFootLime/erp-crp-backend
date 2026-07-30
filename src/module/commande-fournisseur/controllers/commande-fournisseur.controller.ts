@@ -1,4 +1,5 @@
 import type { Request, RequestHandler } from "express";
+import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 
 import { HttpError } from "../../../utils/httpError";
 import { roleHasCommandeFournisseurCapability } from "../domain/commande-fournisseur-rbac";
@@ -73,7 +74,10 @@ function buildAuditContext(req: Request): AuditContext {
 }
 
 function includePricesFor(req: Request): boolean {
-  return roleHasCommandeFournisseurCapability(req.user?.role, "prices");
+  return (
+    requestHasGrantedAccountModuleAccess(req) ||
+    roleHasCommandeFournisseurCapability(req.user?.role, "prices")
+  );
 }
 
 /** Clé d'idempotence : header standard prioritaire, sinon champ body. */
@@ -267,7 +271,9 @@ export const resyncReceptions: RequestHandler = async (req, res, next) => {
   try {
     const { params } = commandeIdParamSchema.parse({ params: req.params });
     const audit = buildAuditContext(req);
-    const allowOver = roleHasCommandeFournisseurCapability(req.user?.role, "over_receipt");
+    const allowOver =
+      requestHasGrantedAccountModuleAccess(req) ||
+      roleHasCommandeFournisseurCapability(req.user?.role, "over_receipt");
     res.json(await resyncReceptionsSVC(params.id, audit, allowOver));
   } catch (err) {
     next(err);
