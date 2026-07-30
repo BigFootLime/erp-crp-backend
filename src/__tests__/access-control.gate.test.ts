@@ -45,6 +45,16 @@ vi.mock("../module/metrologie/controllers/metrology-360.controller", async (impo
   };
 });
 
+vi.mock("../module/qualite/controllers/qualite.controller", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../module/qualite/controllers/qualite.controller")>();
+  return {
+    ...actual,
+    qualiteDashboard: (_req: unknown, res: { json: (body: unknown) => void }) =>
+      res.json({ ok: true }),
+  };
+});
+
 vi.mock("../module/auth/middlewares/auth.middleware", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../module/auth/middlewares/auth.middleware")>();
   return {
@@ -349,6 +359,19 @@ describe("Gate d'accès module — application réelle", () => {
 
     const res = await request(app)
       .get("/api/v1/metrologie/v2/center?horizon_days=30")
+      .set("x-test-role", "Employee");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+  });
+
+  it("ouvre le dashboard Qualité à un compte autorisé sans rôle Qualité", async () => {
+    repo.repoResolveAccessProfile.mockResolvedValue([
+      profileRow({ module_key: "qualite" }),
+    ]);
+
+    const res = await request(app)
+      .get("/api/v1/qualite/dashboard?today=2026-07-31")
       .set("x-test-role", "Employee");
 
     expect(res.status).toBe(200);
