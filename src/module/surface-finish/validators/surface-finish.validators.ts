@@ -131,6 +131,23 @@ export const listFinishesQuerySchema = z.object({
 });
 export type ListFinishesQueryDTO = z.infer<typeof listFinishesQuerySchema>;
 
+const familyCode = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .min(2)
+  .max(60)
+  .regex(/^[A-Z0-9_]+$/, "Le code famille accepte uniquement A-Z, 0-9 et _.");
+
+export const createFinishFamilyBodySchema = z.object({
+  code: familyCode,
+  label: shortText,
+  description: optionalText(2000),
+  commentaire_template: optionalText(4000),
+  sort_order: z.coerce.number().int().min(0).max(10_000).optional().default(100),
+});
+export type CreateFinishFamilyBodyDTO = z.infer<typeof createFinishFamilyBodySchema>;
+
 /* -------------------------------------------------------------------------- */
 /* Bibliothèque — contrôle des doublons (#226)                                 */
 /* -------------------------------------------------------------------------- */

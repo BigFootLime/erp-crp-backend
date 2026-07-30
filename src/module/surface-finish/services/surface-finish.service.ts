@@ -13,6 +13,7 @@ import {
 import {
   repoAttachRevisionDocument,
   repoCreateFinishDraft,
+  repoCreateFinishFamily,
   repoCreateRevision,
   repoGetFinish,
   repoListFinishes,
@@ -42,6 +43,7 @@ import {
 import type {
   ArchiveFinishBodyDTO,
   AttachDocumentBodyDTO,
+  CreateFinishFamilyBodyDTO,
   ConfirmFinishBodyDTO,
   CreateFinishBodyDTO,
   DetachFinishBodyDTO,
@@ -75,6 +77,13 @@ export type Actor = { user_id: number; role: string | null };
 
 export async function listFinishFamiliesSVC(): Promise<SurfaceFinishFamily[]> {
   return repoListFinishFamilies();
+}
+
+export async function createFinishFamilySVC(
+  body: CreateFinishFamilyBodyDTO,
+  audit: AuditContext
+): Promise<SurfaceFinishFamily> {
+  return repoCreateFinishFamily(body, audit);
 }
 
 export async function listFinishesSVC(

@@ -20,6 +20,7 @@ import {
 } from "../domain/surface-finish-policy";
 import type {
   AttachDocumentBodyDTO,
+  CreateFinishFamilyBodyDTO,
   CreateFinishBodyDTO,
   ListFinishesQueryDTO,
   RevisionPayloadDTO,
@@ -258,11 +259,46 @@ export async function insertFinishAudit(
 
 export async function repoListFinishFamilies(): Promise<SurfaceFinishFamily[]> {
   const res = await db.query<SurfaceFinishFamily>(
-    `SELECT code, label, description, sort_order, is_active
+    `SELECT code, label, description, commentaire_template, sort_order, is_active
      FROM public.surface_finish_families
      ORDER BY sort_order, label`
   );
   return res.rows;
+}
+
+/** Family parameterization is auditable and separate from a finish draft. */
+export async function repoCreateFinishFamily(
+  body: CreateFinishFamilyBodyDTO,
+  audit: AuditContext
+): Promise<SurfaceFinishFamily> {
+  assertTemplateVariablesAllowed(body.commentaire_template ?? "");
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const res = await client.query<SurfaceFinishFamily>(
+      `INSERT INTO public.surface_finish_families
+         (code, label, description, commentaire_template, sort_order, is_active)
+       VALUES ($1, $2, $3, $4, $5, true)
+       RETURNING code, label, description, commentaire_template, sort_order, is_active`,
+      [body.code, body.label, body.description, body.commentaire_template, body.sort_order]
+    );
+    const family = res.rows[0];
+    await insertFinishAudit(client, audit, "finitions.family.create", "surface_finish_family", family.code, {
+      code: family.code,
+      label: family.label,
+      has_commentaire_template: Boolean(family.commentaire_template),
+    });
+    await client.query("COMMIT");
+    return family;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    if (typeof err === "object" && err !== null && (err as { code?: string }).code === "23505") {
+      throw new HttpError(409, "SURFACE_FINISH_FAMILY_DUPLICATE", "Une famille de finition porte dÃ©jÃ  ce code.");
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 /* -------------------------------------------------------------------------- */

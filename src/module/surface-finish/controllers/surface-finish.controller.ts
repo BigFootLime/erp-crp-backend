@@ -12,6 +12,7 @@ import {
   attachRevisionDocumentSVC,
   capabilitiesSVC,
   confirmOperationFinishSVC,
+  createFinishFamilySVC,
   createFinishDraftSVC,
   createRevisionSVC,
   detachOperationFinishSVC,
@@ -100,6 +101,14 @@ function headerValue(req: Request, name: string): string | null {
 export const listFinishFamilies: RequestHandler = async (_req, res, next) => {
   try {
     res.json(await listFinishFamiliesSVC());
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const createFinishFamily: RequestHandler = async (req, res, next) => {
+  try {
+    res.status(201).json(await createFinishFamilySVC(req.body, buildAuditContext(req)));
   } catch (err) {
     next(err);
   }
