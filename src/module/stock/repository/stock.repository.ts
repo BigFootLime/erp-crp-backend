@@ -329,15 +329,6 @@ export function commandeClientSelectableCategoryCodes(): string[] {
   return ARTICLE_CATEGORY_OPTIONS.filter((option) => option.commande_client_selectable).map((option) => option.code);
 }
 
-const BUSINESS_TO_PRIMARY_CATEGORY: Record<ArticleBusinessCategory, ArticleCategory> = {
-  piece_finie_fabriquee: "fabrique",
-  matiere_premiere: "matiere",
-  traitement_surface: "traitement",
-  achat_revente: "achat",
-  achat_transforme: "achat",
-  sous_traitance: "achat",
-};
-
 type UploadedDocument = Express.Multer.File;
 
 function isPgUniqueViolation(err: unknown): boolean {
@@ -489,7 +480,7 @@ function normalizeArticleWorkflowStatus(value: string | null | undefined): "EN_D
   return normalized === "EN_DEVIS" ? "EN_DEVIS" : "VALIDE";
 }
 
-function normalizeArticleCategories(
+export function normalizeArticleCategories(
   requested: string[] | null | undefined,
   primaryCategory: ArticleCategory
 ): ArticleBusinessCategory[] {
@@ -515,11 +506,18 @@ function normalizeArticleCategories(
   return out;
 }
 
-function derivePrimaryCategoryFromBusinessCategories(categories: ArticleBusinessCategory[]): ArticleCategory {
-  if (categories.some((value) => BUSINESS_TO_PRIMARY_CATEGORY[value] === "fabrique")) return "fabrique";
-  if (categories.some((value) => BUSINESS_TO_PRIMARY_CATEGORY[value] === "matiere")) return "matiere";
-  if (categories.some((value) => BUSINESS_TO_PRIMARY_CATEGORY[value] === "traitement")) return "traitement";
-  return "achat";
+/**
+ * Keeps the primary category explicit and deterministic while allowing the
+ * category link table to hold secondary business uses.
+ */
+export function normalizeArticleCategorySelection(
+  primaryCategory: ArticleCategory,
+  requestedCategories: string[] | null | undefined
+): { article_category: ArticleCategory; article_categories: ArticleBusinessCategory[] } {
+  return {
+    article_category: primaryCategory,
+    article_categories: normalizeArticleCategories(requestedCategories, primaryCategory),
+  };
 }
 
 function expectedFabricatedArticleCodeFromPlan(planReference: string, planIndex: number): string {
@@ -642,8 +640,16 @@ async function normalizeArticleState(args: {
     return toBusinessArticleCategory(args.article_category, "achat");
   })();
   const requestedPrimaryCategory = toBusinessArticleCategory(args.article_category, categoryFromType);
-  const article_categories = normalizeArticleCategories(args.article_categories, requestedPrimaryCategory);
-  const article_category = derivePrimaryCategoryFromBusinessCategories(article_categories);
+  const categorySelection = normalizeArticleCategorySelection(requestedPrimaryCategory, args.article_categories);
+  /**
+   * `article_category` is the authoritative primary classification. Business
+   * categories are secondary uses and must never silently reclassify an
+   * Article just because one of them maps to another primary category.
+   *
+   * normalizeArticleCategories keeps the matching business category at index
+   * zero, which syncArticleCategories persists with is_primary = true.
+   */
+  const { article_category, article_categories } = categorySelection;
   const article_type = inferArticleType(article_category);
   const piece_technique_id = article_category === "fabrique" ? args.piece_technique_id : null;
   const requestedFamilyCode = normalizeFamilyCode(args.family_code, defaultFamilyCodeForCategory(article_category));
@@ -1324,7 +1330,7 @@ async function ensureArticleFamilyEntry(
   );
 }
 
-async function syncArticleSubtypeDetails(
+export async function syncArticleSubtypeDetails(
   client: Pick<PoolClient, "query">,
   args: {
     article_id: string;
@@ -3181,6 +3187,14 @@ export async function repoUpdateArticle(
       designation: patch.designation ?? current.designation,
       client,
     });
+
+    if (patch.article_matiere && normalized.article_category !== "matiere") {
+      throw new HttpError(
+        400,
+        "INVALID_ARTICLE",
+        "article_matiere is only allowed for article_category=matiere"
+      );
+    }
 
     if (current.stock_managed && !normalized.stock_managed) {
       await ensureArticleCanDisableStockManagement(client, id);
