@@ -359,6 +359,7 @@ export async function repoListPieceTechniques(filters: ListPiecesTechniquesQuery
       p.designation,
       p.designation_2,
       p.client_id,
+      COALESCE(NULLIF(btrim(c.client_code), ''), NULLIF(btrim(p.code_client), '')) AS code_client,
       p.client_name,
       p.famille_id::text AS famille_id,
       f.code AS famille_code,
@@ -386,15 +387,25 @@ export async function repoListPieceTechniques(filters: ListPiecesTechniquesQuery
       ${HAS_DOCUMENTS_SQL} AS has_documents,
       ${TO_COMPLETE_SQL} AS to_complete
     FROM pieces_techniques p
+    LEFT JOIN clients c ON c.client_id = p.client_id
     LEFT JOIN pieces_families f ON f.id = p.famille_id
     LEFT JOIN LATERAL (
       -- #146 : la version applicable porte aussi l'indice et la référence de plan, deux
       -- informations que le préparateur cherchait jusqu'ici en ouvrant chaque fiche.
-      SELECT v.code_metier, v.indice, v.plan_reference, v.date_effet, v.version_interne
+      SELECT
+        v.code_metier,
+        COALESCE(NULLIF(btrim(v.indice_externe_original), ''), NULLIF(btrim(v.indice), '')) AS indice,
+        v.plan_reference,
+        v.date_effet,
+        v.version_interne
       FROM public.piece_technique_versions v
       WHERE v.piece_technique_id = p.id
-        AND v.statut = 'APPLICABLE'
-      ORDER BY v.date_effet DESC NULLS LAST, v.version_interne DESC NULLS LAST, v.created_at DESC
+        AND v.statut <> 'OBSOLETE'
+      ORDER BY
+        CASE WHEN v.statut = 'APPLICABLE' THEN 0 ELSE 1 END,
+        v.version_interne DESC NULLS LAST,
+        v.created_at DESC,
+        v.id DESC
       LIMIT 1
     ) current_version ON true
     LEFT JOIN (

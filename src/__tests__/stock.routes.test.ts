@@ -111,8 +111,16 @@ describe("/api/v1/stock", () => {
     mocks.clientQuery.mockImplementation(async (sql: unknown) => {
       const q = String(sql);
       if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
-      if (q.includes("FROM public.pieces_techniques pt") && q.includes("LEFT JOIN public.pieces_families")) {
-        return { rows: [{ code_piece: "PT-001", designation: "Pièce stockée", family_code: "PT" }] };
+      if (q.includes("FROM public.pieces_techniques pt") && q.includes("LEFT JOIN LATERAL")) {
+        return {
+          rows: [{
+            piece_exists: true,
+            client_code: "CLI-001",
+            plan_reference: "PT-001",
+            indice: "A",
+            version_interne: 1,
+          }],
+        };
       }
       if (q.includes("FROM public.pieces_techniques WHERE id = $1::uuid LIMIT 1")) {
         return { rows: [{ ok: 1 }] };
@@ -149,7 +157,7 @@ describe("/api/v1/stock", () => {
           plan_index: 1,
           status: "VALIDE",
           projet_id: null,
-          code: "PT-001-P1",
+          code: "ART-FAB-001-PT001-A",
           designation: "Pièce stockée",
           article_type: "PIECE_TECHNIQUE",
           article_category: "fabrique",
@@ -191,6 +199,11 @@ describe("/api/v1/stock", () => {
 
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({ article_category: "fabrique", family_code: "PT", stock_managed: true });
+    expect(
+      mocks.clientQuery.mock.calls.some((call) =>
+        Array.isArray(call[1]) && call[1].includes("ART-FAB-001-PT001-A")
+      )
+    ).toBe(true);
     expect(
       mocks.clientQuery.mock.calls.some((call) =>
         String(call[0]).includes("UPDATE public.pieces_techniques SET article_id = $2::uuid WHERE id = $1::uuid")

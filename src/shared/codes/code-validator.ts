@@ -50,9 +50,9 @@ export const CODE_FORMATS = {
     hintText: "Format attendu: BCF-2026-0001",
   },
   article: {
-    regex: /^(ART-[A-Z0-9]+-\d{6}|ART-\d{4})$/,
-    example: "ART-USI-000042",
-    hintText: "Format attendu: ART-USI-000042",
+    regex: /^(ART-[A-Z0-9]+-\d{6}|ART-FAB-[A-Z0-9]+-[A-Z0-9]+-[A-Z0-9]+(?:-V(?:[2-9]|[1-9]\d+))?|ART-\d{4})$/,
+    example: "ART-FAB-001-17025950000-A",
+    hintText: "Formats attendus : ART-USI-000042 ou ART-FAB-001-17025950000-A[-Vn]",
   },
   // #210 — Finition de surface : code alloué par le serveur, puis immuable.
   surfaceFinish: {
