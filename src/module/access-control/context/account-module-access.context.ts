@@ -14,10 +14,12 @@ const accountModuleAccessStorage = new AsyncLocalStorage<AccountModuleAccessCont
  * Express, y compris les routeurs imbriqués et leurs middlewares asynchrones.
  */
 export function runWithAccountModuleAccessScope(callback: () => void): void {
-  accountModuleAccessStorage.run(
-    { userId: null, moduleKey: null, granted: false },
-    callback
-  );
+  accountModuleAccessStorage.enterWith({
+    userId: null,
+    moduleKey: null,
+    granted: false,
+  });
+  callback();
 }
 
 /**
@@ -40,7 +42,8 @@ export function runWithAccountModuleAccess(
     callback();
     return;
   }
-  accountModuleAccessStorage.run({ ...context, granted: true }, callback);
+  accountModuleAccessStorage.enterWith({ ...context, granted: true });
+  callback();
 }
 
 export function hasGrantedAccountModuleAccess(): boolean {
