@@ -60,6 +60,19 @@ export function buildMethodesAuditContext(req: Request): AuditContext {
   };
 }
 
+/**
+ * Express route parameters are typed as `string | string[]`. Route validators
+ * protect normal HTTP requests, but controllers must keep the same boundary
+ * when they are called by tests or by future route wiring.
+ */
+export function requiredRouteParam(req: Request, name: string): string {
+  const value = req.params[name];
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new HttpError(400, "INVALID_ROUTE_PARAM", `Paramètre de route invalide : ${name}`);
+  }
+  return value;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Capacités                                                                  */
 /* -------------------------------------------------------------------------- */
@@ -100,7 +113,7 @@ export const updateMachineFamily: RequestHandler = async (req, res, next) => {
   try {
     const audit = buildMethodesAuditContext(req);
     const body = updateFamilySchema.parse(req.body);
-    const out = await updateMachineFamilySVC(String(req.params.code).toUpperCase(), body, audit);
+    const out = await updateMachineFamilySVC(requiredRouteParam(req, "code").toUpperCase(), body, audit);
     if (!out) throw new HttpError(404, "NOT_FOUND", "Famille machine introuvable");
     res.json(out);
   } catch (error) {
@@ -130,7 +143,7 @@ export const listCostCenters: RequestHandler = async (req, res, next) => {
 
 export const getCostCenter: RequestHandler = async (req, res, next) => {
   try {
-    const out = await getCostCenterSVC(req.params.cfId);
+    const out = await getCostCenterSVC(requiredRouteParam(req, "cfId"));
     if (!out) throw new HttpError(404, "NOT_FOUND", "Centre de frais introuvable");
     res.json(out);
   } catch (error) {
@@ -152,7 +165,7 @@ export const updateCostCenter: RequestHandler = async (req, res, next) => {
   try {
     const audit = buildMethodesAuditContext(req);
     const body = updateCostCenterSchema.parse(req.body);
-    const out = await updateCostCenterSVC(req.params.cfId, body, audit);
+    const out = await updateCostCenterSVC(requiredRouteParam(req, "cfId"), body, audit);
     if (!out) throw new HttpError(404, "NOT_FOUND", "Centre de frais introuvable");
     res.json(out);
   } catch (error) {
@@ -162,7 +175,7 @@ export const updateCostCenter: RequestHandler = async (req, res, next) => {
 
 export const listCostCenterRates: RequestHandler = async (req, res, next) => {
   try {
-    res.json(await listCostCenterRatesSVC(req.params.cfId));
+    res.json(await listCostCenterRatesSVC(requiredRouteParam(req, "cfId")));
   } catch (error) {
     next(error);
   }
@@ -172,7 +185,7 @@ export const addCostCenterRate: RequestHandler = async (req, res, next) => {
   try {
     const audit = buildMethodesAuditContext(req);
     const body = addCostCenterRateSchema.parse(req.body);
-    res.status(201).json(await addCostCenterRateSVC(req.params.cfId, body, audit));
+    res.status(201).json(await addCostCenterRateSVC(requiredRouteParam(req, "cfId"), body, audit));
   } catch (error) {
     next(error);
   }
@@ -218,7 +231,7 @@ export const listMachinesForQualification: RequestHandler = async (req, res, nex
 
 export const getMachineQualification: RequestHandler = async (req, res, next) => {
   try {
-    const out = await getMachineQualificationSVC(req.params.machineId);
+    const out = await getMachineQualificationSVC(requiredRouteParam(req, "machineId"));
     if (!out) throw new HttpError(404, "NOT_FOUND", "Machine introuvable");
     res.json(out);
   } catch (error) {
@@ -230,7 +243,10 @@ export const getMachineQualification: RequestHandler = async (req, res, next) =>
 export const previewMachineQualification: RequestHandler = async (req, res, next) => {
   try {
     const query = validatedQuery<ReturnType<(typeof previewMachineQualificationQuerySchema)["parse"]>>(req);
-    const out = await previewMachineQualificationSVC(req.params.machineId, query.machine_family_code ?? null);
+    const out = await previewMachineQualificationSVC(
+      requiredRouteParam(req, "machineId"),
+      query.machine_family_code ?? null
+    );
     if (!out) throw new HttpError(404, "NOT_FOUND", "Machine introuvable");
     res.json(out);
   } catch (error) {
@@ -243,7 +259,7 @@ export const qualifyMachine: RequestHandler = async (req, res, next) => {
     const audit = buildMethodesAuditContext(req);
     const body = qualifyMachineSchema.parse(req.body);
     const out = await qualifyMachineSVC(
-      req.params.machineId,
+      requiredRouteParam(req, "machineId"),
       {
         machine_family_code: body.machine_family_code,
         cf_id: body.cf_id,
