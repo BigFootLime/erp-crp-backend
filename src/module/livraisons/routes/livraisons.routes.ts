@@ -1,4 +1,5 @@
 import { Router, type RequestHandler } from "express"
+import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import multer from "multer"
 
 import { authenticateToken } from "../../auth/middlewares/auth.middleware"
@@ -54,7 +55,10 @@ router.use(authenticateToken)
 
 const requireLivraisonCapability = (capability: LivraisonCapability): RequestHandler =>
   (req, _res, next) => {
-    if (!roleHasLivraisonCapability(req.user?.role, capability)) {
+    if (
+      !requestHasGrantedAccountModuleAccess(req) &&
+      !roleHasLivraisonCapability(req.user?.role, capability)
+    ) {
       next(
         new HttpError(
           403,

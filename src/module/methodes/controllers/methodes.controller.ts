@@ -3,7 +3,11 @@
 import type { Request, RequestHandler } from "express";
 
 import { HttpError } from "../../../utils/httpError";
-import { methodesCapabilitiesFor } from "../domain/methodes-policy";
+import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
+import {
+  METHODES_CAPABILITIES,
+  methodesCapabilitiesFor,
+} from "../domain/methodes-policy";
 import {
   addCostCenterRateSVC,
   createCostCenterSVC,
@@ -80,6 +84,14 @@ export function requiredRouteParam(req: Request, name: string): string {
 export const readMethodesCapabilities: RequestHandler = (req, res, next) => {
   try {
     if (!req.user) throw new HttpError(401, "UNAUTHORIZED", "Authentification requise.");
+    if (requestHasGrantedAccountModuleAccess(req)) {
+      res.json({
+        capabilities: Object.fromEntries(
+          METHODES_CAPABILITIES.map((capability) => [capability, true])
+        ),
+      });
+      return;
+    }
     res.json({ capabilities: methodesCapabilitiesFor(req.user.role) });
   } catch (error) {
     next(error);

@@ -7,6 +7,7 @@
 import type { RequestHandler } from "express";
 
 import { HttpError } from "../../../utils/httpError";
+import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import { roleHasGedCapability, type GedCapability } from "../domain/ged-policy";
 
 export function requireGedCapability(capability: GedCapability): RequestHandler {
@@ -15,7 +16,10 @@ export function requireGedCapability(capability: GedCapability): RequestHandler 
       next(new HttpError(401, "UNAUTHORIZED", "Authentification requise."));
       return;
     }
-    if (!roleHasGedCapability(req.user.role, capability)) {
+    if (
+      !requestHasGrantedAccountModuleAccess(req) &&
+      !roleHasGedCapability(req.user.role, capability)
+    ) {
       next(
         new HttpError(403, "GED_CAPABILITY_REQUIRED", `La capacité GED '${capability}' est requise.`)
       );

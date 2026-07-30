@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { Request } from "express";
 
 export type AccountModuleAccessContext = {
   userId: number | null;
@@ -8,18 +9,24 @@ export type AccountModuleAccessContext = {
 
 const accountModuleAccessStorage = new AsyncLocalStorage<AccountModuleAccessContext>();
 
+declare global {
+  namespace Express {
+    interface Request {
+      accountModuleAccess?: AccountModuleAccessContext;
+    }
+  }
+}
+
 /**
  * Installe le contexte dès l'entrée dans le routeur v1. La décision est
  * complétée ensuite par le gate. Ce cycle de vie englobe toute la chaîne
  * Express, y compris les routeurs imbriqués et leurs middlewares asynchrones.
  */
 export function runWithAccountModuleAccessScope(callback: () => void): void {
-  accountModuleAccessStorage.enterWith({
-    userId: null,
-    moduleKey: null,
-    granted: false,
-  });
-  callback();
+  accountModuleAccessStorage.run(
+    { userId: null, moduleKey: null, granted: false },
+    callback
+  );
 }
 
 /**
@@ -42,8 +49,20 @@ export function runWithAccountModuleAccess(
     callback();
     return;
   }
-  accountModuleAccessStorage.enterWith({ ...context, granted: true });
-  callback();
+  accountModuleAccessStorage.run({ ...context, granted: true }, callback);
+}
+
+export function grantAccountModuleAccessToRequest(
+  req: Request,
+  context: Pick<AccountModuleAccessContext, "userId" | "moduleKey">,
+  callback: () => void
+): void {
+  req.accountModuleAccess = { ...context, granted: true };
+  runWithAccountModuleAccess(context, callback);
+}
+
+export function requestHasGrantedAccountModuleAccess(req: Request): boolean {
+  return req.accountModuleAccess?.granted === true;
 }
 
 export function hasGrantedAccountModuleAccess(): boolean {

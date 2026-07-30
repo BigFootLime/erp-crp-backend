@@ -1,7 +1,10 @@
 import { Request, Response, NextFunction, RequestHandler } from "express";
 import jwt from "jsonwebtoken";
 import { stripQueryFromUrl } from "../../../utils/logPath";
-import { hasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
+import {
+  hasGrantedAccountModuleAccess,
+  requestHasGrantedAccountModuleAccess,
+} from "../../access-control/context/account-module-access.context";
 import {
   effectiveRoleHasAny,
   hasAnyAssignedRole,
@@ -84,7 +87,10 @@ export const authorizeRole = (...roles: string[]) => {
       return;
     }
 
-    if (hasGrantedAccountModuleAccess()) {
+    if (
+      requestHasGrantedAccountModuleAccess(req) ||
+      hasGrantedAccountModuleAccess()
+    ) {
       next();
       return;
     }
