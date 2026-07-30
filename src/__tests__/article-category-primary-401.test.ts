@@ -118,6 +118,13 @@ describe("#401 catégorie primaire Article", () => {
     }).success).toBe(false);
   });
 
+  it("accepte une PF sans article_matiere mais refuse explicitement article_matiere=null", () => {
+    expect(createArticleSchema.safeParse({ body: validCases[0].body }).success).toBe(true);
+    expect(createArticleSchema.safeParse({
+      body: { ...validCases[0].body, article_matiere: null },
+    }).success).toBe(false);
+  });
+
   it("interdit les détails matière hors matière, y compris lors d'une mise à jour explicitement catégorisée", () => {
     expect(createArticleSchema.safeParse({
       body: { ...validCases[3].body, article_matiere: {} },
