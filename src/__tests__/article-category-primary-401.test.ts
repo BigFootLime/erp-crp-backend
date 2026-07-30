@@ -151,7 +151,9 @@ describe("#401 catégorie primaire Article", () => {
     });
 
     expect(queries.some((sql) => sql.includes("DELETE FROM public.articles_matiere"))).toBe(false);
-    const materialUpsert = queries.find((sql) => sql.includes("INSERT INTO public.articles_matiere"));
+    const materialUpsert = queries.find((sql) =>
+      /INSERT INTO public\.articles_matiere\s*\(/.test(sql)
+    );
     const materialUpsertText = materialUpsert ?? "";
     expect(materialUpsertText).toContain("SET family_code = EXCLUDED.family_code");
     expect(materialUpsertText).not.toContain("longueur_mm = EXCLUDED.longueur_mm");
