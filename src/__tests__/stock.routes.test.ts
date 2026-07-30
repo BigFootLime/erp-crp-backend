@@ -157,7 +157,7 @@ describe("/api/v1/stock", () => {
           plan_index: 1,
           status: "VALIDE",
           projet_id: null,
-          code: "ART-FAB-001-PT001-A",
+          code: "ART-FAB-001-PT-001-A",
           designation: "Pièce stockée",
           article_type: "PIECE_TECHNIQUE",
           article_category: "fabrique",
@@ -201,7 +201,7 @@ describe("/api/v1/stock", () => {
     expect(res.body).toMatchObject({ article_category: "fabrique", family_code: "PT", stock_managed: true });
     expect(
       mocks.clientQuery.mock.calls.some((call) =>
-        Array.isArray(call[1]) && call[1].includes("ART-FAB-001-PT001-A")
+        Array.isArray(call[1]) && call[1].includes("ART-FAB-001-PT-001-A")
       )
     ).toBe(true);
     expect(
@@ -262,6 +262,86 @@ describe("/api/v1/stock", () => {
     expect(
       mocks.clientQuery.mock.calls.some((call) =>
         String(call[0]).includes("UPDATE public.articles")
+      )
+    ).toBe(false);
+  });
+
+  it("PATCH /api/v1/stock/articles/:id preserves the fabricated code without rereading the technical piece", async () => {
+    const articleId = "11111111-1111-1111-1111-111111111111";
+    const pieceTechniqueId = "22222222-2222-2222-2222-222222222222";
+    const immutableCode = "ART-FAB-001-170-25464-001-A";
+
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const q = String(sql);
+      if (q.includes("FROM public.pieces_techniques pt") && q.includes("LEFT JOIN LATERAL")) {
+        throw new Error("A normal fabricated-article PATCH must not recalculate its immutable code");
+      }
+      if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
+      if (q.includes("FROM public.articles") && q.includes("FOR UPDATE")) {
+        return {
+          rows: [{
+            id: articleId,
+            code: immutableCode,
+            designation: "Pièce fabriquée",
+            article_type: "PIECE_TECHNIQUE",
+            article_category: "fabrique",
+            article_categories: ["fabrique"],
+            root_article_id: articleId,
+            version_number: 1,
+            plan_index: 1,
+            status: "VALIDE",
+            projet_id: null,
+            family_code: "PT",
+            piece_technique_id: pieceTechniqueId,
+            stock_managed: true,
+            lot_tracking: false,
+            row_version: 3,
+            designation_secondary: null,
+            is_sold: true,
+          }],
+        };
+      }
+      if (q.includes("SELECT 1::int AS ok FROM public.pieces_techniques")) {
+        return { rows: [{ ok: 1 }] };
+      }
+      if (q.includes("UPDATE public.articles")) {
+        return { rows: [{ id: articleId }] };
+      }
+      return { rows: [] };
+    });
+
+    mocks.poolQuery.mockResolvedValue({
+      rows: [{
+        id: articleId,
+        code: immutableCode,
+        designation: "Pièce fabriquée",
+        article_type: "PIECE_TECHNIQUE",
+        article_category: "fabrique",
+        article_categories: ["fabrique"],
+        family_code: "PT",
+        stock_managed: true,
+        piece_technique_id: pieceTechniqueId,
+        lot_tracking: false,
+        is_active: true,
+        notes: "Contrôle périodique",
+        row_version: 4,
+      }],
+    });
+
+    const res = await request(app)
+      .patch(`/api/v1/stock/articles/${articleId}`)
+      .set("Authorization", "Bearer fake")
+      .send({
+        expected_row_version: 3,
+        notes: "Contrôle périodique",
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.code).toBe(immutableCode);
+    expect(
+      mocks.clientQuery.mock.calls.some((call) =>
+        String(call[0]).includes("FROM public.pieces_techniques pt") &&
+        String(call[0]).includes("LEFT JOIN LATERAL")
       )
     ).toBe(false);
   });

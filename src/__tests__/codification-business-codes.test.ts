@@ -28,7 +28,15 @@ describe("Codification métier centralisée", () => {
       clientCode: "1",
       planReference: "1702595 0000",
       indiceExterne: "c-1",
-    })).toBe("001-17025950000-C1");
+    })).toBe("001-1702595-0000-C1");
+  });
+
+  it("conserve les groupes de la référence plan dans le code PT", () => {
+    expect(previewPieceTechniqueCode({
+      clientCode: "CLI-001",
+      planReference: "170 25464 001",
+      indiceExterne: "A",
+    })).toBe("001-170-25464-001-A");
   });
 
   it("réserve la séquence article dans PostgreSQL et ne reçoit pas le code final du client", async () => {
@@ -56,7 +64,7 @@ describe("Codification métier centralisée", () => {
     };
 
     await expect(generateFabricatedArticleBusinessCode(tx as never, "11111111-1111-4111-8111-111111111111"))
-      .resolves.toBe("ART-FAB-001-17025950000-A1");
+      .resolves.toBe("ART-FAB-001-1702595-0000-A1");
     expect(calls[0]?.sql).toContain("pv.statut = 'APPLICABLE'");
     expect(calls[0]?.values).toEqual(["11111111-1111-4111-8111-111111111111"]);
   });
@@ -75,7 +83,7 @@ describe("Codification métier centralisée", () => {
     };
 
     await expect(generateFabricatedArticleBusinessCode(tx as never, "22222222-2222-4222-8222-222222222222"))
-      .resolves.toBe("ART-FAB-002-PLAN42-B-V3");
+      .resolves.toBe("ART-FAB-002-PLAN-42-B-V3");
   });
 
   it("rejects a fabricated article when its technical piece has no client code", async () => {
@@ -151,9 +159,12 @@ describe("Codification métier centralisée", () => {
 
   it("expose les formats canoniques tout en gardant les références historiques lisibles", () => {
     expect(isValidCode("pieceTechnique", "001-17025950000-C")).toBe(true);
+    expect(isValidCode("pieceTechnique", "001-170-25464-001-C")).toBe(true);
     expect(isValidCode("article", "ART-USI-000042")).toBe(true);
     expect(isValidCode("article", "ART-FAB-001-17025950000-A")).toBe(true);
+    expect(isValidCode("article", "ART-FAB-001-170-25464-001-A")).toBe(true);
     expect(isValidCode("article", "ART-FAB-001-17025950000-A-V2")).toBe(true);
+    expect(isValidCode("article", "ART-FAB-001-170-25464-001-A-V2")).toBe(true);
     expect(isValidCode("article", "ART-FAB-001-17025950000-A-V10")).toBe(true);
     expect(isValidCode("article", "ART-FAB-001-17025950000-A-V1")).toBe(false);
     expect(isValidCode("commande", "CMD-2026-0007")).toBe(true);

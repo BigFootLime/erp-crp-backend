@@ -594,6 +594,7 @@ async function normalizeArticleState(args: {
   code: string;
   designation: string;
   client: Pick<PoolClient, "query">;
+  preserve_existing_code?: boolean;
 }) {
   const categoryFromType = (() => {
     const articleType = typeof args.article_type === "string" ? args.article_type.trim().toUpperCase() : "";
@@ -636,13 +637,15 @@ async function normalizeArticleState(args: {
     await ensureProjetAffaireExists(args.client, projet_id);
   }
 
-  const code = await resolveArticleCode(args.client, {
-    code: args.code,
-    designation: args.designation,
-    category: article_category,
-    family_code,
-    piece_technique_id,
-  });
+  const code = args.preserve_existing_code
+    ? args.code
+    : await resolveArticleCode(args.client, {
+        code: args.code,
+        designation: args.designation,
+        category: article_category,
+        family_code,
+        piece_technique_id,
+      });
 
   return {
     article_type: article_type as "PIECE_TECHNIQUE" | "PURCHASED",
@@ -3168,6 +3171,9 @@ export async function repoUpdateArticle(
       code: current.code ?? "",
       designation: patch.designation ?? current.designation,
       client,
+      // Article business codes are immutable snapshots. A normal PATCH must
+      // not depend on the current state of the linked technical piece.
+      preserve_existing_code: true,
     });
 
     if (patch.article_matiere && normalized.article_category !== "matiere") {

@@ -5,6 +5,7 @@ import { HttpError } from "../../utils/httpError";
 type DbQueryer = Pick<PoolClient, "query">;
 
 const ASCII_SEGMENT = /[^A-Z0-9]+/g;
+const ASCII_PLAN_SEPARATOR = /[^A-Z0-9]+/g;
 
 function pad(n: number, width: number): string {
   return String(n).padStart(width, "0");
@@ -25,6 +26,25 @@ function normalizeSegment(value: string, field: string): string {
 
   if (!normalized) {
     throw new HttpError(400, "INVALID_CODE_SEGMENT", `${field} is required to build the business code.`);
+  }
+  return normalized;
+}
+
+/**
+ * Technical plan references often contain meaningful groups separated by
+ * spaces, slashes or dashes (for example `170 25464 001`). Keep those groups
+ * readable in business codes while normalising every separator to one dash.
+ */
+function normalizePlanReference(value: string): string {
+  const normalized = value
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toUpperCase()
+    .replace(ASCII_PLAN_SEPARATOR, "-")
+    .replace(/^-+|-+$/g, "");
+
+  if (!normalized) {
+    throw new HttpError(400, "INVALID_CODE_SEGMENT", "Plan reference is required to build the business code.");
   }
   return normalized;
 }
@@ -69,7 +89,7 @@ export function previewPieceTechniqueCode(input: {
 }): string {
   return [
     normalizeClientSegment(input.clientCode),
-    normalizeSegment(input.planReference, "Plan reference"),
+    normalizePlanReference(input.planReference),
     normalizeSegment(input.indiceExterne, "External index"),
   ].join("-");
 }
@@ -169,7 +189,7 @@ export async function generateFabricatedArticleBusinessCode(
     "ART",
     "FAB",
     normalizeClientSegment(source.client_code),
-    normalizeSegment(source.plan_reference, "Plan reference"),
+    normalizePlanReference(source.plan_reference),
     normalizeSegment(source.indice, "External index"),
   ];
   const version = Number(source.version_interne);
