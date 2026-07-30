@@ -36,9 +36,12 @@ const FORCE_OVERLAP_ROLES = new Set([
 ]);
 
 export function roleHasPlanningAccess(role: string | null | undefined): boolean {
+  if (hasGrantedAccountModuleAccess()) return true;
   return effectiveRoleParts(role).some((part) => PLANNING_ACCESS_ROLES.has(normalizeRole(part)));
 }
 
 export function roleCanForcePlanningOverlap(role: string | null | undefined): boolean {
+  if (hasGrantedAccountModuleAccess()) return true;
   return effectiveRoleParts(role).some((part) => FORCE_OVERLAP_ROLES.has(normalizeRole(part)));
 }
+import { hasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";

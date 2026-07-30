@@ -1,4 +1,5 @@
 import { HttpError } from "../../../utils/httpError";
+import { hasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import {
   repoCreateAdjustment,
   repoDecideAdjustment,
@@ -28,6 +29,7 @@ export type Actor = { id: number; role: string };
 
 // Miroir de isHrPrivileged du contrôleur T2 (rôle RH/Direction/Admin). Pur ⇒ testable directement.
 export function isHrPrivileged(role: string): boolean {
+  if (hasGrantedAccountModuleAccess()) return true;
   const r = role.toLowerCase();
   return r.includes("rh") || r.includes("directeur") || r.includes("direction") || r.includes("administrateur");
 }

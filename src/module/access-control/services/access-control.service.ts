@@ -39,13 +39,14 @@ export function invalidateAccessCache(userId?: number): void {
 function decide(params: {
   isSuperadmin: boolean;
   isActive: boolean;
-  enabledByDefault: boolean;
+  isProtected: boolean;
   override: ModuleAccessOverride | null;
 }): { allowed: boolean; source: ModuleAccessSource } {
   if (params.isSuperadmin) return { allowed: true, source: "SUPERADMIN" };
+  if (params.isProtected) return { allowed: true, source: "DEFAULT" };
   if (!params.isActive) return { allowed: false, source: "DEFAULT" };
-  if (params.override) return { allowed: params.override === "GRANTED", source: "OVERRIDE" };
-  return { allowed: params.enabledByDefault, source: "DEFAULT" };
+  if (params.override === "DENIED") return { allowed: false, source: "OVERRIDE" };
+  return { allowed: true, source: params.override === "GRANTED" ? "OVERRIDE" : "DEFAULT" };
 }
 
 /**
@@ -66,7 +67,7 @@ export async function resolveAccessProfile(userId: number): Promise<ResolvedAcce
     const { allowed, source } = decide({
       isSuperadmin,
       isActive: row.is_active !== false,
-      enabledByDefault: row.enabled_by_default !== false,
+      isProtected: row.is_protected === true,
       override: row.access,
     });
     modules.push({
@@ -122,7 +123,7 @@ export async function buildOverview(tx?: DbQueryer): Promise<AccessOverview> {
       const { allowed, source } = decide({
         isSuperadmin: user.is_superadmin,
         isActive: module.is_active,
-        enabledByDefault: module.enabled_by_default,
+        isProtected: module.is_protected,
         override,
       });
       matrix.push({ user_id: user.id, module_key: module.module_key, access: override, effective: allowed, source });
@@ -213,6 +214,13 @@ export async function setModuleDefault(params: {
   enabled: boolean;
   audit: AccessAuditContext;
 }): Promise<AccessOverview> {
+  if (!params.enabled) {
+    throw new HttpError(
+      409,
+      "ACCOUNT_ONLY_ACCESS_POLICY",
+      "Le défaut global est toujours ouvert. Restreignez un compte sur un module."
+    );
+  }
   const overview = await repo.withTransaction(async (tx) => {
     const module = await loadModuleOrThrow(tx, params.moduleKey);
     if (module.is_protected && !params.enabled) {
@@ -257,7 +265,10 @@ async function applyUserModuleDecision(
     targetIsSuperadmin: boolean;
   }
 ): Promise<{ previous: ModuleAccessOverride | null; next: ModuleAccessDecision } | null> {
-  if (params.decision === "DENIED") {
+  const decision: ModuleAccessDecision =
+    params.decision === "GRANTED" ? "INHERIT" : params.decision;
+
+  if (decision === "DENIED") {
     if (params.module.is_protected) {
       throw new HttpError(409, "MODULE_PROTECTED", "Ce module ne peut pas être restreint.");
     }
@@ -267,18 +278,18 @@ async function applyUserModuleDecision(
   }
 
   const previous = await repo.repoGetUserModuleAccess(params.userId, params.module.module_key, tx);
-  if (params.decision === "INHERIT") {
+  if (decision === "INHERIT") {
     if (previous === null) return null;
     await repo.repoDeleteUserModuleAccess(tx, {
       userId: params.userId,
       moduleKey: params.module.module_key,
     });
   } else {
-    if (previous === params.decision) return null;
+    if (previous === decision) return null;
     await repo.repoUpsertUserModuleAccess(tx, {
       userId: params.userId,
       moduleKey: params.module.module_key,
-      access: params.decision,
+      access: decision,
       updatedBy: params.actorUserId,
     });
   }
@@ -286,13 +297,13 @@ async function applyUserModuleDecision(
   await repo.repoInsertAccessEvent(tx, {
     userId: params.userId,
     moduleKey: params.module.module_key,
-    eventType: params.decision === "INHERIT" ? "INHERITED" : params.decision,
+    eventType: decision === "INHERIT" ? "INHERITED" : decision,
     previousState: previous ?? "INHERIT",
-    nextState: params.decision,
+    nextState: decision,
     actorUserId: params.actorUserId,
   });
 
-  return { previous, next: params.decision };
+  return { previous, next: decision };
 }
 
 async function loadTargetUser(tx: DbQueryer, userId: number) {

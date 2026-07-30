@@ -1,6 +1,7 @@
 import { Router, type RequestHandler } from "express";
 import multer from "multer";
 
+import { hasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
@@ -52,6 +53,10 @@ function isQualityRole(role: string | undefined): boolean {
 }
 
 const requireQualityOrAdmin: RequestHandler = (req, _res, next) => {
+  if (hasGrantedAccountModuleAccess()) {
+    next();
+    return;
+  }
   const role = req.user?.role;
   if (!isAdminRole(role) && !isQualityRole(role)) {
     next(new HttpError(403, "FORBIDDEN", "Quality role required"));

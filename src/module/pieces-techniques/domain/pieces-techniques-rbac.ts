@@ -1,4 +1,5 @@
 import { effectiveRoleHasAny } from "../../auth/domain/roles";
+import { hasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 
 /**
  * Releasing a technical definition is distinct from deleting one.
@@ -17,5 +18,6 @@ export const PIECE_TECHNIQUE_VERSION_APPROVAL_ROLES = [
 export function canApprovePieceTechniqueVersion(
   role: string | null | undefined
 ): boolean {
+  if (hasGrantedAccountModuleAccess()) return true;
   return effectiveRoleHasAny(role, PIECE_TECHNIQUE_VERSION_APPROVAL_ROLES);
 }

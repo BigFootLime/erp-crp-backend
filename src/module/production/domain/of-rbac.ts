@@ -96,6 +96,7 @@ function foldRole(role: string): string {
 }
 
 export function roleHasOfCapability(role: string | null | undefined, capability: OfCapability): boolean {
+  if (hasGrantedAccountModuleAccess()) return true;
   const normalized = foldRole(role ?? "");
   if (!normalized) return false;
   return NEEDLES[capability].some((needle) => normalized.includes(foldRole(needle)));
@@ -118,3 +119,4 @@ export function capabilityForOfTransition(_from: OfStatut, to: OfStatut): OfCapa
       return "edit_prelaunch";
   }
 }
+import { hasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";

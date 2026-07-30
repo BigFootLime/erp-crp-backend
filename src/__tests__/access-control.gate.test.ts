@@ -139,11 +139,11 @@ describe("Gate d'accès module — passages sans interrogation de la base", () =
     expect(repo.repoResolveAccessProfile).not.toHaveBeenCalled();
   });
 
-  it("laisse passer le module protégé sans résoudre aucun profil", async () => {
+  it("laisse passer le module protégé après résolution du compte", async () => {
     const { res, next } = await run("/admin/users");
     expect(next).toHaveBeenCalledOnce();
     expect(res.statusCode).toBe(0);
-    expect(repo.repoResolveAccessProfile).not.toHaveBeenCalled();
+    expect(repo.repoResolveAccessProfile).toHaveBeenCalledOnce();
   });
 
   it("laisse passer quand aucun utilisateur n'est attaché à la requête", async () => {
@@ -177,12 +177,13 @@ describe("Gate d'accès module — décisions", () => {
     expect(JSON.stringify(res.body)).not.toMatch(/module|superadmin|catalogue|interdit au module/i);
   });
 
-  it("défaut catalogue désactivé ⇒ 403 sans override", async () => {
+  it("un ancien défaut catalogue désactivé n'a plus aucun effet", async () => {
     repo.repoResolveAccessProfile.mockResolvedValue([
       profileRow({ module_key: "clients", enabled_by_default: false }),
     ]);
-    const { res } = await run("/clients/1");
-    expect(res.statusCode).toBe(403);
+    const { res, next } = await run("/clients/1");
+    expect(next).toHaveBeenCalledOnce();
+    expect(res.statusCode).toBe(0);
   });
 
   it("module désactivé au catalogue ⇒ 403", async () => {

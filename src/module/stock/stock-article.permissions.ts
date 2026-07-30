@@ -1,4 +1,5 @@
 import { effectiveRoleHasAny } from "../auth/domain/roles";
+import { hasGrantedAccountModuleAccess } from "../access-control/context/account-module-access.context";
 
 export const ARTICLE_WRITE_ROLES = [
   "Directeur",
@@ -41,5 +42,6 @@ export const ARTICLE_COST_ROLES = [
 ] as const;
 
 export function canViewArticleCosts(role: string | null | undefined): boolean {
+  if (hasGrantedAccountModuleAccess()) return true;
   return effectiveRoleHasAny(role, ARTICLE_COST_ROLES);
 }
