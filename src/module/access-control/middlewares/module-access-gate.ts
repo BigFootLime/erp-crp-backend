@@ -11,6 +11,17 @@ function isGateDisabled(): boolean {
   return process.env[KILL_SWITCH_ENV] === "1";
 }
 
+function normalizeUserId(value: unknown): number | null {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) {
+    return value;
+  }
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+  }
+  return null;
+}
+
 let killSwitchWarned = false;
 
 function warnKillSwitchOnce(): void {
@@ -54,26 +65,28 @@ function warnMissingInfrastructure(reason: string, moduleKey: string | null): vo
  * toujours ouverts et non restreignables.
  */
 export function moduleAccessGate(req: Request, res: Response, next: NextFunction): void {
-  if (isGateDisabled()) {
-    warnKillSwitchOnce();
-    next();
-    return;
-  }
-
   const moduleKey = resolveModuleKeyForPath(req.path);
   if (!moduleKey) {
     next();
     return;
   }
 
-  const user = req.user;
-  if (!user || typeof user.id !== "number") {
+  const userId = normalizeUserId(req.user?.id);
+  if (userId === null) {
     // Le socle authenticateToken a déjà statué : rien à ajouter ici.
     next();
     return;
   }
 
-  resolveAccessProfile(user.id)
+  if (isGateDisabled()) {
+    warnKillSwitchOnce();
+    // Le kill-switch désactive seulement les refus nominatifs. Il ne doit
+    // jamais réactiver les anciens refus par rôle dans la suite de la requête.
+    runWithAccountModuleAccess({ userId, moduleKey }, next);
+    return;
+  }
+
+  resolveAccessProfile(userId)
     .then((profile) => {
       if (profile === null) {
         warnMissingInfrastructure("access_tables_missing", moduleKey);
@@ -81,7 +94,7 @@ export function moduleAccessGate(req: Request, res: Response, next: NextFunction
         return;
       }
       if (profile.is_superadmin) {
-        runWithAccountModuleAccess({ userId: user.id, moduleKey }, next);
+        runWithAccountModuleAccess({ userId, moduleKey }, next);
         return;
       }
 
@@ -94,7 +107,7 @@ export function moduleAccessGate(req: Request, res: Response, next: NextFunction
         return;
       }
       if (decision.allowed) {
-        runWithAccountModuleAccess({ userId: user.id, moduleKey }, next);
+        runWithAccountModuleAccess({ userId, moduleKey }, next);
         return;
       }
 
@@ -103,7 +116,7 @@ export function moduleAccessGate(req: Request, res: Response, next: NextFunction
           type: "auth_forbidden",
           module: moduleKey,
           reason: "module_access_denied",
-          userId: user.id,
+          userId,
           requestId: req.requestId ?? null,
           method: req.method,
           path: stripQueryFromUrl(req.originalUrl),
