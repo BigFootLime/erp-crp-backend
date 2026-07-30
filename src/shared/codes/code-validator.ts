@@ -20,9 +20,9 @@ export const CODE_FORMATS = {
     hintText: "Format attendu: AFF-2026-0001",
   },
   pieceTechnique: {
-    regex: /^(?:[A-Z0-9]+-[A-Z0-9]+-[A-Z0-9]+|P-\d{3,})$/,
-    example: "001-17025950000-C",
-    hintText: "Format attendu: 001-17025950000-C",
+    regex: /^(?:[A-Z0-9]+(?:-[A-Z0-9]+){2,}|P-\d{3,})$/,
+    example: "001-170-25464-001-C",
+    hintText: "Format attendu: 001-170-25464-001-C",
   },
   of: {
     regex: /^(OF-\d{4}-\d{6}|OF-\d{4}-\d{5}|OF-\d+)$/,
@@ -50,9 +50,9 @@ export const CODE_FORMATS = {
     hintText: "Format attendu: BCF-2026-0001",
   },
   article: {
-    regex: /^(ART-[A-Z0-9]+-\d{6}|ART-\d{4})$/,
-    example: "ART-USI-000042",
-    hintText: "Format attendu: ART-USI-000042",
+    regex: /^(ART-[A-Z0-9]+-\d{6}|ART-FAB-(?!.*-V1$)[A-Z0-9]+(?:-[A-Z0-9]+){2,}(?:-V(?:[2-9]|[1-9]\d+))?|ART-\d{4})$/,
+    example: "ART-FAB-001-170-25464-001-A",
+    hintText: "Formats attendus : ART-USI-000042 ou ART-FAB-001-170-25464-001-A[-Vn]",
   },
   // #210 — Finition de surface : code alloué par le serveur, puis immuable.
   surfaceFinish: {

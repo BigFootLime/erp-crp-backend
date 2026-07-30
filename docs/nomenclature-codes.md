@@ -29,8 +29,9 @@ Le frontend peut afficher `hintText` + `example` et valider le champ cote client
 Les formats sont declares dans `src/shared/codes/code-validator.ts`.
 
 - Client: `CLI-001`
-- Pièce technique: `001-17025950000-C` (client, référence plan, indice externe)
-- Article: `ART-USI-000042` (séquence de six chiffres, famille explicite)
+- Pièce technique: `001-170-25464-001-C` (client, groupes de la référence plan, indice externe)
+- Article fabriqué: `ART-FAB-001-170-25464-001-C[-Vn]` (snapshot de la PT ; suffixe à partir de V2)
+- Article acheté: `ART-USI-000042` (séquence de six chiffres, famille explicite)
 - Devis: `DEV-2026-0001`
 - Commande client: `CMD-2026-0001`
 - Affaire: `AFF-2026-0001`
@@ -74,7 +75,8 @@ Points importants:
   référence historique de l'agrégat. Le code de travail d'une version est
   calculé uniquement à partir de `client + plan + indice externe` et exposé
   dans `piece_technique_versions.code_metier`; la recherche pièce couvre aussi
-  ce code de version.
+  ce code de version. Les séparateurs présents dans la référence plan sont
+  normalisés en tirets afin de conserver ses groupes lisibles.
 - BL/RF/NC/CAP reutilisent les generateurs/sequence existants en base (formats deja en prod).
 
 ## Smoke

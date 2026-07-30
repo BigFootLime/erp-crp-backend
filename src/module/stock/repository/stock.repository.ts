@@ -5,7 +5,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import db from "../../../config/database";
-import { generateArticleBusinessCode, generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
+import {
+  generateArticleBusinessCode,
+  generateFabricatedArticleBusinessCode,
+  generateTransactionalBusinessCode,
+} from "../../../shared/codes/code-generator.service";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
@@ -520,10 +524,6 @@ export function normalizeArticleCategorySelection(
   };
 }
 
-function expectedFabricatedArticleCodeFromPlan(planReference: string, planIndex: number): string {
-  return `${sanitizeCodeToken(planReference, "PLAN")}-P${planIndex}`;
-}
-
 function categoryCodeSegment(category: ArticleCategory): string {
   if (category === "fabrique") return "PLAN";
   if (category === "matiere") return "MP";
@@ -538,38 +538,11 @@ function familyCodeSegment(value: string | null | undefined): string {
   return normalized.slice(0, 3);
 }
 
-async function getPieceTechniqueMetadata(
-  client: Pick<PoolClient, "query">,
-  pieceTechniqueId: string
-): Promise<{ code_piece: string; designation: string; family_code: string | null }> {
-  const res = await client.query<{ code_piece: string; designation: string; family_code: string | null }>(
-    `
-      SELECT
-        pt.code_piece,
-        pt.designation,
-        pf.code AS family_code
-      FROM public.pieces_techniques pt
-      LEFT JOIN public.pieces_families pf ON pf.id = pt.famille_id
-      WHERE pt.id = $1::uuid
-      LIMIT 1
-    `,
-    [pieceTechniqueId]
-  );
-  const row = res.rows[0] ?? null;
-  if (!row) {
-    throw new HttpError(400, "INVALID_PIECE_TECHNIQUE", "Unknown piece_technique_id");
-  }
-  return row;
-}
-
 function buildSuggestedArticleCode(args: {
   category: ArticleCategory;
   family_code: string;
   final_segment: string;
 }): string {
-  if (args.category === "fabrique") {
-    return sanitizeCodeToken(args.final_segment, "PLAN");
-  }
   return `${categoryCodeSegment(args.category)}-${familyCodeSegment(args.family_code)}-${sanitizeCodeToken(args.final_segment, "GEN")}`;
 }
 
@@ -581,34 +554,23 @@ async function resolveArticleCode(
     category: ArticleCategory;
     family_code: string;
     piece_technique_id: string | null;
-    plan_index: number;
   }
 ): Promise<string> {
-  const pieceMeta = args.piece_technique_id ? await getPieceTechniqueMetadata(client, args.piece_technique_id) : null;
-  const finalSegment = args.category === "fabrique"
-    ? sanitizeCodeToken(pieceMeta?.code_piece, "PLAN")
-    : sanitizeCodeToken(args.code || args.designation, "GEN");
+  if (args.category === "fabrique") {
+    if (!args.piece_technique_id) {
+      throw new HttpError(400, "INVALID_ARTICLE", "Fabricated articles require piece_technique_id");
+    }
+    // Client input is deliberately ignored: the server stores an immutable
+    // snapshot of the linked technical-piece identity.
+    return generateFabricatedArticleBusinessCode(client, args.piece_technique_id);
+  }
+
+  const finalSegment = sanitizeCodeToken(args.code || args.designation, "GEN");
   const suggested = buildSuggestedArticleCode({
     category: args.category,
     family_code: args.family_code,
     final_segment: finalSegment,
   });
-
-  if (args.category === "fabrique") {
-    const expected = expectedFabricatedArticleCodeFromPlan(finalSegment, args.plan_index);
-    const provided = args.code.trim();
-    if (!provided) return expected;
-
-    const normalized = normalizeFullArticleCode(provided);
-    if (normalized !== expected) {
-      throw new HttpError(
-        400,
-        "INVALID_FABRICATED_ARTICLE_CODE",
-        `Fabricated article code must match plan reference with index (${expected})`
-      );
-    }
-    return normalized;
-  }
 
   const provided = args.code.trim();
   if (!provided) return suggested;
@@ -632,6 +594,7 @@ async function normalizeArticleState(args: {
   code: string;
   designation: string;
   client: Pick<PoolClient, "query">;
+  preserve_existing_code?: boolean;
 }) {
   const categoryFromType = (() => {
     const articleType = typeof args.article_type === "string" ? args.article_type.trim().toUpperCase() : "";
@@ -674,14 +637,15 @@ async function normalizeArticleState(args: {
     await ensureProjetAffaireExists(args.client, projet_id);
   }
 
-  const code = await resolveArticleCode(args.client, {
-    code: args.code,
-    designation: args.designation,
-    category: article_category,
-    family_code,
-    piece_technique_id,
-    plan_index,
-  });
+  const code = args.preserve_existing_code
+    ? args.code
+    : await resolveArticleCode(args.client, {
+        code: args.code,
+        designation: args.designation,
+        category: article_category,
+        family_code,
+        piece_technique_id,
+      });
 
   return {
     article_type: article_type as "PIECE_TECHNIQUE" | "PURCHASED",
@@ -2921,7 +2885,9 @@ export async function repoCreateArticleTx(
     designation: body.designation,
     client,
   });
-  const generatedCode = await generateArticleBusinessCode(client, normalized.family_code);
+  const generatedCode = normalized.article_category === "fabrique"
+    ? normalized.code
+    : await generateArticleBusinessCode(client, normalized.family_code);
 
   if (normalized.piece_technique_id) {
     await ensurePieceTechniqueExists(client, normalized.piece_technique_id);
@@ -3171,6 +3137,25 @@ export async function repoUpdateArticle(
       });
     }
 
+    const requestedCategory = patch.article_category ?? current.article_category;
+    const requestedPieceTechniqueId =
+      patch.piece_technique_id !== undefined
+        ? patch.piece_technique_id
+        : current.piece_technique_id;
+    const fabricatedIdentityChanged =
+      (current.article_category === "fabrique" || requestedCategory === "fabrique") &&
+      (
+        requestedCategory !== current.article_category ||
+        requestedPieceTechniqueId !== current.piece_technique_id
+      );
+    if (fabricatedIdentityChanged) {
+      throw new HttpError(
+        409,
+        "FABRICATED_ARTICLE_IDENTITY_IMMUTABLE",
+        "La catégorie et la pièce technique liées à un article fabriqué sont immuables. Créez un nouvel article pour une autre identité technique."
+      );
+    }
+
     const normalized = await normalizeArticleState({
       article_type: patch.article_type ?? current.article_type,
       article_category: patch.article_category ?? current.article_category,
@@ -3186,6 +3171,9 @@ export async function repoUpdateArticle(
       code: current.code ?? "",
       designation: patch.designation ?? current.designation,
       client,
+      // Article business codes are immutable snapshots. A normal PATCH must
+      // not depend on the current state of the linked technical piece.
+      preserve_existing_code: true,
     });
 
     if (patch.article_matiere && normalized.article_category !== "matiere") {
