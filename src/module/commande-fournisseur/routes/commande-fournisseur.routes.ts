@@ -1,4 +1,5 @@
 import { Router, type RequestHandler } from "express";
+import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 
 import { HttpError } from "../../../utils/httpError";
 import {
@@ -35,7 +36,10 @@ import {
  */
 function requireCapability(capability: CommandeFournisseurCapability): RequestHandler {
   return (req, _res, next) => {
-    if (!roleHasCommandeFournisseurCapability(req.user?.role, capability)) {
+    if (
+      !requestHasGrantedAccountModuleAccess(req) &&
+      !roleHasCommandeFournisseurCapability(req.user?.role, capability)
+    ) {
       next(new HttpError(403, "FORBIDDEN", "Votre rôle ne permet pas cette action sur les commandes fournisseurs."));
       return;
     }

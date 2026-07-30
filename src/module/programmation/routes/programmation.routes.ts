@@ -1,5 +1,8 @@
 import { Router, type RequestHandler } from "express";
-import { hasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
+import {
+  hasGrantedAccountModuleAccess,
+  requestHasGrantedAccountModuleAccess,
+} from "../../access-control/context/account-module-access.context";
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
 import { HttpError } from "../../../utils/httpError";
 import { healthProgrammations, listProgrammations } from "../controllers/programmation.controller";
@@ -17,7 +20,10 @@ function isProductionRole(role: string | undefined): boolean {
 }
 
 const requireProductionOrAdmin: RequestHandler = (req, _res, next) => {
-  if (hasGrantedAccountModuleAccess()) {
+  if (
+    requestHasGrantedAccountModuleAccess(req) ||
+    hasGrantedAccountModuleAccess()
+  ) {
     next();
     return;
   }

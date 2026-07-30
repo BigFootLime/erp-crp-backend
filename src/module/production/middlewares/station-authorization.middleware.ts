@@ -1,6 +1,7 @@
 import type { RequestHandler, Request, Response } from "express";
 
 import { HttpError } from "../../../utils/httpError";
+import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import {
   evaluateSession,
   roleHasStationCapability,
@@ -273,7 +274,10 @@ export function requireStationCapability(capability: StationCapability): Request
       next(new HttpError(401, "UNAUTHORIZED", "Authentification requise."));
       return;
     }
-    if (!roleHasStationCapability(role, capability)) {
+    if (
+      !requestHasGrantedAccountModuleAccess(req) &&
+      !roleHasStationCapability(role, capability)
+    ) {
       void repoStationAudit({
         event_type: "AUTHORIZATION_DENIED",
         outcome: "DENIED",

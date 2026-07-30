@@ -1,6 +1,7 @@
 import type { RequestHandler } from "express";
 
 import { HttpError } from "../../../utils/httpError";
+import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import { roleHasMethodesCapability, type MethodesCapability } from "../domain/methodes-policy";
 
 /**
@@ -15,7 +16,10 @@ export function requireMethodesCapability(capability: MethodesCapability): Reque
       next(new HttpError(401, "UNAUTHORIZED", "Authentification requise."));
       return;
     }
-    if (!roleHasMethodesCapability(req.user.role, capability)) {
+    if (
+      !requestHasGrantedAccountModuleAccess(req) &&
+      !roleHasMethodesCapability(req.user.role, capability)
+    ) {
       next(new HttpError(403, "METHODES_CAPABILITY_REQUIRED", `La capacité Méthodes '${capability}' est requise.`));
       return;
     }

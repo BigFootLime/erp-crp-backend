@@ -1,7 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 
 import { stripQueryFromUrl } from "../../../utils/logPath";
-import { runWithAccountModuleAccess } from "../context/account-module-access.context";
+import { grantAccountModuleAccessToRequest } from "../context/account-module-access.context";
 import { resolveModuleKeyForPath } from "../domain/module-catalog";
 import { resolveAccessProfile } from "../services/access-control.service";
 
@@ -78,7 +78,7 @@ export function moduleAccessGate(req: Request, res: Response, next: NextFunction
   if (!moduleKey) {
     // Les surfaces partagées authentifiées (utilisateurs, codes,
     // notifications, capabilities…) ne sont pas restrictibles par module.
-    runWithAccountModuleAccess({ userId, moduleKey: "shared" }, next);
+    grantAccountModuleAccessToRequest(req, { userId, moduleKey: "shared" }, next);
     return;
   }
 
@@ -86,7 +86,7 @@ export function moduleAccessGate(req: Request, res: Response, next: NextFunction
     warnKillSwitchOnce();
     // Le kill-switch désactive seulement les refus nominatifs. Il ne doit
     // jamais réactiver les anciens refus par rôle dans la suite de la requête.
-    runWithAccountModuleAccess({ userId, moduleKey }, next);
+    grantAccountModuleAccessToRequest(req, { userId, moduleKey }, next);
     return;
   }
 
@@ -98,7 +98,7 @@ export function moduleAccessGate(req: Request, res: Response, next: NextFunction
         return;
       }
       if (profile.is_superadmin) {
-        runWithAccountModuleAccess({ userId, moduleKey }, next);
+        grantAccountModuleAccessToRequest(req, { userId, moduleKey }, next);
         return;
       }
 
@@ -111,7 +111,7 @@ export function moduleAccessGate(req: Request, res: Response, next: NextFunction
         return;
       }
       if (decision.allowed) {
-        runWithAccountModuleAccess({ userId, moduleKey }, next);
+        grantAccountModuleAccessToRequest(req, { userId, moduleKey }, next);
         return;
       }
 

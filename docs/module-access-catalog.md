@@ -28,6 +28,10 @@ middlewares asynchrones et les services profonds. Les surfaces partagées
 authentifiées qui ne correspondent à aucun module (par exemple les réponses de
 capacités UI) reçoivent également ce contexte ; elles ne recréent jamais une
 autorisation par rôle.
+La décision est aussi inscrite sur l'objet `Request` Express. Les gardes HTTP
+lisent cette preuve en priorité : des appels parallèles du dashboard ne peuvent
+donc ni perdre ni échanger leur autorisation asynchrone. L'AsyncLocalStorage
+reste utilisé par les règles profondes qui ne reçoivent pas la requête.
 L'identifiant du compte est normalisé lorsqu'un ancien jeton JWT le fournit
 sous forme de chaîne numérique, afin que la décision nominative reste
 autoritaire. Le kill-switch d'exploitation désactive uniquement les refus

@@ -1,6 +1,7 @@
 import type { RequestHandler } from "express";
 
 import { HttpError } from "../../../utils/httpError";
+import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import { roleHasQualityCapability, type QualityCapability } from "../domain/quality-policy";
 
 /**
@@ -14,7 +15,10 @@ export function requireQualityCapability(capability: QualityCapability): Request
       next(new HttpError(401, "UNAUTHORIZED", "Authentification requise."));
       return;
     }
-    if (!roleHasQualityCapability(req.user.role, capability)) {
+    if (
+      !requestHasGrantedAccountModuleAccess(req) &&
+      !roleHasQualityCapability(req.user.role, capability)
+    ) {
       next(
         new HttpError(
           403,

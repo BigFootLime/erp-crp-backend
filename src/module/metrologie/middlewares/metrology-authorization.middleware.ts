@@ -1,6 +1,7 @@
 import type { RequestHandler } from "express";
 
 import { HttpError } from "../../../utils/httpError";
+import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import { roleHasMetrologyCapability, type MetrologyCapability } from "../domain/metrology-policy";
 
 /**
@@ -15,7 +16,10 @@ export function requireMetrologyCapability(capability: MetrologyCapability): Req
       next(new HttpError(401, "UNAUTHORIZED", "Authentification requise."));
       return;
     }
-    if (!roleHasMetrologyCapability(req.user.role, capability)) {
+    if (
+      !requestHasGrantedAccountModuleAccess(req) &&
+      !roleHasMetrologyCapability(req.user.role, capability)
+    ) {
       next(
         new HttpError(
           403,

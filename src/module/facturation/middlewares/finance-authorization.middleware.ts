@@ -1,6 +1,7 @@
 import type { RequestHandler } from "express";
 
 import { HttpError } from "../../../utils/httpError";
+import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import {
   roleHasFinanceCapability,
   type FinanceCapability,
@@ -12,7 +13,10 @@ export function requireFinanceCapability(capability: FinanceCapability): Request
       next(new HttpError(401, "UNAUTHORIZED", "Authentification requise."));
       return;
     }
-    if (!roleHasFinanceCapability(req.user.role, capability)) {
+    if (
+      !requestHasGrantedAccountModuleAccess(req) &&
+      !roleHasFinanceCapability(req.user.role, capability)
+    ) {
       next(
         new HttpError(
           403,
