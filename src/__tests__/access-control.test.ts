@@ -162,10 +162,10 @@ beforeEach(() => {
 });
 
 describe("Catalogue de modules #326", () => {
-  it("expose 20 modules aux clés et préfixes uniques, dont un seul protégé", () => {
-    expect(MODULE_CATALOG).toHaveLength(20);
+  it("expose 24 modules aux clés et préfixes uniques, dont un seul protégé", () => {
+    expect(MODULE_CATALOG).toHaveLength(24);
     const keys = MODULE_CATALOG.map((entry) => entry.module_key);
-    expect(new Set(keys).size).toBe(20);
+    expect(new Set(keys).size).toBe(24);
 
     const prefixes = MODULE_CATALOG.flatMap((entry) => entry.api_prefixes);
     expect(new Set(prefixes).size).toBe(prefixes.length);
@@ -182,6 +182,30 @@ describe("Catalogue de modules #326", () => {
     expect(resolveModuleKeyForPath("/commandes-fournisseurs/17")).toBe("commandes-fournisseurs");
     expect(resolveModuleKeyForPath("/piece-technique-versions/9")).toBe("pieces-techniques");
     expect(resolveModuleKeyForPath("/pieces-techniques/9")).toBe("pieces-techniques");
+    expect(resolveModuleKeyForPath("/finitions/9")).toBe("finitions");
+    expect(resolveModuleKeyForPath("/methodes/centres-frais/9")).toBe("methodes-centres-frais");
+    expect(resolveModuleKeyForPath("/methodes/machines/9")).toBe("methodes-parc-machines");
+    expect(resolveModuleKeyForPath("/methodes/familles-machine/9")).toBe("methodes-parc-machines");
+    expect(resolveModuleKeyForPath("/centre-frais/9")).toBe("methodes-centres-frais");
+    expect(resolveModuleKeyForPath("/ged/documents")).toBe("ged");
+  });
+
+  it("rend les nouveaux espaces sélectionnables séparément dans la tour d'accès", () => {
+    const technicalData = MODULE_CATALOG.find((entry) => entry.module_key === "pieces-techniques");
+    const finitions = MODULE_CATALOG.find((entry) => entry.module_key === "finitions");
+    const costCenters = MODULE_CATALOG.find((entry) => entry.module_key === "methodes-centres-frais");
+    const machines = MODULE_CATALOG.find((entry) => entry.module_key === "methodes-parc-machines");
+    const ged = MODULE_CATALOG.find((entry) => entry.module_key === "ged");
+
+    expect(technicalData?.nav_page_keys).toEqual(["pieces-techniques"]);
+    expect(finitions).toMatchObject({ nav_page_keys: ["finitions"], api_prefixes: ["/finitions"] });
+    expect(costCenters).toMatchObject({ nav_page_keys: ["methodes-centres-frais"] });
+    expect(machines).toMatchObject({ nav_page_keys: ["methodes-parc-machines"] });
+    expect(ged).toMatchObject({
+      is_protected: false,
+      api_prefixes: ["/ged"],
+      nav_page_keys: ["ged"],
+    });
   });
 
   it("accepte une URL complète et ignore la query string", () => {
@@ -199,7 +223,6 @@ describe("Catalogue de modules #326", () => {
       "/chat/threads",
       "/users/4",
       "/locks",
-      "/centre-frais",
       "/pieces-families",
       "/environment",
     ]) {
