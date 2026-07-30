@@ -219,6 +219,29 @@ describe("Gate d'accès module — décisions", () => {
     expect(res.statusCode).toBe(403);
   });
 
+  it("la GED est filtrée par son module dédié pour les comptes non superadmin", async () => {
+    repo.repoResolveAccessProfile.mockResolvedValue([
+      profileRow({ module_key: "ged", access: "DENIED" }),
+    ]);
+    const { res, next } = await run("/ged/documents");
+
+    expect(next).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(403);
+    expect(res.body).toEqual({ error: "Accès interdit" });
+  });
+
+  it("applique des décisions distinctes aux nouveaux modules techniques", async () => {
+    repo.repoResolveAccessProfile.mockResolvedValue([
+      profileRow({ module_key: "finitions", access: "DENIED" }),
+      profileRow({ module_key: "methodes-centres-frais" }),
+      profileRow({ module_key: "methodes-parc-machines", access: "DENIED" }),
+    ]);
+
+    expect((await run("/finitions/search")).res.statusCode).toBe(403);
+    expect((await run("/methodes/centres-frais")).next).toHaveBeenCalledOnce();
+    expect((await run("/methodes/machines/parc")).res.statusCode).toBe(403);
+  });
+
   it("résout le profil une seule fois par compte grâce au cache", async () => {
     await run("/clients/1");
     await run("/clients/2");
