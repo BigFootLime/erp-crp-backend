@@ -98,3 +98,17 @@ Validation du 29 juillet 2026 sur `cerp_test` :
 
 La migration de production reste une décision humaine distincte. Le patch n'a
 pas été appliqué à `cerp_prod`.
+
+## Classification primaire et validations conditionnelles (#401)
+
+`articles.article_category` reste la classification primaire explicite et
+autoritaire. `article_categories` décrit les usages métier secondaires mais ne
+peut plus reclasser silencieusement un Article selon un ordre de priorité.
+
+- une PF exige une PT et utilise la famille technique interne `PT` ;
+- une PT est interdite sur les catégories achat, matière et traitement ;
+- `article_matiere` est accepté uniquement pour une matière ;
+- un PATCH matière qui ne renvoie pas `article_matiere` conserve les détails
+  existants au lieu de les effacer ;
+- les contrôles sont répétés côté serveur : le masquage d’un champ frontend ne
+  constitue jamais une validation métier.
