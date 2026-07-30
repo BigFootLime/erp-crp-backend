@@ -22,6 +22,12 @@ d'autorisation :
 Le middleware global porte la décision autorisée dans un contexte asynchrone
 jusqu'aux politiques profondes. L'identité, le rôle descriptif et les données
 d'audit ne sont pas modifiés. Un `DENIED` est refusé avant la route.
+Ce contexte est ouvert dès l'entrée dans `/api/v1`, puis marqué comme accordé
+par le gate : il reste ainsi disponible dans les routeurs imbriqués, les
+middlewares asynchrones et les services profonds. Les surfaces partagées
+authentifiées qui ne correspondent à aucun module (par exemple les réponses de
+capacités UI) reçoivent également ce contexte ; elles ne recréent jamais une
+autorisation par rôle.
 L'identifiant du compte est normalisé lorsqu'un ancien jeton JWT le fournit
 sous forme de chaîne numérique, afin que la décision nominative reste
 autoritaire. Le kill-switch d'exploitation désactive uniquement les refus
