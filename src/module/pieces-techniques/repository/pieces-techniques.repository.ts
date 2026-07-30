@@ -1637,6 +1637,31 @@ async function lookupClientCompanyName(tx: Pick<PoolClient, "query">, clientId: 
   return typeof name === "string" && name.trim().length > 0 ? name.trim() : null;
 }
 
+/**
+ * La contrainte historique `pieces_techniques.famille_id NOT NULL` est conservée.
+ * Une PT créée par le nouveau parcours reçoit néanmoins une famille interne,
+ * stable et non exposée comme un choix métier : `PF` (pièce fabriquée).
+ */
+async function resolveInternalFabricatedFamilyId(tx: Pick<PoolClient, "query">): Promise<string> {
+  const result = await tx.query<{ id: string }>(
+    `SELECT id::text AS id
+       FROM public.pieces_families
+      WHERE upper(btrim(code)) = 'PF'
+      ORDER BY created_at ASC, id ASC
+      LIMIT 1
+      FOR SHARE`
+  );
+  const familyId = result.rows[0]?.id;
+  if (!familyId) {
+    throw new HttpError(
+      503,
+      "PIECE_TECHNIQUE_INTERNAL_FAMILY_MISSING",
+      "La famille interne PF est absente. Appliquez le patch de référentiel avant de créer une pièce technique."
+    );
+  }
+  return familyId;
+}
+
 export async function repoCreatePieceTechnique(
   body: CreatePieceTechniqueBodyDTO & {
     statut: PieceTechniqueStatut;
@@ -1648,6 +1673,9 @@ export async function repoCreatePieceTechnique(
   idempotencyKey?: string | null
 ): Promise<PieceTechnique> {
   const client = await db.connect();
+  // Conserve le hash historique : une clé déjà consommée avant #404 doit
+  // continuer à rejouer la même pièce, même si son ancien payload portait une
+  // famille choisie dans l'interface.
   const requestHash = crypto.createHash("sha256").update(JSON.stringify(body)).digest("hex");
   try {
     await client.query("BEGIN");
@@ -1670,6 +1698,11 @@ export async function repoCreatePieceTechnique(
         return existing;
       }
     }
+
+    // Ne jamais réutiliser une famille envoyée par le navigateur : la famille
+    // d'une PT est un invariant serveur. Cette résolution arrive après le
+    // rejeu d'idempotence pour préserver les créations historiques.
+    const internalFamilyId = await resolveInternalFabricatedFamilyId(client);
 
     const actorUserId = audit.user_id;
     const createdBy = actorUserId;
@@ -1747,7 +1780,7 @@ export async function repoCreatePieceTechnique(
       clientIdForInsert,
       createdBy,
       updatedBy,
-      body.famille_id,
+      internalFamilyId,
       body.name_piece,
       generatedCode,
       body.designation,
@@ -2216,13 +2249,27 @@ export async function repoDeletePieceTechnique(id: string, audit: AuditContext):
       return false;
     }
 
+    const archivedCode = base.code_piece.startsWith("ARCH-") ? base.code_piece : `ARCH-${base.code_piece}`;
+    const collision = await client.query<{ id: string }>(
+      `SELECT id::text AS id
+         FROM pieces_techniques
+        WHERE code_piece = $2
+          AND id <> $1::uuid
+        LIMIT 1
+        FOR KEY SHARE`,
+      [id, archivedCode]
+    );
+    if (collision.rows[0]) {
+      throw new HttpError(409, "ARCHIVE_CODE_CONFLICT", "Le code archivé existe déjà ; la pièce n'a pas été supprimée.");
+    }
+
     const upd = await client.query(
       `
         UPDATE pieces_techniques
-        SET deleted_at = now(), deleted_by = $2, updated_at = now(), updated_by = $2
+        SET code_piece = $3, deleted_at = now(), deleted_by = $2, updated_at = now(), updated_by = $2
         WHERE id = $1::uuid AND deleted_at IS NULL
       `,
-      [id, audit.user_id]
+      [id, audit.user_id, archivedCode]
     );
     if ((upd.rowCount ?? 0) === 0) {
       await client.query("ROLLBACK");
@@ -2235,6 +2282,7 @@ export async function repoDeletePieceTechnique(id: string, audit: AuditContext):
       entity_id: id,
       details: {
         code_piece: base.code_piece,
+        archived_code_piece: archivedCode,
         designation: base.designation,
       },
     });
