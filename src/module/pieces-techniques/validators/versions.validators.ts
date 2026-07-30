@@ -39,7 +39,20 @@ export type UpdateVersionBodyDTO = z.infer<typeof updateVersionSchema>["body"]
 export const versionStatusSchema = z.object({
   body: z.object({
     next_statut: versionStatutSchema,
-    date_application: z.string().min(1).optional().nullable(),
+    // Empêche qu'une valeur d'interface non SQL (ex. datetime ISO) atteigne le
+    // cast `::date` de la transaction de publication et se transforme en 500.
+    date_application: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "Date d'application attendue au format YYYY-MM-DD")
+      .refine(
+        (value) => {
+          const parsed = new Date(`${value}T00:00:00.000Z`)
+          return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value
+        },
+        "Date d'application invalide"
+      )
+      .optional()
+      .nullable(),
     commentaire_validation: z.string().max(2000).optional().nullable(),
     expected_updated_at: z.string().min(1).optional(),
   }),

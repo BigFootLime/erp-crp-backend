@@ -14,6 +14,7 @@ export type SurfaceFinishFamily = {
   code: string;
   label: string;
   description: string | null;
+  commentaire_template: string | null;
   sort_order: number;
   is_active: boolean;
 };

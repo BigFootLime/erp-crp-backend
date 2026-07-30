@@ -163,6 +163,7 @@ async function loadRevision(tx: Queryer, revisionId: string) {
       finish_designation: string;
       finish_family: string;
       finish_procede: string;
+      family_commentaire_template: string | null;
       finish_statut: SurfaceFinishStatus;
       finish_uuid: string;
     }
@@ -173,9 +174,11 @@ async function loadRevision(tx: Queryer, revisionId: string) {
             f.designation_courte  AS finish_designation,
             f.family_code         AS finish_family,
             f.procede             AS finish_procede,
+            fam.commentaire_template AS family_commentaire_template,
             f.statut              AS finish_statut
      FROM public.surface_finish_revisions r
      JOIN public.surface_finishes f ON f.id = r.finish_id
+     LEFT JOIN public.surface_finish_families fam ON fam.code = f.family_code
      WHERE r.id = $1::uuid`,
     [revisionId]
   );
@@ -188,6 +191,7 @@ async function loadRevision(tx: Queryer, revisionId: string) {
       code: row.finish_code,
       designation_courte: row.finish_designation,
       family_code: row.finish_family,
+      family_commentaire_template: row.family_commentaire_template,
       procede: row.finish_procede,
       statut: row.finish_statut,
     },
@@ -318,7 +322,7 @@ export type GenerationResult = {
  */
 export function generateTexts(params: {
   context: OperationFinishContext;
-  finish: { code: string; designation_courte: string };
+  finish: { code: string; designation_courte: string; family_commentaire_template?: string | null };
   revision: SurfaceFinishRevisionDetail;
   spec: CanonicalFinishSpec;
 }): GenerationResult {
@@ -337,7 +341,9 @@ export function generateTexts(params: {
     zones: spec.zones,
   });
 
-  const template = revision.commentaire_template ?? DEFAULT_COMMENT_TEMPLATE;
+  const familyTemplate = params.finish.family_commentaire_template?.trim() ?? "";
+  const revisionTemplate = revision.commentaire_template ?? DEFAULT_COMMENT_TEMPLATE;
+  const template = [familyTemplate, revisionTemplate].filter(Boolean).join("\n");
   const teinteAspect = [spec.teinte_ral ?? spec.couleur, spec.aspect].filter(Boolean).join(" / ") || null;
 
   const rendered = renderGeneratedComment(

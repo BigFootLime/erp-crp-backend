@@ -5,6 +5,7 @@ import {
   createVersionSchema,
   versionStatusSchema,
 } from "../module/pieces-techniques/validators/versions.validators"
+import { createPieceTechniqueSchema } from "../module/pieces-techniques/validators/pieces-techniques.validators"
 
 // GPAO B2.1 — règles de cycle de vie des versions.
 // (La règle "une seule APPLICABLE" est en plus garantie par l'index unique partiel DB
@@ -61,8 +62,29 @@ describe("Versions — validators", () => {
     expect(versionStatusSchema.safeParse({ body: { next_statut: "WRONG" } }).success).toBe(false)
   })
 
+  it("valide la publication avec une date SQL et refuse un datetime qui ferait échouer la transaction", () => {
+    expect(versionStatusSchema.safeParse({ body: { next_statut: "APPLICABLE", date_application: "2026-07-30" } }).success).toBe(true)
+    expect(versionStatusSchema.safeParse({ body: { next_statut: "APPLICABLE", date_application: "2026-07-30T10:00:00.000Z" } }).success).toBe(false)
+    expect(versionStatusSchema.safeParse({ body: { next_statut: "APPLICABLE", date_application: "2026-02-30" } }).success).toBe(false)
+  })
+
   it("create-next exige aussi un indice", () => {
     expect(createNextVersionSchema.safeParse({ body: { indice: "B", type_changement: "EVOLUTION" } }).success).toBe(true)
     expect(createNextVersionSchema.safeParse({ body: {} }).success).toBe(false)
+  })
+})
+
+describe("Pièce technique — famille interne PF", () => {
+  it("accepte la création sans famille : le serveur attribue la famille interne", () => {
+    const parsed = createPieceTechniqueSchema.safeParse({
+      body: {
+        client_id: "045",
+        name_piece: "Carter",
+        designation: "Carter aluminium",
+        plan_reference: "10233",
+        indice_externe: "A",
+      },
+    })
+    expect(parsed.success).toBe(true)
   })
 })

@@ -186,7 +186,10 @@ export const createPieceTechniqueSchema = z.object({
     client_id: z.string().trim().min(1).max(3).optional().nullable(),
     code_client: z.string().trim().min(1).max(80).optional().nullable(),
     client_name: z.string().trim().min(1).max(200).optional().nullable(),
-    famille_id: uuid,
+    // Une pièce technique est par définition une pièce fabriquée. La famille
+    // technique interne est imposée par le serveur : le client ne doit plus la
+    // choisir, tout en restant tolérant aux anciens formulaires qui l'envoient.
+    famille_id: uuid.optional(),
     name_piece: z.string().trim().min(1, "Nom de pièce requis"),
     // Kept only to return a clear compatibility error to legacy callers.  It is
     // never accepted as the source of a final business code.
