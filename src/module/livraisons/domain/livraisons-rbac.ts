@@ -30,7 +30,9 @@ export function roleHasLivraisonCapability(
   role: string | null | undefined,
   capability: LivraisonCapability
 ): boolean {
+  if (hasGrantedAccountModuleAccess()) return true
   const normalized = (role ?? "").trim().toLowerCase()
   if (!normalized) return false
   return NEEDLES[capability].some((needle) => normalized.includes(needle))
 }
+import { hasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context"

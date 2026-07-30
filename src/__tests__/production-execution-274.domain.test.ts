@@ -158,10 +158,10 @@ describe("#274 séparation des tâches", () => {
     ).not.toThrow();
   });
 
-  it("exempte la direction, qui n'a personne au-dessus d'elle", () => {
+  it("n'exempte aucun rôle de la séparation auteur/validateur", () => {
     expect(() =>
       assertSeparationOfDuties({ actorUserId: 1, ownerUserId: 1, actorRole: ADMIN })
-    ).not.toThrow();
+    ).toThrowError(/propre auteur/i);
   });
 });
 

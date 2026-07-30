@@ -1,4 +1,5 @@
 import { effectiveRoleHasAny } from "../auth/domain/roles";
+import { hasGrantedAccountModuleAccess } from "../access-control/context/account-module-access.context";
 
 /**
  * RBAC clients — rôles existants uniquement (contrainte users_role_check,
@@ -27,6 +28,7 @@ export const CLIENT_FINANCE_ROLES = [
 ] as const;
 
 export function canViewClientFinance(role: string | undefined | null): boolean {
+  if (hasGrantedAccountModuleAccess()) return true;
   return effectiveRoleHasAny(role, CLIENT_FINANCE_ROLES);
 }
 

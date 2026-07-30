@@ -1,8 +1,32 @@
 # Catalogue de visibilité des modules
 
-Le contrôle de visibilité par compte repose sur `public.app_modules` et
-`public.app_module_user_access`. Il ne remplace pas les autorisations métier :
-les routes concernées gardent leurs contrôles RBAC propres.
+Le contrôle d'accès par compte repose sur `public.app_modules` et
+`public.app_module_user_access`.
+
+## Politique autoritaire #262
+
+Depuis le 30 juillet 2026, les rôles sont descriptifs et ne portent plus
+d'autorisation :
+
+- tout module actif est ouvert par défaut à tout compte authentifié ;
+- seule une ligne `DENIED` pour un couple compte × module ferme l'accès ;
+- `INHERIT` signifie ouvert et supprime l'override ;
+- un ancien `GRANTED` est normalisé en `INHERIT` ;
+- le défaut global ne peut plus être fermé ;
+- les capacités historiques basées sur le rôle sont traversées après
+  autorisation du module ;
+- les invariants métier qui ne dépendent pas du rôle restent appliqués ;
+- les API `/admin/access` sont réservées au statut `is_superadmin`, attribué
+  uniquement au compte KEENAN.
+
+Le middleware global porte la décision autorisée dans un contexte asynchrone
+jusqu'aux politiques profondes. L'identité, le rôle descriptif et les données
+d'audit ne sont pas modifiés. Un `DENIED` est refusé avant la route.
+
+Le patch `20260730_account_module_access_262.sql` ouvre et active le catalogue,
+journalise les anciens overrides avant de les retirer et garantit l'unicité du
+superadmin KEENAN. Préflight et vérification sont obligatoires sur `cerp_test`
+avant `cerp_prod`.
 
 ## Réparation #402
 

@@ -116,6 +116,7 @@ export function roleHasMetrologyCapability(
   role: string | null | undefined,
   capability: MetrologyCapability
 ): boolean {
+  if (hasGrantedAccountModuleAccess()) return true;
   const normalized = (role ?? "").trim().toLowerCase();
   if (!normalized) return false;
   const needles = CAPABILITY_NEEDLES[capability];
@@ -691,3 +692,4 @@ export function assertOptimisticVersion(params: {
     );
   }
 }
+import { hasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";

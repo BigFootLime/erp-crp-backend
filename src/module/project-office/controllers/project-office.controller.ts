@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import { asyncHandler } from "../../../utils/asyncHandler";
 import { HttpError } from "../../../utils/httpError";
+import { hasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import type { AuditContext } from "../repository/project-office.repository";
 import { hasProjectOfficeAccess } from "../services/project-office-access.service";
 
@@ -54,6 +55,6 @@ export function buildAuditContext(req: Request): AuditContext {
 // répond { project_office: false } au lieu de 403 pour piloter l'affichage de la nav.
 export const getAccess = asyncHandler(async (req: Request, res: Response) => {
   const user = requireUser(req);
-  const ok = await hasProjectOfficeAccess(user.id);
+  const ok = hasGrantedAccountModuleAccess() || await hasProjectOfficeAccess(user.id);
   res.json({ project_office: ok });
 });

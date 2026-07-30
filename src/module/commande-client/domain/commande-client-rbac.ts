@@ -1,4 +1,5 @@
 import { effectiveRoleHasAny } from "../../auth/domain/roles";
+import { hasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 
 export const INTERNAL_ORDER_LAUNCH_ROLES = [
   "Directeur",
@@ -15,5 +16,6 @@ export const INTERNAL_ORDER_LAUNCH_ROLES = [
 ] as const;
 
 export function canLaunchInternalOrder(role: string | null | undefined): boolean {
+  if (hasGrantedAccountModuleAccess()) return true;
   return effectiveRoleHasAny(role, INTERNAL_ORDER_LAUNCH_ROLES);
 }

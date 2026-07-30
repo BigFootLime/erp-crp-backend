@@ -1,7 +1,8 @@
 import type { NextFunction, Request, Response } from "express";
 
 import { stripQueryFromUrl } from "../../../utils/logPath";
-import { isProtectedModuleKey, resolveModuleKeyForPath } from "../domain/module-catalog";
+import { runWithAccountModuleAccess } from "../context/account-module-access.context";
+import { resolveModuleKeyForPath } from "../domain/module-catalog";
 import { resolveAccessProfile } from "../services/access-control.service";
 
 const KILL_SWITCH_ENV = "CERP_MODULE_ACCESS_GATE_DISABLED";
@@ -48,7 +49,9 @@ function warnMissingInfrastructure(reason: string, moduleKey: string | null): vo
  *
  * Le chemin est résolu vers un module par le catalogue TypeScript (plus long
  * préfixe, frontière de segment) ; seule la DÉCISION vient de la base. Surface
- * hors catalogue, module protégé et superadmin passent sans aucune requête.
+ * hors catalogue passe sans aucune requête. Les modules protégés sont résolus
+ * comme les autres afin d'installer le contexte de capacités ; ils restent
+ * toujours ouverts et non restreignables.
  */
 export function moduleAccessGate(req: Request, res: Response, next: NextFunction): void {
   if (isGateDisabled()) {
@@ -58,7 +61,7 @@ export function moduleAccessGate(req: Request, res: Response, next: NextFunction
   }
 
   const moduleKey = resolveModuleKeyForPath(req.path);
-  if (!moduleKey || isProtectedModuleKey(moduleKey)) {
+  if (!moduleKey) {
     next();
     return;
   }
@@ -78,7 +81,7 @@ export function moduleAccessGate(req: Request, res: Response, next: NextFunction
         return;
       }
       if (profile.is_superadmin) {
-        next();
+        runWithAccountModuleAccess({ userId: user.id, moduleKey }, next);
         return;
       }
 
@@ -91,7 +94,7 @@ export function moduleAccessGate(req: Request, res: Response, next: NextFunction
         return;
       }
       if (decision.allowed) {
-        next();
+        runWithAccountModuleAccess({ userId: user.id, moduleKey }, next);
         return;
       }
 
