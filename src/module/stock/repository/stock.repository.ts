@@ -3134,6 +3134,25 @@ export async function repoUpdateArticle(
       });
     }
 
+    const requestedCategory = patch.article_category ?? current.article_category;
+    const requestedPieceTechniqueId =
+      patch.piece_technique_id !== undefined
+        ? patch.piece_technique_id
+        : current.piece_technique_id;
+    const fabricatedIdentityChanged =
+      (current.article_category === "fabrique" || requestedCategory === "fabrique") &&
+      (
+        requestedCategory !== current.article_category ||
+        requestedPieceTechniqueId !== current.piece_technique_id
+      );
+    if (fabricatedIdentityChanged) {
+      throw new HttpError(
+        409,
+        "FABRICATED_ARTICLE_IDENTITY_IMMUTABLE",
+        "La catégorie et la pièce technique liées à un article fabriqué sont immuables. Créez un nouvel article pour une autre identité technique."
+      );
+    }
+
     const normalized = await normalizeArticleState({
       article_type: patch.article_type ?? current.article_type,
       article_category: patch.article_category ?? current.article_category,

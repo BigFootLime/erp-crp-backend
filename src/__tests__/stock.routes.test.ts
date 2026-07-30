@@ -216,6 +216,56 @@ describe("/api/v1/stock", () => {
     ).toBe(false);
   });
 
+  it("PATCH /api/v1/stock/articles/:id refuses to relink an existing fabricated article", async () => {
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const q = String(sql);
+      if (q === "BEGIN" || q === "ROLLBACK") return { rows: [] };
+      if (q.includes("FROM public.articles") && q.includes("FOR UPDATE")) {
+        return {
+          rows: [{
+            id: "11111111-1111-1111-1111-111111111111",
+            code: "ART-FAB-001-PT001-A",
+            designation: "Pièce fabriquée",
+            article_type: "PIECE_TECHNIQUE",
+            article_category: "fabrique",
+            article_categories: ["fabrique"],
+            root_article_id: "11111111-1111-1111-1111-111111111111",
+            version_number: 1,
+            plan_index: 1,
+            status: "VALIDE",
+            projet_id: null,
+            family_code: "PT",
+            piece_technique_id: "22222222-2222-2222-2222-222222222222",
+            stock_managed: true,
+            lot_tracking: false,
+            row_version: 3,
+            designation_secondary: null,
+            is_sold: true,
+          }],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const res = await request(app)
+      .patch("/api/v1/stock/articles/11111111-1111-1111-1111-111111111111")
+      .set("Authorization", "Bearer fake")
+      .send({
+        expected_row_version: 3,
+        piece_technique_id: "33333333-3333-3333-3333-333333333333",
+      });
+
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({
+      code: "FABRICATED_ARTICLE_IDENTITY_IMMUTABLE",
+    });
+    expect(
+      mocks.clientQuery.mock.calls.some((call) =>
+        String(call[0]).includes("UPDATE public.articles")
+      )
+    ).toBe(false);
+  });
+
   it("POST /api/v1/stock/articles persists article_matiere payload", async () => {
     mocks.clientQuery.mockImplementation(async (sql: unknown) => {
       const q = String(sql);
