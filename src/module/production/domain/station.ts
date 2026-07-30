@@ -111,6 +111,7 @@ export function roleHasStationCapability(
   role: string | null | undefined,
   capability: StationCapability
 ): boolean {
+  if (hasGrantedAccountModuleAccess()) return true;
   const normalized = (role ?? "").trim().toLowerCase();
   if (!normalized) return false;
   const needles = CAPABILITY_NEEDLES[capability];
@@ -1039,3 +1040,4 @@ export function sanitizeAuditDetail(detail: Record<string, unknown>): Record<str
   }
   return out;
 }
+import { hasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";

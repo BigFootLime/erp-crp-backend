@@ -92,6 +92,7 @@ export function roleHasFinanceCapability(
   role: string | null | undefined,
   capability: FinanceCapability
 ): boolean {
+  if (hasGrantedAccountModuleAccess()) return true;
   if (effectiveRoleHasAny(role, [ROLES.administrator])) return true;
   return effectiveRoleHasAny(role, [...CAPABILITY_ROLES[capability]]);
 }
@@ -217,3 +218,4 @@ export function paymentStatusFromAllocation(params: {
   if (params.allocatedCents < params.paymentCents) return "PARTIALLY_ALLOCATED";
   return "ALLOCATED";
 }
+import { hasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";

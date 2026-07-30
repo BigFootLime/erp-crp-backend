@@ -27,6 +27,7 @@
 
 import type { Request } from "express";
 
+import { hasGrantedAccountModuleAccess } from "../access-control/context/account-module-access.context";
 import { effectiveRoleHasAny, hasAnyAssignedRole } from "../auth/domain/roles";
 
 /**
@@ -93,6 +94,7 @@ type RoleBearer = Pick<NonNullable<Request["user"]>, "role"> & { roles?: string[
 
 function allows(user: RoleBearer | null | undefined, allowed: readonly string[]): boolean {
   if (!user) return false;
+  if (hasGrantedAccountModuleAccess()) return true;
   // Comparaison exacte sur les rôles assignés, jamais une sous-chaîne :
   // un rôle inconnu est refusé, point.
   return (

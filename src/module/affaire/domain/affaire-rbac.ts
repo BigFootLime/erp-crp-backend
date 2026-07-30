@@ -47,6 +47,7 @@ const CAPABILITY_ROLE_NEEDLES: Record<AffaireCapability, readonly string[]> = {
 };
 
 export function roleHasAffaireCapability(role: string | null | undefined, capability: AffaireCapability): boolean {
+  if (hasGrantedAccountModuleAccess()) return true;
   if (!role) return false;
   const normalized = role.trim().toLowerCase();
   if (!normalized) return false;
@@ -66,3 +67,4 @@ export function capabilityForTransition(kind: AffaireTransitionKind): AffaireCap
       return "transition";
   }
 }
+import { hasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";

@@ -1,4 +1,5 @@
 import { HttpError } from "../../../utils/httpError";
+import { hasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import {
   PROJECT_OFFICE_FLAG_KEY,
   repoGetProjectAccess,
@@ -8,6 +9,7 @@ import type { Actor, PoMemberRole, ProjectAccess } from "../types/project-office
 
 // Accès au module : feature flag fail-closed (flag absent/OFF ⇒ false), override par utilisateur.
 export async function hasProjectOfficeAccess(userId: number): Promise<boolean> {
+  if (hasGrantedAccountModuleAccess()) return true;
   return repoResolveFeatureAccess(PROJECT_OFFICE_FLAG_KEY, userId);
 }
 
@@ -21,10 +23,12 @@ const WRITE_ROLES: PoMemberRole[] = ["OWNER", "MANAGER", "CONTRIBUTOR"];
 const MANAGE_ROLES: PoMemberRole[] = ["OWNER", "MANAGER"];
 
 export function canWrite(access: ProjectAccess): boolean {
+  if (hasGrantedAccountModuleAccess()) return true;
   return access.effective_role !== null && WRITE_ROLES.includes(access.effective_role);
 }
 
 export function canManage(access: ProjectAccess): boolean {
+  if (hasGrantedAccountModuleAccess()) return true;
   return access.effective_role !== null && MANAGE_ROLES.includes(access.effective_role);
 }
 

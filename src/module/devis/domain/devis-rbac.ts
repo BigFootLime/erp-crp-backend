@@ -53,6 +53,7 @@ const CAPABILITY_ROLE_NEEDLES: Record<DevisCapability, readonly string[]> = {
 };
 
 export function roleHasDevisCapability(role: string | null | undefined, capability: DevisCapability): boolean {
+  if (hasGrantedAccountModuleAccess()) return true;
   if (!role) return false;
   const normalized = role.trim().toLowerCase();
   if (!normalized) return false;
@@ -79,3 +80,4 @@ export const DEVIS_TRANSITION_CAPABILITIES: readonly DevisCapability[] = [
   "cancel",
   "update_draft",
 ];
+import { hasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";

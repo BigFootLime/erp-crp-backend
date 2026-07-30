@@ -98,6 +98,7 @@ export function roleHasSurfaceFinishCapability(
   role: string | null | undefined,
   capability: SurfaceFinishCapability
 ): boolean {
+  if (hasGrantedAccountModuleAccess()) return true;
   const normalized = (role ?? "").trim().toLowerCase();
   if (!normalized) return false;
   const needles = CAPABILITY_NEEDLES[capability];
@@ -1094,3 +1095,4 @@ export const PURCHASE_LINE_TYPE = "TRAITEMENT" as const;
  * documente le mapping et on l'expose pour que l'UI dise la vérité.
  */
 export const SUPPLIER_CATALOGUE_CATEGORY = "SOUS_TRAITANCE" as const;
+import { hasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";

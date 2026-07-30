@@ -59,6 +59,7 @@ export function roleHasCommandeFournisseurCapability(
   role: string | null | undefined,
   capability: CommandeFournisseurCapability
 ): boolean {
+  if (hasGrantedAccountModuleAccess()) return true;
   if (!role) return false;
   const normalized = role.trim().toLowerCase();
   if (!normalized) return false;
@@ -90,3 +91,4 @@ export function capabilityForTransition(
       return "cancel";
   }
 }
+import { hasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";

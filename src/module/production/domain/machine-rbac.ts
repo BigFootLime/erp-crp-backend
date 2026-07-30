@@ -24,7 +24,9 @@ const NEEDLES: Record<MachineCapability, readonly string[]> = {
 };
 
 export function roleHasMachineCapability(role: string | null | undefined, capability: MachineCapability): boolean {
+  if (hasGrantedAccountModuleAccess()) return true;
   const normalized = (role ?? "").trim().toLowerCase();
   if (!normalized) return false;
   return NEEDLES[capability].some((needle) => normalized.includes(needle));
 }
+import { hasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
