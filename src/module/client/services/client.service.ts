@@ -95,7 +95,21 @@ export async function updateClientLogoPath(id: string, logoPath: string): Promis
 }
 
 
+/**
+ * A short numeric search is a client-code lookup, not a broad text search.
+ * Without this distinction, entering "001" also matched SIRETs and made the
+ * client selector unreliable. The stored legacy code may be "001", "CLI-001"
+ * or "CLI 001"; all three forms are normalized by the SQL predicate below.
+ */
+function exactClientCodeQuery(q: string): string | null {
+  const match = q.trim().match(/^(?:CLI[-\s]?)?(\d{1,3})$/i);
+  if (!match) return null;
+
+  return `CLI-${match[1].padStart(3, "0")}`;
+}
+
 export async function listClients(q = "", limit = 25): Promise<ClientRow[]> {
+  const codeQuery = exactClientCodeQuery(q);
   const sql = `
   SELECT
     c.client_id::text,
@@ -194,17 +208,34 @@ export async function listClients(q = "", limit = 25): Promise<ClientRow[]> {
 
     WHERE
       $1 = '' OR (
-        c.company_name ILIKE '%' || $1 || '%'
-        OR COALESCE(
-          NULLIF(btrim(to_jsonb(c)->>'client_code'), ''),
-          NULLIF(btrim(to_jsonb(c)->>'code_client'), '')
-        ) ILIKE '%' || $1 || '%'
-        OR c.email ILIKE '%' || $1 || '%'
-        OR c.siret ILIKE replace('%' || $1 || '%',' ','')
-        OR c.vat_number ILIKE '%' || $1 || '%'
-      OR af.city ILIKE '%' || $1 || '%'
-      OR al.city ILIKE '%' || $1 || '%'
-    )
+        CASE
+          WHEN $3::text IS NOT NULL THEN
+            'CLI-' || LPAD(
+              REGEXP_REPLACE(
+                COALESCE(
+                  NULLIF(btrim(to_jsonb(c)->>'client_code'), ''),
+                  NULLIF(btrim(to_jsonb(c)->>'code_client'), '')
+                ),
+                '^CLI[- ]?',
+                '',
+                'i'
+              ),
+              3,
+              '0'
+            ) = $3
+          ELSE
+            c.company_name ILIKE '%' || $1 || '%'
+            OR COALESCE(
+              NULLIF(btrim(to_jsonb(c)->>'client_code'), ''),
+              NULLIF(btrim(to_jsonb(c)->>'code_client'), '')
+            ) ILIKE '%' || $1 || '%'
+            OR c.email ILIKE '%' || $1 || '%'
+            OR c.siret ILIKE replace('%' || $1 || '%',' ','')
+            OR c.vat_number ILIKE '%' || $1 || '%'
+            OR af.city ILIKE '%' || $1 || '%'
+            OR al.city ILIKE '%' || $1 || '%'
+        END
+      )
 
   GROUP BY
     c.client_id, af.bill_address_id, al.delivery_address_id, ib.bank_info_id, ct.contact_id
@@ -213,7 +244,7 @@ export async function listClients(q = "", limit = 25): Promise<ClientRow[]> {
   LIMIT $2
 `;
 
-  const { rows } = await pool.query<ClientRow>(sql, [q, limit]);
+  const { rows } = await pool.query<ClientRow>(sql, [q, limit, codeQuery]);
   return rows;
 }
 // createClient (MAX+1 sur client_id) et updateClientPrimaryContact (sans
