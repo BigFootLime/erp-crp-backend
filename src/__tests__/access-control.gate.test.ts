@@ -25,6 +25,16 @@ vi.mock("../utils/checkNetworkDrive", () => ({
   checkNetworkDrive: vi.fn(() => Promise.resolve()),
 }));
 
+vi.mock("../module/production/controllers/pointages.controller", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../module/production/controllers/pointages.controller")>();
+  return {
+    ...actual,
+    pointagesKpis: (_req: unknown, res: { json: (body: unknown) => void }) =>
+      res.json({ ok: true }),
+  };
+});
+
 vi.mock("../module/auth/middlewares/auth.middleware", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../module/auth/middlewares/auth.middleware")>();
   return {
@@ -57,6 +67,7 @@ import type { NextFunction, Request, Response } from "express";
 
 import app from "../config/app";
 import * as baseRepo from "../module/access-control/repository/access-control.repository";
+import { hasGrantedAccountModuleAccess } from "../module/access-control/context/account-module-access.context";
 import { moduleAccessGate } from "../module/access-control/middlewares/module-access-gate";
 import { invalidateAccessCache } from "../module/access-control/services/access-control.service";
 
@@ -80,7 +91,7 @@ function fakeRes(): FakeRes {
 
 // `null` signifie explicitement « aucun utilisateur attaché », ce qu'un paramètre
 // optionnel ne permettrait pas de distinguer de l'absence d'argument.
-function fakeReq(path: string, user: { id: number } | null): Request {
+function fakeReq(path: string, user: { id: number | string } | null): Request {
   return {
     path,
     originalUrl: `/api/v1${path}`,
@@ -109,12 +120,15 @@ function profileRow(overrides: {
   };
 }
 
-async function run(path: string, user: { id: number } | null = { id: USER_ID }) {
+async function run(path: string, user: { id: number | string } | null = { id: USER_ID }) {
   const res = fakeRes();
-  const next = vi.fn() as unknown as NextFunction;
+  let accountPolicyInstalled = false;
+  const next = vi.fn(() => {
+    accountPolicyInstalled = hasGrantedAccountModuleAccess();
+  }) as unknown as NextFunction;
   moduleAccessGate(fakeReq(path, user), res, next);
   await new Promise((resolve) => setTimeout(resolve, 0));
-  return { res, next: next as unknown as ReturnType<typeof vi.fn> };
+  return { res, next: next as unknown as ReturnType<typeof vi.fn>, accountPolicyInstalled };
 }
 
 beforeEach(() => {
@@ -157,10 +171,11 @@ describe("Gate d'accès module — passages sans interrogation de la base", () =
     repo.repoResolveAccessProfile.mockResolvedValue([
       profileRow({ module_key: "clients", access: "DENIED" }),
     ]);
-    const { res, next } = await run("/clients/1");
+    const { res, next, accountPolicyInstalled } = await run("/clients/1");
     expect(next).toHaveBeenCalledOnce();
     expect(res.statusCode).toBe(0);
     expect(repo.repoResolveAccessProfile).not.toHaveBeenCalled();
+    expect(accountPolicyInstalled).toBe(true);
   });
 });
 
@@ -201,6 +216,20 @@ describe("Gate d'accès module — décisions", () => {
     const { res, next } = await run("/clients/1");
     expect(next).toHaveBeenCalledOnce();
     expect(res.statusCode).toBe(0);
+  });
+
+  it("normalise un identifiant de compte numérique issu du JWT", async () => {
+    repo.repoResolveAccessProfile.mockResolvedValue([
+      profileRow({ module_key: "production" }),
+    ]);
+
+    const { next, accountPolicyInstalled } = await run("/production/pointages/kpis", {
+      id: "21",
+    });
+
+    expect(repo.repoResolveAccessProfile).toHaveBeenCalledWith(21);
+    expect(next).toHaveBeenCalledOnce();
+    expect(accountPolicyInstalled).toBe(true);
   });
 
   it("le refus d'un module n'en refuse aucun autre", async () => {
@@ -275,6 +304,19 @@ describe("Gate d'accès module — absence d'infrastructure", () => {
 });
 
 describe("Gate d'accès module — application réelle", () => {
+  it("ouvre les KPI de pointage à un compte authentifié sans rôle production", async () => {
+    repo.repoResolveAccessProfile.mockResolvedValue([
+      profileRow({ module_key: "production" }),
+    ]);
+
+    const res = await request(app)
+      .get("/api/v1/production/pointages/kpis?date_from=2026-07-30&date_to=2026-07-30")
+      .set("x-test-role", "Employee");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+  });
+
   it("refuse 403 sur une route métier réelle, sans fuiter le motif", async () => {
     repo.repoResolveAccessProfile.mockResolvedValue([
       profileRow({ module_key: "clients", access: "DENIED" }),
