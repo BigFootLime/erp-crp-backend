@@ -146,7 +146,7 @@ type PieceTechniqueCoreRow = {
   client_id: string | null;
   created_by: number | null;
   updated_by: number | null;
-  famille_id: string;
+  famille_id: string | null;
   name_piece: string;
   code_piece: string;
   designation: string;
@@ -1637,31 +1637,6 @@ async function lookupClientCompanyName(tx: Pick<PoolClient, "query">, clientId: 
   return typeof name === "string" && name.trim().length > 0 ? name.trim() : null;
 }
 
-/**
- * La contrainte historique `pieces_techniques.famille_id NOT NULL` est conservée.
- * Une PT créée par le nouveau parcours reçoit néanmoins une famille interne,
- * stable et non exposée comme un choix métier : `PF` (pièce fabriquée).
- */
-async function resolveInternalFabricatedFamilyId(tx: Pick<PoolClient, "query">): Promise<string> {
-  const result = await tx.query<{ id: string }>(
-    `SELECT id::text AS id
-       FROM public.pieces_families
-      WHERE upper(btrim(code)) = 'PF'
-      ORDER BY created_at ASC, id ASC
-      LIMIT 1
-      FOR SHARE`
-  );
-  const familyId = result.rows[0]?.id;
-  if (!familyId) {
-    throw new HttpError(
-      503,
-      "PIECE_TECHNIQUE_INTERNAL_FAMILY_MISSING",
-      "La famille interne PF est absente. Appliquez le patch de référentiel avant de créer une pièce technique."
-    );
-  }
-  return familyId;
-}
-
 export async function repoCreatePieceTechnique(
   body: CreatePieceTechniqueBodyDTO & {
     statut: PieceTechniqueStatut;
@@ -1698,11 +1673,6 @@ export async function repoCreatePieceTechnique(
         return existing;
       }
     }
-
-    // Ne jamais réutiliser une famille envoyée par le navigateur : la famille
-    // d'une PT est un invariant serveur. Cette résolution arrive après le
-    // rejeu d'idempotence pour préserver les créations historiques.
-    const internalFamilyId = await resolveInternalFabricatedFamilyId(client);
 
     const actorUserId = audit.user_id;
     const createdBy = actorUserId;
@@ -1780,7 +1750,7 @@ export async function repoCreatePieceTechnique(
       clientIdForInsert,
       createdBy,
       updatedBy,
-      internalFamilyId,
+      null,
       body.name_piece,
       generatedCode,
       body.designation,
@@ -2166,7 +2136,9 @@ export async function repoUpdatePieceTechnique(
   if (patch.version_number !== undefined) sets.push(`version_number = ${push(patch.version_number)}::int`);
   if (patch.code_client !== undefined) sets.push(`code_client = ${push(patch.code_client)}`);
   if (patch.client_name !== undefined) sets.push(`client_name = ${push(patch.client_name)}`);
-  if (patch.famille_id !== undefined) sets.push(`famille_id = ${push(patch.famille_id)}::uuid`);
+  // #413 — Compatibility input only: an old client may still send `famille_id`,
+  // but a PATCH must never erase an historical family assignment. New PTs are
+  // created without a family (see the creation path).
   if (patch.name_piece !== undefined) sets.push(`name_piece = ${push(patch.name_piece)}`);
   if (patch.designation !== undefined) sets.push(`designation = ${push(patch.designation)}`);
   if (patch.designation_2 !== undefined) sets.push(`designation_2 = ${push(patch.designation_2)}`);
@@ -2532,7 +2504,8 @@ export async function repoDuplicatePieceTechnique(id: string, userId: number | n
             o.client_id,
             userId,
             userId,
-            o.famille_id,
+            // A duplicate is a new PT: do not propagate the historical family.
+            null,
             o.name_piece,
             code,
             o.designation,

@@ -164,7 +164,7 @@ export type PieceTechnique = {
   created_by: number | null
   updated_by: number | null
 
-  famille_id: string
+  famille_id: string | null
   name_piece: string
   code_piece: string
   designation: string
@@ -198,7 +198,7 @@ export type CreatePieceTechniqueInput = {
   created_by?: number | null
   updated_by?: number | null
 
-  famille_id: string
+  famille_id?: string | null
   name_piece: string
   code_piece: string
   designation: string

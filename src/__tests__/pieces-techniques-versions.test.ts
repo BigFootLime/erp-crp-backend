@@ -5,7 +5,10 @@ import {
   createVersionSchema,
   versionStatusSchema,
 } from "../module/pieces-techniques/validators/versions.validators"
-import { createPieceTechniqueSchema } from "../module/pieces-techniques/validators/pieces-techniques.validators"
+import {
+  createPieceTechniqueSchema,
+  updatePieceTechniqueSchema,
+} from "../module/pieces-techniques/validators/pieces-techniques.validators"
 
 // GPAO B2.1 — règles de cycle de vie des versions.
 // (La règle "une seule APPLICABLE" est en plus garantie par l'index unique partiel DB
@@ -74,17 +77,35 @@ describe("Versions — validators", () => {
   })
 })
 
-describe("Pièce technique — famille interne PF", () => {
-  it("accepte la création sans famille : le serveur attribue la famille interne", () => {
+describe("Pièce technique — aucune famille métier (#413)", () => {
+  const validBody = {
+    client_id: "045",
+    name_piece: "Carter",
+    designation: "Carter aluminium",
+    plan_reference: "10233",
+    indice_externe: "A",
+  }
+
+  it("accepte la création sans famille", () => {
     const parsed = createPieceTechniqueSchema.safeParse({
-      body: {
-        client_id: "045",
-        name_piece: "Carter",
-        designation: "Carter aluminium",
-        plan_reference: "10233",
-        indice_externe: "A",
-      },
+      body: validBody,
     })
     expect(parsed.success).toBe(true)
+    if (parsed.success) expect(parsed.data.body.famille_id).toBeUndefined()
+  })
+
+  it("tolère le null et l'UUID des anciens clients sans les rendre obligatoires", () => {
+    expect(createPieceTechniqueSchema.safeParse({
+      body: { ...validBody, famille_id: null },
+    }).success).toBe(true)
+    expect(createPieceTechniqueSchema.safeParse({
+      body: { ...validBody, famille_id: "33333333-3333-4333-8333-333333333333" },
+    }).success).toBe(true)
+  })
+  it("accepts the legacy family field on PATCH without making it required", () => {
+    expect(updatePieceTechniqueSchema.safeParse({
+      body: { famille_id: "33333333-3333-4333-8333-333333333333" },
+    }).success).toBe(true)
+    expect(updatePieceTechniqueSchema.safeParse({ body: { famille_id: null } }).success).toBe(true)
   })
 })
