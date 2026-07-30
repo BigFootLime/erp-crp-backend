@@ -27,7 +27,7 @@
 
 import type { Request } from "express";
 
-import { hasAnyAssignedRole } from "../auth/domain/roles";
+import { effectiveRoleHasAny, hasAnyAssignedRole } from "../auth/domain/roles";
 
 /**
  * Rédaction du dossier technique : créer/modifier une pièce, sa nomenclature, sa gamme,
@@ -42,6 +42,7 @@ export const PIECE_TECHNIQUE_WRITE_ROLES = [
   "Programmation",
   "Études-Méthodes",
   "Responsable CAO",
+  "Method",
   "Responsable Qualité",
   "Qualité",
 ] as const;
@@ -61,6 +62,7 @@ export const PIECE_TECHNIQUE_VALIDATE_ROLES = [
   "Qualité",
   "Responsable Programmation",
   "Études-Méthodes",
+  "Method",
 ] as const;
 
 /**
@@ -93,7 +95,10 @@ function allows(user: RoleBearer | null | undefined, allowed: readonly string[])
   if (!user) return false;
   // Comparaison exacte sur les rôles assignés, jamais une sous-chaîne :
   // un rôle inconnu est refusé, point.
-  return hasAnyAssignedRole(user.role, user.roles, allowed);
+  return (
+    hasAnyAssignedRole(user.role, user.roles, allowed) ||
+    effectiveRoleHasAny(user.role, allowed)
+  );
 }
 
 export const canWritePieceTechnique = (user: RoleBearer | null | undefined): boolean =>
