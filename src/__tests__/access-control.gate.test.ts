@@ -35,6 +35,16 @@ vi.mock("../module/production/controllers/pointages.controller", async (importOr
   };
 });
 
+vi.mock("../module/metrologie/controllers/metrology-360.controller", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../module/metrologie/controllers/metrology-360.controller")>();
+  return {
+    ...actual,
+    center: (_req: unknown, res: { json: (body: unknown) => void }) =>
+      res.json({ ok: true }),
+  };
+});
+
 vi.mock("../module/auth/middlewares/auth.middleware", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../module/auth/middlewares/auth.middleware")>();
   return {
@@ -148,9 +158,10 @@ afterEach(() => {
 
 describe("Gate d'accès module — passages sans interrogation de la base", () => {
   it("laisse passer une surface d'infrastructure partagée sans résoudre aucun profil", async () => {
-    const { next } = await run("/users/4");
+    const { next, accountPolicyInstalled } = await run("/users/4");
     expect(next).toHaveBeenCalledOnce();
     expect(repo.repoResolveAccessProfile).not.toHaveBeenCalled();
+    expect(accountPolicyInstalled).toBe(true);
   });
 
   it("laisse passer le module protégé après résolution du compte", async () => {
@@ -304,6 +315,20 @@ describe("Gate d'accès module — absence d'infrastructure", () => {
 });
 
 describe("Gate d'accès module — application réelle", () => {
+  it("ouvre les capacités partagées Méthodes sans revenir au rôle", async () => {
+    const res = await request(app)
+      .get("/api/v1/methodes/capabilities")
+      .set("x-test-role", "Employee");
+
+    expect(res.status).toBe(200);
+    expect(res.body.capabilities).toMatchObject({
+      referentiel_read: true,
+      referentiel_write: true,
+      tarif_read: true,
+      tarif_write: true,
+    });
+  });
+
   it("ouvre les KPI de pointage à un compte authentifié sans rôle production", async () => {
     repo.repoResolveAccessProfile.mockResolvedValue([
       profileRow({ module_key: "production" }),
@@ -311,6 +336,19 @@ describe("Gate d'accès module — application réelle", () => {
 
     const res = await request(app)
       .get("/api/v1/production/pointages/kpis?date_from=2026-07-30&date_to=2026-07-30")
+      .set("x-test-role", "Employee");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+  });
+
+  it("ouvre Métrologie 360 à un compte autorisé sans rôle Métrologie", async () => {
+    repo.repoResolveAccessProfile.mockResolvedValue([
+      profileRow({ module_key: "metrologie" }),
+    ]);
+
+    const res = await request(app)
+      .get("/api/v1/metrologie/v2/center?horizon_days=30")
       .set("x-test-role", "Employee");
 
     expect(res.status).toBe(200);

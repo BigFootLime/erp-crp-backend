@@ -65,16 +65,20 @@ function warnMissingInfrastructure(reason: string, moduleKey: string | null): vo
  * toujours ouverts et non restreignables.
  */
 export function moduleAccessGate(req: Request, res: Response, next: NextFunction): void {
-  const moduleKey = resolveModuleKeyForPath(req.path);
-  if (!moduleKey) {
-    next();
-    return;
-  }
-
   const userId = normalizeUserId(req.user?.id);
   if (userId === null) {
     // Le socle authenticateToken a déjà statué : rien à ajouter ici.
     next();
+    return;
+  }
+
+  const moduleKey =
+    resolveModuleKeyForPath(req.originalUrl) ??
+    resolveModuleKeyForPath(req.path);
+  if (!moduleKey) {
+    // Les surfaces partagées authentifiées (utilisateurs, codes,
+    // notifications, capabilities…) ne sont pas restrictibles par module.
+    runWithAccountModuleAccess({ userId, moduleKey: "shared" }, next);
     return;
   }
 
