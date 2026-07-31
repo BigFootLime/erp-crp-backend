@@ -49,8 +49,8 @@ schema represented by the current patch files.
 
 ## Issue #446 - Stock functional scopes OLD/NEW
 
-`20260731_stock_old_new_446.sql` is additive and has **not been applied** to
-`cerp_test` or `cerp_prod`. It adds the four fixed functional stores
+`20260731_stock_old_new_446.sql` is additive and was applied to both
+`cerp_test` and `cerp_prod` on 2026-07-31. It adds the four fixed functional stores
 `OLD-PF`, `OLD-MP`, `NEW-PF`, `NEW-MP`, lot opening provenance/traceability,
 and the `Fourniture Client` label without changing the stable technical code
 `achat_transforme`.
@@ -62,8 +62,16 @@ the patch to `cerp_test` using the normal runner, run the read-only
 and BL without OF; shortage: delivery decision, then OF for the missing quantity).
 The `...446.rollback.sql` script is test-only and refuses to delete the patch
 as soon as OLD/NEW movements, lots, trace references, locations or Fourniture
-Client values exist. Production remains a separate human backup/preflight/
-verify decision; it is not authorized by this implementation.
+Client values exist.
+
+Deployment record (HYPERBOX2): the migration checksum recorded in both patch
+ledgers is
+`624bb347dfd0458b913cad1fe25affc71ef0bdf3a2a1e2c9250f6f10589af794`.
+The verified pre-migration backups are
+`/var/backups/cerp/cerp_test_pre_446_20260731-234440.dump` (74,339,659 bytes)
+and `/var/backups/cerp/cerp_prod_20260731-234848.dump` (50,866,662 bytes).
+Preflight, apply and read-only verification passed on both databases;
+`cerp_test` was then reapplied successfully to confirm idempotence.
 
 ## Issue #164 - Règles Articles / matière / Stock restantes
 
