@@ -44,7 +44,8 @@ BEGIN
 END $$;
 
 DELETE FROM public.magasins
-WHERE code IN ('OLD-PF', 'OLD-MP', 'NEW-PF', 'NEW-MP');
+WHERE code IN ('OLD-PF', 'OLD-MP', 'NEW-PF', 'NEW-MP')
+   OR code_magasin IN ('OLD-PF', 'OLD-MP', 'NEW-PF', 'NEW-MP');
 
 DELETE FROM public.warehouses
 WHERE code IN ('OLD-PF', 'OLD-MP', 'NEW-PF', 'NEW-MP');

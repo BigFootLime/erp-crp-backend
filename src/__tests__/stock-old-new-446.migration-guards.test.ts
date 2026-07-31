@@ -44,6 +44,9 @@ describe("#446 stock OLD/NEW migration guards", () => {
     }
     expect(migration.match(/\('(?:OLD|NEW)-(?:PF|MP)'/g)).toHaveLength(8);
     expect(migration).toMatch(/CHECK \(stock_scope IN \('OLD', 'NEW'\)\)/i);
+    expect(migration).toMatch(/code_magasin, name, libelle, stock_scope, warehouse_id, is_active, actif/i);
+    expect(migration).toMatch(/seed\.code, seed\.code, seed\.name, seed\.name/i);
+    expect(migration).toMatch(/actif = true/i);
   });
 
   it("verrouille la trace a six chiffres et son QR associe", () => {
@@ -71,6 +74,7 @@ describe("#446 stock OLD/NEW migration guards", () => {
     expect(preflight).toMatch(/BEGIN TRANSACTION READ ONLY;/i);
     expect(preflight).toMatch(/COMMIT;/i);
     expect(preflight).toMatch(/UUID magasins\.id\/emplacements\.magasin_id/i);
+    expect(preflight).toMatch(/magasins\.code_magasin\/libelle varchar and magasins\.actif boolean/i);
     expect(preflight).toMatch(/article_category_ref/i);
     expect(preflight).not.toMatch(/^\s*(INSERT|UPDATE|DELETE|ALTER|CREATE|DROP|TRUNCATE)\b/im);
   });
@@ -80,6 +84,8 @@ describe("#446 stock OLD/NEW migration guards", () => {
     expect(verify).toMatch(/stock_lot_trace_references/i);
     expect(verify).toMatch(/stock_trace_code_446_seq/i);
     expect(verify).toMatch(/v_fixed_store_count <> 4/i);
+    expect(verify).toMatch(/magasin\.code_magasin = expected\.code/i);
+    expect(verify).toMatch(/magasin\.actif/i);
     expect(verify).toMatch(/has_table_privilege\('cerp_app'/i);
     expect(verify).toMatch(/has_sequence_privilege\('cerp_app'/i);
     expect(verify).not.toMatch(/^\s*(INSERT|UPDATE|DELETE|ALTER|CREATE|DROP|TRUNCATE)\b/im);
@@ -91,6 +97,7 @@ describe("#446 stock OLD/NEW migration guards", () => {
     expect(rollback).toMatch(/stock_trace_code IS NOT NULL/i);
     expect(rollback).toMatch(/stock_movement_lines/i);
     expect(rollback).toMatch(/rollback refused/i);
+    expect(rollback).toMatch(/OR code_magasin IN/i);
     expect(rollback).toMatch(/DROP TABLE IF EXISTS public\.stock_lot_trace_references/i);
   });
 });
