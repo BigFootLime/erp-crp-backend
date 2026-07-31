@@ -47,6 +47,24 @@ schema represented by the current patch files.
 - Review `checksum-mismatch` results before continuing.
 - Keep passwords and `DATABASE_URL` out of Git, logs, and tickets.
 
+## Issue #446 - Stock functional scopes OLD/NEW
+
+`20260731_stock_old_new_446.sql` is additive and has **not been applied** to
+`cerp_test` or `cerp_prod`. It adds the four fixed functional stores
+`OLD-PF`, `OLD-MP`, `NEW-PF`, `NEW-MP`, lot opening provenance/traceability,
+and the `Fourniture Client` label without changing the stable technical code
+`achat_transforme`.
+
+Required operating order: retrieve and verify a restorable backup, run the
+read-only `db/patches/support/20260731_stock_old_new_446.preflight.sql`, apply
+the patch to `cerp_test` using the normal runner, run the read-only
+`...446.verify.sql`, then execute the business recipe (full stock: reservation
+and BL without OF; shortage: delivery decision, then OF for the missing quantity).
+The `...446.rollback.sql` script is test-only and refuses to delete the patch
+as soon as OLD/NEW movements, lots, trace references, locations or Fourniture
+Client values exist. Production remains a separate human backup/preflight/
+verify decision; it is not authorized by this implementation.
+
 ## Issue #164 - Règles Articles / matière / Stock restantes
 
 `20260729_articles_164_remaining_rules.sql` ajoute les sept profils matière

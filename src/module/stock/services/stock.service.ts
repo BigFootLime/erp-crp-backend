@@ -66,6 +66,8 @@ import type {
   UpdateLotQualityBodyDTO,
   CreateLotGenealogyBodyDTO,
   UpdateMagasinBodyDTO,
+  HistoricalImportBodyDTO,
+  ListConsolidatedInventoryQueryDTO,
 } from "../validators/stock.validators";
 import type { AuditContext } from "../repository/stock.repository";
 import type {
@@ -138,6 +140,8 @@ import {
   repoUpdateMagasin,
   repoDeactivateMagasin,
   repoActivateMagasin,
+  repoCreateHistoricalImport,
+  repoListConsolidatedInventory,
 } from "../repository/stock.repository";
 import {
   repoFindSimilarArticles,
@@ -461,6 +465,14 @@ export async function createStockLotGenealogySVC(
 
 export async function listStockBalancesSVC(filters: ListBalancesQueryDTO) {
   return repoListBalances(filters);
+}
+
+export async function listConsolidatedInventorySVC(filters: ListConsolidatedInventoryQueryDTO) {
+  return repoListConsolidatedInventory(filters);
+}
+
+export async function createHistoricalImportSVC(body: HistoricalImportBodyDTO, audit: AuditContext, idempotencyKey: string) {
+  return repoCreateHistoricalImport(body, audit, idempotencyKey);
 }
 
 export async function getStockAnalyticsSVC(filters: ListAnalyticsQueryDTO): Promise<StockAnalytics> {

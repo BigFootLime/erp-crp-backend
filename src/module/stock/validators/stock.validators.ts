@@ -287,6 +287,10 @@ const articleMatiereSchema = z
   })
   .strict();
 
+const fournitureClientSchema = z.object({
+  reference: z.string().trim().min(1).max(120), indice: z.string().trim().min(1).max(40).optional().nullable(), numero_client: z.string().trim().min(1).max(40),
+}).strict();
+
 const articleProcurementSchema = z
   .object({
     manufacturer_name: z.string().trim().min(1).max(200).optional().nullable(),
@@ -339,6 +343,7 @@ export const createArticleSchema = z.object({
       notes: z.string().trim().min(1).optional().nullable(),
       article_matiere: articleMatiereSchema.optional(),
       procurement: articleProcurementSchema.optional(),
+      fourniture_client: fournitureClientSchema.optional(),
     })
     .strict()
     .superRefine((body, ctx) => {
@@ -386,6 +391,28 @@ export const createArticleSchema = z.object({
           path: ["article_matiere", "client_proprietaire_id"],
         });
       }
+      const isFournitureClient = body.article_categories?.includes("achat_transforme") === true;
+      if (isFournitureClient && !body.fourniture_client) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Les informations de Fourniture Client sont obligatoires.",
+          path: ["fourniture_client"],
+        });
+      }
+      if (!isFournitureClient && body.fourniture_client) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "fourniture_client est réservé à la catégorie achat_transforme.",
+          path: ["fourniture_client"],
+        });
+      }
+      if (isFournitureClient && !body.fourniture_client?.indice?.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "L'indice client est obligatoire.",
+          path: ["fourniture_client", "indice"],
+        });
+      }
     }),
 });
 
@@ -411,6 +438,7 @@ export const updateArticleSchema = z.object({
       notes: z.string().trim().min(1).optional().nullable(),
       article_matiere: articleMatiereSchema.optional(),
       procurement: articleProcurementSchema.optional(),
+      fourniture_client: fournitureClientSchema.optional(),
     })
     .strict()
     .superRefine((body, ctx) => {
@@ -723,6 +751,51 @@ export const listBalancesQuerySchema = z.object({
 
 export type ListBalancesQueryDTO = z.infer<typeof listBalancesQuerySchema>;
 
+export const stockScopeSchema = z.enum(["OLD", "NEW"]);
+export type StockScopeDTO = z.infer<typeof stockScopeSchema>;
+
+const historicalPfImportSchema = z.object({
+    kind: z.literal("PF"),
+    client_number: z.string().trim().min(1).max(40),
+    reference: z.string().trim().min(1).max(120),
+    indice: z.string().trim().min(1).max(40).optional().nullable(),
+    family_code: z.string().trim().min(1).max(40).optional(),
+    designation: z.string().trim().min(1).max(400),
+    quantity: z.coerce.number().positive(),
+    of_affaire_refs: z.array(z.string().trim().min(1).max(120)).max(4).optional().default([]),
+    mp_lot_refs: z.array(z.string().trim().min(1).max(120)).max(4).optional().default([]),
+    traitement_lot_refs: z.array(z.string().trim().min(1).max(120)).max(4).optional().default([]),
+    notes: z.string().trim().min(1).max(2000).optional().nullable(),
+  }).strict();
+const historicalMpImportSchema = z.object({
+    kind: z.literal("MP"),
+    article_id: uuid.optional(),
+    article: createArticleSchema.shape.body.optional(),
+    quantity: z.coerce.number().positive(),
+    unite: z.string().trim().min(1).max(30).optional().nullable(),
+    lot_number: z.string().trim().min(1).max(120),
+    notes: z.string().trim().min(1).max(2000).optional().nullable(),
+  }).strict();
+export const historicalImportSchema = z.object({ body: z.discriminatedUnion("kind", [historicalPfImportSchema, historicalMpImportSchema]) }).superRefine((value, ctx) => {
+  if (value.body.kind !== "MP") return;
+  if (!value.body.article_id && !value.body.article) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["body", "article_id"], message: "article_id or article is required" });
+  if (value.body.article_id && value.body.article) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["body", "article"], message: "article_id and article are mutually exclusive" });
+});
+export type HistoricalImportBodyDTO = z.infer<typeof historicalImportSchema>["body"];
+
+export const listConsolidatedInventoryQuerySchema = z.object({
+  scope: stockScopeSchema.optional(),
+  magasin_id: uuid.optional(),
+  rayon: z.string().trim().max(40).optional(),
+  lot: z.string().trim().max(120).optional(),
+  q: z.string().trim().max(120).optional(),
+  page: z.coerce.number().int().min(1).optional().default(1),
+  pageSize: z.coerce.number().int().min(1).max(200).optional().default(100),
+  sortBy: z.enum(["article_code", "scope", "magasin_code", "rayon_code", "lot_code", "qty_available"]).optional().default("article_code"),
+  sortDir: sortDirSchema.optional().default("asc"),
+}).strict();
+export type ListConsolidatedInventoryQueryDTO = z.infer<typeof listConsolidatedInventoryQuerySchema>;
+
 export const listAnalyticsQuerySchema = z.object({
   from: z.string().trim().optional(),
   to: z.string().trim().optional(),
@@ -834,7 +907,6 @@ const createMovementBodySchema = z
       }
     }
   });
-
 export const createMovementSchema = z.object({
   body: createMovementBodySchema,
 });

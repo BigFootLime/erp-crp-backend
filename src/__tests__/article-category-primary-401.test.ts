@@ -64,6 +64,11 @@ const validCases = [
       article_category: "achat" as const,
       article_categories: ["achat_transforme" as const],
       family_code: "ACH",
+      fourniture_client: {
+        reference: "BRUT-CLIENT",
+        indice: "A",
+        numero_client: "001",
+      },
     },
   },
   {

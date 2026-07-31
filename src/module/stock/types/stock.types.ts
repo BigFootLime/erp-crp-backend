@@ -3,6 +3,14 @@ export type Paginated<T> = {
   total: number;
 };
 
+export type HistoricalStockImport = { article_id: string; lot_id: string; movement_id: string; stock_trace_code: string; qr_payload: string; replayed: boolean };
+export type ConsolidatedInventoryRow = {
+  article_id: string; article_code: string; article_designation: string; scope: "OLD" | "NEW";
+  magasin_id: string; magasin_code: string; rayon_code: string; lot_id: string | null; lot_code: string | null;
+  stock_trace_code: string | null; qr_payload: string | null; qty_total: number; qty_reserved: number; qty_available: number;
+  updated_at: string;
+};
+
 export type ArticleType = "PIECE_TECHNIQUE" | "PURCHASED";
 export type ArticleCategory = "fabrique" | "matiere" | "traitement" | "achat";
 export type ArticleBusinessCategory =
@@ -179,6 +187,11 @@ export type StockArticleListItem = {
 export type StockArticleDetail = StockArticleListItem & {
   notes: string | null;
   article_matiere: ArticleMatierePayload | null;
+  fourniture_client: {
+    reference: string;
+    indice: string | null;
+    numero_client: string;
+  } | null;
   procurement: ArticleProcurementProfile | null;
   suppliers: ArticleSupplierReference[];
   open_supplier_orders: ArticleOpenSupplierOrder[];

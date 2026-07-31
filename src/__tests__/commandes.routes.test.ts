@@ -687,8 +687,8 @@ describe("/api/v1/commandes", () => {
       available_actions: [
         {
           key: "complete_technical_analysis",
-          target_status: "ATTENTE_PLANNING",
-          next_checkpoint_code: "of_generation",
+          target_status: "ATTENTE_STOCK",
+          next_checkpoint_code: "stock_check",
         },
       ],
     });
@@ -721,8 +721,8 @@ describe("/api/v1/commandes", () => {
       {
         id: "78",
         commande_id: "123",
-        checkpoint_code: "of_generation",
-        label: "Generation OF",
+        checkpoint_code: "stock_check",
+        label: "Controle du stock",
         sort_order: 40,
         status: "active",
         responsible_role: "technique",
@@ -732,8 +732,8 @@ describe("/api/v1/commandes", () => {
         completed_by: null,
         blocked_reason: null,
         notes: null,
-        action_key: "mark_of_ready",
-        action_label: "OF prets",
+        action_key: "check_stock",
+        action_label: "Controler le stock",
         metadata: {},
         created_at: "2026-06-01T08:00:00.000Z",
         updated_at: "2026-06-16T08:00:00.000Z",
@@ -770,12 +770,12 @@ describe("/api/v1/commandes", () => {
       commande_id: 123,
       statut: "ATTENTE_TECHNIQUE",
       current_checkpoint: {
-        checkpoint_code: "of_generation",
+        checkpoint_code: "stock_check",
         status: "active",
       },
       available_actions: [
         {
-          key: "mark_of_ready",
+          key: "check_stock",
         },
       ],
     });
@@ -788,7 +788,8 @@ describe("/api/v1/commandes", () => {
     const statusHistoryCall = mocks.clientQuery.mock.calls.find((c) =>
       String(c[0]).includes("INSERT INTO commande_historique")
     );
-    expect(statusHistoryCall?.[1]).toEqual([123, 1, "ATTENTE_TECHNIQUE", "ATTENTE_PLANNING", "ok technique"]);
+    expect(statusHistoryCall?.[1]).toEqual([123, 1, "ATTENTE_TECHNIQUE", "ATTENTE_STOCK", "ok technique"]);
+    expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO ordres_fabrication"))).toBe(false);
   });
 
   it("PATCH /api/v1/commandes/:id/workflow/checkpoints/:checkpointCode clears assignment and resumes blocked status", async () => {
@@ -961,7 +962,7 @@ describe("/api/v1/commandes", () => {
     expect(res.body).toMatchObject({ id: 456 });
   });
 
-  it("POST /api/v1/commandes/:id/generate-affaires returns affaire_ids and links rows", async () => {
+  it("POST /api/v1/commandes/:id/generate-affaires prepares a reserved BL from OLD stock without OF", async () => {
     process.env.JWT_SECRET = "test-secret";
     const token = jwt.sign(
       { id: 1, username: "test", email: "test@example.com", role: "admin" },
@@ -974,11 +975,33 @@ describe("/api/v1/commandes", () => {
     const ARTICLE_ID = "11111111-1111-1111-1111-111111111111";
     const PIECE_ID = "22222222-2222-2222-2222-222222222222";
 
+    let fullStockReplay = false;
     mocks.clientQuery.mockImplementation(async (sql: unknown, params?: unknown[]) => {
       const q = String(sql);
       const p0 = Array.isArray(params) ? params[0] : undefined;
 
       if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
+
+      // The launch is only available after the OLD -> NEW stock checkpoint.
+      if (q.includes("FROM commande_client cc") && q.includes("LEFT JOIN LATERAL")) {
+        return { rows: [{ id: "123", numero: "CC-123", client_id: "001", raw_statut: "ATTENTE_OF" }] };
+      }
+      if (q.includes("INSERT INTO public.commande_client_workflow_checkpoint")) return { rows: [] };
+      if (q.includes("FROM public.commande_client_workflow_checkpoint") && q.includes("checkpoint_code IN ('stock_check', 'of_generation')")) {
+        return {
+          rows: [
+            { checkpoint_code: "stock_check", status: "done" },
+            { checkpoint_code: "of_generation", status: fullStockReplay ? "skipped" : "active" },
+          ],
+        };
+      }
+      if (q.includes("SELECT EXISTS(SELECT 1 FROM public.commande_to_affaire")) return { rows: [{ exists: fullStockReplay }] };
+      if (q.includes("SELECT id::int AS id, numero, client_id") && q.includes("FROM commande_client")) {
+        return { rows: [{ id: 123, numero: "CC-123", client_id: "001" }] };
+      }
+      if (q.includes("SELECT id, numero, client_id FROM commande_client")) {
+        return { rows: [{ id: 123, numero: "CC-123", client_id: "001" }] };
+      }
 
       if (q.toLowerCase().includes("pg_get_serial_sequence")) {
         return { rows: [{ of_id: "9" }] };
@@ -1009,7 +1032,7 @@ describe("/api/v1/commandes", () => {
       }
 
       if (q.includes("FROM commande_to_affaire") && q.includes("WHERE commande_id")) {
-        return { rows: [] };
+        return { rows: fullStockReplay ? [{ affaire_id: 7, role: "LIVRAISON" }] : [] };
       }
 
       if (q.includes("FROM public.erp_settings") && String(p0) === "stock.default_shipping_location") {
@@ -1034,8 +1057,24 @@ describe("/api/v1/commandes", () => {
         };
       }
 
-      if (q.includes("FROM public.stock_levels") && q.includes("GROUP BY sl.article_id")) {
-        return { rows: [{ article_id: ARTICLE_ID, qty_available: 1 }] };
+      if (q.includes("availability.stock_level_id") && q.includes("warehouse.stock_scope")) {
+        return {
+          rows: [{
+            article_id: ARTICLE_ID,
+            stock_scope: "OLD",
+            stock_level_id: "33333333-3333-4333-8333-333333333333",
+            stock_batch_id: null,
+            location_id: LOCATION_ID,
+            lot_id: null,
+            magasin_id: MAGASIN_ID,
+            emplacement_id: 1,
+            qty_available: 1,
+          }],
+        };
+      }
+
+      if (q.includes("FROM public.v_stock_availability_225 availability") && q.includes("warehouse.stock_scope")) {
+        return { rows: [{ article_id: ARTICLE_ID, stock_scope: "OLD", qty_available: 1 }] };
       }
 
       if (q.includes("nextval('public.affaire_id_seq')")) {
@@ -1069,6 +1108,33 @@ describe("/api/v1/commandes", () => {
       if (q.includes("INSERT INTO affaire")) return { rows: [] };
       if (q.includes("INSERT INTO commande_to_affaire")) return { rows: [] };
       if (q.includes("INSERT INTO public.commande_ligne_affaire_allocation")) return { rows: [] };
+      if (q.includes("SELECT delivery_address_id::text AS delivery_address_id FROM clients")) return { rows: [{ delivery_address_id: null }] };
+      if (q.includes("nextval('public.bon_livraison_no_seq')")) return { rows: [{ n: "1" }] };
+      if (q.includes("INSERT INTO bon_livraison (") && q.includes("RETURNING id::text AS id")) {
+        return { rows: [{ id: "44444444-4444-4444-8444-444444444444" }] };
+      }
+      if (q.includes("v_bon_livraison_reliquats_226") && q.includes("remainder.quantite_restante::float8 AS quantite") && !q.includes("AS quantite_restante")) {
+        return { rows: [{ id: 1, designation: "Line", code_piece: "P1", quantite: 1, unite: "u", delai_client: null }] };
+      }
+      if (q.includes("INSERT INTO bon_livraison_ligne (")) return { rows: [] };
+      if (q.includes("SELECT id::text AS id, commande_ligne_id::bigint::int AS commande_ligne_id")) {
+        return { rows: [{ id: "55555555-5555-4555-8555-555555555555", commande_ligne_id: 1 }] };
+      }
+      if (q.includes("INSERT INTO public.bon_livraison_ligne_allocations")) return { rows: [] };
+      if (q.includes("FROM public.bon_livraison") && q.includes("row_version::int AS row_version")) {
+        return { rows: [{ id: "44444444-4444-4444-8444-444444444444", numero: "BL-00000001", statut: "DRAFT", row_version: 1, commande_id: "123", affaire_id: "7" }] };
+      }
+      if (q.includes("remainder.quantite_commandee::float8 AS quantite_commandee")) {
+        return { rows: [{ id: "55555555-5555-4555-8555-555555555555", ordre: 1, quantite: 1, commande_ligne_id: 1, quantite_commandee: 1, quantite_expediee: 0, quantite_restante: 1 }] };
+      }
+      if (q.includes("FROM public.bon_livraison_ligne_allocations allocation")) {
+        return { rows: [{ id: "66666666-6666-4666-8666-666666666666", bon_livraison_ligne_id: "55555555-5555-4555-8555-555555555555", line_order: 1, line_quantity: 1, article_id: ARTICLE_ID, lot_id: null, lot_article_id: null, lot_status: null, magasin_id: MAGASIN_ID, emplacement_id: 1, location_id: LOCATION_ID, stock_level_id: "33333333-3333-4333-8333-333333333333", stock_batch_id: null, reservation_id: null, reservation_status: null, reservation_quantity: null, stock_movement_line_id: null, quantite: 1, unite: "u", qty_on_hand: 1, qty_reserved: 0, qty_depreciated: 0 }] };
+      }
+      if (q.includes("FROM public.bon_livraison_pack_versions")) return { rows: [] };
+      if (q.includes("FROM public.stock_levels") && q.includes("qty_total::float8 AS qty_total") && q.includes("FOR UPDATE")) return { rows: [{ qty_total: 1, qty_reserved: 0, qty_depreciated: 0 }] };
+      if (q.includes("INSERT INTO public.stock_reservations")) return { rows: [{ id: "77777777-7777-4777-8777-777777777777" }] };
+      if (q.includes("FROM public.bon_livraison_ligne_allocations allocation") && q.includes("JOIN public.stock_reservations reservation")) return { rows: [{ id: "77777777-7777-4777-8777-777777777777" }] };
+      if (q.includes("bon_livraison_event_log")) return { rows: [] };
       if (q.includes("INSERT INTO public.of_operations")) return { rows: [], rowCount: 1 };
       if (q.includes("INSERT INTO public.commande_client_event_log")) return { rows: [] };
       if (q.includes("INSERT INTO erp_audit_logs")) return { rows: [{ id: "1", created_at: "2026-01-01T00:00:00.000Z" }] };
@@ -1077,13 +1143,36 @@ describe("/api/v1/commandes", () => {
       return { rows: [] };
     });
 
+    const forcedProduction = await request(app)
+      .post("/api/v1/commandes/123/generate-affaires")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        lines: [{ commande_ligne_id: 1, qty_ship_now: 1, qty_to_produce: 1 }],
+      });
+
+    expect(forcedProduction.status).toBe(400);
+    expect(forcedProduction.body).toMatchObject({ code: "PRODUCTION_NOT_REQUIRED" });
+    expect(
+      mocks.clientQuery.mock.calls.some((call) =>
+        String(call[0]).includes("INSERT INTO public.ordres_fabrication")
+      )
+    ).toBe(false);
+
+    mocks.clientQuery.mockClear();
+
     const res = await request(app)
       .post("/api/v1/commandes/123/generate-affaires")
       .set("Authorization", `Bearer ${token}`)
       .send({});
 
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ affaire_ids: [7] });
+    expect(res.body).toMatchObject({
+      affaire_ids: [7],
+      bon_livraison_id: "44444444-4444-4444-8444-444444444444",
+      reservations_created: [expect.any(String)],
+      of_ids: [],
+      workflow_status: "PRET_LIVRAISON",
+    });
 
     const insertAffaireCall = mocks.clientQuery.mock.calls.find((c) => String(c[0]).includes("INSERT INTO affaire"));
     expect(insertAffaireCall).toBeTruthy();
@@ -1092,6 +1181,30 @@ describe("/api/v1/commandes", () => {
       String(c[0]).includes("INSERT INTO commande_to_affaire")
     );
     expect(linkCall).toBeTruthy();
+    const allocationCall = mocks.clientQuery.mock.calls.find((call) =>
+      String(call[0]).includes("INSERT INTO public.bon_livraison_ligne_allocations")
+    );
+    expect(allocationCall?.[1]).toEqual(expect.arrayContaining(["33333333-3333-4333-8333-333333333333"]));
+    const workflowAdvanceCall = mocks.clientQuery.mock.calls.find((call) =>
+      String(call[0]).includes("checkpoint_code IN (") && String(call[0]).includes("'delivery'")
+    );
+    expect(workflowAdvanceCall).toBeTruthy();
+    expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO public.ordres_fabrication"))).toBe(false);
+
+    mocks.clientQuery.mockClear();
+    fullStockReplay = true;
+    const replay = await request(app)
+      .post("/api/v1/commandes/123/generate-affaires")
+      .set("Authorization", `Bearer ${token}`)
+      .send({});
+    expect(replay.status).toBe(200);
+    expect(replay.body).toMatchObject({
+      affaire_ids: [7],
+      livraison_affaire_id: 7,
+      idempotent_replay: true,
+      of_ids: [],
+    });
+    expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO affaire"))).toBe(false);
   });
 
   it("POST /api/v1/commandes/:id/generate-affaires creates LIVRAISON even when no stock is available", async () => {
@@ -1106,12 +1219,26 @@ describe("/api/v1/commandes", () => {
     const LOCATION_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
     const ARTICLE_ID = "11111111-1111-1111-1111-111111111111";
     const PIECE_ID = "22222222-2222-2222-2222-222222222222";
+    const ofInsertCalls: unknown[][] = [];
 
     mocks.clientQuery.mockImplementation(async (sql: unknown, params?: unknown[]) => {
       const q = String(sql);
       const p0 = Array.isArray(params) ? params[0] : undefined;
 
       if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
+
+      // Customer-command generation is intentionally gated by the completed stock check.
+      if (q.includes("FROM commande_client cc") && q.includes("LEFT JOIN LATERAL")) {
+        return { rows: [{ id: "123", numero: "CC-123", client_id: "001", raw_statut: "ATTENTE_OF" }] };
+      }
+      if (q.includes("INSERT INTO public.commande_client_workflow_checkpoint")) return { rows: [] };
+      if (q.includes("FROM public.commande_client_workflow_checkpoint") && q.includes("checkpoint_code IN ('stock_check', 'of_generation')")) {
+        return { rows: [{ checkpoint_code: "stock_check", status: "done" }, { checkpoint_code: "of_generation", status: "active" }] };
+      }
+      if (q.includes("SELECT EXISTS(SELECT 1 FROM public.commande_to_affaire")) return { rows: [{ exists: false }] };
+      if (q.includes("SELECT id::int AS id, numero, client_id") && q.includes("FROM commande_client")) {
+        return { rows: [{ id: 123, numero: "CC-123", client_id: "001" }] };
+      }
 
       if (q.includes("FROM commande_client") && q.includes("FOR UPDATE") && q.includes("order_type")) {
         return {
@@ -1209,7 +1336,10 @@ describe("/api/v1/commandes", () => {
       if (q.includes("INSERT INTO affaire")) return { rows: [] };
       if (q.includes("INSERT INTO commande_to_affaire")) return { rows: [] };
       if (q.includes("INSERT INTO public.of_generation_batches")) return { rows: [] };
-      if (q.includes("INSERT INTO public.ordres_fabrication")) return { rows: [] };
+      if (q.includes("INSERT INTO public.ordres_fabrication")) {
+        ofInsertCalls.push(Array.isArray(params) ? params : []);
+        return { rows: [] };
+      }
       if (q.includes("INSERT INTO public.of_operations")) return { rows: [], rowCount: 1 };
       if (q.includes("INSERT INTO public.of_technical_snapshots")) return { rows: [] };
       if (q.includes("INSERT INTO public.of_structure_snapshot")) return { rows: [] };
@@ -1229,13 +1359,17 @@ describe("/api/v1/commandes", () => {
     const res = await request(app)
       .post("/api/v1/commandes/123/generate-affaires")
       .set("Authorization", `Bearer ${token}`)
-      .send({});
+      .send({
+        // The shortage is 1; launching 3 is a deliberate stock build-up.
+        lines: [{ commande_ligne_id: 1, qty_ship_now: 0, qty_to_produce: 3 }],
+      });
 
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({
       affaire_ids: [7],
       livraison_affaire_id: 7,
     });
+    expect(ofInsertCalls.some((params) => params.includes(3))).toBe(true);
   });
 
   it("POST /api/v1/commandes/:id/generate-affaires creates recursive OF tree for manufactured sub-pieces", async () => {
@@ -1261,6 +1395,19 @@ describe("/api/v1/commandes", () => {
       const p0 = Array.isArray(params) ? params[0] : undefined;
 
       if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
+
+      // The recursive OF scenario starts after a successful stock-control checkpoint.
+      if (q.includes("FROM commande_client cc") && q.includes("LEFT JOIN LATERAL")) {
+        return { rows: [{ id: "123", numero: "CC-123", client_id: "001", raw_statut: "ATTENTE_OF" }] };
+      }
+      if (q.includes("INSERT INTO public.commande_client_workflow_checkpoint")) return { rows: [] };
+      if (q.includes("FROM public.commande_client_workflow_checkpoint") && q.includes("checkpoint_code IN ('stock_check', 'of_generation')")) {
+        return { rows: [{ checkpoint_code: "stock_check", status: "done" }, { checkpoint_code: "of_generation", status: "active" }] };
+      }
+      if (q.includes("SELECT EXISTS(SELECT 1 FROM public.commande_to_affaire")) return { rows: [{ exists: false }] };
+      if (q.includes("SELECT id::int AS id, numero, client_id") && q.includes("FROM commande_client")) {
+        return { rows: [{ id: 123, numero: "CC-123", client_id: "001" }] };
+      }
 
       if (q.includes("FROM commande_client") && q.includes("FOR UPDATE") && q.includes("order_type")) {
         return {

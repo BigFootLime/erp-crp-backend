@@ -10,6 +10,8 @@ import { emitAppNotificationCreated, emitEntityChanged } from "../../../shared/r
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 import { repoCreateAppNotifications, repoListUsersForCommandePlanningNotification } from "../../notifications/repository/notifications.repository";
+import { repoCreateLivraisonFromCommande } from "../../livraisons/repository/livraisons.repository";
+import { prepareLivraisonInTransaction } from "../../livraisons/repository/livraisons-shipment.repository";
 import type { AppNotification } from "../../notifications/types/notifications.types";
 import type {
   CreateCommandeInput,
@@ -41,6 +43,10 @@ import {
   type GeneratedOfRef,
 } from "../../production/domain/of-generation";
 import { canLaunchInternalOrder } from "../domain/commande-client-rbac";
+import {
+  allocateCommandeStockOldThenNew,
+  type CommandeStockAvailability,
+} from "../domain/stock-scope-allocation";
 
 function normalizeStoredPath(filePath: string) {
   const rel = path.isAbsolute(filePath) ? path.relative(process.cwd(), filePath) : filePath;
@@ -931,7 +937,7 @@ function normalizedCommandeStatusSql(rawExpr: string): string {
     CASE
       WHEN ${rawExpr} IS NULL THEN 'BROUILLON'
       WHEN ${rawExpr} IN (
-        'BROUILLON','EN_ANALYSE','ATTENTE_TECHNIQUE','ATTENTE_PLANNING','PLANNING_VALIDE',
+        'BROUILLON','EN_ANALYSE','ATTENTE_TECHNIQUE','ATTENTE_STOCK','ATTENTE_OF','ATTENTE_PLANNING','PLANNING_VALIDE',
         'AR_PRET','AR_ENVOYE','EN_PRODUCTION','PRODUCTION_TERMINEE','CONTROLE_QUALITE',
         'PRET_LIVRAISON','LIVRE','FACTURE','ARCHIVE','BLOQUE'
       ) THEN ${rawExpr}
@@ -1205,28 +1211,28 @@ async function advanceInternalOrderWorkflowAfterGeneration(params: {
       UPDATE public.commande_client_workflow_checkpoint
       SET
         status = CASE
-          WHEN checkpoint_code IN ('commercial_review','ar_preparation','ar_sent','invoicing') THEN 'skipped'
+          WHEN checkpoint_code IN ('commercial_review','stock_check','ar_preparation','ar_sent','invoicing') THEN 'skipped'
           WHEN checkpoint_code IN ('order_intake','technical_analysis','of_generation') THEN 'done'
           WHEN checkpoint_code = 'planning_validation' THEN 'active'
           ELSE status
         END,
         completed_at = CASE
           WHEN checkpoint_code IN (
-            'order_intake','commercial_review','technical_analysis','of_generation',
+            'order_intake','commercial_review','technical_analysis','stock_check','of_generation',
             'ar_preparation','ar_sent','invoicing'
           ) THEN COALESCE(completed_at, now())
           ELSE completed_at
         END,
         completed_by = CASE
           WHEN checkpoint_code IN (
-            'order_intake','commercial_review','technical_analysis','of_generation',
+            'order_intake','commercial_review','technical_analysis','stock_check','of_generation',
             'ar_preparation','ar_sent','invoicing'
           ) THEN COALESCE(completed_by, $2::int)
           ELSE completed_by
         END,
         metadata = COALESCE(metadata, '{}'::jsonb) || CASE
           WHEN checkpoint_code = 'of_generation' THEN $3::jsonb
-          WHEN checkpoint_code IN ('commercial_review','ar_preparation','ar_sent','invoicing')
+          WHEN checkpoint_code IN ('commercial_review','stock_check','ar_preparation','ar_sent','invoicing')
             THEN '{"skip_reason":"internal_order_flow"}'::jsonb
           ELSE '{"internal_order_flow":true}'::jsonb
         END,
@@ -1245,6 +1251,80 @@ async function advanceInternalOrderWorkflowAfterGeneration(params: {
   );
 
   return transition;
+}
+
+async function advanceCustomerOrderWorkflowAfterLaunch(params: {
+  tx: Queryable;
+  commande_id: number;
+  user_id: number;
+  needs_production: boolean;
+  bon_livraison_id: string | null;
+  of_ids: number[];
+}) {
+  if (params.needs_production) {
+    await params.tx.query(
+      `
+        UPDATE public.commande_client_workflow_checkpoint
+        SET status = 'done',
+            completed_at = COALESCE(completed_at, now()),
+            completed_by = COALESCE(completed_by, $2::int),
+            metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+            updated_at = now()
+        WHERE commande_id = $1
+          AND checkpoint_code = 'of_generation'
+          AND status = 'active'
+      `,
+      [params.commande_id, params.user_id, JSON.stringify({ of_ids: params.of_ids })]
+    );
+    await activateNextCheckpoint(params.tx, params.commande_id, "planning_validation");
+    return repoEnsureCommandeWorkflowStatus({
+      tx: params.tx,
+      commande_id: params.commande_id,
+      nouveau_statut: "ATTENTE_PLANNING",
+      commentaire: "Stock réservé et OF du manquant générés",
+      user_id: params.user_id,
+    });
+  }
+
+  await params.tx.query(
+    `
+      UPDATE public.commande_client_workflow_checkpoint
+      SET status = CASE
+            WHEN checkpoint_code = 'delivery' THEN 'active'
+            ELSE 'skipped'
+          END,
+          completed_at = CASE
+            WHEN checkpoint_code = 'delivery' THEN NULL
+            ELSE COALESCE(completed_at, now())
+          END,
+          completed_by = CASE
+            WHEN checkpoint_code = 'delivery' THEN NULL
+            ELSE COALESCE(completed_by, $2::int)
+          END,
+          metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+          updated_at = now()
+      WHERE commande_id = $1
+        AND checkpoint_code IN (
+          'of_generation', 'planning_validation', 'ar_preparation', 'ar_sent',
+          'production_launch', 'production_completion', 'quality_control', 'delivery'
+        )
+    `,
+    [
+      params.commande_id,
+      params.user_id,
+      JSON.stringify({
+        skip_reason: "commande_fully_reserved_from_stock",
+        bon_livraison_id: params.bon_livraison_id,
+      }),
+    ]
+  );
+  return repoEnsureCommandeWorkflowStatus({
+    tx: params.tx,
+    commande_id: params.commande_id,
+    nouveau_statut: "PRET_LIVRAISON",
+    commentaire: "Commande entièrement réservée, BL préparé sans OF",
+    user_id: params.user_id,
+  });
 }
 
 type CommandeWorkflowHeader = {
@@ -1759,58 +1839,7 @@ export async function repoRunCommandeWorkflowAction(
   const action = getCommandeWorkflowAction(body.action);
   if (!action) throw new HttpError(400, "UNKNOWN_WORKFLOW_ACTION", "Unknown workflow action");
 
-  const workflowAudit: AuditContext = {
-    user_id: userId,
-    user_role: userRole,
-    ip: null,
-    user_agent: null,
-    device_type: null,
-    os: null,
-    browser: null,
-    path: null,
-    page_key: "commande.workflow",
-    client_session_id: null,
-  };
-  let generatedAffaires: Awaited<ReturnType<typeof repoGenerateAffairesFromOrder>> | null = null;
-  const runsTechnicalGeneration = action.key === "complete_technical_analysis";
-  if (runsTechnicalGeneration) {
-    const preflightClient = await pool.connect();
-    try {
-      await preflightClient.query("BEGIN");
-      const header = await loadCommandeWorkflowHeaderWithStatus(preflightClient, commandeId);
-      if (!header) {
-        await preflightClient.query("ROLLBACK");
-        return null;
-      }
-      await ensureCommandeWorkflowCheckpoints(preflightClient, commandeId, header.statut);
-      const checkpointRes = await preflightClient.query<{ status: string }>(
-        `
-          SELECT status
-          FROM public.commande_client_workflow_checkpoint
-          WHERE commande_id = $1 AND checkpoint_code = $2
-          FOR UPDATE
-        `,
-        [commandeId, action.checkpoint_code]
-      );
-      const checkpoint = checkpointRes.rows[0] ?? null;
-      if (!checkpoint) throw new HttpError(404, "CHECKPOINT_NOT_FOUND", "Workflow checkpoint not found");
-      if (checkpoint.status === "blocked") {
-        throw new HttpError(409, "CHECKPOINT_BLOCKED", "Resolve the blocker before running this workflow action");
-      }
-      await preflightClient.query("ROLLBACK");
-    } catch (e) {
-      await preflightClient.query("ROLLBACK").catch(() => undefined);
-      throw e;
-    } finally {
-      preflightClient.release();
-    }
-
-    generatedAffaires = await repoGenerateAffairesFromOrder(
-      id,
-      { decision: null, livraison_count: 1, lines: [] },
-      workflowAudit
-    );
-  }
+  const runsStockAnalysis = action.key === "check_stock";
 
   const client = await pool.connect();
   let notifications: AppNotification[] = [];
@@ -1837,8 +1866,30 @@ export async function repoRunCommandeWorkflowAction(
     if (checkpoint.status === "blocked") {
       throw new HttpError(409, "CHECKPOINT_BLOCKED", "Resolve the blocker before running this workflow action");
     }
+    if (checkpoint.status !== "active") {
+      throw new HttpError(
+        409,
+        "CHECKPOINT_NOT_ACTIVE",
+        `L'étape ${action.checkpoint_code} n'est pas l'étape active de la commande.`
+      );
+    }
 
-    const nextCheckpointCode = runsTechnicalGeneration ? "planning_validation" : action.next_checkpoint_code;
+    const stockAnalysisResult = runsStockAnalysis
+      ? await analyzeCommandeStockTx(client, commandeId, {
+          user_id: userId,
+          user_role: userRole,
+          ip: null,
+          user_agent: null,
+          device_type: null,
+          os: null,
+          browser: null,
+          path: null,
+          page_key: "commande.workflow",
+          client_session_id: null,
+        })
+      : null;
+
+    const nextCheckpointCode = action.next_checkpoint_code;
 
     await client.query(
       `
@@ -1852,25 +1903,21 @@ export async function repoRunCommandeWorkflowAction(
       `,
       [commandeId, action.checkpoint_code, userId, body.commentaire ?? null]
     );
-    if (runsTechnicalGeneration) {
+    if (runsStockAnalysis) {
       await client.query(
         `
           UPDATE public.commande_client_workflow_checkpoint
-          SET status = 'done',
-              completed_at = COALESCE(completed_at, now()),
-              completed_by = COALESCE(completed_by, $2::int),
-              metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+          SET metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
               updated_at = now()
           WHERE commande_id = $1
-            AND checkpoint_code = 'of_generation'
-            AND status <> 'done'
+            AND checkpoint_code = $2
         `,
         [
           commandeId,
-          userId,
+          action.checkpoint_code,
           JSON.stringify({
-            automated_by: "complete_technical_analysis",
-            generated_affaires: generatedAffaires,
+            stock_scope_order: ["OLD", "NEW"],
+            analysis: stockAnalysisResult,
           }),
         ]
       );
@@ -1911,7 +1958,7 @@ export async function repoRunCommandeWorkflowAction(
         statut: action.target_status,
         action: action.key,
         next_checkpoint_code: nextCheckpointCode,
-        generated_affaires: generatedAffaires,
+        stock_analysis: stockAnalysisResult,
       },
       user_id: userId,
     });
@@ -3051,115 +3098,129 @@ export async function repoUpdateCommandeStatus(
   }
 }
 
+async function analyzeCommandeStockTx(
+  client: PoolClient,
+  commandeId: number,
+  audit: AuditContext
+) {
+  const commandeRes = await client.query<{
+    id: number;
+    client_id: string | null;
+    order_type: string;
+    dest_stock_magasin_id: string | null;
+    dest_stock_emplacement_id: string | null;
+  }>(
+    `
+      SELECT
+        id::bigint::int AS id,
+        client_id,
+        order_type,
+        dest_stock_magasin_id::text AS dest_stock_magasin_id,
+        dest_stock_emplacement_id::bigint::text AS dest_stock_emplacement_id
+      FROM commande_client
+      WHERE id = $1
+      FOR UPDATE
+    `,
+    [commandeId]
+  );
+  const commande = commandeRes.rows[0] ?? null;
+  if (!commande) return null;
+
+  let locationId: string | null = null;
+  let analysis: CommandeStockAnalysis;
+  if (commande.order_type === "INTERNE") {
+    const magasinId = commande.dest_stock_magasin_id;
+    const emplacementIdRaw = commande.dest_stock_emplacement_id;
+    const emplacementId =
+      typeof emplacementIdRaw === "string" && /^\d+$/.test(emplacementIdRaw)
+        ? Number(emplacementIdRaw)
+        : null;
+    if (!magasinId || typeof emplacementId !== "number" || !Number.isFinite(emplacementId)) {
+      throw new HttpError(
+        400,
+        "DEST_STOCK_LOCATION_REQUIRED",
+        "dest_stock_magasin_id and dest_stock_emplacement_id are required for internal orders"
+      );
+    }
+    locationId = await resolveLocationIdForEmplacement(client, {
+      magasin_id: magasinId,
+      emplacement_id: emplacementId,
+      label: "dest_stock_location",
+    });
+    analysis = {
+      lines: buildZeroStockAnalysisLines(await selectCommandeLineRefs(client, commandeId)),
+    };
+  } else {
+    analysis = await computeCommandeStockAnalysis(client, { commande_id: commandeId });
+  }
+
+  const hasPartial = analysis.lines.some((line) => line.status === "PARTIAL");
+  const hasShortage = analysis.lines.some((line) => line.shortage_qty > 0);
+  const needs_confirmation = commande.order_type !== "INTERNE" && hasPartial;
+  const suggested_decision: CommandesStockDecisionDTO | null = needs_confirmation
+    ? "SHIP_AVAILABLE_NOW"
+    : null;
+  const suggested_scenario =
+    commande.order_type === "INTERNE"
+      ? "INTERNE_OF"
+      : needs_confirmation
+        ? "CONFIRMATION_REQUIRED"
+        : hasShortage
+          ? "LIVRAISON_AND_OF"
+          : "LIVRAISON_ONLY";
+
+  const result = {
+    commande_id: commandeId,
+    location_id: locationId,
+    stock_scope_order: ["OLD", "NEW"] as const,
+    lines: analysis.lines,
+    suggested_scenario,
+    needs_confirmation,
+    suggested_decision,
+  };
+
+  await insertCommandeEvent(client, {
+    commande_id: commandeId,
+    event_type: "STOCK_ANALYZED",
+    new_values: {
+      location_id: locationId,
+      stock_scope_order: ["OLD", "NEW"],
+      suggested_scenario,
+      needs_confirmation,
+      suggested_decision,
+    },
+    user_id: audit.user_id,
+  });
+
+  await insertAuditLog(client, audit, {
+    action: "commandes.stock.analyze",
+    entity_type: "commande_client",
+    entity_id: String(commandeId),
+    details: {
+      commande_id: commandeId,
+      location_id: locationId,
+      stock_scope_order: ["OLD", "NEW"],
+      suggested_scenario,
+      needs_confirmation,
+      suggested_decision,
+      lines: analysis.lines,
+    },
+  });
+
+  return result;
+}
+
 export async function repoAnalyzeCommandeStock(id: string, audit: AuditContext) {
   const commandeId = toInt(id, "commande_id");
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-
-    const commandeRes = await client.query<{
-      id: number;
-      client_id: string | null;
-      order_type: string;
-      dest_stock_magasin_id: string | null;
-      dest_stock_emplacement_id: string | null;
-    }>(
-      `
-        SELECT
-          id::bigint::int AS id,
-          client_id,
-          order_type,
-          dest_stock_magasin_id::text AS dest_stock_magasin_id,
-          dest_stock_emplacement_id::bigint::text AS dest_stock_emplacement_id
-        FROM commande_client
-        WHERE id = $1
-        FOR UPDATE
-      `,
-      [commandeId]
-    );
-    const commande = commandeRes.rows[0] ?? null;
-    if (!commande) {
-      await client.query("ROLLBACK");
-      return null;
-    }
-
-    let locationId: string;
-    if (commande.order_type === "INTERNE") {
-      const magasinId = commande.dest_stock_magasin_id;
-      const emplacementIdRaw = commande.dest_stock_emplacement_id;
-      const emplacementId = typeof emplacementIdRaw === "string" && /^\d+$/.test(emplacementIdRaw) ? Number(emplacementIdRaw) : null;
-      if (!magasinId || typeof emplacementId !== "number" || !Number.isFinite(emplacementId)) {
-        throw new HttpError(
-          400,
-          "DEST_STOCK_LOCATION_REQUIRED",
-          "dest_stock_magasin_id and dest_stock_emplacement_id are required for internal orders"
-        );
-      }
-      locationId = await resolveLocationIdForEmplacement(client, {
-        magasin_id: magasinId,
-        emplacement_id: emplacementId,
-        label: "dest_stock_location",
-      });
-    } else {
-      const shipping = await getDefaultShippingLocation(client);
-      locationId = shipping.location_id;
-    }
-
-    const analysis = await computeCommandeStockAnalysis(client, { commande_id: commandeId, location_id: locationId });
-
-    const hasPartial = analysis.lines.some((l) => l.status === "PARTIAL");
-    const hasShortage = analysis.lines.some((l) => l.shortage_qty > 0);
-
-    const needs_confirmation = commande.order_type !== "INTERNE" && hasPartial;
-    const suggested_decision: CommandesStockDecisionDTO | null = needs_confirmation ? "SHIP_AVAILABLE_NOW" : null;
-
-    const suggested_scenario =
-      commande.order_type === "INTERNE"
-        ? "INTERNE_OF"
-        : needs_confirmation
-          ? "CONFIRMATION_REQUIRED"
-          : hasShortage
-            ? "LIVRAISON_AND_OF"
-            : "LIVRAISON_ONLY";
-
-    await insertCommandeEvent(client, {
-      commande_id: commandeId,
-      event_type: "STOCK_ANALYZED",
-      new_values: {
-        location_id: locationId,
-        suggested_scenario,
-        needs_confirmation,
-        suggested_decision,
-      },
-      user_id: audit.user_id,
-    });
-
-    await insertAuditLog(client, audit, {
-      action: "commandes.stock.analyze",
-      entity_type: "commande_client",
-      entity_id: String(commandeId),
-      details: {
-        commande_id: commandeId,
-        location_id: locationId,
-        suggested_scenario,
-        needs_confirmation,
-        suggested_decision,
-        lines: analysis.lines,
-      },
-    });
-
+    const result = await analyzeCommandeStockTx(client, commandeId, audit);
     await client.query("COMMIT");
-    return {
-      commande_id: commandeId,
-      location_id: locationId,
-      lines: analysis.lines,
-      suggested_scenario,
-      needs_confirmation,
-      suggested_decision,
-    };
-  } catch (e) {
+    return result;
+  } catch (error) {
     await client.query("ROLLBACK");
-    throw e;
+    throw error;
   } finally {
     client.release();
   }
@@ -3218,6 +3279,45 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
     const orderType = coerceOrderType(commande.order_type);
     const requestedLivraisonCountRaw = typeof body.livraison_count === "number" ? body.livraison_count : 1;
     const requestedLivraisonCount = Math.max(1, Math.min(10, Math.trunc(requestedLivraisonCountRaw)));
+
+    if (orderType !== "INTERNE") {
+      const workflowHeader = await loadCommandeWorkflowHeaderWithStatus(client, commandeId);
+      if (!workflowHeader) throw new HttpError(404, "COMMANDE_NOT_FOUND", "Commande not found");
+      await ensureCommandeWorkflowCheckpoints(client, commandeId, workflowHeader.statut);
+      const launchCheckpoints = await client.query<{ checkpoint_code: string; status: string }>(
+        `
+          SELECT checkpoint_code, status
+          FROM public.commande_client_workflow_checkpoint
+          WHERE commande_id = $1
+            AND checkpoint_code IN ('stock_check', 'of_generation')
+          ORDER BY checkpoint_code
+          FOR UPDATE
+        `,
+        [commandeId]
+      );
+      const statusByCheckpoint = new Map(
+        launchCheckpoints.rows.map((checkpoint) => [checkpoint.checkpoint_code, checkpoint.status] as const)
+      );
+      const existingLaunch = await client.query<{ exists: boolean }>(
+        `SELECT EXISTS(SELECT 1 FROM public.commande_to_affaire WHERE commande_id = $1) AS exists`,
+        [commandeId]
+      );
+      const ofGenerationStatus = statusByCheckpoint.get("of_generation");
+      const launchAllowed =
+        statusByCheckpoint.get("stock_check") === "done" &&
+        (
+          ofGenerationStatus === "active" ||
+          ((ofGenerationStatus === "done" || ofGenerationStatus === "skipped") &&
+            existingLaunch.rows[0]?.exists === true)
+        );
+      if (!launchAllowed) {
+        throw new HttpError(
+          409,
+          "STOCK_CHECK_REQUIRED",
+          "Validez d'abord l'analyse technique puis le contrôle OLD → NEW avant de lancer la commande."
+        );
+      }
+    }
 
     if (orderType === "INTERNE") {
       if (!canLaunchInternalOrder(audit.user_role)) {
@@ -3360,72 +3460,63 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         emplacement_id: emplacementId,
         label: "dest_stock_location",
       });
-    } else {
-      try {
-        stockLocationId = (await getDefaultShippingLocation(client)).location_id;
-      } catch {
-        stockLocationId = null;
-      }
     }
 
-    let analysis: CommandeStockAnalysis | null = null;
+    let analysis: CommandeStockAnalysis;
     if (orderType === "INTERNE") {
       analysis = {
-        lines: refs.map((ref) => ({
-          commande_ligne_id: ref.commande_ligne_id,
-          code_piece: ref.code_piece,
-          article_id: ref.article_id,
-          article_code: ref.article_code,
-          article_designation: ref.article_designation,
-          piece_technique_id: ref.piece_technique_id,
-          piece_code: ref.piece_code,
-          piece_designation: ref.piece_designation,
-          requested_qty: Number(ref.qty_ordered),
-          available_qty: 0,
-          available_used_qty: 0,
-          shortage_qty: Number(ref.qty_ordered),
-          status: "NONE",
-        })),
+        lines: buildZeroStockAnalysisLines(refs),
       };
-    } else if (stockLocationId) {
-      try {
-        analysis = await computeCommandeStockAnalysis(client, { commande_id: commandeId, location_id: stockLocationId });
-      } catch {
-        analysis = null;
-      }
-    }
-    if (!analysis) {
-      analysis = {
-        lines: refs.map((r) => {
-          const requestedQty = Number(r.qty_ordered);
-          const shortage = Math.max(0, requestedQty);
-          return {
-            commande_ligne_id: r.commande_ligne_id,
-            code_piece: r.code_piece,
-            article_id: r.article_id,
-            article_code: r.article_code,
-            article_designation: r.article_designation,
-            piece_technique_id: r.piece_technique_id,
-            piece_code: r.piece_code,
-            piece_designation: r.piece_designation,
-            requested_qty: requestedQty,
-            available_qty: 0,
-            available_used_qty: 0,
-            shortage_qty: shortage,
-            status: shortage > 0 ? "NONE" : "FULL",
-          };
-        }),
-      };
+    } else {
+      // Fail closed: generation must use the same authoritative OLD -> NEW
+      // availability projection as the preview, never silently fall back to zero.
+      analysis = await computeCommandeStockAnalysis(client, { commande_id: commandeId });
     }
 
     const stockAnalysis = analysis;
 
     const hasPartial = stockAnalysis.lines.some((l) => l.status === "PARTIAL");
     const needsConfirmation = orderType !== "INTERNE" && hasPartial;
-    const needsProduction = orderType === "INTERNE" ? true : stockAnalysis.lines.some((l) => l.shortage_qty > 0);
+
+    const requestedProductionByLine = new Map<number, number>();
+    for (const line of body.lines ?? []) {
+      if (line.qty_to_produce !== undefined) {
+        requestedProductionByLine.set(line.commande_ligne_id, Number(line.qty_to_produce));
+      }
+    }
+    const productionByLine = new Map<number, number>();
+    for (const line of stockAnalysis.lines) {
+      const minimum = orderType === "INTERNE" ? line.requested_qty : line.shortage_qty;
+      const requested = requestedProductionByLine.get(line.commande_ligne_id);
+      const quantity = requested ?? minimum;
+      if (!Number.isFinite(quantity) || quantity < 0) {
+        throw new HttpError(
+          400,
+          "INVALID_PRODUCTION_QTY",
+          `Invalid qty_to_produce for line ${line.commande_ligne_id}`
+        );
+      }
+      if (orderType !== "INTERNE" && quantity + 1e-9 < minimum) {
+        throw new HttpError(
+          400,
+          "PRODUCTION_QTY_BELOW_SHORTAGE",
+          `qty_to_produce for line ${line.commande_ligne_id} must cover the shortage (${minimum})`
+        );
+      }
+      if (orderType !== "INTERNE" && minimum <= 1e-9 && quantity > 1e-9) {
+        throw new HttpError(
+          400,
+          "PRODUCTION_NOT_REQUIRED",
+          `qty_to_produce for line ${line.commande_ligne_id} must be zero because stock covers the requested quantity`
+        );
+      }
+      productionByLine.set(line.commande_ligne_id, quantity);
+    }
+    const needsProduction = Array.from(productionByLine.values()).some((quantity) => quantity > 0);
 
     let decision = body.decision ?? null;
     if (needsConfirmation && decision === null) decision = "SHIP_AVAILABLE_NOW";
+    else if (needsProduction && decision === null) decision = "SHIP_ALL_TOGETHER";
 
     const overrides = new Map<number, number>();
     for (const l of body.lines ?? []) {
@@ -3433,19 +3524,42 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
     }
 
     const reservedByLine = new Map<number, number>();
-    if (decision !== null) {
-      for (const l of stockAnalysis.lines) {
-        const maxShip = Number(l.available_used_qty);
-        const override = overrides.has(l.commande_ligne_id) ? Number(overrides.get(l.commande_ligne_id) ?? 0) : null;
-        const qtyToReserve = override === null ? maxShip : override;
-        if (!Number.isFinite(qtyToReserve) || qtyToReserve < 0) {
-          throw new HttpError(400, "INVALID_QTY", `Invalid qty_ship_now for line ${l.commande_ligne_id}`);
-        }
-        if (qtyToReserve > maxShip) {
-          throw new HttpError(400, "INVALID_QTY", `qty_ship_now for line ${l.commande_ligne_id} exceeds available qty (${maxShip})`);
-        }
-        reservedByLine.set(l.commande_ligne_id, qtyToReserve);
+    for (const line of stockAnalysis.lines) {
+      const maxShip = Number(line.available_used_qty);
+      const override = overrides.has(line.commande_ligne_id)
+        ? Number(overrides.get(line.commande_ligne_id) ?? 0)
+        : null;
+      const qtyToDeliverNow =
+        orderType === "INTERNE"
+          ? 0
+          : needsProduction && decision === "SHIP_ALL_TOGETHER"
+            ? 0
+            : line.shortage_qty <= 1e-9
+              ? override ?? maxShip
+              : decision === "SHIP_AVAILABLE_NOW"
+                ? override ?? maxShip
+                : 0;
+      if (!Number.isFinite(qtyToDeliverNow) || qtyToDeliverNow < 0) {
+        throw new HttpError(400, "INVALID_QTY", `Invalid qty_ship_now for line ${line.commande_ligne_id}`);
       }
+      if (qtyToDeliverNow > maxShip + 1e-9) {
+        throw new HttpError(
+          400,
+          "INVALID_QTY",
+          `qty_ship_now for line ${line.commande_ligne_id} exceeds available qty (${maxShip})`
+        );
+      }
+      if (
+        decision === "SHIP_AVAILABLE_NOW" &&
+        qtyToDeliverNow + Number(productionByLine.get(line.commande_ligne_id) ?? 0) + 1e-9 < line.requested_qty
+      ) {
+        throw new HttpError(
+          400,
+          "UNPLANNED_ORDER_QUANTITY",
+          `La livraison et la production doivent couvrir la quantité demandée pour la ligne ${line.commande_ligne_id}.`
+        );
+      }
+      reservedByLine.set(line.commande_ligne_id, qtyToDeliverNow);
     }
 
     const livraisonAffaireIds: number[] = [];
@@ -3485,7 +3599,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       qty_ordered: l.requested_qty,
       qty_on_hand: 0,
       qty_from_stock: l.available_used_qty,
-      qty_to_produce: l.shortage_qty,
+      qty_to_produce: Number(productionByLine.get(l.commande_ligne_id) ?? l.shortage_qty),
     }));
 
     const allocationMode =
@@ -3500,93 +3614,28 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       livraison_affaire_id: livraisonAffaireId,
       allocation_mode: allocationMode,
       reserve_stock: false,
-      reserved_qty_by_line: decision !== null ? reservedByLine : null,
+      reserved_qty_by_line: orderType !== "INTERNE" ? reservedByLine : null,
       lines: planLines,
     });
 
-    const reservationsCreated: string[] = [];
-    if (decision !== null && stockLocationId) {
-      const reservationItems = stockAnalysis.lines
-        .map((l) => {
-          const qty = Number(reservedByLine.get(l.commande_ligne_id) ?? 0);
-          return { line: l, qty };
-        })
-        .filter((x) => x.qty > 0);
-
-      reservationItems.sort((a, b) => {
-        const aa = a.line.article_id ?? "";
-        const bb = b.line.article_id ?? "";
-        if (aa !== bb) return aa.localeCompare(bb);
-        return a.line.commande_ligne_id - b.line.commande_ligne_id;
-      });
-
-      for (const it of reservationItems) {
-        const articleId = it.line.article_id;
-        if (!articleId) {
-          throw new HttpError(400, "ARTICLE_REQUIRED", `Cannot reserve stock for line ${it.line.commande_ligne_id} (missing article_id)`);
-        }
-
-        const sl = await client.query<{ id: string; qty_total: number; qty_reserved: number }>(
-          `
-            SELECT id::text AS id, qty_total::float8 AS qty_total, qty_reserved::float8 AS qty_reserved
-            FROM public.stock_levels
-            WHERE article_id = $1::uuid
-              AND location_id = $2::uuid
-            FOR UPDATE
-            LIMIT 1
-          `,
-          [articleId, stockLocationId]
-        );
-        const row = sl.rows[0] ?? null;
-        if (!row) {
-          throw new HttpError(409, "INSUFFICIENT_STOCK", `No stock level found for article ${articleId}`);
-        }
-
-        const available = Number(row.qty_total) - Number(row.qty_reserved);
-        if (available < it.qty - 1e-9) {
-          throw new HttpError(409, "INSUFFICIENT_STOCK", `Not enough available stock for article ${articleId} (need ${it.qty}, have ${available})`);
-        }
-
-        await client.query(
-          `
-            UPDATE public.stock_levels
-            SET qty_reserved = qty_reserved + $2,
-                updated_at = now(),
-                updated_by = $3
-            WHERE id = $1::uuid
-          `,
-          [row.id, it.qty, audit.user_id]
-        );
-
-        const ins = await client.query<{ id: string }>(
-          `
-            INSERT INTO public.stock_reservations (
-              article_id,
-              location_id,
-              qty_reserved,
-              source_type,
-              source_id,
-              commande_ligne_id,
-              status,
-              created_by,
-              updated_by
-            ) VALUES ($1::uuid,$2::uuid,$3,'COMMANDE_LIGNE',$4,$4::bigint,'ACTIVE',$5,$5)
-            RETURNING id::text AS id
-          `,
-          [articleId, stockLocationId, it.qty, String(it.line.commande_ligne_id), audit.user_id]
-        );
-        const reservationId = ins.rows[0]?.id ?? null;
-        if (reservationId) reservationsCreated.push(reservationId);
-      }
-    }
+    const preparedDelivery =
+      orderType !== "INTERNE"
+        ? await createPreparedLivraisonForStock(client, {
+            commande_id: commandeId,
+            user_id: audit.user_id,
+            analysis_lines: stockAnalysis.lines,
+            quantities_by_line: reservedByLine,
+          })
+        : null;
+    const reservationsCreated = preparedDelivery?.reservation_ids ?? [];
+    const bonLivraisonId = preparedDelivery?.bon_livraison_id ?? null;
 
     const generatedOfs: GeneratedOfRef[] = [];
     if (needsProduction) {
       const byLine = new Map<number, CommandeLineRef>(refs.map((r) => [r.commande_ligne_id, r] as const));
 
       for (const l of stockAnalysis.lines) {
-        const qtyToProduce =
-          orderType === "INTERNE" ? l.requested_qty : Number(l.shortage_qty);
+        const qtyToProduce = Number(productionByLine.get(l.commande_ligne_id) ?? 0);
         if (!Number.isFinite(qtyToProduce) || qtyToProduce <= 0) continue;
 
         const ref = byLine.get(l.commande_ligne_id) ?? null;
@@ -3638,6 +3687,16 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         },
         user_id: audit.user_id,
       });
+    } else {
+      const transition = await advanceCustomerOrderWorkflowAfterLaunch({
+        tx: client,
+        commande_id: commandeId,
+        user_id: audit.user_id,
+        needs_production: needsProduction,
+        bon_livraison_id: bonLivraisonId,
+        of_ids: ofIds,
+      });
+      workflowStatus = transition.nouveau_statut;
     }
 
     await insertCommandeEvent(client, {
@@ -3648,6 +3707,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         decision,
         stock_location_id: stockLocationId,
         livraison_affaire_ids: livraisonAffaireIds,
+        bon_livraison_id: bonLivraisonId,
         reservations_created: reservationsCreated.length,
         of_created: ofIds.length,
       },
@@ -3664,6 +3724,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         decision,
         livraison_affaire_id: livraisonAffaireId,
         livraison_affaire_ids: livraisonAffaireIds,
+        bon_livraison_id: bonLivraisonId,
         reservations_created: reservationsCreated,
         of_ids: ofIds,
       },
@@ -3678,6 +3739,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
           commande_id: commandeId,
           decision,
           stock_location_id: stockLocationId,
+          bon_livraison_id: bonLivraisonId,
           reservation_ids: reservationsCreated,
         },
       });
@@ -3692,6 +3754,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       livraison_affaire_id: livraisonAffaireId,
       requires_confirmation: false,
       livraison_affaire_ids: livraisonAffaireIds,
+      bon_livraison_id: bonLivraisonId,
       reservations_created: reservationsCreated,
       of_ids: ofIds,
       root_of_ids: generatedOfs.filter((of) => of.parent_of_id === null).map((of) => of.id),
@@ -3927,6 +3990,42 @@ async function loadAvailableQtyByArticle(db: PoolClient, params: {
   return out;
 }
 
+async function loadScopedAvailableQtyByArticle(
+  db: PoolClient,
+  articleIds: string[]
+): Promise<Map<string, CommandeStockAvailability>> {
+  const out = new Map<string, CommandeStockAvailability>();
+  for (const articleId of articleIds) out.set(articleId, { OLD: 0, NEW: 0 });
+  if (articleIds.length === 0) return out;
+
+  const res = await db.query<{
+    article_id: string;
+    stock_scope: "OLD" | "NEW";
+    qty_available: number;
+  }>(
+    `
+      SELECT
+        availability.article_id::text AS article_id,
+        warehouse.stock_scope,
+        COALESCE(SUM(availability.qty_available), 0)::float8 AS qty_available
+      FROM public.v_stock_availability_225 availability
+      JOIN public.warehouses warehouse ON warehouse.id = availability.warehouse_id
+      WHERE availability.article_id = ANY($1::uuid[])
+        AND availability.managed_in_stock = true
+        AND warehouse.stock_scope IN ('OLD', 'NEW')
+      GROUP BY availability.article_id, warehouse.stock_scope
+    `,
+    [articleIds]
+  );
+
+  for (const row of res.rows) {
+    const current = out.get(row.article_id) ?? { OLD: 0, NEW: 0 };
+    current[row.stock_scope] = Math.max(0, Number(row.qty_available ?? 0));
+    out.set(row.article_id, current);
+  }
+  return out;
+}
+
 type StockAvailabilityStatus = "FULL" | "PARTIAL" | "NONE";
 
 type CommandeStockAnalysisLine = {
@@ -3939,9 +4038,14 @@ type CommandeStockAnalysisLine = {
   piece_code: string | null;
   piece_designation: string | null;
   requested_qty: number;
+  old_available_qty: number;
+  old_used_qty: number;
+  new_available_qty: number;
+  new_used_qty: number;
   available_qty: number;
   available_used_qty: number;
   shortage_qty: number;
+  proposed_production_qty: number;
   status: StockAvailabilityStatus;
 };
 
@@ -3949,75 +4053,275 @@ type CommandeStockAnalysis = {
   lines: CommandeStockAnalysisLine[];
 };
 
+function buildZeroStockAnalysisLines(refs: CommandeLineRef[]): CommandeStockAnalysisLine[] {
+  return refs.map((ref) => {
+    const requestedQty = Math.max(0, Number(ref.qty_ordered));
+    return {
+      commande_ligne_id: ref.commande_ligne_id,
+      code_piece: ref.code_piece,
+      article_id: ref.article_id,
+      article_code: ref.article_code,
+      article_designation: ref.article_designation,
+      piece_technique_id: ref.piece_technique_id,
+      piece_code: ref.piece_code,
+      piece_designation: ref.piece_designation,
+      requested_qty: requestedQty,
+      old_available_qty: 0,
+      old_used_qty: 0,
+      new_available_qty: 0,
+      new_used_qty: 0,
+      available_qty: 0,
+      available_used_qty: 0,
+      shortage_qty: requestedQty,
+      proposed_production_qty: requestedQty,
+      status: requestedQty > 0 ? "NONE" : "FULL",
+    };
+  });
+}
+
 async function computeCommandeStockAnalysis(db: PoolClient, params: {
   commande_id: number;
-  location_id: string;
 }): Promise<CommandeStockAnalysis> {
   const refs = await selectCommandeLineRefs(db, params.commande_id);
   const articleIds = Array.from(
     new Set(refs.map((r) => r.article_id).filter((v): v is string => typeof v === "string" && v.length > 0))
   );
 
-  const availableByArticle = await loadAvailableQtyByArticle(db, {
-    article_ids: articleIds,
-    location_id: params.location_id,
-  });
+  const availableByArticle = await loadScopedAvailableQtyByArticle(db, articleIds);
+  const allocations = allocateCommandeStockOldThenNew(
+    refs.map((ref) => ({ article_id: ref.article_id, requested_qty: Number(ref.qty_ordered) })),
+    availableByArticle
+  );
 
-  const remainingByArticle = new Map<string, number>();
-  const getRemaining = (articleId: string, initial: number) => {
-    if (!remainingByArticle.has(articleId)) remainingByArticle.set(articleId, initial);
-    return remainingByArticle.get(articleId) ?? 0;
-  };
-
-  const lines: CommandeStockAnalysisLine[] = refs.map((r) => {
+  const lines: CommandeStockAnalysisLine[] = refs.map((r, index) => {
     const requestedQty = Number(r.qty_ordered);
-    const articleId = r.article_id;
-
-    if (!articleId) {
-      const shortage = Math.max(0, requestedQty);
-      return {
-        commande_ligne_id: r.commande_ligne_id,
-        code_piece: r.code_piece,
-        article_id: null,
-        article_code: r.article_code,
-        article_designation: r.article_designation,
-        piece_technique_id: r.piece_technique_id,
-        piece_code: r.piece_code,
-        piece_designation: r.piece_designation,
-        requested_qty: requestedQty,
-        available_qty: 0,
-        available_used_qty: 0,
-        shortage_qty: shortage,
-        status: shortage > 0 ? "NONE" : "FULL",
-      };
-    }
-
-    const initialAvailable = Number(availableByArticle.get(articleId) ?? 0);
-    const remaining = getRemaining(articleId, initialAvailable);
-    const used = Math.max(0, Math.min(requestedQty, remaining));
-    remainingByArticle.set(articleId, remaining - used);
-
-    const shortage = Math.max(0, requestedQty - used);
-    const status: StockAvailabilityStatus = shortage === 0 ? "FULL" : used === 0 ? "NONE" : "PARTIAL";
+    const allocation = allocations[index] ?? {
+      old_available_qty: 0,
+      old_used_qty: 0,
+      new_available_qty: 0,
+      new_used_qty: 0,
+      available_qty: 0,
+      available_used_qty: 0,
+      shortage_qty: Math.max(0, requestedQty),
+      proposed_production_qty: Math.max(0, requestedQty),
+      status: requestedQty > 0 ? "NONE" as const : "FULL" as const,
+    };
 
     return {
       commande_ligne_id: r.commande_ligne_id,
       code_piece: r.code_piece,
-      article_id: articleId,
+      article_id: r.article_id,
       article_code: r.article_code,
       article_designation: r.article_designation,
       piece_technique_id: r.piece_technique_id,
       piece_code: r.piece_code,
       piece_designation: r.piece_designation,
       requested_qty: requestedQty,
-      available_qty: initialAvailable,
-      available_used_qty: used,
-      shortage_qty: shortage,
-      status,
+      ...allocation,
     };
   });
 
   return { lines };
+}
+
+type ScopedDeliveryStockCandidate = {
+  article_id: string;
+  stock_scope: "OLD" | "NEW";
+  stock_level_id: string;
+  stock_batch_id: string | null;
+  location_id: string;
+  lot_id: string | null;
+  magasin_id: string;
+  emplacement_id: number;
+  qty_available: number;
+};
+
+type PlannedDeliveryAllocation = ScopedDeliveryStockCandidate & {
+  commande_ligne_id: number;
+  quantity: number;
+};
+
+async function loadScopedDeliveryStockCandidates(
+  db: PoolClient,
+  articleIds: string[]
+): Promise<ScopedDeliveryStockCandidate[]> {
+  if (articleIds.length === 0) return [];
+  const rows = await db.query<ScopedDeliveryStockCandidate>(
+    `
+      SELECT
+        availability.article_id::text AS article_id,
+        warehouse.stock_scope,
+        availability.stock_level_id::text AS stock_level_id,
+        availability.stock_batch_id::text AS stock_batch_id,
+        availability.location_id::text AS location_id,
+        availability.lot_id::text AS lot_id,
+        magasin.id::text AS magasin_id,
+        emplacement.id::int AS emplacement_id,
+        availability.qty_available::float8 AS qty_available
+      FROM public.v_stock_availability_225 availability
+      JOIN public.warehouses warehouse ON warehouse.id = availability.warehouse_id
+      JOIN public.emplacements emplacement ON emplacement.location_id = availability.location_id
+      JOIN public.magasins magasin ON magasin.id = emplacement.magasin_id
+      WHERE availability.article_id = ANY($1::uuid[])
+        AND availability.managed_in_stock = true
+        AND availability.qty_available > 0
+        AND warehouse.stock_scope IN ('OLD', 'NEW')
+      ORDER BY
+        CASE warehouse.stock_scope WHEN 'OLD' THEN 0 ELSE 1 END,
+        availability.article_id,
+        availability.lot_id NULLS LAST,
+        availability.location_id,
+        availability.stock_batch_id NULLS LAST
+    `,
+    [articleIds]
+  );
+  return rows.rows.map((row) => ({ ...row, qty_available: Math.max(0, Number(row.qty_available)) }));
+}
+
+function planDeliveryAllocations(
+  analysisLines: CommandeStockAnalysisLine[],
+  quantitiesByLine: ReadonlyMap<number, number>,
+  candidates: ScopedDeliveryStockCandidate[]
+): PlannedDeliveryAllocation[] {
+  const remainingByCandidate = new Map<number, number>(
+    candidates.map((candidate, index) => [index, candidate.qty_available])
+  );
+  const planned: PlannedDeliveryAllocation[] = [];
+
+  for (const line of analysisLines) {
+    let remaining = Number(quantitiesByLine.get(line.commande_ligne_id) ?? 0);
+    if (remaining <= 1e-9) continue;
+    if (!line.article_id) {
+      throw new HttpError(
+        409,
+        "DELIVERY_ARTICLE_REQUIRED",
+        `La ligne ${line.commande_ligne_id} n'est rattachée à aucun article stockable.`
+      );
+    }
+
+    for (let index = 0; index < candidates.length && remaining > 1e-9; index += 1) {
+      const candidate = candidates[index];
+      if (!candidate || candidate.article_id !== line.article_id) continue;
+      const available = Number(remainingByCandidate.get(index) ?? 0);
+      if (available <= 1e-9) continue;
+      const quantity = Math.min(remaining, available);
+      planned.push({ ...candidate, commande_ligne_id: line.commande_ligne_id, quantity });
+      remainingByCandidate.set(index, available - quantity);
+      remaining -= quantity;
+    }
+
+    if (remaining > 1e-9) {
+      throw new HttpError(
+        409,
+        "STOCK_POSITION_NOT_DELIVERABLE",
+        `Le stock OLD/NEW de la ligne ${line.commande_ligne_id} n'est plus entièrement réservable. Relancez l'analyse.`
+      );
+    }
+  }
+
+  return planned;
+}
+
+async function createPreparedLivraisonForStock(
+  db: PoolClient,
+  params: {
+    commande_id: number;
+    user_id: number;
+    analysis_lines: CommandeStockAnalysisLine[];
+    quantities_by_line: ReadonlyMap<number, number>;
+  }
+): Promise<{ bon_livraison_id: string; reservation_ids: string[] } | null> {
+  const positiveQuantities = new Map(
+    [...params.quantities_by_line.entries()].filter(([, quantity]) => Number(quantity) > 1e-9)
+  );
+  if (positiveQuantities.size === 0) return null;
+
+  const articleIds = Array.from(
+    new Set(
+      params.analysis_lines
+        .filter((line) => positiveQuantities.has(line.commande_ligne_id))
+        .map((line) => line.article_id)
+        .filter((articleId): articleId is string => Boolean(articleId))
+    )
+  );
+  const candidates = await loadScopedDeliveryStockCandidates(db, articleIds);
+  const allocations = planDeliveryAllocations(params.analysis_lines, positiveQuantities, candidates);
+  const livraison = await repoCreateLivraisonFromCommande(
+    params.commande_id,
+    params.user_id,
+    db,
+    positiveQuantities
+  );
+
+  const lineRows = await db.query<{ id: string; commande_ligne_id: number }>(
+    `
+      SELECT id::text AS id, commande_ligne_id::bigint::int AS commande_ligne_id
+      FROM public.bon_livraison_ligne
+      WHERE bon_livraison_id = $1::uuid
+        AND commande_ligne_id IS NOT NULL
+    `,
+    [livraison.id]
+  );
+  const deliveryLineByCommandeLine = new Map(
+    lineRows.rows.map((line) => [line.commande_ligne_id, line.id] as const)
+  );
+
+  for (const allocation of allocations) {
+    const deliveryLineId = deliveryLineByCommandeLine.get(allocation.commande_ligne_id);
+    if (!deliveryLineId) throw new Error("Prepared delivery line mapping is missing");
+    await db.query(
+      `
+        INSERT INTO public.bon_livraison_ligne_allocations (
+          bon_livraison_ligne_id,
+          article_id,
+          lot_id,
+          magasin_id,
+          emplacement_id,
+          location_id,
+          stock_level_id,
+          stock_batch_id,
+          reservation_id,
+          stock_movement_line_id,
+          quantite,
+          unite,
+          created_by,
+          updated_by
+        ) VALUES (
+          $1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::bigint,$6::uuid,$7::uuid,$8::uuid,
+          NULL,NULL,$9,NULL,$10,$10
+        )
+      `,
+      [
+        deliveryLineId,
+        allocation.article_id,
+        allocation.lot_id,
+        allocation.magasin_id,
+        allocation.emplacement_id,
+        allocation.location_id,
+        allocation.stock_level_id,
+        allocation.stock_batch_id,
+        allocation.quantity,
+        params.user_id,
+      ]
+    );
+  }
+
+  await prepareLivraisonInTransaction(db, livraison.id, params.user_id);
+  const reservations = await db.query<{ id: string }>(
+    `
+      SELECT reservation.id::text AS id
+      FROM public.bon_livraison_ligne_allocations allocation
+      JOIN public.bon_livraison_ligne line ON line.id = allocation.bon_livraison_ligne_id
+      JOIN public.stock_reservations reservation ON reservation.id = allocation.reservation_id
+      WHERE line.bon_livraison_id = $1::uuid
+      ORDER BY reservation.id
+    `,
+    [livraison.id]
+  );
+  return {
+    bon_livraison_id: livraison.id,
+    reservation_ids: reservations.rows.map((reservation) => reservation.id),
+  };
 }
 
 async function computeCommandeAllocationPlan(db: PoolClient, commandeId: number): Promise<CommandeAllocationPlan> {
@@ -4245,7 +4549,8 @@ export async function repoGenerateAffairesFromCommande(id: string, body: Generat
       );
     }
 
-    // Apply user overrides (only decreasing from the computed missing qty).
+    // The shortage is the default. Operators may launch extra parts to build
+    // stock, but can never leave part of the customer demand unplanned.
     const overrideByLine = new Map<number, number>();
     for (const p of body.production_quantities ?? []) {
       overrideByLine.set(p.commande_ligne_id, Number(p.qty_to_produce));
@@ -4260,11 +4565,11 @@ export async function repoGenerateAffairesFromCommande(id: string, body: Generat
       if (!Number.isFinite(requestedQtyToProduce) || requestedQtyToProduce < 0) {
         throw new HttpError(400, "INVALID_QTY", `Invalid qty_to_produce for line ${lineId}`);
       }
-      if (requestedQtyToProduce > current.qty_to_produce) {
+      if (requestedQtyToProduce + 1e-9 < current.qty_to_produce) {
         throw new HttpError(
           400,
           "INVALID_QTY",
-          `qty_to_produce for line ${lineId} cannot exceed missing quantity (${current.qty_to_produce})`
+          `qty_to_produce for line ${lineId} must cover the missing quantity (${current.qty_to_produce})`
         );
       }
       current.qty_to_produce = requestedQtyToProduce;
@@ -4357,7 +4662,8 @@ export async function repoConfirmGenerateAffaires(id: string, body: ConfirmGener
     const computed = await computeCommandeAllocationPlan(client, commandeId);
     const lines = computed.lines;
 
-    // Apply user overrides (only decreasing from the computed missing qty).
+    // The shortage is the default. Operators may launch extra parts to build
+    // stock, but can never leave part of the customer demand unplanned.
     const overrideByLine = new Map<number, number>();
     for (const p of body.production_quantities ?? []) {
       overrideByLine.set(p.commande_ligne_id, Number(p.qty_to_produce));
@@ -4372,11 +4678,11 @@ export async function repoConfirmGenerateAffaires(id: string, body: ConfirmGener
       if (!Number.isFinite(requestedQtyToProduce) || requestedQtyToProduce < 0) {
         throw new HttpError(400, "INVALID_QTY", `Invalid qty_to_produce for line ${lineId}`);
       }
-      if (requestedQtyToProduce > current.qty_to_produce) {
+      if (requestedQtyToProduce + 1e-9 < current.qty_to_produce) {
         throw new HttpError(
           400,
           "INVALID_QTY",
-          `qty_to_produce for line ${lineId} cannot exceed missing quantity (${current.qty_to_produce})`
+          `qty_to_produce for line ${lineId} must cover the missing quantity (${current.qty_to_produce})`
         );
       }
       current.qty_to_produce = requestedQtyToProduce;
