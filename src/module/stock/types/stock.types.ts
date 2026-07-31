@@ -116,6 +116,31 @@ export type ArticleSupplierReference = {
   active: boolean;
 };
 
+export type ArticleOpenSupplierOrderAllocation = {
+  of_id: number;
+  of_number: string | null;
+  allocated_quantity: number | null;
+};
+
+export type ArticleOpenSupplierOrder = {
+  order_id: string;
+  order_code: string;
+  order_status: "APPROUVEE" | "ENVOYEE" | "ACCUSE_RECU" | "PARTIELLEMENT_RECUE";
+  supplier_id: string;
+  supplier_code: string | null;
+  supplier_name: string;
+  line_id: string;
+  line_position: number;
+  ordered_quantity: number;
+  received_quantity: number;
+  remaining_quantity: number;
+  unit: string | null;
+  need_date: string | null;
+  promised_date: string | null;
+  lead_time_days: number | null;
+  of_allocations: ArticleOpenSupplierOrderAllocation[];
+};
+
 export type StockArticleListItem = {
   id: string;
   root_article_id: string;
@@ -156,6 +181,7 @@ export type StockArticleDetail = StockArticleListItem & {
   article_matiere: ArticleMatierePayload | null;
   procurement: ArticleProcurementProfile | null;
   suppliers: ArticleSupplierReference[];
+  open_supplier_orders: ArticleOpenSupplierOrder[];
   documents: StockDocument[];
   costs_redacted: boolean;
 };

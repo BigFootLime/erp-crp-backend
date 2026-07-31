@@ -462,6 +462,103 @@ describe("/api/v1/stock", () => {
     ).toBe(false);
   });
 
+  it("GET /api/v1/stock/articles/:id exposes validated, unreceived supplier orders for a material", async () => {
+    mocks.poolQuery.mockImplementation(async (sql: unknown) => {
+      const q = String(sql);
+      if (q.includes("FROM public.articles a") && q.includes("LEFT JOIN public.articles_matiere")) {
+        return {
+          rows: [{
+            id: "11111111-1111-1111-1111-111111111111",
+            root_article_id: "11111111-1111-1111-1111-111111111111",
+            parent_article_id: null,
+            version_number: 1,
+            plan_index: 1,
+            status: "VALIDE",
+            projet_id: null,
+            code: "MP-PL-ALU-ETAT-50x10x1000",
+            designation: "Alu plat",
+            designation_secondary: null,
+            article_type: "PURCHASED",
+            article_category: "matiere",
+            article_categories: ["matiere_premiere"],
+            family_code: "PLAT",
+            stock_managed: true,
+            piece_technique_id: null,
+            piece_code: null,
+            piece_designation: null,
+            unite: "kg",
+            lot_tracking: true,
+            is_sold: false,
+            is_active: true,
+            row_version: 1,
+            archived_at: null,
+            archive_reason: null,
+            applicable_version: null,
+            notes: null,
+            article_matiere: { nuance_id: 1 },
+            qty_available: 0,
+            qty_reserved: 0,
+            qty_total: 0,
+            locations_count: 0,
+            updated_at: "2026-07-31T08:00:00.000Z",
+            created_at: "2026-07-30T08:00:00.000Z",
+          }],
+        };
+      }
+      if (q.includes("FROM public.commande_fournisseur_ligne cfl")) {
+        return {
+          rows: [{
+            order_id: "22222222-2222-2222-2222-222222222222",
+            order_code: "BCF-2026-0042",
+            order_status: "PARTIELLEMENT_RECUE",
+            supplier_id: "33333333-3333-3333-3333-333333333333",
+            supplier_code: "FOU-001",
+            supplier_name: "Métaux SA",
+            line_id: "44444444-4444-4444-4444-444444444444",
+            line_position: 2,
+            ordered_quantity: "100",
+            received_quantity: "40",
+            remaining_quantity: "60",
+            unit: "kg",
+            need_date: "2026-08-15",
+            promised_date: "2026-08-10",
+            lead_time_days: 10,
+            of_allocations: [{ of_id: 42, of_number: "OF-2026-0042", allocated_quantity: 60 }],
+          }],
+        };
+      }
+      if (q.includes("FROM public.article_procurement_profile")) return { rows: [] };
+      if (q.includes("FROM public.fournisseur_catalogue")) return { rows: [] };
+      if (q.includes("SELECT 1::int AS ok FROM public.articles")) return { rows: [{ ok: 1 }] };
+      if (q.includes("FROM public.article_documents")) return { rows: [] };
+      return { rows: [] };
+    });
+
+    const res = await request(app)
+      .get("/api/v1/stock/articles/11111111-1111-1111-1111-111111111111")
+      .set("Authorization", "Bearer fake");
+
+    expect(res.status).toBe(200);
+    expect(res.body.open_supplier_orders).toEqual([
+      expect.objectContaining({
+        order_code: "BCF-2026-0042",
+        order_status: "PARTIELLEMENT_RECUE",
+        ordered_quantity: 100,
+        received_quantity: 40,
+        remaining_quantity: 60,
+        promised_date: "2026-08-10",
+        of_allocations: [{ of_id: 42, of_number: "OF-2026-0042", allocated_quantity: 60 }],
+      }),
+    ]);
+    const openOrdersQuery = mocks.poolQuery.mock.calls.find((call) =>
+      String(call[0]).includes("FROM public.commande_fournisseur_ligne cfl")
+    );
+    expect(String(openOrdersQuery?.[0])).toContain(
+      "cf.statut IN ('APPROUVEE', 'ENVOYEE', 'ACCUSE_RECU', 'PARTIELLEMENT_RECUE')"
+    );
+    expect(String(openOrdersQuery?.[0])).toContain("remaining_quantity");
+  });
+
   it("POST /api/v1/stock/movements rejects missing lot for lot-tracked article", async () => {
     mocks.clientQuery.mockImplementation(async (sql: unknown) => {
       const q = String(sql);

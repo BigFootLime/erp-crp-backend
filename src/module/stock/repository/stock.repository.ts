@@ -2875,7 +2875,104 @@ export async function repoGetArticle(id: string, includeCosts = false): Promise<
   const article = res.rows[0] ?? null;
   if (!article) return null;
 
-  const [procurementRes, suppliersRes, documents] = await Promise.all([
+  const isMaterialArticle =
+    article.article_category === "matiere" ||
+    (Array.isArray(article.article_categories) && article.article_categories.includes("matiere_premiere"));
+
+  const openSupplierOrdersPromise = isMaterialArticle
+    ? db.query<{
+        order_id: string;
+        order_code: string;
+        order_status: StockArticleDetail["open_supplier_orders"][number]["order_status"];
+        supplier_id: string;
+        supplier_code: string | null;
+        supplier_name: string;
+        line_id: string;
+        line_position: number;
+        ordered_quantity: string;
+        received_quantity: string;
+        remaining_quantity: string;
+        unit: string | null;
+        need_date: string | null;
+        promised_date: string | null;
+        lead_time_days: number | null;
+        of_allocations: StockArticleDetail["open_supplier_orders"][number]["of_allocations"] | null;
+      }>(
+        `SELECT
+           cf.id::text AS order_id,
+           cf.code AS order_code,
+           cf.statut AS order_status,
+           f.id::text AS supplier_id,
+           COALESCE(f.code, f.code_fournisseur)::text AS supplier_code,
+           COALESCE(f.nom, f.raison_sociale)::text AS supplier_name,
+           cfl.id::text AS line_id,
+           cfl.position::int AS line_position,
+           cfl.quantite::text AS ordered_quantity,
+           COALESCE(receipts.received_quantity, 0)::text AS received_quantity,
+           GREATEST(cfl.quantite - cfl.qty_annulee - COALESCE(receipts.received_quantity, 0), 0)::text
+             AS remaining_quantity,
+           cfl.unite AS unit,
+           COALESCE(cfl.date_besoin, cf.date_besoin)::text AS need_date,
+           COALESCE(cfl.date_promesse, cf.date_promesse)::text AS promised_date,
+           cfl.delai_jours::int AS lead_time_days,
+           COALESCE(allocations.items, '[]'::jsonb) AS of_allocations
+         FROM public.commande_fournisseur_ligne cfl
+         JOIN public.commande_fournisseur cf ON cf.id = cfl.commande_id
+         JOIN public.fournisseurs f ON f.id = cf.fournisseur_id
+         LEFT JOIN LATERAL (
+           SELECT COALESCE(SUM(reception_line.qty_received), 0) AS received_quantity
+           FROM public.reception_fournisseur_lignes reception_line
+           WHERE reception_line.commande_fournisseur_ligne_id = cfl.id
+         ) receipts ON TRUE
+         LEFT JOIN LATERAL (
+           SELECT jsonb_agg(
+             jsonb_build_object(
+               'of_id', source.of_id,
+               'of_number', source.of_number,
+               'allocated_quantity', source.allocated_quantity
+             )
+             ORDER BY source.of_number NULLS LAST, source.of_id
+           ) AS items
+           FROM (
+             SELECT
+               need.of_id,
+               fabrication_order.numero AS of_number,
+               SUM(need.quantite_couverte)::float8 AS allocated_quantity
+             FROM public.commande_fournisseur_ligne_besoin need
+             LEFT JOIN public.ordres_fabrication fabrication_order ON fabrication_order.id = need.of_id
+             WHERE need.ligne_id = cfl.id
+               AND NOT need.annule
+               AND need.of_id IS NOT NULL
+             GROUP BY need.of_id, fabrication_order.numero
+
+             UNION ALL
+
+             SELECT
+               cfl.of_id,
+               direct_order.numero AS of_number,
+               NULL::float8 AS allocated_quantity
+             FROM public.ordres_fabrication direct_order
+             WHERE direct_order.id = cfl.of_id
+               AND cfl.of_id IS NOT NULL
+               AND NOT EXISTS (
+                 SELECT 1
+                 FROM public.commande_fournisseur_ligne_besoin existing_need
+                 WHERE existing_need.ligne_id = cfl.id
+                   AND NOT existing_need.annule
+                   AND existing_need.of_id = cfl.of_id
+               )
+           ) source
+         ) allocations ON TRUE
+         WHERE cfl.article_id = $1::uuid
+           AND cfl.statut_ligne = 'ACTIVE'
+           AND cf.statut IN ('APPROUVEE', 'ENVOYEE', 'ACCUSE_RECU', 'PARTIELLEMENT_RECUE')
+           AND GREATEST(cfl.quantite - cfl.qty_annulee - COALESCE(receipts.received_quantity, 0), 0) > 0
+         ORDER BY COALESCE(cfl.date_promesse, cf.date_promesse) ASC NULLS LAST, cf.code ASC, cfl.position ASC`,
+        [id]
+      )
+    : Promise.resolve({ rows: [] });
+
+  const [procurementRes, suppliersRes, documents, openSupplierOrdersRes] = await Promise.all([
     db.query<NonNullable<StockArticleDetail["procurement"]>>(
       `SELECT
          manufacturer_name,
@@ -2916,12 +3013,29 @@ export async function repoGetArticle(id: string, includeCosts = false): Promise<
       [id, includeCosts]
     ),
     repoListArticleDocuments(id),
+    openSupplierOrdersPromise,
   ]);
 
   return {
     ...article,
     procurement: procurementRes.rows[0] ?? null,
     suppliers: suppliersRes.rows,
+    open_supplier_orders: openSupplierOrdersRes.rows.map((row) => ({
+      ...row,
+      line_position: Number(row.line_position),
+      ordered_quantity: Number(row.ordered_quantity),
+      received_quantity: Number(row.received_quantity),
+      remaining_quantity: Number(row.remaining_quantity),
+      lead_time_days: row.lead_time_days == null ? null : Number(row.lead_time_days),
+      of_allocations: Array.isArray(row.of_allocations)
+        ? row.of_allocations.map((allocation) => ({
+            of_id: Number(allocation.of_id),
+            of_number: allocation.of_number,
+            allocated_quantity:
+              allocation.allocated_quantity == null ? null : Number(allocation.allocated_quantity),
+          }))
+        : [],
+    })),
     documents: documents ?? [],
     costs_redacted: !includeCosts,
   };

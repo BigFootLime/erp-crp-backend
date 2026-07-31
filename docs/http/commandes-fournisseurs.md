@@ -94,6 +94,19 @@ accepte `commande_fournisseur_ligne_id` (cohérence fournisseur/article/état v�
 puis recalcule transactionnellement l'état de la commande (sur-réception → 422
 `OVER_RECEIPT` sauf rôle `over_receipt` + notes ≥ 3 car.).
 
+## Projection sur la fiche article MP (#439)
+
+`GET /api/v1/stock/articles/:id` ajoute `open_supplier_orders` pour les articles matière
+première. Une entrée est renvoyée par ligne ACTIVE de commande `APPROUVEE`, `ENVOYEE`,
+`ACCUSE_RECU` ou `PARTIELLEMENT_RECUE` lorsqu'il reste une quantité à recevoir. Elle contient
+le bon, le fournisseur, les quantités commandée/reçue/restante, l'unité, les dates de besoin et
+de promesse, le délai en jours et toutes les affectations OF connues.
+
+La quantité reçue reste calculée depuis `reception_fournisseur_lignes`; le reliquat retranche
+aussi `qty_annulee`. Les commandes brouillon, à valider, reçues, clôturées ou annulées ainsi
+que les lignes soldées sont exclues. Pour les autres catégories d'article, le tableau est vide.
+Cette projection est strictement en lecture seule et ne requiert aucune migration.
+
 ## Audit & événements
 
 Chaque écriture journalise `erp_audit_logs` (action `commandes_fournisseurs.*`, acteur,
