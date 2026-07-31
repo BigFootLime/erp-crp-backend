@@ -267,6 +267,14 @@ export async function repoCreateGammeRevision(
       throw new HttpError(404, "NOT_FOUND", "Gamme introuvable")
     }
 
+    if (source.statut !== "APPLICABLE" && source.statut !== "OBSOLETE") {
+      throw new HttpError(
+        409,
+        "GAMME_REVISION_SOURCE_NOT_FROZEN",
+        "Seule une gamme figée (applicable ou obsolète) peut être préparée en révision."
+      )
+    }
+
     // Verrou optimiste : la gamme affichée doit être celle qu'on duplique.
     if (body.expected_updated_at && body.expected_updated_at !== source.updated_at) {
       throw new HttpError(409, "CONCURRENT_MODIFICATION", "La gamme a été modifiée entre-temps")

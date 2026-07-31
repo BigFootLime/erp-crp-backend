@@ -97,16 +97,23 @@ export const updateGamme: RequestHandler = async (req, res, next) => {
 /**
  * #433 — Préparer une révision d'une gamme figée.
  *
- * `Idempotency-Key` est FACULTATIVE mais fortement recommandée : sans elle, un
- * double clic crée deux brouillons. L'écran en fournit une, stable tant que
- * l'utilisateur reste sur la même gamme.
+ * `Idempotency-Key` est OBLIGATOIRE : l'API ne doit pas dépendre du seul
+ * comportement de l'écran pour garantir qu'un double clic ou un rejeu après
+ * coupure ne crée pas deux brouillons.
  */
 export const createGammeRevision: RequestHandler = async (req, res, next) => {
   try {
     const audit = buildAuditContext(req)
     const body = createGammeRevisionSchema.parse({ body: req.body }).body
     const rawKey = req.headers["idempotency-key"]
-    const idempotencyKey = typeof rawKey === "string" && rawKey.trim() ? rawKey.trim().slice(0, 200) : null
+    const idempotencyKey = typeof rawKey === "string" ? rawKey.trim() : ""
+    if (idempotencyKey.length < 8 || idempotencyKey.length > 200) {
+      throw new HttpError(
+        400,
+        "IDEMPOTENCY_KEY_REQUIRED",
+        "Une clé Idempotency-Key stable de 8 à 200 caractères est obligatoire."
+      )
+    }
     const out = await createGammeRevisionSVC(routeParam(req, "gammeId"), body, audit, idempotencyKey)
     res.status(out.replayed ? 200 : 201).json(out)
   } catch (err) {
