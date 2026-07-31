@@ -122,8 +122,10 @@ BEGIN
   END IF;
 END $$;
 
--- Four fixed functional stores. Physical locations/rays are created through the
--- normal magasin/emplacement APIs or the historical import endpoint.
+-- Four fixed functional stores. HYPERBOX2 keeps both the current (`code`,
+-- `name`, `is_active`) and legacy (`code_magasin`, `libelle`, `actif`) magasin
+-- fields as NOT NULL. Seed both representations so the historical schema and
+-- current stock APIs see the same functional stores.
 INSERT INTO public.warehouses (code, name, stock_scope)
 VALUES
   ('OLD-PF', 'Base old - Produits finis', 'OLD'),
@@ -132,8 +134,12 @@ VALUES
   ('NEW-MP', 'Base new - Matieres premieres', 'NEW')
 ON CONFLICT (code) DO UPDATE SET stock_scope = EXCLUDED.stock_scope;
 
-INSERT INTO public.magasins (id, code, name, stock_scope, warehouse_id, is_active)
-SELECT gen_random_uuid(), seed.code, seed.name, seed.stock_scope, w.id, true
+INSERT INTO public.magasins (
+  id, code, code_magasin, name, libelle, stock_scope, warehouse_id, is_active, actif
+)
+SELECT
+  gen_random_uuid(), seed.code, seed.code, seed.name, seed.name,
+  seed.stock_scope, w.id, true, true
 FROM (VALUES
   ('OLD-PF', 'Base old - Produits finis', 'OLD'),
   ('OLD-MP', 'Base old - Matieres premieres', 'OLD'),
@@ -142,9 +148,13 @@ FROM (VALUES
 ) AS seed(code, name, stock_scope)
 JOIN public.warehouses w ON w.code = seed.code
 ON CONFLICT (code) DO UPDATE
-SET stock_scope = EXCLUDED.stock_scope,
+SET code_magasin = EXCLUDED.code_magasin,
+    name = EXCLUDED.name,
+    libelle = EXCLUDED.libelle,
+    stock_scope = EXCLUDED.stock_scope,
     warehouse_id = EXCLUDED.warehouse_id,
     is_active = true,
+    actif = true,
     updated_at = now();
 
 COMMIT;
