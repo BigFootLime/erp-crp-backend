@@ -126,6 +126,7 @@ const requireStockCapability = (capability: StockCapability): RequestHandler => 
 };
 
 router.get("/analytics", requireStockCapability("read"), getStockAnalytics);
+router.get("/positions", requireStockCapability("read"), listConsolidatedInventory);
 router.get("/inventory", requireStockCapability("read"), listConsolidatedInventory);
 router.post("/historical-imports", requireStockCapability("movement_create"), createHistoricalImport);
 router.get("/article-categories", requireStockCapability("read"), listStockArticleCategories);
