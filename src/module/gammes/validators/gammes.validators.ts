@@ -46,6 +46,23 @@ export const updateGammeSchema = z.object({
 })
 export type UpdateGammeBodyDTO = z.infer<typeof updateGammeSchema>["body"]
 
+/**
+ * #433 — Préparer une révision d'une gamme figée.
+ *
+ * Le corps ne décrit PAS le contenu de la nouvelle gamme : celui-ci est
+ * intégralement dupliqué depuis la source. Il ne porte que le verrou optimiste
+ * et, éventuellement, un intitulé choisi — sinon le serveur nomme la révision.
+ */
+export const createGammeRevisionSchema = z.object({
+  body: z
+    .object({
+      expected_updated_at: z.string().min(1).optional(),
+      nom: z.string().trim().min(1, "Nom de gamme vide").max(200).optional().nullable(),
+    })
+    .strict(),
+})
+export type CreateGammeRevisionBodyDTO = z.infer<typeof createGammeRevisionSchema>["body"]
+
 // Opération de gamme. Noms métier mappés aux colonnes DB : numero_operation→phase,
 // temps_preparation→tp, temps_cycle→tf_unit.
 //

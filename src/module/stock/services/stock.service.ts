@@ -30,6 +30,7 @@ import type {
   CreateArticleFamilyBodyDTO,
   CreateMatiereEtatBodyDTO,
   CreateMatiereNuanceBodyDTO,
+  PreviewMaterialArticleCodeBodyDTO,
   CreateMatiereSousEtatBodyDTO,
   CreateEmplacementBodyDTO,
   CreateLotBodyDTO,
@@ -97,6 +98,7 @@ import {
   repoGetArticle,
   repoListArticleCategories,
   repoListArticleFamilies,
+  repoPreviewMaterialArticleCode,
   repoListMatiereEtats,
   repoListMatiereNuances,
   repoListMatiereSousEtats,
@@ -257,6 +259,35 @@ export async function listStockArticleFamiliesSVC(filters: ListArticleFamiliesQu
 
 export async function listStockMatiereNuancesSVC(filters: ListMatiereNuancesQueryDTO): Promise<StockMatiereNuance[]> {
   return repoListMatiereNuances(filters);
+}
+
+/**
+ * #164 — Aperçu de la référence matière.
+ *
+ * Le même générateur sert l'aperçu et la création : ce que l'écran affiche est
+ * ce que la base recevra, ou la création est refusée.
+ */
+export async function previewMaterialArticleCodeSVC(body: PreviewMaterialArticleCodeBodyDTO) {
+  return repoPreviewMaterialArticleCode({
+    family_code: body.family_code,
+    nuance_id: body.nuance_id ?? null,
+    etat_id: body.etat_id ?? null,
+    sous_etat_id: body.sous_etat_id ?? null,
+    client_proprietaire_id: body.client_proprietaire_id ?? null,
+    reference_suffix: body.reference_suffix ?? null,
+    dimensions: {
+      barre_a_decouper: body.barre_a_decouper ?? false,
+      longueur_barre_source_mm: body.longueur_barre_source_mm ?? null,
+      longueur_coupe_mm: body.longueur_coupe_mm ?? null,
+      longueur_brut_mm: body.longueur_brut_mm ?? null,
+      longueur_mm: body.longueur_mm ?? null,
+      largeur_mm: body.largeur_mm ?? null,
+      hauteur_mm: body.hauteur_mm ?? null,
+      epaisseur_mm: body.epaisseur_mm ?? null,
+      diametre_mm: body.diametre_mm ?? null,
+      largeur_plat_mm: body.largeur_plat_mm ?? null,
+    },
+  });
 }
 
 export async function createStockMatiereNuanceSVC(body: CreateMatiereNuanceBodyDTO, audit: AuditContext): Promise<StockMatiereNuance> {

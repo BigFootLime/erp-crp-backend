@@ -10,6 +10,16 @@ import {
   generateFabricatedArticleBusinessCode,
   generateTransactionalBusinessCode,
 } from "../../../shared/codes/code-generator.service";
+import {
+  assertMaterialPreviewFresh,
+  buildMaterialArticleCode,
+  computeMaterialCodePreviewHash,
+  isSpecialMaterialProfile,
+  normalizeMaterialProfile,
+  type MaterialCodeInput,
+  type MaterialCodeResult,
+  type MaterialProfileCode,
+} from "../../../shared/codes/material-article-code";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
@@ -579,6 +589,109 @@ async function resolveArticleCode(
   return normalized;
 }
 
+/* -------------------------------------------------------------------------- */
+/* Référence MATIÈRE PREMIÈRE — résolution des segments puis génération        */
+/* -------------------------------------------------------------------------- */
+
+export type MaterialCodeRequest = {
+  family_code: string;
+  nuance_id?: number | null;
+  etat_id?: number | null;
+  sous_etat_id?: number | null;
+  client_proprietaire_id?: string | null;
+  reference_suffix?: string | null;
+  dimensions?: MaterialCodeInput["dimensions"];
+};
+
+async function referentialCode(
+  client: Pick<PoolClient, "query">,
+  args: { table: "stock_nuances" | "stock_etats" | "stock_sous_etats"; id: number; label: string }
+): Promise<string> {
+  const res = await client.query<{ code: string | null }>(
+    `SELECT code FROM public.${args.table} WHERE id = $1::bigint LIMIT 1`,
+    [args.id]
+  );
+  const code = (res.rows[0]?.code ?? "").trim();
+  if (!code) {
+    throw new HttpError(400, "INVALID_MATERIAL_REFERENTIAL", `${args.label} introuvable (id ${args.id}).`);
+  }
+  return code;
+}
+
+/**
+ * Résout, EN BASE, les codes qui composent une référence matière.
+ *
+ * Le navigateur n'envoie que des identifiants : c'est le serveur qui lit le
+ * code de la nuance, de l'état, du sous-état et du client propriétaire. Une
+ * interface qui enverrait un libellé fantaisiste ne peut donc pas influencer la
+ * référence produite.
+ */
+export async function resolveMaterialCodeInput(
+  client: Pick<PoolClient, "query">,
+  request: MaterialCodeRequest
+): Promise<MaterialCodeInput> {
+  const profile: MaterialProfileCode = normalizeMaterialProfile(request.family_code);
+  const special = isSpecialMaterialProfile(profile);
+
+  const nuanceId = typeof request.nuance_id === "number" && Number.isFinite(request.nuance_id) ? Math.trunc(request.nuance_id) : null;
+  const etatId = typeof request.etat_id === "number" && Number.isFinite(request.etat_id) ? Math.trunc(request.etat_id) : null;
+  const sousEtatId =
+    typeof request.sous_etat_id === "number" && Number.isFinite(request.sous_etat_id) ? Math.trunc(request.sous_etat_id) : null;
+
+  const nuanceCode = !special && nuanceId ? await referentialCode(client, { table: "stock_nuances", id: nuanceId, label: "Nuance" }) : null;
+  const etatCode = !special && etatId ? await referentialCode(client, { table: "stock_etats", id: etatId, label: "État" }) : null;
+  const sousEtatCode = !special && sousEtatId
+    ? await referentialCode(client, { table: "stock_sous_etats", id: sousEtatId, label: "Sous-état" })
+    : null;
+
+  let clientCode: string | null = null;
+  if (profile === "BRUTCL") {
+    const clientId = (request.client_proprietaire_id ?? "").trim();
+    if (!clientId) {
+      throw new HttpError(
+        400,
+        "MATERIAL_CLIENT_CODE_REQUIRED",
+        "Un brut client exige le client propriétaire pour construire sa référence."
+      );
+    }
+    const res = await client.query<{ client_code: string | null }>(
+      `SELECT client_code FROM public.clients WHERE client_id = $1 LIMIT 1`,
+      [clientId]
+    );
+    if (res.rowCount === 0) {
+      throw new HttpError(400, "INVALID_CLIENT", `Client propriétaire inconnu : ${clientId}.`);
+    }
+    // Le code client est la forme lisible ; l'identifiant reste la valeur de
+    // secours pour un client historique sans code attribué.
+    clientCode = (res.rows[0]?.client_code ?? "").trim() || clientId;
+  }
+
+  return {
+    profile,
+    nuance_code: nuanceCode,
+    etat_code: etatCode,
+    sous_etat_code: sousEtatCode,
+    client_code: clientCode,
+    reference_suffix: request.reference_suffix ?? null,
+    dimensions: request.dimensions ?? null,
+  };
+}
+
+export type MaterialCodePreview = MaterialCodeResult & { preview_hash: string };
+
+/**
+ * Aperçu serveur de la référence matière. C'est LA MÊME fonction que la
+ * création : les deux ne peuvent pas diverger.
+ */
+export async function repoPreviewMaterialArticleCode(request: MaterialCodeRequest): Promise<MaterialCodePreview> {
+  const input = await resolveMaterialCodeInput(db, request);
+  const result = buildMaterialArticleCode(input);
+  return {
+    ...result,
+    preview_hash: computeMaterialCodePreviewHash({ input, code: result.code, designation: result.designation }),
+  };
+}
+
 async function normalizeArticleState(args: {
   article_type: string | null | undefined;
   article_category: string | null | undefined;
@@ -1056,7 +1169,7 @@ export async function repoListMatiereEtats(filters: ListMatiereEtatsQueryDTO = {
   const res = await db.query<{
     id: number;
     code: string;
-    designation: string;
+    designation: string | null;
     unite_achat: number;
     is_active: boolean;
     nuance_ids: number[];
@@ -1084,7 +1197,9 @@ export async function repoListMatiereEtats(filters: ListMatiereEtatsQueryDTO = {
   return res.rows.map((row) => ({
     id: row.id,
     code: row.code,
-    designation: row.designation,
+    // Une désignation vide en base est présentée comme absente : l'écran affiche
+    // alors le code, il n'affiche pas « CODE — ».
+    designation: row.designation && row.designation.trim() ? row.designation : null,
     unite_achat: typeof row.unite_achat === "number" ? row.unite_achat : Number(row.unite_achat) || 3020,
     is_active: row.is_active,
     nuance_ids: Array.isArray(row.nuance_ids) ? row.nuance_ids.filter((v) => typeof v === "number") : [],
@@ -1093,7 +1208,9 @@ export async function repoListMatiereEtats(filters: ListMatiereEtatsQueryDTO = {
 
 export async function repoCreateMatiereEtat(body: CreateMatiereEtatBodyDTO, audit: AuditContext): Promise<StockMatiereEtat> {
   const code = normalizeStockReferentialCode(body.code, "Etat");
-  const designation = body.designation.trim();
+  // La colonne historique `stock_etats.designation` est NOT NULL : une
+  // désignation absente est stockée vide et ressort `null` côté API.
+  const designation = body.designation?.trim() || "";
   const unite_achat = typeof body.unite_achat === "number" && Number.isFinite(body.unite_achat) ? Math.trunc(body.unite_achat) : 3020;
   const is_active = body.is_active;
   const nuance_ids = uniqPositiveInts(body.nuance_ids);
@@ -1143,7 +1260,7 @@ export async function repoCreateMatiereEtat(body: CreateMatiereEtatBodyDTO, audi
         entity_id: String(etatId),
         path: audit.path,
         client_session_id: audit.client_session_id,
-        details: { code, designation, unite_achat, is_active, nuance_ids },
+        details: { code, designation: designation || null, unite_achat, is_active, nuance_ids },
       },
       ip: audit.ip,
       user_agent: audit.user_agent,
@@ -1158,7 +1275,7 @@ export async function repoCreateMatiereEtat(body: CreateMatiereEtatBodyDTO, audi
     return {
       id: etatId,
       code,
-      designation,
+      designation: designation || null,
       unite_achat,
       is_active,
       nuance_ids,
@@ -2882,12 +2999,49 @@ export async function repoCreateArticleTx(
     // The submitted code is non-authoritative. Keep legacy payloads compatible
     // while the final ART-{FAMILY}-{SEQ6} value is allocated below.
     code: "",
-    designation: body.designation,
+    designation: body.designation ?? "",
     client,
   });
+  /**
+   * Matière première : la référence est DÉRIVÉE de la configuration matière,
+   * jamais séquencée. Deux matières identiques doivent porter la même
+   * référence — c'est ce qui rend le doublon détectable au lieu d'être créé en
+   * silence sous deux numéros différents.
+   *
+   * La désignation suit la même source : si l'écran n'en propose pas (une MP
+   * n'a plus de champ Désignation), le serveur produit la forme canonique.
+   * `articles.designation` n'est jamais rendue nullable pour arranger l'UI.
+   */
+  const material = normalized.article_category === "matiere"
+    ? await (async () => {
+        const input = await resolveMaterialCodeInput(client, {
+          family_code: normalized.family_code,
+          nuance_id: body.article_matiere?.nuance_id ?? null,
+          etat_id: body.article_matiere?.etat_id ?? null,
+          sous_etat_id: body.article_matiere?.sous_etat_id ?? null,
+          client_proprietaire_id: body.article_matiere?.client_proprietaire_id ?? null,
+          reference_suffix: body.article_matiere?.reference_suffix ?? null,
+          dimensions: body.article_matiere ?? null,
+        });
+        const result = buildMaterialArticleCode(input);
+        assertMaterialPreviewFresh(
+          body.material_code_preview_hash,
+          computeMaterialCodePreviewHash({ input, code: result.code, designation: result.designation })
+        );
+        return result;
+      })()
+    : null;
+
   const generatedCode = normalized.article_category === "fabrique"
     ? normalized.code
-    : await generateArticleBusinessCode(client, normalized.family_code);
+    : material
+      ? material.code
+      : await generateArticleBusinessCode(client, normalized.family_code);
+
+  const designation = (body.designation ?? "").trim() || material?.designation || "";
+  if (!designation) {
+    throw new HttpError(400, "INVALID_ARTICLE", "La désignation de l'article est obligatoire.");
+  }
 
   if (normalized.piece_technique_id) {
     await ensurePieceTechniqueExists(client, normalized.piece_technique_id);
@@ -2910,7 +3064,7 @@ export async function repoCreateArticleTx(
     [
       articleId,
       generatedCode,
-      body.designation,
+      designation,
       body.designation_secondary ?? null,
       normalized.article_type,
       normalized.article_category,
@@ -2957,7 +3111,7 @@ export async function repoCreateArticleTx(
     entity_id: id,
     details: {
       code: generatedCode,
-      designation: body.designation,
+      designation,
       article_type: normalized.article_type,
       article_category: normalized.article_category,
       article_categories: normalized.article_categories,
@@ -3050,11 +3204,56 @@ export async function repoCreateArticle(
       }
     }
     if (isPgUniqueViolation(err)) {
+      /**
+       * Matière : deux configurations identiques produisent volontairement la
+       * MÊME référence. La collision n'est donc pas un incident technique, c'est
+       * l'article qui existe déjà — on le dit, avec de quoi agir, au lieu
+       * d'inventer un suffixe qui créerait un doublon silencieux.
+       */
+      if (body.article_category === "matiere") {
+        const existing = await repoFindArticleByMaterialConfiguration(body);
+        throw new HttpError(
+          409,
+          "DUPLICATE_MATERIAL_ARTICLE",
+          existing
+            ? `Cette matière existe déjà sous la référence ${existing.code}. Réutilisez-la, ou précisez la configuration (dimensions, sous-état) pour créer une matière distincte.`
+            : "Cette référence matière existe déjà. Précisez la configuration pour créer une matière distincte."
+        );
+      }
       throw new HttpError(409, "DUPLICATE", "Article code already exists");
     }
     throw err;
   } finally {
     client.release();
+  }
+}
+
+/**
+ * Retrouve l'article matière qui occupe déjà la référence calculée, pour
+ * pouvoir le nommer dans le message d'erreur. Toute défaillance de cette
+ * lecture d'agrément reste silencieuse : elle ne doit jamais masquer le 409.
+ */
+async function repoFindArticleByMaterialConfiguration(
+  body: CreateArticleBodyDTO
+): Promise<{ id: string; code: string } | null> {
+  try {
+    const input = await resolveMaterialCodeInput(db, {
+      family_code: body.family_code,
+      nuance_id: body.article_matiere?.nuance_id ?? null,
+      etat_id: body.article_matiere?.etat_id ?? null,
+      sous_etat_id: body.article_matiere?.sous_etat_id ?? null,
+      client_proprietaire_id: body.article_matiere?.client_proprietaire_id ?? null,
+      reference_suffix: body.article_matiere?.reference_suffix ?? null,
+      dimensions: body.article_matiere ?? null,
+    });
+    const { code } = buildMaterialArticleCode(input);
+    const res = await db.query<{ id: string; code: string }>(
+      `SELECT id::text AS id, code FROM public.articles WHERE code = $1 LIMIT 1`,
+      [code]
+    );
+    return res.rows[0] ?? null;
+  } catch {
+    return null;
   }
 }
 
