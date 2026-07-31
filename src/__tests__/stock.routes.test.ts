@@ -71,6 +71,20 @@ beforeEach(() => {
 });
 
 describe("/api/v1/stock", () => {
+  it("GET /api/v1/stock/positions exposes the consolidated OLD/NEW read model", async () => {
+    mocks.poolQuery
+      .mockResolvedValueOnce({ rows: [{ total: 0 }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app)
+      .get("/api/v1/stock/positions?scope=OLD&page=1&pageSize=50&sortBy=article_code&sortDir=asc")
+      .set("Authorization", "Bearer fake");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ items: [], total: 0 });
+    expect(mocks.poolQuery).toHaveBeenCalledTimes(2);
+  });
+
   it("GET /api/v1/stock/analytics returns analytics payload", async () => {
     mocks.poolQuery
       .mockResolvedValueOnce({ rows: [{ articles_count: 12, stock_managed_articles: 9, qty_on_hand: 120, qty_available: 100, qty_reserved: 20 }] })
