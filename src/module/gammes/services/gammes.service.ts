@@ -14,11 +14,13 @@ import {
 } from "../repository/gamme-operations.repository"
 import {
   repoCreateGamme,
+  repoCreateGammeRevision,
   repoListGammesByVersion,
   repoUpdateGamme,
 } from "../repository/gammes.repository"
 import type {
   CreateGammeBodyDTO,
+  CreateGammeRevisionBodyDTO,
   UpdateGammeBodyDTO,
 } from "../validators/gammes.validators"
 
@@ -27,6 +29,13 @@ export const createGammeSVC = (versionId: string, body: CreateGammeBodyDTO, audi
   repoCreateGamme(versionId, body, audit)
 export const updateGammeSVC = (gammeId: string, body: UpdateGammeBodyDTO, audit: AuditContext) =>
   repoUpdateGamme(gammeId, body, audit)
+/** #433 — duplique une gamme figée dans un brouillon modifiable, en une transaction. */
+export const createGammeRevisionSVC = (
+  gammeId: string,
+  body: CreateGammeRevisionBodyDTO,
+  audit: AuditContext,
+  idempotencyKey?: string | null
+) => repoCreateGammeRevision(gammeId, body, audit, idempotencyKey)
 
 export const listGammeOperationsSVC = (gammeId: string) => repoListGammeOperations(gammeId)
 export const nextPhaseSVC = (gammeId: string, afterOperationId: string | null) =>

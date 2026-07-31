@@ -146,7 +146,7 @@ type PieceTechniqueCoreRow = {
   client_id: string | null;
   created_by: number | null;
   updated_by: number | null;
-  famille_id: string;
+  famille_id: string | null;
   name_piece: string;
   code_piece: string;
   designation: string;
@@ -359,6 +359,7 @@ export async function repoListPieceTechniques(filters: ListPiecesTechniquesQuery
       p.designation,
       p.designation_2,
       p.client_id,
+      COALESCE(NULLIF(btrim(c.client_code), ''), NULLIF(btrim(p.code_client), '')) AS code_client,
       p.client_name,
       p.famille_id::text AS famille_id,
       f.code AS famille_code,
@@ -386,15 +387,25 @@ export async function repoListPieceTechniques(filters: ListPiecesTechniquesQuery
       ${HAS_DOCUMENTS_SQL} AS has_documents,
       ${TO_COMPLETE_SQL} AS to_complete
     FROM pieces_techniques p
+    LEFT JOIN clients c ON c.client_id = p.client_id
     LEFT JOIN pieces_families f ON f.id = p.famille_id
     LEFT JOIN LATERAL (
       -- #146 : la version applicable porte aussi l'indice et la référence de plan, deux
       -- informations que le préparateur cherchait jusqu'ici en ouvrant chaque fiche.
-      SELECT v.code_metier, v.indice, v.plan_reference, v.date_effet, v.version_interne
+      SELECT
+        v.code_metier,
+        COALESCE(NULLIF(btrim(v.indice_externe_original), ''), NULLIF(btrim(v.indice), '')) AS indice,
+        v.plan_reference,
+        v.date_effet,
+        v.version_interne
       FROM public.piece_technique_versions v
       WHERE v.piece_technique_id = p.id
-        AND v.statut = 'APPLICABLE'
-      ORDER BY v.date_effet DESC NULLS LAST, v.version_interne DESC NULLS LAST, v.created_at DESC
+        AND v.statut <> 'OBSOLETE'
+      ORDER BY
+        CASE WHEN v.statut = 'APPLICABLE' THEN 0 ELSE 1 END,
+        v.version_interne DESC NULLS LAST,
+        v.created_at DESC,
+        v.id DESC
       LIMIT 1
     ) current_version ON true
     LEFT JOIN (
@@ -1648,6 +1659,9 @@ export async function repoCreatePieceTechnique(
   idempotencyKey?: string | null
 ): Promise<PieceTechnique> {
   const client = await db.connect();
+  // Conserve le hash historique : une clé déjà consommée avant #404 doit
+  // continuer à rejouer la même pièce, même si son ancien payload portait une
+  // famille choisie dans l'interface.
   const requestHash = crypto.createHash("sha256").update(JSON.stringify(body)).digest("hex");
   try {
     await client.query("BEGIN");
@@ -1747,7 +1761,7 @@ export async function repoCreatePieceTechnique(
       clientIdForInsert,
       createdBy,
       updatedBy,
-      body.famille_id,
+      null,
       body.name_piece,
       generatedCode,
       body.designation,
@@ -2133,7 +2147,9 @@ export async function repoUpdatePieceTechnique(
   if (patch.version_number !== undefined) sets.push(`version_number = ${push(patch.version_number)}::int`);
   if (patch.code_client !== undefined) sets.push(`code_client = ${push(patch.code_client)}`);
   if (patch.client_name !== undefined) sets.push(`client_name = ${push(patch.client_name)}`);
-  if (patch.famille_id !== undefined) sets.push(`famille_id = ${push(patch.famille_id)}::uuid`);
+  // #413 — Compatibility input only: an old client may still send `famille_id`,
+  // but a PATCH must never erase an historical family assignment. New PTs are
+  // created without a family (see the creation path).
   if (patch.name_piece !== undefined) sets.push(`name_piece = ${push(patch.name_piece)}`);
   if (patch.designation !== undefined) sets.push(`designation = ${push(patch.designation)}`);
   if (patch.designation_2 !== undefined) sets.push(`designation_2 = ${push(patch.designation_2)}`);
@@ -2216,13 +2232,27 @@ export async function repoDeletePieceTechnique(id: string, audit: AuditContext):
       return false;
     }
 
+    const archivedCode = base.code_piece.startsWith("ARCH-") ? base.code_piece : `ARCH-${base.code_piece}`;
+    const collision = await client.query<{ id: string }>(
+      `SELECT id::text AS id
+         FROM pieces_techniques
+        WHERE code_piece = $2
+          AND id <> $1::uuid
+        LIMIT 1
+        FOR KEY SHARE`,
+      [id, archivedCode]
+    );
+    if (collision.rows[0]) {
+      throw new HttpError(409, "ARCHIVE_CODE_CONFLICT", "Le code archivé existe déjà ; la pièce n'a pas été supprimée.");
+    }
+
     const upd = await client.query(
       `
         UPDATE pieces_techniques
-        SET deleted_at = now(), deleted_by = $2, updated_at = now(), updated_by = $2
+        SET code_piece = $3, deleted_at = now(), deleted_by = $2, updated_at = now(), updated_by = $2
         WHERE id = $1::uuid AND deleted_at IS NULL
       `,
-      [id, audit.user_id]
+      [id, audit.user_id, archivedCode]
     );
     if ((upd.rowCount ?? 0) === 0) {
       await client.query("ROLLBACK");
@@ -2235,6 +2265,7 @@ export async function repoDeletePieceTechnique(id: string, audit: AuditContext):
       entity_id: id,
       details: {
         code_piece: base.code_piece,
+        archived_code_piece: archivedCode,
         designation: base.designation,
       },
     });
@@ -2484,7 +2515,8 @@ export async function repoDuplicatePieceTechnique(id: string, userId: number | n
             o.client_id,
             userId,
             userId,
-            o.famille_id,
+            // A duplicate is a new PT: do not propagate the historical family.
+            null,
             o.name_piece,
             code,
             o.designation,

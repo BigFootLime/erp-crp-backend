@@ -191,6 +191,7 @@ export function roleHasTraceabilityCapability(
   role: string | null | undefined,
   capability: TraceabilityCapability
 ): boolean {
+  if (hasGrantedAccountModuleAccess()) return true;
   const normalized = (role ?? "").trim().toLowerCase();
   if (!normalized) return false;
   const needles = CAPABILITY_NEEDLES[capability];
@@ -334,3 +335,4 @@ export function clampSearchLimit(value: number | undefined): number {
   }
   return Math.max(1, Math.min(TRACEABILITY_LIMITS.SEARCH_MAX_LIMIT, Math.trunc(value)));
 }
+import { hasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";

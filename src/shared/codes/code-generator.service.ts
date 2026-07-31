@@ -5,6 +5,7 @@ import { HttpError } from "../../utils/httpError";
 type DbQueryer = Pick<PoolClient, "query">;
 
 const ASCII_SEGMENT = /[^A-Z0-9]+/g;
+const ASCII_PLAN_SEPARATOR = /[^A-Z0-9]+/g;
 
 function pad(n: number, width: number): string {
   return String(n).padStart(width, "0");
@@ -25,6 +26,25 @@ function normalizeSegment(value: string, field: string): string {
 
   if (!normalized) {
     throw new HttpError(400, "INVALID_CODE_SEGMENT", `${field} is required to build the business code.`);
+  }
+  return normalized;
+}
+
+/**
+ * Technical plan references often contain meaningful groups separated by
+ * spaces, slashes or dashes (for example `170 25464 001`). Keep those groups
+ * readable in business codes while normalising every separator to one dash.
+ */
+function normalizePlanReference(value: string): string {
+  const normalized = value
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toUpperCase()
+    .replace(ASCII_PLAN_SEPARATOR, "-")
+    .replace(/^-+|-+$/g, "");
+
+  if (!normalized) {
+    throw new HttpError(400, "INVALID_CODE_SEGMENT", "Plan reference is required to build the business code.");
   }
   return normalized;
 }
@@ -69,7 +89,7 @@ export function previewPieceTechniqueCode(input: {
 }): string {
   return [
     normalizeClientSegment(input.clientCode),
-    normalizeSegment(input.planReference, "Plan reference"),
+    normalizePlanReference(input.planReference),
     normalizeSegment(input.indiceExterne, "External index"),
   ].join("-");
 }
@@ -97,6 +117,88 @@ export async function generateArticleBusinessCode(tx: DbQueryer, familyCode: str
   const family = normalizeSegment(familyCode, "Article family");
   const seq = await nextCodeValue(tx, `ART:${family}`);
   return `ART-${family}-${pad(seq, 6)}`;
+}
+
+/**
+ * Canonical, immutable snapshot code for a fabricated article.
+ *
+ * The identity is read from the linked technical piece at the instant the
+ * article is created. An applicable technical version wins; a newly-created
+ * technical piece has only a draft version, so the newest non-obsolete version
+ * is used as an explicit fallback. The article code is never recalculated on
+ * later technical revisions.
+ */
+export async function generateFabricatedArticleBusinessCode(
+  tx: DbQueryer,
+  pieceTechniqueId: string
+): Promise<string> {
+  const result = await tx.query<{
+    piece_exists: boolean;
+    client_code: string | null;
+    plan_reference: string | null;
+    indice: string | null;
+    version_interne: number | string | null;
+  }>(
+    `
+      SELECT
+        true AS piece_exists,
+        COALESCE(NULLIF(btrim(c.client_code), ''), NULLIF(btrim(pt.code_client), '')) AS client_code,
+        v.plan_reference,
+        COALESCE(NULLIF(btrim(v.indice_externe_original), ''), NULLIF(btrim(v.indice), '')) AS indice,
+        v.version_interne
+      FROM public.pieces_techniques pt
+      LEFT JOIN public.clients c ON c.client_id = pt.client_id
+      LEFT JOIN LATERAL (
+        SELECT
+          pv.plan_reference,
+          pv.indice,
+          pv.indice_externe_original,
+          pv.version_interne
+        FROM public.piece_technique_versions pv
+        WHERE pv.piece_technique_id = pt.id
+          AND pv.statut <> 'OBSOLETE'
+        ORDER BY
+          CASE WHEN pv.statut = 'APPLICABLE' THEN 0 ELSE 1 END,
+          pv.version_interne DESC NULLS LAST,
+          pv.created_at DESC,
+          pv.id DESC
+        LIMIT 1
+      ) v ON true
+      WHERE pt.id = $1::uuid
+        AND pt.deleted_at IS NULL
+      LIMIT 1
+    `,
+    [pieceTechniqueId]
+  );
+
+  const source = result.rows[0];
+  if (!source?.piece_exists) {
+    throw new HttpError(400, "INVALID_PIECE_TECHNIQUE", "Pièce technique introuvable pour la codification de l'article fabriqué.");
+  }
+  if (!source.client_code?.trim()) {
+    throw new HttpError(400, "CLIENT_CODE_REQUIRED", "Code client manquant sur la pièce technique : impossible de générer le code article fabriqué.");
+  }
+  if (!source.plan_reference?.trim()) {
+    throw new HttpError(400, "PLAN_REFERENCE_REQUIRED", "Aucune version non obsolète avec référence plan n'est disponible pour cette pièce technique.");
+  }
+  if (!source.indice?.trim()) {
+    throw new HttpError(400, "INDEX_REQUIRED", "Aucune version non obsolète avec indice n'est disponible pour cette pièce technique.");
+  }
+
+  const parts = [
+    "ART",
+    "FAB",
+    normalizeClientSegment(source.client_code),
+    normalizePlanReference(source.plan_reference),
+    normalizeSegment(source.indice, "External index"),
+  ];
+  const version = Number(source.version_interne);
+  if (Number.isInteger(version) && version > 1) parts.push(`V${version}`);
+
+  // `articles.code` est un TEXT indexé et les références plan PT acceptent
+  // volontairement jusqu'à 160 caractères. Ne pas introduire ici une limite
+  // arbitraire plus courte que le contrat source.
+  return parts.join("-");
 }
 
 export async function generateTransactionalBusinessCode(

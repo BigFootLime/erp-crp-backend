@@ -162,10 +162,10 @@ beforeEach(() => {
 });
 
 describe("Catalogue de modules #326", () => {
-  it("expose 20 modules aux clés et préfixes uniques, dont un seul protégé", () => {
-    expect(MODULE_CATALOG).toHaveLength(20);
+  it("expose 24 modules aux clés et préfixes uniques, dont un seul protégé", () => {
+    expect(MODULE_CATALOG).toHaveLength(24);
     const keys = MODULE_CATALOG.map((entry) => entry.module_key);
-    expect(new Set(keys).size).toBe(20);
+    expect(new Set(keys).size).toBe(24);
 
     const prefixes = MODULE_CATALOG.flatMap((entry) => entry.api_prefixes);
     expect(new Set(prefixes).size).toBe(prefixes.length);
@@ -182,6 +182,30 @@ describe("Catalogue de modules #326", () => {
     expect(resolveModuleKeyForPath("/commandes-fournisseurs/17")).toBe("commandes-fournisseurs");
     expect(resolveModuleKeyForPath("/piece-technique-versions/9")).toBe("pieces-techniques");
     expect(resolveModuleKeyForPath("/pieces-techniques/9")).toBe("pieces-techniques");
+    expect(resolveModuleKeyForPath("/finitions/9")).toBe("finitions");
+    expect(resolveModuleKeyForPath("/methodes/centres-frais/9")).toBe("methodes-centres-frais");
+    expect(resolveModuleKeyForPath("/methodes/machines/9")).toBe("methodes-parc-machines");
+    expect(resolveModuleKeyForPath("/methodes/familles-machine/9")).toBe("methodes-parc-machines");
+    expect(resolveModuleKeyForPath("/centre-frais/9")).toBe("methodes-centres-frais");
+    expect(resolveModuleKeyForPath("/ged/documents")).toBe("ged");
+  });
+
+  it("rend les nouveaux espaces sélectionnables séparément dans la tour d'accès", () => {
+    const technicalData = MODULE_CATALOG.find((entry) => entry.module_key === "pieces-techniques");
+    const finitions = MODULE_CATALOG.find((entry) => entry.module_key === "finitions");
+    const costCenters = MODULE_CATALOG.find((entry) => entry.module_key === "methodes-centres-frais");
+    const machines = MODULE_CATALOG.find((entry) => entry.module_key === "methodes-parc-machines");
+    const ged = MODULE_CATALOG.find((entry) => entry.module_key === "ged");
+
+    expect(technicalData?.nav_page_keys).toEqual(["pieces-techniques"]);
+    expect(finitions).toMatchObject({ nav_page_keys: ["finitions"], api_prefixes: ["/finitions"] });
+    expect(costCenters).toMatchObject({ nav_page_keys: ["methodes-centres-frais"] });
+    expect(machines).toMatchObject({ nav_page_keys: ["methodes-parc-machines"] });
+    expect(ged).toMatchObject({
+      is_protected: false,
+      api_prefixes: ["/ged"],
+      nav_page_keys: ["ged"],
+    });
   });
 
   it("accepte une URL complète et ignore la query string", () => {
@@ -190,16 +214,15 @@ describe("Catalogue de modules #326", () => {
     expect(resolveModuleKeyForPath("/stock/")).toBe("stock");
   });
 
-  it("ne rattache aucune surface d'infrastructure partagée à un module", () => {
+  it("rattache les journaux à Administration et laisse les autres surfaces partagées hors catalogue", () => {
+    expect(resolveModuleKeyForPath("/audit-logs")).toBe("administration");
     for (const path of [
       "/auth/login",
-      "/audit-logs",
       "/codes/formats",
       "/notifications",
       "/chat/threads",
       "/users/4",
       "/locks",
-      "/centre-frais",
       "/pieces-families",
       "/environment",
     ]) {
@@ -211,12 +234,12 @@ describe("Catalogue de modules #326", () => {
 });
 
 describe("Règles métier de la tour de contrôle", () => {
-  it("refuse 409 MODULE_PROTECTED de restreindre le module protégé", async () => {
+  it("refuse tout défaut global fermé et protège le module administration", async () => {
     repo.repoGetCatalogModule.mockResolvedValue(PROTECTED_ROW);
 
     await expect(
       service.setModuleDefault({ moduleKey: "administration", enabled: false, audit: AUDIT })
-    ).rejects.toMatchObject({ status: 409, code: "MODULE_PROTECTED" });
+    ).rejects.toMatchObject({ status: 409, code: "ACCOUNT_ONLY_ACCESS_POLICY" });
 
     await expect(
       service.setUserModuleAccess({
@@ -231,7 +254,7 @@ describe("Règles métier de la tour de contrôle", () => {
     expect(repo.repoSetModuleDefault).not.toHaveBeenCalled();
   });
 
-  it("autorise en revanche un GRANTED explicite sur le module protégé", async () => {
+  it("normalise un ancien GRANTED explicite en ouverture par défaut", async () => {
     repo.repoGetCatalogModule.mockResolvedValue(PROTECTED_ROW);
     await service.setUserModuleAccess({
       userId: OPERATEUR_ID,
@@ -239,7 +262,7 @@ describe("Règles métier de la tour de contrôle", () => {
       decision: "GRANTED",
       audit: AUDIT,
     });
-    expect(repo.repoUpsertUserModuleAccess).toHaveBeenCalledOnce();
+    expect(repo.repoUpsertUserModuleAccess).not.toHaveBeenCalled();
   });
 
   it("refuse 409 SUPERADMIN_IMMUTABLE de refuser un module à un superadmin", async () => {
@@ -322,7 +345,7 @@ describe("Règles métier de la tour de contrôle", () => {
       audit: AUDIT,
     });
 
-    expect(repo.repoUpsertUserModuleAccess).toHaveBeenCalledTimes(2);
+    expect(repo.repoUpsertUserModuleAccess).toHaveBeenCalledTimes(1);
     const auditActions = mocks.txQuery.mock.calls
       .filter((call) => String(call[0]).includes("INSERT INTO erp_audit_logs"))
       .map((call) => (call[1] as unknown[])[2]);
@@ -372,10 +395,10 @@ describe("Résolution du profil d'accès", () => {
     },
   ];
 
-  it("hérite du défaut catalogue quand aucun override n'existe", async () => {
+  it("reste ouvert même si une ancienne valeur catalogue vaut false", async () => {
     repo.repoResolveAccessProfile.mockResolvedValue(profileRows({ enabled: false }));
     const profile = await service.getAccessProfile(OPERATEUR_ID);
-    expect(profile.modules[0]).toMatchObject({ allowed: false, source: "DEFAULT" });
+    expect(profile.modules[0]).toMatchObject({ allowed: true, source: "DEFAULT" });
   });
 
   it("l'override explicite prime sur le défaut catalogue", async () => {
@@ -501,7 +524,7 @@ describe("Surface HTTP /admin/access", () => {
     expect(Object.keys(res.body).sort()).toEqual(["matrix", "modules", "summary", "users"]);
   });
 
-  it("409 MODULE_PROTECTED via l'API quand on tente de restreindre l'administration", async () => {
+  it("409 ACCOUNT_ONLY_ACCESS_POLICY via l'API pour toute fermeture globale", async () => {
     repo.repoIsSuperadmin.mockResolvedValue(true);
     repo.repoGetCatalogModule.mockResolvedValue(PROTECTED_ROW);
     const res = await request(app)
@@ -511,7 +534,7 @@ describe("Surface HTTP /admin/access", () => {
       .send({ enabled_by_default: false });
 
     expect(res.status).toBe(409);
-    expect(res.body).toMatchObject({ code: "MODULE_PROTECTED" });
+    expect(res.body).toMatchObject({ code: "ACCOUNT_ONLY_ACCESS_POLICY" });
   });
 
   it("400 CONFIRMATION_REQUIRED sur « tout débloquer » sans la phrase exacte", async () => {

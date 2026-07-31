@@ -47,6 +47,30 @@ schema represented by the current patch files.
 - Review `checksum-mismatch` results before continuing.
 - Keep passwords and `DATABASE_URL` out of Git, logs, and tickets.
 
+## Issue #164 - Règles Articles / matière / Stock restantes
+
+`20260729_articles_164_remaining_rules.sql` ajoute les sept profils matière
+canoniques, le propriétaire du brut client, les longueurs industrielles
+distinctes, la quantité linéaire par Article/lot et la base de prix fournisseur
+`NONE`/`KG`/`M`.
+
+La densité publique devient le kg/m³ dans une nouvelle colonne
+`stock_nuances.densite_kg_m3`. La colonne historique `densite` reste en kg/dm³
+et est synchronisée pour assurer la compatibilité ; la reprise applique
+exactement `kg/m³ = kg/dm³ × 1 000`. L'audit du 2026-07-29 n'a trouvé aucune
+densité renseignée dans `cerp_test` ou `cerp_prod`.
+
+Ordre obligatoire : préflight, sauvegarde, patch sur `cerp_test`, verify,
+rollback test-only, réapplication et recette. Le rollback refuse toute base
+autre que `cerp_test` et toute nouvelle donnée utilisant les champs. Aucune
+application automatique à `cerp_prod` n'est autorisée.
+
+Validation du 2026-07-29 : sauvegarde `cerp_test` vérifiée, préflight vert,
+application/verify/rollback/réapplication/verify réussis, patch enregistré sous
+le SHA-256 `ecf89b47af9d62fe96642c232aad75a64f6414071fad7d3e5b4416d8658e1236`.
+Les volumes sont restés 272 Articles matière, 0 lot, 233 lignes de mouvement et
+0 prix fournisseur. `cerp_prod` n'a pas reçu ce patch.
+
 ## Issue #167 - Assistant d’import CLIPPER
 
 Patch `20260726_import_assistant_167.sql` ajoute le staging reprenable, le
@@ -441,6 +465,29 @@ l'infrastructure existe, la décision redevient fermée par défaut.
 
 État au 2026-07-27 : patch, scripts de support et seed **écrits et versionnés,
 appliqués sur aucune base**. Ni `cerp_test` ni `cerp_prod` n'ont été modifiés.
+
+## Issue #402 - Granularité des modules récents dans la Tour d'accès
+
+Le patch `20260730_repair_module_catalog_visibility_402.sql` fait apparaître
+séparément dans la matrice d'habilitation : **Pièces techniques**,
+**Bibliothèque de finitions**, **Méthodes — Centres de frais**, **Méthodes — Parc
+machine** et **Gestion documentaire**. Les nouveaux espaces sont ainsi réglables
+compte par compte, sans donner accès à toute la rubrique Données techniques.
+
+Le patch est transactionnel et idempotent. Les nouveaux modules héritent une seule
+fois de l'état actif et du défaut historique de `pieces-techniques`; il ne réécrit
+jamais ensuite leurs paramètres d'exploitation. Les overrides existants sur les
+nouvelles clés sont conservés, et un override historique de `pieces-techniques`
+est recopié vers les trois sous-espaces seulement lorsqu'aucun réglage dédié ne le
+remplace. Aucun droit métier, donnée industrielle ou compte utilisateur n'est créé.
+
+Ordre de recette : préflight #402, sauvegarde et application sur `cerp_test`,
+verify #402, contrôle navigateur de la Tour d'accès avec un compte non superadmin,
+puis seulement le même enchaînement sur `cerp_prod` après validation humaine. Les
+scripts de préflight et de vérification refusent toute autre base. Le backend qui
+porte le nouveau catalogue doit être redémarré dans la même fenêtre que le patch :
+le résolveur de routes est volontairement côté code et ne doit pas cohabiter avec
+la version de catalogue précédente.
 
 ## Mentions légales obligatoires de l'entité émettrice
 

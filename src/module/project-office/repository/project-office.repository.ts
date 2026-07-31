@@ -1,5 +1,6 @@
 import type { PoolClient } from "pg";
 import pool from "../../../config/database";
+import { hasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 import type {
@@ -170,6 +171,7 @@ export async function repoGetProjectAccess(
   if (Number(row.owner_id) === userId) effective = "OWNER";
   else if (row.member_role) effective = row.member_role;
   else if (row.visibility === "INTERNAL") effective = "VIEWER";
+  if (!effective && hasGrantedAccountModuleAccess()) effective = "MANAGER";
   if (!effective) return null; // PRIVATE/PILOT non-membre ⇒ invisible (404 contrôlé, pas de fuite)
   return { project_id: row.id, visibility: row.visibility, owner_id: Number(row.owner_id), effective_role: effective };
 }
@@ -180,7 +182,9 @@ export async function repoListProjects(
   q: DbQueryer = pool
 ): Promise<{ items: ProjectRow[]; total: number }> {
   const conds: string[] = [
-    `(p.owner_id = $1 OR p.visibility = 'INTERNAL' OR EXISTS (
+    hasGrantedAccountModuleAccess()
+      ? "TRUE"
+      : `(p.owner_id = $1 OR p.visibility = 'INTERNAL' OR EXISTS (
         SELECT 1 FROM public.project_members m WHERE m.project_id = p.id AND m.user_id = $1))`,
   ];
   const params: unknown[] = [userId];

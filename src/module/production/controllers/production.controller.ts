@@ -1,4 +1,5 @@
 import type { Request } from "express";
+import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import { asyncHandler } from "../../../utils/asyncHandler";
 import { HttpError } from "../../../utils/httpError";
 import { emitEntityChanged } from "../../../shared/realtime/realtime.service";
@@ -57,8 +58,21 @@ import {
   svcUpdatePoste,
 } from "../services/production.service";
 import { svcGetMachineIntelligence } from "../services/machine-intelligence.service";
-import { roleHasMachineCapability } from "../domain/machine-rbac";
+import {
+  roleHasMachineCapability,
+  type MachineCapability,
+} from "../domain/machine-rbac";
 import { roleHasOfCapability } from "../domain/of-rbac";
+
+function requestHasMachineCapability(
+  req: Request,
+  capability: MachineCapability
+): boolean {
+  return (
+    requestHasGrantedAccountModuleAccess(req) ||
+    roleHasMachineCapability(req.user?.role, capability)
+  );
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -170,7 +184,7 @@ function redactMachineCosts<T extends object>(value: T) {
 export const listMachines = asyncHandler(async (req, res) => {
   const query = listMachinesQuerySchema.parse(req.query);
   const out = await svcListMachines(query);
-  res.json(roleHasMachineCapability(req.user?.role, "costs") ? out : { ...out, items: out.items.map(redactMachineCosts) });
+  res.json(requestHasMachineCapability(req, "costs") ? out : { ...out, items: out.items.map(redactMachineCosts) });
 });
 
 export const getMachine = asyncHandler(async (req, res) => {
@@ -182,7 +196,7 @@ export const getMachine = asyncHandler(async (req, res) => {
   }
   const intelligence = await svcGetMachineIntelligence(id);
   const detail = { ...out, ...(intelligence ?? {}) };
-  res.json(roleHasMachineCapability(req.user?.role, "costs") ? detail : redactMachineCosts(detail));
+  res.json(requestHasMachineCapability(req, "costs") ? detail : redactMachineCosts(detail));
 });
 
 export const createMachine = asyncHandler(async (req, res) => {
@@ -190,7 +204,7 @@ export const createMachine = asyncHandler(async (req, res) => {
   const raw = parseBody(req);
   const body = createMachineSchema.parse({ body: raw }).body;
   assertMachineRateProvenance(body);
-  if (hasMachineCostMutation(body) && !roleHasMachineCapability(req.user?.role, "costs")) {
+  if (hasMachineCostMutation(body) && !requestHasMachineCapability(req, "costs")) {
     throw new HttpError(403, "MACHINE_COST_FORBIDDEN", "Machine cost capability required.");
   }
   const file = (req as Request & { file?: unknown }).file;
@@ -198,7 +212,7 @@ export const createMachine = asyncHandler(async (req, res) => {
   const idempotencyKey = typeof req.headers["idempotency-key"] === "string" ? req.headers["idempotency-key"].trim() : null;
   if (idempotencyKey && (idempotencyKey.length < 8 || idempotencyKey.length > 200)) throw new HttpError(400, "INVALID_IDEMPOTENCY_KEY", "Idempotency-Key must contain 8 to 200 characters.");
   const out = await svcCreateMachine({ body, image_path: imagePath, idempotency_key: idempotencyKey, audit });
-  res.status(201).json(roleHasMachineCapability(req.user?.role, "costs") ? out : redactMachineCosts(out));
+  res.status(201).json(requestHasMachineCapability(req, "costs") ? out : redactMachineCosts(out));
 });
 
 export const createMachineOnboarding = asyncHandler(async (req, res) => {
@@ -206,7 +220,7 @@ export const createMachineOnboarding = asyncHandler(async (req, res) => {
   const raw = parseBody(req);
   const body = createMachineOnboardingSchema.parse({ body: raw }).body;
   assertMachineRateProvenance(body.machine);
-  if (hasMachineCostMutation(body.machine) && !roleHasMachineCapability(req.user?.role, "costs")) {
+  if (hasMachineCostMutation(body.machine) && !requestHasMachineCapability(req, "costs")) {
     throw new HttpError(403, "MACHINE_COST_FORBIDDEN", "Machine cost capability required.");
   }
   const file = (req as Request & { file?: unknown }).file;
@@ -214,7 +228,7 @@ export const createMachineOnboarding = asyncHandler(async (req, res) => {
   const idempotencyKey = typeof req.headers["idempotency-key"] === "string" ? req.headers["idempotency-key"].trim() : null;
   if (!idempotencyKey || idempotencyKey.length < 8 || idempotencyKey.length > 200) throw new HttpError(400, "IDEMPOTENCY_KEY_REQUIRED", "A stable Idempotency-Key containing 8 to 200 characters is required.");
   const out = await svcCreateMachineOnboarding({ body, image_path: imagePath, idempotency_key: idempotencyKey, audit });
-  res.status(201).json(roleHasMachineCapability(req.user?.role, "costs") ? out : redactMachineCosts(out));
+  res.status(201).json(requestHasMachineCapability(req, "costs") ? out : redactMachineCosts(out));
 });
 
 export const updateMachine = asyncHandler(async (req, res) => {
@@ -223,7 +237,7 @@ export const updateMachine = asyncHandler(async (req, res) => {
   const raw = parseBody(req);
   const patch = updateMachineSchema.parse({ body: raw }).body;
   assertMachineRateProvenance(patch);
-  if (hasMachineCostMutation(patch) && !roleHasMachineCapability(req.user?.role, "costs")) {
+  if (hasMachineCostMutation(patch) && !requestHasMachineCapability(req, "costs")) {
     throw new HttpError(403, "MACHINE_COST_FORBIDDEN", "Machine cost capability required.");
   }
   const file = (req as Request & { file?: unknown }).file;
@@ -233,7 +247,7 @@ export const updateMachine = asyncHandler(async (req, res) => {
     res.status(404).json({ error: "Not found" });
     return;
   }
-  res.status(200).json(roleHasMachineCapability(req.user?.role, "costs") ? out : redactMachineCosts(out));
+  res.status(200).json(requestHasMachineCapability(req, "costs") ? out : redactMachineCosts(out));
 });
 
 export const updateMachineOnboarding = asyncHandler(async (req, res) => {
@@ -242,10 +256,10 @@ export const updateMachineOnboarding = asyncHandler(async (req, res) => {
   const raw = parseBody(req);
   const body = updateMachineOnboardingSchema.parse({ body: raw }).body;
   assertMachineRateProvenance(body.machine);
-  if (hasMachineCostMutation(body.machine) && !roleHasMachineCapability(req.user?.role, "costs")) {
+  if (hasMachineCostMutation(body.machine) && !requestHasMachineCapability(req, "costs")) {
     throw new HttpError(403, "MACHINE_COST_FORBIDDEN", "Machine cost capability required.");
   }
-  if (body.update_shared_model && !roleHasMachineCapability(req.user?.role, "model_update")) {
+  if (body.update_shared_model && !requestHasMachineCapability(req, "model_update")) {
     throw new HttpError(403, "MACHINE_MODEL_UPDATE_FORBIDDEN", "Shared machine model update capability required.");
   }
   const file = (req as Request & { file?: unknown }).file;
@@ -255,7 +269,7 @@ export const updateMachineOnboarding = asyncHandler(async (req, res) => {
     res.status(404).json({ error: "Not found" });
     return;
   }
-  res.status(200).json(roleHasMachineCapability(req.user?.role, "costs") ? out : redactMachineCosts(out));
+  res.status(200).json(requestHasMachineCapability(req, "costs") ? out : redactMachineCosts(out));
 });
 
 export const archiveMachine = asyncHandler(async (req, res) => {
@@ -473,7 +487,9 @@ async function withGenerationDependencyGuard<T>(fn: () => Promise<T>): Promise<T
 export const getOfReceiptContext = asyncHandler(async (req, res) => {
   const { id } = ofIdParamSchema.parse({ params: req.params }).params;
   const out = await svcGetOfReceiptContext({ of_id: id });
-  const canDecideQuality = roleHasOfCapability(req.user?.role, "quality_decision");
+    const canDecideQuality =
+      requestHasGrantedAccountModuleAccess(req) ||
+      roleHasOfCapability(req.user?.role, "quality_decision");
   res.json({
     ...out,
     permissions: {
@@ -493,7 +509,11 @@ export const createOfReceipt = asyncHandler(async (req, res) => {
   if (!idempotencyKey || idempotencyKey.length < 8 || idempotencyKey.length > 200) {
     throw new HttpError(400, "IDEMPOTENCY_KEY_REQUIRED", "Une cle Idempotency-Key stable de 8 a 200 caracteres est requise.");
   }
-  if (body.quality_status !== "QUARANTAINE" && !roleHasOfCapability(req.user?.role, "quality_decision")) {
+    if (
+      body.quality_status !== "QUARANTAINE" &&
+      !requestHasGrantedAccountModuleAccess(req) &&
+      !roleHasOfCapability(req.user?.role, "quality_decision")
+    ) {
     throw new HttpError(
       403,
       "OF_QUALITY_DECISION_FORBIDDEN",

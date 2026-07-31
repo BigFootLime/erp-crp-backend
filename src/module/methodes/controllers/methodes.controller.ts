@@ -3,16 +3,24 @@
 import type { Request, RequestHandler } from "express";
 
 import { HttpError } from "../../../utils/httpError";
-import { methodesCapabilitiesFor } from "../domain/methodes-policy";
+import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
+import {
+  METHODES_CAPABILITIES,
+  methodesCapabilitiesFor,
+} from "../domain/methodes-policy";
 import {
   addCostCenterRateSVC,
   createCostCenterSVC,
   createMachineFamilySVC,
   getCostCenterSVC,
+  getMachineQualificationSVC,
   listCostCenterRatesSVC,
   listCostCentersSVC,
   listMachineFamiliesSVC,
   listMachineOptionsSVC,
+  listMachinesForQualificationSVC,
+  previewMachineQualificationSVC,
+  qualifyMachineSVC,
   updateCostCenterSVC,
   updateMachineFamilySVC,
 } from "../services/methodes.service";
@@ -24,6 +32,9 @@ import {
   listCostCentersQuerySchema,
   listFamiliesQuerySchema,
   listMachineOptionsQuerySchema,
+  listMachinesQualificationQuerySchema,
+  previewMachineQualificationQuerySchema,
+  qualifyMachineSchema,
   updateCostCenterSchema,
   updateFamilySchema,
   validatedQuery,
@@ -53,6 +64,19 @@ export function buildMethodesAuditContext(req: Request): AuditContext {
   };
 }
 
+/**
+ * Express route parameters are typed as `string | string[]`. Route validators
+ * protect normal HTTP requests, but controllers must keep the same boundary
+ * when they are called by tests or by future route wiring.
+ */
+export function requiredRouteParam(req: Request, name: string): string {
+  const value = req.params[name];
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new HttpError(400, "INVALID_ROUTE_PARAM", `Paramètre de route invalide : ${name}`);
+  }
+  return value;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Capacités                                                                  */
 /* -------------------------------------------------------------------------- */
@@ -60,6 +84,14 @@ export function buildMethodesAuditContext(req: Request): AuditContext {
 export const readMethodesCapabilities: RequestHandler = (req, res, next) => {
   try {
     if (!req.user) throw new HttpError(401, "UNAUTHORIZED", "Authentification requise.");
+    if (requestHasGrantedAccountModuleAccess(req)) {
+      res.json({
+        capabilities: Object.fromEntries(
+          METHODES_CAPABILITIES.map((capability) => [capability, true])
+        ),
+      });
+      return;
+    }
     res.json({ capabilities: methodesCapabilitiesFor(req.user.role) });
   } catch (error) {
     next(error);
@@ -93,7 +125,7 @@ export const updateMachineFamily: RequestHandler = async (req, res, next) => {
   try {
     const audit = buildMethodesAuditContext(req);
     const body = updateFamilySchema.parse(req.body);
-    const out = await updateMachineFamilySVC(String(req.params.code).toUpperCase(), body, audit);
+    const out = await updateMachineFamilySVC(requiredRouteParam(req, "code").toUpperCase(), body, audit);
     if (!out) throw new HttpError(404, "NOT_FOUND", "Famille machine introuvable");
     res.json(out);
   } catch (error) {
@@ -123,7 +155,7 @@ export const listCostCenters: RequestHandler = async (req, res, next) => {
 
 export const getCostCenter: RequestHandler = async (req, res, next) => {
   try {
-    const out = await getCostCenterSVC(req.params.cfId);
+    const out = await getCostCenterSVC(requiredRouteParam(req, "cfId"));
     if (!out) throw new HttpError(404, "NOT_FOUND", "Centre de frais introuvable");
     res.json(out);
   } catch (error) {
@@ -145,7 +177,7 @@ export const updateCostCenter: RequestHandler = async (req, res, next) => {
   try {
     const audit = buildMethodesAuditContext(req);
     const body = updateCostCenterSchema.parse(req.body);
-    const out = await updateCostCenterSVC(req.params.cfId, body, audit);
+    const out = await updateCostCenterSVC(requiredRouteParam(req, "cfId"), body, audit);
     if (!out) throw new HttpError(404, "NOT_FOUND", "Centre de frais introuvable");
     res.json(out);
   } catch (error) {
@@ -155,7 +187,7 @@ export const updateCostCenter: RequestHandler = async (req, res, next) => {
 
 export const listCostCenterRates: RequestHandler = async (req, res, next) => {
   try {
-    res.json(await listCostCenterRatesSVC(req.params.cfId));
+    res.json(await listCostCenterRatesSVC(requiredRouteParam(req, "cfId")));
   } catch (error) {
     next(error);
   }
@@ -165,7 +197,7 @@ export const addCostCenterRate: RequestHandler = async (req, res, next) => {
   try {
     const audit = buildMethodesAuditContext(req);
     const body = addCostCenterRateSchema.parse(req.body);
-    res.status(201).json(await addCostCenterRateSVC(req.params.cfId, body, audit));
+    res.status(201).json(await addCostCenterRateSVC(requiredRouteParam(req, "cfId"), body, audit));
   } catch (error) {
     next(error);
   }
@@ -185,6 +217,73 @@ export const listMachineOptions: RequestHandler = async (req, res, next) => {
         include_unselectable: query.include_unselectable,
       })
     );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/* -------------------------------------------------------------------------- */
+/* Qualification du parc machine (#233)                                       */
+/* -------------------------------------------------------------------------- */
+
+export const listMachinesForQualification: RequestHandler = async (req, res, next) => {
+  try {
+    const query = validatedQuery<ReturnType<(typeof listMachinesQualificationQuerySchema)["parse"]>>(req);
+    res.json(
+      await listMachinesForQualificationSVC({
+        search: query.search ?? null,
+        only_unqualified: query.only_unqualified,
+        include_archived: query.include_archived,
+      })
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getMachineQualification: RequestHandler = async (req, res, next) => {
+  try {
+    const out = await getMachineQualificationSVC(requiredRouteParam(req, "machineId"));
+    if (!out) throw new HttpError(404, "NOT_FOUND", "Machine introuvable");
+    res.json(out);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** Aperçu d'impact : lecture seule, appelée avant de confirmer une décision. */
+export const previewMachineQualification: RequestHandler = async (req, res, next) => {
+  try {
+    const query = validatedQuery<ReturnType<(typeof previewMachineQualificationQuerySchema)["parse"]>>(req);
+    const out = await previewMachineQualificationSVC(
+      requiredRouteParam(req, "machineId"),
+      query.machine_family_code ?? null
+    );
+    if (!out) throw new HttpError(404, "NOT_FOUND", "Machine introuvable");
+    res.json(out);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const qualifyMachine: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildMethodesAuditContext(req);
+    const body = qualifyMachineSchema.parse(req.body);
+    const out = await qualifyMachineSVC(
+      requiredRouteParam(req, "machineId"),
+      {
+        machine_family_code: body.machine_family_code,
+        cf_id: body.cf_id,
+        valid_from: body.valid_from ?? null,
+        valid_to: body.valid_to ?? null,
+        motif: body.motif,
+        expected_updated_at: body.expected_updated_at,
+      },
+      audit
+    );
+    if (!out) throw new HttpError(404, "NOT_FOUND", "Machine introuvable");
+    res.json(out);
   } catch (error) {
     next(error);
   }

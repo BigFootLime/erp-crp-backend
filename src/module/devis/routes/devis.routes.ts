@@ -1,5 +1,6 @@
 import type { RequestHandler } from "express";
 import { Router } from "express";
+import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import multer from "multer";
 import { z } from "zod";
 import { HttpError } from "../../../utils/httpError";
@@ -73,7 +74,10 @@ const parseMultipartData = (schema: z.ZodTypeAny): RequestHandler => {
  */
 function requireCapability(capability: DevisCapability): RequestHandler {
   return (req, _res, next) => {
-    if (!roleHasDevisCapability(req.user?.role, capability)) {
+    if (
+      !requestHasGrantedAccountModuleAccess(req) &&
+      !roleHasDevisCapability(req.user?.role, capability)
+    ) {
       next(new HttpError(403, "FORBIDDEN", "Votre rôle ne permet pas cette action sur les devis."));
       return;
     }

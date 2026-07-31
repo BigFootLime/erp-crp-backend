@@ -51,6 +51,8 @@ import type {
   DetachFinishBodyDTO,
   OperationOverridesDTO,
   PreviewFinishBodyDTO,
+  StockArticleFinishConfirmBodyDTO,
+  StockArticleFinishPreviewBodyDTO,
 } from "../validators/surface-finish.validators";
 import type {
   ArticleMatch,
@@ -64,6 +66,7 @@ import type {
   SupplierCandidate,
   SurfaceFinishPreview,
   SurfaceFinishRevisionDetail,
+  StockFinishArticleResult,
 } from "../types/surface-finish.types";
 import { insertFinishAudit, mapRevision, revisionColumns, type RevisionRow } from "./surface-finish-library.repository";
 
@@ -160,6 +163,7 @@ async function loadRevision(tx: Queryer, revisionId: string) {
       finish_designation: string;
       finish_family: string;
       finish_procede: string;
+      family_commentaire_template: string | null;
       finish_statut: SurfaceFinishStatus;
       finish_uuid: string;
     }
@@ -170,9 +174,11 @@ async function loadRevision(tx: Queryer, revisionId: string) {
             f.designation_courte  AS finish_designation,
             f.family_code         AS finish_family,
             f.procede             AS finish_procede,
+            fam.commentaire_template AS family_commentaire_template,
             f.statut              AS finish_statut
      FROM public.surface_finish_revisions r
      JOIN public.surface_finishes f ON f.id = r.finish_id
+     LEFT JOIN public.surface_finish_families fam ON fam.code = f.family_code
      WHERE r.id = $1::uuid`,
     [revisionId]
   );
@@ -185,6 +191,7 @@ async function loadRevision(tx: Queryer, revisionId: string) {
       code: row.finish_code,
       designation_courte: row.finish_designation,
       family_code: row.finish_family,
+      family_commentaire_template: row.family_commentaire_template,
       procede: row.finish_procede,
       statut: row.finish_statut,
     },
@@ -315,7 +322,7 @@ export type GenerationResult = {
  */
 export function generateTexts(params: {
   context: OperationFinishContext;
-  finish: { code: string; designation_courte: string };
+  finish: { code: string; designation_courte: string; family_commentaire_template?: string | null };
   revision: SurfaceFinishRevisionDetail;
   spec: CanonicalFinishSpec;
 }): GenerationResult {
@@ -334,7 +341,9 @@ export function generateTexts(params: {
     zones: spec.zones,
   });
 
-  const template = revision.commentaire_template ?? DEFAULT_COMMENT_TEMPLATE;
+  const familyTemplate = params.finish.family_commentaire_template?.trim() ?? "";
+  const revisionTemplate = revision.commentaire_template ?? DEFAULT_COMMENT_TEMPLATE;
+  const template = [familyTemplate, revisionTemplate].filter(Boolean).join("\n");
   const teinteAspect = [spec.teinte_ral ?? spec.couleur, spec.aspect].filter(Boolean).join(" / ") || null;
 
   const rendered = renderGeneratedComment(
@@ -518,6 +527,371 @@ function buildClassification(): PlannedArticleClassification {
     // format, jamais une valeur qui pourrait ne pas être celle attribuée.
     code_hint: `ART-${GENERATED_ARTICLE_TAXONOMY.default_family_code}-…`,
   };
+}
+
+type StockContextRow = {
+  piece_technique_id: string;
+  code_piece: string;
+  designation_piece: string;
+  piece_technique_version_id: string;
+  indice: string;
+  plan_reference: string | null;
+  version_updated_at: string;
+};
+
+/**
+ * Contexte Stock : la PT/version vient du formulaire mais son appartenance est
+ * recoupée en une requête. Le reste du moteur (résolution, empreinte, textes,
+ * détection exacte et idempotence) est exactement celui de #210/#380.
+ */
+async function loadStockContext(
+  queryer: Queryer,
+  pieceTechniqueId: string,
+  pieceTechniqueVersionId: string
+): Promise<OperationFinishContext> {
+  const result = await queryer.query<StockContextRow>(
+    `SELECT
+       pt.id::text AS piece_technique_id,
+       pt.code_piece,
+       pt.designation AS designation_piece,
+       ptv.id::text AS piece_technique_version_id,
+       ptv.indice,
+       ptv.plan_reference,
+       ptv.updated_at::text AS version_updated_at
+     FROM public.pieces_techniques pt
+     JOIN public.piece_technique_versions ptv
+       ON ptv.piece_technique_id = pt.id
+     WHERE pt.id = $1::uuid
+       AND ptv.id = $2::uuid`,
+    [pieceTechniqueId, pieceTechniqueVersionId]
+  );
+  const row = result.rows[0];
+  if (!row) {
+    throw new HttpError(
+      422,
+      "PIECE_TECHNIQUE_VERSION_MISMATCH",
+      "La version sélectionnée n'appartient pas à la pièce technique."
+    );
+  }
+  return {
+    piece_technique_id: row.piece_technique_id,
+    code_piece: row.code_piece,
+    designation_piece: row.designation_piece,
+    piece_technique_version_id: row.piece_technique_version_id,
+    indice: row.indice,
+    plan_reference: row.plan_reference,
+    gamme_id: row.piece_technique_version_id,
+    gamme_code: "STOCK",
+    gamme_nom: "Création depuis Stock",
+    gamme_statut: "BROUILLON",
+    gamme_updated_at: row.version_updated_at,
+    gamme_editable: true,
+    operation_id: row.piece_technique_version_id,
+    numero_operation: null,
+    designation_operation: "Création d'article depuis Stock",
+    type_operation: "SOUS_TRAITANCE",
+    operation_updated_at: row.version_updated_at,
+  };
+}
+
+export async function repoPreviewStockFinishArticle(
+  body: StockArticleFinishPreviewBodyDTO,
+  actor: { user_id: number; role: string | null }
+): Promise<SurfaceFinishPreview> {
+  const context = await loadStockContext(db, body.piece_technique_id, body.piece_technique_version_id);
+  const { revision, finish } = await loadRevision(db, body.finish_revision_id);
+  const resolved = resolveOperationSpec(revision, body.overrides);
+  const spec = buildCanonicalFinishSpec({
+    piece_technique_version_id: context.piece_technique_version_id,
+    finish_revision_id: revision.id,
+    ...resolved,
+  });
+  const fingerprint = computeSpecFingerprint(spec);
+  const texts = generateTexts({ context, finish, revision, spec });
+  const exactRow = await findExactMatch(db, fingerprint);
+  const nearMatches = await findNearMatches(db, {
+    fingerprint,
+    versionId: context.piece_technique_version_id,
+    revisionId: revision.id,
+    spec,
+  });
+  const suppliers = await findSupplierCandidates(db, exactRow?.article_id ?? null);
+  const warnings: Array<{ code: string; message: string }> = [];
+  if (revision.statut !== "ACTIVE") {
+    warnings.push({
+      code: "FINISH_REVISION_INACTIVE",
+      message: `La révision ${revision.revision} est ${revision.statut.toLowerCase()} : elle ne peut pas créer un article.`,
+    });
+  }
+  if (statusIsHistoricalOnly(finish.statut)) {
+    warnings.push({ code: "FINISH_HISTORICAL", message: "Cette finition est historique et ne peut plus être sélectionnée." });
+  }
+  if (exactRow && !exactRow.is_active) {
+    warnings.push({
+      code: "ARTICLE_EXACT_MATCH_INACTIVE",
+      message: `L'article exact ${exactRow.code} est inactif : réactivez-le ou créez un article distinct.`,
+    });
+  }
+  if (suppliers.length === 0) {
+    warnings.push({
+      code: "NO_SUPPLIER_CANDIDATE",
+      message: "Aucun fournisseur de sous-traitance actif n'est encore rattaché.",
+    });
+  }
+  const capabilities = surfaceFinishCapabilitiesFor(actor.role);
+  const allowed = decisionsAllowedFor(actor.role, Boolean(exactRow), Boolean(exactRow?.is_active));
+  const previewHash = computePreviewHash({
+    gamme_id: context.gamme_id,
+    operation_id: context.operation_id,
+    spec_fingerprint: fingerprint,
+    exact_match_article_id: exactRow?.article_id ?? null,
+    designation: texts.designation,
+    comment: texts.comment,
+    gamme_updated_at: context.gamme_updated_at,
+    operation_updated_at: context.operation_updated_at,
+  });
+  return {
+    context,
+    finish,
+    revision,
+    spec_canonical: spec,
+    spec_fingerprint: fingerprint,
+    generated_designation: texts.designation,
+    generated_comment: texts.comment,
+    omitted_comment_lines: texts.omitted_lines,
+    template_version: texts.template_version,
+    classification: buildClassification(),
+    exact_match: toArticleMatch(exactRow),
+    near_matches: nearMatches,
+    purchase_line: {
+      type_achat: PURCHASE_LINE_TYPE,
+      quantite: 1,
+      unite: spec.unite_achat,
+      designation_snapshot: texts.designation,
+      gamme_operation_id: context.operation_id,
+      piece_technique_version_id: context.piece_technique_version_id,
+      existing_line_id: null,
+    },
+    suppliers,
+    quality: {
+      certificat_requis: spec.certificat_requis,
+      certificat_type: spec.certificat_type,
+      controles: spec.controles,
+      criteres_acceptation: revision.criteres_acceptation,
+      conditionnement: spec.conditionnement,
+    },
+    warnings,
+    capabilities,
+    allowed_decisions: allowed,
+    preview_hash: previewHash,
+    generated_at: new Date().toISOString(),
+  };
+}
+
+export async function repoConfirmStockFinishArticle(
+  body: StockArticleFinishConfirmBodyDTO,
+  audit: AuditContext,
+  actor: { role: string | null },
+  idempotencyKey: string
+): Promise<StockFinishArticleResult> {
+  const commandType = "surface_finish.stock_article.confirm";
+  const incomingHash = requestHash(commandType, body);
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const receipt = await client.query<{ request_hash: string; result: StockFinishArticleResult }>(
+      `SELECT request_hash, result
+       FROM public.surface_finish_command_receipts
+       WHERE idempotency_key = $1`,
+      [idempotencyKey]
+    );
+    const existingReceipt = receipt.rows[0];
+    const receiptDecision = decideReceipt(existingReceipt?.request_hash, incomingHash);
+    assertNoIdempotencyConflict(receiptDecision);
+    if (receiptDecision === "REPLAY") {
+      await client.query("ROLLBACK");
+      return existingReceipt.result;
+    }
+
+    const context = await loadStockContext(client, body.piece_technique_id, body.piece_technique_version_id);
+    const { revision, finish } = await loadRevision(client, body.finish_revision_id);
+    assertRevisionSelectable(revision.statut);
+    const resolved = resolveOperationSpec(revision, body.overrides);
+    const spec = buildCanonicalFinishSpec({
+      piece_technique_version_id: context.piece_technique_version_id,
+      finish_revision_id: revision.id,
+      ...resolved,
+    });
+    const fingerprint = computeSpecFingerprint(spec);
+    if (fingerprint !== body.spec_fingerprint) {
+      throw new HttpError(409, "PREVIEW_STALE", "La spécification a changé depuis l'aperçu.");
+    }
+    const texts = generateTexts({ context, finish, revision, spec });
+    const exactRow = await findExactMatch(client, fingerprint);
+    const currentPreviewHash = computePreviewHash({
+      gamme_id: context.gamme_id,
+      operation_id: context.operation_id,
+      spec_fingerprint: fingerprint,
+      exact_match_article_id: exactRow?.article_id ?? null,
+      designation: texts.designation,
+      comment: texts.comment,
+      gamme_updated_at: context.gamme_updated_at,
+      operation_updated_at: context.operation_updated_at,
+    });
+    assertPreviewFresh(body.preview_hash, currentPreviewHash);
+    assertArticleDecisionConsistent({
+      decision: body.decision,
+      state: {
+        exactMatchArticleId: exactRow?.article_id ?? null,
+        exactMatchIsActive: Boolean(exactRow?.is_active),
+      },
+      requestedArticleId: body.article_id,
+      role: actor.role,
+      justification: body.justification,
+    });
+
+    let articleId: string;
+    let articleCode: string;
+    let articleDesignation: string;
+    let articleStatus: string;
+    let result: StockFinishArticleResult["result"];
+    let articleCategories = [...GENERATED_ARTICLE_TAXONOMY.article_categories] as string[];
+    let articleFamily: string = GENERATED_ARTICLE_TAXONOMY.default_family_code;
+
+    if (body.decision === "REUSE" && exactRow) {
+      articleId = exactRow.article_id;
+      articleCode = exactRow.code;
+      articleDesignation = exactRow.designation;
+      articleStatus = exactRow.status ?? "VALIDE";
+      result = "REUSED";
+      const classification = await client.query<{
+        family_code: string;
+        category_codes: string[] | null;
+      }>(
+        `SELECT
+           a.family_code,
+           array_agg(acl.category_code ORDER BY acl.is_primary DESC, acl.category_code) AS category_codes
+         FROM public.articles a
+         LEFT JOIN public.article_category_link acl ON acl.article_id = a.id
+         WHERE a.id = $1::uuid
+         GROUP BY a.id`,
+        [articleId]
+      );
+      articleFamily = classification.rows[0]?.family_code ?? articleFamily;
+      articleCategories = classification.rows[0]?.category_codes ?? articleCategories;
+    } else {
+      const created = await repoCreateArticleTx(
+        client,
+        {
+          designation: texts.designation,
+          designation_secondary: null,
+          article_type: GENERATED_ARTICLE_TAXONOMY.article_type,
+          article_category: GENERATED_ARTICLE_TAXONOMY.article_category,
+          article_categories: [...GENERATED_ARTICLE_TAXONOMY.article_categories],
+          family_code: GENERATED_ARTICLE_TAXONOMY.default_family_code,
+          stock_managed: GENERATED_ARTICLE_TAXONOMY.stock_managed,
+          lot_tracking: GENERATED_ARTICLE_TAXONOMY.lot_tracking,
+          is_sold: false,
+          is_active: true,
+          unite: spec.unite_achat,
+          notes: texts.comment,
+          status: "EN_DEVIS",
+          projet_id: null,
+          piece_technique_id: null,
+        } satisfies CreateArticleBodyDTO,
+        audit
+      );
+      articleId = created.id;
+      articleCode = created.code;
+      articleDesignation = texts.designation;
+      articleStatus = "EN_DEVIS";
+      articleCategories = created.article_categories;
+      articleFamily = created.family_code;
+      result = "CREATED";
+      await client.query(
+        `UPDATE public.articles_traitement
+         SET piece_technique_id = $2::uuid,
+             piece_technique_version_id = $3::uuid,
+             finish_revision_id = $4::uuid,
+             spec_fingerprint = $5,
+             spec_canonical = $6::jsonb,
+             generated_designation = $7,
+             generated_comment = $8,
+             template_version = $9,
+             origin = 'MANUEL',
+             created_by = COALESCE(created_by, $10),
+             updated_at = now()
+         WHERE article_id = $1::uuid`,
+        [
+          articleId,
+          context.piece_technique_id,
+          context.piece_technique_version_id,
+          revision.id,
+          fingerprint,
+          JSON.stringify(spec),
+          texts.designation,
+          texts.comment,
+          texts.template_version,
+          audit.user_id,
+        ]
+      );
+    }
+
+    await insertFinishAudit(client, audit, "finitions.stock-article.confirm", "articles_traitement", articleId, {
+      piece_technique_id: context.piece_technique_id,
+      piece_technique_version_id: context.piece_technique_version_id,
+      finish_revision_id: revision.id,
+      finish_code: finish.code,
+      spec_fingerprint: fingerprint,
+      preview_hash: body.preview_hash,
+      decision: body.decision,
+      result,
+      article_code: articleCode,
+      generated_designation: texts.designation,
+      template_version: texts.template_version,
+      idempotency_key: idempotencyKey,
+    });
+
+    const payload: StockFinishArticleResult = {
+      result,
+      article: {
+        id: articleId,
+        code: articleCode,
+        designation: articleDesignation,
+        status: articleStatus,
+        article_type: GENERATED_ARTICLE_TAXONOMY.article_type,
+        article_category: GENERATED_ARTICLE_TAXONOMY.article_category,
+        article_categories: articleCategories,
+        family_code: articleFamily,
+        stock_managed: GENERATED_ARTICLE_TAXONOMY.stock_managed,
+        lot_tracking: GENERATED_ARTICLE_TAXONOMY.lot_tracking,
+      },
+      next_actions: [
+        { key: "article", label: "Ouvrir le brouillon Article", href: `/stock/articles/${articleId}` },
+        { key: "validate", label: "Valider et mettre en production", href: `/stock/articles/${articleId}` },
+      ],
+    };
+    await client.query(
+      `INSERT INTO public.surface_finish_command_receipts
+         (idempotency_key, command_type, request_hash, result, user_id)
+       VALUES ($1,$2,$3,$4::jsonb,$5)`,
+      [idempotencyKey, commandType, incomingHash, JSON.stringify(payload), audit.user_id]
+    );
+    await client.query("COMMIT");
+    return payload;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    if ((error as { code?: string } | null)?.code === "23505") {
+      throw new HttpError(
+        409,
+        "ARTICLE_EXACT_MATCH_CHANGED",
+        "Un article portant cette empreinte vient d'être créé : rechargez l'aperçu."
+      );
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function repoPreviewOperationFinish(

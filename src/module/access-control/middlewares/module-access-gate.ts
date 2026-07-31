@@ -1,13 +1,25 @@
 import type { NextFunction, Request, Response } from "express";
 
 import { stripQueryFromUrl } from "../../../utils/logPath";
-import { isProtectedModuleKey, resolveModuleKeyForPath } from "../domain/module-catalog";
+import { grantAccountModuleAccessToRequest } from "../context/account-module-access.context";
+import { resolveModuleKeyForPath } from "../domain/module-catalog";
 import { resolveAccessProfile } from "../services/access-control.service";
 
 const KILL_SWITCH_ENV = "CERP_MODULE_ACCESS_GATE_DISABLED";
 
 function isGateDisabled(): boolean {
   return process.env[KILL_SWITCH_ENV] === "1";
+}
+
+function normalizeUserId(value: unknown): number | null {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) {
+    return value;
+  }
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+  }
+  return null;
 }
 
 let killSwitchWarned = false;
@@ -48,29 +60,37 @@ function warnMissingInfrastructure(reason: string, moduleKey: string | null): vo
  *
  * Le chemin est résolu vers un module par le catalogue TypeScript (plus long
  * préfixe, frontière de segment) ; seule la DÉCISION vient de la base. Surface
- * hors catalogue, module protégé et superadmin passent sans aucune requête.
+ * hors catalogue passe sans aucune requête. Les modules protégés sont résolus
+ * comme les autres afin d'installer le contexte de capacités ; ils restent
+ * toujours ouverts et non restreignables.
  */
 export function moduleAccessGate(req: Request, res: Response, next: NextFunction): void {
-  if (isGateDisabled()) {
-    warnKillSwitchOnce();
-    next();
-    return;
-  }
-
-  const moduleKey = resolveModuleKeyForPath(req.path);
-  if (!moduleKey || isProtectedModuleKey(moduleKey)) {
-    next();
-    return;
-  }
-
-  const user = req.user;
-  if (!user || typeof user.id !== "number") {
+  const userId = normalizeUserId(req.user?.id);
+  if (userId === null) {
     // Le socle authenticateToken a déjà statué : rien à ajouter ici.
     next();
     return;
   }
 
-  resolveAccessProfile(user.id)
+  const moduleKey =
+    resolveModuleKeyForPath(req.originalUrl) ??
+    resolveModuleKeyForPath(req.path);
+  if (!moduleKey) {
+    // Les surfaces partagées authentifiées (utilisateurs, codes,
+    // notifications, capabilities…) ne sont pas restrictibles par module.
+    grantAccountModuleAccessToRequest(req, { userId, moduleKey: "shared" }, next);
+    return;
+  }
+
+  if (isGateDisabled()) {
+    warnKillSwitchOnce();
+    // Le kill-switch désactive seulement les refus nominatifs. Il ne doit
+    // jamais réactiver les anciens refus par rôle dans la suite de la requête.
+    grantAccountModuleAccessToRequest(req, { userId, moduleKey }, next);
+    return;
+  }
+
+  resolveAccessProfile(userId)
     .then((profile) => {
       if (profile === null) {
         warnMissingInfrastructure("access_tables_missing", moduleKey);
@@ -78,7 +98,7 @@ export function moduleAccessGate(req: Request, res: Response, next: NextFunction
         return;
       }
       if (profile.is_superadmin) {
-        next();
+        grantAccountModuleAccessToRequest(req, { userId, moduleKey }, next);
         return;
       }
 
@@ -91,7 +111,7 @@ export function moduleAccessGate(req: Request, res: Response, next: NextFunction
         return;
       }
       if (decision.allowed) {
-        next();
+        grantAccountModuleAccessToRequest(req, { userId, moduleKey }, next);
         return;
       }
 
@@ -100,7 +120,7 @@ export function moduleAccessGate(req: Request, res: Response, next: NextFunction
           type: "auth_forbidden",
           module: moduleKey,
           reason: "module_access_denied",
-          userId: user.id,
+          userId,
           requestId: req.requestId ?? null,
           method: req.method,
           path: stripQueryFromUrl(req.originalUrl),

@@ -14,6 +14,7 @@
 import crypto from "node:crypto";
 
 import { HttpError } from "../../../utils/httpError";
+import { hasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 
 /* -------------------------------------------------------------------------- */
 /* 1) Capacités RBAC — refus par défaut                                       */
@@ -91,6 +92,7 @@ export function roleHasProductionExecutionCapability(
   role: string | null | undefined,
   capability: ProductionExecutionCapability
 ): boolean {
+  if (hasGrantedAccountModuleAccess()) return true;
   const normalized = (role ?? "").trim().toLowerCase();
   if (!normalized) return false;
   const needles = CAPABILITY_NEEDLES[capability];
@@ -200,9 +202,6 @@ export function assertSeparationOfDuties(params: {
   actorRole: string | null | undefined;
 }): void {
   if (params.actorUserId !== params.ownerUserId) return;
-  const normalized = (params.actorRole ?? "").trim().toLowerCase();
-  const exempt = ["admin", "administrateur", "directeur"].some((needle) => normalized.includes(needle));
-  if (exempt) return;
   throw new HttpError(
     409,
     "PRODUCTION_EXECUTION_SELF_VALIDATION_FORBIDDEN",

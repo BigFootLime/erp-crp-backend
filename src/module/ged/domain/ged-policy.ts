@@ -72,6 +72,7 @@ export function roleHasGedCapability(
   role: string | null | undefined,
   capability: GedCapability
 ): boolean {
+  if (hasGrantedAccountModuleAccess()) return true;
   const normalized = (role ?? "").trim().toLowerCase();
   if (!normalized) return false;
   const needles = CAPABILITY_NEEDLES[capability];
@@ -229,3 +230,4 @@ export function fileExtension(name: string): string {
   const match = /\.([a-zA-Z0-9]{1,10})$/.exec(name);
   return match ? `.${match[1].toLowerCase()}` : "";
 }
+import { hasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";

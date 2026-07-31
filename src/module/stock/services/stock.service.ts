@@ -30,6 +30,7 @@ import type {
   CreateArticleFamilyBodyDTO,
   CreateMatiereEtatBodyDTO,
   CreateMatiereNuanceBodyDTO,
+  PreviewMaterialArticleCodeBodyDTO,
   CreateMatiereSousEtatBodyDTO,
   CreateEmplacementBodyDTO,
   CreateLotBodyDTO,
@@ -40,6 +41,7 @@ import type {
   ListAnalyticsQueryDTO,
   ListInventorySessionsQueryDTO,
   ListArticlesQueryDTO,
+  SimilarArticlesQueryDTO,
   ListArticleVersionsQueryDTO,
   ListArticleWhereUsedQueryDTO,
   ListArticleFamiliesQueryDTO,
@@ -55,6 +57,7 @@ import type {
   InventorySessionActionBodyDTO,
   CancelInventorySessionBodyDTO,
   UpdateArticleBodyDTO,
+  ValidateArticleBodyDTO,
   ArchiveArticleBodyDTO,
   ReactivateArticleBodyDTO,
   ArticleDocumentMetadataDTO,
@@ -95,6 +98,7 @@ import {
   repoGetArticle,
   repoListArticleCategories,
   repoListArticleFamilies,
+  repoPreviewMaterialArticleCode,
   repoListMatiereEtats,
   repoListMatiereNuances,
   repoListMatiereSousEtats,
@@ -120,6 +124,7 @@ import {
   repoRemoveMovementDocument,
   repoUpsertInventoryLine,
   repoUpdateArticle,
+  repoValidateArticle,
   repoArchiveArticle,
   repoReactivateArticle,
   repoResolveStockOpeningReferences,
@@ -134,6 +139,10 @@ import {
   repoDeactivateMagasin,
   repoActivateMagasin,
 } from "../repository/stock.repository";
+import {
+  repoFindSimilarArticles,
+  type SimilarArticleMatch,
+} from "../repository/stock-article-similarity.repository";
 
 export async function resolveStockOpeningReferencesSVC(
   inputs: StockOpeningReferenceInput[]
@@ -210,6 +219,28 @@ export async function listStockArticlesSVC(filters: ListArticlesQueryDTO) {
   return repoListArticles(filters);
 }
 
+export async function exportStockArticlesSVC(filters: ListArticlesQueryDTO) {
+  const items: Awaited<ReturnType<typeof repoListArticles>>["items"] = [];
+  const pageSize = 200;
+  const maxRows = 10_000;
+  let page = 1;
+  let total = 0;
+
+  do {
+    const result = await repoListArticles({ ...filters, page, pageSize });
+    total = result.total;
+    items.push(...result.items);
+    page += 1;
+  } while (items.length < total && items.length < maxRows);
+
+  return { items: items.slice(0, maxRows), total, truncated: total > maxRows };
+}
+
+/** #226 — Consultatif : ne crée rien, ne verrouille rien, ne bloque rien. */
+export async function findSimilarStockArticlesSVC(query: SimilarArticlesQueryDTO): Promise<SimilarArticleMatch[]> {
+  return repoFindSimilarArticles(query);
+}
+
 export async function getStockArticleSVC(id: string, includeCosts = false): Promise<StockArticleDetail | null> {
   return repoGetArticle(id, includeCosts);
 }
@@ -228,6 +259,35 @@ export async function listStockArticleFamiliesSVC(filters: ListArticleFamiliesQu
 
 export async function listStockMatiereNuancesSVC(filters: ListMatiereNuancesQueryDTO): Promise<StockMatiereNuance[]> {
   return repoListMatiereNuances(filters);
+}
+
+/**
+ * #164 — Aperçu de la référence matière.
+ *
+ * Le même générateur sert l'aperçu et la création : ce que l'écran affiche est
+ * ce que la base recevra, ou la création est refusée.
+ */
+export async function previewMaterialArticleCodeSVC(body: PreviewMaterialArticleCodeBodyDTO) {
+  return repoPreviewMaterialArticleCode({
+    family_code: body.family_code,
+    nuance_id: body.nuance_id ?? null,
+    etat_id: body.etat_id ?? null,
+    sous_etat_id: body.sous_etat_id ?? null,
+    client_proprietaire_id: body.client_proprietaire_id ?? null,
+    reference_suffix: body.reference_suffix ?? null,
+    dimensions: {
+      barre_a_decouper: body.barre_a_decouper ?? false,
+      longueur_barre_source_mm: body.longueur_barre_source_mm ?? null,
+      longueur_coupe_mm: body.longueur_coupe_mm ?? null,
+      longueur_brut_mm: body.longueur_brut_mm ?? null,
+      longueur_mm: body.longueur_mm ?? null,
+      largeur_mm: body.largeur_mm ?? null,
+      hauteur_mm: body.hauteur_mm ?? null,
+      epaisseur_mm: body.epaisseur_mm ?? null,
+      diametre_mm: body.diametre_mm ?? null,
+      largeur_plat_mm: body.largeur_plat_mm ?? null,
+    },
+  });
 }
 
 export async function createStockMatiereNuanceSVC(body: CreateMatiereNuanceBodyDTO, audit: AuditContext): Promise<StockMatiereNuance> {
@@ -273,6 +333,15 @@ export async function updateStockArticleSVC(
   includeCosts = false
 ): Promise<StockArticleDetail | null> {
   return repoUpdateArticle(id, patch, audit, includeCosts);
+}
+
+export async function validateStockArticleSVC(
+  id: string,
+  body: ValidateArticleBodyDTO,
+  audit: AuditContext,
+  includeCosts = false
+): Promise<StockArticleDetail | null> {
+  return repoValidateArticle(id, body, audit, includeCosts);
 }
 
 export async function archiveStockArticleSVC(

@@ -108,25 +108,47 @@ export const MODULE_CATALOG: readonly ModuleCatalogEntry[] = [
   {
     module_key: "pieces-techniques",
     label: "Données techniques",
-    description: "Pièces techniques, versions, gammes, finitions et dossiers d’opération.",
+    description: "Pièces techniques, versions, gammes et dossiers d’opération.",
     category: "Production",
-    // `/finitions` (#210) rejoint le module Données techniques : la bibliothèque
-    // de finitions est un référentiel Méthodes, pas un module d'accès distinct.
-    // Idem `/methodes` : familles machine, centres de frais tarifés et sélecteur
-    // de machines sont les référentiels de la gamme, pas un module à part.
     api_prefixes: [
       "/pieces-techniques",
       "/piece-technique-versions",
       "/gammes",
-      "/finitions",
       "/dossiers",
-      "/methodes",
     ],
-    // `methodes-centres-frais` est une page de CE module : sans elle dans la
-    // liste, l'entrée de navigation disparaîtrait pour tout compte filtré.
-    nav_page_keys: ["pieces-techniques", "methodes-centres-frais"],
+    nav_page_keys: ["pieces-techniques"],
     is_protected: false,
     sort_order: 100,
+  },
+  {
+    module_key: "finitions",
+    label: "Bibliothèque de finitions",
+    description: "Référentiel contrôlé des traitements et finitions de surface.",
+    category: "Production",
+    api_prefixes: ["/finitions"],
+    nav_page_keys: ["finitions"],
+    is_protected: false,
+    sort_order: 101,
+  },
+  {
+    module_key: "methodes-centres-frais",
+    label: "Méthodes — Centres de frais",
+    description: "Centres de frais, tarifs versionnés et référentiel associé.",
+    category: "Production",
+    api_prefixes: ["/methodes/centres-frais", "/centre-frais"],
+    nav_page_keys: ["methodes-centres-frais"],
+    is_protected: false,
+    sort_order: 102,
+  },
+  {
+    module_key: "methodes-parc-machines",
+    label: "Méthodes — Parc machine",
+    description: "Qualification du parc machine et familles de machines.",
+    category: "Production",
+    api_prefixes: ["/methodes/machines", "/methodes/familles-machine"],
+    nav_page_keys: ["methodes-parc-machines"],
+    is_protected: false,
+    sort_order: 103,
   },
   {
     module_key: "production",
@@ -227,11 +249,21 @@ export const MODULE_CATALOG: readonly ModuleCatalogEntry[] = [
     sort_order: 190,
   },
   {
+    module_key: "ged",
+    label: "Gestion documentaire",
+    description: "Documents contrôlés, versions, classes documentaires et validations.",
+    category: "Système",
+    api_prefixes: ["/ged"],
+    nav_page_keys: ["ged"],
+    is_protected: false,
+    sort_order: 195,
+  },
+  {
     module_key: "administration",
     label: "Administration",
     description: "Comptes, rôles, réglages ERP et tour de contrôle des accès.",
     category: "Système",
-    api_prefixes: ["/admin"],
+    api_prefixes: ["/admin", "/audit-logs"],
     nav_page_keys: ["administration", "erp-settings", "acces"],
     is_protected: true,
     sort_order: 200,

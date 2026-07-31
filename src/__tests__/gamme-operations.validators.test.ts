@@ -13,6 +13,8 @@ import {
   createFamilySchema,
   listMachineOptionsQuerySchema,
 } from "../module/methodes/validators/methodes.validators"
+import { requiredRouteParam } from "../module/methodes/controllers/methodes.controller"
+import { HttpError } from "../utils/httpError"
 
 describe("Opération de gamme — contrat d'entrée", () => {
   it("accepte le type DECOUPE sans retirer les types existants", () => {
@@ -75,6 +77,20 @@ describe("Opération de gamme — contrat d'entrée", () => {
 })
 
 describe("Référentiels Méthodes — contrat d'entrée", () => {
+  it("refuse les paramètres de route absents, multiples ou vides", () => {
+    const req = (params: Record<string, string | string[] | undefined>) => ({ params }) as never
+
+    expect(requiredRouteParam(req({ cfId: "  123  " }), "cfId")).toBe("  123  ")
+    for (const params of [{}, { cfId: ["123", "456"] }, { cfId: "   " }]) {
+      expect(() => requiredRouteParam(req(params), "cfId")).toThrow(HttpError)
+      try {
+        requiredRouteParam(req(params), "cfId")
+      } catch (error) {
+        expect(error).toMatchObject({ status: 400, code: "INVALID_ROUTE_PARAM" })
+      }
+    }
+  })
+
   it("impose un code de famille en majuscules sans espace", () => {
     const ok = createFamilySchema.safeParse({ code: "rectif cn", libelle: "Rectification" })
     expect(ok.success).toBe(false)

@@ -1,13 +1,15 @@
 // src/module/pieces-techniques/routes/pieces-techniques.routes.ts
-import { Router } from "express"
+import { Router, type RequestHandler } from "express"
+import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import multer from "multer"
 
 import { authenticateToken, authorizeRole } from "../../auth/middlewares/auth.middleware"
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
+import { HttpError } from "../../../utils/httpError"
 import {
+  canValidatePieceTechnique,
   PIECE_DOCUMENT_POLICY_ROLES,
   PIECE_TECHNIQUE_DELETE_ROLES,
-  PIECE_TECHNIQUE_VALIDATE_ROLES,
 } from "../pieces-techniques.permissions"
 import {
   abandonPieceDraft,
@@ -115,9 +117,24 @@ const router = Router()
 // refusé » à la validation d'un indice), acceptait tout futur rôle contenant « admin »,
 // et ignorait le multi-rôles #315. Les listes vivent dans pieces-techniques.permissions.ts
 // et sont comparées aux rôles réellement assignés.
-const requireValidateRole = authorizeRole(...PIECE_TECHNIQUE_VALIDATE_ROLES)
 const requireDeleteRole = authorizeRole(...PIECE_TECHNIQUE_DELETE_ROLES)
 const requireDocumentPolicyRole = authorizeRole(...PIECE_DOCUMENT_POLICY_ROLES)
+const requireVersionApproval: RequestHandler = (req, _res, next) => {
+  if (
+    !requestHasGrantedAccountModuleAccess(req) &&
+    !canValidatePieceTechnique(req.user)
+  ) {
+    next(
+      new HttpError(
+        403,
+        "PIECE_VERSION_APPROVAL_FORBIDDEN",
+        "Technical definition approval role required"
+      )
+    )
+    return
+  }
+  next()
+}
 
 const docsBaseDir = ensureDocumentStoragePath("pieces-techniques")
 
@@ -183,7 +200,7 @@ router.post("/:id/create-or-link-article-fabrique", validate(idParamSchema), cre
 router.get("/:id/versions", validate(idParamSchema), listVersions)
 router.post("/:id/versions", validate(idParamSchema), validate(createVersionSchema), createVersion)
 router.patch("/:id/versions/:versionId", validate(versionIdParamSchema), validate(updateVersionSchema), updateVersion)
-router.patch("/:id/versions/:versionId/status", requireValidateRole, validate(versionIdParamSchema), validate(versionStatusSchema), updateVersionStatus)
+router.patch("/:id/versions/:versionId/status", requireVersionApproval, validate(versionIdParamSchema), validate(versionStatusSchema), updateVersionStatus)
 router.post("/:id/versions/:versionId/create-next", validate(versionIdParamSchema), validate(createNextVersionSchema), createNextVersion)
 
 router.post("/:id/nomenclature", validate(idParamSchema), validate(addBomLineSchema), addBomLine)

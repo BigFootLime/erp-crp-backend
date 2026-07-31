@@ -285,10 +285,12 @@ describe("colonnes de complétude", () => {
     }
   });
 
-  it("ne retient qu'une seule version applicable, la plus récente en date d'effet", async () => {
+  it("privilégie la version applicable puis la version interne la plus récente", async () => {
     await repoListPieceTechniques(parse({}));
     const dataSql = captured()[1].text;
-    expect(dataSql).toContain("ORDER BY v.date_effet DESC NULLS LAST");
+    expect(dataSql).toContain("CASE WHEN v.statut = 'APPLICABLE' THEN 0 ELSE 1 END");
+    expect(dataSql).toContain("v.version_interne DESC NULLS LAST");
+    expect(dataSql).toContain("v.id DESC");
     expect(dataSql).toContain("LIMIT 1");
   });
 

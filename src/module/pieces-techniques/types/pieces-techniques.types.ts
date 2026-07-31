@@ -164,7 +164,7 @@ export type PieceTechnique = {
   created_by: number | null
   updated_by: number | null
 
-  famille_id: string
+  famille_id: string | null
   name_piece: string
   code_piece: string
   designation: string
@@ -198,7 +198,7 @@ export type CreatePieceTechniqueInput = {
   created_by?: number | null
   updated_by?: number | null
 
-  famille_id: string
+  famille_id?: string | null
   name_piece: string
   code_piece: string
   designation: string
@@ -219,7 +219,7 @@ export type CreatePieceTechniqueInput = {
 
 export type PieceTechniqueListItem = Pick<
   PieceTechnique,
-  "id" | "article_id" | "root_piece_technique_id" | "parent_piece_technique_id" | "version_number" | "code_piece" | "designation" | "designation_2" | "client_id" | "client_name" | "famille_id" | "statut" | "en_fabrication" | "prix_unitaire" | "created_at" | "updated_at" | "ensemble"
+  "id" | "article_id" | "root_piece_technique_id" | "parent_piece_technique_id" | "version_number" | "code_piece" | "designation" | "designation_2" | "client_id" | "code_client" | "client_name" | "famille_id" | "statut" | "en_fabrication" | "prix_unitaire" | "created_at" | "updated_at" | "ensemble"
 > & {
   bom_count: number
   operations_count: number

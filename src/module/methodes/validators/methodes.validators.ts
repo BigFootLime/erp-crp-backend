@@ -135,6 +135,35 @@ export const listMachineOptionsQuerySchema = z.object({
   include_unselectable: booleanish.optional().default(true),
 });
 
+export const machineIdParamSchema = z.object({ machineId: uuid });
+
+export const listMachinesQualificationQuerySchema = z.object({
+  search: z.string().trim().min(1).max(120).optional(),
+  /** `true` = seulement les machines dont la famille n'est pas renseignée. */
+  only_unqualified: booleanish.optional().default(false),
+  include_archived: booleanish.optional().default(false),
+});
+
+export const previewMachineQualificationQuerySchema = z.object({
+  machine_family_code: familyCode.optional(),
+});
+
+/**
+ * Qualification d'une machine. `machine_family_code` et `cf_id` acceptent
+ * explicitement `null` : « à qualifier » est une valeur assumée, pas un oubli.
+ * Le `motif` est obligatoire — une affectation qui change le coût des gammes
+ * futures se justifie par écrit.
+ */
+export const qualifyMachineSchema = z.object({
+  machine_family_code: familyCode.nullable(),
+  cf_id: uuid.nullable(),
+  valid_from: isoDate.nullable().optional().default(null),
+  valid_to: isoDate.nullable().optional().default(null),
+  motif: z.string().trim().min(5, "Le motif de la qualification est obligatoire (au moins 5 caractères)").max(1000),
+  expected_updated_at: z.string().trim().min(1, "expected_updated_at est obligatoire"),
+});
+export type QualifyMachineBodyDTO = z.infer<typeof qualifyMachineSchema>;
+
 /* -------------------------------------------------------------------------- */
 /* Fragments partagés avec le module Gammes                                   */
 /* -------------------------------------------------------------------------- */

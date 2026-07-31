@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
+import { hasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import { hasProjectOfficeAccess } from "../services/project-office-access.service";
 
 // Gate du module Project Office (#130) — monté en tête du routeur /project-office,
@@ -8,6 +9,10 @@ export function requireProjectOfficeAccess(req: Request, res: Response, next: Ne
   const user = req.user;
   if (!user || typeof user.id !== "number") {
     res.status(401).json({ error: "Utilisateur non authentifié" });
+    return;
+  }
+  if (hasGrantedAccountModuleAccess()) {
+    next();
     return;
   }
   hasProjectOfficeAccess(user.id)

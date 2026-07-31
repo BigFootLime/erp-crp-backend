@@ -8,6 +8,7 @@ import { authenticateToken } from "../../auth/middlewares/auth.middleware"
 import { requireMethodesCapability } from "../../methodes/middlewares/methodes-authorization.middleware"
 import {
   addGammeOperation,
+  createGammeRevision,
   deleteGammeOperation,
   listGammeOperations,
   nextGammeOperationPhase,
@@ -19,6 +20,7 @@ import {
 } from "../controllers/gammes.controller"
 import {
   addGammeOperationSchema,
+  createGammeRevisionSchema,
   deleteGammeOperationSchema,
   gammeIdParamSchema,
   nextPhaseQuerySchema,
@@ -34,6 +36,21 @@ const router = Router()
 router.use(authenticateToken)
 
 router.patch("/:gammeId", validate(gammeIdParamSchema), validate(updateGammeSchema), updateGamme)
+
+/**
+ * #433 — Révision d'une gamme figée.
+ *
+ * Écrire une gamme applicable reste INTERDIT ; en préparer une révision est une
+ * écriture Méthodes ordinaire, soumise à la même capacité que l'ajout d'une
+ * opération — c'est bien ce que l'utilisateur veut faire au bout du parcours.
+ */
+router.post(
+  "/:gammeId/revisions",
+  requireMethodesCapability("gamme_operation_write"),
+  validate(gammeIdParamSchema),
+  validate(createGammeRevisionSchema),
+  createGammeRevision
+)
 
 /* Opérations. */
 router.get(

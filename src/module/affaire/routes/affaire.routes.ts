@@ -1,4 +1,5 @@
 import { Router, type RequestHandler } from "express";
+import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
 import { HttpError } from "../../../utils/httpError";
 import { roleHasAffaireCapability, type AffaireCapability } from "../domain/affaire-rbac";
@@ -19,7 +20,10 @@ const router = Router();
 // Refus par défaut : chaque route exige une capacité distincte, vérifiée côté serveur.
 function requireAffaireCapability(capability: AffaireCapability): RequestHandler {
   return (req, _res, next) => {
-    if (roleHasAffaireCapability(req.user?.role, capability)) {
+  if (
+    requestHasGrantedAccountModuleAccess(req) ||
+    roleHasAffaireCapability(req.user?.role, capability)
+  ) {
       next();
       return;
     }
@@ -35,7 +39,10 @@ const requireAffaireTransitionCapability: RequestHandler = (req, _res, next) => 
   let capability: AffaireCapability = "transition";
   if (to === "CLOTUREE") capability = "close";
   else if (to === "ANNULEE") capability = "archive";
-  if (roleHasAffaireCapability(role, capability)) {
+  if (
+    requestHasGrantedAccountModuleAccess(req) ||
+    roleHasAffaireCapability(role, capability)
+  ) {
     next();
     return;
   }

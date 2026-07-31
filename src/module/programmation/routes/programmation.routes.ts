@@ -1,4 +1,8 @@
 import { Router, type RequestHandler } from "express";
+import {
+  hasGrantedAccountModuleAccess,
+  requestHasGrantedAccountModuleAccess,
+} from "../../access-control/context/account-module-access.context";
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
 import { HttpError } from "../../../utils/httpError";
 import { healthProgrammations, listProgrammations } from "../controllers/programmation.controller";
@@ -16,6 +20,13 @@ function isProductionRole(role: string | undefined): boolean {
 }
 
 const requireProductionOrAdmin: RequestHandler = (req, _res, next) => {
+  if (
+    requestHasGrantedAccountModuleAccess(req) ||
+    hasGrantedAccountModuleAccess()
+  ) {
+    next();
+    return;
+  }
   const role = req.user?.role;
   if (!isAdminRole(role) && !isProductionRole(role)) {
     next(new HttpError(403, "FORBIDDEN", "Production, atelier, secretariat or admin role required"));

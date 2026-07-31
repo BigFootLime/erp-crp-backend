@@ -35,7 +35,7 @@ export type StockArticleFamily = {
 export type StockMatiereNuance = {
   id: number;
   code: string;
-  designation: string;
+  designation: string | null;
   densite: number | null;
   is_active: boolean;
   etat_ids: number[];
@@ -44,7 +44,8 @@ export type StockMatiereNuance = {
 export type StockMatiereEtat = {
   id: number;
   code: string;
-  designation: string;
+  /** #164 — Facultative. `null` quand l'état n'est connu que par son code. */
+  designation: string | null;
   unite_achat: number;
   is_active: boolean;
   nuance_ids: number[];
@@ -62,7 +63,12 @@ export type ArticleMatierePayload = {
   nuance_id?: number | null;
   etat_id?: number | null;
   sous_etat_id?: number | null;
+  client_proprietaire_id?: string | null;
   barre_a_decouper?: boolean;
+  longueur_barre_source_mm?: number | null;
+  longueur_coupe_mm?: number | null;
+  longueur_brut_mm?: number | null;
+  quantite_lineaire_totale_mm?: number | null;
   longueur_mm?: number | null;
   longueur_unitaire_mm?: number | null;
   largeur_mm?: number | null;
@@ -101,6 +107,7 @@ export type ArticleSupplierReference = {
   supplier_reference: string | null;
   unit: string | null;
   unit_price: number | null;
+  pricing_basis: "NONE" | "KG" | "M";
   currency: string | null;
   lead_time_days: number | null;
   moq: number | null;
@@ -271,6 +278,7 @@ export type StockLotListItem = {
   received_at: string | null;
   manufactured_at: string | null;
   expiry_at: string | null;
+  quantite_lineaire_totale_mm: number | null;
   updated_at: string;
   created_at: string;
 };

@@ -23,6 +23,7 @@ import reportingRoutes from "../module/facturation/routes/reporting.routes";
 import productionRoutes from "../module/production/routes/production.routes";
 import productionExecutionRoutes from "../module/production/routes/production-execution.routes";
 import productionStationRoutes from "../module/production/routes/station.routes";
+import ofVersioningRoutes from "../module/production/routes/of-versioning.routes";
 import qualiteRoutes from "../module/qualite/routes/qualite.routes";
 import quality360Routes from "../module/qualite/routes/quality-360.routes";
 import livraisonsRoutes from "../module/livraisons/routes/livraisons.routes";
@@ -55,19 +56,22 @@ import methodesRoutes from "../module/methodes/routes/methodes.routes"
 import importAssistantRoutes from "../module/import-assistant/routes/import-assistant.routes"
 import accessControlRoutes from "../module/access-control/routes/access-control.routes"
 import { moduleAccessGate } from "../module/access-control/middlewares/module-access-gate"
+import { runWithAccountModuleAccessScope } from "../module/access-control/context/account-module-access.context"
 const router = Router()
+
+router.use((_req, _res, next) => runWithAccountModuleAccessScope(next))
 
 // --- Routes publiques (avant authentification) ---
 router.use("/auth", authRoutes)
 
-// 🔒 Socle default-deny (ISO/IEC 27001 A.5.15 / A.8.3) : toute route sous /api/v1
-// définie APRÈS cette ligne exige un JWT valide. Les modules conservent en plus leurs
-// gardes authorizeRole plus fines. Tout nouveau module est protégé par défaut.
+// 🔒 Socle d'authentification : toute route sous /api/v1 définie APRÈS cette
+// ligne exige un JWT valide. Les rôles restent descriptifs ; l'autorisation
+// métier est portée par le compte et le module au middleware suivant.
 router.use(authenticateToken)
 
 // 🔒 Tour de contrôle des accès (#326) : filtrage module par compte, monté avant tout
-// module métier pour qu'aucune surface future n'y échappe par oubli. Il n'ôte aucun
-// garde existant — les authorizeRole des modules s'appliquent toujours ensuite.
+// module métier pour qu'aucune surface future n'y échappe par oubli. Une fois le
+// module autorisé, les anciens gardes de rôle deviennent de simples compatibilités.
 router.use(moduleAccessGate)
 
 router.use("/outils", outilRoutes)
@@ -110,6 +114,11 @@ router.use("/production/execution", productionExecutionRoutes);
 // duplique aucune commande d'exécution : il ajoute appareil, session, file de
 // travail, dossier OF numérique et transmission de poste.
 router.use("/production/station", productionStationRoutes);
+// Versioning d'OF, replanification, AR client et document (#370), monté AVANT le
+// routeur historique. Il ne duplique aucune commande existante : il ajoute les
+// révisions, le VISA de phase, la dérive de temps, le brouillon de planning, le
+// dossier d'AR à recaler et le document d'OF figé.
+router.use("/production/of-versioning", ofVersioningRoutes);
 router.use("/production", productionRoutes);
 router.use("/planning", planningRoutes);
 router.use("/programmations", programmationRoutes);

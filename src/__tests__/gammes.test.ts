@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest"
 import {
   addGammeOperationSchema,
   createGammeSchema,
+  createGammeRevisionSchema,
   gammeStatutSchema,
   operationTypeSchema,
   reorderOperationsSchema,
@@ -33,6 +34,15 @@ describe("Gammes — validators", () => {
   it("update partiel + expected_updated_at", () => {
     expect(updateGammeSchema.safeParse({ body: { is_current: true, expected_updated_at: "2026-07-08" } }).success).toBe(true)
     expect(updateGammeSchema.safeParse({ body: {} }).success).toBe(true)
+  })
+
+  it("borne le corps d'une révision au verrou optimiste et au nom", () => {
+    expect(
+      createGammeRevisionSchema.safeParse({
+        body: { expected_updated_at: "2026-07-31T10:00:00.000Z", nom: "Révision B" },
+      }).success,
+    ).toBe(true)
+    expect(createGammeRevisionSchema.safeParse({ body: { statut: "BROUILLON" } }).success).toBe(false)
   })
 })
 

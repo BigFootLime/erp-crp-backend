@@ -27,7 +27,8 @@
 
 import type { Request } from "express";
 
-import { hasAnyAssignedRole } from "../auth/domain/roles";
+import { hasGrantedAccountModuleAccess } from "../access-control/context/account-module-access.context";
+import { effectiveRoleHasAny, hasAnyAssignedRole } from "../auth/domain/roles";
 
 /**
  * Rédaction du dossier technique : créer/modifier une pièce, sa nomenclature, sa gamme,
@@ -42,6 +43,7 @@ export const PIECE_TECHNIQUE_WRITE_ROLES = [
   "Programmation",
   "Études-Méthodes",
   "Responsable CAO",
+  "Method",
   "Responsable Qualité",
   "Qualité",
 ] as const;
@@ -61,6 +63,7 @@ export const PIECE_TECHNIQUE_VALIDATE_ROLES = [
   "Qualité",
   "Responsable Programmation",
   "Études-Méthodes",
+  "Method",
 ] as const;
 
 /**
@@ -91,9 +94,13 @@ type RoleBearer = Pick<NonNullable<Request["user"]>, "role"> & { roles?: string[
 
 function allows(user: RoleBearer | null | undefined, allowed: readonly string[]): boolean {
   if (!user) return false;
+  if (hasGrantedAccountModuleAccess()) return true;
   // Comparaison exacte sur les rôles assignés, jamais une sous-chaîne :
   // un rôle inconnu est refusé, point.
-  return hasAnyAssignedRole(user.role, user.roles, allowed);
+  return (
+    hasAnyAssignedRole(user.role, user.roles, allowed) ||
+    effectiveRoleHasAny(user.role, allowed)
+  );
 }
 
 export const canWritePieceTechnique = (user: RoleBearer | null | undefined): boolean =>

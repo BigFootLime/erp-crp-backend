@@ -1,6 +1,7 @@
 import type { RequestHandler } from "express";
 
 import { HttpError } from "../../../utils/httpError";
+import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import {
   roleHasTraceabilityCapability,
   type TraceabilityCapability,
@@ -21,7 +22,10 @@ export function requireTraceabilityCapability(capability: TraceabilityCapability
       next(new HttpError(401, "UNAUTHORIZED", "Authentification requise."));
       return;
     }
-    if (!roleHasTraceabilityCapability(req.user.role, capability)) {
+    if (
+      !requestHasGrantedAccountModuleAccess(req) &&
+      !roleHasTraceabilityCapability(req.user.role, capability)
+    ) {
       next(
         new HttpError(
           403,

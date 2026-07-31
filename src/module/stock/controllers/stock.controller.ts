@@ -1,4 +1,5 @@
 import type { Request, RequestHandler, Response } from "express";
+import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import fs from "node:fs/promises";
 
 import { previewArticleCode } from "../../../shared/codes/code-generator.service";
@@ -24,9 +25,11 @@ import {
   listAnalyticsQuerySchema,
   listInventorySessionsQuerySchema,
   listArticlesQuerySchema,
+  similarArticlesQuerySchema,
   listArticleFamiliesQuerySchema,
   listMatiereEtatsQuerySchema,
   listMatiereNuancesQuerySchema,
+  previewMaterialArticleCodeSchema,
   listMatiereSousEtatsQuerySchema,
   listBalancesQuerySchema,
   listEmplacementsQuerySchema,
@@ -38,6 +41,7 @@ import {
   inventorySessionActionSchema,
   cancelInventorySessionSchema,
   updateArticleSchema,
+  validateArticleSchema,
   archiveArticleSchema,
   reactivateArticleSchema,
   listArticleVersionsQuerySchema,
@@ -52,6 +56,7 @@ import {
   type CreateArticleFamilyBodyDTO,
   type CreateMatiereEtatBodyDTO,
   type CreateMatiereNuanceBodyDTO,
+  type PreviewMaterialArticleCodeBodyDTO,
   type CreateMatiereSousEtatBodyDTO,
   type CreateEmplacementBodyDTO,
   type CreateLotBodyDTO,
@@ -66,6 +71,7 @@ import {
   type ListMatiereNuancesQueryDTO,
   type ListMatiereSousEtatsQueryDTO,
   type UpdateArticleBodyDTO,
+  type ValidateArticleBodyDTO,
   type ArchiveArticleBodyDTO,
   type ReactivateArticleBodyDTO,
   type UpdateEmplacementBodyDTO,
@@ -109,6 +115,7 @@ import {
   listStockArticleFamiliesSVC,
   listStockMatiereEtatsSVC,
   listStockMatiereNuancesSVC,
+  previewMaterialArticleCodeSVC,
   listStockMatiereSousEtatsSVC,
   getStockLotSVC,
   getStockLotGenealogySVC,
@@ -118,6 +125,8 @@ import {
   getStockMovementSVC,
   listStockArticleDocumentsSVC,
   listStockArticlesSVC,
+  exportStockArticlesSVC,
+  findSimilarStockArticlesSVC,
   listStockBalancesSVC,
   listStockEmplacementsSVC,
   listStockLotsSVC,
@@ -128,6 +137,7 @@ import {
   removeStockArticleDocumentSVC,
   removeStockMovementDocumentSVC,
   updateStockArticleSVC,
+  validateStockArticleSVC,
   archiveStockArticleSVC,
   reactivateStockArticleSVC,
   listStockArticleVersionsSVC,
@@ -331,6 +341,75 @@ export const listStockArticles: RequestHandler = async (req, res, next) => {
   }
 };
 
+function csvCell(value: unknown): string {
+  const raw = value === null || value === undefined ? "" : String(value);
+  const formulaSafe = /^[=+\-@]/.test(raw) ? `'${raw}` : raw;
+  return `"${formulaSafe.replace(/"/g, '""')}"`;
+}
+
+export const exportStockArticles: RequestHandler = async (req, res, next) => {
+  try {
+    const parsed = listArticlesQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues?.[0]?.message ?? "Invalid query" });
+      return;
+    }
+    const out = await exportStockArticlesSVC(parsed.data);
+    const headers = [
+      "Code",
+      "Désignation",
+      "Profil matière",
+      "Catégorie",
+      "Statut",
+      "Unité",
+      "Stock disponible",
+      "Stock réservé",
+      "Gestion par lot",
+      "Actif",
+    ];
+    const lines = out.items.map((item) => [
+      item.code,
+      item.designation,
+      item.family_code,
+      item.article_category,
+      item.status,
+      item.unite,
+      item.qty_available,
+      item.qty_reserved,
+      item.lot_tracking ? "Oui" : "Non",
+      item.is_active ? "Oui" : "Non",
+    ].map(csvCell).join(";"));
+    const metadata = out.truncated
+      ? `\r\n${csvCell("Export limité à 10 000 lignes")};${csvCell(`${out.total} articles correspondent aux filtres`)}`
+      : "";
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", 'attachment; filename="articles-stock.csv"');
+    res.send(`\uFEFF${headers.map(csvCell).join(";")}\r\n${lines.join("\r\n")}${metadata}`);
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * #226 — « Existe-t-il déjà un article comme celui-ci ? » posée AVANT création.
+ * Lecture pure : `requireStockCapability("read")` suffit, et aucune écriture
+ * n'est émise.
+ */
+export const listSimilarStockArticles: RequestHandler = async (req, res, next) => {
+  try {
+    const parsed = similarArticlesQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues?.[0]?.message ?? "Invalid query" });
+      return;
+    }
+    const items = await findSimilarStockArticlesSVC(parsed.data);
+    res.json({ items, total: items.length });
+  } catch (err) {
+    next(err);
+  }
+};
+
 export const listStockArticleCategories: RequestHandler = async (_req, res, next) => {
   try {
     const out = await listStockArticleCategoriesSVC();
@@ -349,6 +428,23 @@ export const listStockArticleFamilies: RequestHandler = async (req, res, next) =
     }
     const out = await listStockArticleFamiliesSVC(parsed.data);
     res.json({ items: out, total: out.length });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * #164 — Aperçu SERVEUR de la référence matière.
+ *
+ * POST parce que la configuration matière est un objet, pas une chaîne de
+ * requête. La réponse porte `authoritative: true` : contrairement à
+ * `/articles/code-preview`, cette valeur EST celle qui sera enregistrée.
+ */
+export const previewMaterialArticleCode: RequestHandler = async (req, res, next) => {
+  try {
+    const body: PreviewMaterialArticleCodeBodyDTO = previewMaterialArticleCodeSchema.parse({ body: req.body }).body;
+    const out = await previewMaterialArticleCodeSVC(body);
+    res.json({ ...out, authoritative: true, source: "server-generator" });
   } catch (err) {
     next(err);
   }
@@ -502,6 +598,22 @@ export const updateStockArticle: RequestHandler = async (req, res, next) => {
     const { id } = idParamSchema.parse({ params: req.params }).params;
     const body: UpdateArticleBodyDTO = updateArticleSchema.parse({ body: req.body }).body;
     const out = await updateStockArticleSVC(id, body, audit, includeArticleCosts(req));
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const validateStockArticle: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildAuditContext(req);
+    const { id } = idParamSchema.parse({ params: req.params }).params;
+    const body: ValidateArticleBodyDTO = validateArticleSchema.parse({ body: req.body }).body;
+    const out = await validateStockArticleSVC(id, body, audit, includeArticleCosts(req));
     if (!out) {
       res.status(404).json({ error: "Not found" });
       return;
@@ -999,6 +1111,7 @@ export const postStockMovement: RequestHandler = async (req, res, next) => {
     const body: PostMovementBodyDTO = postMovementSchema.parse({ body: req.body }).body;
     if (
       body.negative_stock_override &&
+      !requestHasGrantedAccountModuleAccess(req) &&
       !roleHasStockCapability(req.user?.role, "negative_stock_override")
     ) {
       throw new HttpError(

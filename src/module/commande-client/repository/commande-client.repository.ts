@@ -473,7 +473,6 @@ async function ensureOfficialPieceFromPreparatory(
 
   if (!officialPieceId) {
     const payload = asRecord(dossier.payload);
-    const maybeFamilleId = typeof payload.famille_id === "string" ? payload.famille_id : null;
     const maybeClientId = typeof payload.client_id === "string" ? payload.client_id : null;
     const maybeCodeClient = typeof payload.code_client === "string" ? payload.code_client : null;
     const maybeClientName = typeof payload.client_name === "string" ? payload.client_name : null;
@@ -517,25 +516,24 @@ async function ensureOfficialPieceFromPreparatory(
           $2,
           NULL,
           NULL,
-          $3::uuid,
+          NULL,
+          $3,
           $4,
           $5,
           $6,
           $7,
-          $8,
           'ACTIVE',
           0,
           NULL,
           NULL,
+          $8,
           $9,
-          $10,
           false
         )
       `,
       [
         officialPieceId,
         maybeClientId,
-        maybeFamilleId,
         maybeNamePiece,
         dossier.code_piece,
         dossier.designation,

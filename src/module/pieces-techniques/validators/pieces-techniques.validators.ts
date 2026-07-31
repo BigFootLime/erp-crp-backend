@@ -186,7 +186,9 @@ export const createPieceTechniqueSchema = z.object({
     client_id: z.string().trim().min(1).max(3).optional().nullable(),
     code_client: z.string().trim().min(1).max(80).optional().nullable(),
     client_name: z.string().trim().min(1).max(200).optional().nullable(),
-    famille_id: uuid,
+    // #413 — Une pièce technique n'a pas de famille à saisir. Le champ reste
+    // toléré à l'entrée pour les anciens clients, mais le repository l'ignore.
+    famille_id: uuid.optional().nullable(),
     name_piece: z.string().trim().min(1, "Nom de pièce requis"),
     // Kept only to return a clear compatibility error to legacy callers.  It is
     // never accepted as the source of a final business code.
@@ -241,7 +243,9 @@ export const updatePieceTechniqueSchema = z.object({
     client_id: z.string().trim().min(1).max(3).optional().nullable(),
     code_client: z.string().trim().min(1).max(80).optional().nullable(),
     client_name: z.string().trim().min(1).max(200).optional().nullable(),
-    famille_id: uuid.optional(),
+    // Compatibilité de transport uniquement : toute valeur reçue est neutralisée
+    // par le repository afin qu'une PT ne porte plus de famille métier.
+    famille_id: uuid.optional().nullable(),
     name_piece: z.string().trim().min(1).optional(),
     designation: z.string().trim().min(1).optional(),
     designation_2: z.string().optional().nullable(),

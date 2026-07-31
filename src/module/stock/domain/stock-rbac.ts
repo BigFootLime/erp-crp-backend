@@ -63,7 +63,9 @@ export function roleHasStockCapability(
   role: string | null | undefined,
   capability: StockCapability
 ): boolean {
+  if (hasGrantedAccountModuleAccess()) return true;
   const normalized = (role ?? "").trim().toLowerCase();
   if (!normalized) return false;
   return NEEDLES[capability].some((needle) => normalized.includes(needle));
 }
+import { hasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";

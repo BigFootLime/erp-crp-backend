@@ -20,6 +20,7 @@ import {
 } from "../domain/surface-finish-policy";
 import type {
   AttachDocumentBodyDTO,
+  CreateFinishFamilyBodyDTO,
   CreateFinishBodyDTO,
   ListFinishesQueryDTO,
   RevisionPayloadDTO,
@@ -98,7 +99,9 @@ const FINISH_COLS = `
   f.statut,
   f.current_revision_id::text AS current_revision_id,
   f.created_at::text AS created_at,
-  f.updated_at::text AS updated_at
+  f.updated_at::text AS updated_at,
+  f.archived_at::text AS archived_at,
+  f.archive_reason
 `;
 
 export type RevisionRow = {
@@ -155,6 +158,8 @@ type FinishRow = {
   current_revision_id: string | null;
   created_at: string;
   updated_at: string;
+  archived_at: string | null;
+  archive_reason: string | null;
 };
 
 export function mapRevision(row: RevisionRow): SurfaceFinishRevisionDetail {
@@ -254,11 +259,46 @@ export async function insertFinishAudit(
 
 export async function repoListFinishFamilies(): Promise<SurfaceFinishFamily[]> {
   const res = await db.query<SurfaceFinishFamily>(
-    `SELECT code, label, description, sort_order, is_active
+    `SELECT code, label, description, commentaire_template, sort_order, is_active
      FROM public.surface_finish_families
      ORDER BY sort_order, label`
   );
   return res.rows;
+}
+
+/** Family parameterization is auditable and separate from a finish draft. */
+export async function repoCreateFinishFamily(
+  body: CreateFinishFamilyBodyDTO,
+  audit: AuditContext
+): Promise<SurfaceFinishFamily> {
+  assertTemplateVariablesAllowed(body.commentaire_template ?? "");
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const res = await client.query<SurfaceFinishFamily>(
+      `INSERT INTO public.surface_finish_families
+         (code, label, description, commentaire_template, sort_order, is_active)
+       VALUES ($1, $2, $3, $4, $5, true)
+       RETURNING code, label, description, commentaire_template, sort_order, is_active`,
+      [body.code, body.label, body.description, body.commentaire_template, body.sort_order]
+    );
+    const family = res.rows[0];
+    await insertFinishAudit(client, audit, "finitions.family.create", "surface_finish_family", family.code, {
+      code: family.code,
+      label: family.label,
+      has_commentaire_template: Boolean(family.commentaire_template),
+    });
+    await client.query("COMMIT");
+    return family;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    if (typeof err === "object" && err !== null && (err as { code?: string }).code === "23505") {
+      throw new HttpError(409, "SURFACE_FINISH_FAMILY_DUPLICATE", "Une famille de finition porte dÃ©jÃ  ce code.");
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -273,7 +313,10 @@ export async function repoListFinishFamilies(): Promise<SurfaceFinishFamily[]> {
  * épaisseur et synonyme. La norme et la couleur vivent sur la RÉVISION : la
  * jointure latérale retient la révision active, sinon la plus récente.
  */
-export async function repoListFinishes(filters: ListFinishesQueryDTO): Promise<SurfaceFinishListResult> {
+export async function repoListFinishes(
+  filters: ListFinishesQueryDTO,
+  viewerUserId: number
+): Promise<SurfaceFinishListResult> {
   const where: string[] = [];
   const values: unknown[] = [];
   const push = (value: unknown) => {
@@ -281,13 +324,23 @@ export async function repoListFinishes(filters: ListFinishesQueryDTO): Promise<S
     return `$${values.length}`;
   };
 
+  // #226 — Le favori est PERSONNEL : il est joint sur l'utilisateur qui
+  // interroge, jamais agrégé. Poussé en premier pour que `$1` soit stable.
+  const viewer = push(viewerUserId);
+
   if (filters.only_selectable) {
     // Depuis une gamme : uniquement ce qui est réellement applicable.
     where.push(`f.statut = 'ACTIVE'`);
     where.push(`rev.id IS NOT NULL AND rev.statut = 'ACTIVE'`);
   } else if (filters.statut) {
     where.push(`f.statut = ${push(filters.statut)}`);
+  } else if (!filters.include_archived) {
+    // #226 — Les archives ne remontent que si on les demande explicitement,
+    // OU si l'utilisateur filtre justement sur le statut ARCHIVEE ci-dessus.
+    where.push(`f.statut <> 'ARCHIVEE'`);
   }
+
+  if (filters.only_favorites) where.push(`fav.user_id IS NOT NULL`);
 
   if (filters.family_code) where.push(`f.family_code = ${push(filters.family_code)}`);
   if (filters.procede) {
@@ -338,6 +391,8 @@ export async function repoListFinishes(filters: ListFinishesQueryDTO): Promise<S
   const baseFrom = `
     FROM public.surface_finishes f
     LEFT JOIN public.surface_finish_families fam ON fam.code = f.family_code
+    LEFT JOIN public.surface_finish_favorites fav
+      ON fav.finish_id = f.id AND fav.user_id = ${viewer}::integer
     LEFT JOIN LATERAL (
       SELECT ${revisionColumns("r")}
       FROM public.surface_finish_revisions r
@@ -352,10 +407,12 @@ export async function repoListFinishes(filters: ListFinishesQueryDTO): Promise<S
   const total = countRes.rows[0]?.total ?? 0;
 
   const offset = (filters.page - 1) * filters.page_size;
-  const dataRes = await db.query<FinishRow & { rev_json: RevisionRow | null }>(
-    `SELECT ${FINISH_COLS}, CASE WHEN rev.id IS NULL THEN NULL ELSE to_jsonb(rev) END AS rev_json
+  const dataRes = await db.query<FinishRow & { rev_json: RevisionRow | null; favori: boolean }>(
+    `SELECT ${FINISH_COLS},
+            (fav.user_id IS NOT NULL) AS favori,
+            CASE WHEN rev.id IS NULL THEN NULL ELSE to_jsonb(rev) END AS rev_json
      ${baseFrom}
-     ORDER BY f.designation_courte, f.code
+     ORDER BY (fav.user_id IS NOT NULL) DESC, f.designation_courte, f.code
      LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
     [...values, filters.page_size, offset]
   );
@@ -372,18 +429,31 @@ export async function repoListFinishes(filters: ListFinishesQueryDTO): Promise<S
     statut: row.statut,
     current_revision: row.rev_json ? toRevisionSummary(mapRevision(row.rev_json)) : null,
     updated_at: row.updated_at,
+    favori: row.favori === true,
+    archived_at: row.archived_at,
+    archive_reason: row.archive_reason,
   }));
 
   return { items, total, page: filters.page, page_size: filters.page_size };
 }
 
-export async function repoGetFinish(finishId: string): Promise<SurfaceFinishDetail | null> {
-  const res = await db.query<FinishRow>(
-    `SELECT ${FINISH_COLS}
+/**
+ * `viewerUserId` peut être `null` pour les relectures internes (après écriture)
+ * qui n'ont pas de lecteur : le favori vaut alors `false` et n'est jamais
+ * renvoyé au mauvais utilisateur.
+ */
+export async function repoGetFinish(
+  finishId: string,
+  viewerUserId: number | null = null
+): Promise<SurfaceFinishDetail | null> {
+  const res = await db.query<FinishRow & { favori: boolean }>(
+    `SELECT ${FINISH_COLS}, (fav.user_id IS NOT NULL) AS favori
      FROM public.surface_finishes f
      LEFT JOIN public.surface_finish_families fam ON fam.code = f.family_code
+     LEFT JOIN public.surface_finish_favorites fav
+       ON fav.finish_id = f.id AND fav.user_id = $2::integer
      WHERE f.id = $1::uuid`,
-    [finishId]
+    [finishId, viewerUserId]
   );
   const row = res.rows[0];
   if (!row) return null;
@@ -412,6 +482,9 @@ export async function repoGetFinish(finishId: string): Promise<SurfaceFinishDeta
     revisions: mapped,
     created_at: row.created_at,
     updated_at: row.updated_at,
+    favori: row.favori === true,
+    archived_at: row.archived_at,
+    archive_reason: row.archive_reason,
   };
 }
 
@@ -480,6 +553,17 @@ export async function repoCreateFinishDraft(
     await client.query("COMMIT");
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
+    // #226 — `surface_finishes_identity_uq` (même famille + même procédé +
+    // même désignation normalisée, hors archives) rend le doublon strict
+    // impossible EN BASE. Sans cette traduction, deux créations concurrentes
+    // rendraient un 500 illisible au lieu d'un conflit exploitable.
+    if (typeof err === "object" && err !== null && (err as { code?: string }).code === "23505") {
+      throw new HttpError(
+        409,
+        "SURFACE_FINISH_DUPLICATE",
+        "Une finition active porte déjà cette famille, ce procédé et cette désignation. Ouvrez-la, ou changez la désignation."
+      );
+    }
     throw err;
   } finally {
     client.release();
@@ -487,7 +571,7 @@ export async function repoCreateFinishDraft(
 
   // Relecture APRÈS le commit : lire par le pool depuis une transaction ouverte
   // ne verrait rien (leçon du chantier GED).
-  const out = await repoGetFinish(finishId);
+  const out = await repoGetFinish(finishId, audit.user_id);
   if (!out) throw new Error("Failed to read created finish");
   return out;
 }
@@ -549,12 +633,21 @@ export async function repoUpdateFinishDraft(
     await client.query("COMMIT");
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
+    // Renommer une finition peut la faire entrer en collision avec une autre :
+    // même index, même traduction que pour la création.
+    if (typeof err === "object" && err !== null && (err as { code?: string }).code === "23505") {
+      throw new HttpError(
+        409,
+        "SURFACE_FINISH_DUPLICATE",
+        "Une autre finition active porte déjà cette famille, ce procédé et cette désignation."
+      );
+    }
     throw err;
   } finally {
     client.release();
   }
 
-  const out = await repoGetFinish(finishId);
+  const out = await repoGetFinish(finishId, audit.user_id);
   if (!out) throw new HttpError(404, "NOT_FOUND", "Finition introuvable.");
   return out;
 }

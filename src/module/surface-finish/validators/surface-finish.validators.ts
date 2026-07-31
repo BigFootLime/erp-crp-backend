@@ -7,6 +7,7 @@ import { z } from "zod";
 
 import { HttpError } from "../../../utils/httpError";
 import {
+  ARCHIVE_REASON_MIN_LENGTH,
   ARTICLE_DECISIONS,
   FINISH_SCOPES,
   SURFACE_FINISH_STATUSES,
@@ -112,10 +113,110 @@ export const listFinishesQuerySchema = z.object({
     .union([z.boolean(), z.enum(["true", "false", "1", "0"])])
     .optional()
     .transform((value) => value === true || value === "true" || value === "1"),
+  // #226 — Mes favoris. Personnel : jamais partagé entre utilisateurs.
+  only_favorites: z
+    .union([z.boolean(), z.enum(["true", "false", "1", "0"])])
+    .optional()
+    .transform((value) => value === true || value === "true" || value === "1"),
+  /**
+   * #226 — Les archives sont EXCLUES par défaut. Une bibliothèque qui montre
+   * ses archives sans qu'on les demande redevient illisible en un an.
+   */
+  include_archived: z
+    .union([z.boolean(), z.enum(["true", "false", "1", "0"])])
+    .optional()
+    .transform((value) => value === true || value === "true" || value === "1"),
   page: z.coerce.number().int().min(1).max(10_000).optional().default(1),
   page_size: z.coerce.number().int().min(1).max(50).optional().default(20),
 });
 export type ListFinishesQueryDTO = z.infer<typeof listFinishesQuerySchema>;
+
+const familyCode = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .min(2)
+  .max(60)
+  .regex(/^[A-Z0-9_]+$/, "Le code famille accepte uniquement A-Z, 0-9 et _.");
+
+export const createFinishFamilyBodySchema = z.object({
+  code: familyCode,
+  label: shortText,
+  description: optionalText(2000),
+  commentaire_template: optionalText(4000),
+  sort_order: z.coerce.number().int().min(0).max(10_000).optional().default(100),
+});
+export type CreateFinishFamilyBodyDTO = z.infer<typeof createFinishFamilyBodySchema>;
+
+/* -------------------------------------------------------------------------- */
+/* Bibliothèque — contrôle des doublons (#226)                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Recherche de finitions proches AVANT création. Les mêmes champs que la
+ * création, tous facultatifs : on interroge en cours de frappe, pas une fois le
+ * formulaire complet.
+ */
+export const similarFinishesQuerySchema = z.object({
+  family_code: optionalText(60),
+  procede: optionalText(200),
+  designation_courte: optionalText(200),
+  synonymes: z
+    .union([z.string(), z.array(z.string())])
+    .optional()
+    .transform((value) => {
+      if (value === undefined) return [] as string[];
+      const list = Array.isArray(value) ? value : value.split(",");
+      return list.map((item) => item.trim()).filter((item) => item !== "").slice(0, 50);
+    }),
+  norme: optionalText(200),
+  couleur: optionalText(120),
+  epaisseur_um: optionalNumber,
+  // Une modification exclut la finition en cours de sa propre liste de doublons.
+  exclude_finish_id: z.union([uuid, z.literal(""), z.null()]).optional().transform((v) => (v ? v : null)),
+  limit: z.coerce.number().int().min(1).max(20).optional().default(8),
+});
+export type SimilarFinishesQueryDTO = z.infer<typeof similarFinishesQuerySchema>;
+
+/* -------------------------------------------------------------------------- */
+/* Bibliothèque — archivage (#226)                                             */
+/* -------------------------------------------------------------------------- */
+
+export const archiveFinishBodySchema = z
+  .object({
+    // Sortir une entrée du référentiel se motive par écrit : c'est ce motif que
+    // relira, dans deux ans, celui qui se demandera où est passée la finition.
+    motif: z
+      .string()
+      .trim()
+      .min(ARCHIVE_REASON_MIN_LENGTH, `Le motif doit faire au moins ${ARCHIVE_REASON_MIN_LENGTH} caractères.`)
+      .max(1000),
+    expected_updated_at: z.string().min(1),
+  })
+  .strict();
+export type ArchiveFinishBodyDTO = z.infer<typeof archiveFinishBodySchema>;
+
+export const reactivateFinishBodySchema = z
+  .object({
+    motif: z
+      .string()
+      .trim()
+      .min(ARCHIVE_REASON_MIN_LENGTH, `Le motif doit faire au moins ${ARCHIVE_REASON_MIN_LENGTH} caractères.`)
+      .max(1000),
+    expected_updated_at: z.string().min(1),
+  })
+  .strict();
+export type ReactivateFinishBodyDTO = z.infer<typeof reactivateFinishBodySchema>;
+
+/* -------------------------------------------------------------------------- */
+/* Bibliothèque — historique (#226)                                            */
+/* -------------------------------------------------------------------------- */
+
+export const finishHistoryQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).optional().default(50),
+  before_id: z.coerce.number().int().min(1).optional(),
+});
+export type FinishHistoryQueryDTO = z.infer<typeof finishHistoryQuerySchema>;
 
 /* -------------------------------------------------------------------------- */
 /* Bibliothèque — écriture                                                     */
@@ -300,6 +401,28 @@ export const confirmFinishBodySchema = z.object({
   expected_finition_updated_at: z.union([z.string().min(1), z.null()]).optional().transform((v) => v ?? null),
 });
 export type ConfirmFinishBodyDTO = z.infer<typeof confirmFinishBodySchema>;
+
+/**
+ * Depuis Stock, la PT et sa version sont explicites. Depuis une nomenclature
+ * de PT, elles restent dérivées du contexte de gamme et ne sont jamais
+ * redemandées : les deux routes conservent donc des contrats séparés.
+ */
+export const stockArticleFinishPreviewBodySchema = z.object({
+  piece_technique_id: uuid,
+  piece_technique_version_id: uuid,
+  finish_revision_id: uuid,
+  overrides: operationOverridesSchema.optional().default(operationOverridesSchema.parse({})),
+});
+export type StockArticleFinishPreviewBodyDTO = z.infer<typeof stockArticleFinishPreviewBodySchema>;
+
+export const stockArticleFinishConfirmBodySchema = stockArticleFinishPreviewBodySchema.extend({
+  decision: articleDecisionSchema,
+  article_id: z.union([uuid, z.null()]).optional().transform((value) => value ?? null),
+  justification: optionalText(1000),
+  preview_hash: z.string().regex(/^[0-9a-f]{64}$/, "Aperçu invalide."),
+  spec_fingerprint: z.string().regex(/^[0-9a-f]{64}$/, "Empreinte invalide."),
+});
+export type StockArticleFinishConfirmBodyDTO = z.infer<typeof stockArticleFinishConfirmBodySchema>;
 
 export const detachFinishBodySchema = z.object({
   motif: mediumText,

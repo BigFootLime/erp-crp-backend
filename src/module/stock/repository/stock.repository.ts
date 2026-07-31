@@ -5,7 +5,21 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import db from "../../../config/database";
-import { generateArticleBusinessCode, generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
+import {
+  generateArticleBusinessCode,
+  generateFabricatedArticleBusinessCode,
+  generateTransactionalBusinessCode,
+} from "../../../shared/codes/code-generator.service";
+import {
+  assertMaterialPreviewFresh,
+  buildMaterialArticleCode,
+  computeMaterialCodePreviewHash,
+  isSpecialMaterialProfile,
+  normalizeMaterialProfile,
+  type MaterialCodeInput,
+  type MaterialCodeResult,
+  type MaterialProfileCode,
+} from "../../../shared/codes/material-article-code";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
@@ -255,6 +269,24 @@ const ARTICLE_PRIMARY_CATEGORY_OPTIONS: Array<{ code: ArticleCategory }> = [
   { code: "achat" },
 ];
 
+/**
+ * Référentiel des catégories métier d'article.
+ *
+ * `commande_client_selectable` (#395) — élargi à TOUTES les catégories.
+ *
+ * Il ne valait `true` que pour `piece_finie_fabriquee`, ce qui rendait la création d'article
+ * depuis une commande client inutilisable pour tout le reste : un composant revendu, un
+ * achat transformé, une sous-traitance refacturée, un traitement de surface facturé à la
+ * ligne ou une matière cédée au client sont tous des choses que CRP vend réellement, et
+ * toutes finissaient par un contournement (créer l'article ailleurs, puis revenir).
+ *
+ * Ce drapeau reste le SEUL levier pour restreindre à nouveau : il pilote à la fois les
+ * catégories proposées à la création depuis une commande et le filtre de recherche des
+ * lignes de commande. Le repasser à `false` suffit, sans toucher au frontend.
+ *
+ * `piece_technique_required` n'est PAS élargi : seule une pièce finie fabriquée exige un
+ * dossier technique — c'est lui qui produit les OF.
+ */
 const ARTICLE_CATEGORY_OPTIONS: StockArticleCategoryOption[] = [
   {
     code: "piece_finie_fabriquee",
@@ -270,7 +302,7 @@ const ARTICLE_CATEGORY_OPTIONS: StockArticleCategoryOption[] = [
     code_segment: "MP",
     stock_managed_default: true,
     piece_technique_required: false,
-    commande_client_selectable: false,
+    commande_client_selectable: true,
   },
   {
     code: "traitement_surface",
@@ -278,7 +310,7 @@ const ARTICLE_CATEGORY_OPTIONS: StockArticleCategoryOption[] = [
     code_segment: "TRT",
     stock_managed_default: false,
     piece_technique_required: false,
-    commande_client_selectable: false,
+    commande_client_selectable: true,
   },
   {
     code: "achat_revente",
@@ -286,7 +318,7 @@ const ARTICLE_CATEGORY_OPTIONS: StockArticleCategoryOption[] = [
     code_segment: "ACH",
     stock_managed_default: true,
     piece_technique_required: false,
-    commande_client_selectable: false,
+    commande_client_selectable: true,
   },
   {
     code: "achat_transforme",
@@ -294,7 +326,7 @@ const ARTICLE_CATEGORY_OPTIONS: StockArticleCategoryOption[] = [
     code_segment: "AHT",
     stock_managed_default: true,
     piece_technique_required: false,
-    commande_client_selectable: false,
+    commande_client_selectable: true,
   },
   {
     code: "sous_traitance",
@@ -302,18 +334,14 @@ const ARTICLE_CATEGORY_OPTIONS: StockArticleCategoryOption[] = [
     code_segment: "STA",
     stock_managed_default: false,
     piece_technique_required: false,
-    commande_client_selectable: false,
+    commande_client_selectable: true,
   },
 ];
 
-const BUSINESS_TO_PRIMARY_CATEGORY: Record<ArticleBusinessCategory, ArticleCategory> = {
-  piece_finie_fabriquee: "fabrique",
-  matiere_premiere: "matiere",
-  traitement_surface: "traitement",
-  achat_revente: "achat",
-  achat_transforme: "achat",
-  sous_traitance: "achat",
-};
+/** Codes métier vendables en commande client, dérivés du référentiel ci-dessus. */
+export function commandeClientSelectableCategoryCodes(): string[] {
+  return ARTICLE_CATEGORY_OPTIONS.filter((option) => option.commande_client_selectable).map((option) => option.code);
+}
 
 type UploadedDocument = Express.Multer.File;
 
@@ -430,6 +458,16 @@ const familyCodeAliasMap: Record<string, string> = {
   PROFIL: "PR",
 };
 
+const materialFamilyCanonicalMap: Record<string, string> = {
+  PLAT: "PL",
+  ROND: "RO",
+  FONDERI: "FOND",
+  FONDERIE: "FOND",
+  PROFI: "PROFIL",
+  "BRUT-CL": "BRUTCL",
+  "BRUT-CLIENT": "BRUTCL",
+};
+
 function normalizeFamilyCode(value: string | null | undefined, fallback: string): string {
   const raw = typeof value === "string" ? value.trim().toUpperCase() : "";
   const normalized = raw.replace(/[^A-Z0-9]+/g, "-").replace(/^-+|-+$/g, "");
@@ -456,7 +494,7 @@ function normalizeArticleWorkflowStatus(value: string | null | undefined): "EN_D
   return normalized === "EN_DEVIS" ? "EN_DEVIS" : "VALIDE";
 }
 
-function normalizeArticleCategories(
+export function normalizeArticleCategories(
   requested: string[] | null | undefined,
   primaryCategory: ArticleCategory
 ): ArticleBusinessCategory[] {
@@ -482,15 +520,18 @@ function normalizeArticleCategories(
   return out;
 }
 
-function derivePrimaryCategoryFromBusinessCategories(categories: ArticleBusinessCategory[]): ArticleCategory {
-  if (categories.some((value) => BUSINESS_TO_PRIMARY_CATEGORY[value] === "fabrique")) return "fabrique";
-  if (categories.some((value) => BUSINESS_TO_PRIMARY_CATEGORY[value] === "matiere")) return "matiere";
-  if (categories.some((value) => BUSINESS_TO_PRIMARY_CATEGORY[value] === "traitement")) return "traitement";
-  return "achat";
-}
-
-function expectedFabricatedArticleCodeFromPlan(planReference: string, planIndex: number): string {
-  return `${sanitizeCodeToken(planReference, "PLAN")}-P${planIndex}`;
+/**
+ * Keeps the primary category explicit and deterministic while allowing the
+ * category link table to hold secondary business uses.
+ */
+export function normalizeArticleCategorySelection(
+  primaryCategory: ArticleCategory,
+  requestedCategories: string[] | null | undefined
+): { article_category: ArticleCategory; article_categories: ArticleBusinessCategory[] } {
+  return {
+    article_category: primaryCategory,
+    article_categories: normalizeArticleCategories(requestedCategories, primaryCategory),
+  };
 }
 
 function categoryCodeSegment(category: ArticleCategory): string {
@@ -507,38 +548,11 @@ function familyCodeSegment(value: string | null | undefined): string {
   return normalized.slice(0, 3);
 }
 
-async function getPieceTechniqueMetadata(
-  client: Pick<PoolClient, "query">,
-  pieceTechniqueId: string
-): Promise<{ code_piece: string; designation: string; family_code: string | null }> {
-  const res = await client.query<{ code_piece: string; designation: string; family_code: string | null }>(
-    `
-      SELECT
-        pt.code_piece,
-        pt.designation,
-        pf.code AS family_code
-      FROM public.pieces_techniques pt
-      LEFT JOIN public.pieces_families pf ON pf.id = pt.famille_id
-      WHERE pt.id = $1::uuid
-      LIMIT 1
-    `,
-    [pieceTechniqueId]
-  );
-  const row = res.rows[0] ?? null;
-  if (!row) {
-    throw new HttpError(400, "INVALID_PIECE_TECHNIQUE", "Unknown piece_technique_id");
-  }
-  return row;
-}
-
 function buildSuggestedArticleCode(args: {
   category: ArticleCategory;
   family_code: string;
   final_segment: string;
 }): string {
-  if (args.category === "fabrique") {
-    return sanitizeCodeToken(args.final_segment, "PLAN");
-  }
   return `${categoryCodeSegment(args.category)}-${familyCodeSegment(args.family_code)}-${sanitizeCodeToken(args.final_segment, "GEN")}`;
 }
 
@@ -550,40 +564,132 @@ async function resolveArticleCode(
     category: ArticleCategory;
     family_code: string;
     piece_technique_id: string | null;
-    plan_index: number;
   }
 ): Promise<string> {
-  const pieceMeta = args.piece_technique_id ? await getPieceTechniqueMetadata(client, args.piece_technique_id) : null;
-  const finalSegment = args.category === "fabrique"
-    ? sanitizeCodeToken(pieceMeta?.code_piece, "PLAN")
-    : sanitizeCodeToken(args.code || args.designation, "GEN");
+  if (args.category === "fabrique") {
+    if (!args.piece_technique_id) {
+      throw new HttpError(400, "INVALID_ARTICLE", "Fabricated articles require piece_technique_id");
+    }
+    // Client input is deliberately ignored: the server stores an immutable
+    // snapshot of the linked technical-piece identity.
+    return generateFabricatedArticleBusinessCode(client, args.piece_technique_id);
+  }
+
+  const finalSegment = sanitizeCodeToken(args.code || args.designation, "GEN");
   const suggested = buildSuggestedArticleCode({
     category: args.category,
     family_code: args.family_code,
     final_segment: finalSegment,
   });
 
-  if (args.category === "fabrique") {
-    const expected = expectedFabricatedArticleCodeFromPlan(finalSegment, args.plan_index);
-    const provided = args.code.trim();
-    if (!provided) return expected;
-
-    const normalized = normalizeFullArticleCode(provided);
-    if (normalized !== expected) {
-      throw new HttpError(
-        400,
-        "INVALID_FABRICATED_ARTICLE_CODE",
-        `Fabricated article code must match plan reference with index (${expected})`
-      );
-    }
-    return normalized;
-  }
-
   const provided = args.code.trim();
   if (!provided) return suggested;
 
   const normalized = normalizeFullArticleCode(provided);
   return normalized;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Référence MATIÈRE PREMIÈRE — résolution des segments puis génération        */
+/* -------------------------------------------------------------------------- */
+
+export type MaterialCodeRequest = {
+  family_code: string;
+  nuance_id?: number | null;
+  etat_id?: number | null;
+  sous_etat_id?: number | null;
+  client_proprietaire_id?: string | null;
+  reference_suffix?: string | null;
+  dimensions?: MaterialCodeInput["dimensions"];
+};
+
+async function referentialCode(
+  client: Pick<PoolClient, "query">,
+  args: { table: "stock_nuances" | "stock_etats" | "stock_sous_etats"; id: number; label: string }
+): Promise<string> {
+  const res = await client.query<{ code: string | null }>(
+    `SELECT code FROM public.${args.table} WHERE id = $1::bigint LIMIT 1`,
+    [args.id]
+  );
+  const code = (res.rows[0]?.code ?? "").trim();
+  if (!code) {
+    throw new HttpError(400, "INVALID_MATERIAL_REFERENTIAL", `${args.label} introuvable (id ${args.id}).`);
+  }
+  return code;
+}
+
+/**
+ * Résout, EN BASE, les codes qui composent une référence matière.
+ *
+ * Le navigateur n'envoie que des identifiants : c'est le serveur qui lit le
+ * code de la nuance, de l'état, du sous-état et du client propriétaire. Une
+ * interface qui enverrait un libellé fantaisiste ne peut donc pas influencer la
+ * référence produite.
+ */
+export async function resolveMaterialCodeInput(
+  client: Pick<PoolClient, "query">,
+  request: MaterialCodeRequest
+): Promise<MaterialCodeInput> {
+  const profile: MaterialProfileCode = normalizeMaterialProfile(request.family_code);
+  const special = isSpecialMaterialProfile(profile);
+
+  const nuanceId = typeof request.nuance_id === "number" && Number.isFinite(request.nuance_id) ? Math.trunc(request.nuance_id) : null;
+  const etatId = typeof request.etat_id === "number" && Number.isFinite(request.etat_id) ? Math.trunc(request.etat_id) : null;
+  const sousEtatId =
+    typeof request.sous_etat_id === "number" && Number.isFinite(request.sous_etat_id) ? Math.trunc(request.sous_etat_id) : null;
+
+  const nuanceCode = !special && nuanceId ? await referentialCode(client, { table: "stock_nuances", id: nuanceId, label: "Nuance" }) : null;
+  const etatCode = !special && etatId ? await referentialCode(client, { table: "stock_etats", id: etatId, label: "État" }) : null;
+  const sousEtatCode = !special && sousEtatId
+    ? await referentialCode(client, { table: "stock_sous_etats", id: sousEtatId, label: "Sous-état" })
+    : null;
+
+  let clientCode: string | null = null;
+  if (profile === "BRUTCL") {
+    const clientId = (request.client_proprietaire_id ?? "").trim();
+    if (!clientId) {
+      throw new HttpError(
+        400,
+        "MATERIAL_CLIENT_CODE_REQUIRED",
+        "Un brut client exige le client propriétaire pour construire sa référence."
+      );
+    }
+    const res = await client.query<{ client_code: string | null }>(
+      `SELECT client_code FROM public.clients WHERE client_id = $1 LIMIT 1`,
+      [clientId]
+    );
+    if (res.rowCount === 0) {
+      throw new HttpError(400, "INVALID_CLIENT", `Client propriétaire inconnu : ${clientId}.`);
+    }
+    // Le code client est la forme lisible ; l'identifiant reste la valeur de
+    // secours pour un client historique sans code attribué.
+    clientCode = (res.rows[0]?.client_code ?? "").trim() || clientId;
+  }
+
+  return {
+    profile,
+    nuance_code: nuanceCode,
+    etat_code: etatCode,
+    sous_etat_code: sousEtatCode,
+    client_code: clientCode,
+    reference_suffix: request.reference_suffix ?? null,
+    dimensions: request.dimensions ?? null,
+  };
+}
+
+export type MaterialCodePreview = MaterialCodeResult & { preview_hash: string };
+
+/**
+ * Aperçu serveur de la référence matière. C'est LA MÊME fonction que la
+ * création : les deux ne peuvent pas diverger.
+ */
+export async function repoPreviewMaterialArticleCode(request: MaterialCodeRequest): Promise<MaterialCodePreview> {
+  const input = await resolveMaterialCodeInput(db, request);
+  const result = buildMaterialArticleCode(input);
+  return {
+    ...result,
+    preview_hash: computeMaterialCodePreviewHash({ input, code: result.code, designation: result.designation }),
+  };
 }
 
 async function normalizeArticleState(args: {
@@ -601,6 +707,7 @@ async function normalizeArticleState(args: {
   code: string;
   designation: string;
   client: Pick<PoolClient, "query">;
+  preserve_existing_code?: boolean;
 }) {
   const categoryFromType = (() => {
     const articleType = typeof args.article_type === "string" ? args.article_type.trim().toUpperCase() : "";
@@ -609,11 +716,22 @@ async function normalizeArticleState(args: {
     return toBusinessArticleCategory(args.article_category, "achat");
   })();
   const requestedPrimaryCategory = toBusinessArticleCategory(args.article_category, categoryFromType);
-  const article_categories = normalizeArticleCategories(args.article_categories, requestedPrimaryCategory);
-  const article_category = derivePrimaryCategoryFromBusinessCategories(article_categories);
+  const categorySelection = normalizeArticleCategorySelection(requestedPrimaryCategory, args.article_categories);
+  /**
+   * `article_category` is the authoritative primary classification. Business
+   * categories are secondary uses and must never silently reclassify an
+   * Article just because one of them maps to another primary category.
+   *
+   * normalizeArticleCategories keeps the matching business category at index
+   * zero, which syncArticleCategories persists with is_primary = true.
+   */
+  const { article_category, article_categories } = categorySelection;
   const article_type = inferArticleType(article_category);
   const piece_technique_id = article_category === "fabrique" ? args.piece_technique_id : null;
-  const family_code = normalizeFamilyCode(args.family_code, defaultFamilyCodeForCategory(article_category));
+  const requestedFamilyCode = normalizeFamilyCode(args.family_code, defaultFamilyCodeForCategory(article_category));
+  const family_code = article_category === "matiere"
+    ? materialFamilyCanonicalMap[requestedFamilyCode] ?? requestedFamilyCode
+    : requestedFamilyCode;
   const version_number = typeof args.version_number === "number" && Number.isFinite(args.version_number) ? Math.max(1, Math.trunc(args.version_number)) : 1;
   const plan_index = typeof args.plan_index === "number" && Number.isFinite(args.plan_index) ? Math.max(1, Math.trunc(args.plan_index)) : 1;
   const status = normalizeArticleWorkflowStatus(args.status);
@@ -632,14 +750,15 @@ async function normalizeArticleState(args: {
     await ensureProjetAffaireExists(args.client, projet_id);
   }
 
-  const code = await resolveArticleCode(args.client, {
-    code: args.code,
-    designation: args.designation,
-    category: article_category,
-    family_code,
-    piece_technique_id,
-    plan_index,
-  });
+  const code = args.preserve_existing_code
+    ? args.code
+    : await resolveArticleCode(args.client, {
+        code: args.code,
+        designation: args.designation,
+        category: article_category,
+        family_code,
+        piece_technique_id,
+      });
 
   return {
     article_type: article_type as "PIECE_TECHNIQUE" | "PURCHASED",
@@ -879,7 +998,7 @@ export async function repoListMatiereNuances(filters: ListMatiereNuancesQueryDTO
   if (filters.q) {
     const q = `%${filters.q.trim()}%`;
     const p = push(q);
-    where.push(`(n.code ILIKE ${p} OR n.designation ILIKE ${p})`);
+    where.push(`(n.code ILIKE ${p} OR COALESCE(n.designation, '') ILIKE ${p})`);
   }
   if (typeof filters.is_active === "boolean") {
     where.push(`n.is_active = ${push(filters.is_active)}`);
@@ -894,7 +1013,7 @@ export async function repoListMatiereNuances(filters: ListMatiereNuancesQueryDTO
   const res = await db.query<{
     id: number;
     code: string;
-    designation: string;
+    designation: string | null;
     densite: string | number | null;
     is_active: boolean;
     etat_ids: number[];
@@ -904,7 +1023,10 @@ export async function repoListMatiereNuances(filters: ListMatiereNuancesQueryDTO
         n.id::int AS id,
         n.code,
         n.designation,
-        n.densite,
+        COALESCE(
+          NULLIF(to_jsonb(n) ->> 'densite_kg_m3', '')::numeric,
+          n.densite * 1000
+        ) AS densite,
         n.is_active,
         COALESCE(
           array_agg(ne.etat_id::int ORDER BY ne.etat_id) FILTER (WHERE ne.etat_id IS NOT NULL),
@@ -922,7 +1044,7 @@ export async function repoListMatiereNuances(filters: ListMatiereNuancesQueryDTO
   return res.rows.map((row) => ({
     id: row.id,
     code: row.code,
-    designation: row.designation,
+    designation: row.designation && row.designation.trim() ? row.designation : null,
     densite: row.densite === null ? null : typeof row.densite === "number" ? row.densite : Number(row.densite),
     is_active: row.is_active,
     etat_ids: Array.isArray(row.etat_ids) ? row.etat_ids.filter((v) => typeof v === "number") : [],
@@ -931,8 +1053,11 @@ export async function repoListMatiereNuances(filters: ListMatiereNuancesQueryDTO
 
 export async function repoCreateMatiereNuance(body: CreateMatiereNuanceBodyDTO, audit: AuditContext): Promise<StockMatiereNuance> {
   const code = normalizeStockReferentialCode(body.code, "Nuance");
-  const designation = body.designation.trim();
+  // Compatibilité pré-patch : la colonne historique est NOT NULL et stocke
+  // des kg/dm³. L'API, elle, est désormais exclusivement en kg/m³.
+  const designation = body.designation?.trim() || "";
   const densite = body.densite ?? null;
+  const legacyDensiteKgDm3 = densite === null ? null : densite / 1000;
   const is_active = body.is_active;
   const etat_ids = uniqPositiveInts(body.etat_ids);
 
@@ -948,7 +1073,7 @@ export async function repoCreateMatiereNuance(body: CreateMatiereNuanceBodyDTO, 
           VALUES ($1,$2,$3,$4)
           RETURNING id::int AS id
         `,
-        [code, designation, densite, is_active]
+        [code, designation, legacyDensiteKgDm3, is_active]
       );
     } catch (err) {
       if (isPgUniqueViolation(err)) {
@@ -981,7 +1106,7 @@ export async function repoCreateMatiereNuance(body: CreateMatiereNuanceBodyDTO, 
         entity_id: String(nuanceId),
         path: audit.path,
         client_session_id: audit.client_session_id,
-        details: { code, designation, densite, is_active, etat_ids },
+        details: { code, designation: designation || null, densite_kg_m3: densite, is_active, etat_ids },
       },
       ip: audit.ip,
       user_agent: audit.user_agent,
@@ -996,7 +1121,7 @@ export async function repoCreateMatiereNuance(body: CreateMatiereNuanceBodyDTO, 
     return {
       id: nuanceId,
       code,
-      designation,
+      designation: designation || null,
       densite: densite === null ? null : Number(densite),
       is_active,
       etat_ids,
@@ -1044,7 +1169,7 @@ export async function repoListMatiereEtats(filters: ListMatiereEtatsQueryDTO = {
   const res = await db.query<{
     id: number;
     code: string;
-    designation: string;
+    designation: string | null;
     unite_achat: number;
     is_active: boolean;
     nuance_ids: number[];
@@ -1072,7 +1197,9 @@ export async function repoListMatiereEtats(filters: ListMatiereEtatsQueryDTO = {
   return res.rows.map((row) => ({
     id: row.id,
     code: row.code,
-    designation: row.designation,
+    // Une désignation vide en base est présentée comme absente : l'écran affiche
+    // alors le code, il n'affiche pas « CODE — ».
+    designation: row.designation && row.designation.trim() ? row.designation : null,
     unite_achat: typeof row.unite_achat === "number" ? row.unite_achat : Number(row.unite_achat) || 3020,
     is_active: row.is_active,
     nuance_ids: Array.isArray(row.nuance_ids) ? row.nuance_ids.filter((v) => typeof v === "number") : [],
@@ -1081,7 +1208,9 @@ export async function repoListMatiereEtats(filters: ListMatiereEtatsQueryDTO = {
 
 export async function repoCreateMatiereEtat(body: CreateMatiereEtatBodyDTO, audit: AuditContext): Promise<StockMatiereEtat> {
   const code = normalizeStockReferentialCode(body.code, "Etat");
-  const designation = body.designation.trim();
+  // La colonne historique `stock_etats.designation` est NOT NULL : une
+  // désignation absente est stockée vide et ressort `null` côté API.
+  const designation = body.designation?.trim() || "";
   const unite_achat = typeof body.unite_achat === "number" && Number.isFinite(body.unite_achat) ? Math.trunc(body.unite_achat) : 3020;
   const is_active = body.is_active;
   const nuance_ids = uniqPositiveInts(body.nuance_ids);
@@ -1131,7 +1260,7 @@ export async function repoCreateMatiereEtat(body: CreateMatiereEtatBodyDTO, audi
         entity_id: String(etatId),
         path: audit.path,
         client_session_id: audit.client_session_id,
-        details: { code, designation, unite_achat, is_active, nuance_ids },
+        details: { code, designation: designation || null, unite_achat, is_active, nuance_ids },
       },
       ip: audit.ip,
       user_agent: audit.user_agent,
@@ -1146,7 +1275,7 @@ export async function repoCreateMatiereEtat(body: CreateMatiereEtatBodyDTO, audi
     return {
       id: etatId,
       code,
-      designation,
+      designation: designation || null,
       unite_achat,
       is_active,
       nuance_ids,
@@ -1282,7 +1411,7 @@ async function ensureArticleFamilyEntry(
   );
 }
 
-async function syncArticleSubtypeDetails(
+export async function syncArticleSubtypeDetails(
   client: Pick<PoolClient, "query">,
   args: {
     article_id: string;
@@ -1323,6 +1452,28 @@ async function syncArticleSubtypeDetails(
 
   if (args.category === "matiere" && args.article_matiere) {
     const m = args.article_matiere;
+    const remainingColumnsAvailable = await tableColumnExists(
+      client,
+      "articles_matiere",
+      "longueur_coupe_mm"
+    );
+    if (
+      !remainingColumnsAvailable
+      && (
+        m.client_proprietaire_id
+        || m.longueur_coupe_mm
+        || m.quantite_lineaire_totale_mm
+        || (m.barre_a_decouper && !(m.longueur_barre_source_mm ?? m.longueur_unitaire_mm))
+      )
+    ) {
+      throw new HttpError(
+        503,
+        "STOCK_SCHEMA_UPGRADE_REQUIRED",
+        "Le patch additif #164 doit être appliqué sur cet environnement avant d'enregistrer ces règles matière."
+      );
+    }
+    const legacyLongueur = m.longueur_brut_mm ?? m.longueur_mm ?? null;
+    const legacyLongueurUnitaire = m.longueur_barre_source_mm ?? m.longueur_unitaire_mm ?? null;
     await client.query(
       `
         INSERT INTO public.articles_matiere (
@@ -1377,8 +1528,8 @@ async function syncArticleSubtypeDetails(
         m.etat_id ?? null,
         m.sous_etat_id ?? null,
         m.barre_a_decouper ?? false,
-        m.longueur_mm ?? null,
-        m.longueur_unitaire_mm ?? null,
+        legacyLongueur,
+        legacyLongueurUnitaire,
         m.largeur_mm ?? null,
         m.hauteur_mm ?? null,
         m.epaisseur_mm ?? null,
@@ -1386,6 +1537,26 @@ async function syncArticleSubtypeDetails(
         m.largeur_plat_mm ?? null,
       ]
     );
+    if (remainingColumnsAvailable) {
+      await client.query(
+        `UPDATE public.articles_matiere
+         SET client_proprietaire_id = $2,
+             longueur_barre_source_mm = $3::int,
+             longueur_coupe_mm = $4::int,
+             longueur_brut_mm = $5::int,
+             quantite_lineaire_totale_mm = $6::numeric,
+             updated_at = now()
+         WHERE article_id = $1::uuid`,
+        [
+          args.article_id,
+          m.client_proprietaire_id ?? null,
+          m.longueur_barre_source_mm ?? m.longueur_unitaire_mm ?? null,
+          m.longueur_coupe_mm ?? null,
+          m.longueur_brut_mm ?? m.longueur_mm ?? null,
+          m.quantite_lineaire_totale_mm ?? null,
+        ]
+      );
+    }
     return;
   }
 
@@ -1400,6 +1571,24 @@ async function syncArticleSubtypeDetails(
     `,
     [args.article_id, args.family_code]
   );
+}
+
+async function tableColumnExists(
+  queryer: Pick<PoolClient, "query">,
+  tableName: string,
+  columnName: string
+): Promise<boolean> {
+  const result = await queryer.query<{ present: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1
+       FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = $1
+         AND column_name = $2
+     ) AS present`,
+    [tableName, columnName]
+  );
+  return result.rows[0]?.present === true;
 }
 
 async function syncArticleProcurementProfile(
@@ -2464,6 +2653,34 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
   if (filters.lot_tracking !== undefined) where.push(`a.lot_tracking = ${push(filters.lot_tracking)}`);
   if (filters.stock_managed !== undefined) where.push(`a.stock_managed = ${push(filters.stock_managed)}`);
 
+  /**
+   * #395 — Filtre « vendable en commande client », dérivé du référentiel.
+   *
+   * Un article est retenu si sa catégorie primaire OU l'une de ses catégories métier liées est
+   * vendable. Le jeu de codes vient de `ARTICLE_CATEGORY_OPTIONS` : élargir ou restreindre la
+   * vente se fait à cet endroit unique, et la recherche de ligne suit sans redéploiement du
+   * frontend.
+   */
+  if (filters.commande_client_selectable !== undefined) {
+    const sellable = commandeClientSelectableCategoryCodes();
+    if (sellable.length === 0) {
+      // Référentiel entièrement fermé : ne rien proposer plutôt que tout proposer.
+      where.push(filters.commande_client_selectable ? "FALSE" : "TRUE");
+    } else {
+      const p = push(sellable);
+      const predicate = `(
+        ${normalizedBusinessCategorySql("a.article_category")} = ANY(${p}::text[])
+        OR EXISTS (
+          SELECT 1
+          FROM public.article_category_link acls
+          WHERE acls.article_id = a.id
+            AND acls.category_code = ANY(${p}::text[])
+        )
+      )`;
+      where.push(filters.commande_client_selectable ? predicate : `NOT ${predicate}`);
+    }
+  }
+
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
   const orderBy = articleSortColumn(filters.sortBy);
   const orderDir = sortDirection(filters.sortDir);
@@ -2599,7 +2816,15 @@ export async function repoGetArticle(id: string, includeCosts = false): Promise<
              'nuance_id', am.nuance_id,
              'etat_id', am.etat_id,
              'sous_etat_id', am.sous_etat_id,
+             'client_proprietaire_id', to_jsonb(am) ->> 'client_proprietaire_id',
              'barre_a_decouper', am.barre_a_decouper,
+             'longueur_barre_source_mm', NULLIF(to_jsonb(am) ->> 'longueur_barre_source_mm', '')::int,
+             'longueur_coupe_mm', NULLIF(to_jsonb(am) ->> 'longueur_coupe_mm', '')::int,
+             'longueur_brut_mm', COALESCE(
+               NULLIF(to_jsonb(am) ->> 'longueur_brut_mm', '')::int,
+               am.longueur_mm
+             ),
+             'quantite_lineaire_totale_mm', NULLIF(to_jsonb(am) ->> 'quantite_lineaire_totale_mm', '')::float8,
              'longueur_mm', am.longueur_mm,
              'longueur_unitaire_mm', am.longueur_unitaire_mm,
              'largeur_mm', am.largeur_mm,
@@ -2773,6 +2998,7 @@ export async function repoGetArticle(id: string, includeCosts = false): Promise<
          fc.reference_fournisseur AS supplier_reference,
          fc.unite AS unit,
          CASE WHEN $2::boolean THEN fc.prix_unitaire::float8 ELSE NULL END AS unit_price,
+         COALESCE(to_jsonb(fc) ->> 'pricing_basis', 'NONE') AS pricing_basis,
          CASE WHEN $2::boolean THEN fc.devise ELSE NULL END AS currency,
          fc.delai_jours::int AS lead_time_days,
          fc.moq::float8 AS moq,
@@ -2887,10 +3113,49 @@ export async function repoCreateArticleTx(
     // The submitted code is non-authoritative. Keep legacy payloads compatible
     // while the final ART-{FAMILY}-{SEQ6} value is allocated below.
     code: "",
-    designation: body.designation,
+    designation: body.designation ?? "",
     client,
   });
-  const generatedCode = await generateArticleBusinessCode(client, normalized.family_code);
+  /**
+   * Matière première : la référence est DÉRIVÉE de la configuration matière,
+   * jamais séquencée. Deux matières identiques doivent porter la même
+   * référence — c'est ce qui rend le doublon détectable au lieu d'être créé en
+   * silence sous deux numéros différents.
+   *
+   * La désignation suit la même source : si l'écran n'en propose pas (une MP
+   * n'a plus de champ Désignation), le serveur produit la forme canonique.
+   * `articles.designation` n'est jamais rendue nullable pour arranger l'UI.
+   */
+  const material = normalized.article_category === "matiere"
+    ? await (async () => {
+        const input = await resolveMaterialCodeInput(client, {
+          family_code: normalized.family_code,
+          nuance_id: body.article_matiere?.nuance_id ?? null,
+          etat_id: body.article_matiere?.etat_id ?? null,
+          sous_etat_id: body.article_matiere?.sous_etat_id ?? null,
+          client_proprietaire_id: body.article_matiere?.client_proprietaire_id ?? null,
+          reference_suffix: body.article_matiere?.reference_suffix ?? null,
+          dimensions: body.article_matiere ?? null,
+        });
+        const result = buildMaterialArticleCode(input);
+        assertMaterialPreviewFresh(
+          body.material_code_preview_hash,
+          computeMaterialCodePreviewHash({ input, code: result.code, designation: result.designation })
+        );
+        return result;
+      })()
+    : null;
+
+  const generatedCode = normalized.article_category === "fabrique"
+    ? normalized.code
+    : material
+      ? material.code
+      : await generateArticleBusinessCode(client, normalized.family_code);
+
+  const designation = (body.designation ?? "").trim() || material?.designation || "";
+  if (!designation) {
+    throw new HttpError(400, "INVALID_ARTICLE", "La désignation de l'article est obligatoire.");
+  }
 
   if (normalized.piece_technique_id) {
     await ensurePieceTechniqueExists(client, normalized.piece_technique_id);
@@ -2913,7 +3178,7 @@ export async function repoCreateArticleTx(
     [
       articleId,
       generatedCode,
-      body.designation,
+      designation,
       body.designation_secondary ?? null,
       normalized.article_type,
       normalized.article_category,
@@ -2960,7 +3225,7 @@ export async function repoCreateArticleTx(
     entity_id: id,
     details: {
       code: generatedCode,
-      designation: body.designation,
+      designation,
       article_type: normalized.article_type,
       article_category: normalized.article_category,
       article_categories: normalized.article_categories,
@@ -3053,11 +3318,56 @@ export async function repoCreateArticle(
       }
     }
     if (isPgUniqueViolation(err)) {
+      /**
+       * Matière : deux configurations identiques produisent volontairement la
+       * MÊME référence. La collision n'est donc pas un incident technique, c'est
+       * l'article qui existe déjà — on le dit, avec de quoi agir, au lieu
+       * d'inventer un suffixe qui créerait un doublon silencieux.
+       */
+      if (body.article_category === "matiere") {
+        const existing = await repoFindArticleByMaterialConfiguration(body);
+        throw new HttpError(
+          409,
+          "DUPLICATE_MATERIAL_ARTICLE",
+          existing
+            ? `Cette matière existe déjà sous la référence ${existing.code}. Réutilisez-la, ou précisez la configuration (dimensions, sous-état) pour créer une matière distincte.`
+            : "Cette référence matière existe déjà. Précisez la configuration pour créer une matière distincte."
+        );
+      }
       throw new HttpError(409, "DUPLICATE", "Article code already exists");
     }
     throw err;
   } finally {
     client.release();
+  }
+}
+
+/**
+ * Retrouve l'article matière qui occupe déjà la référence calculée, pour
+ * pouvoir le nommer dans le message d'erreur. Toute défaillance de cette
+ * lecture d'agrément reste silencieuse : elle ne doit jamais masquer le 409.
+ */
+async function repoFindArticleByMaterialConfiguration(
+  body: CreateArticleBodyDTO
+): Promise<{ id: string; code: string } | null> {
+  try {
+    const input = await resolveMaterialCodeInput(db, {
+      family_code: body.family_code,
+      nuance_id: body.article_matiere?.nuance_id ?? null,
+      etat_id: body.article_matiere?.etat_id ?? null,
+      sous_etat_id: body.article_matiere?.sous_etat_id ?? null,
+      client_proprietaire_id: body.article_matiere?.client_proprietaire_id ?? null,
+      reference_suffix: body.article_matiere?.reference_suffix ?? null,
+      dimensions: body.article_matiere ?? null,
+    });
+    const { code } = buildMaterialArticleCode(input);
+    const res = await db.query<{ id: string; code: string }>(
+      `SELECT id::text AS id, code FROM public.articles WHERE code = $1 LIMIT 1`,
+      [code]
+    );
+    return res.rows[0] ?? null;
+  } catch {
+    return null;
   }
 }
 
@@ -3140,6 +3450,25 @@ export async function repoUpdateArticle(
       });
     }
 
+    const requestedCategory = patch.article_category ?? current.article_category;
+    const requestedPieceTechniqueId =
+      patch.piece_technique_id !== undefined
+        ? patch.piece_technique_id
+        : current.piece_technique_id;
+    const fabricatedIdentityChanged =
+      (current.article_category === "fabrique" || requestedCategory === "fabrique") &&
+      (
+        requestedCategory !== current.article_category ||
+        requestedPieceTechniqueId !== current.piece_technique_id
+      );
+    if (fabricatedIdentityChanged) {
+      throw new HttpError(
+        409,
+        "FABRICATED_ARTICLE_IDENTITY_IMMUTABLE",
+        "La catégorie et la pièce technique liées à un article fabriqué sont immuables. Créez un nouvel article pour une autre identité technique."
+      );
+    }
+
     const normalized = await normalizeArticleState({
       article_type: patch.article_type ?? current.article_type,
       article_category: patch.article_category ?? current.article_category,
@@ -3155,7 +3484,18 @@ export async function repoUpdateArticle(
       code: current.code ?? "",
       designation: patch.designation ?? current.designation,
       client,
+      // Article business codes are immutable snapshots. A normal PATCH must
+      // not depend on the current state of the linked technical piece.
+      preserve_existing_code: true,
     });
+
+    if (patch.article_matiere && normalized.article_category !== "matiere") {
+      throw new HttpError(
+        400,
+        "INVALID_ARTICLE",
+        "article_matiere is only allowed for article_category=matiere"
+      );
+    }
 
     if (current.stock_managed && !normalized.stock_managed) {
       await ensureArticleCanDisableStockManagement(client, id);
@@ -3228,6 +3568,96 @@ export async function repoUpdateArticle(
       throw new HttpError(409, "DUPLICATE", "Article code already exists");
     }
     throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function repoValidateArticle(
+  id: string,
+  body: { expected_row_version: number },
+  audit: AuditContext,
+  includeCosts = false
+): Promise<StockArticleDetail | null> {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const currentResult = await client.query<{
+      status: string;
+      row_version: number;
+      article_category: string;
+      finish_revision_id: string | null;
+      piece_technique_id: string | null;
+      piece_technique_version_id: string | null;
+      generated_designation: string | null;
+      generated_comment: string | null;
+    }>(
+      `SELECT
+         a.status,
+         a.row_version::int AS row_version,
+         ${normalizedArticleCategorySql("a.article_category")} AS article_category,
+         t.finish_revision_id::text AS finish_revision_id,
+         t.piece_technique_id::text AS piece_technique_id,
+         t.piece_technique_version_id::text AS piece_technique_version_id,
+         t.generated_designation,
+         t.generated_comment
+       FROM public.articles a
+       LEFT JOIN public.articles_traitement t ON t.article_id = a.id
+       WHERE a.id = $1::uuid
+       FOR UPDATE OF a`,
+      [id]
+    );
+    const current = currentResult.rows[0];
+    if (!current) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+    if (current.row_version !== body.expected_row_version) {
+      throw new HttpError(409, "ARTICLE_VERSION_CONFLICT", "L'article a été modifié depuis son chargement.");
+    }
+    if (current.status !== "EN_DEVIS") {
+      throw new HttpError(409, "ARTICLE_NOT_DRAFT", "Seul un article brouillon peut être validé et mis en production.");
+    }
+    if (
+      current.article_category === "traitement"
+      && (
+        !current.finish_revision_id
+        || !current.piece_technique_id
+        || !current.piece_technique_version_id
+        || !current.generated_designation
+        || !current.generated_comment
+      )
+    ) {
+      throw new HttpError(
+        422,
+        "SURFACE_FINISH_ARTICLE_INCOMPLETE",
+        "L'article de traitement doit conserver la finition, la PT/version et les textes générés avant sa mise en production."
+      );
+    }
+
+    await client.query(
+      `UPDATE public.articles
+       SET status = 'VALIDE',
+           row_version = row_version + 1,
+           updated_at = now(),
+           updated_by = $2
+       WHERE id = $1::uuid`,
+      [id, audit.user_id]
+    );
+    await insertAuditLog(client, audit, {
+      action: "stock.articles.validate-and-release",
+      entity_type: "articles",
+      entity_id: id,
+      details: {
+        before: { status: current.status, row_version: current.row_version },
+        after: { status: "VALIDE", row_version: current.row_version + 1 },
+      },
+    });
+    await client.query("COMMIT");
+    return repoGetArticle(id, includeCosts);
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
   } finally {
     client.release();
   }
@@ -4253,6 +4683,7 @@ export async function repoListLots(filters: ListLotsQueryDTO): Promise<Paginated
       l.received_at::text AS received_at,
       l.manufactured_at::text AS manufactured_at,
       l.expiry_at::text AS expiry_at,
+      NULLIF(to_jsonb(l) ->> 'quantite_lineaire_totale_mm', '')::float8 AS quantite_lineaire_totale_mm,
       l.updated_at::text AS updated_at,
       l.created_at::text AS created_at
     FROM public.lots l
@@ -4282,6 +4713,7 @@ export async function repoGetLot(id: string): Promise<StockLotDetail | null> {
         l.received_at::text AS received_at,
         l.manufactured_at::text AS manufactured_at,
         l.expiry_at::text AS expiry_at,
+        NULLIF(to_jsonb(l) ->> 'quantite_lineaire_totale_mm', '')::float8 AS quantite_lineaire_totale_mm,
         l.notes,
         l.updated_at::text AS updated_at,
         l.created_at::text AS created_at
@@ -4325,6 +4757,21 @@ export async function repoCreateLot(body: CreateLotBodyDTO, audit: AuditContext)
     );
     const id = res.rows[0]?.id;
     if (!id) throw new Error("Failed to create lot");
+    if (body.quantite_lineaire_totale_mm !== undefined) {
+      if (!(await tableColumnExists(client, "lots", "quantite_lineaire_totale_mm"))) {
+        throw new HttpError(
+          503,
+          "STOCK_SCHEMA_UPGRADE_REQUIRED",
+          "Le patch additif #164 doit être appliqué avant d'enregistrer une quantité linéaire de lot."
+        );
+      }
+      await client.query(
+        `UPDATE public.lots
+         SET quantite_lineaire_totale_mm = $2::numeric
+         WHERE id = $1::uuid`,
+        [id, body.quantite_lineaire_totale_mm ?? null]
+      );
+    }
 
     await insertAuditLog(client, audit, {
       action: "stock.lots.create",
@@ -4364,6 +4811,16 @@ export async function repoUpdateLot(id: string, patch: UpdateLotBodyDTO, audit: 
   if (patch.received_at !== undefined) sets.push(`received_at = ${push(patch.received_at)}::date`);
   if (patch.manufactured_at !== undefined) sets.push(`manufactured_at = ${push(patch.manufactured_at)}::date`);
   if (patch.expiry_at !== undefined) sets.push(`expiry_at = ${push(patch.expiry_at)}::date`);
+  if (patch.quantite_lineaire_totale_mm !== undefined) {
+    if (!(await tableColumnExists(db, "lots", "quantite_lineaire_totale_mm"))) {
+      throw new HttpError(
+        503,
+        "STOCK_SCHEMA_UPGRADE_REQUIRED",
+        "Le patch additif #164 doit être appliqué avant d'enregistrer une quantité linéaire de lot."
+      );
+    }
+    sets.push(`quantite_lineaire_totale_mm = ${push(patch.quantite_lineaire_totale_mm)}::numeric`);
+  }
   if (patch.notes !== undefined) sets.push(`notes = ${push(patch.notes)}`);
   sets.push(`updated_at = now()`);
   sets.push(`updated_by = ${push(audit.user_id)}`);

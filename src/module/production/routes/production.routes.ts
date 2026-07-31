@@ -1,6 +1,10 @@
 import { Router, type RequestHandler } from "express";
 import multer from "multer";
 
+import {
+  hasGrantedAccountModuleAccess,
+  requestHasGrantedAccountModuleAccess,
+} from "../../access-control/context/account-module-access.context";
 import { upload } from "../../../middlewares/upload";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
@@ -93,6 +97,13 @@ function isProductionRole(role: string | undefined): boolean {
 }
 
 const requireAdmin: RequestHandler = (req, _res, next) => {
+  if (
+    requestHasGrantedAccountModuleAccess(req) ||
+    hasGrantedAccountModuleAccess()
+  ) {
+    next();
+    return;
+  }
   if (!isAdminRole(req.user?.role)) {
     next(new HttpError(403, "FORBIDDEN", "Admin role required"));
     return;
@@ -101,6 +112,13 @@ const requireAdmin: RequestHandler = (req, _res, next) => {
 };
 
 const requireProductionOrAdmin: RequestHandler = (req, _res, next) => {
+  if (
+    requestHasGrantedAccountModuleAccess(req) ||
+    hasGrantedAccountModuleAccess()
+  ) {
+    next();
+    return;
+  }
   const role = req.user?.role;
   if (!isAdminRole(role) && !isProductionRole(role)) {
     next(new HttpError(403, "FORBIDDEN", "Production, atelier, secretariat or admin role required"));
@@ -110,7 +128,10 @@ const requireProductionOrAdmin: RequestHandler = (req, _res, next) => {
 };
 
 const requireMachineCapability = (capability: MachineCapability): RequestHandler => (req, _res, next) => {
-  if (!roleHasMachineCapability(req.user?.role, capability)) {
+  if (
+    !requestHasGrantedAccountModuleAccess(req) &&
+    !roleHasMachineCapability(req.user?.role, capability)
+  ) {
     next(new HttpError(403, "MACHINE_FORBIDDEN", `Machine capability required: ${capability}`));
     return;
   }
@@ -121,7 +142,10 @@ const requireMachineCapability = (capability: MachineCapability): RequestHandler
 // capacité explicite (la granularité fine transition/édition se rejoue au
 // repository qui connaît le statut courant).
 const requireOfCapability = (capability: OfCapability): RequestHandler => (req, _res, next) => {
-  if (!roleHasOfCapability(req.user?.role, capability)) {
+  if (
+    !requestHasGrantedAccountModuleAccess(req) &&
+    !roleHasOfCapability(req.user?.role, capability)
+  ) {
     next(new HttpError(403, "OF_FORBIDDEN", `OF capability required: ${capability}`));
     return;
   }
@@ -129,6 +153,10 @@ const requireOfCapability = (capability: OfCapability): RequestHandler => (req, 
 };
 
 const requireAnyOfCapability = (capabilities: readonly OfCapability[]): RequestHandler => (req, _res, next) => {
+  if (requestHasGrantedAccountModuleAccess(req)) {
+    next();
+    return;
+  }
   if (!capabilities.some((capability) => roleHasOfCapability(req.user?.role, capability))) {
     next(new HttpError(403, "OF_FORBIDDEN", `OF capability required: ${capabilities.join("|")}`));
     return;

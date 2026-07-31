@@ -25,6 +25,36 @@ vi.mock("../utils/checkNetworkDrive", () => ({
   checkNetworkDrive: vi.fn(() => Promise.resolve()),
 }));
 
+vi.mock("../module/production/controllers/pointages.controller", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../module/production/controllers/pointages.controller")>();
+  return {
+    ...actual,
+    pointagesKpis: (_req: unknown, res: { json: (body: unknown) => void }) =>
+      res.json({ ok: true }),
+  };
+});
+
+vi.mock("../module/metrologie/controllers/metrology-360.controller", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../module/metrologie/controllers/metrology-360.controller")>();
+  return {
+    ...actual,
+    center: (_req: unknown, res: { json: (body: unknown) => void }) =>
+      res.json({ ok: true }),
+  };
+});
+
+vi.mock("../module/qualite/controllers/qualite.controller", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../module/qualite/controllers/qualite.controller")>();
+  return {
+    ...actual,
+    qualiteDashboard: (_req: unknown, res: { json: (body: unknown) => void }) =>
+      res.json({ ok: true }),
+  };
+});
+
 vi.mock("../module/auth/middlewares/auth.middleware", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../module/auth/middlewares/auth.middleware")>();
   return {
@@ -57,6 +87,7 @@ import type { NextFunction, Request, Response } from "express";
 
 import app from "../config/app";
 import * as baseRepo from "../module/access-control/repository/access-control.repository";
+import { hasGrantedAccountModuleAccess } from "../module/access-control/context/account-module-access.context";
 import { moduleAccessGate } from "../module/access-control/middlewares/module-access-gate";
 import { invalidateAccessCache } from "../module/access-control/services/access-control.service";
 
@@ -80,7 +111,7 @@ function fakeRes(): FakeRes {
 
 // `null` signifie explicitement « aucun utilisateur attaché », ce qu'un paramètre
 // optionnel ne permettrait pas de distinguer de l'absence d'argument.
-function fakeReq(path: string, user: { id: number } | null): Request {
+function fakeReq(path: string, user: { id: number | string } | null): Request {
   return {
     path,
     originalUrl: `/api/v1${path}`,
@@ -109,12 +140,15 @@ function profileRow(overrides: {
   };
 }
 
-async function run(path: string, user: { id: number } | null = { id: USER_ID }) {
+async function run(path: string, user: { id: number | string } | null = { id: USER_ID }) {
   const res = fakeRes();
-  const next = vi.fn() as unknown as NextFunction;
+  let accountPolicyInstalled = false;
+  const next = vi.fn(() => {
+    accountPolicyInstalled = hasGrantedAccountModuleAccess();
+  }) as unknown as NextFunction;
   moduleAccessGate(fakeReq(path, user), res, next);
   await new Promise((resolve) => setTimeout(resolve, 0));
-  return { res, next: next as unknown as ReturnType<typeof vi.fn> };
+  return { res, next: next as unknown as ReturnType<typeof vi.fn>, accountPolicyInstalled };
 }
 
 beforeEach(() => {
@@ -134,16 +168,17 @@ afterEach(() => {
 
 describe("Gate d'accès module — passages sans interrogation de la base", () => {
   it("laisse passer une surface d'infrastructure partagée sans résoudre aucun profil", async () => {
-    const { next } = await run("/users/4");
+    const { next, accountPolicyInstalled } = await run("/users/4");
     expect(next).toHaveBeenCalledOnce();
     expect(repo.repoResolveAccessProfile).not.toHaveBeenCalled();
+    expect(accountPolicyInstalled).toBe(true);
   });
 
-  it("laisse passer le module protégé sans résoudre aucun profil", async () => {
+  it("laisse passer le module protégé après résolution du compte", async () => {
     const { res, next } = await run("/admin/users");
     expect(next).toHaveBeenCalledOnce();
     expect(res.statusCode).toBe(0);
-    expect(repo.repoResolveAccessProfile).not.toHaveBeenCalled();
+    expect(repo.repoResolveAccessProfile).toHaveBeenCalledOnce();
   });
 
   it("laisse passer quand aucun utilisateur n'est attaché à la requête", async () => {
@@ -157,10 +192,11 @@ describe("Gate d'accès module — passages sans interrogation de la base", () =
     repo.repoResolveAccessProfile.mockResolvedValue([
       profileRow({ module_key: "clients", access: "DENIED" }),
     ]);
-    const { res, next } = await run("/clients/1");
+    const { res, next, accountPolicyInstalled } = await run("/clients/1");
     expect(next).toHaveBeenCalledOnce();
     expect(res.statusCode).toBe(0);
     expect(repo.repoResolveAccessProfile).not.toHaveBeenCalled();
+    expect(accountPolicyInstalled).toBe(true);
   });
 });
 
@@ -177,12 +213,13 @@ describe("Gate d'accès module — décisions", () => {
     expect(JSON.stringify(res.body)).not.toMatch(/module|superadmin|catalogue|interdit au module/i);
   });
 
-  it("défaut catalogue désactivé ⇒ 403 sans override", async () => {
+  it("un ancien défaut catalogue désactivé n'a plus aucun effet", async () => {
     repo.repoResolveAccessProfile.mockResolvedValue([
       profileRow({ module_key: "clients", enabled_by_default: false }),
     ]);
-    const { res } = await run("/clients/1");
-    expect(res.statusCode).toBe(403);
+    const { res, next } = await run("/clients/1");
+    expect(next).toHaveBeenCalledOnce();
+    expect(res.statusCode).toBe(0);
   });
 
   it("module désactivé au catalogue ⇒ 403", async () => {
@@ -202,6 +239,20 @@ describe("Gate d'accès module — décisions", () => {
     expect(res.statusCode).toBe(0);
   });
 
+  it("normalise un identifiant de compte numérique issu du JWT", async () => {
+    repo.repoResolveAccessProfile.mockResolvedValue([
+      profileRow({ module_key: "production" }),
+    ]);
+
+    const { next, accountPolicyInstalled } = await run("/production/pointages/kpis", {
+      id: "21",
+    });
+
+    expect(repo.repoResolveAccessProfile).toHaveBeenCalledWith(21);
+    expect(next).toHaveBeenCalledOnce();
+    expect(accountPolicyInstalled).toBe(true);
+  });
+
   it("le refus d'un module n'en refuse aucun autre", async () => {
     repo.repoResolveAccessProfile.mockResolvedValue([
       profileRow({ module_key: "clients", access: "DENIED" }),
@@ -217,6 +268,29 @@ describe("Gate d'accès module — décisions", () => {
     ]);
     const { res } = await run("/production/station/sessions");
     expect(res.statusCode).toBe(403);
+  });
+
+  it("la GED est filtrée par son module dédié pour les comptes non superadmin", async () => {
+    repo.repoResolveAccessProfile.mockResolvedValue([
+      profileRow({ module_key: "ged", access: "DENIED" }),
+    ]);
+    const { res, next } = await run("/ged/documents");
+
+    expect(next).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(403);
+    expect(res.body).toEqual({ error: "Accès interdit" });
+  });
+
+  it("applique des décisions distinctes aux nouveaux modules techniques", async () => {
+    repo.repoResolveAccessProfile.mockResolvedValue([
+      profileRow({ module_key: "finitions", access: "DENIED" }),
+      profileRow({ module_key: "methodes-centres-frais" }),
+      profileRow({ module_key: "methodes-parc-machines", access: "DENIED" }),
+    ]);
+
+    expect((await run("/finitions/search")).res.statusCode).toBe(403);
+    expect((await run("/methodes/centres-frais")).next).toHaveBeenCalledOnce();
+    expect((await run("/methodes/machines/parc")).res.statusCode).toBe(403);
   });
 
   it("résout le profil une seule fois par compte grâce au cache", async () => {
@@ -251,6 +325,59 @@ describe("Gate d'accès module — absence d'infrastructure", () => {
 });
 
 describe("Gate d'accès module — application réelle", () => {
+  it("ouvre les capacités partagées Méthodes sans revenir au rôle", async () => {
+    const res = await request(app)
+      .get("/api/v1/methodes/capabilities")
+      .set("x-test-role", "Employee");
+
+    expect(res.status).toBe(200);
+    expect(res.body.capabilities).toMatchObject({
+      referentiel_read: true,
+      referentiel_write: true,
+      tarif_read: true,
+      tarif_write: true,
+    });
+  });
+
+  it("ouvre les KPI de pointage à un compte authentifié sans rôle production", async () => {
+    repo.repoResolveAccessProfile.mockResolvedValue([
+      profileRow({ module_key: "production" }),
+    ]);
+
+    const res = await request(app)
+      .get("/api/v1/production/pointages/kpis?date_from=2026-07-30&date_to=2026-07-30")
+      .set("x-test-role", "Employee");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+  });
+
+  it("ouvre Métrologie 360 à un compte autorisé sans rôle Métrologie", async () => {
+    repo.repoResolveAccessProfile.mockResolvedValue([
+      profileRow({ module_key: "metrologie" }),
+    ]);
+
+    const res = await request(app)
+      .get("/api/v1/metrologie/v2/center?horizon_days=30")
+      .set("x-test-role", "Employee");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+  });
+
+  it("ouvre le dashboard Qualité à un compte autorisé sans rôle Qualité", async () => {
+    repo.repoResolveAccessProfile.mockResolvedValue([
+      profileRow({ module_key: "qualite" }),
+    ]);
+
+    const res = await request(app)
+      .get("/api/v1/qualite/dashboard?today=2026-07-31")
+      .set("x-test-role", "Employee");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+  });
+
   it("refuse 403 sur une route métier réelle, sans fuiter le motif", async () => {
     repo.repoResolveAccessProfile.mockResolvedValue([
       profileRow({ module_key: "clients", access: "DENIED" }),

@@ -1,11 +1,15 @@
-import { Request, Response, NextFunction, RequestHandler } from 'express';
-import jwt from 'jsonwebtoken';
-import { stripQueryFromUrl } from '../../../utils/logPath';
+import { Request, Response, NextFunction, RequestHandler } from "express";
+import jwt from "jsonwebtoken";
+import { stripQueryFromUrl } from "../../../utils/logPath";
+import {
+  hasGrantedAccountModuleAccess,
+  requestHasGrantedAccountModuleAccess,
+} from "../../access-control/context/account-module-access.context";
 import {
   effectiveRoleHasAny,
   hasAnyAssignedRole,
   normalizeAssignedRoles,
-} from '../domain/roles';
+} from "../domain/roles";
 
 interface JwtPayload {
   id: number;
@@ -16,7 +20,6 @@ interface JwtPayload {
   roles?: string[];
 }
 
-// 🔧 Ajout de `req.user` pour tout Express
 declare global {
   namespace Express {
     interface Request {
@@ -25,7 +28,6 @@ declare global {
   }
 }
 
-// 🔐 Vérifie le token JWT
 export const authenticateToken: RequestHandler = (req, res, next) => {
   const authHeader = req.headers.authorization;
   const ctx = {
@@ -34,14 +36,14 @@ export const authenticateToken: RequestHandler = (req, res, next) => {
     method: req.method,
     path: stripQueryFromUrl(req.originalUrl),
   };
- 
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
     console.warn(JSON.stringify({ type: "auth_fail", reason: "missing_bearer", ...ctx }));
-    res.status(401).json({ error: 'Token manquant ou invalide' });
+    res.status(401).json({ error: "Token manquant ou invalide" });
     return;
   }
 
-  const token = authHeader.split(' ')[1];
+  const token = authHeader.split(" ")[1];
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET as string) as JwtPayload;
@@ -56,57 +58,65 @@ export const authenticateToken: RequestHandler = (req, res, next) => {
         ...ctx,
       })
     );
-    res.status(401).json({ error: 'Token invalide ou expiré' });
+    res.status(401).json({ error: "Token invalide ou expiré" });
   }
 };
 
-// 🎯 Vérifie que l'utilisateur a un rôle autorisé
+/**
+ * Compatibility wrapper kept for existing routes.
+ *
+ * Roles are descriptive metadata only. Authenticated business access is
+ * resolved per account and per module by moduleAccessGate. The Access Control
+ * Tower does not use this wrapper: requireSuperadmin checks the database
+ * account flag independently.
+ */
 export const authorizeRole = (...roles: string[]) => {
-    return (req: Request, res: Response, next: NextFunction): void => {
-      if (!req.user) {
-        console.warn(
-          JSON.stringify({
-            type: "auth_fail",
-            reason: "missing_user",
-            requestId: req.requestId ?? null,
-            origin: req.headers.origin ?? null,
-            method: req.method,
-            path: stripQueryFromUrl(req.originalUrl),
-          })
-        );
-        res.status(401).json({ error: 'Utilisateur non authentifié' });
-        return;
-      }
-  
-      const primaryRole = req.user.primary_role ?? req.user.role;
-      const assignedRoles = normalizeAssignedRoles(primaryRole, req.user.roles);
-      // Multi-role sessions expose both the raw assignments and the explicit
-      // authorization aliases in `role`. Exact guards must understand both:
-      // e.g. `Assistante polyvalente` is deliberately aliased to `Secretaire`,
-      // while `Directeur Technique` is not aliased to the global `Directeur`.
-      const hasAssignedMatch = hasAnyAssignedRole(primaryRole, assignedRoles, roles);
-      const hasEffectiveMatch = effectiveRoleHasAny(req.user.role, roles);
-      if (!hasAssignedMatch && !hasEffectiveMatch) {
-        console.warn(
-          JSON.stringify({
-            type: "auth_forbidden",
-            requestId: req.requestId ?? null,
-            origin: req.headers.origin ?? null,
-            method: req.method,
-            path: stripQueryFromUrl(req.originalUrl),
-            userId: req.user.id,
-            role: primaryRole,
-            roles: assignedRoles,
-            allowedRoles: roles,
-          })
-        );
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (!req.user) {
+      console.warn(
+        JSON.stringify({
+          type: "auth_fail",
+          reason: "missing_user",
+          requestId: req.requestId ?? null,
+          origin: req.headers.origin ?? null,
+          method: req.method,
+          path: stripQueryFromUrl(req.originalUrl),
+        })
+      );
+      res.status(401).json({ error: "Utilisateur non authentifié" });
+      return;
+    }
 
-       res.status(403).json({ error: 'Accès interdit' });
-
-        return;
-      }
-  
+    if (
+      requestHasGrantedAccountModuleAccess(req) ||
+      hasGrantedAccountModuleAccess()
+    ) {
       next();
-    };
+      return;
+    }
+
+    const primaryRole = req.user.primary_role ?? req.user.role;
+    const assignedRoles = normalizeAssignedRoles(primaryRole, req.user.roles);
+    const hasAssignedMatch = hasAnyAssignedRole(primaryRole, assignedRoles, roles);
+    const hasEffectiveMatch = effectiveRoleHasAny(req.user.role, roles);
+    if (!hasAssignedMatch && !hasEffectiveMatch) {
+      console.warn(
+        JSON.stringify({
+          type: "auth_forbidden",
+          requestId: req.requestId ?? null,
+          origin: req.headers.origin ?? null,
+          method: req.method,
+          path: stripQueryFromUrl(req.originalUrl),
+          userId: req.user.id,
+          role: primaryRole,
+          roles: assignedRoles,
+          allowedRoles: roles,
+        })
+      );
+      res.status(403).json({ error: "Accès interdit" });
+      return;
+    }
+
+    next();
   };
-  
+};

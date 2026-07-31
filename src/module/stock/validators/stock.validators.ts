@@ -89,6 +89,19 @@ export const listArticlesQuerySchema = z.object({
   is_active: z.preprocess(parseBoolean, z.boolean().optional()),
   lot_tracking: z.preprocess(parseBoolean, z.boolean().optional()),
   stock_managed: z.preprocess(parseBoolean, z.boolean().optional()),
+  /**
+   * #395 — Ne renvoyer que les articles VENDABLES en commande client.
+   *
+   * `article_category` n'accepte qu'UNE catégorie : il ne peut donc pas exprimer « les cinq
+   * catégories vendables ». Ce drapeau délègue la question au référentiel
+   * (`commande_client_selectable`), qui reste ainsi le seul endroit à modifier pour élargir
+   * ou restreindre — écran de création ET recherche de ligne suivent ensemble.
+   *
+   * ATTENTION : ce schéma est `.strict()`. Un frontend qui envoie ce paramètre à un backend
+   * qui ne le connaît pas encore reçoit un 400, pas un filtre ignoré. Les deux dépôts se
+   * déploient donc ensemble, backend d'abord.
+   */
+  commande_client_selectable: z.preprocess(parseBoolean, z.boolean().optional()),
   page: z.coerce.number().int().min(1).optional().default(1),
   pageSize: z.coerce.number().int().min(1).max(200).optional().default(20),
   sortBy: z.enum(["updated_at", "created_at", "code", "designation"]).optional().default("updated_at"),
@@ -96,6 +109,28 @@ export const listArticlesQuerySchema = z.object({
 }).strict();
 
 export type ListArticlesQueryDTO = z.infer<typeof listArticlesQuerySchema>;
+
+/**
+ * #226 — Détection d'articles similaires AVANT création.
+ *
+ * « Article manquant » veut dire ABSENT DU RÉFÉRENTIEL, jamais « stock à zéro » :
+ * cette recherche ignore donc totalement les quantités et interroge la seule
+ * table `articles`. Les articles archivés ou inactifs SONT retournés — « il
+ * existe déjà mais il a été archivé » est précisément ce qu'il faut savoir
+ * avant d'en créer un second.
+ */
+export const similarArticlesQuerySchema = z
+  .object({
+    designation: z.string().trim().min(2, "Deux caractères au minimum.").max(300),
+    article_category: articleCategorySchema.optional(),
+    /** CAT métier (`article_category_link`), plus fine que la catégorie primaire. */
+    business_category: z.string().trim().min(1).max(60).optional(),
+    family_code: z.string().trim().min(1).max(40).optional(),
+    piece_technique_id: z.string().uuid().optional(),
+    limit: z.coerce.number().int().min(1).max(20).optional().default(8),
+  })
+  .strict();
+export type SimilarArticlesQueryDTO = z.infer<typeof similarArticlesQuerySchema>;
 
 export const listArticleFamiliesQuerySchema = z.object({
   category: articleCategorySchema.optional(),
@@ -113,8 +148,16 @@ export const createMatiereNuanceSchema = z.object({
   body: z
     .object({
       code: z.string().trim().min(1).max(40),
-      designation: z.string().trim().min(1).max(160),
-      densite: nullablePositiveNumber.optional(),
+      designation: z
+        .union([z.string().trim().max(160), z.null()])
+        .optional()
+        .transform((value) => (value && value.length > 0 ? value : null)),
+      /**
+       * Unité canonique #164 : kg/m³. La colonne historique `densite`
+       * reste convertie à la frontière du repository tant que le patch
+       * additif n'a pas créé `densite_kg_m3`.
+       */
+      densite: z.coerce.number().min(100).max(30_000).optional().nullable(),
       etat_ids: z.array(positiveInt).optional().default([]),
       is_active: z.boolean().optional().default(true),
     })
@@ -133,7 +176,16 @@ export const createMatiereEtatSchema = z.object({
   body: z
     .object({
       code: z.string().trim().min(1).max(40),
-      designation: z.string().trim().min(1).max(160),
+      /**
+       * #164 — La désignation d'un état est FACULTATIVE, comme celle d'une
+       * nuance. Un état d'approvisionnement est souvent connu par son seul code
+       * atelier (`BRUT`, `RECT`) ; exiger une phrase poussait à saisir un
+       * doublon du code. Le code sert de libellé de secours à l'affichage.
+       */
+      designation: z
+        .union([z.string().trim().max(160), z.null()])
+        .optional()
+        .transform((value) => (value && value.length > 0 ? value : null)),
       unite_achat: optionalPositiveInt,
       nuance_ids: z.array(positiveInt).optional().default([]),
       is_active: z.boolean().optional().default(true),
@@ -161,6 +213,38 @@ export const createMatiereSousEtatSchema = z.object({
 });
 export type CreateMatiereSousEtatBodyDTO = z.infer<typeof createMatiereSousEtatSchema>["body"];
 
+/**
+ * #164 — Aperçu SERVEUR de la référence matière.
+ *
+ * Le corps reprend exactement la configuration matière du formulaire. Le
+ * serveur relit lui-même les codes de nuance, d'état, de sous-état et du client
+ * propriétaire : aucun libellé fourni par le navigateur n'entre dans la
+ * référence.
+ */
+export const previewMaterialArticleCodeSchema = z.object({
+  body: z
+    .object({
+      family_code: z.string().trim().min(1).max(40),
+      nuance_id: nullablePositiveInt.optional(),
+      etat_id: nullablePositiveInt.optional(),
+      sous_etat_id: nullablePositiveInt.optional(),
+      client_proprietaire_id: z.string().trim().regex(/^[0-9]{3}$/).optional().nullable(),
+      reference_suffix: z.string().trim().min(1).max(60).optional().nullable(),
+      barre_a_decouper: z.boolean().optional().default(false),
+      longueur_barre_source_mm: nullablePositiveInt.optional(),
+      longueur_coupe_mm: nullablePositiveInt.optional(),
+      longueur_brut_mm: nullablePositiveInt.optional(),
+      longueur_mm: nullablePositiveInt.optional(),
+      largeur_mm: nullablePositiveInt.optional(),
+      hauteur_mm: nullablePositiveInt.optional(),
+      epaisseur_mm: nullablePositiveInt.optional(),
+      diametre_mm: nullablePositiveInt.optional(),
+      largeur_plat_mm: nullablePositiveInt.optional(),
+    })
+    .strict(),
+});
+export type PreviewMaterialArticleCodeBodyDTO = z.infer<typeof previewMaterialArticleCodeSchema>["body"];
+
 export const createArticleFamilySchema = z.object({
   body: z
     .object({
@@ -177,7 +261,22 @@ const articleMatiereSchema = z
     nuance_id: nullablePositiveInt.optional(),
     etat_id: nullablePositiveInt.optional(),
     sous_etat_id: nullablePositiveInt.optional(),
+    client_proprietaire_id: z.string().trim().regex(/^[0-9]{3}$/).optional().nullable(),
+    /**
+     * Suffixe métier des profils qu'aucune géométrie n'identifie
+     * (`FOND`, `PROFIL`, `BRUTCL`). Il entre dans la référence calculée par le
+     * serveur ; ce n'est pas un code libre, seulement un segment normalisé.
+     */
+    reference_suffix: z.string().trim().min(1).max(60).optional().nullable(),
     barre_a_decouper: z.boolean().optional().default(false),
+    longueur_barre_source_mm: nullablePositiveInt.optional(),
+    longueur_coupe_mm: nullablePositiveInt.optional(),
+    longueur_brut_mm: nullablePositiveInt.optional(),
+    quantite_lineaire_totale_mm: nullablePositiveNumber.optional(),
+    /**
+     * Champs historiques conservés pendant la transition. Ils ne portent plus
+     * l'invariant erroné « barre à découper => longueur théorique obligatoire ».
+     */
     longueur_mm: nullablePositiveInt.optional(),
     longueur_unitaire_mm: nullablePositiveInt.optional(),
     largeur_mm: nullablePositiveInt.optional(),
@@ -186,18 +285,7 @@ const articleMatiereSchema = z
     diametre_mm: nullablePositiveInt.optional(),
     largeur_plat_mm: nullablePositiveInt.optional(),
   })
-  .strict()
-  .superRefine((value, ctx) => {
-    if (value.barre_a_decouper && !value.longueur_unitaire_mm) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "longueur_unitaire_mm is required for cut bars", path: ["longueur_unitaire_mm"] });
-    }
-    if (value.barre_a_decouper && value.longueur_mm) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "longueur_mm is not allowed for cut bars", path: ["longueur_mm"] });
-    }
-    if (!value.barre_a_decouper && value.longueur_unitaire_mm) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "longueur_unitaire_mm requires barre_a_decouper=true", path: ["longueur_unitaire_mm"] });
-    }
-  });
+  .strict();
 
 const articleProcurementSchema = z
   .object({
@@ -222,10 +310,22 @@ const articleProcurementSchema = z
 export const createArticleSchema = z.object({
   body: z
     .object({
-      designation: z.string().trim().min(1).max(400),
+      /**
+       * Facultative pour une MATIÈRE uniquement : l'écran n'expose plus de champ
+       * Désignation et le serveur produit la forme canonique depuis la
+       * configuration matière. Elle reste exigée partout ailleurs (superRefine).
+       */
+      designation: z.string().trim().min(1).max(400).optional(),
       designation_secondary: z.string().trim().min(1).max(400).optional().nullable(),
+      /**
+       * Empreinte de l'aperçu de référence matière. Facultative — un client qui
+       * ne l'envoie pas garde le comportement précédent — mais si elle est
+       * fournie et périmée, la création est refusée (409) plutôt que de produire
+       * une référence différente de celle affichée.
+       */
+      material_code_preview_hash: z.string().regex(/^[0-9a-f]{64}$/, "Aperçu matière invalide.").optional(),
       article_type: articleTypeSchema.optional(),
-      article_category: articleCategorySchema.optional().default("achat"),
+      article_category: articleCategorySchema,
       article_categories: z.array(articleBusinessCategorySchema).min(1).max(8).optional(),
       family_code: z.string().trim().min(1).max(40),
       status: articleWorkflowStatusSchema.optional().default("VALIDE"),
@@ -242,6 +342,20 @@ export const createArticleSchema = z.object({
     })
     .strict()
     .superRefine((body, ctx) => {
+      if (body.article_category !== "matiere" && !body.designation) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "La désignation de l'article est obligatoire.",
+          path: ["designation"],
+        });
+      }
+      if (body.material_code_preview_hash && body.article_category !== "matiere") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "material_code_preview_hash n'existe que pour une matière première.",
+          path: ["material_code_preview_hash"],
+        });
+      }
       if (body.article_category === "fabrique") {
         if (!body.piece_technique_id) {
           ctx.addIssue({ code: z.ZodIssueCode.custom, message: "piece_technique_id is required for fabricated articles", path: ["piece_technique_id"] });
@@ -259,6 +373,17 @@ export const createArticleSchema = z.object({
           code: z.ZodIssueCode.custom,
           message: "article_matiere is only allowed for article_category=matiere",
           path: ["article_matiere"],
+        });
+      }
+      if (
+        body.article_category === "matiere"
+        && /^(BRUTCL|BRUT-CL|BRUT-CLIENT)$/.test(body.family_code.trim().toUpperCase())
+        && !body.article_matiere?.client_proprietaire_id
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Le client propriétaire est obligatoire pour un brut client.",
+          path: ["article_matiere", "client_proprietaire_id"],
         });
       }
     }),
@@ -299,6 +424,13 @@ export const updateArticleSchema = z.object({
 });
 
 export type UpdateArticleBodyDTO = z.infer<typeof updateArticleSchema>["body"];
+
+export const validateArticleSchema = z.object({
+  body: z.object({
+    expected_row_version: positiveInt,
+  }).strict(),
+});
+export type ValidateArticleBodyDTO = z.infer<typeof validateArticleSchema>["body"];
 
 export const archiveArticleSchema = z.object({
   body: z.object({
@@ -487,6 +619,7 @@ export const createLotSchema = z.object({
       received_at: z.string().trim().optional().nullable(),
       manufactured_at: z.string().trim().optional().nullable(),
       expiry_at: z.string().trim().optional().nullable(),
+      quantite_lineaire_totale_mm: nullablePositiveNumber.optional(),
       notes: z.string().trim().min(1).optional().nullable(),
     })
     .strict(),
@@ -502,6 +635,7 @@ export const updateLotSchema = z.object({
       received_at: z.string().trim().optional().nullable(),
       manufactured_at: z.string().trim().optional().nullable(),
       expiry_at: z.string().trim().optional().nullable(),
+      quantite_lineaire_totale_mm: nullablePositiveNumber.optional(),
       notes: z.string().trim().min(1).optional().nullable(),
     })
     .strict(),

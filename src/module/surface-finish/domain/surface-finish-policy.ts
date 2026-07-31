@@ -98,6 +98,7 @@ export function roleHasSurfaceFinishCapability(
   role: string | null | undefined,
   capability: SurfaceFinishCapability
 ): boolean {
+  if (hasGrantedAccountModuleAccess()) return true;
   const normalized = (role ?? "").trim().toLowerCase();
   if (!normalized) return false;
   const needles = CAPABILITY_NEEDLES[capability];
@@ -196,6 +197,76 @@ export function assertRevisionContentMutable(status: SurfaceFinishStatus): void 
 export function statusIsHistoricalOnly(status: SurfaceFinishStatus): boolean {
   return status === "SUSPENDUE" || status === "OBSOLETE" || status === "ARCHIVEE";
 }
+
+/* -------------------------------------------------------------------------- */
+/* 2 bis) Archivage d'une FINITION (#226)                                     */
+/* -------------------------------------------------------------------------- */
+//
+// `STATUS_TRANSITIONS` ci-dessus gouverne les RÉVISIONS. Archiver la finition
+// elle-même est un autre acte : on sort une entrée du référentiel sans toucher
+// à ce que les gammes ont déjà figé. Les deux ne se confondent pas.
+
+/** Une finition déjà archivée ne se réarchive pas ; le motif est obligatoire. */
+export function assertFinishArchivable(status: SurfaceFinishStatus): void {
+  if (status === "ARCHIVEE") {
+    throw new HttpError(409, "SURFACE_FINISH_ALREADY_ARCHIVED", "Cette finition est déjà archivée.");
+  }
+}
+
+export function assertFinishReactivable(status: SurfaceFinishStatus): void {
+  if (status !== "ARCHIVEE") {
+    throw new HttpError(
+      409,
+      "SURFACE_FINISH_NOT_ARCHIVED",
+      "Cette finition n'est pas archivée : il n'y a rien à réactiver."
+    );
+  }
+}
+
+/**
+ * Statut retrouvé en sortie d'archive. On ne restaure PAS le statut d'avant :
+ * il n'a pas été conservé et le déduire d'une colonne effacée serait une
+ * invention. On le recalcule depuis la seule chose qui fasse foi — les
+ * révisions existantes.
+ */
+export function statusAfterReactivation(hasActiveRevision: boolean): SurfaceFinishStatus {
+  return hasActiveRevision ? "ACTIVE" : "BROUILLON";
+}
+
+/* -------------------------------------------------------------------------- */
+/* 2 ter) Similarité — contrôle des doublons du RÉFÉRENTIEL (#226)            */
+/* -------------------------------------------------------------------------- */
+//
+// La base interdit le doublon STRICT (index `surface_finishes_identity_uq` :
+// même famille + même procédé + même désignation, normalisés). Elle ne peut pas
+// arbitrer « anodisation noire » contre « anodisation noire mate » : seul le
+// métier le peut. D'où un service CONSULTATIF, jamais bloquant.
+
+export const SIMILARITY_LEVELS = ["IDENTIQUE", "TRES_PROCHE", "PROCHE"] as const;
+export type SimilarityLevel = (typeof SIMILARITY_LEVELS)[number];
+
+/** En deçà, deux libellés n'ont plus rien à voir : ne pas encombrer l'écran. */
+export const SIMILARITY_FLOOR = 0.34;
+const VERY_CLOSE_FLOOR = 0.62;
+
+/**
+ * `exactIdentity` vient de la base (le triplet normalisé), pas du score : deux
+ * libellés identiques à la casse près SONT le même, quel que soit le trigramme.
+ */
+export function classifySimilarity(score: number, exactIdentity: boolean): SimilarityLevel | null {
+  if (exactIdentity) return "IDENTIQUE";
+  if (!Number.isFinite(score) || score < SIMILARITY_FLOOR) return null;
+  return score >= VERY_CLOSE_FLOOR ? "TRES_PROCHE" : "PROCHE";
+}
+
+export const SIMILARITY_LEVEL_LABELS: Record<SimilarityLevel, string> = {
+  IDENTIQUE: "Doublon : cette finition existe déjà",
+  TRES_PROCHE: "Très proche — vérifiez avant de créer",
+  PROCHE: "Proche — peut-être la même prestation",
+};
+
+/** Motif d'archivage : assez long pour dire pourquoi, pas un simple « ok ». */
+export const ARCHIVE_REASON_MIN_LENGTH = 10;
 
 /* -------------------------------------------------------------------------- */
 /* 3) Gammes — modifiabilité                                                  */
@@ -1024,3 +1095,4 @@ export const PURCHASE_LINE_TYPE = "TRAITEMENT" as const;
  * documente le mapping et on l'expose pour que l'UI dise la vérité.
  */
 export const SUPPLIER_CATALOGUE_CATEGORY = "SOUS_TRAITANCE" as const;
+import { hasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";

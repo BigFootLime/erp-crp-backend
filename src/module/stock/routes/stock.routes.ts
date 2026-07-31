@@ -1,4 +1,5 @@
 import { Router, type RequestHandler } from "express";
+import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import multer from "multer";
 
 import { authenticateToken, authorizeRole } from "../../auth/middlewares/auth.middleware";
@@ -15,6 +16,7 @@ import {
   createStockInventorySession,
   createStockArticle,
   previewStockArticleCode,
+  previewMaterialArticleCode,
   createStockArticleFamily,
   createStockMatiereEtat,
   createStockMatiereNuance,
@@ -46,6 +48,8 @@ import {
   listStockInventorySessions,
   listStockArticleDocuments,
   listStockArticles,
+  exportStockArticles,
+  listSimilarStockArticles,
   listStockBalances,
   listStockEmplacements,
   listStockLots,
@@ -60,6 +64,7 @@ import {
   removeStockMovementDocument,
   upsertStockInventorySessionLine,
   updateStockArticle,
+  validateStockArticle,
   archiveStockArticle,
   reactivateStockArticle,
   listStockArticleVersions,
@@ -83,6 +88,7 @@ import {
 } from "../controllers/stock-reservation.controller";
 import {
   ARTICLE_ARCHIVE_ROLES,
+  ARTICLE_APPROVE_ROLES,
   ARTICLE_DOCUMENT_WRITE_ROLES,
   ARTICLE_WRITE_ROLES,
 } from "../stock-article.permissions";
@@ -103,10 +109,14 @@ router.use(authenticateToken);
 
 const requireArticleWrite = authorizeRole(...ARTICLE_WRITE_ROLES);
 const requireArticleArchive = authorizeRole(...ARTICLE_ARCHIVE_ROLES);
+const requireArticleApprove = authorizeRole(...ARTICLE_APPROVE_ROLES);
 const requireArticleDocumentWrite = authorizeRole(...ARTICLE_DOCUMENT_WRITE_ROLES);
 
 const requireStockCapability = (capability: StockCapability): RequestHandler => (req, _res, next) => {
-  if (!roleHasStockCapability(req.user?.role, capability)) {
+  if (
+    !requestHasGrantedAccountModuleAccess(req) &&
+    !roleHasStockCapability(req.user?.role, capability)
+  ) {
     next(new HttpError(403, "STOCK_FORBIDDEN", `Stock capability required: ${capability}`));
     return;
   }
@@ -126,9 +136,16 @@ router.post("/matiere-sous-etats", requireArticleWrite, createStockMatiereSousEt
 router.get("/articles", requireStockCapability("read"), listStockArticles);
 router.get("/articles/kpis", requireStockCapability("read"), getStockArticlesKpis);
 router.get("/articles/code-preview", requireStockCapability("read"), previewStockArticleCode);
+// #164 — Aperçu AUTORITAIRE de la référence matière : même générateur que la création.
+router.post("/articles/material-code-preview", requireStockCapability("read"), previewMaterialArticleCode);
+router.get("/articles/export.csv", requireStockCapability("read"), exportStockArticles);
+// #226 — Déclarée AVANT `/articles/:id` : sans cela, « similaires » serait lu
+// comme un identifiant d'article.
+router.get("/articles/similaires", requireStockCapability("read"), listSimilarStockArticles);
 router.post("/articles", requireArticleWrite, createStockArticle);
 router.get("/articles/:id", requireStockCapability("read"), getStockArticle);
 router.patch("/articles/:id", requireArticleWrite, updateStockArticle);
+router.post("/articles/:id/validate", requireArticleApprove, validateStockArticle);
 router.post("/articles/:id/archive", requireArticleArchive, archiveStockArticle);
 router.post("/articles/:id/reactivate", requireArticleArchive, reactivateStockArticle);
 router.get("/articles/:id/versions", requireStockCapability("read"), listStockArticleVersions);
