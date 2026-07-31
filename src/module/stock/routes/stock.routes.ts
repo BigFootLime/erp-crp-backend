@@ -73,6 +73,8 @@ import {
   updateStockLot,
   updateStockLotQuality,
   updateStockMagasin,
+  createHistoricalImport,
+  listConsolidatedInventory,
 } from "../controllers/stock.controller";
 import {
   getArticleDefinitionTechnique,
@@ -124,6 +126,8 @@ const requireStockCapability = (capability: StockCapability): RequestHandler => 
 };
 
 router.get("/analytics", requireStockCapability("read"), getStockAnalytics);
+router.get("/inventory", requireStockCapability("read"), listConsolidatedInventory);
+router.post("/historical-imports", requireStockCapability("movement_create"), createHistoricalImport);
 router.get("/article-categories", requireStockCapability("read"), listStockArticleCategories);
 router.get("/article-families", requireStockCapability("read"), listStockArticleFamilies);
 router.post("/article-families", requireArticleWrite, createStockArticleFamily);
