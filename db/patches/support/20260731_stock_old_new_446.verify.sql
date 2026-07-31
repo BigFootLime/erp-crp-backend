@@ -8,6 +8,7 @@ SELECT current_database() AS database_name, current_user AS database_user, now()
 DO $$
 DECLARE
   v_fixed_store_count integer;
+  v_required_magasin_columns integer;
 BEGIN
   IF to_regclass('public.stock_lot_trace_references') IS NULL
      OR to_regclass('public.stock_trace_code_446_seq') IS NULL THEN
@@ -41,6 +42,19 @@ BEGIN
     RAISE EXCEPTION '#446 verify failed: achat_transforme must be labelled Fourniture Client';
   END IF;
 
+  SELECT count(*) INTO v_required_magasin_columns
+  FROM information_schema.columns
+  WHERE table_schema = 'public'
+    AND table_name = 'magasins'
+    AND (
+      (column_name IN ('code_magasin', 'libelle')
+       AND data_type = 'character varying' AND is_nullable = 'NO')
+      OR (column_name = 'actif' AND data_type = 'boolean')
+    );
+  IF v_required_magasin_columns <> 3 THEN
+    RAISE EXCEPTION '#446 verify failed: required legacy magasin columns are missing or incompatible';
+  END IF;
+
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'warehouses_stock_scope_446_ck')
      OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'magasins_stock_scope_446_ck')
      OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'lots_origin_stock_scope_446_ck')
@@ -52,15 +66,22 @@ BEGIN
   SELECT count(*) INTO v_fixed_store_count
   FROM (
     VALUES
-      ('OLD-PF', 'OLD'), ('OLD-MP', 'OLD'), ('NEW-PF', 'NEW'), ('NEW-MP', 'NEW')
-  ) AS expected(code, stock_scope)
+      ('OLD-PF', 'Base old - Produits finis', 'OLD'),
+      ('OLD-MP', 'Base old - Matieres premieres', 'OLD'),
+      ('NEW-PF', 'Base new - Produits finis', 'NEW'),
+      ('NEW-MP', 'Base new - Matieres premieres', 'NEW')
+  ) AS expected(code, name, stock_scope)
   JOIN public.warehouses warehouse
     ON warehouse.code = expected.code AND warehouse.stock_scope = expected.stock_scope
   JOIN public.magasins magasin
-    ON magasin.code = expected.code
+   ON magasin.code = expected.code
+   AND magasin.code_magasin = expected.code
+   AND magasin.name = expected.name
+   AND magasin.libelle = expected.name
    AND magasin.stock_scope = expected.stock_scope
    AND magasin.warehouse_id = warehouse.id
-   AND magasin.is_active;
+   AND magasin.is_active
+   AND magasin.actif;
 
   IF v_fixed_store_count <> 4 THEN
     RAISE EXCEPTION '#446 verify failed: expected four aligned OLD/NEW warehouses and magasins, found %', v_fixed_store_count;
@@ -111,18 +132,28 @@ ORDER BY indexname;
 
 SELECT
   expected.code,
+  expected.name,
   expected.stock_scope,
   warehouse.id AS warehouse_id,
   magasin.id AS magasin_id,
-  magasin.is_active
+  magasin.code_magasin,
+  magasin.libelle,
+  magasin.is_active,
+  magasin.actif
 FROM (
   VALUES
-    ('OLD-PF', 'OLD'), ('OLD-MP', 'OLD'), ('NEW-PF', 'NEW'), ('NEW-MP', 'NEW')
-) AS expected(code, stock_scope)
+    ('OLD-PF', 'Base old - Produits finis', 'OLD'),
+    ('OLD-MP', 'Base old - Matieres premieres', 'OLD'),
+    ('NEW-PF', 'Base new - Produits finis', 'NEW'),
+    ('NEW-MP', 'Base new - Matieres premieres', 'NEW')
+) AS expected(code, name, stock_scope)
 JOIN public.warehouses warehouse
   ON warehouse.code = expected.code
 JOIN public.magasins magasin
   ON magasin.code = expected.code
+ AND magasin.code_magasin = expected.code
+ AND magasin.name = expected.name
+ AND magasin.libelle = expected.name
 ORDER BY expected.code;
 
 SELECT
