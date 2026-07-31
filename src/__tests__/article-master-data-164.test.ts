@@ -26,6 +26,15 @@ const validPurchasingCases = Array.from({ length: 40 }, (_, index) => ({
     max_stock: index + 10,
     certificate_required: index % 2 === 0,
   },
+  ...(index % 2 === 0
+    ? {
+        fourniture_client: {
+          reference: `CLIENT-${index}`,
+          indice: "A",
+          numero_client: "001",
+        },
+      }
+    : {}),
 }))
 
 const validMaterialCases = Array.from({ length: 20 }, (_, index) => ({

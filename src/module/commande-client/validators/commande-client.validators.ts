@@ -228,6 +228,8 @@ export const commandeWorkflowStatusSchema = z.enum([
   "BROUILLON",
   "EN_ANALYSE",
   "ATTENTE_TECHNIQUE",
+  "ATTENTE_STOCK",
+  "ATTENTE_OF",
   "ATTENTE_PLANNING",
   "PLANNING_VALIDE",
   "AR_PRET",
@@ -476,6 +478,7 @@ export const generateAffairesV3Schema = z
               .object({
                 commande_ligne_id: z.coerce.number().int().positive(),
                 qty_ship_now: z.coerce.number().min(0),
+                qty_to_produce: z.coerce.number().min(0).optional(),
               })
               .strict()
           )

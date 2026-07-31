@@ -2,10 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   createInventorySessionSchema,
+  createArticleSchema,
   createLotGenealogySchema,
   createMovementSchema,
   postMovementSchema,
   upsertInventoryLineSchema,
+  historicalImportSchema,
+  listConsolidatedInventoryQuerySchema,
 } from "./stock.validators";
 import {
   createStockReservationSchema,
@@ -18,6 +21,42 @@ const UUID_B = "22222222-2222-4222-8222-222222222222";
 const UUID_C = "33333333-3333-4333-8333-333333333333";
 
 describe("#225 stock validators", () => {
+  it("requires Fourniture Client identification only for achat_transforme", () => {
+    const base = {
+      designation: "Brut fourni par le client",
+      article_category: "achat",
+      article_categories: ["achat_transforme"],
+      family_code: "ACH",
+    };
+
+    expect(createArticleSchema.safeParse({ body: base }).success).toBe(false);
+    expect(createArticleSchema.safeParse({
+      body: {
+        ...base,
+        fourniture_client: { reference: "045/10", indice: "A", numero_client: "001" },
+      },
+    }).success).toBe(true);
+    expect(createArticleSchema.safeParse({
+      body: {
+        ...base,
+        article_categories: ["achat_revente"],
+        fourniture_client: { reference: "045/10", indice: "A", numero_client: "001" },
+      },
+    }).success).toBe(false);
+  });
+
+  it("validates the OLD historical import contract and consolidated inventory filters", () => {
+    expect(historicalImportSchema.safeParse({ body: {
+      kind: "PF", client_number: "CLI-01", reference: "PLAN-42", designation: "Pièce reprise", quantity: 2,
+      of_affaire_refs: ["OF-1"], mp_lot_refs: [], traitement_lot_refs: [],
+    } }).success).toBe(true);
+    expect(historicalImportSchema.safeParse({ body: { kind: "MP", quantity: 1, lot_number: "F-1" } }).success).toBe(false);
+    expect(historicalImportSchema.safeParse({ body: {
+      kind: "MP", article_id: UUID_A, quantity: 1, lot_number: "F-1", unexpected: true,
+    } }).success).toBe(false);
+    expect(listConsolidatedInventoryQuerySchema.safeParse({ scope: "OLD", sortBy: "lot_code", sortDir: "desc" }).success).toBe(true);
+    expect(listConsolidatedInventoryQuerySchema.safeParse({ scope: "ARCHIVE" }).success).toBe(false);
+  });
   const movementCases: Array<{
     name: string;
     body: Record<string, unknown>;

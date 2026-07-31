@@ -346,6 +346,101 @@ describe("/api/v1/stock", () => {
     ).toBe(false);
   });
 
+  it("PATCH /api/v1/stock/articles/:id persists Fourniture Client fields and returns them", async () => {
+    const articleId = "11111111-1111-1111-1111-111111111111";
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const q = String(sql);
+      if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
+      if (q.includes("FROM public.articles") && q.includes("FOR UPDATE")) {
+        return {
+          rows: [{
+            id: articleId,
+            code: "ACH-CLIENT-001",
+            designation: "Brut client",
+            article_type: "PURCHASED",
+            article_category: "achat",
+            article_categories: ["achat_transforme"],
+            root_article_id: articleId,
+            version_number: 1,
+            plan_index: 1,
+            status: "VALIDE",
+            projet_id: null,
+            family_code: "ACH",
+            piece_technique_id: null,
+            stock_managed: true,
+            lot_tracking: true,
+            row_version: 3,
+            designation_secondary: null,
+            is_sold: false,
+          }],
+        };
+      }
+      if (q.includes("UPDATE public.articles_achat SET reference_client")) return { rows: [] };
+      if (q.includes("UPDATE public.articles")) return { rows: [{ id: articleId }] };
+      return { rows: [] };
+    });
+    mocks.poolQuery.mockImplementation(async (sql: unknown) => {
+      const q = String(sql);
+      if (q.includes("FROM public.articles a") && q.includes("LEFT JOIN public.articles_achat aa")) {
+        return {
+          rows: [{
+            id: articleId,
+            root_article_id: articleId,
+            parent_article_id: null,
+            version_number: 1,
+            plan_index: 1,
+            status: "VALIDE",
+            projet_id: null,
+            code: "ACH-CLIENT-001",
+            designation: "Brut client",
+            designation_secondary: null,
+            article_type: "PURCHASED",
+            article_category: "achat",
+            article_categories: ["achat_transforme"],
+            family_code: "ACH",
+            stock_managed: true,
+            piece_technique_id: null,
+            piece_code: null,
+            piece_designation: null,
+            unite: "u",
+            lot_tracking: true,
+            is_sold: false,
+            is_active: true,
+            row_version: 4,
+            archived_at: null,
+            archive_reason: null,
+            applicable_version: null,
+            notes: null,
+            article_matiere: null,
+            fourniture_client: { reference: "REF-CLIENT", indice: "B", numero_client: "001" },
+            qty_available: 0,
+            qty_reserved: 0,
+            qty_total: 0,
+            locations_count: 0,
+            updated_at: "2026-07-31T08:00:00.000Z",
+            created_at: "2026-07-30T08:00:00.000Z",
+          }],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const res = await request(app)
+      .patch(`/api/v1/stock/articles/${articleId}`)
+      .set("Authorization", "Bearer fake")
+      .send({
+        expected_row_version: 3,
+        fourniture_client: { reference: "REF-CLIENT", indice: "B", numero_client: "001" },
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.fourniture_client).toEqual({ reference: "REF-CLIENT", indice: "B", numero_client: "001" });
+    const update = mocks.clientQuery.mock.calls.find((call) =>
+      String(call[0]).includes("UPDATE public.articles_achat SET reference_client")
+    );
+    expect(update?.[1]).toEqual([articleId, "REF-CLIENT", "B", "001"]);
+  });
+
   it("POST /api/v1/stock/articles persists article_matiere payload", async () => {
     mocks.clientQuery.mockImplementation(async (sql: unknown) => {
       const q = String(sql);

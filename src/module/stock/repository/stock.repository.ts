@@ -9,6 +9,7 @@ import {
   generateArticleBusinessCode,
   generateFabricatedArticleBusinessCode,
   generateTransactionalBusinessCode,
+  generatePieceTechniqueBusinessCode,
 } from "../../../shared/codes/code-generator.service";
 import {
   assertMaterialPreviewFresh,
@@ -66,6 +67,8 @@ import type {
   StockMovementEvent,
   StockMovementLineDetail,
   StockMovementListItem,
+  HistoricalStockImport,
+  ConsolidatedInventoryRow,
 } from "../types/stock.types";
 import type {
   ArticleCategoryDTO,
@@ -109,6 +112,8 @@ import type {
   UpdateLotQualityBodyDTO,
   CreateLotGenealogyBodyDTO,
   UpdateMagasinBodyDTO,
+  HistoricalImportBodyDTO,
+  ListConsolidatedInventoryQueryDTO,
 } from "../validators/stock.validators";
 
 export type AuditContext = {
@@ -1419,6 +1424,7 @@ export async function syncArticleSubtypeDetails(
     family_code: string;
     piece_technique_id: string | null;
     article_matiere?: CreateArticleBodyDTO["article_matiere"];
+    fourniture_client?: CreateArticleBodyDTO["fourniture_client"] | UpdateArticleBodyDTO["fourniture_client"];
   }
 ) {
   await ensureArticleFamilyEntry(client, args.category, args.family_code);
@@ -1571,6 +1577,13 @@ export async function syncArticleSubtypeDetails(
     `,
     [args.article_id, args.family_code]
   );
+
+  if (args.category === "achat" && args.fourniture_client) {
+    await client.query(
+      `UPDATE public.articles_achat SET reference_client = $2, indice_client = $3, numero_client = $4, updated_at = now() WHERE article_id = $1::uuid`,
+      [args.article_id, args.fourniture_client.reference, args.fourniture_client.indice ?? null, args.fourniture_client.numero_client]
+    );
+  }
 }
 
 async function tableColumnExists(
@@ -2834,6 +2847,15 @@ export async function repoGetArticle(id: string, includeCosts = false): Promise<
              'largeur_plat_mm', am.largeur_plat_mm
            )
          END AS article_matiere,
+         CASE
+           WHEN ${normalizedArticleCategorySql("a.article_category")} <> 'achat' OR aa.article_id IS NULL THEN NULL
+           WHEN aa.reference_client IS NULL OR aa.numero_client IS NULL THEN NULL
+           ELSE jsonb_build_object(
+             'reference', aa.reference_client,
+             'indice', aa.indice_client,
+             'numero_client', aa.numero_client
+           )
+         END AS fourniture_client,
          COALESCE(bs.qty_available, 0)::float8 AS qty_available,
          COALESCE(bs.qty_reserved, 0)::float8 AS qty_reserved,
          COALESCE(bs.qty_total, 0)::float8 AS qty_total,
@@ -2845,6 +2867,8 @@ export async function repoGetArticle(id: string, includeCosts = false): Promise<
          ON pt.id = a.piece_technique_id
        LEFT JOIN public.articles_matiere am
          ON am.article_id = a.id
+       LEFT JOIN public.articles_achat aa
+         ON aa.article_id = a.id
        LEFT JOIN LATERAL (
          SELECT v.id, v.indice, v.statut, v.plan_reference, v.date_application::text AS date_application
          FROM public.piece_technique_versions v
@@ -3215,7 +3239,8 @@ export async function repoCreateArticleTx(
     category: normalized.article_category,
     family_code: normalized.family_code,
     piece_technique_id: normalized.piece_technique_id,
-    article_matiere: body.article_matiere,
+      article_matiere: body.article_matiere,
+      fourniture_client: body.fourniture_client,
   });
   await syncArticleProcurementProfile(client, id, body.procurement, audit.user_id);
 
@@ -3546,6 +3571,7 @@ export async function repoUpdateArticle(
       family_code: normalized.family_code,
       piece_technique_id: normalized.piece_technique_id,
       article_matiere: patch.article_matiere,
+      fourniture_client: patch.fourniture_client,
     });
     await syncArticleProcurementProfile(client, id, patch.procurement, audit.user_id);
 
@@ -5222,6 +5248,179 @@ export async function repoCreateLotGenealogy(
   } finally {
     client.release();
   }
+}
+
+/** Read model used by the singular, consolidated inventory screen. Count sessions
+ * remain under /inventory-sessions and are deliberately not folded into it. */
+export async function repoListConsolidatedInventory(
+  filters: ListConsolidatedInventoryQueryDTO
+): Promise<Paginated<ConsolidatedInventoryRow>> {
+  const page = filters.page ?? 1;
+  const pageSize = filters.pageSize ?? 100;
+  const offset = (page - 1) * pageSize;
+  const values: unknown[] = [];
+  const where: string[] = [];
+  const push = (value: unknown) => { values.push(value); return `$${values.length}`; };
+
+  if (filters.scope) where.push(`COALESCE(m.stock_scope, w.stock_scope, 'NEW') = ${push(filters.scope)}`);
+  if (filters.magasin_id) where.push(`e.magasin_id = ${push(filters.magasin_id)}::uuid`);
+  if (filters.rayon) where.push(`e.code ILIKE ${push(normalizeLikeQuery(filters.rayon))}`);
+  if (filters.lot) where.push(`COALESCE(l.lot_code, '') ILIKE ${push(normalizeLikeQuery(filters.lot))}`);
+  if (filters.q) {
+    const p = push(normalizeLikeQuery(filters.q));
+    where.push(`(a.code ILIKE ${p} OR a.designation ILIKE ${p} OR COALESCE(l.lot_code, '') ILIKE ${p})`);
+  }
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  const sort = {
+    article_code: "a.code",
+    scope: "COALESCE(m.stock_scope, w.stock_scope, 'NEW')",
+    magasin_code: "COALESCE(m.code, m.code_magasin, w.code)",
+    rayon_code: "COALESCE(e.code, loc.code)",
+    lot_code: "l.lot_code",
+    qty_available: "b.qty_available",
+  }[filters.sortBy ?? "article_code"];
+  const direction = sortDirection(filters.sortDir);
+  const fromSql = `
+    FROM public.v_stock_availability_225 b
+    JOIN public.articles a ON a.id = b.article_id
+    JOIN public.warehouses w ON w.id = b.warehouse_id
+    JOIN public.locations loc ON loc.id = b.location_id
+    LEFT JOIN public.emplacements e ON e.location_id = b.location_id
+    LEFT JOIN public.magasins m ON m.id = e.magasin_id
+    LEFT JOIN public.lots l ON l.id = b.lot_id
+  `;
+  const count = await db.query<{ total: number }>(`SELECT COUNT(*)::int AS total ${fromSql} ${whereSql}`, values);
+  const rows = await db.query<ConsolidatedInventoryRow>(
+    `SELECT
+       b.article_id::text AS article_id, a.code AS article_code, a.designation AS article_designation,
+       COALESCE(m.stock_scope, w.stock_scope, 'NEW')::text AS scope,
+       COALESCE(m.id, '00000000-0000-0000-0000-000000000000')::text AS magasin_id,
+       COALESCE(m.code, m.code_magasin, w.code)::text AS magasin_code,
+       COALESCE(e.code, loc.code)::text AS rayon_code,
+       b.lot_id::text AS lot_id, l.lot_code, l.stock_trace_code::text AS stock_trace_code, l.qr_payload,
+       b.qty_total::float8 AS qty_total, b.qty_reserved::float8 AS qty_reserved,
+       b.qty_available::float8 AS qty_available, b.updated_at::text AS updated_at
+     ${fromSql} ${whereSql}
+     ORDER BY ${sort} ${direction}, a.code ASC
+     LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+    [...values, pageSize, offset]
+  );
+  return { items: rows.rows, total: count.rows[0]?.total ?? 0 };
+}
+
+async function ensureHistoricalPositionTx(client: PoolClient, kind: "PF" | "MP", shelf: string, audit: AuditContext) {
+  const magasinCode = `OLD-${kind}`;
+  const magasin = await client.query<{ id: string; warehouse_id: string | null; code: string }>(`SELECT id::text AS id, warehouse_id::text AS warehouse_id, COALESCE(code, code_magasin)::text AS code FROM public.magasins WHERE code = $1::citext FOR UPDATE`, [magasinCode]);
+  const magasinId = magasin.rows[0]?.id;
+  if (!magasinId) throw new HttpError(503, "STOCK_SCHEMA_UPGRADE_REQUIRED", "Les magasins OLD-PF et OLD-MP doivent être créés par le patch #446.");
+  let emplacement = await client.query<{ id: number }>(`SELECT id::int AS id FROM public.emplacements WHERE magasin_id = $1::uuid AND code = $2 FOR UPDATE`, [magasinId, shelf]);
+  let emplacementId = emplacement.rows[0]?.id;
+  if (!emplacementId) {
+    emplacement = await client.query<{ id: number }>(
+      `INSERT INTO public.emplacements (magasin_id, code, name, is_scrap, is_active, location_type, allow_inbound, allow_outbound, restrictions, created_by, updated_by)
+       VALUES ($1::uuid,$2,$2,false,true,'STORAGE',true,true,'{}'::jsonb,$3,$3) RETURNING id::int AS id`,
+      [magasinId, shelf, audit.user_id]
+    );
+    emplacementId = emplacement.rows[0]?.id;
+  }
+  if (!emplacementId) throw new Error("Unable to create historical shelf");
+  const warehouseId = magasin.rows[0]?.warehouse_id;
+  if (!warehouseId) throw new HttpError(503, "STOCK_SCHEMA_UPGRADE_REQUIRED", "Le magasin OLD doit être lié à son entrepôt.");
+  const locationCode = `${magasin.rows[0]?.code}-${shelf}`;
+  let locationId = (await client.query<{ id: string }>(`SELECT id::text AS id FROM public.locations WHERE warehouse_id=$1::uuid AND code=$2::citext LIMIT 1`, [warehouseId, locationCode])).rows[0]?.id;
+  if (!locationId) {
+    locationId = (await client.query<{ id: string }>(`INSERT INTO public.locations (warehouse_id, code, description) VALUES ($1::uuid,$2::citext,$3) RETURNING id::text AS id`, [warehouseId, locationCode, `Emplacement ${shelf}`])).rows[0]?.id;
+  }
+  if (!locationId) throw new Error("Unable to create historical stock location");
+  await client.query(`UPDATE public.emplacements SET location_id=$2::uuid, updated_at=now(), updated_by=$3 WHERE id=$1::bigint AND location_id IS NULL`, [emplacementId, locationId, audit.user_id]);
+  const map = await getEmplacementMapping(client, magasinId, emplacementId, "dst");
+  return { magasinId, emplacementId, ...map };
+}
+
+async function ensureHistoricalPieceTechniqueTx(client: PoolClient, input: { clientNumber: string; reference: string; indice: string | null; designation: string }, audit: AuditContext) {
+  const customer = await client.query<{ client_id: string; client_code: string; company_name: string | null }>(
+    `SELECT client_id::text AS client_id, client_code, company_name FROM public.clients WHERE client_code = $1 OR client_id = $1 LIMIT 1 FOR UPDATE`, [input.clientNumber]
+  );
+  const c = customer.rows[0];
+  if (!c) throw new HttpError(422, "CLIENT_NOT_FOUND", "Le numéro client doit correspondre à un client existant.");
+  const indice = input.indice?.trim() || "NA";
+  const code = await generatePieceTechniqueBusinessCode(client, { clientId: c.client_id, planReference: input.reference, indiceExterne: indice });
+  await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`historical-pt:${code}`]);
+  const existing = await client.query<{ id: string }>(`SELECT id::text AS id FROM public.pieces_techniques WHERE code_piece = $1 LIMIT 1`, [code]);
+  if (existing.rows[0]?.id) return existing.rows[0].id;
+  const id = crypto.randomUUID();
+  await client.query(
+    `INSERT INTO public.pieces_techniques (id, root_piece_technique_id, version_number, client_id, created_by, updated_by, famille_id, name_piece, code_piece, designation, prix_unitaire, statut, en_fabrication, code_client, client_name)
+     VALUES ($1::uuid,$1::uuid,1,$2,$3,$3,NULL,$4,$5,$4,0,'EN_DEVIS',0,$6,$7)`,
+    [id, c.client_id, audit.user_id, input.designation, code, c.client_code, c.company_name]
+  );
+  await client.query(
+    `INSERT INTO public.piece_technique_versions (piece_technique_id, indice, plan_reference, indice_externe_original, indice_externe_normalise, version_interne, code_metier, statut, is_current, raison_changement, motif_modification, created_by, updated_by)
+     VALUES ($1::uuid,$2,$3,$4,$2,1,$5,'BROUILLON',false,'Reprise historique OLD','Reprise historique OLD',$6,$6)`,
+    [id, indice, input.reference, input.indice ?? null, code, audit.user_id]
+  );
+  await client.query(`INSERT INTO public.pieces_techniques_historique (piece_technique_id, user_id, ancien_statut, nouveau_statut, commentaire) VALUES ($1::uuid,$2,NULL,'EN_DEVIS','Création par reprise historique OLD')`, [id, audit.user_id]);
+  return id;
+}
+
+export async function repoCreateHistoricalImport(body: HistoricalImportBodyDTO, audit: AuditContext, idempotencyKey: string): Promise<HistoricalStockImport> {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const command = await beginStockCommand(client, { audit, idempotency_key: idempotencyKey, command_type: "MOVEMENT_CREATE", request_payload: { historical_import: body } });
+    if (command.existing) {
+      const data = command.existing.result_payload as HistoricalStockImport | null;
+      if (!data) throw new Error("Historical import receipt has no result");
+      await client.query("COMMIT");
+      return { ...data, replayed: true };
+    }
+    let articleId: string;
+    let shelf: string;
+    if (body.kind === "MP") {
+      if (body.article_id) articleId = body.article_id;
+      else if (body.article) articleId = (await repoCreateArticleTx(client, body.article, audit)).id;
+      else throw new HttpError(400, "ARTICLE_REQUIRED", "Article matière requis.");
+      const a = await client.query<{ category: string; nuance: string | null }>(`SELECT a.article_category::text AS category, n.code AS nuance FROM public.articles a LEFT JOIN public.articles_matiere am ON am.article_id=a.id LEFT JOIN public.matiere_nuances n ON n.id=am.nuance_id WHERE a.id=$1::uuid FOR UPDATE`, [articleId]);
+      if (a.rows[0]?.category !== "matiere") throw new HttpError(422, "MP_ARTICLE_REQUIRED", "L'import MP requiert un article matière première.");
+      shelf = a.rows[0]?.nuance?.trim() || "SANS-NUANCE";
+    } else {
+      const ptId = await ensureHistoricalPieceTechniqueTx(client, { clientNumber: body.client_number, reference: body.reference, indice: body.indice ?? null, designation: body.designation }, audit);
+      const existing = await client.query<{ id: string }>(`SELECT id::text AS id FROM public.articles WHERE piece_technique_id=$1::uuid LIMIT 1 FOR UPDATE`, [ptId]);
+      if (existing.rows[0]?.id) articleId = existing.rows[0].id;
+      else {
+        const family = body.family_code ?? (await client.query<{ code: string }>(`SELECT code FROM public.article_families WHERE category='fabrique' AND is_active=true ORDER BY code LIMIT 1`)).rows[0]?.code;
+        if (!family) throw new HttpError(422, "PF_FAMILY_REQUIRED", "Aucune famille active de produits fabriqués n'est disponible.");
+        articleId = (await repoCreateArticleTx(client, { designation: body.designation, article_type: "PIECE_TECHNIQUE", article_category: "fabrique", article_categories: ["piece_finie_fabriquee"], family_code: family, piece_technique_id: ptId, stock_managed: true, lot_tracking: true, is_sold: true, is_active: true, status: "VALIDE" }, audit)).id;
+      }
+      shelf = body.client_number.trim();
+    }
+    await ensureArticleStockManaged(client, articleId);
+    const position = await ensureHistoricalPositionTx(client, body.kind, shelf, audit);
+    const lotCode = await generateTransactionalBusinessCode(client, { prefix: "LOT" });
+    const traceSequence = await client.query<{ value: string }>(`SELECT nextval('public.stock_trace_code_446_seq')::text AS value`);
+    const trace = (traceSequence.rows[0]?.value ?? "0").padStart(6, "0");
+    const lot = await client.query<{ id: string }>(`INSERT INTO public.lots (article_id, lot_code, supplier_lot_code, notes, stock_trace_code, qr_payload, origin_stock_scope, created_by, updated_by) VALUES ($1::uuid,$2,$3,$4,$5,$6,'OLD',$7,$7) RETURNING id::text AS id`, [articleId, lotCode, body.kind === "MP" ? body.lot_number : null, body.notes ?? null, trace, `CERP-STOCK:${trace}`, audit.user_id]);
+    const lotId = lot.rows[0]?.id;
+    if (!lotId) throw new Error("Unable to create historical lot");
+    const refs: Array<["OF" | "MP_LOT" | "TRAITEMENT_LOT", string[]]> = body.kind === "PF"
+      ? [["OF", body.of_affaire_refs], ["MP_LOT", body.mp_lot_refs], ["TRAITEMENT_LOT", body.traitement_lot_refs]]
+      : [["MP_LOT", [body.lot_number]]];
+    for (const [type, values] of refs) for (const value of values) await client.query(`INSERT INTO public.stock_lot_trace_references (lot_id, reference_type, reference_value, created_by) VALUES ($1::uuid,$2,$3,$4) ON CONFLICT DO NOTHING`, [lotId, type, value, audit.user_id]);
+    const unitId = await resolveUnitIdForArticle(client, articleId, body.kind === "MP" ? body.unite ?? null : null);
+    const levelId = await ensureStockLevel(client, { article_id: articleId, unit_id: unitId, warehouse_id: position.warehouse_id, location_id: position.location_id, actor_user_id: audit.user_id });
+    const batchId = await ensureStockBatchId(client, { stock_level_id: levelId, lot_id: lotId });
+    const movementNo = await reserveMovementNo(client);
+    const movement = await client.query<{ id: string }>(`INSERT INTO public.stock_movements (movement_no,movement_type,status,article_id,stock_level_id,stock_batch_id,qty,currency,effective_at,posted_at,posted_by,source_document_type,reason_code,notes,correlation_id,user_id,created_by,updated_by) VALUES ($1,'IN','POSTED',$2::uuid,$3::uuid,$4::uuid,$5,'EUR',now(),now(),$6,'CERP_HISTORICAL_OPENING','HISTORICAL_OPENING',$7,$8::uuid,$6,$6,$6) RETURNING id::text AS id`, [movementNo, articleId, levelId, batchId, body.quantity, audit.user_id, body.notes ?? null, command.correlation_id]);
+    const movementId = movement.rows[0]?.id;
+    if (!movementId) throw new Error("Unable to post historical opening movement");
+    await client.query(`INSERT INTO public.stock_movement_lines (movement_id,line_no,article_id,lot_id,qty,unite,dst_magasin_id,dst_emplacement_id,created_by,updated_by) VALUES ($1::uuid,1,$2::uuid,$3::uuid,$4,$5,$6::uuid,$7::bigint,$8,$8)`, [movementId, articleId, lotId, body.quantity, body.kind === "MP" ? body.unite ?? null : null, position.magasinId, position.emplacementId, audit.user_id]);
+    await insertMovementEvent(client, { movement_id: movementId, event_type: "CREATED_POSTED", old_values: null, new_values: { status: "POSTED", source: "CERP_HISTORICAL_OPENING" }, user_id: audit.user_id });
+    const result: HistoricalStockImport = { article_id: articleId, lot_id: lotId, movement_id: movementId, stock_trace_code: trace, qr_payload: `CERP-STOCK:${trace}`, replayed: false };
+    await insertAuditLog(client, audit, { action: "stock.historical-import.create", entity_type: "stock_movements", entity_id: movementId, details: { kind: body.kind, article_id: articleId, lot_id: lotId, stock_scope: "OLD" } });
+    await completeStockCommand(client, { audit, command, command_type: "MOVEMENT_CREATE", resource_type: "stock_movement", resource_id: movementId, result_payload: result });
+    await client.query("COMMIT");
+    return result;
+  } catch (err) { await client.query("ROLLBACK"); throw err; } finally { client.release(); }
 }
 
 export async function repoListBalances(filters: ListBalancesQueryDTO): Promise<Paginated<StockBalanceRow>> {

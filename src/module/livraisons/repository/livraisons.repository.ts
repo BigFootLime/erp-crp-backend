@@ -2282,10 +2282,16 @@ export async function repoUpdateLivraisonStatus(
   }
 }
 
-export async function repoCreateLivraisonFromCommande(commandeId: number, userId: number): Promise<{ id: string }> {
-  const db = await pool.connect()
+export async function repoCreateLivraisonFromCommande(
+  commandeId: number,
+  userId: number,
+  transaction?: PoolClient,
+  quantitiesByCommandeLine?: ReadonlyMap<number, number>
+): Promise<{ id: string }> {
+  const ownsTransaction = transaction === undefined
+  const db = transaction ?? await pool.connect()
   try {
-    await db.query("BEGIN")
+    if (ownsTransaction) await db.query("BEGIN")
 
     const cmdRes = await db.query<{ id: number; numero: string; client_id: string }>(
       `SELECT id, numero, client_id FROM commande_client WHERE id = $1`,
@@ -2383,7 +2389,23 @@ export async function repoCreateLivraisonFromCommande(commandeId: number, userId
       `,
       [commandeId]
     )
-    const lignes = lignesRes.rows
+    const lignes = lignesRes.rows.flatMap((line) => {
+      const requestedQuantity = quantitiesByCommandeLine
+        ? Number(quantitiesByCommandeLine.get(line.id) ?? 0)
+        : Number(line.quantite)
+      if (!Number.isFinite(requestedQuantity) || requestedQuantity < 0) {
+        throw new HttpError(400, "INVALID_DELIVERY_QUANTITY", `Quantité de BL invalide pour la ligne ${line.id}.`)
+      }
+      if (requestedQuantity <= 1e-9) return []
+      if (requestedQuantity > Number(line.quantite) + 1e-9) {
+        throw new HttpError(
+          409,
+          "DELIVERY_QUANTITY_EXCEEDS_REMAINDER",
+          `La quantité de BL dépasse le reliquat de la ligne ${line.id}.`
+        )
+      }
+      return [{ ...line, quantite: requestedQuantity }]
+    })
     if (!lignes.length) {
       throw new HttpError(
         409,
@@ -2410,13 +2432,13 @@ export async function repoCreateLivraisonFromCommande(commandeId: number, userId
       new_values: { id, numero, commande_id: cmd.id, commande_numero: cmd.numero },
     })
 
-    await db.query("COMMIT")
+    if (ownsTransaction) await db.query("COMMIT")
     return { id }
   } catch (err) {
-    await db.query("ROLLBACK")
+    if (ownsTransaction) await db.query("ROLLBACK")
     throw err
   } finally {
-    db.release()
+    if (ownsTransaction) db.release()
   }
 }
 

@@ -51,6 +51,8 @@ import {
   updateLotSchema,
   updateLotQualitySchema,
   updateMagasinSchema,
+  historicalImportSchema,
+  listConsolidatedInventoryQuerySchema,
   type CreateInventorySessionBodyDTO,
   type CreateArticleBodyDTO,
   type CreateArticleFamilyBodyDTO,
@@ -81,6 +83,8 @@ import {
   type UpsertInventoryLineBodyDTO,
   type InventorySessionActionBodyDTO,
   type CancelInventorySessionBodyDTO,
+  type HistoricalImportBodyDTO,
+  type ListConsolidatedInventoryQueryDTO,
 } from "../validators/stock.validators";
 import { roleHasStockCapability } from "../domain/stock-rbac";
 import type { AuditContext } from "../repository/stock.repository";
@@ -151,6 +155,8 @@ import {
   createStockMatiereEtatSVC,
   createStockMatiereNuanceSVC,
   createStockMatiereSousEtatSVC,
+  createHistoricalImportSVC,
+  listConsolidatedInventorySVC,
 } from "../services/stock.service";
 import { canViewArticleCosts } from "../stock-article.permissions";
 import { removeTemporaryArticleDocuments, validateArticleDocuments } from "../services/article-document-validation";
@@ -164,6 +170,25 @@ export const listStockInventorySessions: RequestHandler = async (req, res, next)
     }
     const out = await listStockInventorySessionsSVC(parsed.data);
     res.json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const listConsolidatedInventory: RequestHandler = async (req, res, next) => {
+  try {
+    const filters: ListConsolidatedInventoryQueryDTO = listConsolidatedInventoryQuerySchema.parse(req.query);
+    res.json(await listConsolidatedInventorySVC(filters));
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const createHistoricalImport: RequestHandler = async (req, res, next) => {
+  try {
+    const body: HistoricalImportBodyDTO = historicalImportSchema.parse({ body: req.body }).body;
+    const out = await createHistoricalImportSVC(body, buildAuditContext(req), getRequiredIdempotencyKey(req));
+    res.status(201).json(out);
   } catch (err) {
     next(err);
   }
