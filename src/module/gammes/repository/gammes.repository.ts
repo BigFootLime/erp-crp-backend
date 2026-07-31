@@ -158,6 +158,237 @@ export async function repoCreateGamme(versionId: string, body: CreateGammeBodyDT
   }
 }
 
+/* -------------------------------------------------------------------------- */
+/* #433 — Préparer une RÉVISION d'une gamme figée                             */
+/* -------------------------------------------------------------------------- */
+
+async function columnExists(
+  tx: Pick<PoolClient, "query">,
+  table: string,
+  column: string
+): Promise<boolean> {
+  const res = await tx.query<{ present: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2
+     ) AS present`,
+    [table, column]
+  )
+  return Boolean(res.rows[0]?.present)
+}
+
+/**
+ * Colonnes à recopier d'une ligne à l'autre : tout SAUF l'identité et les
+ * traces d'écriture, qui doivent être neuves.
+ *
+ * La liste est lue dans le catalogue plutôt qu'écrite en dur : une colonne
+ * ajoutée plus tard aux opérations (un référentiel Méthodes, un temps, un lien
+ * de finition) est reprise automatiquement. Une liste figée aurait perdu cette
+ * donnée en silence, ce qui est exactement ce qu'une révision ne doit pas faire.
+ */
+async function copyableColumns(
+  tx: Pick<PoolClient, "query">,
+  table: string,
+  excluded: string[]
+): Promise<string[]> {
+  const res = await tx.query<{ column_name: string }>(
+    `SELECT column_name
+       FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = $1
+        AND is_generated = 'NEVER'
+        AND column_name <> ALL($2::text[])
+      ORDER BY ordinal_position`,
+    [table, excluded]
+  )
+  return res.rows.map((row) => row.column_name)
+}
+
+export type GammeRevisionResult = { gamme: GammeRow; operations_copied: number; replayed: boolean }
+
+/**
+ * Duplique une gamme et ses opérations dans un NOUVEAU BROUILLON.
+ *
+ * Pourquoi ce point d'entrée existe
+ * ---------------------------------
+ * Une gamme `APPLICABLE` est volontairement immuable : les OF lancés et les
+ * snapshots historiques s'appuient dessus. « Ajouter une opération » y est donc
+ * grisé — sans issue. Cette opération donne la suite : repartir de la définition
+ * figée dans un brouillon modifiable.
+ *
+ * Garanties
+ * ---------
+ * · atomique — une seule transaction, entête + opérations + liens de finition ;
+ * · fidèle — phases, ordre, référentiels, temps et taux gelés sont recopiés ;
+ * · non destructive — la gamme source n'est PAS touchée, la gamme courante non
+ *   plus (le brouillon n'est jamais `is_current`) ;
+ * · idempotente — la même `Idempotency-Key` rend la même révision ;
+ * · auditée.
+ */
+export async function repoCreateGammeRevision(
+  gammeId: string,
+  body: { expected_updated_at?: string | null; nom?: string | null },
+  audit: AuditContext,
+  idempotencyKey?: string | null
+): Promise<GammeRevisionResult> {
+  const client = await db.connect()
+  try {
+    await client.query("BEGIN")
+
+    const lineageReady =
+      (await columnExists(client, "gammes", "source_gamme_id"))
+      && (await columnExists(client, "gammes", "revision_idempotency_key"))
+    if (!lineageReady) {
+      throw new HttpError(
+        503,
+        "GAMME_REVISION_SCHEMA_UPGRADE_REQUIRED",
+        "Le patch additif 20260731_gamme_revision_lineage doit être appliqué sur cet environnement avant de préparer une révision de gamme."
+      )
+    }
+
+    const sourceRes = await client.query<{
+      id: string
+      piece_technique_version_id: string
+      nom: string | null
+      code: string | null
+      designation: string | null
+      commentaire: string | null
+      statut: GammeStatutDTO
+      updated_at: string
+    }>(
+      `SELECT id::text AS id, piece_technique_version_id::text AS piece_technique_version_id,
+              nom, code, designation, commentaire, statut, updated_at::text AS updated_at
+         FROM public.gammes WHERE id = $1 FOR UPDATE`,
+      [gammeId]
+    )
+    const source = sourceRes.rows[0]
+    if (!source) {
+      await client.query("ROLLBACK").catch(() => {})
+      throw new HttpError(404, "NOT_FOUND", "Gamme introuvable")
+    }
+
+    // Verrou optimiste : la gamme affichée doit être celle qu'on duplique.
+    if (body.expected_updated_at && body.expected_updated_at !== source.updated_at) {
+      throw new HttpError(409, "CONCURRENT_MODIFICATION", "La gamme a été modifiée entre-temps")
+    }
+
+    // Rejeu : la même clé sur la même gamme source rend la révision déjà créée.
+    if (idempotencyKey) {
+      const replay = await client.query<GammeRow>(
+        `SELECT ${GAMME_COLS} FROM public.gammes
+          WHERE source_gamme_id = $1 AND revision_idempotency_key = $2
+          LIMIT 1`,
+        [gammeId, idempotencyKey]
+      )
+      const existing = replay.rows[0]
+      if (existing) {
+        const counted = await client.query<{ total: string }>(
+          `SELECT count(*)::text AS total FROM public.pieces_techniques_operations WHERE gamme_id = $1`,
+          [existing.id]
+        )
+        await client.query("COMMIT")
+        return { gamme: existing, operations_copied: Number(counted.rows[0]?.total ?? "0"), replayed: true }
+      }
+    }
+
+    const naming = await readGammeNamingContext(client, source.piece_technique_version_id)
+    const nom = resolveGammeName(body.nom ?? null, naming)
+
+    // La révision naît BROUILLON et jamais courante : tant qu'elle n'est pas
+    // publiée, la production continue de suivre la gamme applicable.
+    const createdRes = await client.query<GammeRow>(
+      `INSERT INTO public.gammes
+        (piece_technique_version_id, nom, code, designation, commentaire, statut, is_current,
+         source_gamme_id, revision_idempotency_key, created_by, updated_by)
+       VALUES ($1,$2,$3,$4,$5,'BROUILLON',false,$6,$7,$8,$8)
+       RETURNING ${GAMME_COLS}`,
+      [
+        source.piece_technique_version_id,
+        nom,
+        source.code,
+        source.designation,
+        source.commentaire,
+        gammeId,
+        idempotencyKey ?? null,
+        audit.user_id,
+      ]
+    )
+    const created = createdRes.rows[0]
+
+    const opColumns = await copyableColumns(client, "pieces_techniques_operations", [
+      "id",
+      "gamme_id",
+      "created_at",
+      "updated_at",
+      "created_by",
+      "updated_by",
+    ])
+    const opColumnList = opColumns.map((c) => `"${c}"`).join(", ")
+    const copiedOps = await client.query<{ new_id: string; old_id: string }>(
+      `WITH copied AS (
+         INSERT INTO public.pieces_techniques_operations
+           (gamme_id, ${opColumnList}, created_by, updated_by)
+         SELECT $2::uuid, ${opColumns.map((c) => `o."${c}"`).join(", ")}, $3, $3
+           FROM public.pieces_techniques_operations o
+          WHERE o.gamme_id = $1
+          ORDER BY o.ordre ASC, o.phase ASC, o.created_at ASC
+         RETURNING id::text AS new_id, ordre, phase
+       )
+       SELECT c.new_id,
+              (SELECT o.id::text
+                 FROM public.pieces_techniques_operations o
+                WHERE o.gamme_id = $1 AND o.ordre = c.ordre AND o.phase IS NOT DISTINCT FROM c.phase
+                LIMIT 1) AS old_id
+         FROM copied c`,
+      [gammeId, created.id, audit.user_id]
+    )
+
+    // Liens de finition : chaque ligne suit SON opération dupliquée. Une
+    // finition orpheline serait pire qu'absente.
+    const finitionsTable = await client.query<{ present: boolean }>(
+      `SELECT to_regclass('public.gamme_operation_finitions') IS NOT NULL AS present`
+    )
+    if (finitionsTable.rows[0]?.present) {
+      const finitionColumns = await copyableColumns(client, "gamme_operation_finitions", [
+        "id",
+        "gamme_id",
+        "gamme_operation_id",
+        "created_at",
+        "updated_at",
+        "created_by",
+        "updated_by",
+      ])
+      const finitionList = finitionColumns.map((c) => `"${c}"`).join(", ")
+      for (const pair of copiedOps.rows) {
+        if (!pair.old_id) continue
+        await client.query(
+          `INSERT INTO public.gamme_operation_finitions
+             (gamme_id, gamme_operation_id, ${finitionList}, created_by, updated_by)
+           SELECT $2::uuid, $3::uuid, ${finitionColumns.map((c) => `f."${c}"`).join(", ")}, $4, $4
+             FROM public.gamme_operation_finitions f
+            WHERE f.gamme_operation_id = $1::uuid`,
+          [pair.old_id, created.id, pair.new_id, audit.user_id]
+        )
+      }
+    }
+
+    await insertAudit(client, audit, "gammes.revision.create", "gamme", created.id, {
+      source_gamme_id: gammeId,
+      source_statut: source.statut,
+      piece_technique_version_id: source.piece_technique_version_id,
+      operations_copied: copiedOps.rowCount ?? 0,
+    })
+
+    await client.query("COMMIT")
+    return { gamme: created, operations_copied: copiedOps.rowCount ?? 0, replayed: false }
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {})
+    throw e
+  } finally {
+    client.release()
+  }
+}
+
 export async function repoUpdateGamme(gammeId: string, body: UpdateGammeBodyDTO, audit: AuditContext): Promise<GammeRow | null> {
   const client = await db.connect()
   try {

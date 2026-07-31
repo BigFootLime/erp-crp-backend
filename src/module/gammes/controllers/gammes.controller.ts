@@ -6,6 +6,7 @@ import type { AuditContext } from "../../pieces-techniques/repository/pieces-tec
 import {
   addGammeOperationSchema,
   createGammeSchema,
+  createGammeRevisionSchema,
   deleteGammeOperationSchema,
   publishGammeSchema,
   reorderOperationsSchema,
@@ -15,6 +16,7 @@ import {
 import {
   addGammeOperationSVC,
   createGammeSVC,
+  createGammeRevisionSVC,
   deleteGammeOperationSVC,
   gammePublicationReadinessSVC,
   listGammeOperationsSVC,
@@ -87,6 +89,26 @@ export const updateGamme: RequestHandler = async (req, res, next) => {
     const out = await updateGammeSVC(routeParam(req, "gammeId"), body, audit)
     if (!out) throw new HttpError(404, "NOT_FOUND", "Gamme introuvable")
     res.json(out)
+  } catch (err) {
+    next(err)
+  }
+}
+
+/**
+ * #433 — Préparer une révision d'une gamme figée.
+ *
+ * `Idempotency-Key` est FACULTATIVE mais fortement recommandée : sans elle, un
+ * double clic crée deux brouillons. L'écran en fournit une, stable tant que
+ * l'utilisateur reste sur la même gamme.
+ */
+export const createGammeRevision: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildAuditContext(req)
+    const body = createGammeRevisionSchema.parse({ body: req.body }).body
+    const rawKey = req.headers["idempotency-key"]
+    const idempotencyKey = typeof rawKey === "string" && rawKey.trim() ? rawKey.trim().slice(0, 200) : null
+    const out = await createGammeRevisionSVC(routeParam(req, "gammeId"), body, audit, idempotencyKey)
+    res.status(out.replayed ? 200 : 201).json(out)
   } catch (err) {
     next(err)
   }
