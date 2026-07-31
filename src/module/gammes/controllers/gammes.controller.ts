@@ -6,6 +6,7 @@ import type { AuditContext } from "../../pieces-techniques/repository/pieces-tec
 import {
   addGammeOperationSchema,
   createGammeSchema,
+  createGammeRevisionSchema,
   deleteGammeOperationSchema,
   publishGammeSchema,
   reorderOperationsSchema,
@@ -15,6 +16,7 @@ import {
 import {
   addGammeOperationSVC,
   createGammeSVC,
+  createGammeRevisionSVC,
   deleteGammeOperationSVC,
   gammePublicationReadinessSVC,
   listGammeOperationsSVC,
@@ -87,6 +89,33 @@ export const updateGamme: RequestHandler = async (req, res, next) => {
     const out = await updateGammeSVC(routeParam(req, "gammeId"), body, audit)
     if (!out) throw new HttpError(404, "NOT_FOUND", "Gamme introuvable")
     res.json(out)
+  } catch (err) {
+    next(err)
+  }
+}
+
+/**
+ * #433 — Préparer une révision d'une gamme figée.
+ *
+ * `Idempotency-Key` est OBLIGATOIRE : l'API ne doit pas dépendre du seul
+ * comportement de l'écran pour garantir qu'un double clic ou un rejeu après
+ * coupure ne crée pas deux brouillons.
+ */
+export const createGammeRevision: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildAuditContext(req)
+    const body = createGammeRevisionSchema.parse({ body: req.body }).body
+    const rawKey = req.headers["idempotency-key"]
+    const idempotencyKey = typeof rawKey === "string" ? rawKey.trim() : ""
+    if (idempotencyKey.length < 8 || idempotencyKey.length > 200) {
+      throw new HttpError(
+        400,
+        "IDEMPOTENCY_KEY_REQUIRED",
+        "Une clé Idempotency-Key stable de 8 à 200 caractères est obligatoire."
+      )
+    }
+    const out = await createGammeRevisionSVC(routeParam(req, "gammeId"), body, audit, idempotencyKey)
+    res.status(out.replayed ? 200 : 201).json(out)
   } catch (err) {
     next(err)
   }

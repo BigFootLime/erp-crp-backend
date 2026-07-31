@@ -29,6 +29,7 @@ import {
   listArticleFamiliesQuerySchema,
   listMatiereEtatsQuerySchema,
   listMatiereNuancesQuerySchema,
+  previewMaterialArticleCodeSchema,
   listMatiereSousEtatsQuerySchema,
   listBalancesQuerySchema,
   listEmplacementsQuerySchema,
@@ -55,6 +56,7 @@ import {
   type CreateArticleFamilyBodyDTO,
   type CreateMatiereEtatBodyDTO,
   type CreateMatiereNuanceBodyDTO,
+  type PreviewMaterialArticleCodeBodyDTO,
   type CreateMatiereSousEtatBodyDTO,
   type CreateEmplacementBodyDTO,
   type CreateLotBodyDTO,
@@ -113,6 +115,7 @@ import {
   listStockArticleFamiliesSVC,
   listStockMatiereEtatsSVC,
   listStockMatiereNuancesSVC,
+  previewMaterialArticleCodeSVC,
   listStockMatiereSousEtatsSVC,
   getStockLotSVC,
   getStockLotGenealogySVC,
@@ -425,6 +428,23 @@ export const listStockArticleFamilies: RequestHandler = async (req, res, next) =
     }
     const out = await listStockArticleFamiliesSVC(parsed.data);
     res.json({ items: out, total: out.length });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * #164 — Aperçu SERVEUR de la référence matière.
+ *
+ * POST parce que la configuration matière est un objet, pas une chaîne de
+ * requête. La réponse porte `authoritative: true` : contrairement à
+ * `/articles/code-preview`, cette valeur EST celle qui sera enregistrée.
+ */
+export const previewMaterialArticleCode: RequestHandler = async (req, res, next) => {
+  try {
+    const body: PreviewMaterialArticleCodeBodyDTO = previewMaterialArticleCodeSchema.parse({ body: req.body }).body;
+    const out = await previewMaterialArticleCodeSVC(body);
+    res.json({ ...out, authoritative: true, source: "server-generator" });
   } catch (err) {
     next(err);
   }

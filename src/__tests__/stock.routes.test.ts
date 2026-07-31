@@ -363,6 +363,11 @@ describe("/api/v1/stock", () => {
       if (q.includes("INSERT INTO public.articles_matiere")) {
         return { rows: [] };
       }
+      // #164 — La référence matière est DÉRIVÉE par le serveur : il relit
+      // lui-même les codes du référentiel, le navigateur n'envoie que des ids.
+      if (q.includes("FROM public.stock_nuances")) return { rows: [{ code: "ALU" }] };
+      if (q.includes("FROM public.stock_etats")) return { rows: [{ code: "ETAT" }] };
+      if (q.includes("FROM public.stock_sous_etats")) return { rows: [] };
       return { rows: [] };
     });
 
@@ -443,6 +448,18 @@ describe("/api/v1/stock", () => {
     expect(
       mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO public.articles_matiere"))
     ).toBe(true);
+
+    // #164 — Le code enregistré est DÉRIVÉ de la configuration matière, pas
+    // séquencé : aucun `ART-<FAMILLE>-<SEQ6>` n'est alloué pour une matière.
+    const insertArticle = mocks.clientQuery.mock.calls.find((call) =>
+      String(call[0]).includes("INSERT INTO public.articles (")
+    );
+    expect(insertArticle).toBeDefined();
+    const insertedCode = (insertArticle?.[1] as unknown[])?.[1];
+    expect(insertedCode).toBe("MP-PL-ALU-ETAT-50x10x1000");
+    expect(
+      mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("public.fn_next_issued_code_value"))
+    ).toBe(false);
   });
 
   it("POST /api/v1/stock/movements rejects missing lot for lot-tracked article", async () => {

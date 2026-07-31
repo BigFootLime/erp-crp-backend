@@ -44,7 +44,8 @@ export type StockMatiereNuance = {
 export type StockMatiereEtat = {
   id: number;
   code: string;
-  designation: string;
+  /** #164 — Facultative. `null` quand l'état n'est connu que par son code. */
+  designation: string | null;
   unite_achat: number;
   is_active: boolean;
   nuance_ids: number[];
