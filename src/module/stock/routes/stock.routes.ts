@@ -16,6 +16,7 @@ import {
   createStockInventorySession,
   createStockArticle,
   previewStockArticleCode,
+  previewMaterialArticleCode,
   createStockArticleFamily,
   createStockMatiereEtat,
   createStockMatiereNuance,
@@ -135,6 +136,8 @@ router.post("/matiere-sous-etats", requireArticleWrite, createStockMatiereSousEt
 router.get("/articles", requireStockCapability("read"), listStockArticles);
 router.get("/articles/kpis", requireStockCapability("read"), getStockArticlesKpis);
 router.get("/articles/code-preview", requireStockCapability("read"), previewStockArticleCode);
+// #164 — Aperçu AUTORITAIRE de la référence matière : même générateur que la création.
+router.post("/articles/material-code-preview", requireStockCapability("read"), previewMaterialArticleCode);
 router.get("/articles/export.csv", requireStockCapability("read"), exportStockArticles);
 // #226 — Déclarée AVANT `/articles/:id` : sans cela, « similaires » serait lu
 // comme un identifiant d'article.
