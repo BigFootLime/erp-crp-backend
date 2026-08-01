@@ -163,6 +163,134 @@ describe("/api/v1/pieces-techniques", () => {
     expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("SET date_effet = $2::date"))).toBe(true);
   });
 
+  it("freezes document requirements before guided publication makes the version immutable", async () => {
+    const pieceId = "11111111-1111-4111-8111-111111111111";
+    const versionId = "22222222-2222-4222-8222-222222222222";
+    const currentVersion = {
+      id: versionId,
+      piece_technique_id: pieceId,
+      indice: "A",
+      statut: "EN_VALIDATION",
+      updated_at: "2026-08-01T10:00:00.000Z",
+      date_effet: null,
+    };
+
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const query = String(sql);
+      if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK") return { rows: [] };
+      if (query.includes("indice_externe_original") && query.includes("FOR UPDATE")) {
+        return { rows: [currentVersion] };
+      }
+      if (query.includes("to_regclass('public.piece_document_types')")) return { rows: [{ ready: true }] };
+      if (query.includes("FROM public.pieces_techniques p")) {
+        return {
+          rows: [{
+            piece_technique_id: pieceId,
+            code_piece: "PT-001",
+            designation: "Pièce test",
+            client_id: null,
+            client_name: null,
+            piece_critique: false,
+            piece_critique_motif: null,
+            document_policy: "NONE",
+            selected: [],
+            current_version_id: versionId,
+            current_version_indice: "A",
+            current_version_statut: "EN_VALIDATION",
+            frozen_at: null,
+            frozen_policy: null,
+          }],
+        };
+      }
+      if (query.includes("FROM public.pieces_techniques_documents")) return { rows: [] };
+      if (query.includes("FROM public.piece_document_types")) return { rows: [] };
+      if (query.includes("SELECT document_requirements_frozen_at::text AS frozen_at")) {
+        return { rows: [{ frozen_at: null }] };
+      }
+      if (query.includes("statut = 'APPLICABLE',") && query.includes("RETURNING")) {
+        return { rows: [{ ...currentVersion, statut: "APPLICABLE", is_current: true }] };
+      }
+      return { rows: [] };
+    });
+
+    const res = await request(app)
+      .post(`/api/v1/pieces-techniques/${pieceId}/versions/${versionId}/publish`)
+      .send({ expected_updated_at: currentVersion.updated_at });
+
+    expect(res.status).toBe(200);
+    const queries = mocks.clientQuery.mock.calls.map((call) => String(call[0]));
+    const freezeIndex = queries.findIndex((query) => query.includes("SET document_requirements_frozen_at = now()"));
+    const demoteIndex = queries.findIndex((query) => query.includes("SET statut = 'OBSOLETE'"));
+    const promoteIndex = queries.findIndex((query) => query.includes("statut = 'APPLICABLE',") && query.includes("RETURNING"));
+    expect(freezeIndex).toBeGreaterThan(-1);
+    expect(demoteIndex).toBeGreaterThan(freezeIndex);
+    expect(promoteIndex).toBeGreaterThan(demoteIndex);
+  });
+
+  it("freezes document requirements before the legacy status endpoint promotes a version", async () => {
+    const pieceId = "11111111-1111-4111-8111-111111111111";
+    const versionId = "22222222-2222-4222-8222-222222222222";
+    const currentVersion = {
+      id: versionId,
+      piece_technique_id: pieceId,
+      indice: "A",
+      statut: "EN_VALIDATION",
+      updated_at: "2026-08-01T10:00:00.000Z",
+      date_effet: null,
+    };
+    mocks.poolQuery.mockResolvedValue({ rows: [currentVersion] });
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const query = String(sql);
+      if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK") return { rows: [] };
+      if (query.includes("indice_externe_original") && query.includes("FOR UPDATE")) {
+        return { rows: [currentVersion] };
+      }
+      if (query.includes("to_regclass('public.piece_document_types')")) return { rows: [{ ready: true }] };
+      if (query.includes("FROM public.pieces_techniques p")) {
+        return {
+          rows: [{
+            piece_technique_id: pieceId,
+            code_piece: "PT-001",
+            designation: "Pièce test",
+            client_id: null,
+            client_name: null,
+            piece_critique: false,
+            piece_critique_motif: null,
+            document_policy: "NONE",
+            selected: [],
+            current_version_id: versionId,
+            current_version_indice: "A",
+            current_version_statut: "EN_VALIDATION",
+            frozen_at: null,
+            frozen_policy: null,
+          }],
+        };
+      }
+      if (query.includes("FROM public.pieces_techniques_documents")) return { rows: [] };
+      if (query.includes("FROM public.piece_document_types")) return { rows: [] };
+      if (query.includes("SELECT document_requirements_frozen_at::text AS frozen_at")) {
+        return { rows: [{ frozen_at: null }] };
+      }
+      if (query.includes("statut = $2") && query.includes("RETURNING")) {
+        return { rows: [{ ...currentVersion, statut: "APPLICABLE", is_current: true }] };
+      }
+      return { rows: [] };
+    });
+
+    const res = await request(app)
+      .patch(`/api/v1/pieces-techniques/${pieceId}/versions/${versionId}/status`)
+      .send({ next_statut: "APPLICABLE", expected_updated_at: currentVersion.updated_at });
+
+    expect(res.status).toBe(200);
+    const queries = mocks.clientQuery.mock.calls.map((call) => String(call[0]));
+    const freezeIndex = queries.findIndex((query) => query.includes("SET document_requirements_frozen_at = now()"));
+    const demoteIndex = queries.findIndex((query) => query.includes("SET statut = 'OBSOLETE'"));
+    const promoteIndex = queries.findIndex((query) => query.includes("statut = $2") && query.includes("RETURNING"));
+    expect(freezeIndex).toBeGreaterThan(-1);
+    expect(demoteIndex).toBeGreaterThan(freezeIndex);
+    expect(promoteIndex).toBeGreaterThan(demoteIndex);
+  });
+
   it("refuses a future effective date before it can replace the current applicable version", async () => {
     const pieceId = "11111111-1111-4111-8111-111111111111";
     const versionId = "22222222-2222-4222-8222-222222222222";
