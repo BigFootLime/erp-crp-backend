@@ -301,8 +301,8 @@ export async function repoUpdateVersionStatus(
   const client = await db.connect()
   try {
     await client.query("BEGIN")
-    const cur = await client.query<{ statut: VersionStatutDTO; updated_at: string; date_effet: string | null }>(
-      `SELECT statut, updated_at::text AS updated_at, date_effet::text AS date_effet FROM public.piece_technique_versions
+    const cur = await client.query<PieceTechniqueVersionRow>(
+      `SELECT ${VERSION_COLUMNS} FROM public.piece_technique_versions
        WHERE id = $1 AND piece_technique_id = $2 FOR UPDATE`,
       [versionId, pieceTechniqueId]
     )
@@ -315,8 +315,28 @@ export async function repoUpdateVersionStatus(
       throw new HttpError(409, "CONCURRENT_MODIFICATION", "La version a été modifiée entre-temps")
     }
 
+    // Les statuts validés sont immuables. Une répétition du même ordre est donc
+    // idempotente et ne doit pas émettre un UPDATE que le trigger refuserait.
+    if (current.statut === toStatut && (current.statut === "APPLICABLE" || current.statut === "OBSOLETE")) {
+      await client.query("COMMIT")
+      return current
+    }
+
     if (toStatut === "APPLICABLE") {
       await assertVersionEffectiveToday(client, current.date_effet)
+    }
+
+    // #227 — geler les exigences AVANT de rendre l'indice immuable. Le trigger
+    // PostgreSQL interdit toute modification fonctionnelle d'une version déjà
+    // APPLICABLE ; un gel exécuté après la promotion fait échouer la transaction.
+    // Le gel reste atomique : une promotion ultérieure en échec l'annule aussi.
+    let frozen: Awaited<ReturnType<typeof freezePieceVersionRequirements>> = null
+    if (toStatut === "APPLICABLE" && current.statut !== "APPLICABLE") {
+      frozen = await freezePieceVersionRequirements(client, {
+        pieceTechniqueId,
+        versionId,
+        userId: audit.user_id,
+      })
     }
 
     // Passe APPLICABLE : déclasser l'ancienne APPLICABLE d'abord (respecte l'index unique partiel).
@@ -344,20 +364,6 @@ export async function repoUpdateVersionStatus(
       [versionId, toStatut, isCurrent, extra.valide_par ?? audit.user_id, extra.date_application ?? null, extra.commentaire_validation ?? null, audit.user_id]
     )
     const row = res.rows[0]
-
-    // #227 — GEL des exigences documentaires au moment où l'indice devient applicable.
-    // Dans la MÊME transaction que la publication : une version publiée sans son
-    // instantané serait une version dont on ne saurait plus ce qu'elle exigeait.
-    // Idempotent côté service : un indice déjà gelé n'est jamais réécrit, donc une
-    // modification ultérieure de la politique du client ne remonte pas dans l'histoire.
-    let frozen: Awaited<ReturnType<typeof freezePieceVersionRequirements>> = null
-    if (toStatut === "APPLICABLE") {
-      frozen = await freezePieceVersionRequirements(client, {
-        pieceTechniqueId,
-        versionId,
-        userId: audit.user_id,
-      })
-    }
 
     await insertAudit(client, audit, "pieces-techniques.version.status", versionId, {
       piece_technique_id: pieceTechniqueId,
@@ -454,6 +460,14 @@ export async function repoPublishVersion(
       )
     }
 
+    // Le gel doit précéder la promotion finale : une version APPLICABLE est
+    // immuable au niveau PostgreSQL. L'ordre inverse déclenchait SQLSTATE 55000.
+    const frozen = await freezePieceVersionRequirements(client, {
+      pieceTechniqueId,
+      versionId,
+      userId: audit.user_id,
+    })
+
     // Déclasser l'ancienne applicable avant de promouvoir la nouvelle afin de
     // respecter l'index unique partiel, y compris sous concurrence.
     await client.query(
@@ -486,11 +500,6 @@ export async function repoPublishVersion(
     const row = published.rows[0]
     if (!row) throw new Error("Impossible de publier la version technique")
 
-    const frozen = await freezePieceVersionRequirements(client, {
-      pieceTechniqueId,
-      versionId,
-      userId: audit.user_id,
-    })
     await insertAudit(client, audit, "pieces-techniques.version.publish", versionId, {
       piece_technique_id: pieceTechniqueId,
       from: current.statut,

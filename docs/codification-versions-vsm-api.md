@@ -37,12 +37,16 @@ légaux de facture restent au format `FT-…`; le mouvement de stock conserve so
   Un brouillon passe par la validation puis devient Applicable dans la même transaction ; une version
   déjà en validation devient Applicable et un rejeu sur l'indice déjà Applicable est idempotent. Le
   déclassement de l'ancien indice et le gel des exigences documentaires font partie de la transaction.
+  Le gel est exécuté avant la promotion finale afin que le trigger d'immuabilité ne voie jamais une
+  modification tardive d'un indice déjà Applicable ; un échec ultérieur annule toujours l'ensemble.
   `expected_updated_at` protège des modifications concurrentes. `date_effet: null`, envoyé
   explicitement, rend immédiatement effective une version Applicable dont l'effet était différé.
 - Une version `APPLICABLE` ou `OBSOLETE` est immuable et une seule version peut être applicable par pièce.
 - Une date d'effet future est refusée avant tout déclassement avec
   `422 VERSION_EFFECTIVE_DATE_FUTURE`. Une version obsolète est refusée avec
   `409 VERSION_NOT_PUBLISHABLE`.
+- Le patch `20260801_piece_version_guided_publish_trigger.sql` conserve l'immuabilité du contenu validé
+  et autorise uniquement l'avance auditée d'une date d'effet encore future vers un effet immédiat.
 - `POST /api/v1/production/ofs` exige une version applicable et enregistre son snapshot JSON et son
   empreinte SHA-256. Les OF enfants générés récursivement possèdent leur propre snapshot.
 - Quand aucune version utilisable n'existe, `VERSION_NOT_APPLICABLE` expose dans `details`
