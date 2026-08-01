@@ -44,6 +44,12 @@ import {
 } from "../../production/domain/of-generation";
 import { canLaunchInternalOrder } from "../domain/commande-client-rbac";
 import {
+  assertCommandeFullyInvoiced,
+  assertCommandeFullyShipped,
+  assertCommandeHasActiveOf,
+  assertCommandeHasPreparedDelivery,
+} from "./commande-fulfillment.repository";
+import {
   allocateCommandeStockOldThenNew,
   type CommandeStockAvailability,
 } from "../domain/stock-scope-allocation";
@@ -758,6 +764,7 @@ async function listGeneratedOfRefs(db: Queryable, commandeId: number): Promise<G
       FROM public.ordres_fabrication
       WHERE commande_id = $1
         AND generation_batch_id IS NOT NULL
+        AND statut::text <> 'ANNULE'
       ORDER BY generation_level ASC, id ASC
     `,
     [commandeId]
@@ -1030,6 +1037,16 @@ async function loadCommandeWorkflowHeader(tx: Queryable, commandeId: number): Pr
   return res.rows[0] ?? null;
 }
 
+const COMMANDE_STATUSES_REQUIRING_OF = new Set([
+  "ATTENTE_PLANNING",
+  "PLANNING_VALIDE",
+  "AR_PRET",
+  "AR_ENVOYE",
+  "EN_PRODUCTION",
+  "PRODUCTION_TERMINEE",
+  "CONTROLE_QUALITE",
+]);
+
 export async function repoEnsureCommandeWorkflowStatus(params: {
   tx: Queryable;
   commande_id: number;
@@ -1284,6 +1301,14 @@ async function advanceCustomerOrderWorkflowAfterLaunch(params: {
       commentaire: "Stock réservé et OF du manquant générés",
       user_id: params.user_id,
     });
+  }
+
+  if (!params.bon_livraison_id) {
+    throw new HttpError(
+      409,
+      "PREPARED_DELIVERY_REQUIRED",
+      "La commande couverte par le stock doit posséder un bon de livraison préparé."
+    );
   }
 
   await params.tx.query(
@@ -1838,6 +1863,13 @@ export async function repoRunCommandeWorkflowAction(
   if (userId === null) throw new HttpError(401, "UNAUTHORIZED", "Authentication required");
   const action = getCommandeWorkflowAction(body.action);
   if (!action) throw new HttpError(400, "UNKNOWN_WORKFLOW_ACTION", "Unknown workflow action");
+  if (action.key === "mark_of_ready") {
+    throw new HttpError(
+      409,
+      "COMMAND_LAUNCH_REQUIRED",
+      "Utilisez Vérifier le stock et lancer : cette étape doit réserver OLD/NEW, préparer le BL ou créer les OF du manquant."
+    );
+  }
 
   const runsStockAnalysis = action.key === "check_stock";
 
@@ -1850,6 +1882,9 @@ export async function repoRunCommandeWorkflowAction(
       await client.query("ROLLBACK");
       return null;
     }
+    if (action.key === "validate_planning") await assertCommandeHasActiveOf(client, commandeId);
+    if (action.key === "mark_delivered") await assertCommandeFullyShipped(client, commandeId);
+    if (action.key === "mark_invoiced") await assertCommandeFullyInvoiced(client, commandeId);
     await ensureCommandeWorkflowCheckpoints(client, commandeId, header.statut);
 
     const checkpointRes = await client.query<{ status: string; responsible_role: string }>(
@@ -3059,6 +3094,20 @@ export async function repoUpdateCommandeStatus(
       throw new HttpError(401, "UNAUTHORIZED", "Authentication required");
     }
 
+    const normalizedTargetStatus = normalizeCommandeWorkflowStatus(nouveau_statut);
+    if (normalizedTargetStatus && COMMANDE_STATUSES_REQUIRING_OF.has(normalizedTargetStatus)) {
+      await assertCommandeHasActiveOf(client, commandeId);
+    }
+    if (normalizedTargetStatus === "PRET_LIVRAISON") {
+      await assertCommandeHasPreparedDelivery(client, commandeId);
+    }
+    if (normalizedTargetStatus === "LIVRE") {
+      await assertCommandeFullyShipped(client, commandeId);
+    }
+    if (normalizedTargetStatus === "FACTURE" || normalizedTargetStatus === "ARCHIVE") {
+      await assertCommandeFullyInvoiced(client, commandeId);
+    }
+
     const out = await repoEnsureCommandeWorkflowStatus({
       tx: client,
       commande_id: commandeId,
@@ -3229,6 +3278,7 @@ export async function repoAnalyzeCommandeStock(id: string, audit: AuditContext) 
 export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAffairesV3BodyDTO, audit: AuditContext) {
   const commandeId = toInt(id, "commande_id");
   const client = await pool.connect();
+  let recoveredInvalidPlanningState = false;
   try {
     await client.query("BEGIN");
 
@@ -3303,12 +3353,67 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         [commandeId]
       );
       const ofGenerationStatus = statusByCheckpoint.get("of_generation");
+      const stockCheckDone = statusByCheckpoint.get("stock_check") === "done";
+      const hasExistingLaunch = existingLaunch.rows[0]?.exists === true;
+
+      if (
+        stockCheckDone &&
+        ofGenerationStatus === "done" &&
+        workflowHeader.statut === "ATTENTE_PLANNING"
+      ) {
+        const artifacts = await client.query<{ has_of: boolean; has_delivery: boolean }>(
+          `
+            SELECT
+              EXISTS(
+                SELECT 1
+                FROM public.ordres_fabrication
+                WHERE commande_id = $1
+                  AND statut::text <> 'ANNULE'
+              ) AS has_of,
+              EXISTS(
+                SELECT 1
+                FROM public.bon_livraison
+                WHERE commande_id = $1
+                  AND statut <> 'CANCELLED'
+              ) AS has_delivery
+          `,
+          [commandeId]
+        );
+        const artifactState = artifacts.rows[0] ?? { has_of: false, has_delivery: false };
+        recoveredInvalidPlanningState = !artifactState.has_of && !artifactState.has_delivery;
+
+        if (recoveredInvalidPlanningState) {
+          await client.query(
+            `
+              UPDATE public.commande_client_workflow_checkpoint
+              SET
+                status = CASE
+                  WHEN checkpoint_code = 'of_generation' THEN 'active'
+                  WHEN checkpoint_code = 'planning_validation' THEN 'pending'
+                  ELSE status
+                END,
+                completed_at = CASE WHEN checkpoint_code = 'of_generation' THEN NULL ELSE completed_at END,
+                completed_by = CASE WHEN checkpoint_code = 'of_generation' THEN NULL ELSE completed_by END,
+                metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+                updated_at = now()
+              WHERE commande_id = $1
+                AND checkpoint_code IN ('of_generation', 'planning_validation')
+            `,
+            [
+              commandeId,
+              JSON.stringify({ recovery_reason: "planning_without_of_or_delivery" }),
+            ]
+          );
+        }
+      }
+
       const launchAllowed =
-        statusByCheckpoint.get("stock_check") === "done" &&
+        stockCheckDone &&
         (
           ofGenerationStatus === "active" ||
+          recoveredInvalidPlanningState ||
           ((ofGenerationStatus === "done" || ofGenerationStatus === "skipped") &&
-            existingLaunch.rows[0]?.exists === true)
+            hasExistingLaunch)
         );
       if (!launchAllowed) {
         throw new HttpError(
@@ -3359,7 +3464,15 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
     const existingMappings = await listCommandeToAffaireMappings(client, commandeId);
     const existingLivraisons = existingMappings.filter((r) => r.role === "LIVRAISON");
 
-    if (existingMappings.length > 0) {
+    if (recoveredInvalidPlanningState && existingMappings.length > 0 && existingLivraisons.length === 0) {
+      throw new HttpError(
+        409,
+        "COMMANDE_AFFAIRE_MAPPING_INVALID",
+        "La commande possède une affaire liée sans rôle LIVRAISON. Corrigez ce lien avant de relancer."
+      );
+    }
+
+    if (existingMappings.length > 0 && !recoveredInvalidPlanningState) {
       if (orderType === "INTERNE" && existingLivraisons.length === 0) {
         throw new HttpError(
           409,
@@ -3523,7 +3636,8 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       overrides.set(l.commande_ligne_id, Number(l.qty_ship_now));
     }
 
-    const reservedByLine = new Map<number, number>();
+    const stockCoveredByLine = new Map<number, number>();
+    const immediateDeliveryByLine = new Map<number, number>();
     for (const line of stockAnalysis.lines) {
       const maxShip = Number(line.available_used_qty);
       const override = overrides.has(line.commande_ligne_id)
@@ -3559,24 +3673,30 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
           `La livraison et la production doivent couvrir la quantité demandée pour la ligne ${line.commande_ligne_id}.`
         );
       }
-      reservedByLine.set(line.commande_ligne_id, qtyToDeliverNow);
+      stockCoveredByLine.set(line.commande_ligne_id, maxShip);
+      immediateDeliveryByLine.set(line.commande_ligne_id, qtyToDeliverNow);
     }
 
-    const livraisonAffaireIds: number[] = [];
-    const livraisonAffaireId = await createAffaire(client, {
-      commande_id: commandeId,
-      devis_id: commande.devis_id ? toNullableInt(commande.devis_id, "commande.devis_id") : null,
-      client_id: clientId,
-    });
-    await insertCommandeToAffaireMapping(client, {
-      commande_id: commandeId,
-      affaire_id: livraisonAffaireId,
-      role: "LIVRAISON",
-      commentaire: "Generated from commande",
-    });
-    livraisonAffaireIds.push(livraisonAffaireId);
+    const livraisonAffaireIds: number[] = recoveredInvalidPlanningState
+      ? existingLivraisons.map((mapping) => mapping.affaire_id)
+      : [];
 
-    for (let i = 1; i < requestedLivraisonCount; i += 1) {
+    if (livraisonAffaireIds.length === 0) {
+      const createdId = await createAffaire(client, {
+        commande_id: commandeId,
+        devis_id: commande.devis_id ? toNullableInt(commande.devis_id, "commande.devis_id") : null,
+        client_id: clientId,
+      });
+      await insertCommandeToAffaireMapping(client, {
+        commande_id: commandeId,
+        affaire_id: createdId,
+        role: "LIVRAISON",
+        commentaire: "Generated from commande",
+      });
+      livraisonAffaireIds.push(createdId);
+    }
+
+    for (let i = livraisonAffaireIds.length; i < requestedLivraisonCount; i += 1) {
       const extraId = await createAffaire(client, {
         commande_id: commandeId,
         devis_id: commande.devis_id ? toNullableInt(commande.devis_id, "commande.devis_id") : null,
@@ -3589,6 +3709,11 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         commentaire: `Split delivery (${i + 1}/${requestedLivraisonCount})`,
       });
       livraisonAffaireIds.push(extraId);
+    }
+
+    const livraisonAffaireId = livraisonAffaireIds[0];
+    if (!livraisonAffaireId) {
+      throw new HttpError(500, "LIVRAISON_AFFAIRE_REQUIRED", "Aucune affaire de livraison n'a pu être préparée.");
     }
 
     const planLines: CommandeAllocationPlanLine[] = analysis.lines.map((l) => ({
@@ -3614,20 +3739,38 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       livraison_affaire_id: livraisonAffaireId,
       allocation_mode: allocationMode,
       reserve_stock: false,
-      reserved_qty_by_line: orderType !== "INTERNE" ? reservedByLine : null,
+      reserved_qty_by_line: orderType !== "INTERNE" ? stockCoveredByLine : null,
       lines: planLines,
     });
 
+    const holdsStockForGroupedDelivery =
+      orderType !== "INTERNE" && needsProduction && decision === "SHIP_ALL_TOGETHER";
     const preparedDelivery =
-      orderType !== "INTERNE"
+      orderType !== "INTERNE" && !holdsStockForGroupedDelivery
         ? await createPreparedLivraisonForStock(client, {
             commande_id: commandeId,
             user_id: audit.user_id,
             analysis_lines: stockAnalysis.lines,
-            quantities_by_line: reservedByLine,
+            quantities_by_line: immediateDeliveryByLine,
           })
         : null;
-    const reservationsCreated = preparedDelivery?.reservation_ids ?? [];
+    const reservationsCreated = holdsStockForGroupedDelivery
+      ? (
+          (recoveredInvalidPlanningState
+            ? await reuseRecoveredCommandeStockReservations(client, {
+                commande_id: commandeId,
+                quantities_by_line: stockCoveredByLine,
+              })
+            : null) ??
+          await reserveCommandeStockForLaterDelivery(client, {
+            commande_id: commandeId,
+            livraison_affaire_id: livraisonAffaireId,
+            user_id: audit.user_id,
+            analysis_lines: stockAnalysis.lines,
+            quantities_by_line: stockCoveredByLine,
+          })
+        )
+      : preparedDelivery?.reservation_ids ?? [];
     const bonLivraisonId = preparedDelivery?.bon_livraison_id ?? null;
 
     const generatedOfs: GeneratedOfRef[] = [];
@@ -3710,6 +3853,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         bon_livraison_id: bonLivraisonId,
         reservations_created: reservationsCreated.length,
         of_created: ofIds.length,
+        recovered_invalid_planning_state: recoveredInvalidPlanningState,
       },
       user_id: audit.user_id,
     });
@@ -3727,6 +3871,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         bon_livraison_id: bonLivraisonId,
         reservations_created: reservationsCreated,
         of_ids: ofIds,
+        recovered_invalid_planning_state: recoveredInvalidPlanningState,
       },
     });
 
@@ -3763,7 +3908,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       generation_mode: orderType === "INTERNE" ? "INTERNAL_ORDER" : "CUSTOMER_ORDER",
       idempotent_replay: false,
       workflow_status: workflowStatus,
-      warnings: [],
+      warnings: recoveredInvalidPlanningState ? ["RECOVERED_PLANNING_WITHOUT_OF_OR_DELIVERY"] : [],
     };
   } catch (e) {
     await client.query("ROLLBACK");
@@ -4028,7 +4173,7 @@ async function loadScopedAvailableQtyByArticle(
 
 type StockAvailabilityStatus = "FULL" | "PARTIAL" | "NONE";
 
-type CommandeStockAnalysisLine = {
+export type CommandeStockAnalysisLine = {
   commande_ligne_id: number;
   code_piece: string | null;
   article_id: string | null;
@@ -4322,6 +4467,205 @@ async function createPreparedLivraisonForStock(
     bon_livraison_id: livraison.id,
     reservation_ids: reservations.rows.map((reservation) => reservation.id),
   };
+}
+
+export async function reserveCommandeStockForLaterDelivery(
+  db: PoolClient,
+  params: {
+    commande_id: number;
+    livraison_affaire_id: number;
+    user_id: number;
+    analysis_lines: CommandeStockAnalysisLine[];
+    quantities_by_line: ReadonlyMap<number, number>;
+  }
+): Promise<string[]> {
+  const positiveQuantities = new Map(
+    [...params.quantities_by_line.entries()].filter(([, quantity]) => Number(quantity) > 1e-9)
+  );
+  if (positiveQuantities.size === 0) return [];
+
+  const articleIds = Array.from(
+    new Set(
+      params.analysis_lines
+        .filter((line) => positiveQuantities.has(line.commande_ligne_id))
+        .map((line) => line.article_id)
+        .filter((articleId): articleId is string => Boolean(articleId))
+    )
+  );
+  const candidates = await loadScopedDeliveryStockCandidates(db, articleIds);
+  const allocations = planDeliveryAllocations(params.analysis_lines, positiveQuantities, candidates);
+  const reservationIds: string[] = [];
+
+  for (const allocation of allocations) {
+    const stockLevel = await db.query<{
+      qty_total: number;
+      qty_reserved: number;
+      qty_depreciated: number;
+    }>(
+      `
+        SELECT
+          qty_total::float8 AS qty_total,
+          qty_reserved::float8 AS qty_reserved,
+          qty_depreciated::float8 AS qty_depreciated
+        FROM public.stock_levels
+        WHERE id = $1::uuid
+        FOR UPDATE
+      `,
+      [allocation.stock_level_id]
+    );
+    const level = stockLevel.rows[0] ?? null;
+    const available = level
+      ? Number(level.qty_total) - Number(level.qty_reserved) - Number(level.qty_depreciated)
+      : 0;
+    if (!level || available + 1e-9 < allocation.quantity) {
+      throw new HttpError(
+        409,
+        "STOCK_POSITION_NOT_RESERVABLE",
+        `Le stock OLD/NEW de la ligne ${allocation.commande_ligne_id} a changé. Relancez l'analyse.`
+      );
+    }
+
+    if (allocation.stock_batch_id) {
+      const stockBatch = await db.query<{ qty_total: number; qty_reserved: number }>(
+        `
+          SELECT qty_total::float8 AS qty_total, qty_reserved::float8 AS qty_reserved
+          FROM public.stock_batches
+          WHERE id = $1::uuid
+          FOR UPDATE
+        `,
+        [allocation.stock_batch_id]
+      );
+      const batch = stockBatch.rows[0] ?? null;
+      const batchAvailable = batch
+        ? Number(batch.qty_total) - Number(batch.qty_reserved)
+        : 0;
+      if (!batch || batchAvailable + 1e-9 < allocation.quantity) {
+        throw new HttpError(
+          409,
+          "STOCK_BATCH_NOT_RESERVABLE",
+          `Le lot OLD/NEW de la ligne ${allocation.commande_ligne_id} a changé. Relancez l'analyse.`
+        );
+      }
+    }
+
+    await db.query(
+      `
+        UPDATE public.stock_levels
+        SET qty_reserved = qty_reserved + $2,
+            updated_at = now(),
+            updated_by = $3
+        WHERE id = $1::uuid
+      `,
+      [allocation.stock_level_id, allocation.quantity, params.user_id]
+    );
+    if (allocation.stock_batch_id) {
+      await db.query(
+        `UPDATE public.stock_batches SET qty_reserved = qty_reserved + $2 WHERE id = $1::uuid`,
+        [allocation.stock_batch_id, allocation.quantity]
+      );
+    }
+
+    const reservation = await db.query<{ id: string }>(
+      `
+        INSERT INTO public.stock_reservations (
+          article_id, location_id, qty_reserved, source_type, source_id,
+          commande_ligne_id, affaire_id, status, lot_id, stock_batch_id,
+          reason, created_by, updated_by
+        ) VALUES (
+          $1::uuid,$2::uuid,$3,'COMMANDE_LIGNE',$4,$4::bigint,$5::bigint,
+          'ACTIVE',$6::uuid,$7::uuid,$8,$9,$9
+        )
+        ON CONFLICT (source_type, source_id, article_id, location_id, lot_id)
+          WHERE status = 'ACTIVE' AND lot_id IS NOT NULL
+        DO UPDATE SET
+          qty_reserved = public.stock_reservations.qty_reserved + EXCLUDED.qty_reserved,
+          affaire_id = COALESCE(public.stock_reservations.affaire_id, EXCLUDED.affaire_id),
+          updated_at = now(),
+          updated_by = EXCLUDED.updated_by
+        RETURNING id::text AS id
+      `,
+      [
+        allocation.article_id,
+        allocation.location_id,
+        allocation.quantity,
+        String(allocation.commande_ligne_id),
+        params.livraison_affaire_id,
+        allocation.lot_id,
+        allocation.stock_batch_id,
+        "Réservée dès le lancement pour une livraison groupée",
+        params.user_id,
+      ]
+    );
+    const reservationId = reservation.rows[0]?.id;
+    if (!reservationId) throw new Error("Failed to reserve order stock for later delivery");
+    reservationIds.push(reservationId);
+  }
+
+  return reservationIds;
+}
+
+/**
+ * A legacy command can be marked `ATTENTE_PLANNING` without a BL or OF while still
+ * carrying active grouped-delivery reservations. Re-running the launcher must not
+ * add those quantities a second time. We only reuse an exact, locked coverage; any
+ * partial or unexpected reservation is left untouched and requires a manual repair.
+ */
+export async function reuseRecoveredCommandeStockReservations(
+  db: PoolClient,
+  params: {
+    commande_id: number;
+    quantities_by_line: ReadonlyMap<number, number>;
+  }
+): Promise<string[] | null> {
+  const expected = new Map(
+    [...params.quantities_by_line.entries()].filter(([, quantity]) => Number(quantity) > 1e-9)
+  );
+
+  const reservations = await db.query<{
+    id: string;
+    commande_ligne_id: number;
+    qty_reserved: number;
+  }>(
+    `
+      SELECT reservation.id::text AS id,
+             reservation.commande_ligne_id::bigint::int AS commande_ligne_id,
+             reservation.qty_reserved::float8 AS qty_reserved
+      FROM public.stock_reservations reservation
+      JOIN public.commande_ligne line
+        ON line.id = reservation.commande_ligne_id
+       AND line.commande_id = $1
+      WHERE reservation.source_type = 'COMMANDE_LIGNE'
+        AND reservation.source_id = reservation.commande_ligne_id::text
+        AND reservation.status = 'ACTIVE'
+      ORDER BY reservation.commande_ligne_id, reservation.created_at, reservation.id
+      FOR UPDATE
+    `,
+    [params.commande_id]
+  );
+  if (reservations.rows.length === 0) return expected.size === 0 ? [] : null;
+
+  const covered = new Map<number, number>();
+  for (const reservation of reservations.rows) {
+    covered.set(
+      reservation.commande_ligne_id,
+      (covered.get(reservation.commande_ligne_id) ?? 0) + Number(reservation.qty_reserved)
+    );
+  }
+  const mismatch =
+    [...expected.entries()].some(([lineId, quantity]) =>
+      Math.abs((covered.get(lineId) ?? 0) - Number(quantity)) > 1e-9
+    ) ||
+    [...covered.entries()].some(
+      ([lineId, quantity]) => !expected.has(lineId) || !Number.isFinite(quantity) || quantity <= 0
+    );
+  if (mismatch) {
+    throw new HttpError(
+      409,
+      "RECOVERED_RESERVATION_COVERAGE_MISMATCH",
+      "La reprise a trouvé des réservations OLD/NEW partielles ou incohérentes. Elles n'ont pas été modifiées ; corrigez-les avant de relancer."
+    );
+  }
+  return reservations.rows.map((reservation) => reservation.id);
 }
 
 async function computeCommandeAllocationPlan(db: PoolClient, commandeId: number): Promise<CommandeAllocationPlan> {

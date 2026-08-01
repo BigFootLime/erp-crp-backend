@@ -19,6 +19,7 @@ export const factureIdParamsSchema = z.object({
 export const listFacturesQuerySchema = z.object({
   q: z.string().optional(),
   client_id: z.string().optional(),
+  commande_id: z.coerce.number().int().positive().optional(),
   statut: z.string().optional(),
   from: isoDate.optional(),
   to: isoDate.optional(),

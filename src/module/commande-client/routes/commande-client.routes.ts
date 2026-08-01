@@ -18,9 +18,7 @@ import {
   deleteCommande,
   duplicateCommande,
   generateAffairesFromOrder,
-  confirmGenerateAffaires,
   previewAffairesFromCommande,
-  generateAffairesFromCommande,
   getCadreRelease,
   getCommande,
   getCommandeDocumentFile,
@@ -43,8 +41,6 @@ import {
 } from "../validators/commande-ar.validators"
 import {
   createCommandeBodySchema,
-  confirmGenerateAffairesSchema,
-  generateAffairesSchema,
   generateAffairesV3Schema,
   commandeWorkflowCheckpointCodeParamSchema,
   documentIdParamSchema,
@@ -114,6 +110,16 @@ const requireOfficeSupportOrAdmin: RequestHandler = (req, _res, next) => {
     return
   }
   next()
+}
+
+const rejectLegacyCommandeLaunch: RequestHandler = (_req, _res, next) => {
+  next(
+    new HttpError(
+      410,
+      "LEGACY_COMMAND_LAUNCH_REMOVED",
+      "Cet ancien lancement de commande est désactivé. Utilisez Vérifier le stock et lancer."
+    )
+  )
 }
 
 // POST /api/v1/commandes  (multipart: data + documents[])
@@ -200,13 +206,13 @@ router.post("/:id/analyze-stock", authenticateToken, validate(idParamSchema), an
 router.post("/:id/generate-affaires", authenticateToken, validate(generateAffairesV3Schema), generateAffairesFromOrder)
 
 // POST /api/v1/commandes/:id/generate-affaires/confirm
-router.post("/:id/generate-affaires/confirm", authenticateToken, validate(confirmGenerateAffairesSchema), confirmGenerateAffaires)
+router.post("/:id/generate-affaires/confirm", authenticateToken, rejectLegacyCommandeLaunch)
 
 // POST /api/v1/commandes/:id/affaires/preview
 router.post("/:id/affaires/preview", authenticateToken, validate(idParamSchema), previewAffairesFromCommande)
 
 // POST /api/v1/commandes/:id/affaires/generate
-router.post("/:id/affaires/generate", authenticateToken, validate(generateAffairesSchema), generateAffairesFromCommande)
+router.post("/:id/affaires/generate", authenticateToken, rejectLegacyCommandeLaunch)
 
 // POST /api/v1/commandes/:id/duplicate
 router.post("/:id/duplicate", validate(idParamSchema), duplicateCommande)

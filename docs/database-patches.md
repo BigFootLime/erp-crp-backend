@@ -73,6 +73,21 @@ and `/var/backups/cerp/cerp_prod_20260731-234848.dump` (50,866,662 bytes).
 Preflight, apply and read-only verification passed on both databases;
 `cerp_test` was then reapplied successfully to confirm idempotence.
 
+### Comportement applicatif après patch
+
+Cette section ne décrit pas une nouvelle migration. Après le contrôle `OLD` puis
+`NEW`, une commande entièrement couverte réserve le stock et prépare le BL sans
+OF ni Planning. En cas de manque, le stock disponible est réservé et seuls les
+manquants génèrent des OF ; la quantité proposée peut être majorée pour une
+reconstitution volontaire de stock. Lors de la préparation du BL, une réservation
+active provenant du lancement est transférée à la ligne de BL au lieu d'être
+dupliquée. L'expédition crée la sortie de stock et synchronise la commande vers
+`LIVRE`; l'état `FACTURE` ne peut suivre que l'émission Finance explicite.
+
+Les paramètres légaux et la politique d'émission Finance restent à valider par
+Finance/Juridique. Les recettes frontend et le déploiement applicatif restent à
+compléter séparément.
+
 ## Issue #164 - Règles Articles / matière / Stock restantes
 
 `20260729_articles_164_remaining_rules.sql` ajoute les sept profils matière

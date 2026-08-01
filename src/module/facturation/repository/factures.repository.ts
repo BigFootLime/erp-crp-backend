@@ -93,6 +93,24 @@ function buildListWhere(filters: ListFacturesQueryDTO, includeClientInSearch: bo
     where.push(`f.client_id = ${p}`);
   }
 
+  if (filters.commande_id) {
+    const p = push(filters.commande_id);
+    where.push(`(
+      f.commande_id = ${p}::bigint
+      OR EXISTS (
+        SELECT 1
+        FROM public.facture_source_allocations source
+        JOIN public.bon_livraison_ligne delivery_line
+          ON source.source_type = 'DELIVERY_LINE'
+         AND source.source_line_id = delivery_line.id::text
+        JOIN public.bon_livraison delivery
+          ON delivery.id = delivery_line.bon_livraison_id
+        WHERE source.facture_id = f.id
+          AND delivery.commande_id = ${p}::bigint
+      )
+    )`);
+  }
+
   if (filters.statut && filters.statut.trim().length > 0) {
     const p = push(filters.statut.trim());
     where.push(`f.statut = ${p}`);
@@ -153,6 +171,7 @@ export async function repoListFactures(filters: ListFacturesQueryDTO): Promise<P
       f.id::text AS id,
       f.numero,
       f.client_id,
+      f.commande_id::bigint::int AS commande_id,
       f.date_emission::text AS date_emission,
       f.date_echeance::text AS date_echeance,
       f.total_ht::float8 AS total_ht,
