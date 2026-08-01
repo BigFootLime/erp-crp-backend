@@ -89,6 +89,25 @@ async function assertPieceExists(tx: Pick<PoolClient, "query">, pieceId: string)
   if (res.rowCount === 0) throw new HttpError(404, "NOT_FOUND", "Pièce technique introuvable")
 }
 
+async function assertVersionEffectiveToday(
+  tx: Pick<PoolClient, "query">,
+  dateEffet: string | null
+): Promise<void> {
+  if (!dateEffet) return
+  const result = await tx.query<{ is_future: boolean }>(
+    `SELECT $1::date > CURRENT_DATE AS is_future`,
+    [dateEffet]
+  )
+  if (result.rows[0]?.is_future) {
+    throw new HttpError(
+      422,
+      "VERSION_EFFECTIVE_DATE_FUTURE",
+      "La date d'effet de la version est dans le futur : choisissez aujourd'hui ou une date antérieure pour lancer un OF.",
+      { date_effet: dateEffet }
+    )
+  }
+}
+
 export type PieceTechniqueVersionCloneResult = PieceTechniqueVersionRow & {
   copied: {
     current_gamme: boolean
@@ -282,8 +301,8 @@ export async function repoUpdateVersionStatus(
   const client = await db.connect()
   try {
     await client.query("BEGIN")
-    const cur = await client.query<{ statut: VersionStatutDTO; updated_at: string }>(
-      `SELECT statut, updated_at::text AS updated_at FROM public.piece_technique_versions
+    const cur = await client.query<{ statut: VersionStatutDTO; updated_at: string; date_effet: string | null }>(
+      `SELECT statut, updated_at::text AS updated_at, date_effet::text AS date_effet FROM public.piece_technique_versions
        WHERE id = $1 AND piece_technique_id = $2 FOR UPDATE`,
       [versionId, pieceTechniqueId]
     )
@@ -294,6 +313,10 @@ export async function repoUpdateVersionStatus(
     }
     if (extra.expected_updated_at && extra.expected_updated_at !== current.updated_at) {
       throw new HttpError(409, "CONCURRENT_MODIFICATION", "La version a été modifiée entre-temps")
+    }
+
+    if (toStatut === "APPLICABLE") {
+      await assertVersionEffectiveToday(client, current.date_effet)
     }
 
     // Passe APPLICABLE : déclasser l'ancienne APPLICABLE d'abord (respecte l'index unique partiel).
@@ -340,6 +363,138 @@ export async function repoUpdateVersionStatus(
       piece_technique_id: pieceTechniqueId,
       from: current.statut,
       to: toStatut,
+      document_requirements_frozen: frozen ? !frozen.already_frozen : false,
+      document_requirements_count: frozen?.frozen_count ?? null,
+    })
+    await client.query("COMMIT")
+    return row
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {})
+    throw e
+  } finally {
+    client.release()
+  }
+}
+
+/**
+ * Publication guidée d'un indice dans une transaction unique. La transition
+ * intermédiaire EN_VALIDATION est conservée dans la règle métier, sans
+ * exposer au client un état partiellement publié si le gel documentaire
+ * échoue ensuite.
+ */
+export async function repoPublishVersion(
+  pieceTechniqueId: string,
+  versionId: string,
+  extra: {
+    date_application: string | null;
+    date_effet?: string | null;
+    commentaire_validation: string | null;
+    expected_updated_at?: string;
+  },
+  audit: AuditContext
+): Promise<PieceTechniqueVersionRow | null> {
+  const client = await db.connect()
+  try {
+    await client.query("BEGIN")
+    const cur = await client.query<PieceTechniqueVersionRow>(
+      `SELECT ${VERSION_COLUMNS}
+         FROM public.piece_technique_versions
+        WHERE id = $1 AND piece_technique_id = $2
+        FOR UPDATE`,
+      [versionId, pieceTechniqueId]
+    )
+    const current = cur.rows[0] ?? null
+    if (!current) {
+      await client.query("ROLLBACK").catch(() => {})
+      return null
+    }
+    if (extra.expected_updated_at && extra.expected_updated_at !== current.updated_at) {
+      throw new HttpError(409, "CONCURRENT_MODIFICATION", "La version a été modifiée entre-temps")
+    }
+
+    if (current.statut === "OBSOLETE") {
+      throw new HttpError(409, "VERSION_NOT_PUBLISHABLE", "Une version obsolète ne peut pas redevenir applicable — créez un nouvel indice")
+    }
+    const targetDateEffet = extra.date_effet !== undefined ? extra.date_effet : current.date_effet
+    await assertVersionEffectiveToday(client, targetDateEffet)
+    if (current.statut === "APPLICABLE") {
+      // Une ancienne publication peut avoir une date d'effet future : elle est
+      // alors Applicable dans le dossier mais inutilisable par le moteur OF.
+      // Le parcours guidé peut la rendre effective sans changer d'indice.
+      if (extra.date_effet !== undefined) {
+        const updated = await client.query<PieceTechniqueVersionRow>(
+          `UPDATE public.piece_technique_versions
+              SET date_effet = $2::date, updated_at = now(), updated_by = $3
+            WHERE id = $1
+            RETURNING ${VERSION_COLUMNS}`,
+          [versionId, extra.date_effet, audit.user_id]
+        )
+        const row = updated.rows[0]
+        if (!row) throw new Error("Impossible de mettre à jour la date d'effet de la version technique")
+        await insertAudit(client, audit, "pieces-techniques.version.publish", versionId, {
+          piece_technique_id: pieceTechniqueId,
+          from: "APPLICABLE",
+          to: "APPLICABLE",
+          date_effet_updated: true,
+          date_effet: extra.date_effet,
+        })
+        await client.query("COMMIT")
+        return row
+      }
+      await client.query("COMMIT")
+      return current
+    }
+
+    if (current.statut === "BROUILLON") {
+      await client.query(
+        `UPDATE public.piece_technique_versions
+            SET statut = 'EN_VALIDATION', is_current = false, updated_at = now(), updated_by = $2
+          WHERE id = $1`,
+        [versionId, audit.user_id]
+      )
+    }
+
+    // Déclasser l'ancienne applicable avant de promouvoir la nouvelle afin de
+    // respecter l'index unique partiel, y compris sous concurrence.
+    await client.query(
+      `UPDATE public.piece_technique_versions
+          SET statut = 'OBSOLETE', is_current = false, updated_at = now(), updated_by = $3
+        WHERE piece_technique_id = $1 AND statut = 'APPLICABLE' AND id <> $2`,
+      [pieceTechniqueId, versionId, audit.user_id]
+    )
+    const published = await client.query<PieceTechniqueVersionRow>(
+      `UPDATE public.piece_technique_versions SET
+         statut = 'APPLICABLE',
+         is_current = true,
+         valide_par = $2,
+         date_validation = now(),
+         date_application = COALESCE($3::date, date_application, CURRENT_DATE),
+         commentaire_validation = COALESCE($4, commentaire_validation),
+         date_effet = CASE WHEN $5::boolean THEN $6::date ELSE date_effet END,
+         updated_at = now(), updated_by = $2
+       WHERE id = $1
+       RETURNING ${VERSION_COLUMNS}`,
+      [
+        versionId,
+        audit.user_id,
+        extra.date_application,
+        extra.commentaire_validation,
+        extra.date_effet !== undefined,
+        extra.date_effet ?? null,
+      ]
+    )
+    const row = published.rows[0]
+    if (!row) throw new Error("Impossible de publier la version technique")
+
+    const frozen = await freezePieceVersionRequirements(client, {
+      pieceTechniqueId,
+      versionId,
+      userId: audit.user_id,
+    })
+    await insertAudit(client, audit, "pieces-techniques.version.publish", versionId, {
+      piece_technique_id: pieceTechniqueId,
+      from: current.statut,
+      to: "APPLICABLE",
       document_requirements_frozen: frozen ? !frozen.already_frozen : false,
       document_requirements_count: frozen?.frozen_count ?? null,
     })

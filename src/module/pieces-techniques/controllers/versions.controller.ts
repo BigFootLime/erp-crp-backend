@@ -7,6 +7,7 @@ import {
   createNextVersionSchema,
   createVersionSchema,
   updateVersionSchema,
+  publishVersionSchema,
   versionStatusSchema,
 } from "../validators/versions.validators"
 import {
@@ -15,6 +16,7 @@ import {
   listVersionsSVC,
   updateVersionSVC,
   updateVersionStatusSVC,
+  publishVersionSVC,
 } from "../services/versions.service"
 
 function buildAuditContext(req: Request): AuditContext {
@@ -93,6 +95,23 @@ export const updateVersionStatus: RequestHandler = async (req, res, next) => {
     const audit = buildAuditContext(req)
     const body = versionStatusSchema.parse({ body: req.body }).body
     const out = await updateVersionStatusSVC(
+      routeParam(req, "id"),
+      routeParam(req, "versionId"),
+      body,
+      audit
+    )
+    if (!out) throw new HttpError(404, "NOT_FOUND", "Version introuvable")
+    res.json(out)
+  } catch (err) {
+    next(err)
+  }
+}
+
+export const publishVersion: RequestHandler = async (req, res, next) => {
+  try {
+    const audit = buildAuditContext(req)
+    const body = publishVersionSchema.parse({ body: req.body }).body
+    const out = await publishVersionSVC(
       routeParam(req, "id"),
       routeParam(req, "versionId"),
       body,

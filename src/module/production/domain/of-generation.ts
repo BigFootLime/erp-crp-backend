@@ -329,6 +329,52 @@ export type ApplicableTechnicalSnapshot = {
   sha256: string;
 };
 
+type VersionNotApplicableDetails = {
+  piece_technique_id: string;
+  code_piece: string;
+  designation: string;
+  versions: Array<{
+    id: string;
+    indice: string;
+    statut: string;
+    date_effet: string | null;
+    effective_now: boolean;
+  }>;
+};
+
+async function loadVersionNotApplicableDetails(
+  tx: Queryable,
+  pieceTechniqueId: string
+): Promise<VersionNotApplicableDetails | null> {
+  const result = await tx.query<VersionNotApplicableDetails>(
+    `
+      SELECT pt.id::text AS piece_technique_id,
+             pt.code_piece,
+             pt.designation,
+             COALESCE(
+               jsonb_agg(
+                 jsonb_build_object(
+                   'id', v.id::text,
+                   'indice', v.indice,
+                   'statut', v.statut,
+                   'date_effet', v.date_effet,
+                   'effective_now', v.statut = 'APPLICABLE'
+                     AND (v.date_effet IS NULL OR v.date_effet <= CURRENT_DATE)
+                 )
+                 ORDER BY v.date_effet DESC NULLS LAST, v.version_interne DESC NULLS LAST, v.created_at DESC
+               ) FILTER (WHERE v.id IS NOT NULL),
+               '[]'::jsonb
+             ) AS versions
+        FROM public.pieces_techniques pt
+        LEFT JOIN public.piece_technique_versions v ON v.piece_technique_id = pt.id
+       WHERE pt.id = $1::uuid
+       GROUP BY pt.id, pt.code_piece, pt.designation
+    `,
+    [pieceTechniqueId]
+  );
+  return result.rows[0] ?? null;
+}
+
 /**
  * Sélectionne la version applicable (ou valide une version épinglée) DANS la
  * transaction de génération, puis fige toutes les données de fabrication dans
@@ -366,10 +412,12 @@ export async function loadApplicableTechnicalSnapshot(
   );
   const version = versionRes.rows[0] ?? null;
   if (!version) {
+    const details = await loadVersionNotApplicableDetails(tx, pieceTechniqueId);
     throw new HttpError(
       422,
       "VERSION_NOT_APPLICABLE",
-      `La pièce technique ${pieceTechniqueId} ne possède pas de version applicable pour générer un OF.`
+      `La pièce technique ${pieceTechniqueId} ne possède pas de version applicable pour générer un OF.`,
+      details ?? { piece_technique_id: pieceTechniqueId, code_piece: null, designation: null, versions: [] }
     );
   }
   if (pinned && version.version_id !== pinned) {

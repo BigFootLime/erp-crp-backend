@@ -180,3 +180,33 @@ describe("Snapshot JSON — preuve figée lisible", () => {
     }
   })
 })
+
+describe("Snapshot OF — diagnostic version non applicable", () => {
+  it("retourne la pièce et les versions exploitables par l'interface", async () => {
+    let call = 0
+    const tx = {
+      query: async () => {
+        call += 1
+        if (call === 1) return { rows: [] } as never
+        return {
+          rows: [{
+            piece_technique_id: "11111111-1111-1111-1111-111111111111",
+            code_piece: "PT-001",
+            designation: "Pièce test",
+            versions: [{ id: "v1", indice: "A", statut: "EN_VALIDATION", date_effet: null, effective_now: false }],
+          }],
+        } as never
+      },
+    }
+
+    await expect(loadApplicableTechnicalSnapshot(tx, "11111111-1111-1111-1111-111111111111")).rejects.toMatchObject({
+      status: 422,
+      code: "VERSION_NOT_APPLICABLE",
+      details: {
+        piece_technique_id: "11111111-1111-1111-1111-111111111111",
+        code_piece: "PT-001",
+        versions: [{ indice: "A", statut: "EN_VALIDATION", effective_now: false }],
+      },
+    })
+  })
+})
