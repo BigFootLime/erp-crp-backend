@@ -1,0 +1,35 @@
+### Finance configuration readiness (Director / Administrator)
+GET {{baseUrl}}/api/v1/factures/configuration?year=2026
+Authorization: Bearer {{token}}
+
+### Activate a new Finance policy and legal sequences
+# This command only creates records. Existing policies and sequence scopes are never overwritten.
+POST {{baseUrl}}/api/v1/factures/configuration/activate
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "confirm": true,
+  "legal_entity_code": "00000000-0000-0000-0000-000000000000",
+  "policy_version": "finance-2026-v1",
+  "effective_from": "2026-01-01",
+  "effective_to": null,
+  "eligible_delivery_statuses": ["SHIPPED", "DELIVERED"],
+  "require_distinct_issuer": true,
+  "sequences": {
+    "facture": { "year": 2026, "prefix": "FAC-2026-", "next_value": 1, "padding": 6 },
+    "avoir": { "year": 2026, "prefix": "AVO-2026-", "next_value": 1, "padding": 6 }
+  }
+}
+
+### Add a new year or optional AVOIR sequence to the current policy issuer
+POST {{baseUrl}}/api/v1/factures/configuration/sequences
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "confirm": true,
+  "sequences": {
+    "avoir": { "year": 2027, "prefix": "AVO-2027-", "next_value": 1, "padding": 6 }
+  }
+}

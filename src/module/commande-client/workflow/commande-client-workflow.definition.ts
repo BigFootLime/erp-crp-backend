@@ -129,7 +129,7 @@ export const COMMANDE_WORKFLOW_CHECKPOINTS: CommandeWorkflowCheckpointDefinition
     sort_order: 50,
     status_when_done: "ATTENTE_PLANNING",
     action_key: "mark_of_ready",
-    action_label: "Lancement pret",
+    action_label: "Vérifier le stock et lancer",
   },
   {
     code: "planning_validation",

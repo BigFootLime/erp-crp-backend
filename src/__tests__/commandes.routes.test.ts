@@ -596,6 +596,7 @@ describe("/api/v1/commandes", () => {
 
     mocks.clientQuery
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ exists: true }] }) // linked OF invariant
       .mockResolvedValueOnce({ rows: [{ id: "123" }] }) // exists
       .mockResolvedValueOnce({ rows: [{ nouveau_statut: "ENREGISTREE" }] }) // last
       .mockResolvedValueOnce({ rows: [{ id: "10" }] }) // insert historique
@@ -613,6 +614,31 @@ describe("/api/v1/commandes", () => {
     const insertCall = mocks.clientQuery.mock.calls.find((c) => String(c[0]).includes("INSERT INTO commande_historique"));
     expect(insertCall).toBeTruthy();
     expect(insertCall?.[1]).toEqual([123, 1, "ENREGISTREE", "PLANIFIEE", "ok"]);
+  });
+
+  it("POST /api/v1/commandes/:id/status refuses planning statuses without an OF", async () => {
+    process.env.JWT_SECRET = "test-secret";
+    const token = jwt.sign(
+      { id: 1, username: "test", email: "test@example.com", role: "admin" },
+      process.env.JWT_SECRET,
+      { expiresIn: "1h" }
+    );
+
+    mocks.clientQuery
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ exists: false }] }) // linked OF invariant
+      .mockResolvedValueOnce({ rows: [] }); // ROLLBACK
+
+    const res = await request(app)
+      .post("/api/v1/commandes/123/status")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ nouveau_statut: "ATTENTE_PLANNING", commentaire: "force" });
+
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ code: "PLANNING_REQUIRES_OF" });
+    expect(
+      mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO commande_historique"))
+    ).toBe(false);
   });
 
   it("GET /api/v1/commandes/:id/workflow returns checkpoints and available actions", async () => {
@@ -790,6 +816,81 @@ describe("/api/v1/commandes", () => {
     );
     expect(statusHistoryCall?.[1]).toEqual([123, 1, "ATTENTE_TECHNIQUE", "ATTENTE_STOCK", "ok technique"]);
     expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO ordres_fabrication"))).toBe(false);
+  });
+
+  it("POST /api/v1/commandes/:id/workflow/actions refuses to complete launch without stock allocation or OF generation", async () => {
+    const res = await request(app)
+      .post("/api/v1/commandes/123/workflow/actions")
+      .send({ action: "mark_of_ready" });
+
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ code: "COMMAND_LAUNCH_REQUIRED" });
+    expect(mocks.poolConnect).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "/api/v1/commandes/123/generate-affaires/confirm",
+    "/api/v1/commandes/123/affaires/generate",
+  ])("POST %s rejects the removed legacy launch path", async (path) => {
+    const res = await request(app).post(path).send({ strategy: "AUTO" });
+
+    expect(res.status).toBe(410);
+    expect(res.body).toMatchObject({ code: "LEGACY_COMMAND_LAUNCH_REMOVED" });
+    expect(mocks.poolConnect).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["mark_delivered", "DELIVERY_NOT_COMPLETE"],
+    ["mark_invoiced", "INVOICE_NOT_COMPLETE"],
+  ])("refuses workflow action %s without its real fulfillment artifact", async (action, code) => {
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const q = String(sql);
+      if (q === "BEGIN" || q === "ROLLBACK") return { rows: [] };
+      if (q.includes("FROM commande_client cc")) {
+        return { rows: [{ id: "123", numero: "CC-123", client_id: "001", raw_statut: "PRET_LIVRAISON" }] };
+      }
+      if (q.includes("WITH shipped_by_line AS")) {
+        return {
+          rows: [{
+            has_lines: true,
+            has_ready_delivery: true,
+            fully_shipped: false,
+            fully_invoiced: false,
+          }],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const res = await request(app)
+      .post("/api/v1/commandes/123/workflow/actions")
+      .send({ action });
+
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ code });
+    expect(mocks.clientQuery).toHaveBeenCalledWith("ROLLBACK");
+  });
+
+  it("POST /api/v1/commandes/:id/workflow/actions refuses planning validation without an OF", async () => {
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const q = String(sql);
+      if (q === "BEGIN" || q === "ROLLBACK") return { rows: [] };
+      if (q.includes("FROM commande_client cc")) {
+        return { rows: [{ id: "123", numero: "CC-123", client_id: "001", raw_statut: "ATTENTE_PLANNING" }] };
+      }
+      if (q.includes("FROM public.ordres_fabrication")) {
+        return { rows: [{ exists: false }] };
+      }
+      return { rows: [] };
+    });
+
+    const res = await request(app)
+      .post("/api/v1/commandes/123/workflow/actions")
+      .send({ action: "validate_planning" });
+
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ code: "PLANNING_REQUIRES_OF" });
+    expect(mocks.clientQuery).toHaveBeenCalledWith("ROLLBACK");
   });
 
   it("PATCH /api/v1/commandes/:id/workflow/checkpoints/:checkpointCode clears assignment and resumes blocked status", async () => {
@@ -1207,7 +1308,7 @@ describe("/api/v1/commandes", () => {
     expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO affaire"))).toBe(false);
   });
 
-  it("POST /api/v1/commandes/:id/generate-affaires creates LIVRAISON even when no stock is available", async () => {
+  it("POST /api/v1/commandes/:id/generate-affaires recovers planning and reuses its existing delivery affair", async () => {
     process.env.JWT_SECRET = "test-secret";
     const token = jwt.sign(
       { id: 1, username: "test", email: "test@example.com", role: "admin" },
@@ -1229,13 +1330,16 @@ describe("/api/v1/commandes", () => {
 
       // Customer-command generation is intentionally gated by the completed stock check.
       if (q.includes("FROM commande_client cc") && q.includes("LEFT JOIN LATERAL")) {
-        return { rows: [{ id: "123", numero: "CC-123", client_id: "001", raw_statut: "ATTENTE_OF" }] };
+        return { rows: [{ id: "123", numero: "CC-123", client_id: "001", raw_statut: "ATTENTE_PLANNING" }] };
       }
       if (q.includes("INSERT INTO public.commande_client_workflow_checkpoint")) return { rows: [] };
       if (q.includes("FROM public.commande_client_workflow_checkpoint") && q.includes("checkpoint_code IN ('stock_check', 'of_generation')")) {
-        return { rows: [{ checkpoint_code: "stock_check", status: "done" }, { checkpoint_code: "of_generation", status: "active" }] };
+        return { rows: [{ checkpoint_code: "stock_check", status: "done" }, { checkpoint_code: "of_generation", status: "done" }] };
       }
-      if (q.includes("SELECT EXISTS(SELECT 1 FROM public.commande_to_affaire")) return { rows: [{ exists: false }] };
+      if (q.includes("SELECT EXISTS(SELECT 1 FROM public.commande_to_affaire")) return { rows: [{ exists: true }] };
+      if (q.includes("EXISTS(SELECT 1 FROM public.ordres_fabrication") && q.includes("EXISTS(SELECT 1 FROM public.bon_livraison")) {
+        return { rows: [{ has_of: false, has_delivery: false }] };
+      }
       if (q.includes("SELECT id::int AS id, numero, client_id") && q.includes("FROM commande_client")) {
         return { rows: [{ id: 123, numero: "CC-123", client_id: "001" }] };
       }
@@ -1261,7 +1365,7 @@ describe("/api/v1/commandes", () => {
       }
 
       if (q.includes("FROM commande_to_affaire") && q.includes("WHERE commande_id")) {
-        return { rows: [] };
+        return { rows: [{ affaire_id: 7, role: "LIVRAISON" }] };
       }
 
       if (q.includes("FROM public.erp_settings") && String(p0) === "stock.default_shipping_location") {
@@ -1278,7 +1382,7 @@ describe("/api/v1/commandes", () => {
             {
               commande_ligne_id: 1,
               code_piece: "P1",
-              qty_ordered: 1,
+              qty_ordered: 2,
               article_id: ARTICLE_ID,
               piece_technique_id: PIECE_ID,
             },
@@ -1286,9 +1390,13 @@ describe("/api/v1/commandes", () => {
         };
       }
 
-      // No stock available -> should create the livraison affaire and OF.
-      if (q.includes("FROM public.stock_levels") && q.includes("GROUP BY sl.article_id")) {
-        return { rows: [{ article_id: ARTICLE_ID, qty_available: 0 }] };
+      // One OLD/NEW unit is already covered by a legacy grouped-delivery reservation.
+      if (q.includes("GROUP BY availability.article_id") && q.includes("warehouse.stock_scope")) {
+        return { rows: [{ article_id: ARTICLE_ID, stock_scope: "OLD", qty_available: 1 }] };
+      }
+
+      if (q.includes("FROM public.stock_reservations reservation") && q.includes("JOIN public.commande_ligne line")) {
+        return { rows: [{ id: "99999999-9999-4999-8999-999999999999", commande_ligne_id: 1, qty_reserved: 1 }] };
       }
 
       if (q.includes("nextval('public.affaire_id_seq')")) {
@@ -1360,6 +1468,7 @@ describe("/api/v1/commandes", () => {
       .post("/api/v1/commandes/123/generate-affaires")
       .set("Authorization", `Bearer ${token}`)
       .send({
+        decision: "SHIP_ALL_TOGETHER",
         // The shortage is 1; launching 3 is a deliberate stock build-up.
         lines: [{ commande_ligne_id: 1, qty_ship_now: 0, qty_to_produce: 3 }],
       });
@@ -1368,8 +1477,23 @@ describe("/api/v1/commandes", () => {
     expect(res.body).toMatchObject({
       affaire_ids: [7],
       livraison_affaire_id: 7,
+      warnings: ["RECOVERED_PLANNING_WITHOUT_OF_OR_DELIVERY"],
     });
     expect(ofInsertCalls.some((params) => params.includes(3))).toBe(true);
+    expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO affaire"))).toBe(false);
+    expect(
+      mocks.clientQuery.mock.calls.some(
+        (call) =>
+          String(call[0]).includes("checkpoint_code IN ('of_generation', 'planning_validation')") &&
+          JSON.stringify(call[1] ?? []).includes("planning_without_of_or_delivery")
+      )
+    ).toBe(true);
+    expect(mocks.clientQuery.mock.calls.some((call) =>
+      String(call[0]).includes("UPDATE public.stock_levels") && String(call[0]).includes("qty_reserved = qty_reserved +")
+    )).toBe(false);
+    expect(mocks.clientQuery.mock.calls.some((call) =>
+      String(call[0]).includes("FROM public.stock_reservations reservation") && String(call[0]).includes("JOIN public.commande_ligne line")
+    )).toBe(true);
   });
 
   it("POST /api/v1/commandes/:id/generate-affaires creates recursive OF tree for manufactured sub-pieces", async () => {

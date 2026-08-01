@@ -36,6 +36,7 @@ export const listLivraisonsQuerySchema = z
   .object({
     q: z.string().trim().min(1).max(120).optional(),
     client_id: z.string().trim().min(1).optional(),
+    commande_id: z.coerce.number().int().positive().optional(),
     statut: bonLivraisonStatutSchema.optional(),
     from: isoDate.optional(),
     to: isoDate.optional(),

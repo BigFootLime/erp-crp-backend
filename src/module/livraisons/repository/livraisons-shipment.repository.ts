@@ -4,6 +4,7 @@ import type { PoolClient } from "pg"
 import pool from "../../../config/database"
 import { HttpError } from "../../../utils/httpError"
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
+import { syncCommandeAfterShipment } from "../../commande-client/repository/commande-fulfillment.repository"
 import { hashStockCommand, normalizeIdempotencyKey } from "../../stock/domain/stock-command"
 import {
   assertStockConsumptionAllowed,
@@ -544,9 +545,13 @@ export async function prepareLivraisonInTransaction(
     header: { ...snapshot.header, statut: "READY" },
     allocations: snapshot.allocations.map((allocation) => ({
       ...allocation,
-      reservation_id: crypto.randomUUID(),
-      reservation_status: "ACTIVE",
-      reservation_quantity: allocation.quantite,
+      reservation_id: allocation.reservation_id ?? crypto.randomUUID(),
+      reservation_status: allocation.reservation_id
+        ? allocation.reservation_status
+        : "ACTIVE",
+      reservation_quantity: allocation.reservation_id
+        ? allocation.reservation_quantity
+        : allocation.quantite,
     })),
   })
   const relevantBlockers = draftPreview.blockers.filter(
@@ -563,7 +568,11 @@ export async function prepareLivraisonInTransaction(
     )
   }
 
-  const groups = buildGroups(snapshot.allocations)
+  const allocationsToReserve = snapshot.allocations.filter(
+    (allocation) =>
+      !allocation.reservation_id || allocation.reservation_status !== "ACTIVE"
+  )
+  const groups = buildGroups(allocationsToReserve)
   const targets: StockLockTarget[] = groups.map((group) => ({
     stock_level_id: group.stock_level_id,
     stock_batch_id: group.stock_batch_id,
@@ -665,6 +674,30 @@ export async function prepareLivraisonInTransaction(
 
   await client.query(
     `
+      UPDATE public.stock_reservations reservation
+      SET source_type = 'BON_LIVRAISON_LIGNE',
+          source_id = allocation.bon_livraison_ligne_id::text,
+          commande_ligne_id = line.commande_ligne_id,
+          bon_livraison_ligne_id = allocation.bon_livraison_ligne_id,
+          affaire_id = delivery.affaire_id,
+          reason = 'Préparation du bon de livraison ' || delivery.numero,
+          correlation_id = COALESCE(reservation.correlation_id, $2::uuid),
+          updated_at = now(),
+          updated_by = $3
+      FROM public.bon_livraison_ligne_allocations allocation
+      JOIN public.bon_livraison_ligne line
+        ON line.id = allocation.bon_livraison_ligne_id
+      JOIN public.bon_livraison delivery
+        ON delivery.id = line.bon_livraison_id
+      WHERE delivery.id = $1::uuid
+        AND allocation.reservation_id = reservation.id
+        AND reservation.status = 'ACTIVE'
+    `,
+    [bonLivraisonId, correlationId, userId]
+  )
+
+  await client.query(
+    `
       UPDATE public.bon_livraison
       SET statut = 'READY',
           updated_at = now(),
@@ -681,6 +714,7 @@ export async function prepareLivraisonInTransaction(
     new_values: {
       statut: "READY",
       reservations_count: snapshot.allocations.length,
+      reservations_reused: snapshot.allocations.length - allocationsToReserve.length,
       correlation_id: correlationId,
     },
   })
@@ -1133,6 +1167,13 @@ export async function repoShipLivraison(
       browser: null,
       tx: client,
     })
+
+    const commandeId = snapshot.header.commande_id === null
+      ? null
+      : Number(snapshot.header.commande_id)
+    if (commandeId !== null && Number.isInteger(commandeId)) {
+      await syncCommandeAfterShipment(client, commandeId, userId)
+    }
 
     const result: BonLivraisonShipResult = {
       id: bonLivraisonId,

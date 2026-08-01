@@ -401,6 +401,11 @@ function buildListWhere(filters: ListLivraisonsQueryDTO): ListWhere {
     where.push(`bl.client_id = ${p}`)
   }
 
+  if (filters.commande_id) {
+    const p = push(filters.commande_id)
+    where.push(`bl.commande_id = ${p}::bigint`)
+  }
+
   if (filters.statut) {
     const p = push(filters.statut)
     where.push(`bl.statut = ${p}`)
@@ -2280,6 +2285,211 @@ export async function repoUpdateLivraisonStatus(
   } finally {
     db.release()
   }
+
+}
+
+export async function attachActiveCommandeReservationsToLivraison(
+  db: PoolClient,
+  bonLivraisonId: string,
+  userId: number
+): Promise<{ attached: number; fullyAllocated: boolean }> {
+  const reservations = await db.query<{
+    line_id: string
+    commande_ligne_id: number
+    line_quantity: number
+    affaire_id: number | null
+    reservation_id: string
+    reservation_quantity: number
+    article_id: string
+    lot_id: string | null
+    location_id: string
+    stock_level_id: string
+    stock_batch_id: string | null
+    magasin_id: string | null
+    emplacement_id: number | null
+    unite: string | null
+  }>(
+    `
+      SELECT
+        delivery_line.id::text AS line_id,
+        delivery_line.commande_ligne_id::bigint::int AS commande_ligne_id,
+        delivery_line.quantite::float8 AS line_quantity,
+        delivery.affaire_id::bigint::int AS affaire_id,
+        reservation.id::text AS reservation_id,
+        reservation.qty_reserved::float8 AS reservation_quantity,
+        reservation.article_id::text AS article_id,
+        reservation.lot_id::text AS lot_id,
+        reservation.location_id::text AS location_id,
+        level.id::text AS stock_level_id,
+        reservation.stock_batch_id::text AS stock_batch_id,
+        location_map.magasin_id::text AS magasin_id,
+        location_map.emplacement_id::bigint::int AS emplacement_id,
+        article.unite
+      FROM public.bon_livraison_ligne delivery_line
+      JOIN public.bon_livraison delivery
+        ON delivery.id = delivery_line.bon_livraison_id
+      JOIN public.stock_reservations reservation
+        ON reservation.commande_ligne_id = delivery_line.commande_ligne_id
+       AND reservation.source_type = 'COMMANDE_LIGNE'
+       AND reservation.status = 'ACTIVE'
+      JOIN public.stock_levels level
+        ON level.article_id = reservation.article_id
+       AND level.location_id = reservation.location_id
+      JOIN public.articles article ON article.id = reservation.article_id
+      LEFT JOIN LATERAL (
+        SELECT
+          emplacement.magasin_id,
+          emplacement.id AS emplacement_id
+        FROM public.emplacements emplacement
+        WHERE emplacement.location_id = reservation.location_id
+        ORDER BY emplacement.id
+        LIMIT 1
+      ) location_map ON TRUE
+      WHERE delivery.id = $1::uuid
+        AND delivery_line.commande_ligne_id IS NOT NULL
+      ORDER BY delivery_line.ordre, reservation.created_at, reservation.id
+      FOR UPDATE OF delivery_line, reservation, level
+    `,
+    [bonLivraisonId]
+  )
+
+  const remainingByLine = new Map<string, number>()
+  const consumedReservationIds = new Set<string>()
+  let attached = 0
+  for (const reservation of reservations.rows) {
+    // A reservation can appear more than once if a malformed BL contains
+    // duplicate lines for the same order line. Never allocate the same locked
+    // reservation snapshot twice; leave the duplicate line visibly uncovered.
+    if (consumedReservationIds.has(reservation.reservation_id)) continue
+    consumedReservationIds.add(reservation.reservation_id)
+    const remaining = remainingByLine.has(reservation.line_id)
+      ? Number(remainingByLine.get(reservation.line_id))
+      : Number(reservation.line_quantity)
+    if (remaining <= 1e-9) continue
+    if (!reservation.magasin_id || reservation.emplacement_id === null) {
+      throw new HttpError(
+        409,
+        "RESERVED_STOCK_LOCATION_INVALID",
+        "L'emplacement du stock réservé ne peut pas être rattaché au bon de livraison."
+      )
+    }
+
+    const quantity = Math.min(remaining, Number(reservation.reservation_quantity))
+    if (quantity <= 1e-9) continue
+    let reservationId = reservation.reservation_id
+
+    if (quantity + 1e-9 < Number(reservation.reservation_quantity)) {
+      await db.query(
+        `
+          UPDATE public.stock_reservations
+          SET qty_reserved = qty_reserved - $2,
+              row_version = row_version + 1,
+              updated_at = now(),
+              updated_by = $3
+          WHERE id = $1::uuid
+            AND status = 'ACTIVE'
+        `,
+        [reservation.reservation_id, quantity, userId]
+      )
+      const split = await db.query<{ id: string }>(
+        `
+          INSERT INTO public.stock_reservations (
+            article_id, location_id, qty_reserved, source_type, source_id, status,
+            lot_id, stock_batch_id, correlation_id, commande_ligne_id, of_id,
+            bon_livraison_ligne_id, affaire_id, reason, created_by, updated_by
+          )
+          SELECT
+            article_id, location_id, $2, 'BON_LIVRAISON_LIGNE', $3, 'ACTIVE',
+            lot_id, stock_batch_id, correlation_id, commande_ligne_id, of_id,
+            $3::uuid, $4::bigint, 'Affectée au bon de livraison ' || $5, $6, $6
+          FROM public.stock_reservations
+          WHERE id = $1::uuid
+          RETURNING id::text AS id
+        `,
+        [
+          reservation.reservation_id,
+          quantity,
+          reservation.line_id,
+          reservation.affaire_id,
+          bonLivraisonId,
+          userId,
+        ]
+      )
+      reservationId = split.rows[0]?.id ?? ""
+      if (!reservationId) throw new Error("Failed to split the order-line stock reservation")
+    } else {
+      await db.query(
+        `
+          UPDATE public.stock_reservations
+          SET source_type = 'BON_LIVRAISON_LIGNE',
+              source_id = $2,
+              bon_livraison_ligne_id = $2::uuid,
+              affaire_id = $3::bigint,
+              reason = 'Affectée au bon de livraison ' || $4,
+              row_version = row_version + 1,
+              updated_at = now(),
+              updated_by = $5
+          WHERE id = $1::uuid
+            AND status = 'ACTIVE'
+        `,
+        [
+          reservation.reservation_id,
+          reservation.line_id,
+          reservation.affaire_id,
+          bonLivraisonId,
+          userId,
+        ]
+      )
+    }
+
+    await db.query(
+      `
+        INSERT INTO public.bon_livraison_ligne_allocations (
+          bon_livraison_ligne_id, article_id, lot_id, magasin_id,
+          emplacement_id, location_id, stock_level_id, stock_batch_id,
+          reservation_id, stock_movement_line_id, quantite, unite,
+          created_by, updated_by
+        ) VALUES (
+          $1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::bigint,$6::uuid,$7::uuid,$8::uuid,
+          $9::uuid,NULL,$10,$11,$12,$12
+        )
+      `,
+      [
+        reservation.line_id,
+        reservation.article_id,
+        reservation.lot_id,
+        reservation.magasin_id,
+        reservation.emplacement_id,
+        reservation.location_id,
+        reservation.stock_level_id,
+        reservation.stock_batch_id,
+        reservationId,
+        quantity,
+        reservation.unite,
+        userId,
+      ]
+    )
+    remainingByLine.set(reservation.line_id, remaining - quantity)
+    attached += 1
+  }
+
+  const coverage = await db.query<{ complete: boolean }>(
+    `
+      SELECT NOT EXISTS(
+        SELECT 1
+        FROM public.bon_livraison_ligne line
+        LEFT JOIN LATERAL (
+          SELECT COALESCE(SUM(allocation.quantite), 0)::numeric AS quantity
+          FROM public.bon_livraison_ligne_allocations allocation
+          WHERE allocation.bon_livraison_ligne_id = line.id
+        ) allocated ON TRUE
+        WHERE line.bon_livraison_id = $1::uuid
+          AND ABS(line.quantite - COALESCE(allocated.quantity, 0)) > 0.000000001
+      ) AS complete
+    `,
+    [bonLivraisonId]
+  )
+  return { attached, fullyAllocated: coverage.rows[0]?.complete === true }
 }
 
 export async function repoCreateLivraisonFromCommande(
@@ -2425,11 +2635,27 @@ export async function repoCreateLivraisonFromCommande(
 
     await insertLines(db, id, outLines, userId)
 
+    const transferredReservations = await attachActiveCommandeReservationsToLivraison(
+      db,
+      id,
+      userId
+    )
+    if (transferredReservations.fullyAllocated) {
+      await prepareLivraisonInTransaction(db, id, userId)
+    }
+
     await insertEvent(db, {
       bon_livraison_id: id,
       event_type: "CREATED_FROM_COMMANDE",
       user_id: userId,
-      new_values: { id, numero, commande_id: cmd.id, commande_numero: cmd.numero },
+      new_values: {
+        id,
+        numero,
+        commande_id: cmd.id,
+        commande_numero: cmd.numero,
+        reservations_transferred: transferredReservations.attached,
+        prepared: transferredReservations.fullyAllocated,
+      },
     })
 
     if (ownsTransaction) await db.query("COMMIT")

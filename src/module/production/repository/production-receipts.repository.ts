@@ -171,7 +171,7 @@ async function resolveArticleForPieceTechnique(client: Pick<PoolClient, "query">
   return row;
 }
 
-async function reserveProducedQtyForCommandeLine(
+export async function reserveProducedQtyForCommandeLine(
   client: Pick<PoolClient, "query">,
   args: {
     commande_ligne_id: number;
@@ -214,9 +214,21 @@ async function reserveProducedQtyForCommandeLine(
     [String(args.commande_ligne_id)]
   );
 
+  const plannedDeliveryRes = await client.query<{ qty_planned: number }>(
+    `
+      SELECT COALESCE(SUM(line.quantite), 0)::float8 AS qty_planned
+      FROM public.bon_livraison_ligne line
+      JOIN public.bon_livraison delivery ON delivery.id = line.bon_livraison_id
+      WHERE line.commande_ligne_id = $1::bigint
+        AND delivery.statut <> 'CANCELLED'
+    `,
+    [args.commande_ligne_id]
+  );
+
   const orderedQty = Number(line.quantite);
   const alreadyReserved = Number(currentReservedRes.rows[0]?.qty_reserved ?? 0);
-  const remainingToReserve = Math.max(0, orderedQty - alreadyReserved);
+  const alreadyPlannedForDelivery = Number(plannedDeliveryRes.rows[0]?.qty_planned ?? 0);
+  const remainingToReserve = Math.max(0, orderedQty - alreadyReserved - alreadyPlannedForDelivery);
   const qtyToReserve = Math.min(args.qty_ok, remainingToReserve);
   if (qtyToReserve <= 0) return null;
 
