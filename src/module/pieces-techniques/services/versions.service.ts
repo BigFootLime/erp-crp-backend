@@ -7,6 +7,7 @@ import {
   repoCreateVersion,
   repoGetVersion,
   repoListVersions,
+  repoPublishVersion,
   repoUpdateVersion,
   repoUpdateVersionStatus,
 } from "../repository/versions.repository"
@@ -15,6 +16,7 @@ import type {
   CreateVersionBodyDTO,
   UpdateVersionBodyDTO,
   VersionStatusBodyDTO,
+  PublishVersionBodyDTO,
   VersionStatutDTO,
 } from "../validators/versions.validators"
 
@@ -65,6 +67,23 @@ export async function updateVersionStatusSVC(
     audit
   )
 }
+
+export const publishVersionSVC = (
+  pieceTechniqueId: string,
+  versionId: string,
+  body: PublishVersionBodyDTO,
+  audit: AuditContext
+) => repoPublishVersion(
+  pieceTechniqueId,
+  versionId,
+  {
+    date_application: body.date_application ?? null,
+    date_effet: body.date_effet,
+    commentaire_validation: body.commentaire_validation ?? null,
+    expected_updated_at: body.expected_updated_at,
+  },
+  audit
+)
 
 export const createNextVersionSVC = (
   pieceTechniqueId: string,

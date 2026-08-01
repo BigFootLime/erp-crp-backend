@@ -33,9 +33,22 @@ légaux de facture restent au format `FT-…`; le mouvement de stock conserve so
 - `GET /api/v1/pieces-techniques/code-preview` : aperçu non réservant.
 - `POST /api/v1/pieces-techniques/:id/versions/:versionId/create-next` : clone la définition courante
   (champs de version, opérations, gamme et nomenclature) dans une nouvelle version modifiable.
+- `POST /api/v1/pieces-techniques/:id/versions/:versionId/publish` : publication guidée atomique.
+  Un brouillon passe par la validation puis devient Applicable dans la même transaction ; une version
+  déjà en validation devient Applicable et un rejeu sur l'indice déjà Applicable est idempotent. Le
+  déclassement de l'ancien indice et le gel des exigences documentaires font partie de la transaction.
+  `expected_updated_at` protège des modifications concurrentes. `date_effet: null`, envoyé
+  explicitement, rend immédiatement effective une version Applicable dont l'effet était différé.
 - Une version `APPLICABLE` ou `OBSOLETE` est immuable et une seule version peut être applicable par pièce.
+- Une date d'effet future est refusée avant tout déclassement avec
+  `422 VERSION_EFFECTIVE_DATE_FUTURE`. Une version obsolète est refusée avec
+  `409 VERSION_NOT_PUBLISHABLE`.
 - `POST /api/v1/production/ofs` exige une version applicable et enregistre son snapshot JSON et son
   empreinte SHA-256. Les OF enfants générés récursivement possèdent leur propre snapshot.
+- Quand aucune version utilisable n'existe, `VERSION_NOT_APPLICABLE` expose dans `details`
+  `piece_technique_id`, `code_piece`, `designation` et les versions candidates (`id`, `indice`,
+  `statut`, `date_effet`, `effective_now`). Le frontend peut ainsi guider vers le dossier exact sans
+  deviner la pièce à partir d'une recherche.
 - Une mise à jour d'OF ne peut pas remplacer sa version, son snapshot, sa date ou son empreinte.
 
 ## Fichiers Project Office
