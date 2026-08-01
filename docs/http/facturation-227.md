@@ -69,3 +69,20 @@ Le patch `db/patches/20260725_facturation_payments_227.sql` ne crée aucune
 politique ni séquence active. Finance et Juridique doivent valider puis
 configurer ces lignes sur `cerp_test` avant toute recette d'émission. Aucune
 migration n'a été exécutée pendant l'implémentation.
+
+### Configuration administrée
+
+- `GET /factures/configuration?year=YYYY` expose uniquement l'état de
+  préparation : émetteurs, complétude des mentions légales, politique active,
+  séquences et bloqueurs. Les coordonnées bancaires ne sont jamais retournées.
+- `POST /factures/configuration/activate` crée atomiquement une politique et sa
+  séquence `FACTURE` obligatoire, avec une séquence `AVOIR` optionnelle.
+- `POST /factures/configuration/sequences` ajoute une séquence annuelle
+  manquante à l'émetteur de la politique active.
+
+Ces mutations exigent `settings_manage` et `confirm: true`, verrouillent la
+configuration, écrivent l'audit global et restent create-only : aucun numéro,
+préfixe, compteur ou historique existant n'est réinitialisé. Les chevauchements
+de politique, les scopes de séquence déjà présents et les mentions légales
+incomplètes sont refusés. L'écran d'administration rend ce paramétrage
+possible ; il ne vaut ni validation Finance/Juridique ni activation implicite.

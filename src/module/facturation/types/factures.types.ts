@@ -70,6 +70,7 @@ export type FactureListItem = {
   id: number;
   numero: string;
   client_id: string;
+  commande_id: number | null;
   date_emission: string;
   date_echeance: string | null;
   total_ht: number;

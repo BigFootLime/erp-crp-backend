@@ -17,6 +17,11 @@ import {
   validateFactureWorkflow,
 } from "../controllers/facture-workflow.controller";
 import { requireFinanceCapability } from "../middlewares/finance-authorization.middleware";
+import {
+  activateFinanceConfiguration,
+  createFinanceSequences,
+  getFinanceConfigurationReadiness,
+} from "../controllers/finance-configuration.controller";
 
 const router = Router();
 
@@ -38,6 +43,23 @@ router.post(
   validateFactureWorkflow
 );
 router.post("/workflow/:id/issue", requireFinanceCapability("issue"), issueFactureWorkflow);
+
+// Must precede `/:id`: configuration is a Finance settings resource, not a legacy invoice id.
+router.get(
+  "/configuration",
+  requireFinanceCapability("settings_manage"),
+  getFinanceConfigurationReadiness
+);
+router.post(
+  "/configuration/activate",
+  requireFinanceCapability("settings_manage"),
+  activateFinanceConfiguration
+);
+router.post(
+  "/configuration/sequences",
+  requireFinanceCapability("settings_manage"),
+  createFinanceSequences
+);
 
 router.get("/", requireFinanceCapability("read"), listFactures);
 router.get("/:id", requireFinanceCapability("read"), getFacture);

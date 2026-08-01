@@ -3,6 +3,10 @@ import type { PoolClient } from "pg";
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
 import {
+  listIssuedInvoiceCommandeIds,
+  syncCommandeAfterInvoiceIssue,
+} from "../../commande-client/repository/commande-fulfillment.repository";
+import {
   assertFactureTransition,
   assertSeparationOfDuties,
   financePreviewHash,
@@ -1287,6 +1291,10 @@ export async function repoIssueFacture(params: {
         correlation_id: correlationId,
       },
     });
+    const commandeIds = await listIssuedInvoiceCommandeIds(client, facture.id);
+    for (const commandeId of commandeIds) {
+      await syncCommandeAfterInvoiceIssue(client, commandeId, params.actor.userId);
+    }
     await saveFinanceReceipt({
       client,
       actor: params.actor,
