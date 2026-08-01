@@ -100,6 +100,7 @@ import {
   listVersions,
   updateVersion,
   updateVersionStatus,
+  publishVersion,
 } from "../controllers/versions.controller"
 import { createOrLinkArticleFabrique, getPieceArticlePrincipal } from "../controllers/piece-article.controller"
 import {
@@ -108,6 +109,7 @@ import {
   updateVersionSchema,
   versionIdParamSchema,
   versionStatusSchema,
+  publishVersionSchema,
 } from "../validators/versions.validators"
 
 const router = Router()
@@ -201,6 +203,7 @@ router.get("/:id/versions", validate(idParamSchema), listVersions)
 router.post("/:id/versions", validate(idParamSchema), validate(createVersionSchema), createVersion)
 router.patch("/:id/versions/:versionId", validate(versionIdParamSchema), validate(updateVersionSchema), updateVersion)
 router.patch("/:id/versions/:versionId/status", requireVersionApproval, validate(versionIdParamSchema), validate(versionStatusSchema), updateVersionStatus)
+router.post("/:id/versions/:versionId/publish", requireVersionApproval, validate(versionIdParamSchema), validate(publishVersionSchema), publishVersion)
 router.post("/:id/versions/:versionId/create-next", validate(versionIdParamSchema), validate(createNextVersionSchema), createNextVersion)
 
 router.post("/:id/nomenclature", validate(idParamSchema), validate(addBomLineSchema), addBomLine)

@@ -4,6 +4,7 @@ import {
   createNextVersionSchema,
   createVersionSchema,
   versionStatusSchema,
+  publishVersionSchema,
 } from "../module/pieces-techniques/validators/versions.validators"
 import {
   createPieceTechniqueSchema,
@@ -69,6 +70,15 @@ describe("Versions — validators", () => {
     expect(versionStatusSchema.safeParse({ body: { next_statut: "APPLICABLE", date_application: "2026-07-30" } }).success).toBe(true)
     expect(versionStatusSchema.safeParse({ body: { next_statut: "APPLICABLE", date_application: "2026-07-30T10:00:00.000Z" } }).success).toBe(false)
     expect(versionStatusSchema.safeParse({ body: { next_statut: "APPLICABLE", date_application: "2026-02-30" } }).success).toBe(false)
+  })
+
+  it("accepte le contrat minimal du bouton Valider et appliquer", () => {
+    expect(publishVersionSchema.safeParse({ body: {} }).success).toBe(true)
+    expect(publishVersionSchema.safeParse({ body: { date_application: "2026-07-30" } }).success).toBe(true)
+    expect(publishVersionSchema.safeParse({ body: { date_effet: "2026-08-01" } }).success).toBe(true)
+    expect(publishVersionSchema.safeParse({ body: { date_effet: null } }).success).toBe(true)
+    expect(publishVersionSchema.safeParse({ body: { date_effet: "2026-02-30" } }).success).toBe(false)
+    expect(publishVersionSchema.safeParse({ body: { date_application: "2026-07-30T10:00:00.000Z" } }).success).toBe(false)
   })
 
   it("create-next exige aussi un indice", () => {
