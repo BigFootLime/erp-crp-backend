@@ -2,6 +2,7 @@
 // GPAO B2.1 — HTTP handlers des versions/indices.
 import type { Request, RequestHandler } from "express"
 import { HttpError } from "../../../utils/httpError"
+import { parseUuidRouteParam } from "../../../utils/routeParams"
 import type { AuditContext } from "../repository/pieces-techniques.repository"
 import {
   createNextVersionSchema,
@@ -45,17 +46,9 @@ function buildAuditContext(req: Request): AuditContext {
   }
 }
 
-function routeParam(req: Request, name: string): string {
-  const value = req.params[name]
-  if (typeof value !== "string" || value.length === 0) {
-    throw new HttpError(400, "INVALID_ROUTE_PARAM", `Paramètre de route invalide : ${name}`)
-  }
-  return value
-}
-
 export const listVersions: RequestHandler = async (req, res, next) => {
   try {
-    const items = await listVersionsSVC(routeParam(req, "id"))
+    const items = await listVersionsSVC(parseUuidRouteParam(req.params, "id"))
     res.json(items)
   } catch (err) {
     next(err)
@@ -66,7 +59,7 @@ export const createVersion: RequestHandler = async (req, res, next) => {
   try {
     const audit = buildAuditContext(req)
     const body = createVersionSchema.parse({ body: req.body }).body
-    const out = await createVersionSVC(routeParam(req, "id"), body, audit)
+    const out = await createVersionSVC(parseUuidRouteParam(req.params, "id"), body, audit)
     res.status(201).json(out)
   } catch (err) {
     next(err)
@@ -78,8 +71,8 @@ export const updateVersion: RequestHandler = async (req, res, next) => {
     const audit = buildAuditContext(req)
     const body = updateVersionSchema.parse({ body: req.body }).body
     const out = await updateVersionSVC(
-      routeParam(req, "id"),
-      routeParam(req, "versionId"),
+      parseUuidRouteParam(req.params, "id"),
+      parseUuidRouteParam(req.params, "versionId"),
       body,
       audit
     )
@@ -95,8 +88,8 @@ export const updateVersionStatus: RequestHandler = async (req, res, next) => {
     const audit = buildAuditContext(req)
     const body = versionStatusSchema.parse({ body: req.body }).body
     const out = await updateVersionStatusSVC(
-      routeParam(req, "id"),
-      routeParam(req, "versionId"),
+      parseUuidRouteParam(req.params, "id"),
+      parseUuidRouteParam(req.params, "versionId"),
       body,
       audit
     )
@@ -112,8 +105,8 @@ export const publishVersion: RequestHandler = async (req, res, next) => {
     const audit = buildAuditContext(req)
     const body = publishVersionSchema.parse({ body: req.body }).body
     const out = await publishVersionSVC(
-      routeParam(req, "id"),
-      routeParam(req, "versionId"),
+      parseUuidRouteParam(req.params, "id"),
+      parseUuidRouteParam(req.params, "versionId"),
       body,
       audit
     )
@@ -129,8 +122,8 @@ export const createNextVersion: RequestHandler = async (req, res, next) => {
     const audit = buildAuditContext(req)
     const body = createNextVersionSchema.parse({ body: req.body }).body
     const out = await createNextVersionSVC(
-      routeParam(req, "id"),
-      routeParam(req, "versionId"),
+      parseUuidRouteParam(req.params, "id"),
+      parseUuidRouteParam(req.params, "versionId"),
       body,
       audit
     )

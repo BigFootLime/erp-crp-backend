@@ -2,6 +2,7 @@
 // GPAO B2.2 — validators des gammes + opérations de gamme.
 import type { RequestHandler } from "express"
 import { z } from "zod"
+import { uuidRouteParam } from "../../../utils/routeParams"
 
 const uuid = z.string().uuid()
 
@@ -23,8 +24,8 @@ export const operationTypeSchema = z.enum([
 ])
 export type OperationTypeDTO = z.infer<typeof operationTypeSchema>
 
-export const versionIdParamSchema = z.object({ params: z.object({ versionId: uuid }) })
-export const gammeIdParamSchema = z.object({ params: z.object({ gammeId: uuid }) })
+export const versionIdParamSchema = z.object({ params: z.object({ versionId: uuidRouteParam("versionId") }) })
+export const gammeIdParamSchema = z.object({ params: z.object({ gammeId: uuidRouteParam("gammeId") }) })
 
 const gammeCore = z.object({
   // #227 — le nom devient OPTIONNEL : le serveur le calcule depuis la pièce et l'indice
@@ -131,7 +132,9 @@ export const deleteGammeOperationSchema = z.object({
   body: z.object({ expected_updated_at: z.string().trim().min(1, "expected_updated_at est obligatoire") }),
 })
 
-export const operationIdParamSchema = z.object({ params: z.object({ gammeId: uuid, operationId: uuid }) })
+export const operationIdParamSchema = z.object({
+  params: z.object({ gammeId: uuidRouteParam("gammeId"), operationId: uuidRouteParam("operationId") }),
+})
 
 export const nextPhaseQuerySchema = z.object({
   query: z.object({ after_operation_id: uuid.optional() }),
