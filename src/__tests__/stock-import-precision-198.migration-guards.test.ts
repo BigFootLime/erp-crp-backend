@@ -2,8 +2,9 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { repoRoot } from "./helpers/repo-paths";
 
-const root = process.cwd();
+const root = repoRoot;
 const patch = readFileSync(
   resolve(root, "db/patches/20260727_stock_import_precision_198.sql"),
   "utf8"

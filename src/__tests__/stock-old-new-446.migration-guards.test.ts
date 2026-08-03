@@ -2,21 +2,22 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { repoRoot } from "./helpers/repo-paths";
 
 const migration = readFileSync(
-  resolve(process.cwd(), "db/patches/20260731_stock_old_new_446.sql"),
+  resolve(repoRoot, "db/patches/20260731_stock_old_new_446.sql"),
   "utf8"
 );
 const preflight = readFileSync(
-  resolve(process.cwd(), "db/patches/support/20260731_stock_old_new_446.preflight.sql"),
+  resolve(repoRoot, "db/patches/support/20260731_stock_old_new_446.preflight.sql"),
   "utf8"
 );
 const verify = readFileSync(
-  resolve(process.cwd(), "db/patches/support/20260731_stock_old_new_446.verify.sql"),
+  resolve(repoRoot, "db/patches/support/20260731_stock_old_new_446.verify.sql"),
   "utf8"
 );
 const rollback = readFileSync(
-  resolve(process.cwd(), "db/patches/support/20260731_stock_old_new_446.rollback.sql"),
+  resolve(repoRoot, "db/patches/support/20260731_stock_old_new_446.rollback.sql"),
   "utf8"
 );
 

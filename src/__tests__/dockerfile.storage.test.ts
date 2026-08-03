@@ -1,9 +1,9 @@
-import fs from "fs";
-import path from "path";
+import fs from "node:fs";
 
 import { describe, expect, it } from "vitest";
+import { repoPath } from "./helpers/repo-paths";
 
-const dockerfile = fs.readFileSync(path.resolve(process.cwd(), "Dockerfile"), "utf8");
+const dockerfile = fs.readFileSync(repoPath("Dockerfile"), "utf8");
 
 describe("Dockerfile storage permissions", () => {
   it("creates the active CERP storage root before switching to the node user", () => {

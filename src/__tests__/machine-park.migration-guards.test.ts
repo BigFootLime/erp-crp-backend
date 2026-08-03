@@ -1,8 +1,9 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { repoRoot } from "./helpers/repo-paths";
 
-const root = process.cwd();
+const root = repoRoot;
 const patch = readFileSync(resolve(root, "db/patches/20260722_machine_park_165.sql"), "utf8");
 const preflight = readFileSync(resolve(root, "db/patches/support/20260722_machine_park_165.preflight.sql"), "utf8");
 const verify = readFileSync(resolve(root, "db/patches/support/20260722_machine_park_165.verify.sql"), "utf8");

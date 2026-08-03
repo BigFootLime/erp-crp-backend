@@ -50,6 +50,7 @@ From `package.json`:
   - `npm test` (vitest)
   - `npm run test:run` (vitest run)
   - `npm run test:ui` (vitest UI)
+  - `pnpm test:collection` (verify the complete checkout-local test manifest)
 
 Notes:
 
@@ -268,6 +269,9 @@ Conventions:
 - Test runner: Vitest (`vitest`) with Supertest (`supertest`).
 - Tests live in `src/__tests__/` (example: `src/__tests__/app.test.ts`).
 - Commands: `npm test` or `npm run test:run`.
+- Colocated `*.test.*` and `*.spec.*` files below `src/module/` are also part of
+  the suite. See `docs/vitest-checkout-isolation.md` for collection and
+  temporary-storage guarantees.
 
 Observed conventions:
 
