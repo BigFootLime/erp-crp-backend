@@ -418,7 +418,12 @@ describe("Résolution du profil d'accès", () => {
 
   it("infrastructure absente (42P01) : profil vide en 200, jamais un refus", async () => {
     repo.repoResolveAccessProfile.mockResolvedValue(null);
-    expect(await service.getAccessProfile(OPERATEUR_ID)).toEqual({ is_superadmin: false, modules: [] });
+    expect(await service.getAccessProfile(OPERATEUR_ID)).toEqual({
+      contract_version: 1,
+      cache_ttl_seconds: 10,
+      is_superadmin: false,
+      modules: [],
+    });
   });
 
   it("met le profil en cache et le relit après invalidation explicite", async () => {
@@ -563,6 +568,13 @@ describe("Surface HTTP /admin/access", () => {
 });
 
 describe("Profil d'accès et exposition du marqueur superadmin", () => {
+  it("GET /auth/access-profile refuse 401 sans authentification", async () => {
+    const res = await request(app).get("/api/v1/auth/access-profile");
+
+    expect(res.status).toBe(401);
+    expect(repo.repoResolveAccessProfile).not.toHaveBeenCalled();
+  });
+
   it("GET /auth/access-profile est ouvert à tout compte authentifié", async () => {
     repo.repoResolveAccessProfile.mockResolvedValue([
       {
@@ -583,6 +595,7 @@ describe("Profil d'accès et exposition du marqueur superadmin", () => {
       .set("x-test-user-id", String(OPERATEUR_ID));
 
     expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ contract_version: 1, cache_ttl_seconds: 10 });
     expect(res.body.is_superadmin).toBe(false);
     expect(res.body.modules[0]).toMatchObject({ module_key: "clients", allowed: true, source: "DEFAULT" });
   });

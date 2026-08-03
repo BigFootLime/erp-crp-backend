@@ -176,6 +176,20 @@ describe("RBAC multi-rôles #315", () => {
     expect(invalid.success).toBe(false);
   });
 
+  it("refuse les rôles inconnus au lieu de fabriquer une autorisation", () => {
+    expect(
+      adminCreateUserSchema.safeParse({
+        body: { ...validUserBody, role: "Directeur Technique Inconnu" },
+      }).success
+    ).toBe(false);
+    expect(
+      adminCreateUserSchema.safeParse({
+        body: { ...validUserBody, roles: ["Directeur", "Role-Inconnu"] },
+      }).success
+    ).toBe(false);
+    expect(authorizationRole("Role-Inconnu", ["Role-Inconnu"])).toBe("");
+  });
+
   it("autorise un compte ERP incomplet sans inventer de données RH", () => {
     const accountOnly = {
       ...validUserBody,
