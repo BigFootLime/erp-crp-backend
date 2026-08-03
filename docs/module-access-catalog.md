@@ -43,6 +43,27 @@ journalise les anciens overrides avant de les retirer et garantit l'unicité du
 superadmin KEENAN. Préflight et vérification sont obligatoires sur `cerp_test`
 avant `cerp_prod`.
 
+## Contrat `access-profile` v1
+
+`GET /api/v1/auth/access-profile` exige un JWT valide et répond pour tout compte
+authentifié. La réponse canonique contient `contract_version: 1`,
+`cache_ttl_seconds`, `is_superadmin` et la liste `modules`. Chaque module porte
+`module_key`, `label`, `nav_page_keys`, `allowed` et `source`. Le frontend peut
+masquer une entrée à partir de ce profil, mais cette visibilité ne remplace
+jamais le gate serveur : un accès direct explicitement refusé reste un `403`.
+
+Le cache serveur converge au plus tard dans le délai annoncé par
+`cache_ttl_seconds` et les mutations locales l'invalident immédiatement. Pendant
+un déploiement progressif, un frontend récent accepte l'ancienne réponse sans
+métadonnées et utilise dix secondes par défaut ; un frontend ancien ignore les
+deux champs additifs.
+
+Ordre de déploiement : backend, tests `401/403/200` sur `cerp_test`, puis
+frontend. Le rollback applicatif consiste à remettre le frontend précédent puis
+le backend précédent ; aucun rollback SQL n'est requis pour ces deux champs de
+réponse additifs. Les restrictions en base et leurs journaux ne sont jamais
+supprimés par ce rollback.
+
 ## Réparation #402
 
 Le patch `20260730_repair_module_catalog_visibility_402.sql` remet le catalogue
