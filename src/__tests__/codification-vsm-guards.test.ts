@@ -1,8 +1,8 @@
 import fs from "node:fs";
-import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { assertAcceptedEvidenceFile } from "../module/project-office/services/project-office-registers.service";
+import { repoPath } from "./helpers/repo-paths";
 
 function uploadFile(name: string, mime: string, buffer: Buffer) {
   return { originalname: name, mimetype: mime, buffer, size: buffer.byteLength } as Express.Multer.File;
@@ -11,7 +11,7 @@ function uploadFile(name: string, mime: string, buffer: Buffer) {
 describe("Garde-fous codification et VSM", () => {
   it("utilise une séquence PostgreSQL native avec une fonction à périmètre autorisé", () => {
     const migration = fs.readFileSync(
-      path.resolve(process.cwd(), "db/patches/20260713_codification_versions_of_vsm.sql"),
+      repoPath("db/patches/20260713_codification_versions_of_vsm.sql"),
       "utf8"
     );
     expect(migration).toContain("CREATE SEQUENCE IF NOT EXISTS public.cerp_business_code_issue_seq");
@@ -42,7 +42,7 @@ describe("Garde-fous codification et VSM", () => {
 
   it("garde le rollback strictement bloqué après une donnée post-migration", () => {
     const rollback = fs.readFileSync(
-      path.resolve(process.cwd(), "db/patches/support/20260713_codification_versions_of_vsm.rollback.sql"),
+      repoPath("db/patches/support/20260713_codification_versions_of_vsm.rollback.sql"),
       "utf8"
     );
     expect(rollback).toContain("post-migration technical-version metadata or versions would be lost");

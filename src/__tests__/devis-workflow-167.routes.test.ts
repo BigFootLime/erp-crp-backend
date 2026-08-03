@@ -1,10 +1,7 @@
 import request from "supertest";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EventEmitter } from "events";
-import path from "node:path";
 import { HttpError } from "../utils/httpError";
-
-process.env.CERP_DOCUMENTS_ROOT = path.resolve("uploads", "docs");
 
 const mocks = vi.hoisted(() => ({
   poolQuery: vi.fn(),

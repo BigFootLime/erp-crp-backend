@@ -4,6 +4,7 @@
   "description": "",
   "author": "",
   "license": "ISC",
+  "packageManager": "pnpm@11.5.2",
   "main": "dist/index.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
@@ -12,9 +13,11 @@
     "db:patches:status": "node scripts/db-patches.js status",
     "db:patches:up": "node scripts/db-patches.js up",
     "db:patches:baseline": "node scripts/db-patches.js baseline",
-    "test": "vitest",
-    "test:run": "vitest run",
-    "test:ui": "vitest --ui"
+    "test": "vitest --config vitest.config.ts",
+    "test:run": "vitest run --config vitest.config.ts",
+    "test:list": "vitest list --filesOnly --config vitest.config.ts",
+    "test:collection": "node scripts/verify-vitest-collection.mjs",
+    "test:ui": "vitest --ui --config vitest.config.ts"
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^1.4.1",

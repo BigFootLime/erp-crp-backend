@@ -9,10 +9,10 @@
 //      du rapport #275).
 
 import { writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
+import { ensureTmpStoragePath } from "../utils/cerpStorage";
 
 const captured: Array<{ sql: string; values: unknown[] }> = [];
 
@@ -660,5 +660,9 @@ afterAll(async () => {
     });
   }
 
-  writeFileSync(join(tmpdir(), "cerp-reporting-275-queries.sql"), lines.join("\n"), "utf8");
+  writeFileSync(
+    join(ensureTmpStoragePath("reporting"), "queries.sql"),
+    lines.join("\n"),
+    "utf8",
+  );
 });

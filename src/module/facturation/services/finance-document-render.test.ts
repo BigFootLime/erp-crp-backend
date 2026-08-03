@@ -15,6 +15,7 @@ import { resolve } from "node:path";
 import { inflateSync } from "node:zlib";
 
 import { describe, expect, it } from "vitest";
+import { getGeneratedRootPath } from "../../../utils/cerpStorage";
 
 import { issuerIdentityLine, issuerLegalMentions } from "../../../shared/pdf/legal-mentions";
 
@@ -29,7 +30,7 @@ import {
 } from "./finance-document-render";
 
 const PREVIEW_ENABLED = process.env.CERP_PDF_PREVIEW === "1";
-const PREVIEW_DIR = process.env.CERP_PDF_PREVIEW_DIR ?? resolve(process.cwd(), "outputs", "pdf-preview");
+const PREVIEW_DIR = process.env.CERP_PDF_PREVIEW_DIR ?? getGeneratedRootPath("pdf-preview");
 
 function keep(name: string, bytes: Buffer): void {
   if (!PREVIEW_ENABLED) return;

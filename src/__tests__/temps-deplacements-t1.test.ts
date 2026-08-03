@@ -3,13 +3,14 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { roles } from "../module/auth/validators/user.validator";
+import { repoRoot } from "./helpers/repo-paths";
 
 // T1 — module « Temps & Déplacements » : schéma DB + append-only + rôle RH.
 // Tests « de base » sans base de données (le comportement runtime append-only est prouvé
 // par db/privileged/*.verify.sql sur cerp_test). Ici on garantit : vocabulaire RBAC,
 // idempotence/additivité de la migration, et présence du hardening append-only.
 
-const root = process.cwd();
+const root = repoRoot;
 const additive = readFileSync(resolve(root, "db/patches/20260709_hr_temps_deplacements.sql"), "utf8");
 const appendOnly = readFileSync(resolve(root, "db/privileged/20260709_hr_time_events_append_only.sql"), "utf8");
 

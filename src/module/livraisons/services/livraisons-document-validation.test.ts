@@ -1,8 +1,8 @@
 import fs from "node:fs/promises"
-import os from "node:os"
 import path from "node:path"
 
 import { afterEach, describe, expect, it } from "vitest"
+import { ensureTmpStoragePath } from "../../../utils/cerpStorage"
 
 import {
   removeTemporaryLivraisonDocuments,
@@ -16,7 +16,7 @@ async function fileFixture(
   mimetype: string,
   bytes: Buffer
 ): Promise<Express.Multer.File> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "cerp-livraison-doc-"))
+  const directory = await fs.mkdtemp(path.join(ensureTmpStoragePath("fixtures"), "livraison-doc-"))
   temporaryDirectories.push(directory)
   const filePath = path.join(directory, "upload")
   await fs.writeFile(filePath, bytes)

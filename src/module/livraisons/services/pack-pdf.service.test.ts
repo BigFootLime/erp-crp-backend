@@ -14,6 +14,7 @@ import { resolve } from "node:path"
 import { inflateSync } from "node:zlib"
 
 import { describe, expect, it, vi } from "vitest"
+import { getGeneratedRootPath } from "../../../utils/cerpStorage"
 
 /**
  * Instantane de l'emetteur, tel que le renvoie `fn_finance_issuer_snapshot`.
@@ -60,7 +61,7 @@ import { svcRenderPackBonLivraisonPdf, svcRenderPackCofcPdf } from "./pack-pdf.s
 import type { LivraisonPackPreview } from "../types/pack.types"
 
 const PREVIEW_ENABLED = process.env.CERP_PDF_PREVIEW === "1"
-const PREVIEW_DIR = process.env.CERP_PDF_PREVIEW_DIR ?? resolve(process.cwd(), "outputs", "pdf-preview")
+const PREVIEW_DIR = process.env.CERP_PDF_PREVIEW_DIR ?? getGeneratedRootPath("pdf-preview")
 
 function keep(name: string, bytes: Buffer): void {
   if (!PREVIEW_ENABLED) return
