@@ -17,6 +17,43 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+function hasPreparationValue(value: unknown) {
+  if (value === null || value === undefined) return false;
+  if (typeof value === "string") return value.trim().length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  if (isRecord(value)) return Object.keys(value).length > 0;
+  return true;
+}
+
+function emptyPreparationToUndefined(value: unknown, meaningfulFields: readonly string[]) {
+  if (value === null || value === undefined) return undefined;
+  if (!isRecord(value)) return value;
+  return meaningfulFields.some((field) => hasPreparationValue(value[field])) ? value : undefined;
+}
+
+const articlePreparationFields = [
+  "id",
+  "root_article_devis_id",
+  "parent_article_devis_id",
+  "code",
+  "designation",
+  "primary_category",
+  "article_categories",
+  "family_code",
+  "projet_id",
+  "source_official_article_id",
+] as const;
+
+const dossierPreparationFields = [
+  "id",
+  "root_dossier_devis_id",
+  "parent_dossier_devis_id",
+  "code_piece",
+  "designation",
+  "source_official_piece_technique_id",
+  "payload",
+] as const;
+
 export const devisIdParamsSchema = z.object({
   id: z.coerce.number().int().positive(),
 });
@@ -94,10 +131,11 @@ z.object({
   prix_unitaire_ht: z.coerce.number().min(0),
   remise_ligne: z.coerce.number().min(0).max(100).optional().default(0),
   taux_tva: z.coerce.number().min(0).max(100).optional().default(20),
-  article_devis: z
-    .object({
-      id: z.string().uuid().optional(),
-      root_article_devis_id: z.string().uuid().optional(),
+  article_devis: z.preprocess(
+    (value) => emptyPreparationToUndefined(value, articlePreparationFields),
+    z.object({
+      id: z.string().uuid().optional().nullable(),
+      root_article_devis_id: z.string().uuid().optional().nullable(),
       parent_article_devis_id: z.string().uuid().optional().nullable(),
       version_number: z.coerce.number().int().positive().optional(),
       code: z.string().trim().min(1),
@@ -108,20 +146,21 @@ z.object({
       plan_index: z.coerce.number().int().positive().optional().default(1),
       projet_id: z.coerce.number().int().positive().optional().nullable(),
       source_official_article_id: z.string().uuid().optional().nullable(),
-    })
-    .optional(),
-  dossier_technique_piece_devis: z
-    .object({
-      id: z.string().uuid().optional(),
-      root_dossier_devis_id: z.string().uuid().optional(),
+    }).optional()
+  ),
+  dossier_technique_piece_devis: z.preprocess(
+    (value) => emptyPreparationToUndefined(value, dossierPreparationFields),
+    z.object({
+      id: z.string().uuid().optional().nullable(),
+      root_dossier_devis_id: z.string().uuid().optional().nullable(),
       parent_dossier_devis_id: z.string().uuid().optional().nullable(),
       version_number: z.coerce.number().int().positive().optional(),
       code_piece: z.string().trim().min(1),
       designation: z.string().trim().min(1),
       source_official_piece_technique_id: z.string().uuid().optional().nullable(),
       payload: z.record(z.string(), z.unknown()).optional().default({}),
-    })
-    .optional(),
+    }).optional()
+  ),
 }));
 
 export const createDevisBodySchema = z.object({

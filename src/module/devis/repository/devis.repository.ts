@@ -116,8 +116,8 @@ type DossierDevisRow = Omit<DossierTechniquePieceDevis, "devis_id" | "version_nu
 
 type DevisLineWithPreparatoryInput = CreateDevisBodyDTO["lignes"][number] & {
   article_devis?: {
-    id?: string;
-    root_article_devis_id?: string;
+    id?: string | null;
+    root_article_devis_id?: string | null;
     parent_article_devis_id?: string | null;
     version_number?: number;
     code: string;
@@ -130,8 +130,8 @@ type DevisLineWithPreparatoryInput = CreateDevisBodyDTO["lignes"][number] & {
     source_official_article_id?: string | null;
   };
   dossier_technique_piece_devis?: {
-    id?: string;
-    root_dossier_devis_id?: string;
+    id?: string | null;
+    root_dossier_devis_id?: string | null;
     parent_dossier_devis_id?: string | null;
     version_number?: number;
     code_piece: string;

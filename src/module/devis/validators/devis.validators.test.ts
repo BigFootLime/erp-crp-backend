@@ -203,6 +203,58 @@ describe("#167 — matrice de payloads createDevisBodySchema", () => {
       expect(parsed.data.lignes[0]).toMatchObject({ quantite: 1, taux_tva: 20, remise_ligne: 0 });
     }
   });
+
+  it.each([
+    ["absentes", {}],
+    ["null", { article_devis: null, dossier_technique_piece_devis: null }],
+    [
+      "vides",
+      {
+        article_devis: { code: " ", designation: "", primary_category: "", family_code: "", plan_index: 1 },
+        dossier_technique_piece_devis: { code_piece: " ", designation: "", payload: {} },
+      },
+    ],
+  ])("accepte les données de préparation %s sur un devis minimal", (_label, preparation) => {
+    const parsed = createDevisBodySchema.safeParse(withLigne(preparation));
+
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data.lignes[0].article_devis).toBeUndefined();
+    expect(parsed.data.lignes[0].dossier_technique_piece_devis).toBeUndefined();
+  });
+
+  it("préserve les valeurs de préparation non vides et accepte leurs identifiants null", () => {
+    const parsed = createDevisBodySchema.safeParse(withLigne({
+      article_devis: {
+        id: null,
+        root_article_devis_id: null,
+        code: "  ART-42  ",
+        designation: "  Pièce spéciale  ",
+        primary_category: "piece_finie_fabriquee",
+        article_categories: ["piece_finie_fabriquee"],
+        family_code: "PT",
+      },
+      dossier_technique_piece_devis: {
+        id: null,
+        root_dossier_devis_id: null,
+        code_piece: "  DOS-42  ",
+        designation: "  Dossier spécial  ",
+      },
+    }));
+
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data.lignes[0].article_devis).toMatchObject({
+      id: null,
+      code: "ART-42",
+      designation: "Pièce spéciale",
+    });
+    expect(parsed.data.lignes[0].dossier_technique_piece_devis).toMatchObject({
+      id: null,
+      code_piece: "DOS-42",
+      designation: "Dossier spécial",
+    });
+  });
 });
 
 describe("#167 — updateDevisBodySchema (verrou optimiste additif)", () => {
