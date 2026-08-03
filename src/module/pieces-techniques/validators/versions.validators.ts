@@ -1,6 +1,7 @@
 // src/module/pieces-techniques/validators/versions.validators.ts
 // GPAO B2.1 — validators des versions/indices d'une pièce technique.
 import { z } from "zod"
+import { uuidRouteParam } from "../../../utils/routeParams"
 
 const uuid = z.string().uuid()
 
@@ -22,7 +23,7 @@ export const typeChangementSchema = z.enum(["EVOLUTION", "MODIFICATION"])
 export type TypeChangementDTO = z.infer<typeof typeChangementSchema>
 
 export const versionIdParamSchema = z.object({
-  params: z.object({ id: uuid, versionId: uuid }),
+  params: z.object({ id: uuidRouteParam("id"), versionId: uuidRouteParam("versionId") }),
 })
 
 const versionCoreBody = z.object({
