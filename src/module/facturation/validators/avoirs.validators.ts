@@ -1,6 +1,8 @@
 import { z } from "zod";
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date (expected YYYY-MM-DD)");
+const avoirStatus = z.enum(["DRAFT", "PENDING_VALIDATION", "APPROVED", "ISSUED", "CANCELLED"]);
+const avoirDraftStatus = z.literal("DRAFT");
 
 function emptyStringToUndefined(value: unknown) {
   if (typeof value !== "string") return value;
@@ -20,7 +22,7 @@ export const listAvoirsQuerySchema = z.object({
   q: z.string().optional(),
   client_id: z.string().optional(),
   facture_id: z.coerce.number().int().positive().optional(),
-  statut: z.string().optional(),
+  statut: avoirStatus.optional(),
   from: isoDate.optional(),
   to: isoDate.optional(),
   page: z.coerce.number().int().min(1).optional().default(1),
@@ -67,7 +69,7 @@ export const createAvoirBodySchema = z.object({
   client_id: z.string().trim().min(1),
   facture_id: z.coerce.number().int().positive().optional().nullable(),
   date_emission: z.preprocess(emptyStringToUndefined, isoDate).optional(),
-  statut: z.preprocess(emptyStringToUndefined, z.string().trim().min(1).max(40)).optional().default("brouillon"),
+  statut: z.preprocess(emptyStringToUndefined, avoirDraftStatus).optional().default("DRAFT"),
   motif: z.preprocess(emptyStringToNull, z.string().trim().min(1)).optional().nullable(),
   lignes: z.array(avoirLineSchema).min(1),
 });
@@ -79,7 +81,7 @@ export const updateAvoirBodySchema = z.object({
   client_id: z.string().trim().min(1).optional(),
   facture_id: z.coerce.number().int().positive().optional().nullable(),
   date_emission: z.preprocess(emptyStringToUndefined, isoDate).optional(),
-  statut: z.preprocess(emptyStringToUndefined, z.string().trim().min(1).max(40)).optional(),
+  statut: z.preprocess(emptyStringToUndefined, avoirDraftStatus).optional(),
   motif: z.preprocess(emptyStringToNull, z.string().trim().min(1)).optional().nullable(),
   lignes: z.array(avoirLineSchema).min(1).optional(),
 });

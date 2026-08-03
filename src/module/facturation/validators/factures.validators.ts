@@ -1,6 +1,16 @@
 import { z } from "zod";
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date (expected YYYY-MM-DD)");
+const factureStatus = z.enum([
+  "DRAFT",
+  "PENDING_VALIDATION",
+  "APPROVED",
+  "ISSUED",
+  "PARTIALLY_PAID",
+  "PAID",
+  "CANCELLED",
+]);
+const factureDraftStatus = z.literal("DRAFT");
 
 function emptyStringToUndefined(value: unknown) {
   if (typeof value !== "string") return value;
@@ -20,7 +30,7 @@ export const listFacturesQuerySchema = z.object({
   q: z.string().optional(),
   client_id: z.string().optional(),
   commande_id: z.coerce.number().int().positive().optional(),
-  statut: z.string().optional(),
+  statut: factureStatus.optional(),
   from: isoDate.optional(),
   to: isoDate.optional(),
   page: z.coerce.number().int().min(1).optional().default(1),
@@ -70,7 +80,7 @@ export const createFactureBodySchema = z.object({
   affaire_id: z.coerce.number().int().positive().optional().nullable(),
   date_emission: z.preprocess(emptyStringToUndefined, isoDate).optional(),
   date_echeance: z.preprocess(emptyStringToNull, isoDate).optional().nullable(),
-  statut: z.preprocess(emptyStringToUndefined, z.string().trim().min(1).max(40)).optional().default("brouillon"),
+  statut: z.preprocess(emptyStringToUndefined, factureDraftStatus).optional().default("DRAFT"),
   remise_globale: z.coerce.number().min(0).optional().default(0),
   commentaires: z.preprocess(emptyStringToNull, z.string().trim().min(1)).optional().nullable(),
   lignes: z.array(factureLineSchema).min(1),
@@ -86,7 +96,7 @@ export const updateFactureBodySchema = z.object({
   affaire_id: z.coerce.number().int().positive().optional().nullable(),
   date_emission: z.preprocess(emptyStringToUndefined, isoDate).optional(),
   date_echeance: z.preprocess(emptyStringToNull, isoDate).optional().nullable(),
-  statut: z.preprocess(emptyStringToUndefined, z.string().trim().min(1).max(40)).optional(),
+  statut: z.preprocess(emptyStringToUndefined, factureDraftStatus).optional(),
   remise_globale: z.coerce.number().min(0).optional(),
   commentaires: z.preprocess(emptyStringToNull, z.string().trim().min(1)).optional().nullable(),
   lignes: z.array(factureLineSchema).min(1).optional(),

@@ -4,6 +4,7 @@ import type { PoolClient } from "pg";
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
 import {
+  invoiceSettlementStatusFromBalance,
   paymentStatusFromAllocation,
   type PaymentStatus,
 } from "../domain/finance-policy";
@@ -83,6 +84,7 @@ async function resolveAndValidateAllocations(params: {
 }): Promise<ResolvedAllocation[]> {
   const uniqueTargets = new Set<string>();
   const resolved: ResolvedAllocation[] = [];
+  const requestedByInvoice = new Map<number, bigint>();
   let requestedCents = 0n;
 
   const sorted = [...params.allocations].sort((left, right) =>
@@ -212,13 +214,15 @@ async function resolveAndValidateAllocations(params: {
     const invoiceAvailableCents =
       moneyToCents(invoice.total_ttc, "Total facture") -
       moneyToCents(invoice.settled_ttc, "Total réglé");
-    if (amountCents > invoiceAvailableCents) {
+    const alreadyRequestedForInvoice = requestedByInvoice.get(factureId) ?? 0n;
+    if (alreadyRequestedForInvoice + amountCents > invoiceAvailableCents) {
       throw new HttpError(
         409,
         "PAYMENT_INVOICE_BALANCE_EXCEEDED",
         "L'allocation dépasse le solde de la facture."
       );
     }
+    requestedByInvoice.set(factureId, alreadyRequestedForInvoice + amountCents);
     resolved.push({
       targetType: allocation.target_type,
       targetId: allocation.target_id,
@@ -278,6 +282,129 @@ async function insertAllocations(params: {
         [allocation.dueDateId, allocation.amount]
       );
     }
+  }
+}
+
+async function refreshInvoiceSettlementStates(params: {
+  client: PoolClient;
+  allocations: readonly ResolvedAllocation[];
+  actor: FinanceActorContext;
+  correlationId: string;
+  idempotencyKey: string;
+}): Promise<void> {
+  const factureIds = [...new Set(params.allocations.map((allocation) => allocation.factureId))]
+    .sort((left, right) => left - right);
+
+  for (const factureId of factureIds) {
+    const result = await params.client.query<{
+      uuid: string | null;
+      statut: string;
+      document_status: string;
+      settlement_status: string;
+      total_ttc: string;
+      settled_ttc: string;
+    }>(
+      `
+        SELECT
+          f.uuid::text AS uuid,
+          f.statut,
+          f.document_status,
+          f.settlement_status,
+          f.total_ttc::numeric(18,2)::text AS total_ttc,
+          (
+            COALESCE((
+              SELECT SUM(pa.amount_ttc)
+              FROM public.paiement_allocations pa
+              WHERE pa.facture_id = f.id
+            ), 0)
+            +
+            COALESCE((
+              SELECT SUM(asa.amount_ttc)
+              FROM public.avoir_source_allocations asa
+              WHERE asa.facture_id = f.id
+                AND asa.allocation_status = 'CONSUMED'
+            ), 0)
+          )::numeric(18,2)::text AS settled_ttc
+        FROM public.facture f
+        WHERE f.id = $1
+        FOR UPDATE
+      `,
+      [factureId]
+    );
+    const invoice = result.rows[0];
+    if (!invoice) throw new HttpError(404, "FACTURE_NOT_FOUND", "Facture introuvable.");
+    if (invoice.document_status !== "ISSUED") {
+      throw new HttpError(
+        409,
+        "PAYMENT_FACTURE_NOT_ISSUED",
+        "Un paiement ne peut être alloué qu'à une facture émise."
+      );
+    }
+    const settlementStatus = invoiceSettlementStatusFromBalance({
+      totalCents: moneyToCents(invoice.total_ttc, "Total facture"),
+      settledCents: moneyToCents(invoice.settled_ttc, "Total réglé"),
+    });
+    const projectedStatus = settlementStatus === "UNPAID" ? "ISSUED" : settlementStatus;
+    if (
+      invoice.statut === projectedStatus &&
+      invoice.settlement_status === settlementStatus
+    ) {
+      continue;
+    }
+
+    // The immutable-evidence trigger accepts only this correlation-bound settlement projection.
+    await params.client.query(
+      `SELECT set_config('cerp.finance_settlement_correlation_id', $1, true)`,
+      [params.correlationId]
+    );
+    await params.client.query(
+      `
+        UPDATE public.facture
+        SET statut = $2,
+            document_status = 'ISSUED',
+            settlement_status = $3,
+            row_version = row_version + 1,
+            correlation_id = $4::uuid,
+            updated_at = now()
+        WHERE id = $1
+      `,
+      [factureId, projectedStatus, settlementStatus, params.correlationId]
+    );
+    const aggregateId = invoice.uuid ?? String(factureId);
+    await insertFinanceEvent({
+      client: params.client,
+      aggregateType: "FACTURE",
+      aggregateId,
+      eventType: "FACTURE_SETTLEMENT_DERIVED",
+      oldValues: {
+        status: invoice.statut,
+        settlement_status: invoice.settlement_status,
+      },
+      newValues: {
+        status: projectedStatus,
+        settlement_status: settlementStatus,
+        settled_amount: invoice.settled_ttc,
+        total_amount: invoice.total_ttc,
+      },
+      actor: params.actor,
+      correlationId: params.correlationId,
+      idempotencyKey: params.idempotencyKey,
+      ruleCode: "FINANCE-SETTLEMENT-469",
+    });
+    await insertGlobalFinanceAudit({
+      client: params.client,
+      actor: params.actor,
+      action: "facturation.facture_settlement_derived",
+      entityType: "facture",
+      entityId: aggregateId,
+      details: {
+        from: invoice.settlement_status,
+        to: settlementStatus,
+        settled_amount: invoice.settled_ttc,
+        total_amount: invoice.total_ttc,
+        correlation_id: params.correlationId,
+      },
+    });
   }
 }
 
@@ -389,6 +516,13 @@ export async function repoRegisterPayment(params: {
       actor: params.actor,
       correlationId,
       allocations,
+    });
+    await refreshInvoiceSettlementStates({
+      client,
+      allocations,
+      actor: params.actor,
+      correlationId,
+      idempotencyKey: receipt.idempotencyKey,
     });
     const allocatedCents = allocations.reduce(
       (sum, allocation) => sum + moneyToCents(allocation.amount, "Montant alloué"),
@@ -529,6 +663,13 @@ export async function repoAllocatePayment(params: {
       actor: params.actor,
       correlationId,
       allocations,
+    });
+    await refreshInvoiceSettlementStates({
+      client,
+      allocations,
+      actor: params.actor,
+      correlationId,
+      idempotencyKey: receipt.idempotencyKey,
     });
     const newlyAllocated = allocations.reduce(
       (sum, allocation) => sum + moneyToCents(allocation.amount, "Montant alloué"),

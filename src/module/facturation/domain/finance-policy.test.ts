@@ -6,6 +6,7 @@ import {
   assertFactureTransition,
   decideReceipt,
   financeRequestHash,
+  invoiceSettlementStatusFromBalance,
   invoiceStatusFromBalance,
   paymentStatusFromAllocation,
   roleHasFinanceCapability,
@@ -140,6 +141,15 @@ describe("issue #227 — idempotence et soldes", () => {
     [10_000n, 10_000n, "PAID"],
   ] as const)("statut facture %s/%s", (totalCents, settledCents, expected) => {
     expect(invoiceStatusFromBalance({ totalCents, settledCents })).toBe(expected);
+  });
+
+  it.each([
+    [10_000n, 0n, "UNPAID"],
+    [10_000n, 1n, "PARTIALLY_PAID"],
+    [10_000n, 9_999n, "PARTIALLY_PAID"],
+    [10_000n, 10_000n, "PAID"],
+  ] as const)("état de règlement facture %s/%s", (totalCents, settledCents, expected) => {
+    expect(invoiceSettlementStatusFromBalance({ totalCents, settledCents })).toBe(expected);
   });
 
   it.each([

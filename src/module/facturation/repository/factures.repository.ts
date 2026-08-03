@@ -70,6 +70,15 @@ function sortDirection(sortDir: ListFacturesQueryDTO["sortDir"]) {
   return sortDir === "asc" ? "ASC" : "DESC";
 }
 
+function factureProjectedStatusSql(alias = "f") {
+  return `CASE
+    WHEN ${alias}.document_status = 'ISSUED' AND ${alias}.settlement_status = 'UNPAID' THEN 'ISSUED'
+    WHEN ${alias}.document_status = 'ISSUED' THEN ${alias}.settlement_status
+    WHEN ${alias}.document_status = 'LEGACY' THEN ${alias}.statut
+    ELSE ${alias}.document_status
+  END`;
+}
+
 type ListWhere = { whereSql: string; values: unknown[] };
 function buildListWhere(filters: ListFacturesQueryDTO, includeClientInSearch: boolean): ListWhere {
   const where: string[] = [];
@@ -112,8 +121,16 @@ function buildListWhere(filters: ListFacturesQueryDTO, includeClientInSearch: bo
   }
 
   if (filters.statut && filters.statut.trim().length > 0) {
-    const p = push(filters.statut.trim());
-    where.push(`f.statut = ${p}`);
+    const status = filters.statut.trim();
+    if (status === "PARTIALLY_PAID" || status === "PAID") {
+      const p = push(status);
+      where.push(`f.document_status = 'ISSUED' AND f.settlement_status = ${p}`);
+    } else if (status === "ISSUED") {
+      where.push(`f.document_status = 'ISSUED' AND f.settlement_status = 'UNPAID'`);
+    } else {
+      const p = push(status);
+      where.push(`f.document_status = ${p}`);
+    }
   }
 
   if (filters.from) {
@@ -177,7 +194,9 @@ export async function repoListFactures(filters: ListFacturesQueryDTO): Promise<P
       f.total_ht::float8 AS total_ht,
       f.total_ttc::float8 AS total_ttc,
       f.updated_at::text AS updated_at,
-      f.statut,
+      ${factureProjectedStatusSql("f")} AS statut,
+      f.document_status,
+      f.settlement_status,
       ${clientSelectSql},
       pay.total_paye_ttc,
       av.total_avoirs_ttc,
@@ -185,15 +204,39 @@ export async function repoListFactures(filters: ListFacturesQueryDTO): Promise<P
     FROM facture f
     ${joinClientSql}
     LEFT JOIN LATERAL (
-      SELECT COALESCE(SUM(p.montant), 0)::float8 AS total_paye_ttc
-      FROM paiement p
-      WHERE p.facture_id = f.id
+      SELECT (
+        COALESCE((
+          SELECT SUM(pa.amount_ttc)
+          FROM paiement_allocations pa
+          WHERE pa.facture_id = f.id
+        ), 0)
+        + COALESCE((
+          SELECT SUM(p.montant)
+          FROM paiement p
+          WHERE p.facture_id = f.id
+            AND NOT EXISTS (
+              SELECT 1 FROM paiement_allocations pa WHERE pa.paiement_id = p.id
+            )
+        ), 0)
+      )::float8 AS total_paye_ttc
     ) pay ON TRUE
     LEFT JOIN LATERAL (
-      SELECT COALESCE(SUM(a.total_ttc), 0)::float8 AS total_avoirs_ttc
-      FROM avoir a
-      WHERE a.facture_id = f.id
-        AND COALESCE(a.statut, '') <> 'brouillon'
+      SELECT (
+        COALESCE((
+          SELECT SUM(asa.amount_ttc)
+          FROM avoir_source_allocations asa
+          WHERE asa.facture_id = f.id AND asa.allocation_status = 'CONSUMED'
+        ), 0)
+        + COALESCE((
+          SELECT SUM(a.total_ttc)
+          FROM avoir a
+          WHERE a.facture_id = f.id
+            AND a.statut IN ('ISSUED','emis','emise','envoyee')
+            AND NOT EXISTS (
+              SELECT 1 FROM avoir_source_allocations asa WHERE asa.avoir_id = a.id
+            )
+        ), 0)
+      )::float8 AS total_avoirs_ttc
     ) av ON TRUE
     ${whereSql}
     ORDER BY ${orderBy} ${orderDir}
@@ -256,7 +299,9 @@ export async function repoGetFacture(id: number, includeValue: string): Promise<
       f.affaire_id::text AS affaire_id,
       f.date_emission::text AS date_emission,
       f.date_echeance::text AS date_echeance,
-      f.statut,
+      ${factureProjectedStatusSql("f")} AS statut,
+      f.document_status,
+      f.settlement_status,
       f.remise_globale::float8 AS remise_globale,
       f.total_ht::float8 AS total_ht,
       f.total_ttc::float8 AS total_ttc,
@@ -270,15 +315,39 @@ export async function repoGetFacture(id: number, includeValue: string): Promise<
     FROM facture f
     ${joinClientSql}
     LEFT JOIN LATERAL (
-      SELECT COALESCE(SUM(p.montant), 0)::float8 AS total_paye_ttc
-      FROM paiement p
-      WHERE p.facture_id = f.id
+      SELECT (
+        COALESCE((
+          SELECT SUM(pa.amount_ttc)
+          FROM paiement_allocations pa
+          WHERE pa.facture_id = f.id
+        ), 0)
+        + COALESCE((
+          SELECT SUM(p.montant)
+          FROM paiement p
+          WHERE p.facture_id = f.id
+            AND NOT EXISTS (
+              SELECT 1 FROM paiement_allocations pa WHERE pa.paiement_id = p.id
+            )
+        ), 0)
+      )::float8 AS total_paye_ttc
     ) pay ON TRUE
     LEFT JOIN LATERAL (
-      SELECT COALESCE(SUM(a.total_ttc), 0)::float8 AS total_avoirs_ttc
-      FROM avoir a
-      WHERE a.facture_id = f.id
-        AND COALESCE(a.statut, '') <> 'brouillon'
+      SELECT (
+        COALESCE((
+          SELECT SUM(asa.amount_ttc)
+          FROM avoir_source_allocations asa
+          WHERE asa.facture_id = f.id AND asa.allocation_status = 'CONSUMED'
+        ), 0)
+        + COALESCE((
+          SELECT SUM(a.total_ttc)
+          FROM avoir a
+          WHERE a.facture_id = f.id
+            AND a.statut IN ('ISSUED','emis','emise','envoyee')
+            AND NOT EXISTS (
+              SELECT 1 FROM avoir_source_allocations asa WHERE asa.avoir_id = a.id
+            )
+        ), 0)
+      )::float8 AS total_avoirs_ttc
     ) av ON TRUE
     WHERE f.id = $1
   `;
@@ -312,7 +381,13 @@ export async function repoGetFacture(id: number, includeValue: string): Promise<
           `
           SELECT
             id::text AS id,
-            facture_id::text AS facture_id,
+            CASE
+              WHEN EXISTS (
+                SELECT 1 FROM paiement_allocations target
+                WHERE target.paiement_id = paiement.id AND target.facture_id = $1
+              ) THEN $1::text
+              ELSE facture_id::text
+            END AS facture_id,
             ordre,
             designation,
             code_piece,
@@ -392,6 +467,11 @@ export async function repoGetFacture(id: number, includeValue: string): Promise<
             updated_at::text AS updated_at
           FROM paiement
           WHERE facture_id = $1
+             OR EXISTS (
+               SELECT 1
+               FROM paiement_allocations pa
+               WHERE pa.paiement_id = paiement.id AND pa.facture_id = $1
+             )
           ORDER BY date_paiement DESC, id DESC
           `,
           [id]
