@@ -1,6 +1,7 @@
 // src/module/pieces-techniques/validators/pieces-techniques.validators.ts
 import type { RequestHandler } from "express"
 import { z } from "zod"
+import { uuidRouteParam } from "../../../utils/routeParams"
 
 const uuid = z.string().uuid()
 
@@ -14,7 +15,7 @@ export const pieceTechniqueStatutSchema = z.enum([
 export type PieceTechniqueStatutDTO = z.infer<typeof pieceTechniqueStatutSchema>
 
 export const idParamSchema = z.object({
-  params: z.object({ id: uuid }),
+  params: z.object({ id: uuidRouteParam("id") }),
 })
 
 export const bomLineIdParamSchema = z.object({
