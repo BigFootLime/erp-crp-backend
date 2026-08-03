@@ -31,6 +31,15 @@ function emptyPreparationToUndefined(value: unknown, meaningfulFields: readonly 
   return meaningfulFields.some((field) => hasPreparationValue(value[field])) ? value : undefined;
 }
 
+function emptyArticlePreparationToUndefined(value: unknown) {
+  const preparation = emptyPreparationToUndefined(value, articlePreparationFields);
+  if (preparation !== undefined || !isRecord(value)) return preparation;
+
+  const planIndex = value.plan_index;
+  if (!hasPreparationValue(planIndex) || Number(planIndex) === 1) return undefined;
+  return value;
+}
+
 const articlePreparationFields = [
   "id",
   "root_article_devis_id",
@@ -132,7 +141,7 @@ z.object({
   remise_ligne: z.coerce.number().min(0).max(100).optional().default(0),
   taux_tva: z.coerce.number().min(0).max(100).optional().default(20),
   article_devis: z.preprocess(
-    (value) => emptyPreparationToUndefined(value, articlePreparationFields),
+    emptyArticlePreparationToUndefined,
     z.object({
       id: z.string().uuid().optional().nullable(),
       root_article_devis_id: z.string().uuid().optional().nullable(),
@@ -161,6 +170,14 @@ z.object({
       payload: z.record(z.string(), z.unknown()).optional().default({}),
     }).optional()
   ),
+}).superRefine((line, context) => {
+  if (line.dossier_technique_piece_devis && !line.article_devis) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["article_devis"],
+      message: "article_devis est requis lorsqu'un dossier_technique_piece_devis est fourni",
+    });
+  }
 }));
 
 export const createDevisBodySchema = z.object({

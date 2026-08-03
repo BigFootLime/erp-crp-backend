@@ -861,7 +861,16 @@ type InsertedDevisLine = {
 async function insertDevisPreparatoryEntities(client: PoolClient, devisId: number, lines: InsertedDevisLine[]) {
   for (const line of lines) {
     const source = line.input;
-    if (!source.article_devis) continue;
+    if (!source.article_devis) {
+      if (source.dossier_technique_piece_devis) {
+        throw new HttpError(
+          422,
+          "DEVIS_DOSSIER_REQUIRES_ARTICLE",
+          "Un dossier technique de devis doit être rattaché à un article-devis."
+        );
+      }
+      continue;
+    }
 
     const a = source.article_devis;
     const articleDevisId = a.id ?? crypto.randomUUID();
