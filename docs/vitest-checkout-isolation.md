@@ -79,17 +79,20 @@ The pre-change audit on checkout `f11707f` found 1,353 collected files:
 - 60 files belonged to that checkout;
 - 1,293 files came from 11 nested `.claude/worktrees` checkouts.
 
-The delivery branch is based on the newer `dev` commit `5276a3b`, where the
-checkout itself contains 162 legitimate test/spec files. The collection guard
-keeps all 162; it does not preserve the older count of 60 as a hard-coded cap.
+The delivery branch was based on the newer `dev` commit `5276a3b`, where the
+checkout itself contained 162 legitimate test/spec files. The final promotion
+commit `4b4e034` also includes two current-code tests added independently by
+#293, bringing the legitimate total to 164. The collection guard keeps all of
+them; neither 60 nor 162 is a hard-coded cap.
 
 | Environment | Collected | Outside checkout | Manifest SHA-256 |
 |---|---:|---:|---|
-| Simple clone | 162 | 0 | `0811028fda5027627733aac056234e9316024b184ef707c5412f7588b1682e69` |
-| Nested `.claude/worktrees` checkout | 162 | 0 | `0811028fda5027627733aac056234e9316024b184ef707c5412f7588b1682e69` |
+| Simple clone | 164 | 0 | `402dcbea2a509a6aa2b17d5707d4ea7e2d39e89362719bf70435c2de830e261a` |
+| Nested `.claude/worktrees` checkout | 164 | 0 | `402dcbea2a509a6aa2b17d5707d4ea7e2d39e89362719bf70435c2de830e261a` |
 
 The nested validation checkout contained another `.claude/worktrees` clone with
-136 test/spec files. None entered the manifest. Both environments completed
-`pnpm test:run` with 162/162 files and 3,497/3,497 tests passing. The two rows
+136 test/spec files. None entered the manifest. At final promotion commit
+`4b4e034`, both environments completed `pnpm test:run` with 164/164 files and
+3,508/3,508 tests passing. The two rows
 must keep the same count and fingerprint before merging a change to the
 collection rules.
