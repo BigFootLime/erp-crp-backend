@@ -5,8 +5,9 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { repoRoot } from "./helpers/repo-paths";
 
-const root = process.cwd();
+const root = repoRoot;
 const read = (p: string) => readFileSync(resolve(root, p), "utf8");
 
 const patch = read("db/patches/20260726_tracabilite_360_142.sql");

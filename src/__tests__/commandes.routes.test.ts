@@ -2,12 +2,12 @@ import request from "supertest";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EventEmitter } from "events";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import jwt from "jsonwebtoken";
-import { getDocumentStoragePath } from "../utils/cerpStorage";
-
-process.env.CERP_DOCUMENTS_ROOT = path.resolve("uploads", "docs");
+import {
+  ensureTmpStoragePath,
+  getDocumentStoragePath,
+} from "../utils/cerpStorage";
 
 const mocks = vi.hoisted(() => ({
   poolQuery: vi.fn(),
@@ -286,7 +286,7 @@ describe("/api/v1/commandes", () => {
   it("POST /api/v1/commandes handles multipart data + documents[]", async () => {
     const ARTICLE_ID = "11111111-1111-1111-1111-111111111111";
     const PIECE_ID = "22222222-2222-2222-2222-222222222222";
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "cerp-docs-"));
+    const tmpDir = fs.mkdtempSync(path.join(ensureTmpStoragePath("fixtures"), "commandes-"));
     const tmpFile = path.join(tmpDir, "doc.txt");
     fs.writeFileSync(tmpFile, "hello");
 

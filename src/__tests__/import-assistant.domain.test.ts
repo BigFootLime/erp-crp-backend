@@ -14,6 +14,7 @@ import {
 } from "../module/import-assistant/domain/import-normalization";
 import { parseTabularFile } from "../module/import-assistant/domain/tabular-file-parser";
 import type { ImportMapping } from "../module/import-assistant/types/import-assistant.types";
+import { repoRoot } from "./helpers/repo-paths";
 
 function uploadFile(name: string, body: string) {
   const buffer = Buffer.from(body, "utf8");
@@ -530,7 +531,7 @@ describe("Assistant d’import CLIPPER", () => {
 
   it("garde la migration additive, idempotente et soumise à rétention", () => {
     const patch = fs.readFileSync(
-      path.resolve(process.cwd(), "db/patches/20260726_import_assistant_167.sql"),
+      path.resolve(repoRoot, "db/patches/20260726_import_assistant_167.sql"),
       "utf8"
     );
     expect(patch).toContain("data_import_crosswalk_source_uq");
@@ -542,7 +543,7 @@ describe("Assistant d’import CLIPPER", () => {
 
   it("ajoute les imports clients spécialisés et l'idempotence des contacts", () => {
     const patch = fs.readFileSync(
-      path.resolve(process.cwd(), "db/patches/20260727_import_clients_enrichment_306.sql"),
+      path.resolve(repoRoot, "db/patches/20260727_import_clients_enrichment_306.sql"),
       "utf8"
     );
 
@@ -554,7 +555,7 @@ describe("Assistant d’import CLIPPER", () => {
 
   it("ouvre les commandes fournisseurs uniquement via le patch cerp_test", () => {
     const patch = fs.readFileSync(
-      path.resolve(process.cwd(), "db/patches/20260727_import_supplier_orders_312.sql"),
+      path.resolve(repoRoot, "db/patches/20260727_import_supplier_orders_312.sql"),
       "utf8"
     );
 
@@ -565,7 +566,7 @@ describe("Assistant d’import CLIPPER", () => {
 
   it("porte l'unicité du courriel de contact au niveau du client actif", () => {
     const patch = fs.readFileSync(
-      path.resolve(process.cwd(), "db/patches/20260727_contacts_email_scope_187.sql"),
+      path.resolve(repoRoot, "db/patches/20260727_contacts_email_scope_187.sql"),
       "utf8"
     );
 
@@ -579,7 +580,7 @@ describe("Assistant d’import CLIPPER", () => {
 
   it("autorise un courriel fonctionnel partagé par des personnes distinctes du même client", () => {
     const patch = fs.readFileSync(
-      path.resolve(process.cwd(), "db/patches/20260727_contacts_shared_email_identity_190.sql"),
+      path.resolve(repoRoot, "db/patches/20260727_contacts_shared_email_identity_190.sql"),
       "utf8"
     );
 

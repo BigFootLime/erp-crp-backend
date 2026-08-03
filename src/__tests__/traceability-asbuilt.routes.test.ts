@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeAll, afterAll } from "vitest"
 import request from "supertest"
 import fs from "node:fs/promises"
 import path from "node:path"
-import os from "node:os"
+import { ensureTmpStoragePath } from "../utils/cerpStorage"
 
 const lotId = "11111111-1111-1111-1111-111111111111"
 const docId = "22222222-2222-2222-2222-222222222222"
@@ -139,7 +139,7 @@ import app from "../config/app"
 
 describe("🧪 Routes Traceabilite + As-built (/traceability, /asbuilt)", () => {
   beforeAll(async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "asbuilt-"))
+    const dir = await fs.mkdtemp(path.join(ensureTmpStoragePath("fixtures"), "asbuilt-"))
     tmpPdfPath = path.join(dir, "fake.pdf")
     await fs.writeFile(tmpPdfPath, Buffer.from("%PDF-1.4\n%fake\n"))
   })

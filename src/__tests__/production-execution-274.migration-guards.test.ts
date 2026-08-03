@@ -7,9 +7,10 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { repoRoot } from "./helpers/repo-paths";
 
-const PATCH = path.join(process.cwd(), "db", "patches", "20260726_production_execution_274.sql");
-const SUPPORT = path.join(process.cwd(), "db", "patches", "support");
+const PATCH = path.join(repoRoot, "db", "patches", "20260726_production_execution_274.sql");
+const SUPPORT = path.join(repoRoot, "db", "patches", "support");
 
 const sql = fs.readFileSync(PATCH, "utf8");
 
