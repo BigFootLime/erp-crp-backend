@@ -36,6 +36,11 @@ export type ResolvedAccessProfile = {
   modules: ResolvedModuleAccess[];
 };
 
+export type AccessProfileResponse = ResolvedAccessProfile & {
+  contract_version: 1;
+  cache_ttl_seconds: number;
+};
+
 export type OverviewModuleRow = {
   module_key: string;
   label: string;

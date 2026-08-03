@@ -5,6 +5,7 @@ import * as repo from "../repository/access-control.repository";
 import type { CatalogModuleRow, DbQueryer } from "../repository/access-control.repository";
 import type {
   AccessAuditContext,
+  AccessProfileResponse,
   AccessOverview,
   ModuleAccessDecision,
   ModuleAccessOverride,
@@ -20,6 +21,7 @@ const UNLOCK_ALL_CONFIRMATION = "DEBLOQUER TOUT";
 
 /** Durée de vie du cache de résolution, en millisecondes. */
 export const ACCESS_CACHE_TTL_MS = 10_000;
+export const ACCESS_PROFILE_CONTRACT_VERSION = 1 as const;
 
 type CacheEntry = { expiresAt: number; profile: ResolvedAccessProfile };
 
@@ -84,10 +86,14 @@ export async function resolveAccessProfile(userId: number): Promise<ResolvedAcce
   return profile;
 }
 
-/** Réponse de `GET /auth/access-profile`. Infrastructure absente ⇒ aucun filtrage. */
-export async function getAccessProfile(userId: number): Promise<ResolvedAccessProfile> {
+/** Réponse versionnée de `GET /auth/access-profile`. Infrastructure absente ⇒ aucun filtrage. */
+export async function getAccessProfile(userId: number): Promise<AccessProfileResponse> {
   const profile = await resolveAccessProfile(userId);
-  return profile ?? { is_superadmin: false, modules: [] };
+  return {
+    contract_version: ACCESS_PROFILE_CONTRACT_VERSION,
+    cache_ttl_seconds: ACCESS_CACHE_TTL_MS / 1000,
+    ...(profile ?? { is_superadmin: false, modules: [] }),
+  };
 }
 
 export async function isSuperadmin(userId: number): Promise<boolean> {
