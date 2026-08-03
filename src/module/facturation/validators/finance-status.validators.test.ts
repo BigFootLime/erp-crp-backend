@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { createAvoirBodySchema, updateAvoirBodySchema } from "./avoirs.validators";
-import { createFactureBodySchema, updateFactureBodySchema } from "./factures.validators";
+import {
+  createFactureBodySchema,
+  listFacturesQuerySchema,
+  updateFactureBodySchema,
+} from "./factures.validators";
 
 const invoiceDraft = {
   client_id: "CLIENT-1",
@@ -13,6 +17,17 @@ const creditDraft = {
 };
 
 describe("#469 finance write status validation", () => {
+  it.each(["LEGACY", "emis", "emise", "envoyee", "partielle", "payee", "brouillon", "annulee"])(
+    "keeps historical invoice status %s filterable",
+    (statut) => {
+      expect(listFacturesQuerySchema.parse({ statut }).statut).toBe(statut);
+    }
+  );
+
+  it("rejects arbitrary invoice status filters", () => {
+    expect(listFacturesQuerySchema.safeParse({ statut: "arbitrary" }).success).toBe(false);
+  });
+
   it("defaults legacy create payloads to the canonical draft status", () => {
     expect(createFactureBodySchema.parse(invoiceDraft).statut).toBe("DRAFT");
     expect(createAvoirBodySchema.parse(creditDraft).statut).toBe("DRAFT");

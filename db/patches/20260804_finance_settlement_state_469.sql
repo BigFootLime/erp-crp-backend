@@ -11,9 +11,26 @@ BEGIN
     WHERE COALESCE((
       SELECT SUM(pa.amount_ttc) FROM public.paiement_allocations pa WHERE pa.facture_id = f.id
     ), 0) + COALESCE((
+      SELECT SUM(p.montant)
+      FROM public.paiement p
+      WHERE p.facture_id = f.id
+        AND NOT EXISTS (
+          SELECT 1 FROM public.paiement_allocations existing_pa
+          WHERE existing_pa.paiement_id = p.id
+        )
+    ), 0) + COALESCE((
       SELECT SUM(asa.amount_ttc)
       FROM public.avoir_source_allocations asa
       WHERE asa.facture_id = f.id AND asa.allocation_status = 'CONSUMED'
+    ), 0) + COALESCE((
+      SELECT SUM(a.total_ttc)
+      FROM public.avoir a
+      WHERE a.facture_id = f.id
+        AND a.statut IN ('ISSUED','emis','emise','envoyee')
+        AND NOT EXISTS (
+          SELECT 1 FROM public.avoir_source_allocations existing_asa
+          WHERE existing_asa.avoir_id = a.id
+        )
     ), 0) > f.total_ttc
   ) THEN
     RAISE EXCEPTION '#469 migration refused: an invoice is already over-allocated';
@@ -52,9 +69,28 @@ FROM (
         WHERE pa.facture_id = invoice.id
       ), 0)
       + COALESCE((
+        SELECT SUM(p.montant)
+        FROM public.paiement p
+        WHERE p.facture_id = invoice.id
+          AND NOT EXISTS (
+            SELECT 1 FROM public.paiement_allocations existing_pa
+            WHERE existing_pa.paiement_id = p.id
+          )
+      ), 0)
+      + COALESCE((
         SELECT SUM(asa.amount_ttc)
         FROM public.avoir_source_allocations asa
         WHERE asa.facture_id = invoice.id AND asa.allocation_status = 'CONSUMED'
+      ), 0)
+      + COALESCE((
+        SELECT SUM(a.total_ttc)
+        FROM public.avoir a
+        WHERE a.facture_id = invoice.id
+          AND a.statut IN ('ISSUED','emis','emise','envoyee')
+          AND NOT EXISTS (
+            SELECT 1 FROM public.avoir_source_allocations existing_asa
+            WHERE existing_asa.avoir_id = a.id
+          )
       ), 0)
     )::numeric(18,2) AS settled_ttc
   FROM public.facture invoice
@@ -69,6 +105,11 @@ ALTER TABLE public.facture
   ALTER COLUMN settlement_status SET DEFAULT 'UNPAID',
   ALTER COLUMN settlement_status SET NOT NULL;
 
+-- Recreate the two NOT VALID compatibility constraints so a safely replayed patch
+-- also repairs an earlier #469 draft definition.
+ALTER TABLE public.facture DROP CONSTRAINT IF EXISTS facture_statut_469_ck;
+ALTER TABLE public.avoir DROP CONSTRAINT IF EXISTS avoir_statut_469_ck;
+
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -76,9 +117,13 @@ BEGIN
     WHERE conname = 'facture_statut_469_ck'
       AND conrelid = 'public.facture'::regclass
   ) THEN
-    -- NOT VALID preserves arbitrary historical values while rejecting every new one.
+    -- NOT VALID preserves rows outside the known vocabulary. Known historical values
+    -- remain updateable; arbitrary future values are still rejected.
     ALTER TABLE public.facture ADD CONSTRAINT facture_statut_469_ck CHECK (
-      statut IN ('DRAFT','PENDING_VALIDATION','APPROVED','ISSUED','PARTIALLY_PAID','PAID','CANCELLED')
+      statut IN (
+        'DRAFT','PENDING_VALIDATION','APPROVED','ISSUED','PARTIALLY_PAID','PAID','CANCELLED',
+        'brouillon','emis','emise','envoyee','partielle','payee','annule','annulee'
+      )
     ) NOT VALID;
   END IF;
   IF NOT EXISTS (
@@ -105,7 +150,10 @@ BEGIN
       AND conrelid = 'public.avoir'::regclass
   ) THEN
     ALTER TABLE public.avoir ADD CONSTRAINT avoir_statut_469_ck CHECK (
-      statut IN ('DRAFT','PENDING_VALIDATION','APPROVED','ISSUED','CANCELLED')
+      statut IN (
+        'DRAFT','PENDING_VALIDATION','APPROVED','ISSUED','CANCELLED',
+        'brouillon','emis','emise','envoyee','annule','annulee'
+      )
     ) NOT VALID;
   END IF;
 END $$;
@@ -129,14 +177,18 @@ BEGIN
   IF TG_TABLE_NAME = 'facture'
      AND OLD.document_status = 'ISSUED'
      AND NEW.document_status = 'ISSUED'
-     AND OLD.statut IN ('ISSUED', 'PARTIALLY_PAID', 'PAID')
+     AND OLD.statut IN (
+       'ISSUED', 'PARTIALLY_PAID', 'PAID',
+       'emise', 'envoyee', 'partielle', 'payee', 'emis'
+     )
      AND NEW.statut = CASE
        WHEN NEW.settlement_status = 'UNPAID' THEN 'ISSUED'
        ELSE NEW.settlement_status
      END
      AND NEW.row_version = OLD.row_version + 1
+     AND current_setting('cerp.finance_settlement_correlation_id', true) IS NOT NULL
      AND current_setting('cerp.finance_settlement_correlation_id', true)
-         IS NOT DISTINCT FROM NEW.correlation_id::text
+         = NEW.correlation_id::text
      AND (to_jsonb(NEW)
           - 'statut' - 'document_status' - 'settlement_status'
           - 'row_version' - 'correlation_id' - 'updated_at')
@@ -163,6 +215,6 @@ $$;
 COMMENT ON COLUMN public.facture.document_status IS
   'Authoritative document lifecycle. ISSUED remains immutable after legal emission.';
 COMMENT ON COLUMN public.facture.settlement_status IS
-  'Derived only from consumed payment and credit allocations: UNPAID, PARTIALLY_PAID, PAID.';
+  'Derived from modern allocations plus non-duplicated direct legacy evidence: UNPAID, PARTIALLY_PAID, PAID.';
 
 COMMIT;

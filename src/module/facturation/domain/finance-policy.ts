@@ -33,6 +33,42 @@ export const FACTURE_SETTLEMENT_STATUSES = [
 
 export type FactureSettlementStatus = (typeof FACTURE_SETTLEMENT_STATUSES)[number];
 
+/** Statuts réellement présents avant le workflow #227 et encore supportés en lecture. */
+export const FACTURE_LEGACY_STATUSES = [
+  "brouillon",
+  "emis",
+  "emise",
+  "envoyee",
+  "partielle",
+  "payee",
+  "annule",
+  "annulee",
+] as const;
+
+export const FACTURE_LEGACY_ISSUED_STATUSES = [
+  "emis",
+  "emise",
+  "envoyee",
+  "partielle",
+  "payee",
+] as const;
+
+export const FACTURE_LIST_FILTER_STATUSES = [
+  ...FACTURE_WORKFLOW_STATUSES,
+  "LEGACY",
+  ...FACTURE_LEGACY_STATUSES,
+] as const;
+
+export function isInvoiceIssuedForSettlement(params: {
+  documentStatus: string | null | undefined;
+  legacyStatus: string | null | undefined;
+}): boolean {
+  if (params.documentStatus === "ISSUED") return true;
+  return (FACTURE_LEGACY_ISSUED_STATUSES as readonly string[]).includes(
+    (params.legacyStatus ?? "").trim()
+  );
+}
+
 export const AVOIR_WORKFLOW_STATUSES = [
   "DRAFT",
   "PENDING_VALIDATION",

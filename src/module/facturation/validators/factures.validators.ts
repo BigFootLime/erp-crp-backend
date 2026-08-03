@@ -1,15 +1,8 @@
 import { z } from "zod";
+import { FACTURE_LIST_FILTER_STATUSES } from "../domain/finance-policy";
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date (expected YYYY-MM-DD)");
-const factureStatus = z.enum([
-  "DRAFT",
-  "PENDING_VALIDATION",
-  "APPROVED",
-  "ISSUED",
-  "PARTIALLY_PAID",
-  "PAID",
-  "CANCELLED",
-]);
+const factureStatus = z.enum(FACTURE_LIST_FILTER_STATUSES);
 const factureDraftStatus = z.literal("DRAFT");
 
 function emptyStringToUndefined(value: unknown) {

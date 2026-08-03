@@ -1,6 +1,7 @@
 import type { PoolClient } from "pg";
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
+import { FACTURE_LEGACY_STATUSES } from "../domain/finance-policy";
 import { computeDocumentTotals, computeLineTotals } from "../lib/totals";
 import type { ClientLite, DocumentClient } from "../types/shared.types";
 import type {
@@ -80,7 +81,7 @@ function factureProjectedStatusSql(alias = "f") {
 }
 
 type ListWhere = { whereSql: string; values: unknown[] };
-function buildListWhere(filters: ListFacturesQueryDTO, includeClientInSearch: boolean): ListWhere {
+export function buildListWhere(filters: ListFacturesQueryDTO, includeClientInSearch: boolean): ListWhere {
   const where: string[] = [];
   const values: unknown[] = [];
   const push = (v: unknown) => {
@@ -127,6 +128,11 @@ function buildListWhere(filters: ListFacturesQueryDTO, includeClientInSearch: bo
       where.push(`f.document_status = 'ISSUED' AND f.settlement_status = ${p}`);
     } else if (status === "ISSUED") {
       where.push(`f.document_status = 'ISSUED' AND f.settlement_status = 'UNPAID'`);
+    } else if (status === "LEGACY") {
+      where.push(`f.document_status = 'LEGACY'`);
+    } else if ((FACTURE_LEGACY_STATUSES as readonly string[]).includes(status)) {
+      const p = push(status);
+      where.push(`f.statut = ${p}`);
     } else {
       const p = push(status);
       where.push(`f.document_status = ${p}`);
@@ -381,13 +387,7 @@ export async function repoGetFacture(id: number, includeValue: string): Promise<
           `
           SELECT
             id::text AS id,
-            CASE
-              WHEN EXISTS (
-                SELECT 1 FROM paiement_allocations target
-                WHERE target.paiement_id = paiement.id AND target.facture_id = $1
-              ) THEN $1::text
-              ELSE facture_id::text
-            END AS facture_id,
+            facture_id::text AS facture_id,
             ordre,
             designation,
             code_piece,
@@ -456,7 +456,15 @@ export async function repoGetFacture(id: number, includeValue: string): Promise<
           `
           SELECT
             id::text AS id,
-            facture_id::text AS facture_id,
+            CASE
+              WHEN EXISTS (
+                SELECT 1
+                FROM paiement_allocations target
+                WHERE target.paiement_id = paiement.id
+                  AND target.facture_id = $1
+              ) THEN $1::text
+              ELSE facture_id::text
+            END AS facture_id,
             client_id,
             date_paiement::text AS date_paiement,
             montant::float8 AS montant,

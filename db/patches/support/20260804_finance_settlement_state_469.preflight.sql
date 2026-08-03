@@ -21,9 +21,26 @@ BEGIN
     WHERE COALESCE((
       SELECT SUM(pa.amount_ttc) FROM public.paiement_allocations pa WHERE pa.facture_id = f.id
     ), 0) + COALESCE((
+      SELECT SUM(p.montant)
+      FROM public.paiement p
+      WHERE p.facture_id = f.id
+        AND NOT EXISTS (
+          SELECT 1 FROM public.paiement_allocations existing_pa
+          WHERE existing_pa.paiement_id = p.id
+        )
+    ), 0) + COALESCE((
       SELECT SUM(asa.amount_ttc)
       FROM public.avoir_source_allocations asa
       WHERE asa.facture_id = f.id AND asa.allocation_status = 'CONSUMED'
+    ), 0) + COALESCE((
+      SELECT SUM(a.total_ttc)
+      FROM public.avoir a
+      WHERE a.facture_id = f.id
+        AND a.statut IN ('ISSUED','emis','emise','envoyee')
+        AND NOT EXISTS (
+          SELECT 1 FROM public.avoir_source_allocations existing_asa
+          WHERE existing_asa.avoir_id = a.id
+        )
     ), 0) > f.total_ttc
   ) THEN
     RAISE EXCEPTION '#469 preflight refused: an invoice is already over-allocated';

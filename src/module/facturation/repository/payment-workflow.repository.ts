@@ -4,7 +4,6 @@ import type { PoolClient } from "pg";
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
 import {
-  invoiceSettlementStatusFromBalance,
   paymentStatusFromAllocation,
   type PaymentStatus,
 } from "../domain/finance-policy";
@@ -24,6 +23,12 @@ import {
   nextLegacyId,
   saveFinanceReceipt,
 } from "./workflow.repository.shared";
+import {
+  assertInvoiceIssued,
+  lockInvoiceSettlement,
+  refreshInvoiceSettlementStates,
+  type LockedInvoiceSettlement,
+} from "./invoice-settlement.repository";
 
 type LockedPayment = {
   id: number;
@@ -74,16 +79,25 @@ type ResolvedAllocation = {
   amount: string;
 };
 
-async function resolveAndValidateAllocations(params: {
+type AllocationCandidate = ResolvedAllocation & { amountCents: bigint };
+
+type LockedDueDate = {
+  id: string;
+  facture_id: number;
+  amount_due: string;
+  amount_allocated: string;
+  status: string;
+};
+
+export async function resolveAndValidateAllocations(params: {
   client: PoolClient;
   clientId: string;
   currency: string;
-  paymentId: number;
   paymentAvailableCents: bigint;
   allocations: readonly AllocationInput[];
 }): Promise<ResolvedAllocation[]> {
   const uniqueTargets = new Set<string>();
-  const resolved: ResolvedAllocation[] = [];
+  const candidates: AllocationCandidate[] = [];
   const requestedByInvoice = new Map<number, bigint>();
   let requestedCents = 0n;
 
@@ -111,24 +125,15 @@ async function resolveAndValidateAllocations(params: {
 
     let factureId: number;
     let dueDateId: string | null = null;
-    let dueAvailableCents: bigint | null = null;
     if (allocation.target_type === "ECHEANCE") {
       const due = await params.client.query<{
         id: string;
         facture_id: number;
-        amount_due: string;
-        amount_allocated: string;
-        status: string;
       }>(
         `
-          SELECT
-            id::text AS id, facture_id,
-            amount_due::numeric(18,2)::text AS amount_due,
-            amount_allocated::numeric(18,2)::text AS amount_allocated,
-            status
+          SELECT id::text AS id, facture_id
           FROM public.facture_echeance
           WHERE id = $1::uuid
-          FOR UPDATE
         `,
         [allocation.target_id]
       );
@@ -138,16 +143,6 @@ async function resolveAndValidateAllocations(params: {
       }
       factureId = row.facture_id;
       dueDateId = row.id;
-      dueAvailableCents =
-        moneyToCents(row.amount_due, "Échéance") -
-        moneyToCents(row.amount_allocated, "Échéance allouée");
-      if (row.status === "CANCELLED" || amountCents > dueAvailableCents) {
-        throw new HttpError(
-          409,
-          "PAYMENT_DUE_DATE_EXCEEDED",
-          "L'allocation dépasse le solde de l'échéance."
-        );
-      }
     } else {
       if (!/^\d+$/.test(allocation.target_id)) {
         throw new HttpError(422, "PAYMENT_FACTURE_ID_INVALID", "Identifiant facture invalide.");
@@ -155,49 +150,26 @@ async function resolveAndValidateAllocations(params: {
       factureId = Number.parseInt(allocation.target_id, 10);
     }
 
-    const facture = await params.client.query<{
-      client_id: string;
-      currency: string;
-      statut: string;
-      total_ttc: string;
-      settled_ttc: string;
-    }>(
-      `
-        SELECT
-          f.client_id,
-          COALESCE(f.currency, 'EUR') AS currency,
-          f.statut,
-          f.total_ttc::numeric(18,2)::text AS total_ttc,
-          (
-            COALESCE((
-              SELECT SUM(pa.amount_ttc)
-              FROM public.paiement_allocations pa
-              WHERE pa.facture_id = f.id
-            ), 0)
-            +
-            COALESCE((
-              SELECT SUM(asa.amount_ttc)
-              FROM public.avoir_source_allocations asa
-              WHERE asa.facture_id = f.id
-                AND asa.allocation_status = 'CONSUMED'
-            ), 0)
-          )::numeric(18,2)::text AS settled_ttc
-        FROM public.facture f
-        WHERE f.id = $1
-        FOR UPDATE
-      `,
-      [factureId]
-    );
-    const invoice = facture.rows[0];
+    candidates.push({
+      targetType: allocation.target_type,
+      targetId: allocation.target_id,
+      factureId,
+      dueDateId,
+      amount: allocation.amount,
+      amountCents,
+    });
+  }
+
+  // Tous les verrous facture sont acquis dans le même ordre global, avant les
+  // échéances. Un mélange FACTURE + ECHEANCE ne peut donc plus inverser l'ordre.
+  const invoices = new Map<number, LockedInvoiceSettlement>();
+  const factureIds = [...new Set(candidates.map((candidate) => candidate.factureId))]
+    .sort((left, right) => left - right);
+  for (const factureId of factureIds) {
+    const invoice = await lockInvoiceSettlement(params.client, factureId);
     if (!invoice) throw new HttpError(404, "FACTURE_NOT_FOUND", "Facture introuvable.");
-    if (!["ISSUED", "PARTIALLY_PAID", "PAID"].includes(invoice.statut)) {
-      throw new HttpError(
-        409,
-        "PAYMENT_FACTURE_NOT_ISSUED",
-        "Un paiement ne peut être alloué qu'à une facture émise."
-      );
-    }
-    if (invoice.client_id !== params.clientId) {
+    assertInvoiceIssued(invoice);
+    if (invoice.clientId !== params.clientId) {
       throw new HttpError(
         422,
         "PAYMENT_CLIENT_MISMATCH",
@@ -211,25 +183,67 @@ async function resolveAndValidateAllocations(params: {
         "Le paiement et la facture doivent avoir la même devise."
       );
     }
-    const invoiceAvailableCents =
-      moneyToCents(invoice.total_ttc, "Total facture") -
-      moneyToCents(invoice.settled_ttc, "Total réglé");
-    const alreadyRequestedForInvoice = requestedByInvoice.get(factureId) ?? 0n;
-    if (alreadyRequestedForInvoice + amountCents > invoiceAvailableCents) {
+    invoices.set(factureId, invoice);
+  }
+
+  const dueDates = new Map<string, LockedDueDate>();
+  const dueCandidates = candidates
+    .filter((candidate): candidate is AllocationCandidate & { dueDateId: string } =>
+      candidate.dueDateId !== null
+    )
+    .sort((left, right) =>
+      left.factureId - right.factureId || left.dueDateId.localeCompare(right.dueDateId)
+    );
+  for (const candidate of dueCandidates) {
+    const due = await params.client.query<LockedDueDate>(
+      `
+        SELECT
+          id::text AS id, facture_id,
+          amount_due::numeric(18,2)::text AS amount_due,
+          amount_allocated::numeric(18,2)::text AS amount_allocated,
+          status
+        FROM public.facture_echeance
+        WHERE id = $1::uuid
+        FOR UPDATE
+      `,
+      [candidate.dueDateId]
+    );
+    const row = due.rows[0];
+    if (!row) throw new HttpError(404, "PAYMENT_DUE_DATE_NOT_FOUND", "Échéance introuvable.");
+    if (row.facture_id !== candidate.factureId) {
+      throw new HttpError(409, "PAYMENT_DUE_DATE_CHANGED", "L'échéance a changé; réessayez.");
+    }
+    dueDates.set(candidate.dueDateId, row);
+  }
+
+  for (const candidate of candidates) {
+    const invoice = invoices.get(candidate.factureId)!;
+    if (candidate.dueDateId) {
+      const due = dueDates.get(candidate.dueDateId)!;
+      const dueAvailableCents =
+        moneyToCents(due.amount_due, "Échéance") -
+        moneyToCents(due.amount_allocated, "Échéance allouée");
+      if (due.status === "CANCELLED" || candidate.amountCents > dueAvailableCents) {
+        throw new HttpError(
+          409,
+          "PAYMENT_DUE_DATE_EXCEEDED",
+          "L'allocation dépasse le solde de l'échéance."
+        );
+      }
+    }
+    const invoiceAvailableCents = invoice.totalCents - invoice.settledCents;
+    const alreadyRequestedForInvoice = requestedByInvoice.get(candidate.factureId) ?? 0n;
+    if (alreadyRequestedForInvoice + candidate.amountCents > invoiceAvailableCents) {
       throw new HttpError(
         409,
         "PAYMENT_INVOICE_BALANCE_EXCEEDED",
         "L'allocation dépasse le solde de la facture."
       );
     }
-    requestedByInvoice.set(factureId, alreadyRequestedForInvoice + amountCents);
-    resolved.push({
-      targetType: allocation.target_type,
-      targetId: allocation.target_id,
-      factureId,
-      dueDateId,
-      amount: allocation.amount,
-    });
+    requestedByInvoice.set(
+      candidate.factureId,
+      alreadyRequestedForInvoice + candidate.amountCents
+    );
   }
 
   if (requestedCents > params.paymentAvailableCents) {
@@ -239,7 +253,7 @@ async function resolveAndValidateAllocations(params: {
       "Les allocations dépassent le montant disponible du paiement."
     );
   }
-  return resolved;
+  return candidates.map(({ amountCents: _amountCents, ...candidate }) => candidate);
 }
 
 async function insertAllocations(params: {
@@ -282,129 +296,6 @@ async function insertAllocations(params: {
         [allocation.dueDateId, allocation.amount]
       );
     }
-  }
-}
-
-async function refreshInvoiceSettlementStates(params: {
-  client: PoolClient;
-  allocations: readonly ResolvedAllocation[];
-  actor: FinanceActorContext;
-  correlationId: string;
-  idempotencyKey: string;
-}): Promise<void> {
-  const factureIds = [...new Set(params.allocations.map((allocation) => allocation.factureId))]
-    .sort((left, right) => left - right);
-
-  for (const factureId of factureIds) {
-    const result = await params.client.query<{
-      uuid: string | null;
-      statut: string;
-      document_status: string;
-      settlement_status: string;
-      total_ttc: string;
-      settled_ttc: string;
-    }>(
-      `
-        SELECT
-          f.uuid::text AS uuid,
-          f.statut,
-          f.document_status,
-          f.settlement_status,
-          f.total_ttc::numeric(18,2)::text AS total_ttc,
-          (
-            COALESCE((
-              SELECT SUM(pa.amount_ttc)
-              FROM public.paiement_allocations pa
-              WHERE pa.facture_id = f.id
-            ), 0)
-            +
-            COALESCE((
-              SELECT SUM(asa.amount_ttc)
-              FROM public.avoir_source_allocations asa
-              WHERE asa.facture_id = f.id
-                AND asa.allocation_status = 'CONSUMED'
-            ), 0)
-          )::numeric(18,2)::text AS settled_ttc
-        FROM public.facture f
-        WHERE f.id = $1
-        FOR UPDATE
-      `,
-      [factureId]
-    );
-    const invoice = result.rows[0];
-    if (!invoice) throw new HttpError(404, "FACTURE_NOT_FOUND", "Facture introuvable.");
-    if (invoice.document_status !== "ISSUED") {
-      throw new HttpError(
-        409,
-        "PAYMENT_FACTURE_NOT_ISSUED",
-        "Un paiement ne peut être alloué qu'à une facture émise."
-      );
-    }
-    const settlementStatus = invoiceSettlementStatusFromBalance({
-      totalCents: moneyToCents(invoice.total_ttc, "Total facture"),
-      settledCents: moneyToCents(invoice.settled_ttc, "Total réglé"),
-    });
-    const projectedStatus = settlementStatus === "UNPAID" ? "ISSUED" : settlementStatus;
-    if (
-      invoice.statut === projectedStatus &&
-      invoice.settlement_status === settlementStatus
-    ) {
-      continue;
-    }
-
-    // The immutable-evidence trigger accepts only this correlation-bound settlement projection.
-    await params.client.query(
-      `SELECT set_config('cerp.finance_settlement_correlation_id', $1, true)`,
-      [params.correlationId]
-    );
-    await params.client.query(
-      `
-        UPDATE public.facture
-        SET statut = $2,
-            document_status = 'ISSUED',
-            settlement_status = $3,
-            row_version = row_version + 1,
-            correlation_id = $4::uuid,
-            updated_at = now()
-        WHERE id = $1
-      `,
-      [factureId, projectedStatus, settlementStatus, params.correlationId]
-    );
-    const aggregateId = invoice.uuid ?? String(factureId);
-    await insertFinanceEvent({
-      client: params.client,
-      aggregateType: "FACTURE",
-      aggregateId,
-      eventType: "FACTURE_SETTLEMENT_DERIVED",
-      oldValues: {
-        status: invoice.statut,
-        settlement_status: invoice.settlement_status,
-      },
-      newValues: {
-        status: projectedStatus,
-        settlement_status: settlementStatus,
-        settled_amount: invoice.settled_ttc,
-        total_amount: invoice.total_ttc,
-      },
-      actor: params.actor,
-      correlationId: params.correlationId,
-      idempotencyKey: params.idempotencyKey,
-      ruleCode: "FINANCE-SETTLEMENT-469",
-    });
-    await insertGlobalFinanceAudit({
-      client: params.client,
-      actor: params.actor,
-      action: "facturation.facture_settlement_derived",
-      entityType: "facture",
-      entityId: aggregateId,
-      details: {
-        from: invoice.settlement_status,
-        to: settlementStatus,
-        settled_amount: invoice.settled_ttc,
-        total_amount: invoice.total_ttc,
-        correlation_id: params.correlationId,
-      },
-    });
   }
 }
 
@@ -470,7 +361,6 @@ export async function repoRegisterPayment(params: {
       client,
       clientId: params.input.client_id,
       currency: params.input.currency,
-      paymentId: id,
       paymentAvailableCents: amountCents,
       allocations: params.input.allocations,
     });
@@ -519,7 +409,7 @@ export async function repoRegisterPayment(params: {
     });
     await refreshInvoiceSettlementStates({
       client,
-      allocations,
+      factureIds: allocations.map((allocation) => allocation.factureId),
       actor: params.actor,
       correlationId,
       idempotencyKey: receipt.idempotencyKey,
@@ -652,7 +542,6 @@ export async function repoAllocatePayment(params: {
       client,
       clientId: payment.client_id,
       currency: payment.currency,
-      paymentId: payment.id,
       paymentAvailableCents: amountCents - alreadyAllocated,
       allocations: params.input.allocations,
     });
@@ -666,7 +555,7 @@ export async function repoAllocatePayment(params: {
     });
     await refreshInvoiceSettlementStates({
       client,
-      allocations,
+      factureIds: allocations.map((allocation) => allocation.factureId),
       actor: params.actor,
       correlationId,
       idempotencyKey: receipt.idempotencyKey,

@@ -1,10 +1,23 @@
 -- Roll back the #469 schema contract. Derived columns are removed; historical rows are untouched.
+--
+-- Controlled production procedure (never run from application startup):
+--   1. stop/drain Finance writes;
+--   2. deploy the previous application version (it tolerates the additive columns);
+--   3. in this same psql session set both explicit acknowledgements below;
+--   4. run this script, verify COMMIT, then reopen Finance writes.
+--
+--   SET cerp.finance_469_application_rolled_back = 'YES';
+--   SET cerp.finance_469_rollback_authorized = 'YES';
 BEGIN;
 
 DO $$
 BEGIN
-  IF current_database() <> 'cerp_test' THEN
-    RAISE EXCEPTION '#469 rollback is restricted to cerp_test';
+  IF current_database() <> 'cerp_test'
+     AND (
+       COALESCE(current_setting('cerp.finance_469_application_rolled_back', true), '') <> 'YES'
+       OR COALESCE(current_setting('cerp.finance_469_rollback_authorized', true), '') <> 'YES'
+     ) THEN
+    RAISE EXCEPTION '#469 rollback outside cerp_test requires an app rollback and two explicit session acknowledgements';
   END IF;
 END $$;
 

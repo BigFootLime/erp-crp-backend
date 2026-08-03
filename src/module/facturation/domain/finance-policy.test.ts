@@ -2,12 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import { HttpError } from "../../../utils/httpError";
 import {
+  FACTURE_LIST_FILTER_STATUSES,
   assertAvoirTransition,
   assertFactureTransition,
   decideReceipt,
   financeRequestHash,
   invoiceSettlementStatusFromBalance,
   invoiceStatusFromBalance,
+  isInvoiceIssuedForSettlement,
   paymentStatusFromAllocation,
   roleHasFinanceCapability,
 } from "./finance-policy";
@@ -120,6 +122,15 @@ describe("issue #227 — RBAC fail-closed", () => {
 });
 
 describe("issue #227 — idempotence et soldes", () => {
+  it("reconnaît les factures historiques émises sans élargir le vocabulaire arbitrairement", () => {
+    for (const legacyStatus of ["emis", "emise", "envoyee", "partielle", "payee"]) {
+      expect(isInvoiceIssuedForSettlement({ documentStatus: "ISSUED", legacyStatus })).toBe(true);
+      expect(FACTURE_LIST_FILTER_STATUSES).toContain(legacyStatus);
+    }
+    expect(isInvoiceIssuedForSettlement({ documentStatus: "LEGACY", legacyStatus: "custom" })).toBe(false);
+    expect(FACTURE_LIST_FILTER_STATUSES).not.toContain("custom" as never);
+  });
+
   it("stabilise le hash malgré l'ordre des propriétés", () => {
     expect(financeRequestHash("PAYMENT_REGISTER", { b: 2, a: 1 })).toBe(
       financeRequestHash("PAYMENT_REGISTER", { a: 1, b: 2 })
