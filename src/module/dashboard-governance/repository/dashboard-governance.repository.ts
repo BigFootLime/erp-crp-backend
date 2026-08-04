@@ -4,7 +4,6 @@ import pool from "../../../config/database";
 import {
   DASHBOARD_ARIANE_DEFAULT_FLAG,
   DASHBOARD_USAGE_METRICS_FLAG,
-  DASHBOARD_USAGE_RETENTION_DAYS,
   type DashboardRoleBucket,
   type DashboardUsageInput,
   type DashboardUsageMetricRow,
@@ -19,9 +18,8 @@ function isUndefinedTable(error: unknown): boolean {
 }
 
 /**
- * Résout les deux kill-switches de convergence. Les valeurs de compatibilité
- * préservent le comportement livré avant ce module : ARIANE reste la cible et
- * la collecte reste OFF tant que le seed et la table ne sont pas présents.
+ * Résout les deux kill-switches de convergence. L'absence de table, de flag ou
+ * de valeur globale positive reste fail-closed : V2 et collecte OFF.
  */
 export async function repoResolveDashboardFlags(
   userId: number,
@@ -33,7 +31,9 @@ export async function repoResolveDashboardFlags(
         WITH requested(key) AS (
           SELECT unnest($1::text[])
         )
-        SELECT requested.key, COALESCE(ffu.enabled, ff.enabled) AS enabled
+        SELECT
+          requested.key,
+          (ff.enabled IS TRUE AND COALESCE(ffu.enabled, TRUE) IS TRUE) AS enabled
         FROM requested
         LEFT JOIN public.app_feature_flags ff ON ff.key = requested.key
         LEFT JOIN public.app_feature_flag_users ffu
@@ -47,14 +47,14 @@ export async function repoResolveDashboardFlags(
     );
 
     return {
-      ariane_default_enabled: byKey.get(DASHBOARD_ARIANE_DEFAULT_FLAG) !== false,
+      ariane_default_enabled: byKey.get(DASHBOARD_ARIANE_DEFAULT_FLAG) === true,
       telemetry_enabled:
         byKey.get(DASHBOARD_USAGE_METRICS_FLAG) === true &&
         infrastructure.rows[0]?.usage_table_ready === true,
     };
   } catch (error) {
     if (isUndefinedTable(error)) {
-      return { ariane_default_enabled: true, telemetry_enabled: false };
+      return { ariane_default_enabled: false, telemetry_enabled: false };
     }
     throw error;
   }
@@ -70,10 +70,6 @@ export async function repoIncrementDashboardUsage(
 ): Promise<void> {
   await q.query(
     `
-      WITH pruned AS (
-        DELETE FROM public.dashboard_usage_daily
-        WHERE usage_date < (CURRENT_DATE - $6::int)
-      )
       INSERT INTO public.dashboard_usage_daily (
         usage_date,
         experience,
@@ -114,7 +110,6 @@ export async function repoIncrementDashboardUsage(
       params.input.selection_source,
       params.input.previous_experience ?? "none",
       params.role_bucket,
-      DASHBOARD_USAGE_RETENTION_DAYS,
     ]
   );
 }

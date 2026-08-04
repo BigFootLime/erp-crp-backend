@@ -21,6 +21,7 @@ function getUser(req: Request) {
 
 export const getDashboardGovernance: RequestHandler = asyncHandler(async (req, res) => {
   const user = getUser(req);
+  res.set("Cache-Control", "no-store");
   res.json(await svcGetDashboardGovernance(user.id));
 });
 

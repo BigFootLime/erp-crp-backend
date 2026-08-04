@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -58,14 +59,61 @@ describe("dashboard governance", () => {
     })).toThrow();
   });
 
-  it("keeps the migration additive and ships operational scripts", () => {
+  it("accepts only coherent bounded telemetry transitions", () => {
+    expect(dashboardUsageBodySchema.parse({
+      experience: "v2",
+      event_type: "switch",
+      selection_source: "switch",
+      previous_experience: "legacy",
+    })).toMatchObject({ experience: "v2", previous_experience: "legacy" });
+
+    for (const invalid of [
+      { experience: "v2", event_type: "switch", selection_source: "switch" },
+      { experience: "v2", event_type: "switch", selection_source: "switch", previous_experience: "v2" },
+      { experience: "legacy", event_type: "deep_link", selection_source: "default" },
+      { experience: "v2", event_type: "fallback", selection_source: "query" },
+      { experience: "v2", event_type: "view", selection_source: "default", previous_experience: "legacy" },
+    ]) {
+      expect(() => dashboardUsageBodySchema.parse(invalid)).toThrow();
+    }
+  });
+
+  it("ships a fail-closed canonical patch and independent retention maintenance", () => {
     const root = path.resolve(__dirname, "../..");
     const patch = fs.readFileSync(path.join(root, "db/patches/20260805_dashboard_convergence_governance.sql"), "utf8");
-    expect(patch).toMatch(/CREATE TABLE IF NOT EXISTS public\.dashboard_usage_daily/);
-    expect(patch).not.toMatch(/DROP\s+TABLE|TRUNCATE|DELETE\s+FROM/i);
+    const repository = fs.readFileSync(path.join(root, "src/module/dashboard-governance/repository/dashboard-governance.repository.ts"), "utf8");
+    const maintenance = fs.readFileSync(path.join(root, "scripts/prune-dashboard-usage.js"), "utf8");
+    const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as { scripts: Record<string, string> };
+
+    expect(patch).toMatch(/CREATE TABLE public\.dashboard_usage_daily/);
+    expect(patch).toContain("CREATE FUNCTION public.prune_dashboard_usage_daily");
+    expect(patch).toMatch(/'DASHBOARD_ARIANE_DEFAULT'[\s\S]*false[\s\S]*'DASHBOARD_USAGE_METRICS'[\s\S]*false/);
+    expect(fs.existsSync(path.join(root, "db/seeds/dashboard-convergence-flags.sql"))).toBe(false);
     expect(patch).not.toMatch(/^\s*(user_id|ip_address|user_agent)\s+/im);
+    expect(repository).toContain("ff.enabled IS TRUE AND COALESCE(ffu.enabled, TRUE) IS TRUE");
+    expect(repository).not.toMatch(/DELETE FROM public\.dashboard_usage_daily/);
+    expect(maintenance).toContain("public.prune_dashboard_usage_daily");
+    expect(packageJson.scripts["maintenance:dashboard-usage"]).toBe("node scripts/prune-dashboard-usage.js");
+
     for (const suffix of ["preflight", "verify", "rollback"]) {
       expect(fs.existsSync(path.join(root, `db/patches/support/20260805_dashboard_convergence_governance.${suffix}.sql`))).toBe(true);
     }
+  });
+
+  it("guards read-only verification and destructive rollback with exact provenance", () => {
+    const root = path.resolve(__dirname, "../..");
+    const patch = fs.readFileSync(path.join(root, "db/patches/20260805_dashboard_convergence_governance.sql"), "utf8");
+    const verify = fs.readFileSync(path.join(root, "db/patches/support/20260805_dashboard_convergence_governance.verify.sql"), "utf8");
+    const rollback = fs.readFileSync(path.join(root, "db/patches/support/20260805_dashboard_convergence_governance.rollback.sql"), "utf8");
+    const expectedSha = createHash("sha256").update(patch.replace(/\r\n?/g, "\n"), "utf8").digest("hex");
+
+    expect(verify).toContain("BEGIN TRANSACTION READ ONLY");
+    expect(verify).toContain(expectedSha);
+    expect(verify).toContain("both baseline flags must exist globally and remain OFF");
+    expect(rollback).toContain("current_database() NOT IN ('cerp_dev', 'cerp_test')");
+    expect(rollback).toContain("SELECT pg_advisory_xact_lock(hashtext('cerp_schema_migrations'))");
+    expect(rollback).toContain(expectedSha);
+    expect(rollback).toContain("usage evidence exists; export/retention decision required");
+    expect(rollback).toContain("DELETE FROM public.cerp_schema_migrations");
   });
 });
