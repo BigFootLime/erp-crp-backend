@@ -1,13 +1,17 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import crypto from "node:crypto"
+import type { PoolClient } from "pg"
 
 import pool from "../../../config/database"
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
 import { readIssuerParty } from "../../../shared/documents/issuer-identity.repository"
 import { pickMention } from "../../../shared/pdf/legal-mentions"
-import { repoGetLivraisonDetail, repoGetDocumentName } from "../repository/livraisons.repository"
+import {
+  repoGetDocumentName,
+  repoGetLivraisonDetail,
+} from "../repository/livraisons.repository"
 
 import { renderBonLivraisonDocument } from "./bon-livraison-document"
 
@@ -26,11 +30,28 @@ async function ensureDocsDir(): Promise<string> {
   return uploadDir
 }
 
+function assertLivraisonPdfGenerationAllowed(statut: string): void {
+  if (statut === "CANCELLED") {
+    throw new HttpError(
+      409,
+      "LIVRAISON_CANCELLED_PDF_FORBIDDEN",
+      "Un bon de livraison annulé ne peut pas générer ou régénérer de PDF."
+    )
+  }
+}
+
 // L'emetteur n'est plus reduit a sa raison sociale : `readIssuerParty` remonte aussi son
 // identite legale et ses mentions obligatoires, que le bon de livraison doit porter.
 
 export async function svcGetLatestLivraisonPdfDocument(id: string): Promise<{ document_id: string; version: number } | null> {
-  const res = await pool.query<{ document_id: string; version: number }>(
+  return getLatestLivraisonPdfDocument(pool, id)
+}
+
+async function getLatestLivraisonPdfDocument(
+  queryer: Pick<PoolClient, "query">,
+  id: string
+): Promise<{ document_id: string; version: number } | null> {
+  const res = await queryer.query<{ document_id: string; version: number }>(
     `
     SELECT d.document_id::text AS document_id, d.version
     FROM bon_livraison_documents d
@@ -50,35 +71,44 @@ export async function svcGetPdfFilePath(documentId: string): Promise<string> {
 }
 
 export async function svcGenerateLivraisonPdf(bonLivraisonId: string, userId: number): Promise<{ document_id: string; version: number }> {
-  const detail = await repoGetLivraisonDetail(bonLivraisonId)
-  if (!detail) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
-
-  const existing = await svcGetLatestLivraisonPdfDocument(bonLivraisonId)
-  const version = (existing?.version ?? 0) + 1
-
-  const docsDir = await ensureDocsDir()
-  const documentId = crypto.randomUUID()
-  const fileName = `Bon_livraison_${detail.bon_livraison.numero}.pdf`
-  const filePath = path.join(docsDir, `${documentId}.pdf`)
-
-  const issuer = await readIssuerParty({
-    at: detail.bon_livraison.date_expedition ?? detail.bon_livraison.date_creation,
-  })
-  const pdfBytes = await renderBonLivraisonDocument({
-    header: detail.bon_livraison,
-    lignes: detail.lignes,
-    version,
-    company: pickMention(issuer, "company_name"),
-    issuer,
-  })
-  await fs.mkdir(path.dirname(filePath), { recursive: true })
-  await fs.writeFile(filePath, pdfBytes)
-
-  const checksumSha256 = crypto.createHash("sha256").update(pdfBytes).digest("hex")
-
   const db = await pool.connect()
+  let filePath: string | null = null
   try {
     await db.query("BEGIN")
+    const locked = await db.query<{ statut: string }>(
+      `SELECT statut FROM public.bon_livraison WHERE id = $1::uuid FOR UPDATE`,
+      [bonLivraisonId]
+    )
+    const statut = locked.rows[0]?.statut
+    if (!statut) {
+      throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
+    }
+    assertLivraisonPdfGenerationAllowed(statut)
+
+    const detail = await repoGetLivraisonDetail(bonLivraisonId)
+    if (!detail) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
+
+    const existing = await getLatestLivraisonPdfDocument(db, bonLivraisonId)
+    const version = (existing?.version ?? 0) + 1
+    const docsDir = await ensureDocsDir()
+    const documentId = crypto.randomUUID()
+    const fileName = `Bon_livraison_${detail.bon_livraison.numero}.pdf`
+    filePath = path.join(docsDir, `${documentId}.pdf`)
+
+    const issuer = await readIssuerParty({
+      at: detail.bon_livraison.date_expedition ?? detail.bon_livraison.date_creation,
+    })
+    const pdfBytes = await renderBonLivraisonDocument({
+      header: detail.bon_livraison,
+      lignes: detail.lignes,
+      version,
+      company: pickMention(issuer, "company_name"),
+      issuer,
+    })
+    await fs.mkdir(path.dirname(filePath), { recursive: true })
+    await fs.writeFile(filePath, pdfBytes)
+    const checksumSha256 = crypto.createHash("sha256").update(pdfBytes).digest("hex")
+
     await db.query(`INSERT INTO documents_clients (id, document_name, type) VALUES ($1, $2, $3)`, [documentId, fileName, "PDF"])
     await db.query(
       `
@@ -109,15 +139,14 @@ export async function svcGenerateLivraisonPdf(bonLivraisonId: string, userId: nu
     )
     await db.query(`UPDATE bon_livraison SET updated_at = now(), updated_by = $2 WHERE id = $1::uuid`, [bonLivraisonId, userId])
     await db.query("COMMIT")
+    return { document_id: documentId, version }
   } catch (err) {
     await db.query("ROLLBACK")
-    await fs.unlink(filePath).catch(() => undefined)
+    if (filePath) await fs.unlink(filePath).catch(() => undefined)
     throw err
   } finally {
     db.release()
   }
-
-  return { document_id: documentId, version }
 }
 
 export async function svcGetDocumentName(documentId: string) {

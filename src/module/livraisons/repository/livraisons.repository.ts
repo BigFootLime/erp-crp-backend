@@ -2227,7 +2227,10 @@ export async function repoUpdateLivraisonStatus(
       return { id: bonLivraisonId, statut: "READY" }
     }
 
-    if (current.statut === "READY" && statut === "CANCELLED") {
+    if (
+      (current.statut === "DRAFT" || current.statut === "READY") &&
+      statut === "CANCELLED"
+    ) {
       await releaseLivraisonReservationsInTransaction(
         db,
         bonLivraisonId,

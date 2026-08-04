@@ -59,29 +59,49 @@ describe("transaction d'annulation d'un bon de livraison", () => {
     testState.releaseReservations.mockResolvedValue(undefined)
   })
 
-  it("libère les réservations READY avec le même motif avant la mutation", async () => {
-    const { client, query } = createClient("READY")
+  it.each(["DRAFT", "READY"] as const)(
+    "libère les réservations ACTIVE d'un BL %s avec le même motif avant la mutation",
+    async (currentStatus) => {
+      const { client, query } = createClient(currentStatus)
+      testState.connect.mockResolvedValue(client)
+
+      await expect(
+        repoUpdateLivraisonStatus(BON_LIVRAISON_ID, "CANCELLED", USER_ID, {
+          commentaire: "  Commande client abandonnée  ",
+        })
+      ).resolves.toEqual({ id: BON_LIVRAISON_ID, statut: "CANCELLED" })
+
+      expect(testState.releaseReservations).toHaveBeenCalledWith(
+        client,
+        BON_LIVRAISON_ID,
+        USER_ID,
+        "Commande client abandonnée"
+      )
+      const updateCallIndex = query.mock.calls.findIndex(([sql]) =>
+        String(sql).includes("UPDATE public.bon_livraison")
+      )
+      expect(testState.releaseReservations.mock.invocationCallOrder[0]).toBeLessThan(
+        query.mock.invocationCallOrder[updateCallIndex]
+      )
+      expect(testState.insertAudit).toHaveBeenCalledOnce()
+    }
+  )
+
+  it("annule toute la transaction si la libération des réservations échoue", async () => {
+    const { client, query } = createClient("DRAFT")
     testState.connect.mockResolvedValue(client)
+    testState.releaseReservations.mockRejectedValueOnce(new Error("stock release failed"))
 
     await expect(
       repoUpdateLivraisonStatus(BON_LIVRAISON_ID, "CANCELLED", USER_ID, {
-        commentaire: "  Commande client abandonnée  ",
+        commentaire: "Annulation avec allocation partielle",
       })
-    ).resolves.toEqual({ id: BON_LIVRAISON_ID, statut: "CANCELLED" })
+    ).rejects.toThrow("stock release failed")
 
-    expect(testState.releaseReservations).toHaveBeenCalledWith(
-      client,
-      BON_LIVRAISON_ID,
-      USER_ID,
-      "Commande client abandonnée"
-    )
-    const updateCallIndex = query.mock.calls.findIndex(([sql]) =>
-      String(sql).includes("UPDATE public.bon_livraison")
-    )
-    expect(testState.releaseReservations.mock.invocationCallOrder[0]).toBeLessThan(
-      query.mock.invocationCallOrder[updateCallIndex]
-    )
-    expect(testState.insertAudit).toHaveBeenCalledOnce()
+    expect(query).toHaveBeenCalledWith("ROLLBACK")
+    expect(query.mock.calls.some(([sql]) => String(sql).includes("UPDATE public.bon_livraison"))).toBe(false)
+    expect(query.mock.calls.some(([sql]) => String(sql).includes("bon_livraison_event_log"))).toBe(false)
+    expect(testState.insertAudit).not.toHaveBeenCalled()
   })
 
   it("conserve le DRAFT et écrit l'événement et l'audit avant COMMIT", async () => {
