@@ -36,6 +36,33 @@ npm run db:patches:baseline
 Use `baseline` only after confirming the restored database already contains the
 schema represented by the current patch files.
 
+The runner owns `public.cerp_schema_migrations`; patch files must not insert a
+second, competing registry row. For `up`, it normalizes SQL line endings to LF
+for a platform-independent SHA-256, removes a supported outer `BEGIN`/`COMMIT`
+wrapper for execution, pins `standard_conforming_strings=on` transaction-locally
+so its lexer matches PostgreSQL, and commits the patch plus `filename`, `sha256`
+and `applied_at` together. A registry-write failure therefore rolls the patch back.
+`baseline` remains a separate metadata-only operation: it never executes patch
+SQL and is allowed only after the represented schema has been verified manually.
+
+For the rate-limit rollout, `--only 20260804_auth_rate_limit_buckets.sql` is an
+immutable selector: the runner accepts the exact basename only, verifies its
+canonical LF SHA-256, still evaluates the complete patch inventory for checksum
+mismatches, and applies zero or one selected patch according to its
+`pending`/`applied` status. The selector always reads the repository's canonical
+`db/patches` directory; it refuses `--patch-dir`, substituted directories and
+symbolic-link SQL files so a reduced inventory cannot conceal another applied
+checksum mismatch. `--only` is deliberately unavailable to `baseline`.
+
+The rate-limit table is owned by `cerp_app`. Its explicit table ACL is exactly
+`SELECT`/`INSERT`/`UPDATE`/`DELETE` for that role, with no grant option, no
+`PUBLIC` entry, no other grantee and no column ACL. The patch removes creator
+default-ACL leakage before recording the migration. Effective ordinary table
+rights are the same four DML privileges: `TRUNCATE`, `REFERENCES` and `TRIGGER`
+are revoked. PostgreSQL ownership still carries inherent alter/drop/regrant
+authority; verification and rollback account for that separately and reject
+every owner other than `cerp_app`.
+
 ## Rules
 
 - Before any database change, download or retrieve the latest SQL backup from
@@ -45,6 +72,8 @@ schema represented by the current patch files.
 - Prefer additive SQL changes.
 - Do not edit a patch file after it has been applied; add a new patch instead.
 - Review `checksum-mismatch` results before continuing.
+- Apply primary patch files through `db:patches:up`, not directly with `psql`,
+  so schema state and the migration registry cannot diverge.
 - Keep passwords and `DATABASE_URL` out of Git, logs, and tickets.
 
 ## Issue #446 - Stock functional scopes OLD/NEW

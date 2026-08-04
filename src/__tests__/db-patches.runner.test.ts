@@ -1,0 +1,396 @@
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { resolve } from "node:path";
+
+import { describe, expect, it, vi } from "vitest";
+
+import { repoRoot } from "./helpers/repo-paths";
+
+type Patch = {
+  filename: string;
+  sql: string;
+  sha256: string;
+};
+
+type RunnerModule = {
+  applyPatch: (client: { query: (...args: unknown[]) => Promise<unknown> }, patch: Patch) => Promise<void>;
+  buildStatuses: (
+    patches: Patch[],
+    applied: Map<string, { sha256: string; applied_at: Date }>
+  ) => Array<Patch & { status: string }>;
+  listPatches: (patchDir: string) => Array<Patch & { fullPath: string }>;
+  immutableOnlyPatch: (patches: Patch[], onlyFilename: string | null) => Patch | null;
+  parseArgs: (args: string[]) => {
+    command: string;
+    dryRun: boolean;
+    check: boolean;
+    patchDir: string;
+    only: string | null;
+  };
+  runUp: (
+    client: { query: (...args: unknown[]) => Promise<unknown> },
+    patches: Patch[],
+    options: { dryRun: boolean; only: string | null }
+  ) => Promise<void>;
+  sha256Sql: (sql: string) => string;
+  sqlWithoutOuterTransaction: (sql: string, filename?: string) => string;
+  validateImmutableInventoryPath: (patchDir: string, onlyFilename: string | null) => void;
+};
+
+const require = createRequire(import.meta.url);
+const runner = require(resolve(repoRoot, "scripts/db-patches.js")) as RunnerModule;
+const patchFilename = "20260804_auth_rate_limit_buckets.sql";
+
+function queryText(value: unknown): string {
+  return String(value).replace(/\s+/g, " ").trim();
+}
+
+function transactionalClient(failure?: "patch" | "registry") {
+  const committed = { patchObject: false, registryEntry: false };
+  let pending = { ...committed };
+  let inTransaction = false;
+
+  const query = vi.fn(async (sql: unknown) => {
+    const statement = queryText(sql);
+    if (statement === "BEGIN") {
+      inTransaction = true;
+      pending = { ...committed };
+    } else if (statement.includes("CREATE TABLE example")) {
+      if (failure === "patch") throw new Error("patch failed");
+      pending.patchObject = true;
+    } else if (statement.includes("INSERT INTO public.cerp_schema_migrations")) {
+      if (failure === "registry") throw new Error("registry failed");
+      pending.registryEntry = true;
+    } else if (statement === "COMMIT") {
+      Object.assign(committed, pending);
+      inTransaction = false;
+    } else if (statement === "ROLLBACK") {
+      pending = { ...committed };
+      inTransaction = false;
+    }
+    return { rows: [] };
+  });
+
+  return { committed, isInTransaction: () => inTransaction, query };
+}
+
+function inventoryClient(appliedRows: Array<{ filename: string; sha256: string; applied_at: Date }> = []) {
+  const query = vi.fn(async (sql: unknown) => {
+    const statement = queryText(sql);
+    if (statement.includes("SELECT to_regclass($1) IS NOT NULL AS exists")) {
+      return { rows: [{ exists: true }] };
+    }
+    if (statement.includes("SELECT filename, sha256, applied_at")) {
+      return { rows: appliedRows };
+    }
+    return { rows: [] };
+  });
+  return { query };
+}
+
+describe("database patch runner", () => {
+  it("uses the same deterministic LF checksum on Windows and Linux checkouts", () => {
+    const lf = "BEGIN;\nSELECT 'rate-limit';\nCOMMIT;\n";
+    const crlf = lf.replace(/\n/g, "\r\n");
+    expect(runner.sha256Sql(crlf)).toBe(runner.sha256Sql(lf));
+
+    const patch = readFileSync(resolve(repoRoot, "db/patches", patchFilename), "utf8");
+    expect(runner.sha256Sql(patch)).toBe(
+      "f61120b4068a36138b1d85c0269f764061a525aab6141f99df9c93ad6c5d27a2"
+    );
+
+    const previouslyRecordedPatch = readFileSync(
+      resolve(repoRoot, "db/patches/20260731_stock_old_new_446.sql"),
+      "utf8"
+    );
+    expect(runner.sha256Sql(previouslyRecordedPatch)).toBe(
+      "624bb347dfd0458b913cad1fe25affc71ef0bdf3a2a1e2c9250f6f10589af794"
+    );
+  });
+
+  it("binds --only to one exact basename and canonical LF checksum", () => {
+    const patches = runner.listPatches(resolve(repoRoot, "db/patches"));
+    const selected = runner.immutableOnlyPatch(patches, patchFilename);
+
+    expect(selected).toMatchObject({
+      filename: patchFilename,
+      sha256: "f61120b4068a36138b1d85c0269f764061a525aab6141f99df9c93ad6c5d27a2",
+    });
+    expect(runner.parseArgs(["up", "--only", patchFilename]).only).toBe(patchFilename);
+    expect(() => runner.parseArgs(["up", "--only", `db/patches/${patchFilename}`])).toThrow(
+      /exact patch basename/
+    );
+    expect(() => runner.parseArgs(["up", "--only", patchFilename.toUpperCase()])).toThrow(
+      /not registered as an immutable patch selection/
+    );
+    expect(() => runner.parseArgs(["up", "--only"])).toThrow(/exact patch basename/);
+    expect(() => runner.parseArgs(["baseline", "--only", patchFilename])).toThrow(
+      /not supported for metadata-only baseline/
+    );
+    expect(() =>
+      runner.immutableOnlyPatch(
+        [{ filename: patchFilename, sql: "SELECT 1;", sha256: runner.sha256Sql("SELECT 1;") }],
+        patchFilename
+      )
+    ).toThrow(/expected canonical LF SHA-256/);
+  });
+
+  it("refuses an alternate --patch-dir that could hide the global inventory", () => {
+    const targetOnlyDirectory = resolve(repoRoot, "tmp/target-only");
+
+    expect(() =>
+      runner.parseArgs([
+        "up",
+        "--only",
+        patchFilename,
+        "--patch-dir",
+        targetOnlyDirectory,
+      ])
+    ).toThrow(/cannot be combined with --patch-dir/);
+    expect(() =>
+      runner.parseArgs([
+        "up",
+        `--only=${patchFilename}`,
+        `--patch-dir=${resolve(repoRoot, "db/patches")}`,
+      ])
+    ).toThrow(/cannot be combined with --patch-dir/);
+    expect(() =>
+      runner.validateImmutableInventoryPath(targetOnlyDirectory, patchFilename)
+    ).toThrow(/canonical db\/patches inventory/);
+    expect(() =>
+      runner.validateImmutableInventoryPath(resolve(repoRoot, "db/patches"), patchFilename)
+    ).not.toThrow();
+  });
+
+  it("applies only the immutable target while leaving another global patch pending", async () => {
+    const target = runner.immutableOnlyPatch(
+      runner.listPatches(resolve(repoRoot, "db/patches")),
+      patchFilename
+    )!;
+    const otherSql = "BEGIN;\nSELECT 'OTHER_PENDING_PATCH';\nCOMMIT;\n";
+    const other = {
+      filename: "20260803_other_pending.sql",
+      sql: otherSql,
+      sha256: runner.sha256Sql(otherSql),
+    };
+    const client = inventoryClient();
+
+    await runner.runUp(
+      { query: client.query },
+      [other, target],
+      { dryRun: false, only: patchFilename }
+    );
+
+    const statements = client.query.mock.calls.map(([statement]) => String(statement));
+    expect(statements.some((statement) => statement.includes("CREATE TABLE public.auth_rate_limit_buckets"))).toBe(true);
+    expect(statements.some((statement) => statement.includes("OTHER_PENDING_PATCH"))).toBe(false);
+    const registryCall = client.query.mock.calls.find(([statement]) =>
+      String(statement).includes("INSERT INTO public.cerp_schema_migrations")
+    );
+    expect(registryCall?.[1]).toEqual([patchFilename, target.sha256]);
+  });
+
+  it("treats an applied --only target as a no-op while another patch remains pending", async () => {
+    const target = runner.immutableOnlyPatch(
+      runner.listPatches(resolve(repoRoot, "db/patches")),
+      patchFilename
+    )!;
+    const otherSql = "SELECT 'STILL_PENDING';\n";
+    const other = {
+      filename: "20260803_other_pending.sql",
+      sql: otherSql,
+      sha256: runner.sha256Sql(otherSql),
+    };
+    const client = inventoryClient([
+      { filename: target.filename, sha256: target.sha256, applied_at: new Date(0) },
+    ]);
+
+    await runner.runUp(
+      { query: client.query },
+      [other, target],
+      { dryRun: false, only: patchFilename }
+    );
+
+    const statements = client.query.mock.calls.map(([statement]) => String(statement));
+    expect(statements.some((statement) => statement.includes("auth_rate_limit_buckets"))).toBe(false);
+    expect(statements.some((statement) => statement.includes("STILL_PENDING"))).toBe(false);
+    expect(statements.some((statement) => statement.includes("INSERT INTO"))).toBe(false);
+  });
+
+  it("refuses --only when any other applied inventory checksum mismatches", async () => {
+    const target = runner.immutableOnlyPatch(
+      runner.listPatches(resolve(repoRoot, "db/patches")),
+      patchFilename
+    )!;
+    const otherSql = "SELECT 'GLOBAL_CHECKSUM';\n";
+    const other = {
+      filename: "20260803_other_applied.sql",
+      sql: otherSql,
+      sha256: runner.sha256Sql(otherSql),
+    };
+    const client = inventoryClient([
+      { filename: other.filename, sha256: "0".repeat(64), applied_at: new Date(0) },
+    ]);
+
+    await expect(
+      runner.runUp(
+        { query: client.query },
+        [other, target],
+        { dryRun: false, only: patchFilename }
+      )
+    ).rejects.toThrow(/one or more applied files changed checksum/);
+
+    const statements = client.query.mock.calls.map(([statement]) => String(statement));
+    expect(statements.some((statement) => statement.includes("CREATE TABLE public.auth_rate_limit_buckets"))).toBe(false);
+  });
+
+  it("accepts every tracked primary patch transaction shape", () => {
+    const patches = runner.listPatches(resolve(repoRoot, "db/patches"));
+    expect(patches.length).toBeGreaterThan(0);
+    for (const patch of patches) {
+      expect(() => runner.sqlWithoutOuterTransaction(patch.sql, patch.filename)).not.toThrow();
+      expect(patch.sql).not.toMatch(
+        /\b(?:CREATE\s+(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY|VACUUM|REINDEX\s+(?:DATABASE|SYSTEM)|CREATE\s+DATABASE|DROP\s+DATABASE|ALTER\s+SYSTEM)\b/i
+      );
+    }
+  });
+
+  it("supports BOM and commented wrappers without mistaking comments or a DO block for controls", () => {
+    const wrapped = [
+      " \t\n\uFEFF/* header /* nested block comment */ still header */",
+      "START TRANSACTION /* runner wrapper */; -- removed before execution",
+      "SELECT 1;",
+      "COMMIT WORK /* runner commits after the registry insert */;",
+      "",
+    ].join("\n");
+    const executable = runner.sqlWithoutOuterTransaction(wrapped, "commented.sql");
+    expect(executable).toContain("SELECT 1;");
+    expect(executable).not.toMatch(/\b(?:START\s+TRANSACTION|COMMIT\s+WORK)\b/i);
+    expect(executable).not.toContain("\uFEFF");
+
+    const unwrappedDoBlock = [
+      "/* COMMIT; is only a comment. */",
+      "DO $body$",
+      "BEGIN",
+      "  PERFORM 'ROLLBACK;';",
+      "END",
+      "$body$;",
+      "",
+    ].join("\n");
+    expect(runner.sqlWithoutOuterTransaction(unwrappedDoBlock, "do-block.sql")).toBe(
+      unwrappedDoBlock
+    );
+  });
+
+  it("cannot hide top-level controls behind PostgreSQL standard strings or quoted identifiers", () => {
+    expect(() =>
+      runner.sqlWithoutOuterTransaction(
+        String.raw`SELECT '\'; COMMIT; SELECT 1;`,
+        "standard-string-bypass.sql"
+      )
+    ).toThrow(/unsupported transaction control/);
+
+    expect(() =>
+      runner.sqlWithoutOuterTransaction(
+        String.raw`SELECT "\"; ROLLBACK; SELECT 1;`,
+        "quoted-identifier-bypass.sql"
+      )
+    ).toThrow(/unsupported transaction control/);
+  });
+
+  it("does not mistake dollar signs inside PostgreSQL identifiers for dollar quotes", () => {
+    expect(() =>
+      runner.sqlWithoutOuterTransaction(
+        "SELECT 1 AS first$tag$; COMMIT; SELECT 1 AS second$tag$;",
+        "dollar-identifier-bypass.sql"
+      )
+    ).toThrow(/unsupported transaction control/);
+  });
+
+  it("keeps backslash quote escapes inside explicit PostgreSQL E strings", () => {
+    const sql = String.raw`SELECT E'not top-level: \'; COMMIT;'; SELECT 1;`;
+    expect(runner.sqlWithoutOuterTransaction(sql, "escape-string.sql")).toBe(sql);
+  });
+
+  it.each([
+    "BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;\nSELECT 1;\nCOMMIT;\n",
+    "START TRANSACTION READ ONLY;\nSELECT 1;\nCOMMIT;\n",
+    "SELECT 1;\nCOMMIT AND CHAIN;\n",
+    "SAVEPOINT future_control;\nSELECT 1;\n",
+    "ROLLBACK TO SAVEPOINT future_control;\n",
+    "PREPARE TRANSACTION 'future-control';\n",
+  ])("refuses unsupported top-level transaction control: %s", (sql) => {
+    expect(() => runner.sqlWithoutOuterTransaction(sql, "unsupported.sql")).toThrow(
+      /unsupported transaction control/
+    );
+  });
+
+  it("commits the patch and its complete registry record in one runner-owned transaction", async () => {
+    const client = transactionalClient();
+    const sql = "-- wrapped patch\r\nBEGIN;\r\nCREATE TABLE example(id integer);\r\nCOMMIT;\r\n";
+    const patch = { filename: patchFilename, sql, sha256: runner.sha256Sql(sql) };
+
+    await runner.applyPatch({ query: client.query }, patch);
+
+    expect(client.query).toHaveBeenCalledTimes(6);
+    expect(client.query.mock.calls[0][0]).toBe("BEGIN");
+    expect(queryText(client.query.mock.calls[1][0])).toContain(
+      "SELECT pg_advisory_xact_lock(hashtext($1))"
+    );
+    expect(client.query.mock.calls[1][1]).toEqual(["cerp_schema_migrations"]);
+    expect(client.query.mock.calls[2][0]).toBe(
+      "SET LOCAL standard_conforming_strings = on"
+    );
+    expect(queryText(client.query.mock.calls[3][0])).toContain("CREATE TABLE example(id integer);");
+    expect(queryText(client.query.mock.calls[3][0])).not.toMatch(/\b(?:BEGIN|COMMIT)\s*;/i);
+    expect(queryText(client.query.mock.calls[4][0])).toContain(
+      "INSERT INTO public.cerp_schema_migrations (filename, sha256, applied_at)"
+    );
+    expect(queryText(client.query.mock.calls[4][0])).toContain("statement_timestamp()");
+    expect(client.query.mock.calls[4][1]).toEqual([patch.filename, patch.sha256]);
+    expect(client.query.mock.calls[5][0]).toBe("COMMIT");
+    expect(client.committed).toEqual({ patchObject: true, registryEntry: true });
+    expect(client.isInTransaction()).toBe(false);
+  });
+
+  it.each(["patch", "registry"] as const)(
+    "rolls back without a patch object or registry entry when the %s write fails",
+    async (failure) => {
+      const client = transactionalClient(failure);
+      const sql = "BEGIN;\nCREATE TABLE example(id integer);\nCOMMIT;\n";
+
+      await expect(
+        runner.applyPatch(
+          { query: client.query },
+          { filename: patchFilename, sql, sha256: runner.sha256Sql(sql) }
+        )
+      ).rejects.toThrow(`${failure} failed`);
+
+      const statements = client.query.mock.calls.map(([statement]) => queryText(statement));
+      expect(statements.at(-1)).toBe("ROLLBACK");
+      expect(statements).not.toContain("COMMIT");
+      if (failure === "patch") {
+        expect(statements.some((statement) => statement.includes("INSERT INTO"))).toBe(false);
+      }
+      expect(client.committed).toEqual({ patchObject: false, registryEntry: false });
+      expect(client.isInTransaction()).toBe(false);
+    }
+  );
+
+  it("skips a matching registered patch and rejects unsafe transaction control", () => {
+    const patch = {
+      filename: patchFilename,
+      sql: "SELECT 1;\n",
+      sha256: runner.sha256Sql("SELECT 1;\n"),
+    };
+    const statuses = runner.buildStatuses(
+      [patch],
+      new Map([[patch.filename, { sha256: patch.sha256, applied_at: new Date(0) }]])
+    );
+
+    expect(statuses).toMatchObject([{ filename: patch.filename, status: "applied" }]);
+    expect(() =>
+      runner.sqlWithoutOuterTransaction("BEGIN;\nSELECT 1;\n", "unsafe.sql")
+    ).toThrow(/unsupported transaction control/);
+  });
+});
