@@ -1,8 +1,10 @@
+import { createHash } from "node:crypto"
 import fs from "node:fs"
 import path from "node:path"
 import { describe, expect, it } from "vitest"
 
 import {
+  allocateCoverage,
   calculateReplenishment,
   convertOpenOrderRemainderToStock,
 } from "../module/commande-fournisseur/domain/replenishment-calculation"
@@ -92,6 +94,28 @@ describe("FEAT-CERP-0003 replenishment calculation", () => {
     expect(calculateReplenishment({ ...base, qty_open_orders: 0, open_order_conversion_missing: true }).missing_data)
       .toContain("OPEN_ORDER_UNIT_CONVERSION")
   })
+
+  it("allocates coverage in exact positive milliunits without manufacturing quantity", () => {
+    const levels = ["level-a", "level-b", "level-c"]
+
+    expect(allocateCoverage(0.001, levels)).toEqual([
+      { stock_level_id: "level-a", quantity: 0.001 },
+    ])
+    expect(allocateCoverage(0.002, levels)).toEqual([
+      { stock_level_id: "level-a", quantity: 0.001 },
+      { stock_level_id: "level-b", quantity: 0.001 },
+    ])
+
+    const split = allocateCoverage(0.005, levels.slice(0, 2))
+    expect(split).toEqual([
+      { stock_level_id: "level-a", quantity: 0.003 },
+      { stock_level_id: "level-b", quantity: 0.002 },
+    ])
+    expect(Math.round(split.reduce((sum, item) => sum + item.quantity, 0) * 1000)).toBe(5)
+    expect(split.every((item) => item.quantity > 0)).toBe(true)
+    expect(allocateCoverage(0.0004, levels)).toEqual([])
+    expect(allocateCoverage(10, [])).toEqual([])
+  })
 })
 
 describe("FEAT-CERP-0003 boundaries", () => {
@@ -105,13 +129,36 @@ describe("FEAT-CERP-0003 boundaries", () => {
 
   it("migration carries deduplication, append-only audit, order linkage and guarded rollback", () => {
     const migration = fs.readFileSync(path.resolve("db/patches/20260805_replenishment_proposals.sql"), "utf8")
+    const preflight = fs.readFileSync(path.resolve("db/patches/support/20260805_replenishment_proposals.preflight.sql"), "utf8")
+    const verify = fs.readFileSync(path.resolve("db/patches/support/20260805_replenishment_proposals.verify.sql"), "utf8")
     const rollback = fs.readFileSync(path.resolve("db/patches/support/20260805_replenishment_proposals.rollback.sql"), "utf8")
+    const canonicalSha256 = createHash("sha256")
+      .update(migration.replace(/\r\n?/g, "\n"), "utf8")
+      .digest("hex")
+
     expect(migration).toMatch(/replenishment_proposals_article_site_uniq/)
     expect(migration).toMatch(/replenishment_proposals_article_unmapped_uniq/)
     expect(migration).toMatch(/stock_level_ids uuid\[\] NOT NULL/)
     expect(migration).toMatch(/replenishment_proposal_events_immutable/)
     expect(migration).toMatch(/commande_fournisseur_replenishment_idx/)
     expect(migration).toMatch(/UNIQUE \(actor_id, idempotency_key\)/)
+    expect(migration).not.toMatch(/\b(?:CREATE TABLE|CREATE INDEX|ADD COLUMN)\s+IF NOT EXISTS/i)
+    expect(migration).not.toMatch(/CREATE\s+OR\s+REPLACE/i)
+    for (const lifecycleScript of [preflight, verify, rollback]) {
+      expect(lifecycleScript).toContain(canonicalSha256)
+      expect(lifecycleScript).toMatch(/cerp_schema_migrations/)
+      expect(lifecycleScript).toMatch(/full target column shape is altered/)
+      expect(lifecycleScript).toMatch(/owned constraint definition is altered/)
+      expect(lifecycleScript).toMatch(/owned index definition is altered/)
+      expect(lifecycleScript).toMatch(/owned trigger mapping\/event is altered/)
+      expect(lifecycleScript).toMatch(/immutable function definition\/settings are altered/)
+    }
+    expect(preflight).toMatch(/BEGIN TRANSACTION READ ONLY/)
+    expect(preflight).toMatch(/target artifact exists without migration ledger provenance/)
+    expect(preflight).toMatch(/aclexplode/)
+    expect(verify).toMatch(/BEGIN TRANSACTION READ ONLY/)
+    expect(verify).toMatch(/module prefix is missing or duplicated/)
+    expect(verify).toMatch(/aclexplode/)
     const repository = fs.readFileSync(path.resolve("src/module/commande-fournisseur/repository/replenishment-proposal.repository.ts"), "utf8")
     expect(repository).toMatch(/BEGIN ISOLATION LEVEL SERIALIZABLE/)
     expect(repository).toMatch(/FOR UPDATE OF p/)
@@ -120,8 +167,11 @@ describe("FEAT-CERP-0003 boundaries", () => {
     expect(repository).toMatch(/array_agg\(id::text ORDER BY id::text\) AS stock_level_ids/)
     expect(repository).toMatch(/GROUP BY article_id, magasin_id/)
     expect(repository).toMatch(/ON CONFLICT \$\{conflictTarget\}/)
-    expect(rollback).toMatch(/restricted to cerp_test/)
-    expect(rollback).toMatch(/Rollback refused/)
+    expect(rollback).toMatch(/restricted to cerp_dev\/cerp_test/)
+    expect(rollback).toMatch(/pg_advisory_xact_lock/)
+    expect(rollback).toMatch(/replenishment evidence or governed values exist/)
+    expect(rollback).toMatch(/exact migration ledger row was not removed/)
+    expect(rollback).not.toMatch(/DROP\s+(?:TABLE|INDEX|COLUMN|FUNCTION|TRIGGER)[\s\S]{0,80}\bIF EXISTS\b/i)
   })
 
   it("releases STOCK_LEVEL coverage transactionally for replacement while keeping active 23505 protection", () => {

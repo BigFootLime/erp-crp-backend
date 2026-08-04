@@ -6,7 +6,7 @@ import { generateCommandeFournisseurCode } from "../../../shared/codes/code-gene
 import { HttpError } from "../../../utils/httpError"
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
 import { computeCommandeTotaux } from "../domain/commande-fournisseur-totaux"
-import { calculateReplenishment, normalizeUnit } from "../domain/replenishment-calculation"
+import { allocateCoverage, calculateReplenishment, normalizeUnit } from "../domain/replenishment-calculation"
 import type { AuditContext } from "./commande-fournisseur.repository"
 import type {
   ReplenishmentProposal,
@@ -323,19 +323,6 @@ function hasBlockingScopeData(calculation: ReturnType<typeof calculateReplenishm
     "OPEN_ORDER_UNIT_CONVERSION",
     "SITE",
   ].includes(item))
-}
-
-function allocateCoverage(total: number, stockLevelIds: string[]): Array<{ stock_level_id: string; quantity: number }> {
-  if (!stockLevelIds.length || total <= 0) return []
-  const base = Math.max(0.001, Math.floor((total * 1000) / stockLevelIds.length) / 1000)
-  let allocated = 0
-  return stockLevelIds.map((stockLevelId, index) => {
-    const quantity = index === stockLevelIds.length - 1
-      ? Math.max(0.001, Math.round((total - allocated) * 1000) / 1000)
-      : base
-    allocated += quantity
-    return { stock_level_id: stockLevelId, quantity }
-  })
 }
 
 async function upsertProposal(queryer: Queryer, context: StockContext, actorId: number | null) {

@@ -60,6 +60,27 @@ export function roundMoney(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100
 }
 
+export function allocateCoverage(
+  totalStockQty: number,
+  stockLevelIds: string[]
+): Array<{ stock_level_id: string; quantity: number }> {
+  const totalMilliunits = Math.max(0, Math.round(totalStockQty * 1000))
+  if (totalMilliunits === 0 || stockLevelIds.length === 0) return []
+
+  // quantite_couverte is NUMERIC(...,3) and must stay strictly positive. When
+  // there are fewer milliunits than stock levels, only the deterministic first
+  // levels receive a link; manufacturing extra 0.001 links would overstate the
+  // order coverage.
+  const linkCount = Math.min(totalMilliunits, stockLevelIds.length)
+  const baseMilliunits = Math.floor(totalMilliunits / linkCount)
+  const extraMilliunits = totalMilliunits % linkCount
+
+  return stockLevelIds.slice(0, linkCount).map((stockLevelId, index) => ({
+    stock_level_id: stockLevelId,
+    quantity: (baseMilliunits + (index < extraMilliunits ? 1 : 0)) / 1000,
+  }))
+}
+
 export function convertOpenOrderRemainderToStock(input: OpenOrderRemainderInput): {
   remaining_purchase_qty: number
   remaining_stock_qty: number
