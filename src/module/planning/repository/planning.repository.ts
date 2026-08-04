@@ -6,6 +6,7 @@ import type { PoolClient } from "pg";
 import pool from "../../../config/database";
 import { emitAppNotificationCreated, emitEntityChanged } from "../../../shared/realtime/realtime.service";
 import { registerUploadDestination } from "../../../shared/uploads/secure-upload";
+import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
@@ -2422,8 +2423,9 @@ async function insertPlanningEventDocuments(tx: PoolClient, params: {
   event_id: string;
   documents: UploadedDocument[];
   user_id: number;
-}) {
-  if (!params.documents.length) return;
+}): Promise<Array<{ id: string; key: string; absolutePath: string }>> {
+  const expected: Array<{ id: string; key: string; absolutePath: string }> = [];
+  if (!params.documents.length) return expected;
 
   for (const doc of params.documents) {
     const documentId = crypto.randomUUID();
@@ -2456,7 +2458,13 @@ async function insertPlanningEventDocuments(tx: PoolClient, params: {
       `,
       [params.event_id, documentId, isPdf ? "PDF" : null, params.user_id]
     );
+    expected.push({
+      id: documentId,
+      key: `${params.event_id}|${documentId}|${doc.originalname}|${docType}`,
+      absolutePath: finalPath,
+    });
   }
+  return expected;
 }
 
 export async function repoUploadPlanningEventDocuments(params: {
@@ -2465,8 +2473,12 @@ export async function repoUploadPlanningEventDocuments(params: {
   audit: AuditContext;
 }): Promise<PlanningEventDocument[]> {
   const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+  let expected: Array<{ id: string; key: string; absolutePath: string }> = [];
+  return withUploadTransaction({
+    client,
+    files: params.documents,
+    context: "planning.events.documents.upload",
+    work: async () => {
 
     const exists = await client.query<{ id: string }>(
       `SELECT id::text AS id FROM public.planning_events WHERE id = $1::uuid AND archived_at IS NULL LIMIT 1`,
@@ -2476,7 +2488,7 @@ export async function repoUploadPlanningEventDocuments(params: {
       throw new HttpError(404, "PLANNING_EVENT_NOT_FOUND", "Event not found");
     }
 
-    await insertPlanningEventDocuments(client, {
+    expected = await insertPlanningEventDocuments(client, {
       event_id: params.event_id,
       documents: params.documents,
       user_id: params.audit.user_id,
@@ -2489,9 +2501,7 @@ export async function repoUploadPlanningEventDocuments(params: {
       details: { count: params.documents.length },
     });
 
-    await client.query("COMMIT");
-
-    const docsRes = await pool.query<{ document_id: string; document_name: string; type: string | null }>(
+    const docsRes = await client.query<{ document_id: string; document_name: string; type: string | null }>(
       `
         SELECT
           ped.document_id::text AS document_id,
@@ -2510,12 +2520,28 @@ export async function repoUploadPlanningEventDocuments(params: {
       document_name: r.document_name,
       type: r.type,
     }));
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+    },
+    reconcile: async () => {
+      if (expected.length === 0) return "committed";
+      const { rows } = await pool.query<{ event_id: string | null; document_id: string; document_name: string; type: string | null }>(
+        `SELECT ped.event_id::text AS event_id, dc.id::text AS document_id, dc.document_name, dc.type
+           FROM public.documents_clients dc
+           LEFT JOIN public.planning_event_documents ped
+             ON ped.document_id = dc.id AND ped.event_id = $1::uuid
+          WHERE dc.id = ANY($2::uuid[])`,
+        [params.event_id, expected.map((entry) => entry.id)]
+      );
+      const status = classifyUploadReconciliation(
+        expected.map((entry) => entry.key),
+        rows.map((row) => `${row.event_id ?? ""}|${row.document_id}|${row.document_name}|${row.type ?? ""}`)
+      );
+      if (status !== "committed") return status;
+      const filesPresent = await Promise.all(
+        expected.map((entry) => fs.stat(entry.absolutePath).then((stat) => stat.isFile()).catch(() => false))
+      );
+      return filesPresent.every(Boolean) ? "committed" : "uncertain";
+    },
+  });
 }
 
 export async function repoGetPlanningEventDocumentFileMeta(params: {

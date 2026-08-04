@@ -6,6 +6,7 @@ import path from "node:path";
 
 import pool from "../../../config/database";
 import { registerUploadDestination } from "../../../shared/uploads/secure-upload";
+import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
@@ -1234,24 +1235,25 @@ export async function repoAttachCertificats(params: {
   audit: AuditContext;
 }): Promise<MetrologieCertificat[] | null> {
   const { equipement_id, body, documents, audit } = params;
-  const client = await pool.connect();
   const docsDirRel = ensureDocumentStoragePath("metrologie");
   const docsDirAbs = path.resolve(docsDirRel);
+  const client = await pool.connect();
+  const expected = new Map<string, { key: string; absolutePath: string }>();
 
-  try {
-    await client.query("BEGIN");
-
+  return withUploadTransaction({
+    client,
+    files: documents,
+    context: "metrologie.certificats.attach",
+    work: async () => {
     const equipOk = await client.query<{ ok: number }>(
       `SELECT 1::int AS ok FROM public.metrologie_equipements WHERE id = $1::uuid AND deleted_at IS NULL LIMIT 1`,
       [equipement_id]
     );
     if (!equipOk.rows[0]?.ok) {
-      await client.query("ROLLBACK");
       return null;
     }
 
     if (!documents.length) {
-      await client.query("COMMIT");
       return [];
     }
 
@@ -1352,6 +1354,10 @@ export async function repoAttachCertificats(params: {
       );
       const row = ins.rows[0] ?? null;
       if (!row) throw new Error("Failed to insert certificat");
+      expected.set(row.id, {
+        key: `${row.id}|${row.sha256 ?? ""}|${row.storage_path ?? ""}`,
+        absolutePath: absPath,
+      });
       inserted.push(mapCertRow(row));
     }
 
@@ -1422,14 +1428,28 @@ export async function repoAttachCertificats(params: {
       details: { equipement_id, count: inserted.length, date_etalonnage: body.date_etalonnage, resultat: body.resultat },
     });
 
-    await client.query("COMMIT");
     return inserted;
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+    },
+    reconcile: async () => {
+      const ids = [...expected.keys()];
+      if (ids.length === 0) return "committed";
+      const { rows } = await pool.query<{ id: string; sha256: string | null; storage_path: string | null }>(
+        `SELECT id::text AS id, sha256, storage_path
+         FROM public.metrologie_certificats
+          WHERE id = ANY($1::uuid[])`,
+        [ids]
+      );
+      const status = classifyUploadReconciliation(
+        [...expected.values()].map((entry) => entry.key),
+        rows.map((row) => `${row.id}|${row.sha256 ?? ""}|${row.storage_path ?? ""}`)
+      );
+      if (status !== "committed") return status;
+      const present = await Promise.all(
+        [...expected.values()].map((entry) => fs.stat(entry.absolutePath).then((stat) => stat.isFile()).catch(() => false))
+      );
+      return present.every(Boolean) ? "committed" : "uncertain";
+    },
+  });
 }
 
 export async function repoRemoveCertificat(params: {

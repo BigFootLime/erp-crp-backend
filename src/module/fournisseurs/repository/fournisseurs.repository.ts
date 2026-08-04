@@ -9,6 +9,7 @@ import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
 import { generateFournisseurCode } from "../../../shared/codes/code-generator.service"
 import { registerUploadDestination } from "../../../shared/uploads/secure-upload"
+import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction"
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators"
 import type {
@@ -1471,15 +1472,17 @@ export async function repoAttachFournisseurDocuments(
   const validated: Array<{ doc: UploadedDocument; ext: string }> = []
   for (const doc of documents) validated.push({ doc, ext: await assertUploadAllowed(doc) })
 
-  const client = await db.connect()
   const docsDirRel = ensureDocumentStoragePath("fournisseurs")
   const docsDirAbs = path.resolve(docsDirRel)
-  const movedFiles: string[] = []
-  let commitAttempted = false
-  try {
-    await client.query("BEGIN")
-    if (!(await ensureFournisseurExists(client, fournisseurId))) { await client.query("ROLLBACK"); return null }
-    if (!validated.length) { await client.query("COMMIT"); return [] }
+  const client = await db.connect()
+  const expected = new Map<string, { key: string; absolutePath: string }>()
+  return withUploadTransaction({
+    client,
+    files: documents,
+    context: "fournisseurs.documents.attach",
+    work: async () => {
+    if (!(await ensureFournisseurExists(client, fournisseurId))) return null
+    if (!validated.length) return []
     await fs.mkdir(docsDirAbs, { recursive: true })
     const inserted: FournisseurDocument[] = []
     for (const { doc, ext } of validated) {
@@ -1490,7 +1493,6 @@ export async function repoAttachFournisseurDocuments(
       const tempPath = path.resolve(doc.path)
       try { await fs.rename(tempPath, absPath) } catch { await fs.copyFile(tempPath, absPath); await fs.unlink(tempPath) }
       registerUploadDestination(doc, absPath)
-      movedFiles.push(absPath)
       const hash = await sha256File(absPath)
       const ins = await client.query<DocumentRow>(
         `INSERT INTO public.fournisseur_documents
@@ -1501,6 +1503,7 @@ export async function repoAttachFournisseurDocuments(
       )
       const row = ins.rows[0]
       if (!row) throw new Error("Failed to insert fournisseur document")
+      expected.set(row.id, { key: `${row.id}|${row.sha256 ?? ""}|${relPath}`, absolutePath: absPath })
       inserted.push(mapDocumentRow(row))
     }
     await insertAuditLog(client, audit, {
@@ -1508,21 +1511,27 @@ export async function repoAttachFournisseurDocuments(
       details: { document_type: body.document_type, count: inserted.length,
         documents: inserted.map((d) => ({ id: d.id, original_name: d.original_name, mime_type: d.mime_type, size_bytes: d.size_bytes })) },
     })
-    commitAttempted = true
-    await client.query("COMMIT")
     return inserted
-  } catch (err) {
-    if (!commitAttempted) {
-      let rollbackConfirmed = false
-      try { await client.query("ROLLBACK"); rollbackConfirmed = true } catch { /* preserve for reconciliation */ }
-      if (rollbackConfirmed) for (const f of movedFiles) await fs.unlink(f).catch(() => undefined)
-    } else {
-      console.error("[FOURNISSEUR_UPLOAD_COMMIT_UNCERTAIN] durable files preserved", { count: movedFiles.length })
-    }
-    throw err
-  } finally {
-    client.release()
-  }
+    },
+    reconcile: async () => {
+      const ids = [...expected.keys()]
+      if (!ids.length) return "committed"
+      const { rows } = await db.query<{ id: string; sha256: string | null; storage_path: string }>(
+        `SELECT id::text AS id, sha256, storage_path
+          FROM public.fournisseur_documents
+          WHERE fournisseur_id = $1::uuid
+            AND id = ANY($2::uuid[])`,
+        [fournisseurId, ids]
+      )
+      const status = classifyUploadReconciliation(
+        [...expected.values()].map((entry) => entry.key),
+        rows.map((row) => `${row.id}|${row.sha256 ?? ""}|${row.storage_path}`)
+      )
+      if (status !== "committed") return status
+      const present = await Promise.all([...expected.values()].map((entry) => fs.stat(entry.absolutePath).then((stat) => stat.isFile()).catch(() => false)))
+      return present.every(Boolean) ? "committed" : "uncertain"
+    },
+  })
 }
 
 export async function repoRemoveFournisseurDocument(

@@ -7,6 +7,7 @@ import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { generateCommandeCode, generateDevisCode } from "../../../shared/codes/code-generator.service";
 import { registerUploadDestination } from "../../../shared/uploads/secure-upload";
+import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 import { computeDevisTotals, computeLineTotals } from "../lib/totals";
@@ -1045,8 +1046,30 @@ async function insertDevisLines(client: PoolClient, devisId: number, lignes: Cre
   return inserted;
 }
 
-async function insertDevisDocuments(client: PoolClient, devisId: number, documents: UploadedDocument[]) {
-  if (!documents.length) return;
+type DevisUploadExpectation = {
+  documentId: string;
+  devisId: number;
+  key: string;
+  absolutePath: string;
+};
+
+type DevisMutationExpectation = {
+  mode: "create" | "revise" | "update" | "replay";
+  devisId: number;
+  rootDevisId?: number;
+  parentDevisId?: number | null;
+  versionNumber?: number;
+  updatedAt?: string | null;
+  previousUpdatedAt?: string | null;
+};
+
+async function insertDevisDocuments(
+  client: PoolClient,
+  devisId: number,
+  documents: UploadedDocument[]
+): Promise<DevisUploadExpectation[]> {
+  const expected: DevisUploadExpectation[] = [];
+  if (!documents.length) return expected;
 
   for (const doc of documents) {
     const documentId = crypto.randomUUID();
@@ -1081,7 +1104,85 @@ async function insertDevisDocuments(client: PoolClient, devisId: number, documen
       `,
       [devisId, documentId, isPdf ? "PDF" : null]
     );
+    expected.push({
+      documentId,
+      devisId,
+      key: `${devisId}|${documentId}|${doc.originalname}|${docType}`,
+      absolutePath: finalPath,
+    });
   }
+  return expected;
+}
+
+async function reconcileDevisDocumentUploads(
+  expected: readonly DevisUploadExpectation[]
+): Promise<"committed" | "not-committed" | "uncertain"> {
+  if (expected.length === 0) return "committed";
+  const { rows } = await pool.query<{
+    devis_id: string | null;
+    document_id: string;
+    document_name: string;
+    type: string | null;
+  }>(
+    `SELECT dd.devis_id::text AS devis_id,
+            dc.id::text AS document_id,
+            dc.document_name,
+            dc.type
+       FROM public.documents_clients dc
+       LEFT JOIN public.devis_documents dd ON dd.document_id = dc.id
+      WHERE dc.id = ANY($1::uuid[])`,
+    [expected.map((entry) => entry.documentId)]
+  );
+  const status = classifyUploadReconciliation(
+    expected.map((entry) => entry.key),
+    rows.map((row) => `${row.devis_id ?? ""}|${row.document_id}|${row.document_name}|${row.type ?? ""}`)
+  );
+  if (status !== "committed") return status;
+  const present = await Promise.all(
+    expected.map((entry) => fs.stat(entry.absolutePath).then((stat) => stat.isFile()).catch(() => false))
+  );
+  return present.every(Boolean) ? "committed" : "uncertain";
+}
+
+async function reconcileDevisMutation(
+  mutation: DevisMutationExpectation | null,
+  uploads: readonly DevisUploadExpectation[]
+): Promise<"committed" | "not-committed" | "uncertain"> {
+  if (!mutation) return "uncertain";
+  const { rows } = await pool.query<{
+    id: string;
+    root_devis_id: string | null;
+    parent_devis_id: string | null;
+    version_number: number;
+    updated_at: string | null;
+  }>(
+    `SELECT id::text AS id,
+            root_devis_id::text AS root_devis_id,
+            parent_devis_id::text AS parent_devis_id,
+            version_number::int AS version_number,
+            updated_at::text AS updated_at
+       FROM public.devis
+      WHERE id = $1::bigint`,
+    [mutation.devisId]
+  );
+  const row = rows[0];
+  if (!row) return mutation.mode === "create" || mutation.mode === "revise" ? "not-committed" : "uncertain";
+  if (mutation.mode === "replay") return "committed";
+  if (mutation.mode === "update") {
+    if (row.updated_at === mutation.updatedAt) {
+      const documents = await reconcileDevisDocumentUploads(uploads);
+      return documents === "not-committed" ? "uncertain" : documents;
+    }
+    if (row.updated_at === mutation.previousUpdatedAt) return "not-committed";
+    return "uncertain";
+  }
+  const aggregateMatches =
+    row.root_devis_id === String(mutation.rootDevisId) &&
+    row.parent_devis_id === (mutation.parentDevisId === null ? null : String(mutation.parentDevisId)) &&
+    row.version_number === mutation.versionNumber;
+  if (!aggregateMatches) return "uncertain";
+  const documents = await reconcileDevisDocumentUploads(uploads);
+  return documents === "not-committed" ? "uncertain" : documents;
 }
 
 export async function repoGetDevis(id: number, includeValue: string) {
@@ -1591,13 +1692,19 @@ export async function repoCreateDevis(
   const idempotencyPayloadHash = ctx.idempotency_key
     ? devisIdempotencyPayloadHash({ input, documents: documents.map((d) => d.originalname) })
     : null;
+  let expectedUploads: DevisUploadExpectation[] = [];
+  let expectedMutation: DevisMutationExpectation | null = null;
   try {
-    await client.query("BEGIN");
+    return await withUploadTransaction({
+      client,
+      files: documents,
+      context: "devis.create",
+      work: async () => {
 
     if (ctx.idempotency_key && idempotencyPayloadHash && (await hasDevisIdempotenceTable(client))) {
       const replay = await readDevisIdempotentReplay(client, ctx.idempotency_key, "CREATE", idempotencyPayloadHash);
       if (replay) {
-        await client.query("COMMIT");
+        expectedMutation = { mode: "replay", devisId: Number(replay.id) };
         return replay as { id: number; idempotent_replay: true };
       }
     }
@@ -1684,7 +1791,7 @@ export async function repoCreateDevis(
     );
 
     await insertDevisLines(client, devisId, input.lignes);
-    await insertDevisDocuments(client, devisId, documents);
+    expectedUploads = await insertDevisDocuments(client, devisId, documents);
 
     await insertDevisAuditLog(client, ctx.audit, {
       action: "devis.create",
@@ -1701,14 +1808,22 @@ export async function repoCreateDevis(
 
     const inserted = ins.rows[0]?.id;
     const resultat = { id: inserted ? toInt(inserted, "devis.id") : devisId };
+    expectedMutation = {
+      mode: "create",
+      devisId: resultat.id,
+      rootDevisId: devisId,
+      parentDevisId: null,
+      versionNumber: 1,
+    };
     if (ctx.idempotency_key && idempotencyPayloadHash && (await hasDevisIdempotenceTable(client))) {
       await recordDevisIdempotence(client, ctx.idempotency_key, "CREATE", resultat.id, idempotencyPayloadHash, resultat);
     }
 
-    await client.query("COMMIT");
     return { ...resultat, idempotent_replay: false };
+      },
+      reconcile: async () => reconcileDevisMutation(expectedMutation, expectedUploads),
+    });
   } catch (err) {
-    await client.query("ROLLBACK");
     const { code, constraint } = getPgErrorInfo(err);
     if (code === "23505" && constraint === "devis_numero_key") {
       throw new HttpError(409, "DEVIS_NUMERO_EXISTS", "Numero already exists");
@@ -1719,8 +1834,6 @@ export async function repoCreateDevis(
       if (replay) return replay as { id: number; idempotent_replay: true };
     }
     throw err;
-  } finally {
-    client.release();
   }
 }
 
@@ -1748,8 +1861,14 @@ export async function repoUpdateDevis(
   ctx: DevisWriteContext = {}
 ) {
   const client = await pool.connect();
+  let expectedUploads: DevisUploadExpectation[] = [];
+  let expectedMutation: DevisMutationExpectation | null = null;
   try {
-    await client.query("BEGIN");
+    return await withUploadTransaction({
+      client,
+      files: documents,
+      context: "devis.update",
+      work: async () => {
 
     // #167 : l'écriture démarre TOUJOURS par un verrou de la ligne + lecture de l'état
     // (statut courant, jeton de fraîcheur, descendance) — l'automate et l'immutabilité
@@ -1778,7 +1897,6 @@ export async function repoUpdateDevis(
     );
     const current = currentRes.rows[0] ?? null;
     if (!current) {
-      await client.query("ROLLBACK");
       return null;
     }
 
@@ -1890,38 +2008,45 @@ export async function repoUpdateDevis(
     }
 
     if (sets.length === 0 && input.lignes === undefined && documents.length === 0) {
-      await client.query("ROLLBACK");
       throw new HttpError(400, "NO_UPDATE", "No fields to update");
     }
 
     let updatedId: number | null = null;
+    let updatedAt: string | null = null;
     if (sets.length) {
       sets.push("updated_at = now()");
       const updateSql = `
         UPDATE devis
         SET ${sets.join(", ")}
         WHERE id = $1
-        RETURNING id::text AS id
+        RETURNING id::text AS id, updated_at::text AS updated_at
       `;
-      const updateRes = await client.query<{ id: string }>(updateSql, values);
+      const updateRes = await client.query<{ id: string; updated_at: string | null }>(updateSql, values);
       const row = updateRes.rows[0] ?? null;
       if (!row) {
-        await client.query("ROLLBACK");
         return null;
       }
       updatedId = toInt(row.id, "devis.id");
+      updatedAt = row.updated_at;
     } else {
-      const touch = await client.query<{ id: string }>(
-        `UPDATE devis SET updated_at = now() WHERE id = $1 RETURNING id::text AS id`,
+      const touch = await client.query<{ id: string; updated_at: string | null }>(
+        `UPDATE devis SET updated_at = now() WHERE id = $1 RETURNING id::text AS id, updated_at::text AS updated_at`,
         [id]
       );
       const row = touch.rows[0] ?? null;
       if (!row) {
-        await client.query("ROLLBACK");
         return null;
       }
       updatedId = toInt(row.id, "devis.id");
+      updatedAt = row.updated_at;
     }
+
+    expectedMutation = {
+      mode: "update",
+      devisId: id,
+      updatedAt,
+      previousUpdatedAt: current.updated_at,
+    };
 
     if (input.lignes) {
       await deleteDevisPreparatoryEntities(client, id);
@@ -1929,7 +2054,7 @@ export async function repoUpdateDevis(
       await insertDevisLines(client, id, input.lignes);
     }
 
-    await insertDevisDocuments(client, id, documents);
+    expectedUploads = await insertDevisDocuments(client, id, documents);
 
     if (statutChanges) {
       await insertDevisAuditLog(client, ctx.audit, {
@@ -1951,17 +2076,16 @@ export async function repoUpdateDevis(
       });
     }
 
-    await client.query("COMMIT");
     return { id: updatedId };
+      },
+      reconcile: async () => reconcileDevisMutation(expectedMutation, expectedUploads),
+    });
   } catch (err) {
-    await client.query("ROLLBACK");
     const { code, constraint } = getPgErrorInfo(err);
     if (code === "23505" && constraint === "devis_numero_key") {
       throw new HttpError(409, "DEVIS_NUMERO_EXISTS", "Numero already exists");
     }
     throw err;
-  } finally {
-    client.release();
   }
 }
 
@@ -1976,13 +2100,19 @@ export async function repoReviseDevis(
   const idempotencyPayloadHash = ctx.idempotency_key
     ? devisIdempotencyPayloadHash({ source_devis_id: id, input, documents: documents.map((d) => d.originalname) })
     : null;
+  let expectedUploads: DevisUploadExpectation[] = [];
+  let expectedMutation: DevisMutationExpectation | null = null;
   try {
-    await client.query("BEGIN");
+    return await withUploadTransaction({
+      client,
+      files: documents,
+      context: "devis.revise",
+      work: async () => {
 
     if (ctx.idempotency_key && idempotencyPayloadHash && (await hasDevisIdempotenceTable(client))) {
       const replay = await readDevisIdempotentReplay(client, ctx.idempotency_key, "REVISE", idempotencyPayloadHash);
       if (replay) {
-        await client.query("COMMIT");
+        expectedMutation = { mode: "replay", devisId: Number(replay.id) };
         return replay as {
           id: number;
           root_devis_id: number;
@@ -2042,7 +2172,6 @@ export async function repoReviseDevis(
 
     const source = sourceRes.rows[0] ?? null;
     if (!source) {
-      await client.query("ROLLBACK");
       return null;
     }
 
@@ -2210,7 +2339,7 @@ export async function repoReviseDevis(
       [newDevisId, id]
     );
 
-    await insertDevisDocuments(client, newDevisId, documents);
+    expectedUploads = await insertDevisDocuments(client, newDevisId, documents);
 
     const newId = inserted.rows[0]?.id;
     const resultat = {
@@ -2218,6 +2347,13 @@ export async function repoReviseDevis(
       root_devis_id: rootDevisId,
       parent_devis_id: id,
       version_number: nextVersion,
+    };
+    expectedMutation = {
+      mode: "revise",
+      devisId: resultat.id,
+      rootDevisId,
+      parentDevisId: id,
+      versionNumber: nextVersion,
     };
 
     await insertDevisAuditLog(client, ctx.audit, {
@@ -2239,10 +2375,11 @@ export async function repoReviseDevis(
       await recordDevisIdempotence(client, ctx.idempotency_key, "REVISE", resultat.id, idempotencyPayloadHash, resultat);
     }
 
-    await client.query("COMMIT");
     return { ...resultat, idempotent_replay: false };
+      },
+      reconcile: async () => reconcileDevisMutation(expectedMutation, expectedUploads),
+    });
   } catch (err) {
-    await client.query("ROLLBACK");
     const { code, constraint } = getPgErrorInfo(err);
     if (code === "23505" && constraint === "devis_numero_key") {
       throw new HttpError(409, "DEVIS_NUMERO_EXISTS", "Numero already exists");
@@ -2260,8 +2397,6 @@ export async function repoReviseDevis(
       }
     }
     throw err;
-  } finally {
-    client.release();
   }
 }
 

@@ -8,6 +8,7 @@ import pool from "../../../config/database";
 import { generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
 import { canonicalizeStockUnitCode } from "../../../shared/stock-unit";
 import { registerUploadDestination } from "../../../shared/uploads/secure-upload";
+import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
@@ -1426,15 +1427,17 @@ export async function repoAttachDocuments(params: {
 }): Promise<QualityDocument[]> {
   const { entity_type, entity_id, document_type, documents, audit } = params;
 
-  const client = await pool.connect();
   const docsDirRel = ensureDocumentStoragePath("qualite");
   const docsDirAbs = path.resolve(docsDirRel);
+  const client = await pool.connect();
+  const expected = new Map<string, { key: string; absolutePath: string }>();
 
-  try {
-    await client.query("BEGIN");
-
+  return withUploadTransaction({
+    client,
+    files: documents,
+    context: "qualite.attach-documents",
+    work: async () => {
     if (!documents.length) {
-      await client.query("COMMIT");
       return [];
     }
 
@@ -1530,6 +1533,10 @@ export async function repoAttachDocuments(params: {
 
       const row = ins.rows[0];
       if (!row) throw new Error("Failed to insert quality document");
+      expected.set(row.id, {
+        key: `${row.id}|${row.sha256 ?? ""}|${row.storage_path}`,
+        absolutePath: absPath,
+      });
       inserted.push({
         id: row.id,
         entity_type: row.entity_type,
@@ -1569,14 +1576,28 @@ export async function repoAttachDocuments(params: {
       details: { entity_type, entity_id, document_type, count: inserted.length },
     });
 
-    await client.query("COMMIT");
     return inserted;
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+    },
+    reconcile: async () => {
+      const ids = [...expected.keys()];
+      if (ids.length === 0) return "committed";
+      const { rows } = await pool.query<{ id: string; sha256: string | null; storage_path: string }>(
+        `SELECT id::text AS id, sha256, storage_path
+         FROM public.quality_documents
+         WHERE id = ANY($1::uuid[])`,
+        [ids]
+      );
+      const status = classifyUploadReconciliation(
+        [...expected.values()].map((entry) => entry.key),
+        rows.map((row) => `${row.id}|${row.sha256 ?? ""}|${row.storage_path}`)
+      );
+      if (status !== "committed") return status;
+      const filesPresent = await Promise.all(
+        [...expected.values()].map((entry) => fs.stat(entry.absolutePath).then((stat) => stat.isFile()).catch(() => false))
+      );
+      return filesPresent.every(Boolean) ? "committed" : "uncertain";
+    },
+  });
 }
 
 export async function repoRemoveDocument(params: {

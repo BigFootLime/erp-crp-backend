@@ -52,9 +52,14 @@ export type SecureUpload = Readonly<{
 const SAMPLE_BYTES = 64 * 1024;
 const WINDOWS_UNSAFE = /[:*?"<>|]/;
 const CONTROL_OR_BIDI = /[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/;
-type UploadDestinationState = "transferred" | "commit-attempted" | "committed" | "rolled-back";
+export type UploadDestinationState =
+  | "transferred"
+  | "commit-attempted"
+  | "committed"
+  | "rolled-back"
+  | "rollback-uncertain";
 type UploadDestination = { destination: string; state: UploadDestinationState };
-type UploadFileReference = Readonly<{ path: string }>;
+export type UploadFileReference = Readonly<{ path: string }>;
 const uploadDestinations = new Map<string, Map<string, UploadDestination>>();
 
 /**
@@ -90,6 +95,11 @@ export function markUploadCommitAttempted(files: readonly UploadFileReference[])
 /** Call after a successful COMMIT or positive reconciliation on a fresh connection. */
 export function markUploadsCommitted(files: readonly UploadFileReference[]): void {
   updateUploadDestinationState(files, "committed");
+}
+
+/** Mark ownership as indeterminate when a pre-COMMIT rollback could not be confirmed. */
+export function markUploadRollbackUncertain(files: readonly UploadFileReference[]): void {
+  updateUploadDestinationState(files, "rollback-uncertain");
 }
 
 /**
@@ -362,6 +372,29 @@ async function moveFile(source: string, destination: string): Promise<void> {
   }
 }
 
+/**
+ * Promote one validated staging file into durable storage and transfer its
+ * ownership to the transaction lifecycle. The file object is updated so both
+ * transaction helpers and the response cleanup callback address the same key.
+ */
+export async function promoteSecureUpload(
+  file: Express.Multer.File,
+  finalDirectory: string,
+  filename?: string
+): Promise<string> {
+  ensureDirectory(finalDirectory);
+  const extension = path.extname(file.originalname).toLowerCase();
+  const storedName = filename ?? `${randomUUID()}${extension}`;
+  const destination = path.resolve(finalDirectory, storedName);
+  await moveFile(path.resolve(file.path), destination);
+  await fs.chmod(destination, 0o600).catch(() => undefined);
+  file.destination = path.resolve(finalDirectory);
+  file.filename = storedName;
+  file.path = destination;
+  registerUploadDestination(file, destination);
+  return destination;
+}
+
 async function promoteFiles(files: Express.Multer.File[], finalDirectory: string): Promise<string[]> {
   ensureDirectory(finalDirectory);
   const promoted: string[] = [];
@@ -488,7 +521,11 @@ export function createSecureUpload(usage: UploadUsage, options: SecureUploadOpti
         if (cleanupStarted) return;
         cleanupStarted = true;
         const ownership = releaseRegisteredUploadDestinations(files);
-        const uncertain = ownership.filter((record) => record.state === "transferred" || record.state === "commit-attempted");
+        const uncertain = ownership.filter((record) =>
+          record.state === "transferred" ||
+          record.state === "commit-attempted" ||
+          record.state === "rollback-uncertain"
+        );
         if (uncertain.length > 0 || (promotedPaths.length > 0 && (res.statusCode >= 400 || !res.writableEnded))) {
           logger.error("[UPLOAD_OWNERSHIP] durable destination preserved for reconciliation", JSON.stringify({
             state_counts: ownership.reduce<Record<string, number>>((counts, record) => {

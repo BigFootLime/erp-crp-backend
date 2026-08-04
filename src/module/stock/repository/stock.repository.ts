@@ -23,6 +23,7 @@ import {
 } from "../../../shared/codes/material-article-code";
 import { canonicalizeStockUnitCode } from "../../../shared/stock-unit";
 import { registerUploadDestination } from "../../../shared/uploads/secure-upload";
+import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
@@ -7670,21 +7671,29 @@ export async function repoAttachArticleDocuments(
   metadata: ArticleDocumentMetadataDTO,
   audit: AuditContext
 ): Promise<StockDocument[] | null> {
-  const client = await db.connect();
   const docsDirRel = ensureDocumentStoragePath("stock", "articles");
-  try {
-    await client.query("BEGIN");
+  const client = await db.connect();
+  let expected: Array<{ id: string; key: string; absolutePath: string }> = [];
+  const result = await withUploadTransaction({
+    client,
+    files: documents,
+    context: "stock.articles.documents.attach",
+    work: async () => {
 
     const exists = await client.query<{ ok: number }>(
       `SELECT 1::int AS ok FROM public.articles WHERE id = $1::uuid FOR UPDATE`,
       [articleId]
     );
     if (!exists.rows[0]?.ok) {
-      await client.query("ROLLBACK");
       return null;
     }
 
     const inserted = await insertStockDocuments(client, documents, audit, docsDirRel);
+    expected = inserted.map((document) => ({
+      id: document.id,
+      key: `${articleId}|${document.id}|${document.sha256 ?? ""}|${document.storage_path}`,
+      absolutePath: path.resolve(document.storage_path),
+    }));
     for (const d of inserted) {
       await client.query(
         `
@@ -7715,14 +7724,29 @@ export async function repoAttachArticleDocuments(
       },
     });
 
-    await client.query("COMMIT");
-    return repoListArticleDocuments(articleId);
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+    return inserted;
+    },
+    reconcile: async () => {
+      if (expected.length === 0) return "committed";
+      const { rows } = await db.query<{ article_id: string | null; id: string; sha256: string | null; storage_path: string }>(
+        `SELECT ad.article_id::text AS article_id, sd.id::text AS id, sd.sha256, sd.storage_path
+           FROM public.stock_documents sd
+           LEFT JOIN public.article_documents ad
+             ON ad.document_id = sd.id AND ad.article_id = $1::uuid
+          WHERE sd.id = ANY($2::uuid[])`,
+        [articleId, expected.map((entry) => entry.id)]
+      );
+      const status = classifyUploadReconciliation(
+        expected.map((entry) => entry.key),
+        rows.map((row) => `${row.article_id ?? ""}|${row.id}|${row.sha256 ?? ""}|${row.storage_path}`)
+      );
+      if (status !== "committed") return status;
+      const present = await Promise.all(expected.map((entry) => fs.stat(entry.absolutePath).then((stat) => stat.isFile()).catch(() => false)));
+      return present.every(Boolean) ? "committed" : "uncertain";
+    },
+  });
+  if (result === null) return null;
+  return repoListArticleDocuments(articleId);
 }
 
 export async function repoRemoveArticleDocument(
@@ -7841,21 +7865,29 @@ export async function repoAttachMovementDocuments(
   documents: UploadedDocument[],
   audit: AuditContext
 ): Promise<StockDocument[] | null> {
-  const client = await db.connect();
   const docsDirRel = ensureDocumentStoragePath("stock", "movements");
-  try {
-    await client.query("BEGIN");
+  const client = await db.connect();
+  let expected: Array<{ id: string; key: string; absolutePath: string }> = [];
+  const result = await withUploadTransaction({
+    client,
+    files: documents,
+    context: "stock.movements.documents.attach",
+    work: async () => {
 
     const exists = await client.query<{ ok: number }>(
       `SELECT 1::int AS ok FROM public.stock_movements WHERE id = $1::uuid FOR UPDATE`,
       [movementId]
     );
     if (!exists.rows[0]?.ok) {
-      await client.query("ROLLBACK");
       return null;
     }
 
     const inserted = await insertStockDocuments(client, documents, audit, docsDirRel);
+    expected = inserted.map((document) => ({
+      id: document.id,
+      key: `${movementId}|${document.id}|${document.sha256 ?? ""}|${document.storage_path}`,
+      absolutePath: path.resolve(document.storage_path),
+    }));
     for (const d of inserted) {
       await client.query(
         `
@@ -7882,14 +7914,29 @@ export async function repoAttachMovementDocuments(
       },
     });
 
-    await client.query("COMMIT");
-    return repoListMovementDocuments(movementId);
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+    return inserted;
+    },
+    reconcile: async () => {
+      if (expected.length === 0) return "committed";
+      const { rows } = await db.query<{ stock_movement_id: string | null; id: string; sha256: string | null; storage_path: string }>(
+        `SELECT md.stock_movement_id::text AS stock_movement_id, sd.id::text AS id, sd.sha256, sd.storage_path
+           FROM public.stock_documents sd
+           LEFT JOIN public.stock_movement_documents md
+             ON md.document_id = sd.id AND md.stock_movement_id = $1::uuid
+          WHERE sd.id = ANY($2::uuid[])`,
+        [movementId, expected.map((entry) => entry.id)]
+      );
+      const status = classifyUploadReconciliation(
+        expected.map((entry) => entry.key),
+        rows.map((row) => `${row.stock_movement_id ?? ""}|${row.id}|${row.sha256 ?? ""}|${row.storage_path}`)
+      );
+      if (status !== "committed") return status;
+      const present = await Promise.all(expected.map((entry) => fs.stat(entry.absolutePath).then((stat) => stat.isFile()).catch(() => false)));
+      return present.every(Boolean) ? "committed" : "uncertain";
+    },
+  });
+  if (result === null) return null;
+  return repoListMovementDocuments(movementId);
 }
 
 export async function repoRemoveMovementDocument(

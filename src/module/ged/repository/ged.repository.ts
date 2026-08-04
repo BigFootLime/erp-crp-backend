@@ -14,6 +14,7 @@
 import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
+import type { UploadCommitReconciliation } from "../../../shared/uploads/upload-transaction";
 import { HttpError } from "../../../utils/httpError";
 import { formatDocumentCode, type GedVersionStatus } from "../domain/ged-policy";
 import type {
@@ -85,11 +86,17 @@ export async function withGedTransaction<T>(
   hooks: GedTransactionHooks = {}
 ): Promise<T> {
   let client!: PoolClient;
+  let released = false;
+  const release = (destroy = false) => {
+    if (!client || released) return;
+    released = true;
+    client.release(destroy);
+  };
   try {
     client = await pool.connect();
     await client.query("BEGIN");
   } catch (err) {
-    client?.release();
+    release(true);
     await hooks.afterConfirmedRollback?.();
     return rethrowGed(err);
   }
@@ -102,6 +109,7 @@ export async function withGedTransaction<T>(
       try {
         await client.query("ROLLBACK");
       } catch {
+        release(true);
         throw new GedRollbackUncertainError(err);
       }
       await hooks.afterConfirmedRollback?.();
@@ -113,12 +121,13 @@ export async function withGedTransaction<T>(
     } catch (err) {
       // Never issue ROLLBACK after COMMIT was sent: PostgreSQL may have applied
       // it and only the acknowledgement may have been lost.
+      release(true);
       throw new GedCommitUncertainError(out, err);
     }
     await hooks.afterCommit?.();
     return out;
   } finally {
-    client.release();
+    release();
   }
 }
 
@@ -737,18 +746,26 @@ export async function repoInternalGetVersionContentRef(versionId: string): Promi
 }
 
 /** Fresh-connection reconciliation used only after a COMMIT acknowledgement loss. */
-export async function repoIsVersionBlobCommitted(versionId: string, sha256: string): Promise<boolean> {
+export async function repoIsVersionBlobCommitted(
+  versionId: string,
+  sha256: string
+): Promise<UploadCommitReconciliation> {
   try {
-    const res = await pool.query(
-      `SELECT EXISTS (
-         SELECT 1
-           FROM public.ged_document_versions v
-           JOIN public.ged_blobs b ON b.id = v.blob_id
-          WHERE v.id = $1::uuid AND b.sha256 = $2
-       ) AS committed`,
+    const res = await pool.query<{ version_sha256: string | null; blob_present: boolean }>(
+      `SELECT
+         (SELECT b.sha256
+            FROM public.ged_document_versions v
+            JOIN public.ged_blobs b ON b.id = v.blob_id
+           WHERE v.id = $1::uuid) AS version_sha256,
+         EXISTS (
+           SELECT 1 FROM public.ged_blobs b WHERE b.sha256 = $2
+         ) AS blob_present`,
       [versionId, sha256]
     );
-    return res.rows[0]?.committed === true;
+    const row = res.rows[0];
+    if (row?.version_sha256 === sha256) return "committed";
+    if (row?.version_sha256 || row?.blob_present) return "uncertain";
+    return "not-committed";
   } catch (err) {
     return rethrowGed(err);
   }

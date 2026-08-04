@@ -13,6 +13,7 @@ import type { PoolClient } from "pg";
 
 import { generateMetrologieExecutionCode } from "../../../shared/codes/code-generator.service";
 import { registerUploadDestination } from "../../../shared/uploads/secure-upload";
+import { withUploadTransaction } from "../../../shared/uploads/upload-transaction";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 
@@ -59,8 +60,6 @@ import {
   insertAuditLog,
   insertMetrologyEvent,
   isRecord,
-  MetrologyCommitUncertainError,
-  MetrologyRollbackUncertainError,
   rethrowMapped,
   saveReceipt,
   sortDirection,
@@ -1365,7 +1364,6 @@ export async function repoUploadCertificate(params: {
 
   const docsDirRel = ensureDocumentStoragePath("metrologie");
   const docsDirAbs = path.resolve(docsDirRel);
-  await fs.mkdir(docsDirAbs, { recursive: true });
 
   const certId = crypto.randomUUID();
   const extension = path.extname(file.originalname).toLowerCase();
@@ -1373,17 +1371,15 @@ export async function repoUploadCertificate(params: {
   const relPath = path.join(docsDirRel, storedName).split(path.sep).join(path.posix.sep);
   const absPath = path.join(docsDirAbs, storedName);
 
-  try {
-    await fs.rename(path.resolve(file.path), absPath);
-  } catch {
-    await fs.copyFile(path.resolve(file.path), absPath);
-    await fs.unlink(path.resolve(file.path));
-  }
-  registerUploadDestination(file, absPath);
-  const hash = await sha256File(absPath);
-
-  try {
-    await withTransaction(async (client) => {
+  const hash = await sha256File(path.resolve(file.path));
+  const client = await db().connect();
+  let inserted = false;
+  let resultId: string = certId;
+  await withUploadTransaction({
+    client,
+    files: [file],
+    context: "metrologie.certificate.upload",
+    work: async () => {
       const claim = await acquireIdempotency({
         client,
         actor,
@@ -1391,7 +1387,14 @@ export async function repoUploadCertificate(params: {
         commandType: "metrology.certificate.upload",
         requestPayload: { equipementId, ...body, sha256: hash },
       });
-      if (claim.replay) return;
+      if (claim.replay) {
+        const replayId = claim.replay.id;
+        if (typeof replayId !== "string") {
+          throw new HttpError(500, "METROLOGY_RECEIPT_INVALID", "Le reÃ§u idempotent du certificat est invalide.");
+        }
+        resultId = replayId;
+        return { id: replayId, inserted: false };
+      }
 
       const equip = await client.query<{ id: string }>(
         `SELECT id::text AS id FROM public.metrologie_equipements
@@ -1410,6 +1413,16 @@ export async function repoUploadCertificate(params: {
           throw new HttpError(422, "METROLOGY_EXECUTION_MISMATCH", "Cette exécution n'appartient pas à l'équipement.");
         }
       }
+
+      await fs.mkdir(docsDirAbs, { recursive: true });
+      try {
+        await fs.rename(path.resolve(file.path), absPath);
+      } catch {
+        await fs.copyFile(path.resolve(file.path), absPath);
+        await fs.unlink(path.resolve(file.path));
+      }
+      registerUploadDestination(file, absPath);
+      inserted = true;
 
       try {
         await client.query(
@@ -1489,16 +1502,27 @@ export async function repoUploadCertificate(params: {
         resultPayload: { id: certId, sha256: hash },
         correlationId,
       });
-    });
-  } catch (err) {
-    // Delete only after the transaction wrapper confirmed a pre-COMMIT
-    // rollback. COMMIT/rollback uncertainty preserves the proof for a fresh
-    // connection reconciliation instead of risking durable metadata without it.
-    if (!(err instanceof MetrologyCommitUncertainError) && !(err instanceof MetrologyRollbackUncertainError)) {
-      await fs.unlink(absPath).catch(() => undefined);
-    }
-    throw err;
-  }
+      return { id: certId, inserted: true };
+    },
+    reconcile: async () => {
+      if (!inserted) return "committed";
+      const { rows } = await db().query<{
+        equipement_id: string;
+        sha256: string | null;
+        storage_path: string | null;
+      }>(
+        `SELECT equipement_id::text AS equipement_id, sha256, storage_path
+           FROM public.metrologie_certificats
+          WHERE id = $1::uuid`,
+        [certId]
+      );
+      const row = rows[0];
+      if (!row) return "not-committed";
+      if (row.equipement_id !== equipementId || row.sha256 !== hash || row.storage_path !== relPath) return "uncertain";
+      const filePresent = await fs.stat(absPath).then((stat) => stat.isFile()).catch(() => false);
+      return filePresent ? "committed" : "uncertain";
+    },
+  });
 
   const res = await db().query(
     `
@@ -1516,7 +1540,7 @@ export async function repoUploadCertificate(params: {
       LEFT JOIN public.users cb ON cb.id = c.created_by
       WHERE c.id = $1::uuid
     `,
-    [certId]
+    [resultId]
   );
   const row = res.rows[0];
   if (!row) throw new HttpError(500, "METROLOGY_CERTIFICATE_RELOAD_FAILED", "Certificat introuvable après dépôt.");

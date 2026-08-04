@@ -42,6 +42,7 @@ function errorHandler(): ErrorRequestHandler {
 
 function uploadApp(options?: {
   failAfterUpload?: boolean;
+  failureStatus?: 409 | 422 | 500;
   moveBeforeFailureTo?: string;
   usage?: "business-document" | "image";
   ownership?: "rolled-back" | "commit-attempted" | "committed";
@@ -74,7 +75,10 @@ function uploadApp(options?: {
         }
       }
       if (options?.failAfterUpload) {
-        next(new HttpError(409, "BUSINESS_ROLLBACK", "Transaction métier annulée."));
+        const status = options.failureStatus ?? 409;
+        next(status === 500
+          ? new Error("downstream failure")
+          : new HttpError(status, "BUSINESS_ROLLBACK", "Transaction métier annulée."));
         return;
       }
       res.status(201).json({ files: files.map((file) => file.uploadSecurity) });
@@ -194,6 +198,21 @@ describe("politique centrale des uploads", () => {
       .attach("documents[]", VALID_PDF, { filename: "rollback.pdf", contentType: "application/pdf" });
 
     expect(response.status).toBe(409);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(await allFiles(temporaryRoot)).toEqual([]);
+  });
+
+  it.each([422, 500] as const)("nettoie le staging image après un rejet aval %i", async (failureStatus) => {
+    const response = await request(uploadApp({ usage: "image", failAfterUpload: true, failureStatus }))
+      .post("/upload")
+      .attach("documents[]", Buffer.from([
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+        0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+        0x08, 0x02, 0x00, 0x00, 0x00,
+      ]), { filename: "machine.png", contentType: "image/png" });
+
+    expect(response.status).toBe(failureStatus);
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(await allFiles(temporaryRoot)).toEqual([]);
   });

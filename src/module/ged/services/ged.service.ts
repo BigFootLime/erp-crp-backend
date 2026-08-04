@@ -5,6 +5,8 @@
 // compensé. L'inverse (base d'abord) laisserait des métadonnées sans fichier,
 // c'est-à-dire des documents fantômes.
 
+import fs from "node:fs/promises";
+
 import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
@@ -76,23 +78,41 @@ function uploadTransactionHooks(files: readonly { path: string }[]) {
 async function reconcileGedCommit(
   error: GedCommitUncertainError<GedUploadTransactionResult>,
   sha256: string,
+  storageKey: string,
   files: readonly { path: string }[]
 ): Promise<GedUploadTransactionResult> {
+  let outcome: Awaited<ReturnType<typeof repoIsVersionBlobCommitted>>;
+  let durableFilePresent = false;
   try {
-    const committed = await repoIsVersionBlobCommitted(error.transactionResult.versionId, sha256);
-    if (committed) {
-      markUploadsCommitted(files);
-      return error.transactionResult;
+    outcome = await repoIsVersionBlobCommitted(error.transactionResult.versionId, sha256);
+    if (outcome === "committed") {
+      const blob = await resolveBlobForDownload(storageKey);
+      durableFilePresent = await fs.stat(blob.file_path).then((stat) => stat.isFile()).catch(() => false);
     }
-    await cleanupUploadsAfterReconciledNoCommit(files);
-    throw error.originalError;
   } catch (reconcileError) {
-    if (reconcileError === error.originalError) throw reconcileError;
     logger.error("[GED_UPLOAD_COMMIT_UNCERTAIN] fresh-connection reconciliation failed", JSON.stringify({
       version_id: error.transactionResult.versionId,
     }));
     throw error;
   }
+  if (outcome === "committed") {
+    if (!durableFilePresent) {
+      logger.error("[GED_UPLOAD_COMMIT_UNCERTAIN] metadata committed but durable blob missing", JSON.stringify({
+        version_id: error.transactionResult.versionId,
+      }));
+      throw error;
+    }
+    markUploadsCommitted(files);
+    return error.transactionResult;
+  }
+  if (outcome === "not-committed") {
+    await cleanupUploadsAfterReconciledNoCommit(files);
+    throw error.originalError;
+  }
+  logger.error("[GED_UPLOAD_COMMIT_UNCERTAIN] metadata mismatch; durable blob preserved", JSON.stringify({
+    version_id: error.transactionResult.versionId,
+  }));
+  throw error;
 }
 
 /**
@@ -266,6 +286,7 @@ export async function uploadDocument(
       transactionResult = await reconcileGedCommit(
         err as GedCommitUncertainError<GedUploadTransactionResult>,
         written.sha256,
+        written.storage_key,
         uploadedFiles
       );
     } else {
@@ -350,6 +371,7 @@ export async function uploadNewVersion(
       transactionResult = await reconcileGedCommit(
         err as GedCommitUncertainError<GedUploadTransactionResult>,
         written.sha256,
+        written.storage_key,
         uploadedFiles
       );
     } else {

@@ -4,7 +4,6 @@ import {
   hasGrantedAccountModuleAccess,
   requestHasGrantedAccountModuleAccess,
 } from "../../access-control/context/account-module-access.context";
-import { upload } from "../../../middlewares/upload";
 import { createSecureUpload } from "../../../shared/uploads/secure-upload";
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
 import { HttpError } from "../../../utils/httpError";
@@ -165,6 +164,7 @@ const requireAnyOfCapability = (capabilities: readonly OfCapability[]): RequestH
 
 const router = Router();
 const machineDocumentUpload = createSecureUpload("machine-document", { maxFiles: 1 });
+const machineImageUpload = createSecureUpload("image", { maxFiles: 1 });
 
 router.use(authenticateToken);
 
@@ -192,10 +192,10 @@ router.post("/machines/:id/documents", requireMachineCapability("documents"), cr
 router.get("/machines/:id/documents/:documentId/download", requireMachineCapability("read"), downloadMachineDocument);
 router.delete("/machines/:id/documents/:documentId", requireMachineCapability("documents"), removeMachineDocument);
 router.get("/machines/:id", requireMachineCapability("read"), getMachine);
-router.post("/machines/onboarding", requireMachineCapability("create"), upload.single("image"), createMachineOnboarding);
-router.post("/machines", requireMachineCapability("create"), upload.single("image"), createMachine);
-router.patch("/machines/:id/onboarding", requireMachineCapability("update"), upload.single("image"), updateMachineOnboarding);
-router.patch("/machines/:id", requireMachineCapability("update"), upload.single("image"), updateMachine);
+router.post("/machines/onboarding", requireMachineCapability("create"), machineImageUpload.single("image"), createMachineOnboarding);
+router.post("/machines", requireMachineCapability("create"), machineImageUpload.single("image"), createMachine);
+router.patch("/machines/:id/onboarding", requireMachineCapability("update"), machineImageUpload.single("image"), updateMachineOnboarding);
+router.patch("/machines/:id", requireMachineCapability("update"), machineImageUpload.single("image"), updateMachine);
 router.delete("/machines/:id", requireMachineCapability("archive"), archiveMachine);
 
 // Postes

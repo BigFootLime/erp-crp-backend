@@ -576,7 +576,12 @@ export async function uploadEvidenceFile(
       try {
         const persisted = await repoGetEvidenceFileById(result.file.id);
         if (persisted && persisted.sha256 === sha256 && persisted.storage_key === storageKey) {
-          return result;
+          const durableFilePresent = await fs.stat(destination).then((stat) => stat.isFile()).catch(() => false);
+          if (durableFilePresent) return result;
+          logger.error("[PO_UPLOAD_COMMIT_UNCERTAIN] metadata committed but durable file missing", JSON.stringify({
+            file_id: result.file.id,
+          }));
+          throw err;
         }
         if (!persisted) {
           if (written) await fs.unlink(destination).catch(() => undefined);

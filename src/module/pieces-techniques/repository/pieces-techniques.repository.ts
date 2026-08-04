@@ -9,6 +9,7 @@ import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { generatePieceTechniqueBusinessCode } from "../../../shared/codes/code-generator.service";
 import { registerUploadDestination } from "../../../shared/uploads/secure-upload";
+import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 import type {
@@ -969,21 +970,22 @@ export async function repoAttachPieceTechniqueDocuments(
    */
   options: { documentTypeCode?: string | null } = {}
 ): Promise<PieceTechniqueDocument[] | null> {
-  const client = await db.connect();
   const docsDirRel = ensureDocumentStoragePath("pieces-techniques");
   const docsDirAbs = path.resolve(docsDirRel);
+  const client = await db.connect();
+  const expected = new Map<string, { key: string; absolutePath: string }>();
 
-  try {
-    await client.query("BEGIN");
-
+  return withUploadTransaction({
+    client,
+    files: documents,
+    context: "pieces-techniques.attach-documents",
+    work: async () => {
     const exists = await ensurePieceTechniqueExists(client, pieceTechniqueId);
     if (!exists) {
-      await client.query("ROLLBACK");
       return null;
     }
 
     if (!documents.length) {
-      await client.query("COMMIT");
       return [];
     }
 
@@ -1077,6 +1079,10 @@ export async function repoAttachPieceTechniqueDocuments(
 
       const row = ins.rows[0];
       if (!row) throw new Error("Failed to insert piece technique document");
+      expected.set(row.id, {
+        key: `${row.id}|${row.sha256 ?? ""}|${row.storage_path}`,
+        absolutePath: absPath,
+      });
       inserted.push(mapDocRow(row));
     }
 
@@ -1096,14 +1102,28 @@ export async function repoAttachPieceTechniqueDocuments(
       },
     });
 
-    await client.query("COMMIT");
     return inserted;
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+    },
+    reconcile: async () => {
+      const ids = [...expected.keys()];
+      if (ids.length === 0) return "committed";
+      const { rows } = await db.query<{ id: string; sha256: string | null; storage_path: string }>(
+        `SELECT id::text AS id, sha256, storage_path
+           FROM public.pieces_techniques_documents
+          WHERE id = ANY($1::uuid[])`,
+        [ids]
+      );
+      const status = classifyUploadReconciliation(
+        [...expected.values()].map((entry) => entry.key),
+        rows.map((row) => `${row.id}|${row.sha256 ?? ""}|${row.storage_path}`)
+      );
+      if (status !== "committed") return status;
+      const filesPresent = await Promise.all(
+        [...expected.values()].map((entry) => fs.stat(entry.absolutePath).then((stat) => stat.isFile()).catch(() => false))
+      );
+      return filesPresent.every(Boolean) ? "committed" : "uncertain";
+    },
+  });
 }
 
 export async function repoRemovePieceTechniqueDocument(

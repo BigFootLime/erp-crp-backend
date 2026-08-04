@@ -55,11 +55,17 @@ export class PoRollbackUncertainError extends HttpError {
 
 export async function withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
   let client!: PoolClient;
+  let released = false;
+  const release = (destroy = false) => {
+    if (!client || released) return;
+    released = true;
+    client.release(destroy);
+  };
   try {
     client = await pool.connect();
     await client.query("BEGIN");
   } catch (err) {
-    client?.release();
+    release(true);
     throw err;
   }
   try {
@@ -70,6 +76,7 @@ export async function withTransaction<T>(fn: (client: PoolClient) => Promise<T>)
       try {
         await client.query("ROLLBACK");
       } catch {
+        release(true);
         throw new PoRollbackUncertainError(err);
       }
       throw err;
@@ -78,11 +85,12 @@ export async function withTransaction<T>(fn: (client: PoolClient) => Promise<T>)
     try {
       await client.query("COMMIT");
     } catch (err) {
+      release(true);
       throw new PoCommitUncertainError(result, err);
     }
     return result;
   } finally {
-    client.release();
+    release();
   }
 }
 

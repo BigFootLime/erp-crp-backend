@@ -7,6 +7,7 @@ import path from "node:path"
 import db from "../../../config/database"
 import { generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service"
 import { registerUploadDestination } from "../../../shared/uploads/secure-upload"
+import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction"
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
@@ -1060,16 +1061,17 @@ export async function repoAttachDocuments(
   documents: UploadedDocument[],
   audit: AuditContext
 ): Promise<ReceptionFournisseurDocument[] | null> {
-  const client = await db.connect()
   const docsDirRel = ensureDocumentStoragePath("receptions")
   const docsDirAbs = path.resolve(docsDirRel)
-  const movedFiles: string[] = []
-  let commitAttempted = false
-  try {
-    await client.query("BEGIN")
+  const client = await db.connect()
+  const expected = new Map<string, { key: string; absolutePath: string }>()
+  return withUploadTransaction({
+    client,
+    files: documents,
+    context: "receptions.documents.attach",
+    work: async () => {
     const exists = await ensureReceptionExists(client, receptionId)
     if (!exists) {
-      await client.query("ROLLBACK")
       return null
     }
 
@@ -1087,7 +1089,6 @@ export async function repoAttachDocuments(
     }
 
     if (!documents.length) {
-      await client.query("COMMIT")
       return []
     }
 
@@ -1110,7 +1111,6 @@ export async function repoAttachDocuments(
       }
       registerUploadDestination(doc, absPath)
 
-      movedFiles.push(absPath)
       const hash = await sha256File(absPath)
 
       const ins = await client.query<DocumentRow>(
@@ -1170,6 +1170,10 @@ export async function repoAttachDocuments(
       )
       const row = ins.rows[0] ?? null
       if (!row) throw new Error("Failed to insert reception document")
+      expected.set(row.id, {
+        key: `${row.id}|${row.sha256 ?? ""}|${row.storage_path}`,
+        absolutePath: absPath,
+      })
       inserted.push(mapDocumentRow(row))
     }
 
@@ -1185,21 +1189,27 @@ export async function repoAttachDocuments(
       },
     })
 
-    commitAttempted = true
-    await client.query("COMMIT")
     return inserted
-  } catch (err) {
-    if (!commitAttempted) {
-      let rollbackConfirmed = false
-      try { await client.query("ROLLBACK"); rollbackConfirmed = true } catch { /* preserve for reconciliation */ }
-      if (rollbackConfirmed) for (const f of movedFiles) await fs.unlink(f).catch(() => undefined)
-    } else {
-      console.error("[RECEPTION_UPLOAD_COMMIT_UNCERTAIN] durable files preserved", { count: movedFiles.length })
-    }
-    throw err
-  } finally {
-    client.release()
-  }
+    },
+    reconcile: async () => {
+      const ids = [...expected.keys()]
+      if (!ids.length) return "committed"
+      const { rows } = await db.query<{ id: string; sha256: string | null; storage_path: string }>(
+        `SELECT id::text AS id, sha256, storage_path
+          FROM public.reception_fournisseur_documents
+          WHERE reception_id = $1::uuid
+            AND id = ANY($2::uuid[])`,
+        [receptionId, ids]
+      )
+      const status = classifyUploadReconciliation(
+        [...expected.values()].map((entry) => entry.key),
+        rows.map((row) => `${row.id}|${row.sha256 ?? ""}|${row.storage_path}`)
+      )
+      if (status !== "committed") return status
+      const present = await Promise.all([...expected.values()].map((entry) => fs.stat(entry.absolutePath).then((stat) => stat.isFile()).catch(() => false)))
+      return present.every(Boolean) ? "committed" : "uncertain"
+    },
+  })
 }
 
 export async function repoRemoveDocument(receptionId: string, documentId: string, audit: AuditContext): Promise<boolean | null> {
