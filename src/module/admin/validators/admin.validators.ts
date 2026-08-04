@@ -5,6 +5,7 @@ import {
   ASSIGNABLE_USER_ROLES,
   PRIMARY_USER_ROLES,
 } from "../../auth/domain/roles";
+import { canonicalizeAuthUsername } from "../../auth/domain/auth-identity";
 
 const userIdParam = z
   .string({ required_error: "ID utilisateur requis", invalid_type_error: "ID utilisateur invalide" })
@@ -12,7 +13,7 @@ const userIdParam = z
   .regex(/^\d+$/, "ID utilisateur invalide");
 
 const usernameSchema = trimString(3, "Nom d'utilisateur requis (min 3 caractères)")
-  .transform((v) => v.toUpperCase())
+  .transform(canonicalizeAuthUsername)
   .refine((v) => /^[A-Z0-9._-]+$/.test(v), "Username: caractères autorisés A-Z 0-9 . _ -");
 
 const phoneFR = z

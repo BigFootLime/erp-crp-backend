@@ -1,10 +1,14 @@
 import { z } from "zod";
 import { trimString } from "./_helpers";
 import { strongPasswordReset } from "./_helpers";
+import {
+  canonicalizeAuthUsername,
+  preserveOpaqueAuthToken,
+} from "../domain/auth-identity";
 
 export const loginSchema = z.object({
   username: trimString(3, "Nom d'utilisateur requis (min 3 caractères)")
-    .transform(v => v.toUpperCase()), // si tu veux forcer "UTILISATEUR" style ERP
+    .transform(canonicalizeAuthUsername),
   password: z
     .string({ required_error: "Mot de passe requis" })
     .min(1, "Mot de passe requis"),
@@ -25,9 +29,9 @@ export const resetPasswordSchema = z
   .object({
     token: z
       .string({ required_error: "Token requis" })
-      .trim()
       .min(1, "Token requis")
-      .max(256, "Token invalide"),
+      .max(256, "Token invalide")
+      .transform(preserveOpaqueAuthToken),
     newPassword: strongPasswordReset,
   })
   .strict();
