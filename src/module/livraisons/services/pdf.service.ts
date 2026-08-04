@@ -13,6 +13,7 @@ import {
 import { HttpError } from "../../../utils/httpError"
 import { repoGetLivraisonDetail, repoGetDocumentName } from "../repository/livraisons.repository"
 import type {
+  BonLivraisonStatut,
   LivraisonPdfAvailability,
   LivraisonPdfGenerationResult,
 } from "../types/livraisons.types"
@@ -27,6 +28,7 @@ type PdfDocumentRow = {
   version: number | null
   generated_at: string | null
   file_size_bytes: number | null
+  checksum_sha256: string | null
 }
 
 const generatedPdfPredicate = `
@@ -73,14 +75,16 @@ async function queryPdfDocument(
         latest.document_id,
         latest.version,
         latest.generated_at,
-        latest.file_size_bytes
+        latest.file_size_bytes,
+        latest.checksum_sha256
       FROM public.bon_livraison delivery
       LEFT JOIN LATERAL (
         SELECT
           document.document_id::text AS document_id,
           document.version::int AS version,
           document.created_at::text AS generated_at,
-          document.file_size_bytes::float8 AS file_size_bytes
+          document.file_size_bytes::float8 AS file_size_bytes,
+          document.checksum_sha256
         FROM public.bon_livraison_documents document
         WHERE document.bon_livraison_id = delivery.id
           AND ${generatedPdfPredicate}
@@ -97,20 +101,15 @@ async function queryPdfDocument(
 
 async function assertStoredPdf(
   documentId: string,
-  expectedSize: number | null
+  expectedSize: number | null,
+  expectedChecksum: string | null
 ): Promise<void> {
   const filePath = svcGetPdfFilePath(documentId)
-  let handle: Awaited<ReturnType<typeof fs.open>> | null = null
   try {
-    handle = await fs.open(filePath, "r")
-    const stat = await handle.stat()
-    const signature = Buffer.alloc(5)
-    const read = await handle.read(signature, 0, signature.length, 0)
+    const bytes = await fs.readFile(filePath)
     if (
-      !stat.isFile() ||
-      stat.size < signature.length ||
-      read.bytesRead !== signature.length ||
-      signature.toString("ascii") !== "%PDF-"
+      bytes.byteLength < 5 ||
+      bytes.subarray(0, 5).toString("ascii") !== "%PDF-"
     ) {
       throw new HttpError(
         500,
@@ -118,12 +117,23 @@ async function assertStoredPdf(
         "Le PDF archive est invalide. Une regeneration explicite est requise."
       )
     }
-    if (expectedSize !== null && expectedSize > 0 && stat.size !== expectedSize) {
+    if (expectedSize !== null && expectedSize > 0 && bytes.byteLength !== expectedSize) {
       throw new HttpError(
         500,
         "LIVRAISON_PDF_INTEGRITY_ERROR",
         "Le PDF archive ne correspond plus a son empreinte de stockage."
       )
+    }
+    if (expectedChecksum !== null) {
+      const normalizedChecksum = expectedChecksum.trim().toLowerCase()
+      const actualChecksum = crypto.createHash("sha256").update(bytes).digest("hex")
+      if (!/^[a-f0-9]{64}$/.test(normalizedChecksum) || actualChecksum !== normalizedChecksum) {
+        throw new HttpError(
+          500,
+          "LIVRAISON_PDF_INTEGRITY_ERROR",
+          "Le PDF archive ne correspond plus a son empreinte SHA-256."
+        )
+      }
     }
   } catch (error) {
     if (error instanceof HttpError) throw error
@@ -138,8 +148,6 @@ async function assertStoredPdf(
       )
     }
     throw error
-  } finally {
-    await handle?.close().catch(() => undefined)
   }
 }
 
@@ -168,7 +176,7 @@ export async function svcGetLivraisonPdfAvailability(
     }
   }
 
-  await assertStoredPdf(row.document_id, row.file_size_bytes)
+  await assertStoredPdf(row.document_id, row.file_size_bytes, row.checksum_sha256)
   return {
     available: true,
     status: "AVAILABLE",
@@ -195,7 +203,8 @@ async function findIdempotentReplay(
         document.document_id::text AS document_id,
         document.version::int AS version,
         document.created_at::text AS generated_at,
-        document.file_size_bytes::float8 AS file_size_bytes
+        document.file_size_bytes::float8 AS file_size_bytes,
+        document.checksum_sha256
       FROM public.bon_livraison_event_log event
       JOIN public.bon_livraison_documents document
         ON document.bon_livraison_id = event.bon_livraison_id
@@ -249,17 +258,29 @@ export async function svcGenerateLivraisonPdf(
 
   try {
     await db.query("BEGIN")
-    const delivery = await db.query<{ id: string }>(
-      `SELECT id::text AS id FROM public.bon_livraison WHERE id = $1::uuid FOR UPDATE`,
+    const delivery = await db.query<{ id: string; statut: BonLivraisonStatut }>(
+      `SELECT id::text AS id, statut FROM public.bon_livraison WHERE id = $1::uuid FOR UPDATE`,
       [bonLivraisonId]
     )
-    if (!delivery.rows[0]) {
+    const lockedDelivery = delivery.rows[0]
+    if (!lockedDelivery) {
       throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
+    }
+    if (lockedDelivery.statut === "CANCELLED") {
+      throw new HttpError(
+        409,
+        "LIVRAISON_CANCELLED_PDF_FORBIDDEN",
+        "Un bon de livraison annulé ne peut plus générer de nouveau PDF."
+      )
     }
 
     const replay = await findIdempotentReplay(db, bonLivraisonId, userId, keyHash)
     if (replay?.document_id && replay.version) {
-      await assertStoredPdf(replay.document_id, replay.file_size_bytes)
+      await assertStoredPdf(
+        replay.document_id,
+        replay.file_size_bytes,
+        replay.checksum_sha256
+      )
       await db.query("COMMIT")
       committed = true
       return {

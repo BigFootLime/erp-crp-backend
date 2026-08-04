@@ -80,6 +80,17 @@ journal.
   version suivante. Ses archives `GENERATED_SIMPLE_BL_PDF` restent séparées des BL du pack
   figé (`GENERATED_BL_PDF`), dont le cycle de version est autonome.
 
+Le même verrou charge le statut courant avant tout rejeu ou rendu. Une annulation qui obtient le
+verrou en premier interdit génération et régénération avec
+`LIVRAISON_CANCELLED_PDF_FORBIDDEN` (`409`). Une génération déjà verrouillée peut terminer avant
+l'annulation ; son archive devient alors une pièce historique lisible, mais aucun nouveau rendu
+ne peut être produit après le passage à `CANCELLED`.
+
+La disponibilité, la lecture d'une version exacte et le rejeu relisent les octets stockés et
+vérifient leur signature, leur taille et leur SHA-256 persistant. Une altération conservant la
+même taille et l'en-tête `%PDF-` est donc rejetée avec `LIVRAISON_PDF_INTEGRITY_ERROR`, au lieu
+d'être confondue avec une absence ordinaire.
+
 Les réponses PDF et de disponibilité portent `Cache-Control: private, no-store` afin qu'un
 navigateur ou un proxy ne réutilise pas un état d'autorisation ou une version obsolète.
 
@@ -125,8 +136,9 @@ donc ce que le document affiche, pas ce que le code croit avoir écrit. C'est ce
 d'affirmer qu'aucun UUID n'y figure.
 
 `src/module/livraisons/services/pdf.service.test.ts` couvre en complément le brouillon vide,
-un BL complet, la régénération, le rejeu idempotent, l'archive manquante et deux générations
-concurrentes. Le contrôleur vérifie séparément que `GET` reste sans effet de bord et ne masque
+un BL complet, la régénération, le rejeu idempotent, l'archive manquante, la corruption SHA-256
+à taille identique, deux générations concurrentes et les deux ordres de verrou entre annulation
+et génération. Le contrôleur vérifie séparément que `GET` reste sans effet de bord et ne masque
 pas les erreurs d'autorisation ou de stockage.
 
 Suite complète : **2968 tests verts sur 2969**. L'échec restant

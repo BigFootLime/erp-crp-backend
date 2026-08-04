@@ -144,4 +144,24 @@ describe("livraison PDF controller contract", () => {
     expect(response.status).toHaveBeenCalledWith(201)
     expect(next).not.toHaveBeenCalled()
   })
+
+  it("preserves the structured cancellation conflict from explicit generation", async () => {
+    const conflict = Object.assign(new Error("Cancelled"), {
+      status: 409,
+      code: "LIVRAISON_CANCELLED_PDF_FORBIDDEN",
+    })
+    mocks.generate.mockRejectedValue(conflict)
+    const response = responseDouble()
+    const next = vi.fn() as NextFunction
+
+    await generateLivraisonPdf(
+      requestDouble({ headers: { "idempotency-key": "cancelled-generation" } }),
+      response as unknown as Response,
+      next,
+    )
+
+    expect(next).toHaveBeenCalledWith(conflict)
+    expect(response.status).not.toHaveBeenCalled()
+    expect(mocks.emitEntityChanged).not.toHaveBeenCalled()
+  })
 })

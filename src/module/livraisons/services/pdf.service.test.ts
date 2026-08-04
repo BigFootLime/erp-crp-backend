@@ -1,3 +1,4 @@
+import crypto from "node:crypto"
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
@@ -37,10 +38,19 @@ import {
 const BL_ID = "11111111-1111-4111-8111-111111111111"
 const DOC_ID = "22222222-2222-4222-8222-222222222222"
 const PDF_BYTES = Buffer.from("%PDF-1.7\nsynthetic")
+const PDF_CHECKSUM = crypto.createHash("sha256").update(PDF_BYTES).digest("hex")
 
 type TestPoolClient = {
   query: ReturnType<typeof vi.fn>
   release: ReturnType<typeof vi.fn>
+}
+
+function deferred() {
+  let resolve!: () => void
+  const promise = new Promise<void>((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
 }
 
 let documentsRoot = ""
@@ -63,17 +73,19 @@ function detail(lines: unknown[] = []) {
 
 function generationDb(options: {
   nextVersion?: number
+  statut?: "DRAFT" | "CANCELLED"
   replay?: {
     document_id: string
     version: number
     generated_at: string
     file_size_bytes: number
+    checksum_sha256: string
   }
 } = {}): TestPoolClient {
   const query = vi.fn(async (sqlValue: unknown) => {
     const sql = String(sqlValue)
     if (sql.includes("SELECT id::text AS id") && sql.includes("FOR UPDATE")) {
-      return { rows: [{ id: BL_ID }] }
+      return { rows: [{ id: BL_ID, statut: options.statut ?? "DRAFT" }] }
     }
     if (sql.includes("idempotency_key_hash") && sql.includes("SELECT")) {
       return {
@@ -94,6 +106,81 @@ async function storePdf(documentId = DOC_ID, bytes = PDF_BYTES) {
   const directory = path.join(documentsRoot, "livraisons")
   await fs.mkdir(directory, { recursive: true })
   await fs.writeFile(path.join(directory, `${documentId}.pdf`), bytes)
+}
+
+function lifecycleDatabase() {
+  let statut: "DRAFT" | "CANCELLED" = "DRAFT"
+  let version = 0
+  let lockOwner: symbol | null = null
+  const waiters: Array<() => void> = []
+  const lockWaiterQueued = deferred()
+
+  const releaseLock = (owner: symbol) => {
+    if (lockOwner !== owner) return
+    const next = waiters.shift()
+    if (next) next()
+    else lockOwner = null
+  }
+
+  const connect = (): TestPoolClient => {
+    const owner = Symbol("delivery-transaction")
+    let ownsLock = false
+    const query = vi.fn(async (sqlValue: unknown, values?: unknown[]) => {
+      const sql = String(sqlValue)
+      if (sql.includes("SELECT id::text AS id") && sql.includes("FOR UPDATE")) {
+        if (lockOwner !== null) {
+          lockWaiterQueued.resolve()
+          await new Promise<void>((done) => waiters.push(done))
+        }
+        lockOwner = owner
+        ownsLock = true
+        return { rows: [{ id: BL_ID, statut }] }
+      }
+      if (sql.includes("TEST_CANCEL_DELIVERY")) {
+        statut = "CANCELLED"
+      }
+      if (sql.includes("idempotency_key_hash") && sql.includes("SELECT")) return { rows: [] }
+      if (sql.includes("COALESCE(MAX(document.version)")) {
+        return { rows: [{ version: version + 1 }] }
+      }
+      if (sql.includes("INSERT INTO public.bon_livraison_documents")) {
+        version = Number(values?.[2])
+      }
+      if ((sql === "COMMIT" || sql === "ROLLBACK") && ownsLock) {
+        ownsLock = false
+        releaseLock(owner)
+      }
+      return { rows: [] }
+    })
+    return { query, release: vi.fn() }
+  }
+
+  return {
+    connect,
+    getStatut: () => statut,
+    waitForBlockedTransaction: lockWaiterQueued.promise,
+  }
+}
+
+async function cancelDeliveryWithRowLock(
+  afterLock?: () => Promise<void> | void,
+): Promise<void> {
+  const db = await mocks.poolConnect()
+  try {
+    await db.query("BEGIN")
+    await db.query(
+      `SELECT id::text AS id, statut FROM public.bon_livraison WHERE id = $1::uuid FOR UPDATE`,
+      [BL_ID],
+    )
+    await db.query(`UPDATE public.bon_livraison SET statut = 'CANCELLED' /* TEST_CANCEL_DELIVERY */`)
+    await afterLock?.()
+    await db.query("COMMIT")
+  } catch (error) {
+    await db.query("ROLLBACK")
+    throw error
+  } finally {
+    db.release()
+  }
 }
 
 beforeEach(async () => {
@@ -120,6 +207,7 @@ describe("livraison PDF availability", () => {
         version: null,
         generated_at: null,
         file_size_bytes: null,
+        checksum_sha256: null,
       }],
     })
 
@@ -149,6 +237,7 @@ describe("livraison PDF availability", () => {
         version: 3,
         generated_at: "2026-08-04T12:00:00.000Z",
         file_size_bytes: PDF_BYTES.byteLength,
+        checksum_sha256: PDF_CHECKSUM,
       }],
     })
 
@@ -169,6 +258,7 @@ describe("livraison PDF availability", () => {
         version: 1,
         generated_at: "2026-08-04T12:00:00.000Z",
         file_size_bytes: PDF_BYTES.byteLength,
+        checksum_sha256: PDF_CHECKSUM,
       }],
     })
 
@@ -176,6 +266,33 @@ describe("livraison PDF availability", () => {
       status: 410,
       code: "LIVRAISON_PDF_FILE_MISSING",
     })
+  })
+
+  it("rejects a version-specific archive whose bytes changed without changing size or signature", async () => {
+    const corruptedBytes = Buffer.from(PDF_BYTES)
+    corruptedBytes[corruptedBytes.byteLength - 1] ^= 1
+    expect(corruptedBytes.byteLength).toBe(PDF_BYTES.byteLength)
+    expect(corruptedBytes.subarray(0, 5).toString("ascii")).toBe("%PDF-")
+    await storePdf(DOC_ID, corruptedBytes)
+    mocks.poolQuery.mockResolvedValue({
+      rows: [{
+        bon_livraison_id: BL_ID,
+        document_id: DOC_ID,
+        version: 3,
+        generated_at: "2026-08-04T12:00:00.000Z",
+        file_size_bytes: PDF_BYTES.byteLength,
+        checksum_sha256: PDF_CHECKSUM,
+      }],
+    })
+
+    await expect(svcGetLivraisonPdfAvailability(BL_ID, 3)).rejects.toMatchObject({
+      status: 500,
+      code: "LIVRAISON_PDF_INTEGRITY_ERROR",
+    })
+    expect(mocks.poolQuery).toHaveBeenCalledWith(
+      expect.stringContaining("latest.checksum_sha256"),
+      [BL_ID, 3],
+    )
   })
 })
 
@@ -194,7 +311,7 @@ describe("livraison PDF generation", () => {
       fs.readFile(path.join(documentsRoot, "livraisons", `${result.document_id}.pdf`)),
     ).resolves.toEqual(PDF_BYTES)
     expect(db.query).toHaveBeenCalledWith(
-      expect.stringContaining("FOR UPDATE"),
+      expect.stringContaining("id::text AS id, statut"),
       [BL_ID],
     )
     expect(
@@ -230,6 +347,7 @@ describe("livraison PDF generation", () => {
         version: 2,
         generated_at: "2026-08-04T12:00:00.000Z",
         file_size_bytes: PDF_BYTES.byteLength,
+        checksum_sha256: PDF_CHECKSUM,
       },
     })
     mocks.poolConnect.mockResolvedValue(db)
@@ -245,6 +363,119 @@ describe("livraison PDF generation", () => {
     expect(
       db.query.mock.calls.some(([sql]) => String(sql).includes("INSERT INTO public.documents_clients")),
     ).toBe(false)
+  })
+
+  it("rejects a same-size checksum corruption during idempotent replay", async () => {
+    const corruptedBytes = Buffer.from(PDF_BYTES)
+    corruptedBytes[corruptedBytes.byteLength - 1] ^= 1
+    await storePdf(DOC_ID, corruptedBytes)
+    const db = generationDb({
+      replay: {
+        document_id: DOC_ID,
+        version: 2,
+        generated_at: "2026-08-04T12:00:00.000Z",
+        file_size_bytes: PDF_BYTES.byteLength,
+        checksum_sha256: PDF_CHECKSUM,
+      },
+    })
+    mocks.poolConnect.mockResolvedValue(db)
+
+    await expect(
+      svcGenerateLivraisonPdf(BL_ID, 7, "corrupted-replay-key"),
+    ).rejects.toMatchObject({
+      status: 500,
+      code: "LIVRAISON_PDF_INTEGRITY_ERROR",
+    })
+    expect(mocks.renderBonLivraisonDocument).not.toHaveBeenCalled()
+    expect(db.query).toHaveBeenCalledWith("ROLLBACK")
+    expect(
+      db.query.mock.calls.some(([sql]) =>
+        String(sql).includes("document.checksum_sha256"),
+      ),
+    ).toBe(true)
+  })
+
+  it("rejects generation and creator replay after cancellation before rendering", async () => {
+    await storePdf()
+    const db = generationDb({
+      statut: "CANCELLED",
+      replay: {
+        document_id: DOC_ID,
+        version: 2,
+        generated_at: "2026-08-04T12:00:00.000Z",
+        file_size_bytes: PDF_BYTES.byteLength,
+        checksum_sha256: PDF_CHECKSUM,
+      },
+    })
+    mocks.poolConnect.mockResolvedValue(db)
+
+    await expect(
+      svcGenerateLivraisonPdf(BL_ID, 7, "cancelled-replay-key"),
+    ).rejects.toMatchObject({
+      status: 409,
+      code: "LIVRAISON_CANCELLED_PDF_FORBIDDEN",
+    })
+    expect(mocks.renderBonLivraisonDocument).not.toHaveBeenCalled()
+    expect(
+      db.query.mock.calls.some(([sql]) => String(sql).includes("idempotency_key_hash")),
+    ).toBe(false)
+    expect(db.query).toHaveBeenCalledWith("ROLLBACK")
+  })
+
+  it("lets cancellation win the row lock and blocks the waiting generation before render", async () => {
+    const lifecycle = lifecycleDatabase()
+    mocks.poolConnect.mockImplementation(async () => lifecycle.connect())
+    const cancellationLocked = deferred()
+    const allowCancellationCommit = deferred()
+
+    const cancellation = cancelDeliveryWithRowLock(async () => {
+      cancellationLocked.resolve()
+      await allowCancellationCommit.promise
+    })
+    await cancellationLocked.promise
+    const generation = svcGenerateLivraisonPdf(BL_ID, 7, "cancel-wins-generation")
+
+    await lifecycle.waitForBlockedTransaction
+    expect(mocks.renderBonLivraisonDocument).not.toHaveBeenCalled()
+    allowCancellationCommit.resolve()
+    await cancellation
+    await expect(generation).rejects.toMatchObject({
+      status: 409,
+      code: "LIVRAISON_CANCELLED_PDF_FORBIDDEN",
+    })
+    expect(lifecycle.getStatut()).toBe("CANCELLED")
+    expect(mocks.renderBonLivraisonDocument).not.toHaveBeenCalled()
+  })
+
+  it("lets an already locked generation finish, then blocks every post-cancellation render", async () => {
+    const lifecycle = lifecycleDatabase()
+    mocks.poolConnect.mockImplementation(async () => lifecycle.connect())
+    const rendering = deferred()
+    const allowRender = deferred()
+    mocks.renderBonLivraisonDocument.mockImplementationOnce(async () => {
+      rendering.resolve()
+      await allowRender.promise
+      return PDF_BYTES
+    })
+
+    const generation = svcGenerateLivraisonPdf(BL_ID, 7, "generation-wins-cancel")
+    await rendering.promise
+    const cancellation = cancelDeliveryWithRowLock()
+    await lifecycle.waitForBlockedTransaction
+    expect(lifecycle.getStatut()).toBe("DRAFT")
+
+    allowRender.resolve()
+    await expect(generation).resolves.toMatchObject({ version: 1 })
+    await cancellation
+    expect(lifecycle.getStatut()).toBe("CANCELLED")
+
+    await expect(
+      svcGenerateLivraisonPdf(BL_ID, 7, "post-cancel-generation"),
+    ).rejects.toMatchObject({
+      status: 409,
+      code: "LIVRAISON_CANCELLED_PDF_FORBIDDEN",
+    })
+    expect(mocks.renderBonLivraisonDocument).toHaveBeenCalledTimes(1)
   })
 
   it("serializes concurrent requests so distinct keys receive distinct versions", async () => {
@@ -265,7 +496,7 @@ describe("livraison PDF generation", () => {
           if (locked) await new Promise<void>((resolve) => waiters.push(resolve))
           else locked = true
           ownsLock = true
-          return { rows: [{ id: BL_ID }] }
+          return { rows: [{ id: BL_ID, statut: "DRAFT" }] }
         }
         if (sql.includes("idempotency_key_hash") && sql.includes("SELECT")) return { rows: [] }
         if (sql.includes("COALESCE(MAX(document.version)")) {
