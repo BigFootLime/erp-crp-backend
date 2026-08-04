@@ -20,12 +20,24 @@
 import type { PoolClient } from "pg";
 
 import {
+  GedBlobCleanupUncertainError,
   repoAddVersion,
   repoCreateDocumentWithVersion,
+  repoGetGedBlobReferenceState,
+  repoLockGedBlobSha256,
   repoSetCurrentVersion,
   repoUpsertBlob,
+  withGedBlobSha256Coordination,
 } from "../../ged/repository/ged.repository";
-import { isVaultConfigured, readBlob, storageKeyForSha256, writeBlob } from "../../ged/services/ged-vault.service";
+import {
+  cleanupOwnedVaultBlob,
+  computeSha256,
+  isVaultConfigured,
+  readBlob,
+  storageKeyForSha256,
+  writeBlob,
+  type VaultBlobOwnership,
+} from "../../ged/services/ged-vault.service";
 
 /** Classe GED du dossier atelier — déjà présente au référentiel. */
 const OF_DOCUMENT_CLASS_KEY = "OF_DOSSIER";
@@ -49,18 +61,73 @@ export type OfDocumentArchiveResult = {
   gedVersionId: string | null;
   /** Pourquoi l'archivage n'a pas eu lieu, quand il n'a pas eu lieu. */
   skippedReason: string | null;
+  /** Internal transaction ownership; must never be serialized by controllers. */
+  blobOwnership: VaultBlobOwnership | null;
+  blobSha256: string | null;
+  blobStorageKey: string | null;
 };
+
+export type PublicOfDocumentArchiveResult = Omit<
+  OfDocumentArchiveResult,
+  "blobOwnership" | "blobSha256" | "blobStorageKey"
+>;
+
+export type OfDocumentArchiveOwnershipObserver = (
+  ownership: OfDocumentArchiveResult
+) => void;
+
+export function publicOfDocumentArchiveResult(
+  archive: PublicOfDocumentArchiveResult & Partial<Pick<
+    OfDocumentArchiveResult,
+    "blobOwnership" | "blobSha256" | "blobStorageKey"
+  >>
+): PublicOfDocumentArchiveResult {
+  const {
+    blobOwnership: _blobOwnership,
+    blobSha256: _blobSha256,
+    blobStorageKey: _blobStorageKey,
+    ...publicResult
+  } = archive;
+  return publicResult;
+}
+
+/**
+ * Compensate only a blob inode created by this OF emission, after the OF
+ * transaction has a confirmed non-commit outcome. The fresh transaction takes
+ * the same SHA lock and rechecks all GED references before filesystem cleanup.
+ */
+export async function compensateOfDocumentArchive(
+  archive: OfDocumentArchiveResult | null
+): Promise<void> {
+  if (
+    !archive?.blobSha256
+    || !archive.blobOwnership
+    || archive.blobOwnership.kind === "deduplicated"
+  ) return;
+
+  try {
+    await withGedBlobSha256Coordination(archive.blobSha256, async (tx) => {
+      const state = await repoGetGedBlobReferenceState(tx, archive.blobSha256!);
+      if (state.blob_present || state.reference_count > 0) return;
+      await cleanupOwnedVaultBlob(archive.blobOwnership!);
+    });
+  } catch (error) {
+    throw new GedBlobCleanupUncertainError(error);
+  }
+}
 
 /**
  * Verse le PDF au coffre et l'enregistre en GED, dans la transaction fournie.
  *
- * L'écriture du blob a lieu AVANT l'insertion : un enregistrement GED qui
- * pointerait vers un fichier absent serait pire qu'une absence d'archive, parce
- * qu'il affirmerait une conservation qui n'existe pas.
+ * Le verrou transactionnel de l'empreinte est acquis AVANT l'écriture du blob,
+ * puis conservé jusqu'au COMMIT/ROLLBACK de l'appelant. L'écriture reste antérieure
+ * à l'insertion : une référence GED sans fichier affirmerait une conservation
+ * qui n'existe pas.
  */
 export async function archiveOfDocument(
   tx: Pick<PoolClient, "query">,
-  input: OfDocumentArchiveInput
+  input: OfDocumentArchiveInput,
+  observeOwnership?: OfDocumentArchiveOwnershipObserver
 ): Promise<OfDocumentArchiveResult> {
   if (!isVaultConfigured()) {
     return {
@@ -69,16 +136,38 @@ export async function archiveOfDocument(
       gedVersionId: null,
       skippedReason:
         "Coffre documentaire non configuré : le document reste réimprimable depuis son payload figé et vérifié contre son empreinte.",
+      blobOwnership: null,
+      blobSha256: null,
+      blobStorageKey: null,
     };
   }
 
-  const written = await writeBlob(input.pdf);
-  if (written.sha256 !== input.pdfSha256) {
-    // Ne peut arriver que si le binaire a changé entre le hachage et le dépôt.
-    throw new Error(
-      `Empreinte incohérente à l'archivage : attendue ${input.pdfSha256}, déposée ${written.sha256}.`
-    );
+  // Snapshot the mutable Buffer and validate its identity before taking a lock
+  // or creating a durable path. The private copy cannot change while awaiting
+  // another writer of the same content.
+  const pdf = Buffer.from(input.pdf);
+  const pdfSha256 = computeSha256(pdf);
+  if (pdfSha256 !== input.pdfSha256) {
+    throw new Error("Empreinte incohérente avant archivage GED du document d’OF.");
   }
+
+  // Participate in the same transaction-scoped SHA protocol as HTTP GED
+  // uploads. Promotion must happen only after this lock is acquired and the
+  // lock remains held by the caller's transaction through COMMIT/ROLLBACK.
+  await repoLockGedBlobSha256(tx, pdfSha256);
+  const written = await writeBlob(pdf);
+  // Publish filesystem ownership to the transaction orchestrator immediately:
+  // any later GED insert can fail before this function returns, but cleanup is
+  // still forbidden until the caller confirms ROLLBACK on its SQL transaction.
+  observeOwnership?.({
+    archived: false,
+    gedDocumentId: null,
+    gedVersionId: null,
+    skippedReason: null,
+    blobOwnership: written.ownership,
+    blobSha256: written.sha256,
+    blobStorageKey: written.storage_key,
+  });
 
   const blob = await repoUpsertBlob(tx, {
     sha256: written.sha256,
@@ -108,6 +197,9 @@ export async function archiveOfDocument(
       gedDocumentId: input.existingGedDocumentId,
       gedVersionId: version.version_id,
       skippedReason: null,
+      blobOwnership: written.ownership,
+      blobSha256: written.sha256,
+      blobStorageKey: written.storage_key,
     };
   }
 
@@ -127,6 +219,9 @@ export async function archiveOfDocument(
     gedDocumentId: created.document_id,
     gedVersionId: created.version_id,
     skippedReason: null,
+    blobOwnership: written.ownership,
+    blobSha256: written.sha256,
+    blobStorageKey: written.storage_key,
   };
 }
 

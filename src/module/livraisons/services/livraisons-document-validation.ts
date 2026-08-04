@@ -2,6 +2,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 
 import { HttpError } from "../../../utils/httpError"
+import { cleanupIncomingUploadStaging } from "../../../shared/uploads/secure-upload"
 
 const MAX_DOCUMENTS = 10
 const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024
@@ -109,5 +110,5 @@ export async function validateLivraisonDocuments(
 export async function removeTemporaryLivraisonDocuments(
   files: Express.Multer.File[]
 ): Promise<void> {
-  await Promise.all(files.map((file) => fs.unlink(file.path).catch(() => undefined)))
+  await cleanupIncomingUploadStaging(files)
 }

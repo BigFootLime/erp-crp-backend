@@ -1,11 +1,11 @@
 import type { Request, RequestHandler } from "express";
-import fs from "node:fs/promises";
 
 import { asyncHandler } from "../../../utils/asyncHandler";
-import { isPathInsideDirectory, resolveCerpStoragePath } from "../../../utils/cerpStorage";
+import { resolveCerpStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { getClientIp, parseDevice } from "../../../utils/requestMeta";
 import { emitEntityChanged } from "../../../shared/realtime/realtime.service";
+import { sendSecureStoredFile } from "../../../shared/uploads/secure-download";
 
 import type { AuditContext } from "../repository/metrologie.repository";
 import {
@@ -231,19 +231,14 @@ export const downloadCertificatFile: RequestHandler = asyncHandler(async (req, r
 
   const baseDir = svcMetrologieDocsBaseDir();
   const absPath = resolveCerpStoragePath(doc.storage_path, baseDir);
-  if (!isPathInsideDirectory(baseDir, absPath)) {
-    throw new HttpError(400, "INVALID_STORAGE_PATH", "Invalid document storage path");
-  }
-
-  await fs.access(absPath);
-  res.setHeader("Content-Type", doc.mime_type ?? "application/octet-stream");
-
   const rawDownload = (req.query as { download?: unknown } | undefined)?.download;
   const download = rawDownload === true || rawDownload === "true" || rawDownload === "1" || rawDownload === 1;
   const name = doc.file_original_name ?? `certificat-${certificatId}`;
-  res.setHeader(
-    "Content-Disposition",
-    `${download ? "attachment" : "inline"}; filename="${encodeURIComponent(name)}"`
-  );
-  res.sendFile(absPath);
+  await sendSecureStoredFile(res, {
+    filePath: absPath,
+    allowedRoots: [baseDir],
+    filename: name,
+    mimeType: doc.mime_type,
+    download,
+  });
 });

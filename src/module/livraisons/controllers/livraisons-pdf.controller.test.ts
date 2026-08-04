@@ -118,12 +118,14 @@ describe("livraison PDF controller contract", () => {
     expect(response.setHeader).toHaveBeenCalledWith("Content-Type", "application/pdf")
     expect(response.setHeader).toHaveBeenCalledWith(
       "Content-Disposition",
-      'inline; filename="BL-0018.pdf"',
+      'inline; filename="BL-0018.pdf"; filename*=UTF-8\'\'BL-0018.pdf',
     )
     expect(response.setHeader).toHaveBeenCalledWith(
       "Cache-Control",
       "private, no-store, max-age=0",
     )
+    expect(response.setHeader).toHaveBeenCalledWith("X-Content-Type-Options", "nosniff")
+    expect(response.setHeader).toHaveBeenCalledWith("Cross-Origin-Resource-Policy", "same-origin")
     expect(response.send).toHaveBeenCalledWith(validatedBytes)
     expect(response.sendFile).not.toHaveBeenCalled()
     expect(mocks.getPath).not.toHaveBeenCalled()

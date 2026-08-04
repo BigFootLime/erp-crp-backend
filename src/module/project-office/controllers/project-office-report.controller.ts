@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import { asyncHandler } from "../../../utils/asyncHandler";
+import { buildContentDisposition } from "../../../shared/uploads/secure-download";
 import * as svc from "../services/project-office-report.service";
 import {
   createAssetSchema,
@@ -79,7 +80,7 @@ export const getReportDocx = asyncHandler(async (req: Request, res: Response) =>
   const { id } = uuidParamsSchema.parse(req.params);
   const { filename, buffer } = await svc.exportReportDocx(requireUser(req), id, {}, buildAuditContext(req));
   res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
-  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.setHeader("Content-Disposition", buildContentDisposition(filename, true));
   res.send(buffer);
 });
 
@@ -87,7 +88,7 @@ export const getSectionDocx = asyncHandler(async (req: Request, res: Response) =
   const { id, sectionId } = entryParamsSchema.parse(req.params);
   const { filename, buffer } = await svc.exportReportDocx(requireUser(req), id, { sectionId }, buildAuditContext(req));
   res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
-  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.setHeader("Content-Disposition", buildContentDisposition(filename, true));
   res.send(buffer);
 });
 
@@ -95,7 +96,7 @@ export const getReportMarkdown = asyncHandler(async (req: Request, res: Response
   const { id } = uuidParamsSchema.parse(req.params);
   const { filename, markdown } = await svc.exportReportMarkdown(requireUser(req), id, buildAuditContext(req));
   res.setHeader("Content-Type", "text/markdown; charset=utf-8");
-  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.setHeader("Content-Disposition", buildContentDisposition(filename, true));
   res.send(markdown);
 });
 
@@ -107,7 +108,7 @@ export const getExportFile = asyncHandler(async (req: Request, res: Response) =>
     : export_type === "PDF" ? "application/pdf"
     : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
   res.setHeader("Content-Type", mime);
-  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.setHeader("Content-Disposition", buildContentDisposition(filename, true));
   res.send(buffer);
 });
 

@@ -1,11 +1,8 @@
-import path from "node:path";
-
 import { Router, type RequestHandler } from "express";
-import multer from "multer";
 
 import pool from "../../../config/database";
 import { authorizeRole } from "../../auth/middlewares/auth.middleware";
-import { HttpError } from "../../../utils/httpError";
+import { createSecureUpload } from "../../../shared/uploads/secure-upload";
 import * as controller from "../controllers/import-assistant.controller";
 import { assertImportAssistantDatabase } from "../domain/import-database-guard";
 
@@ -22,18 +19,7 @@ const requireImportTestDatabase: RequestHandler = async (_req, _res, next) => {
     next(error);
   }
 };
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { files: 1, fileSize: 25 * 1024 * 1024 },
-  fileFilter: (_req, file, callback) => {
-    const extension = path.extname(file.originalname).toLowerCase();
-    if (![".xlsx", ".csv"].includes(extension)) {
-      callback(new HttpError(400, "UNSUPPORTED_IMPORT_FORMAT", "Format refusé. Utilisez un fichier .xlsx ou .csv."));
-      return;
-    }
-    callback(null, true);
-  },
-});
+const upload = createSecureUpload("import-tabular", { storage: "memory" });
 
 router.use(requireImportAdmin, requireImportTestDatabase);
 

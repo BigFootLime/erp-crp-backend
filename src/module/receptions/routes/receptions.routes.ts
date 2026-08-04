@@ -1,8 +1,7 @@
 import { Router } from "express"
-import multer from "multer"
 
 import { authenticateToken } from "../../auth/middlewares/auth.middleware"
-import { ensureTmpStoragePath } from "../../../utils/cerpStorage"
+import { createSecureUpload } from "../../../shared/uploads/secure-upload"
 import {
   addIncomingMeasurement,
   attachReceptionDocuments,
@@ -20,12 +19,7 @@ import {
   startIncomingInspection,
 } from "../controllers/receptions.controller"
 
-const tmpBaseDir = ensureTmpStoragePath("receptions")
-
-const upload = multer({
-  dest: tmpBaseDir,
-  limits: { fileSize: 25 * 1024 * 1024, files: 10 },
-})
+const upload = createSecureUpload("quality-document")
 
 const router = Router()
 router.use(authenticateToken)

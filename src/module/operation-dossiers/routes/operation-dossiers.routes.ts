@@ -1,16 +1,14 @@
 import { Router } from "express"
-import multer from "multer"
 
 import { authenticateToken } from "../../auth/middlewares/auth.middleware"
-import { ensureTmpStoragePath } from "../../../utils/cerpStorage"
+import { createSecureUpload } from "../../../shared/uploads/secure-upload"
 import {
   createOperationDossierVersion,
   downloadOperationDossierDocument,
   getOperationDossierByOperation,
 } from "../controllers/operation-dossiers.controller"
 
-const uploadTmpDir = ensureTmpStoragePath("operation-dossiers")
-const upload = multer({ dest: uploadTmpDir, limits: { files: 10 } })
+const upload = createSecureUpload("technical-document")
 
 const router = Router()
 router.use(authenticateToken)

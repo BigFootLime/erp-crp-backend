@@ -49,16 +49,41 @@ export const METROLOGY_SETTING_KEY = "metrologie.block_on_overdue_critical";
 /* Transaction, journal, audit                                                */
 /* ========================================================================== */
 
+export class MetrologyCommitUncertainError<T> extends HttpError {
+  readonly transactionResult: T;
+  constructor(transactionResult: T) {
+    super(503, "METROLOGY_COMMIT_UNCERTAIN", "Le résultat du COMMIT doit être rapproché avant toute compensation.");
+    this.transactionResult = transactionResult;
+  }
+}
+
+export class MetrologyRollbackUncertainError extends HttpError {
+  constructor() {
+    super(503, "METROLOGY_ROLLBACK_UNCERTAIN", "Le rollback n’a pas pu être confirmé ; les preuves sont préservées.");
+  }
+}
+
 export async function withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const out = await fn(client);
-    await client.query("COMMIT");
+    let out: T;
+    try {
+      out = await fn(client);
+    } catch (err) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        throw new MetrologyRollbackUncertainError();
+      }
+      throw err;
+    }
+    try {
+      await client.query("COMMIT");
+    } catch {
+      throw new MetrologyCommitUncertainError(out);
+    }
     return out;
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
   } finally {
     client.release();
   }

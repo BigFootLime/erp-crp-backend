@@ -11,6 +11,11 @@ import {
   sha256DocumentFile,
   toPosixStoragePath,
 } from "../../../shared/documents/document-upload";
+import {
+  cleanupIncomingUploadStaging,
+  transferSecureUploadToDestination,
+} from "../../../shared/uploads/secure-upload";
+import { withUploadTransaction } from "../../../shared/uploads/upload-transaction";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 import type { AuditContext } from "./production.repository";
@@ -482,26 +487,25 @@ export async function repoUploadMachineDocument(params: {
   try {
     extension = await assertDocumentUploadAllowed(params.file);
   } catch (error) {
-    await fs.unlink(params.file.path).catch(() => undefined);
+    await cleanupIncomingUploadStaging([params.file]);
     throw error;
   }
 
-  const client = await pool.connect();
   const documentsDirectory = ensureDocumentStoragePath("machines");
+  const client = await pool.connect();
   const id = crypto.randomUUID();
   const finalPath = path.join(documentsDirectory, `${id}${extension}`);
-  let moved = false;
-  try {
-    await client.query("BEGIN");
+  let expectedSha256: string | null = null;
+  const storagePath = toPosixStoragePath(finalPath);
+  return withUploadTransaction({
+    client,
+    files: [params.file],
+    context: "production.machines.document.upload",
+    work: async () => {
     await requireActiveMachine(client, params.machineId);
-    try {
-      await fs.rename(path.resolve(params.file.path), finalPath);
-    } catch {
-      await fs.copyFile(path.resolve(params.file.path), finalPath);
-      await fs.unlink(path.resolve(params.file.path));
-    }
-    moved = true;
+    await transferSecureUploadToDestination(params.file, finalPath);
     const sha256 = await sha256DocumentFile(finalPath);
+    expectedSha256 = sha256;
     const b = params.body;
     const result = await client.query<MachineDocument>(
       `INSERT INTO public.production_machine_documents (
@@ -517,7 +521,7 @@ export async function repoUploadMachineDocument(params: {
         params.machineId,
         b.title,
         b.document_type,
-        toPosixStoragePath(finalPath),
+        storagePath,
         b.revision ?? null,
         sha256,
         params.file.mimetype,
@@ -544,16 +548,23 @@ export async function repoUploadMachineDocument(params: {
         sha256,
       },
     });
-    await client.query("COMMIT");
     return created;
-  } catch (error) {
-    await client.query("ROLLBACK");
-    if (moved) await fs.unlink(finalPath).catch(() => undefined);
-    else await fs.unlink(params.file.path).catch(() => undefined);
-    throw error;
-  } finally {
-    client.release();
-  }
+    },
+    reconcile: async () => {
+      if (!expectedSha256) return "uncertain";
+      const { rows } = await pool.query<{ machine_id: string; sha256: string | null; storage_path: string | null }>(
+        `SELECT machine_id::text AS machine_id, sha256, storage_path
+           FROM public.production_machine_documents
+          WHERE id = $1::uuid`,
+        [id]
+      );
+      const row = rows[0];
+      if (!row) return "not-committed";
+      if (row.machine_id !== params.machineId || row.sha256 !== expectedSha256 || row.storage_path !== storagePath) return "uncertain";
+      const filePresent = await fs.stat(finalPath).then((stat) => stat.isFile()).catch(() => false);
+      return filePresent ? "committed" : "uncertain";
+    },
+  });
 }
 
 export async function repoGetMachineDocumentForDownload(params: {

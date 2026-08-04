@@ -25,7 +25,7 @@ Repo-specific instructions for automated coding agents working on the **cerp-api
 
 Observed from `package.json`, `tsconfig.json`, and code:
 
-- Runtime: Node.js (Docker base image `node:20-alpine` in `Dockerfile`)
+- Runtime: Node.js 24 LTS (Docker base `node:24.18.0-alpine3.24` pinned by OCI digest in `Dockerfile`)
 - Language: TypeScript (`typescript`), strict mode enabled (`tsconfig.json`)
 - HTTP: Express (`express`)
 - Validation: Zod (`zod`)

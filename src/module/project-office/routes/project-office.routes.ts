@@ -1,5 +1,5 @@
 import { Router } from "express";
-import multer from "multer";
+import { createSecureUpload } from "../../../shared/uploads/secure-upload";
 import { requireProjectOfficeAccess } from "../middlewares/require-project-office-access";
 import * as base from "../controllers/project-office.controller";
 import * as projects from "../controllers/project-office-projects.controller";
@@ -61,10 +61,7 @@ router.post("/projects/:id/actions", registers.postAction);
 router.patch("/actions/:id", registers.patchAction);
 router.get("/projects/:id/evidence", registers.getEvidence);
 router.post("/projects/:id/evidence", registers.postEvidence);
-const evidenceFileUpload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 25 * 1024 * 1024, files: 1, fields: 12, fieldSize: 64 * 1024 },
-});
+const evidenceFileUpload = createSecureUpload("project-evidence-deferred", { storage: "memory" });
 router.post("/projects/:id/evidence/files", evidenceFileUpload.single("file"), registers.postEvidenceFile);
 router.get("/projects/:id/evidence/files", registers.getEvidenceFiles);
 router.get("/projects/:projectId/evidence-files/:id/content", registers.getProjectEvidenceFileContent);
@@ -78,10 +75,7 @@ router.get("/projects/:id/export.md", registers.getStatusReportMarkdown);
 router.get("/projects/:id/export.pdf", registers.getStatusReportPdf);
 
 // Rapport de projet Bac+5
-const assetUpload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024, files: 1, fields: 5, fieldSize: 64 * 1024 },
-});
+const assetUpload = createSecureUpload("project-asset-image", { storage: "memory" });
 router.get("/report-templates", report.getTemplates);
 router.get("/projects/:id/reports", report.getReports);
 router.post("/projects/:id/reports", report.postReport);

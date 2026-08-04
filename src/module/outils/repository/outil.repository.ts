@@ -863,6 +863,32 @@ export const outilRepository = {
     }
   },
 
+  async setOutilUploadPaths(
+    client: DbClient,
+    id_outil: number,
+    paths: { esquisse?: string; plan?: string; image?: string }
+  ) {
+    if (!paths.esquisse && !paths.plan && !paths.image) return;
+    const result = await client.query(
+      `
+        UPDATE gestion_outils_outil
+        SET
+          esquisse = COALESCE($2, esquisse),
+          plan = COALESCE($3, plan),
+          image = COALESCE($4, image)
+        WHERE id_outil = $1
+        RETURNING id_outil
+      `,
+      [
+        id_outil,
+        normalizeStoredImagePath(paths.esquisse),
+        normalizeStoredImagePath(paths.plan),
+        normalizeStoredImagePath(paths.image),
+      ]
+    );
+    if (!result.rows[0]) throw new HttpError(404, "OUTIL_NOT_FOUND", "Outil introuvable");
+  },
+
   async delete(id_outil: number, client: DbClient) {
     const existing = await getOutilBaseRow(client, id_outil);
     if (!existing) throw new HttpError(404, "OUTIL_NOT_FOUND", "Outil introuvable");
@@ -1145,8 +1171,8 @@ export const outilRepository = {
     }));
   },
 
-  async createFamille(nom_famille: string, image_path: string | null) {
-    const result = await db.query(
+  async createFamille(nom_famille: string, image_path: string | null, client: DbClient = db) {
+    const result = await client.query(
       `
         INSERT INTO gestion_outils_famille (nom_famille, image_path)
         VALUES ($1, $2)
@@ -1163,8 +1189,13 @@ export const outilRepository = {
     };
   },
 
-  async updateFamille(id_famille: number, nom_famille: string, image_path?: string | null) {
-    const result = await db.query(
+  async updateFamille(
+    id_famille: number,
+    nom_famille: string,
+    image_path?: string | null,
+    client: DbClient = db
+  ) {
+    const result = await client.query(
       `
         UPDATE gestion_outils_famille
         SET
@@ -1186,85 +1217,88 @@ export const outilRepository = {
     };
   },
 
+  async setFamilleImagePath(client: DbClient, id_famille: number, image_path: string) {
+    const result = await client.query(
+      `UPDATE gestion_outils_famille SET image_path = $2 WHERE id_famille = $1 RETURNING id_famille`,
+      [id_famille, normalizeStoredImagePath(image_path)]
+    );
+    if (!result.rows[0]) throw new HttpError(404, "FAMILLE_NOT_FOUND", "Famille introuvable");
+  },
+
   // 🏭 Fabricants
   async getFabricants() {
     const result = await db.query(`SELECT id_fabricant, name FROM gestion_outils_fabricant ORDER BY name`);
     return result.rows.map((row: any) => ({ value: row.id_fabricant, label: row.name }));
   },
 
-  async createFabricant(nom_fabricant: string, logo: string | null, id_fournisseurs: number[]) {
-    const client = await db.connect();
-    try {
-      await client.query("BEGIN");
+  async createFabricant(
+    nom_fabricant: string,
+    logo: string | null,
+    id_fournisseurs: number[],
+    client: DbClient = db
+  ) {
+    const result = await client.query(
+      `INSERT INTO gestion_outils_fabricant (name, logo) VALUES ($1, $2) RETURNING id_fabricant`,
+      [nom_fabricant, normalizeStoredImagePath(logo)]
+    );
 
-      const result = await client.query(
-        `INSERT INTO gestion_outils_fabricant (name, logo) VALUES ($1, $2) RETURNING id_fabricant`,
-        [nom_fabricant, logo]
+    const id_fabricant = asInteger(result.rows[0]?.id_fabricant);
+    for (const id_fournisseur of uniquePositiveIntegers(id_fournisseurs)) {
+      await client.query(
+        `INSERT INTO gestion_outils_fournisseur_fabricant (id_fabricant, id_fournisseur) VALUES ($1, $2)`,
+        [id_fabricant, id_fournisseur]
       );
-
-      const id_fabricant = result.rows[0].id_fabricant;
-
-      for (const id_fournisseur of id_fournisseurs) {
-        await client.query(
-          `INSERT INTO gestion_outils_fournisseur_fabricant (id_fabricant, id_fournisseur) VALUES ($1, $2)`,
-          [id_fabricant, id_fournisseur]
-        );
-      }
-
-      await client.query("COMMIT");
-      return id_fabricant;
-    } catch (e) {
-      await client.query("ROLLBACK");
-      throw e;
-    } finally {
-      client.release();
     }
+    return id_fabricant;
   },
 
-  async updateFabricant(id_fabricant: number, nom_fabricant: string, logo: string | null, id_fournisseurs: number[]) {
-    const client = await db.connect();
-    try {
-      await client.query("BEGIN");
-
-      const result = await client.query(
-        `
+  async updateFabricant(
+    id_fabricant: number,
+    nom_fabricant: string,
+    logo: string | null,
+    id_fournisseurs: number[],
+    client: DbClient = db
+  ) {
+    const result = await client.query(
+      `
         UPDATE gestion_outils_fabricant
         SET
           name = $2,
           logo = COALESCE($3, logo)
         WHERE id_fabricant = $1
         RETURNING id_fabricant, name, logo
-        `,
-        [id_fabricant, nom_fabricant, normalizeStoredImagePath(logo)]
-      );
+      `,
+      [id_fabricant, nom_fabricant, normalizeStoredImagePath(logo)]
+    );
 
-      if (!result.rows[0]) throw new HttpError(404, "FABRICANT_NOT_FOUND", "Fabricant introuvable");
+    if (!result.rows[0]) throw new HttpError(404, "FABRICANT_NOT_FOUND", "Fabricant introuvable");
 
-      await client.query(`DELETE FROM gestion_outils_fournisseur_fabricant WHERE id_fabricant = $1`, [id_fabricant]);
-      for (const id_fournisseur of uniquePositiveIntegers(id_fournisseurs)) {
-        await client.query(
-          `
+    await client.query(`DELETE FROM gestion_outils_fournisseur_fabricant WHERE id_fabricant = $1`, [id_fabricant]);
+    for (const id_fournisseur of uniquePositiveIntegers(id_fournisseurs)) {
+      await client.query(
+        `
           INSERT INTO gestion_outils_fournisseur_fabricant (id_fabricant, id_fournisseur)
           VALUES ($1, $2)
           ON CONFLICT DO NOTHING
-          `,
-          [id_fabricant, id_fournisseur]
-        );
-      }
-
-      await client.query("COMMIT");
-      const row = result.rows[0];
-      return {
-        value: asInteger(row.id_fabricant),
-        label: asNullableString(row.name) ?? "",
-        logo: buildPublicImageUrl(asNullableString(row.logo)),
-      };
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
+        `,
+        [id_fabricant, id_fournisseur]
+      );
     }
+
+    const row = result.rows[0];
+    return {
+      value: asInteger(row.id_fabricant),
+      label: asNullableString(row.name) ?? "",
+      logo: buildPublicImageUrl(asNullableString(row.logo)),
+    };
+  },
+
+  async setFabricantLogo(client: DbClient, id_fabricant: number, logo: string) {
+    const result = await client.query(
+      `UPDATE gestion_outils_fabricant SET logo = $2 WHERE id_fabricant = $1 RETURNING id_fabricant`,
+      [id_fabricant, normalizeStoredImagePath(logo)]
+    );
+    if (!result.rows[0]) throw new HttpError(404, "FABRICANT_NOT_FOUND", "Fabricant introuvable");
   },
 
   // 🤝 Fournisseurs
@@ -1374,8 +1408,13 @@ export const outilRepository = {
     }));
   },
 
-  async createGeometrie(nom_geometrie: string, id_famille: number, image_path: string | null) {
-    const result = await db.query(
+  async createGeometrie(
+    nom_geometrie: string,
+    id_famille: number,
+    image_path: string | null,
+    client: DbClient = db
+  ) {
+    const result = await client.query(
       `
         INSERT INTO gestion_outils_geometrie (nom_geometrie, id_famille, image_path)
         VALUES ($1, $2, $3)
@@ -1393,8 +1432,14 @@ export const outilRepository = {
     };
   },
 
-  async updateGeometrie(id_geometrie: number, nom_geometrie: string, id_famille: number, image_path?: string | null) {
-    const result = await db.query(
+  async updateGeometrie(
+    id_geometrie: number,
+    nom_geometrie: string,
+    id_famille: number,
+    image_path?: string | null,
+    client: DbClient = db
+  ) {
+    const result = await client.query(
       `
         UPDATE gestion_outils_geometrie
         SET
@@ -1416,6 +1461,14 @@ export const outilRepository = {
       id_famille: asInteger(row.id_famille),
       imagePath: buildPublicImageUrl(asNullableString(row.image_path)),
     };
+  },
+
+  async setGeometrieImagePath(client: DbClient, id_geometrie: number, image_path: string) {
+    const result = await client.query(
+      `UPDATE gestion_outils_geometrie SET image_path = $2 WHERE id_geometrie = $1 RETURNING id_geometrie`,
+      [id_geometrie, normalizeStoredImagePath(image_path)]
+    );
+    if (!result.rows[0]) throw new HttpError(404, "GEOMETRIE_NOT_FOUND", "Geometrie introuvable");
   },
 
   // 🎨 Revêtements

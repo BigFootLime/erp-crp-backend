@@ -4,6 +4,8 @@ import path from "node:path"
 import type { PoolClient } from "pg"
 
 import pool from "../../../config/database"
+import { transferSecureUploadToDestination } from "../../../shared/uploads/secure-upload"
+import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction"
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
@@ -479,11 +481,14 @@ export async function repoCreateOperationDossierVersion(params: {
 }): Promise<CreateOperationDossierVersionResult> {
   const docsDir = await ensureDocsDir()
   const tx = await pool.connect()
-  const movedFiles: string[] = []
+  let expectedVersion: { id: string; dossierId: string; version: number } | null = null
+  const expectedDocuments = new Map<string, { key: string; absolutePath: string }>()
 
-  try {
-    await tx.query("BEGIN")
-
+  return withUploadTransaction({
+    client: tx,
+    files: [...params.uploadsBySlot.values()],
+    context: "operation-dossiers.version.create",
+    work: async () => {
     const dossier = await repoGetDossierForUpdate(tx, params.dossier_id)
     const baseline = await repoGetLatestVersionBaseline(tx, params.dossier_id)
 
@@ -499,6 +504,7 @@ export async function repoCreateOperationDossierVersion(params: {
 
     const versionRow = versionIns.rows[0] ?? null
     if (!versionRow) throw new Error("Failed to create operation dossier version")
+    expectedVersion = { id: versionRow.id, dossierId: versionRow.dossier_id, version: versionRow.version }
 
     const allowedSlots = slotKeysForType(dossier.dossier_type)
     const docsBySlot = baseline?.docsBySlot ?? new Map<string, SlotDocumentBaseline>()
@@ -533,13 +539,7 @@ export async function repoCreateOperationDossierVersion(params: {
         const safeExt = safeExtFromName(file.originalname)
         const finalPath = path.join(docsDir, `${documentId}${safeExt}`)
 
-        try {
-          await fs.rename(file.path, finalPath)
-        } catch {
-          await fs.copyFile(file.path, finalPath)
-          await fs.unlink(file.path)
-        }
-        movedFiles.push(finalPath)
+        await transferSecureUploadToDestination(file, finalPath)
 
         await tx.query(`INSERT INTO public.documents_clients (id, document_name, type) VALUES ($1, $2, $3)`, [
           documentId,
@@ -551,6 +551,10 @@ export async function repoCreateOperationDossierVersion(params: {
         nextMimeType = file.mimetype
         nextFileName = file.originalname
         nextSizeBytes = typeof file.size === "number" && Number.isFinite(file.size) ? file.size : null
+        expectedDocuments.set(documentId, {
+          key: `${versionRow.id}|${slotKey}|${documentId}|${file.originalname}|${file.mimetype}`,
+          absolutePath: finalPath,
+        })
       }
 
       await tx.query(
@@ -600,15 +604,49 @@ export async function repoCreateOperationDossierVersion(params: {
       },
     })
 
-    await tx.query("COMMIT")
     return { id: versionRow.id, dossier_id: versionRow.dossier_id, version: versionRow.version }
-  } catch (err) {
-    await tx.query("ROLLBACK")
-    for (const f of movedFiles) await fs.unlink(f).catch(() => undefined)
-    throw err
-  } finally {
-    tx.release()
-  }
+    },
+    reconcile: async () => {
+      const version = expectedVersion
+      if (!version) return "uncertain"
+      const versionRes = await pool.query<{ id: string; dossier_id: string; version: number }>(
+        `SELECT id::text AS id, dossier_id::text AS dossier_id, version
+           FROM public.operation_dossier_versions
+          WHERE id = $1::uuid`,
+        [version.id]
+      )
+      const observedVersion = versionRes.rows[0]
+      if (!observedVersion) return "not-committed"
+      if (observedVersion.dossier_id !== version.dossierId || observedVersion.version !== version.version) return "uncertain"
+
+      const ids = [...expectedDocuments.keys()]
+      if (!ids.length) return "committed"
+      const { rows } = await pool.query<{
+        dossier_version_id: string
+        slot_key: string
+        document_id: string
+        file_name: string | null
+        mime_type: string | null
+      }>(
+        `SELECT dossier_version_id::text AS dossier_version_id,
+                slot_key,
+                document_id::text AS document_id,
+                file_name,
+                mime_type
+           FROM public.operation_dossier_version_documents
+          WHERE dossier_version_id = $1::uuid
+            AND document_id = ANY($2::uuid[])`,
+        [version.id, ids]
+      )
+      const status = classifyUploadReconciliation(
+        [...expectedDocuments.values()].map((entry) => entry.key),
+        rows.map((row) => `${row.dossier_version_id}|${row.slot_key}|${row.document_id}|${row.file_name ?? ""}|${row.mime_type ?? ""}`)
+      )
+      if (status !== "committed") return "uncertain"
+      const present = await Promise.all([...expectedDocuments.values()].map((entry) => fs.stat(entry.absolutePath).then((stat) => stat.isFile()).catch(() => false)))
+      return present.every(Boolean) ? "committed" : "uncertain"
+    },
+  })
 }
 
 export async function repoIsOperationDossierDocumentLinked(documentId: string): Promise<boolean> {

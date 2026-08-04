@@ -1,8 +1,8 @@
 import type { Request, RequestHandler, Response } from "express"
-import fs from "node:fs/promises"
 
-import { getDocumentStoragePath, isPathInsideDirectory, resolveCerpStoragePath } from "../../../utils/cerpStorage"
+import { getDocumentStoragePath, resolveCerpStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
+import { sendSecureStoredFile } from "../../../shared/uploads/secure-download"
 import type { AuditContext } from "../repository/fournisseurs.repository"
 import {
   adresseIdParamSchema,
@@ -107,18 +107,15 @@ async function sendDocumentFile(
 ) {
   const baseDir = getDocumentStoragePath("fournisseurs")
   const absPath = resolveCerpStoragePath(doc.storage_path, baseDir)
-  if (!isPathInsideDirectory(baseDir, absPath)) {
-    throw new HttpError(400, "INVALID_STORAGE_PATH", "Invalid document storage path")
-  }
-  await fs.access(absPath)
-  res.setHeader("Content-Type", doc.mime_type)
   const rawDownload = (req.query as { download?: unknown } | undefined)?.download
   const download = rawDownload === true || rawDownload === "true" || rawDownload === "1" || rawDownload === 1
-  res.setHeader(
-    "Content-Disposition",
-    `${download ? "attachment" : "inline"}; filename="${encodeURIComponent(doc.original_name)}"`
-  )
-  res.sendFile(absPath)
+  await sendSecureStoredFile(res, {
+    filePath: absPath,
+    allowedRoots: [baseDir],
+    filename: doc.original_name,
+    mimeType: doc.mime_type,
+    download,
+  })
 }
 
 export const listFournisseurs: RequestHandler = async (req, res, next) => {

@@ -1,11 +1,11 @@
 // src/module/pieces-techniques/controllers/pieces-techniques.controller.ts
 import type { Request, RequestHandler } from "express"
-import fs from "node:fs/promises"
 import db from "../../../config/database"
 import { repoFindIdempotentPieceCreate } from "../repository/create-drafts.repository"
 import { generatePieceTechniqueBusinessCode } from "../../../shared/codes/code-generator.service"
-import { getDocumentStoragePath, isPathInsideDirectory, resolveCerpStoragePath } from "../../../utils/cerpStorage"
+import { getDocumentStoragePath, resolveCerpStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
+import { sendSecureStoredFile } from "../../../shared/uploads/secure-download"
 import {
   achatIdParamSchema,
   addAchatSchema,
@@ -390,19 +390,15 @@ export const downloadPieceTechniqueDocument: RequestHandler = async (req, res, n
 
     const baseDir = getDocumentStoragePath("pieces-techniques")
     const absPath = resolveCerpStoragePath(doc.storage_path, baseDir)
-    if (!isPathInsideDirectory(baseDir, absPath)) {
-      throw new HttpError(400, "INVALID_STORAGE_PATH", "Invalid document storage path")
-    }
-    await fs.access(absPath)
-
-    res.setHeader("Content-Type", doc.mime_type)
     const rawDownload = (req.query as { download?: unknown } | undefined)?.download
     const download = rawDownload === true || rawDownload === "true" || rawDownload === "1" || rawDownload === 1
-    res.setHeader(
-      "Content-Disposition",
-      `${download ? "attachment" : "inline"}; filename="${encodeURIComponent(doc.original_name)}"`
-    )
-    res.sendFile(absPath)
+    await sendSecureStoredFile(res, {
+      filePath: absPath,
+      allowedRoots: [baseDir],
+      filename: doc.original_name,
+      mimeType: doc.mime_type,
+      download,
+    })
   } catch (err) {
     if (err && typeof err === "object" && "code" in err && (err as { code?: unknown }).code === "ENOENT") {
       next(new HttpError(404, "FILE_NOT_FOUND", "File not found"))

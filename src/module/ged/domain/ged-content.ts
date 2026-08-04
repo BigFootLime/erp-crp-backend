@@ -5,8 +5,10 @@
 // binaire concordent. Un exécutable renommé en `.pdf` est refusé ici, pas
 // découvert plus tard sur le poste de quelqu'un.
 //
-// Aucune I/O : ces fonctions travaillent sur un buffer déjà en mémoire.
+// La voie historique sur Buffer reste disponible pour les tests et petits
+// producteurs internes. Les uploads HTTP utilisent la voie disque bornée.
 
+import fs from "node:fs/promises";
 import { HttpError } from "../../../utils/httpError";
 import { fileExtension, sanitizeOriginalName } from "./ged-policy";
 
@@ -161,8 +163,7 @@ export function hasValidSignature(buffer: Buffer, kind: GedFileKind): boolean {
 /* Contrôle complet                                                           */
 /* -------------------------------------------------------------------------- */
 
-export type AcceptedGedFile = {
-  buffer: Buffer;
+export type AcceptedGedFileMetadata = {
   sanitized_name: string;
   extension: string;
   mime_type: string;
@@ -170,19 +171,18 @@ export type AcceptedGedFile = {
   kind: GedFileKind;
 };
 
-/**
- * Contrôle complet d'un fichier déposé, dans l'ordre du moins cher au plus cher :
- * présence, taille, extension interdite, allowlist de classe, puis signature.
- */
-export function assertAcceptedFile(
-  file: { buffer?: Buffer; originalname?: string; mimetype?: string; size?: number } | undefined,
+export type AcceptedGedFile = AcceptedGedFileMetadata & { buffer: Buffer };
+export type AcceptedGedFileOnDisk = AcceptedGedFileMetadata & { path: string };
+
+function assertAcceptedMetadata(
+  file: { originalname?: string; mimetype?: string; size?: number } | undefined,
   rules: GedClassContentRules
-): AcceptedGedFile {
-  if (!file || !Buffer.isBuffer(file.buffer)) {
+): AcceptedGedFileMetadata {
+  if (!file || !Number.isSafeInteger(file.size)) {
     throw new HttpError(400, "GED_FILE_REQUIRED", "Un fichier est requis.");
   }
 
-  const size = file.size ?? file.buffer.byteLength;
+  const size = file.size!;
   if (size <= 0) {
     throw new HttpError(400, "GED_FILE_REQUIRED", "Le fichier est vide.");
   }
@@ -229,7 +229,31 @@ export function assertAcceptedFile(
   if (!kind) {
     throw new HttpError(415, "GED_FILE_TYPE", "Type de fichier non reconnu par la GED.");
   }
-  if (!hasValidSignature(file.buffer, kind)) {
+  return {
+    sanitized_name: sanitizedName,
+    extension,
+    mime_type: mimeType,
+    size_bytes: size,
+    kind,
+  };
+}
+
+/**
+ * Contrôle complet d'un fichier déposé, dans l'ordre du moins cher au plus cher :
+ * présence, taille, extension interdite, allowlist de classe, puis signature.
+ */
+export function assertAcceptedFile(
+  file: { buffer?: Buffer; originalname?: string; mimetype?: string; size?: number } | undefined,
+  rules: GedClassContentRules
+): AcceptedGedFile {
+  if (!file || !Buffer.isBuffer(file.buffer)) {
+    throw new HttpError(400, "GED_FILE_REQUIRED", "Un fichier est requis.");
+  }
+  const metadata = assertAcceptedMetadata(
+    { ...file, size: file.size ?? file.buffer.byteLength },
+    rules
+  );
+  if (!hasValidSignature(file.buffer, metadata.kind)) {
     throw new HttpError(
       415,
       "GED_FILE_SIGNATURE",
@@ -239,10 +263,46 @@ export function assertAcceptedFile(
 
   return {
     buffer: file.buffer,
-    sanitized_name: sanitizedName,
-    extension,
-    mime_type: mimeType,
-    size_bytes: size,
-    kind,
+    ...metadata,
   };
+}
+
+const SIGNATURE_SAMPLE_BYTES = 64 * 1024;
+
+/** Validate a staged upload without ever allocating the complete file. */
+export async function assertAcceptedFileOnDisk(
+  file: { path?: string; originalname?: string; mimetype?: string; size?: number } | undefined,
+  rules: GedClassContentRules
+): Promise<AcceptedGedFileOnDisk> {
+  if (!file?.path) throw new HttpError(400, "GED_FILE_REQUIRED", "Un fichier est requis.");
+  const metadata = assertAcceptedMetadata(file, rules);
+  const handle = await fs.open(file.path, "r").catch(() => {
+    throw new HttpError(400, "GED_FILE_REQUIRED", "Le fichier déposé est introuvable.");
+  });
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.size !== metadata.size_bytes) {
+      throw new HttpError(409, "GED_FILE_CHANGED", "Le fichier déposé a changé pendant sa validation.");
+    }
+    const headLength = Math.min(SIGNATURE_SAMPLE_BYTES, stat.size);
+    const tailLength = Math.min(SIGNATURE_SAMPLE_BYTES, Math.max(0, stat.size - headLength));
+    const head = Buffer.allocUnsafe(headLength);
+    await handle.read(head, 0, headLength, 0);
+    let sample = head;
+    if (tailLength > 0) {
+      const tail = Buffer.allocUnsafe(tailLength);
+      await handle.read(tail, 0, tailLength, stat.size - tailLength);
+      sample = Buffer.concat([head, tail]);
+    }
+    if (!hasValidSignature(sample, metadata.kind)) {
+      throw new HttpError(
+        415,
+        "GED_FILE_SIGNATURE",
+        "La signature binaire du fichier ne correspond pas au type annoncé."
+      );
+    }
+  } finally {
+    await handle.close();
+  }
+  return { path: file.path, ...metadata };
 }

@@ -7,6 +7,8 @@ import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { generateAffaireCode, generateCommandeCode, generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
+import { transferSecureUploadToDestination } from "../../../shared/uploads/secure-upload";
+import { withUploadTransaction } from "../../../shared/uploads/upload-transaction";
 import { emitAppNotificationCreated, emitEntityChanged } from "../../../shared/realtime/realtime.service";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
@@ -2958,7 +2960,18 @@ async function insertCommandeEcheances(
   );
 }
 
-async function insertCommandeDocuments(client: PoolClient, commandeId: string, documents: UploadedDocument[]) {
+type CommandeDocumentMove = Readonly<{
+  file: UploadedDocument;
+  documentId: string;
+  finalPath: string;
+}>;
+
+async function insertCommandeDocuments(
+  client: PoolClient,
+  commandeId: string,
+  documents: UploadedDocument[],
+  movedDocuments: CommandeDocumentMove[]
+) {
   if (!documents.length) return;
 
   for (const doc of documents) {
@@ -2972,13 +2985,8 @@ async function insertCommandeDocuments(client: PoolClient, commandeId: string, d
     const uploadDir = ensureDocumentStoragePath();
     const finalPath = path.join(uploadDir, `${documentId}${safeExt}`);
 
-    try {
-      await fs.rename(doc.path, finalPath);
-    } catch {
-      // Fallback for cross-device issues
-      await fs.copyFile(doc.path, finalPath);
-      await fs.unlink(doc.path);
-    }
+    await transferSecureUploadToDestination(doc, finalPath);
+    movedDocuments.push({ file: doc, documentId, finalPath });
 
     await client.query(
       `
@@ -2995,6 +3003,49 @@ async function insertCommandeDocuments(client: PoolClient, commandeId: string, d
       `,
       [commandeId, documentId, isPdf ? "PDF" : null]
     );
+  }
+}
+
+type CommandeUploadCommitOutcome = "committed" | "not-committed" | "uncertain";
+
+async function reconcileCommandeUploadCommit(
+  commandeId: string,
+  movedDocuments: readonly CommandeDocumentMove[],
+  operation: "create" | "update"
+): Promise<CommandeUploadCommitOutcome> {
+  try {
+    if (movedDocuments.length === 0) {
+      if (operation === "update") return "uncertain";
+      const command = await pool.query(
+        `SELECT EXISTS (SELECT 1 FROM public.commande_client WHERE id = $1::bigint) AS committed`,
+        [commandeId]
+      );
+      return command.rows[0]?.committed === true ? "committed" : "not-committed";
+    }
+
+    const ids = movedDocuments.map((move) => move.documentId);
+    const result = await pool.query<{ document_id: string; commande_id: string | null }>(
+      `SELECT dc.id::text AS document_id, cd.commande_id::text AS commande_id
+         FROM public.documents_clients dc
+         LEFT JOIN public.commande_documents cd
+           ON cd.document_id = dc.id AND cd.commande_id = $1::bigint
+        WHERE dc.id = ANY($2::uuid[])`,
+      [commandeId, ids]
+    );
+    const persisted = new Set(result.rows
+      .filter((row) => row.commande_id === commandeId)
+      .map((row) => String(row.document_id)));
+    if (result.rows.length === 0) return "not-committed";
+    if (persisted.size === 0) return "uncertain";
+    if (persisted.size !== ids.length || ids.some((id) => !persisted.has(id))) return "uncertain";
+
+    const filesPresent = await Promise.all(movedDocuments.map(async (move) => {
+      const stat = await fs.stat(move.finalPath).catch(() => null);
+      return stat?.isFile() === true;
+    }));
+    return filesPresent.every(Boolean) ? "committed" : "uncertain";
+  } catch {
+    return "uncertain";
   }
 }
 
@@ -3058,8 +3109,15 @@ async function transitionLinkedDevisArticlesToValide(
 export async function repoCreateCommande(input: CreateCommandeInput, documents: UploadedDocument[]) {
   const client = await pool.connect();
   let notifications: AppNotification[] = [];
+  let commandeIdForReconciliation: string | null = null;
+  const movedDocuments: CommandeDocumentMove[] = [];
+  let result: { id: number };
   try {
-    await client.query("BEGIN");
+    result = await withUploadTransaction({
+      client,
+      files: documents,
+      context: "commande-client.create",
+      work: async () => {
 
     await assertDevisDraftIsFresh(client, input.devis_id ?? null, input.source_devis_updated_at ?? null);
 
@@ -3150,13 +3208,14 @@ export async function repoCreateCommande(input: CreateCommandeInput, documents: 
     const ins = await client.query<{ id: string }>(insertSql, insertParams);
     const commandeId = ins.rows[0]?.id;
     if (!commandeId) throw new Error("Failed to create commande");
+    commandeIdForReconciliation = commandeId;
 
     await insertCommandeLignes(client, commandeId, input.lignes, {
       officialize_preparatory_data: input.officialize_preparatory_data ?? false,
       commande_id_int: commandeIdInt,
     });
     await insertCommandeEcheances(client, commandeId, input.echeances ?? []);
-    await insertCommandeDocuments(client, commandeId, documents);
+    await insertCommandeDocuments(client, commandeId, documents, movedDocuments);
     await transitionLinkedDevisArticlesToValide(client, commandeIdInt, input.devis_id ?? null);
     await repoEnsureCommandeWorkflowCheckpoints(client, commandeIdInt, initialWorkflowStatus);
 
@@ -3197,13 +3256,13 @@ export async function repoCreateCommande(input: CreateCommandeInput, documents: 
       dedupe_key: `commande:${commandeIdInt}:checkpoint:technical_analysis:created`,
     });
 
-    await client.query("COMMIT");
-    for (const notification of notifications) {
-      emitAppNotificationCreated(notification.user_id, notification);
-    }
     return { id: toInt(commandeId, "commande.id") };
+      },
+      reconcile: async () => commandeIdForReconciliation
+        ? reconcileCommandeUploadCommit(commandeIdForReconciliation, movedDocuments, "create")
+        : "uncertain",
+    });
   } catch (e) {
-    await client.query("ROLLBACK");
     if (isObject(e)) {
       const code = typeof e.code === "string" ? e.code : null;
       const constraint = typeof e.constraint === "string" ? e.constraint : null;
@@ -3212,15 +3271,22 @@ export async function repoCreateCommande(input: CreateCommandeInput, documents: 
       }
     }
     throw e;
-  } finally {
-    client.release();
   }
+  for (const notification of notifications) {
+    emitAppNotificationCreated(notification.user_id, notification);
+  }
+  return result;
 }
 
 export async function repoUpdateCommande(id: string, input: CreateCommandeInput, documents: UploadedDocument[]) {
   const client = await pool.connect();
+  const movedDocuments: CommandeDocumentMove[] = [];
   try {
-    await client.query("BEGIN");
+    return await withUploadTransaction({
+      client,
+      files: documents,
+      context: "commande-client.update",
+      work: async () => {
 
     const existingRes = await client.query<{
       numero: string;
@@ -3254,7 +3320,6 @@ export async function repoUpdateCommande(id: string, input: CreateCommandeInput,
     );
     const existing = existingRes.rows[0] ?? null;
     if (!existing) {
-      await client.query("ROLLBACK");
       return null;
     }
 
@@ -3368,7 +3433,6 @@ export async function repoUpdateCommande(id: string, input: CreateCommandeInput,
     const updated = await client.query<{ id: string }>(updateSql, updateParams);
     const commandeId = updated.rows[0]?.id;
     if (!commandeId) {
-      await client.query("ROLLBACK");
       return null;
     }
 
@@ -3380,13 +3444,14 @@ export async function repoUpdateCommande(id: string, input: CreateCommandeInput,
       commande_id_int: toInt(id, "commande_id"),
     });
     await insertCommandeEcheances(client, id, input.echeances ?? []);
-    await insertCommandeDocuments(client, id, documents);
+    await insertCommandeDocuments(client, id, documents, movedDocuments);
     await transitionLinkedDevisArticlesToValide(client, toInt(id, "commande_id"), devisIdForUpdate);
 
-    await client.query("COMMIT");
     return { id: toInt(commandeId, "commande.id") };
+      },
+      reconcile: async () => reconcileCommandeUploadCommit(id, movedDocuments, "update"),
+    });
   } catch (e) {
-    await client.query("ROLLBACK");
     if (isObject(e)) {
       const code = typeof e.code === "string" ? e.code : null;
       const constraint = typeof e.constraint === "string" ? e.constraint : null;
@@ -3395,8 +3460,6 @@ export async function repoUpdateCommande(id: string, input: CreateCommandeInput,
       }
     }
     throw e;
-  } finally {
-    client.release();
   }
 }
 

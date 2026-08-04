@@ -1,10 +1,9 @@
 import type { RequestHandler } from "express"
 import { Router } from "express"
-import multer from "multer"
 
 import { authenticateToken } from "../../auth/middlewares/auth.middleware"
 import { HttpError } from "../../../utils/httpError"
-import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
+import { createSecureUpload } from "../../../shared/uploads/secure-upload"
 import {
   addCadreReleaseLine,
   analyzeCommandeStock,
@@ -45,8 +44,7 @@ import {
   validate,
 } from "../validators/commande-client.validators"
 
-const uploadDir = ensureDocumentStoragePath()
-const upload = multer({ dest: uploadDir })
+const upload = createSecureUpload("business-document")
 
 // middleware pour parser `data` JSON depuis multipart
 declare global {

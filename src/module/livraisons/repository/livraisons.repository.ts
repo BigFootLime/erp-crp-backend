@@ -5,6 +5,8 @@ import type { PoolClient } from "pg"
 
 import pool from "../../../config/database"
 import { canonicalizeStockUnitCode } from "../../../shared/stock-unit"
+import { transferSecureUploadToDestination } from "../../../shared/uploads/secure-upload"
+import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction"
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
 import { normalizeCommandeWorkflowStatus } from "../../commande-client/workflow/commande-client-workflow.definition"
@@ -2788,11 +2790,14 @@ export async function repoAttachLivraisonDocuments(params: {
   type?: string | null
   userId: number
 }): Promise<BonLivraisonDocument[]> {
-  const db = await pool.connect()
   const docsDir = await ensureDocsDir()
-  const storedPaths: string[] = []
-  try {
-    await db.query("BEGIN")
+  const db = await pool.connect()
+  const expected = new Map<string, { key: string; absolutePath: string }>()
+  return withUploadTransaction({
+    client: db,
+    files: params.documents,
+    context: "livraisons.documents.attach",
+    work: async () => {
     const header = await getHeader(db, params.bonLivraisonId, { forUpdate: true })
     if (!header) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
     if (header.statut === "DELIVERED" || header.statut === "CANCELLED") {
@@ -2818,13 +2823,7 @@ export async function repoAttachLivraisonDocuments(params: {
       const safeExt = /^\.[a-z0-9]+$/.test(extCandidate) && extCandidate.length <= 10 ? extCandidate : ""
       const finalPath = path.join(docsDir, `${documentId}${safeExt}`)
 
-      try {
-        await fs.rename(doc.path, finalPath)
-      } catch {
-        await fs.copyFile(doc.path, finalPath)
-        await fs.unlink(doc.path)
-      }
-      storedPaths.push(finalPath)
+      await transferSecureUploadToDestination(doc, finalPath)
 
       await db.query(`INSERT INTO documents_clients (id, document_name, type) VALUES ($1, $2, $3)`, [
         documentId,
@@ -2857,6 +2856,10 @@ export async function repoAttachLivraisonDocuments(params: {
       )
 
       insertedDocIds.push(documentId)
+      expected.set(documentId, {
+        key: `${params.bonLivraisonId}|${documentId}|${checksumSha256}|${doc.originalname}|${docType}`,
+        absolutePath: finalPath,
+      })
     }
 
     await db.query(`UPDATE bon_livraison SET updated_at = now(), updated_by = $2 WHERE id = $1::uuid`, [params.bonLivraisonId, params.userId])
@@ -2919,15 +2922,38 @@ export async function repoAttachLivraisonDocuments(params: {
       }))
     }
 
-    await db.query("COMMIT")
     return docsOut
-  } catch (err) {
-    await db.query("ROLLBACK")
-    await Promise.all(storedPaths.map((filePath) => fs.unlink(filePath).catch(() => undefined)))
-    throw err
-  } finally {
-    db.release()
-  }
+    },
+    reconcile: async () => {
+      const ids = [...expected.keys()]
+      if (!ids.length) return "committed"
+      const { rows } = await pool.query<{
+        bon_livraison_id: string | null
+        document_id: string
+        checksum_sha256: string | null
+        document_name: string | null
+        document_type: string | null
+      }>(
+        `SELECT bld.bon_livraison_id::text AS bon_livraison_id,
+                dc.id::text AS document_id,
+                bld.checksum_sha256,
+                dc.document_name,
+                dc.type AS document_type
+           FROM public.documents_clients dc
+           LEFT JOIN public.bon_livraison_documents bld
+             ON bld.document_id = dc.id AND bld.bon_livraison_id = $1::uuid
+          WHERE dc.id = ANY($2::uuid[])`,
+        [params.bonLivraisonId, ids]
+      )
+      const status = classifyUploadReconciliation(
+        [...expected.values()].map((entry) => entry.key),
+        rows.map((row) => `${row.bon_livraison_id ?? ""}|${row.document_id}|${row.checksum_sha256 ?? ""}|${row.document_name ?? ""}|${row.document_type ?? ""}`)
+      )
+      if (status !== "committed") return status
+      const present = await Promise.all([...expected.values()].map((entry) => fs.stat(entry.absolutePath).then((stat) => stat.isFile()).catch(() => false)))
+      return present.every(Boolean) ? "committed" : "uncertain"
+    },
+  })
 }
 
 export async function repoRemoveLivraisonDocument(params: {

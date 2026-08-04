@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import { asyncHandler } from "../../../utils/asyncHandler";
+import { buildContentDisposition, setSecureDownloadHeaders } from "../../../shared/uploads/secure-download";
 import * as reg from "../services/project-office-registers.service";
 import * as status from "../services/project-office-status.service";
 import {
@@ -139,20 +140,16 @@ export const getProjectEvidenceFileContent = asyncHandler(async (req: Request, r
   const { projectId, id } = projectEvidenceFileContentParamsSchema.parse(req.params);
   const { disposition } = evidenceFileContentQuerySchema.parse(req.query);
   const file = await reg.downloadProjectEvidenceFile(requireUser(req), projectId, id);
-  const safeName = file.original_name.replace(/["\\\r\n]/g, "_");
-  res.setHeader("Content-Type", file.mime_type);
   res.setHeader("Content-Length", String(file.buffer.byteLength));
-  res.setHeader("Content-Disposition", `${disposition}; filename="${safeName}"`);
+  setSecureDownloadHeaders(res, { filename: file.original_name, mimeType: file.mime_type, download: disposition === "attachment" });
   res.send(file.buffer);
 });
 
 export const getEvidenceFileDownload = asyncHandler(async (req: Request, res: Response) => {
   const { id } = uuidParamsSchema.parse(req.params);
   const file = await reg.downloadEvidenceFile(requireUser(req), id);
-  const safeName = file.original_name.replace(/["\\\r\n]/g, "_");
-  res.setHeader("Content-Type", file.mime_type);
   res.setHeader("Content-Length", String(file.size_bytes));
-  res.setHeader("Content-Disposition", `attachment; filename="${safeName}"`);
+  setSecureDownloadHeaders(res, { filename: file.original_name, mimeType: file.mime_type, download: true });
   res.send(file.buffer);
 });
 
@@ -177,7 +174,7 @@ export const getStatusReportMarkdown = asyncHandler(async (req: Request, res: Re
   const report = await status.buildStatusReport(requireUser(req), id);
   const md = status.statusReportToMarkdown(report);
   res.setHeader("Content-Type", "text/markdown; charset=utf-8");
-  res.setHeader("Content-Disposition", `attachment; filename="statut-${report.project.code.toLowerCase()}.md"`);
+  res.setHeader("Content-Disposition", buildContentDisposition(`statut-${report.project.code.toLowerCase()}.md`, true));
   res.send(md);
 });
 
@@ -186,6 +183,6 @@ export const getStatusReportPdf = asyncHandler(async (req: Request, res: Respons
   const report = await status.buildStatusReport(requireUser(req), id);
   const pdf = await status.statusReportToPdf(report);
   res.setHeader("Content-Type", "application/pdf");
-  res.setHeader("Content-Disposition", `attachment; filename="statut-${report.project.code.toLowerCase()}.pdf"`);
+  res.setHeader("Content-Disposition", buildContentDisposition(`statut-${report.project.code.toLowerCase()}.pdf`, true));
   res.send(pdf);
 });

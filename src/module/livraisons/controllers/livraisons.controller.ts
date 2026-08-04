@@ -24,6 +24,8 @@ import {
 } from "../services/livraisons-document-validation"
 import { repoFindDocumentFilePath, repoGetDocumentName, repoIsLivraisonDocumentLinked } from "../repository/livraisons.repository"
 import { emitEntityChanged } from "../../../shared/realtime/realtime.service"
+import { getDocumentStoragePath } from "../../../utils/cerpStorage"
+import { sendSecureStoredFile, setSecureDownloadHeaders } from "../../../shared/uploads/secure-download"
 
 function coerceBool(value: unknown): boolean {
   if (typeof value === "boolean") return value
@@ -323,7 +325,12 @@ export const uploadLivraisonDocuments: RequestHandler = async (req, res, next) =
     emitLivraisonChanged(req, { entityId: id, action: "updated" })
     res.status(201).json({ documents: out })
   } catch (e) {
-    await removeTemporaryLivraisonDocuments(files)
+    try {
+      await removeTemporaryLivraisonDocuments(files)
+    } catch (cleanupError) {
+      next(cleanupError)
+      return
+    }
     next(e)
   }
 }
@@ -373,8 +380,12 @@ export const getLivraisonDocumentFile: RequestHandler = async (req, res, next) =
       return
     }
     const name = (await repoGetDocumentName(docId)) ?? `document-${id}`
-    res.setHeader("Content-Disposition", `inline; filename=\"${name.replace(/\"/g, "")}\"`)
-    res.sendFile(filePath)
+    await sendSecureStoredFile(res, {
+      filePath,
+      allowedRoots: [getDocumentStoragePath("livraisons")],
+      filename: name,
+      download: false,
+    })
   } catch (e) {
     next(e)
   }
@@ -425,10 +436,7 @@ export const getLivraisonPdf: RequestHandler = async (req, res, next) => {
     }
 
     const docName = (await pdfService.svcGetDocumentName(archive.document_id)) ?? `bon-livraison-${id}.pdf`
-    const disposition = download ? "attachment" : "inline"
-    res.setHeader("Content-Type", "application/pdf")
-    res.setHeader("Content-Disposition", `${disposition}; filename=\"${docName.replace(/\"/g, "")}\"`)
-    res.setHeader("Cache-Control", "private, no-store, max-age=0")
+    setSecureDownloadHeaders(res, { filename: docName, mimeType: "application/pdf", download })
     res.send(archive.bytes)
   } catch (e) {
     next(e)
