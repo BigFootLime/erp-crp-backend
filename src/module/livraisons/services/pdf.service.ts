@@ -11,6 +11,7 @@ import {
   getDocumentStoragePath,
 } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
+import logger from "../../../utils/logger"
 import { repoGetLivraisonDetail, repoGetDocumentName } from "../repository/livraisons.repository"
 import type {
   BonLivraisonStatut,
@@ -262,6 +263,63 @@ async function findIdempotentReplay(
   return result.rows[0] ?? null
 }
 
+async function reconcilePdfCommit(args: {
+  bonLivraisonId: string
+  userId: number
+  keyHash: string
+}): Promise<PdfDocumentRow | null> {
+  const reconciliationDb = await pool.connect()
+  let discardConnection = false
+  try {
+    const delivery = await reconciliationDb.query<{ id: string }>(
+      `SELECT id::text AS id FROM public.bon_livraison WHERE id = $1::uuid FOR UPDATE`,
+      [args.bonLivraisonId]
+    )
+    if (!delivery.rows[0]) {
+      throw new Error("Delivery disappeared while reconciling an uncertain PDF commit")
+    }
+    return findIdempotentReplay(
+      reconciliationDb,
+      args.bonLivraisonId,
+      args.userId,
+      args.keyHash
+    )
+  } catch (error) {
+    discardConnection = true
+    throw error
+  } finally {
+    reconciliationDb.release(discardConnection)
+  }
+}
+
+function uncertainPdfCommitError(args: {
+  result: LivraisonPdfGenerationResult
+  commitError: unknown
+  reconciliationError?: unknown
+}): HttpError {
+  logger.error("livraison_pdf_commit_uncertain", {
+    document_id: args.result.document_id,
+    version: args.result.version,
+    commit_error: args.commitError instanceof Error ? args.commitError.message : String(args.commitError),
+    reconciliation_error:
+      args.reconciliationError instanceof Error
+        ? args.reconciliationError.message
+        : args.reconciliationError === undefined
+          ? null
+          : String(args.reconciliationError),
+  })
+  return new HttpError(
+    503,
+    "LIVRAISON_PDF_COMMIT_UNCERTAIN",
+    "L'etat de la generation PDF doit etre reconcilie. Rejouez la meme Idempotency-Key et suivez le runbook sans supprimer le fichier archive.",
+    {
+      document_id: args.result.document_id,
+      version: args.result.version,
+      runbook: "docs/livraison-document-cerp-213.md#commit-postgresql-incertain",
+    }
+  )
+}
+
 async function nextPdfVersion(db: Queryable, bonLivraisonId: string): Promise<number> {
   const result = await db.query<{ version: number }>(
     `
@@ -296,6 +354,10 @@ export async function svcGenerateLivraisonPdf(
   let filePath: string | null = null
   let temporaryPath: string | null = null
   let committed = false
+  let commitAttempted = false
+  let primaryConnectionReleased = false
+  let cleanupAllowed = true
+  let pendingResult: LivraisonPdfGenerationResult | null = null
 
   try {
     await db.query("BEGIN")
@@ -322,13 +384,15 @@ export async function svcGenerateLivraisonPdf(
         replay.file_size_bytes,
         replay.checksum_sha256
       )
-      await db.query("COMMIT")
-      committed = true
-      return {
+      pendingResult = {
         document_id: replay.document_id,
         version: replay.version,
         idempotent_replay: true,
       }
+      commitAttempted = true
+      await db.query("COMMIT")
+      committed = true
+      return pendingResult
     }
 
     const detail = await repoGetLivraisonDetail(bonLivraisonId)
@@ -403,15 +467,65 @@ export async function svcGenerateLivraisonPdf(
       `UPDATE public.bon_livraison SET updated_at = now(), updated_by = $2 WHERE id = $1::uuid`,
       [bonLivraisonId, userId]
     )
+    pendingResult = { document_id: documentId, version, idempotent_replay: false }
+    commitAttempted = true
     await db.query("COMMIT")
     committed = true
-    return { document_id: documentId, version, idempotent_replay: false }
+    return pendingResult
   } catch (error) {
-    if (!committed) await db.query("ROLLBACK").catch(() => undefined)
-    throw error
+    if (!commitAttempted) {
+      await db.query("ROLLBACK").catch(() => undefined)
+      throw error
+    }
+
+    db.release(error instanceof Error ? error : true)
+    primaryConnectionReleased = true
+    if (!pendingResult) {
+      cleanupAllowed = false
+      throw new HttpError(
+        503,
+        "LIVRAISON_PDF_COMMIT_UNCERTAIN",
+        "L'etat de la generation PDF est incertain et doit etre reconcilie manuellement."
+      )
+    }
+
+    let reconciled: PdfDocumentRow | null
+    try {
+      reconciled = await reconcilePdfCommit({ bonLivraisonId, userId, keyHash })
+    } catch (reconciliationError) {
+      cleanupAllowed = false
+      throw uncertainPdfCommitError({
+        result: pendingResult,
+        commitError: error,
+        reconciliationError,
+      })
+    }
+
+    if (!reconciled) {
+      throw error
+    }
+    if (
+      reconciled.document_id !== pendingResult.document_id ||
+      reconciled.version !== pendingResult.version
+    ) {
+      cleanupAllowed = false
+      throw uncertainPdfCommitError({
+        result: pendingResult,
+        commitError: error,
+        reconciliationError: new Error("The idempotency identity resolved to another PDF"),
+      })
+    }
+
+    committed = true
+    await assertStoredPdf(
+      reconciled.document_id,
+      reconciled.file_size_bytes,
+      reconciled.checksum_sha256
+    )
+    return pendingResult
   } finally {
-    db.release()
-    if (!committed) {
+    if (!primaryConnectionReleased) db.release()
+    if (!committed && cleanupAllowed) {
       await Promise.all(
         [temporaryPath, filePath]
           .filter((candidate): candidate is string => Boolean(candidate))
