@@ -11,6 +11,12 @@ vi.mock('../module/auth/controllers/auth.controller', () => ({
   resetPassword: vi.fn((req, res) => res.status(200).json({ message: 'Mot de passe réinitialisé' })),
 }))
 
+vi.mock('../module/auth/services/auth-rate-limit.service', () => ({
+  authRateLimiter: {
+    check: vi.fn(async (endpoint: string) => ({ status: 'allowed', endpoint, disabled: false })),
+  },
+}))
+
 vi.mock('../module/auth/controllers/user.controller', () => ({
   getProfile: vi.fn((req, res) => res.status(200).json({ username: 'admin', role: 'Administrateur' })),
 }))
