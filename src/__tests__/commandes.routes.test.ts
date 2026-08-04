@@ -459,7 +459,7 @@ describe("/api/v1/commandes", () => {
         articlePromoted = true;
         return { rows: [] };
       }
-      if (q.includes("SELECT") && q.includes("FROM public.articles a") && q.includes("WHERE a.id = $1::uuid")) {
+      if (q.includes("SELECT") && q.includes("FROM public.articles a")) {
         return {
           rows: [
             {

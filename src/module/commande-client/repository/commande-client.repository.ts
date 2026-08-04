@@ -60,6 +60,13 @@ import {
   allocateCommandeStockOldThenNew,
   type CommandeStockAvailability,
 } from "../domain/stock-scope-allocation";
+import {
+  commandeArticleEligibleSql,
+  commandeArticleEligibilityError,
+  commandeArticleIneligibilityFromState,
+  commandeArticleIneligibilityCodeSql,
+  type CommandeArticleIneligibilityCode,
+} from "../../stock/domain/commande-article-eligibility";
 
 function normalizeStoredPath(filePath: string) {
   const rel = path.isAbsolute(filePath) ? path.relative(process.cwd(), filePath) : filePath;
@@ -123,6 +130,8 @@ type CommandeLineArticleResolution = {
   piece_designation: string | null;
   stock_managed: boolean;
   is_active: boolean;
+  commande_client_eligible: boolean;
+  commande_client_ineligibility_code: CommandeArticleIneligibilityCode | null;
 };
 
 type AuditContext = {
@@ -201,13 +210,17 @@ async function insertCommandeEvent(db: Queryable, params: {
 
 async function resolveCommandeLineArticle(
   db: Queryable,
-  line: CreateCommandeInput["lignes"][number]
+  line: CreateCommandeInput["lignes"][number],
+  lineIndex: number
 ): Promise<CommandeLineArticleResolution> {
   const requestedArticleId = typeof line.article_id === "string" && line.article_id.trim() ? line.article_id.trim() : null;
   const requestedCode = typeof line.code_piece === "string" && line.code_piece.trim() ? line.code_piece.trim() : null;
 
   if (!requestedArticleId && !requestedCode) {
-    throw new HttpError(400, "ARTICLE_REQUIRED", "Each commande line must reference an article");
+    throw new HttpError(400, "ARTICLE_REQUIRED", "Chaque ligne doit référencer un article.", {
+      field: `lignes.${lineIndex}.article_id`,
+      line_index: lineIndex,
+    });
   }
 
   const res = await db.query<CommandeLineArticleResolution>(
@@ -223,7 +236,9 @@ async function resolveCommandeLineArticle(
         pt.code_piece AS piece_code,
         pt.designation AS piece_designation,
         a.stock_managed,
-        a.is_active
+        a.is_active,
+        ${commandeArticleEligibleSql("a")} AS commande_client_eligible,
+        ${commandeArticleIneligibilityCodeSql("a")} AS commande_client_ineligibility_code
       FROM public.articles a
       LEFT JOIN public.pieces_techniques pt ON pt.id = a.piece_technique_id
       WHERE ($1::uuid IS NOT NULL AND a.id = $1::uuid)
@@ -249,29 +264,28 @@ async function resolveCommandeLineArticle(
       400,
       "INVALID_ARTICLE",
       requestedCode
-        ? `Unknown article for reference ${requestedCode}`
-        : `Unknown article_id ${requestedArticleId}`
+        ? `Article inconnu pour la référence ${requestedCode}. Choisissez un article proposé par la recherche.`
+        : `Article inconnu ${requestedArticleId}. Choisissez un article proposé par la recherche.`,
+      {
+        field: `lignes.${lineIndex}.article_id`,
+        line_index: lineIndex,
+        article_id: requestedArticleId,
+        article_code: requestedCode,
+      }
     );
   }
 
-  if (!article.is_active) {
-    throw new HttpError(409, "ARTICLE_INACTIVE", `Article ${article.article_code} is inactive`);
-  }
-
-  if (!article.stock_managed) {
-    throw new HttpError(409, "ARTICLE_NOT_STOCK_MANAGED", `Article ${article.article_code} is not stock-managed`);
-  }
-
-  if (article.article_category !== "fabrique" && article.article_category !== "PIECE_TECHNIQUE") {
-    throw new HttpError(409, "ARTICLE_NOT_FABRICATED", `Article ${article.article_code} is not a fabricated article and cannot be sold in commande client`);
-  }
-
-  if (!article.piece_technique_id) {
-    throw new HttpError(
-      409,
-      "ARTICLE_PIECE_TECHNIQUE_REQUIRED",
-      `Article ${article.article_code} must be linked to a piece technique before it can be sold`
-    );
+  const ineligibilityCode =
+    article.commande_client_eligible === true
+      ? null
+      : article.commande_client_ineligibility_code ?? commandeArticleIneligibilityFromState(article);
+  if (ineligibilityCode) {
+    throw commandeArticleEligibilityError({
+      code: ineligibilityCode,
+      articleId: article.article_id,
+      articleCode: article.article_code,
+      lineIndex,
+    });
   }
 
   return article;
@@ -2779,7 +2793,7 @@ async function insertCommandeLignes(
 ) {
   if (!lignes.length) return;
 
-  for (const l of lignes) {
+  for (const [lineIndex, l] of lignes.entries()) {
     const hasPreparatory = lineHasPreparatorySource(l);
     if (hasPreparatory && !options.officialize_preparatory_data) {
       throw new HttpError(
@@ -2802,9 +2816,22 @@ async function insertCommandeLignes(
       sourceDossierDevisId = bundle.source_dossier_devis_id;
 
       const officialPieceId = await ensureOfficialPieceFromPreparatory(client, bundle, options.commande_id_int);
-      resolved = await ensureOfficialArticleFromPreparatory(client, bundle, options.commande_id_int, officialPieceId);
+      const promoted = await ensureOfficialArticleFromPreparatory(
+        client,
+        bundle,
+        options.commande_id_int,
+        officialPieceId
+      );
+      // Une promotion ne vaut pas éligibilité Commande. Relire l'article officiel par le
+      // resolver canonique garantit le même prédicat et les mêmes erreurs structurées que
+      // pour une ligne non préparatoire (POST comme PATCH).
+      resolved = await resolveCommandeLineArticle(
+        client,
+        { ...l, article_id: promoted.article_id, code_piece: undefined },
+        lineIndex
+      );
     } else {
-      resolved = await resolveCommandeLineArticle(client, l);
+      resolved = await resolveCommandeLineArticle(client, l, lineIndex);
     }
 
     const designation = typeof l.designation === "string" && l.designation.trim().length > 0

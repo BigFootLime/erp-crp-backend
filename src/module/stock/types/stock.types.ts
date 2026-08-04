@@ -1,3 +1,6 @@
+import type { CommandeArticleIneligibilityCode } from "../domain/commande-article-eligibility";
+export type { CommandeArticleIneligibilityCode } from "../domain/commande-article-eligibility";
+
 export type Paginated<T> = {
   items: T[];
   total: number;
@@ -172,6 +175,8 @@ export type StockArticleListItem = {
   lot_tracking: boolean;
   is_sold: boolean;
   is_active: boolean;
+  commande_client_eligible: boolean;
+  commande_client_ineligibility_code: CommandeArticleIneligibilityCode | null;
   row_version: number;
   archived_at: string | null;
   archive_reason: string | null;

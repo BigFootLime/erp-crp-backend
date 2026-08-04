@@ -34,6 +34,10 @@ import {
   type StockLotQualityStatus,
 } from "../domain/stock-availability";
 import { hashStockCommand, normalizeIdempotencyKey } from "../domain/stock-command";
+import {
+  commandeArticleEligibleSql,
+  commandeArticleIneligibilityCodeSql,
+} from "../domain/commande-article-eligibility";
 import type {
   ArticleCategory,
   ArticleBusinessCategory,
@@ -278,20 +282,9 @@ const ARTICLE_PRIMARY_CATEGORY_OPTIONS: Array<{ code: ArticleCategory }> = [
 /**
  * Référentiel des catégories métier d'article.
  *
- * `commande_client_selectable` (#395) — élargi à TOUTES les catégories.
- *
- * Il ne valait `true` que pour `piece_finie_fabriquee`, ce qui rendait la création d'article
- * depuis une commande client inutilisable pour tout le reste : un composant revendu, un
- * achat transformé, une sous-traitance refacturée, un traitement de surface facturé à la
- * ligne ou une matière cédée au client sont tous des choses que CRP vend réellement, et
- * toutes finissaient par un contournement (créer l'article ailleurs, puis revenir).
- *
- * Ce drapeau reste le SEUL levier pour restreindre à nouveau : il pilote à la fois les
- * catégories proposées à la création depuis une commande et le filtre de recherche des
- * lignes de commande. Le repasser à `false` suffit, sans toucher au frontend.
- *
- * `piece_technique_required` n'est PAS élargi : seule une pièce finie fabriquée exige un
- * dossier technique — c'est lui qui produit les OF.
+ * `commande_client_selectable` décrit les catégories qu'un utilisateur peut créer depuis
+ * une commande. La sauvegarde Commande reste canonique : seule une pièce fabriquée, gérée
+ * en stock, active et reliée à une pièce technique est éligible (BUG-CERP-0015).
  */
 const ARTICLE_CATEGORY_OPTIONS: StockArticleCategoryOption[] = [
   {
@@ -308,7 +301,7 @@ const ARTICLE_CATEGORY_OPTIONS: StockArticleCategoryOption[] = [
     code_segment: "MP",
     stock_managed_default: true,
     piece_technique_required: false,
-    commande_client_selectable: true,
+    commande_client_selectable: false,
   },
   {
     code: "traitement_surface",
@@ -316,7 +309,7 @@ const ARTICLE_CATEGORY_OPTIONS: StockArticleCategoryOption[] = [
     code_segment: "TRT",
     stock_managed_default: false,
     piece_technique_required: false,
-    commande_client_selectable: true,
+    commande_client_selectable: false,
   },
   {
     code: "achat_revente",
@@ -324,7 +317,7 @@ const ARTICLE_CATEGORY_OPTIONS: StockArticleCategoryOption[] = [
     code_segment: "ACH",
     stock_managed_default: true,
     piece_technique_required: false,
-    commande_client_selectable: true,
+    commande_client_selectable: false,
   },
   {
     code: "achat_transforme",
@@ -332,7 +325,7 @@ const ARTICLE_CATEGORY_OPTIONS: StockArticleCategoryOption[] = [
     code_segment: "AHT",
     stock_managed_default: true,
     piece_technique_required: false,
-    commande_client_selectable: true,
+    commande_client_selectable: false,
   },
   {
     code: "sous_traitance",
@@ -340,7 +333,7 @@ const ARTICLE_CATEGORY_OPTIONS: StockArticleCategoryOption[] = [
     code_segment: "STA",
     stock_managed_default: false,
     piece_technique_required: false,
-    commande_client_selectable: true,
+    commande_client_selectable: false,
   },
 ];
 
@@ -2718,32 +2711,10 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
   if (filters.lot_tracking !== undefined) where.push(`a.lot_tracking = ${push(filters.lot_tracking)}`);
   if (filters.stock_managed !== undefined) where.push(`a.stock_managed = ${push(filters.stock_managed)}`);
 
-  /**
-   * #395 — Filtre « vendable en commande client », dérivé du référentiel.
-   *
-   * Un article est retenu si sa catégorie primaire OU l'une de ses catégories métier liées est
-   * vendable. Le jeu de codes vient de `ARTICLE_CATEGORY_OPTIONS` : élargir ou restreindre la
-   * vente se fait à cet endroit unique, et la recherche de ligne suit sans redéploiement du
-   * frontend.
-   */
+  /** BUG-CERP-0015 — même prédicat que POST/PATCH /commandes, fermé par défaut. */
   if (filters.commande_client_selectable !== undefined) {
-    const sellable = commandeClientSelectableCategoryCodes();
-    if (sellable.length === 0) {
-      // Référentiel entièrement fermé : ne rien proposer plutôt que tout proposer.
-      where.push(filters.commande_client_selectable ? "FALSE" : "TRUE");
-    } else {
-      const p = push(sellable);
-      const predicate = `(
-        ${normalizedBusinessCategorySql("a.article_category")} = ANY(${p}::text[])
-        OR EXISTS (
-          SELECT 1
-          FROM public.article_category_link acls
-          WHERE acls.article_id = a.id
-            AND acls.category_code = ANY(${p}::text[])
-        )
-      )`;
-      where.push(filters.commande_client_selectable ? predicate : `NOT ${predicate}`);
-    }
+    const predicate = commandeArticleEligibleSql("a");
+    where.push(filters.commande_client_selectable ? predicate : `(${predicate}) IS NOT TRUE`);
   }
 
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
@@ -2785,6 +2756,8 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
       a.lot_tracking,
       a.is_sold,
       a.is_active,
+      ${commandeArticleEligibleSql("a")} AS commande_client_eligible,
+      ${commandeArticleIneligibilityCodeSql("a")} AS commande_client_ineligibility_code,
       a.row_version::int AS row_version,
       a.archived_at::text AS archived_at,
       a.archive_reason,
@@ -2863,6 +2836,8 @@ export async function repoGetArticle(id: string, includeCosts = false): Promise<
          a.lot_tracking,
          a.is_sold,
          a.is_active,
+         ${commandeArticleEligibleSql("a")} AS commande_client_eligible,
+         ${commandeArticleIneligibilityCodeSql("a")} AS commande_client_ineligibility_code,
          a.row_version::int AS row_version,
          a.archived_at::text AS archived_at,
          a.archive_reason,
