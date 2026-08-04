@@ -127,7 +127,10 @@ async function loadActiveBillingPolicy(queryer: DbQueryer): Promise<BillingPolic
 }
 
 function listWhere(filters: EligibleSourcesQueryDTO): { sql: string; values: unknown[] } {
-  const where = [`bl.statut IN ('SHIPPED','DELIVERED')`];
+  const where = [
+    `bl.statut IN ('SHIPPED','DELIVERED')`,
+    `COALESCE(upper(cc.order_type), '') <> 'INTERNE'`,
+  ];
   const values: unknown[] = [];
   const push = (value: unknown) => {
     values.push(value);
@@ -176,6 +179,7 @@ const DELIVERY_SOURCE_SELECT = `
   FROM public.bon_livraison_ligne bll
   JOIN public.bon_livraison bl ON bl.id = bll.bon_livraison_id
   JOIN public.clients c ON c.client_id = bl.client_id
+  LEFT JOIN public.commande_client cc ON cc.id = bl.commande_id
   LEFT JOIN public.commande_ligne cl ON cl.id = bll.commande_ligne_id
   LEFT JOIN LATERAL (
     SELECT COALESCE(SUM(source.quantity_consumed), 0) AS quantity
@@ -284,6 +288,7 @@ export async function repoListEligibleFactureSources(
       FROM public.bon_livraison_ligne bll
       JOIN public.bon_livraison bl ON bl.id = bll.bon_livraison_id
       JOIN public.clients c ON c.client_id = bl.client_id
+      LEFT JOIN public.commande_client cc ON cc.id = bl.commande_id
       ${sql}
     `,
     values
@@ -316,6 +321,7 @@ async function loadSelectedDeliverySources(
       ${DELIVERY_SOURCE_SELECT}
       WHERE bll.id = ANY($1::uuid[])
         AND bl.statut IN ('SHIPPED','DELIVERED')
+        AND COALESCE(upper(cc.order_type), '') <> 'INTERNE'
       ORDER BY bll.id
       ${lock ? "FOR UPDATE OF bll" : ""}
     `,
@@ -891,6 +897,7 @@ async function transitionFacture(params: {
     }
     const facture = await lockFacture(client, params.factureId);
     if (!facture) throw new HttpError(404, "FACTURE_NOT_FOUND", "Facture introuvable.");
+    await repoAssertFactureHasNoInternalSource(client, params.factureId);
     if (facture.statut !== params.expectedStatus) {
       throw new HttpError(409, "FACTURE_STATUS_CONFLICT", "Le statut de la facture a changé.");
     }
@@ -964,6 +971,37 @@ async function transitionFacture(params: {
     throw error;
   } finally {
     client.release();
+  }
+}
+
+export async function repoAssertFactureHasNoInternalSource(
+  queryer: DbQueryer,
+  factureId: number
+): Promise<void> {
+  const internalSource = await queryer.query<{ blocked: boolean }>(
+    `
+      SELECT EXISTS (
+        SELECT 1
+        FROM public.facture facture
+        JOIN public.commande_client linked_commande ON linked_commande.id = facture.commande_id
+        WHERE facture.id = $1
+          AND upper(COALESCE(linked_commande.order_type, '')) = 'INTERNE'
+      ) OR EXISTS (
+        SELECT 1
+        FROM public.facture_source_allocations source
+        JOIN public.bon_livraison_ligne delivery_line
+          ON source.source_type = 'DELIVERY_LINE'
+         AND source.source_line_id = delivery_line.id::text
+        JOIN public.bon_livraison delivery ON delivery.id = delivery_line.bon_livraison_id
+        JOIN public.commande_client commande ON commande.id = delivery.commande_id
+        WHERE source.facture_id = $1
+          AND upper(COALESCE(commande.order_type, '')) = 'INTERNE'
+      ) AS blocked
+    `,
+    [factureId]
+  );
+  if (internalSource.rows[0]?.blocked === true) {
+    throw new HttpError(409, "INTERNAL_ORDER_NOT_BILLABLE", "Une commande interne ne peut pas être facturée.");
   }
 }
 
@@ -1096,6 +1134,7 @@ export async function repoIssueFacture(params: {
     }
     const facture = await lockFacture(client, params.factureId);
     if (!facture) throw new HttpError(404, "FACTURE_NOT_FOUND", "Facture introuvable.");
+    await repoAssertFactureHasNoInternalSource(client, params.factureId);
     if (facture.statut !== "APPROVED") {
       throw new HttpError(409, "FACTURE_NOT_APPROVED", "La facture doit être validée avant émission.");
     }

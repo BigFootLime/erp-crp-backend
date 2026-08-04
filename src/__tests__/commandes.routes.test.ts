@@ -157,6 +157,13 @@ describe("/api/v1/commandes", () => {
 
     expect(String(dataCall[0])).toContain("ORDER BY cc.numero ASC");
     expect(dataCall[1]).toEqual(["%ACME%", "001", "valide", "2026-02-01", "2026-02-28", 10, 200, 5, 5]);
+
+    const statusProjectionSql = `${String(countCall[0])}\n${String(dataCall[0])}`;
+    expect(statusProjectionSql).toContain("THEN 'EN_ANALYSE'");
+    expect(statusProjectionSql).toContain("THEN 'PLANNING_VALIDE'");
+    expect(statusProjectionSql).toContain("THEN 'AR_ENVOYE'");
+    expect(statusProjectionSql).toContain("THEN 'LIVRE'");
+    expect(statusProjectionSql).not.toMatch(/THEN '(ENREGISTREE|PLANIFIEE|AR_ENVOYEE|LIVREE)'/);
   });
 
   it("GET /api/v1/commandes/:id returns include structures", async () => {
@@ -586,59 +593,22 @@ describe("/api/v1/commandes", () => {
     expect(deleteLignesCall).toBeTruthy();
   });
 
-  it("POST /api/v1/commandes/:id/status writes historique", async () => {
+  it("POST /api/v1/commandes/:id/status is disabled in favor of checkpoint actions", async () => {
     process.env.JWT_SECRET = "test-secret";
     const token = jwt.sign(
       { id: 1, username: "test", email: "test@example.com", role: "admin" },
       process.env.JWT_SECRET,
       { expiresIn: "1h" }
     );
-
-    mocks.clientQuery
-      .mockResolvedValueOnce({ rows: [] }) // BEGIN
-      .mockResolvedValueOnce({ rows: [{ exists: true }] }) // linked OF invariant
-      .mockResolvedValueOnce({ rows: [{ id: "123" }] }) // exists
-      .mockResolvedValueOnce({ rows: [{ nouveau_statut: "ENREGISTREE" }] }) // last
-      .mockResolvedValueOnce({ rows: [{ id: "10" }] }) // insert historique
-      .mockResolvedValueOnce({ rows: [] }) // update commande
-      .mockResolvedValueOnce({ rows: [] }); // COMMIT
 
     const res = await request(app)
       .post("/api/v1/commandes/123/status")
       .set("Authorization", `Bearer ${token}`)
       .send({ nouveau_statut: "PLANIFIEE", commentaire: "ok" });
 
-    expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ ok: true, nouveau_statut: "PLANIFIEE" });
-
-    const insertCall = mocks.clientQuery.mock.calls.find((c) => String(c[0]).includes("INSERT INTO commande_historique"));
-    expect(insertCall).toBeTruthy();
-    expect(insertCall?.[1]).toEqual([123, 1, "ENREGISTREE", "PLANIFIEE", "ok"]);
-  });
-
-  it("POST /api/v1/commandes/:id/status refuses planning statuses without an OF", async () => {
-    process.env.JWT_SECRET = "test-secret";
-    const token = jwt.sign(
-      { id: 1, username: "test", email: "test@example.com", role: "admin" },
-      process.env.JWT_SECRET,
-      { expiresIn: "1h" }
-    );
-
-    mocks.clientQuery
-      .mockResolvedValueOnce({ rows: [] }) // BEGIN
-      .mockResolvedValueOnce({ rows: [{ exists: false }] }) // linked OF invariant
-      .mockResolvedValueOnce({ rows: [] }); // ROLLBACK
-
-    const res = await request(app)
-      .post("/api/v1/commandes/123/status")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ nouveau_statut: "ATTENTE_PLANNING", commentaire: "force" });
-
-    expect(res.status).toBe(409);
-    expect(res.body).toMatchObject({ code: "PLANNING_REQUIRES_OF" });
-    expect(
-      mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO commande_historique"))
-    ).toBe(false);
+    expect(res.status).toBe(410);
+    expect(res.body).toMatchObject({ code: "DIRECT_COMMAND_STATUS_MUTATION_DISABLED" });
+    expect(mocks.poolConnect).not.toHaveBeenCalled();
   });
 
   it("GET /api/v1/commandes/:id/workflow returns checkpoints and available actions", async () => {
@@ -705,6 +675,7 @@ describe("/api/v1/commandes", () => {
       commande_id: 123,
       numero: "CC-123",
       statut: "ATTENTE_TECHNIQUE",
+      can_act: true,
       current_checkpoint: {
         checkpoint_code: "technical_analysis",
         status: "active",
@@ -719,6 +690,71 @@ describe("/api/v1/commandes", () => {
       ],
     });
     expect(res.body.checkpoints).toHaveLength(2);
+
+    const commandLockIndex = mocks.clientQuery.mock.calls.findIndex(([sql]) =>
+      String(sql).includes("FROM commande_client cc") && String(sql).includes("FOR UPDATE")
+    );
+    const freshHistoryIndex = mocks.clientQuery.mock.calls.findIndex(([sql]) =>
+      String(sql).includes("st.nouveau_statut AS raw_statut")
+    );
+    expect(commandLockIndex).toBeGreaterThanOrEqual(0);
+    expect(freshHistoryIndex).toBeGreaterThan(commandLockIndex);
+    expect(String(mocks.clientQuery.mock.calls[freshHistoryIndex]?.[0])).not.toContain("FOR UPDATE OF cc");
+  });
+
+  it("computes workflow can_act from exact role, assignment and administrator override", async () => {
+    let assignedUserId: number | null = null;
+    const checkpoint = {
+      id: "77",
+      commande_id: "123",
+      checkpoint_code: "technical_analysis",
+      label: "Analyse technique",
+      sort_order: 30,
+      status: "active",
+      responsible_role: "technique",
+      assigned_user_id: null,
+      due_at: null,
+      completed_at: null,
+      completed_by: null,
+      blocked_reason: null,
+      notes: null,
+      action_key: "complete_technical_analysis",
+      action_label: "Valider technique",
+      metadata: {},
+      created_at: "2026-06-01T08:00:00.000Z",
+      updated_at: "2026-06-01T08:00:00.000Z",
+    };
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const q = String(sql);
+      if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
+      if (q.includes("FROM commande_client cc")) {
+        return { rows: [{ id: "123", numero: "CC-123", client_id: "001", raw_statut: "ATTENTE_TECHNIQUE" }] };
+      }
+      if (q.includes("INSERT INTO public.commande_client_workflow_checkpoint")) return { rows: [] };
+      if (q.includes("FROM public.commande_client_workflow_checkpoint")) {
+        return { rows: [{ ...checkpoint, assigned_user_id: assignedUserId }] };
+      }
+      return { rows: [] };
+    });
+
+    const wrongRole = await request(app)
+      .get("/api/v1/commandes/123/workflow")
+      .set("x-test-role", "Employee");
+    expect(wrongRole.body).toMatchObject({ can_act: false, available_actions: [] });
+    expect(wrongRole.body.action_forbidden_reason).toContain("technique");
+
+    assignedUserId = 2;
+    const wrongAssignee = await request(app)
+      .get("/api/v1/commandes/123/workflow")
+      .set("x-test-role", "Method");
+    expect(wrongAssignee.body).toMatchObject({ can_act: false, available_actions: [] });
+    expect(wrongAssignee.body.action_forbidden_reason).toContain("autre utilisateur");
+
+    const admin = await request(app)
+      .get("/api/v1/commandes/123/workflow")
+      .set("x-test-role", "Administrateur Systeme et Reseau");
+    expect(admin.body).toMatchObject({ can_act: true });
+    expect(admin.body.available_actions).toHaveLength(1);
   });
 
   it("POST /api/v1/commandes/:id/workflow/actions advances the checkpoint workflow", async () => {
@@ -794,7 +830,7 @@ describe("/api/v1/commandes", () => {
     expect(res.status).toBe(200);
     expect(res.body.workflow).toMatchObject({
       commande_id: 123,
-      statut: "ATTENTE_TECHNIQUE",
+      statut: "ATTENTE_STOCK",
       current_checkpoint: {
         checkpoint_code: "stock_check",
         status: "active",
@@ -805,6 +841,7 @@ describe("/api/v1/commandes", () => {
         },
       ],
     });
+    expect(res.body.idempotent_replay).toBe(false);
 
     const completedCheckpointCall = mocks.clientQuery.mock.calls.find(
       (c) => String(c[0]).includes("SET status = 'done'") && String(c[0]).includes("public.commande_client_workflow_checkpoint")
@@ -818,6 +855,76 @@ describe("/api/v1/commandes", () => {
     expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO ordres_fabrication"))).toBe(false);
   });
 
+  it("replays an already completed workflow action without a second side effect", async () => {
+    const checkpointRows = [
+      {
+        id: "77",
+        commande_id: "123",
+        checkpoint_code: "technical_analysis",
+        label: "Analyse technique",
+        sort_order: 30,
+        status: "done",
+        responsible_role: "technique",
+        assigned_user_id: 12,
+        due_at: null,
+        completed_at: "2026-06-16T08:00:00.000Z",
+        completed_by: 1,
+        blocked_reason: null,
+        notes: "ok technique",
+        action_key: "complete_technical_analysis",
+        action_label: "Valider technique",
+        metadata: {},
+        created_at: "2026-06-01T08:00:00.000Z",
+        updated_at: "2026-06-16T08:00:00.000Z",
+      },
+      {
+        id: "78",
+        commande_id: "123",
+        checkpoint_code: "stock_check",
+        label: "Controle du stock",
+        sort_order: 40,
+        status: "active",
+        responsible_role: "technique",
+        assigned_user_id: null,
+        due_at: null,
+        completed_at: null,
+        completed_by: null,
+        blocked_reason: null,
+        notes: null,
+        action_key: "check_stock",
+        action_label: "Controler le stock",
+        metadata: {},
+        created_at: "2026-06-01T08:00:00.000Z",
+        updated_at: "2026-06-16T08:00:00.000Z",
+      },
+    ];
+
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const query = String(sql);
+      if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK") return { rows: [] };
+      if (query.includes("FROM commande_client cc")) {
+        return { rows: [{ id: "123", numero: "CC-123", client_id: "001", raw_statut: "ATTENTE_STOCK" }] };
+      }
+      if (query.includes("INSERT INTO public.commande_client_workflow_checkpoint")) return { rows: [] };
+      if (query.includes("SELECT status, responsible_role")) {
+        return { rows: [{ status: "done", responsible_role: "technique" }] };
+      }
+      if (query.includes("FROM public.commande_client_workflow_checkpoint")) return { rows: checkpointRows };
+      return { rows: [] };
+    });
+
+    const res = await request(app)
+      .post("/api/v1/commandes/123/workflow/actions")
+      .send({ action: "complete_technical_analysis", commentaire: "ok technique" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ idempotent_replay: true, workflow: { statut: "ATTENTE_STOCK" } });
+    expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO commande_historique"))).toBe(false);
+    expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("commande_client_event_log"))).toBe(false);
+    expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("app_notification"))).toBe(false);
+    expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("SET status = 'done'"))).toBe(false);
+  });
+
   it("POST /api/v1/commandes/:id/workflow/actions refuses to complete launch without stock allocation or OF generation", async () => {
     const res = await request(app)
       .post("/api/v1/commandes/123/workflow/actions")
@@ -826,6 +933,17 @@ describe("/api/v1/commandes", () => {
     expect(res.status).toBe(409);
     expect(res.body).toMatchObject({ code: "COMMAND_LAUNCH_REQUIRED" });
     expect(mocks.poolConnect).not.toHaveBeenCalled();
+  });
+
+  it("refuses to simulate AR delivery through the generic checkpoint action", async () => {
+    const res = await request(app)
+      .post("/api/v1/commandes/123/workflow/actions")
+      .send({ action: "mark_ar_sent" });
+
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ code: "COMMAND_AR_SEND_REQUIRED" });
+    expect(mocks.poolConnect).not.toHaveBeenCalled();
+    expect(mocks.clientQuery).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -848,6 +966,10 @@ describe("/api/v1/commandes", () => {
       if (q === "BEGIN" || q === "ROLLBACK") return { rows: [] };
       if (q.includes("FROM commande_client cc")) {
         return { rows: [{ id: "123", numero: "CC-123", client_id: "001", raw_statut: "PRET_LIVRAISON" }] };
+      }
+      if (q.includes("INSERT INTO public.commande_client_workflow_checkpoint")) return { rows: [] };
+      if (q.includes("SELECT status, responsible_role")) {
+        return { rows: [{ status: "active", responsible_role: "logistique" }] };
       }
       if (q.includes("WITH shipped_by_line AS")) {
         return {
@@ -877,6 +999,10 @@ describe("/api/v1/commandes", () => {
       if (q === "BEGIN" || q === "ROLLBACK") return { rows: [] };
       if (q.includes("FROM commande_client cc")) {
         return { rows: [{ id: "123", numero: "CC-123", client_id: "001", raw_statut: "ATTENTE_PLANNING" }] };
+      }
+      if (q.includes("INSERT INTO public.commande_client_workflow_checkpoint")) return { rows: [] };
+      if (q.includes("SELECT status, responsible_role")) {
+        return { rows: [{ status: "active", responsible_role: "planning" }] };
       }
       if (q.includes("FROM public.ordres_fabrication")) {
         return { rows: [{ exists: false }] };
@@ -988,6 +1114,161 @@ describe("/api/v1/commandes", () => {
     expect(resumeStatusCall?.[1]).toEqual([123, 1, "BLOQUE", "ATTENTE_TECHNIQUE", "ok"]);
   });
 
+  it.each(["done", "skipped", "pending"])(
+    "PATCH checkpoint rejects direct progress status %s",
+    async (status) => {
+      const res = await request(app)
+        .patch("/api/v1/commandes/123/workflow/checkpoints/technical_analysis")
+        .send({ status });
+
+      expect(res.status).toBe(400);
+      expect(mocks.poolConnect).not.toHaveBeenCalled();
+    }
+  );
+
+  it("replays an identical blocked-checkpoint patch without duplicate history or notification", async () => {
+    const checkpointRow = {
+      id: "77",
+      commande_id: "123",
+      checkpoint_code: "technical_analysis",
+      label: "Analyse technique",
+      sort_order: 30,
+      status: "blocked",
+      responsible_role: "technique",
+      assigned_user_id: 12,
+      due_at: null,
+      completed_at: null,
+      completed_by: null,
+      blocked_reason: "Plan manquant",
+      notes: null,
+      action_key: "complete_technical_analysis",
+      action_label: "Valider technique",
+      metadata: { previous_status_before_block: "ATTENTE_TECHNIQUE" },
+      created_at: "2026-06-01T08:00:00.000Z",
+      updated_at: "2026-06-01T08:00:00.000Z",
+    };
+
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const query = String(sql);
+      if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK") return { rows: [] };
+      if (query.includes("FROM commande_client cc")) {
+        return { rows: [{ id: "123", numero: "CC-123", client_id: "001", raw_statut: "BLOQUE" }] };
+      }
+      if (query.includes("INSERT INTO public.commande_client_workflow_checkpoint")) return { rows: [] };
+      if (query.includes("FROM public.commande_client_workflow_checkpoint") && query.includes("FOR UPDATE")) {
+        return { rows: [checkpointRow] };
+      }
+      return { rows: [] };
+    });
+
+    const res = await request(app)
+      .patch("/api/v1/commandes/123/workflow/checkpoints/technical_analysis")
+      .send({ status: "blocked", blocked_reason: "Plan manquant" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ idempotent_replay: true, checkpoint: { status: "blocked" } });
+    expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("UPDATE public.commande_client_workflow_checkpoint"))).toBe(false);
+    expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO commande_historique"))).toBe(false);
+    expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("commande_client_event_log"))).toBe(false);
+    expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("app_notification"))).toBe(false);
+  });
+
+  it("notifies each real block episode with its own history-backed dedupe key", async () => {
+    let currentStatus = "ATTENTE_TECHNIQUE";
+    let nextHistoryId = 100;
+    let checkpoint = {
+      id: "77",
+      commande_id: "123",
+      checkpoint_code: "technical_analysis",
+      label: "Analyse technique",
+      sort_order: 30,
+      status: "active",
+      responsible_role: "technique",
+      assigned_user_id: null,
+      due_at: null,
+      completed_at: null,
+      completed_by: null,
+      blocked_reason: null,
+      notes: null,
+      action_key: "complete_technical_analysis",
+      action_label: "Valider technique",
+      metadata: {} as Record<string, unknown>,
+      created_at: "2026-06-01T08:00:00.000Z",
+      updated_at: "2026-06-01T08:00:00.000Z",
+    };
+    const notificationKeys: string[] = [];
+
+    mocks.clientQuery.mockImplementation(async (sql: unknown, values?: unknown[]) => {
+      const q = String(sql);
+      if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
+      if (q.includes("FROM commande_client cc")) {
+        return { rows: [{ id: "123", numero: "CC-123", client_id: "001", raw_statut: currentStatus }] };
+      }
+      if (q.includes("INSERT INTO public.commande_client_workflow_checkpoint")) return { rows: [] };
+      if (q.includes("FROM public.commande_client_workflow_checkpoint") && q.includes("FOR UPDATE")) {
+        return { rows: [checkpoint] };
+      }
+      if (q.includes("UPDATE public.commande_client_workflow_checkpoint") && q.includes("RETURNING")) {
+        checkpoint = {
+          ...checkpoint,
+          status: String(values?.[2]),
+          assigned_user_id: (values?.[3] as number | null) ?? checkpoint.assigned_user_id,
+          due_at: (values?.[4] as string | null) ?? checkpoint.due_at,
+          blocked_reason: (values?.[6] as string | null) ?? null,
+          notes: (values?.[7] as string | null) ?? checkpoint.notes,
+          metadata: JSON.parse(String(values?.[8] ?? "{}")),
+        };
+        return { rows: [checkpoint] };
+      }
+      if (q.includes("SELECT id::int AS id, numero, client_id")) {
+        return { rows: [{ id: 123, numero: "CC-123", client_id: "001" }] };
+      }
+      if (q.includes("SELECT nouveau_statut")) return { rows: [{ nouveau_statut: currentStatus }] };
+      if (q.includes("INSERT INTO commande_historique")) {
+        currentStatus = String(values?.[3]);
+        nextHistoryId += 1;
+        return { rows: [{ id: String(nextHistoryId) }] };
+      }
+      if (q.includes("SELECT DISTINCT u.id::int AS id")) return { rows: [{ id: 9 }] };
+      if (q.includes("FROM public.app_notifications") && q.includes("dedupe_key")) return { rows: [] };
+      if (q.includes("INSERT INTO public.app_notifications")) {
+        notificationKeys.push(String(values?.[8]));
+        return {
+          rows: [{
+            id: String(notificationKeys.length),
+            user_id: 9,
+            kind: values?.[1],
+            title: values?.[2],
+            message: values?.[3],
+            severity: values?.[4],
+            action_url: values?.[5],
+            action_label: values?.[6],
+            payload: {},
+            created_at: "2026-08-04T08:00:00.000Z",
+            read_at: null,
+          }],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const blockOne = await request(app)
+      .patch("/api/v1/commandes/123/workflow/checkpoints/technical_analysis")
+      .send({ status: "blocked", blocked_reason: "Premier blocage" });
+    const resume = await request(app)
+      .patch("/api/v1/commandes/123/workflow/checkpoints/technical_analysis")
+      .send({ status: "active" });
+    const blockTwo = await request(app)
+      .patch("/api/v1/commandes/123/workflow/checkpoints/technical_analysis")
+      .send({ status: "blocked", blocked_reason: "Second blocage" });
+
+    expect([blockOne.status, resume.status, blockTwo.status]).toEqual([200, 200, 200]);
+    expect(notificationKeys).toEqual([
+      "commande:123:checkpoint:technical_analysis:blocked:101",
+      "commande:123:checkpoint:technical_analysis:blocked:103",
+    ]);
+  });
+
   it("POST /api/v1/commandes/:id/duplicate returns new id", async () => {
     const ARTICLE_ID = "11111111-1111-1111-1111-111111111111";
     const PIECE_ID = "22222222-2222-2222-2222-222222222222";
@@ -1087,6 +1368,19 @@ describe("/api/v1/commandes", () => {
       if (q.includes("FROM commande_client cc") && q.includes("LEFT JOIN LATERAL")) {
         return { rows: [{ id: "123", numero: "CC-123", client_id: "001", raw_statut: "ATTENTE_OF" }] };
       }
+      if (q.includes("FROM public.commande_client cc") && q.includes("dest_stock_magasin_id")) {
+        return {
+          rows: [{
+            id: 123,
+            numero: "CC-123",
+            client_id: "001",
+            order_type: "FERME",
+            raw_statut: "ATTENTE_OF",
+            dest_stock_magasin_id: null,
+            dest_stock_emplacement_id: null,
+          }],
+        };
+      }
       if (q.includes("INSERT INTO public.commande_client_workflow_checkpoint")) return { rows: [] };
       if (q.includes("FROM public.commande_client_workflow_checkpoint") && q.includes("checkpoint_code IN ('stock_check', 'of_generation')")) {
         return {
@@ -1099,6 +1393,9 @@ describe("/api/v1/commandes", () => {
       if (q.includes("SELECT EXISTS(SELECT 1 FROM public.commande_to_affaire")) return { rows: [{ exists: fullStockReplay }] };
       if (q.includes("SELECT id::int AS id, numero, client_id") && q.includes("FROM commande_client")) {
         return { rows: [{ id: 123, numero: "CC-123", client_id: "001" }] };
+      }
+      if (q.includes("SELECT nouveau_statut") && q.includes("FROM commande_historique")) {
+        return { rows: [{ nouveau_statut: "ATTENTE_OF" }] };
       }
       if (q.includes("SELECT id, numero, client_id FROM commande_client")) {
         return { rows: [{ id: 123, numero: "CC-123", client_id: "001" }] };
@@ -1343,6 +1640,9 @@ describe("/api/v1/commandes", () => {
       if (q.includes("SELECT id::int AS id, numero, client_id") && q.includes("FROM commande_client")) {
         return { rows: [{ id: 123, numero: "CC-123", client_id: "001" }] };
       }
+      if (q.includes("SELECT nouveau_statut") && q.includes("FROM commande_historique")) {
+        return { rows: [{ nouveau_statut: "ATTENTE_PLANNING" }] };
+      }
 
       if (q.includes("FROM commande_client") && q.includes("FOR UPDATE") && q.includes("order_type")) {
         return {
@@ -1531,6 +1831,9 @@ describe("/api/v1/commandes", () => {
       if (q.includes("SELECT EXISTS(SELECT 1 FROM public.commande_to_affaire")) return { rows: [{ exists: false }] };
       if (q.includes("SELECT id::int AS id, numero, client_id") && q.includes("FROM commande_client")) {
         return { rows: [{ id: 123, numero: "CC-123", client_id: "001" }] };
+      }
+      if (q.includes("SELECT nouveau_statut") && q.includes("FROM commande_historique")) {
+        return { rows: [{ nouveau_statut: "ATTENTE_OF" }] };
       }
 
       if (q.includes("FROM commande_client") && q.includes("FOR UPDATE") && q.includes("order_type")) {
@@ -1848,7 +2151,9 @@ describe("/api/v1/commandes", () => {
       if (q.includes("SELECT id::int AS id, numero, client_id") && q.includes("FROM commande_client")) {
         return { rows: [{ id: 123, numero: "CI-123", client_id: "001" }] };
       }
-      if (q.includes("SELECT nouveau_statut") && q.includes("FROM commande_historique")) return { rows: [] };
+      if (q.includes("SELECT nouveau_statut") && q.includes("FROM commande_historique")) {
+        return { rows: [{ nouveau_statut: "ATTENTE_TECHNIQUE" }] };
+      }
       if (q.includes("INSERT INTO commande_historique") && q.includes("RETURNING id::text AS id")) {
         return { rows: [{ id: "1" }] };
       }

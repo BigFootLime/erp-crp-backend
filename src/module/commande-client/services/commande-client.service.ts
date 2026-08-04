@@ -19,7 +19,6 @@ import {
   repoRunCommandeWorkflowAction,
   repoUpdateCommandeWorkflowCheckpoint,
   repoUpdateCommande,
-  repoUpdateCommandeStatus,
 } from "../repository/commande-client.repository";
 
 import {
@@ -69,14 +68,16 @@ export const listCommandesSVC = (filters: ListCommandesQueryDTO) => repoListComm
 
 export const getCommandeSVC = (id: string, includes: Set<string>) => repoGetCommande(id, includes);
 
-export const getCommandeWorkflowSVC = (id: string) => repoGetCommandeWorkflow(id);
+export const getCommandeWorkflowSVC = (id: string, userId: number, userRole: string | null | undefined) =>
+  repoGetCommandeWorkflow(id, userId, userRole);
 
 export const updateCommandeWorkflowCheckpointSVC = (
   id: string,
   checkpointCode: string,
   body: UpdateCommandeWorkflowCheckpointBodyDTO,
-  userId: number | null
-) => repoUpdateCommandeWorkflowCheckpoint(id, checkpointCode, body, userId);
+  userId: number | null,
+  userRole: string | null
+) => repoUpdateCommandeWorkflowCheckpoint(id, checkpointCode, body, userId, userRole);
 
 export const runCommandeWorkflowActionSVC = (
   id: string,
@@ -88,14 +89,8 @@ export const runCommandeWorkflowActionSVC = (
 export const getCommandeDocumentFileMetaSVC = (commandeId: string, docId: string) =>
   repoGetCommandeDocumentFileMeta(commandeId, docId);
 
-export const deleteCommandeSVC = (id: string) => repoDeleteCommande(id);
-
-export const updateCommandeStatusSVC = (
-  id: string,
-  nouveau_statut: string,
-  commentaire: string | null,
-  userId: number | null
-) => repoUpdateCommandeStatus(id, nouveau_statut, commentaire, userId);
+export const deleteCommandeSVC = (id: string, userId: number, userRole: string | null) =>
+  repoDeleteCommande(id, { user_id: userId, user_role: userRole });
 
 export const analyzeCommandeStockSVC = (id: string, audit: CommandesAuditContext) => repoAnalyzeCommandeStock(id, audit);
 

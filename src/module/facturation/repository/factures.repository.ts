@@ -555,6 +555,18 @@ async function insertFactureLines(client: PoolClient, factureId: number, lignes:
   );
 }
 
+async function assertLegacyInvoiceCommandeBillable(client: PoolClient, commandeId: number): Promise<void> {
+  const commande = await client.query<{ order_type: string | null }>(
+    `SELECT order_type FROM public.commande_client WHERE id = $1::bigint FOR SHARE`,
+    [commandeId]
+  );
+  const row = commande.rows[0];
+  if (!row) throw new HttpError(404, "COMMANDE_NOT_FOUND", "Commande introuvable.");
+  if (String(row.order_type ?? "").toUpperCase() === "INTERNE") {
+    throw new HttpError(409, "INTERNAL_ORDER_NOT_BILLABLE", "Une commande interne ne peut pas être facturée.");
+  }
+}
+
 export async function repoCreateFacture(input: CreateFactureBodyDTO) {
   if (input.numero !== undefined) {
     throw new HttpError(400, "FACTURE_NUMERO_SERVER_MANAGED", "Le numéro légal de facture est attribué automatiquement.");
@@ -562,6 +574,10 @@ export async function repoCreateFacture(input: CreateFactureBodyDTO) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+
+    if (input.commande_id !== undefined && input.commande_id !== null) {
+      await assertLegacyInvoiceCommandeBillable(client, input.commande_id);
+    }
 
     const seq = await client.query<{ id: string }>(`SELECT nextval('public.facture_id_seq')::bigint::text AS id`);
     const idRaw = seq.rows[0]?.id;
@@ -642,9 +658,14 @@ export async function repoUpdateFacture(id: number, input: UpdateFactureBodyDTO)
       id: string;
       remise_globale: number;
       statut: string;
+      commande_id: number | null;
     }>(
       `
-      SELECT id::text AS id, remise_globale::float8 AS remise_globale, statut
+      SELECT
+        id::text AS id,
+        remise_globale::float8 AS remise_globale,
+        statut,
+        commande_id::int AS commande_id
       FROM facture
       WHERE id = $1
       FOR UPDATE
@@ -656,6 +677,13 @@ export async function repoUpdateFacture(id: number, input: UpdateFactureBodyDTO)
       await client.query("ROLLBACK");
       return null;
     }
+    // Finance uses one global order: invoice first, then its linked command.
+    // This matches issue/validation flows and prevents a PATCH/issue deadlock.
+    const targetCommandeId = input.commande_id !== undefined ? input.commande_id : base.commande_id;
+    if (targetCommandeId !== null && targetCommandeId !== undefined) {
+      await assertLegacyInvoiceCommandeBillable(client, targetCommandeId);
+    }
+
     if (!["DRAFT", "brouillon"].includes(base.statut)) {
       throw new HttpError(
         409,

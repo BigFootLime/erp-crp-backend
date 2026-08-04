@@ -35,7 +35,7 @@ vi.mock("../utils/checkNetworkDrive", () => ({
 
 vi.mock("../module/auth/middlewares/auth.middleware", () => ({
   authenticateToken: (req: { user?: { id: number; role: string } }, _res: unknown, next: () => void) => {
-    req.user = { id: 1, role: "Atelier" };
+    req.user = { id: 1, role: "Production" };
     next();
   },
   authorizeRole:
@@ -309,6 +309,9 @@ describe("/api/v1/planning", () => {
           ],
         };
       }
+      if (q.includes("checkpoint_code = 'planning_validation'")) {
+        return { rows: [{ status: "active", responsible_role: "planning", assigned_user_id: null }] };
+      }
       if (q.includes("SELECT commande_id::text AS commande_id FROM public.ordres_fabrication")) {
         return { rows: [{ commande_id: null }] };
       }
@@ -487,11 +490,17 @@ describe("/api/v1/planning", () => {
           ],
         };
       }
+      if (q.includes("SELECT id::int AS id FROM public.commande_client") && q.includes("FOR UPDATE")) {
+        return { rows: [{ id: 123 }] };
+      }
+      if (q.includes("checkpoint_code = 'planning_validation'")) {
+        return { rows: [{ status: "active", responsible_role: "planning", assigned_user_id: null }] };
+      }
       if (q.includes("SELECT id::int AS id, numero, client_id") && q.includes("FROM commande_client")) {
         return { rows: [{ id: 123, numero: "CC-123", client_id: "001" }] };
       }
       if (q.includes("FROM commande_historique") && q.includes("LIMIT 1")) {
-        return { rows: [{ nouveau_statut: "ENREGISTREE" }] };
+        return { rows: [{ nouveau_statut: "ATTENTE_PLANNING" }] };
       }
       if (q.includes("INSERT INTO commande_historique")) {
         return { rows: [{ id: "11" }] };
@@ -546,7 +555,7 @@ describe("/api/v1/planning", () => {
 
     expect(res.status).toBe(201);
     expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO commande_historique"))).toBe(true);
-    expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO public.app_notifications"))).toBe(true);
+    expect(mocks.clientQuery.mock.calls.filter((call) => String(call[0]).includes("INSERT INTO public.app_notifications"))).toHaveLength(1);
   });
 
   it("POST /api/v1/planning/events rejects a blocked machine", async () => {

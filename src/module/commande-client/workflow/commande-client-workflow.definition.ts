@@ -20,6 +20,26 @@ export const COMMANDE_WORKFLOW_STATUSES = [
 
 export type CommandeWorkflowStatus = (typeof COMMANDE_WORKFLOW_STATUSES)[number];
 
+export const COMMANDE_WORKFLOW_STATUS_LABELS: Record<CommandeWorkflowStatus, string> = {
+  BROUILLON: "Brouillon",
+  EN_ANALYSE: "En analyse",
+  ATTENTE_TECHNIQUE: "Attente technique",
+  ATTENTE_STOCK: "Attente contrôle stock",
+  ATTENTE_OF: "Attente lancement",
+  ATTENTE_PLANNING: "Attente planning",
+  PLANNING_VALIDE: "Planning validé",
+  AR_PRET: "AR prêt",
+  AR_ENVOYE: "AR envoyé",
+  EN_PRODUCTION: "En production",
+  PRODUCTION_TERMINEE: "Production terminée",
+  CONTROLE_QUALITE: "Contrôle qualité",
+  PRET_LIVRAISON: "Prêt livraison",
+  LIVRE: "Livré",
+  FACTURE: "Facturé",
+  ARCHIVE: "Archivé",
+  BLOQUE: "Bloqué",
+};
+
 export const COMMANDE_WORKFLOW_STATUS_ORDER: Record<CommandeWorkflowStatus, number> = {
   BROUILLON: 0,
   EN_ANALYSE: 1,
@@ -40,12 +60,114 @@ export const COMMANDE_WORKFLOW_STATUS_ORDER: Record<CommandeWorkflowStatus, numb
   BLOQUE: 99,
 };
 
-const LEGACY_STATUS_ALIASES: Record<string, CommandeWorkflowStatus> = {
+export const COMMANDE_WORKFLOW_LEGACY_STATUS_ALIASES: Record<string, CommandeWorkflowStatus> = {
   ENREGISTREE: "EN_ANALYSE",
   PLANIFIEE: "PLANNING_VALIDE",
   AR_ENVOYEE: "AR_ENVOYE",
   LIVREE: "LIVRE",
 };
+
+export const COMMANDE_WORKFLOW_TRANSITION_CAUSES = [
+  "checkpoint",
+  "customer_order_launch",
+  "internal_order_launch",
+  "internal_planning_validation",
+  "internal_production_launch",
+  "internal_archive",
+  "planning_sync",
+  "ar_send",
+  "shipment_sync",
+  "invoice_sync",
+  "block",
+  "resume",
+] as const;
+
+export type CommandeWorkflowTransitionCause = (typeof COMMANDE_WORKFLOW_TRANSITION_CAUSES)[number];
+
+export type CommandeWorkflowTransitionRule = {
+  from: CommandeWorkflowStatus;
+  to: CommandeWorkflowStatus;
+  cause: CommandeWorkflowTransitionCause;
+};
+
+const CHECKPOINT_TRANSITIONS: CommandeWorkflowTransitionRule[] = [
+  { from: "BROUILLON", to: "EN_ANALYSE", cause: "checkpoint" },
+  { from: "EN_ANALYSE", to: "ATTENTE_TECHNIQUE", cause: "checkpoint" },
+  { from: "ATTENTE_TECHNIQUE", to: "ATTENTE_STOCK", cause: "checkpoint" },
+  { from: "ATTENTE_STOCK", to: "ATTENTE_OF", cause: "checkpoint" },
+  { from: "ATTENTE_PLANNING", to: "PLANNING_VALIDE", cause: "checkpoint" },
+  { from: "PLANNING_VALIDE", to: "AR_PRET", cause: "checkpoint" },
+  { from: "AR_ENVOYE", to: "EN_PRODUCTION", cause: "checkpoint" },
+  { from: "EN_PRODUCTION", to: "PRODUCTION_TERMINEE", cause: "checkpoint" },
+  // The quality checkpoint owns the release decision. CONTROLE_QUALITE remains
+  // readable for historical/integration data, while the UI action may release
+  // directly from PRODUCTION_TERMINEE once the quality artifact is complete.
+  { from: "PRODUCTION_TERMINEE", to: "PRET_LIVRAISON", cause: "checkpoint" },
+  { from: "CONTROLE_QUALITE", to: "PRET_LIVRAISON", cause: "checkpoint" },
+  { from: "PRET_LIVRAISON", to: "LIVRE", cause: "checkpoint" },
+  { from: "LIVRE", to: "FACTURE", cause: "checkpoint" },
+  { from: "FACTURE", to: "ARCHIVE", cause: "checkpoint" },
+];
+
+export const COMMANDE_WORKFLOW_BLOCKABLE_STATUSES = COMMANDE_WORKFLOW_STATUSES.filter(
+  (status): status is Exclude<CommandeWorkflowStatus, "ARCHIVE" | "BLOQUE"> => status !== "ARCHIVE" && status !== "BLOQUE"
+);
+
+export const COMMANDE_WORKFLOW_TRANSITIONS: readonly CommandeWorkflowTransitionRule[] = [
+  ...CHECKPOINT_TRANSITIONS,
+  { from: "ATTENTE_OF", to: "ATTENTE_PLANNING", cause: "customer_order_launch" },
+  { from: "ATTENTE_OF", to: "PRET_LIVRAISON", cause: "customer_order_launch" },
+  // A legacy invalid planning state can be recovered by reopening the launch
+  // checkpoint while its append-only status history remains ATTENTE_PLANNING.
+  { from: "ATTENTE_PLANNING", to: "PRET_LIVRAISON", cause: "customer_order_launch" },
+  { from: "ATTENTE_TECHNIQUE", to: "ATTENTE_PLANNING", cause: "internal_order_launch" },
+  // Commands saved by the former guided flow may already have completed one
+  // or both customer-only preparation checkpoints. Keep their launch
+  // recoverable under the same INTERNE-only cause.
+  { from: "ATTENTE_STOCK", to: "ATTENTE_PLANNING", cause: "internal_order_launch" },
+  { from: "ATTENTE_OF", to: "ATTENTE_PLANNING", cause: "internal_order_launch" },
+  { from: "ATTENTE_PLANNING", to: "PLANNING_VALIDE", cause: "internal_planning_validation" },
+  { from: "PLANNING_VALIDE", to: "EN_PRODUCTION", cause: "internal_production_launch" },
+  { from: "LIVRE", to: "ARCHIVE", cause: "internal_archive" },
+  { from: "ATTENTE_PLANNING", to: "PLANNING_VALIDE", cause: "planning_sync" },
+  { from: "AR_PRET", to: "AR_ENVOYE", cause: "ar_send" },
+  { from: "PRET_LIVRAISON", to: "LIVRE", cause: "shipment_sync" },
+  { from: "LIVRE", to: "FACTURE", cause: "invoice_sync" },
+];
+
+export type CommandeWorkflowTransitionContext = {
+  resume_status?: CommandeWorkflowStatus | null;
+};
+
+export function isCanonicalCommandeWorkflowStatus(value: unknown): value is CommandeWorkflowStatus {
+  return typeof value === "string" && (COMMANDE_WORKFLOW_STATUSES as readonly string[]).includes(value);
+}
+
+export function canCommandeWorkflowTransition(
+  from: CommandeWorkflowStatus,
+  to: CommandeWorkflowStatus,
+  cause: CommandeWorkflowTransitionCause,
+  context: CommandeWorkflowTransitionContext = {}
+): boolean {
+  if (from === to) return true;
+  if (cause === "block") {
+    return to === "BLOQUE" && (COMMANDE_WORKFLOW_BLOCKABLE_STATUSES as readonly string[]).includes(from);
+  }
+  if (cause === "resume") {
+    return from === "BLOQUE" && context.resume_status === to;
+  }
+  return COMMANDE_WORKFLOW_TRANSITIONS.some(
+    (transition) => transition.from === from && transition.to === to && transition.cause === cause
+  );
+}
+
+export function getAllowedCommandeWorkflowTransitions(from: CommandeWorkflowStatus): readonly CommandeWorkflowStatus[] {
+  return [...new Set(
+    COMMANDE_WORKFLOW_TRANSITIONS
+      .filter((transition) => transition.from === from && transition.cause === "checkpoint")
+      .map((transition) => transition.to)
+  )];
+}
 
 export function normalizeCommandeWorkflowStatus(value: unknown): CommandeWorkflowStatus | null {
   if (typeof value !== "string") return null;
@@ -53,7 +175,7 @@ export function normalizeCommandeWorkflowStatus(value: unknown): CommandeWorkflo
   if ((COMMANDE_WORKFLOW_STATUSES as readonly string[]).includes(normalized)) {
     return normalized as CommandeWorkflowStatus;
   }
-  return LEGACY_STATUS_ALIASES[normalized] ?? null;
+  return COMMANDE_WORKFLOW_LEGACY_STATUS_ALIASES[normalized] ?? null;
 }
 
 export const COMMANDE_CHECKPOINT_STATUSES = ["pending", "active", "blocked", "done", "skipped"] as const;
@@ -248,3 +370,44 @@ export function getCommandeWorkflowAction(key: string) {
   const normalized = key.trim();
   return COMMANDE_WORKFLOW_ACTIONS.find((action) => action.key === normalized) ?? null;
 }
+
+export const COMMANDE_WORKFLOW_CONTRACT = {
+  schema_version: "1.0.0",
+  authority: "erp-crp-backend",
+  statuses: COMMANDE_WORKFLOW_STATUSES,
+  status_labels: COMMANDE_WORKFLOW_STATUS_LABELS,
+  status_order: COMMANDE_WORKFLOW_STATUS_ORDER,
+  checkpoint_statuses: COMMANDE_CHECKPOINT_STATUSES,
+  legacy_status_aliases: COMMANDE_WORKFLOW_LEGACY_STATUS_ALIASES,
+  checkpoint_transitions: Object.fromEntries(
+    COMMANDE_WORKFLOW_STATUSES.map((status) => [status, getAllowedCommandeWorkflowTransitions(status)])
+  ) as Record<CommandeWorkflowStatus, readonly CommandeWorkflowStatus[]>,
+  transition_rules: COMMANDE_WORKFLOW_TRANSITIONS,
+  transition_policies: {
+    block: {
+      from: "active checkpoint current status",
+      to: "BLOQUE",
+    },
+    resume: {
+      from: "BLOQUE",
+      to: "checkpoint metadata.previous_status_before_block",
+    },
+    system_replays: {
+      shipment_sync: ["LIVRE", "FACTURE", "ARCHIVE"],
+      invoice_sync: ["FACTURE", "ARCHIVE"],
+      planning_sync: [
+        "PLANNING_VALIDE",
+        "AR_PRET",
+        "AR_ENVOYE",
+        "EN_PRODUCTION",
+        "PRODUCTION_TERMINEE",
+        "CONTROLE_QUALITE",
+        "PRET_LIVRAISON",
+        "LIVRE",
+        "FACTURE",
+        "ARCHIVE",
+      ],
+    },
+  },
+  checkpoints: COMMANDE_WORKFLOW_CHECKPOINTS,
+} as const;

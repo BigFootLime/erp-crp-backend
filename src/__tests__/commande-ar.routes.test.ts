@@ -1,6 +1,7 @@
 import request from "supertest";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EventEmitter } from "events";
+import { HttpError } from "../utils/httpError";
 
 const mocks = vi.hoisted(() => ({
   poolQuery: vi.fn(),
@@ -36,8 +37,16 @@ vi.mock("../utils/checkNetworkDrive", () => ({
 }));
 
 vi.mock("../module/auth/middlewares/auth.middleware", () => ({
-  authenticateToken: (req: { user?: { id: number; role: string } }, _res: unknown, next: () => void) => {
-    req.user = { id: 7, role: "Secretaire" };
+  authenticateToken: (
+    req: { user?: { id: number; role: string }; headers?: Record<string, string | string[] | undefined> },
+    _res: unknown,
+    next: () => void
+  ) => {
+    const requestedRole = req.headers?.["x-test-role"];
+    req.user = {
+      id: 7,
+      role: typeof requestedRole === "string" ? decodeURIComponent(requestedRole) : "Secretaire",
+    };
     next();
   },
   authorizeRole:
@@ -80,6 +89,48 @@ beforeEach(() => {
 });
 
 describe("/api/v1/commandes/:id/ar", () => {
+  it.each(["Employee", "Directeur Technique", "Responsable Qualité"])(
+    "delegates AR authorization for the exact identity %s to the checkpoint policy",
+    async (role) => {
+      const forbidden = new HttpError(403, "COMMAND_CHECKPOINT_FORBIDDEN", "forbidden");
+      mocks.generateAr.mockRejectedValueOnce(forbidden);
+      mocks.sendAr.mockRejectedValueOnce(forbidden);
+      const generate = await request(app)
+        .post("/api/v1/commandes/123/ar/generate")
+        .set("Authorization", "Bearer fake")
+        .set("x-test-role", encodeURIComponent(role))
+        .send({});
+
+      const send = await request(app)
+        .post("/api/v1/commandes/123/ar/send")
+        .set("Authorization", "Bearer fake")
+        .set("x-test-role", encodeURIComponent(role))
+        .send({
+          ar_id: "11111111-1111-1111-1111-111111111111",
+          recipient_emails: ["client@example.com"],
+          recipient_contact_ids: [],
+        });
+
+      expect(generate.status).toBe(403);
+      expect(send.status).toBe(403);
+      expect(mocks.generateAr).toHaveBeenCalledWith({ commande_id: 123, user_id: 7, user_role: role });
+      expect(mocks.sendAr).toHaveBeenCalledWith(expect.objectContaining({ user_id: 7, user_role: role }));
+    }
+  );
+
+  it("accepts an authorized role from the central multi-role representation", async () => {
+    mocks.generateAr.mockResolvedValue({ commande_id: 123, status: "GENERATED" });
+
+    const res = await request(app)
+      .post("/api/v1/commandes/123/ar/generate")
+      .set("Authorization", "Bearer fake")
+      .set("x-test-role", "Employee | Secretaire")
+      .send({});
+
+    expect(res.status).toBe(201);
+    expect(mocks.generateAr).toHaveBeenCalledWith({ commande_id: 123, user_id: 7, user_role: "Employee | Secretaire" });
+  });
+
   it("POST /generate returns generated AR draft", async () => {
     mocks.generateAr.mockResolvedValue({
       ar_id: "11111111-1111-1111-1111-111111111111",
@@ -102,7 +153,7 @@ describe("/api/v1/commandes/:id/ar", () => {
 
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({ commande_id: 123, status: "GENERATED" });
-    expect(mocks.generateAr).toHaveBeenCalledWith({ commande_id: 123, user_id: 7 });
+    expect(mocks.generateAr).toHaveBeenCalledWith({ commande_id: 123, user_id: 7, user_role: "Secretaire" });
   });
 
   it("POST /send returns AR send result", async () => {
@@ -110,7 +161,7 @@ describe("/api/v1/commandes/:id/ar", () => {
       ar_id: "11111111-1111-1111-1111-111111111111",
       commande_id: 123,
       document_id: "22222222-2222-2222-2222-222222222222",
-      status: "AR_ENVOYEE",
+      status: "AR_ENVOYE",
       sent_at: "2026-03-12T09:15:00.000Z",
       recipient_emails: ["client@example.com"],
       email_provider_id: "resend_123",
@@ -126,10 +177,11 @@ describe("/api/v1/commandes/:id/ar", () => {
       });
 
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ status: "AR_ENVOYEE", commande_id: 123 });
+    expect(res.body).toMatchObject({ status: "AR_ENVOYE", commande_id: 123 });
     expect(mocks.sendAr).toHaveBeenCalledWith({
       commande_id: 123,
       user_id: 7,
+      user_role: "Secretaire",
       body: {
         ar_id: "11111111-1111-1111-1111-111111111111",
         recipient_emails: ["client@example.com"],
