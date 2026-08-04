@@ -23,7 +23,6 @@ import {
   validateLivraisonDocuments,
 } from "../services/livraisons-document-validation"
 import { repoFindDocumentFilePath, repoGetDocumentName, repoIsLivraisonDocumentLinked } from "../repository/livraisons.repository"
-import { emitEntityChanged } from "../../../shared/realtime/realtime.service"
 import { getDocumentStoragePath } from "../../../utils/cerpStorage"
 import { sendSecureStoredFile, setSecureDownloadHeaders } from "../../../shared/uploads/secure-download"
 
@@ -61,25 +60,6 @@ function routeParam(req: Request, name: string): string {
   throw new HttpError(400, "INVALID_ROUTE_PARAM", `${name} must be a string`)
 }
 
-function getUserRef(req: Express.Request): { id: number; name: string } {
-  const id = getUserId(req)
-  const name = typeof req.user?.username === "string" && req.user.username.trim() ? req.user.username.trim() : String(id)
-  return { id, name }
-}
-
-function emitLivraisonChanged(req: Express.Request, params: { entityId: string; action: "created" | "updated" | "deleted" | "status_changed" }) {
-  const entityId = params.entityId
-  emitEntityChanged({
-    entityType: "BON_LIVRAISON",
-    entityId,
-    action: params.action,
-    module: "livraisons",
-    at: new Date().toISOString(),
-    by: getUserRef(req),
-    invalidateKeys: ["livraisons:list", `livraisons:detail:${entityId}`],
-  })
-}
-
 export const listLivraisons: RequestHandler = async (req, res, next) => {
   try {
     getUserId(req)
@@ -112,7 +92,6 @@ export const createLivraison: RequestHandler = async (req, res, next) => {
     const dto = createLivraisonBodySchema.parse(req.body)
     const out = await service.svcCreateLivraison(dto, userId)
 
-    emitLivraisonChanged(req, { entityId: out.id, action: "created" })
     res.status(201).json(out)
   } catch (e) {
     next(e)
@@ -125,7 +104,6 @@ export const createLivraisonFromCommande: RequestHandler = async (req, res, next
     const { commandeId } = fromCommandeParamsSchema.parse(req.params)
     const out = await service.svcCreateLivraisonFromCommande(commandeId, userId)
 
-    emitLivraisonChanged(req, { entityId: out.id, action: "created" })
     res.status(201).json(out)
   } catch (e) {
     next(e)
@@ -147,7 +125,6 @@ export const updateLivraison: RequestHandler = async (req, res, next) => {
       return
     }
 
-    emitLivraisonChanged(req, { entityId: id, action: "updated" })
     res.status(200).json(out)
   } catch (e) {
     next(e)
@@ -161,7 +138,6 @@ export const addLivraisonLine: RequestHandler = async (req, res, next) => {
     const dto = createLivraisonLineBodySchema.parse(req.body)
     const out = await service.svcAddLivraisonLine(id, dto, userId)
 
-    emitLivraisonChanged(req, { entityId: id, action: "updated" })
     res.status(201).json(out)
   } catch (e) {
     next(e)
@@ -183,7 +159,6 @@ export const updateLivraisonLine: RequestHandler = async (req, res, next) => {
       return
     }
 
-    emitLivraisonChanged(req, { entityId: id, action: "updated" })
     res.status(200).json(out)
   } catch (e) {
     next(e)
@@ -200,7 +175,6 @@ export const deleteLivraisonLine: RequestHandler = async (req, res, next) => {
       return
     }
 
-    emitLivraisonChanged(req, { entityId: id, action: "updated" })
     res.status(204).send()
   } catch (e) {
     next(e)
@@ -214,7 +188,6 @@ export const addLivraisonLineAllocation: RequestHandler = async (req, res, next)
     const dto = createLivraisonAllocationBodySchema.parse(req.body)
     const out = await service.svcCreateLivraisonLineAllocation(id, lineId, dto, userId)
 
-    emitLivraisonChanged(req, { entityId: id, action: "updated" })
     res.status(201).json(out)
   } catch (e) {
     next(e)
@@ -231,7 +204,6 @@ export const deleteLivraisonLineAllocation: RequestHandler = async (req, res, ne
       return
     }
 
-    emitLivraisonChanged(req, { entityId: id, action: "updated" })
     res.status(204).send()
   } catch (e) {
     next(e)
@@ -245,7 +217,6 @@ export const updateLivraisonStatus: RequestHandler = async (req, res, next) => {
     const body = livraisonStatusBodySchema.parse(req.body)
     const out = await service.svcUpdateLivraisonStatus(id, body, userId)
 
-    emitLivraisonChanged(req, { entityId: id, action: "status_changed" })
     res.status(200).json(out)
   } catch (e) {
     next(e)
@@ -274,7 +245,6 @@ export const shipLivraison: RequestHandler = async (req, res, next) => {
       userId,
       getRequiredIdempotencyKey(req)
     )
-    emitLivraisonChanged(req, { entityId: id, action: "status_changed" })
     res.status(200).json(out)
   } catch (e) {
     next(e)
@@ -287,7 +257,6 @@ export const createLivraisonProof: RequestHandler = async (req, res, next) => {
     const { id } = livraisonIdParamsSchema.parse(req.params)
     const body = livraisonProofBodySchema.parse(req.body)
     const out = await service.svcCreateLivraisonProof(id, body, userId)
-    emitLivraisonChanged(req, { entityId: id, action: "updated" })
     res.status(201).json(out)
   } catch (e) {
     next(e)
@@ -322,7 +291,6 @@ export const uploadLivraisonDocuments: RequestHandler = async (req, res, next) =
       userId,
     })
 
-    emitLivraisonChanged(req, { entityId: id, action: "updated" })
     res.status(201).json({ documents: out })
   } catch (e) {
     try {
@@ -351,7 +319,6 @@ export const deleteLivraisonDocument: RequestHandler = async (req, res, next) =>
       return
     }
 
-    emitLivraisonChanged(req, { entityId: id, action: "updated" })
     res.status(204).send()
   } catch (e) {
     next(e)
@@ -401,7 +368,6 @@ export const generateLivraisonPdf: RequestHandler = async (req, res, next) => {
       getRequiredIdempotencyKey(req)
     )
 
-    emitLivraisonChanged(req, { entityId: id, action: "updated" })
     res.status(out.idempotent_replay ? 200 : 201).json(out)
   } catch (e) {
     next(e)

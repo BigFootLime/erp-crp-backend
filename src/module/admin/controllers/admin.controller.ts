@@ -117,12 +117,10 @@ export const resetUserPasswordAdmin: RequestHandler = asyncHandler(async (req, r
     params: req.params,
     body: req.body,
   });
-
   await adminService.resetUserPasswordByAdmin({
     userId: dto.params.id,
     token: dto.body.token,
     newPassword: dto.body.newPassword,
   });
-
   res.status(204).end();
 });

@@ -32,6 +32,12 @@ vi.mock("../utils/checkNetworkDrive", () => ({
   checkNetworkDrive: vi.fn(() => Promise.resolve()),
 }));
 
+vi.mock("../shared/realtime/realtime-outbox.service", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../shared/realtime/realtime-outbox.service")>(),
+  enqueueAuditNew: vi.fn().mockResolvedValue("audit-outbox-event"),
+  enqueueEntityChanged: vi.fn().mockResolvedValue("entity-outbox-event"),
+}));
+
 vi.mock("../module/auth/middlewares/auth.middleware", () => ({
   authenticateToken: (
     req: { user?: { id: number; role: string }; headers?: Record<string, string | string[] | undefined> },

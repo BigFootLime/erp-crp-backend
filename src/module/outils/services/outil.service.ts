@@ -1,8 +1,11 @@
+import crypto from "node:crypto"
 import fs from "node:fs/promises"
 
 import type { PoolClient } from "pg"
 
 import db from "../../../config/database"
+import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction"
+import { enqueueEntityChanged } from "../../../shared/realtime/realtime-outbox.service"
 import { buildPublicImageUrl, deleteStoredImageFile, normalizeStoredImagePath } from "../../../utils/imageStorage"
 import { HttpError } from "../../../utils/httpError"
 import {
@@ -270,6 +273,16 @@ export const outilService = {
           plan: promoted.plan?.storedPath,
           image: promoted.image?.storedPath,
         })
+        await enqueueEntityChanged(client, {
+          entityType: "OUTIL",
+          entityId: String(id_outil),
+          action: "created",
+          module: "outillage",
+          at: new Date().toISOString(),
+          invalidateKeys: ["outils", "outils-low-stock", "outils-summary"],
+        }, {
+          deduplicationKey: `outillage:outil:${id_outil}:created`,
+        })
         return { id_outil }
       },
       reconcile: async ({ id_outil }) => {
@@ -288,6 +301,9 @@ export const outilService = {
     files: OutillageToolUploadFiles = {}
   ) {
     assertPositiveInt(id_outil, "ID outil")
+    // One id per requested mutation: retries inside the commit verifier retain
+    // this key, while a later A -> B -> A update receives a distinct event.
+    const realtimeMutationId = crypto.randomUUID()
 
     const client = await db.connect()
     let expected: ExpectedOutillageUpload[] = []
@@ -309,6 +325,16 @@ export const outilService = {
           plan: promoted.plan?.storedPath,
           image: promoted.image?.storedPath,
         })
+        await enqueueEntityChanged(client, {
+          entityType: "OUTIL",
+          entityId: String(id_outil),
+          action: "updated",
+          module: "outillage",
+          at: new Date().toISOString(),
+          invalidateKeys: ["outils", "outils-low-stock", "outils-summary"],
+        }, {
+          deduplicationKey: `outillage:outil:${id_outil}:updated:${realtimeMutationId}`,
+        })
         return { id_outil }
       },
       reconcile: async () => {
@@ -325,24 +351,28 @@ export const outilService = {
     assertPositiveInt(id_outil, "ID outil")
 
     const client = await db.connect()
-    try {
-      await client.query("BEGIN")
-      const deletedAssets = await outilRepository.delete(id_outil, client)
-      await client.query("COMMIT")
-
-      await Promise.all([
-        deleteStoredImageFile(deletedAssets.image),
-        deleteStoredImageFile(deletedAssets.plan),
-        deleteStoredImageFile(deletedAssets.esquisse),
-      ])
-
-      return { success: true }
-    } catch (error) {
-      await client.query("ROLLBACK")
-      throw error
-    } finally {
-      client.release()
-    }
+    const deletedAssets = await withRealtimeOutboxTransaction(client, async () => {
+      const assets = await outilRepository.delete(id_outil, client)
+      await enqueueEntityChanged(client, {
+        entityType: "OUTIL",
+        entityId: String(id_outil),
+        action: "deleted",
+        module: "outillage",
+        at: new Date().toISOString(),
+        invalidateKeys: ["outils", "outils-low-stock", "outils-summary", "outils-recent-movements"],
+      }, {
+        deduplicationKey: `outillage:outil:${id_outil}:deleted`,
+      })
+      return assets
+    })
+    // Storage cleanup happens after the durable delete and must never turn a
+    // committed business mutation into a retryable 5xx.
+    await Promise.allSettled([
+      deleteStoredImageFile(deletedAssets.image),
+      deleteStoredImageFile(deletedAssets.plan),
+      deleteStoredImageFile(deletedAssets.esquisse),
+    ])
+    return { success: true }
   },
 
   async sortieStock(payload: SortieStockPayload) {
@@ -353,11 +383,9 @@ export const outilService = {
     assertUser(utilisateur)
 
     const client = await db.connect()
-    try {
-      await client.query("BEGIN")
-
+    return withRealtimeOutboxTransaction(client, async () => {
       await outilRepository.removeFromStock(client, id_outil, quantite)
-      await outilRepository.logMouvementStock(client, {
+      const movement = await outilRepository.logMouvementStock(client, {
         id_outil,
         quantite,
         type: "sortie",
@@ -368,15 +396,16 @@ export const outilService = {
         note: payload.note ?? null,
         affaire_id: payload.affaire_id ?? null,
       })
-
-      await client.query("COMMIT")
+      await enqueueEntityChanged(client, {
+        entityType: "OUTIL",
+        entityId: String(id_outil),
+        action: "updated",
+        module: "outillage",
+        at: new Date(movement.date).toISOString(),
+        invalidateKeys: ["outils", "outils-low-stock", "outils-summary", "outils-recent-movements"],
+      }, { deduplicationKey: `outillage:movement:${movement.id}` })
       return { success: true }
-    } catch (error) {
-      await client.query("ROLLBACK")
-      throw error
-    } finally {
-      client.release()
-    }
+    })
   },
 
   async retourStock(payload: RetourStockPayload) {
@@ -387,14 +416,12 @@ export const outilService = {
     assertUser(utilisateur)
 
     const client = await db.connect()
-    try {
-      await client.query("BEGIN")
-
+    return withRealtimeOutboxTransaction(client, async () => {
       const exists = await outilRepository.exists(id_outil)
       if (!exists) throw new HttpError(404, "OUTIL_NOT_FOUND", "Outil introuvable")
 
       await outilRepository.addToStock(client, id_outil, quantite)
-      await outilRepository.logMouvementStock(client, {
+      const movement = await outilRepository.logMouvementStock(client, {
         id_outil,
         quantite,
         type: "entr\u00e9e",
@@ -405,15 +432,16 @@ export const outilService = {
         note: payload.note ?? null,
         affaire_id: payload.affaire_id ?? null,
       })
-
-      await client.query("COMMIT")
+      await enqueueEntityChanged(client, {
+        entityType: "OUTIL",
+        entityId: String(id_outil),
+        action: "updated",
+        module: "outillage",
+        at: new Date(movement.date).toISOString(),
+        invalidateKeys: ["outils", "outils-low-stock", "outils-summary", "outils-recent-movements"],
+      }, { deduplicationKey: `outillage:movement:${movement.id}` })
       return { success: true }
-    } catch (error) {
-      await client.query("ROLLBACK")
-      throw error
-    } finally {
-      client.release()
-    }
+    })
   },
 
   async reapprovisionner(payload: ReapproPayload) {
@@ -426,11 +454,9 @@ export const outilService = {
     assertUser(utilisateur)
 
     const client = await db.connect()
-    try {
-      await client.query("BEGIN")
-
+    return withRealtimeOutboxTransaction(client, async () => {
       await outilRepository.addToStock(client, id_outil, quantite)
-      await outilRepository.logMouvementStock(client, {
+      const movement = await outilRepository.logMouvementStock(client, {
         id_outil,
         quantite,
         type: "entrée",
@@ -444,15 +470,16 @@ export const outilService = {
         prix_unitaire: prix,
       })
       await outilRepository.insertHistoriquePrix(client, id_outil, prix, id_fournisseur)
-
-      await client.query("COMMIT")
+      await enqueueEntityChanged(client, {
+        entityType: "OUTIL",
+        entityId: String(id_outil),
+        action: "updated",
+        module: "outillage",
+        at: new Date(movement.date).toISOString(),
+        invalidateKeys: ["outils", "outils-low-stock", "outils-summary", "outils-recent-movements", "outil-pricing"],
+      }, { deduplicationKey: `outillage:movement:${movement.id}` })
       return { success: true }
-    } catch (error) {
-      await client.query("ROLLBACK")
-      throw error
-    } finally {
-      client.release()
-    }
+    })
   },
 
   async scanSortie(payload: ScanSortiePayload) {
@@ -463,15 +490,13 @@ export const outilService = {
     assertUser(utilisateur)
 
     const client = await db.connect()
-    try {
-      await client.query("BEGIN")
-
+    return withRealtimeOutboxTransaction(client, async () => {
       const outil = await outilRepository.findByReferenceFabricant(reference_fabricant, client)
       if (!outil) throw new HttpError(404, "OUTIL_NOT_FOUND", `Aucun outil pour la reference fabricant: ${reference_fabricant}`)
 
       const id_outil = Number(outil.id_outil)
       await outilRepository.removeFromStock(client, id_outil, quantite)
-      await outilRepository.logMouvementStock(client, {
+      const movement = await outilRepository.logMouvementStock(client, {
         id_outil,
         quantite,
         type: "sortie",
@@ -482,15 +507,16 @@ export const outilService = {
         note: payload.note ?? null,
         affaire_id: payload.affaire_id ?? null,
       })
-
-      await client.query("COMMIT")
+      await enqueueEntityChanged(client, {
+        entityType: "OUTIL",
+        entityId: String(id_outil),
+        action: "updated",
+        module: "outillage",
+        at: new Date(movement.date).toISOString(),
+        invalidateKeys: ["outils", "outils-low-stock", "outils-summary", "outils-recent-movements"],
+      }, { deduplicationKey: `outillage:movement:${movement.id}` })
       return { id_outil, reference_fabricant, quantite }
-    } catch (error) {
-      await client.query("ROLLBACK")
-      throw error
-    } finally {
-      client.release()
-    }
+    })
   },
 
   async scanEntree(payload: ScanEntreePayload) {
@@ -510,15 +536,13 @@ export const outilService = {
     }
 
     const client = await db.connect()
-    try {
-      await client.query("BEGIN")
-
+    return withRealtimeOutboxTransaction(client, async () => {
       const outil = await outilRepository.findByReferenceFabricant(reference_fabricant, client)
       if (!outil) throw new HttpError(404, "OUTIL_NOT_FOUND", `Aucun outil pour la reference fabricant: ${reference_fabricant}`)
 
       const id_outil = Number(outil.id_outil)
       await outilRepository.addToStock(client, id_outil, quantite)
-      await outilRepository.logMouvementStock(client, {
+      const movement = await outilRepository.logMouvementStock(client, {
         id_outil,
         quantite,
         type: "entrée",
@@ -535,15 +559,16 @@ export const outilService = {
       if (payload.prix !== undefined && payload.id_fournisseur !== undefined) {
         await outilRepository.insertHistoriquePrix(client, id_outil, Number(payload.prix), Number(payload.id_fournisseur))
       }
-
-      await client.query("COMMIT")
+      await enqueueEntityChanged(client, {
+        entityType: "OUTIL",
+        entityId: String(id_outil),
+        action: "updated",
+        module: "outillage",
+        at: new Date(movement.date).toISOString(),
+        invalidateKeys: ["outils", "outils-low-stock", "outils-summary", "outils-recent-movements", "outil-pricing"],
+      }, { deduplicationKey: `outillage:movement:${movement.id}` })
       return { id_outil, reference_fabricant, quantite }
-    } catch (error) {
-      await client.query("ROLLBACK")
-      throw error
-    } finally {
-      client.release()
-    }
+    })
   },
 
   async inventaireSet(payload: InventaireSetPayload) {
@@ -554,11 +579,9 @@ export const outilService = {
     assertUser(utilisateur)
 
     const client = await db.connect()
-    try {
-      await client.query("BEGIN")
-
+    return withRealtimeOutboxTransaction(client, async () => {
       await outilRepository.setStockAbsolute(client, id_outil, new_qty)
-      await outilRepository.logMouvementStock(client, {
+      const movement = await outilRepository.logMouvementStock(client, {
         id_outil,
         quantite: Number(new_qty),
         type: "inventaire",
@@ -569,15 +592,16 @@ export const outilService = {
         note: payload.note ?? null,
         affaire_id: null,
       })
-
-      await client.query("COMMIT")
+      await enqueueEntityChanged(client, {
+        entityType: "OUTIL",
+        entityId: String(id_outil),
+        action: "updated",
+        module: "outillage",
+        at: new Date(movement.date).toISOString(),
+        invalidateKeys: ["outils", "outils-low-stock", "outils-summary", "outils-recent-movements"],
+      }, { deduplicationKey: `outillage:movement:${movement.id}` })
       return { success: true }
-    } catch (error) {
-      await client.query("ROLLBACK")
-      throw error
-    } finally {
-      client.release()
-    }
+    })
   },
 }
 
@@ -640,13 +664,27 @@ export const outilSupportService = {
     file: Express.Multer.File | undefined,
     fournisseurs: number[]
   ) {
+    const realtimeMutationId = crypto.randomUUID()
     return withSingleOutillageUpload({
       context: "outillage.fabricants.update",
       operation: "update",
       file,
       column: "logo",
       promote: promoteOutillageFabricantFile,
-      mutate: (client) => outilRepository.updateFabricant(id_fabricant, nom, null, fournisseurs, client),
+      mutate: async (client) => {
+        const result = await outilRepository.updateFabricant(id_fabricant, nom, null, fournisseurs, client)
+        await enqueueEntityChanged(client, {
+          entityType: "OUTIL_FABRICANT",
+          entityId: String(id_fabricant),
+          action: "updated",
+          module: "outillage",
+          at: new Date().toISOString(),
+          invalidateKeys: ["outils-fabricants", "outils"],
+        }, {
+          deduplicationKey: `outillage:fabricant:${id_fabricant}:updated:${realtimeMutationId}`,
+        })
+        return result
+      },
       persist: (client, _result, storedPath) => outilRepository.setFabricantLogo(client, id_fabricant, storedPath),
       readFresh: async () => (await db.query(
         `SELECT logo FROM gestion_outils_fabricant WHERE id_fabricant = $1`,

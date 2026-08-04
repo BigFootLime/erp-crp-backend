@@ -2,7 +2,6 @@ import type { Request } from "express";
 import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import { asyncHandler } from "../../../utils/asyncHandler";
 import { HttpError } from "../../../utils/httpError";
-import { emitEntityChanged } from "../../../shared/realtime/realtime.service";
 import type { AuditContext } from "../repository/production.repository";
 import {
   createMachineOnboardingSchema,
@@ -127,31 +126,6 @@ export function buildAuditContext(req: Request): AuditContext {
     page_key: pageKey,
     client_session_id: clientSessionId,
   };
-}
-
-function getUserRef(req: Request): { id: number; name: string } {
-  const user = req.user;
-  if (!user || typeof user.id !== "number") throw new HttpError(401, "UNAUTHORIZED", "Authentication required");
-  const name = typeof user.username === "string" && user.username.trim() ? user.username.trim() : String(user.id);
-  return { id: user.id, name };
-}
-
-function emitOfChanged(req: Request, params: { ofId: number; action: "created" | "updated" | "deleted" | "status_changed" }) {
-  const entityId = String(params.ofId);
-  emitEntityChanged({
-    entityType: "OF",
-    entityId,
-    action: params.action,
-    module: "production",
-    at: new Date().toISOString(),
-    by: getUserRef(req),
-    invalidateKeys: [
-      "production:ofs",
-      `production:of:${entityId}`,
-      `production:of:${entityId}:receipt-context`,
-      `production:of:${entityId}:traceability`,
-    ],
-  });
 }
 
 function hasMachineCostMutation(value: object): boolean {
@@ -367,7 +341,6 @@ export const createOrdreFabrication = asyncHandler(async (req, res) => {
   const raw = parseBody(req);
   const body = createOfSchema.parse({ body: raw }).body;
   const out = await svcCreateOrdreFabrication({ body, audit });
-  emitOfChanged(req, { ofId: out.id, action: "created" });
   res.status(201).json(out);
 });
 
@@ -381,7 +354,6 @@ export const updateOrdreFabrication = asyncHandler(async (req, res) => {
     res.status(404).json({ error: "Not found" });
     return;
   }
-  emitOfChanged(req, { ofId: id, action: "updated" });
   res.status(200).json(out);
 });
 
@@ -395,7 +367,6 @@ export const updateOrdreFabricationOperation = asyncHandler(async (req, res) => 
     res.status(404).json({ error: "Not found" });
     return;
   }
-  emitOfChanged(req, { ofId: id, action: "updated" });
   res.status(200).json(out);
 });
 
@@ -409,7 +380,6 @@ export const startOfOperationTimeLog = asyncHandler(async (req, res) => {
     res.status(404).json({ error: "Not found" });
     return;
   }
-  emitOfChanged(req, { ofId: id, action: "updated" });
   res.status(201).json(out);
 });
 
@@ -424,7 +394,6 @@ export const reorderOfOperations = asyncHandler(async (req, res) => {
     res.status(404).json({ error: "Not found" });
     return;
   }
-  emitOfChanged(req, { ofId: id, action: "updated" });
   res.status(200).json(out);
 });
 
@@ -450,7 +419,6 @@ export const generateOfs = asyncHandler(async (req, res) => {
     svcGenerateOfs({ body, idempotency_key: idempotencyKey, audit })
   );
   if (!out.idempotent_replay && out.root_of_id) {
-    emitOfChanged(req, { ofId: out.root_of_id, action: "created" });
   }
   res.status(out.idempotent_replay ? 200 : 201).json(out);
 });
@@ -522,7 +490,6 @@ export const createOfReceipt = asyncHandler(async (req, res) => {
   }
   const out = await svcCreateOfReceipt({ of_id: id, body, idempotency_key: idempotencyKey, audit });
   if (!out.idempotent_replay) {
-    emitOfChanged(req, { ofId: id, action: "status_changed" });
   }
   res.status(out.idempotent_replay ? 200 : 201).json(out);
 });
@@ -543,6 +510,5 @@ export const stopOfOperationTimeLog = asyncHandler(async (req, res) => {
     res.status(404).json({ error: "Not found" });
     return;
   }
-  emitOfChanged(req, { ofId: id, action: "updated" });
   res.status(200).json(out);
 });

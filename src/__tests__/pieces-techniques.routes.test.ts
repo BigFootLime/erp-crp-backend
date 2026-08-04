@@ -33,6 +33,10 @@ vi.mock("../utils/checkNetworkDrive", () => ({
   checkNetworkDrive: vi.fn(() => Promise.resolve()),
 }));
 
+vi.mock("../module/access-control/middlewares/module-access-gate", () => ({
+  moduleAccessGate: (_req: unknown, _res: unknown, next: () => void) => next(),
+}));
+
 vi.mock("../module/auth/middlewares/auth.middleware", () => ({
   authenticateToken: (
     req: { user?: { id: number; role: string }; headers?: Record<string, string | string[] | undefined> },
@@ -58,6 +62,7 @@ vi.mock("../module/auth/middlewares/auth.middleware", () => ({
 }));
 
 import app from "../config/app";
+import { withRealtimeOutboxDbMock } from "./helpers/realtime-outbox-db-mock";
 
 beforeEach(() => {
   mocks.poolQuery.mockReset();
@@ -69,7 +74,7 @@ beforeEach(() => {
   mocks.clientQuery.mockResolvedValue({ rows: [] });
 
   mocks.poolConnect.mockResolvedValue({
-    query: mocks.clientQuery,
+    query: withRealtimeOutboxDbMock(mocks.clientQuery),
     release: mocks.clientRelease,
   });
 });

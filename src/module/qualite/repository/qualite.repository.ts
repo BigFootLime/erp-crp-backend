@@ -5,6 +5,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import pool from "../../../config/database";
+import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
+import { enqueueEntityChanged } from "../../../shared/realtime/realtime-outbox.service";
 import { generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
 import { canonicalizeStockUnitCode } from "../../../shared/stock-unit";
 import { transferSecureUploadToDestination } from "../../../shared/uploads/secure-upload";
@@ -133,7 +135,7 @@ async function insertQualityEvent(
     new_values: Record<string, unknown> | null;
   }
 ) {
-  await tx.query(
+  const inserted = await tx.query<{ id: string; created_at: string }>(
     `
       INSERT INTO quality_event_log (
         entity_type,
@@ -144,6 +146,7 @@ async function insertQualityEvent(
         user_id
       )
       VALUES ($1::quality_entity_type, $2::uuid, $3, $4::jsonb, $5::jsonb, $6)
+      RETURNING id::text AS id, created_at::text AS created_at
     `,
     [
       params.entity_type,
@@ -154,6 +157,55 @@ async function insertQualityEvent(
       params.user_id,
     ]
   );
+  const event = inserted.rows[0];
+  if (!event) throw new Error("QUALITY_EVENT_INSERT_FAILED");
+  if (params.entity_type === "NON_CONFORMITY" || params.entity_type === "ACTION") {
+    await enqueueQualityEntityChanged(tx, {
+      entityType: params.entity_type,
+      entityId: params.entity_id,
+      eventId: event.id,
+      eventType: params.event_type,
+      occurredAt: event.created_at,
+    });
+  }
+}
+
+export async function enqueueQualityEntityChanged(
+  tx: DbQueryer,
+  params: {
+    entityType: "NON_CONFORMITY" | "ACTION";
+    entityId: string;
+    eventId: string;
+    eventType: string;
+    occurredAt: string;
+  }
+): Promise<void> {
+  const normalized = params.eventType.toUpperCase();
+  const action = normalized === "CREATE"
+    ? "created"
+    : normalized.includes("DELETE") || normalized.includes("REMOVE")
+      ? "deleted"
+      : normalized.includes("STATUS") || normalized.includes("VALIDAT")
+        ? "status_changed"
+        : "updated";
+  const isNc = params.entityType === "NON_CONFORMITY";
+  await enqueueEntityChanged(tx, {
+    entityType: isNc ? "NCR" : "CAPA",
+    entityId: params.entityId,
+    action,
+    module: "qualite",
+    at: params.occurredAt,
+    invalidateKeys: isNc
+      ? [
+          "qualite:non-conformities",
+          "qualite:kpis",
+          "qualite:dashboard",
+          "qualite:controls",
+          `qualite:non-conformity:${params.entityId}`,
+          `qualite:non-conformity:${params.entityId}:dispositions`,
+        ]
+      : ["qualite:actions", `qualite:action:${params.entityId}`],
+  }, { deduplicationKey: `quality-event:${params.eventId}` });
 }
 
 function computePointResult(p: {
@@ -1052,15 +1104,13 @@ export async function repoCreateControl(params: { body: CreateControlBodyDTO; au
   }
 
   const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-
+  const id = await withRealtimeOutboxTransaction(client, async (tx) => {
     if (body.operation_id && body.of_id) {
-      await ensureOperationBelongsToOf(client, body.operation_id, body.of_id);
+      await ensureOperationBelongsToOf(tx, body.operation_id, body.of_id);
     }
 
-    const reference = await generateTransactionalBusinessCode(client, { prefix: "CQ" });
-    const ins = await client.query<{ id: string }>(
+    const reference = await generateTransactionalBusinessCode(tx, { prefix: "CQ" });
+    const ins = await tx.query<{ id: string }>(
       `
         INSERT INTO quality_control (
           reference,
@@ -1104,16 +1154,16 @@ export async function repoCreateControl(params: { body: CreateControlBodyDTO; au
     const id = ins.rows[0]?.id;
     if (!id) throw new Error("Failed to create quality control");
 
-    const { inserted: points, result } = await replaceControlPoints(client, id, body.points ?? []);
+    const { inserted: points, result } = await replaceControlPoints(tx, id, body.points ?? []);
 
-    await client.query(`UPDATE quality_control SET result = $2::quality_control_result, updated_by = $3 WHERE id = $1::uuid`, [
+    await tx.query(`UPDATE quality_control SET result = $2::quality_control_result, updated_by = $3 WHERE id = $1::uuid`, [
       id,
       result,
       audit.user_id,
     ]);
 
-    const snapshot = await selectControlSnapshot(client, id);
-    await insertQualityEvent(client, {
+    const snapshot = await selectControlSnapshot(tx, id);
+    await insertQualityEvent(tx, {
       entity_type: "CONTROL",
       entity_id: id,
       event_type: "CREATE",
@@ -1122,36 +1172,26 @@ export async function repoCreateControl(params: { body: CreateControlBodyDTO; au
       new_values: snapshot ? (snapshot as unknown as Record<string, unknown>) : { id },
     });
 
-    await insertAuditLog(client, audit, {
+    await insertAuditLog(tx, audit, {
       action: "qualite.controls.create",
       entity_type: "quality_control",
       entity_id: id,
       details: { points_count: points.length, result },
     });
 
-    await client.query("COMMIT");
-    const detail = await repoGetControl(id);
-    if (!detail) throw new Error("Failed to reload quality control");
-    return detail;
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+    return id;
+  });
+  const detail = await repoGetControl(id);
+  if (!detail) throw new Error("Failed to reload quality control");
+  return detail;
 }
 
 export async function repoPatchControl(params: { id: string; body: PatchControlBodyDTO; audit: AuditContext }): Promise<QualityControlDetail | null> {
   const { id, body, audit } = params;
   const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-
-    const before = await selectControlSnapshot(client, id);
-    if (!before) {
-      await client.query("ROLLBACK");
-      return null;
-    }
+  const updated = await withRealtimeOutboxTransaction(client, async (tx) => {
+    const before = await selectControlSnapshot(tx, id);
+    if (!before) return false;
     if (before.control.validation_date) {
       throw new HttpError(400, "LOCKED", "Validated controls cannot be edited");
     }
@@ -1163,7 +1203,7 @@ export async function repoPatchControl(params: { id: string; body: PatchControlB
       throw new HttpError(400, "MISSING_OF", "operation_id requires of_id");
     }
     if (nextOperationId && nextOfId) {
-      await ensureOperationBelongsToOf(client, nextOperationId, nextOfId);
+      await ensureOperationBelongsToOf(tx, nextOperationId, nextOfId);
     }
 
     const fields: string[] = [];
@@ -1186,24 +1226,24 @@ export async function repoPatchControl(params: { id: string; body: PatchControlB
 
     if (fields.length) {
       fields.push(`updated_by = ${push(audit.user_id)}`);
-      await client.query(`UPDATE quality_control SET ${fields.join(", ")} WHERE id = $${values.length + 1}::uuid`, [
+      await tx.query(`UPDATE quality_control SET ${fields.join(", ")} WHERE id = $${values.length + 1}::uuid`, [
         ...values,
         id,
       ]);
     }
 
     if (patch.points !== undefined) {
-      const { result } = await replaceControlPoints(client, id, patch.points);
-      await client.query(`UPDATE quality_control SET result = $2::quality_control_result, updated_by = $3 WHERE id = $1::uuid`, [
+      const { result } = await replaceControlPoints(tx, id, patch.points);
+      await tx.query(`UPDATE quality_control SET result = $2::quality_control_result, updated_by = $3 WHERE id = $1::uuid`, [
         id,
         result,
         audit.user_id,
       ]);
     }
 
-    const after = await selectControlSnapshot(client, id);
+    const after = await selectControlSnapshot(tx, id);
 
-    await insertQualityEvent(client, {
+    await insertQualityEvent(tx, {
       entity_type: "CONTROL",
       entity_id: id,
       event_type: "UPDATE",
@@ -1212,39 +1252,29 @@ export async function repoPatchControl(params: { id: string; body: PatchControlB
       new_values: after ? (after as unknown as Record<string, unknown>) : null,
     });
 
-    await insertAuditLog(client, audit, {
+    await insertAuditLog(tx, audit, {
       action: "qualite.controls.update",
       entity_type: "quality_control",
       entity_id: id,
       details: { note: body.note ?? null },
     });
 
-    await client.query("COMMIT");
-    return repoGetControl(id);
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+    return true;
+  });
+  return updated ? repoGetControl(id) : null;
 }
 
 export async function repoValidateControl(params: { id: string; body: ValidateControlBodyDTO; audit: AuditContext }): Promise<QualityControlDetail | null> {
   const { id, body, audit } = params;
   const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-
-    const before = await selectControlSnapshot(client, id);
-    if (!before) {
-      await client.query("ROLLBACK");
-      return null;
-    }
+  const updated = await withRealtimeOutboxTransaction(client, async (tx) => {
+    const before = await selectControlSnapshot(tx, id);
+    if (!before) return false;
     if (before.control.validation_date) {
       throw new HttpError(400, "ALREADY_VALIDATED", "Control already validated");
     }
 
-    const block = await repoGetMetrologieBlockState(client);
+    const block = await repoGetMetrologieBlockState(tx);
     if (block.enabled && block.overdue_critical > 0) {
       throw new HttpError(
         409,
@@ -1253,11 +1283,11 @@ export async function repoValidateControl(params: { id: string; body: ValidateCo
       );
     }
 
-    const points = await selectControlPoints(client, id);
+    const points = await selectControlPoints(tx, id);
     const overall = computeControlResult(points);
     const nextStatus = overall === "OK" ? "VALIDATED" : "REJECTED";
 
-    await client.query(
+    await tx.query(
       `
         UPDATE quality_control
         SET
@@ -1271,9 +1301,9 @@ export async function repoValidateControl(params: { id: string; body: ValidateCo
       [id, overall, nextStatus, audit.user_id]
     );
 
-    const after = await selectControlSnapshot(client, id);
+    const after = await selectControlSnapshot(tx, id);
 
-    await insertQualityEvent(client, {
+    await insertQualityEvent(tx, {
       entity_type: "CONTROL",
       entity_id: id,
       event_type: "VALIDATE",
@@ -1282,21 +1312,16 @@ export async function repoValidateControl(params: { id: string; body: ValidateCo
       new_values: after ? (after as unknown as Record<string, unknown>) : null,
     });
 
-    await insertAuditLog(client, audit, {
+    await insertAuditLog(tx, audit, {
       action: "qualite.controls.validate",
       entity_type: "quality_control",
       entity_id: id,
       details: { note: body.note ?? null, status: nextStatus, result: overall },
     });
 
-    await client.query("COMMIT");
-    return repoGetControl(id);
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+    return true;
+  });
+  return updated ? repoGetControl(id) : null;
 }
 
 export async function repoKpis(_filters: KpisQueryDTO): Promise<QualityKpis> {
@@ -1437,13 +1462,14 @@ export async function repoAttachDocuments(params: {
     files: documents,
     context: "qualite.attach-documents",
     work: async () => {
+    const tx = client;
     if (!documents.length) {
       return [];
     }
 
     await fs.mkdir(docsDirAbs, { recursive: true });
 
-    const maxRes = await client.query<{ v: number }>(
+    const maxRes = await tx.query<{ v: number }>(
       `
         SELECT COALESCE(MAX(version), 0)::int AS v
         FROM quality_documents
@@ -1466,7 +1492,7 @@ export async function repoAttachDocuments(params: {
 
       const hash = await sha256File(absPath);
 
-      const ins = await client.query<{
+      const ins = await tx.query<{
         id: string;
         entity_type: QualityEntityType;
         entity_id: string;
@@ -1549,7 +1575,7 @@ export async function repoAttachDocuments(params: {
       nextVersion += 1;
     }
 
-    await insertQualityEvent(client, {
+    await insertQualityEvent(tx, {
       entity_type,
       entity_id,
       event_type: "DOCUMENT_ATTACH",
@@ -1561,7 +1587,7 @@ export async function repoAttachDocuments(params: {
       },
     });
 
-    await insertAuditLog(client, audit, {
+    await insertAuditLog(tx, audit, {
       action: "qualite.documents.attach",
       entity_type: "quality_documents",
       entity_id,
@@ -1600,10 +1626,8 @@ export async function repoRemoveDocument(params: {
 }): Promise<boolean> {
   const { entity_type, entity_id, doc_id, audit } = params;
   const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-
-    const current = await client.query<{ original_name: string; storage_path: string }>(
+  return withRealtimeOutboxTransaction(client, async (tx) => {
+    const current = await tx.query<{ original_name: string; storage_path: string }>(
       `
         SELECT original_name, storage_path
         FROM quality_documents
@@ -1616,12 +1640,9 @@ export async function repoRemoveDocument(params: {
       [doc_id, entity_type, entity_id]
     );
     const doc = current.rows[0] ?? null;
-    if (!doc) {
-      await client.query("ROLLBACK");
-      return false;
-    }
+    if (!doc) return false;
 
-    const upd = await client.query(
+    const upd = await tx.query(
       `
         UPDATE quality_documents
         SET removed_at = now(), removed_by = $4, updated_at = now()
@@ -1633,12 +1654,9 @@ export async function repoRemoveDocument(params: {
       [doc_id, entity_type, entity_id, audit.user_id]
     );
 
-    if ((upd.rowCount ?? 0) === 0) {
-      await client.query("ROLLBACK");
-      return false;
-    }
+    if ((upd.rowCount ?? 0) === 0) return false;
 
-    await insertQualityEvent(client, {
+    await insertQualityEvent(tx, {
       entity_type,
       entity_id,
       event_type: "DOCUMENT_REMOVE",
@@ -1647,21 +1665,15 @@ export async function repoRemoveDocument(params: {
       new_values: null,
     });
 
-    await insertAuditLog(client, audit, {
+    await insertAuditLog(tx, audit, {
       action: "qualite.documents.remove",
       entity_type: "quality_documents",
       entity_id: doc_id,
       details: { entity_type, entity_id, original_name: doc.original_name, storage_path: doc.storage_path },
     });
 
-    await client.query("COMMIT");
     return true;
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function repoGetDocumentForDownload(params: {
@@ -1674,10 +1686,8 @@ export async function repoGetDocumentForDownload(params: {
 }): Promise<QualityDocumentInternal | null> {
   const { entity_type, entity_id, doc_id, audit } = params;
   const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-
-    const res = await client.query<{
+  return withRealtimeOutboxTransaction(client, async (tx) => {
+    const res = await tx.query<{
       id: string;
       entity_type: QualityEntityType;
       entity_id: string;
@@ -1725,19 +1735,14 @@ export async function repoGetDocumentForDownload(params: {
       [doc_id, entity_type, entity_id]
     );
     const row = res.rows[0] ?? null;
-    if (!row) {
-      await client.query("ROLLBACK");
-      return null;
-    }
+    if (!row) return null;
 
-    await insertAuditLog(client, audit, {
+    await insertAuditLog(tx, audit, {
       action: "qualite.documents.download",
       entity_type: "quality_documents",
       entity_id: doc_id,
       details: { entity_type, entity_id, original_name: row.original_name },
     });
-
-    await client.query("COMMIT");
 
     return {
       id: row.id,
@@ -1758,12 +1763,7 @@ export async function repoGetDocumentForDownload(params: {
       removed_at: row.removed_at,
       removed_by: row.removed_by,
     };
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export function qualityDocumentBaseDir(): string {
@@ -2425,10 +2425,8 @@ export async function repoGetNonConformity(id: string): Promise<NonConformityDet
 export async function repoCreateNonConformity(params: { body: CreateNonConformityBodyDTO; audit: AuditContext }): Promise<NonConformityDetail> {
   const { body, audit } = params;
   const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-
-    const ins = await client.query<{ id: string; reference: string }>(
+  const id = await withRealtimeOutboxTransaction(client, async (tx) => {
+    const ins = await tx.query<{ id: string; reference: string }>(
       `
         INSERT INTO non_conformity (
           reference,
@@ -2499,7 +2497,7 @@ export async function repoCreateNonConformity(params: { body: CreateNonConformit
 
     const reference = ins.rows[0]?.reference ?? body.reference ?? null;
     if (body.lot_id) {
-      const lot = await client.query<{ lot_status: string | null }>(
+      const lot = await tx.query<{ lot_status: string | null }>(
         `SELECT lot_status FROM public.lots WHERE id = $1::uuid FOR UPDATE`,
         [body.lot_id]
       );
@@ -2510,7 +2508,7 @@ export async function repoCreateNonConformity(params: { body: CreateNonConformit
       const current = row.lot_status ?? "LIBERE";
       if (current === "LIBERE") {
         const note = reference ? `NC ${reference} : mise en quarantaine` : "Mise en quarantaine (NC)";
-        await client.query(
+        await tx.query(
           `
             UPDATE public.lots
             SET lot_status = 'EN_ATTENTE', lot_status_note = $2, updated_at = now(), updated_by = $3
@@ -2521,8 +2519,8 @@ export async function repoCreateNonConformity(params: { body: CreateNonConformit
       }
     }
 
-    const snapshot = await selectNcSnapshot(client, id);
-    await insertQualityEvent(client, {
+    const snapshot = await selectNcSnapshot(tx, id);
+    await insertQualityEvent(tx, {
       entity_type: "NON_CONFORMITY",
       entity_id: id,
       event_type: "CREATE",
@@ -2531,35 +2529,26 @@ export async function repoCreateNonConformity(params: { body: CreateNonConformit
       new_values: snapshot ? (snapshot as unknown as Record<string, unknown>) : { id },
     });
 
-    await insertAuditLog(client, audit, {
+    await insertAuditLog(tx, audit, {
       action: "qualite.non-conformities.create",
       entity_type: "non_conformity",
       entity_id: id,
       details: { reference: body.reference ?? null, severity: body.severity ?? "MINOR" },
     });
 
-    await client.query("COMMIT");
-    const out = await repoGetNonConformity(id);
-    if (!out) throw new Error("Failed to reload non conformity");
-    return out;
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+    return id;
+  });
+  const out = await repoGetNonConformity(id);
+  if (!out) throw new Error("Failed to reload non conformity");
+  return out;
 }
 
 export async function repoPatchNonConformity(params: { id: string; body: PatchNonConformityBodyDTO; audit: AuditContext }): Promise<NonConformityDetail | null> {
   const { id, body, audit } = params;
   const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    const before = await selectNcSnapshot(client, id);
-    if (!before) {
-      await client.query("ROLLBACK");
-      return null;
-    }
+  const updated = await withRealtimeOutboxTransaction(client, async (tx) => {
+    const before = await selectNcSnapshot(tx, id);
+    if (!before) return false;
 
     const patch = body.patch;
     const fields: string[] = [];
@@ -2603,14 +2592,14 @@ export async function repoPatchNonConformity(params: { id: string; body: PatchNo
 
     fields.push(`updated_by = ${push(audit.user_id)}`);
 
-    await client.query(`UPDATE non_conformity SET ${fields.join(", ")} WHERE id = $${values.length + 1}::uuid`, [
+    await tx.query(`UPDATE non_conformity SET ${fields.join(", ")} WHERE id = $${values.length + 1}::uuid`, [
       ...values,
       id,
     ]);
 
-    const after = await selectNcSnapshot(client, id);
+    const after = await selectNcSnapshot(tx, id);
 
-    await insertQualityEvent(client, {
+    await insertQualityEvent(tx, {
       entity_type: "NON_CONFORMITY",
       entity_id: id,
       event_type: "UPDATE",
@@ -2619,21 +2608,16 @@ export async function repoPatchNonConformity(params: { id: string; body: PatchNo
       new_values: after ? (after as unknown as Record<string, unknown>) : null,
     });
 
-    await insertAuditLog(client, audit, {
+    await insertAuditLog(tx, audit, {
       action: "qualite.non-conformities.update",
       entity_type: "non_conformity",
       entity_id: id,
       details: { note: body.note ?? null },
     });
 
-    await client.query("COMMIT");
-    return repoGetNonConformity(id);
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+    return true;
+  });
+  return updated ? repoGetNonConformity(id) : null;
 }
 
 export async function repoUpdateNonConformityStatus(params: {
@@ -2643,13 +2627,9 @@ export async function repoUpdateNonConformityStatus(params: {
 }): Promise<NonConformityDetail | null> {
   const { id, body, audit } = params;
   const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    const before = await selectNcSnapshot(client, id);
-    if (!before) {
-      await client.query("ROLLBACK");
-      return null;
-    }
+  const updated = await withRealtimeOutboxTransaction(client, async (tx) => {
+    const before = await selectNcSnapshot(tx, id);
+    if (!before) return false;
 
     const sets: string[] = [
       `status = $2::quality_nc_status`,
@@ -2666,10 +2646,10 @@ export async function repoUpdateNonConformityStatus(params: {
       sets.push(`closed_by = NULL`);
     }
 
-    await client.query(`UPDATE non_conformity SET ${sets.join(", ")} WHERE id = $1::uuid`, values);
+    await tx.query(`UPDATE non_conformity SET ${sets.join(", ")} WHERE id = $1::uuid`, values);
 
-    const after = await selectNcSnapshot(client, id);
-    await insertQualityEvent(client, {
+    const after = await selectNcSnapshot(tx, id);
+    await insertQualityEvent(tx, {
       entity_type: "NON_CONFORMITY",
       entity_id: id,
       event_type: "STATUS_CHANGE",
@@ -2678,21 +2658,16 @@ export async function repoUpdateNonConformityStatus(params: {
       new_values: after ? (after as unknown as Record<string, unknown>) : null,
     });
 
-    await insertAuditLog(client, audit, {
+    await insertAuditLog(tx, audit, {
       action: "qualite.non-conformities.status",
       entity_type: "non_conformity",
       entity_id: id,
       details: { status: body.status, note: body.note ?? null },
     });
 
-    await client.query("COMMIT");
-    return repoGetNonConformity(id);
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+    return true;
+  });
+  return updated ? repoGetNonConformity(id) : null;
 }
 
 export async function repoListNonConformityDispositions(id: string): Promise<NonConformityDisposition[]> {
@@ -3011,20 +2986,15 @@ export async function repoCreateNonConformityDisposition(params: {
 }): Promise<NonConformityDisposition> {
   const { id, body, audit } = params;
   const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-
-    const nc = await client.query<{ id: string; reference: string; lot_id: string | null }>(
+  const dispositionId = await withRealtimeOutboxTransaction(client, async (tx) => {
+    const nc = await tx.query<{ id: string; reference: string; lot_id: string | null }>(
       `SELECT id::text AS id, reference, lot_id::text AS lot_id FROM public.non_conformity WHERE id = $1::uuid FOR UPDATE`,
       [id]
     );
     const row = nc.rows[0] ?? null;
-    if (!row) {
-      await client.query("ROLLBACK");
-      throw new HttpError(404, "NC_NOT_FOUND", "Non-conformite introuvable");
-    }
+    if (!row) throw new HttpError(404, "NC_NOT_FOUND", "Non-conformite introuvable");
 
-    const ins = await client.query<{ id: string }>(
+    const ins = await tx.query<{ id: string }>(
       `
         INSERT INTO public.non_conformity_dispositions (
           non_conformity_id,
@@ -3059,14 +3029,14 @@ export async function repoCreateNonConformityDisposition(params: {
         body.src_magasin_id && body.src_emplacement_id
           ? { magasin_id: body.src_magasin_id, emplacement_id: body.src_emplacement_id }
           : undefined;
-      const source = await resolveStockSourceForLot(client, lotId, qty, hint);
+      const source = await resolveStockSourceForLot(tx, lotId, qty, hint);
 
       const movementType = body.disposition_type === "SCRAP" ? "SCRAP" : "OUT";
       const reason = body.disposition_type === "SCRAP" ? "NC_SCRAP" : "NC_RETURN_SUPPLIER";
       const notes = body.comment?.trim() ? body.comment.trim() : `NC ${row.reference} - ${body.disposition_type}`;
       const idempotencyKey = `qualite:nc:${id}:disposition:${dispositionId}:movement`;
 
-      const movement = await createPostedStockMovementForDisposition(client, {
+      const movement = await createPostedStockMovementForDisposition(tx, {
         movement_type: movementType,
         lot_id: lotId,
         qty,
@@ -3081,31 +3051,31 @@ export async function repoCreateNonConformityDisposition(params: {
         idempotency_key: idempotencyKey,
       });
 
-      await client.query(
+      await tx.query(
         `UPDATE public.non_conformity_dispositions SET stock_movement_id = $2::uuid, updated_at = now(), updated_by = $3 WHERE id = $1::uuid`,
         [dispositionId, movement.movement_id, audit.user_id]
       );
 
-      await client.query(
+      await tx.query(
         `UPDATE public.lots SET lot_status = 'BLOQUE', lot_status_note = $2, updated_at = now(), updated_by = $3 WHERE id = $1::uuid`,
         [lotId, `NC ${row.reference} : ${body.disposition_type}`, audit.user_id]
       );
     } else if (lotId) {
       if (body.disposition_type === "HOLD") {
-        await client.query(
+        await tx.query(
           `UPDATE public.lots SET lot_status = 'EN_ATTENTE', lot_status_note = $2, updated_at = now(), updated_by = $3 WHERE id = $1::uuid`,
           [lotId, `NC ${row.reference} : mise en quarantaine`, audit.user_id]
         );
       }
       if (body.disposition_type === "RELEASE") {
-        await client.query(
+        await tx.query(
           `UPDATE public.lots SET lot_status = 'LIBERE', lot_status_note = $2, updated_at = now(), updated_by = $3 WHERE id = $1::uuid`,
           [lotId, `NC ${row.reference} : lot libere`, audit.user_id]
         );
       }
     }
 
-    await insertQualityEvent(client, {
+    await insertQualityEvent(tx, {
       entity_type: "NON_CONFORMITY",
       entity_id: id,
       event_type: "DISPOSITION_CREATE",
@@ -3118,24 +3088,18 @@ export async function repoCreateNonConformityDisposition(params: {
       },
     });
 
-    await insertAuditLog(client, audit, {
+    await insertAuditLog(tx, audit, {
       action: "qualite.non-conformities.dispositions.create",
       entity_type: "non_conformity_dispositions",
       entity_id: dispositionId,
       details: { nc_id: id, disposition_type: body.disposition_type, note: body.note ?? null },
     });
 
-    await client.query("COMMIT");
-
-    const created = (await selectNcDispositions(pool, id)).find((d) => d.id === dispositionId) ?? null;
-    if (!created) throw new Error("Failed to reload disposition");
-    return created;
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+    return dispositionId;
+  });
+  const created = (await selectNcDispositions(pool, id)).find((d) => d.id === dispositionId) ?? null;
+  if (!created) throw new Error("Failed to reload disposition");
+  return created;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -3461,10 +3425,8 @@ export async function repoGetAction(id: string): Promise<QualityActionDetail | n
 export async function repoCreateAction(params: { body: CreateActionBodyDTO; audit: AuditContext }): Promise<QualityActionDetail> {
   const { body, audit } = params;
   const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-
-    const ins = await client.query<{ id: string }>(
+  const id = await withRealtimeOutboxTransaction(client, async (tx) => {
+    const ins = await tx.query<{ id: string }>(
       `
         INSERT INTO quality_action (
           non_conformity_id,
@@ -3495,8 +3457,8 @@ export async function repoCreateAction(params: { body: CreateActionBodyDTO; audi
     const id = ins.rows[0]?.id;
     if (!id) throw new Error("Failed to create quality action");
 
-    const snapshot = await selectActionSnapshot(client, id);
-    await insertQualityEvent(client, {
+    const snapshot = await selectActionSnapshot(tx, id);
+    await insertQualityEvent(tx, {
       entity_type: "ACTION",
       entity_id: id,
       event_type: "CREATE",
@@ -3505,36 +3467,26 @@ export async function repoCreateAction(params: { body: CreateActionBodyDTO; audi
       new_values: snapshot ? (snapshot as unknown as Record<string, unknown>) : { id },
     });
 
-    await insertAuditLog(client, audit, {
+    await insertAuditLog(tx, audit, {
       action: "qualite.actions.create",
       entity_type: "quality_action",
       entity_id: id,
       details: { non_conformity_id: body.non_conformity_id, responsible_user_id: body.responsible_user_id },
     });
 
-    await client.query("COMMIT");
-    const out = await repoGetAction(id);
-    if (!out) throw new Error("Failed to reload quality action");
-    return out;
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+    return id;
+  });
+  const out = await repoGetAction(id);
+  if (!out) throw new Error("Failed to reload quality action");
+  return out;
 }
 
 export async function repoPatchAction(params: { id: string; body: PatchActionBodyDTO; audit: AuditContext }): Promise<QualityActionDetail | null> {
   const { id, body, audit } = params;
   const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-
-    const before = await selectActionSnapshot(client, id);
-    if (!before) {
-      await client.query("ROLLBACK");
-      return null;
-    }
+  const updated = await withRealtimeOutboxTransaction(client, async (tx) => {
+    const before = await selectActionSnapshot(tx, id);
+    if (!before) return false;
 
     const patch = body.patch;
     const fields: string[] = [];
@@ -3555,14 +3507,14 @@ export async function repoPatchAction(params: { id: string; body: PatchActionBod
 
     fields.push(`updated_by = ${push(audit.user_id)}`);
 
-    await client.query(`UPDATE quality_action SET ${fields.join(", ")} WHERE id = $${values.length + 1}::uuid`, [
+    await tx.query(`UPDATE quality_action SET ${fields.join(", ")} WHERE id = $${values.length + 1}::uuid`, [
       ...values,
       id,
     ]);
 
-    const after = await selectActionSnapshot(client, id);
+    const after = await selectActionSnapshot(tx, id);
 
-    await insertQualityEvent(client, {
+    await insertQualityEvent(tx, {
       entity_type: "ACTION",
       entity_id: id,
       event_type: "UPDATE",
@@ -3571,19 +3523,14 @@ export async function repoPatchAction(params: { id: string; body: PatchActionBod
       new_values: after ? (after as unknown as Record<string, unknown>) : null,
     });
 
-    await insertAuditLog(client, audit, {
+    await insertAuditLog(tx, audit, {
       action: "qualite.actions.update",
       entity_type: "quality_action",
       entity_id: id,
       details: { note: body.note ?? null },
     });
 
-    await client.query("COMMIT");
-    return repoGetAction(id);
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+    return true;
+  });
+  return updated ? repoGetAction(id) : null;
 }

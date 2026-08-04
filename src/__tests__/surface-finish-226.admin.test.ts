@@ -39,6 +39,10 @@ vi.mock("../utils/checkNetworkDrive", () => ({
   checkNetworkDrive: vi.fn(() => Promise.resolve()),
 }));
 
+vi.mock("../module/access-control/middlewares/module-access-gate", () => ({
+  moduleAccessGate: (_req: unknown, _res: unknown, next: () => void) => next(),
+}));
+
 vi.mock("../module/auth/middlewares/auth.middleware", () => ({
   authenticateToken: (
     req: { user?: { id: number; username: string; email: string; role: string } },
@@ -56,6 +60,7 @@ vi.mock("../module/auth/middlewares/auth.middleware", () => ({
 }));
 
 import app from "../config/app";
+import { withRealtimeOutboxDbMock } from "./helpers/realtime-outbox-db-mock";
 
 const FIN_BASE = "/api/v1/finitions";
 const FINISH_ID = "66666666-6666-4666-8666-666666666666";
@@ -89,7 +94,10 @@ const finishRow = (overrides: Row = {}): Row => ({
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.currentRole.value = "administrateur";
-  mocks.poolConnect.mockResolvedValue({ query: mocks.clientQuery, release: mocks.clientRelease });
+  mocks.poolConnect.mockResolvedValue({
+    query: withRealtimeOutboxDbMock(mocks.clientQuery),
+    release: mocks.clientRelease,
+  });
 });
 
 /* -------------------------------------------------------------------------- */

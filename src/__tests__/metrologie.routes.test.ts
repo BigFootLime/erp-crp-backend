@@ -1,6 +1,12 @@
 import request from "supertest"
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { EventEmitter } from "events"
+
+vi.mock("../shared/realtime/realtime-outbox.service", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../shared/realtime/realtime-outbox.service")>(),
+  enqueueAuditNew: vi.fn().mockResolvedValue("audit-outbox-event"),
+  enqueueEntityChanged: vi.fn().mockResolvedValue("entity-outbox-event"),
+}))
 import jwt from "jsonwebtoken"
 
 const mocks = vi.hoisted(() => ({
@@ -229,7 +235,7 @@ describe("/api/v1/metrologie", () => {
     mocks.clientQuery
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
       .mockResolvedValueOnce({ rows: [{ id: equipementId }] }) // INSERT metrologie_equipements
-      .mockResolvedValueOnce({ rows: [] }) // INSERT metrologie_event_log
+      .mockResolvedValueOnce({ rows: [{ id: "met-event-1", created_at: "2026-02-25T10:00:00.000Z" }] }) // INSERT metrologie_event_log + realtime key
       .mockResolvedValueOnce({ rows: [{ id: "1", created_at: "2026-02-25T10:00:00.000Z" }] }) // INSERT erp_audit_logs
       .mockResolvedValueOnce({ rows: [] }) // COMMIT
 

@@ -42,6 +42,10 @@ vi.mock("../module/audit-logs/repository/audit-logs.repository", () => ({
   repoInsertAuditLog: vi.fn(async () => ({ id: "audit-1", created_at: new Date().toISOString() })),
 }));
 
+vi.mock("../sockets/sockeServer", () => ({
+  revokeUserRealtimeSessions: vi.fn(async () => undefined),
+}));
+
 import { requestPasswordReset, resetPasswordWithToken } from "../module/auth/services/auth.service";
 import { resetPasswordSchema } from "../module/auth/validators/auth.validator";
 
@@ -49,10 +53,15 @@ import * as authRepo from "../module/auth/repository/auth.repository";
 import * as resetRepo from "../module/auth/repository/password-reset.repository";
 import * as resetEmail from "../module/auth/services/password-reset-email.service";
 import * as auditRepo from "../module/audit-logs/repository/audit-logs.repository";
+import * as socketRuntime from "../sockets/sockeServer";
+import pool from "../config/database";
+import { RealtimeCommitUncertainError } from "../shared/realtime/realtime-outbox-transaction";
 
 describe("password reset service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    dbClient.query.mockResolvedValue({ rows: [] });
+    (pool.connect as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(dbClient);
     process.env.FRONTEND_URL = "https://erp.example.com";
   });
 
@@ -170,6 +179,11 @@ describe("password reset service", () => {
     (resetRepo.repoGetPasswordResetForUpdate as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       id: "22222222-2222-2222-2222-222222222222",
       user_id: 7,
+      password_hash: "old-hash",
+      session_epoch: 3,
+    });
+    (authRepo.updateUserPassword as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      expectedSessionEpoch: 4,
     });
 
     await resetPasswordWithToken("good-token", "P@ssw0rd-OK", {
@@ -195,6 +209,174 @@ describe("password reset service", () => {
         body: expect.objectContaining({ action: "AUTH_PASSWORD_RESET_COMPLETED" }),
       })
     );
+  });
+
+  it("keeps local socket revocation best-effort after the durable reset commits", async () => {
+    (resetRepo.repoGetPasswordResetForUpdate as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      id: "22222222-2222-2222-2222-222222222222",
+      user_id: 7,
+      password_hash: "old-hash",
+      session_epoch: 3,
+    });
+    (authRepo.updateUserPassword as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      expectedSessionEpoch: 4,
+    });
+    (socketRuntime.revokeUserRealtimeSessions as unknown as ReturnType<typeof vi.fn>)
+      .mockRejectedValueOnce(new Error("socket runtime unavailable"));
+
+    await expect(resetPasswordWithToken("good-token", "P@ssw0rd-OK", {
+      ip: "127.0.0.1", user_agent: null, device_type: null, os: null, browser: null,
+    })).resolves.toBeUndefined();
+    expect(socketRuntime.revokeUserRealtimeSessions).toHaveBeenCalledWith(7, { durable: false });
+  });
+
+  it("sends a reset email only after the reset transaction has committed", async () => {
+    (authRepo.findUserByUsernameOrEmail as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      id: 1,
+      username: "ADMIN",
+      email: "admin@example.com",
+      password: "hash",
+    });
+    let releaseCommit!: () => void;
+    const commitPending = new Promise<void>((resolve) => { releaseCommit = resolve; });
+    const primary = {
+      query: vi.fn(async (sql: string) => {
+        if (sql === "COMMIT") await commitPending;
+        return { rows: [] };
+      }),
+      release: vi.fn(),
+    };
+    (pool.connect as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(primary);
+
+    const pending = requestPasswordReset("admin@example.com", {
+      ip: "127.0.0.1", user_agent: null, device_type: null, os: null, browser: null,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(resetEmail.sendPasswordResetEmail).not.toHaveBeenCalled();
+
+    releaseCommit();
+    await pending;
+    expect(resetEmail.sendPasswordResetEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { outcome: "committed", expected: "resolved" },
+    { outcome: "not_committed", expected: "commit-error" },
+    { outcome: "unknown", expected: "uncertain" },
+  ] as const)("sends no reset email after an ACK-lost request until it is proven $outcome", async ({ outcome, expected }) => {
+    (authRepo.findUserByUsernameOrEmail as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      id: 1,
+      username: "ADMIN",
+      email: "admin@example.com",
+      password: "hash",
+    });
+    const commitError = new Error("commit ack lost");
+    const primary = {
+      query: vi.fn(async (sql: string) => {
+        if (sql === "COMMIT") throw commitError;
+        return { rows: [] };
+      }),
+      release: vi.fn(),
+    };
+    const verifier = {
+      query: vi.fn(async (_sql: string, params?: unknown[]) => {
+        if (outcome === "unknown") throw new Error("verification outage");
+        if (outcome === "not_committed") return { rows: [] };
+        return {
+          rows: [{
+            user_id: 1,
+            token_hash: String(params?.[2]),
+            expires_matches: true,
+          }],
+        };
+      }),
+      release: vi.fn(),
+    };
+    (pool.connect as unknown as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(primary)
+      .mockResolvedValueOnce(verifier);
+
+    const promise = requestPasswordReset("admin@example.com", {
+      ip: "127.0.0.1", user_agent: null, device_type: null, os: null, browser: null,
+    });
+    if (expected === "resolved") {
+      await expect(promise).resolves.toBeUndefined();
+      expect(resetEmail.sendPasswordResetEmail).toHaveBeenCalledTimes(1);
+    } else if (expected === "commit-error") {
+      await expect(promise).rejects.toBe(commitError);
+      expect(resetEmail.sendPasswordResetEmail).not.toHaveBeenCalled();
+    } else {
+      await expect(promise).rejects.toBeInstanceOf(RealtimeCommitUncertainError);
+      expect(resetEmail.sendPasswordResetEmail).not.toHaveBeenCalled();
+    }
+    expect(primary.query).not.toHaveBeenCalledWith("ROLLBACK");
+  });
+
+  it.each([
+    { outcome: "committed", expected: "resolved" },
+    { outcome: "not_committed", expected: "commit-error" },
+    { outcome: "unknown", expected: "uncertain" },
+  ] as const)("reconciles an ACK-lost reset as $outcome", async ({ outcome, expected }) => {
+    const commitError = new Error("commit ack lost");
+    const primary = {
+      query: vi.fn(async (sql: string) => {
+        if (sql === "COMMIT") throw commitError;
+        return { rows: [] };
+      }),
+      release: vi.fn(),
+    };
+    let expectedPasswordHash = "";
+    (authRepo.updateUserPassword as unknown as ReturnType<typeof vi.fn>).mockImplementationOnce(async (params) => {
+      expectedPasswordHash = String(params.passwordHash);
+      return { expectedSessionEpoch: 4 };
+    });
+    (resetRepo.repoGetPasswordResetForUpdate as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      id: "22222222-2222-2222-2222-222222222222",
+      user_id: 7,
+      password_hash: "old-hash",
+      session_epoch: 3,
+    });
+    const tokenHash = await import("node:crypto").then(({ default: crypto }) =>
+      crypto.createHash("sha256").update("good-token").digest("hex")
+    );
+    const verifier = {
+      query: vi.fn(async () => {
+        if (outcome === "unknown") throw new Error("verification outage");
+        return {
+          rows: [{
+            token_hash: tokenHash,
+            used: outcome === "committed",
+            password_hash: outcome === "committed" ? expectedPasswordHash : "old-hash",
+            session_epoch: outcome === "committed" ? 4 : 3,
+          }],
+        };
+      }),
+      release: vi.fn(),
+    };
+    (pool.connect as unknown as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(primary)
+      .mockResolvedValueOnce(verifier);
+
+    const promise = resetPasswordWithToken("good-token", "P@ssw0rd-OK", {
+      ip: "127.0.0.1",
+      user_agent: "ua",
+      device_type: "desktop",
+      os: "Linux",
+      browser: "Chrome",
+    });
+    if (expected === "resolved") {
+      await expect(promise).resolves.toBeUndefined();
+      expect(socketRuntime.revokeUserRealtimeSessions).toHaveBeenCalledWith(7, { durable: false });
+    } else if (expected === "commit-error") {
+      await expect(promise).rejects.toBe(commitError);
+      expect(socketRuntime.revokeUserRealtimeSessions).not.toHaveBeenCalled();
+    } else {
+      await expect(promise).rejects.toBeInstanceOf(RealtimeCommitUncertainError);
+      expect(socketRuntime.revokeUserRealtimeSessions).not.toHaveBeenCalled();
+    }
+    expect(primary.release).toHaveBeenCalledWith(true);
+    expect(primary.query).not.toHaveBeenCalledWith("ROLLBACK");
   });
 
   it("resetPasswordSchema rejects weak passwords", () => {

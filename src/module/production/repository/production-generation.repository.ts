@@ -6,6 +6,7 @@
 import crypto from "node:crypto";
 
 import pool from "../../../config/database";
+import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
@@ -22,6 +23,7 @@ import {
   type Queryable,
 } from "../domain/of-generation";
 import { roleHasOfCapability } from "../domain/of-rbac";
+import { enqueueProductionOfChanged, productionRealtimeActionFromAudit } from "./production-realtime.repository";
 
 async function insertAuditLog(tx: Queryable, audit: AuditContext, entry: {
   action: string;
@@ -39,7 +41,7 @@ async function insertAuditLog(tx: Queryable, audit: AuditContext, entry: {
     client_session_id: audit.client_session_id,
     details: entry.details ?? null,
   };
-  await repoInsertAuditLog({
+  const inserted = await repoInsertAuditLog({
     user_id: audit.user_id,
     body,
     ip: audit.ip,
@@ -49,6 +51,17 @@ async function insertAuditLog(tx: Queryable, audit: AuditContext, entry: {
     browser: audit.browser,
     tx,
   });
+  const generatedIds = Array.isArray(entry.details?.of_ids) ? entry.details.of_ids : [];
+  const rawOfId = entry.details?.root_of_id ?? generatedIds[0];
+  if ((typeof rawOfId === "string" || typeof rawOfId === "number") && String(rawOfId).length > 0) {
+    if (!inserted) throw new Error("PRODUCTION_GENERATION_AUDIT_INSERT_FAILED");
+    await enqueueProductionOfChanged(tx, {
+      ofId: rawOfId,
+      auditId: inserted.id,
+      action: productionRealtimeActionFromAudit(entry.action),
+      occurredAt: inserted.created_at,
+    });
+  }
 }
 
 type SnapshotShape = {
@@ -475,9 +488,7 @@ export async function repoGenerateOfs(params: {
   const requestHash = crypto.createHash("sha256").update(JSON.stringify(params.body)).digest("hex");
 
   const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-
+  return withRealtimeOutboxTransaction(client, async (client) => {
     // Idempotence : un retry identique renvoie le même batch/arbre ; une
     // réutilisation de clé avec un payload différent est refusée.
     const replay = await client.query<{ id: string; request_hash: string | null; result: unknown }>(
@@ -489,7 +500,6 @@ export async function repoGenerateOfs(params: {
       if (replayRow.request_hash !== requestHash) {
         throw new HttpError(409, "IDEMPOTENCY_KEY_REUSED", "Idempotency key was reused with a different payload.");
       }
-      await client.query("COMMIT");
       const persisted = (replayRow.result ?? {}) as Partial<OfGenerationResult> & { of_ids?: number[] };
       return {
         batch_id: replayRow.id,
@@ -566,12 +576,11 @@ export async function repoGenerateOfs(params: {
         quantity: source.quantity,
         idempotency_key: params.idempotency_key,
         source_hash: generated.source_hash,
+        root_of_id: generated.root_of_id,
         of_ids: generated.ofs.map((of) => of.id),
         purchase_requirements_count: generated.purchase_requirements.length,
       },
     });
-
-    await client.query("COMMIT");
 
     return {
       batch_id: generated.batch_id,
@@ -585,10 +594,5 @@ export async function repoGenerateOfs(params: {
       purchase_requirements: generated.purchase_requirements,
       idempotent_replay: false,
     };
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+  });
 }

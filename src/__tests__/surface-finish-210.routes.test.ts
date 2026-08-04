@@ -32,6 +32,10 @@ vi.mock("../utils/checkNetworkDrive", () => ({
   checkNetworkDrive: vi.fn(() => Promise.resolve()),
 }));
 
+vi.mock("../module/access-control/middlewares/module-access-gate", () => ({
+  moduleAccessGate: (_req: unknown, _res: unknown, next: () => void) => next(),
+}));
+
 vi.mock("../module/auth/middlewares/auth.middleware", () => ({
   authenticateToken: (
     req: { user?: { id: number; username: string; email: string; role: string } },
@@ -54,6 +58,7 @@ vi.mock("../module/auth/middlewares/auth.middleware", () => ({
 }));
 
 import app from "../config/app";
+import { withRealtimeOutboxDbMock } from "./helpers/realtime-outbox-db-mock";
 
 const FIN_BASE = "/api/v1/finitions";
 const GAMME_ID = "11111111-1111-4111-8111-111111111111";
@@ -232,7 +237,10 @@ function installQueryRouter(scenario: Scenario = {}) {
 
   mocks.poolQuery.mockImplementation((sql: string) => handler(sql));
   mocks.clientQuery.mockImplementation((sql: string) => handler(sql));
-  mocks.poolConnect.mockResolvedValue({ query: mocks.clientQuery, release: mocks.clientRelease });
+  mocks.poolConnect.mockResolvedValue({
+    query: withRealtimeOutboxDbMock(mocks.clientQuery),
+    release: mocks.clientRelease,
+  });
 }
 
 async function fetchPreview(): Promise<{ status: number; body: Record<string, unknown> }> {

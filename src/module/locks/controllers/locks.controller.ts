@@ -1,6 +1,5 @@
 import type { RequestHandler } from "express";
 import { HttpError } from "../../../utils/httpError";
-import { emitLockUpdated } from "../../../shared/realtime/realtime.service";
 import { svcAcquireLock, svcHeartbeatLock, svcReleaseLock } from "../services/locks.service";
 import { acquireLockBodySchema, lockEntityBodySchema } from "../validators/locks.validators";
 
@@ -39,7 +38,6 @@ export const acquireLock: RequestHandler = async (req, res, next) => {
       return;
     }
 
-    emitLockUpdated({ entityType: r.lock.entityType, entityId: r.lock.entityId, locked: true, lock: r.lock });
     res.status(200).json({ lock: r.lock });
   } catch (e) {
     next(e);
@@ -62,7 +60,6 @@ export const heartbeatLock: RequestHandler = async (req, res, next) => {
       return;
     }
 
-    emitLockUpdated({ entityType: r.lock.entityType, entityId: r.lock.entityId, locked: true, lock: r.lock });
     res.status(200).json({ lock: r.lock });
   } catch (e) {
     next(e);
@@ -85,7 +82,6 @@ export const releaseLock: RequestHandler = async (req, res, next) => {
       return;
     }
 
-    emitLockUpdated({ entityType: body.entity_type, entityId: body.entity_id, locked: false, lock: null });
     res.status(200).json({ lock: null });
   } catch (e) {
     next(e);

@@ -19,6 +19,10 @@ vi.mock("../utils/checkNetworkDrive", () => ({
   checkNetworkDrive: vi.fn(() => Promise.resolve()),
 }));
 
+vi.mock("../module/access-control/middlewares/module-access-gate", () => ({
+  moduleAccessGate: (_req: unknown, _res: unknown, next: () => void) => next(),
+}));
+
 vi.mock("../module/auth/middlewares/auth.middleware", () => ({
   authenticateToken: (req: { user?: unknown }, _res: unknown, next: () => void) => {
     (req as { user?: unknown }).user = { id: 1, username: "t", email: "t@t.t", role: "administrateur" };
@@ -28,6 +32,7 @@ vi.mock("../module/auth/middlewares/auth.middleware", () => ({
 }));
 
 import app from "../config/app";
+import { withRealtimeOutboxDbMock } from "./helpers/realtime-outbox-db-mock";
 
 const CLIENT_ROW = {
   client_id: "001",
@@ -44,7 +49,10 @@ beforeEach(() => {
   mocks.clientRelease.mockReset();
 
   mocks.poolQuery.mockResolvedValue({ rows: [] });
-  mocks.poolConnect.mockResolvedValue({ query: mocks.clientQuery, release: mocks.clientRelease });
+  mocks.poolConnect.mockResolvedValue({
+    query: withRealtimeOutboxDbMock(mocks.clientQuery),
+    release: mocks.clientRelease,
+  });
   mocks.clientQuery.mockImplementation((sql: unknown) => {
     if (typeof sql === "string" && sql.includes("FOR UPDATE")) return Promise.resolve({ rows: [CLIENT_ROW] });
     return Promise.resolve({ rows: [{ id: 1, created_at: "2026-07-07T00:00:00.000Z" }] });

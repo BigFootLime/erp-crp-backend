@@ -33,6 +33,10 @@ vi.mock("../utils/checkNetworkDrive", () => ({
   checkNetworkDrive: vi.fn(() => Promise.resolve()),
 }));
 
+vi.mock("../module/access-control/middlewares/module-access-gate", () => ({
+  moduleAccessGate: (_req: unknown, _res: unknown, next: () => void) => next(),
+}));
+
 vi.mock("../module/auth/middlewares/auth.middleware", () => ({
   authenticateToken: (req: { user?: { id: number; role: string; username: string; email: string } }, _res: unknown, next: () => void) => {
     req.user = { id: 1, role: "Atelier", username: "U1", email: "u1@example.com" };
@@ -42,6 +46,7 @@ vi.mock("../module/auth/middlewares/auth.middleware", () => ({
 }));
 
 import app from "../config/app";
+import { withRealtimeOutboxDbMock } from "./helpers/realtime-outbox-db-mock";
 
 beforeEach(() => {
   mocks.poolQuery.mockReset();
@@ -50,7 +55,7 @@ beforeEach(() => {
   mocks.clientRelease.mockReset();
 
   mocks.poolConnect.mockResolvedValue({
-    query: mocks.clientQuery,
+    query: withRealtimeOutboxDbMock(mocks.clientQuery),
     release: mocks.clientRelease,
   });
 });
@@ -161,11 +166,14 @@ describe("/api/v1/chat", () => {
         ],
       });
 
-    mocks.clientQuery
-      .mockResolvedValueOnce({ rows: [] }) // BEGIN
-      .mockResolvedValueOnce({ rows: [{ id: convId }] }) // INSERT conversation
-      .mockResolvedValueOnce({ rows: [] }) // INSERT participants
-      .mockResolvedValueOnce({ rows: [] }); // COMMIT
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const text = String(sql);
+      if (text.includes("INSERT INTO public.chat_conversations")) return { rows: [{ id: convId }] };
+      if (text.includes("INSERT INTO public.erp_outbox_events")) {
+        return { rows: [{ event_id: "11111111-1111-4111-8111-111111111111" }] };
+      }
+      return { rows: [] };
+    });
 
     const res = await request(app)
       .post("/api/v1/chat/conversations/group")
@@ -289,14 +297,21 @@ describe("/api/v1/chat", () => {
     };
 
     mocks.poolQuery
-      // repoGetChatConversation
       .mockResolvedValueOnce({ rows: [baseRow] })
-      // repoUpdateGroupConversationName
-      .mockResolvedValueOnce({ rows: [{ ok: 1 }] })
-      // repoListChatConversationParticipantUserIds
-      .mockResolvedValueOnce({ rows: [{ user_id: 1 }, { user_id: 2 }, { user_id: 3 }] })
-      // repoGetChatConversation after update
       .mockResolvedValueOnce({ rows: [{ ...baseRow, group_name: "Nouveau nom" }] });
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const text = String(sql);
+      if (text.includes("UPDATE public.chat_conversations")) {
+        return { rows: [{ updated_at: "2026-03-20T10:01:00.000Z" }] };
+      }
+      if (text.includes("SELECT user_id::int AS user_id")) {
+        return { rows: [{ user_id: 1 }, { user_id: 2 }, { user_id: 3 }] };
+      }
+      if (text.includes("INSERT INTO public.erp_outbox_events")) {
+        return { rows: [{ event_id: "22222222-2222-4222-8222-222222222222" }] };
+      }
+      return { rows: [] };
+    });
 
     const res = await request(app)
       .patch(`/api/v1/chat/conversations/${convId}/group`)
@@ -341,20 +356,27 @@ describe("/api/v1/chat", () => {
     };
 
     mocks.poolQuery
-      // repoGetChatConversation
       .mockResolvedValueOnce({ rows: [baseRow] })
-      // repoListChatUsersByIds
       .mockResolvedValueOnce({
         rows: [
           { id: 4, username: "U4", name: "X", surname: "Y", email: "u4@example.com", role: "Atelier", status: "Active", profile_picture: null },
         ],
       })
-      // repoAddGroupConversationMembers
-      .mockResolvedValueOnce({ rows: [] })
-      // repoListChatConversationParticipantUserIds
-      .mockResolvedValueOnce({ rows: [{ user_id: 1 }, { user_id: 2 }, { user_id: 3 }, { user_id: 4 }] })
-      // repoGetChatConversation after update
       .mockResolvedValueOnce({ rows: [{ ...baseRow, participant_count: 4 }] });
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const text = String(sql);
+      if (text.includes("SELECT group_name")) return { rows: [{ group_name: "Equipe Atelier" }] };
+      if (text.includes("INSERT INTO public.chat_conversation_participants")) {
+        return { rows: [{ user_id: 4, joined_at: "2026-03-20T10:02:00.000Z" }] };
+      }
+      if (text.includes("SELECT user_id::int AS user_id")) {
+        return { rows: [{ user_id: 1 }, { user_id: 2 }, { user_id: 3 }, { user_id: 4 }] };
+      }
+      if (text.includes("INSERT INTO public.erp_outbox_events")) {
+        return { rows: [{ event_id: "33333333-3333-4333-8333-333333333333" }] };
+      }
+      return { rows: [] };
+    });
 
     const res = await request(app)
       .post(`/api/v1/chat/conversations/${convId}/group/members`)
@@ -398,13 +420,21 @@ describe("/api/v1/chat", () => {
       unread_count: 0,
     };
 
-    mocks.poolQuery
-      // repoGetChatConversation
-      .mockResolvedValueOnce({ rows: [baseRow] })
-      // repoRemoveGroupConversationMember
-      .mockResolvedValueOnce({ rows: [{ ok: 1 }] })
-      // repoListChatConversationParticipantUserIds
-      .mockResolvedValueOnce({ rows: [{ user_id: 1 }, { user_id: 3 }] });
+    mocks.poolQuery.mockResolvedValueOnce({ rows: [baseRow] });
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const text = String(sql);
+      if (text.includes("SELECT group_name")) return { rows: [{ group_name: "Equipe Atelier" }] };
+      if (text.includes("DELETE FROM public.chat_conversation_participants")) {
+        return { rows: [{ joined_at: "2026-03-19T09:00:00.000Z" }] };
+      }
+      if (text.includes("SELECT user_id::int AS user_id")) {
+        return { rows: [{ user_id: 1 }, { user_id: 3 }] };
+      }
+      if (text.includes("INSERT INTO public.erp_outbox_events")) {
+        return { rows: [{ event_id: "44444444-4444-4444-8444-444444444444" }] };
+      }
+      return { rows: [] };
+    });
 
     const res = await request(app)
       .delete(`/api/v1/chat/conversations/${convId}/group/members/2`)

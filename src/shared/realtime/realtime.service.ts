@@ -1,165 +1,86 @@
-import type { Server as SocketIOServer } from "socket.io";
+import { publishRealtimeEvent, type PublishRealtimeOptions } from "../../sockets/sockeServer";
+import {
+  REALTIME_EVENTS,
+  type AppNotificationCreatedPayload,
+  type AuditNewPayload,
+  type ChatConversationReadPayload,
+  type ChatConversationUpsertPayload,
+  type ChatMessageCreatedPayload,
+  type EntityChangedPayload,
+  type LockUpdatedPayload,
+} from "./realtime-outbox.service";
+import {
+  REALTIME_CAPABILITIES,
+  entityRealtimeSubscription,
+  moduleForRealtimeEntity,
+  moduleRealtimeSubscription,
+  normalizeRealtimeModuleKey,
+  type RealtimeSubscription,
+} from "./realtime-room-policy";
 
-import { getIO } from "../../sockets/sockeServer";
+export * from "./realtime-outbox.service";
 
-export const REALTIME_EVENTS = {
-  ENTITY_CHANGED: "entity:changed",
-  AUDIT_NEW: "audit:new",
-  LOCK_UPDATED: "lock:updated",
-  APP_NOTIFICATION_CREATED: "app-notification:created",
-  CHAT_MESSAGE_CREATED: "chat:message:created",
-  CHAT_CONVERSATION_READ: "chat:conversation:read",
-  CHAT_CONVERSATION_UPSERT: "chat:conversation:upsert",
-} as const;
+function dispatch(
+  event: string,
+  payload: unknown,
+  targets: readonly RealtimeSubscription[],
+  options: PublishRealtimeOptions = {}
+): Promise<void> {
+  const publication = publishRealtimeEvent(event, payload, targets, options).then(() => undefined);
+  void publication.catch((error: unknown) => {
+    console.error(JSON.stringify({
+      type: "realtime_producer_publish_failed",
+      event,
+      error: error instanceof Error ? error.name : "unknown",
+    }));
+  });
+  return publication;
+}
 
-export const REALTIME_ROOMS = {
-  GLOBAL: "erp:global",
-} as const;
-
-export type RealtimeUserRef = {
-  id: number;
-  name: string;
-};
-
-export type EntityChangedPayload = {
-  entityType: string;
-  entityId: string;
-  action: "created" | "updated" | "deleted" | "status_changed";
-  module: string;
-  at: string;
-  by: RealtimeUserRef;
-  invalidateKeys: string[];
-};
-
-export type AuditNewPayload = {
-  auditId: string;
-};
-
-export type LockRef = {
-  id: string;
-  entityType: string;
-  entityId: string;
-  lockedBy: RealtimeUserRef;
-  lockedAt: string;
-  expiresAt: string;
-};
-
-export type LockUpdatedPayload = {
-  entityType: string;
-  entityId: string;
-  locked: boolean;
-  lock: LockRef | null;
-};
-
-export type AppNotificationCreatedPayload = {
-  id: string;
-  user_id: number;
-  kind: string;
-  title: string;
-  message: string;
-  severity: "info" | "success" | "warning" | "error";
-  action_url: string | null;
-  action_label: string | null;
-  payload: Record<string, unknown>;
-  created_at: string;
-  read_at: string | null;
-};
-
-export type ChatMessageCreatedPayload = {
-  conversation_id: string;
-  message: {
-    id: string;
-    conversation_id: string;
-    sender_user_id: number;
-    message_type: "text";
-    content: string;
-    created_at: string;
-  };
-  sender: {
-    id: number;
-    username: string;
-    name: string | null;
-    surname: string | null;
-    email: string | null;
-    role: string | null;
-    status: string | null;
-  };
-};
-
-export type ChatConversationReadPayload = {
-  conversation_id: string;
-  read_at: string;
-};
-
-export type ChatConversationUpsertPayload = {
-  conversation_id: string;
-  type: "direct" | "group";
-  group_name: string | null;
-};
-
-function tryGetIO(): SocketIOServer | null {
-  try {
-    return getIO();
-  } catch {
-    // Tests often mount Express without Socket.IO.
-    return null;
+export function emitEntityChanged(payload: EntityChangedPayload): Promise<void> {
+  const moduleSubscription = moduleRealtimeSubscription(payload.module);
+  const entitySubscription = entityRealtimeSubscription(payload.entityType, payload.entityId);
+  const entityModule = moduleForRealtimeEntity(payload.entityType);
+  if (!moduleSubscription || !entitySubscription || entityModule !== moduleSubscription.moduleKey) {
+    return dispatch(REALTIME_EVENTS.ENTITY_CHANGED, payload, []);
   }
+  return dispatch(REALTIME_EVENTS.ENTITY_CHANGED, {
+    ...payload,
+    module: moduleSubscription.moduleKey,
+    entityType: entitySubscription.entityType,
+  }, [moduleSubscription, entitySubscription]);
 }
 
-function entityRoom(entityType: string, entityId: string): string {
-  return `${entityType}:${entityId}`;
+export function emitAuditNew(payload: AuditNewPayload): Promise<void> {
+  return dispatch(REALTIME_EVENTS.AUDIT_NEW, payload, [
+    { scope: "capability", capability: REALTIME_CAPABILITIES.AUDIT_READ },
+  ], { deduplicationKey: `audit:new:${payload.auditId}` });
 }
 
-function moduleRoom(moduleKey: string): string {
-  return `module:${moduleKey}`;
+export function emitLockUpdated(payload: LockUpdatedPayload): Promise<void> {
+  const entitySubscription = entityRealtimeSubscription(payload.entityType, payload.entityId);
+  return dispatch(REALTIME_EVENTS.LOCK_UPDATED, payload, entitySubscription ? [entitySubscription] : []);
 }
 
-function userRoom(userId: number): string {
-  return `USER:${userId}`;
+export function emitAppNotificationCreated(userId: number, payload: AppNotificationCreatedPayload): Promise<void> {
+  return dispatch(REALTIME_EVENTS.APP_NOTIFICATION_CREATED, payload, [{ scope: "user", userId }]);
 }
 
-export function emitEntityChanged(payload: EntityChangedPayload): void {
-  const io = tryGetIO();
-  if (!io) return;
-
-  io.to(REALTIME_ROOMS.GLOBAL).emit(REALTIME_EVENTS.ENTITY_CHANGED, payload);
-  io.to(entityRoom(payload.entityType, payload.entityId)).emit(REALTIME_EVENTS.ENTITY_CHANGED, payload);
-  io.to(moduleRoom(payload.module)).emit(REALTIME_EVENTS.ENTITY_CHANGED, payload);
+export function emitChatMessageCreated(userId: number, payload: ChatMessageCreatedPayload): Promise<void> {
+  return dispatch(REALTIME_EVENTS.CHAT_MESSAGE_CREATED, payload, [{ scope: "user", userId }]);
 }
 
-export function emitAuditNew(payload: AuditNewPayload): void {
-  const io = tryGetIO();
-  if (!io) return;
-  io.to(REALTIME_ROOMS.GLOBAL).emit(REALTIME_EVENTS.AUDIT_NEW, payload);
+export function emitChatConversationRead(userId: number, payload: ChatConversationReadPayload): Promise<void> {
+  return dispatch(REALTIME_EVENTS.CHAT_CONVERSATION_READ, payload, [{ scope: "user", userId }]);
 }
 
-export function emitLockUpdated(payload: LockUpdatedPayload): void {
-  const io = tryGetIO();
-  if (!io) return;
-  io.to(REALTIME_ROOMS.GLOBAL).emit(REALTIME_EVENTS.LOCK_UPDATED, payload);
-  io.to(entityRoom(payload.entityType, payload.entityId)).emit(REALTIME_EVENTS.LOCK_UPDATED, payload);
+export function emitChatConversationUpsert(userId: number, payload: ChatConversationUpsertPayload): Promise<void> {
+  return dispatch(REALTIME_EVENTS.CHAT_CONVERSATION_UPSERT, payload, [{ scope: "user", userId }]);
 }
 
-export function emitAppNotificationCreated(userId: number, payload: AppNotificationCreatedPayload): void {
-  const io = tryGetIO();
-  if (!io) return;
-  io.to(userRoom(userId)).emit(REALTIME_EVENTS.APP_NOTIFICATION_CREATED, payload);
-}
-
-export function emitChatMessageCreated(userId: number, payload: ChatMessageCreatedPayload): void {
-  const io = tryGetIO();
-  if (!io) return;
-  io.to(userRoom(userId)).emit(REALTIME_EVENTS.CHAT_MESSAGE_CREATED, payload);
-}
-
-export function emitChatConversationRead(userId: number, payload: ChatConversationReadPayload): void {
-  const io = tryGetIO();
-  if (!io) return;
-  io.to(userRoom(userId)).emit(REALTIME_EVENTS.CHAT_CONVERSATION_READ, payload);
-}
-
-export function emitChatConversationUpsert(userId: number, payload: ChatConversationUpsertPayload): void {
-  const io = tryGetIO();
-  if (!io) return;
-  io.to(userRoom(userId)).emit(REALTIME_EVENTS.CHAT_CONVERSATION_UPSERT, payload);
+/** Compatibility bridge. Production repositories use the outbox-only module. */
+export function emitModuleRealtimeEvent(moduleKey: string, event: string, payload?: unknown): Promise<void> {
+  const canonical = normalizeRealtimeModuleKey(moduleKey);
+  const subscription = canonical ? moduleRealtimeSubscription(canonical) : null;
+  return dispatch(event, payload, subscription ? [subscription] : []);
 }

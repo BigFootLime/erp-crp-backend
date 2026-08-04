@@ -57,6 +57,7 @@ vi.mock("../module/access-control/middlewares/module-access-gate", () => ({
 }));
 
 import app from "../config/app";
+import { withRealtimeOutboxDbMock } from "./helpers/realtime-outbox-db-mock";
 
 beforeEach(() => {
   mocks.poolQuery.mockReset();
@@ -65,7 +66,7 @@ beforeEach(() => {
   mocks.clientRelease.mockReset();
 
   mocks.poolConnect.mockResolvedValue({
-    query: mocks.clientQuery,
+    query: withRealtimeOutboxDbMock(mocks.clientQuery),
     release: mocks.clientRelease,
   });
 });
@@ -315,6 +316,12 @@ describe("/api/v1/planning", () => {
       if (q.includes("SELECT commande_id::text AS commande_id FROM public.ordres_fabrication")) {
         return { rows: [{ commande_id: null }] };
       }
+      if (q.includes("INSERT INTO erp_audit_logs")) {
+        return { rows: [{ id: "planning-audit-1", created_at: "2026-02-14T07:00:00.000Z" }] };
+      }
+      if (q.includes("INSERT INTO public.erp_outbox_events")) {
+        return { rows: [{ event_id: "planning-outbox-1" }] };
+      }
       return { rows: [] };
     });
 
@@ -535,6 +542,12 @@ describe("/api/v1/planning", () => {
       }
       if (q.includes("SELECT commande_id::text AS commande_id FROM public.ordres_fabrication")) {
         return { rows: [{ commande_id: "123" }] };
+      }
+      if (q.includes("INSERT INTO erp_audit_logs")) {
+        return { rows: [{ id: "planning-audit-2", created_at: "2026-02-14T07:01:00.000Z" }] };
+      }
+      if (q.includes("INSERT INTO public.erp_outbox_events")) {
+        return { rows: [{ event_id: "planning-outbox-2" }] };
       }
       return { rows: [] };
     });

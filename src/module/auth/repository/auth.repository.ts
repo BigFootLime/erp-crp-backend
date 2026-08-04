@@ -1,13 +1,68 @@
 import pool from '../../../config/database';
+import type { PoolClient } from 'pg';
+import {
+  bumpRealtimeAuthorizationEpoch,
+  bumpRealtimeSessionEpoch,
+  type RealtimeDbQueryer,
+} from '../../../shared/realtime/realtime-control-plane';
+import { withRealtimeOutboxTransaction } from '../../../shared/realtime/realtime-outbox-transaction';
 import { CreateUserDTO } from '../types/user.type';
 import {
   canonicalizeAuthEmail,
   canonicalizeAuthUsername,
 } from '../domain/auth-identity';
 
+type AuthEpochMutation<T> = {
+  value: T;
+  userId: number;
+  kind?: 'create' | 'password';
+  expectedSessionEpoch?: number;
+  previousSessionEpoch?: number;
+  expectedPasswordHash?: string;
+  previousPasswordHash?: string;
+  noOp?: boolean;
+};
+
+async function reconcileAuthEpochMutation(verifier: PoolClient, mutation: AuthEpochMutation<unknown>) {
+  if (mutation.noOp) return 'committed' as const;
+  const { rows } = await verifier.query<{
+    user_exists: boolean;
+    password_hash: string | null;
+    session_epoch: string;
+  }>(
+    `
+      SELECT
+        EXISTS(SELECT 1 FROM public.users WHERE id = $1)::boolean AS user_exists,
+        (SELECT password FROM public.users WHERE id = $1) AS password_hash,
+        COALESCE((SELECT session_epoch FROM public.realtime_session_epochs WHERE user_id = $1), 0)::text AS session_epoch
+    `,
+    [mutation.userId]
+  );
+  const row = rows[0];
+  if (!row) return 'unknown' as const;
+  if (mutation.kind === 'create') return row.user_exists ? 'committed' as const : 'not_committed' as const;
+
+  const session = Number.parseInt(row.session_epoch, 10);
+  if (
+    mutation.kind === 'password'
+    && row.user_exists
+    && row.password_hash === mutation.expectedPasswordHash
+    && mutation.expectedSessionEpoch !== undefined
+    && session >= mutation.expectedSessionEpoch
+  ) return 'committed' as const;
+  if (
+    mutation.kind === 'password'
+    && row.user_exists
+    && row.password_hash === mutation.previousPasswordHash
+    && mutation.previousSessionEpoch !== undefined
+    && session <= mutation.previousSessionEpoch
+  ) return 'not_committed' as const;
+  return 'unknown' as const;
+}
+
 export const createUser = async (user: CreateUserDTO, hashedPassword: string) => {
   const client = await pool.connect();
-  try {
+  const mutation = await withRealtimeOutboxTransaction(client, async (tx) => {
     const {
       username, name, surname, email, tel_no, gender, address, lane,
       house_no, postcode, country = 'France', salary = 0,
@@ -16,7 +71,7 @@ export const createUser = async (user: CreateUserDTO, hashedPassword: string) =>
     const canonicalUsername = canonicalizeAuthUsername(username);
     const canonicalEmail = canonicalizeAuthEmail(email);
 
-    const result = await client.query(
+    const result = await tx.query<{ id: number; username: string; email: string; role: string }>(
       `INSERT INTO users (
         username, password, name, surname, email, tel_no, gender, address,
         lane, house_no, postcode, country, salary, date_of_birth, role, social_security_number
@@ -30,10 +85,18 @@ export const createUser = async (user: CreateUserDTO, hashedPassword: string) =>
       ]
     );
 
-    return result.rows[0];
-  } finally {
-    client.release();
-  }
+    const created = result.rows[0];
+    if (!created) throw new Error("AUTH_USER_INSERT_FAILED");
+    const expectedSessionEpoch = await bumpRealtimeSessionEpoch(tx, created.id);
+    await bumpRealtimeAuthorizationEpoch(tx);
+    return {
+      value: created,
+      userId: created.id,
+      kind: 'create',
+      expectedSessionEpoch,
+    } satisfies AuthEpochMutation<typeof created>;
+  }, { reconcileCommit: reconcileAuthEpochMutation });
+  return mutation.value;
 };
 
 // 🔍 Cherche un utilisateur par email
@@ -45,15 +108,17 @@ export const findUserByUsername = async (username: string) => {
       `
         SELECT
           u.*,
+          COALESCE(rse.session_epoch, 0)::text AS realtime_session_epoch,
           COALESCE(
             array_agg(ura.role_key ORDER BY (ura.role_key = u.role) DESC, ura.role_key)
               FILTER (WHERE ura.role_key IS NOT NULL),
             ARRAY[u.role]::text[]
           ) AS roles
         FROM public.users u
+        LEFT JOIN public.realtime_session_epochs rse ON rse.user_id = u.id
         LEFT JOIN public.user_role_assignments ura ON ura.user_id = u.id
         WHERE u.username = $1
-        GROUP BY u.id
+        GROUP BY u.id, rse.session_epoch
         LIMIT 1
       `,
       [canonicalUsername]
@@ -97,15 +162,46 @@ export const findUserByUsernameOrEmail = async (usernameOrEmail: string): Promis
   }
 };
 
-export const updateUserPassword = async (params: { userId: number; passwordHash: string; tx?: { query: (sql: string, values?: unknown[]) => Promise<unknown> } }) => {
-  const q = params.tx ?? pool;
-  await q.query(
-    `
-      UPDATE users
-      SET password = $1
-      WHERE id = $2
-    `,
-    [params.passwordHash, params.userId]
-  );
+export const updateUserPassword = async (params: { userId: number; passwordHash: string; tx?: RealtimeDbQueryer }) => {
+  const work = async (q: RealtimeDbQueryer): Promise<AuthEpochMutation<void>> => {
+    const previous = await q.query<{ password_hash: string; session_epoch: string }>(
+      `
+        SELECT
+          users.password AS password_hash,
+          COALESCE(epochs.session_epoch, 0)::text AS session_epoch
+        FROM public.users
+        LEFT JOIN public.realtime_session_epochs epochs ON epochs.user_id = users.id
+        WHERE users.id = $1
+        FOR UPDATE OF users
+      `,
+      [params.userId]
+    );
+    const previousRow = previous.rows[0];
+    if (!previousRow) return { value: undefined, userId: params.userId, noOp: true };
+    const result = await q.query(
+      `
+        UPDATE users
+        SET password = $1
+        WHERE id = $2
+      `,
+      [params.passwordHash, params.userId]
+    );
+    if ((result.rowCount ?? 0) === 0) return { value: undefined, userId: params.userId, noOp: true };
+    const expectedSessionEpoch = await bumpRealtimeSessionEpoch(q, params.userId);
+    return {
+      value: undefined,
+      userId: params.userId,
+      kind: 'password',
+      expectedSessionEpoch,
+      previousSessionEpoch: Number.parseInt(previousRow.session_epoch, 10),
+      expectedPasswordHash: params.passwordHash,
+      previousPasswordHash: previousRow.password_hash,
+    };
+  };
+  if (params.tx) {
+    return work(params.tx);
+  }
+  const client = await pool.connect();
+  return withRealtimeOutboxTransaction(client, work, { reconcileCommit: reconcileAuthEpochMutation });
 };
 

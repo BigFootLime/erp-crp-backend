@@ -4,12 +4,16 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import type { PoolClient } from "pg";
 import pool from "../../../config/database";
+import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
 import { HttpError } from "../../../utils/httpError";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { generateAffaireCode, generateCommandeCode, generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
 import { transferSecureUploadToDestination } from "../../../shared/uploads/secure-upload";
 import { withUploadTransaction } from "../../../shared/uploads/upload-transaction";
-import { emitAppNotificationCreated, emitEntityChanged } from "../../../shared/realtime/realtime.service";
+import {
+  enqueueAppNotificationCreated,
+  enqueueEntityChanged,
+} from "../../../shared/realtime/realtime-outbox.service";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 import { repoCreateAppNotifications, repoListUsersForCommandePlanningNotification } from "../../notifications/repository/notifications.repository";
@@ -189,8 +193,8 @@ async function insertCommandeEvent(db: Queryable, params: {
   old_values?: unknown | null;
   new_values?: unknown | null;
   user_id?: number | null;
-}) {
-  await db.query(
+}): Promise<string | null> {
+  const inserted = await db.query<{ id: string }>(
     `
       INSERT INTO public.commande_client_event_log (
         commande_id,
@@ -199,6 +203,7 @@ async function insertCommandeEvent(db: Queryable, params: {
         new_values,
         user_id
       ) VALUES ($1,$2,$3,$4,$5)
+      RETURNING id::text AS id
     `,
     [
       params.commande_id,
@@ -208,6 +213,7 @@ async function insertCommandeEvent(db: Queryable, params: {
       params.user_id ?? null,
     ]
   );
+  return inserted.rows[0]?.id ?? null;
 }
 
 async function resolveCommandeLineArticle(
@@ -1873,11 +1879,9 @@ export async function repoUpdateCommandeWorkflowCheckpoint(
 
   const client = await pool.connect();
   let notifications: AppNotification[] = [];
-  try {
-    await client.query("BEGIN");
+  return withRealtimeOutboxTransaction(client, async () => {
     const header = await loadCommandeWorkflowHeaderWithStatus(client, commandeId, { forUpdate: true });
     if (!header) {
-      await client.query("ROLLBACK");
       return null;
     }
     await repoEnsureCommandeWorkflowCheckpoints(client, commandeId, header.statut);
@@ -1995,7 +1999,6 @@ export async function repoUpdateCommandeWorkflowCheckpoint(
       isDeepStrictEqual(metadata, before.metadata ?? {});
 
     if (isIdempotentReplay) {
-      await client.query("COMMIT");
       return { checkpoint: mapWorkflowCheckpoint(before), idempotent_replay: true };
     }
 
@@ -2079,7 +2082,7 @@ export async function repoUpdateCommandeWorkflowCheckpoint(
       });
     }
 
-    await insertCommandeEvent(client, {
+    const realtimeMutationId = await insertCommandeEvent(client, {
       commande_id: commandeId,
       event_type: "CHECKPOINT_UPDATED",
       old_values: {
@@ -2097,28 +2100,25 @@ export async function repoUpdateCommandeWorkflowCheckpoint(
       },
       user_id: userId,
     });
+    if (!realtimeMutationId) throw new Error("COMMANDE_EVENT_INSERT_FAILED");
 
-    await client.query("COMMIT");
     for (const notification of notifications) {
-      emitAppNotificationCreated(notification.user_id, notification);
+      await enqueueAppNotificationCreated(client, notification.user_id, notification, {
+        deduplicationKey: `notification:${notification.id}`,
+      });
     }
-    emitEntityChanged({
-      entityType: "commande_client",
+    await enqueueEntityChanged(client, {
+      entityType: "COMMANDE_CLIENT",
       entityId: String(commandeId),
       action: "updated",
-      module: "commandes",
+      module: "commandes-clients",
       at: new Date().toISOString(),
-      by: { id: userId, name: `User #${userId}` },
       invalidateKeys: ["commandes:list", `commandes:detail:${commandeId}`, `commandes:workflow:${commandeId}`],
+    }, {
+      deduplicationKey: `commande-event:${realtimeMutationId}`,
     });
-
     return { checkpoint: mapWorkflowCheckpoint(updated.rows[0]), idempotent_replay: false };
-  } catch (e) {
-    await client.query("ROLLBACK");
-    throw e;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function repoRunCommandeWorkflowAction(
@@ -2150,11 +2150,9 @@ export async function repoRunCommandeWorkflowAction(
 
   const client = await pool.connect();
   let notifications: AppNotification[] = [];
-  try {
-    await client.query("BEGIN");
+  return withRealtimeOutboxTransaction(client, async () => {
     const header = await loadCommandeWorkflowHeaderWithStatus(client, commandeId, { forUpdate: true });
     if (!header) {
-      await client.query("ROLLBACK");
       return null;
     }
     await repoEnsureCommandeWorkflowCheckpoints(client, commandeId, header.statut);
@@ -2183,7 +2181,6 @@ export async function repoRunCommandeWorkflowAction(
     }
     if (checkpoint.status === "done") {
       const checkpoints = await loadCommandeWorkflowCheckpoints(client, commandeId);
-      await client.query("COMMIT");
       return {
         workflow: buildWorkflowView(header, checkpoints, { user_id: userId, user_role: userRole }),
         idempotent_replay: true,
@@ -2294,7 +2291,7 @@ export async function repoRunCommandeWorkflowAction(
       }
     }
 
-    await insertCommandeEvent(client, {
+    const realtimeMutationId = await insertCommandeEvent(client, {
       commande_id: commandeId,
       event_type: "WORKFLOW_ACTION",
       old_values: { statut: header.statut, checkpoint_code: action.checkpoint_code },
@@ -2306,6 +2303,7 @@ export async function repoRunCommandeWorkflowAction(
       },
       user_id: userId,
     });
+    if (!realtimeMutationId) throw new Error("COMMANDE_EVENT_INSERT_FAILED");
 
     const checkpoints = await loadCommandeWorkflowCheckpoints(client, commandeId);
     const workflow = buildWorkflowView(
@@ -2314,28 +2312,23 @@ export async function repoRunCommandeWorkflowAction(
       { user_id: userId, user_role: userRole }
     );
 
-    await client.query("COMMIT");
-
     for (const notification of notifications) {
-      emitAppNotificationCreated(notification.user_id, notification);
+      await enqueueAppNotificationCreated(client, notification.user_id, notification, {
+        deduplicationKey: `notification:${notification.id}`,
+      });
     }
-    emitEntityChanged({
-      entityType: "commande_client",
+    await enqueueEntityChanged(client, {
+      entityType: "COMMANDE_CLIENT",
       entityId: String(commandeId),
       action: "updated",
-      module: "commandes",
+      module: "commandes-clients",
       at: new Date().toISOString(),
-      by: { id: userId, name: `User #${userId}` },
       invalidateKeys: ["commandes:list", `commandes:detail:${commandeId}`, `commandes:workflow:${commandeId}`],
+    }, {
+      deduplicationKey: `commande-event:${realtimeMutationId}`,
     });
-
     return { workflow, idempotent_replay: false };
-  } catch (e) {
-    await client.query("ROLLBACK");
-    throw e;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function repoListCommandes(filters: ListCommandesQueryDTO) {
@@ -3256,6 +3249,12 @@ export async function repoCreateCommande(input: CreateCommandeInput, documents: 
       dedupe_key: `commande:${commandeIdInt}:checkpoint:technical_analysis:created`,
     });
 
+    for (const notification of notifications) {
+      await enqueueAppNotificationCreated(client, notification.user_id, notification, {
+        deduplicationKey: `notification:${notification.id}`,
+      });
+    }
+
     return { id: toInt(commandeId, "commande.id") };
       },
       reconcile: async () => commandeIdForReconciliation
@@ -3271,9 +3270,6 @@ export async function repoCreateCommande(input: CreateCommandeInput, documents: 
       }
     }
     throw e;
-  }
-  for (const notification of notifications) {
-    emitAppNotificationCreated(notification.user_id, notification);
   }
   return result;
 }
@@ -3740,25 +3736,14 @@ async function analyzeCommandeStockTx(
 export async function repoAnalyzeCommandeStock(id: string, audit: AuditContext) {
   const commandeId = toInt(id, "commande_id");
   const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    const result = await analyzeCommandeStockTx(client, commandeId, audit);
-    await client.query("COMMIT");
-    return result;
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  return withRealtimeOutboxTransaction(client, (tx) => analyzeCommandeStockTx(tx, commandeId, audit));
 }
 
 export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAffairesV3BodyDTO, audit: AuditContext) {
   const commandeId = toInt(id, "commande_id");
   const client = await pool.connect();
-  let recoveredInvalidPlanningState = false;
-  try {
-    await client.query("BEGIN");
+  return withRealtimeOutboxTransaction(client, async (client) => {
+    let recoveredInvalidPlanningState = false;
 
     const commandeRes = await client.query<{
       client_id: string | null;
@@ -3785,7 +3770,6 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
     );
     const commande = commandeRes.rows[0];
     if (!commande) {
-      await client.query("ROLLBACK");
       return null;
     }
 
@@ -3987,7 +3971,6 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         const existingOfs = await listGeneratedOfRefs(client, commandeId);
         const workflowHeader =
           orderType === "INTERNE" ? await loadCommandeWorkflowHeaderWithStatus(client, commandeId) : null;
-        await client.query("COMMIT");
         return {
           affaire_ids: existingLivraisons.map((r) => r.affaire_id),
           livraison_affaire_id: livraison,
@@ -4028,7 +4011,6 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       const nextMappings = await listCommandeToAffaireMappings(client, commandeId);
       const nextLivraisons = nextMappings.filter((r) => r.role === "LIVRAISON");
       const livraison = nextLivraisons[0]?.affaire_id ?? null;
-      await client.query("COMMIT");
       return {
         affaire_ids: nextLivraisons.map((r) => r.affaire_id),
         livraison_affaire_id: livraison,
@@ -4393,8 +4375,6 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
 
     await client.query(`UPDATE commande_client SET updated_at = now() WHERE id = $1`, [commandeId]);
 
-    await client.query("COMMIT");
-
     return {
       affaire_ids: livraisonAffaireIds,
       livraison_affaire_id: livraisonAffaireId,
@@ -4411,12 +4391,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       workflow_status: workflowStatus,
       warnings: recoveredInvalidPlanningState ? ["RECOVERED_PLANNING_WITHOUT_OF_OR_DELIVERY"] : [],
     };
-  } catch (e) {
-    await client.query("ROLLBACK");
-    throw e;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 type AffaireCreationInput = {

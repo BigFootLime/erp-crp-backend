@@ -23,9 +23,11 @@ import {
   repoAuthorizeCommandeArGeneration,
   repoClaimCommandeArSend,
   repoCreateCommandeArDraft,
+  repoFinalizeCommandeArSend,
   repoMarkCommandeArFailed,
 } from "./commande-ar.repository";
 import { runWithAccountModuleAccess } from "../../access-control/context/account-module-access.context";
+import { withRealtimeOutboxDbMock } from "../../../__tests__/helpers/realtime-outbox-db-mock";
 
 const draftRow = {
   ar_id: "11111111-1111-4111-8111-111111111111",
@@ -160,6 +162,39 @@ describe("commande AR atomic send claim", () => {
     expect(mocks.release).toHaveBeenCalledTimes(1);
   });
 
+  it("hands an authorized SENT replay to the transaction helper before COMMIT", async () => {
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const q = String(sql);
+      if (q.includes("FROM public.commande_client cc")) return { rows: [{ raw_statut: "AR_ENVOYE" }] };
+      if (q.includes("FROM public.commande_ar_log ar")) {
+        return {
+          rows: [{
+            ...draftRow,
+            status: "SENT",
+            sent_at: "2026-08-04T08:05:00.000Z",
+            recipient_emails: ["persisted@example.test"],
+            email_provider_id: "provider-1",
+          }],
+        };
+      }
+      if (q.includes("checkpoint_code = 'ar_sent'")) {
+        return { rows: [{ status: "done", responsible_role: "secretariat", assigned_user_id: null }] };
+      }
+      if (q === "COMMIT") throw new Error("COMMIT_ACK_LOST");
+      return { rows: [] };
+    });
+
+    await expect(repoClaimCommandeArSend({
+      commande_id: 123,
+      ar_id: draftRow.ar_id,
+      user_id: 7,
+      user_role: "Secretaire",
+    })).rejects.toMatchObject({ code: "REALTIME_COMMIT_OUTCOME_UNKNOWN" });
+
+    expect(mocks.clientQuery.mock.calls.map(([sql]) => String(sql))).not.toContain("ROLLBACK");
+    expect(mocks.release).toHaveBeenCalledWith(true);
+  });
+
   it("rejects an unknown technical AR status before the provider can be invoked", async () => {
     mocks.clientQuery.mockImplementation(async (sql: unknown) => {
       const q = String(sql);
@@ -188,6 +223,27 @@ describe("commande AR atomic send claim", () => {
 
     const [sql] = mocks.poolQuery.mock.calls[0];
     expect(String(sql)).toContain("AND status <> 'SENT'");
+  });
+
+  it("never issues ROLLBACK after a lost COMMIT acknowledgement on a claimed failure", async () => {
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      if (String(sql) === "COMMIT") throw new Error("COMMIT_ACK_LOST");
+      return { rows: [] };
+    });
+
+    await expect(repoMarkCommandeArFailed({
+      commande_id: 123,
+      ar_id: draftRow.ar_id,
+      error_message: "provider timeout",
+      claim: {
+        kind: "claimed",
+        client: { query: mocks.clientQuery, release: mocks.release },
+        draft: draftRow,
+      } as never,
+    })).rejects.toMatchObject({ code: "REALTIME_COMMIT_OUTCOME_UNKNOWN" });
+
+    expect(mocks.clientQuery.mock.calls.map(([sql]) => String(sql))).not.toContain("ROLLBACK");
+    expect(mocks.release).toHaveBeenCalledWith(true);
   });
 });
 
@@ -233,5 +289,116 @@ describe("commande AR generation authorization", () => {
       user_id: 7,
       user_role: "Employee",
     })).rejects.toMatchObject({ status: 403, code: "COMMAND_CHECKPOINT_FORBIDDEN" });
+  });
+});
+
+describe("commande AR realtime transaction outbox", () => {
+  const notification = {
+    id: "33333333-3333-4333-8333-333333333333",
+    user_id: 9,
+    kind: "commande_status",
+    title: "Commande mise à jour",
+    message: "L'accusé de réception a été envoyé.",
+    severity: "success" as const,
+    action_url: "/commandes/123",
+    action_label: "Voir la commande",
+    payload: { commande_id: 123 },
+    created_at: "2026-08-04T08:05:00.000Z",
+    read_at: null,
+  };
+
+  function makeFinalizeClient(options: { failOutbox?: boolean; failCommit?: boolean } = {}) {
+    const release = vi.fn();
+    const query = vi.fn(withRealtimeOutboxDbMock(async (sql: unknown) => {
+      const statement = String(sql);
+      if (statement.includes("UPDATE public.commande_ar_log")) {
+        return { rows: [{ sent_at: "2026-08-04T08:05:00.000Z" }] };
+      }
+      if (statement === "COMMIT" && options.failCommit) throw new Error("COMMIT_ACK_LOST");
+      return { rows: [] };
+    }, {
+      onOutboxInsert: (_sql, params) => {
+        if (options.failOutbox) throw new Error("OUTBOX_UNAVAILABLE");
+        return { rows: [{ event_id: String(params?.[5]) }] };
+      },
+    }));
+    return { query, release };
+  }
+
+  function outboxKeys(client: ReturnType<typeof makeFinalizeClient>): string[] {
+    return client.query.mock.calls
+      .filter(([sql]) => String(sql).includes("INSERT INTO public.erp_outbox_events"))
+      .map(([, params]) => String(params?.[0]));
+  }
+
+  async function finalizeWith(client: ReturnType<typeof makeFinalizeClient>) {
+    return repoFinalizeCommandeArSend({
+      claim: { kind: "claimed", client, draft: draftRow } as never,
+      commande_id: 123,
+      ar_id: draftRow.ar_id,
+      sent_by: 7,
+      recipient_emails: ["client@example.test"],
+      recipient_contact_ids: [],
+      email_provider_id: "provider-1",
+      commentaire: null,
+    });
+  }
+
+  it("enqueues notifications and entity invalidation before COMMIT with stable retry keys", async () => {
+    const firstClient = makeFinalizeClient();
+    const secondClient = makeFinalizeClient();
+    mocks.applyMilestone.mockResolvedValue({ notifications: [notification] });
+
+    await finalizeWith(firstClient);
+    await finalizeWith(secondClient);
+
+    const expectedKeys = [
+      `realtime:notification:${notification.id}`,
+      `realtime:commande-ar:${draftRow.ar_id}:sent`,
+    ];
+    expect(outboxKeys(firstClient)).toEqual(expectedKeys);
+    expect(outboxKeys(secondClient)).toEqual(expectedKeys);
+
+    const commitIndex = firstClient.query.mock.calls.findIndex(([sql]) => String(sql) === "COMMIT");
+    const lastOutboxIndex = firstClient.query.mock.calls
+      .map(([sql]) => String(sql).includes("INSERT INTO public.erp_outbox_events"))
+      .lastIndexOf(true);
+    expect(commitIndex).toBeGreaterThan(lastOutboxIndex);
+    expect(firstClient.release).toHaveBeenCalledOnce();
+  });
+
+  it("rolls back the AR mutation when enqueue fails", async () => {
+    const client = makeFinalizeClient({ failOutbox: true });
+    mocks.applyMilestone.mockResolvedValue({ notifications: [notification] });
+
+    await expect(finalizeWith(client)).rejects.toThrow("OUTBOX_UNAVAILABLE");
+
+    const statements = client.query.mock.calls.map(([sql]) => String(sql));
+    expect(statements).toContain("ROLLBACK");
+    expect(statements).not.toContain("COMMIT");
+    expect(client.release).toHaveBeenCalledOnce();
+  });
+
+  it("adopts the claim transaction and resolves a lost COMMIT acknowledgement without ROLLBACK", async () => {
+    const client = makeFinalizeClient({ failCommit: true });
+    const expectedKeys = [
+      `realtime:notification:${notification.id}`,
+      `realtime:commande-ar:${draftRow.ar_id}:sent`,
+    ];
+    const verifier = {
+      query: vi.fn().mockResolvedValue({ rows: expectedKeys.map((event_key) => ({ event_key })) }),
+      release: vi.fn(),
+    };
+    mocks.connect.mockResolvedValueOnce(verifier);
+    mocks.applyMilestone.mockResolvedValue({ notifications: [notification] });
+
+    const result = await finalizeWith(client);
+
+    const statements = client.query.mock.calls.map(([sql]) => String(sql));
+    expect(result.result.status).toBe("AR_ENVOYE");
+    expect(statements).not.toContain("BEGIN");
+    expect(statements).not.toContain("ROLLBACK");
+    expect(client.release).toHaveBeenCalledWith(true);
+    expect(verifier.release).toHaveBeenCalledOnce();
   });
 });

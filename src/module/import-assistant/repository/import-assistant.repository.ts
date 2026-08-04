@@ -4,6 +4,7 @@ import type { PoolClient } from "pg";
 
 import db from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
+import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type {
   ImportBatchRow,
   ImportBatchStatus,
@@ -622,10 +623,23 @@ export async function repoInsertBatchAudit(
     details: Record<string, unknown>;
   }
 ) {
-  await queryer.query(
-    `INSERT INTO public.erp_audit_logs
-       (user_id, event_type, action, page_key, entity_type, entity_id, path, details)
-     VALUES ($1,'ACTION',$2,'import-assistant','DATA_IMPORT_BATCH',$3,'/api/v1/import-assistant',$4::jsonb)`,
-    [params.user_id, params.action, params.batch_id, JSON.stringify(params.details)]
-  );
+  await repoInsertAuditLog({
+    user_id: params.user_id,
+    body: {
+      event_type: "ACTION",
+      action: params.action,
+      page_key: "import-assistant",
+      entity_type: "DATA_IMPORT_BATCH",
+      entity_id: params.batch_id,
+      path: "/api/v1/import-assistant",
+      client_session_id: null,
+      details: params.details,
+    },
+    ip: null,
+    user_agent: null,
+    device_type: null,
+    os: null,
+    browser: null,
+    tx: queryer,
+  });
 }

@@ -50,6 +50,7 @@ vi.mock("../module/access-control/middlewares/module-access-gate", () => ({
 }));
 
 import app from "../config/app"
+import { withRealtimeOutboxDbMock } from "./helpers/realtime-outbox-db-mock"
 
 beforeEach(() => {
   mocks.poolQuery.mockReset()
@@ -60,7 +61,7 @@ beforeEach(() => {
   mocks.poolQuery.mockResolvedValue({ rows: [] })
   mocks.clientQuery.mockResolvedValue({ rows: [] })
   mocks.poolConnect.mockResolvedValue({
-    query: mocks.clientQuery,
+    query: withRealtimeOutboxDbMock(mocks.clientQuery),
     release: mocks.clientRelease,
   })
 })
@@ -171,8 +172,9 @@ describe("/api/v1/outils", () => {
     mocks.clientQuery
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [{ id_mouvement: "movement-99", date_mouvement: "2026-03-10T09:00:00.000Z" }] })
       .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ event_id: "outbox-stock-99" }] })
       .mockResolvedValueOnce({ rows: [] })
 
     const res = await request(app)

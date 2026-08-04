@@ -60,6 +60,7 @@ vi.mock("../module/access-control/middlewares/module-access-gate", () => ({
 }));
 
 import app from "../config/app";
+import { withRealtimeOutboxDbMock } from "./helpers/realtime-outbox-db-mock";
 
 beforeEach(() => {
   mocks.poolQuery.mockReset();
@@ -68,7 +69,7 @@ beforeEach(() => {
   mocks.clientRelease.mockReset();
 
   mocks.poolConnect.mockResolvedValue({
-    query: mocks.clientQuery,
+    query: withRealtimeOutboxDbMock(mocks.clientQuery),
     release: mocks.clientRelease,
   });
 });

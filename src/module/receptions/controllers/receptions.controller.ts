@@ -2,7 +2,6 @@ import type { Request, RequestHandler, Response } from "express"
 
 import { getDocumentStoragePath, resolveCerpStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
-import { emitEntityChanged } from "../../../shared/realtime/realtime.service"
 import { sendSecureStoredFile } from "../../../shared/uploads/secure-download"
 import type { AuditContext } from "../repository/receptions.repository"
 import {
@@ -64,13 +63,6 @@ function buildAuditContext(req: Request): AuditContext {
   }
 }
 
-function getUserRef(req: Request): { id: number; name: string } {
-  const user = req.user
-  if (!user || typeof user.id !== "number") throw new HttpError(401, "UNAUTHORIZED", "Authentication required")
-  const name = typeof user.username === "string" && user.username.trim() ? user.username.trim() : String(user.id)
-  return { id: user.id, name }
-}
-
 function getRequiredIdempotencyKey(req: Request): string {
   const value = req.headers["idempotency-key"]
   if (typeof value !== "string" || value.trim().length < 8 || value.trim().length > 200) {
@@ -81,22 +73,6 @@ function getRequiredIdempotencyKey(req: Request): string {
     )
   }
   return value.trim()
-}
-
-function emitReceptionChanged(
-  req: Request,
-  params: { receptionId: string; action: "created" | "updated" | "deleted" | "status_changed" }
-) {
-  const receptionId = params.receptionId
-  emitEntityChanged({
-    entityType: "RECEPTION",
-    entityId: receptionId,
-    action: params.action,
-    module: "receptions",
-    at: new Date().toISOString(),
-    by: getUserRef(req),
-    invalidateKeys: ["receptions:list", "receptions:kpis", `receptions:detail:${receptionId}`],
-  })
 }
 
 function isMulterFile(value: unknown): value is Express.Multer.File {
@@ -158,7 +134,6 @@ export const createReception: RequestHandler = async (req, res, next) => {
     const body = createReceptionSchema.parse({ body: req.body }).body
     const out = await createReceptionSVC(body, audit)
 
-    emitReceptionChanged(req, { receptionId: out.id, action: "created" })
     res.status(201).json(out)
   } catch (err) {
     next(err)
@@ -190,7 +165,6 @@ export const patchReception: RequestHandler = async (req, res, next) => {
       return
     }
 
-    emitReceptionChanged(req, { receptionId: id, action: "updated" })
     res.json(out)
   } catch (err) {
     next(err)
@@ -208,7 +182,6 @@ export const createReceptionLine: RequestHandler = async (req, res, next) => {
       return
     }
 
-    emitReceptionChanged(req, { receptionId: id, action: "updated" })
     res.status(201).json(out)
   } catch (err) {
     next(err)
@@ -226,7 +199,6 @@ export const createLotForReceptionLine: RequestHandler = async (req, res, next) 
       return
     }
 
-    emitReceptionChanged(req, { receptionId: id, action: "updated" })
     res.status(201).json(out)
   } catch (err) {
     next(err)
@@ -245,7 +217,6 @@ export const attachReceptionDocuments: RequestHandler = async (req, res, next) =
       return
     }
 
-    emitReceptionChanged(req, { receptionId: id, action: "updated" })
     res.status(201).json(out)
   } catch (err) {
     next(err)
@@ -262,7 +233,6 @@ export const removeReceptionDocument: RequestHandler = async (req, res, next) =>
       return
     }
 
-    emitReceptionChanged(req, { receptionId: id, action: "updated" })
     res.status(204).send()
   } catch (err) {
     next(err)
@@ -294,7 +264,6 @@ export const startIncomingInspection: RequestHandler = async (req, res, next) =>
       return
     }
 
-    emitReceptionChanged(req, { receptionId: id, action: "updated" })
     res.status(200).json(out)
   } catch (err) {
     next(err)
@@ -308,7 +277,6 @@ export const addIncomingMeasurement: RequestHandler = async (req, res, next) => 
     const body = addMeasurementSchema.parse({ body: req.body }).body
     const out = await addIncomingMeasurementSVC(id, lineId, body, audit)
 
-    emitReceptionChanged(req, { receptionId: id, action: "updated" })
     res.status(201).json(out)
   } catch (err) {
     next(err)
@@ -322,7 +290,6 @@ export const decideIncomingInspection: RequestHandler = async (req, res, next) =
     const body = decideInspectionSchema.parse({ body: req.body }).body
     const out = await decideIncomingInspectionSVC(id, lineId, body, audit)
 
-    emitReceptionChanged(req, { receptionId: id, action: "status_changed" })
     res.status(200).json(out)
   } catch (err) {
     next(err)
@@ -340,7 +307,6 @@ export const createReceptionStockReceipt: RequestHandler = async (req, res, next
       return
     }
 
-    emitReceptionChanged(req, { receptionId: id, action: "updated" })
     res.status(201).json(out)
   } catch (err) {
     next(err)

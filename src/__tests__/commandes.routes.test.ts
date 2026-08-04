@@ -72,6 +72,7 @@ vi.mock("../module/access-control/middlewares/module-access-gate", () => ({
 }));
 
 import app from "../config/app";
+import { withRealtimeOutboxDbMock } from "./helpers/realtime-outbox-db-mock";
 
 beforeEach(() => {
   mocks.poolQuery.mockReset();
@@ -84,7 +85,7 @@ beforeEach(() => {
   mocks.clientQuery.mockResolvedValue({ rows: [] });
 
   mocks.poolConnect.mockResolvedValue({
-    query: mocks.clientQuery,
+    query: withRealtimeOutboxDbMock(mocks.clientQuery),
     release: mocks.clientRelease,
   });
 });
@@ -818,7 +819,9 @@ describe("/api/v1/commandes", () => {
       if (q.includes("INSERT INTO commande_historique")) return { rows: [{ id: "45" }] };
       if (q.includes("UPDATE commande_client SET updated_at")) return { rows: [] };
       if (q.includes("SELECT DISTINCT u.id")) return { rows: [] };
-      if (q.includes("INSERT INTO public.commande_client_event_log")) return { rows: [] };
+      if (q.includes("INSERT INTO public.commande_client_event_log")) {
+        return { rows: [{ id: "99999999-9999-4999-8999-999999999999" }] };
+      }
       if (q.includes("FROM public.commande_client_workflow_checkpoint")) return { rows: reloadedCheckpointRows };
       return { rows: [] };
     });
@@ -1074,7 +1077,9 @@ describe("/api/v1/commandes", () => {
       if (q.includes("SELECT nouveau_statut")) return { rows: [{ nouveau_statut: "BLOQUE" }] };
       if (q.includes("INSERT INTO commande_historique")) return { rows: [{ id: "45" }] };
       if (q.includes("UPDATE commande_client SET updated_at")) return { rows: [] };
-      if (q.includes("INSERT INTO public.commande_client_event_log")) return { rows: [] };
+      if (q.includes("INSERT INTO public.commande_client_event_log")) {
+        return { rows: [{ id: "99999999-9999-4999-8999-999999999999" }] };
+      }
       return { rows: [] };
     });
 
@@ -1248,6 +1253,9 @@ describe("/api/v1/commandes", () => {
             read_at: null,
           }],
         };
+      }
+      if (q.includes("INSERT INTO public.commande_client_event_log")) {
+        return { rows: [{ id: "99999999-9999-4999-8999-999999999999" }] };
       }
       return { rows: [] };
     });
@@ -1532,9 +1540,21 @@ describe("/api/v1/commandes", () => {
       if (q.includes("FROM public.stock_levels") && q.includes("qty_total::float8 AS qty_total") && q.includes("FOR UPDATE")) return { rows: [{ qty_total: 1, qty_reserved: 0, qty_depreciated: 0 }] };
       if (q.includes("INSERT INTO public.stock_reservations")) return { rows: [{ id: "77777777-7777-4777-8777-777777777777" }] };
       if (q.includes("FROM public.bon_livraison_ligne_allocations allocation") && q.includes("JOIN public.stock_reservations reservation")) return { rows: [{ id: "77777777-7777-4777-8777-777777777777" }] };
-      if (q.includes("bon_livraison_event_log")) return { rows: [] };
+      if (
+        q.includes("INSERT INTO bon_livraison_event_log")
+        || q.includes("INSERT INTO public.bon_livraison_event_log")
+      ) {
+        return {
+          rows: [{
+            id: "88888888-8888-4888-8888-888888888888",
+            created_at: "2026-08-04T08:00:00.000Z",
+          }],
+        };
+      }
       if (q.includes("INSERT INTO public.of_operations")) return { rows: [], rowCount: 1 };
-      if (q.includes("INSERT INTO public.commande_client_event_log")) return { rows: [] };
+      if (q.includes("INSERT INTO public.commande_client_event_log")) {
+        return { rows: [{ id: "99999999-9999-4999-8999-999999999999" }] };
+      }
       if (q.includes("INSERT INTO erp_audit_logs")) return { rows: [{ id: "1", created_at: "2026-01-01T00:00:00.000Z" }] };
       if (q.includes("UPDATE commande_client SET updated_at")) return { rows: [] };
 
@@ -1752,7 +1772,9 @@ describe("/api/v1/commandes", () => {
       if (q.includes("INSERT INTO public.of_technical_snapshots")) return { rows: [] };
       if (q.includes("INSERT INTO public.of_structure_snapshot")) return { rows: [] };
       if (q.includes("UPDATE public.of_generation_batches")) return { rows: [] };
-      if (q.includes("INSERT INTO public.commande_client_event_log")) return { rows: [] };
+      if (q.includes("INSERT INTO public.commande_client_event_log")) {
+        return { rows: [{ id: "99999999-9999-4999-8999-999999999999" }] };
+      }
       if (q.includes("INSERT INTO erp_audit_logs")) return { rows: [{ id: "1", created_at: "2026-01-01T00:00:00.000Z" }] };
       if (q.includes("UPDATE commande_client SET updated_at")) return { rows: [] };
 
@@ -1960,7 +1982,9 @@ describe("/api/v1/commandes", () => {
       if (q.includes("INSERT INTO public.of_technical_snapshots")) return { rows: [] };
       if (q.includes("INSERT INTO public.of_structure_snapshot")) return { rows: [] };
       if (q.includes("UPDATE public.of_generation_batches")) return { rows: [] };
-      if (q.includes("INSERT INTO public.commande_client_event_log")) return { rows: [] };
+      if (q.includes("INSERT INTO public.commande_client_event_log")) {
+        return { rows: [{ id: "99999999-9999-4999-8999-999999999999" }] };
+      }
       if (q.includes("INSERT INTO erp_audit_logs")) return { rows: [{ id: "1", created_at: "2026-01-01T00:00:00.000Z" }] };
       if (q.includes("UPDATE commande_client SET updated_at")) return { rows: [] };
 
