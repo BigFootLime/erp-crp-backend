@@ -6,7 +6,12 @@ import type { PoolClient } from "pg";
 import pool from "../../../config/database";
 import { getDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
-import { repoEnsureCommandeWorkflowStatus } from "./commande-client.repository";
+import {
+  repoApplyCommandeWorkflowMilestone,
+  repoEnsureCommandeWorkflowCheckpoints,
+} from "./commande-client.repository";
+import { canActOnCommandeWorkflowCheckpoint } from "../domain/commande-client-rbac";
+import { normalizeCommandeWorkflowStatus } from "../workflow/commande-client-workflow.definition";
 import type { AppNotification } from "../../notifications/types/notifications.types";
 import type {
   CommandeArDraft,
@@ -86,6 +91,8 @@ export type CommandeArStoredDraft = {
   generated_by: number | null;
   status: "GENERATED" | "SENT" | "FAILED";
   sent_at: string | null;
+  recipient_emails: string[];
+  email_provider_id: string | null;
   preview_path: string;
 };
 
@@ -137,6 +144,94 @@ export function buildCommandeArRecipientSuggestions(data: CommandeArGenerationDa
   return out;
 }
 
+type CommandeArCheckpointAccess = {
+  status: string;
+  responsible_role: string;
+  assigned_user_id: number | null;
+};
+
+function assertCommandeArCheckpointAccess(params: {
+  checkpoint: CommandeArCheckpointAccess;
+  user_id: number;
+  user_role: string | null | undefined;
+}): void {
+  if (!canActOnCommandeWorkflowCheckpoint({
+    user_id: params.user_id,
+    user_role: params.user_role,
+    responsible_role: params.checkpoint.responsible_role,
+    assigned_user_id: params.checkpoint.assigned_user_id,
+  })) {
+    throw new HttpError(403, "COMMAND_CHECKPOINT_FORBIDDEN", "Ce checkpoint est attribué à un autre rôle ou utilisateur.");
+  }
+}
+
+export async function repoAuthorizeCommandeArGeneration(params: {
+  tx: DbQueryer;
+  commande_id: number;
+  user_id: number;
+  user_role: string | null | undefined;
+}): Promise<void> {
+  const access = await params.tx.query<{
+    raw_statut: string | null;
+    checkpoint_status: string | null;
+    responsible_role: string | null;
+    assigned_user_id: number | null;
+  }>(
+    `
+      SELECT
+        st.nouveau_statut AS raw_statut,
+        cp.status AS checkpoint_status,
+        cp.responsible_role,
+        cp.assigned_user_id::int AS assigned_user_id
+      FROM public.commande_client cc
+      LEFT JOIN LATERAL (
+        SELECT ch.nouveau_statut
+        FROM public.commande_historique ch
+        WHERE ch.commande_id = cc.id
+        ORDER BY ch.date_action DESC, ch.id DESC
+        LIMIT 1
+      ) st ON TRUE
+      LEFT JOIN public.commande_client_workflow_checkpoint cp
+        ON cp.commande_id = cc.id AND cp.checkpoint_code = 'ar_sent'
+      WHERE cc.id = $1::bigint
+      LIMIT 1
+    `,
+    [params.commande_id]
+  );
+  const row = access.rows[0];
+  if (!row) throw new HttpError(404, "COMMANDE_NOT_FOUND", "Commande introuvable");
+
+  const currentStatus = row.raw_statut === null ? "BROUILLON" : normalizeCommandeWorkflowStatus(row.raw_statut);
+  if (!currentStatus) {
+    throw new HttpError(
+      409,
+      "COMMAND_STATUS_HISTORY_INVALID",
+      `Le dernier statut enregistré (${row.raw_statut}) est inconnu. Réparez l'historique avant la génération de l'AR.`
+    );
+  }
+  if (!row.checkpoint_status || !row.responsible_role) {
+    throw new HttpError(409, "COMMAND_CHECKPOINT_MISSING", "Le checkpoint d'envoi de l'AR est absent.");
+  }
+
+  assertCommandeArCheckpointAccess({
+    checkpoint: {
+      status: row.checkpoint_status,
+      responsible_role: row.responsible_role,
+      assigned_user_id: row.assigned_user_id,
+    },
+    user_id: params.user_id,
+    user_role: params.user_role,
+  });
+
+  if (currentStatus !== "AR_PRET" || row.checkpoint_status !== "active") {
+    throw new HttpError(
+      409,
+      "COMMAND_AR_GENERATION_NOT_ALLOWED",
+      "L'AR ne peut être généré que lorsque son checkpoint d'envoi est actif."
+    );
+  }
+}
+
 export async function repoLoadCommandeArGenerationData(tx: DbQueryer, commandeId: number): Promise<CommandeArGenerationData | null> {
   type HeaderRow = Omit<CommandeArHeader, "commande_id"> & { commande_id: number };
   const headerRes = await tx.query<HeaderRow>(
@@ -144,7 +239,13 @@ export async function repoLoadCommandeArGenerationData(tx: DbQueryer, commandeId
       SELECT
         cc.id::int AS commande_id,
         cc.numero,
-        COALESCE(st.nouveau_statut, 'ENREGISTREE') AS statut,
+        CASE COALESCE(st.nouveau_statut, 'BROUILLON')
+          WHEN 'ENREGISTREE' THEN 'EN_ANALYSE'
+          WHEN 'PLANIFIEE' THEN 'PLANNING_VALIDE'
+          WHEN 'AR_ENVOYEE' THEN 'AR_ENVOYE'
+          WHEN 'LIVREE' THEN 'LIVRE'
+          ELSE COALESCE(st.nouveau_statut, 'BROUILLON')
+        END AS statut,
         cc.date_commande::text AS date_commande,
         cc.commentaire,
         cc.total_ht::float8 AS total_ht,
@@ -275,6 +376,7 @@ async function insertCommandeEvent(db: DbQueryer, params: {
 export async function repoCreateCommandeArDraft(params: {
   commande_id: number;
   user_id: number;
+  user_role: string | null | undefined;
   document_name: string;
   pdf_buffer: Buffer;
   subject: string;
@@ -296,6 +398,16 @@ export async function repoCreateCommandeArDraft(params: {
     if (!exists.rows[0]?.id) {
       throw new HttpError(404, "COMMANDE_NOT_FOUND", "Commande introuvable");
     }
+
+    // The PDF was rendered outside this transaction. Revalidate the status,
+    // active checkpoint and actor after acquiring the command lock so a send
+    // that committed in the meantime cannot be followed by a stale draft.
+    await repoAuthorizeCommandeArGeneration({
+      tx: client,
+      commande_id: params.commande_id,
+      user_id: params.user_id,
+      user_role: params.user_role,
+    });
 
     await fs.mkdir(path.dirname(filePath), { recursive: true });
     await fs.writeFile(filePath, params.pdf_buffer);
@@ -376,6 +488,8 @@ export async function repoCreateCommandeArDraft(params: {
       generated_by: row.generated_by,
       status: row.status,
       sent_at: row.sent_at,
+      recipient_emails: [],
+      email_provider_id: null,
       preview_path: `/commandes/${params.commande_id}/documents/${documentId}/file`,
     };
   } catch (err) {
@@ -395,6 +509,7 @@ export async function repoGetCommandeArDraft(params: {
   commande_id: number;
   ar_id: string;
   tx?: DbQueryer;
+  for_update?: boolean;
 }): Promise<CommandeArStoredDraft | null> {
   const db = params.tx ?? pool;
   const res = await db.query<{
@@ -408,6 +523,8 @@ export async function repoGetCommandeArDraft(params: {
     generated_by: number | null;
     status: "GENERATED" | "SENT" | "FAILED";
     sent_at: string | null;
+    recipient_emails: string[] | null;
+    email_provider_id: string | null;
   }>(
     `
       SELECT
@@ -420,12 +537,15 @@ export async function repoGetCommandeArDraft(params: {
         ar.generated_at::text AS generated_at,
         ar.generated_by,
         ar.status::text AS status,
-        ar.sent_at::text AS sent_at
+        ar.sent_at::text AS sent_at,
+        ar.recipient_emails,
+        ar.email_provider_id
       FROM public.commande_ar_log ar
       JOIN public.documents_clients dc ON dc.id = ar.document_id
       WHERE ar.commande_id = $1::bigint
         AND ar.id = $2::uuid
       LIMIT 1
+      ${params.for_update ? "FOR UPDATE OF ar" : ""}
     `,
     [params.commande_id, params.ar_id]
   );
@@ -444,6 +564,8 @@ export async function repoGetCommandeArDraft(params: {
     generated_by: row.generated_by,
     status: row.status,
     sent_at: row.sent_at,
+    recipient_emails: row.recipient_emails ?? [],
+    email_provider_id: row.email_provider_id,
     preview_path: `/commandes/${row.commande_id}/documents/${row.document_id}/file`,
   };
 }
@@ -452,19 +574,159 @@ export async function repoMarkCommandeArFailed(params: {
   commande_id: number;
   ar_id: string;
   error_message: string;
+  claim?: CommandeArSendClaim;
 }): Promise<void> {
-  await pool.query(
-    `
-      UPDATE public.commande_ar_log
-      SET status = 'FAILED', error_message = $3
-      WHERE commande_id = $1::bigint
-        AND id = $2::uuid
-    `,
-    [params.commande_id, params.ar_id, params.error_message]
-  );
+  const db = params.claim?.client ?? pool;
+  try {
+    await db.query(
+      `
+        UPDATE public.commande_ar_log
+        SET status = 'FAILED', error_message = $3
+        WHERE commande_id = $1::bigint
+          AND id = $2::uuid
+          AND status <> 'SENT'
+      `,
+      [params.commande_id, params.ar_id, params.error_message]
+    );
+    if (params.claim) await params.claim.client.query("COMMIT");
+  } catch (err) {
+    if (params.claim) await params.claim.client.query("ROLLBACK");
+    throw err;
+  } finally {
+    if (params.claim) params.claim.client.release();
+  }
+}
+
+export type CommandeArSendClaim = {
+  kind: "claimed";
+  client: PoolClient;
+  draft: CommandeArStoredDraft;
+};
+
+export type CommandeArSendClaimResult =
+  | CommandeArSendClaim
+  | { kind: "replay"; draft: CommandeArStoredDraft };
+
+export async function repoClaimCommandeArSend(params: {
+  commande_id: number;
+  ar_id: string;
+  user_id: number;
+  user_role: string | null | undefined;
+}): Promise<CommandeArSendClaimResult> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const header = await client.query<{ raw_statut: string | null }>(
+      `
+        SELECT st.nouveau_statut AS raw_statut
+        FROM public.commande_client cc
+        LEFT JOIN LATERAL (
+          SELECT ch.nouveau_statut
+          FROM public.commande_historique ch
+          WHERE ch.commande_id = cc.id
+          ORDER BY ch.date_action DESC, ch.id DESC
+          LIMIT 1
+        ) st ON TRUE
+        WHERE cc.id = $1::bigint
+        FOR UPDATE OF cc
+      `,
+      [params.commande_id]
+    );
+    if (!header.rows[0]) {
+      throw new HttpError(404, "COMMANDE_NOT_FOUND", "Commande introuvable");
+    }
+
+    const draft = await repoGetCommandeArDraft({
+      commande_id: params.commande_id,
+      ar_id: params.ar_id,
+      tx: client,
+      for_update: true,
+    });
+    if (!draft) {
+      throw new HttpError(404, "COMMANDE_AR_NOT_FOUND", "Accusé de réception introuvable");
+    }
+    if (!(new Set(["GENERATED", "FAILED", "SENT"])).has(draft.status)) {
+      throw new HttpError(
+        409,
+        "COMMAND_AR_STATUS_INVALID",
+        `Le statut technique de l'AR (${String(draft.status)}) ne permet pas son envoi.`
+      );
+    }
+
+    const rawStatus = header.rows[0].raw_statut;
+    const currentStatus = rawStatus === null ? "BROUILLON" : normalizeCommandeWorkflowStatus(rawStatus);
+    if (!currentStatus) {
+      throw new HttpError(
+        409,
+        "COMMAND_STATUS_HISTORY_INVALID",
+        `Le dernier statut enregistré (${rawStatus}) est inconnu. Réparez l'historique avant l'envoi de l'AR.`
+      );
+    }
+    await repoEnsureCommandeWorkflowCheckpoints(client, params.commande_id, currentStatus);
+    const checkpoint = await client.query<{
+      status: string;
+      responsible_role: string;
+      assigned_user_id: number | null;
+    }>(
+      `
+        SELECT status, responsible_role, assigned_user_id::int AS assigned_user_id
+        FROM public.commande_client_workflow_checkpoint
+        WHERE commande_id = $1::bigint
+          AND checkpoint_code = 'ar_sent'
+        FOR UPDATE
+      `,
+      [params.commande_id]
+    );
+    const activeCheckpoint = checkpoint.rows[0];
+    if (!activeCheckpoint) {
+      throw new HttpError(
+        409,
+        "COMMAND_CHECKPOINT_MISSING",
+        "Le checkpoint d'envoi de l'AR est absent. Rechargez le workflow de la commande."
+      );
+    }
+    assertCommandeArCheckpointAccess({ checkpoint: activeCheckpoint, user_id: params.user_id, user_role: params.user_role });
+    if (draft.status === "SENT") {
+      await client.query("COMMIT");
+      client.release();
+      return { kind: "replay", draft };
+    }
+    if (currentStatus !== "AR_PRET") {
+      throw new HttpError(
+        409,
+        "COMMAND_AR_SEND_NOT_ALLOWED",
+        `L'AR ne peut être envoyé que depuis le statut AR_PRET (statut courant: ${currentStatus}).`
+      );
+    }
+    if (activeCheckpoint.status !== "active") {
+      throw new HttpError(
+        409,
+        "COMMAND_CHECKPOINT_NOT_ACTIVE",
+        "Le checkpoint d'envoi de l'AR n'est pas actif. Rechargez le workflow de la commande."
+      );
+    }
+
+    // The open transaction and row locks are the send claim. A concurrent call
+    // waits here and observes SENT after commit, so it never invokes the provider.
+    return { kind: "claimed", client, draft };
+  } catch (err) {
+    await client.query("ROLLBACK");
+    client.release();
+    throw err;
+  }
+}
+
+export async function repoAbortCommandeArSendClaim(claim: CommandeArSendClaim): Promise<void> {
+  try {
+    await claim.client.query("ROLLBACK");
+  } finally {
+    claim.client.release();
+  }
 }
 
 export async function repoFinalizeCommandeArSend(params: {
+  claim: CommandeArSendClaim;
   commande_id: number;
   ar_id: string;
   sent_by: number;
@@ -473,15 +735,9 @@ export async function repoFinalizeCommandeArSend(params: {
   email_provider_id: string | null;
   commentaire: string | null;
 }): Promise<{ result: CommandeArSendResult; notifications: AppNotification[] }> {
-  const client = await pool.connect();
+  const client = params.claim.client;
+  const draft = params.claim.draft;
   try {
-    await client.query("BEGIN");
-
-    const draft = await repoGetCommandeArDraft({ commande_id: params.commande_id, ar_id: params.ar_id, tx: client });
-    if (!draft) {
-      throw new HttpError(404, "COMMANDE_AR_NOT_FOUND", "Accusé de réception introuvable");
-    }
-
     const updateRes = await client.query<{ sent_at: string }>(
       `
         UPDATE public.commande_ar_log
@@ -495,17 +751,24 @@ export async function repoFinalizeCommandeArSend(params: {
           error_message = NULL
         WHERE id = $1::uuid
           AND commande_id = $2::bigint
+          AND status IN ('GENERATED', 'FAILED')
         RETURNING sent_at::text AS sent_at
       `,
       [params.ar_id, params.commande_id, params.recipient_emails, params.recipient_contact_ids, params.sent_by, params.email_provider_id]
     );
+    if (!updateRes.rows[0]) {
+      throw new HttpError(409, "COMMAND_AR_SEND_CLAIM_LOST", "La réservation d'envoi de l'AR n'est plus valide.");
+    }
 
-    const statusOut = await repoEnsureCommandeWorkflowStatus({
+    const statusOut = await repoApplyCommandeWorkflowMilestone({
       tx: client,
       commande_id: params.commande_id,
-      nouveau_statut: "AR_ENVOYEE",
+      nouveau_statut: "AR_ENVOYE",
+      cause: "ar_send",
       commentaire: params.commentaire,
       user_id: params.sent_by,
+      completed_checkpoint_codes: ["ar_sent"],
+      active_checkpoint_code: "production_launch",
     });
 
     await insertCommandeEvent(client, {
@@ -527,7 +790,7 @@ export async function repoFinalizeCommandeArSend(params: {
         ar_id: draft.ar_id,
         commande_id: params.commande_id,
         document_id: draft.document_id,
-        status: "AR_ENVOYEE",
+        status: "AR_ENVOYE",
         sent_at: updateRes.rows[0]?.sent_at ?? new Date().toISOString(),
         recipient_emails: params.recipient_emails,
         email_provider_id: params.email_provider_id,

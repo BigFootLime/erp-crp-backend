@@ -25,7 +25,7 @@ export type CommandeArSendResult = {
   ar_id: string;
   commande_id: number;
   document_id: string;
-  status: "AR_ENVOYEE";
+  status: "AR_ENVOYE";
   sent_at: string;
   recipient_emails: string[];
   email_provider_id: string | null;

@@ -2,10 +2,6 @@ import type { RequestHandler } from "express"
 import { Router } from "express"
 import multer from "multer"
 
-import {
-  hasGrantedAccountModuleAccess,
-  requestHasGrantedAccountModuleAccess,
-} from "../../access-control/context/account-module-access.context"
 import { authenticateToken } from "../../auth/middlewares/auth.middleware"
 import { HttpError } from "../../../utils/httpError"
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
@@ -32,7 +28,6 @@ import {
   updateCadreReleaseStatus,
   updateCommande,
   updateCommandeWorkflowCheckpoint,
-  updateCommandeStatus,
 } from "../controllers/commande-client.controller"
 import { generateCommandeAr, sendCommandeAr } from "../controllers/commande-ar.controller"
 import {
@@ -84,40 +79,22 @@ const parseCommandeBody: RequestHandler = (req, res, next) => {
 
 const router = Router()
 
-function isAdminRole(role: string | undefined): boolean {
-  if (!role) return false
-  const r = role.trim().toLowerCase()
-  return r.includes("admin") || r.includes("administrateur") || r.includes("directeur")
-}
-
-function isOfficeSupportRole(role: string | undefined): boolean {
-  if (!role) return false
-  const r = role.trim().toLowerCase()
-  return r.includes("secr") || r.includes("secret") || r.includes("compt")
-}
-
-const requireOfficeSupportOrAdmin: RequestHandler = (req, _res, next) => {
-  if (
-    requestHasGrantedAccountModuleAccess(req) ||
-    hasGrantedAccountModuleAccess()
-  ) {
-    next()
-    return
-  }
-  const role = req.user?.role
-  if (!isAdminRole(role) && !isOfficeSupportRole(role)) {
-    next(new HttpError(403, "FORBIDDEN", "Secretary or accounting role required"))
-    return
-  }
-  next()
-}
-
 const rejectLegacyCommandeLaunch: RequestHandler = (_req, _res, next) => {
   next(
     new HttpError(
       410,
       "LEGACY_COMMAND_LAUNCH_REMOVED",
       "Cet ancien lancement de commande est désactivé. Utilisez Vérifier le stock et lancer."
+    )
+  )
+}
+
+const rejectDirectCommandeStatusMutation: RequestHandler = (_req, _res, next) => {
+  next(
+    new HttpError(
+      410,
+      "DIRECT_COMMAND_STATUS_MUTATION_DISABLED",
+      "La modification directe du statut est désactivée. Utilisez l'action du checkpoint métier actif."
     )
   )
 }
@@ -191,13 +168,23 @@ router.patch("/:id", validate(idParamSchema), upload.array("documents[]"), parse
 router.delete("/:id", validate(idParamSchema), deleteCommande)
 
 // POST /api/v1/commandes/:id/status
-router.post("/:id/status", authenticateToken, validate(idParamSchema), updateCommandeStatus)
+router.post("/:id/status", authenticateToken, validate(idParamSchema), rejectDirectCommandeStatusMutation)
 
 // POST /api/v1/commandes/:id/ar/generate
-router.post("/:id/ar/generate", authenticateToken, validate(generateCommandeArSchema), generateCommandeAr)
+router.post(
+  "/:id/ar/generate",
+  authenticateToken,
+  validate(generateCommandeArSchema),
+  generateCommandeAr
+)
 
 // POST /api/v1/commandes/:id/ar/send
-router.post("/:id/ar/send", authenticateToken, validate(sendCommandeArSchema), sendCommandeAr)
+router.post(
+  "/:id/ar/send",
+  authenticateToken,
+  validate(sendCommandeArSchema),
+  sendCommandeAr
+)
 
 // POST /api/v1/commandes/:id/analyze-stock
 router.post("/:id/analyze-stock", authenticateToken, validate(idParamSchema), analyzeCommandeStock)

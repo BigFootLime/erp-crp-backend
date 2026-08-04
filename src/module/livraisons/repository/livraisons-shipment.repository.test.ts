@@ -2,7 +2,98 @@ import type { PoolClient } from "pg";
 import { describe, expect, it, vi } from "vitest";
 
 import { prepareLivraisonInTransaction } from "./livraisons-shipment.repository";
-import { attachActiveCommandeReservationsToLivraison } from "./livraisons.repository";
+import {
+  attachActiveCommandeReservationsToLivraison,
+  repoCreateLivraisonFromCommande,
+} from "./livraisons.repository";
+
+describe("internal order delivery gate", () => {
+  it("creates no BL artifact before the post-quality PRET_LIVRAISON milestone", async () => {
+    const query = vi.fn(async (sql: string, _values?: unknown[]) => {
+      if (sql.includes("FROM public.commande_client cc")) {
+        return {
+          rows: [{
+            id: 12,
+            numero: "CI-12",
+            client_id: null,
+            order_type: "INTERNE",
+            raw_statut: "PRODUCTION_TERMINEE",
+          }],
+        };
+      }
+      return { rows: [] };
+    });
+    const tx = { query } as unknown as PoolClient;
+
+    await expect(repoCreateLivraisonFromCommande(12, 7, tx)).rejects.toMatchObject({
+      status: 409,
+      code: "INTERNAL_DELIVERY_QUALITY_RELEASE_REQUIRED",
+    });
+
+    expect(query.mock.calls.some(([sql]) => String(sql).includes("INSERT INTO bon_livraison"))).toBe(false);
+    expect(query.mock.calls.some(([sql]) => String(sql).includes("bon_livraison_no_seq"))).toBe(false);
+  });
+
+  it("resolves the configured internal client and records the stock destination after quality", async () => {
+    const internalClientId = "CERP-INTERNE";
+    const warehouseId = "11111111-1111-4111-8111-111111111111";
+    const deliveryId = "22222222-2222-4222-8222-222222222222";
+    const query = vi.fn(async (sql: string, _values?: unknown[]) => {
+      if (sql.includes("FROM public.commande_client cc")) {
+        return {
+          rows: [{
+            id: 12,
+            numero: "CI-12",
+            client_id: null,
+            order_type: "INTERNE",
+            raw_statut: "PRET_LIVRAISON",
+            dest_stock_magasin_id: warehouseId,
+            dest_stock_emplacement_id: 42,
+          }],
+        };
+      }
+      if (sql.includes("commandes.internal_client_id")) return { rows: [{ value_text: internalClientId }] };
+      if (sql.includes("FROM pg_attribute")) return { rows: [{ ok: 1 }] };
+      if (sql.includes("FROM commande_to_affaire") || sql.includes("FROM public.commande_to_affaire")) {
+        return { rows: [{ affaire_id: 91 }] };
+      }
+      if (sql.includes("bon_livraison_no_seq")) return { rows: [{ n: "8" }] };
+      if (sql.includes("INSERT INTO bon_livraison (")) return { rows: [{ id: deliveryId }] };
+      if (sql.includes("v_bon_livraison_reliquats_226")) {
+        return {
+          rows: [{
+            id: 501,
+            designation: "Pièce interne",
+            code_piece: "INT-01",
+            quantite: 2,
+            unite: "u",
+            delai_client: null,
+          }],
+        };
+      }
+      if (sql.includes("FROM public.bon_livraison_ligne delivery_line")) return { rows: [] };
+      if (sql.includes("SELECT NOT EXISTS(")) return { rows: [{ complete: false }] };
+      return { rows: [] };
+    });
+    const tx = { query } as unknown as PoolClient;
+
+    await expect(repoCreateLivraisonFromCommande(12, 7, tx)).resolves.toEqual({ id: deliveryId });
+
+    const insert = query.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO bon_livraison ("));
+    expect(insert?.[1]).toEqual([
+      "BL-00000008",
+      internalClientId,
+      12,
+      91,
+      null,
+      `Destination stock interne: magasin ${warehouseId}, emplacement 42`,
+      7,
+    ]);
+    const event = query.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO bon_livraison_event_log"));
+    expect(String(event?.[1]?.[3])).toContain(`\"magasin_id\":\"${warehouseId}\"`);
+    expect(String(event?.[1]?.[3])).toContain("\"emplacement_id\":42");
+  });
+});
 
 describe("prepareLivraisonInTransaction", () => {
   it("reuses an active production reservation without reserving stock twice", async () => {

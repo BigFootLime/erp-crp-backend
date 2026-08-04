@@ -13,7 +13,11 @@ function getUserId(req: Request): number {
 
 export const generateCommandeAr: RequestHandler = asyncHandler(async (req, res) => {
   const { id } = generateCommandeArSchema.parse({ params: req.params }).params;
-  const out = await svcGenerateCommandeAr({ commande_id: Number(id), user_id: getUserId(req) });
+  const out = await svcGenerateCommandeAr({
+    commande_id: Number(id),
+    user_id: getUserId(req),
+    user_role: req.user?.role,
+  });
   res.status(201).json(out);
 });
 
@@ -22,6 +26,7 @@ export const sendCommandeAr: RequestHandler = asyncHandler(async (req, res) => {
   const out = await svcSendCommandeAr({
     commande_id: Number(parsed.params.id),
     user_id: getUserId(req),
+    user_role: req.user?.role,
     body: parsed.body,
   });
   res.status(200).json(out);

@@ -20,9 +20,11 @@ import type {
 import type { SendCommandeArBodyDTO } from "../validators/commande-ar.validators";
 import {
   buildCommandeArRecipientSuggestions,
+  repoAbortCommandeArSendClaim,
+  repoAuthorizeCommandeArGeneration,
+  repoClaimCommandeArSend,
   repoCreateCommandeArDraft,
   repoFinalizeCommandeArSend,
-  repoGetCommandeArDraft,
   repoLoadCommandeArGenerationData,
   repoMarkCommandeArFailed,
 } from "../repository/commande-ar.repository";
@@ -229,9 +231,16 @@ export async function buildCommandeArPdfBuffer(params: {
 export async function svcGenerateCommandeAr(params: {
   commande_id: number;
   user_id: number;
+  user_role: string | null | undefined;
 }): Promise<CommandeArDraft> {
   const client = await pool.connect();
   try {
+    await repoAuthorizeCommandeArGeneration({
+      tx: client,
+      commande_id: params.commande_id,
+      user_id: params.user_id,
+      user_role: params.user_role,
+    });
     const data = await repoLoadCommandeArGenerationData(client, params.commande_id);
     if (!data) {
       throw new HttpError(404, "COMMANDE_NOT_FOUND", "Commande introuvable");
@@ -285,6 +294,7 @@ export async function svcGenerateCommandeAr(params: {
     const draft = await repoCreateCommandeArDraft({
       commande_id: params.commande_id,
       user_id: params.user_id,
+      user_role: params.user_role,
       document_name: documentName,
       pdf_buffer: pdfBuffer,
       subject,
@@ -323,74 +333,100 @@ export async function svcGenerateCommandeAr(params: {
 export async function svcSendCommandeAr(params: {
   commande_id: number;
   user_id: number;
+  user_role: string | null | undefined;
   body: SendCommandeArBodyDTO;
 }): Promise<CommandeArSendResult> {
-  const draft = await repoGetCommandeArDraft({ commande_id: params.commande_id, ar_id: params.body.ar_id });
-  if (!draft) {
-    throw new HttpError(404, "COMMANDE_AR_NOT_FOUND", "Accusé de réception introuvable");
-  }
-
-  const filePath = path.resolve(getDocumentStoragePath(), `${draft.document_id}.pdf`);
-  const pdfBuffer = await fs.readFile(filePath);
-
-  const baseText = draft.body_text?.trim() || `Veuillez trouver ci-joint l'accuse de reception de la commande.`;
-  const customMessage = params.body.message?.trim() || null;
-  const fullText = customMessage ? `${baseText}\n\n${customMessage}` : baseText;
-
-  const emailResult = await sendTransactionalEmail({
-    to: params.body.recipient_emails,
-    subject: draft.subject,
-    text: fullText,
-    html: buildEmailHtml(baseText, customMessage),
-    idempotencyKey: `commande-ar:${params.body.ar_id}`,
-    attachments: [
-      {
-        filename: draft.document_name,
-        content: pdfBuffer,
-        contentType: "application/pdf",
-      },
-    ],
-  });
-
-  if (!emailResult.ok) {
-    let statusCode = 502;
-    let message = "Erreur d'envoi de l'email";
-    if ("skipped" in emailResult && emailResult.skipped === true) {
-      statusCode = 503;
-      message = "Email non configuré sur le serveur";
-    } else if (isResendSendError(emailResult)) {
-      message = emailResult.error;
-    }
-    await repoMarkCommandeArFailed({
-      commande_id: params.commande_id,
-      ar_id: params.body.ar_id,
-      error_message: message,
-    });
-    throw new HttpError(statusCode, "COMMANDE_AR_SEND_FAILED", message);
-  }
-
-  const finalized = await repoFinalizeCommandeArSend({
+  const claimResult = await repoClaimCommandeArSend({
     commande_id: params.commande_id,
     ar_id: params.body.ar_id,
-    sent_by: params.user_id,
-    recipient_emails: params.body.recipient_emails,
-    recipient_contact_ids: params.body.recipient_contact_ids,
-    email_provider_id: emailResult.id ?? null,
-    commentaire: `AR envoyé à ${params.body.recipient_emails.join(", ")}`,
+    user_id: params.user_id,
+    user_role: params.user_role,
   });
-
-  for (const notification of finalized.notifications) {
-    emitAppNotificationCreated(notification.user_id, notification);
+  if (claimResult.kind === "replay") {
+    return {
+      ar_id: claimResult.draft.ar_id,
+      commande_id: params.commande_id,
+      document_id: claimResult.draft.document_id,
+      status: "AR_ENVOYE",
+      sent_at: claimResult.draft.sent_at ?? new Date().toISOString(),
+      recipient_emails: claimResult.draft.recipient_emails,
+      email_provider_id: claimResult.draft.email_provider_id,
+    };
   }
-  emitEntityChanged({
-    entityType: "commande_client",
-    entityId: String(params.commande_id),
-    action: "status_changed",
-    module: "commandes",
-    at: new Date().toISOString(),
-    by: { id: params.user_id, name: `User #${params.user_id}` },
-    invalidateKeys: ["commandes:list", `commandes:detail:${params.commande_id}`],
-  });
 
-  return finalized.result;
+  const claim = claimResult;
+  const draft = claim.draft;
+  let claimOpen = true;
+  try {
+    const filePath = path.resolve(getDocumentStoragePath(), `${draft.document_id}.pdf`);
+    const pdfBuffer = await fs.readFile(filePath);
+
+    const baseText = draft.body_text?.trim() || `Veuillez trouver ci-joint l'accuse de reception de la commande.`;
+    const customMessage = params.body.message?.trim() || null;
+    const fullText = customMessage ? `${baseText}\n\n${customMessage}` : baseText;
+
+    const emailResult = await sendTransactionalEmail({
+      to: params.body.recipient_emails,
+      subject: draft.subject,
+      text: fullText,
+      html: buildEmailHtml(baseText, customMessage),
+      idempotencyKey: `commande-ar:${params.body.ar_id}`,
+      attachments: [
+        {
+          filename: draft.document_name,
+          content: pdfBuffer,
+          contentType: "application/pdf",
+        },
+      ],
+    });
+
+    if (!emailResult.ok) {
+      let statusCode = 502;
+      let message = "Erreur d'envoi de l'email";
+      if ("skipped" in emailResult && emailResult.skipped === true) {
+        statusCode = 503;
+        message = "Email non configuré sur le serveur";
+      } else if (isResendSendError(emailResult)) {
+        message = emailResult.error;
+      }
+      claimOpen = false;
+      await repoMarkCommandeArFailed({
+        commande_id: params.commande_id,
+        ar_id: params.body.ar_id,
+        error_message: message,
+        claim,
+      });
+      throw new HttpError(statusCode, "COMMANDE_AR_SEND_FAILED", message);
+    }
+
+    claimOpen = false;
+    const finalized = await repoFinalizeCommandeArSend({
+      claim,
+      commande_id: params.commande_id,
+      ar_id: params.body.ar_id,
+      sent_by: params.user_id,
+      recipient_emails: params.body.recipient_emails,
+      recipient_contact_ids: params.body.recipient_contact_ids,
+      email_provider_id: emailResult.id ?? null,
+      commentaire: `AR envoyé à ${params.body.recipient_emails.join(", ")}`,
+    });
+
+    for (const notification of finalized.notifications) {
+      emitAppNotificationCreated(notification.user_id, notification);
+    }
+    emitEntityChanged({
+      entityType: "commande_client",
+      entityId: String(params.commande_id),
+      action: "status_changed",
+      module: "commandes",
+      at: new Date().toISOString(),
+      by: { id: params.user_id, name: `User #${params.user_id}` },
+      invalidateKeys: ["commandes:list", `commandes:detail:${params.commande_id}`],
+    });
+
+    return finalized.result;
+  } catch (err) {
+    if (claimOpen) await repoAbortCommandeArSendClaim(claim);
+    throw err;
+  }
 }

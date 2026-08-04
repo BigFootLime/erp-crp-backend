@@ -224,38 +224,6 @@ z.object({
 
 export type CreateCommandeBodyDTO = z.infer<typeof createCommandeBodySchema>;
 
-export const commandeWorkflowStatusSchema = z.enum([
-  "BROUILLON",
-  "EN_ANALYSE",
-  "ATTENTE_TECHNIQUE",
-  "ATTENTE_STOCK",
-  "ATTENTE_OF",
-  "ATTENTE_PLANNING",
-  "PLANNING_VALIDE",
-  "AR_PRET",
-  "AR_ENVOYE",
-  "EN_PRODUCTION",
-  "PRODUCTION_TERMINEE",
-  "CONTROLE_QUALITE",
-  "PRET_LIVRAISON",
-  "LIVRE",
-  "FACTURE",
-  "ARCHIVE",
-  "BLOQUE",
-  "ENREGISTREE",
-  "PLANIFIEE",
-  "AR_ENVOYEE",
-  "LIVREE",
-]);
-export type CommandeWorkflowStatusDTO = z.infer<typeof commandeWorkflowStatusSchema>;
-
-export const updateCommandeStatusBodySchema = z.object({
-  nouveau_statut: commandeWorkflowStatusSchema,
-  commentaire: z.string().optional().nullable(),
-});
-
-export type UpdateCommandeStatusBodyDTO = z.infer<typeof updateCommandeStatusBodySchema>;
-
 export const commandeCheckpointStatusSchema = z.enum(COMMANDE_CHECKPOINT_STATUSES);
 
 export const commandeWorkflowCheckpointCodeParamSchema = z.object({
@@ -267,7 +235,9 @@ export const commandeWorkflowCheckpointCodeParamSchema = z.object({
 
 export const updateCommandeWorkflowCheckpointBodySchema = z
   .object({
-    status: commandeCheckpointStatusSchema.optional(),
+    // Workflow progress is owned by POST /workflow/actions. PATCH is limited
+    // to assignment metadata and the reversible active <-> blocked control.
+    status: z.enum(["active", "blocked"]).optional(),
     assigned_user_id: z.coerce.number().int().positive().optional().nullable(),
     due_at: z.string().datetime().optional().nullable(),
     blocked_reason: z.string().max(20000).optional().nullable(),
