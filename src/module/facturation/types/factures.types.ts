@@ -10,6 +10,8 @@ export type FactureHeader = {
   date_emission: string;
   date_echeance: string | null;
   statut: string;
+  document_status: string;
+  settlement_status: string;
   remise_globale: number;
   total_ht: number;
   total_ttc: number;
@@ -77,6 +79,8 @@ export type FactureListItem = {
   total_ttc: number;
   updated_at: string;
   statut: string;
+  document_status: string;
+  settlement_status: string;
   client?: ClientLite | null;
   total_paye_ttc?: number;
   total_avoirs_ttc?: number;

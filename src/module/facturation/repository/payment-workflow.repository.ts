@@ -23,11 +23,18 @@ import {
   nextLegacyId,
   saveFinanceReceipt,
 } from "./workflow.repository.shared";
+import {
+  assertInvoiceIssued,
+  lockInvoiceSettlement,
+  refreshInvoiceSettlementStates,
+  type LockedInvoiceSettlement,
+} from "./invoice-settlement.repository";
 
 type LockedPayment = {
   id: number;
   uuid: string;
   code: string;
+  facture_id: number | null;
   client_id: string;
   montant: string;
   currency: string;
@@ -41,7 +48,7 @@ async function lockPayment(client: PoolClient, paymentId: number): Promise<Locke
   const result = await client.query<LockedPayment>(
     `
       SELECT
-        id, uuid::text AS uuid, code, client_id,
+        id, uuid::text AS uuid, code, facture_id, client_id,
         montant::numeric(18,2)::text AS montant,
         currency, status, row_version
       FROM public.paiement
@@ -53,16 +60,24 @@ async function lockPayment(client: PoolClient, paymentId: number): Promise<Locke
   return result.rows[0] ?? null;
 }
 
-async function allocatedPaymentCents(client: PoolClient, paymentId: number): Promise<bigint> {
-  const result = await client.query<{ amount: string }>(
+async function allocatedPaymentEvidence(
+  client: PoolClient,
+  paymentId: number
+): Promise<{ allocatedCents: bigint; allocationCount: number }> {
+  const result = await client.query<{ amount: string; allocation_count: number }>(
     `
-      SELECT COALESCE(SUM(amount_ttc), 0)::numeric(18,2)::text AS amount
+      SELECT
+        COALESCE(SUM(amount_ttc), 0)::numeric(18,2)::text AS amount,
+        COUNT(*)::int AS allocation_count
       FROM public.paiement_allocations
       WHERE paiement_id = $1
     `,
     [paymentId]
   );
-  return moneyToCents(result.rows[0]?.amount ?? "0.00", "Montant alloué");
+  return {
+    allocatedCents: moneyToCents(result.rows[0]?.amount ?? "0.00", "Montant alloué"),
+    allocationCount: result.rows[0]?.allocation_count ?? 0,
+  };
 }
 
 type ResolvedAllocation = {
@@ -73,16 +88,26 @@ type ResolvedAllocation = {
   amount: string;
 };
 
-async function resolveAndValidateAllocations(params: {
+type AllocationCandidate = ResolvedAllocation & { amountCents: bigint };
+
+type LockedDueDate = {
+  id: string;
+  facture_id: number;
+  amount_due: string;
+  amount_allocated: string;
+  status: string;
+};
+
+export async function resolveAndValidateAllocations(params: {
   client: PoolClient;
   clientId: string;
   currency: string;
-  paymentId: number;
   paymentAvailableCents: bigint;
   allocations: readonly AllocationInput[];
 }): Promise<ResolvedAllocation[]> {
   const uniqueTargets = new Set<string>();
-  const resolved: ResolvedAllocation[] = [];
+  const candidates: AllocationCandidate[] = [];
+  const requestedByInvoice = new Map<number, bigint>();
   let requestedCents = 0n;
 
   const sorted = [...params.allocations].sort((left, right) =>
@@ -109,24 +134,15 @@ async function resolveAndValidateAllocations(params: {
 
     let factureId: number;
     let dueDateId: string | null = null;
-    let dueAvailableCents: bigint | null = null;
     if (allocation.target_type === "ECHEANCE") {
       const due = await params.client.query<{
         id: string;
         facture_id: number;
-        amount_due: string;
-        amount_allocated: string;
-        status: string;
       }>(
         `
-          SELECT
-            id::text AS id, facture_id,
-            amount_due::numeric(18,2)::text AS amount_due,
-            amount_allocated::numeric(18,2)::text AS amount_allocated,
-            status
+          SELECT id::text AS id, facture_id
           FROM public.facture_echeance
           WHERE id = $1::uuid
-          FOR UPDATE
         `,
         [allocation.target_id]
       );
@@ -136,16 +152,6 @@ async function resolveAndValidateAllocations(params: {
       }
       factureId = row.facture_id;
       dueDateId = row.id;
-      dueAvailableCents =
-        moneyToCents(row.amount_due, "Échéance") -
-        moneyToCents(row.amount_allocated, "Échéance allouée");
-      if (row.status === "CANCELLED" || amountCents > dueAvailableCents) {
-        throw new HttpError(
-          409,
-          "PAYMENT_DUE_DATE_EXCEEDED",
-          "L'allocation dépasse le solde de l'échéance."
-        );
-      }
     } else {
       if (!/^\d+$/.test(allocation.target_id)) {
         throw new HttpError(422, "PAYMENT_FACTURE_ID_INVALID", "Identifiant facture invalide.");
@@ -153,49 +159,26 @@ async function resolveAndValidateAllocations(params: {
       factureId = Number.parseInt(allocation.target_id, 10);
     }
 
-    const facture = await params.client.query<{
-      client_id: string;
-      currency: string;
-      statut: string;
-      total_ttc: string;
-      settled_ttc: string;
-    }>(
-      `
-        SELECT
-          f.client_id,
-          COALESCE(f.currency, 'EUR') AS currency,
-          f.statut,
-          f.total_ttc::numeric(18,2)::text AS total_ttc,
-          (
-            COALESCE((
-              SELECT SUM(pa.amount_ttc)
-              FROM public.paiement_allocations pa
-              WHERE pa.facture_id = f.id
-            ), 0)
-            +
-            COALESCE((
-              SELECT SUM(asa.amount_ttc)
-              FROM public.avoir_source_allocations asa
-              WHERE asa.facture_id = f.id
-                AND asa.allocation_status = 'CONSUMED'
-            ), 0)
-          )::numeric(18,2)::text AS settled_ttc
-        FROM public.facture f
-        WHERE f.id = $1
-        FOR UPDATE
-      `,
-      [factureId]
-    );
-    const invoice = facture.rows[0];
+    candidates.push({
+      targetType: allocation.target_type,
+      targetId: allocation.target_id,
+      factureId,
+      dueDateId,
+      amount: allocation.amount,
+      amountCents,
+    });
+  }
+
+  // Tous les verrous facture sont acquis dans le même ordre global, avant les
+  // échéances. Un mélange FACTURE + ECHEANCE ne peut donc plus inverser l'ordre.
+  const invoices = new Map<number, LockedInvoiceSettlement>();
+  const factureIds = [...new Set(candidates.map((candidate) => candidate.factureId))]
+    .sort((left, right) => left - right);
+  for (const factureId of factureIds) {
+    const invoice = await lockInvoiceSettlement(params.client, factureId);
     if (!invoice) throw new HttpError(404, "FACTURE_NOT_FOUND", "Facture introuvable.");
-    if (!["ISSUED", "PARTIALLY_PAID", "PAID"].includes(invoice.statut)) {
-      throw new HttpError(
-        409,
-        "PAYMENT_FACTURE_NOT_ISSUED",
-        "Un paiement ne peut être alloué qu'à une facture émise."
-      );
-    }
-    if (invoice.client_id !== params.clientId) {
+    assertInvoiceIssued(invoice);
+    if (invoice.clientId !== params.clientId) {
       throw new HttpError(
         422,
         "PAYMENT_CLIENT_MISMATCH",
@@ -209,23 +192,67 @@ async function resolveAndValidateAllocations(params: {
         "Le paiement et la facture doivent avoir la même devise."
       );
     }
-    const invoiceAvailableCents =
-      moneyToCents(invoice.total_ttc, "Total facture") -
-      moneyToCents(invoice.settled_ttc, "Total réglé");
-    if (amountCents > invoiceAvailableCents) {
+    invoices.set(factureId, invoice);
+  }
+
+  const dueDates = new Map<string, LockedDueDate>();
+  const dueCandidates = candidates
+    .filter((candidate): candidate is AllocationCandidate & { dueDateId: string } =>
+      candidate.dueDateId !== null
+    )
+    .sort((left, right) =>
+      left.factureId - right.factureId || left.dueDateId.localeCompare(right.dueDateId)
+    );
+  for (const candidate of dueCandidates) {
+    const due = await params.client.query<LockedDueDate>(
+      `
+        SELECT
+          id::text AS id, facture_id,
+          amount_due::numeric(18,2)::text AS amount_due,
+          amount_allocated::numeric(18,2)::text AS amount_allocated,
+          status
+        FROM public.facture_echeance
+        WHERE id = $1::uuid
+        FOR UPDATE
+      `,
+      [candidate.dueDateId]
+    );
+    const row = due.rows[0];
+    if (!row) throw new HttpError(404, "PAYMENT_DUE_DATE_NOT_FOUND", "Échéance introuvable.");
+    if (row.facture_id !== candidate.factureId) {
+      throw new HttpError(409, "PAYMENT_DUE_DATE_CHANGED", "L'échéance a changé; réessayez.");
+    }
+    dueDates.set(candidate.dueDateId, row);
+  }
+
+  for (const candidate of candidates) {
+    const invoice = invoices.get(candidate.factureId)!;
+    if (candidate.dueDateId) {
+      const due = dueDates.get(candidate.dueDateId)!;
+      const dueAvailableCents =
+        moneyToCents(due.amount_due, "Échéance") -
+        moneyToCents(due.amount_allocated, "Échéance allouée");
+      if (due.status === "CANCELLED" || candidate.amountCents > dueAvailableCents) {
+        throw new HttpError(
+          409,
+          "PAYMENT_DUE_DATE_EXCEEDED",
+          "L'allocation dépasse le solde de l'échéance."
+        );
+      }
+    }
+    const invoiceAvailableCents = invoice.totalCents - invoice.settledCents;
+    const alreadyRequestedForInvoice = requestedByInvoice.get(candidate.factureId) ?? 0n;
+    if (alreadyRequestedForInvoice + candidate.amountCents > invoiceAvailableCents) {
       throw new HttpError(
         409,
         "PAYMENT_INVOICE_BALANCE_EXCEEDED",
         "L'allocation dépasse le solde de la facture."
       );
     }
-    resolved.push({
-      targetType: allocation.target_type,
-      targetId: allocation.target_id,
-      factureId,
-      dueDateId,
-      amount: allocation.amount,
-    });
+    requestedByInvoice.set(
+      candidate.factureId,
+      alreadyRequestedForInvoice + candidate.amountCents
+    );
   }
 
   if (requestedCents > params.paymentAvailableCents) {
@@ -235,7 +262,7 @@ async function resolveAndValidateAllocations(params: {
       "Les allocations dépassent le montant disponible du paiement."
     );
   }
-  return resolved;
+  return candidates.map(({ amountCents: _amountCents, ...candidate }) => candidate);
 }
 
 async function insertAllocations(params: {
@@ -343,7 +370,6 @@ export async function repoRegisterPayment(params: {
       client,
       clientId: params.input.client_id,
       currency: params.input.currency,
-      paymentId: id,
       paymentAvailableCents: amountCents,
       allocations: params.input.allocations,
     });
@@ -390,6 +416,13 @@ export async function repoRegisterPayment(params: {
       correlationId,
       allocations,
     });
+    await refreshInvoiceSettlementStates({
+      client,
+      factureIds: allocations.map((allocation) => allocation.factureId),
+      actor: params.actor,
+      correlationId,
+      idempotencyKey: receipt.idempotencyKey,
+    });
     const allocatedCents = allocations.reduce(
       (sum, allocation) => sum + moneyToCents(allocation.amount, "Montant alloué"),
       0n
@@ -411,6 +444,7 @@ export async function repoRegisterPayment(params: {
       id,
       uuid,
       code,
+      facture_id: firstFactureId,
       client_id: params.input.client_id,
       montant: params.input.amount,
       currency: params.input.currency,
@@ -513,12 +547,22 @@ export async function repoAllocatePayment(params: {
       throw new HttpError(409, "CONCURRENT_MODIFICATION", "Le paiement a changé.");
     }
     const amountCents = moneyToCents(payment.montant, "Montant du paiement");
-    const alreadyAllocated = await allocatedPaymentCents(client, payment.id);
+    const paymentEvidence = await allocatedPaymentEvidence(client, payment.id);
+    // Un lien facture direct sans allocation est la preuve complète pré-#227.
+    // Le rendre partiellement alloué supprimerait le fallback de la facture
+    // historique et réécrirait son solde économique sans preuve de migration.
+    if (payment.facture_id !== null && paymentEvidence.allocationCount === 0) {
+      throw new HttpError(
+        409,
+        "PAYMENT_LEGACY_DIRECT_IMMUTABLE",
+        "Ce paiement historique est déjà intégralement affecté à sa facture d'origine."
+      );
+    }
+    const alreadyAllocated = paymentEvidence.allocatedCents;
     const allocations = await resolveAndValidateAllocations({
       client,
       clientId: payment.client_id,
       currency: payment.currency,
-      paymentId: payment.id,
       paymentAvailableCents: amountCents - alreadyAllocated,
       allocations: params.input.allocations,
     });
@@ -529,6 +573,13 @@ export async function repoAllocatePayment(params: {
       actor: params.actor,
       correlationId,
       allocations,
+    });
+    await refreshInvoiceSettlementStates({
+      client,
+      factureIds: allocations.map((allocation) => allocation.factureId),
+      actor: params.actor,
+      correlationId,
+      idempotencyKey: receipt.idempotencyKey,
     });
     const newlyAllocated = allocations.reduce(
       (sum, allocation) => sum + moneyToCents(allocation.amount, "Montant alloué"),

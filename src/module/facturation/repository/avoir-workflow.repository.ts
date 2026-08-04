@@ -7,11 +7,13 @@ import {
   assertAvoirTransition,
   assertSeparationOfDuties,
   financePreviewHash,
+  isInvoiceIssuedForSettlement,
   type AvoirWorkflowStatus,
 } from "../domain/finance-policy";
 import {
   computeExactDocumentTotals,
   computeExactLineTotals,
+  moneyToCents,
   parseDecimal,
 } from "../domain/decimal-money";
 import type {
@@ -37,11 +39,18 @@ import {
   requireFinanceIssuerSnapshotAt,
   saveFinanceReceipt,
 } from "./workflow.repository.shared";
+import {
+  assertInvoiceCreditWithinBalance,
+  assertInvoiceIssued,
+  lockInvoiceSettlement,
+  refreshInvoiceSettlementStates,
+} from "./invoice-settlement.repository";
 
 type AvoirSourceRow = {
   facture_id: string;
   facture_number: string;
   facture_status: string;
+  facture_document_status: string | null;
   client_id: string;
   currency: string;
   client_snapshot: Record<string, unknown>;
@@ -105,6 +114,7 @@ async function loadAvoirSources(
         f.id::text AS facture_id,
         f.numero AS facture_number,
         f.statut AS facture_status,
+        f.document_status AS facture_document_status,
         f.client_id,
         COALESCE(f.currency, 'EUR') AS currency,
         COALESCE(f.client_snapshot, '{}'::jsonb) AS client_snapshot,
@@ -145,7 +155,10 @@ async function buildAvoirPreview(
     throw new HttpError(404, "FACTURE_NOT_FOUND", "Facture ou lignes de facture introuvables.");
   }
   const header = rows[0]!;
-  if (!["ISSUED", "PARTIALLY_PAID", "PAID"].includes(header.facture_status)) {
+  if (!isInvoiceIssuedForSettlement({
+    documentStatus: header.facture_document_status,
+    legacyStatus: header.facture_status,
+  })) {
     throw new HttpError(
       409,
       "AVOIR_FACTURE_NOT_ISSUED",
@@ -268,7 +281,10 @@ export async function repoListAvoirEligibleLines(factureId: number): Promise<{
     throw new HttpError(404, "FACTURE_NOT_FOUND", "Facture ou lignes introuvables.");
   }
   const header = rows[0]!;
-  if (!["ISSUED", "PARTIALLY_PAID", "PAID"].includes(header.facture_status)) {
+  if (!isInvoiceIssuedForSettlement({
+    documentStatus: header.facture_document_status,
+    legacyStatus: header.facture_status,
+  })) {
     throw new HttpError(409, "AVOIR_FACTURE_NOT_ISSUED", "La facture n'est pas émise.");
   }
   return {
@@ -747,6 +763,13 @@ export async function repoIssueAvoir(params: {
     ) {
       throw new HttpError(409, "AVOIR_PREVIEW_CHANGED", "L'aperçu de l'avoir a changé.");
     }
+    const invoiceBeforeCredit = await lockInvoiceSettlement(client, preview.facture_id);
+    if (!invoiceBeforeCredit) {
+      throw new HttpError(404, "FACTURE_NOT_FOUND", "Facture introuvable.");
+    }
+    assertInvoiceIssued(invoiceBeforeCredit);
+    const creditCents = moneyToCents(preview.totals.total_incl_tax, "Montant de l'avoir");
+    assertInvoiceCreditWithinBalance(invoiceBeforeCredit, creditCents);
     const policy = await client.query<{ policy_version: string; require_distinct_issuer: boolean }>(
       `
         SELECT policy_version, require_distinct_issuer
@@ -818,6 +841,13 @@ export async function repoIssueAvoir(params: {
       `,
       [params.avoirId, params.actor.userId]
     );
+    await refreshInvoiceSettlementStates({
+      client,
+      factureIds: [preview.facture_id],
+      actor: params.actor,
+      correlationId,
+      idempotencyKey: receipt.idempotencyKey,
+    });
     const updated = await client.query<{ row_version: number }>(
       `
         UPDATE public.avoir

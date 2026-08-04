@@ -6,7 +6,10 @@ import {
   listPaiements,
   updatePaiement,
 } from "../controllers/paiements.controller";
-import { requireFinanceCapability } from "../middlewares/finance-authorization.middleware";
+import {
+  requireFinanceCapability,
+  requirePaymentAllocationCapabilityForInlineAllocations,
+} from "../middlewares/finance-authorization.middleware";
 import {
   allocatePaymentWorkflow,
   registerPaymentWorkflow,
@@ -14,7 +17,12 @@ import {
 
 const router = Router();
 
-router.post("/workflow/register", requireFinanceCapability("payment_register"), registerPaymentWorkflow);
+router.post(
+  "/workflow/register",
+  requireFinanceCapability("payment_register"),
+  requirePaymentAllocationCapabilityForInlineAllocations,
+  registerPaymentWorkflow
+);
 router.post(
   "/workflow/:id/allocations",
   requireFinanceCapability("payment_allocate"),

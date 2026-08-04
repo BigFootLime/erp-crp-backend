@@ -43,6 +43,8 @@ codifié et son explication sont obligatoires.
 
 ## Paiement
 
+- `GET /paiements`
+- `GET /paiements/:id`
 - `POST /paiements/workflow/register`
 - `POST /paiements/workflow/:id/allocations`
 
@@ -50,6 +52,12 @@ Les montants sont des chaînes décimales exactes. L'enregistrement accepte zér
 ou plusieurs allocations `FACTURE`/`ECHEANCE`; chaque allocation contrôle le
 client, la devise, le disponible du paiement et le solde de la cible dans la
 même transaction. Un paiement enregistré est immuable et ne se supprime pas.
+
+Le filtre `GET /paiements?unallocated=true` retient tout règlement net dont le
+disponible (`montant − allocations`) est strictement positif, y compris une affectation
+partielle. Les règlements rejetés/extournés et les rattachements directs hérités sans
+allocation en sont exclus. Pour ces derniers, les lectures liste/détail projettent le
+statut `ALLOCATED` sans modifier leur statut brut historique en base.
 
 ## Garanties transactionnelles
 

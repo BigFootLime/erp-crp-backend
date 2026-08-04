@@ -104,6 +104,13 @@ Un règlement compte comme encaissement net s'il n'est ni rejeté (`REJECTED`), 
 (`reversal_of_id IS NOT NULL`). Cette règle est neutre quelle que soit la convention
 d'extourne retenue plus tard.
 
+Le disponible d'une source de règlement vaut `MAX(montant − allocations, 0)`. Il reste
+donc positif pour un règlement partiellement affecté et alimente à la fois le KPI, son
+drill-down et la file `/paiements?unallocated=true`. Un rattachement direct hérité
+(`facture_id` renseigné sans allocation) constitue une affectation économique complète :
+son disponible vaut zéro et les lectures liste/détail projettent `status = ALLOCATED`, sans
+réécrire le statut brut conservé comme preuve historique.
+
 ### Encours à `as_of` — la règle centrale
 ```
 solde(facture) = total_ttc

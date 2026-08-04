@@ -753,6 +753,33 @@ describe("/api/v1/devis", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  it("POST /api/v1/devis refuse un dossier préparatoire orphelin sans écriture", async () => {
+    const payload = {
+      client_id: "001",
+      user_id: 1,
+      lignes: [{
+        description: "Line",
+        quantite: 1,
+        prix_unitaire_ht: 100,
+        dossier_technique_piece_devis: {
+          code_piece: "DOS-42",
+          designation: "Dossier orphelin",
+        },
+      }],
+    };
+
+    const res = await request(app)
+      .post("/api/v1/devis")
+      .field("data", JSON.stringify(payload));
+
+    expect(res.status).toBe(422);
+    expect(res.body).toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: "article_devis est requis lorsqu'un dossier_technique_piece_devis est fourni",
+    });
+    expect(mocks.poolConnect).not.toHaveBeenCalled();
+  });
+
   it("PATCH /api/v1/devis/:id supports multipart update (replace lignes)", async () => {
     state.updateCurrent = {
       id: "7",

@@ -138,3 +138,16 @@ Cas particulier : l'audit de conversion est écrit après COMMIT du moteur comma
 `support/`). Appliqué sur **cerp_test** le 2026-07-22 (backup pris, verify vert,
 ownership `cerp_app` réassigné). **cerp_prod NON modifié** — application prod
 uniquement après validation humaine explicite.
+
+## 11. Champs de préparation facultatifs (#470)
+
+Le contrat d'entrée d'une ligne de devis distingue désormais la préparation
+explicite de ses valeurs par défaut :
+
+- propriété absente, `null`, objet vide ou chaînes uniquement blanches : aucune
+  préparation explicite ; le validateur normalise la propriété vers l'absence ;
+- objet renseigné : les chaînes sont tronquées et les valeurs non blanches sont
+  conservées ; les identifiants facultatifs acceptent l'absence ou `null` ;
+- le frontend complète un objet partiel avec les mêmes valeurs préparatoires
+  historiques avant l'appel API. Les prix, totaux, statuts et permissions ne
+  sont pas modifiés par ce contrat.

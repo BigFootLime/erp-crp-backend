@@ -717,8 +717,9 @@ const CATALOG: MetricDefinition[] = [
     family: "encaissement",
     label: "Règlements non affectés TTC",
     definition:
-      "Part encaissée à la date d'arrêté qui n'est rattachée à aucune facture : montant du règlement − allocations ≤ as_of.",
-    formula: "SUM(paiement.montant − Σ paiement_allocations ≤ as_of) WHERE date_paiement ≤ as_of",
+      "Part nette encore affectable à la date d'arrêté : montant du règlement − allocations ≤ as_of. Un rattachement direct hérité sans allocation vaut affectation complète.",
+    formula:
+      "SUM(MAX(paiement.montant − affecté_économique ≤ as_of, 0)) WHERE date_paiement ≤ as_of AND règlement net",
     sources: ["paiement.montant", "paiement_allocations.amount_ttc"],
     grain: "Un règlement.",
     date_field: "paiement.date_paiement ≤ as_of",
@@ -736,6 +737,7 @@ const CATALOG: MetricDefinition[] = [
     availability: "available",
     limitations: [
       "Ce montant ne doit jamais être soustrait de l'encours global : ce serait supposer un lettrage qui n'existe pas.",
+      "Une preuve directe héritée (facture_id renseigné sans allocation) est projetée ALLOCATED et contribue zéro au disponible.",
     ],
   },
   {

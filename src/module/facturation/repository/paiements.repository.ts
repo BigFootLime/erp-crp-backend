@@ -3,6 +3,7 @@ import { HttpError } from "../../../utils/httpError";
 import type { ClientLite } from "../types/shared.types";
 import type { Paginated, Paiement, PaiementListItem } from "../types/paiements.types";
 import type { CreatePaiementBodyDTO, ListPaiementsQueryDTO, UpdatePaiementBodyDTO } from "../validators/paiements.validators";
+import { paiementAvailableAmountExpression, paiementProjectedStatusExpression } from "./reporting-sql";
 
 function toInt(value: unknown, label = "id"): number {
   if (typeof value === "number" && Number.isInteger(value)) return value;
@@ -80,11 +81,11 @@ function buildListWhere(filters: ListPaiementsQueryDTO, includeClientInSearch: b
   // « reglements a affecter » sans calcul cote interface.
   if (filters.status && filters.status.trim().length > 0) {
     const p = push(filters.status.trim());
-    where.push(`p.status = ${p}`);
+    where.push(`${paiementProjectedStatusExpression("p")} = ${p}`);
   }
 
   if (filters.unallocated === true) {
-    where.push(`p.facture_id IS NULL`);
+    where.push(`(${paiementAvailableAmountExpression("p")}) > 0::numeric`);
   }
 
   if (filters.from) {
@@ -162,7 +163,7 @@ export async function repoListPaiements(filters: ListPaiementsQueryDTO): Promise
       p.montant::float8 AS montant,
       p.mode,
       p.reference,
-      p.status,
+      ${paiementProjectedStatusExpression("p")} AS status,
       p.workflow_status,
       p.updated_at::text AS updated_at,
       ${clientSelectSql},
@@ -234,7 +235,7 @@ export async function repoGetPaiement(id: number, includeValue: string): Promise
       p.mode,
       p.reference,
       p.commentaire,
-      p.status,
+      ${paiementProjectedStatusExpression("p")} AS status,
       p.workflow_status,
       p.created_at::text AS created_at,
       p.updated_at::text AS updated_at,
