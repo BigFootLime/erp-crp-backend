@@ -1,8 +1,6 @@
-// #395 — Référentiel des catégories d'article : ce qui est VENDABLE en commande client.
-//
-// Ce référentiel est un contrat, pas une préférence d'affichage : le frontend l'utilise à la
-// fois pour proposer les catégories à la création depuis une commande et pour filtrer la
-// recherche d'article des lignes. Un `false` posé ici ferme les deux portes d'un coup.
+// #395 / BUG-CERP-0015 - referentiel des categories commandables.
+// Le filtre de recherche et la creation depuis une commande doivent rester fermes sur le
+// perimetre que le repository Commande sait valider et convertir sans ambiguite.
 import { beforeAll, describe, expect, it } from "vitest";
 
 import {
@@ -11,14 +9,14 @@ import {
 } from "../module/stock/repository/stock.repository";
 import type { StockArticleCategoryOption } from "../module/stock/types/stock.types";
 
-describe("#395 — catégories vendables en commande client", () => {
+describe("#395 / BUG-CERP-0015 - categories commandables", () => {
   let options: StockArticleCategoryOption[] = [];
 
   beforeAll(async () => {
     options = await repoListArticleCategories();
   });
 
-  it("expose les six catégories métier du référentiel", () => {
+  it("expose les six categories metier du referentiel", () => {
     expect(options.map((option) => option.code).sort()).toEqual(
       [
         "achat_revente",
@@ -31,33 +29,28 @@ describe("#395 — catégories vendables en commande client", () => {
     );
   });
 
-  it("rend TOUTES les catégories vendables (élargissement #395)", () => {
-    // Régression : seule `piece_finie_fabriquee` l'était, ce qui rendait la création d'article
-    // depuis une commande inutilisable pour un achat, une sous-traitance ou un traitement.
-    const notSellable = options.filter((option) => !option.commande_client_selectable);
-    expect(notSellable.map((option) => option.code)).toEqual([]);
+  it("n'expose que la piece finie fabriquee a la creation depuis une commande", () => {
+    const selectable = options.filter((option) => option.commande_client_selectable);
+    expect(selectable.map((option) => option.code)).toEqual(["piece_finie_fabriquee"]);
   });
 
-  it("n'exige un dossier technique QUE pour une pièce finie fabriquée", () => {
-    // L'élargissement de la vente ne doit pas propager l'obligation de dossier technique :
-    // c'est lui qui produit les OF, et seule une pièce fabriquée en a un.
+  it("n'exige un dossier technique que pour une piece finie fabriquee", () => {
     const requiring = options.filter((option) => option.piece_technique_required).map((option) => option.code);
     expect(requiring).toEqual(["piece_finie_fabriquee"]);
   });
 
-  it("dérive la liste des codes vendables depuis le référentiel, sans liste parallèle", () => {
+  it("derive les codes commandables depuis le referentiel, sans liste parallele", () => {
     const derived = commandeClientSelectableCategoryCodes();
     const expected = options.filter((option) => option.commande_client_selectable).map((option) => option.code);
     expect(derived).toEqual(expected);
-    expect(derived.length).toBeGreaterThan(0);
+    expect(derived).toEqual(["piece_finie_fabriquee"]);
   });
 
-  it("conserve un segment de code et un comportement stock pour chaque catégorie", () => {
+  it("conserve un segment de code et un comportement stock pour chaque categorie", () => {
     for (const option of options) {
       expect(option.code_segment, `segment manquant pour ${option.code}`).toMatch(/^[A-Z]{2,5}$/);
       expect(typeof option.stock_managed_default, `stock_managed_default pour ${option.code}`).toBe("boolean");
     }
-    // Les services ne sont pas inventoriés : le référentiel doit continuer à le dire.
     const byCode = new Map(options.map((option) => [option.code, option]));
     expect(byCode.get("traitement_surface")?.stock_managed_default).toBe(false);
     expect(byCode.get("sous_traitance")?.stock_managed_default).toBe(false);
