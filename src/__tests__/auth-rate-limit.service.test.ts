@@ -67,15 +67,23 @@ function testConfig(overrides: Partial<AuthRateLimitConfig> = {}): AuthRateLimit
     endpoints: {
       login: {
         failurePolicy: "closed-error",
-        dimensions: { identifier: { limit: 2, windowMs }, ip: { limit: 50, windowMs } },
+        dimensions: { username: { limit: 2, windowMs }, ip: { limit: 50, windowMs } },
       },
       register: {
         failurePolicy: "closed-error",
-        dimensions: { identifier: { limit: 2, windowMs }, ip: { limit: 2, windowMs } },
+        dimensions: {
+          username: { limit: 2, windowMs },
+          email: { limit: 2, windowMs },
+          ip: { limit: 2, windowMs },
+        },
       },
       forgotPassword: {
         failurePolicy: "closed-generic",
-        dimensions: { identifier: { limit: 2, windowMs }, ip: { limit: 2, windowMs } },
+        dimensions: {
+          username: { limit: 2, windowMs },
+          email: { limit: 2, windowMs },
+          ip: { limit: 2, windowMs },
+        },
       },
       resetPassword: {
         failurePolicy: "closed-error",
@@ -94,7 +102,7 @@ describe("distributed auth rate limiter", () => {
     const instanceBStore = new SharedDeterministicStore(() => now, sharedState);
     const instanceA = new AuthRateLimiter(instanceAStore, testConfig());
     const instanceB = new AuthRateLimiter(instanceBStore, testConfig());
-    const subject = [{ dimension: "identifier" as const, value: "operator@example.test" }];
+    const subject = [{ dimension: "username" as const, value: "operator" }];
 
     await expect(instanceA.check("login", subject)).resolves.toMatchObject({ status: "allowed" });
     await expect(instanceB.check("login", subject)).resolves.toMatchObject({ status: "allowed" });
@@ -119,7 +127,7 @@ describe("distributed auth rate limiter", () => {
 
     await limiter.check("forgotPassword", [
       { dimension: "ip", value: "ipv4:198.51.100.42" },
-      { dimension: "identifier", value: "Person@Example.Test" },
+      { dimension: "email", value: "Person@Example.Test" },
     ]);
 
     expect(store.lastInputs).toHaveLength(2);
@@ -137,14 +145,14 @@ describe("distributed auth rate limiter", () => {
     const limiter = new AuthRateLimiter(store, testConfig());
 
     await expect(
-      limiter.check("login", [{ dimension: "identifier", value: "operator" }])
+      limiter.check("login", [{ dimension: "username", value: "operator" }])
     ).resolves.toMatchObject({
       status: "unavailable",
       failurePolicy: "closed-error",
       retryAfterSeconds: 17,
     });
     await expect(
-      limiter.check("forgotPassword", [{ dimension: "identifier", value: "operator" }])
+      limiter.check("forgotPassword", [{ dimension: "username", value: "operator" }])
     ).resolves.toMatchObject({
       status: "unavailable",
       failurePolicy: "closed-generic",
@@ -158,7 +166,50 @@ describe("distributed auth rate limiter", () => {
     const limiter = new AuthRateLimiter(store, testConfig({ enabled: false, hashKey: "disabled" }));
 
     await expect(
-      limiter.check("login", [{ dimension: "identifier", value: "operator" }])
+      limiter.check("login", [{ dimension: "username", value: "operator" }])
     ).resolves.toEqual({ status: "allowed", endpoint: "login", disabled: true });
+  });
+
+  it.each([
+    ["stra\u00dfe", "STRASSE"],
+    ["u\u017fer", "USER"],
+    ["adm\u0131n", "ADMIN"],
+    ["o\ufb03ce", "OFFICE"],
+  ])("shares the username bucket for Unicode variant %s and %s", async (variant, canonical) => {
+    const store = new SharedDeterministicStore(() => 1_000);
+    const limiter = new AuthRateLimiter(store, testConfig());
+
+    await limiter.check("login", [{ dimension: "username", value: variant }]);
+    const variantHash = store.lastInputs[0]?.subjectHash;
+    await limiter.check("login", [{ dimension: "username", value: canonical }]);
+    const canonicalHash = store.lastInputs[0]?.subjectHash;
+
+    expect(variantHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(variantHash).toBe(canonicalHash);
+  });
+
+  it("shares the email bucket after NFKC, trim and lowercase", async () => {
+    const store = new SharedDeterministicStore(() => 1_000);
+    const limiter = new AuthRateLimiter(store, testConfig());
+
+    await limiter.check("register", [{ dimension: "email", value: " O\ufb03CE@Example.Test " }]);
+    const variantHash = store.lastInputs[0]?.subjectHash;
+    await limiter.check("register", [{ dimension: "email", value: "office@example.test" }]);
+
+    expect(store.lastInputs[0]?.subjectHash).toBe(variantHash);
+  });
+
+  it("keeps opaque reset-token case and whitespace in distinct buckets", async () => {
+    const store = new SharedDeterministicStore(() => 1_000);
+    const limiter = new AuthRateLimiter(store, testConfig());
+
+    const hashFor = async (token: string) => {
+      await limiter.check("resetPassword", [{ dimension: "token", value: token }]);
+      return store.lastInputs[0]?.subjectHash;
+    };
+
+    const exact = await hashFor("AbC-opaque-token");
+    expect(await hashFor("abc-opaque-token")).not.toBe(exact);
+    expect(await hashFor(" AbC-opaque-token ")).not.toBe(exact);
   });
 });

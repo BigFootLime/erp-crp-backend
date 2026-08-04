@@ -104,7 +104,65 @@ describe("auth rate limit middleware", () => {
     expect(limiter.check).toHaveBeenCalledTimes(1);
     expect(checkedSubjects[0]).toEqual([
       { dimension: "ip", value: "ipv4:203.0.113.7" },
-      { dimension: "identifier", value: "operator" },
+      { dimension: "username", value: "OPERATOR" },
+    ]);
+  });
+
+  it("always consumes both canonical forgot-password identity candidates", async () => {
+    const { app, checkedSubjects } = appWithDecision("forgotPassword", {
+      status: "allowed",
+      endpoint: "forgotPassword",
+      disabled: false,
+    });
+
+    const responses = [];
+    for (const identifier of ["stra\u00dfe", "Person@Example.Test", "unknown-account"]) {
+      responses.push(
+        await request(app)
+          .post("/auth")
+          .send({ usernameOrEmail: identifier })
+      );
+    }
+
+    expect(responses.map((response) => [response.status, response.body])).toEqual([
+      [200, expect.objectContaining({ suppressed: false })],
+      [200, expect.objectContaining({ suppressed: false })],
+      [200, expect.objectContaining({ suppressed: false })],
+    ]);
+    expect(checkedSubjects).toEqual([
+      [
+        { dimension: "ip", value: "ipv4:127.0.0.1" },
+        { dimension: "username", value: "STRASSE" },
+        { dimension: "email", value: "stra\u00dfe" },
+      ],
+      [
+        { dimension: "ip", value: "ipv4:127.0.0.1" },
+        { dimension: "username", value: "PERSON@EXAMPLE.TEST" },
+        { dimension: "email", value: "person@example.test" },
+      ],
+      [
+        { dimension: "ip", value: "ipv4:127.0.0.1" },
+        { dimension: "username", value: "UNKNOWN-ACCOUNT" },
+        { dimension: "email", value: "unknown-account" },
+      ],
+    ]);
+  });
+
+  it("passes an opaque reset token without trimming or case folding", async () => {
+    const { app, checkedSubjects } = appWithDecision("resetPassword", {
+      status: "allowed",
+      endpoint: "resetPassword",
+      disabled: false,
+    });
+
+    await request(app)
+      .post("/auth")
+      .send({ token: " AbC-opaque-token " })
+      .expect(200);
+
+    expect(checkedSubjects[0]).toEqual([
+      { dimension: "ip", value: "ipv4:127.0.0.1" },
+      { dimension: "token", value: " AbC-opaque-token " },
     ]);
   });
 

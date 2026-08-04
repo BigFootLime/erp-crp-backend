@@ -23,6 +23,10 @@ overrides are defined in `src/config/auth-rate-limit.ts`.
 - PostgreSQL stores no raw IP, email, username or reset token in the rate table.
 - Rate-limit operational logs contain no subject and no HMAC digest.
 - Native IPv6 is minimized to a `/64` network before HMAC.
+- Usernames use the account contract (`NFKC`, trim, Unicode uppercase) and
+  emails use `NFKC`, trim and lowercase before HMAC.
+- Reset tokens remain exact opaque byte-for-byte strings; they are never
+  trimmed, normalized or case-folded.
 - Expired pseudonyms are removed by periodic maintenance; the default grace
   period is one hour after expiry.
 - The HMAC key is a server-side secret and must be identical on both backends.
@@ -41,6 +45,12 @@ and are not reused as a throttling store.
 The minimum response time remains 600 ms whether validation fails, a bucket is
 blocked, the shared store is unavailable, or the account does not exist. A
 blocked/degraded request does not query the account or send an email.
+
+Every syntactically supplied forgot-password identifier consumes both a
+username-canonical bucket and an email-canonical bucket, plus the client
+network bucket. This happens before validation and without a database lookup or
+input-shape branch, so the bucket set and response do not reveal whether the
+value resembles or matches an account of either type.
 
 The other endpoints use generic `429` or `503` messages. A response never states
 which subject reached a threshold and never confirms whether an identifier or

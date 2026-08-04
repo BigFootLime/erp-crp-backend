@@ -4,6 +4,12 @@ import type { AuthRateLimitEndpoint } from "../../../config/auth-rate-limit";
 import type { AuthRateLimitSubject } from "../domain/auth-rate-limit";
 import { authRateLimiter, type AuthRateLimiter } from "../services/auth-rate-limit.service";
 import { getRateLimitClientAddress } from "../../../utils/requestMeta";
+import {
+  canonicalAuthIdentifierCandidates,
+  canonicalizeAuthEmail,
+  canonicalizeAuthUsername,
+  preserveOpaqueAuthToken,
+} from "../domain/auth-identity";
 
 declare global {
   namespace Express {
@@ -24,9 +30,7 @@ const GENERIC_UNAVAILABLE_MESSAGE = "Service d'authentification temporairement i
 function bodyString(req: Request, field: string): string | null {
   const body = req.body as Record<string, unknown> | null | undefined;
   const value = body?.[field];
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed ? trimmed.slice(0, 512) : null;
+  return typeof value === "string" ? value : null;
 }
 
 function safeRequestId(req: Request): string | null {
@@ -39,18 +43,45 @@ function safeRequestId(req: Request): string | null {
 function subjectsFor(endpoint: AuthRateLimitEndpoint, req: Request): AuthRateLimitSubject[] {
   const ip: AuthRateLimitSubject = { dimension: "ip", value: getRateLimitClientAddress(req) };
   switch (endpoint) {
-    case "login":
-      return [ip, { dimension: "identifier", value: bodyString(req, "username") }];
-    case "register":
+    case "login": {
+      const username = bodyString(req, "username");
       return [
         ip,
-        { dimension: "identifier", value: bodyString(req, "username") },
-        { dimension: "identifier", value: bodyString(req, "email") },
+        { dimension: "username", value: username === null ? null : canonicalizeAuthUsername(username) },
       ];
-    case "forgotPassword":
-      return [ip, { dimension: "identifier", value: bodyString(req, "usernameOrEmail") }];
-    case "resetPassword":
-      return [ip, { dimension: "token", value: bodyString(req, "token") }];
+    }
+    case "register": {
+      const username = bodyString(req, "username");
+      const email = bodyString(req, "email");
+      return [
+        ip,
+        { dimension: "username", value: username === null ? null : canonicalizeAuthUsername(username) },
+        { dimension: "email", value: email === null ? null : canonicalizeAuthEmail(email) },
+      ];
+    }
+    case "forgotPassword": {
+      const identifier = bodyString(req, "usernameOrEmail");
+      const candidates = identifier === null
+        ? [
+            { type: "username" as const, value: null },
+            { type: "email" as const, value: null },
+          ]
+        : canonicalAuthIdentifierCandidates(identifier);
+      return [
+        ip,
+        ...candidates.map((candidate) => ({
+          dimension: candidate.type,
+          value: candidate.value,
+        })),
+      ];
+    }
+    case "resetPassword": {
+      const token = bodyString(req, "token");
+      return [
+        ip,
+        { dimension: "token", value: token === null ? null : preserveOpaqueAuthToken(token) },
+      ];
+    }
   }
 }
 

@@ -34,10 +34,10 @@ into Git, issues, logs or evidence.
 | `AUTH_RATE_LIMIT_LOGIN_IDENTIFIER_LIMIT` | `10` | Login username threshold |
 | `AUTH_RATE_LIMIT_REGISTER_WINDOW_MS` | `3600000` | Registration fixed window |
 | `AUTH_RATE_LIMIT_REGISTER_IP_LIMIT` | `10` | Registration client-network threshold |
-| `AUTH_RATE_LIMIT_REGISTER_IDENTIFIER_LIMIT` | `3` | Registration username/email threshold |
+| `AUTH_RATE_LIMIT_REGISTER_IDENTIFIER_LIMIT` | `3` | Per-dimension registration username/email threshold |
 | `AUTH_RATE_LIMIT_FORGOT_WINDOW_MS` | `3600000` | Forgot-password fixed window |
 | `AUTH_RATE_LIMIT_FORGOT_IP_LIMIT` | `20` | Forgot-password client-network threshold |
-| `AUTH_RATE_LIMIT_FORGOT_IDENTIFIER_LIMIT` | `5` | Forgot-password identifier threshold |
+| `AUTH_RATE_LIMIT_FORGOT_IDENTIFIER_LIMIT` | `5` | Per-candidate forgot-password username/email threshold |
 | `AUTH_RATE_LIMIT_RESET_WINDOW_MS` | `900000` | Reset-token fixed window |
 | `AUTH_RATE_LIMIT_RESET_IP_LIMIT` | `30` | Reset client-network threshold |
 | `AUTH_RATE_LIMIT_RESET_TOKEN_LIMIT` | `10` | Reset-token threshold |

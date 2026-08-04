@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest'
 import request from 'supertest'
 
+const rateLimitMocks = vi.hoisted(() => ({
+  check: vi.fn(async (endpoint: string, _subjects?: unknown) => ({ status: 'allowed', endpoint, disabled: false })),
+}))
+
 // 🛑 Place les mocks AVANT d'importer app
 vi.mock('../module/auth/controllers/auth.controller', () => ({
   register: vi.fn((req, res) => res.status(201).json({ message: 'Utilisateur enregistré' })),
@@ -13,7 +17,7 @@ vi.mock('../module/auth/controllers/auth.controller', () => ({
 
 vi.mock('../module/auth/services/auth-rate-limit.service', () => ({
   authRateLimiter: {
-    check: vi.fn(async (endpoint: string) => ({ status: 'allowed', endpoint, disabled: false })),
+    check: rateLimitMocks.check,
   },
 }))
 
@@ -61,6 +65,20 @@ describe('🧪 Routes Authentification (/auth)', () => {
     expect(res.body).toHaveProperty('token')
   })
 
+  it('canonicalise les variantes Unicode du username avant le bucket login', async () => {
+    rateLimitMocks.check.mockClear()
+
+    await request(app)
+      .post('/api/v1/auth/login')
+      .send({ username: 'stra\u00dfe', password: 'password123' })
+      .expect(200)
+
+    expect(rateLimitMocks.check).toHaveBeenCalledWith(
+      'login',
+      expect.arrayContaining([{ dimension: 'username', value: 'STRASSE' }]),
+    )
+  })
+
   it('🔒 GET /api/v1/auth/me retourne les infos profil avec JWT + rôle', async () => {
     const res = await request(app)
       .get('/api/v1/auth/me')
@@ -82,6 +100,29 @@ describe('🧪 Routes Authentification (/auth)', () => {
     expect(res.body).toHaveProperty('message')
   })
 
+  it('forgot-password consomme username et email sans classifier le compte', async () => {
+    rateLimitMocks.check.mockClear()
+
+    const usernameResponse = await request(app)
+      .post('/api/v1/auth/forgot-password')
+      .send({ usernameOrEmail: 'adm\u0131n' })
+    const emailResponse = await request(app)
+      .post('/api/v1/auth/forgot-password')
+      .send({ usernameOrEmail: 'Person@Example.Test' })
+
+    expect([usernameResponse.status, usernameResponse.body]).toEqual([emailResponse.status, emailResponse.body])
+    const forgotCalls = rateLimitMocks.check.mock.calls.filter(([endpoint]) => endpoint === 'forgotPassword')
+    expect(forgotCalls).toHaveLength(2)
+    expect(forgotCalls[0]?.[1]).toEqual(expect.arrayContaining([
+      { dimension: 'username', value: 'ADMIN' },
+      { dimension: 'email', value: 'adm\u0131n' },
+    ]))
+    expect(forgotCalls[1]?.[1]).toEqual(expect.arrayContaining([
+      { dimension: 'username', value: 'PERSON@EXAMPLE.TEST' },
+      { dimension: 'email', value: 'person@example.test' },
+    ]))
+  })
+
   it('✅ POST /api/v1/auth/reset-password retourne 200', async () => {
     const res = await request(app)
       .post('/api/v1/auth/reset-password')
@@ -89,6 +130,21 @@ describe('🧪 Routes Authentification (/auth)', () => {
 
     expect(res.status).toBe(200)
     expect(res.body).toHaveProperty('message')
+  })
+
+  it('conserve le reset token opaque dans le bucket route', async () => {
+    rateLimitMocks.check.mockClear()
+    const token = ' AbC-opaque-token '
+
+    await request(app)
+      .post('/api/v1/auth/reset-password')
+      .send({ token, newPassword: 'P@ssw0rd-OK' })
+      .expect(200)
+
+    expect(rateLimitMocks.check).toHaveBeenCalledWith(
+      'resetPassword',
+      expect.arrayContaining([{ dimension: 'token', value: token }]),
+    )
   })
 
 //   it('🚫 GET /api/v1/auth/me refuse l’accès si rôle non autorisé', async () => {

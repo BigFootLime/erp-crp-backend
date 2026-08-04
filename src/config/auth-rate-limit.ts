@@ -4,7 +4,7 @@ export type AuthRateLimitEndpoint =
   | "forgotPassword"
   | "resetPassword";
 
-export type AuthRateLimitDimension = "ip" | "identifier" | "token";
+export type AuthRateLimitDimension = "ip" | "username" | "email" | "token";
 export type AuthRateLimitFailurePolicy = "closed-error" | "closed-generic";
 
 export type AuthRateLimitDimensionConfig = {
@@ -146,7 +146,7 @@ export function loadAuthRateLimitConfig(env: NodeJS.ProcessEnv = process.env): A
           limit: readBoundedInteger(env, "AUTH_RATE_LIMIT_LOGIN_IP_LIMIT", 50, 1, 10_000),
           windowMs: loginWindowMs,
         },
-        identifier: {
+        username: {
           limit: readBoundedInteger(env, "AUTH_RATE_LIMIT_LOGIN_IDENTIFIER_LIMIT", 10, 1, 10_000),
           windowMs: loginWindowMs,
         },
@@ -156,7 +156,11 @@ export function loadAuthRateLimitConfig(env: NodeJS.ProcessEnv = process.env): A
           limit: readBoundedInteger(env, "AUTH_RATE_LIMIT_REGISTER_IP_LIMIT", 10, 1, 10_000),
           windowMs: registerWindowMs,
         },
-        identifier: {
+        username: {
+          limit: readBoundedInteger(env, "AUTH_RATE_LIMIT_REGISTER_IDENTIFIER_LIMIT", 3, 1, 10_000),
+          windowMs: registerWindowMs,
+        },
+        email: {
           limit: readBoundedInteger(env, "AUTH_RATE_LIMIT_REGISTER_IDENTIFIER_LIMIT", 3, 1, 10_000),
           windowMs: registerWindowMs,
         },
@@ -166,7 +170,11 @@ export function loadAuthRateLimitConfig(env: NodeJS.ProcessEnv = process.env): A
           limit: readBoundedInteger(env, "AUTH_RATE_LIMIT_FORGOT_IP_LIMIT", 20, 1, 10_000),
           windowMs: forgotWindowMs,
         },
-        identifier: {
+        username: {
+          limit: readBoundedInteger(env, "AUTH_RATE_LIMIT_FORGOT_IDENTIFIER_LIMIT", 5, 1, 10_000),
+          windowMs: forgotWindowMs,
+        },
+        email: {
           limit: readBoundedInteger(env, "AUTH_RATE_LIMIT_FORGOT_IDENTIFIER_LIMIT", 5, 1, 10_000),
           windowMs: forgotWindowMs,
         },

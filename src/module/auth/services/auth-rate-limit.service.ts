@@ -12,9 +12,24 @@ import type {
   AuthRateLimitSubject,
 } from "../domain/auth-rate-limit";
 import { authRateLimitStore } from "../repository/auth-rate-limit.repository";
+import {
+  canonicalizeAuthEmail,
+  canonicalizeAuthUsername,
+  preserveOpaqueAuthToken,
+} from "../domain/auth-identity";
 
-function normalizeSubject(value: string): string {
-  return value.trim().toLowerCase();
+function canonicalizeSubject(subject: AuthRateLimitSubject): string {
+  if (subject.value === null) return "";
+  switch (subject.dimension) {
+    case "username":
+      return canonicalizeAuthUsername(subject.value);
+    case "email":
+      return canonicalizeAuthEmail(subject.value);
+    case "token":
+      return preserveOpaqueAuthToken(subject.value);
+    case "ip":
+      return subject.value;
+  }
 }
 
 function safeErrorName(error: unknown): string {
@@ -43,7 +58,7 @@ export class AuthRateLimiter {
     const limits: number[] = [];
 
     for (const subject of subjects) {
-      const value = subject.value ? normalizeSubject(subject.value) : "";
+      const value = canonicalizeSubject(subject);
       const dimensionConfig = endpointConfig.dimensions[subject.dimension];
       if (!value || !dimensionConfig) continue;
 

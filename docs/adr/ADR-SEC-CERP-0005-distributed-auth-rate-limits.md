@@ -30,10 +30,10 @@ The subjects are:
 
 | Endpoint | Subjects | Default window and thresholds |
 |---|---|---|
-| login | client network, normalized username | IP 50 / 15 min; username 10 / 15 min |
-| register | client network, normalized username, normalized email | IP 10 / 60 min; each identifier 3 / 60 min |
-| forgot-password | client network, normalized username/email | IP 20 / 60 min; identifier 5 / 60 min |
-| reset-password | client network, reset token | IP 30 / 15 min; token 10 / 15 min |
+| login | client network, NFKC/uppercase username | IP 50 / 15 min; username 10 / 15 min |
+| register | client network, NFKC/uppercase username, NFKC/lowercase email | IP 10 / 60 min; username and email each 3 / 60 min |
+| forgot-password | client network plus both username and email canonical candidates | IP 20 / 60 min; username and email candidates each 5 / 60 min |
+| reset-password | client network, exact opaque reset token | IP 30 / 15 min; token 10 / 15 min |
 
 Before storage, each subject is transformed as
 `HMAC-SHA256(secret, "v1\0<scope>\0<normalized-subject>")`. The table receives
@@ -41,6 +41,12 @@ only the scope and 64-character digest. It never receives a raw IP, username,
 email or reset token. Rate-limit logs contain only endpoint, outcome, policy,
 request ID, retry duration and a sanitized error class; they do not contain a
 subject or digest.
+
+Username canonicalization is shared with validation and account lookup:
+`NFKC`, trim, then Unicode uppercase. Email uses `NFKC`, trim, then lowercase,
+matching writes and `LOWER(email)` lookup. Forgot-password always consumes both
+canonical candidates without classifying or looking up the input first. Reset
+tokens are opaque and are never trimmed, normalized or case-folded.
 
 IPv4 addresses use their canonical address. IPv4-mapped IPv6 collapses to the
 same IPv4 subject. Native IPv6 uses a canonical `/64` network subject so textual

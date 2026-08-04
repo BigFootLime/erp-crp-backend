@@ -13,7 +13,7 @@ describe("PostgresAuthRateLimitStore", () => {
           retry_after_seconds: 41,
         },
         {
-          scope: "auth:login:identifier",
+          scope: "auth:login:username",
           subject_hash: "b".repeat(64),
           request_count: "11",
           retry_after_seconds: "42",
@@ -26,12 +26,12 @@ describe("PostgresAuthRateLimitStore", () => {
     await expect(
       store.consume([
         { scope: "auth:login:ip", subjectHash: "a".repeat(64), windowMs: 900_000 },
-        { scope: "auth:login:identifier", subjectHash: "b".repeat(64), windowMs: 900_000 },
+        { scope: "auth:login:username", subjectHash: "b".repeat(64), windowMs: 900_000 },
       ])
     ).resolves.toEqual([
       { scope: "auth:login:ip", subjectHash: "a".repeat(64), count: 3, retryAfterSeconds: 41 },
       {
-        scope: "auth:login:identifier",
+        scope: "auth:login:username",
         subjectHash: "b".repeat(64),
         count: 11,
         retryAfterSeconds: 42,
@@ -48,7 +48,7 @@ describe("PostgresAuthRateLimitStore", () => {
       "auth:login:ip",
       "a".repeat(64),
       900_000,
-      "auth:login:identifier",
+      "auth:login:username",
       "b".repeat(64),
       900_000,
     ]);
