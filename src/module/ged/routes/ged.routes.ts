@@ -1,26 +1,20 @@
 // GED centrale CERP (ADR-0037) — routeur.
 //
-// `memoryStorage` et non `dest:` : le fichier est contrôlé (taille, MIME,
-// extension, signature) AVANT toute écriture. Aucun octet non validé n'atteint
-// le coffre, contrairement aux modules historiques qui écrivent d'abord et
-// vérifient ensuite — quand ils vérifient.
+// Le transport GED est toujours stagé sur disque : un document de 512 Mio ne
+// doit jamais devenir un Buffer Node. Validation, scan, empreinte et promotion
+// dans le coffre travaillent ensuite par flux bornés.
 
 import { Router } from "express";
-import multer from "multer";
 
 import * as controller from "../controllers/ged.controller";
 import { requireGedCapability } from "../middlewares/require-ged-capability";
+import { createSecureUpload } from "../../../shared/uploads/secure-upload";
 
 const router = Router();
 
 // Plafond global du transport. Le plafond RÉEL est celui de la classe
 // documentaire, appliqué ensuite par `assertAcceptedFile`.
-const MAX_TRANSPORT_BYTES = 512 * 1024 * 1024;
-
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: MAX_TRANSPORT_BYTES, files: 1, fields: 12, fieldSize: 64 * 1024 },
-});
+const upload = createSecureUpload("ged-deferred", { storage: "staging" });
 
 /* Référentiel et navigation */
 router.get("/classes", requireGedCapability("read"), controller.getClasses);

@@ -71,6 +71,7 @@ vi.mock("../module/access-control/middlewares/module-access-gate", () => ({
 }));
 
 import app from "../config/app";
+import { withRealtimeOutboxDbMock } from "./helpers/realtime-outbox-db-mock";
 
 /**
  * Mock pg robuste par CONTENU de requête (pattern #172) : chaque test configure `state`,
@@ -210,11 +211,13 @@ beforeEach(() => {
   mocks.clientRelease.mockReset();
 
   mocks.poolConnect.mockResolvedValue({
-    query: mocks.clientQuery,
+    query: withRealtimeOutboxDbMock(mocks.clientQuery),
     release: mocks.clientRelease,
   });
   state = defaultState();
-  mocks.poolQuery.mockImplementation(async (sql: unknown, params?: unknown[]) => dispatch(sql, params));
+  mocks.poolQuery.mockImplementation(
+    withRealtimeOutboxDbMock(async (sql: unknown, params?: unknown[]) => dispatch(sql, params))
+  );
   mocks.clientQuery.mockImplementation(async (sql: unknown, params?: unknown[]) => dispatch(sql, params));
   commandeEngine.repoCreateCommande.mockReset();
   commandeEngine.repoCreateCommande.mockResolvedValue({ id: 55 });

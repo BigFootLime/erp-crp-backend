@@ -1,9 +1,14 @@
 import type { PoolClient } from "pg";
 import crypto from "node:crypto";
+import fs from "node:fs/promises";
 import path from "node:path";
 
 import pool from "../../../config/database";
 import { generateMachineCode, generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
+import { promoteSecureUpload } from "../../../shared/uploads/secure-upload";
+import { withUploadTransaction, type UploadCommitReconciliation } from "../../../shared/uploads/upload-transaction";
+import { ensureImagesSubdir } from "../../../utils/imageStorage";
+import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
@@ -49,6 +54,7 @@ import {
 } from "../domain/of-status";
 import { capabilityForOfTransition, roleHasOfCapability } from "../domain/of-rbac";
 import { copyPieceOperationsToOf, loadApplicableTechnicalSnapshot } from "../domain/of-generation";
+import { enqueueProductionOfChanged, productionRealtimeActionFromAudit } from "./production-realtime.repository";
 
 export type AuditContext = {
   user_id: number;
@@ -74,6 +80,43 @@ function imageUrl(imagePath: string | null): string | null {
   return `${BASE_IMAGE_URL}/images/${path.basename(imagePath)}`;
 }
 
+type MachineMutationExpectation = {
+  mode: "create" | "update" | "replay";
+  machineId: string;
+  imagePath: string | null;
+  updatedAt?: string;
+  previousImagePath?: string | null;
+  previousUpdatedAt?: string;
+};
+
+async function reconcileMachineMutation(
+  expected: MachineMutationExpectation | null
+): Promise<UploadCommitReconciliation> {
+  if (!expected) return "uncertain";
+  const { rows } = await pool.query<{ id: string; image_path: string | null; updated_at: string }>(
+    `SELECT id::text AS id, image_path, updated_at::text AS updated_at
+       FROM public.machines
+      WHERE id = $1::uuid`,
+    [expected.machineId]
+  );
+  const row = rows[0];
+  if (!row) return expected.mode === "create" ? "not-committed" : "uncertain";
+  if (expected.mode === "replay") return "committed";
+  if (row.image_path === expected.imagePath && (!expected.updatedAt || row.updated_at === expected.updatedAt)) {
+    if (!expected.imagePath) return "committed";
+    const present = await fs.stat(expected.imagePath).then((stat) => stat.isFile()).catch(() => false);
+    return present ? "committed" : "uncertain";
+  }
+  if (
+    expected.mode === "update" &&
+    row.updated_at === expected.previousUpdatedAt &&
+    row.image_path === expected.previousImagePath
+  ) {
+    return "not-committed";
+  }
+  return "uncertain";
+}
+
 async function insertAuditLog(tx: DbQueryer, audit: AuditContext, entry: {
   action: string;
   entity_type: string | null;
@@ -91,7 +134,7 @@ async function insertAuditLog(tx: DbQueryer, audit: AuditContext, entry: {
     details: entry.details ?? null,
   };
 
-  await repoInsertAuditLog({
+  const inserted = await repoInsertAuditLog({
     user_id: audit.user_id,
     body,
     ip: audit.ip,
@@ -101,6 +144,20 @@ async function insertAuditLog(tx: DbQueryer, audit: AuditContext, entry: {
     browser: audit.browser,
     tx,
   });
+  const rawOfId = entry.entity_type === "ordres_fabrication"
+    ? entry.entity_id
+    : entry.entity_type === "of_operations" || entry.entity_type === "of_time_logs"
+      ? entry.details?.of_id
+      : null;
+  if ((typeof rawOfId === "string" || typeof rawOfId === "number") && String(rawOfId).length > 0) {
+    if (!inserted) throw new Error("PRODUCTION_AUDIT_INSERT_FAILED");
+    await enqueueProductionOfChanged(tx, {
+      ofId: rawOfId,
+      auditId: inserted.id,
+      action: productionRealtimeActionFromAudit(entry.action),
+      occurredAt: inserted.created_at,
+    });
+  }
 }
 
 function isPgUniqueViolation(err: unknown): boolean {
@@ -658,13 +715,18 @@ export async function repoGetMachine(id: string): Promise<MachineDetail | null> 
 
 export async function repoCreateMachine(params: {
   body: CreateMachineBodyDTO;
-  image_path: string | null;
+  image_file: Express.Multer.File | null;
   idempotency_key?: string | null;
   audit: AuditContext;
 }): Promise<MachineDetail> {
   const client = await pool.connect();
+  let expected: MachineMutationExpectation | null = null;
   try {
-    await client.query("BEGIN");
+    return await withUploadTransaction({
+      client,
+      files: params.image_file ? [params.image_file] : [],
+      context: "production.machines.create",
+      work: async () => {
 
     type Row = {
       id: string;
@@ -713,13 +775,16 @@ export async function repoCreateMachine(params: {
       );
       if (replay.rows[0]) {
         if (replay.rows[0].request_hash !== requestHash) throw new HttpError(409, "IDEMPOTENCY_KEY_REUSED", "Idempotency key was reused with a different payload.");
-        await client.query("COMMIT");
+        expected = { mode: "replay", machineId: replay.rows[0].machine_id, imagePath: null };
         const existing = await repoGetMachine(replay.rows[0].machine_id);
         if (!existing) throw new Error("Idempotent machine no longer exists");
         return existing;
       }
     }
     const code = await generateMachineCode(client);
+    const imagePath = params.image_file
+      ? await promoteSecureUpload(params.image_file, ensureImagesSubdir())
+      : null;
 
     const ins = await client.query<Row>(
       `
@@ -802,7 +867,7 @@ export async function repoCreateMachine(params: {
         b.model ?? null,
         b.serial_number ?? null,
         b.commissioned_year ?? null,
-        params.image_path,
+        imagePath,
         b.hourly_rate,
         b.hourly_rate_source ?? null,
         b.hourly_rate_effective_at ?? null,
@@ -826,6 +891,12 @@ export async function repoCreateMachine(params: {
 
     const row = ins.rows[0];
     if (!row) throw new Error("Failed to create machine");
+    expected = {
+      mode: "create",
+      machineId: row.id,
+      imagePath: row.image_path,
+      updatedAt: row.updated_at,
+    };
 
     if (params.idempotency_key) {
       await client.query(
@@ -845,8 +916,6 @@ export async function repoCreateMachine(params: {
         status: row.status,
       },
     });
-
-    await client.query("COMMIT");
 
     return {
       id: row.id,
@@ -887,26 +956,31 @@ export async function repoCreateMachine(params: {
       updated_by: row.updated_by,
       archived_by: row.archived_by,
     };
+      },
+      reconcile: async () => reconcileMachineMutation(expected),
+    });
   } catch (err) {
-    await client.query("ROLLBACK");
     if (isPgUniqueViolation(err)) {
       throw new HttpError(409, "MACHINE_CODE_EXISTS", "A machine with this code already exists");
     }
     throw err;
-  } finally {
-    client.release();
   }
 }
 
 export async function repoCreateMachineOnboarding(params: {
   body: CreateMachineOnboardingBodyDTO;
-  image_path: string | null;
+  image_file: Express.Multer.File | null;
   idempotency_key?: string | null;
   audit: AuditContext;
 }): Promise<MachineDetail> {
   const client = await pool.connect();
+  let expected: MachineMutationExpectation | null = null;
   try {
-    await client.query("BEGIN");
+    return await withUploadTransaction({
+      client,
+      files: params.image_file ? [params.image_file] : [],
+      context: "production.machines.onboarding.create",
+      work: async () => {
 
     const b = params.body;
     const requestHash = crypto.createHash("sha256").update(JSON.stringify(b)).digest("hex");
@@ -917,7 +991,7 @@ export async function repoCreateMachineOnboarding(params: {
       );
       if (replay.rows[0]) {
         if (replay.rows[0].request_hash !== requestHash) throw new HttpError(409, "IDEMPOTENCY_KEY_REUSED", "Idempotency key was reused with a different payload.");
-        await client.query("COMMIT");
+        expected = { mode: "replay", machineId: replay.rows[0].machine_id, imagePath: null };
         const replayMachine = await repoGetMachine(replay.rows[0].machine_id);
         if (!replayMachine) throw new Error("Idempotent machine no longer exists");
         return replayMachine;
@@ -1063,6 +1137,9 @@ export async function repoCreateMachineOnboarding(params: {
 
     const machine = b.machine;
     const code = await generateMachineCode(client);
+    const imagePath = params.image_file
+      ? await promoteSecureUpload(params.image_file, ensureImagesSubdir())
+      : null;
     const ins = await client.query<Row>(
       `
         INSERT INTO machines (
@@ -1144,7 +1221,7 @@ export async function repoCreateMachineOnboarding(params: {
         machine.model ?? resolvedModel?.model ?? null,
         machine.serial_number ?? null,
         machine.commissioned_year ?? null,
-        params.image_path,
+        imagePath,
         machine.hourly_rate,
         machine.hourly_rate_source ?? null,
         machine.hourly_rate_effective_at ?? null,
@@ -1168,6 +1245,12 @@ export async function repoCreateMachineOnboarding(params: {
 
     const row = ins.rows[0];
     if (!row) throw new Error("Failed to create machine from onboarding");
+    expected = {
+      mode: "create",
+      machineId: row.id,
+      imagePath: row.image_path,
+      updatedAt: row.updated_at,
+    };
 
     if (params.idempotency_key) {
       await client.query(
@@ -1191,8 +1274,6 @@ export async function repoCreateMachineOnboarding(params: {
         tooling_count: b.tooling?.length ?? 0,
       },
     });
-
-    await client.query("COMMIT");
 
     return {
       id: row.id,
@@ -1233,8 +1314,10 @@ export async function repoCreateMachineOnboarding(params: {
       updated_by: row.updated_by,
       archived_by: row.archived_by,
     };
+      },
+      reconcile: async () => reconcileMachineMutation(expected),
+    });
   } catch (err) {
-    await client.query("ROLLBACK");
     if (isPgUniqueViolation(err)) {
       const constraint = pgConstraint(err);
       if (constraint === "machines_code_key") {
@@ -1249,20 +1332,23 @@ export async function repoCreateMachineOnboarding(params: {
       throw new HttpError(422, "MACHINE_ONBOARDING_REFERENCE_INVALID", "Machine onboarding references invalid data");
     }
     throw err;
-  } finally {
-    client.release();
   }
 }
 
 export async function repoUpdateMachineOnboarding(params: {
   id: string;
   body: UpdateMachineOnboardingBodyDTO;
-  image_path?: string | null;
+  image_file?: Express.Multer.File | null;
   audit: AuditContext;
 }): Promise<MachineDetail | null> {
   const client = await pool.connect();
+  let expected: MachineMutationExpectation | null = null;
   try {
-    await client.query("BEGIN");
+    const machineId = await withUploadTransaction({
+      client,
+      files: params.image_file ? [params.image_file] : [],
+      context: "production.machines.onboarding.update",
+      work: async () => {
 
     const existingMachine = await client.query<{
       id: string;
@@ -1275,6 +1361,7 @@ export async function repoUpdateMachineOnboarding(params: {
       commissioned_year: number | null;
       location: string | null;
       workshop_zone: string | null;
+      image_path: string | null;
       archived_at: string | null;
       updated_at: string;
     }>(
@@ -1290,6 +1377,7 @@ export async function repoUpdateMachineOnboarding(params: {
           commissioned_year,
           location,
           workshop_zone,
+          image_path,
           archived_at::text AS archived_at,
           updated_at::text AS updated_at
         FROM machines
@@ -1300,7 +1388,6 @@ export async function repoUpdateMachineOnboarding(params: {
     );
     const existing = existingMachine.rows[0] ?? null;
     if (!existing) {
-      await client.query("ROLLBACK");
       return null;
     }
     if (existing.archived_at) {
@@ -1477,6 +1564,10 @@ export async function repoUpdateMachineOnboarding(params: {
       await upsertMachineTooling(client, resolvedModelId, b.tooling ?? []);
     }
 
+    const imagePath = params.image_file
+      ? await promoteSecureUpload(params.image_file, ensureImagesSubdir())
+      : undefined;
+
     const sets: string[] = [];
     const values: unknown[] = [];
     const push = (v: unknown) => {
@@ -1508,8 +1599,8 @@ export async function repoUpdateMachineOnboarding(params: {
     sets.push(`location = ${push(machine.location ?? null)}`);
     sets.push(`workshop_zone = ${push(machine.workshop_zone ?? null)}`);
     sets.push(`notes = ${push(machine.notes ?? null)}`);
-    if (params.image_path !== undefined) {
-      sets.push(`image_path = ${push(params.image_path)}`);
+    if (imagePath !== undefined) {
+      sets.push(`image_path = ${push(imagePath)}`);
     }
     sets.push(`updated_by = ${push(params.audit.user_id)}`);
     sets.push(`updated_at = now()`);
@@ -1525,6 +1616,8 @@ export async function repoUpdateMachineOnboarding(params: {
       commissioned_year: number | null;
       location: string | null;
       workshop_zone: string | null;
+      image_path: string | null;
+      updated_at: string;
     }>(
       `
         UPDATE machines
@@ -1541,13 +1634,23 @@ export async function repoUpdateMachineOnboarding(params: {
           serial_number,
           commissioned_year,
           location,
-          workshop_zone
+          workshop_zone,
+          image_path,
+          updated_at::text AS updated_at
       `,
       values
     );
 
     const row = upd.rows[0] ?? null;
     if (!row) throw new HttpError(409, "CONCURRENT_MODIFICATION", "Machine has been modified by another user.");
+    expected = {
+      mode: "update",
+      machineId: row.id,
+      imagePath: row.image_path,
+      updatedAt: row.updated_at,
+      previousImagePath: existing.image_path,
+      previousUpdatedAt: existing.updated_at,
+    };
 
     await insertAuditLog(client, params.audit, {
       action: "production.machines.onboarding.update",
@@ -1586,13 +1689,15 @@ export async function repoUpdateMachineOnboarding(params: {
       },
     });
 
-    await client.query("COMMIT");
-
-    const out = await repoGetMachine(row.id);
+    return row.id;
+      },
+      reconcile: async () => reconcileMachineMutation(expected),
+    });
+    if (machineId === null) return null;
+    const out = await repoGetMachine(machineId);
     if (!out) throw new Error("Failed to load updated machine");
     return out;
   } catch (err) {
-    await client.query("ROLLBACK");
     if (isPgUniqueViolation(err)) {
       const constraint = pgConstraint(err);
       if (constraint === "machines_code_key") {
@@ -1610,28 +1715,30 @@ export async function repoUpdateMachineOnboarding(params: {
       throw new HttpError(422, "MACHINE_ONBOARDING_REFERENCE_INVALID", "Machine onboarding references invalid data");
     }
     throw err;
-  } finally {
-    client.release();
   }
 }
 
 export async function repoUpdateMachine(params: {
   id: string;
   patch: UpdateMachineBodyDTO;
-  image_path?: string | null;
+  image_file?: Express.Multer.File | null;
   audit: AuditContext;
 }): Promise<MachineDetail | null> {
   const client = await pool.connect();
+  let expected: MachineMutationExpectation | null = null;
   try {
-    await client.query("BEGIN");
+    return await withUploadTransaction({
+      client,
+      files: params.image_file ? [params.image_file] : [],
+      context: "production.machines.update",
+      work: async () => {
 
-    const before = await client.query<{ id: string; archived_at: string | null; updated_at: string }>(
-      `SELECT id::text AS id, archived_at::text AS archived_at, updated_at::text AS updated_at FROM machines WHERE id = $1::uuid FOR UPDATE`,
+    const before = await client.query<{ id: string; image_path: string | null; archived_at: string | null; updated_at: string }>(
+      `SELECT id::text AS id, image_path, archived_at::text AS archived_at, updated_at::text AS updated_at FROM machines WHERE id = $1::uuid FOR UPDATE`,
       [params.id]
     );
     const existing = before.rows[0];
     if (!existing) {
-      await client.query("ROLLBACK");
       return null;
     }
     if (existing.archived_at) {
@@ -1640,6 +1747,10 @@ export async function repoUpdateMachine(params: {
     if (existing.updated_at !== params.patch.expected_updated_at) {
       throw new HttpError(409, "CONCURRENT_MODIFICATION", "Machine has been modified by another user.");
     }
+
+    const imagePath = params.image_file
+      ? await promoteSecureUpload(params.image_file, ensureImagesSubdir())
+      : undefined;
 
     const sets: string[] = [];
     const values: unknown[] = [];
@@ -1676,8 +1787,8 @@ export async function repoUpdateMachine(params: {
     if (p.workshop_zone !== undefined) sets.push(`workshop_zone = ${push(p.workshop_zone ?? null)}`);
     if (p.notes !== undefined) sets.push(`notes = ${push(p.notes ?? null)}`);
 
-    if (params.image_path !== undefined) {
-      sets.push(`image_path = ${push(params.image_path)}`);
+    if (imagePath !== undefined) {
+      sets.push(`image_path = ${push(imagePath)}`);
     }
 
     sets.push(`updated_by = ${push(params.audit.user_id)}`);
@@ -1765,9 +1876,16 @@ export async function repoUpdateMachine(params: {
 
     const row = upd.rows[0];
     if (!row) {
-      await client.query("ROLLBACK");
       return null;
     }
+    expected = {
+      mode: "update",
+      machineId: row.id,
+      imagePath: row.image_path,
+      updatedAt: row.updated_at,
+      previousImagePath: existing.image_path,
+      previousUpdatedAt: existing.updated_at,
+    };
 
     await insertAuditLog(client, params.audit, {
       action: "production.machines.update",
@@ -1778,8 +1896,6 @@ export async function repoUpdateMachine(params: {
         name: row.name,
       },
     });
-
-    await client.query("COMMIT");
 
     return {
       id: row.id,
@@ -1820,14 +1936,14 @@ export async function repoUpdateMachine(params: {
       updated_by: row.updated_by,
       archived_by: row.archived_by,
     };
+      },
+      reconcile: async () => reconcileMachineMutation(expected),
+    });
   } catch (err) {
-    await client.query("ROLLBACK");
     if (isPgUniqueViolation(err)) {
       throw new HttpError(409, "MACHINE_CODE_EXISTS", "A machine with this code already exists");
     }
     throw err;
-  } finally {
-    client.release();
   }
 }
 
@@ -3127,8 +3243,7 @@ export async function repoCreateOrdreFabrication(params: {
 }): Promise<OrdreFabricationDetail> {
   const client = await pool.connect();
   try {
-    await client.query("BEGIN");
-
+    const ofId = await withRealtimeOutboxTransaction(client, async (client) => {
     const pt = await client.query<{ id: string }>(
       `SELECT id::text AS id FROM pieces_techniques WHERE id = $1::uuid LIMIT 1`,
       [params.body.piece_technique_id]
@@ -3267,19 +3382,16 @@ export async function repoCreateOrdreFabrication(params: {
       },
     });
 
-    await client.query("COMMIT");
-
+      return ofId;
+    });
     const out = await repoGetOrdreFabrication({ id: ofId, user_id: params.audit.user_id });
     if (!out) throw new Error("Failed to load created OF");
     return out;
   } catch (err) {
-    await client.query("ROLLBACK");
     if (isPgUniqueViolation(err)) {
       throw new HttpError(409, "OF_NUMERO_EXISTS", "An OF with this number already exists");
     }
     throw err;
-  } finally {
-    client.release();
   }
 }
 
@@ -3289,9 +3401,7 @@ export async function repoUpdateOrdreFabrication(params: {
   audit: AuditContext;
 }): Promise<OrdreFabricationDetail | null> {
   const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-
+  const updated = await withRealtimeOutboxTransaction(client, async (client) => {
     const exists = await client.query<{
       id: string;
       commande_id: string | null;
@@ -3312,8 +3422,7 @@ export async function repoUpdateOrdreFabrication(params: {
     );
     const ofRow = exists.rows[0] ?? null;
     if (!ofRow?.id) {
-      await client.query("ROLLBACK");
-      return null;
+      return false;
     }
 
     // #170 : verrou optimiste — même mécanique que affaire/devis/machines.
@@ -3440,8 +3549,7 @@ export async function repoUpdateOrdreFabrication(params: {
       values
     );
     if (!upd.rows[0]?.id) {
-      await client.query("ROLLBACK");
-      return null;
+      return false;
     }
 
     await insertAuditLog(client, params.audit, {
@@ -3453,15 +3561,10 @@ export async function repoUpdateOrdreFabrication(params: {
       },
     });
 
-    await client.query("COMMIT");
-
-    return repoGetOrdreFabrication({ id: params.id, user_id: params.audit.user_id });
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+    return true;
+  });
+  if (!updated) return null;
+  return repoGetOrdreFabrication({ id: params.id, user_id: params.audit.user_id });
 }
 
 export async function repoUpdateOrdreFabricationOperation(params: {
@@ -3471,9 +3574,7 @@ export async function repoUpdateOrdreFabricationOperation(params: {
   audit: AuditContext;
 }): Promise<OfOperation | null> {
   const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-
+  const updated = await withRealtimeOutboxTransaction(client, async (client) => {
     const before = await client.query<{ id: string; status: OfOperation["status"] }>(
       `
         SELECT id::text AS id, status::text AS status
@@ -3485,8 +3586,7 @@ export async function repoUpdateOrdreFabricationOperation(params: {
     );
     const existing = before.rows[0];
     if (!existing) {
-      await client.query("ROLLBACK");
-      return null;
+      return false;
     }
 
     const sets: string[] = [];
@@ -3548,8 +3648,7 @@ export async function repoUpdateOrdreFabricationOperation(params: {
       values
     );
     if (!upd.rows[0]?.id) {
-      await client.query("ROLLBACK");
-      return null;
+      return false;
     }
 
     await client.query(
@@ -3570,15 +3669,10 @@ export async function repoUpdateOrdreFabricationOperation(params: {
       },
     });
 
-    await client.query("COMMIT");
-
-    return selectOfOperation(pool, { of_id: params.of_id, op_id: params.op_id, user_id: params.audit.user_id });
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+    return true;
+  });
+  if (!updated) return null;
+  return selectOfOperation(pool, { of_id: params.of_id, op_id: params.op_id, user_id: params.audit.user_id });
 }
 
 export async function repoStartOfOperationTimeLog(params: {
@@ -3589,8 +3683,7 @@ export async function repoStartOfOperationTimeLog(params: {
 }): Promise<OfOperation | null> {
   const client = await pool.connect();
   try {
-    await client.query("BEGIN");
-
+    const updated = await withRealtimeOutboxTransaction(client, async (client) => {
     // #170 : le pointage verrouille aussi l'OF — la règle d'admissibilité se
     // joue sur son statut, et le démarrage fait basculer un OF encore
     // BROUILLON/PLANIFIE en EN_COURS (transition serveur auditée).
@@ -3605,8 +3698,7 @@ export async function repoStartOfOperationTimeLog(params: {
     );
     const ofRow = ofRes.rows[0] ?? null;
     if (!ofRow?.id) {
-      await client.query("ROLLBACK");
-      return null;
+      return false;
     }
     const ofStatut = ofRow.statut as OfStatut;
     if (!ofStatutAllowsExecution(ofStatut)) {
@@ -3629,8 +3721,7 @@ export async function repoStartOfOperationTimeLog(params: {
     );
     const existing = op.rows[0];
     if (!existing) {
-      await client.query("ROLLBACK");
-      return null;
+      return false;
     }
     if (existing.status === "DONE") {
       throw new HttpError(
@@ -3710,17 +3801,15 @@ export async function repoStartOfOperationTimeLog(params: {
       },
     });
 
-    await client.query("COMMIT");
-
+      return true;
+    });
+    if (!updated) return null;
     return selectOfOperation(pool, { of_id: params.of_id, op_id: params.op_id, user_id: params.audit.user_id });
   } catch (err) {
-    await client.query("ROLLBACK");
     if (isPgUniqueViolation(err)) {
       throw new HttpError(409, "OF_TIME_LOG_ALREADY_RUNNING", "A time log is already running for this operation");
     }
     throw err;
-  } finally {
-    client.release();
   }
 }
 
@@ -3731,9 +3820,7 @@ export async function repoStopOfOperationTimeLog(params: {
   audit: AuditContext;
 }): Promise<OfOperation | null> {
   const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-
+  const updated = await withRealtimeOutboxTransaction(client, async (client) => {
     const op = await client.query<{ id: string }>(
       `
         SELECT id::text AS id
@@ -3744,8 +3831,7 @@ export async function repoStopOfOperationTimeLog(params: {
       [params.of_id, params.op_id]
     );
     if (!op.rows[0]?.id) {
-      await client.query("ROLLBACK");
-      return null;
+      return false;
     }
 
     const open = await client.query<{ id: string }>(
@@ -3810,15 +3896,10 @@ export async function repoStopOfOperationTimeLog(params: {
       },
     });
 
-    await client.query("COMMIT");
-
-    return selectOfOperation(pool, { of_id: params.of_id, op_id: params.op_id, user_id: params.audit.user_id });
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+    return true;
+  });
+  if (!updated) return null;
+  return selectOfOperation(pool, { of_id: params.of_id, op_id: params.op_id, user_id: params.audit.user_id });
 }
 
 /**
@@ -3835,9 +3916,7 @@ export async function repoReorderOfOperations(params: {
   audit: AuditContext;
 }): Promise<OrdreFabricationDetail | null> {
   const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-
+  const updated = await withRealtimeOutboxTransaction(client, async (client) => {
     const ofRes = await client.query<{ id: string; statut: string; updated_at: string | null }>(
       `
         SELECT id::text AS id, statut::text AS statut, updated_at::text AS updated_at
@@ -3849,8 +3928,7 @@ export async function repoReorderOfOperations(params: {
     );
     const ofRow = ofRes.rows[0] ?? null;
     if (!ofRow?.id) {
-      await client.query("ROLLBACK");
-      return null;
+      return false;
     }
 
     if (ofRow.updated_at && params.body.expected_updated_at !== ofRow.updated_at) {
@@ -3931,13 +4009,8 @@ export async function repoReorderOfOperations(params: {
       },
     });
 
-    await client.query("COMMIT");
-
-    return repoGetOrdreFabrication({ id: params.of_id, user_id: params.audit.user_id });
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+    return true;
+  });
+  if (!updated) return null;
+  return repoGetOrdreFabrication({ id: params.of_id, user_id: params.audit.user_id });
 }

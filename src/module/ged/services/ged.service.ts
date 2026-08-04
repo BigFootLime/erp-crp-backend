@@ -1,15 +1,27 @@
 // GED centrale CERP (ADR-0037) — orchestration.
 //
-// Ordre invariant du dépôt : contrôle de contenu -> écriture du blob ->
-// transaction base. Si la transaction échoue après l'écriture, le blob est
-// compensé. L'inverse (base d'abord) laisserait des métadonnées sans fichier,
-// c'est-à-dire des documents fantômes.
+// Ordre invariant du dépôt : contrôle + empreinte -> transaction + verrou SHA
+// -> promotion du blob -> métadonnées -> COMMIT. Une compensation post-rollback
+// reprend le même verrou sur une connexion fraîche avant de décider de supprimer
+// ou préserver le blob partagé.
+
+import fs from "node:fs/promises";
 
 import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
-import { assertAcceptedFile } from "../domain/ged-content";
+import logger from "../../../utils/logger";
+import {
+  cleanupUploadsAfterConfirmedRollback,
+  cleanupUploadsAfterReconciledNoCommit,
+  markUploadCommitAttempted,
+  markUploadCommitUncertain,
+  markUploadRollbackUncertain,
+  markUploadsCommitted,
+  UploadDestinationCleanupError,
+} from "../../../shared/uploads/secure-upload";
+import { assertAcceptedFileOnDisk } from "../domain/ged-content";
 import {
   assertDistinctApprover,
   assertGedCapability,
@@ -21,12 +33,15 @@ import {
   repoAddVersion,
   repoCreateDocumentWithVersion,
   repoFindDocumentByBlobHash,
+  repoGetGedBlobReferenceState,
   repoGetClass,
   repoGetDocumentDetail,
   repoGetTree,
   repoGetVersionForUpdate,
   repoInsertApproval,
   repoInternalGetVersionContentRef,
+  repoIsVersionBlobCommitted,
+  repoLockGedBlobSha256,
   repoListAccessEvents,
   repoListClasses,
   repoListDocuments,
@@ -35,7 +50,10 @@ import {
   repoSetCurrentVersion,
   repoSetVersionStatus,
   repoUpsertBlob,
+  withGedBlobSha256Coordination,
   withGedTransaction,
+  GedBlobCleanupUncertainError,
+  GedCommitUncertainError,
 } from "../repository/ged.repository";
 import type {
   GedAccessEvent,
@@ -45,11 +63,117 @@ import type {
   GedListResult,
   GedTreeNode,
 } from "../types/ged.types";
-import { checkVaultHealth, readBlob, removeBlobIfOrphan, writeBlob } from "./ged-vault.service";
+import {
+  checkVaultHealth,
+  computeFileSha256,
+  resolveBlobForDownload,
+  storageKeyForSha256,
+  writeBlobFromPath,
+} from "./ged-vault.service";
 
 export type GedActor = { id: number; role: string | null };
 
-type UploadedFile = { buffer?: Buffer; originalname?: string; mimetype?: string; size?: number };
+type UploadedFile = {
+  path?: string;
+  originalname?: string;
+  mimetype?: string;
+  size?: number;
+  uploadSecurity?: { sha256: string };
+};
+type GedUploadTransactionResult = { documentId: string; versionId: string };
+
+async function coordinateGedBlobCleanup(
+  sha256: string,
+  files: readonly { path: string }[],
+  mode: "confirmed-rollback" | "reconciled-no-commit"
+): Promise<void> {
+  const outcome = await withGedBlobSha256Coordination(sha256, async (tx) => {
+    const state = await repoGetGedBlobReferenceState(tx, sha256);
+    if (state.blob_present || state.reference_count > 0) return "preserved" as const;
+    if (mode === "confirmed-rollback") {
+      await cleanupUploadsAfterConfirmedRollback(files);
+    } else {
+      await cleanupUploadsAfterReconciledNoCommit(files);
+    }
+    return "cleaned" as const;
+  });
+  if (outcome === "preserved") markUploadsCommitted(files);
+}
+
+function uploadTransactionHooks(
+  files: readonly { path: string }[],
+  sha256: string,
+  promotionCompleted: () => boolean
+) {
+  return {
+    beforeCommit: () => markUploadCommitAttempted(files),
+    afterCommit: () => markUploadsCommitted(files),
+    afterConfirmedRollback: async () => {
+      if (!promotionCompleted()) return;
+      try {
+        await coordinateGedBlobCleanup(sha256, files, "confirmed-rollback");
+      } catch (error) {
+        if (error instanceof UploadDestinationCleanupError) throw error;
+        logger.error("[GED_BLOB_CLEANUP_UNCERTAIN] rollback compensation could not be coordinated");
+        markUploadRollbackUncertain(files);
+        throw new GedBlobCleanupUncertainError(error);
+      }
+    },
+    afterRollbackUncertain: () => markUploadRollbackUncertain(files),
+  };
+}
+
+async function reconcileGedCommit(
+  error: GedCommitUncertainError<GedUploadTransactionResult>,
+  sha256: string,
+  storageKey: string,
+  files: readonly { path: string }[]
+): Promise<GedUploadTransactionResult> {
+  let outcome: Awaited<ReturnType<typeof repoIsVersionBlobCommitted>>;
+  let durableFilePresent = false;
+  try {
+    outcome = await repoIsVersionBlobCommitted(error.transactionResult.versionId, sha256);
+    if (outcome === "committed") {
+      const blob = await resolveBlobForDownload(storageKey);
+      durableFilePresent = await fs.stat(blob.file_path).then((stat) => stat.isFile()).catch(() => false);
+    }
+  } catch (reconcileError) {
+    logger.error("[GED_UPLOAD_COMMIT_UNCERTAIN] fresh-connection reconciliation failed", JSON.stringify({
+      version_id: error.transactionResult.versionId,
+    }));
+    markUploadCommitUncertain(files);
+    throw error;
+  }
+  if (outcome === "committed") {
+    if (!durableFilePresent) {
+      logger.error("[GED_UPLOAD_COMMIT_UNCERTAIN] metadata committed but durable blob missing", JSON.stringify({
+        version_id: error.transactionResult.versionId,
+      }));
+      markUploadCommitUncertain(files);
+      throw error;
+    }
+    markUploadsCommitted(files);
+    return error.transactionResult;
+  }
+  if (outcome === "not-committed") {
+    try {
+      await coordinateGedBlobCleanup(sha256, files, "reconciled-no-commit");
+    } catch (cleanupError) {
+      if (cleanupError instanceof UploadDestinationCleanupError) throw cleanupError;
+      logger.error("[GED_UPLOAD_COMMIT_UNCERTAIN] no-commit cleanup could not be coordinated", JSON.stringify({
+        version_id: error.transactionResult.versionId,
+      }));
+      markUploadCommitUncertain(files);
+      throw error;
+    }
+    throw error.originalError;
+  }
+  logger.error("[GED_UPLOAD_COMMIT_UNCERTAIN] metadata mismatch; durable blob preserved", JSON.stringify({
+    version_id: error.transactionResult.versionId,
+  }));
+  markUploadCommitUncertain(files);
+  throw error;
+}
 
 /**
  * Relit un document APRÈS le commit.
@@ -148,20 +272,33 @@ export async function uploadDocument(
     throw new HttpError(400, "GED_CLASS_UNKNOWN", `Classe documentaire inconnue : ${input.class_key}.`);
   }
 
-  const accepted = assertAcceptedFile(file, {
+  const accepted = await assertAcceptedFileOnDisk(file, {
     class_key: documentClass.class_key,
     allowed_mime_types: documentClass.allowed_mime_types,
     allowed_extensions: documentClass.allowed_extensions,
     max_size_bytes: documentClass.max_size_bytes,
   });
 
-  // 1) Écriture du contenu AVANT la transaction : un blob orphelin se détecte
-  //    et se nettoie ; une métadonnée sans fichier est un mensonge durable.
-  const written = await writeBlob(accepted.buffer);
+  // `accepted` is validated metadata, but lifecycle ownership must keep the
+  // original Multer object so a close-before-registration race is observable.
+  // The central security hash is computed before waiting for the database
+  // lock; direct service tests fall back to a bounded streaming hash.
+  const uploadedFile = file as UploadedFile & { path: string };
+  const uploadedFiles = [uploadedFile];
+  const expectedSha256 = uploadedFile.uploadSecurity?.sha256
+    ?? await computeFileSha256(uploadedFile.path);
+  const storageKey = storageKeyForSha256(expectedSha256);
+  let promotionCompleted = false;
 
-  let documentId: string;
+  let transactionResult: GedUploadTransactionResult;
   try {
-    documentId = await withGedTransaction(async (tx: PoolClient) => {
+    transactionResult = await withGedTransaction(async (tx: PoolClient) => {
+      // Every writer takes the same transaction-scoped SHA lock before touching
+      // the content-addressed path. It remains held through COMMIT/ROLLBACK.
+      await repoLockGedBlobSha256(tx, expectedSha256);
+      const written = await writeBlobFromPath(uploadedFile, expectedSha256);
+      promotionCompleted = true;
+
       const duplicate = await repoFindDocumentByBlobHash(tx, written.sha256);
       if (duplicate) {
         throw new HttpError(
@@ -214,17 +351,26 @@ export async function uploadDocument(
         },
       });
 
-      return created.document_id;
-    });
+      return { documentId: created.document_id, versionId: created.version_id };
+    }, uploadTransactionHooks(uploadedFiles, expectedSha256, () => promotionCompleted));
   } catch (err) {
-    // Compensation : uniquement si le blob venait d'être créé par ce dépôt.
-    if (!written.deduplicated) await removeBlobIfOrphan(written.storage_key);
-    throw err;
+    if (err instanceof GedCommitUncertainError) {
+      transactionResult = await reconcileGedCommit(
+        err as GedCommitUncertainError<GedUploadTransactionResult>,
+        expectedSha256,
+        storageKey,
+        uploadedFiles
+      );
+    } else {
+      // A rollback-uncertain error deliberately preserves the blob. All other
+      // transaction failures already ran the confirmed-rollback hook.
+      throw err;
+    }
   }
 
   // Relecture APRÈS le commit : `repoGetDocumentDetail` ouvre sa propre
   // connexion et ne verrait rien d'une transaction encore ouverte.
-  return readDetailOrFail(documentId);
+  return readDetailOrFail(transactionResult.documentId);
 }
 
 export async function uploadNewVersion(
@@ -253,17 +399,27 @@ export async function uploadNewVersion(
     throw new HttpError(400, "GED_CLASS_UNKNOWN", "Classe documentaire inconnue.");
   }
 
-  const accepted = assertAcceptedFile(file, {
+  const accepted = await assertAcceptedFileOnDisk(file, {
     class_key: documentClass.class_key,
     allowed_mime_types: documentClass.allowed_mime_types,
     allowed_extensions: documentClass.allowed_extensions,
     max_size_bytes: documentClass.max_size_bytes,
   });
 
-  const written = await writeBlob(accepted.buffer);
+  const uploadedFile = file as UploadedFile & { path: string };
+  const uploadedFiles = [uploadedFile];
+  const expectedSha256 = uploadedFile.uploadSecurity?.sha256
+    ?? await computeFileSha256(uploadedFile.path);
+  const storageKey = storageKeyForSha256(expectedSha256);
+  let promotionCompleted = false;
 
+  let transactionResult: GedUploadTransactionResult;
   try {
-    await withGedTransaction(async (tx: PoolClient) => {
+    transactionResult = await withGedTransaction(async (tx: PoolClient) => {
+      await repoLockGedBlobSha256(tx, expectedSha256);
+      const written = await writeBlobFromPath(uploadedFile, expectedSha256);
+      promotionCompleted = true;
+
       const blob = await repoUpsertBlob(tx, {
         sha256: written.sha256,
         size_bytes: written.size_bytes,
@@ -288,14 +444,23 @@ export async function uploadNewVersion(
         details: { version_number: version.version_number, sha256: written.sha256, size_bytes: written.size_bytes },
       });
 
-    });
+      return { documentId, versionId: version.version_id };
+    }, uploadTransactionHooks(uploadedFiles, expectedSha256, () => promotionCompleted));
   } catch (err) {
-    if (!written.deduplicated) await removeBlobIfOrphan(written.storage_key);
-    throw err;
+    if (err instanceof GedCommitUncertainError) {
+      transactionResult = await reconcileGedCommit(
+        err as GedCommitUncertainError<GedUploadTransactionResult>,
+        expectedSha256,
+        storageKey,
+        uploadedFiles
+      );
+    } else {
+      throw err;
+    }
   }
 
   // Relecture APRÈS le commit, pour la même raison que dans `uploadDocument`.
-  return readDetailOrFail(documentId);
+  return readDetailOrFail(transactionResult.documentId);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -384,10 +549,14 @@ export async function obsoleteVersion(actor: GedActor, versionId: string, reason
 /* -------------------------------------------------------------------------- */
 
 export type DownloadResult = {
-  buffer: Buffer;
+  file_path: string;
+  allowed_root: string;
+  size_bytes: number;
   original_name: string;
   mime_type: string;
   sha256: string;
+  document_id: string;
+  version_id: string;
 };
 
 export async function downloadVersion(actor: GedActor, versionId: string): Promise<DownloadResult> {
@@ -402,38 +571,32 @@ export async function downloadVersion(actor: GedActor, versionId: string): Promi
     assertGedCapability(actor.role, "upload");
   }
 
-  let buffer: Buffer;
-  try {
-    // L'empreinte est RECALCULÉE ici : un fichier altéré sur disque est refusé.
-    buffer = await readBlob(ref.storage_key, ref.sha256);
-  } catch (err) {
-    if (err instanceof HttpError && err.code === "GED_INTEGRITY") {
-      // Une atteinte à l'intégrité est un événement de sécurité : elle est
-      // journalisée même si la lecture échoue.
-      await repoLogAccess(pool, {
-        document_id: ref.document_id,
-        version_id: ref.version_id,
-        event_type: "INTEGRITY_FAILURE",
-        actor_id: actor.id,
-        details: { expected_sha256: ref.sha256 },
-      }).catch(() => undefined);
-    }
-    throw err;
-  }
-
-  // Le journal ne doit jamais faire échouer un téléchargement légitime.
-  await repoLogAccess(pool, {
-    document_id: ref.document_id,
-    version_id: ref.version_id,
-    event_type: "DOWNLOAD",
-    actor_id: actor.id,
-    details: { size_bytes: buffer.byteLength },
-  }).catch(() => undefined);
+  const blob = await resolveBlobForDownload(ref.storage_key);
 
   return {
-    buffer,
+    file_path: blob.file_path,
+    allowed_root: blob.allowed_root,
+    size_bytes: ref.size_bytes,
     original_name: ref.original_name,
     mime_type: ref.mime_type,
     sha256: ref.sha256,
+    document_id: ref.document_id,
+    version_id: ref.version_id,
   };
+}
+
+export async function recordVersionDownload(
+  actor: GedActor,
+  result: DownloadResult,
+  outcome: "DOWNLOAD" | "INTEGRITY_FAILURE"
+): Promise<void> {
+  await repoLogAccess(pool, {
+    document_id: result.document_id,
+    version_id: result.version_id,
+    event_type: outcome,
+    actor_id: actor.id,
+    details: outcome === "DOWNLOAD"
+      ? { size_bytes: result.size_bytes }
+      : { expected_sha256: result.sha256 },
+  }).catch(() => undefined);
 }

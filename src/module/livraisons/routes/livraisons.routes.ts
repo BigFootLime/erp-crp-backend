@@ -1,9 +1,8 @@
 import { Router, type RequestHandler } from "express"
 import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
-import multer from "multer"
 
 import { authenticateToken } from "../../auth/middlewares/auth.middleware"
-import { ensureTmpStoragePath } from "../../../utils/cerpStorage"
+import { createSecureUpload } from "../../../shared/uploads/secure-upload"
 import { HttpError } from "../../../utils/httpError"
 import {
   roleHasLivraisonCapability,
@@ -40,15 +39,7 @@ import {
   revokeLivraisonPackVersion,
 } from "../controllers/pack.controller"
 
-const uploadTmpDir = ensureTmpStoragePath("livraisons")
-const upload = multer({
-  dest: uploadTmpDir,
-  limits: {
-    files: 10,
-    fileSize: 20 * 1024 * 1024,
-    fields: 10,
-  },
-})
+const upload = createSecureUpload("business-document")
 
 const router = Router()
 

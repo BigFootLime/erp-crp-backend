@@ -28,14 +28,14 @@ export const svcGetMachine = (id: string) => repo.repoGetMachine(id);
 
 export const svcCreateMachine = (params: {
   body: CreateMachineBodyDTO;
-  image_path: string | null;
+  image_file: Express.Multer.File | null;
   idempotency_key?: string | null;
   audit: repo.AuditContext;
 }) => repo.repoCreateMachine(params);
 
 export const svcCreateMachineOnboarding = (params: {
   body: CreateMachineOnboardingBodyDTO;
-  image_path: string | null;
+  image_file: Express.Multer.File | null;
   idempotency_key?: string | null;
   audit: repo.AuditContext;
 }) => repo.repoCreateMachineOnboarding(params);
@@ -43,14 +43,14 @@ export const svcCreateMachineOnboarding = (params: {
 export const svcUpdateMachine = (params: {
   id: string;
   patch: UpdateMachineBodyDTO;
-  image_path?: string | null;
+  image_file?: Express.Multer.File | null;
   audit: repo.AuditContext;
 }) => repo.repoUpdateMachine(params);
 
 export const svcUpdateMachineOnboarding = (params: {
   id: string;
   body: UpdateMachineOnboardingBodyDTO;
-  image_path?: string | null;
+  image_file?: Express.Multer.File | null;
   audit: repo.AuditContext;
 }) => repo.repoUpdateMachineOnboarding(params);
 

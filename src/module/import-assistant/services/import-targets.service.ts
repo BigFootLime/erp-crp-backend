@@ -223,7 +223,7 @@ export async function createImportTarget(params: {
     case "MACHINE": {
       const result = await svcCreateMachine({
         body: params.normalized_data as CreateMachineBodyDTO,
-        image_path: null,
+        image_file: null,
         idempotency_key: params.idempotency_key,
         audit,
       });

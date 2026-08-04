@@ -1,10 +1,23 @@
 // src/module/admin/repository/admin.repository.ts
 import pool from "../../../config/database";
 import crypto from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import type { PoolClient } from "pg";
 
+import {
+  bumpRealtimeAuthorizationEpoch,
+  bumpRealtimeSessionEpoch,
+} from "../../../shared/realtime/realtime-control-plane";
+import {
+  type RealtimeCommitReconciliation,
+  withRealtimeOutboxTransaction,
+} from "../../../shared/realtime/realtime-outbox-transaction";
 import { HttpError } from "../../../utils/httpError";
 import { normalizeAssignedRoles } from "../../auth/domain/roles";
+import {
+  canonicalizeAuthEmail,
+  canonicalizeAuthUsername,
+} from "../../auth/domain/auth-identity";
 
 export type AdminUserListRow = {
   id: number;
@@ -57,6 +70,147 @@ export type AdminRoleRow = {
 
 type PgErrorLike = { code?: unknown; constraint?: unknown };
 
+type AdminEpochMutation<T> = {
+  value: T;
+  userId: number;
+  kind?: "create" | "update" | "delete" | "password-reset";
+  expectedSnapshot?: AdminMutationSnapshot;
+  previousSnapshot?: AdminMutationSnapshot;
+  resetTokenId?: string;
+  resetTokenHash?: string;
+  resetUsedAt?: string;
+  noOp?: boolean;
+};
+
+type AdminMutationSnapshot = {
+  userState: Record<string, unknown> | null;
+  roles: string[];
+  sessionEpoch: number;
+  authorizationEpoch: bigint;
+};
+
+async function loadAdminMutationSnapshot(
+  verifier: Pick<PoolClient, "query">,
+  userId: number
+): Promise<AdminMutationSnapshot> {
+  const { rows } = await verifier.query<{
+    user_state: Record<string, unknown> | null;
+    roles: string[];
+    session_epoch: string;
+    authorization_epoch: string;
+  }>(
+    `
+      SELECT
+        (
+          SELECT jsonb_build_object(
+            'username', users.username,
+            'password', users.password,
+            'name', users.name,
+            'surname', users.surname,
+            'email', users.email,
+            'tel_no', users.tel_no,
+            'role', users.role,
+            'gender', users.gender,
+            'address', users.address,
+            'lane', users.lane,
+            'house_no', users.house_no,
+            'postcode', users.postcode,
+            'country', users.country,
+            'salary', users.salary,
+            'date_of_birth', users.date_of_birth,
+            'employment_date', users.employment_date,
+            'employment_end_date', users.employment_end_date,
+            'national_id', users.national_id,
+            'status', users.status,
+            'social_security_number', users.social_security_number
+          )
+          FROM public.users
+          WHERE users.id = $1
+        ) AS user_state,
+        ARRAY(
+          SELECT assignment.role_key
+          FROM public.user_role_assignments assignment
+          WHERE assignment.user_id = $1
+          ORDER BY assignment.role_key
+        )::text[] AS roles,
+        COALESCE((SELECT session_epoch FROM public.realtime_session_epochs WHERE user_id = $1), 0)::text AS session_epoch,
+        COALESCE((SELECT epoch FROM public.realtime_authorization_epoch WHERE singleton), 0)::text AS authorization_epoch
+    `,
+    [userId]
+  );
+  const row = rows[0];
+  if (!row) throw new Error("ADMIN_MUTATION_SNAPSHOT_MISSING");
+  return {
+    userState: row.user_state,
+    roles: row.roles,
+    sessionEpoch: Number.parseInt(row.session_epoch, 10),
+    authorizationEpoch: BigInt(row.authorization_epoch),
+  };
+}
+
+function sameAdminState(left: AdminMutationSnapshot, right: AdminMutationSnapshot): boolean {
+  return isDeepStrictEqual(left.userState, right.userState)
+    && isDeepStrictEqual(left.roles, right.roles);
+}
+
+async function reconcileAdminEpochMutation(
+  verifier: PoolClient,
+  mutation: AdminEpochMutation<unknown>
+): Promise<RealtimeCommitReconciliation> {
+  if (mutation.noOp) return "committed";
+  const visible = await loadAdminMutationSnapshot(verifier, mutation.userId);
+  if (mutation.kind === "create") return visible.userState ? "committed" : "not_committed";
+  if (mutation.kind === "delete") return visible.userState ? "not_committed" : "committed";
+  if (
+    mutation.kind === "password-reset"
+    && mutation.expectedSnapshot
+    && mutation.previousSnapshot
+    && mutation.resetTokenId
+    && mutation.resetTokenHash
+    && mutation.resetUsedAt
+  ) {
+    const { rows } = await verifier.query<{ token_matches: boolean; used_by_mutation: boolean; unused: boolean }>(
+      `
+        SELECT
+          token_hash = $2 AS token_matches,
+          used_at = $3::timestamp AS used_by_mutation,
+          used_at IS NULL AS unused
+        FROM public.password_reset_tokens
+        WHERE id = $1::uuid
+          AND user_id = $4
+      `,
+      [mutation.resetTokenId, mutation.resetTokenHash, mutation.resetUsedAt, mutation.userId]
+    );
+    const token = rows[0];
+    if (
+      token?.token_matches
+      && token.used_by_mutation
+      && sameAdminState(visible, mutation.expectedSnapshot)
+      && visible.sessionEpoch >= mutation.expectedSnapshot.sessionEpoch
+    ) return "committed";
+    if (
+      token?.token_matches
+      && token.unused
+      && sameAdminState(visible, mutation.previousSnapshot)
+      && visible.sessionEpoch === mutation.previousSnapshot.sessionEpoch
+    ) return "not_committed";
+    return "unknown";
+  }
+  if (mutation.kind === "update" && mutation.expectedSnapshot && mutation.previousSnapshot) {
+    if (
+      sameAdminState(visible, mutation.expectedSnapshot)
+      && visible.sessionEpoch >= mutation.expectedSnapshot.sessionEpoch
+      && visible.authorizationEpoch >= mutation.expectedSnapshot.authorizationEpoch
+    ) return "committed";
+    if (
+      sameAdminState(visible, mutation.previousSnapshot)
+      && visible.sessionEpoch === mutation.previousSnapshot.sessionEpoch
+      && visible.authorizationEpoch === mutation.previousSnapshot.authorizationEpoch
+    ) return "not_committed";
+  }
+  return "unknown";
+}
+
 function isPgUniqueViolation(err: unknown): boolean {
   return (err as PgErrorLike | null)?.code === "23505";
 }
@@ -78,7 +232,7 @@ async function replaceUserRoles(
     roles: readonly string[];
     assignedBy: number | null;
   }
-): Promise<void> {
+): Promise<boolean> {
   const roles = normalizeAssignedRoles(params.primaryRole, params.roles);
   const existing = await client.query<{ role_key: string }>(
     `SELECT role_key FROM public.user_role_assignments WHERE user_id = $1`,
@@ -132,6 +286,7 @@ async function replaceUserRoles(
       [params.userId, revoked, params.assignedBy]
     );
   }
+  return assigned.length > 0 || revoked.length > 0;
 }
 
 /**
@@ -261,8 +416,8 @@ export async function repoCreateUser(input: {
 }): Promise<AdminUserDetailRow> {
   const client = await pool.connect();
   try {
-    await client.query("BEGIN");
-    const { rows } = await client.query<{ id: number }>(
+    const mutation = await withRealtimeOutboxTransaction(client, async (tx) => {
+    const { rows } = await tx.query<{ id: number }>(
       `
         INSERT INTO public.users (
           username,
@@ -310,11 +465,11 @@ export async function repoCreateUser(input: {
         RETURNING id::int AS id
       `,
       [
-        input.username,
+        canonicalizeAuthUsername(input.username),
         input.passwordHash,
         input.name,
         input.surname,
-        input.email,
+        canonicalizeAuthEmail(input.email),
         input.tel_no,
         input.role,
         input.gender,
@@ -335,22 +490,25 @@ export async function repoCreateUser(input: {
 
     const row = rows[0];
     if (!row) throw new Error("Failed to create user");
-    await replaceUserRoles(client, {
+    await replaceUserRoles(tx, {
       userId: row.id,
       primaryRole: input.role,
       roles: input.roles,
       assignedBy: input.assignedBy,
     });
-    await client.query("COMMIT");
+    await bumpRealtimeSessionEpoch(tx, row.id);
+    await bumpRealtimeAuthorizationEpoch(tx);
+    return {
+      value: row.id,
+      userId: row.id,
+      kind: "create",
+    } satisfies AdminEpochMutation<number>;
+    }, { reconcileCommit: reconcileAdminEpochMutation });
 
-    const created = await repoGetUserById(row.id);
+    const created = await repoGetUserById(mutation.value);
     if (!created) throw new Error("Failed to reload created user");
     return created;
   } catch (err) {
-    try {
-      await client.query("ROLLBACK");
-    } catch {
-    }
     if (isPgUniqueViolation(err)) {
       const constraint = pgConstraint(err);
       if (constraint === "users_username_key") throw new HttpError(409, "USERNAME_EXISTS", "Username already exists");
@@ -362,8 +520,6 @@ export async function repoCreateUser(input: {
       throw new HttpError(409, "DUPLICATE", "User already exists");
     }
     throw err;
-  } finally {
-    client.release();
   }
 }
 
@@ -412,10 +568,10 @@ export async function repoUpdateUser(
     return `$${values.length}`;
   };
 
-  if (patch.username !== undefined) sets.push(`username = ${push(patch.username)}`);
+  if (patch.username !== undefined) sets.push(`username = ${push(canonicalizeAuthUsername(patch.username))}`);
   if (patch.name !== undefined) sets.push(`name = ${push(patch.name)}`);
   if (patch.surname !== undefined) sets.push(`surname = ${push(patch.surname)}`);
-  if (patch.email !== undefined) sets.push(`email = ${push(patch.email)}`);
+  if (patch.email !== undefined) sets.push(`email = ${push(canonicalizeAuthEmail(patch.email))}`);
   if (patch.tel_no !== undefined) sets.push(`tel_no = ${push(patch.tel_no)}`);
   if (patch.role !== undefined) sets.push(`role = ${push(patch.role)}`);
   if (patch.gender !== undefined) sets.push(`gender = ${push(patch.gender)}`);
@@ -436,31 +592,31 @@ export async function repoUpdateUser(
 
   const client = await pool.connect();
   try {
-    await client.query("BEGIN");
-    const current = await client.query<{ role: string }>(
+    const mutation = await withRealtimeOutboxTransaction(client, async (tx) => {
+    const current = await tx.query<{ role: string }>(
       `SELECT role FROM public.users WHERE id = $1 FOR UPDATE`,
       [userId]
     );
     const currentRole = current.rows[0]?.role;
     if (!currentRole) {
-      await client.query("ROLLBACK");
-      return null;
+      return { value: false, userId, noOp: true } satisfies AdminEpochMutation<boolean>;
     }
+    const previousSnapshot = await loadAdminMutationSnapshot(tx, userId);
 
     if (sets.length) {
       values.push(userId);
-      await client.query(
+      await tx.query(
         `UPDATE public.users SET ${sets.join(", ")} WHERE id = $${values.length}`,
         values
       );
     }
 
     if (patch.roles !== undefined || patch.role !== undefined) {
-      const existing = await client.query<{ role_key: string }>(
+      const existing = await tx.query<{ role_key: string }>(
         `SELECT role_key FROM public.user_role_assignments WHERE user_id = $1 ORDER BY role_key`,
         [userId]
       );
-      await replaceUserRoles(client, {
+      await replaceUserRoles(tx, {
         userId,
         primaryRole: patch.role ?? currentRole,
         roles: patch.roles ?? existing.rows.map((row) => row.role_key),
@@ -468,13 +624,25 @@ export async function repoUpdateUser(
       });
     }
 
-    await client.query("COMMIT");
+    const authorizationChanged = patch.role !== undefined
+      || patch.roles !== undefined
+      || patch.status !== undefined;
+    if (authorizationChanged) {
+      await bumpRealtimeSessionEpoch(tx, userId);
+      await bumpRealtimeAuthorizationEpoch(tx);
+    }
+    const expectedSnapshot = await loadAdminMutationSnapshot(tx, userId);
+    return {
+      value: true,
+      userId,
+      kind: "update",
+      expectedSnapshot,
+      previousSnapshot,
+    } satisfies AdminEpochMutation<boolean>;
+    }, { reconcileCommit: reconcileAdminEpochMutation });
+    if (!mutation.value) return null;
     return repoGetUserById(userId);
   } catch (err) {
-    try {
-      await client.query("ROLLBACK");
-    } catch {
-    }
     if (isPgUniqueViolation(err)) {
       const constraint = pgConstraint(err);
       if (constraint === "users_username_key") throw new HttpError(409, "USERNAME_EXISTS", "Username already exists");
@@ -486,15 +654,27 @@ export async function repoUpdateUser(
       throw new HttpError(409, "DUPLICATE", "User already exists");
     }
     throw err;
-  } finally {
-    client.release();
   }
 }
 
 export async function repoDeleteUser(userId: number): Promise<boolean> {
+  const client = await pool.connect();
   try {
-    const { rowCount } = await pool.query(`DELETE FROM public.users WHERE id = $1`, [userId]);
-    return (rowCount ?? 0) > 0;
+    const mutation = await withRealtimeOutboxTransaction(client, async (tx) => {
+      const { rows } = await tx.query<{ id: number }>(
+        `DELETE FROM public.users WHERE id = $1 RETURNING id::int AS id`,
+        [userId]
+      );
+      if (!rows[0]) return { value: false, userId, noOp: true } satisfies AdminEpochMutation<boolean>;
+      await bumpRealtimeSessionEpoch(tx, userId);
+      await bumpRealtimeAuthorizationEpoch(tx);
+      return {
+        value: true,
+        userId,
+        kind: "delete",
+      } satisfies AdminEpochMutation<boolean>;
+    }, { reconcileCommit: reconcileAdminEpochMutation });
+    return mutation.value;
   } catch (err) {
     if (isPgForeignKeyViolation(err)) {
       throw new HttpError(409, "USER_IN_USE", "User is referenced and cannot be deleted");
@@ -512,7 +692,6 @@ export async function repoCreatePasswordResetToken(params: {
     `SELECT id::int AS id, username FROM public.users WHERE id = $1 LIMIT 1`,
     [params.userId]
   );
-
   const user = userRes.rows[0];
   if (!user) throw new HttpError(404, "USER_NOT_FOUND", "User not found");
 
@@ -525,7 +704,6 @@ export async function repoCreatePasswordResetToken(params: {
     `,
     [tokenId, params.userId, params.tokenHash, expiresAtIso]
   );
-
   return { token_id: tokenId, user_id: user.id, username: user.username, expires_at: expiresAtIso };
 }
 
@@ -571,30 +749,74 @@ export async function repoListLoginLogs(filters: {
   return rows;
 }
 
-/**
- * token stored hashed in DB => compare by hashing provided token (sha256)
- */
-export async function repoFindResetTokenForUser(userId: string, rawToken: string) {
-  const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+export async function repoResetUserPasswordWithToken(params: {
+  userId: string;
+  rawToken: string;
+  passwordHash: string;
+}): Promise<number> {
+  const parsedUserId = Number.parseInt(params.userId, 10);
+  if (!Number.isSafeInteger(parsedUserId) || parsedUserId < 1) {
+    throw new HttpError(400, "RESET_TOKEN_INVALID", "Token invalide ou expiré.");
+  }
+  const tokenHash = crypto.createHash("sha256").update(params.rawToken).digest("hex");
+  const usedAt = new Date().toISOString();
+  const client = await pool.connect();
+  const mutation = await withRealtimeOutboxTransaction(client, async (tx) => {
+    const tokenResult = await tx.query<{
+      id: string;
+      expires_at: string;
+      used_at: string | null;
+    }>(
+      `
+        SELECT
+          reset.id::text AS id,
+          reset.expires_at::text AS expires_at,
+          reset.used_at::text AS used_at
+        FROM public.password_reset_tokens reset
+        JOIN public.users users ON users.id = reset.user_id
+        WHERE reset.user_id = $1
+          AND reset.token_hash = $2
+        ORDER BY reset.created_at DESC
+        LIMIT 1
+        FOR UPDATE OF reset, users
+      `,
+      [parsedUserId, tokenHash]
+    );
+    const token = tokenResult.rows[0];
+    if (!token) throw new HttpError(400, "RESET_TOKEN_INVALID", "Token invalide ou expiré.");
+    if (token.used_at) throw new HttpError(400, "RESET_TOKEN_USED", "Ce token a déjà été utilisé.");
+    if (new Date(token.expires_at).getTime() < Date.now()) {
+      throw new HttpError(400, "RESET_TOKEN_EXPIRED", "Token expiré. Demandez une nouvelle réinitialisation.");
+    }
 
-  const { rows } = await pool.query(
-    `SELECT id, user_id, token_hash, expires_at, used_at
-     FROM password_reset_tokens
-     WHERE user_id = $1::int AND token_hash = $2
-     ORDER BY created_at DESC
-     LIMIT 1`,
-    [userId, tokenHash]
-  );
-
-  return rows[0] ?? null;
-}
-
-export async function repoUpdateUserPassword(userId: string, passwordHash: string) {
-  await pool.query(`UPDATE public.users SET password = $1 WHERE id = $2::int`, [passwordHash, userId]);
-}
-
-export async function repoMarkResetTokenUsed(tokenId: string) {
-  await pool.query(`UPDATE public.password_reset_tokens SET used_at = now() WHERE id = $1::uuid`, [tokenId]);
+    const previousSnapshot = await loadAdminMutationSnapshot(tx, parsedUserId);
+    await tx.query(`UPDATE public.users SET password = $1 WHERE id = $2`, [params.passwordHash, parsedUserId]);
+    await bumpRealtimeSessionEpoch(tx, parsedUserId);
+    const consumed = await tx.query(
+      `
+        UPDATE public.password_reset_tokens
+        SET used_at = $2::timestamp
+        WHERE id = $1::uuid
+          AND used_at IS NULL
+      `,
+      [token.id, usedAt]
+    );
+    if ((consumed.rowCount ?? 0) !== 1) {
+      throw new HttpError(400, "RESET_TOKEN_USED", "Ce token a déjà été utilisé.");
+    }
+    const expectedSnapshot = await loadAdminMutationSnapshot(tx, parsedUserId);
+    return {
+      value: parsedUserId,
+      userId: parsedUserId,
+      kind: "password-reset",
+      expectedSnapshot,
+      previousSnapshot,
+      resetTokenId: token.id,
+      resetTokenHash: tokenHash,
+      resetUsedAt: usedAt,
+    } satisfies AdminEpochMutation<number>;
+  }, { reconcileCommit: reconcileAdminEpochMutation });
+  return mutation.value;
 }
 
 export async function repoGetAdminAnalytics(filters: {

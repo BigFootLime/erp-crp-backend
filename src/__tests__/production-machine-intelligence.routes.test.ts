@@ -57,6 +57,7 @@ vi.mock("../module/access-control/middlewares/module-access-gate", () => ({
 }));
 
 import app from "../config/app";
+import { withRealtimeOutboxDbMock } from "./helpers/realtime-outbox-db-mock";
 
 beforeEach(() => {
   mocks.poolQuery.mockReset();
@@ -65,7 +66,7 @@ beforeEach(() => {
   mocks.clientRelease.mockReset();
 
   mocks.poolConnect.mockResolvedValue({
-    query: mocks.clientQuery,
+    query: withRealtimeOutboxDbMock(mocks.clientQuery),
     release: mocks.clientRelease,
   });
 });
@@ -213,6 +214,7 @@ describe("/api/v1/production machine intelligence", () => {
         };
       }
       if (sql.includes("audit_log")) return { rows: [{ id: "audit-1", created_at: "2026-06-15T08:00:00.000Z" }] };
+      if (sql.includes("INSERT INTO public.erp_outbox_events")) return { rows: [{ event_id: "audit-outbox-1" }] };
       return { rows: [] };
     });
 
@@ -312,6 +314,7 @@ describe("/api/v1/production machine intelligence", () => {
         ],
       })
       .mockResolvedValueOnce({ rows: [{ id: "audit-1", created_at: "2026-06-15T08:00:00.000Z" }] })
+      .mockResolvedValueOnce({ rows: [{ event_id: "audit-outbox-1" }] })
       .mockResolvedValueOnce({ rows: [] });
 
     mocks.poolQuery.mockResolvedValueOnce({

@@ -8,6 +8,11 @@ import { findUserByUsernameOrEmail, updateUserPassword } from "../repository/aut
 import { ApiError } from "../../../utils/apiError";
 import { insertLoginLog } from "../repository/authLog.repository";
 import pool from "../../../config/database";
+import type { PoolClient } from "pg";
+import {
+  type RealtimeCommitReconciliation,
+  withRealtimeOutboxTransaction,
+} from "../../../shared/realtime/realtime-outbox-transaction";
 
 import {
   repoCleanupExpiredPasswordResets,
@@ -21,6 +26,11 @@ import {
 import { sendPasswordResetEmail } from "./password-reset-email.service";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import { authorizationRole, normalizeAssignedRoles } from "../domain/roles";
+import { revokeUserRealtimeSessions } from "../../../sockets/sockeServer";
+import {
+  canonicalizeAuthUsername,
+  preserveOpaqueAuthToken,
+} from "../domain/auth-identity";
 
 export const registerUser = async (data: CreateUserDTO) => {
   // 🔐 Hash du mot de passe
@@ -43,7 +53,7 @@ export const loginUser = async (
     browser: string | null;
   }
 ) => {
-  const normalizedUsername = username.trim().toUpperCase();
+  const normalizedUsername = canonicalizeAuthUsername(username);
 
   const user = await findUserByUsername(normalizedUsername);
 
@@ -75,6 +85,7 @@ export const loginUser = async (
 
   const assignedRoles = normalizeAssignedRoles(user.role, user.roles);
   const effectiveRole = authorizationRole(user.role, assignedRoles);
+  const sessionEpoch = Number.parseInt(String(user.realtime_session_epoch ?? "0"), 10);
   const token = jwt.sign(
     {
       id: user.id,
@@ -83,6 +94,8 @@ export const loginUser = async (
       role: effectiveRole,
       primary_role: user.role,
       roles: assignedRoles,
+      session_epoch: Number.isSafeInteger(sessionEpoch) && sessionEpoch >= 0 ? sessionEpoch : 0,
+      jti: crypto.randomUUID(),
     },
     process.env.JWT_SECRET as string,
     { expiresIn: "1d" }
@@ -140,26 +153,21 @@ export async function requestPasswordReset(
   const token = crypto.randomBytes(RESET_TOKEN_BYTES).toString("hex");
   const token_hash = sha256Hex(token);
   const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MS);
+  const resetId = crypto.randomUUID();
 
   const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    await repoCleanupExpiredPasswordResets({ tx: client });
-    await repoDeleteActivePasswordResetsForUser({ user_id: user.id, tx: client });
+  await withRealtimeOutboxTransaction(client, async (tx) => {
+    await repoCleanupExpiredPasswordResets({ tx });
+    await repoDeleteActivePasswordResetsForUser({ user_id: user.id, tx });
     await repoInsertPasswordReset({
-      id: crypto.randomUUID(),
+      id: resetId,
       user_id: user.id,
       token_hash,
       expires_at: expiresAt,
-      tx: client,
+      tx,
     });
-    await client.query("COMMIT");
-  } catch (e) {
-    await client.query("ROLLBACK");
-    throw e;
-  } finally {
-    client.release();
-  }
+    return { resetId, userId: user.id, tokenHash: token_hash, expiresAt };
+  }, { reconcileCommit: reconcilePasswordResetRequestCommit });
 
   const baseUrl = buildFrontendBaseUrl();
   const resetUrl = baseUrl ? `${baseUrl}/reset-password?token=${encodeURIComponent(token)}` : "";
@@ -240,6 +248,36 @@ export async function requestPasswordReset(
   }
 }
 
+async function reconcilePasswordResetRequestCommit(
+  verifier: PoolClient,
+  mutation: { resetId: string; userId: number; tokenHash: string; expiresAt: Date }
+): Promise<RealtimeCommitReconciliation> {
+  const { rows } = await verifier.query<{
+    user_id: number;
+    token_hash: string;
+    expires_matches: boolean;
+  }>(
+    `
+      SELECT
+        user_id,
+        token_hash,
+        expires_at = $4::timestamp AS expires_matches
+      FROM public.password_resets
+      WHERE id = $1::uuid
+        AND user_id = $2
+        AND token_hash = $3
+    `,
+    [mutation.resetId, mutation.userId, mutation.tokenHash, mutation.expiresAt]
+  );
+  const row = rows[0];
+  if (!row) return "not_committed";
+  return row.user_id === mutation.userId
+    && row.token_hash === mutation.tokenHash
+    && row.expires_matches
+    ? "committed"
+    : "unknown";
+}
+
 export async function resetPasswordWithToken(
   token: string,
   newPassword: string,
@@ -251,35 +289,46 @@ export async function resetPasswordWithToken(
     browser: string | null;
   }
 ) {
-  const token_hash = sha256Hex(token);
+  const token_hash = sha256Hex(preserveOpaqueAuthToken(token));
   const client = await pool.connect();
 
-  try {
-    await client.query("BEGIN");
-
-    await repoCleanupExpiredPasswordResets({ tx: client });
-    const row = await repoGetPasswordResetForUpdate({ token_hash, tx: client });
+  const mutation = await withRealtimeOutboxTransaction(client, async (tx) => {
+    await repoCleanupExpiredPasswordResets({ tx });
+    const row = await repoGetPasswordResetForUpdate({ token_hash, tx });
     if (!row) {
       throw new ApiError(400, "RESET_TOKEN_INVALID", "Lien invalide ou expiré");
     }
 
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(newPassword, salt);
-    await updateUserPassword({ userId: row.user_id, passwordHash, tx: client });
-    await repoMarkPasswordResetUsed({ id: row.id, tx: client });
-    await repoDeleteOtherActivePasswordResetsForUser({ user_id: row.user_id, keep_id: row.id, tx: client });
+    const passwordMutation = await updateUserPassword({ userId: row.user_id, passwordHash, tx });
+    await repoMarkPasswordResetUsed({ id: row.id, tx });
+    await repoDeleteOtherActivePasswordResetsForUser({ user_id: row.user_id, keep_id: row.id, tx });
 
-    await client.query("COMMIT");
+    return {
+      userId: row.user_id,
+      resetId: row.id,
+      tokenHash: token_hash,
+      passwordHash,
+      previousPasswordHash: row.password_hash,
+      previousSessionEpoch: row.session_epoch,
+      expectedSessionEpoch: passwordMutation.expectedSessionEpoch,
+    };
+  }, { reconcileCommit: reconcilePasswordResetCommit });
+
+  // Durable revocation is part of the reconciled transaction. Local fan-out
+  // happens only after COMMIT is acknowledged or proven committed.
+  await revokeUserRealtimeSessions(mutation.userId, { durable: false }).catch(() => undefined);
 
     try {
       await repoInsertAuditLog({
-        user_id: row.user_id,
+        user_id: mutation.userId,
         body: {
           event_type: "ACTION",
           action: "AUTH_PASSWORD_RESET_COMPLETED",
           page_key: "auth",
           entity_type: "user",
-          entity_id: String(row.user_id),
+          entity_id: String(mutation.userId),
           path: "/api/v1/auth/reset-password",
         },
         ...meta,
@@ -288,15 +337,55 @@ export async function resetPasswordWithToken(
       // ignore audit failures
     }
 
-    return;
-  } catch (e) {
-    try {
-      await client.query("ROLLBACK");
-    } catch {
-      // ignore
-    }
-    throw e;
-  } finally {
-    client.release();
-  }
+  return;
+}
+
+type PasswordResetCommitMutation = {
+  userId: number;
+  resetId: string;
+  tokenHash: string;
+  passwordHash: string;
+  previousPasswordHash: string;
+  previousSessionEpoch: number;
+  expectedSessionEpoch: number | undefined;
+};
+
+async function reconcilePasswordResetCommit(
+  verifier: PoolClient,
+  mutation: PasswordResetCommitMutation
+): Promise<RealtimeCommitReconciliation> {
+  const { rows } = await verifier.query<{
+    token_hash: string;
+    used: boolean;
+    password_hash: string;
+    session_epoch: number;
+  }>(
+    `
+      SELECT
+        reset.token_hash,
+        reset.used,
+        users.password AS password_hash,
+        COALESCE(epoch.session_epoch, 0)::int AS session_epoch
+      FROM public.password_resets reset
+      JOIN public.users users ON users.id = reset.user_id
+      LEFT JOIN public.realtime_session_epochs epoch ON epoch.user_id = reset.user_id
+      WHERE reset.id = $1::uuid
+        AND reset.user_id = $2
+    `,
+    [mutation.resetId, mutation.userId]
+  );
+  const row = rows[0];
+  if (!row || row.token_hash !== mutation.tokenHash) return "unknown";
+  if (
+    row.used
+    && row.password_hash === mutation.passwordHash
+    && mutation.expectedSessionEpoch !== undefined
+    && row.session_epoch >= mutation.expectedSessionEpoch
+  ) return "committed";
+  if (
+    !row.used
+    && row.password_hash === mutation.previousPasswordHash
+    && row.session_epoch === mutation.previousSessionEpoch
+  ) return "not_committed";
+  return "unknown";
 }

@@ -25,7 +25,7 @@ Repo-specific instructions for automated coding agents working on the **cerp-api
 
 Observed from `package.json`, `tsconfig.json`, and code:
 
-- Runtime: Node.js (Docker base image `node:20-alpine` in `Dockerfile`)
+- Runtime: Node.js 24 LTS (Docker base `node:24.18.0-alpine3.24` pinned by OCI digest in `Dockerfile`)
 - Language: TypeScript (`typescript`), strict mode enabled (`tsconfig.json`)
 - HTTP: Express (`express`)
 - Validation: Zod (`zod`)
@@ -95,6 +95,15 @@ Env var names observed in code (names only):
 - `JWT_SECRET` (JWT signing/verifying secret) in:
   - `src/module/auth/middlewares/auth.middleware.ts`
   - `src/module/auth/services/auth.service.ts`
+- Distributed authentication throttling in `src/config/auth-rate-limit.ts`:
+  - `AUTH_RATE_LIMIT_ENABLED`
+  - `AUTH_RATE_LIMIT_STORE`
+  - `AUTH_RATE_LIMIT_HASH_KEY`
+  - `AUTH_RATE_LIMIT_*_WINDOW_MS` and `AUTH_RATE_LIMIT_*_LIMIT`
+  - `AUTH_RATE_LIMIT_STORE_RETRY_AFTER_SECONDS`
+  - `AUTH_RATE_LIMIT_CLEANUP_INTERVAL_MS`
+  - `AUTH_RATE_LIMIT_RETENTION_AFTER_EXPIRY_MS`
+- `TRUST_PROXY_HOPS` (bounded reverse-proxy hop count) in `src/config/trust-proxy.ts`
 - `BACKEND_URL` (base URL used to build public image URLs) in `src/module/outils/repository/outil.repository.ts`
 
 GitHub Actions and automated Dependabot updates are disabled at repository

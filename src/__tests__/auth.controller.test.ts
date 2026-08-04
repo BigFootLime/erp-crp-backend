@@ -1,6 +1,6 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest'
 import { Request, Response } from 'express'
-import { register, login } from '../module/auth/controllers/auth.controller'
+import { forgotPassword, register, login } from '../module/auth/controllers/auth.controller'
 import { ZodError, ZodIssueCode } from "zod"
 
 // 🔧 Mocks
@@ -33,8 +33,10 @@ import * as mockedAuthService from '../module/auth/services/auth.service'
 
 const mockedRegisterParse = mockedRegisterValidator.registerSchema.parse as unknown as ReturnType<typeof vi.fn>
 const mockedLoginParse = mockedLoginValidator.loginSchema.parse as unknown as ReturnType<typeof vi.fn>
+const mockedForgotSafeParse = mockedLoginValidator.forgotPasswordSchema.safeParse as unknown as ReturnType<typeof vi.fn>
 const mockedRegisterUser = mockedAuthService.registerUser as unknown as ReturnType<typeof vi.fn>
 const mockedLoginUser = mockedAuthService.loginUser as unknown as ReturnType<typeof vi.fn>
+const mockedRequestPasswordReset = mockedAuthService.requestPasswordReset as unknown as ReturnType<typeof vi.fn>
 
 describe('🧪 auth.controller.ts', () => {
   let req: Partial<Request>
@@ -111,5 +113,30 @@ describe('🧪 auth.controller.ts', () => {
       token: 'fake-jwt',
       user: { id: 1, username: 'admin' }
     })
+  })
+
+  test('🔒 forgot-password conserve le message générique sans effet quand le middleware supprime l’action', async () => {
+    vi.useFakeTimers()
+    mockedForgotSafeParse.mockReturnValue({
+      success: true,
+      data: { usernameOrEmail: 'person@example.test' }
+    })
+    req = {
+      body: { usernameOrEmail: 'person@example.test' },
+      headers: {},
+      authRateLimit: { suppressAction: true, reason: 'blocked' },
+      originalUrl: '/api/v1/auth/forgot-password'
+    }
+
+    const pending = forgotPassword(req as Request, res as Response, vi.fn())
+    await vi.advanceTimersByTimeAsync(600)
+    await pending
+
+    expect(mockedRequestPasswordReset).not.toHaveBeenCalled()
+    expect(statusMock).toHaveBeenCalledWith(200)
+    expect(jsonMock).toHaveBeenCalledWith({
+      message: 'Si ce compte existe, un lien de réinitialisation a été envoyé.'
+    })
+    vi.useRealTimers()
   })
 })

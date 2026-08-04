@@ -1,6 +1,8 @@
 import type { RequestHandler } from "express"
 
 import { HttpError } from "../../../utils/httpError"
+import { getDocumentStoragePath } from "../../../utils/cerpStorage"
+import { sendSecureStoredFile } from "../../../shared/uploads/secure-download"
 
 import { svcGenerateAsbuiltPack, svcGetAsbuiltPreview, svcResolveAsbuiltDocument } from "../services/asbuilt.service"
 import { asbuiltDownloadParamsSchema, asbuiltGenerateBodySchema, asbuiltLotParamsSchema } from "../validators/asbuilt.validators"
@@ -56,10 +58,13 @@ export const downloadAsbuiltDocument: RequestHandler = async (req, res, next) =>
 
     const { filePath, name } = await svcResolveAsbuiltDocument({ lotId, documentId })
 
-    const disposition = download ? "attachment" : "inline"
-    res.setHeader("Content-Type", "application/pdf")
-    res.setHeader("Content-Disposition", `${disposition}; filename=\"${name.replace(/\"/g, "")}\"`)
-    res.sendFile(filePath)
+    await sendSecureStoredFile(res, {
+      filePath,
+      allowedRoots: [getDocumentStoragePath("asbuilt")],
+      filename: name,
+      mimeType: "application/pdf",
+      download,
+    })
   } catch (e) {
     next(e)
   }

@@ -1,10 +1,9 @@
 import type { RequestHandler } from "express";
 import { Router } from "express";
 import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
-import multer from "multer";
 import { z } from "zod";
 import { HttpError } from "../../../utils/httpError";
-import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
+import { createSecureUpload } from "../../../shared/uploads/secure-upload";
 import {
   DEVIS_TRANSITION_CAPABILITIES,
   roleHasDevisCapability,
@@ -34,8 +33,7 @@ declare global {
   }
 }
 
-const uploadDir = ensureDocumentStoragePath();
-const upload = multer({ dest: uploadDir });
+const upload = createSecureUpload("business-document");
 
 const parseMultipartData = (schema: z.ZodTypeAny): RequestHandler => {
   return (req, _res, next) => {

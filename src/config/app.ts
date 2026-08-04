@@ -15,11 +15,13 @@ import { requestLogger } from "../middlewares/requestLogger";
 import { getImagesRootPath } from "../utils/imageStorage";
 import { stripQueryFromUrl } from "../utils/logPath";
 import pool from "./database";
+import { resolveTrustProxySetting } from "./trust-proxy";
+import { getRealtimeReadiness } from "../sockets/sockeServer";
 
 const app = express();
 
 // Reverse proxy (Nginx/Traefik) support: trust X-Forwarded-* headers.
-app.set("trust proxy", 1);
+app.set("trust proxy", resolveTrustProxySetting());
 
 /* ------------------ 1) Sécurité & CORS ------------------ */
 
@@ -177,6 +179,14 @@ app.get("/api/v1/environment", async (_req, res) => {
     // Base injoignable : on ne ment pas, on répond "unknown" (le badge se masquera).
     res.status(503).json({ database: null, environment: "unknown", appEnv: process.env.NODE_ENV ?? null });
   }
+});
+
+// Public doctor signal with booleans only: it reveals neither table ownership
+// nor grants, but prevents deployments from claiming full cross-writer realtime
+// readiness before the mandatory privileged backstops are installed.
+app.get("/api/v1/realtime/readiness", (_req, res) => {
+  const readiness = getRealtimeReadiness();
+  res.status(readiness.ready ? 200 : 503).json(readiness);
 });
 
 // Routes API v1

@@ -64,7 +64,8 @@ vi.mock("../module/methodes/middlewares/methodes-authorization.middleware", () =
   requireMethodesCapability: () => (_req: unknown, _res: unknown, next: () => void) => next(),
 }))
 
-vi.mock("../utils/cerpStorage", () => ({
+vi.mock("../utils/cerpStorage", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../utils/cerpStorage")>()),
   ensureDocumentStoragePath: () => process.cwd(),
 }))
 

@@ -1,5 +1,6 @@
 import type { Request, RequestHandler } from "express";
 
+import { buildContentDisposition } from "../../../shared/uploads/secure-download";
 import { getClientIp, parseDevice } from "../../../utils/requestMeta";
 import { stripQueryFromUrl } from "../../../utils/logPath";
 import { HttpError } from "../../../utils/httpError";
@@ -125,7 +126,7 @@ export const getBatchReport: RequestHandler = async (req, res, next) => {
     const { id } = importBatchIdSchema.parse(req.params);
     const report = await service.buildImportReportCsv(id);
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader("Content-Disposition", `attachment; filename="${report.filename}"`);
+    res.setHeader("Content-Disposition", buildContentDisposition(report.filename, true));
     res.send(report.csv);
   } catch (error) {
     next(error);

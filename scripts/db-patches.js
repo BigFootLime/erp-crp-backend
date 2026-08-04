@@ -10,17 +10,26 @@ const ROOT_DIR = path.resolve(__dirname, "..");
 const DEFAULT_PATCH_DIR = path.join(ROOT_DIR, "db", "patches");
 const MIGRATION_TABLE = "public.cerp_schema_migrations";
 const LOCK_NAME = "cerp_schema_migrations";
+const IMMUTABLE_ONLY_PATCHES = Object.freeze({
+  "20260804_auth_rate_limit_buckets.sql":
+    "f61120b4068a36138b1d85c0269f764061a525aab6141f99df9c93ad6c5d27a2",
+});
+const REALTIME_V1_FILENAME = "20260804_realtime_shared_control_plane.sql";
+const REALTIME_V1_SHA256 = "a532c87aa9962b6171b65db421ee82069ed177bf6f5becb52295df4dacbc76f6";
+const REALTIME_V2_FILENAME = "20260804_realtime_control_plane_v2.sql";
 
 dotenv.config({ path: path.join(ROOT_DIR, ".env") });
 
 function parseArgs(argv) {
   const args = [...argv];
   const command = args[0] && !args[0].startsWith("--") ? args.shift() : "status";
+  let patchDirWasSpecified = false;
   const options = {
     command,
     dryRun: false,
     check: false,
     patchDir: DEFAULT_PATCH_DIR,
+    only: null,
   };
 
   for (let i = 0; i < args.length; i += 1) {
@@ -30,9 +39,17 @@ function parseArgs(argv) {
     } else if (arg === "--check") {
       options.check = true;
     } else if (arg === "--patch-dir") {
+      patchDirWasSpecified = true;
       options.patchDir = path.resolve(args[++i]);
     } else if (arg.startsWith("--patch-dir=")) {
+      patchDirWasSpecified = true;
       options.patchDir = path.resolve(arg.slice("--patch-dir=".length));
+    } else if (arg === "--only") {
+      if (options.only !== null) throw new Error("--only may be specified only once");
+      options.only = args[++i];
+    } else if (arg.startsWith("--only=")) {
+      if (options.only !== null) throw new Error("--only may be specified only once");
+      options.only = arg.slice("--only=".length);
     } else if (arg === "--help" || arg === "-h") {
       printHelp();
       process.exit(0);
@@ -41,13 +58,30 @@ function parseArgs(argv) {
     }
   }
 
+  if (options.only !== null) {
+    if (!options.only || options.only.includes("/") || options.only.includes("\\")) {
+      throw new Error("--only requires one exact patch basename");
+    }
+    if (!Object.prototype.hasOwnProperty.call(IMMUTABLE_ONLY_PATCHES, options.only)) {
+      throw new Error(`--only is not registered as an immutable patch selection: ${options.only}`);
+    }
+    if (command === "baseline") {
+      throw new Error("--only is not supported for metadata-only baseline operations");
+    }
+    if (patchDirWasSpecified) {
+      throw new Error(
+        "--only always validates the canonical db/patches inventory and cannot be combined with --patch-dir"
+      );
+    }
+  }
+
   return options;
 }
 
 function printHelp() {
   console.log(`Usage:
-  node scripts/db-patches.js status [--check] [--patch-dir DIR]
-  node scripts/db-patches.js up [--dry-run] [--patch-dir DIR]
+  node scripts/db-patches.js status [--check] [--only FILE] [--patch-dir DIR]
+  node scripts/db-patches.js up [--dry-run] [--only FILE] [--patch-dir DIR]
   node scripts/db-patches.js baseline [--dry-run] [--patch-dir DIR]
 
 Commands:
@@ -58,8 +92,39 @@ Commands:
 Notes:
   - Requires DATABASE_URL.
   - Stores patch metadata in ${MIGRATION_TABLE}.
+  - --only accepts a registered immutable basename and validates the complete inventory first.
   - Does not print connection strings or secrets.
 `);
+}
+
+function canonicalizeSqlForHash(sql) {
+  return sql.replace(/\r\n?/g, "\n");
+}
+
+function sha256Sql(sql) {
+  return crypto
+    .createHash("sha256")
+    .update(canonicalizeSqlForHash(sql), "utf8")
+    .digest("hex");
+}
+
+function sanitizeLeadingBom(sql) {
+  let sanitized = sql;
+  let previous;
+  do {
+    previous = sanitized;
+    sanitized = sanitized.replace(/^([^\S\uFEFF]*)\uFEFF/, "$1 ");
+  } while (sanitized !== previous);
+  return sanitized;
+}
+
+function isIdentifierContinuation(char) {
+  return Boolean(char) && (/[A-Za-z0-9_$]/.test(char) || char.codePointAt(0) >= 0x80);
+}
+
+function hasEscapeStringPrefix(sql, quoteIndex) {
+  if (quoteIndex < 1 || !/[eE]/.test(sql[quoteIndex - 1])) return false;
+  return quoteIndex === 1 || !isIdentifierContinuation(sql[quoteIndex - 2]);
 }
 
 function listPatches(patchDir) {
@@ -73,9 +138,218 @@ function listPatches(patchDir) {
     .map((filename) => {
       const fullPath = path.join(patchDir, filename);
       const sql = fs.readFileSync(fullPath, "utf8");
-      const sha256 = crypto.createHash("sha256").update(sql).digest("hex");
+      const sha256 = sha256Sql(sql);
       return { filename, fullPath, sql, sha256 };
     });
+}
+
+function canonicalPathKey(value) {
+  const normalized = path.normalize(path.resolve(value));
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+function validateImmutableInventoryPath(patchDir, onlyFilename) {
+  if (onlyFilename === null || onlyFilename === undefined) return;
+
+  if (canonicalPathKey(patchDir) !== canonicalPathKey(DEFAULT_PATCH_DIR)) {
+    throw new Error("Immutable --only requires the canonical db/patches inventory");
+  }
+
+  const directoryMetadata = fs.lstatSync(DEFAULT_PATCH_DIR);
+  const realDirectory = fs.realpathSync.native(DEFAULT_PATCH_DIR);
+  if (
+    !directoryMetadata.isDirectory()
+    || directoryMetadata.isSymbolicLink()
+    || canonicalPathKey(realDirectory) !== canonicalPathKey(DEFAULT_PATCH_DIR)
+  ) {
+    throw new Error("Immutable --only refuses a substituted or symbolic-link patch directory");
+  }
+
+  for (const entry of fs.readdirSync(DEFAULT_PATCH_DIR, { withFileTypes: true })) {
+    if (!entry.name.endsWith(".sql")) continue;
+    const expectedPath = path.join(DEFAULT_PATCH_DIR, entry.name);
+    const fileMetadata = fs.lstatSync(expectedPath);
+    const realFile = fs.realpathSync.native(expectedPath);
+    if (
+      !entry.isFile()
+      || entry.isSymbolicLink()
+      || !fileMetadata.isFile()
+      || fileMetadata.isSymbolicLink()
+      || canonicalPathKey(realFile) !== canonicalPathKey(expectedPath)
+    ) {
+      throw new Error(`Immutable --only refuses a substituted or symbolic-link patch file: ${entry.name}`);
+    }
+  }
+}
+
+function immutableOnlyPatch(patches, onlyFilename) {
+  if (onlyFilename === null || onlyFilename === undefined) return null;
+
+  const matches = patches.filter((patch) => patch.filename === onlyFilename);
+  if (matches.length !== 1) {
+    throw new Error(
+      `Immutable --only patch must exist exactly once in the global inventory: ${onlyFilename}`
+    );
+  }
+
+  const patch = matches[0];
+  const expectedSha256 = IMMUTABLE_ONLY_PATCHES[onlyFilename];
+  if (patch.sha256 !== expectedSha256) {
+    throw new Error(
+      `Immutable --only checksum mismatch for ${onlyFilename}: expected canonical LF SHA-256 ${expectedSha256}, found ${patch.sha256}`
+    );
+  }
+  return patch;
+}
+
+function topLevelSqlStatements(sql) {
+  const statements = [];
+  let statementStart = -1;
+  let statementText = "";
+
+  function appendPlaceholder(value) {
+    if (statementStart === -1) {
+      statementStart = value.start;
+    }
+    statementText += value.text;
+  }
+
+  for (let index = 0; index < sql.length;) {
+    const char = sql[index];
+    const next = sql[index + 1];
+
+    if (char === "-" && next === "-") {
+      if (statementStart !== -1) statementText += " ";
+      index += 2;
+      while (index < sql.length && sql[index] !== "\n" && sql[index] !== "\r") index += 1;
+      continue;
+    }
+
+    if (char === "/" && next === "*") {
+      if (statementStart !== -1) statementText += " ";
+      let depth = 1;
+      index += 2;
+      while (index < sql.length && depth > 0) {
+        if (sql[index] === "/" && sql[index + 1] === "*") {
+          depth += 1;
+          index += 2;
+        } else if (sql[index] === "*" && sql[index + 1] === "/") {
+          depth -= 1;
+          index += 2;
+        } else {
+          index += 1;
+        }
+      }
+      continue;
+    }
+
+    if (char === "'" || char === '"') {
+      const quote = char;
+      const backslashEscapes = quote === "'" && hasEscapeStringPrefix(sql, index);
+      appendPlaceholder({ start: index, text: quote === "'" ? " 'literal' " : ' "identifier" ' });
+      index += 1;
+      while (index < sql.length) {
+        if (backslashEscapes && sql[index] === "\\") {
+          index += Math.min(2, sql.length - index);
+        } else if (sql[index] === quote && sql[index + 1] === quote) {
+          index += 2;
+        } else if (sql[index] === quote) {
+          index += 1;
+          break;
+        } else {
+          index += 1;
+        }
+      }
+      continue;
+    }
+
+    if (char === "$") {
+      const tagMatch = sql.slice(index).match(/^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/);
+      if (tagMatch && !isIdentifierContinuation(sql[index - 1])) {
+        const tag = tagMatch[0];
+        appendPlaceholder({ start: index, text: " $quoted$ " });
+        const closingIndex = sql.indexOf(tag, index + tag.length);
+        index = closingIndex === -1 ? sql.length : closingIndex + tag.length;
+        continue;
+      }
+    }
+
+    if (char === ";") {
+      if (statementStart !== -1 && statementText.trim() !== "") {
+        statements.push({ start: statementStart, end: index + 1, text: statementText.trim() });
+      }
+      statementStart = -1;
+      statementText = "";
+      index += 1;
+      continue;
+    }
+
+    if (statementStart === -1 && (/\s/.test(char) || char === "\uFEFF")) {
+      index += 1;
+      continue;
+    }
+
+    if (statementStart === -1) statementStart = index;
+    statementText += char;
+    index += 1;
+  }
+
+  if (statementStart !== -1 && statementText.trim() !== "") {
+    statements.push({ start: statementStart, end: sql.length, text: statementText.trim() });
+  }
+
+  return statements;
+}
+
+function transactionControlKind(statementText) {
+  const normalized = statementText.replace(/\s+/g, " ").trim().toUpperCase();
+  if (/^(?:BEGIN(?: (?:WORK|TRANSACTION))?|START TRANSACTION)$/.test(normalized)) {
+    return "begin";
+  }
+  if (/^COMMIT(?: (?:WORK|TRANSACTION))?$/.test(normalized)) {
+    return "commit";
+  }
+  if (
+    /^(?:BEGIN|START\s+TRANSACTION|COMMIT|END|ROLLBACK|ABORT|SAVEPOINT|RELEASE(?:\s+SAVEPOINT)?|PREPARE\s+TRANSACTION|COMMIT\s+PREPARED|ROLLBACK\s+PREPARED|SET\s+(?:LOCAL\s+)?TRANSACTION|SET\s+SESSION\s+CHARACTERISTICS\s+AS\s+TRANSACTION)(?:\s|$)/.test(
+      normalized
+    )
+  ) {
+    return "unsupported";
+  }
+  return null;
+}
+
+function blankStatement(sql, statement) {
+  return sql.slice(0, statement.start)
+    + sql.slice(statement.start, statement.end).replace(/[^\r\n]/g, " ")
+    + sql.slice(statement.end);
+}
+
+function sqlWithoutOuterTransaction(sql, filename = "SQL patch") {
+  const statements = topLevelSqlStatements(sql);
+  const controls = statements
+    .map((statement) => ({ ...statement, kind: transactionControlKind(statement.text) }))
+    .filter((statement) => statement.kind !== null);
+
+  if (
+    controls.length === 2
+    && controls[0].kind === "begin"
+    && controls[1].kind === "commit"
+    && controls[0].start === statements[0]?.start
+    && controls[1].start === statements[statements.length - 1]?.start
+  ) {
+    let executableSql = blankStatement(sql, controls[1]);
+    executableSql = blankStatement(executableSql, controls[0]);
+    return sanitizeLeadingBom(executableSql);
+  }
+
+  if (controls.length > 0) {
+    throw new Error(
+      `${filename} contains unsupported transaction control; use one outer BEGIN/COMMIT pair or none.`
+    );
+  }
+
+  return sanitizeLeadingBom(sql);
 }
 
 async function tableExists(client) {
@@ -127,6 +401,41 @@ function buildStatuses(patches, applied) {
   });
 }
 
+async function assertImmutableRealtimeV1Provenance(client, patches, applied) {
+  if (!patches.some((patch) => patch.filename === REALTIME_V2_FILENAME)) return;
+  const v1 = applied.get(REALTIME_V1_FILENAME);
+  if (v1 && v1.sha256 !== REALTIME_V1_SHA256) {
+    throw new Error(
+      `Refusing ${REALTIME_V2_FILENAME}: ${REALTIME_V1_FILENAME} has unexpected ledger checksum ${v1.sha256}.`
+    );
+  }
+  if (!applied.has(REALTIME_V2_FILENAME)) return;
+  const relation = await client.query(
+    "SELECT to_regclass('public.realtime_control_plane_v2_provenance') IS NOT NULL AS relation_exists"
+  );
+  if (relation.rows[0]?.relation_exists !== true) {
+    throw new Error(`Refusing ${REALTIME_V2_FILENAME}: immutable v1 provenance relation is missing.`);
+  }
+  const result = await client.query(`
+    SELECT inherited_v1, source_v1_sha256
+    FROM public.realtime_control_plane_v2_provenance
+    WHERE singleton
+  `);
+  const provenance = result.rows[0];
+  const valid = provenance
+    && (
+      (provenance.inherited_v1 === true
+        && provenance.source_v1_sha256 === REALTIME_V1_SHA256
+        && v1?.sha256 === REALTIME_V1_SHA256)
+      || (provenance.inherited_v1 === false
+        && provenance.source_v1_sha256 === null
+        && !v1)
+    );
+  if (!valid) {
+    throw new Error(`Refusing ${REALTIME_V2_FILENAME}: immutable v1 provenance does not match the migration ledger.`);
+  }
+}
+
 function printStatuses(statuses) {
   const counts = statuses.reduce((acc, item) => {
     acc[item.status] = (acc[item.status] || 0) + 1;
@@ -165,25 +474,77 @@ async function withMigrationLock(client, fn) {
   }
 }
 
-async function runStatus(client, patches, { check }) {
+async function runStatus(client, patches, { check, only }) {
+  immutableOnlyPatch(patches, only);
   const applied = await getApplied(client);
+  await assertImmutableRealtimeV1Provenance(client, patches, applied);
   const statuses = buildStatuses(patches, applied);
   printStatuses(statuses);
 
   const mismatches = statuses.filter((item) => item.status === "checksum-mismatch");
-  const pending = statuses.filter((item) => item.status === "pending");
+  const selected = only
+    ? statuses.find((item) => item.filename === only)
+    : null;
+  const pending = selected
+    ? (selected.status === "pending" ? [selected] : [])
+    : statuses.filter((item) => item.status === "pending");
+  if (selected) {
+    console.log("");
+    console.log(`Immutable selection: ${selected.filename} is ${selected.status}.`);
+  }
   if (mismatches.length > 0 || (check && pending.length > 0)) {
     process.exitCode = 1;
   }
 }
 
-async function runUp(client, patches, { dryRun }) {
+async function recordMigration(client, patch) {
+  await client.query(`
+    INSERT INTO ${MIGRATION_TABLE} (filename, sha256, applied_at)
+    VALUES ($1, $2, statement_timestamp())
+  `, [patch.filename, patch.sha256]);
+}
+
+async function applyPatch(client, patch) {
+  const executableSql = sqlWithoutOuterTransaction(patch.sql, patch.filename);
+
+  await client.query("BEGIN");
+  try {
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [LOCK_NAME]);
+    // Keep the server lexer aligned with sqlWithoutOuterTransaction even when
+    // a database or role default was configured with the legacy `off` value.
+    await client.query("SET LOCAL standard_conforming_strings = on");
+    await client.query(executableSql);
+    await recordMigration(client, patch);
+    await client.query("COMMIT");
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (_) {
+      // Preserve the original patch or registry error.
+    }
+    throw error;
+  }
+}
+
+async function runUp(client, patches, { dryRun, only }) {
+  immutableOnlyPatch(patches, only);
   if (dryRun) {
     const applied = await getApplied(client);
+    await assertImmutableRealtimeV1Provenance(client, patches, applied);
     const statuses = buildStatuses(patches, applied);
-    const pending = statuses.filter((item) => item.status === "pending");
+    const mismatches = statuses.filter((item) => item.status === "checksum-mismatch");
+    const selected = only ? statuses.find((item) => item.filename === only) : null;
+    const pending = selected
+      ? (selected.status === "pending" ? [selected] : [])
+      : statuses.filter((item) => item.status === "pending");
     printStatuses(statuses);
+    if (mismatches.length > 0) {
+      throw new Error(
+        "Refusing dry-run selection because one or more applied files changed checksum."
+      );
+    }
     console.log("");
+    if (selected) console.log(`Immutable selection: ${selected.filename} is ${selected.status}.`);
     console.log(`Dry-run: ${pending.length} patch(es) would be applied.`);
     return;
   }
@@ -191,6 +552,7 @@ async function runUp(client, patches, { dryRun }) {
   await withMigrationLock(client, async () => {
     await ensureMigrationTable(client);
     const applied = await getApplied(client);
+    await assertImmutableRealtimeV1Provenance(client, patches, applied);
     const statuses = buildStatuses(patches, applied);
     const mismatches = statuses.filter((item) => item.status === "checksum-mismatch");
     if (mismatches.length > 0) {
@@ -198,23 +560,14 @@ async function runUp(client, patches, { dryRun }) {
       throw new Error("Refusing to apply patches because one or more applied files changed checksum.");
     }
 
-    const pending = statuses.filter((item) => item.status === "pending");
+    const selected = only ? statuses.find((item) => item.filename === only) : null;
+    const pending = selected
+      ? (selected.status === "pending" ? [selected] : [])
+      : statuses.filter((item) => item.status === "pending");
+    if (selected) console.log(`Immutable selection: ${selected.filename} is ${selected.status}.`);
     for (const patch of pending) {
       console.log(`Applying ${patch.filename}`);
-      try {
-        await client.query(patch.sql);
-        await client.query(`
-          INSERT INTO ${MIGRATION_TABLE} (filename, sha256)
-          VALUES ($1, $2)
-        `, [patch.filename, patch.sha256]);
-      } catch (error) {
-        try {
-          await client.query("ROLLBACK");
-        } catch (_) {
-          // Ignore rollback errors; the patch may not have opened a transaction.
-        }
-        throw error;
-      }
+      await applyPatch(client, patch);
     }
     console.log(`Applied ${pending.length} patch(es).`);
   });
@@ -223,6 +576,7 @@ async function runUp(client, patches, { dryRun }) {
 async function runBaseline(client, patches, { dryRun }) {
   if (dryRun) {
     const applied = await getApplied(client);
+    await assertImmutableRealtimeV1Provenance(client, patches, applied);
     const statuses = buildStatuses(patches, applied);
     printStatuses(statuses);
     console.log("");
@@ -233,6 +587,7 @@ async function runBaseline(client, patches, { dryRun }) {
   await withMigrationLock(client, async () => {
     await ensureMigrationTable(client);
     const applied = await getApplied(client);
+    await assertImmutableRealtimeV1Provenance(client, patches, applied);
     const statuses = buildStatuses(patches, applied);
     const mismatches = statuses.filter((item) => item.status === "checksum-mismatch");
     if (mismatches.length > 0) {
@@ -242,10 +597,7 @@ async function runBaseline(client, patches, { dryRun }) {
 
     const pending = statuses.filter((item) => item.status === "pending");
     for (const patch of pending) {
-      await client.query(`
-        INSERT INTO ${MIGRATION_TABLE} (filename, sha256)
-        VALUES ($1, $2)
-      `, [patch.filename, patch.sha256]);
+      await recordMigration(client, patch);
     }
     console.log(`Baselined ${pending.length} patch(es) without executing SQL.`);
   });
@@ -253,7 +605,9 @@ async function runBaseline(client, patches, { dryRun }) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  validateImmutableInventoryPath(options.patchDir, options.only);
   const patches = listPatches(options.patchDir);
+  immutableOnlyPatch(patches, options.only);
 
   await withClient(async (client) => {
     if (options.command === "status") {
@@ -268,7 +622,25 @@ async function main() {
   });
 }
 
-main().catch((error) => {
-  console.error(error.message);
-  process.exit(1);
-});
+module.exports = {
+  MIGRATION_TABLE,
+  IMMUTABLE_ONLY_PATCHES,
+  applyPatch,
+  buildStatuses,
+  canonicalizeSqlForHash,
+  immutableOnlyPatch,
+  listPatches,
+  parseArgs,
+  recordMigration,
+  runUp,
+  sha256Sql,
+  sqlWithoutOuterTransaction,
+  validateImmutableInventoryPath,
+};
+
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error.message);
+    process.exit(1);
+  });
+}

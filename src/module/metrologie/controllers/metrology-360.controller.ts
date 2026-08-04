@@ -5,14 +5,13 @@
 // aucune décision prise côté client.
 
 import type { Request, RequestHandler } from "express";
-import fs from "node:fs/promises";
 import { ZodError, type ZodTypeAny, type z } from "zod";
 
 import { asyncHandler } from "../../../utils/asyncHandler";
-import { isPathInsideDirectory, resolveCerpStoragePath } from "../../../utils/cerpStorage";
+import { resolveCerpStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { getClientIp, parseDevice } from "../../../utils/requestMeta";
-import { emitEntityChanged } from "../../../shared/realtime/realtime.service";
+import { sendSecureStoredFile } from "../../../shared/uploads/secure-download";
 
 import type { MetrologyActor } from "../repository/metrology-shared.repository";
 import {
@@ -136,31 +135,6 @@ function notFound(entity: string): never {
   throw new HttpError(404, "NOT_FOUND", `${entity} introuvable.`);
 }
 
-function emitChanged(
-  req: Request,
-  params: { equipementId: string; action: "created" | "updated" | "deleted" | "status_changed" }
-) {
-  const user = req.user;
-  emitEntityChanged({
-    entityType: "METROLOGIE_EQUIPEMENT",
-    entityId: params.equipementId,
-    action: params.action,
-    module: "metrologie",
-    at: new Date().toISOString(),
-    by: {
-      id: typeof user?.id === "number" ? user.id : 0,
-      name: typeof user?.username === "string" ? user.username : "",
-    },
-    invalidateKeys: [
-      "metrologie:equipements",
-      "metrologie:kpis",
-      "metrologie:alerts",
-      "metrologie:center",
-      `metrologie:equipement:${params.equipementId}`,
-    ],
-  });
-}
-
 function firstFile(req: Request): Express.Multer.File | null {
   const single = (req as Request & { file?: Express.Multer.File }).file;
   if (single) return single;
@@ -231,7 +205,6 @@ export const createEquipment: RequestHandler = asyncHandler(async (req, res) => 
   const actor = buildActor(req);
   const { body } = parseOrThrow(createEquipmentSchema, { body: req.body });
   const out = await svcCreateEquipment({ body, actor, idempotencyKey: idempotencyKey(req) });
-  emitChanged(req, { equipementId: out.equipement.id, action: "created" });
   res.status(201).json(out);
 });
 
@@ -242,7 +215,6 @@ export const updateEquipment: RequestHandler = asyncHandler(async (req, res) => 
     { params: req.params, body: req.body }
   );
   const out = await svcUpdateEquipment({ id: params.id, body, actor });
-  emitChanged(req, { equipementId: params.id, action: "updated" });
   res.json(out);
 });
 
@@ -258,7 +230,6 @@ export const transitionEquipment: RequestHandler = asyncHandler(async (req, res)
     actor,
     idempotencyKey: idempotencyKey(req),
   });
-  emitChanged(req, { equipementId: params.id, action: "status_changed" });
   res.json(out);
 });
 
@@ -274,7 +245,6 @@ export const quarantineEquipment: RequestHandler = asyncHandler(async (req, res)
     actor,
     idempotencyKey: idempotencyKey(req),
   });
-  emitChanged(req, { equipementId: params.id, action: "status_changed" });
   res.json(out);
 });
 
@@ -338,7 +308,6 @@ export const transitionPlan: RequestHandler = asyncHandler(async (req, res) => {
     actor,
     idempotencyKey: idempotencyKey(req),
   });
-  emitChanged(req, { equipementId: params.id, action: "status_changed" });
   res.json(out);
 });
 
@@ -376,7 +345,6 @@ export const createExecution: RequestHandler = asyncHandler(async (req, res) => 
     actor,
     idempotencyKey: idempotencyKey(req),
   });
-  emitChanged(req, { equipementId: params.id, action: "updated" });
   res.status(201).json(out);
 });
 
@@ -412,7 +380,6 @@ export const validateExecution: RequestHandler = asyncHandler(async (req, res) =
     actor,
     idempotencyKey: idempotencyKey(req),
   });
-  emitChanged(req, { equipementId: out.execution.equipement_id, action: "status_changed" });
   res.json(out);
 });
 
@@ -448,7 +415,6 @@ export const uploadCertificate: RequestHandler = asyncHandler(async (req, res) =
     actor,
     idempotencyKey: idempotencyKey(req),
   });
-  emitChanged(req, { equipementId: params.id, action: "updated" });
   res.status(201).json(out);
 });
 
@@ -465,7 +431,6 @@ export const cancelCertificate: RequestHandler = asyncHandler(async (req, res) =
     actor,
     idempotencyKey: idempotencyKey(req),
   });
-  emitChanged(req, { equipementId: params.id, action: "updated" });
   res.json(out);
 });
 
@@ -482,21 +447,15 @@ export const downloadCertificate: RequestHandler = asyncHandler(async (req, res)
   const absPath = resolveCerpStoragePath(doc.storage_path, baseDir);
   // Défense en profondeur : même si un chemin corrompu franchissait la base, il
   // ne peut pas sortir du répertoire privé des documents.
-  if (!isPathInsideDirectory(baseDir, absPath)) {
-    throw new HttpError(400, "INVALID_STORAGE_PATH", "Chemin de document invalide.");
-  }
-  await fs.access(absPath);
-
-  res.setHeader("Content-Type", doc.mime_type ?? "application/octet-stream");
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("Cache-Control", "private, no-store");
   const download = req.query.download === "true" || req.query.download === "1";
   const name = doc.file_original_name ?? `certificat-${params.childId}`;
-  res.setHeader(
-    "Content-Disposition",
-    `${download ? "attachment" : "inline"}; filename="${encodeURIComponent(name)}"`
-  );
-  res.sendFile(absPath);
+  await sendSecureStoredFile(res, {
+    filePath: absPath,
+    allowedRoots: [baseDir],
+    filename: name,
+    mimeType: doc.mime_type,
+    download,
+  });
 });
 
 /* -------------------------------------------------------------------------- */

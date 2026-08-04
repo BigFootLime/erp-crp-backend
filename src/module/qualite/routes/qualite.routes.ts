@@ -1,12 +1,11 @@
 import { Router, type RequestHandler } from "express";
-import multer from "multer";
 
 import {
   hasGrantedAccountModuleAccess,
   requestHasGrantedAccountModuleAccess,
 } from "../../access-control/context/account-module-access.context";
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
-import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
+import { createSecureUpload } from "../../../shared/uploads/secure-upload";
 import { HttpError } from "../../../utils/httpError";
 
 import {
@@ -103,14 +102,7 @@ router.post("/actions", createAction);
 router.patch("/actions/:id", patchAction);
 
 // Documents (multer)
-const docsBaseDir = ensureDocumentStoragePath("qualite");
-
-const upload = multer({
-  dest: docsBaseDir,
-  limits: {
-    fileSize: 25 * 1024 * 1024,
-  },
-});
+const upload = createSecureUpload("quality-document");
 
 router.get("/controls/:id/documents", listControlDocuments);
 router.post("/controls/:id/documents", upload.array("documents[]"), attachControlDocuments);

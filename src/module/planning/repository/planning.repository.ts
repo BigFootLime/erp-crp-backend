@@ -4,7 +4,13 @@ import path from "node:path";
 import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
-import { emitAppNotificationCreated, emitEntityChanged } from "../../../shared/realtime/realtime.service";
+import { transferSecureUploadToDestination } from "../../../shared/uploads/secure-upload";
+import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction";
+import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
+import {
+  enqueueAppNotificationCreated,
+  enqueueEntityChanged,
+} from "../../../shared/realtime/realtime-outbox.service";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
@@ -69,7 +75,7 @@ async function insertAuditLog(
     details: entry.details ?? null,
   };
 
-  await repoInsertAuditLog({
+  return repoInsertAuditLog({
     user_id: audit.user_id,
     body,
     ip: audit.ip,
@@ -883,12 +889,12 @@ async function loadCommandeIdForOf(tx: DbQueryer, ofId: number): Promise<number 
   return toNullableInt(res.rows[0]?.commande_id ?? null, "ordres_fabrication.commande_id");
 }
 
-function emitPlanningRealtime(params: {
+async function enqueuePlanningRealtime(tx: DbQueryer, params: {
   event_id: string;
   of_id?: number | null;
   commande_id?: number | null;
   action: "created" | "updated" | "deleted" | "status_changed";
-  user_id: number;
+  mutation_key: string;
 }) {
   const invalidateKeys = ["planning:events", `planning:event:${params.event_id}`, "production:ofs"];
   if (typeof params.of_id === "number") invalidateKeys.push(`production:of:${params.of_id}`);
@@ -896,14 +902,15 @@ function emitPlanningRealtime(params: {
     invalidateKeys.push("commandes:list", `commandes:detail:${params.commande_id}`);
   }
 
-  emitEntityChanged({
-    entityType: "planning_events",
+  await enqueueEntityChanged(tx, {
+    entityType: "PLANNING_EVENTS",
     entityId: params.event_id,
     action: params.action,
-    module: "planning",
+    module: "production",
     at: new Date().toISOString(),
-    by: { id: params.user_id, name: `User #${params.user_id}` },
     invalidateKeys,
+  }, {
+    deduplicationKey: `planning:${params.event_id}:${params.mutation_key}`,
   });
 }
 
@@ -916,9 +923,7 @@ export async function repoValidatePlanningForAr(params: {
   const validated: PlanningValidationResult["validated_commandes"] = [];
   const skipped: PlanningValidationResult["skipped_commandes"] = [];
 
-  try {
-    await client.query("BEGIN");
-
+  return withRealtimeOutboxTransaction(client, async () => {
     const where: string[] = [
       "e.archived_at IS NULL",
       "e.status <> 'CANCELLED'::planning_event_status",
@@ -1078,7 +1083,7 @@ export async function repoValidatePlanningForAr(params: {
       });
     }
 
-    await insertAuditLog(client, params.audit, {
+    const realtimeAudit = await insertAuditLog(client, params.audit, {
       action: "planning.validate_for_ar",
       entity_type: "planning",
       entity_id: null,
@@ -1091,24 +1096,24 @@ export async function repoValidatePlanningForAr(params: {
         skipped_commandes: skipped,
       },
     });
-
-    await client.query("COMMIT");
-
+    if (!realtimeAudit?.id) throw new Error("PLANNING_AUDIT_INSERT_FAILED");
     for (const notification of notifications) {
-      emitAppNotificationCreated(notification.user_id, notification);
-    }
-    for (const item of validated) {
-      emitEntityChanged({
-        entityType: "commande_client",
-        entityId: String(item.commande_id),
-        action: "updated",
-        module: "planning",
-        at: new Date().toISOString(),
-        by: { id: params.audit.user_id, name: `User #${params.audit.user_id}` },
-        invalidateKeys: ["commandes:list", `commandes:detail:${item.commande_id}`, `commandes:workflow:${item.commande_id}`],
+      await enqueueAppNotificationCreated(client, notification.user_id, notification, {
+        deduplicationKey: `notification:${notification.id}`,
       });
     }
-
+    for (const item of validated) {
+      await enqueueEntityChanged(client, {
+        entityType: "COMMANDE_CLIENT",
+        entityId: String(item.commande_id),
+        action: "updated",
+        module: "commandes-clients",
+        at: new Date().toISOString(),
+        invalidateKeys: ["commandes:list", `commandes:detail:${item.commande_id}`, `commandes:workflow:${item.commande_id}`],
+      }, {
+        deduplicationKey: `planning-validation:${realtimeAudit.id}:commande:${item.commande_id}`,
+      });
+    }
     const commandeIds = validated.map((item) => item.commande_id);
     return {
       validated_commandes: validated,
@@ -1119,12 +1124,7 @@ export async function repoValidatePlanningForAr(params: {
         primary_commande_id: commandeIds[0] ?? null,
       },
     };
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function repoListPlanningResources(query: ListPlanningResourcesQueryDTO): Promise<PlanningResources> {
@@ -1589,9 +1589,8 @@ export async function repoCreatePlanningEvent(params: {
 }): Promise<PlanningEventListItem> {
   const client = await pool.connect();
   try {
-    await client.query("BEGIN");
-
-    const b = params.body;
+    const eventId = await withRealtimeOutboxTransaction(client, async () => {
+      const b = params.body;
 
     const op = b.of_operation_id ? await selectOfOperationDefaults(client, b.of_operation_id) : null;
     if (b.of_operation_id && !op) {
@@ -1731,7 +1730,7 @@ export async function repoCreatePlanningEvent(params: {
 
     const commandeId = typeof synchronizedOfId === "number" ? await loadCommandeIdForOf(client, synchronizedOfId) : null;
 
-    await insertAuditLog(client, params.audit, {
+    const realtimeAudit = await insertAuditLog(client, params.audit, {
       action: "planning.events.create",
       entity_type: "planning_events",
       entity_id: eventId,
@@ -1751,31 +1750,30 @@ export async function repoCreatePlanningEvent(params: {
         conflicts: b.allow_overlap && conflicts.length > 0 ? conflicts : undefined,
       },
     });
-
-    await client.query("COMMIT");
-
+    if (!realtimeAudit?.id) throw new Error("PLANNING_AUDIT_INSERT_FAILED");
     for (const notification of notifications) {
-      emitAppNotificationCreated(notification.user_id, notification);
+      await enqueueAppNotificationCreated(client, notification.user_id, notification, {
+        deduplicationKey: `notification:${notification.id}`,
+      });
     }
-    emitPlanningRealtime({
+    await enqueuePlanningRealtime(client, {
       event_id: eventId,
       of_id: synchronizedOfId,
       commande_id: commandeId,
       action: b.status === "DONE" || b.status === "BLOCKED" ? "status_changed" : "created",
-      user_id: params.audit.user_id,
+      mutation_key: realtimeAudit.id,
+    });
+      return eventId;
     });
 
     const out = await selectPlanningEventListItemById(pool, eventId);
     if (!out) throw new Error("Failed to reload created planning event");
     return out;
   } catch (err) {
-    await client.query("ROLLBACK");
     if (isPgExclusionViolation(err)) {
       throw new HttpError(409, "PLANNING_CONFLICT", "Resource has conflicting events");
     }
     throw err;
-  } finally {
-    client.release();
   }
 }
 
@@ -1786,9 +1784,8 @@ export async function repoPatchPlanningEvent(params: {
 }): Promise<PlanningEventListItem | null> {
   const client = await pool.connect();
   try {
-    await client.query("BEGIN");
-
-    const beforeRes = await client.query<{
+    const changed = await withRealtimeOutboxTransaction(client, async () => {
+      const beforeRes = await client.query<{
       id: string;
       kind: PlanningEventListItem["kind"];
       status: PlanningEventListItem["status"];
@@ -1833,8 +1830,7 @@ export async function repoPatchPlanningEvent(params: {
 
     const before = beforeRes.rows[0];
     if (!before) {
-      await client.query("ROLLBACK");
-      return null;
+      return false;
     }
     if (before.archived_at) {
       throw new HttpError(409, "PLANNING_EVENT_ARCHIVED", "Archived event cannot be edited");
@@ -1987,7 +1983,7 @@ export async function repoPatchPlanningEvent(params: {
       allow_overlap: before.allow_overlap !== nextAllowOverlap ? { from: before.allow_overlap, to: nextAllowOverlap } : undefined,
     };
 
-    await insertAuditLog(client, params.audit, {
+    const realtimeAudit = await insertAuditLog(client, params.audit, {
       action: "planning.events.update",
       entity_type: "planning_events",
       entity_id: params.id,
@@ -2053,38 +2049,37 @@ export async function repoPatchPlanningEvent(params: {
 
     const commandeId = typeof synchronizedOfId === "number" ? await loadCommandeIdForOf(client, synchronizedOfId) : null;
 
-    await client.query("COMMIT");
-
+    if (!realtimeAudit?.id) throw new Error("PLANNING_AUDIT_INSERT_FAILED");
     for (const notification of notifications) {
-      emitAppNotificationCreated(notification.user_id, notification);
+      await enqueueAppNotificationCreated(client, notification.user_id, notification, {
+        deduplicationKey: `notification:${notification.id}`,
+      });
     }
-    emitPlanningRealtime({
+    await enqueuePlanningRealtime(client, {
       event_id: params.id,
       of_id: synchronizedOfId,
       commande_id: commandeId,
       action: p.status !== undefined ? "status_changed" : "updated",
-      user_id: params.audit.user_id,
+      mutation_key: realtimeAudit.id,
     });
+      return true;
+    });
+    if (!changed) return null;
 
     const out = await selectPlanningEventListItemById(pool, params.id);
     if (!out) throw new Error("Failed to reload patched planning event");
     return out;
   } catch (err) {
-    await client.query("ROLLBACK");
     if (isPgExclusionViolation(err)) {
       throw new HttpError(409, "PLANNING_CONFLICT", "Resource has conflicting events");
     }
     throw err;
-  } finally {
-    client.release();
   }
 }
 
 export async function repoArchivePlanningEvent(params: { id: string; audit: AuditContext }): Promise<boolean | null> {
   const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-
+  return withRealtimeOutboxTransaction(client, async () => {
     const beforeRes = await client.query<{ id: string; archived_at: string | null; of_id: string | null; of_operation_id: string | null }>(
       `
         SELECT
@@ -2100,11 +2095,9 @@ export async function repoArchivePlanningEvent(params: { id: string; audit: Audi
     );
     const before = beforeRes.rows[0];
     if (!before) {
-      await client.query("ROLLBACK");
       return null;
     }
     if (before.archived_at) {
-      await client.query("ROLLBACK");
       return false;
     }
     if (before.of_operation_id) {
@@ -2152,12 +2145,13 @@ export async function repoArchivePlanningEvent(params: { id: string; audit: Audi
       [params.id, params.audit.user_id]
     );
 
-    await insertAuditLog(client, params.audit, {
+    const realtimeAudit = await insertAuditLog(client, params.audit, {
       action: "planning.events.archive",
       entity_type: "planning_events",
       entity_id: params.id,
       details: null,
     });
+    if (!realtimeAudit?.id) throw new Error("PLANNING_AUDIT_INSERT_FAILED");
 
     let synchronizedOfId = toNullableInt(before.of_id, "planning_events.of_id");
     let notifications: AppNotification[] = [];
@@ -2174,25 +2168,20 @@ export async function repoArchivePlanningEvent(params: { id: string; audit: Audi
 
     const commandeId = typeof synchronizedOfId === "number" ? await loadCommandeIdForOf(client, synchronizedOfId) : null;
 
-    await client.query("COMMIT");
-
     for (const notification of notifications) {
-      emitAppNotificationCreated(notification.user_id, notification);
+      await enqueueAppNotificationCreated(client, notification.user_id, notification, {
+        deduplicationKey: `notification:${notification.id}`,
+      });
     }
-    emitPlanningRealtime({
+    await enqueuePlanningRealtime(client, {
       event_id: params.id,
       of_id: synchronizedOfId,
       commande_id: commandeId,
       action: "deleted",
-      user_id: params.audit.user_id,
+      mutation_key: realtimeAudit.id,
     });
     return true;
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function repoRestorePlanningEvent(params: {
@@ -2201,9 +2190,8 @@ export async function repoRestorePlanningEvent(params: {
 }): Promise<PlanningEventListItem | false | null> {
   const client = await pool.connect();
   try {
-    await client.query("BEGIN");
-
-    const beforeRes = await client.query<{
+    const changed = await withRealtimeOutboxTransaction(client, async () => {
+      const beforeRes = await client.query<{
       id: string;
       archived_at: string | null;
       of_id: string | null;
@@ -2234,11 +2222,9 @@ export async function repoRestorePlanningEvent(params: {
 
     const before = beforeRes.rows[0];
     if (!before) {
-      await client.query("ROLLBACK");
       return null;
     }
     if (!before.archived_at) {
-      await client.query("ROLLBACK");
       return false;
     }
 
@@ -2300,12 +2286,13 @@ export async function repoRestorePlanningEvent(params: {
       [params.id, params.audit.user_id]
     );
 
-    await insertAuditLog(client, params.audit, {
+    const realtimeAudit = await insertAuditLog(client, params.audit, {
       action: "planning.events.restore",
       entity_type: "planning_events",
       entity_id: params.id,
       details: { restored_status: "PLANNED", archived_at: before.archived_at },
     });
+    if (!realtimeAudit?.id) throw new Error("PLANNING_AUDIT_INSERT_FAILED");
 
     let notifications: AppNotification[] = [];
     if (before.of_operation_id) {
@@ -2322,30 +2309,30 @@ export async function repoRestorePlanningEvent(params: {
     const commandeId =
       typeof synchronizedOfId === "number" ? await loadCommandeIdForOf(client, synchronizedOfId) : null;
 
-    await client.query("COMMIT");
-
     for (const notification of notifications) {
-      emitAppNotificationCreated(notification.user_id, notification);
+      await enqueueAppNotificationCreated(client, notification.user_id, notification, {
+        deduplicationKey: `notification:${notification.id}`,
+      });
     }
-    emitPlanningRealtime({
+    await enqueuePlanningRealtime(client, {
       event_id: params.id,
       of_id: synchronizedOfId,
       commande_id: commandeId,
       action: "updated",
-      user_id: params.audit.user_id,
+      mutation_key: realtimeAudit.id,
     });
+      return true as const;
+    });
+    if (changed !== true) return changed;
 
     const out = await selectPlanningEventListItemById(pool, params.id);
     if (!out) throw new Error("Failed to reload restored planning event");
     return out;
   } catch (err) {
-    await client.query("ROLLBACK");
     if (isPgExclusionViolation(err)) {
       throw new HttpError(409, "PLANNING_CONFLICT", "Resource has conflicting events");
     }
     throw err;
-  } finally {
-    client.release();
   }
 }
 
@@ -2355,9 +2342,7 @@ export async function repoCreatePlanningEventComment(params: {
   audit: AuditContext;
 }): Promise<PlanningEventComment> {
   const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-
+  return withRealtimeOutboxTransaction(client, async () => {
     const exists = await client.query<{ id: string }>(
       `SELECT id::text AS id FROM public.planning_events WHERE id = $1::uuid AND archived_at IS NULL LIMIT 1`,
       [params.event_id]
@@ -2399,8 +2384,6 @@ export async function repoCreatePlanningEventComment(params: {
       details: { comment_id: commentId },
     });
 
-    await client.query("COMMIT");
-
     return {
       id: row.id,
       event_id: row.event_id,
@@ -2409,20 +2392,16 @@ export async function repoCreatePlanningEventComment(params: {
       created_by_username: row.username,
       created_at: row.created_at,
     };
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 async function insertPlanningEventDocuments(tx: PoolClient, params: {
   event_id: string;
   documents: UploadedDocument[];
   user_id: number;
-}) {
-  if (!params.documents.length) return;
+}): Promise<Array<{ id: string; key: string; absolutePath: string }>> {
+  const expected: Array<{ id: string; key: string; absolutePath: string }> = [];
+  if (!params.documents.length) return expected;
 
   for (const doc of params.documents) {
     const documentId = crypto.randomUUID();
@@ -2435,12 +2414,7 @@ async function insertPlanningEventDocuments(tx: PoolClient, params: {
     const uploadDir = ensureDocumentStoragePath();
     const finalPath = path.join(uploadDir, `${documentId}${safeExt}`);
 
-    try {
-      await fs.rename(doc.path, finalPath);
-    } catch {
-      await fs.copyFile(doc.path, finalPath);
-      await fs.unlink(doc.path);
-    }
+    await transferSecureUploadToDestination(doc, finalPath);
 
     await tx.query(
       `INSERT INTO public.documents_clients (id, document_name, type) VALUES ($1, $2, $3)`,
@@ -2454,7 +2428,13 @@ async function insertPlanningEventDocuments(tx: PoolClient, params: {
       `,
       [params.event_id, documentId, isPdf ? "PDF" : null, params.user_id]
     );
+    expected.push({
+      id: documentId,
+      key: `${params.event_id}|${documentId}|${doc.originalname}|${docType}`,
+      absolutePath: finalPath,
+    });
   }
+  return expected;
 }
 
 export async function repoUploadPlanningEventDocuments(params: {
@@ -2463,8 +2443,12 @@ export async function repoUploadPlanningEventDocuments(params: {
   audit: AuditContext;
 }): Promise<PlanningEventDocument[]> {
   const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+  let expected: Array<{ id: string; key: string; absolutePath: string }> = [];
+  return withUploadTransaction({
+    client,
+    files: params.documents,
+    context: "planning.events.documents.upload",
+    work: async () => {
 
     const exists = await client.query<{ id: string }>(
       `SELECT id::text AS id FROM public.planning_events WHERE id = $1::uuid AND archived_at IS NULL LIMIT 1`,
@@ -2474,7 +2458,7 @@ export async function repoUploadPlanningEventDocuments(params: {
       throw new HttpError(404, "PLANNING_EVENT_NOT_FOUND", "Event not found");
     }
 
-    await insertPlanningEventDocuments(client, {
+    expected = await insertPlanningEventDocuments(client, {
       event_id: params.event_id,
       documents: params.documents,
       user_id: params.audit.user_id,
@@ -2487,9 +2471,7 @@ export async function repoUploadPlanningEventDocuments(params: {
       details: { count: params.documents.length },
     });
 
-    await client.query("COMMIT");
-
-    const docsRes = await pool.query<{ document_id: string; document_name: string; type: string | null }>(
+    const docsRes = await client.query<{ document_id: string; document_name: string; type: string | null }>(
       `
         SELECT
           ped.document_id::text AS document_id,
@@ -2508,12 +2490,28 @@ export async function repoUploadPlanningEventDocuments(params: {
       document_name: r.document_name,
       type: r.type,
     }));
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+    },
+    reconcile: async () => {
+      if (expected.length === 0) return "committed";
+      const { rows } = await pool.query<{ event_id: string | null; document_id: string; document_name: string; type: string | null }>(
+        `SELECT ped.event_id::text AS event_id, dc.id::text AS document_id, dc.document_name, dc.type
+           FROM public.documents_clients dc
+           LEFT JOIN public.planning_event_documents ped
+             ON ped.document_id = dc.id AND ped.event_id = $1::uuid
+          WHERE dc.id = ANY($2::uuid[])`,
+        [params.event_id, expected.map((entry) => entry.id)]
+      );
+      const status = classifyUploadReconciliation(
+        expected.map((entry) => entry.key),
+        rows.map((row) => `${row.event_id ?? ""}|${row.document_id}|${row.document_name}|${row.type ?? ""}`)
+      );
+      if (status !== "committed") return status;
+      const filesPresent = await Promise.all(
+        expected.map((entry) => fs.stat(entry.absolutePath).then((stat) => stat.isFile()).catch(() => false))
+      );
+      return filesPresent.every(Boolean) ? "committed" : "uncertain";
+    },
+  });
 }
 
 export async function repoGetPlanningEventDocumentFileMeta(params: {

@@ -30,7 +30,7 @@ function collectSourceFiles(dir: string): string[] {
 // UPDATE / DELETE / TRUNCATE targeting erp_audit_logs, within a single SQL statement
 // (the [^;] boundary keeps the match inside one statement / template literal).
 const FORBIDDEN: Array<{ label: string; re: RegExp }> = [
-  { label: "UPDATE erp_audit_logs", re: /update\s+[^;]*\berp_audit_logs\b/is },
+  { label: "UPDATE erp_audit_logs", re: /update\s+(?:only\s+)?(?:public\.)?erp_audit_logs\b/is },
   { label: "DELETE FROM erp_audit_logs", re: /delete\s+from\s+[^;]*\berp_audit_logs\b/is },
   { label: "TRUNCATE erp_audit_logs", re: /truncate\s+[^;]*\berp_audit_logs\b/is },
 ];

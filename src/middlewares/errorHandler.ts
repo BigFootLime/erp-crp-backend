@@ -12,16 +12,89 @@ import { stripQueryFromUrl } from "../utils/logPath";
 // dans tous les environnements — le dev garde le détail complet dans les logs serveur.
 const GENERIC_SERVER_ERROR_MESSAGE = "Erreur serveur.";
 
+// Closed allowlist for operational upload/commit failures where a generic 5xx
+// would hide safety-critical retry guidance. Values are public constants: the
+// exception's own message, details, path, and stack are never reused here.
+const PUBLIC_OPERATIONAL_5XX_MESSAGES = new Map<string, string>([
+  ["UPLOAD_SCAN_UNAVAILABLE",
+    "Le contrôle antivirus est temporairement indisponible. Réessayez plus tard.",
+  ],
+  ["UPLOAD_STAGING_PERMISSION_FAILED",
+    "La zone sécurisée de dépôt est temporairement indisponible. Réessayez plus tard ou contactez l’administrateur.",
+  ],
+  ["UPLOAD_CLEANUP_FAILED",
+    "Le nettoyage sécurisé du fichier n’a pas pu être confirmé. Ne relancez pas l’envoi et contactez l’administrateur.",
+  ],
+  ["UPLOAD_COMMIT_UNCERTAIN",
+    "Le résultat de l’enregistrement doit être vérifié. Ne relancez pas l’opération avant actualisation.",
+  ],
+  ["UPLOAD_ROLLBACK_UNCERTAIN",
+    "L’annulation n’a pas pu être confirmée. Le fichier est préservé ; une vérification est requise avant toute nouvelle tentative.",
+  ],
+  ["GED_COMMIT_UNCERTAIN",
+    "Le résultat du dépôt GED doit être vérifié. Ne relancez pas le dépôt avant actualisation.",
+  ],
+  ["GED_UPLOAD_COMMIT_UNCERTAIN",
+    "Le résultat du dépôt GED doit être vérifié. Ne relancez pas le dépôt avant actualisation.",
+  ],
+  ["GED_ROLLBACK_UNCERTAIN",
+    "L’annulation du dépôt GED n’a pas pu être confirmée. Le fichier est préservé ; contactez l’administrateur.",
+  ],
+  ["GED_BLOB_CLEANUP_UNCERTAIN",
+    "Le rapprochement du fichier GED n’a pas pu être confirmé. Ne relancez pas le dépôt et contactez l’administrateur.",
+  ],
+  ["GED_VAULT_STAGING_CLEANUP_FAILED",
+    "Le nettoyage du staging GED n’a pas pu être confirmé. Ne relancez pas le dépôt et contactez l’administrateur.",
+  ],
+  ["METROLOGY_COMMIT_UNCERTAIN",
+    "Le résultat du dépôt métrologique doit être vérifié. Ne relancez pas l’opération avant actualisation.",
+  ],
+  ["METROLOGY_ROLLBACK_UNCERTAIN",
+    "L’annulation du dépôt métrologique n’a pas pu être confirmée. La preuve est préservée ; contactez l’administrateur.",
+  ],
+  ["PO_COMMIT_UNCERTAIN",
+    "Le résultat du dépôt Project Office doit être vérifié. Ne relancez pas l’opération avant actualisation.",
+  ],
+  ["PO_UPLOAD_COMMIT_UNCERTAIN",
+    "Le résultat du dépôt Project Office doit être vérifié. Ne relancez pas l’opération avant actualisation.",
+  ],
+  ["PO_UPLOAD_COMMIT_NOT_APPLIED",
+    "Le dépôt Project Office n’a pas été appliqué. Vous pouvez réessayer.",
+  ],
+  ["PO_ROLLBACK_UNCERTAIN",
+    "L’annulation du dépôt Project Office n’a pas pu être confirmée. Le fichier est préservé ; contactez l’administrateur.",
+  ],
+  ["LIVRAISON_PDF_COMMIT_UNCERTAIN",
+    "Le résultat de l’enregistrement du PDF de livraison doit être vérifié. Ne relancez pas la génération avant actualisation.",
+  ],
+  ["OF_COMMIT_UNCERTAIN",
+    "Le résultat de l’opération OF doit être vérifié. Ne relancez pas l’opération avant actualisation.",
+  ],
+  ["OF_DOCUMENT_COMMIT_UNCERTAIN",
+    "Le résultat de l’émission du document OF doit être vérifié. Ne relancez pas l’émission avant actualisation.",
+  ],
+  ["OF_ROLLBACK_UNCERTAIN",
+    "L’annulation de l’opération OF n’a pas pu être confirmée. Les fichiers sont préservés ; contactez l’administrateur.",
+  ],
+  ["OF_DOCUMENT_COMMIT_NOT_APPLIED",
+    "L’émission du document OF n’a pas été appliquée. Vous pouvez réessayer.",
+  ],
+]);
+
 export function errorHandler(err: any, req: Request, res: Response, _next: NextFunction) {
   const isKnown = err instanceof HttpError || err instanceof ApiError;
   const status = isKnown ? err.status : 500;
   const code = isKnown ? err.code : "INTERNAL_ERROR";
 
-  // Les erreurs "connues" (HttpError/ApiError) < 500 portent un message volontaire et sûr
-  // pour le client (ex. "Pièce introuvable", messages de validation). Toute 5xx ou erreur
-  // inconnue reçoit le message générique — jamais le message d'exception brut.
-  const message =
-    isKnown && status < 500 ? (err.message ?? GENERIC_SERVER_ERROR_MESSAGE) : GENERIC_SERVER_ERROR_MESSAGE;
+  // Les erreurs connues < 500 portent un message volontaire. Une 5xx ne devient
+  // actionnable que si son code figure exactement dans l'allowlist ci-dessus.
+  // Même alors, le texte vient de la constante publique, jamais de l'exception.
+  const operationalMessage = isKnown && status >= 500
+    ? PUBLIC_OPERATIONAL_5XX_MESSAGES.get(code)
+    : undefined;
+  const message = isKnown && status < 500
+    ? (err.message ?? GENERIC_SERVER_ERROR_MESSAGE)
+    : (operationalMessage ?? GENERIC_SERVER_ERROR_MESSAGE);
 
   // Path sans query string : les recherches métier mettent des PII en query
   // (?q=email, ?siret=...) ; ni la réponse ni les logs ne doivent les rejouer.

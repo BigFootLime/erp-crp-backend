@@ -23,10 +23,10 @@ const UNLOCK_ALL_CONFIRMATION = "DEBLOQUER TOUT";
 export const ACCESS_CACHE_TTL_MS = 10_000;
 export const ACCESS_PROFILE_CONTRACT_VERSION = 1 as const;
 
-type CacheEntry = { expiresAt: number; profile: ResolvedAccessProfile };
+type CacheEntry = { expiresAt: number; epoch: bigint; profile: ResolvedAccessProfile };
 
-// Cache PROCESSUS : chaque instance API garde le sien. Une mutation invalide
-// immédiatement le sien ; les autres instances convergent au plus tard au bout du TTL.
+// Cache processus, toujours gardé par l'epoch partagé lu avant chaque décision.
+// Le TTL ne constitue donc jamais une fenêtre de droits obsolètes inter-instance.
 const profileCache = new Map<number, CacheEntry>();
 
 export function invalidateAccessCache(userId?: number): void {
@@ -56,34 +56,70 @@ function decide(params: {
  * (42P01) : l'appelant décide alors de laisser passer, il ne reçoit pas un refus.
  */
 export async function resolveAccessProfile(userId: number): Promise<ResolvedAccessProfile | null> {
-  const cached = profileCache.get(userId);
-  if (cached && cached.expiresAt > Date.now()) return cached.profile;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const epochBefore = await repo.repoAuthorizationEpoch();
+    const cached = profileCache.get(userId);
+    if (
+      epochBefore !== null
+      && cached
+      && cached.epoch === epochBefore
+      && cached.expiresAt > Date.now()
+    ) return cached.profile;
 
-  const rows = await repo.repoResolveAccessProfile(userId);
-  if (rows === null) return null;
+    const rows = await repo.repoResolveAccessProfile(userId);
+    if (rows === null) return null;
 
-  const isSuperadmin = rows[0]?.is_superadmin === true;
-  const modules: ResolvedModuleAccess[] = [];
-  for (const row of rows) {
-    if (!row.module_key) continue;
-    const { allowed, source } = decide({
-      isSuperadmin,
-      isActive: row.is_active !== false,
-      isProtected: row.is_protected === true,
-      override: row.access,
-    });
-    modules.push({
-      module_key: row.module_key,
-      label: row.label ?? row.module_key,
-      nav_page_keys: row.nav_page_keys ?? [],
-      allowed,
-      source,
-    });
+    const isSuperadmin = rows[0]?.is_superadmin === true;
+    const modules: ResolvedModuleAccess[] = [];
+    for (const row of rows) {
+      if (!row.module_key) continue;
+      const { allowed, source } = decide({
+        isSuperadmin,
+        isActive: row.is_active !== false,
+        isProtected: row.is_protected === true,
+        override: row.access,
+      });
+      modules.push({
+        module_key: row.module_key,
+        label: row.label ?? row.module_key,
+        nav_page_keys: row.nav_page_keys ?? [],
+        allowed,
+        source,
+      });
+    }
+
+    const profile: ResolvedAccessProfile = { is_superadmin: isSuperadmin, modules };
+    if (epochBefore === null) return profile;
+    const epochAfter = await repo.repoAuthorizationEpoch();
+    if (epochAfter === epochBefore) {
+      profileCache.set(userId, { expiresAt: Date.now() + ACCESS_CACHE_TTL_MS, epoch: epochBefore, profile });
+      return profile;
+    }
   }
 
-  const profile: ResolvedAccessProfile = { is_superadmin: isSuperadmin, modules };
-  profileCache.set(userId, { expiresAt: Date.now() + ACCESS_CACHE_TTL_MS, profile });
-  return profile;
+  // Under sustained ACL churn, return one uncached read instead of persisting
+  // a profile against an unstable revision.
+  const rows = await repo.repoResolveAccessProfile(userId);
+  if (rows === null) return null;
+  const isSuperadmin = rows[0]?.is_superadmin === true;
+  return {
+    is_superadmin: isSuperadmin,
+    modules: rows.filter((row) => row.module_key).map((row) => {
+      const decision = decide({
+        isSuperadmin,
+        isActive: row.is_active !== false,
+        isProtected: row.is_protected === true,
+        override: row.access,
+      });
+      return {
+        module_key: row.module_key!,
+        label: row.label ?? row.module_key!,
+        nav_page_keys: row.nav_page_keys ?? [],
+        allowed: decision.allowed,
+        source: decision.source,
+      };
+    }),
+  };
 }
 
 /** Réponse versionnée de `GET /auth/access-profile`. Infrastructure absente ⇒ aucun filtrage. */

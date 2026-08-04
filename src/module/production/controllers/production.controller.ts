@@ -2,7 +2,6 @@ import type { Request } from "express";
 import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import { asyncHandler } from "../../../utils/asyncHandler";
 import { HttpError } from "../../../utils/httpError";
-import { emitEntityChanged } from "../../../shared/realtime/realtime.service";
 import type { AuditContext } from "../repository/production.repository";
 import {
   createMachineOnboardingSchema,
@@ -129,31 +128,6 @@ export function buildAuditContext(req: Request): AuditContext {
   };
 }
 
-function getUserRef(req: Request): { id: number; name: string } {
-  const user = req.user;
-  if (!user || typeof user.id !== "number") throw new HttpError(401, "UNAUTHORIZED", "Authentication required");
-  const name = typeof user.username === "string" && user.username.trim() ? user.username.trim() : String(user.id);
-  return { id: user.id, name };
-}
-
-function emitOfChanged(req: Request, params: { ofId: number; action: "created" | "updated" | "deleted" | "status_changed" }) {
-  const entityId = String(params.ofId);
-  emitEntityChanged({
-    entityType: "OF",
-    entityId,
-    action: params.action,
-    module: "production",
-    at: new Date().toISOString(),
-    by: getUserRef(req),
-    invalidateKeys: [
-      "production:ofs",
-      `production:of:${entityId}`,
-      `production:of:${entityId}:receipt-context`,
-      `production:of:${entityId}:traceability`,
-    ],
-  });
-}
-
 function hasMachineCostMutation(value: object): boolean {
   return ["hourly_rate", "hourly_rate_source", "hourly_rate_effective_at"].some((key) =>
     Object.prototype.hasOwnProperty.call(value, key)
@@ -208,10 +182,10 @@ export const createMachine = asyncHandler(async (req, res) => {
     throw new HttpError(403, "MACHINE_COST_FORBIDDEN", "Machine cost capability required.");
   }
   const file = (req as Request & { file?: unknown }).file;
-  const imagePath = isMulterFile(file) ? file.path : null;
+  const imageFile = isMulterFile(file) ? file : null;
   const idempotencyKey = typeof req.headers["idempotency-key"] === "string" ? req.headers["idempotency-key"].trim() : null;
   if (idempotencyKey && (idempotencyKey.length < 8 || idempotencyKey.length > 200)) throw new HttpError(400, "INVALID_IDEMPOTENCY_KEY", "Idempotency-Key must contain 8 to 200 characters.");
-  const out = await svcCreateMachine({ body, image_path: imagePath, idempotency_key: idempotencyKey, audit });
+  const out = await svcCreateMachine({ body, image_file: imageFile, idempotency_key: idempotencyKey, audit });
   res.status(201).json(requestHasMachineCapability(req, "costs") ? out : redactMachineCosts(out));
 });
 
@@ -224,10 +198,10 @@ export const createMachineOnboarding = asyncHandler(async (req, res) => {
     throw new HttpError(403, "MACHINE_COST_FORBIDDEN", "Machine cost capability required.");
   }
   const file = (req as Request & { file?: unknown }).file;
-  const imagePath = isMulterFile(file) ? file.path : null;
+  const imageFile = isMulterFile(file) ? file : null;
   const idempotencyKey = typeof req.headers["idempotency-key"] === "string" ? req.headers["idempotency-key"].trim() : null;
   if (!idempotencyKey || idempotencyKey.length < 8 || idempotencyKey.length > 200) throw new HttpError(400, "IDEMPOTENCY_KEY_REQUIRED", "A stable Idempotency-Key containing 8 to 200 characters is required.");
-  const out = await svcCreateMachineOnboarding({ body, image_path: imagePath, idempotency_key: idempotencyKey, audit });
+  const out = await svcCreateMachineOnboarding({ body, image_file: imageFile, idempotency_key: idempotencyKey, audit });
   res.status(201).json(requestHasMachineCapability(req, "costs") ? out : redactMachineCosts(out));
 });
 
@@ -241,8 +215,8 @@ export const updateMachine = asyncHandler(async (req, res) => {
     throw new HttpError(403, "MACHINE_COST_FORBIDDEN", "Machine cost capability required.");
   }
   const file = (req as Request & { file?: unknown }).file;
-  const imagePath = isMulterFile(file) ? file.path : undefined;
-  const out = await svcUpdateMachine({ id, patch, image_path: imagePath, audit });
+  const imageFile = isMulterFile(file) ? file : undefined;
+  const out = await svcUpdateMachine({ id, patch, image_file: imageFile, audit });
   if (!out) {
     res.status(404).json({ error: "Not found" });
     return;
@@ -263,8 +237,8 @@ export const updateMachineOnboarding = asyncHandler(async (req, res) => {
     throw new HttpError(403, "MACHINE_MODEL_UPDATE_FORBIDDEN", "Shared machine model update capability required.");
   }
   const file = (req as Request & { file?: unknown }).file;
-  const imagePath = isMulterFile(file) ? file.path : undefined;
-  const out = await svcUpdateMachineOnboarding({ id, body, image_path: imagePath, audit });
+  const imageFile = isMulterFile(file) ? file : undefined;
+  const out = await svcUpdateMachineOnboarding({ id, body, image_file: imageFile, audit });
   if (!out) {
     res.status(404).json({ error: "Not found" });
     return;
@@ -367,7 +341,6 @@ export const createOrdreFabrication = asyncHandler(async (req, res) => {
   const raw = parseBody(req);
   const body = createOfSchema.parse({ body: raw }).body;
   const out = await svcCreateOrdreFabrication({ body, audit });
-  emitOfChanged(req, { ofId: out.id, action: "created" });
   res.status(201).json(out);
 });
 
@@ -381,7 +354,6 @@ export const updateOrdreFabrication = asyncHandler(async (req, res) => {
     res.status(404).json({ error: "Not found" });
     return;
   }
-  emitOfChanged(req, { ofId: id, action: "updated" });
   res.status(200).json(out);
 });
 
@@ -395,7 +367,6 @@ export const updateOrdreFabricationOperation = asyncHandler(async (req, res) => 
     res.status(404).json({ error: "Not found" });
     return;
   }
-  emitOfChanged(req, { ofId: id, action: "updated" });
   res.status(200).json(out);
 });
 
@@ -409,7 +380,6 @@ export const startOfOperationTimeLog = asyncHandler(async (req, res) => {
     res.status(404).json({ error: "Not found" });
     return;
   }
-  emitOfChanged(req, { ofId: id, action: "updated" });
   res.status(201).json(out);
 });
 
@@ -424,7 +394,6 @@ export const reorderOfOperations = asyncHandler(async (req, res) => {
     res.status(404).json({ error: "Not found" });
     return;
   }
-  emitOfChanged(req, { ofId: id, action: "updated" });
   res.status(200).json(out);
 });
 
@@ -450,7 +419,6 @@ export const generateOfs = asyncHandler(async (req, res) => {
     svcGenerateOfs({ body, idempotency_key: idempotencyKey, audit })
   );
   if (!out.idempotent_replay && out.root_of_id) {
-    emitOfChanged(req, { ofId: out.root_of_id, action: "created" });
   }
   res.status(out.idempotent_replay ? 200 : 201).json(out);
 });
@@ -522,7 +490,6 @@ export const createOfReceipt = asyncHandler(async (req, res) => {
   }
   const out = await svcCreateOfReceipt({ of_id: id, body, idempotency_key: idempotencyKey, audit });
   if (!out.idempotent_replay) {
-    emitOfChanged(req, { ofId: id, action: "status_changed" });
   }
   res.status(out.idempotent_replay ? 200 : 201).json(out);
 });
@@ -543,6 +510,5 @@ export const stopOfOperationTimeLog = asyncHandler(async (req, res) => {
     res.status(404).json({ error: "Not found" });
     return;
   }
-  emitOfChanged(req, { ofId: id, action: "updated" });
   res.status(200).json(out);
 });

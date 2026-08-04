@@ -1,6 +1,11 @@
 import type { PoolClient } from "pg";
 import { describe, expect, it, vi } from "vitest";
 
+vi.mock("../../../shared/realtime/realtime.service", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../../../shared/realtime/realtime.service")>(),
+  enqueueEntityChanged: vi.fn().mockResolvedValue("event-livraison"),
+}));
+
 import {
   prepareLivraisonInTransaction,
   releaseLivraisonReservationsInTransaction,
@@ -9,10 +14,12 @@ import {
   attachActiveCommandeReservationsToLivraison,
   repoCreateLivraisonFromCommande,
 } from "./livraisons.repository";
+import { withRealtimeOutboxDbMock } from "../../../__tests__/helpers/realtime-outbox-db-mock";
 
 describe("internal order delivery gate", () => {
   it("creates no BL artifact before the post-quality PRET_LIVRAISON milestone", async () => {
-    const query = vi.fn(async (sql: string, _values?: unknown[]) => {
+    const query = vi.fn(withRealtimeOutboxDbMock(async (rawSql: unknown) => {
+      const sql = String(rawSql);
       if (sql.includes("FROM public.commande_client cc")) {
         return {
           rows: [{
@@ -25,7 +32,7 @@ describe("internal order delivery gate", () => {
         };
       }
       return { rows: [] };
-    });
+    }));
     const tx = { query } as unknown as PoolClient;
 
     await expect(repoCreateLivraisonFromCommande(12, 7, tx)).rejects.toMatchObject({
@@ -41,7 +48,8 @@ describe("internal order delivery gate", () => {
     const internalClientId = "CERP-INTERNE";
     const warehouseId = "11111111-1111-4111-8111-111111111111";
     const deliveryId = "22222222-2222-4222-8222-222222222222";
-    const query = vi.fn(async (sql: string, _values?: unknown[]) => {
+    const query = vi.fn(withRealtimeOutboxDbMock(async (rawSql: unknown) => {
+      const sql = String(rawSql);
       if (sql.includes("FROM public.commande_client cc")) {
         return {
           rows: [{
@@ -76,8 +84,11 @@ describe("internal order delivery gate", () => {
       }
       if (sql.includes("FROM public.bon_livraison_ligne delivery_line")) return { rows: [] };
       if (sql.includes("SELECT NOT EXISTS(")) return { rows: [{ complete: false }] };
+      if (sql.includes("INSERT INTO bon_livraison_event_log")) {
+        return { rows: [{ id: "event-created", created_at: "2026-08-04T12:00:00.000Z" }] };
+      }
       return { rows: [] };
-    });
+    }));
     const tx = { query } as unknown as PoolClient;
 
     await expect(repoCreateLivraisonFromCommande(12, 7, tx)).resolves.toEqual({ id: deliveryId });
@@ -100,7 +111,8 @@ describe("internal order delivery gate", () => {
 
 describe("prepareLivraisonInTransaction", () => {
   it("reuses an active production reservation without reserving stock twice", async () => {
-    const query = vi.fn(async (sql: string) => {
+    const query = vi.fn(withRealtimeOutboxDbMock(async (rawSql: unknown) => {
+      const sql = String(rawSql);
       if (sql.includes("FROM public.bon_livraison\n")) {
         return {
           rows: [{
@@ -155,8 +167,11 @@ describe("prepareLivraisonInTransaction", () => {
         };
       }
       if (sql.includes("FROM public.bon_livraison_pack_versions")) return { rows: [] };
+      if (sql.includes("INSERT INTO public.bon_livraison_event_log")) {
+        return { rows: [{ id: "event-ready", created_at: "2026-08-04T12:00:00.000Z" }] };
+      }
       return { rows: [] };
-    });
+    }));
     const client = { query } as unknown as PoolClient;
 
     await expect(

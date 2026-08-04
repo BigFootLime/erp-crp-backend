@@ -1,11 +1,10 @@
 import type { Request, RequestHandler } from "express";
-import fs from "node:fs/promises";
 
 import { asyncHandler } from "../../../utils/asyncHandler";
-import { isPathInsideDirectory, resolveCerpStoragePath } from "../../../utils/cerpStorage";
+import { resolveCerpStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { getClientIp, parseDevice } from "../../../utils/requestMeta";
-import { emitEntityChanged } from "../../../shared/realtime/realtime.service";
+import { sendSecureStoredFile } from "../../../shared/uploads/secure-download";
 
 import type { AuditContext } from "../repository/metrologie.repository";
 import {
@@ -64,33 +63,6 @@ function buildAuditContext(req: Request): AuditContext {
   };
 }
 
-function getUserRef(req: Request): { id: number; name: string } {
-  const user = req.user;
-  if (!user || typeof user.id !== "number") {
-    throw new HttpError(401, "UNAUTHORIZED", "Authentication required");
-  }
-  const name = typeof user.username === "string" && user.username.trim() ? user.username.trim() : String(user.id);
-  return { id: user.id, name };
-}
-
-function emitEquipementChanged(req: Request, params: { equipementId: string; action: "created" | "updated" | "deleted" | "status_changed" }) {
-  const equipementId = params.equipementId;
-  emitEntityChanged({
-    entityType: "METROLOGIE_EQUIPEMENT",
-    entityId: equipementId,
-    action: params.action,
-    module: "metrologie",
-    at: new Date().toISOString(),
-    by: getUserRef(req),
-    invalidateKeys: [
-      "metrologie:equipements",
-      "metrologie:kpis",
-      "metrologie:alerts",
-      `metrologie:equipement:${equipementId}`,
-    ],
-  });
-}
-
 function isMulterFile(value: unknown): value is Express.Multer.File {
   if (typeof value !== "object" || value === null) return false;
   const v = value as { path?: unknown; originalname?: unknown; mimetype?: unknown; size?: unknown };
@@ -138,7 +110,6 @@ export const createEquipement: RequestHandler = asyncHandler(async (req, res) =>
   const audit = buildAuditContext(req);
   const body = createEquipementSchema.parse({ body: req.body }).body;
   const out = await svcCreateEquipement(body, audit);
-  emitEquipementChanged(req, { equipementId: out.equipement.id, action: "created" });
   res.status(201).json(out);
 });
 
@@ -151,7 +122,6 @@ export const patchEquipement: RequestHandler = asyncHandler(async (req, res) => 
     res.status(404).json({ error: "Not found" });
     return;
   }
-  emitEquipementChanged(req, { equipementId: id, action: "updated" });
   res.json(out);
 });
 
@@ -163,7 +133,6 @@ export const deleteEquipement: RequestHandler = asyncHandler(async (req, res) =>
     res.status(404).json({ error: "Not found" });
     return;
   }
-  emitEquipementChanged(req, { equipementId: id, action: "deleted" });
   res.status(204).send();
 });
 
@@ -176,7 +145,6 @@ export const upsertPlan: RequestHandler = asyncHandler(async (req, res) => {
     res.status(404).json({ error: "Not found" });
     return;
   }
-  emitEquipementChanged(req, { equipementId: id, action: "status_changed" });
   res.json(out);
 });
 
@@ -200,7 +168,6 @@ export const attachCertificats: RequestHandler = asyncHandler(async (req, res) =
     res.status(404).json({ error: "Not found" });
     return;
   }
-  emitEquipementChanged(req, { equipementId: id, action: "updated" });
   res.status(201).json(out);
 });
 
@@ -216,7 +183,6 @@ export const removeCertificat: RequestHandler = asyncHandler(async (req, res) =>
     res.status(404).json({ error: "Not found" });
     return;
   }
-  emitEquipementChanged(req, { equipementId: id, action: "updated" });
   res.status(204).send();
 });
 
@@ -231,19 +197,14 @@ export const downloadCertificatFile: RequestHandler = asyncHandler(async (req, r
 
   const baseDir = svcMetrologieDocsBaseDir();
   const absPath = resolveCerpStoragePath(doc.storage_path, baseDir);
-  if (!isPathInsideDirectory(baseDir, absPath)) {
-    throw new HttpError(400, "INVALID_STORAGE_PATH", "Invalid document storage path");
-  }
-
-  await fs.access(absPath);
-  res.setHeader("Content-Type", doc.mime_type ?? "application/octet-stream");
-
   const rawDownload = (req.query as { download?: unknown } | undefined)?.download;
   const download = rawDownload === true || rawDownload === "true" || rawDownload === "1" || rawDownload === 1;
   const name = doc.file_original_name ?? `certificat-${certificatId}`;
-  res.setHeader(
-    "Content-Disposition",
-    `${download ? "attachment" : "inline"}; filename="${encodeURIComponent(name)}"`
-  );
-  res.sendFile(absPath);
+  await sendSecureStoredFile(res, {
+    filePath: absPath,
+    allowedRoots: [baseDir],
+    filename: name,
+    mimeType: doc.mime_type,
+    download,
+  });
 });

@@ -1,8 +1,7 @@
 import { Router } from "express";
-import multer from "multer";
 
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
-import { ensureTmpStoragePath } from "../../../utils/cerpStorage";
+import { createSecureUpload } from "../../../shared/uploads/secure-upload";
 import { requireMetrologyCapability } from "../middlewares/metrology-authorization.middleware";
 import {
   cancelCertificate,
@@ -51,10 +50,7 @@ router.use(authenticateToken);
 
 // Les fichiers transitent par un répertoire temporaire privé, jamais par le
 // répertoire des documents avant d'avoir été contrôlés.
-const upload = multer({
-  dest: ensureTmpStoragePath("metrologie"),
-  limits: { fileSize: 25 * 1024 * 1024, files: 1 },
-});
+const upload = createSecureUpload("quality-document", { maxFiles: 1 });
 
 /* Référentiels ------------------------------------------------------------ */
 router.get("/categories", requireMetrologyCapability("read"), listCategories);
