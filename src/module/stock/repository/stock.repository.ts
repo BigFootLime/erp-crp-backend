@@ -21,6 +21,7 @@ import {
   type MaterialCodeResult,
   type MaterialProfileCode,
 } from "../../../shared/codes/material-article-code";
+import { canonicalizeStockUnitCode } from "../../../shared/stock-unit";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
@@ -837,7 +838,16 @@ export async function repoListStockUnits(): Promise<Array<{ code: string; label:
   const res = await db.query<{ code: string; label: string }>(
     `SELECT code, label FROM public.units ORDER BY code ASC`
   );
-  return res.rows;
+  const canonical = new Map<string, { code: string; label: string }>();
+  for (const row of res.rows) {
+    const code = canonicalizeStockUnitCode(row.code);
+    if (!code) continue;
+    const current = canonical.get(code);
+    if (!current || row.code.trim().toLowerCase() === code) {
+      canonical.set(code, { code, label: row.label });
+    }
+  }
+  return [...canonical.values()].sort((a, b) => a.code.localeCompare(b.code, "fr"));
 }
 
 export async function repoListArticleFamilies(
@@ -1906,24 +1916,35 @@ function parseEffectiveAt(raw: string | null | undefined): Date {
  * their unit as a code so every creation/update must check that code before it
  * can later be used by a stock movement.
  */
+async function findCanonicalStockUnit(
+  client: Pick<PoolClient, "query">,
+  unitCode: string | null | undefined
+): Promise<{ id: string | null; code: string } | null> {
+  const code = canonicalizeStockUnitCode(unitCode);
+  if (!code) return null;
+  const unit = await client.query<{ id: string | null }>(
+    `SELECT id::text AS id FROM public.units WHERE lower(code::text) = lower($1) LIMIT 1`,
+    [code]
+  );
+  const row = unit.rows[0];
+  return row ? { id: row.id, code } : null;
+}
+
 export async function assertCanonicalArticleUnit(
   client: Pick<PoolClient, "query">,
   unitCode: string | null | undefined
-): Promise<void> {
-  const code = unitCode?.trim() ? unitCode.trim() : null;
-  if (!code) return;
-
-  const unit = await client.query<{ code: string }>(
-    `SELECT code FROM public.units WHERE code = $1`,
-    [code]
-  );
-  if (!unit.rows[0]) {
+): Promise<string | null> {
+  if (!canonicalizeStockUnitCode(unitCode)) return null;
+  const unit = await findCanonicalStockUnit(client, unitCode);
+  if (!unit) {
+    const submitted = unitCode?.trim() ?? "";
     throw new HttpError(
       400,
       "INVALID_ARTICLE_UNIT",
-      `L'unité article « ${code} » est inconnue. Choisissez un code du référentiel public.units.`
+      `L'unité article « ${submitted} » est inconnue. Choisissez un code du référentiel des unités de stock.`
     );
   }
+  return unit.code;
 }
 
 export async function resolveUnitIdForArticle(
@@ -1931,8 +1952,7 @@ export async function resolveUnitIdForArticle(
   articleId: string,
   preferredUnitCode: string | null | undefined
 ): Promise<string> {
-  const preferred = preferredUnitCode?.trim() ? preferredUnitCode.trim() : null;
-  let code: string | null = preferred;
+  let code: string | null = preferredUnitCode?.trim() ? preferredUnitCode.trim() : null;
 
   if (!code) {
     const a = await client.query<{ unite: string | null }>(
@@ -1944,8 +1964,8 @@ export async function resolveUnitIdForArticle(
 
   if (!code) code = "u";
 
-  const u = await client.query<{ id: string }>(`SELECT id::text AS id FROM public.units WHERE code = $1`, [code]);
-  const unitId = u.rows[0]?.id;
+  const unit = await findCanonicalStockUnit(client, code);
+  const unitId = unit?.id;
   if (!unitId) {
     throw new HttpError(400, "UNKNOWN_UNIT", `Unknown unit code: ${code}`);
   }
@@ -3154,7 +3174,7 @@ export async function repoCreateArticleTx(
   body: CreateArticleBodyDTO,
   audit: AuditContext
 ): Promise<CreatedArticleSummary> {
-  await assertCanonicalArticleUnit(client, body.unite);
+  const canonicalUnit = await assertCanonicalArticleUnit(client, body.unite);
 
   const normalized = await normalizeArticleState({
     article_type: body.article_type,
@@ -3243,7 +3263,7 @@ export async function repoCreateArticleTx(
       normalized.family_code,
       normalized.stock_managed,
       normalized.piece_technique_id,
-      body.unite ?? null,
+      canonicalUnit,
       articleId,
       null,
       normalized.version_number,
@@ -3560,9 +3580,9 @@ export async function repoUpdateArticle(
       await ensureArticleCanDisableStockManagement(client, id);
     }
 
-    if (patch.unite !== undefined) {
-      await assertCanonicalArticleUnit(client, patch.unite);
-    }
+    const canonicalUnit = patch.unite !== undefined
+      ? await assertCanonicalArticleUnit(client, patch.unite)
+      : undefined;
 
     if (patch.designation !== undefined) sets.push(`designation = ${push(patch.designation)}`);
     if (patch.designation_secondary !== undefined) sets.push(`designation_secondary = ${push(patch.designation_secondary)}`);
@@ -3575,7 +3595,7 @@ export async function repoUpdateArticle(
     sets.push(`family_code = ${push(normalized.family_code)}`);
     sets.push(`stock_managed = ${push(normalized.stock_managed)}`);
     sets.push(`piece_technique_id = ${push(normalized.piece_technique_id)}::uuid`);
-    if (patch.unite !== undefined) sets.push(`unite = ${push(patch.unite)}`);
+    if (patch.unite !== undefined) sets.push(`unite = ${push(canonicalUnit ?? null)}`);
     sets.push(`lot_tracking = ${push(normalized.lot_tracking)}`);
     if (patch.is_sold !== undefined) sets.push(`is_sold = ${push(patch.is_sold)}`);
     if (patch.notes !== undefined) sets.push(`notes = ${push(patch.notes)}`);

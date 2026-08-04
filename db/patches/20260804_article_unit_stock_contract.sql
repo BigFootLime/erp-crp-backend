@@ -1,44 +1,63 @@
 -- #475 / BUG-CERP-0013 — Canonical article/stock unit contract.
 --
--- `public.units.code` is the sole referential used by stock movements and is
--- now also validated when an article is created or updated. Existing article
--- values are never rewritten: this additive seed makes the already accepted
--- linear unit `mm` resolvable by the stock ledger.
+-- public.units remains the authoritative referential. The application maps
+-- historical piece aliases (PCE/PCS/PC, any case) to `u` and normalises other
+-- codes to lower case without converting quantities. Existing article values
+-- are intentionally left untouched and remain readable through that adapter.
 --
--- Idempotent. Run the companion preflight/verify scripts manually on cerp_test;
--- do not run this patch against production as part of this change.
+-- The canonical codes observed in article, stock and production contracts are
+-- seeded additively: u already comes from 20260223; this patch ensures mm, m
+-- and kg. It is idempotent and records exactly which rows it introduced so the
+-- companion rollback cannot delete pre-existing reference data.
 
 BEGIN;
 
 DO $$
 BEGIN
   IF to_regclass('public.units') IS NULL THEN
-    RAISE EXCEPTION '#475: public.units is required before adding the mm unit';
+    RAISE EXCEPTION '#475: public.units is required';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.units WHERE lower(code::text) = 'u') THEN
+    RAISE EXCEPTION '#475: canonical base unit u must be seeded by 20260223 first';
   END IF;
 END $$;
 
--- Keep whether this patch introduced `mm`: rollback must never delete a unit
--- that predated the patch. This tiny marker is dropped by the guarded rollback.
-CREATE TABLE IF NOT EXISTS public.cerp_patch_20260804_unit_mm (
-  singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+CREATE TABLE IF NOT EXISTS public.cerp_patch_20260804_stock_units (
+  code text PRIMARY KEY,
+  unit_id text NOT NULL,
   inserted_by_patch boolean NOT NULL
 );
 
 DO $$
-DECLARE introduced boolean;
+DECLARE seed record;
+        v_unit_id text;
 BEGIN
-  SELECT inserted_by_patch INTO introduced
-  FROM public.cerp_patch_20260804_unit_mm
-  WHERE singleton = true;
+  FOR seed IN
+    SELECT * FROM (VALUES
+      ('mm'::text, 'Millimètre'::text),
+      ('m'::text,  'Mètre'::text),
+      ('kg'::text, 'Kilogramme'::text)
+    ) AS seeded(code, label)
+  LOOP
+    IF NOT EXISTS (SELECT 1 FROM public.cerp_patch_20260804_stock_units WHERE code = seed.code) THEN
+      SELECT id::text INTO v_unit_id
+      FROM public.units
+      WHERE lower(code::text) = seed.code
+      LIMIT 1;
 
-  IF introduced IS NULL THEN
-    IF EXISTS (SELECT 1 FROM public.units WHERE code = 'mm') THEN
-      INSERT INTO public.cerp_patch_20260804_unit_mm (singleton, inserted_by_patch) VALUES (true, false);
-    ELSE
-      INSERT INTO public.units (code, label) VALUES ('mm', 'Millimètre');
-      INSERT INTO public.cerp_patch_20260804_unit_mm (singleton, inserted_by_patch) VALUES (true, true);
+      IF v_unit_id IS NOT NULL THEN
+        INSERT INTO public.cerp_patch_20260804_stock_units (code, unit_id, inserted_by_patch)
+        VALUES (seed.code, v_unit_id, false);
+      ELSE
+        INSERT INTO public.units (code, label)
+        VALUES (seed.code, seed.label)
+        RETURNING id::text INTO v_unit_id;
+
+        INSERT INTO public.cerp_patch_20260804_stock_units (code, unit_id, inserted_by_patch)
+        VALUES (seed.code, v_unit_id, true);
+      END IF;
     END IF;
-  END IF;
+  END LOOP;
 END $$;
 
 COMMIT;
