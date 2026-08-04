@@ -9,7 +9,8 @@ import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
-import { repoEnsureCommandeWorkflowStatus } from "../../commande-client/repository/commande-client.repository";
+import { repoApplyCommandeWorkflowMilestone } from "../../commande-client/repository/commande-client.repository";
+import { canActOnCommandeWorkflowCheckpoint } from "../../commande-client/domain/commande-client-rbac";
 import type { AppNotification } from "../../notifications/types/notifications.types";
 import { roleCanForcePlanningOverlap } from "../domain/planning-rbac";
 import type {
@@ -637,6 +638,7 @@ async function syncLinkedOfOperationFromPlanning(params: {
   tx: DbQueryer;
   of_operation_id: string;
   user_id: number;
+  user_role: string | null | undefined;
 }): Promise<{ of_id: number | null; notifications: AppNotification[] }> {
   const summary = await params.tx.query<{
     of_id: string;
@@ -704,6 +706,7 @@ async function syncLinkedOfOperationFromPlanning(params: {
     tx: params.tx,
     of_id: ofId,
     user_id: params.user_id,
+    user_role: params.user_role,
   });
 
   return { of_id: ofId, notifications };
@@ -713,6 +716,7 @@ async function maybePromoteOfAndCommandeAfterPlanning(params: {
   tx: DbQueryer;
   of_id: number;
   user_id: number;
+  user_role: string | null | undefined;
 }): Promise<AppNotification[]> {
   const statusRes = await params.tx.query<{
     statut: string;
@@ -722,12 +726,14 @@ async function maybePromoteOfAndCommandeAfterPlanning(params: {
     done_ops: number;
     running_ops: number;
     active_events: number;
+    order_type: string | null;
   }>(
     `
       SELECT
         o.statut::text AS statut,
         o.commande_id::text AS commande_id,
         o.numero,
+        cc.order_type,
         COUNT(op.id)::int AS total_ops,
         COUNT(op.id) FILTER (WHERE op.status = 'DONE'::of_operation_status)::int AS done_ops,
         COUNT(op.id) FILTER (WHERE op.status = 'RUNNING'::of_operation_status)::int AS running_ops,
@@ -760,8 +766,9 @@ async function maybePromoteOfAndCommandeAfterPlanning(params: {
                  WHERE r.of_id = o.id AND r.statut = 'ACTIVE'
               )
             )
+      LEFT JOIN public.commande_client cc ON cc.id = o.commande_id
       WHERE o.id = $1::bigint
-      GROUP BY o.id, o.statut, o.commande_id, o.numero
+      GROUP BY o.id, o.statut, o.commande_id, o.numero, cc.order_type
       LIMIT 1
     `,
     [params.of_id]
@@ -803,16 +810,69 @@ async function maybePromoteOfAndCommandeAfterPlanning(params: {
 
   const commandeId = toNullableInt(row.commande_id, "ordres_fabrication.commande_id");
   if (!commandeId || row.active_events <= 0) return [];
+  const internalOrder = String(row.order_type ?? "").toUpperCase() === "INTERNE";
 
-  const workflow = await repoEnsureCommandeWorkflowStatus({
+  await repoAssertPlanningCheckpointAccess({
     tx: params.tx,
     commande_id: commandeId,
-    nouveau_statut: "PLANIFIEE",
+    user_id: params.user_id,
+    user_role: params.user_role,
+  });
+
+  const workflow = await repoApplyCommandeWorkflowMilestone({
+    tx: params.tx,
+    commande_id: commandeId,
+    nouveau_statut: "PLANNING_VALIDE",
+    cause: internalOrder ? "internal_planning_validation" : "planning_sync",
     commentaire: `Commande automatiquement planifiée à partir de l'OF ${row.numero}`,
     user_id: params.user_id,
+    completed_checkpoint_codes: ["planning_validation"],
+    active_checkpoint_code: internalOrder ? "production_launch" : "ar_preparation",
   });
 
   return workflow.notifications;
+}
+
+export async function repoAssertPlanningCheckpointAccess(params: {
+  tx: DbQueryer;
+  commande_id: number;
+  user_id: number;
+  user_role: string | null | undefined;
+}): Promise<void> {
+  // Global workflow lock order is commande_client -> checkpoint. Keeping the
+  // same order as generic workflow actions prevents a command/checkpoint
+  // inversion when planning auto-promotion runs concurrently.
+  const commande = await params.tx.query<{ id: number }>(
+    `SELECT id::int AS id FROM public.commande_client WHERE id = $1::bigint FOR UPDATE`,
+    [params.commande_id]
+  );
+  if (!commande.rows[0]) throw new HttpError(404, "COMMANDE_NOT_FOUND", "Commande introuvable.");
+  const checkpoint = await params.tx.query<{
+    status: string;
+    responsible_role: string;
+    assigned_user_id: number | null;
+  }>(
+    `
+      SELECT status, responsible_role, assigned_user_id::int AS assigned_user_id
+      FROM public.commande_client_workflow_checkpoint
+      WHERE commande_id = $1::bigint AND checkpoint_code = 'planning_validation'
+      FOR UPDATE
+    `,
+    [params.commande_id]
+  );
+  const row = checkpoint.rows[0];
+  if (!row) throw new HttpError(409, "COMMAND_CHECKPOINT_MISSING", "Le checkpoint planning est absent.");
+  if (!canActOnCommandeWorkflowCheckpoint({
+    user_id: params.user_id,
+    user_role: params.user_role,
+    responsible_role: row.responsible_role,
+    assigned_user_id: row.assigned_user_id,
+  })) {
+    throw new HttpError(403, "WORKFLOW_CHECKPOINT_FORBIDDEN", "Le planning est attribué à un autre rôle ou utilisateur.");
+  }
+  if (row.status !== "active" && row.status !== "done") {
+    throw new HttpError(409, "CHECKPOINT_NOT_ACTIVE", "Le checkpoint planning n'est pas actif.");
+  }
 }
 
 async function loadCommandeIdForOf(tx: DbQueryer, ofId: number): Promise<number | null> {
@@ -888,6 +948,7 @@ export async function repoValidatePlanningForAr(params: {
       client_id: string | null;
       planning_validated_at: string | null;
       ar_sent_at: string | null;
+      order_type: string | null;
     };
 
     const candidatesRes = await client.query<CandidateRow>(
@@ -905,6 +966,7 @@ export async function repoValidatePlanningForAr(params: {
           cc.client_id::text AS client_id,
           cc.planning_validated_at::text AS planning_validated_at,
           cc.ar_sent_at::text AS ar_sent_at
+          ,cc.order_type
         FROM public.commande_client cc
         JOIN candidate_ids ci ON ci.commande_id = cc.id
         ORDER BY cc.numero ASC, cc.id ASC
@@ -942,10 +1004,11 @@ export async function repoValidatePlanningForAr(params: {
 
     const commentaire =
       params.body.commentaire?.trim() ||
-      "Planning valide depuis le planning atelier; AR pret pour preparation manuelle.";
+      "Planning validé depuis le planning atelier ; AR à préparer manuellement.";
 
     for (const row of candidates) {
       const commandeId = toInt(row.commande_id, "commande_client.id");
+      const internalOrder = String(row.order_type ?? "").toUpperCase() === "INTERNE";
       if (row.ar_sent_at) {
         skipped.push({
           commande_id: commandeId,
@@ -961,20 +1024,29 @@ export async function repoValidatePlanningForAr(params: {
           commande_id: commandeId,
           numero: row.numero,
           reason: "ALREADY_READY",
-          message: "Planning deja valide; AR pret.",
+          message: "Planning déjà validé ; AR à préparer.",
         });
         continue;
       }
 
       await client.query("SAVEPOINT planning_validate_commande");
       let transition;
+      await repoAssertPlanningCheckpointAccess({
+        tx: client,
+        commande_id: commandeId,
+        user_id: params.audit.user_id,
+        user_role: params.audit.role,
+      });
       try {
-        transition = await repoEnsureCommandeWorkflowStatus({
+        transition = await repoApplyCommandeWorkflowMilestone({
           tx: client,
           commande_id: commandeId,
-          nouveau_statut: "AR_PRET",
+          nouveau_statut: "PLANNING_VALIDE",
+          cause: internalOrder ? "internal_planning_validation" : "planning_sync",
           commentaire,
           user_id: params.audit.user_id,
+          completed_checkpoint_codes: ["planning_validation"],
+          active_checkpoint_code: internalOrder ? "production_launch" : "ar_preparation",
         });
       } catch (err) {
         await client.query("ROLLBACK TO SAVEPOINT planning_validate_commande");
@@ -992,33 +1064,6 @@ export async function repoValidatePlanningForAr(params: {
       await client.query("RELEASE SAVEPOINT planning_validate_commande");
       notifications.push(...transition.notifications);
 
-      await client.query(
-        `
-          UPDATE public.commande_client_workflow_checkpoint
-          SET
-            status = 'done',
-            completed_at = COALESCE(completed_at, now()),
-            completed_by = COALESCE(completed_by, $2::int),
-            notes = COALESCE($3, notes),
-            updated_at = now()
-          WHERE commande_id = $1
-            AND checkpoint_code IN ('planning_validation', 'ar_preparation')
-            AND status <> 'done'
-        `,
-        [commandeId, params.audit.user_id, commentaire]
-      );
-
-      await client.query(
-        `
-          UPDATE public.commande_client_workflow_checkpoint
-          SET status = 'active', updated_at = now()
-          WHERE commande_id = $1
-            AND checkpoint_code = 'ar_sent'
-            AND status = 'pending'
-        `,
-        [commandeId]
-      );
-
       const milestone = await client.query<{ planning_validated_at: string | null }>(
         `SELECT planning_validated_at::text AS planning_validated_at FROM public.commande_client WHERE id = $1::bigint LIMIT 1`,
         [commandeId]
@@ -1029,7 +1074,7 @@ export async function repoValidatePlanningForAr(params: {
         numero: row.numero,
         client_id: row.client_id,
         planning_validated_at: milestone.rows[0]?.planning_validated_at ?? row.planning_validated_at ?? null,
-        workflow_status: "AR_PRET",
+        workflow_status: "PLANNING_VALIDE",
       });
     }
 
@@ -1671,6 +1716,7 @@ export async function repoCreatePlanningEvent(params: {
         tx: client,
         of_operation_id: b.of_operation_id,
         user_id: params.audit.user_id,
+        user_role: params.audit.role,
       });
       synchronizedOfId = sync.of_id ?? synchronizedOfId;
       notifications = sync.notifications;
@@ -1679,6 +1725,7 @@ export async function repoCreatePlanningEvent(params: {
         tx: client,
         of_id: synchronizedOfId,
         user_id: params.audit.user_id,
+        user_role: params.audit.role,
       });
     }
 
@@ -1981,6 +2028,7 @@ export async function repoPatchPlanningEvent(params: {
         tx: client,
         of_operation_id: before.of_operation_id,
         user_id: params.audit.user_id,
+        user_role: params.audit.role,
       });
       synchronizedOfId = previousSync.of_id ?? synchronizedOfId;
     }
@@ -1990,6 +2038,7 @@ export async function repoPatchPlanningEvent(params: {
         tx: client,
         of_operation_id: nextOfOperationId,
         user_id: params.audit.user_id,
+        user_role: params.audit.role,
       });
       synchronizedOfId = sync.of_id ?? synchronizedOfId;
       notifications = sync.notifications;
@@ -1998,6 +2047,7 @@ export async function repoPatchPlanningEvent(params: {
         tx: client,
         of_id: synchronizedOfId,
         user_id: params.audit.user_id,
+        user_role: params.audit.role,
       });
     }
 
@@ -2116,6 +2166,7 @@ export async function repoArchivePlanningEvent(params: { id: string; audit: Audi
         tx: client,
         of_operation_id: before.of_operation_id,
         user_id: params.audit.user_id,
+        user_role: params.audit.role,
       });
       synchronizedOfId = sync.of_id ?? synchronizedOfId;
       notifications = sync.notifications;
@@ -2262,6 +2313,7 @@ export async function repoRestorePlanningEvent(params: {
         tx: client,
         of_operation_id: before.of_operation_id,
         user_id: params.audit.user_id,
+        user_role: params.audit.role,
       });
       synchronizedOfId = sync.of_id ?? synchronizedOfId;
       notifications = sync.notifications;

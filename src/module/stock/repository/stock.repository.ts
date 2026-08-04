@@ -34,6 +34,10 @@ import {
   type StockLotQualityStatus,
 } from "../domain/stock-availability";
 import { hashStockCommand, normalizeIdempotencyKey } from "../domain/stock-command";
+import {
+  commandeArticleEligibleSql,
+  commandeArticleIneligibilityCodeSql,
+} from "../domain/commande-article-eligibility";
 import type {
   ArticleCategory,
   ArticleBusinessCategory,
@@ -278,20 +282,9 @@ const ARTICLE_PRIMARY_CATEGORY_OPTIONS: Array<{ code: ArticleCategory }> = [
 /**
  * Référentiel des catégories métier d'article.
  *
- * `commande_client_selectable` (#395) — élargi à TOUTES les catégories.
- *
- * Il ne valait `true` que pour `piece_finie_fabriquee`, ce qui rendait la création d'article
- * depuis une commande client inutilisable pour tout le reste : un composant revendu, un
- * achat transformé, une sous-traitance refacturée, un traitement de surface facturé à la
- * ligne ou une matière cédée au client sont tous des choses que CRP vend réellement, et
- * toutes finissaient par un contournement (créer l'article ailleurs, puis revenir).
- *
- * Ce drapeau reste le SEUL levier pour restreindre à nouveau : il pilote à la fois les
- * catégories proposées à la création depuis une commande et le filtre de recherche des
- * lignes de commande. Le repasser à `false` suffit, sans toucher au frontend.
- *
- * `piece_technique_required` n'est PAS élargi : seule une pièce finie fabriquée exige un
- * dossier technique — c'est lui qui produit les OF.
+ * `commande_client_selectable` décrit les catégories qu'un utilisateur peut créer depuis
+ * une commande. La sauvegarde Commande reste canonique : seule une pièce fabriquée, gérée
+ * en stock, active et reliée à une pièce technique est éligible (BUG-CERP-0015).
  */
 const ARTICLE_CATEGORY_OPTIONS: StockArticleCategoryOption[] = [
   {
@@ -308,7 +301,7 @@ const ARTICLE_CATEGORY_OPTIONS: StockArticleCategoryOption[] = [
     code_segment: "MP",
     stock_managed_default: true,
     piece_technique_required: false,
-    commande_client_selectable: true,
+    commande_client_selectable: false,
   },
   {
     code: "traitement_surface",
@@ -316,7 +309,7 @@ const ARTICLE_CATEGORY_OPTIONS: StockArticleCategoryOption[] = [
     code_segment: "TRT",
     stock_managed_default: false,
     piece_technique_required: false,
-    commande_client_selectable: true,
+    commande_client_selectable: false,
   },
   {
     code: "achat_revente",
@@ -324,7 +317,7 @@ const ARTICLE_CATEGORY_OPTIONS: StockArticleCategoryOption[] = [
     code_segment: "ACH",
     stock_managed_default: true,
     piece_technique_required: false,
-    commande_client_selectable: true,
+    commande_client_selectable: false,
   },
   {
     code: "achat_transforme",
@@ -332,7 +325,7 @@ const ARTICLE_CATEGORY_OPTIONS: StockArticleCategoryOption[] = [
     code_segment: "AHT",
     stock_managed_default: true,
     piece_technique_required: false,
-    commande_client_selectable: true,
+    commande_client_selectable: false,
   },
   {
     code: "sous_traitance",
@@ -340,7 +333,7 @@ const ARTICLE_CATEGORY_OPTIONS: StockArticleCategoryOption[] = [
     code_segment: "STA",
     stock_managed_default: false,
     piece_technique_required: false,
-    commande_client_selectable: true,
+    commande_client_selectable: false,
   },
 ];
 
@@ -2718,32 +2711,10 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
   if (filters.lot_tracking !== undefined) where.push(`a.lot_tracking = ${push(filters.lot_tracking)}`);
   if (filters.stock_managed !== undefined) where.push(`a.stock_managed = ${push(filters.stock_managed)}`);
 
-  /**
-   * #395 — Filtre « vendable en commande client », dérivé du référentiel.
-   *
-   * Un article est retenu si sa catégorie primaire OU l'une de ses catégories métier liées est
-   * vendable. Le jeu de codes vient de `ARTICLE_CATEGORY_OPTIONS` : élargir ou restreindre la
-   * vente se fait à cet endroit unique, et la recherche de ligne suit sans redéploiement du
-   * frontend.
-   */
+  /** BUG-CERP-0015 — même prédicat que POST/PATCH /commandes, fermé par défaut. */
   if (filters.commande_client_selectable !== undefined) {
-    const sellable = commandeClientSelectableCategoryCodes();
-    if (sellable.length === 0) {
-      // Référentiel entièrement fermé : ne rien proposer plutôt que tout proposer.
-      where.push(filters.commande_client_selectable ? "FALSE" : "TRUE");
-    } else {
-      const p = push(sellable);
-      const predicate = `(
-        ${normalizedBusinessCategorySql("a.article_category")} = ANY(${p}::text[])
-        OR EXISTS (
-          SELECT 1
-          FROM public.article_category_link acls
-          WHERE acls.article_id = a.id
-            AND acls.category_code = ANY(${p}::text[])
-        )
-      )`;
-      where.push(filters.commande_client_selectable ? predicate : `NOT ${predicate}`);
-    }
+    const predicate = commandeArticleEligibleSql("a");
+    where.push(filters.commande_client_selectable ? predicate : `(${predicate}) IS NOT TRUE`);
   }
 
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
@@ -2785,6 +2756,8 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
       a.lot_tracking,
       a.is_sold,
       a.is_active,
+      ${commandeArticleEligibleSql("a")} AS commande_client_eligible,
+      ${commandeArticleIneligibilityCodeSql("a")} AS commande_client_ineligibility_code,
       a.row_version::int AS row_version,
       a.archived_at::text AS archived_at,
       a.archive_reason,
@@ -2863,6 +2836,8 @@ export async function repoGetArticle(id: string, includeCosts = false): Promise<
          a.lot_tracking,
          a.is_sold,
          a.is_active,
+         ${commandeArticleEligibleSql("a")} AS commande_client_eligible,
+         ${commandeArticleIneligibilityCodeSql("a")} AS commande_client_ineligibility_code,
          a.row_version::int AS row_version,
          a.archived_at::text AS archived_at,
          a.archive_reason,
@@ -6244,43 +6219,108 @@ export async function repoPreviewMovement(
 function buildCompensatingMovementBody(
   detail: StockMovementDetail,
   body: CompensateMovementBodyDTO
-): { movement: CreateMovementBodyDTO | null; blockers: Array<{ code: string; message: string }> } {
+): {
+  movement: CreateMovementBodyDTO | null;
+  blockers: Array<{ code: string; message: string }>;
+  prerequisites: StockMovementCompensationPreview["prerequisites"];
+} {
   const blockers: Array<{ code: string; message: string }> = [];
-  if (detail.movement.status !== "POSTED") {
-    blockers.push({ code: "INVALID_STATUS", message: "Only POSTED movements can be compensated" });
-  }
-  if (!detail.movement.posted_at) {
-    blockers.push({ code: "POSTED_AT_MISSING", message: "Posted movement timestamp is missing" });
-  } else if (
-    new Date(detail.movement.posted_at).getTime() !== new Date(body.expected_posted_at).getTime()
-  ) {
-    blockers.push({
+  const prerequisites: StockMovementCompensationPreview["prerequisites"] = [];
+  const addPrerequisite = (args: {
+    code: string;
+    label: string;
+    satisfied: boolean;
+    successMessage: string;
+    failureMessage: string;
+  }) => {
+    const message = args.satisfied ? args.successMessage : args.failureMessage;
+    prerequisites.push({
+      code: args.code,
+      label: args.label,
+      satisfied: args.satisfied,
+      message,
+    });
+    if (!args.satisfied) blockers.push({ code: args.code, message });
+  };
+
+  addPrerequisite({
+    code: "INVALID_STATUS",
+    label: "Mouvement comptabilisé",
+    satisfied: detail.movement.status === "POSTED",
+    successMessage: "Le mouvement d'origine est comptabilisé et reste immuable.",
+    failureMessage:
+      "Le mouvement doit être comptabilisé (statut POSTED) avant de préparer une compensation.",
+  });
+
+  const hasPostedAt = Boolean(detail.movement.posted_at);
+  addPrerequisite({
+    code: "POSTED_AT_MISSING",
+    label: "Date de comptabilisation disponible",
+    satisfied: hasPostedAt,
+    successMessage: "La date de comptabilisation de l'écriture d'origine est disponible.",
+    failureMessage:
+      "La date de comptabilisation est absente. Rechargez le mouvement ou contactez le support Stock avant de continuer.",
+  });
+
+  if (detail.movement.posted_at) {
+    const postingTimestampMatches =
+      new Date(detail.movement.posted_at).getTime() ===
+      new Date(body.expected_posted_at).getTime();
+    addPrerequisite({
       code: "CONCURRENT_MODIFICATION",
-      message: "Movement posting timestamp no longer matches the preview",
+      label: "Aperçu à jour",
+      satisfied: postingTimestampMatches,
+      successMessage: "Le mouvement n'a pas changé depuis son chargement.",
+      failureMessage:
+        "Le mouvement a changé depuis son chargement. Rechargez la fiche puis relancez la prévisualisation.",
     });
   }
-  if (!detail.lines.length) {
-    blockers.push({ code: "MOVEMENT_LINES_MISSING", message: "Movement has no traceable lines" });
-  }
-  if (
-    detail.movement.movement_type === "SCRAP" ||
-    detail.movement.movement_type === "DEPRECIATE"
-  ) {
-    blockers.push({
-      code: "QUALITY_FLOW_REQUIRED",
-      message: "Scrap and depreciation reversals require a dedicated quality decision",
-    });
-  }
-  if (
-    detail.movement.movement_type === "RESERVE" ||
-    detail.movement.movement_type === "UNRESERVE"
-  ) {
-    blockers.push({
-      code: "RESERVATION_FLOW_REQUIRED",
-      message: "Reservation corrections must use the reservation lifecycle",
-    });
-  }
-  if (blockers.length) return { movement: null, blockers };
+
+  addPrerequisite({
+    code: "MOVEMENT_LINES_MISSING",
+    label: "Lignes de stock traçables",
+    satisfied: detail.lines.length > 0,
+    successMessage: "Les lignes de l'écriture d'origine sont traçables.",
+    failureMessage:
+      "Aucune ligne traçable n'est disponible. Vérifiez l'écriture d'origine avant de continuer.",
+  });
+
+  const movementType = detail.movement.movement_type;
+  const movementTypePrerequisite = (() => {
+    if (movementType === "SCRAP" || movementType === "DEPRECIATE") {
+      return {
+        code: "QUALITY_FLOW_REQUIRED",
+        failureMessage:
+          "Les rebuts et dépréciations se corrigent depuis le flux Qualité dédié.",
+      };
+    }
+    if (movementType === "RESERVE" || movementType === "UNRESERVE") {
+      return {
+        code: "RESERVATION_FLOW_REQUIRED",
+        failureMessage:
+          "Les réservations se corrigent depuis leur cycle de vie dédié.",
+      };
+    }
+    const supported = new Set(["IN", "OUT", "TRANSFER", "ADJUST", "ADJUSTMENT"]);
+    return supported.has(movementType)
+      ? null
+      : {
+          code: "MOVEMENT_NOT_COMPENSABLE",
+          failureMessage:
+            "Ce type de mouvement ne peut pas être compensé automatiquement. Contactez le responsable Stock.",
+        };
+  })();
+  addPrerequisite({
+    code: movementTypePrerequisite?.code ?? "MOVEMENT_TYPE_SUPPORTED",
+    label: "Type de mouvement pris en charge",
+    satisfied: movementTypePrerequisite === null,
+    successMessage: "Le type de mouvement peut produire un brouillon inverse.",
+    failureMessage:
+      movementTypePrerequisite?.failureMessage ??
+      "Ce type de mouvement ne peut pas être compensé automatiquement.",
+  });
+
+  if (blockers.length) return { movement: null, blockers, prerequisites };
 
   let reverseType: CreateMovementBodyDTO["movement_type"];
   switch (detail.movement.movement_type) {
@@ -6300,7 +6340,14 @@ function buildCompensatingMovementBody(
     default:
       return {
         movement: null,
-        blockers: [{ code: "MOVEMENT_NOT_COMPENSABLE", message: "Movement type cannot be compensated" }],
+        blockers: [
+          {
+            code: "MOVEMENT_NOT_COMPENSABLE",
+            message:
+              "Ce type de mouvement ne peut pas être compensé automatiquement. Contactez le responsable Stock.",
+          },
+        ],
+        prerequisites,
       };
   }
 
@@ -6365,6 +6412,7 @@ function buildCompensatingMovementBody(
 
   return {
     blockers,
+    prerequisites,
     movement: {
       movement_type: reverseType,
       effective_at: new Date().toISOString(),
@@ -6397,13 +6445,24 @@ export async function repoPreviewMovementCompensation(
     [id]
   );
   const built = buildCompensatingMovementBody(detail, body);
-  if (existing.rows[0]) {
+  const existingCompensation = existing.rows[0] ?? null;
+  const noExistingCompensation = !existingCompensation;
+  const existingMessage = existingCompensation
+    ? `La compensation ${existingCompensation.movement_no ?? existingCompensation.id} existe déjà au statut ${existingCompensation.status}. Ouvrez-la au lieu de créer un doublon.`
+    : "Aucune compensation active n'existe pour ce mouvement.";
+  built.prerequisites.push({
+    code: "COMPENSATION_ALREADY_EXISTS",
+    label: "Aucune compensation déjà active",
+    satisfied: noExistingCompensation,
+    message: existingMessage,
+  });
+  if (existingCompensation) {
     built.blockers.push({
       code: "COMPENSATION_ALREADY_EXISTS",
-      message: `A ${existing.rows[0].status} compensation already exists`,
+      message: existingMessage,
     });
   }
-  const proposed = built.movement
+  const proposed = built.blockers.length === 0 && built.movement
     ? {
         movement_type: built.movement.movement_type,
         source_document_type: "STOCK_COMPENSATION" as const,
@@ -6425,10 +6484,19 @@ export async function repoPreviewMovementCompensation(
     : null;
 
   return {
+    authoritative: true,
+    as_of: new Date().toISOString(),
     original_movement_id: id,
     original_movement_no: detail.movement.movement_no,
+    outcome: existingCompensation
+      ? "ALREADY_COMPENSATED"
+      : built.blockers.length === 0
+        ? "ELIGIBLE"
+        : "INELIGIBLE",
     compensable: built.blockers.length === 0,
     blockers: built.blockers,
+    prerequisites: built.prerequisites,
+    existing_compensation: existingCompensation,
     proposed_movement: proposed,
   };
 }
@@ -6466,7 +6534,7 @@ export async function repoCompensateMovement(
     if (!preview.compensable || !preview.proposed_movement) {
       const blocker = preview.blockers[0] ?? {
         code: "MOVEMENT_NOT_COMPENSABLE",
-        message: "Movement cannot be compensated",
+        message: "Le mouvement ne peut pas être compensé.",
       };
       throw new HttpError(409, blocker.code, blocker.message, { blockers: preview.blockers });
     }
@@ -6475,7 +6543,11 @@ export async function repoCompensateMovement(
     if (!detail) return null;
     const built = buildCompensatingMovementBody(detail, body);
     if (!built.movement) {
-      throw new HttpError(409, "MOVEMENT_NOT_COMPENSABLE", "Movement cannot be compensated");
+      throw new HttpError(
+        409,
+        "MOVEMENT_NOT_COMPENSABLE",
+        "Le mouvement ne peut pas être compensé."
+      );
     }
     const derivedKeyHash = hashStockCommand("MOVEMENT_COMPENSATION_CREATE_KEY", {
       actor_user_id: audit.user_id,

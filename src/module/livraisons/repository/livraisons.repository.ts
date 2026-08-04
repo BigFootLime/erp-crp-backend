@@ -7,6 +7,7 @@ import pool from "../../../config/database"
 import { canonicalizeStockUnitCode } from "../../../shared/stock-unit"
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
+import { normalizeCommandeWorkflowStatus } from "../../commande-client/workflow/commande-client-workflow.definition"
 
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
 import { isLivraisonTransitionAllowed } from "../domain/livraisons-policy"
@@ -2507,18 +2508,86 @@ export async function repoCreateLivraisonFromCommande(
   try {
     if (ownsTransaction) await db.query("BEGIN")
 
-    const cmdRes = await db.query<{ id: number; numero: string; client_id: string }>(
-      `SELECT id, numero, client_id FROM commande_client WHERE id = $1`,
+    const cmdRes = await db.query<{
+      id: number
+      numero: string
+      client_id: string | null
+      order_type: string | null
+      raw_statut: string | null
+      dest_stock_magasin_id: string | null
+      dest_stock_emplacement_id: number | null
+    }>(
+      `
+        SELECT
+          cc.id,
+          cc.numero,
+          cc.client_id,
+          cc.order_type,
+          cc.dest_stock_magasin_id::text AS dest_stock_magasin_id,
+          cc.dest_stock_emplacement_id::int AS dest_stock_emplacement_id,
+          st.nouveau_statut AS raw_statut
+        FROM public.commande_client cc
+        LEFT JOIN LATERAL (
+          SELECT ch.nouveau_statut
+          FROM public.commande_historique ch
+          WHERE ch.commande_id = cc.id
+          ORDER BY ch.date_action DESC, ch.id DESC
+          LIMIT 1
+        ) st ON TRUE
+        WHERE cc.id = $1
+        FOR UPDATE OF cc
+      `,
       [commandeId]
     )
     const cmd = cmdRes.rows[0] ?? null
     if (!cmd) throw new HttpError(404, "COMMANDE_NOT_FOUND", "Commande not found")
 
-    const clientRes = await db.query<{ delivery_address_id: string | null }>(
-      `SELECT delivery_address_id::text AS delivery_address_id FROM clients WHERE client_id = $1`,
-      [cmd.client_id]
-    )
-    const deliveryAddressId = clientRes.rows[0]?.delivery_address_id ?? null
+    const internalOrder = String(cmd.order_type ?? "").toUpperCase() === "INTERNE"
+    const currentStatus = cmd.raw_statut === null ? "BROUILLON" : normalizeCommandeWorkflowStatus(cmd.raw_statut)
+    if (!currentStatus) {
+      throw new HttpError(409, "COMMAND_STATUS_HISTORY_INVALID", "Le dernier statut de la commande est inconnu.")
+    }
+    if (internalOrder && currentStatus !== "PRET_LIVRAISON") {
+      throw new HttpError(
+        409,
+        "INTERNAL_DELIVERY_QUALITY_RELEASE_REQUIRED",
+        "Le BL interne ne peut être créé qu'après fabrication et libération qualité."
+      )
+    }
+    if (internalOrder && (!cmd.dest_stock_magasin_id || cmd.dest_stock_emplacement_id === null)) {
+      throw new HttpError(
+        409,
+        "INTERNAL_STOCK_DESTINATION_REQUIRED",
+        "La destination magasin/emplacement de la commande interne est obligatoire pour créer le BL."
+      )
+    }
+
+    let deliveryClientId = cmd.client_id
+    if (internalOrder && !deliveryClientId) {
+      const setting = await db.query<{ value_text: string | null }>(
+        `SELECT value_text FROM public.erp_settings WHERE key = 'commandes.internal_client_id' LIMIT 1`
+      )
+      deliveryClientId = setting.rows[0]?.value_text?.trim() || null
+    }
+    if (!deliveryClientId) {
+      throw new HttpError(
+        409,
+        internalOrder ? "INTERNAL_CLIENT_REQUIRED" : "COMMANDE_CLIENT_REQUIRED",
+        "Un client de livraison doit être configuré pour créer le BL."
+      )
+    }
+
+    let deliveryAddressId: string | null = null
+    if (!internalOrder) {
+      const clientRes = await db.query<{ delivery_address_id: string | null }>(
+        `SELECT delivery_address_id::text AS delivery_address_id FROM clients WHERE client_id = $1`,
+        [deliveryClientId]
+      )
+      deliveryAddressId = clientRes.rows[0]?.delivery_address_id ?? null
+    }
+    const internalDestination = internalOrder
+      ? `Destination stock interne: magasin ${cmd.dest_stock_magasin_id}, emplacement ${cmd.dest_stock_emplacement_id}`
+      : null
 
     const hasRoleColumn = await hasCommandeToAffaireRoleColumn(db)
     const affaireSql = hasRoleColumn
@@ -2558,14 +2627,15 @@ export async function repoCreateLivraisonFromCommande(
           commande_id,
           affaire_id,
           adresse_livraison_id,
+          commentaire_interne,
           statut,
           date_creation,
           created_by,
           updated_by
-        ) VALUES ($1,$2,$3,$4,$5::uuid,'DRAFT',CURRENT_DATE,$6,$6)
+        ) VALUES ($1,$2,$3,$4,$5::uuid,$6,'DRAFT',CURRENT_DATE,$7,$7)
         RETURNING id::text AS id
         `,
-        [numero, cmd.client_id, cmd.id, affaireId, deliveryAddressId, userId]
+        [numero, deliveryClientId, cmd.id, affaireId, deliveryAddressId, internalDestination, userId]
       )
 
       id = ins.rows[0]?.id ?? ""
@@ -2657,6 +2727,12 @@ export async function repoCreateLivraisonFromCommande(
         numero,
         commande_id: cmd.id,
         commande_numero: cmd.numero,
+        internal_stock_destination: internalOrder
+          ? {
+              magasin_id: cmd.dest_stock_magasin_id,
+              emplacement_id: cmd.dest_stock_emplacement_id,
+            }
+          : null,
         reservations_transferred: transferredReservations.attached,
         prepared: transferredReservations.fullyAllocated,
       },

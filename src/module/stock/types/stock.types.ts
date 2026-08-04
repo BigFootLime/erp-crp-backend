@@ -1,3 +1,6 @@
+import type { CommandeArticleIneligibilityCode } from "../domain/commande-article-eligibility";
+export type { CommandeArticleIneligibilityCode } from "../domain/commande-article-eligibility";
+
 export type Paginated<T> = {
   items: T[];
   total: number;
@@ -172,6 +175,8 @@ export type StockArticleListItem = {
   lot_tracking: boolean;
   is_sold: boolean;
   is_active: boolean;
+  commande_client_eligible: boolean;
+  commande_client_ineligibility_code: CommandeArticleIneligibilityCode | null;
   row_version: number;
   archived_at: string | null;
   archive_reason: string | null;
@@ -475,10 +480,24 @@ export type StockMovementDetail = {
 };
 
 export type StockMovementCompensationPreview = {
+  authoritative: true;
+  as_of: string;
   original_movement_id: string;
   original_movement_no: string | null;
+  outcome: "ELIGIBLE" | "INELIGIBLE" | "ALREADY_COMPENSATED";
   compensable: boolean;
   blockers: Array<{ code: string; message: string }>;
+  prerequisites: Array<{
+    code: string;
+    label: string;
+    satisfied: boolean;
+    message: string;
+  }>;
+  existing_compensation: {
+    id: string;
+    movement_no: string | null;
+    status: string;
+  } | null;
   proposed_movement: {
     movement_type: StockMovementType;
     source_document_type: "STOCK_COMPENSATION";
