@@ -10,6 +10,7 @@ vi.mock("../repository/pieces-techniques.repository", async (importOriginal) => 
 import type { CreatePieceTechniqueBodyDTO } from "../validators/pieces-techniques.validators";
 import {
   createPieceTechniqueSVC,
+  createPieceTechniqueWithReplaySVC,
   pieceTechniqueCreateCompatibleRequestHashes,
   pieceTechniqueCreateRequestHash,
 } from "./pieces-techniques.service";
@@ -44,7 +45,10 @@ const audit = {
 describe("#309 — service de création idempotente", () => {
   beforeEach(() => {
     mocks.create.mockReset();
-    mocks.create.mockResolvedValue({ id: "piece-1", code_piece: "045-10233-000" });
+    mocks.create.mockResolvedValue({
+      piece: { id: "piece-1", code_piece: "045-10233-000" },
+      replayed: false,
+    });
   });
 
   it("transmet la clé et le hash du DTO validé au repository transactionnel", async () => {
@@ -70,5 +74,50 @@ describe("#309 — service de création idempotente", () => {
 
     expect(hashes).toContain(pieceTechniqueCreateRequestHash(body));
     expect(new Set(hashes).size).toBe(2);
+  });
+
+  it("préserve le flag de rejeu pour le contrôleur HTTP sans casser l'appel historique", async () => {
+    mocks.create.mockResolvedValueOnce({
+      piece: { id: "piece-1", code_piece: "045-10233-000", bom: [], operations: [], achats: [] },
+      replayed: true,
+    });
+
+    const httpResult = await createPieceTechniqueWithReplaySVC(body, audit, "wizard-309-key-01");
+    expect(httpResult).toMatchObject({ replayed: true, piece: { id: "piece-1" } });
+
+    mocks.create.mockResolvedValueOnce({
+      piece: { id: "piece-1", code_piece: "045-10233-000" },
+      replayed: false,
+    });
+    await expect(createPieceTechniqueSVC(body, audit, "wizard-309-key-02")).resolves.toMatchObject({
+      id: "piece-1",
+    });
+  });
+
+  it("ne transforme jamais la contrainte d'idempotence en CODE_ALREADY_EXISTS", async () => {
+    const idempotencyViolation = Object.assign(new Error("duplicate idempotency key"), {
+      code: "23505",
+      constraint: "piece_technique_create_idempotence_pkey",
+    });
+    mocks.create.mockRejectedValueOnce(idempotencyViolation);
+
+    await expect(
+      createPieceTechniqueWithReplaySVC(body, audit, "wizard-309-key-01")
+    ).rejects.toBe(idempotencyViolation);
+  });
+
+  it("continue à traduire une autre contrainte unique métier", async () => {
+    mocks.create.mockRejectedValueOnce(
+      Object.assign(new Error("duplicate code"), {
+        code: "23505",
+        constraint: "pieces_techniques_code_piece_key",
+        detail: "Key (code_piece)=(045-10233-000) already exists",
+      })
+    );
+
+    await expect(createPieceTechniqueWithReplaySVC(body, audit, "wizard-309-key-01")).rejects.toMatchObject({
+      status: 409,
+      code: "CODE_ALREADY_EXISTS",
+    });
   });
 });

@@ -1648,6 +1648,28 @@ async function lookupClientCompanyName(tx: Pick<PoolClient, "query">, clientId: 
   return typeof name === "string" && name.trim().length > 0 ? name.trim() : null;
 }
 
+export const PIECE_TECHNIQUE_IDEMPOTENCY_CONSTRAINT = "piece_technique_create_idempotence_pkey";
+
+export type RepoCreatePieceTechniqueResult = {
+  piece: PieceTechnique;
+  replayed: boolean;
+};
+
+function idempotencyKeyReusedError(): HttpError {
+  return new HttpError(
+    409,
+    "IDEMPOTENCY_KEY_REUSED",
+    "Cette clé d’idempotence a déjà servi avec une autre pièce technique."
+  );
+}
+
+function isIdempotencyKeyUniqueViolation(err: unknown): boolean {
+  const pg = err as { code?: unknown; constraint?: unknown } | null;
+  return pg?.code === "23505" && pg.constraint === PIECE_TECHNIQUE_IDEMPOTENCY_CONSTRAINT;
+}
+
+const CREATE_REPLAY_INCLUDES = new Set(["nomenclature", "operations", "achats"]);
+
 export async function repoCreatePieceTechnique(
   body: CreatePieceTechniqueBodyDTO & {
     statut: PieceTechniqueStatut;
@@ -1659,7 +1681,7 @@ export async function repoCreatePieceTechnique(
   idempotencyKey?: string | null,
   validatedRequestHash?: string,
   compatibleRequestHashes: readonly string[] = []
-): Promise<PieceTechnique> {
+): Promise<RepoCreatePieceTechniqueResult> {
   const client = await db.connect();
   // Conserve le hash historique : une clé déjà consommée avant #404 doit
   // continuer à rejouer la même pièce, même si son ancien payload portait une
@@ -1671,6 +1693,13 @@ export async function repoCreatePieceTechnique(
     await client.query("BEGIN");
 
     if (idempotencyKey) {
+      // Un SELECT FOR UPDATE ne verrouille aucune « ligne absente ». Le verrou consultatif
+      // transactionnel sérialise donc toutes les créations portant LA MÊME clé avant la
+      // première écriture métier. Le second appel peut alors décider replay/409 proprement.
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtext('piece-technique-create'), hashtext($1))",
+        [idempotencyKey]
+      );
       const replay = await client.query<{ piece_technique_id: string; request_hash: string }>(
         `SELECT piece_technique_id::text AS piece_technique_id, request_hash
          FROM public.piece_technique_create_idempotence
@@ -1680,12 +1709,12 @@ export async function repoCreatePieceTechnique(
       );
       if (replay.rows[0]) {
         if (!acceptedRequestHashes.has(replay.rows[0].request_hash)) {
-          throw new HttpError(409, "IDEMPOTENCY_KEY_REUSED", "Cette clé d’idempotence a déjà servi avec une autre pièce technique.");
+          throw idempotencyKeyReusedError();
         }
         await client.query("ROLLBACK");
-        const existing = await repoGetPieceTechnique(replay.rows[0].piece_technique_id, new Set());
+        const existing = await repoGetPieceTechnique(replay.rows[0].piece_technique_id, CREATE_REPLAY_INCLUDES);
         if (!existing) throw new Error("Idempotent piece technique no longer exists");
-        return existing;
+        return { piece: existing, replayed: true };
       }
     }
 
@@ -1859,19 +1888,24 @@ export async function repoCreatePieceTechnique(
     }
 
     await client.query("COMMIT");
-    return piece;
+    return { piece, replayed: false };
   } catch (err) {
     await client.query("ROLLBACK");
-    const code = (err as { code?: unknown } | null)?.code;
-    if (idempotencyKey && code === "23505") {
+    if (idempotencyKey && isIdempotencyKeyUniqueViolation(err)) {
       const replay = await db.query<{ piece_technique_id: string; request_hash: string }>(
         `SELECT piece_technique_id::text AS piece_technique_id, request_hash
          FROM public.piece_technique_create_idempotence WHERE idempotency_key = $1`,
         [idempotencyKey]
       );
-      if (replay.rows[0] && acceptedRequestHashes.has(replay.rows[0].request_hash)) {
-        const existing = await repoGetPieceTechnique(replay.rows[0].piece_technique_id, new Set());
-        if (existing) return existing;
+      if (replay.rows[0]) {
+        if (!acceptedRequestHashes.has(replay.rows[0].request_hash)) {
+          throw idempotencyKeyReusedError();
+        }
+        const existing = await repoGetPieceTechnique(
+          replay.rows[0].piece_technique_id,
+          CREATE_REPLAY_INCLUDES
+        );
+        if (existing) return { piece: existing, replayed: true };
       }
     }
     throw err;

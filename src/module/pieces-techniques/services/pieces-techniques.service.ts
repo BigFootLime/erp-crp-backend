@@ -43,7 +43,9 @@ import {
   repoUpdatePieceTechnique,
   repoUpdatePieceTechniqueStatus,
   repoCreatePieceTechnique,
+  PIECE_TECHNIQUE_IDEMPOTENCY_CONSTRAINT,
   type AuditContext,
+  type RepoCreatePieceTechniqueResult,
 } from "../repository/pieces-techniques.repository";
 
 type UploadedDocument = Express.Multer.File;
@@ -127,6 +129,15 @@ export async function createPieceTechniqueSVC(
   audit: AuditContext,
   idempotencyKey?: string | null
 ) {
+  return (await createPieceTechniqueWithReplaySVC(body, audit, idempotencyKey)).piece;
+}
+
+/** Variante HTTP : conserve l'information 201 (création) / 200 (rejeu). */
+export async function createPieceTechniqueWithReplaySVC(
+  body: CreatePieceTechniqueBodyDTO,
+  audit: AuditContext,
+  idempotencyKey?: string | null
+): Promise<RepoCreatePieceTechniqueResult> {
   const statut = body.statut ?? "DRAFT";
   const enFabrication = statut === "IN_FABRICATION";
 
@@ -155,9 +166,9 @@ export async function createPieceTechniqueSVC(
     );
   } catch (err: unknown) {
     // pg unique violation
-    const code = (err as { code?: unknown } | null)?.code;
-    const detail = (err as { detail?: unknown } | null)?.detail;
-    if (code === "23505") {
+    const pg = err as { code?: unknown; constraint?: unknown; detail?: unknown } | null;
+    if (pg?.code === "23505" && pg.constraint !== PIECE_TECHNIQUE_IDEMPOTENCY_CONSTRAINT) {
+      const detail = pg.detail;
       const msg = typeof detail === "string" && detail.includes("code_piece") ? "Code de pièce déjà utilisé" : "Conflit de contrainte";
       throw new HttpError(409, "CODE_ALREADY_EXISTS", msg);
     }

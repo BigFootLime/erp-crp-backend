@@ -62,6 +62,7 @@ import {
   updatePieceTechniqueStatusSVC,
   createPieceTechniqueSVC,
   pieceTechniqueCreateCompatibleRequestHashes,
+  createPieceTechniqueWithReplaySVC,
   attachPieceTechniqueDocumentsSVC,
   downloadPieceTechniqueDocumentSVC,
   listPieceTechniqueDocumentsSVC,
@@ -163,8 +164,8 @@ export const createPieceTechnique: RequestHandler = async (req, res, next) => {
 
     // La clé entre dans LA MÊME transaction que l'insertion métier. Le pré-contrôle
     // ci-dessus optimise le rejeu séquentiel ; l'unicité en base tranche les courses.
-    const out = await createPieceTechniqueSVC(body, audit, idempotencyKey)
-    res.status(201).json(out)
+    const out = await createPieceTechniqueWithReplaySVC(body, audit, idempotencyKey)
+    res.status(out.replayed ? 200 : 201).json(out.piece)
   } catch (err) {
     next(err)
   }
