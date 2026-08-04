@@ -12,10 +12,19 @@ Tout nouvel upload HTTP passe par `src/shared/uploads/secure-upload.ts` et une p
 - refuse les fichiers vides, les exécutables renommés et les doublons de contenu dans un même envoi ;
 - calcule une empreinte SHA-256 et publie le résultat du scan dans `file.uploadSecurity` ;
 - conserve les fichiers disque dans `CERP_TMP_ROOT/upload-quarantine/<usage>` jusqu'à validation ;
-- supprime le staging après la réponse et compense les destinations enregistrées si la requête échoue ou est interrompue ;
+- supprime après la réponse uniquement le staging encore sous sa responsabilité ;
+- ne supprime une destination finale qu'après un `ROLLBACK` pré-`COMMIT`
+  confirmé, ou après un rapprochement sur une nouvelle connexion prouvant que
+  le `COMMIT` tenté n'a pas été appliqué ;
 - journalise usage, acteur, requête, volume, résultat et statut du scan, sans nom, chemin ni contenu du fichier.
 
-Les documents déjà stockés ne sont pas revalidés par cette politique. Le téléchargement vérifie uniquement que le fichier réel existe, est régulier et reste dans une racine autorisée après résolution des liens symboliques. Les réponses ajoutent `nosniff`, `Cache-Control: private, no-store`, une politique cross-origin de même origine et un `Content-Disposition` neutralisé.
+Les documents déjà stockés ne sont pas revalidés par cette politique. Le
+téléchargement valide le chemin puis ouvre le fichier sans suivre le dernier
+lien symbolique, compare `dev`/`ino`/taille avec la validation et sert exactement
+ce descripteur. Les réponses ajoutent `nosniff`, `Cache-Control: private,
+no-store`, une politique cross-origin de même origine et un
+`Content-Disposition` neutralisé. La GED stage sur disque et traite par flux son
+plafond de 512 Mo ; aucun Buffer de cette taille n'est créé.
 
 ## Matrice par usage
 
@@ -38,11 +47,18 @@ Les plafonds GED et Project Office sont des plafonds de transport. Les règles d
 
 Variables de configuration :
 
-- `CERP_UPLOAD_SCAN_MODE=off|monitor|enforce` ;
+- `CERP_UPLOAD_SCAN_MODE=off|monitor|enforce` ; hors tests, une valeur absente
+  vaut `enforce` (y compris avec `NODE_ENV=development`) ;
 - `CERP_UPLOAD_SCAN_PROVIDER=clamdscan` pour activer l'adaptateur ClamAV ;
 - `CERP_UPLOAD_SCANNER_COMMAND` pour remplacer le nom de l'exécutable, sans arguments shell.
 
-Sans mode explicite, le développement utilise `monitor` et la production utilise `enforce`. Une valeur de mode invalide devient également `enforce`. En mode `enforce`, un scanner absent ou indisponible renvoie `503 UPLOAD_SCAN_UNAVAILABLE` et aucun fichier n'est persisté. `monitor` conserve le statut `unavailable` dans l'audit mais n'affirme jamais qu'un antivirus a validé le contenu. `off` est réservé aux tests et au rollback d'urgence approuvé.
+Le runtime de tests utilise seul `monitor` par défaut. Hors tests, une valeur de
+mode invalide bloque le preflight de démarrage. En mode `enforce`,
+`CERP_UPLOAD_SCAN_PROVIDER=clamdscan` est obligatoire au démarrage ; un scanner
+ensuite absent ou indisponible renvoie `503 UPLOAD_SCAN_UNAVAILABLE` et aucun
+fichier n'est persisté. `monitor` conserve le statut `unavailable` dans l'audit
+mais n'affirme jamais qu'un antivirus a validé le contenu. `off` est réservé aux
+tests et au rollback d'urgence approuvé.
 
 Déploiement recommandé :
 
@@ -65,6 +81,13 @@ Après un arrêt brutal, traiter uniquement le staging :
 5. supprimer cette quarantaine seulement après la durée de rétention opérationnelle convenue.
 
 Ne jamais appliquer cette règle d'âge à `CERP_DOCUMENTS_ROOT`, au coffre GED ou aux preuves Project Office. Pour un orphelin supposé dans un stockage final, produire d'abord un rapprochement lecture seule entre les références de métadonnées et les chemins réels, exclure les documents historiques et les versions retenues, puis déplacer les candidats vers une quarantaine récupérable. Aucune suppression finale ne doit être automatisée à partir du seul nom de fichier.
+
+Une fermeture HTTP n'est jamais une preuve de rollback : elle peut survenir
+après un `COMMIT` réussi. Si l'accusé de réception du `COMMIT` est perdu, les
+modules Commande, GED et Project Office interrogent une nouvelle connexion.
+Un état partiel ou une panne de rapprochement préserve le fichier, renvoie une
+erreur d'incertitude et laisse l'opérateur appliquer le rapprochement lecture
+seule ci-dessus.
 
 ## Vérification minimale
 

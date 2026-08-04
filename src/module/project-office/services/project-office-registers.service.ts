@@ -9,10 +9,13 @@ import {
   requirePersistentDocumentsRoot,
 } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
+import logger from "../../../utils/logger";
 import {
   insertAuditLog,
   insertProjectActivity,
   isPgUniqueViolation,
+  PoCommitUncertainError,
+  PoRollbackUncertainError,
   withTransaction,
   type AuditContext,
 } from "../repository/project-office.repository";
@@ -565,7 +568,36 @@ export async function uploadEvidenceFile(
       return { evidence, file: evidenceFile };
     });
   } catch (err) {
-    if (written) await fs.unlink(destination).catch(() => undefined);
+    if (err instanceof PoCommitUncertainError) {
+      const result = err.transactionResult as {
+        evidence: Awaited<ReturnType<typeof repoCreateEvidence>>;
+        file: EvidenceFileRow;
+      };
+      try {
+        const persisted = await repoGetEvidenceFileById(result.file.id);
+        if (persisted && persisted.sha256 === sha256 && persisted.storage_key === storageKey) {
+          return result;
+        }
+        if (!persisted) {
+          if (written) await fs.unlink(destination).catch(() => undefined);
+          throw err.originalError;
+        }
+        logger.error("[PO_UPLOAD_COMMIT_UNCERTAIN] metadata mismatch; durable file preserved", JSON.stringify({
+          file_id: result.file.id,
+        }));
+        throw err;
+      } catch (reconcileError) {
+        if (reconcileError === err.originalError || reconcileError === err) throw reconcileError;
+        logger.error("[PO_UPLOAD_COMMIT_UNCERTAIN] reconciliation failed; durable file preserved", JSON.stringify({
+          file_id: result.file.id,
+        }));
+        throw err;
+      }
+    }
+    if (written && !(err instanceof PoRollbackUncertainError)) {
+      // withTransaction only yields the original error after a confirmed ROLLBACK.
+      await fs.unlink(destination).catch(() => undefined);
+    }
     if (isPgUniqueViolation(err)) {
       throw new HttpError(409, "PO_EVIDENCE_FILE_DUPLICATE", "Ce fichier est déjà enregistré dans ce projet.");
     }

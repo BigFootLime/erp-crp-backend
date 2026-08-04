@@ -52,27 +52,87 @@ export type SecureUpload = Readonly<{
 const SAMPLE_BYTES = 64 * 1024;
 const WINDOWS_UNSAFE = /[:*?"<>|]/;
 const CONTROL_OR_BIDI = /[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/;
-const uploadDestinations = new Map<string, Set<string>>();
+type UploadDestinationState = "transferred" | "commit-attempted" | "committed" | "rolled-back";
+type UploadDestination = { destination: string; state: UploadDestinationState };
+type UploadFileReference = Readonly<{ path: string }>;
+const uploadDestinations = new Map<string, Map<string, UploadDestination>>();
 
 /**
  * Registers an application-managed destination created from an uploaded file.
- * The secure upload lifecycle removes it when the request aborts or returns an
- * error, which compensates file moves performed before a database transaction
- * commits. Successful responses keep the destination.
+ * Registration transfers ownership out of central staging. A response close
+ * can happen after COMMIT (or after COMMIT was applied but its ACK was lost),
+ * so the response lifecycle never deletes a registered destination.
  */
 export function registerUploadDestination(file: Readonly<{ path: string }>, destination: string): void {
   const source = path.resolve(file.path);
   const resolved = path.resolve(destination);
-  const destinations = uploadDestinations.get(source) ?? new Set<string>();
-  destinations.add(resolved);
+  const destinations = uploadDestinations.get(source) ?? new Map<string, UploadDestination>();
+  destinations.set(resolved, { destination: resolved, state: "transferred" });
   uploadDestinations.set(source, destinations);
 }
 
-function takeRegisteredUploadDestinations(files: readonly Express.Multer.File[]): string[] {
+function updateUploadDestinationState(
+  files: readonly UploadFileReference[],
+  state: UploadDestinationState
+): void {
+  for (const file of files) {
+    const destinations = uploadDestinations.get(path.resolve(file.path));
+    if (!destinations) continue;
+    for (const record of destinations.values()) record.state = state;
+  }
+}
+
+/** Call immediately before issuing COMMIT. From this point deletion is unsafe. */
+export function markUploadCommitAttempted(files: readonly UploadFileReference[]): void {
+  updateUploadDestinationState(files, "commit-attempted");
+}
+
+/** Call after a successful COMMIT or positive reconciliation on a fresh connection. */
+export function markUploadsCommitted(files: readonly UploadFileReference[]): void {
+  updateUploadDestinationState(files, "committed");
+}
+
+/**
+ * Delete transferred destinations only after the caller has proven that the
+ * database transaction rolled back before COMMIT was attempted.
+ */
+async function cleanupOwnedDestinations(
+  files: readonly UploadFileReference[],
+  allowedStates: ReadonlySet<UploadDestinationState>
+): Promise<void> {
+  const removable: string[] = [];
+  for (const file of files) {
+    const destinations = uploadDestinations.get(path.resolve(file.path));
+    if (!destinations) continue;
+    for (const record of destinations.values()) {
+      if (!allowedStates.has(record.state)) {
+        logger.error("[UPLOAD_OWNERSHIP] refused unsafe cleanup", JSON.stringify({ state: record.state }));
+        continue;
+      }
+      record.state = "rolled-back";
+      removable.push(record.destination);
+    }
+  }
+  await cleanupPaths(removable);
+}
+
+export async function cleanupUploadsAfterConfirmedRollback(files: readonly UploadFileReference[]): Promise<void> {
+  await cleanupOwnedDestinations(files, new Set<UploadDestinationState>(["transferred"]));
+}
+
+/** Cleanup after a fresh connection proved that a previously attempted COMMIT was not applied. */
+export async function cleanupUploadsAfterReconciledNoCommit(files: readonly UploadFileReference[]): Promise<void> {
+  await cleanupOwnedDestinations(
+    files,
+    new Set<UploadDestinationState>(["transferred", "commit-attempted"])
+  );
+}
+
+function releaseRegisteredUploadDestinations(files: readonly Express.Multer.File[]): UploadDestination[] {
   return files.flatMap((file) => {
     if (!file.path) return [];
     const source = path.resolve(file.path);
-    const destinations = Array.from(uploadDestinations.get(source) ?? []);
+    const destinations = Array.from(uploadDestinations.get(source)?.values() ?? []);
     uploadDestinations.delete(source);
     return destinations;
   });
@@ -427,15 +487,26 @@ export function createSecureUpload(usage: UploadUsage, options: SecureUploadOpti
       const cleanupAfterResponse = () => {
         if (cleanupStarted) return;
         cleanupStarted = true;
-        const shouldRemovePromoted = res.statusCode >= 400 || !res.writableEnded;
-        const downstreamDestinations = takeRegisteredUploadDestinations(files);
-        void cleanupPaths(
-          shouldRemovePromoted ? [...stagedPaths, ...promotedPaths, ...downstreamDestinations] : stagedPaths
-        ).then(() => {
-          if (shouldRemovePromoted || stagedPaths.length > 0) {
+        const ownership = releaseRegisteredUploadDestinations(files);
+        const uncertain = ownership.filter((record) => record.state === "transferred" || record.state === "commit-attempted");
+        if (uncertain.length > 0 || (promotedPaths.length > 0 && (res.statusCode >= 400 || !res.writableEnded))) {
+          logger.error("[UPLOAD_OWNERSHIP] durable destination preserved for reconciliation", JSON.stringify({
+            state_counts: ownership.reduce<Record<string, number>>((counts, record) => {
+              counts[record.state] = (counts[record.state] ?? 0) + 1;
+              return counts;
+            }, {}),
+            central_promotions: promotedPaths.length,
+            response_status: res.statusCode,
+            response_ended: res.writableEnded,
+          }));
+        }
+        // Response close/abort is never proof of a database rollback. Only
+        // untransferred staging belongs to this lifecycle callback.
+        void cleanupPaths(stagedPaths).then(() => {
+          if (stagedPaths.length > 0) {
             auditUpload(req, usage, "cleaned", {
               staged_count: stagedPaths.length,
-              promoted_count: shouldRemovePromoted ? promotedPaths.length + downstreamDestinations.length : 0,
+              promoted_count: 0,
             });
           }
         });

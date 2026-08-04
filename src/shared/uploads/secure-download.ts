@@ -1,4 +1,6 @@
-import fs from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { constants, createReadStream } from "node:fs";
+import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
 
 import type { Response } from "express";
@@ -51,25 +53,113 @@ async function realExistingDirectory(directory: string): Promise<string> {
   }
 }
 
-export async function assertSecureDownloadPath(filePath: string, allowedRoots: readonly string[]): Promise<string> {
+type SecureDownloadHookPhase = "after-validation" | "after-open";
+type SecureDownloadHook = (
+  phase: SecureDownloadHookPhase,
+  context: Readonly<{ candidatePath: string; realPath: string }>
+) => void | Promise<void>;
+
+let secureDownloadHook: SecureDownloadHook | null = null;
+
+/** Deterministic race injection for tests; never configured by application code. */
+export function setSecureDownloadHookForTests(hook: SecureDownloadHook | null): void {
+  secureDownloadHook = hook;
+}
+
+function notFound(): HttpError {
+  return new HttpError(404, "DOCUMENT_FILE_NOT_FOUND", "Le fichier demandé est introuvable.");
+}
+
+function invalidPath(): HttpError {
+  return new HttpError(400, "INVALID_STORAGE_PATH", "Le chemin de stockage du document est invalide.");
+}
+
+function sameIdentity(
+  expected: Readonly<{ dev: number | bigint; ino: number | bigint; size: number | bigint }>,
+  actual: Readonly<{ dev: number | bigint; ino: number | bigint; size: number | bigint }>
+): boolean {
+  return String(expected.dev) === String(actual.dev)
+    && String(expected.ino) === String(actual.ino)
+    && String(expected.size) === String(actual.size);
+}
+
+type SecureOpenedFile = Readonly<{
+  handle: FileHandle;
+  realPath: string;
+  size: number;
+}>;
+
+async function openSecureDownloadPath(filePath: string, allowedRoots: readonly string[]): Promise<SecureOpenedFile> {
   if (!allowedRoots.length) {
     throw new HttpError(500, "DOWNLOAD_ROOT_MISSING", "Le stockage documentaire n’est pas configuré.");
   }
-  let realFile: string;
+
+  const candidatePath = path.resolve(filePath);
+  let realPath: string;
   try {
-    realFile = await fs.realpath(path.resolve(filePath));
-  } catch {
-    throw new HttpError(404, "DOCUMENT_FILE_NOT_FOUND", "Le fichier demandé est introuvable.");
+    const candidateStat = await fs.lstat(candidatePath);
+    if (candidateStat.isSymbolicLink()) throw invalidPath();
+    if (!candidateStat.isFile()) throw notFound();
+    realPath = await fs.realpath(candidatePath);
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+    throw notFound();
   }
+
   const roots = await Promise.all(allowedRoots.map(realExistingDirectory));
-  if (!roots.some((root) => isPathInsideDirectory(root, realFile))) {
-    throw new HttpError(400, "INVALID_STORAGE_PATH", "Le chemin de stockage du document est invalide.");
+  if (!roots.some((root) => isPathInsideDirectory(root, realPath))) throw invalidPath();
+
+  let validatedStat;
+  try {
+    validatedStat = await fs.lstat(realPath);
+  } catch {
+    throw notFound();
   }
-  const stat = await fs.stat(realFile);
-  if (!stat.isFile()) {
-    throw new HttpError(404, "DOCUMENT_FILE_NOT_FOUND", "Le fichier demandé est introuvable.");
+  if (validatedStat.isSymbolicLink()) throw invalidPath();
+  if (!validatedStat.isFile()) throw notFound();
+
+  await secureDownloadHook?.("after-validation", { candidatePath, realPath });
+
+  let handle: FileHandle;
+  try {
+    const noFollow = typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0;
+    handle = await fs.open(realPath, constants.O_RDONLY | noFollow);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ELOOP") throw invalidPath();
+    throw notFound();
   }
-  return realFile;
+
+  try {
+    const openedStat = await handle.stat();
+    if (!openedStat.isFile() || !sameIdentity(validatedStat, openedStat)) throw invalidPath();
+
+    // Re-resolve the caller's path after opening. Together with the inode check
+    // this detects both leaf replacement and parent-directory substitution.
+    let resolvedAfterOpen: string;
+    try {
+      resolvedAfterOpen = await fs.realpath(candidatePath);
+    } catch {
+      throw invalidPath();
+    }
+    if (resolvedAfterOpen !== realPath) throw invalidPath();
+    if (!roots.some((root) => isPathInsideDirectory(root, resolvedAfterOpen))) throw invalidPath();
+
+    await secureDownloadHook?.("after-open", { candidatePath, realPath });
+
+    const finalStat = await handle.stat();
+    if (!sameIdentity(openedStat, finalStat)) throw invalidPath();
+    return { handle, realPath, size: Number(finalStat.size) };
+  } catch (error) {
+    await handle.close().catch(() => undefined);
+    throw error;
+  }
+}
+
+export async function assertSecureDownloadPath(filePath: string, allowedRoots: readonly string[]): Promise<string> {
+  const opened = await openSecureDownloadPath(filePath, allowedRoots);
+  await opened.handle.close();
+  return opened.realPath;
 }
 
 export async function sendSecureStoredFile(
@@ -80,14 +170,74 @@ export async function sendSecureStoredFile(
     filename: string;
     mimeType?: string | null;
     download?: boolean;
+    expectedSha256?: string;
+    integrityError?: Readonly<{ status: number; code: string; message: string }>;
   }
 ): Promise<void> {
-  const realFile = await assertSecureDownloadPath(options.filePath, options.allowedRoots);
-  setSecureDownloadHeaders(res, options);
-  await new Promise<void>((resolve, reject) => {
-    res.sendFile(realFile, (error) => {
-      if (error) reject(error);
-      else resolve();
+  const opened = await openSecureDownloadPath(options.filePath, options.allowedRoots);
+  let stream: ReturnType<typeof createReadStream> | null = null;
+  try {
+    if (options.expectedSha256) {
+      const hash = createHash("sha256");
+      if (opened.size > 0) {
+        const verifier = createReadStream(opened.realPath, {
+          fd: opened.handle.fd,
+          autoClose: false,
+          start: 0,
+          end: opened.size - 1,
+        });
+        for await (const chunk of verifier) hash.update(chunk as Buffer);
+      }
+      if (hash.digest("hex") !== options.expectedSha256.toLowerCase()) {
+        const failure = options.integrityError ?? {
+          status: 503,
+          code: "DOCUMENT_INTEGRITY_ERROR",
+          message: "L’intégrité du document ne peut pas être confirmée.",
+        };
+        throw new HttpError(failure.status, failure.code, failure.message);
+      }
+    }
+
+    setSecureDownloadHeaders(res, options);
+    res.setHeader("Content-Length", String(opened.size));
+    if (opened.size === 0) {
+      res.end();
+      return;
+    }
+
+    stream = createReadStream(opened.realPath, {
+      fd: opened.handle.fd,
+      autoClose: false,
+      start: 0,
+      end: opened.size - 1,
     });
-  });
+
+    await new Promise<void>((resolve, reject) => {
+      const cleanup = () => {
+        res.off("finish", finish);
+        res.off("close", close);
+        stream?.off("error", fail);
+      };
+      const finish = () => {
+        cleanup();
+        resolve();
+      };
+      const close = () => {
+        stream?.destroy();
+        cleanup();
+        resolve();
+      };
+      const fail = (error: Error) => {
+        cleanup();
+        reject(error);
+      };
+      res.once("finish", finish);
+      res.once("close", close);
+      stream?.once("error", fail);
+      stream?.pipe(res);
+    });
+  } finally {
+    stream?.destroy();
+    await opened.handle.close().catch(() => undefined);
+  }
 }

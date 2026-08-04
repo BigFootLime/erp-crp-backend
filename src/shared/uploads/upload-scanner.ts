@@ -93,10 +93,48 @@ export function setUploadScannerForTests(scanner: UploadScanner | null): void {
 
 export function getUploadScanMode(): UploadScanMode {
   const configured = process.env.CERP_UPLOAD_SCAN_MODE?.trim().toLowerCase();
-  if (!configured) return process.env.NODE_ENV === "production" ? "enforce" : "monitor";
+  // Vitest can keep the historical monitor default so unrelated unit tests do
+  // not need a ClamAV daemon. Every real runtime, including the Docker image
+  // which currently uses NODE_ENV=development, fails closed.
+  if (!configured) return process.env.NODE_ENV === "test" ? "monitor" : "enforce";
   if (configured === "off" || configured === "monitor" || configured === "enforce") return configured;
   // An invalid security configuration must not silently disable scanning.
   return "enforce";
+}
+
+export type UploadScannerConfiguration = Readonly<{
+  mode: UploadScanMode;
+  provider: "clamdscan" | "none";
+  command: string | null;
+}>;
+
+/**
+ * Startup preflight. Runtime upload handling is fail-closed as a second line
+ * of defence, but an enforce deployment should fail during boot instead of
+ * discovering a missing scanner on its first customer upload.
+ */
+export function assertUploadScannerConfiguration(): UploadScannerConfiguration {
+  const rawMode = process.env.CERP_UPLOAD_SCAN_MODE?.trim().toLowerCase();
+  if (rawMode && rawMode !== "off" && rawMode !== "monitor" && rawMode !== "enforce") {
+    throw new Error(`CERP_UPLOAD_SCAN_MODE invalide: ${rawMode}`);
+  }
+
+  const mode = getUploadScanMode();
+  const rawProvider = process.env.CERP_UPLOAD_SCAN_PROVIDER?.trim().toLowerCase();
+  if (rawProvider && rawProvider !== "clamdscan") {
+    throw new Error(`CERP_UPLOAD_SCAN_PROVIDER invalide: ${rawProvider}`);
+  }
+  if (mode === "enforce" && rawProvider !== "clamdscan") {
+    throw new Error("CERP_UPLOAD_SCAN_PROVIDER=clamdscan est obligatoire en mode enforce.");
+  }
+
+  return {
+    mode,
+    provider: rawProvider === "clamdscan" ? "clamdscan" : "none",
+    command: rawProvider === "clamdscan"
+      ? process.env.CERP_UPLOAD_SCANNER_COMMAND?.trim() || "clamdscan"
+      : null,
+  };
 }
 
 function configuredScanner(): UploadScanner {

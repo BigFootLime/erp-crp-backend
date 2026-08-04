@@ -59,6 +59,8 @@ import {
   insertAuditLog,
   insertMetrologyEvent,
   isRecord,
+  MetrologyCommitUncertainError,
+  MetrologyRollbackUncertainError,
   rethrowMapped,
   saveReceipt,
   sortDirection,
@@ -1489,9 +1491,12 @@ export async function repoUploadCertificate(params: {
       });
     });
   } catch (err) {
-    // Le fichier ne doit pas survivre à une transaction annulée : sinon on
-    // accumule des preuves orphelines dans le stockage privé.
-    await fs.unlink(absPath).catch(() => undefined);
+    // Delete only after the transaction wrapper confirmed a pre-COMMIT
+    // rollback. COMMIT/rollback uncertainty preserves the proof for a fresh
+    // connection reconciliation instead of risking durable metadata without it.
+    if (!(err instanceof MetrologyCommitUncertainError) && !(err instanceof MetrologyRollbackUncertainError)) {
+      await fs.unlink(absPath).catch(() => undefined);
+    }
     throw err;
   }
 

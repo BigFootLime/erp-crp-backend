@@ -3,6 +3,7 @@ import pool from "../../../config/database";
 import { hasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
+import { HttpError } from "../../../utils/httpError";
 import type {
   ActivityRow,
   MemberRow,
@@ -32,20 +33,54 @@ export function isPgUniqueViolation(err: unknown): boolean {
   return (err as { code?: unknown } | null)?.code === "23505";
 }
 
+export class PoCommitUncertainError<T> extends HttpError {
+  readonly transactionResult: T;
+  readonly originalError: unknown;
+
+  constructor(transactionResult: T, originalError: unknown) {
+    super(503, "PO_COMMIT_UNCERTAIN", "Le résultat du COMMIT doit être rapproché avant toute compensation de fichier.");
+    this.transactionResult = transactionResult;
+    this.originalError = originalError;
+  }
+}
+
+export class PoRollbackUncertainError extends HttpError {
+  readonly originalError: unknown;
+
+  constructor(originalError: unknown) {
+    super(503, "PO_ROLLBACK_UNCERTAIN", "Le rollback n’a pas pu être confirmé ; le fichier est préservé pour rapprochement.");
+    this.originalError = originalError;
+  }
+}
+
 export async function withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
-  const client = await pool.connect();
+  let client!: PoolClient;
   try {
+    client = await pool.connect();
     await client.query("BEGIN");
-    const result = await fn(client);
-    await client.query("COMMIT");
-    return result;
   } catch (err) {
-    try {
-      await client.query("ROLLBACK");
-    } catch {
-      // ignore
-    }
+    client?.release();
     throw err;
+  }
+  try {
+    let result: T;
+    try {
+      result = await fn(client);
+    } catch (err) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        throw new PoRollbackUncertainError(err);
+      }
+      throw err;
+    }
+
+    try {
+      await client.query("COMMIT");
+    } catch (err) {
+      throw new PoCommitUncertainError(result, err);
+    }
+    return result;
   } finally {
     client.release();
   }

@@ -481,6 +481,7 @@ export async function repoCreateOperationDossierVersion(params: {
   const docsDir = await ensureDocsDir()
   const tx = await pool.connect()
   const movedFiles: string[] = []
+  let commitAttempted = false
 
   try {
     await tx.query("BEGIN")
@@ -602,11 +603,17 @@ export async function repoCreateOperationDossierVersion(params: {
       },
     })
 
+    commitAttempted = true
     await tx.query("COMMIT")
     return { id: versionRow.id, dossier_id: versionRow.dossier_id, version: versionRow.version }
   } catch (err) {
-    await tx.query("ROLLBACK")
-    for (const f of movedFiles) await fs.unlink(f).catch(() => undefined)
+    if (!commitAttempted) {
+      let rollbackConfirmed = false
+      try { await tx.query("ROLLBACK"); rollbackConfirmed = true } catch { /* preserve for reconciliation */ }
+      if (rollbackConfirmed) for (const f of movedFiles) await fs.unlink(f).catch(() => undefined)
+    } else {
+      console.error("[OPERATION_DOSSIER_UPLOAD_COMMIT_UNCERTAIN] durable files preserved", { count: movedFiles.length })
+    }
     throw err
   } finally {
     tx.release()

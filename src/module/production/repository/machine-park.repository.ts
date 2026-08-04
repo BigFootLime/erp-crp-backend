@@ -492,6 +492,7 @@ export async function repoUploadMachineDocument(params: {
   const id = crypto.randomUUID();
   const finalPath = path.join(documentsDirectory, `${id}${extension}`);
   let moved = false;
+  let commitAttempted = false;
   try {
     await client.query("BEGIN");
     await requireActiveMachine(client, params.machineId);
@@ -546,12 +547,20 @@ export async function repoUploadMachineDocument(params: {
         sha256,
       },
     });
+    commitAttempted = true;
     await client.query("COMMIT");
     return created;
   } catch (error) {
-    await client.query("ROLLBACK");
-    if (moved) await fs.unlink(finalPath).catch(() => undefined);
-    else await fs.unlink(params.file.path).catch(() => undefined);
+    if (!commitAttempted) {
+      let rollbackConfirmed = false;
+      try { await client.query("ROLLBACK"); rollbackConfirmed = true; } catch { /* preserve for reconciliation */ }
+      if (rollbackConfirmed) {
+        if (moved) await fs.unlink(finalPath).catch(() => undefined);
+        else await fs.unlink(params.file.path).catch(() => undefined);
+      }
+    } else {
+      console.error("[MACHINE_UPLOAD_COMMIT_UNCERTAIN] durable file preserved");
+    }
     throw error;
   } finally {
     client.release();

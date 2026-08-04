@@ -2792,6 +2792,7 @@ export async function repoAttachLivraisonDocuments(params: {
   const db = await pool.connect()
   const docsDir = await ensureDocsDir()
   const storedPaths: string[] = []
+  let commitAttempted = false
   try {
     await db.query("BEGIN")
     const header = await getHeader(db, params.bonLivraisonId, { forUpdate: true })
@@ -2921,11 +2922,19 @@ export async function repoAttachLivraisonDocuments(params: {
       }))
     }
 
+    commitAttempted = true
     await db.query("COMMIT")
     return docsOut
   } catch (err) {
-    await db.query("ROLLBACK")
-    await Promise.all(storedPaths.map((filePath) => fs.unlink(filePath).catch(() => undefined)))
+    if (!commitAttempted) {
+      let rollbackConfirmed = false
+      try { await db.query("ROLLBACK"); rollbackConfirmed = true } catch { /* preserve for reconciliation */ }
+      if (rollbackConfirmed) {
+        await Promise.all(storedPaths.map((filePath) => fs.unlink(filePath).catch(() => undefined)))
+      }
+    } else {
+      console.error("[LIVRAISON_UPLOAD_COMMIT_UNCERTAIN] durable files preserved", { count: storedPaths.length })
+    }
     throw err
   } finally {
     db.release()

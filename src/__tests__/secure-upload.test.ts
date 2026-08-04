@@ -10,14 +10,23 @@ import { HttpError } from "../utils/httpError";
 import {
   assertSafeUploadName,
   contentMatchesExtension,
+  cleanupUploadsAfterConfirmedRollback,
   createSecureUpload,
+  markUploadCommitAttempted,
+  markUploadsCommitted,
   registerUploadDestination,
 } from "../shared/uploads/secure-upload";
 import {
   assertSecureDownloadPath,
   buildContentDisposition,
+  sendSecureStoredFile,
+  setSecureDownloadHookForTests,
 } from "../shared/uploads/secure-download";
-import { setUploadScannerForTests } from "../shared/uploads/upload-scanner";
+import {
+  assertUploadScannerConfiguration,
+  getUploadScanMode,
+  setUploadScannerForTests,
+} from "../shared/uploads/upload-scanner";
 
 const VALID_PDF = Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF", "ascii");
 
@@ -35,6 +44,8 @@ function uploadApp(options?: {
   failAfterUpload?: boolean;
   moveBeforeFailureTo?: string;
   usage?: "business-document" | "image";
+  ownership?: "rolled-back" | "commit-attempted" | "committed";
+  disconnectAfterCommit?: boolean;
 }) {
   const app = express();
   const usage = options?.usage ?? "business-document";
@@ -47,7 +58,20 @@ function uploadApp(options?: {
         const destination = path.join(options.moveBeforeFailureTo, "stored.pdf");
         const sourcePath = files[0].path;
         await fs.rename(sourcePath, destination);
-        registerUploadDestination({ path: sourcePath }, destination);
+        const references = [{ path: sourcePath }];
+        registerUploadDestination(references[0], destination);
+        if (options.ownership === "rolled-back") {
+          await cleanupUploadsAfterConfirmedRollback(references);
+        } else if (options.ownership === "commit-attempted") {
+          markUploadCommitAttempted(references);
+        } else if (options.ownership === "committed") {
+          markUploadCommitAttempted(references);
+          markUploadsCommitted(references);
+        }
+        if (options.disconnectAfterCommit) {
+          res.socket?.destroy();
+          return;
+        }
       }
       if (options?.failAfterUpload) {
         next(new HttpError(409, "BUSINESS_ROLLBACK", "Transaction métier annulée."));
@@ -161,13 +185,47 @@ describe("politique centrale des uploads", () => {
 
   it("compense le staging et le stockage final lorsque la transaction métier est annulée", async () => {
     const finalDirectory = path.join(temporaryRoot, "documents");
-    const response = await request(uploadApp({ failAfterUpload: true, moveBeforeFailureTo: finalDirectory }))
+    const response = await request(uploadApp({
+      failAfterUpload: true,
+      moveBeforeFailureTo: finalDirectory,
+      ownership: "rolled-back",
+    }))
       .post("/upload")
       .attach("documents[]", VALID_PDF, { filename: "rollback.pdf", contentType: "application/pdf" });
 
     expect(response.status).toBe(409);
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(await allFiles(temporaryRoot)).toEqual([]);
+  });
+
+  it("préserve la destination si COMMIT a été tenté puis son ACK perdu", async () => {
+    const finalDirectory = path.join(temporaryRoot, "documents");
+    const response = await request(uploadApp({
+      failAfterUpload: true,
+      moveBeforeFailureTo: finalDirectory,
+      ownership: "commit-attempted",
+    }))
+      .post("/upload")
+      .attach("documents[]", VALID_PDF, { filename: "ack-perdu.pdf", contentType: "application/pdf" });
+
+    expect(response.status).toBe(409);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(await fs.readFile(path.join(finalDirectory, "stored.pdf"))).toEqual(VALID_PDF);
+  });
+
+  it("ne supprime pas un fichier durable si le client se déconnecte après COMMIT", async () => {
+    const finalDirectory = path.join(temporaryRoot, "documents");
+    await request(uploadApp({
+      moveBeforeFailureTo: finalDirectory,
+      ownership: "committed",
+      disconnectAfterCommit: true,
+    }))
+      .post("/upload")
+      .attach("documents[]", VALID_PDF, { filename: "committed.pdf", contentType: "application/pdf" })
+      .catch(() => undefined);
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(await fs.readFile(path.join(finalDirectory, "stored.pdf"))).toEqual(VALID_PDF);
   });
 
   it("échoue fermé en mode enforce lorsqu’aucun scanner réel n’est configuré", async () => {
@@ -189,6 +247,53 @@ describe("politique centrale des uploads", () => {
   });
 });
 
+describe("configuration fail-closed du scanner", () => {
+  const originalNodeEnv = process.env.NODE_ENV;
+
+  afterEach(() => {
+    if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = originalNodeEnv;
+    delete process.env.CERP_UPLOAD_SCAN_MODE;
+    delete process.env.CERP_UPLOAD_SCAN_PROVIDER;
+    delete process.env.CERP_UPLOAD_SCANNER_COMMAND;
+  });
+
+  it.each(["production", "development", undefined])(
+    "utilise enforce hors tests lorsque NODE_ENV=%s",
+    (nodeEnv) => {
+      if (nodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = nodeEnv;
+      expect(getUploadScanMode()).toBe("enforce");
+    }
+  );
+
+  it("conserve monitor uniquement pour le runtime de tests", () => {
+    process.env.NODE_ENV = "test";
+    expect(getUploadScanMode()).toBe("monitor");
+  });
+
+  it("refuse au preflight un mode invalide et un scanner absent en enforce", () => {
+    process.env.NODE_ENV = "development";
+    process.env.CERP_UPLOAD_SCAN_MODE = "permissive";
+    expect(() => assertUploadScannerConfiguration()).toThrow(/SCAN_MODE invalide/);
+
+    process.env.CERP_UPLOAD_SCAN_MODE = "enforce";
+    expect(() => assertUploadScannerConfiguration()).toThrow(/PROVIDER=clamdscan/);
+  });
+
+  it("accepte la configuration enforce explicite et cohérente", () => {
+    process.env.NODE_ENV = "development";
+    process.env.CERP_UPLOAD_SCAN_MODE = "enforce";
+    process.env.CERP_UPLOAD_SCAN_PROVIDER = "clamdscan";
+    process.env.CERP_UPLOAD_SCANNER_COMMAND = "clamdscan-custom";
+    expect(assertUploadScannerConfiguration()).toEqual({
+      mode: "enforce",
+      provider: "clamdscan",
+      command: "clamdscan-custom",
+    });
+  });
+});
+
 describe("téléchargement sécurisé et compatibilité historique", () => {
   let root: string;
   let outside: string;
@@ -199,11 +304,31 @@ describe("téléchargement sécurisé et compatibilité historique", () => {
   });
 
   afterEach(async () => {
+    setSecureDownloadHookForTests(null);
     await Promise.all([
       fs.rm(root, { recursive: true, force: true }),
       fs.rm(outside, { recursive: true, force: true }),
     ]);
   });
+
+  function downloadApp(filePath: string) {
+    const app = express();
+    app.get("/download", async (_req, res, next) => {
+      try {
+        await sendSecureStoredFile(res, {
+          filePath,
+          allowedRoots: [root],
+          filename: "document.txt",
+          mimeType: "text/plain",
+          download: true,
+        });
+      } catch (error) {
+        next(error);
+      }
+    });
+    app.use(errorHandler());
+    return app;
+  }
 
   it("sert un fichier historique contenu dans sa racine sans revalider son format", async () => {
     const legacy = path.join(root, "legacy-sans-extension");
@@ -215,6 +340,58 @@ describe("téléchargement sécurisé et compatibilité historique", () => {
     const escaped = path.join(outside, "secret.txt");
     await fs.writeFile(escaped, "hors périmètre");
     await expect(assertSecureDownloadPath(escaped, [root])).rejects.toMatchObject({ code: "INVALID_STORAGE_PATH" });
+  });
+
+  it("refuse une substitution entre la validation et l’ouverture", async () => {
+    const candidate = path.join(root, "document.txt");
+    const replacement = path.join(root, "replacement.txt");
+    await fs.writeFile(candidate, "contenu-original");
+    await fs.writeFile(replacement, "contenu-remplace");
+    setSecureDownloadHookForTests(async (phase) => {
+      if (phase !== "after-validation") return;
+      await fs.rename(candidate, path.join(root, "original-retire.txt"));
+      await fs.rename(replacement, candidate);
+    });
+
+    const response = await request(downloadApp(candidate)).get("/download");
+    expect(response.status).toBe(400);
+    expect(response.body.code).toBe("INVALID_STORAGE_PATH");
+  });
+
+  it("refuse aussi une substitution du répertoire parent", async () => {
+    const parent = path.join(root, "parent");
+    const retiredParent = path.join(root, "parent-retired");
+    const outsideParent = path.join(outside, "replacement-parent");
+    await fs.mkdir(parent);
+    await fs.mkdir(outsideParent);
+    const candidate = path.join(parent, "document.txt");
+    await fs.writeFile(candidate, "contenu-original");
+    await fs.writeFile(path.join(outsideParent, "document.txt"), "secret-exterieur");
+    setSecureDownloadHookForTests(async (phase) => {
+      if (phase !== "after-validation") return;
+      await fs.rename(parent, retiredParent);
+      await fs.symlink(outsideParent, parent, "junction");
+    });
+
+    const response = await request(downloadApp(candidate)).get("/download");
+    expect(response.status).toBe(400);
+    expect(response.body.code).toBe("INVALID_STORAGE_PATH");
+  });
+
+  it("sert exactement le descripteur ouvert même si le nom est remplacé ensuite", async () => {
+    const candidate = path.join(root, "document.txt");
+    const replacement = path.join(root, "replacement.txt");
+    await fs.writeFile(candidate, "contenu-original");
+    await fs.writeFile(replacement, "contenu-remplace");
+    setSecureDownloadHookForTests(async (phase) => {
+      if (phase !== "after-open") return;
+      await fs.rename(candidate, path.join(root, "original-ouvert.txt"));
+      await fs.rename(replacement, candidate);
+    });
+
+    const response = await request(downloadApp(candidate)).get("/download");
+    expect(response.status).toBe(200);
+    expect(response.text).toBe("contenu-original");
   });
 
   it("neutralise traversal, CRLF et Unicode dans Content-Disposition", () => {

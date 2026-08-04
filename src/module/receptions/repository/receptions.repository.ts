@@ -1064,6 +1064,7 @@ export async function repoAttachDocuments(
   const docsDirRel = ensureDocumentStoragePath("receptions")
   const docsDirAbs = path.resolve(docsDirRel)
   const movedFiles: string[] = []
+  let commitAttempted = false
   try {
     await client.query("BEGIN")
     const exists = await ensureReceptionExists(client, receptionId)
@@ -1184,11 +1185,17 @@ export async function repoAttachDocuments(
       },
     })
 
+    commitAttempted = true
     await client.query("COMMIT")
     return inserted
   } catch (err) {
-    await client.query("ROLLBACK")
-    for (const f of movedFiles) await fs.unlink(f).catch(() => undefined)
+    if (!commitAttempted) {
+      let rollbackConfirmed = false
+      try { await client.query("ROLLBACK"); rollbackConfirmed = true } catch { /* preserve for reconciliation */ }
+      if (rollbackConfirmed) for (const f of movedFiles) await fs.unlink(f).catch(() => undefined)
+    } else {
+      console.error("[RECEPTION_UPLOAD_COMMIT_UNCERTAIN] durable files preserved", { count: movedFiles.length })
+    }
     throw err
   } finally {
     client.release()

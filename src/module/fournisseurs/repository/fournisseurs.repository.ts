@@ -1475,6 +1475,7 @@ export async function repoAttachFournisseurDocuments(
   const docsDirRel = ensureDocumentStoragePath("fournisseurs")
   const docsDirAbs = path.resolve(docsDirRel)
   const movedFiles: string[] = []
+  let commitAttempted = false
   try {
     await client.query("BEGIN")
     if (!(await ensureFournisseurExists(client, fournisseurId))) { await client.query("ROLLBACK"); return null }
@@ -1507,11 +1508,17 @@ export async function repoAttachFournisseurDocuments(
       details: { document_type: body.document_type, count: inserted.length,
         documents: inserted.map((d) => ({ id: d.id, original_name: d.original_name, mime_type: d.mime_type, size_bytes: d.size_bytes })) },
     })
+    commitAttempted = true
     await client.query("COMMIT")
     return inserted
   } catch (err) {
-    await client.query("ROLLBACK")
-    for (const f of movedFiles) await fs.unlink(f).catch(() => undefined)
+    if (!commitAttempted) {
+      let rollbackConfirmed = false
+      try { await client.query("ROLLBACK"); rollbackConfirmed = true } catch { /* preserve for reconciliation */ }
+      if (rollbackConfirmed) for (const f of movedFiles) await fs.unlink(f).catch(() => undefined)
+    } else {
+      console.error("[FOURNISSEUR_UPLOAD_COMMIT_UNCERTAIN] durable files preserved", { count: movedFiles.length })
+    }
     throw err
   } finally {
     client.release()

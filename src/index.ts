@@ -1,11 +1,12 @@
-import dotenv from 'dotenv';
+import 'dotenv/config';
 import app from './config/app';
 import { createServer } from 'http';
 import { initSocketServer } from './sockets/sockeServer'
 import { startAuditNotifyListener } from "./shared/realtime/audit-notify.listener";
+import { assertUploadScannerConfiguration } from "./shared/uploads/upload-scanner";
 
 
-dotenv.config();
+const uploadScanner = assertUploadScannerConfiguration();
 
 const PORT = parseInt(process.env.PORT || '5000', 10);
 
@@ -22,6 +23,7 @@ startAuditNotifyListener().catch((err) => {
 
 // 🚀 Lancement du serveur
 httpServer.listen(PORT, '0.0.0.0', () => {
+  console.log(`[upload_scan] mode=${uploadScanner.mode} provider=${uploadScanner.provider}`);
   console.log(`🚀 Serveur CERP lancé sur http://0.0.0.0:${PORT}`);
   console.log(`🌐 Accès local prévu : http://10.90.0.2:${PORT}`);
 });

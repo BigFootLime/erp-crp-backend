@@ -3,7 +3,7 @@
 import type { NextFunction, Request, Response } from "express";
 
 import { HttpError } from "../../../utils/httpError";
-import { setSecureDownloadHeaders } from "../../../shared/uploads/secure-download";
+import { sendSecureStoredFile } from "../../../shared/uploads/secure-download";
 import * as service from "../services/ged.service";
 import {
   listQuerySchema,
@@ -179,15 +179,34 @@ export async function publishVersion(req: Request, res: Response, next: NextFunc
 export async function downloadVersion(req: Request, res: Response, next: NextFunction) {
   try {
     const versionId = parseUuid(req.params.versionId, "Identifiant de version");
-    const result = await service.downloadVersion(actorFrom(req), versionId);
+    const actor = actorFrom(req);
+    const result = await service.downloadVersion(actor, versionId);
 
     // `attachment` + `nosniff` : un document n'est jamais interprété par le
     // navigateur, quel que soit son type déclaré.
-    res.setHeader("Content-Length", String(result.buffer.byteLength));
     res.setHeader("X-CERP-Document-SHA256", result.sha256);
-    setSecureDownloadHeaders(res, { filename: result.original_name, mimeType: result.mime_type, download: true });
     res.setHeader("Content-Security-Policy", "sandbox; default-src 'none'");
-    res.send(result.buffer);
+    try {
+      await sendSecureStoredFile(res, {
+        filePath: result.file_path,
+        allowedRoots: [result.allowed_root],
+        filename: result.original_name,
+        mimeType: result.mime_type,
+        download: true,
+        expectedSha256: result.sha256,
+        integrityError: {
+          status: 409,
+          code: "GED_INTEGRITY",
+          message: "L'intégrité du document ne peut pas être vérifiée. Le contenu ne sera pas servi.",
+        },
+      });
+    } catch (error) {
+      if (error instanceof HttpError && error.code === "GED_INTEGRITY") {
+        await service.recordVersionDownload(actor, result, "INTEGRITY_FAILURE");
+      }
+      throw error;
+    }
+    await service.recordVersionDownload(actor, result, "DOWNLOAD");
   } catch (err) {
     next(err);
   }

@@ -14,11 +14,14 @@
 // répertoire local de repli que personne ne sauvegarderait.
 
 import crypto from "node:crypto";
+import { createReadStream, createWriteStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { pipeline } from "node:stream/promises";
 
 import { HttpError } from "../../../utils/httpError";
 import { isPathInsideDirectory } from "../../../utils/cerpStorage";
+import { registerUploadDestination } from "../../../shared/uploads/secure-upload";
 
 const VAULT_SUBDIR = "vault";
 const STAGING_SUBDIR = "staging";
@@ -117,6 +120,13 @@ export function computeSha256(buffer: Buffer): string {
   return crypto.createHash("sha256").update(buffer).digest("hex");
 }
 
+export async function computeFileSha256(filePath: string): Promise<string> {
+  const hash = crypto.createHash("sha256");
+  const stream = createReadStream(filePath);
+  for await (const chunk of stream) hash.update(chunk as Buffer);
+  return hash.digest("hex");
+}
+
 /** Clé interne opaque, relative à la racine. N'est jamais retournée par l'API. */
 export function storageKeyForSha256(sha256: string): string {
   if (!/^[a-f0-9]{64}$/.test(sha256)) {
@@ -187,6 +197,84 @@ export async function writeBlob(buffer: Buffer): Promise<WrittenBlob> {
 }
 
 /**
+ * Move a staged HTTP upload into the content-addressed vault with bounded
+ * memory. A hard link is used on the same filesystem; EXDEV falls back to a
+ * streamed exclusive copy. The durable path is never overwritten.
+ */
+export async function writeBlobFromPath(sourcePath: string): Promise<WrittenBlob> {
+  const root = await ensureVaultReady();
+  const sourceStat = await fs.stat(sourcePath).catch(() => null);
+  if (!sourceStat?.isFile()) {
+    throw new HttpError(400, "GED_FILE_REQUIRED", "Le fichier déposé est introuvable.");
+  }
+
+  const sha256 = await computeFileSha256(sourcePath);
+  const storageKey = storageKeyForSha256(sha256);
+  const destination = resolveInsideVault(root, storageKey);
+  await fs.mkdir(path.dirname(destination), { recursive: true });
+
+  let created = false;
+  try {
+    try {
+      await fs.link(sourcePath, destination);
+      created = true;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "EEXIST") {
+        created = false;
+      } else if (code === "EXDEV" || code === "EPERM" || code === "ENOTSUP") {
+        try {
+          await pipeline(
+            createReadStream(sourcePath),
+            createWriteStream(destination, { flags: "wx", mode: 0o600 })
+          );
+          created = true;
+        } catch (copyError) {
+          if ((copyError as NodeJS.ErrnoException).code !== "EEXIST") {
+            await fs.unlink(destination).catch(() => undefined);
+            throw copyError;
+          }
+          created = false;
+        }
+      } else {
+        throw error;
+      }
+    }
+
+    const storedHash = await computeFileSha256(destination);
+    if (storedHash !== sha256) {
+      if (created) await fs.unlink(destination).catch(() => undefined);
+      throw new HttpError(409, "GED_INTEGRITY", "Le blob du coffre ne correspond pas à son empreinte.");
+    }
+
+    if (created) {
+      await fs.chmod(destination, 0o600).catch(() => undefined);
+      registerUploadDestination({ path: sourcePath }, destination);
+    }
+    await fs.unlink(sourcePath).catch(() => undefined);
+    return {
+      sha256,
+      storage_key: storageKey,
+      size_bytes: sourceStat.size,
+      deduplicated: !created,
+    };
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code === "ENOSPC") {
+      throw new HttpError(507, "GED_VAULT_FULL", "Le coffre documentaire est plein.");
+    }
+    if ((err as NodeJS.ErrnoException)?.code === "EROFS") {
+      throw new HttpError(503, "GED_VAULT_UNAVAILABLE", "Le coffre documentaire est en lecture seule.");
+    }
+    throw err;
+  }
+}
+
+export async function resolveBlobForDownload(storageKey: string): Promise<{ file_path: string; allowed_root: string }> {
+  const root = await ensureVaultReady();
+  return { file_path: resolveInsideVault(root, storageKey), allowed_root: root };
+}
+
+/**
  * Lit un blob et REVÉRIFIE son empreinte. Un fichier altéré sur disque est
  * refusé, jamais servi : c'est ce qui distingue un coffre d'un répertoire.
  */
@@ -209,21 +297,6 @@ export async function readBlob(storageKey: string, expectedSha256: string): Prom
     );
   }
   return buffer;
-}
-
-/**
- * Supprime un blob. Réservé à la compensation d'une transaction échouée juste
- * après l'écriture : un blob déjà référencé n'est jamais supprimé.
- */
-export async function removeBlobIfOrphan(storageKey: string): Promise<void> {
-  try {
-    const root = getVaultRoot();
-    const target = resolveInsideVault(root, storageKey);
-    await fs.unlink(target);
-  } catch {
-    // La compensation est un filet, pas une garantie : un échec ici ne doit pas
-    // masquer l'erreur d'origine. Le rapport d'intégrité détectera l'orphelin.
-  }
 }
 
 /* -------------------------------------------------------------------------- */

@@ -46,16 +46,77 @@ function rethrowGed(err: unknown): never {
   throw err;
 }
 
-export async function withGedTransaction<T>(fn: (tx: PoolClient) => Promise<T>): Promise<T> {
-  const client = await pool.connect();
+export class GedCommitUncertainError<T> extends HttpError {
+  readonly transactionResult: T;
+  readonly originalError: unknown;
+
+  constructor(transactionResult: T, originalError: unknown) {
+    super(
+      503,
+      "GED_COMMIT_UNCERTAIN",
+      "Le résultat du COMMIT GED doit être rapproché avant toute compensation de fichier."
+    );
+    this.transactionResult = transactionResult;
+    this.originalError = originalError;
+  }
+}
+
+export class GedRollbackUncertainError extends HttpError {
+  readonly originalError: unknown;
+
+  constructor(originalError: unknown) {
+    super(
+      503,
+      "GED_ROLLBACK_UNCERTAIN",
+      "Le rollback GED n’a pas pu être confirmé ; le fichier est préservé pour rapprochement."
+    );
+    this.originalError = originalError;
+  }
+}
+
+export type GedTransactionHooks = Readonly<{
+  beforeCommit?: () => void | Promise<void>;
+  afterCommit?: () => void | Promise<void>;
+  afterConfirmedRollback?: () => void | Promise<void>;
+}>;
+
+export async function withGedTransaction<T>(
+  fn: (tx: PoolClient) => Promise<T>,
+  hooks: GedTransactionHooks = {}
+): Promise<T> {
+  let client!: PoolClient;
   try {
+    client = await pool.connect();
     await client.query("BEGIN");
-    const out = await fn(client);
-    await client.query("COMMIT");
-    return out;
   } catch (err) {
-    await client.query("ROLLBACK").catch(() => undefined);
+    client?.release();
+    await hooks.afterConfirmedRollback?.();
     return rethrowGed(err);
+  }
+  try {
+    let out: T;
+    try {
+      out = await fn(client);
+      await hooks.beforeCommit?.();
+    } catch (err) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        throw new GedRollbackUncertainError(err);
+      }
+      await hooks.afterConfirmedRollback?.();
+      return rethrowGed(err);
+    }
+
+    try {
+      await client.query("COMMIT");
+    } catch (err) {
+      // Never issue ROLLBACK after COMMIT was sent: PostgreSQL may have applied
+      // it and only the acknowledgement may have been lost.
+      throw new GedCommitUncertainError(out, err);
+    }
+    await hooks.afterCommit?.();
+    return out;
   } finally {
     client.release();
   }
@@ -646,12 +707,13 @@ export async function repoInternalGetVersionContentRef(versionId: string): Promi
   original_name: string;
   mime_type: string;
   sha256: string;
+  size_bytes: number;
   storage_key: string;
 } | null> {
   try {
     const res = await pool.query(
       `SELECT v.id::text AS version_id, v.document_id::text AS document_id, v.status::text AS status,
-              v.original_name, b.mime_type, b.sha256, b.storage_key
+              v.original_name, b.mime_type, b.sha256, b.size_bytes, b.storage_key
          FROM public.ged_document_versions v
          JOIN public.ged_blobs b ON b.id = v.blob_id
         WHERE v.id = $1::uuid`,
@@ -666,8 +728,27 @@ export async function repoInternalGetVersionContentRef(versionId: string): Promi
       original_name: String(r.original_name),
       mime_type: String(r.mime_type),
       sha256: String(r.sha256),
+      size_bytes: Number(r.size_bytes),
       storage_key: String(r.storage_key),
     };
+  } catch (err) {
+    return rethrowGed(err);
+  }
+}
+
+/** Fresh-connection reconciliation used only after a COMMIT acknowledgement loss. */
+export async function repoIsVersionBlobCommitted(versionId: string, sha256: string): Promise<boolean> {
+  try {
+    const res = await pool.query(
+      `SELECT EXISTS (
+         SELECT 1
+           FROM public.ged_document_versions v
+           JOIN public.ged_blobs b ON b.id = v.blob_id
+          WHERE v.id = $1::uuid AND b.sha256 = $2
+       ) AS committed`,
+      [versionId, sha256]
+    );
+    return res.rows[0]?.committed === true;
   } catch (err) {
     return rethrowGed(err);
   }
