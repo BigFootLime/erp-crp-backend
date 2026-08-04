@@ -28,8 +28,12 @@ ACL dispatcher.
 | `chat:user:presence` | first connect / last disconnect per user | user id, online flag, timestamp | `rt:capability:chat:presence` | current active account | Chat widget |
 | `outilCreated`, `outilUpdated`, `outilDeleted`, `stockUpdated`, `fabricantUpdated`, `fournisseurAdded`, `fournisseurUpdated`, `revetementAdded` | legacy Outillage controllers | legacy IDs/quantities only | `rt:module:outillage` | effective account access to Outillage | compatibility events; no current repository consumer |
 
-The dispatcher treats multiple targets as a set. A socket subscribed to both a
-module and the entity receives one copy, not two.
+Every durable payload additionally carries `event_id`, global decimal
+`sequence`, `stream_id`, and `occurred_at`. The dispatcher treats multiple
+targets as a set. A socket subscribed to both a module and the entity receives
+one copy, not two. The 13 legacy Outillage publication sites contain IDs,
+quantities, action/source and timestamps only; username/identity fields were
+removed.
 
 ## Entity classification
 
@@ -48,28 +52,76 @@ access is therefore the authoritative entity scope. An exact entity room still
 prevents a detail/lock event from reaching a user who did not subscribe to that
 entity.
 
-## Session, role and access changes
+## Shared session revocation (two backend instances)
 
-- Handshake JWT signature/expiry is verified, then status and effective roles
-  are reloaded from PostgreSQL. A blocked, inactive, deleted, or unknown account
-  cannot connect.
+- Handshake JWT signature/expiry is verified, then status, effective roles and
+  `realtime_session_epochs.session_epoch` are reloaded from shared PostgreSQL.
+  A blocked, inactive, deleted, unknown, or epoch-mismatched account cannot
+  connect.
+- New login JWTs contain a signed random UUID `jti` and signed integer
+  `session_epoch`. This removes timestamp resolution from the revocation
+  decision: a mutation and a new login in the same millisecond are separated by
+  the monotonically incremented database epoch.
 - A timer disconnects a socket at JWT expiry; a connection cannot outlive its
   access token.
 - Module/entity access is re-resolved before join and before each emission.
   Access-control mutations already invalidate the profile cache, so the next
   delivery removes a denied socket from the room.
-- Role/status changes, account deletion, and password resets disconnect local
-  sockets and mark their current JWT issue time revoked for reconnection.
+- Database triggers increment the durable epoch in the same transaction as a
+  password/role/status update, user deletion, or role-assignment mutation. The
+  trigger sends a lightweight control `NOTIFY`; both backend instances
+  disconnect matching sockets. A two-second database revalidation loop is the
+  recovery path if a notification connection is interrupted.
 - Reconnection creates no implicit business room. The frontend replays only its
   currently mounted structured subscriptions, and every replay is authorized.
 
-The revocation issue-time cutoff and online presence counters are process-local,
-matching the current single Socket.IO process architecture. There is no Redis
-adapter or horizontally scaled Socket.IO deployment today. Before adding one,
-the cutoff/presence state must move to shared storage and the PostgreSQL audit
-listener needs a cross-instance event id deduplicator; otherwise each process
-would legitimately observe the same `NOTIFY`. The dispatcher intentionally does
-not claim multi-instance guarantees that the current runtime does not provide.
+Rolling compatibility is deliberate: a legacy signed JWT without the new
+claims is treated as epoch zero only while the account registry is still zero.
+After the first durable bump it is rejected permanently. Deployment order is:
+read-only preflight, additive patch, read-only verify, compatible frontend,
+then rolling backend. The patch must exist before the new backend accepts
+traffic. The guarded rollback is restricted to an unused `cerp_test` install
+and refuses to remove a non-empty event log.
+
+## Durable cross-instance event transport
+
+`public.realtime_event_log` is a retained outbox/event log shared by the two
+backend processes. A producer transaction inserts one idempotent row with a
+UUID event id, global `bigserial` sequence, stream, targets and JSON payload,
+then sends `cerp_realtime_control` only as a wake-up hint. Audit notifications
+use a deterministic deduplication key, so two listeners observing the same
+PostgreSQL audit `NOTIFY` still create one event row.
+
+- Publication retries only transient PostgreSQL failures, at most three
+  attempts, with the same event id/deduplication key. A permanent or exhausted
+  failure rejects the producer promise and increments/logs a privacy-safe
+  failure. All 13 Outillage controllers await that promise and report failure
+  through their normal error middleware.
+- Every backend reads rows after its own sequence cursor in ascending order.
+  `LISTEN/NOTIFY` reduces latency; one-second polling is the reliability path
+  for lost notifications and listener outages. No row is destructively claimed,
+  so both instances observe it.
+- Local dispatch is queued per `stream_id` (entity streams for locks and entity
+  changes). Different streams may progress independently. Recipient
+  authorization/delivery uses isolated promises: one database/ACL/socket error
+  is counted and cannot abort the other recipients or the global drain.
+- A publication is successful only when PostgreSQL durably accepted it. Local
+  delivery is measured separately. `deliveryBatchesWithoutRecipients` records
+  the valid case where an instance has zero matching local sockets, rather than
+  reporting a false delivery success.
+- A reconnecting client sends its last accepted global sequence after its
+  mounted descriptors have rejoined. The server replays retained rows, rechecks
+  each target/recipient ACL, caps a replay at 2,000 rows per request, and returns
+  a continuation cursor. Socket and browser event-id/high-water guards remove
+  live/replay and duplicate-wakeup copies.
+- Default retention is 24 hours (`REALTIME_EVENT_RETENTION_HOURS`) and expired
+  rows are pruned in bounded batches. Retention is recovery history, not an
+  authorization cache.
+
+The only remaining process-local state is the chat presence snapshot/count,
+which is explicitly a non-authoritative UI hint and is never used for access or
+delivery decisions. Security revocation, event durability, ordering and replay
+all use shared PostgreSQL.
 
 The selected database/tenant is not represented by a room: production and test
 are routed to separate API processes and PostgreSQL pools during the Socket.IO
@@ -77,15 +129,24 @@ handshake. Adding a tenant room inside one process would weaken that isolation.
 
 ## Observability and evidence
 
-Counters cover denied connections/subscriptions/recipients, delivered
-recipients, invalid emission targets, and expiry disconnects. ACL logs contain
-only reason and scope; no user id, entity id, token, room, payload, email, or
-username is logged. Station denial keeps its pre-existing append-only audit
-record because user/entity identifiers are required security evidence there.
+Counters cover denied connections/subscriptions/recipients, durable publishes,
+publish retries/failures, delivered/replayed recipients, zero-local-recipient
+batches, duplicate event ids, recipient isolation failures, invalid targets,
+control-plane poll failures and expiry/revocation disconnects. Logs contain
+event name, reason/scope, attempt/count and error class only; no user id, entity
+id, token, room, payload, email, or username is logged. Station denial keeps its
+pre-existing append-only audit record because user/entity identifiers are
+required security evidence there.
 
-Local proof: `src/__tests__/socket-room-acl.test.ts` starts a real ephemeral
-Socket.IO server with synthetic JWTs and authorization maps. It covers raw and
-global-room rejection, negative module/entity/user joins, cross-role and
-cross-entity non-delivery, union deduplication, user/audit isolation, capacity
-revocation, reconnect, role change, and JWT expiry. It never opens production,
-uses a real account, or touches PostgreSQL.
+Local proof: `src/__tests__/socket-room-acl.test.ts` starts real ephemeral
+Socket.IO servers over one deterministic in-memory PostgreSQL-equivalent
+control plane. Its 12 cases cover two instances, lost-NOTIFY polling,
+restart/replay, lock ordering,
+event/wakeup deduplication, cross-process same-millisecond revocation/new token,
+legacy rollout, publish failure, zero-local delivery, recipient-error isolation,
+default deny and JWT expiry. `realtime-shared-control-plane.test.ts` proves the
+bounded/idempotent PostgreSQL retry contract and statically checks the patch,
+read-only preflight/verify and guarded rollback;
+`realtime-producer-contract.test.ts` proves awaited Outillage rejection and the
+13 no-username payload sites. No script opens production,
+uses a real account, executes SQL, or touches PostgreSQL.

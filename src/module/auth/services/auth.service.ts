@@ -76,6 +76,7 @@ export const loginUser = async (
 
   const assignedRoles = normalizeAssignedRoles(user.role, user.roles);
   const effectiveRole = authorizationRole(user.role, assignedRoles);
+  const sessionEpoch = Number.parseInt(String(user.realtime_session_epoch ?? "0"), 10);
   const token = jwt.sign(
     {
       id: user.id,
@@ -84,6 +85,8 @@ export const loginUser = async (
       role: effectiveRole,
       primary_role: user.role,
       roles: assignedRoles,
+      session_epoch: Number.isSafeInteger(sessionEpoch) && sessionEpoch >= 0 ? sessionEpoch : 0,
+      jti: crypto.randomUUID(),
     },
     process.env.JWT_SECRET as string,
     { expiresIn: "1d" }
@@ -271,7 +274,7 @@ export async function resetPasswordWithToken(
     await repoDeleteOtherActivePasswordResetsForUser({ user_id: row.user_id, keep_id: row.id, tx: client });
 
     await client.query("COMMIT");
-    revokeUserRealtimeSessions(row.user_id);
+    await revokeUserRealtimeSessions(row.user_id, { durable: false });
 
     try {
       await repoInsertAuditLog({

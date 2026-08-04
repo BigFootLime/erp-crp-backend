@@ -218,11 +218,7 @@ export const outilController = {
         user_id: user.id ?? null,
       })
 
-      try {
-        emitModuleRealtimeEvent("outillage", "outilCreated", { id_outil: result.id_outil })
-      } catch {
-        // noop
-      }
+      await emitModuleRealtimeEvent("outillage", "outilCreated", { id_outil: result.id_outil })
 
       return res.status(201).json(result)
     } catch (error) {
@@ -252,11 +248,7 @@ export const outilController = {
         image: paths.image,
       })
 
-      try {
-        emitModuleRealtimeEvent("outillage", "outilUpdated", { id_outil: id })
-      } catch {
-        // noop
-      }
+      await emitModuleRealtimeEvent("outillage", "outilUpdated", { id_outil: id })
 
       return res.status(200).json({ id_outil: id })
     } catch (error) {
@@ -278,11 +270,7 @@ export const outilController = {
       const id = parseId(req.params.id, "ID Outil")
       await outilService.deleteOutil(id)
 
-      try {
-        emitModuleRealtimeEvent("outillage", "outilDeleted", { id_outil: id })
-      } catch {
-        // noop
-      }
+      await emitModuleRealtimeEvent("outillage", "outilDeleted", { id_outil: id })
 
       return res.status(200).json({ success: true })
     } catch (error) {
@@ -306,17 +294,12 @@ export const outilController = {
         affaire_id: payload.affaire_id ?? null,
       })
 
-      try {
-        emitModuleRealtimeEvent("outillage", "stockUpdated", {
-          id_outil: payload.id,
-          quantity: payload.quantity,
-          user: user.username,
-          type: "sortie",
-          date: new Date().toISOString(),
-        })
-      } catch {
-        // noop
-      }
+      await emitModuleRealtimeEvent("outillage", "stockUpdated", {
+        id_outil: payload.id,
+        quantity: payload.quantity,
+        type: "sortie",
+        date: new Date().toISOString(),
+      })
 
       return res.status(200).json({
         success: true,
@@ -343,16 +326,12 @@ export const outilController = {
         affaire_id: payload.affaire_id ?? null,
       })
 
-      try {
-        emitModuleRealtimeEvent("outillage", "stockUpdated", {
-          id_outil: payload.id,
-          quantity: payload.quantity,
-          user: user.username,
-          type: "retour",
-          date: new Date().toISOString(),
-        })
-      } catch {
-      }
+      await emitModuleRealtimeEvent("outillage", "stockUpdated", {
+        id_outil: payload.id,
+        quantity: payload.quantity,
+        type: "retour",
+        date: new Date().toISOString(),
+      })
 
       return res.status(200).json({
         success: true,
@@ -378,17 +357,12 @@ export const outilController = {
         affaire_id: payload.affaire_id ?? null,
       })
 
-      try {
-        emitModuleRealtimeEvent("outillage", "stockUpdated", {
-          id_outil: payload.id_outil,
-          quantity: payload.quantite,
-          user: user.username,
-          type: "entree",
-          date: new Date().toISOString(),
-        })
-      } catch {
-        // noop
-      }
+      await emitModuleRealtimeEvent("outillage", "stockUpdated", {
+        id_outil: payload.id_outil,
+        quantity: payload.quantite,
+        type: "entree",
+        date: new Date().toISOString(),
+      })
 
       return res.status(200).json({
         success: true,
@@ -415,18 +389,13 @@ export const outilController = {
         affaire_id: payload.affaire_id ?? null,
       })
 
-      try {
-        emitModuleRealtimeEvent("outillage", "stockUpdated", {
-          id_outil: result.id_outil,
-          quantity: payload.quantity,
-          user: user.username,
-          type: "sortie",
-          date: new Date().toISOString(),
-          source: "scan",
-        })
-      } catch {
-        // noop
-      }
+      await emitModuleRealtimeEvent("outillage", "stockUpdated", {
+        id_outil: result.id_outil,
+        quantity: payload.quantity,
+        type: "sortie",
+        date: new Date().toISOString(),
+        source: "scan",
+      })
 
       return res.status(200).json({
         success: true,
@@ -456,18 +425,13 @@ export const outilController = {
         affaire_id: payload.affaire_id ?? null,
       })
 
-      try {
-        emitModuleRealtimeEvent("outillage", "stockUpdated", {
-          id_outil: result.id_outil,
-          quantity: payload.quantity,
-          user: user.username,
-          type: "entree",
-          date: new Date().toISOString(),
-          source: "scan",
-        })
-      } catch {
-        // noop
-      }
+      await emitModuleRealtimeEvent("outillage", "stockUpdated", {
+        id_outil: result.id_outil,
+        quantity: payload.quantity,
+        type: "entree",
+        date: new Date().toISOString(),
+        source: "scan",
+      })
 
       return res.status(200).json({
         success: true,
@@ -494,17 +458,12 @@ export const outilController = {
         note: payload.note ?? null,
       })
 
-      try {
-        emitModuleRealtimeEvent("outillage", "stockUpdated", {
-          id_outil: payload.id_outil,
-          quantity: payload.new_qty,
-          user: user.username,
-          type: "inventaire",
-          date: new Date().toISOString(),
-        })
-      } catch {
-        // noop
-      }
+      await emitModuleRealtimeEvent("outillage", "stockUpdated", {
+        id_outil: payload.id_outil,
+        quantity: payload.new_qty,
+        type: "inventaire",
+        date: new Date().toISOString(),
+      })
 
       return res.status(200).json({ success: true, message: `Inventaire OK (outil ${payload.id_outil} => ${payload.new_qty})` })
     } catch (error) {
@@ -615,11 +574,7 @@ export const outilSupportController = {
         parsed.id_fournisseurs
       )
 
-      try {
-        emitModuleRealtimeEvent("outillage", "fabricantUpdated", { id })
-      } catch {
-        // noop
-      }
+      await emitModuleRealtimeEvent("outillage", "fabricantUpdated", { id })
 
       return res.status(200).json(fabricant)
     } catch (error) {
@@ -643,13 +598,8 @@ export const outilSupportController = {
       requireUser(req)
       const parsed = createFournisseurSchema.parse(req.body)
       await outilSupportService.createFournisseur(parsed)
-      res.status(201).json({ message: "Fournisseur cree" })
-
-      try {
-        emitModuleRealtimeEvent("outillage", "fournisseurAdded")
-      } catch {
-        // noop
-      }
+      await emitModuleRealtimeEvent("outillage", "fournisseurAdded")
+      return res.status(201).json({ message: "Fournisseur cree" })
     } catch (error) {
       next(error)
     }
@@ -662,11 +612,7 @@ export const outilSupportController = {
       const parsed = updateFournisseurSchema.parse(req.body)
       const fournisseur = await outilSupportService.updateFournisseur(id, parsed)
 
-      try {
-        emitModuleRealtimeEvent("outillage", "fournisseurUpdated", { id })
-      } catch {
-        // noop
-      }
+      await emitModuleRealtimeEvent("outillage", "fournisseurUpdated", { id })
 
       return res.status(200).json(fournisseur)
     } catch (error) {
@@ -744,11 +690,7 @@ export const outilSupportController = {
       const parsed = createRevetementSchema.parse(req.body)
       const id = await outilSupportService.createRevetement(parsed.nom, parsed.id_fabricant)
 
-      try {
-        emitModuleRealtimeEvent("outillage", "revetementAdded")
-      } catch {
-        // noop
-      }
+      await emitModuleRealtimeEvent("outillage", "revetementAdded")
 
       return res.status(201).json({ message: "Revetement cree", id })
     } catch (error) {

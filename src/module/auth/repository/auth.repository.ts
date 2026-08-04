@@ -38,15 +38,17 @@ export const findUserByUsername = async (username: string) => {
       `
         SELECT
           u.*,
+          COALESCE(rse.session_epoch, 0)::text AS realtime_session_epoch,
           COALESCE(
             array_agg(ura.role_key ORDER BY (ura.role_key = u.role) DESC, ura.role_key)
               FILTER (WHERE ura.role_key IS NOT NULL),
             ARRAY[u.role]::text[]
           ) AS roles
         FROM public.users u
+        LEFT JOIN public.realtime_session_epochs rse ON rse.user_id = u.id
         LEFT JOIN public.user_role_assignments ura ON ura.user_id = u.id
         WHERE u.username = $1
-        GROUP BY u.id
+        GROUP BY u.id, rse.session_epoch
         LIMIT 1
       `,
       [username]

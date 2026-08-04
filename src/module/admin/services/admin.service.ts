@@ -79,14 +79,14 @@ export async function updateUserByAdmin(
     assignedBy,
   });
   if ("role" in patch || "roles" in patch || "status" in patch) {
-    revokeUserRealtimeSessions(userId);
+    await revokeUserRealtimeSessions(userId, { durable: false });
   }
   return updated;
 }
 
 export async function deleteUserByAdmin(userId: number) {
   const deleted = await adminRepo.repoDeleteUser(userId);
-  revokeUserRealtimeSessions(userId);
+  await revokeUserRealtimeSessions(userId, { durable: false });
   return deleted;
 }
 
@@ -140,7 +140,7 @@ export async function resetUserPasswordByAdmin(input: {
   // 2) update password hash
   const hash = await bcrypt.hash(input.newPassword, 12);
   await adminRepo.repoUpdateUserPassword(input.userId, hash);
-  revokeUserRealtimeSessions(Number(input.userId));
+  await revokeUserRealtimeSessions(Number(input.userId), { durable: false });
 
   // 3) mark token used
   await adminRepo.repoMarkResetTokenUsed(tokenRow.id);
