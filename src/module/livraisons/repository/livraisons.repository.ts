@@ -2202,6 +2202,14 @@ export async function repoUpdateLivraisonStatus(
     await db.query("BEGIN")
     const current = await getHeader(db, bonLivraisonId, { forUpdate: true })
     if (!current) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
+    const cancellationReason = statut === "CANCELLED" ? meta?.commentaire?.trim() ?? "" : ""
+    if (statut === "CANCELLED" && !cancellationReason) {
+      throw new HttpError(
+        422,
+        "CANCELLATION_REASON_REQUIRED",
+        "Un motif est obligatoire pour annuler un bon de livraison."
+      )
+    }
     if (current.statut === statut) {
       await db.query("COMMIT")
       return { id: bonLivraisonId, statut }
@@ -2213,18 +2221,6 @@ export async function repoUpdateLivraisonStatus(
         `Invalid transition from ${current.statut} to ${statut}`
       )
     }
-    if (
-      current.statut === "READY" &&
-      statut === "CANCELLED" &&
-      !meta?.commentaire?.trim()
-    ) {
-      throw new HttpError(
-        422,
-        "CANCELLATION_REASON_REQUIRED",
-        "Un motif est obligatoire pour annuler une préparation READY."
-      )
-    }
-
     if (current.statut === "DRAFT" && statut === "READY") {
       await prepareLivraisonInTransaction(db, bonLivraisonId, userId)
       await db.query("COMMIT")
@@ -2236,7 +2232,7 @@ export async function repoUpdateLivraisonStatus(
         db,
         bonLivraisonId,
         userId,
-        meta?.commentaire ?? "Annulation du bon de livraison"
+        cancellationReason
       )
     }
     if (current.statut === "SHIPPED" && statut === "DELIVERED") {
@@ -2280,8 +2276,37 @@ export async function repoUpdateLivraisonStatus(
       event_type: "STATUS_CHANGED",
       user_id: userId,
       old_values: { statut: current.statut },
-      new_values: { statut, commentaire: meta?.commentaire ?? null },
+      new_values: {
+        statut,
+        commentaire: statut === "CANCELLED" ? cancellationReason : meta?.commentaire ?? null,
+      },
     })
+    if (statut === "CANCELLED") {
+      await repoInsertAuditLog({
+        user_id: userId,
+        body: {
+          event_type: "ACTION",
+          action: "livraisons.cancelled",
+          page_key: "livraisons",
+          entity_type: "bon_livraison",
+          entity_id: bonLivraisonId,
+          path: `/api/v1/livraisons/${bonLivraisonId}/status`,
+          client_session_id: null,
+          details: {
+            bon_livraison_numero: current.numero,
+            old_statut: current.statut,
+            new_statut: statut,
+            reason: cancellationReason,
+          },
+        },
+        ip: null,
+        user_agent: null,
+        device_type: null,
+        os: null,
+        browser: null,
+        tx: db,
+      })
+    }
     await db.query("COMMIT")
     return { id: bonLivraisonId, statut }
   } catch (error) {
