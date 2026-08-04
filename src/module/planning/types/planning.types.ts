@@ -112,7 +112,7 @@ export type PlanningValidationCommande = {
   numero: string;
   client_id: string | null;
   planning_validated_at: string | null;
-  workflow_status: "AR_PRET";
+  workflow_status: "PLANNING_VALIDE";
 };
 
 export type PlanningValidationSkippedCommande = {

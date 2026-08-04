@@ -27,7 +27,6 @@ import {
   updateCadreReleaseStatusSVC,
   updateCommandeSVC,
   updateCommandeWorkflowCheckpointSVC,
-  updateCommandeStatusSVC,
   addCadreReleaseLineSVC,
   cancelCadreReleaseSVC,
 } from "../services/commande-client.service";
@@ -45,7 +44,6 @@ import {
   updateCadreReleaseBodySchema,
   updateCadreReleaseLineBodySchema,
   updateCommandeWorkflowCheckpointBodySchema,
-  updateCommandeStatusBodySchema,
   type CreateCommandeBodyDTO,
 } from "../validators/commande-client.validators";
 import type { UploadedDocument } from "../types/commande-client.types";
@@ -188,7 +186,9 @@ export const getCommande: RequestHandler = async (req, res, next) => {
 // GET /api/v1/commandes/:id/workflow
 export const getCommandeWorkflow: RequestHandler = async (req, res, next) => {
   try {
-    const out = await getCommandeWorkflowSVC(routeParam(req, "id"));
+    const userId = typeof req.user?.id === "number" ? req.user.id : null;
+    if (userId === null) throw new HttpError(401, "UNAUTHORIZED", "Authentication required");
+    const out = await getCommandeWorkflowSVC(routeParam(req, "id"), userId, req.user?.role);
     if (!out) {
       res.status(404).json({ error: "Not found" });
       return;
@@ -212,7 +212,8 @@ export const updateCommandeWorkflowCheckpoint: RequestHandler = async (req, res,
       routeParam(req, "id"),
       routeParam(req, "checkpointCode"),
       parsed.data,
-      userId
+      userId,
+      typeof req.user?.role === "string" ? req.user.role : null
     );
     if (!out) {
       res.status(404).json({ error: "Not found" });
@@ -243,7 +244,7 @@ export const runCommandeWorkflowAction: RequestHandler = async (req, res, next) 
       res.status(404).json({ error: "Not found" });
       return;
     }
-    res.status(200).json({ ok: true, workflow: out });
+    res.status(200).json({ ok: true, workflow: out.workflow, idempotent_replay: out.idempotent_replay });
   } catch (err) {
     next(err);
   }
@@ -252,38 +253,18 @@ export const runCommandeWorkflowAction: RequestHandler = async (req, res, next) 
 // DELETE /api/v1/commandes/:id
 export const deleteCommande: RequestHandler = async (req, res, next) => {
   try {
-    const ok = await deleteCommandeSVC(routeParam(req, "id"));
+    const userId = req.user?.id;
+    if (typeof userId !== "number") throw new HttpError(401, "UNAUTHORIZED", "Authentication required");
+    const ok = await deleteCommandeSVC(
+      routeParam(req, "id"),
+      userId,
+      typeof req.user?.role === "string" ? req.user.role : null
+    );
     if (!ok) {
       res.status(404).json({ error: "Not found" });
       return;
     }
     res.status(204).send();
-  } catch (err) {
-    next(err);
-  }
-};
-
-// POST /api/v1/commandes/:id/status
-export const updateCommandeStatus: RequestHandler = async (req, res, next) => {
-  try {
-    const parsed = updateCommandeStatusBodySchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.issues?.[0]?.message ?? "Invalid request" });
-      return;
-    }
-
-    const userId = typeof req.user?.id === "number" ? req.user.id : null;
-    const out = await updateCommandeStatusSVC(
-      routeParam(req, "id"),
-      parsed.data.nouveau_statut,
-      parsed.data.commentaire ?? null,
-      userId
-    );
-    if (!out) {
-      res.status(404).json({ error: "Not found" });
-      return;
-    }
-    res.status(200).json({ ok: true, ...out });
   } catch (err) {
     next(err);
   }

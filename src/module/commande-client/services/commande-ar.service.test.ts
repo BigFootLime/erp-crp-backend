@@ -2,6 +2,20 @@ import { inflateSync } from "node:zlib";
 
 import { describe, expect, it, vi } from "vitest";
 
+const mocks = vi.hoisted(() => ({
+  readFile: vi.fn(),
+  sendEmail: vi.fn(),
+  authorizeGeneration: vi.fn(),
+  abortClaim: vi.fn(),
+  claimSend: vi.fn(),
+  finalizeSend: vi.fn(),
+  markFailed: vi.fn(),
+}));
+
+vi.mock("node:fs/promises", () => ({
+  default: { readFile: mocks.readFile },
+}));
+
 vi.mock("../../../config/database", () => ({
   default: { connect: vi.fn() },
 }));
@@ -10,21 +24,24 @@ vi.mock("../../../shared/realtime/realtime.service", () => ({
   emitEntityChanged: vi.fn(),
 }));
 vi.mock("../../../shared/email/resend.service", () => ({
-  sendTransactionalEmail: vi.fn(),
+  sendTransactionalEmail: mocks.sendEmail,
 }));
 vi.mock("../../../shared/documents/issuer-identity.repository", () => ({
   readIssuerParty: vi.fn(),
 }));
 vi.mock("../repository/commande-ar.repository", () => ({
   buildCommandeArRecipientSuggestions: vi.fn(),
+  repoAbortCommandeArSendClaim: mocks.abortClaim,
+  repoAuthorizeCommandeArGeneration: mocks.authorizeGeneration,
+  repoClaimCommandeArSend: mocks.claimSend,
   repoCreateCommandeArDraft: vi.fn(),
-  repoFinalizeCommandeArSend: vi.fn(),
+  repoFinalizeCommandeArSend: mocks.finalizeSend,
   repoGetCommandeArDraft: vi.fn(),
   repoLoadCommandeArGenerationData: vi.fn(),
-  repoMarkCommandeArFailed: vi.fn(),
+  repoMarkCommandeArFailed: mocks.markFailed,
 }));
 
-import { buildCommandeArPdfBuffer } from "./commande-ar.service";
+import { buildCommandeArPdfBuffer, svcSendCommandeAr } from "./commande-ar.service";
 
 const WINANSI = new TextDecoder("windows-1252");
 
@@ -91,6 +108,87 @@ const ISSUER = {
   retention_of_title: "Propriété réservée jusqu'au paiement intégral.",
   legal_mentions_version: 1,
 };
+
+const SEND_BODY = {
+  ar_id: "11111111-1111-4111-8111-111111111111",
+  recipient_emails: ["new-request@example.test"],
+  recipient_contact_ids: [],
+};
+
+const GENERATED_DRAFT = {
+  ar_id: SEND_BODY.ar_id,
+  commande_id: 123,
+  document_id: "22222222-2222-4222-8222-222222222222",
+  document_name: "AR-123.pdf",
+  subject: "AR commande 123",
+  body_text: null,
+  generated_at: "2026-08-04T08:00:00.000Z",
+  generated_by: 7,
+  status: "GENERATED" as const,
+  sent_at: null,
+  recipient_emails: [],
+  email_provider_id: null,
+  preview_path: "/commandes/123/documents/22222222-2222-4222-8222-222222222222/file",
+};
+
+describe("envoi AR claimé avant effet externe", () => {
+  it.each([
+    [403, "COMMAND_CHECKPOINT_FORBIDDEN"],
+    [409, "COMMAND_AR_SEND_NOT_ALLOWED"],
+    [409, "COMMAND_AR_STATUS_INVALID"],
+  ])("does not call the email provider when the atomic claim rejects (%s %s)", async (status, code) => {
+    mocks.claimSend.mockRejectedValueOnce(Object.assign(new Error(code), { status, code }));
+
+    await expect(svcSendCommandeAr({
+      commande_id: 123,
+      user_id: 7,
+      user_role: "Secretaire",
+      body: SEND_BODY,
+    })).rejects.toMatchObject({ status, code });
+
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it("lets only the claimed concurrent request call the provider and returns the persisted SENT replay", async () => {
+    const claim = { kind: "claimed" as const, client: {} as never, draft: GENERATED_DRAFT };
+    const persistedReplay = {
+      ...GENERATED_DRAFT,
+      status: "SENT" as const,
+      sent_at: "2026-08-04T08:05:00.000Z",
+      recipient_emails: ["persisted@example.test"],
+      email_provider_id: "provider-persisted",
+    };
+    mocks.claimSend
+      .mockResolvedValueOnce(claim)
+      .mockResolvedValueOnce({ kind: "replay", draft: persistedReplay });
+    mocks.readFile.mockResolvedValueOnce(Buffer.from("pdf"));
+    mocks.sendEmail.mockResolvedValueOnce({ ok: true, id: "provider-first" });
+    mocks.finalizeSend.mockResolvedValueOnce({
+      result: {
+        ar_id: SEND_BODY.ar_id,
+        commande_id: 123,
+        document_id: GENERATED_DRAFT.document_id,
+        status: "AR_ENVOYE",
+        sent_at: "2026-08-04T08:05:00.000Z",
+        recipient_emails: SEND_BODY.recipient_emails,
+        email_provider_id: "provider-first",
+      },
+      notifications: [],
+    });
+
+    const [first, replay] = await Promise.all([
+      svcSendCommandeAr({ commande_id: 123, user_id: 7, user_role: "Secretaire", body: SEND_BODY }),
+      svcSendCommandeAr({ commande_id: 123, user_id: 7, user_role: "Secretaire", body: SEND_BODY }),
+    ]);
+
+    expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
+    expect(first.email_provider_id).toBe("provider-first");
+    expect(replay).toMatchObject({
+      recipient_emails: ["persisted@example.test"],
+      email_provider_id: "provider-persisted",
+    });
+  });
+});
 
 describe("accusé de réception — mentions légales", () => {
   it("uses the CERP document footer and repeats legal mentions on every page", async () => {
