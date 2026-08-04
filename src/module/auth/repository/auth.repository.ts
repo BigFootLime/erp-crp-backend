@@ -1,5 +1,9 @@
 import pool from '../../../config/database';
 import { CreateUserDTO } from '../types/user.type';
+import {
+  canonicalizeAuthEmail,
+  canonicalizeAuthUsername,
+} from '../domain/auth-identity';
 
 export const createUser = async (user: CreateUserDTO, hashedPassword: string) => {
   const client = await pool.connect();
@@ -9,6 +13,8 @@ export const createUser = async (user: CreateUserDTO, hashedPassword: string) =>
       house_no, postcode, country = 'France', salary = 0,
       date_of_birth, role = 'Utilisateur', social_security_number
     } = user;
+    const canonicalUsername = canonicalizeAuthUsername(username);
+    const canonicalEmail = canonicalizeAuthEmail(email);
 
     const result = await client.query(
       `INSERT INTO users (
@@ -19,7 +25,7 @@ export const createUser = async (user: CreateUserDTO, hashedPassword: string) =>
         $9, $10, $11, $12, $13, $14, $15, $16
       ) RETURNING id, username, email, role;`,
       [
-        username, hashedPassword, name, surname, email, tel_no, gender, address,
+        canonicalUsername, hashedPassword, name, surname, canonicalEmail, tel_no, gender, address,
         lane, house_no, postcode, country, salary, date_of_birth, role, social_security_number
       ]
     );
@@ -32,6 +38,7 @@ export const createUser = async (user: CreateUserDTO, hashedPassword: string) =>
 
 // 🔍 Cherche un utilisateur par email
 export const findUserByUsername = async (username: string) => {
+  const canonicalUsername = canonicalizeAuthUsername(username);
   const client = await pool.connect();
   try {
     const result = await client.query(
@@ -51,7 +58,7 @@ export const findUserByUsername = async (username: string) => {
         GROUP BY u.id, rse.session_epoch
         LIMIT 1
       `,
-      [username]
+      [canonicalUsername]
     );
     return result.rows[0]; // undefined si pas trouvé
   } finally {
@@ -67,11 +74,12 @@ export type AuthUserLookupRow = {
 };
 
 export const findUserByUsernameOrEmail = async (usernameOrEmail: string): Promise<AuthUserLookupRow | null> => {
-  const raw = typeof usernameOrEmail === "string" ? usernameOrEmail.trim() : "";
+  const raw = typeof usernameOrEmail === "string" ? usernameOrEmail : "";
   if (!raw) return null;
 
-  const normalizedUsername = raw.toUpperCase();
-  const normalizedEmail = raw.toLowerCase();
+  const normalizedUsername = canonicalizeAuthUsername(raw);
+  const normalizedEmail = canonicalizeAuthEmail(raw);
+  if (!normalizedUsername && !normalizedEmail) return null;
 
   const client = await pool.connect();
   try {

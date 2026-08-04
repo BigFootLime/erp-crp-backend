@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { isoDate, strictEmail, strongPassword, trimString } from "./_helpers";
 import { PRIMARY_USER_ROLES } from "../domain/roles";
+import { canonicalizeAuthUsername } from "../domain/auth-identity";
 
 export const roles = PRIMARY_USER_ROLES;
 
@@ -20,7 +21,7 @@ const phoneFR = z
 
 export const registerSchema = z.object({
   username: trimString(3, "Nom d'utilisateur requis (min 3 caractères)")
-    .transform(v => v.toUpperCase())
+    .transform(canonicalizeAuthUsername)
     .refine(v => /^[A-Z0-9._-]+$/.test(v), "Username: caractères autorisés A-Z 0-9 . _ -"),
 
   password: strongPassword,

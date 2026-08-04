@@ -5,6 +5,10 @@ import type { PoolClient } from "pg";
 
 import { HttpError } from "../../../utils/httpError";
 import { normalizeAssignedRoles } from "../../auth/domain/roles";
+import {
+  canonicalizeAuthEmail,
+  canonicalizeAuthUsername,
+} from "../../auth/domain/auth-identity";
 
 export type AdminUserListRow = {
   id: number;
@@ -310,11 +314,11 @@ export async function repoCreateUser(input: {
         RETURNING id::int AS id
       `,
       [
-        input.username,
+        canonicalizeAuthUsername(input.username),
         input.passwordHash,
         input.name,
         input.surname,
-        input.email,
+        canonicalizeAuthEmail(input.email),
         input.tel_no,
         input.role,
         input.gender,
@@ -412,10 +416,10 @@ export async function repoUpdateUser(
     return `$${values.length}`;
   };
 
-  if (patch.username !== undefined) sets.push(`username = ${push(patch.username)}`);
+  if (patch.username !== undefined) sets.push(`username = ${push(canonicalizeAuthUsername(patch.username))}`);
   if (patch.name !== undefined) sets.push(`name = ${push(patch.name)}`);
   if (patch.surname !== undefined) sets.push(`surname = ${push(patch.surname)}`);
-  if (patch.email !== undefined) sets.push(`email = ${push(patch.email)}`);
+  if (patch.email !== undefined) sets.push(`email = ${push(canonicalizeAuthEmail(patch.email))}`);
   if (patch.tel_no !== undefined) sets.push(`tel_no = ${push(patch.tel_no)}`);
   if (patch.role !== undefined) sets.push(`role = ${push(patch.role)}`);
   if (patch.gender !== undefined) sets.push(`gender = ${push(patch.gender)}`);

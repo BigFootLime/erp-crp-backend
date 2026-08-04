@@ -22,6 +22,10 @@ import { sendPasswordResetEmail } from "./password-reset-email.service";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import { authorizationRole, normalizeAssignedRoles } from "../domain/roles";
 import { revokeUserRealtimeSessions } from "../../../sockets/sockeServer";
+import {
+  canonicalizeAuthUsername,
+  preserveOpaqueAuthToken,
+} from "../domain/auth-identity";
 
 export const registerUser = async (data: CreateUserDTO) => {
   // 🔐 Hash du mot de passe
@@ -44,7 +48,7 @@ export const loginUser = async (
     browser: string | null;
   }
 ) => {
-  const normalizedUsername = username.trim().toUpperCase();
+  const normalizedUsername = canonicalizeAuthUsername(username);
 
   const user = await findUserByUsername(normalizedUsername);
 
@@ -255,7 +259,7 @@ export async function resetPasswordWithToken(
     browser: string | null;
   }
 ) {
-  const token_hash = sha256Hex(token);
+  const token_hash = sha256Hex(preserveOpaqueAuthToken(token));
   const client = await pool.connect();
 
   try {

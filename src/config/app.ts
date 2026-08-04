@@ -15,11 +15,12 @@ import { requestLogger } from "../middlewares/requestLogger";
 import { getImagesRootPath } from "../utils/imageStorage";
 import { stripQueryFromUrl } from "../utils/logPath";
 import pool from "./database";
+import { resolveTrustProxySetting } from "./trust-proxy";
 
 const app = express();
 
 // Reverse proxy (Nginx/Traefik) support: trust X-Forwarded-* headers.
-app.set("trust proxy", 1);
+app.set("trust proxy", resolveTrustProxySetting());
 
 /* ------------------ 1) Sécurité & CORS ------------------ */
 
