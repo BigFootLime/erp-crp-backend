@@ -1656,13 +1656,17 @@ export async function repoCreatePieceTechnique(
     achats: (AddAchatBodyDTO & { total_achat_ht: number; total_achat_ttc: number })[];
   },
   audit: AuditContext,
-  idempotencyKey?: string | null
+  idempotencyKey?: string | null,
+  validatedRequestHash?: string,
+  compatibleRequestHashes: readonly string[] = []
 ): Promise<PieceTechnique> {
   const client = await db.connect();
   // Conserve le hash historique : une clé déjà consommée avant #404 doit
   // continuer à rejouer la même pièce, même si son ancien payload portait une
   // famille choisie dans l'interface.
-  const requestHash = crypto.createHash("sha256").update(JSON.stringify(body)).digest("hex");
+  const requestHash =
+    validatedRequestHash ?? crypto.createHash("sha256").update(JSON.stringify(body)).digest("hex");
+  const acceptedRequestHashes = new Set([requestHash, ...compatibleRequestHashes]);
   try {
     await client.query("BEGIN");
 
@@ -1675,7 +1679,7 @@ export async function repoCreatePieceTechnique(
         [idempotencyKey]
       );
       if (replay.rows[0]) {
-        if (replay.rows[0].request_hash !== requestHash) {
+        if (!acceptedRequestHashes.has(replay.rows[0].request_hash)) {
           throw new HttpError(409, "IDEMPOTENCY_KEY_REUSED", "Cette clé d’idempotence a déjà servi avec une autre pièce technique.");
         }
         await client.query("ROLLBACK");
@@ -1865,7 +1869,7 @@ export async function repoCreatePieceTechnique(
          FROM public.piece_technique_create_idempotence WHERE idempotency_key = $1`,
         [idempotencyKey]
       );
-      if (replay.rows[0]?.request_hash === requestHash) {
+      if (replay.rows[0] && acceptedRequestHashes.has(replay.rows[0].request_hash)) {
         const existing = await repoGetPieceTechnique(replay.rows[0].piece_technique_id, new Set());
         if (existing) return existing;
       }

@@ -1,4 +1,5 @@
 // src/module/pieces-techniques/services/pieces-techniques.service.ts
+import crypto from "node:crypto";
 import { HttpError } from "../../../utils/httpError";
 import type { PieceTechniqueStatut } from "../types/pieces-techniques.types";
 import type {
@@ -96,6 +97,31 @@ export const getPieceTechniqueSVC = (id: string, includes: Set<string>) => repoG
 
 export const getPieceTechniqueFabricationTreeSVC = (id: string) => repoGetFabricationTree(id);
 
+/** Hash du DTO validé, commun au pré-contrôle HTTP et à la transaction de création. */
+export function pieceTechniqueCreateRequestHash(body: CreatePieceTechniqueBodyDTO): string {
+  return crypto.createHash("sha256").update(JSON.stringify(body)).digest("hex");
+}
+
+/**
+ * Avant #309, le contrôleur stockait le hash du DTO validé mais l'assistant d'import
+ * passait directement par le repository, qui hashait le DTO enrichi. Les deux formes
+ * restent acceptées pour que les clés déjà émises continuent à rejouer leur pièce.
+ */
+export function pieceTechniqueCreateCompatibleRequestHashes(body: CreatePieceTechniqueBodyDTO): string[] {
+  const statut = body.statut ?? "DRAFT";
+  const enriched = {
+    ...body,
+    statut,
+    en_fabrication: statut === "IN_FABRICATION",
+    operations: (body.operations ?? []).map((operation) => ({ ...operation, ...computeOperation(operation) })),
+    achats: (body.achats ?? []).map((achat) => ({ ...achat, ...computeAchat(achat) })),
+  };
+  return [
+    pieceTechniqueCreateRequestHash(body),
+    crypto.createHash("sha256").update(JSON.stringify(enriched)).digest("hex"),
+  ];
+}
+
 export async function createPieceTechniqueSVC(
   body: CreatePieceTechniqueBodyDTO,
   audit: AuditContext,
@@ -123,7 +149,9 @@ export async function createPieceTechniqueSVC(
         achats,
       },
       audit,
-      idempotencyKey
+      idempotencyKey,
+      pieceTechniqueCreateRequestHash(body),
+      pieceTechniqueCreateCompatibleRequestHashes(body)
     );
   } catch (err: unknown) {
     // pg unique violation

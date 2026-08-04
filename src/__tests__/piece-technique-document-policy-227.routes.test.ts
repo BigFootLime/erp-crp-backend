@@ -350,6 +350,125 @@ describe("#227 — idempotence de création : le double clic ne crée pas deux p
 
     expect(res.status).toBe(409);
   });
+
+  it("#309 — arbitre deux créations concurrentes dans la transaction et renvoie la même pièce", async () => {
+    const idempotencyKey = "wizard-309-concurrent-01";
+    let earlyReadCount = 0;
+    let releaseEarlyReads: (() => void) | undefined;
+    const bothEarlyReads = new Promise<void>((resolve) => {
+      releaseEarlyReads = resolve;
+    });
+    let stored:
+      | { key: string; requestHash: string; pieceId: string; core: Record<string, unknown> }
+      | null = null;
+    const transactionQueries: string[][] = [];
+
+    // Force les DEUX contrôleurs à observer « aucune clé » avant de laisser les
+    // transactions avancer : c'est exactement la fenêtre de course de la régression.
+    mocks.poolQuery.mockImplementation(async (sql: unknown) => {
+      const query = String(sql);
+      if (query.includes("piece_technique_create_idempotence")) {
+        earlyReadCount += 1;
+        if (earlyReadCount <= 2) {
+          if (earlyReadCount === 2) releaseEarlyReads?.();
+          await bothEarlyReads;
+          return { rows: [], rowCount: 0 };
+        }
+        return {
+          rows: stored
+            ? [{ piece_technique_id: stored.pieceId, request_hash: stored.requestHash }]
+            : [],
+          rowCount: stored ? 1 : 0,
+        };
+      }
+      if (query.includes("FROM pieces_techniques p") && stored) {
+        return { rows: [stored.core], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+
+    mocks.poolConnect.mockImplementation(async () => {
+      const queries: string[] = [];
+      transactionQueries.push(queries);
+      let localCore: Record<string, unknown> | null = null;
+      const query = vi.fn(async (sql: unknown, params?: unknown[]) => {
+        const statement = String(sql);
+        queries.push(statement);
+        if (statement === "BEGIN" || statement === "COMMIT" || statement === "ROLLBACK") {
+          return { rows: [], rowCount: 0 };
+        }
+        if (statement.includes("piece_technique_create_idempotence") && statement.includes("FOR UPDATE")) {
+          return { rows: [], rowCount: 0 };
+        }
+        if (statement.includes("SELECT client_code FROM public.clients")) {
+          return { rows: [{ client_code: "045" }], rowCount: 1 };
+        }
+        if (statement.includes("INSERT INTO pieces_techniques (")) {
+          const pieceId = String(params?.[0]);
+          localCore = {
+            id: pieceId,
+            article_id: null,
+            root_piece_technique_id: pieceId,
+            parent_piece_technique_id: null,
+            version_number: 1,
+            created_at: "2026-08-04T00:00:00.000Z",
+            updated_at: "2026-08-04T00:00:00.000Z",
+            client_id: "045",
+            created_by: 42,
+            updated_by: 42,
+            famille_id: null,
+            name_piece: "Carter",
+            code_piece: "045-10233-000",
+            designation: "Carter aluminium",
+            designation_2: null,
+            prix_unitaire: 0,
+            statut: "DRAFT",
+            en_fabrication: 0,
+            cycle: null,
+            cycle_fabrication: null,
+            code_client: null,
+            client_name: "ACME",
+            ensemble: false,
+          };
+          return { rows: [localCore], rowCount: 1 };
+        }
+        if (statement.includes("INSERT INTO pieces_techniques_historique")) {
+          return {
+            rows: [{ id: "history-1", date_action: "2026-08-04T00:00:00.000Z" }],
+            rowCount: 1,
+          };
+        }
+        if (statement.includes("INSERT INTO public.piece_technique_create_idempotence")) {
+          if (stored) throw Object.assign(new Error("duplicate key"), { code: "23505" });
+          stored = {
+            key: String(params?.[0]),
+            requestHash: String(params?.[1]),
+            pieceId: String(params?.[2]),
+            core: localCore ?? {},
+          };
+          return { rows: [], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      });
+      return { query, release: vi.fn() };
+    });
+
+    const makeRequest = () =>
+      request(app)
+        .post("/api/v1/pieces-techniques")
+        .set("x-test-role", roleHeader("Directeur"))
+        .set("Idempotency-Key", idempotencyKey)
+        .send(body);
+
+    const [first, second] = await Promise.all([makeRequest(), makeRequest()]);
+
+    expect([first.status, second.status]).toEqual([201, 201]);
+    expect(first.body.id).toBe(second.body.id);
+    expect(stored?.key).toBe(idempotencyKey);
+    const flattened = transactionQueries.flat();
+    expect(flattened.filter((query) => query === "COMMIT")).toHaveLength(1);
+    expect(flattened.filter((query) => query === "ROLLBACK").length).toBeGreaterThanOrEqual(1);
+  });
 });
 
 describe("#227 — brouillons : strictement privés à leur auteur", () => {

@@ -1,12 +1,8 @@
 // src/module/pieces-techniques/controllers/pieces-techniques.controller.ts
 import type { Request, RequestHandler } from "express"
-import crypto from "node:crypto"
 import fs from "node:fs/promises"
 import db from "../../../config/database"
-import {
-  repoFindIdempotentPieceCreate,
-  repoRecordIdempotentPieceCreate,
-} from "../repository/create-drafts.repository"
+import { repoFindIdempotentPieceCreate } from "../repository/create-drafts.repository"
 import { generatePieceTechniqueBusinessCode } from "../../../shared/codes/code-generator.service"
 import { getDocumentStoragePath, isPathInsideDirectory, resolveCerpStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
@@ -65,6 +61,7 @@ import {
   updatePieceTechniqueSVC,
   updatePieceTechniqueStatusSVC,
   createPieceTechniqueSVC,
+  pieceTechniqueCreateCompatibleRequestHashes,
   attachPieceTechniqueDocumentsSVC,
   downloadPieceTechniqueDocumentSVC,
   listPieceTechniqueDocumentsSVC,
@@ -145,12 +142,12 @@ export const createPieceTechnique: RequestHandler = async (req, res, next) => {
       return
     }
 
-    const requestHash = crypto.createHash("sha256").update(JSON.stringify(body)).digest("hex")
+    const compatibleRequestHashes = new Set(pieceTechniqueCreateCompatibleRequestHashes(body))
     const replay = await repoFindIdempotentPieceCreate(idempotencyKey)
     if (replay) {
       // Même clé, charge différente : c'est une erreur d'appelant, pas un rejeu. On refuse
       // plutôt que de renvoyer une pièce qui ne correspond pas à ce qui vient d'être envoyé.
-      if (replay.request_hash !== requestHash) {
+      if (!compatibleRequestHashes.has(replay.request_hash)) {
         throw new HttpError(
           409,
           "IDEMPOTENCY_KEY_REUSED",
@@ -164,8 +161,9 @@ export const createPieceTechnique: RequestHandler = async (req, res, next) => {
       }
     }
 
-    const out = await createPieceTechniqueSVC(body, audit)
-    await repoRecordIdempotentPieceCreate(idempotencyKey, requestHash, out.id)
+    // La clé entre dans LA MÊME transaction que l'insertion métier. Le pré-contrôle
+    // ci-dessus optimise le rejeu séquentiel ; l'unicité en base tranche les courses.
+    const out = await createPieceTechniqueSVC(body, audit, idempotencyKey)
     res.status(201).json(out)
   } catch (err) {
     next(err)
