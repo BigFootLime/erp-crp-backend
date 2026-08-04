@@ -3,7 +3,6 @@ import { getIO } from "../../../sockets/sockeServer"
 import { HttpError } from "../../../utils/httpError"
 import { parseId } from "../../../utils/parseId"
 import { parseString } from "../../../utils/parseString"
-import { deleteStoredImageFile } from "../../../utils/imageStorage"
 import { outilService, outilSupportService } from "../services/outil.service"
 import {
   adjustStockSchema,
@@ -23,12 +22,7 @@ import {
   updateFournisseurSchema,
   updateGeometrieSchema,
 } from "../validators/outil.validator"
-import {
-  getOutillageFabricantStoredPath,
-  getOutillageFamilleStoredPath,
-  getOutillageGeometrieStoredPath,
-  getOutillageToolStoredPath,
-} from "../utils/outillage-upload"
+import type { OutillageToolUploadFiles } from "../utils/outillage-upload"
 
 function isPgUniqueViolation(err: unknown): err is { code?: string; constraint?: string; detail?: string; table?: string } {
   return typeof err === "object" && err !== null && "code" in err && (err as { code?: string }).code === "23505"
@@ -63,17 +57,13 @@ function parseMultipartJsonBody<T>(raw: unknown, schema: { parse: (value: unknow
   return schema.parse(parsedJson)
 }
 
-function extractUploadedToolPaths(files: Request["files"]) {
+function extractUploadedToolFiles(files: Request["files"]): OutillageToolUploadFiles {
   const uploaded = files as Record<string, Express.Multer.File[]> | undefined
-
-  const paths = {
-    esquisse: uploaded?.esquisse?.[0]?.filename ? getOutillageToolStoredPath(uploaded.esquisse[0].filename) : undefined,
-    plan: uploaded?.plan?.[0]?.filename ? getOutillageToolStoredPath(uploaded.plan[0].filename) : undefined,
-    image: uploaded?.image?.[0]?.filename ? getOutillageToolStoredPath(uploaded.image[0].filename) : undefined,
+  return {
+    esquisse: uploaded?.esquisse?.[0],
+    plan: uploaded?.plan?.[0],
+    image: uploaded?.image?.[0],
   }
-
-  const uploadedPaths = [paths.esquisse, paths.plan, paths.image].filter((value): value is string => Boolean(value))
-  return { paths, uploadedPaths }
 }
 
 function parseLimit(value: unknown, fallback: number, max: number) {
@@ -204,19 +194,14 @@ export const outilController = {
   },
 
   async create(req: Request, res: Response, next: NextFunction) {
-    const { uploadedPaths, paths } = extractUploadedToolPaths(req.files)
-
     try {
       const user = requireUser(req)
       const parsed = parseMultipartJsonBody(req.body.data, outilUpsertSchema)
       const result = await outilService.createOutil({
         ...parsed,
-        esquisse: paths.esquisse ?? null,
-        plan: paths.plan ?? null,
-        image: paths.image ?? null,
         utilisateur: user.username,
         user_id: user.id ?? null,
-      })
+      }, extractUploadedToolFiles(req.files))
 
       try {
         const io = getIO()
@@ -227,8 +212,6 @@ export const outilController = {
 
       return res.status(201).json(result)
     } catch (error) {
-      await Promise.all(uploadedPaths.map((value) => deleteStoredImageFile(value)))
-
       if (isPgUniqueViolation(error)) {
         return res.status(409).json({
           message: "Doublon: cette reference fabricant existe deja pour ce fabricant.",
@@ -242,16 +225,10 @@ export const outilController = {
 
   async update(req: Request, res: Response, next: NextFunction) {
     const id = parseId(req.params.id, "ID Outil")
-    const { uploadedPaths, paths } = extractUploadedToolPaths(req.files)
 
     try {
       const parsed = parseMultipartJsonBody(req.body.data, outilUpsertSchema)
-      await outilService.updateOutil(id, {
-        ...parsed,
-        esquisse: paths.esquisse,
-        plan: paths.plan,
-        image: paths.image,
-      })
+      await outilService.updateOutil(id, parsed, extractUploadedToolFiles(req.files))
 
       try {
         const io = getIO()
@@ -262,8 +239,6 @@ export const outilController = {
 
       return res.status(200).json({ id_outil: id })
     } catch (error) {
-      await Promise.all(uploadedPaths.map((value) => deleteStoredImageFile(value)))
-
       if (isPgUniqueViolation(error)) {
         return res.status(409).json({
           message: "Doublon: cette reference fabricant existe deja pour ce fabricant.",
@@ -533,30 +508,24 @@ export const outilSupportController = {
   },
 
   postFamille: async (req: Request, res: Response, next: NextFunction) => {
-    const uploadedImage = req.file?.filename ? getOutillageFamilleStoredPath(req.file.filename) : null
-
     try {
       requireUser(req)
       const parsed = createFamilleSchema.parse(req.body)
-      const famille = await outilSupportService.createFamille(parsed.nom_famille, uploadedImage)
+      const famille = await outilSupportService.createFamille(parsed.nom_famille, req.file)
       return res.status(201).json(famille)
     } catch (error) {
-      await deleteStoredImageFile(uploadedImage)
       next(error)
     }
   },
 
   patchFamille: async (req: Request, res: Response, next: NextFunction) => {
-    const uploadedImage = req.file?.filename ? getOutillageFamilleStoredPath(req.file.filename) : null
-
     try {
       requireUser(req)
       const id = parseId(req.params.id, "ID Famille")
       const parsed = updateFamilleSchema.parse(req.body)
-      const famille = await outilSupportService.updateFamille(id, parsed.nom_famille, uploadedImage)
+      const famille = await outilSupportService.updateFamille(id, parsed.nom_famille, req.file)
       return res.status(200).json(famille)
     } catch (error) {
-      await deleteStoredImageFile(uploadedImage)
       next(error)
     }
   },
@@ -571,8 +540,6 @@ export const outilSupportController = {
   },
 
   postFabricant: async (req: Request, res: Response, next: NextFunction) => {
-    const uploadedLogo = req.file?.filename ? getOutillageFabricantStoredPath(req.file.filename) : null
-
     try {
       requireUser(req)
       let fournisseursPayload: unknown = []
@@ -589,17 +556,14 @@ export const outilSupportController = {
         id_fournisseurs: fournisseursPayload,
       })
 
-      const id = await outilSupportService.createFabricant(parsed.nom_fabricant, uploadedLogo, parsed.id_fournisseurs)
+      const id = await outilSupportService.createFabricant(parsed.nom_fabricant, req.file, parsed.id_fournisseurs)
       return res.status(201).json({ message: "Fabricant cree", id })
     } catch (error) {
-      await deleteStoredImageFile(uploadedLogo)
       next(error)
     }
   },
 
   patchFabricant: async (req: Request, res: Response, next: NextFunction) => {
-    const uploadedLogo = req.file?.filename ? getOutillageFabricantStoredPath(req.file.filename) : null
-
     try {
       requireUser(req)
       const id = parseId(req.params.id, "ID Fabricant")
@@ -620,7 +584,7 @@ export const outilSupportController = {
       const fabricant = await outilSupportService.updateFabricant(
         id,
         parsed.nom_fabricant,
-        uploadedLogo,
+        req.file,
         parsed.id_fournisseurs
       )
 
@@ -633,7 +597,6 @@ export const outilSupportController = {
 
       return res.status(200).json(fabricant)
     } catch (error) {
-      await deleteStoredImageFile(uploadedLogo)
       next(error)
     }
   },
@@ -697,22 +660,17 @@ export const outilSupportController = {
   },
 
   postGeometrie: async (req: Request, res: Response, next: NextFunction) => {
-    const uploadedImage = req.file?.filename ? getOutillageGeometrieStoredPath(req.file.filename) : null
-
     try {
       requireUser(req)
       const parsed = createGeometrieSchema.parse(req.body)
-      const geometrie = await outilSupportService.createGeometrie(parsed.nom_geometrie, parsed.id_famille, uploadedImage)
+      const geometrie = await outilSupportService.createGeometrie(parsed.nom_geometrie, parsed.id_famille, req.file)
       return res.status(201).json(geometrie)
     } catch (error) {
-      await deleteStoredImageFile(uploadedImage)
       next(error)
     }
   },
 
   patchGeometrie: async (req: Request, res: Response, next: NextFunction) => {
-    const uploadedImage = req.file?.filename ? getOutillageGeometrieStoredPath(req.file.filename) : null
-
     try {
       requireUser(req)
       const id = parseId(req.params.id, "ID Geometrie")
@@ -721,11 +679,10 @@ export const outilSupportController = {
         id,
         parsed.nom_geometrie,
         parsed.id_famille,
-        uploadedImage
+        req.file
       )
       return res.status(200).json(geometrie)
     } catch (error) {
-      await deleteStoredImageFile(uploadedImage)
       next(error)
     }
   },

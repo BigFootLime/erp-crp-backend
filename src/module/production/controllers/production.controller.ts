@@ -208,10 +208,10 @@ export const createMachine = asyncHandler(async (req, res) => {
     throw new HttpError(403, "MACHINE_COST_FORBIDDEN", "Machine cost capability required.");
   }
   const file = (req as Request & { file?: unknown }).file;
-  const imagePath = isMulterFile(file) ? file.path : null;
+  const imageFile = isMulterFile(file) ? file : null;
   const idempotencyKey = typeof req.headers["idempotency-key"] === "string" ? req.headers["idempotency-key"].trim() : null;
   if (idempotencyKey && (idempotencyKey.length < 8 || idempotencyKey.length > 200)) throw new HttpError(400, "INVALID_IDEMPOTENCY_KEY", "Idempotency-Key must contain 8 to 200 characters.");
-  const out = await svcCreateMachine({ body, image_path: imagePath, idempotency_key: idempotencyKey, audit });
+  const out = await svcCreateMachine({ body, image_file: imageFile, idempotency_key: idempotencyKey, audit });
   res.status(201).json(requestHasMachineCapability(req, "costs") ? out : redactMachineCosts(out));
 });
 
@@ -224,10 +224,10 @@ export const createMachineOnboarding = asyncHandler(async (req, res) => {
     throw new HttpError(403, "MACHINE_COST_FORBIDDEN", "Machine cost capability required.");
   }
   const file = (req as Request & { file?: unknown }).file;
-  const imagePath = isMulterFile(file) ? file.path : null;
+  const imageFile = isMulterFile(file) ? file : null;
   const idempotencyKey = typeof req.headers["idempotency-key"] === "string" ? req.headers["idempotency-key"].trim() : null;
   if (!idempotencyKey || idempotencyKey.length < 8 || idempotencyKey.length > 200) throw new HttpError(400, "IDEMPOTENCY_KEY_REQUIRED", "A stable Idempotency-Key containing 8 to 200 characters is required.");
-  const out = await svcCreateMachineOnboarding({ body, image_path: imagePath, idempotency_key: idempotencyKey, audit });
+  const out = await svcCreateMachineOnboarding({ body, image_file: imageFile, idempotency_key: idempotencyKey, audit });
   res.status(201).json(requestHasMachineCapability(req, "costs") ? out : redactMachineCosts(out));
 });
 
@@ -241,8 +241,8 @@ export const updateMachine = asyncHandler(async (req, res) => {
     throw new HttpError(403, "MACHINE_COST_FORBIDDEN", "Machine cost capability required.");
   }
   const file = (req as Request & { file?: unknown }).file;
-  const imagePath = isMulterFile(file) ? file.path : undefined;
-  const out = await svcUpdateMachine({ id, patch, image_path: imagePath, audit });
+  const imageFile = isMulterFile(file) ? file : undefined;
+  const out = await svcUpdateMachine({ id, patch, image_file: imageFile, audit });
   if (!out) {
     res.status(404).json({ error: "Not found" });
     return;
@@ -263,8 +263,8 @@ export const updateMachineOnboarding = asyncHandler(async (req, res) => {
     throw new HttpError(403, "MACHINE_MODEL_UPDATE_FORBIDDEN", "Shared machine model update capability required.");
   }
   const file = (req as Request & { file?: unknown }).file;
-  const imagePath = isMulterFile(file) ? file.path : undefined;
-  const out = await svcUpdateMachineOnboarding({ id, body, image_path: imagePath, audit });
+  const imageFile = isMulterFile(file) ? file : undefined;
+  const out = await svcUpdateMachineOnboarding({ id, body, image_file: imageFile, audit });
   if (!out) {
     res.status(404).json({ error: "Not found" });
     return;

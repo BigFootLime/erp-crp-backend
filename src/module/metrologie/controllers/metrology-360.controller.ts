@@ -5,14 +5,14 @@
 // aucune décision prise côté client.
 
 import type { Request, RequestHandler } from "express";
-import fs from "node:fs/promises";
 import { ZodError, type ZodTypeAny, type z } from "zod";
 
 import { asyncHandler } from "../../../utils/asyncHandler";
-import { isPathInsideDirectory, resolveCerpStoragePath } from "../../../utils/cerpStorage";
+import { resolveCerpStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { getClientIp, parseDevice } from "../../../utils/requestMeta";
 import { emitEntityChanged } from "../../../shared/realtime/realtime.service";
+import { sendSecureStoredFile } from "../../../shared/uploads/secure-download";
 
 import type { MetrologyActor } from "../repository/metrology-shared.repository";
 import {
@@ -482,21 +482,15 @@ export const downloadCertificate: RequestHandler = asyncHandler(async (req, res)
   const absPath = resolveCerpStoragePath(doc.storage_path, baseDir);
   // Défense en profondeur : même si un chemin corrompu franchissait la base, il
   // ne peut pas sortir du répertoire privé des documents.
-  if (!isPathInsideDirectory(baseDir, absPath)) {
-    throw new HttpError(400, "INVALID_STORAGE_PATH", "Chemin de document invalide.");
-  }
-  await fs.access(absPath);
-
-  res.setHeader("Content-Type", doc.mime_type ?? "application/octet-stream");
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("Cache-Control", "private, no-store");
   const download = req.query.download === "true" || req.query.download === "1";
   const name = doc.file_original_name ?? `certificat-${params.childId}`;
-  res.setHeader(
-    "Content-Disposition",
-    `${download ? "attachment" : "inline"}; filename="${encodeURIComponent(name)}"`
-  );
-  res.sendFile(absPath);
+  await sendSecureStoredFile(res, {
+    filePath: absPath,
+    allowedRoots: [baseDir],
+    filename: name,
+    mimeType: doc.mime_type,
+    download,
+  });
 });
 
 /* -------------------------------------------------------------------------- */

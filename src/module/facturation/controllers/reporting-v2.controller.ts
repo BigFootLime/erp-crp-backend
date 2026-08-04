@@ -6,6 +6,7 @@
 import type { RequestHandler } from "express";
 
 import { HttpError } from "../../../utils/httpError";
+import { buildContentDisposition } from "../../../shared/uploads/secure-download";
 import {
   buildExport,
   getClientsSection,
@@ -93,7 +94,7 @@ export const reportingExport: RequestHandler = async (req, res, next) => {
 
     sealResponse(res);
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader("Content-Disposition", `attachment; filename="${payload.filename}"`);
+    res.setHeader("Content-Disposition", buildContentDisposition(payload.filename, true));
     res.setHeader("X-CERP-Export-Checksum", payload.checksum_sha256);
     res.setHeader("X-CERP-Export-Rows", String(payload.rows));
     // BOM : Excel FR ouvre le CSV en UTF-8 sans casser les accents.

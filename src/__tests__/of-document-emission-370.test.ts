@@ -14,6 +14,7 @@ import {
   type OfDocumentPayload,
 } from "../module/production/domain/of-document";
 import { renderOfDocument } from "../module/production/services/of-document-render";
+import { publicOfDocumentArchiveResult } from "../module/production/services/of-document-archive";
 import {
   buildFixtureInput,
   FIXTURE_FAMILLES,
@@ -21,6 +22,31 @@ import {
 } from "../module/production/domain/__fixtures__/of-document.fixture";
 
 describe("#370 — l'aperçu et l'émission partagent le même read-model", () => {
+  it("ne sérialise jamais l'ownership interne du blob GED", () => {
+    const publicArchive = publicOfDocumentArchiveResult({
+      archived: true,
+      gedDocumentId: "ged-document",
+      gedVersionId: "ged-version",
+      skippedReason: null,
+      blobOwnership: {
+        kind: "created",
+        destination: "C:\\private\\vault\\blob",
+        dev: "12",
+        ino: "34",
+      },
+      blobSha256: "private-sha",
+      blobStorageKey: "vault/sha256/private",
+    });
+
+    expect(publicArchive).toEqual({
+      archived: true,
+      gedDocumentId: "ged-document",
+      gedVersionId: "ged-version",
+      skippedReason: null,
+    });
+    expect(JSON.stringify(publicArchive)).not.toMatch(/ownership|destination|storage|dev|ino|sha/i);
+  });
+
   it("produit un payload identique pour le même instantané", () => {
     // Une seule fonction construit le payload : l'aperçu et l'émission ne peuvent
     // pas divergier, puisqu'il n'y a pas deux chemins à faire concorder.

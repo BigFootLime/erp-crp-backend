@@ -61,7 +61,19 @@ import {
   type OfDocumentPayload,
 } from "../domain/of-document";
 import { renderOfDocument } from "./of-document-render";
-import { archiveOfDocument, readArchivedOfDocument } from "./of-document-archive";
+import {
+  archiveOfDocument,
+  compensateOfDocumentArchive,
+  publicOfDocumentArchiveResult,
+  readArchivedOfDocument,
+  type OfDocumentArchiveResult,
+  type PublicOfDocumentArchiveResult,
+} from "./of-document-archive";
+import {
+  reconcileOfDocumentCommit,
+  type OfDocumentCommitContext,
+} from "./of-document-commit";
+import { storageKeyForSha256 } from "../../ged/services/ged-vault.service";
 import * as repo from "../repository/of-versioning.repository";
 
 export type OfActor = {
@@ -1117,72 +1129,156 @@ export async function emitDocument(
   }
 
   const rendered = await renderOfDocument(payload);
+  const payloadSha256 = hashDocumentPayload(payload);
+  type PublicResult =
+    | Readonly<{
+        document: repo.OfDocumentRow;
+        replayed: true;
+        pdf: Buffer;
+      }>
+    | Readonly<{
+        document: repo.OfDocumentRow;
+        replayed: false;
+        pdf: Buffer;
+        archive: PublicOfDocumentArchiveResult;
+      }>;
+  type CommitContext = OfDocumentCommitContext<PublicResult>;
 
-  return repo.withOfTransaction(async (tx) => {
-    if (idempotencyKey) {
-      const existing = await repo.findDocumentByIdempotencyKey(tx, idempotencyKey);
-      if (existing) return { document: existing, replayed: true, pdf: rendered.buffer };
+  let archiveOwnership: OfDocumentArchiveResult | null = null;
+  try {
+    const committed = await repo.withOfTransaction<CommitContext>(async (tx) => {
+      if (idempotencyKey) {
+        const existing = await repo.findDocumentByIdempotencyKey(tx, idempotencyKey);
+        if (existing) {
+          if (!existing.pdf_sha256 || existing.pdf_byte_size === null) {
+            throw new HttpError(
+              409,
+              "OF_DOCUMENT_NO_PDF",
+              "Le document idempotent n'a pas d'empreinte PDF exploitable."
+            );
+          }
+          const publicResult: PublicResult = {
+            document: existing,
+            replayed: true,
+            pdf: rendered.buffer,
+          };
+          return {
+            publicResult,
+            expectation: {
+              documentId: existing.id,
+              ofId: existing.of_id,
+              revisionId: existing.revision_id,
+              payloadSha256: existing.payload_sha256,
+              pdfSha256: existing.pdf_sha256,
+              pdfByteSize: existing.pdf_byte_size,
+              gedDocumentId: existing.ged_document_id,
+              gedVersionId: existing.ged_version_id,
+              gedBlobStorageKey: existing.ged_version_id
+                ? storageKeyForSha256(existing.pdf_sha256)
+                : null,
+              // A replay may target a GED version whose workflow status has
+              // legitimately evolved since its original emission.
+              gedVersionStatus: null,
+              gedDocumentWasPreexisting: existing.ged_document_id !== null,
+            },
+            archiveOwnership: null,
+          };
+        }
+      }
+
+      await repo.lockOf(tx, ofId);
+
+      // Double émission : une révision ne porte qu'UN document officiel. L'index
+      // unique partiel le garantit, ce contrôle le dit clairement.
+      const already = await repo.getOfficialDocument(ofId, revisionId, tx);
+      if (already) {
+        throw new HttpError(
+          409,
+          "OF_DOCUMENT_ALREADY_EMITTED",
+          `Cette révision a déjà un document officiel (${already.id}). Utiliser la réimpression.`
+        );
+      }
+
+      const existingGed = await repo.findExistingGedDocumentId(tx, ofId);
+      const archive = await archiveOfDocument(tx, {
+        ofNumero: payload.ofNumero,
+        revisionCode: payload.revisionCode,
+        pieceReference: payload.pieceReference,
+        pdf: rendered.buffer,
+        pdfSha256: rendered.sha256,
+        existingGedDocumentId: existingGed,
+        actorUserId: actor.userId,
+        changeReason: `Émission ${payload.ofNumero} ${payload.revisionCode}`,
+      }, (owned) => {
+        archiveOwnership = owned;
+      });
+      archiveOwnership = archive;
+
+      const document = await repo.insertDocument(tx, {
+        ofId,
+        revisionId,
+        payload,
+        payloadSha256,
+        pdfSha256: rendered.sha256,
+        pdfByteSize: rendered.byteSize,
+        generatedAt,
+        generatedBy: actor.userId,
+        generatedByLabel: actor.username,
+        statut: "OFFICIEL",
+        gedDocumentId: archive.gedDocumentId,
+        gedVersionId: archive.gedVersionId,
+        idempotencyKey,
+      });
+
+      await insertAuditLog(tx, audit, {
+        action: "OF_DOCUMENT_EMIT",
+        entity_type: "of_document",
+        entity_id: document.id,
+        details: {
+          of_id: ofId,
+          of_numero: payload.ofNumero,
+          revision_code: payload.revisionCode,
+          payload_sha256: document.payload_sha256,
+          pdf_sha256: rendered.sha256,
+          template_version: payload.templateVersion,
+          ged_archived: archive.archived,
+          ged_skipped_reason: archive.skippedReason,
+        },
+      });
+
+      const publicResult: PublicResult = {
+        document,
+        replayed: false,
+        pdf: rendered.buffer,
+        archive: publicOfDocumentArchiveResult(archive),
+      };
+      return {
+        publicResult,
+        expectation: {
+          documentId: document.id,
+          ofId,
+          revisionId,
+          payloadSha256,
+          pdfSha256: rendered.sha256,
+          pdfByteSize: rendered.byteSize,
+          gedDocumentId: archive.gedDocumentId,
+          gedVersionId: archive.gedVersionId,
+          gedBlobStorageKey: archive.blobStorageKey,
+          gedVersionStatus: archive.gedVersionId ? "BROUILLON" : null,
+          gedDocumentWasPreexisting: existingGed !== null,
+        },
+        archiveOwnership: archive,
+      };
+    }, {
+      afterConfirmedRollback: () => compensateOfDocumentArchive(archiveOwnership),
+    });
+    return committed.publicResult;
+  } catch (error) {
+    if (error instanceof repo.OfCommitUncertainError) {
+      return reconcileOfDocumentCommit(error.transactionResult as CommitContext);
     }
-
-    await repo.lockOf(tx, ofId);
-
-    // Double émission : une révision ne porte qu'UN document officiel. L'index
-    // unique partiel le garantit, ce contrôle le dit clairement.
-    const already = await repo.getOfficialDocument(ofId, revisionId, tx);
-    if (already) {
-      throw new HttpError(
-        409,
-        "OF_DOCUMENT_ALREADY_EMITTED",
-        `Cette révision a déjà un document officiel (${already.id}). Utiliser la réimpression.`
-      );
-    }
-
-    const existingGed = await repo.findExistingGedDocumentId(tx, ofId);
-    const archive = await archiveOfDocument(tx, {
-      ofNumero: payload.ofNumero,
-      revisionCode: payload.revisionCode,
-      pieceReference: payload.pieceReference,
-      pdf: rendered.buffer,
-      pdfSha256: rendered.sha256,
-      existingGedDocumentId: existingGed,
-      actorUserId: actor.userId,
-      changeReason: `Émission ${payload.ofNumero} ${payload.revisionCode}`,
-    });
-
-    const document = await repo.insertDocument(tx, {
-      ofId,
-      revisionId,
-      payload,
-      payloadSha256: hashDocumentPayload(payload),
-      pdfSha256: rendered.sha256,
-      pdfByteSize: rendered.byteSize,
-      generatedAt,
-      generatedBy: actor.userId,
-      generatedByLabel: actor.username,
-      statut: "OFFICIEL",
-      gedDocumentId: archive.gedDocumentId,
-      gedVersionId: archive.gedVersionId,
-      idempotencyKey,
-    });
-
-    await insertAuditLog(tx, audit, {
-      action: "OF_DOCUMENT_EMIT",
-      entity_type: "of_document",
-      entity_id: document.id,
-      details: {
-        of_id: ofId,
-        of_numero: payload.ofNumero,
-        revision_code: payload.revisionCode,
-        payload_sha256: document.payload_sha256,
-        pdf_sha256: rendered.sha256,
-        template_version: payload.templateVersion,
-        ged_archived: archive.archived,
-        ged_skipped_reason: archive.skippedReason,
-      },
-    });
-
-    return { document, replayed: false, pdf: rendered.buffer, archive };
-  });
+    throw error;
+  }
 }
 
 /**

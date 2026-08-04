@@ -9,10 +9,12 @@ import type { Request, Response } from "express";
 
 import { asyncHandler } from "../../../utils/asyncHandler";
 import { HttpError } from "../../../utils/httpError";
+import { buildContentDisposition } from "../../../shared/uploads/secure-download";
 import { buildAuditContext } from "../../project-office/controllers/project-office.controller";
 import { readMachineFamilies } from "../repository/of-versioning.repository";
 import { roleHasOfCapability, type OfCapability } from "../domain/of-rbac";
 import * as service from "../services/of-versioning.service";
+import { publicOfDocumentArchiveResult } from "../services/of-document-archive";
 import { idempotencyKeyOf } from "../middlewares/of-versioning-authorization.middleware";
 import {
   assessVarianceSchema,
@@ -308,7 +310,7 @@ export const previewPdf = asyncHandler(async (req: Request, res: Response) => {
   res.setHeader("X-Snapshot-Sha256", result.payload.snapshotSha256);
   res.setHeader(
     "Content-Disposition",
-    `inline; filename="apercu-OF-${result.payload.ofNumero}-${result.payload.revisionCode}.pdf"`
+    buildContentDisposition(`apercu-OF-${result.payload.ofNumero}-${result.payload.revisionCode}.pdf`, false)
   );
   res.end(result.buffer);
 });
@@ -335,7 +337,7 @@ export const emitDocument = asyncHandler(async (req: Request, res: Response) => 
   res.status(result.replayed ? 200 : 201).json({
     document: result.document,
     replayed: result.replayed,
-    archive: "archive" in result ? result.archive : null,
+    archive: "archive" in result ? publicOfDocumentArchiveResult(result.archive) : null,
   });
 });
 
@@ -347,6 +349,6 @@ export const reprintDocument = asyncHandler(async (req: Request, res: Response) 
   res.setHeader("Content-Length", String(result.pdf.byteLength));
   res.setHeader("X-Document-Sha256", String(result.document.pdf_sha256));
   res.setHeader("X-Reprint-Source", result.source);
-  res.setHeader("Content-Disposition", `inline; filename="OF-${documentId}.pdf"`);
+  res.setHeader("Content-Disposition", buildContentDisposition(`OF-${documentId}.pdf`, false));
   res.end(result.pdf);
 });

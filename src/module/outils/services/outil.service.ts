@@ -1,8 +1,24 @@
+import fs from "node:fs/promises"
+
+import type { PoolClient } from "pg"
+
 import db from "../../../config/database"
-import { deleteStoredImageFile } from "../../../utils/imageStorage"
+import { buildPublicImageUrl, deleteStoredImageFile, normalizeStoredImagePath } from "../../../utils/imageStorage"
 import { HttpError } from "../../../utils/httpError"
+import {
+  type UploadCommitReconciliation,
+  withUploadTransaction,
+} from "../../../shared/uploads/upload-transaction"
 import { outilRepository } from "../repository/outil.repository"
 import type { OutillageImportBatchSummary, OutillageRecentMovement, OutilPricingResponse } from "../types/outil.types"
+import {
+  type OutillageToolUploadFiles,
+  type PromotedOutillageFile,
+  promoteOutillageFabricantFile,
+  promoteOutillageFamilleFile,
+  promoteOutillageGeometrieFile,
+  promoteOutillageToolFiles,
+} from "../utils/outillage-upload"
 import type {
   CreateOutilInput,
   UpdateOutilInput,
@@ -88,6 +104,86 @@ function normalizeTaxonomyLabel(value: string) {
   return value.trim().toLocaleUpperCase("fr-FR")
 }
 
+type ExpectedOutillageUpload = Readonly<{
+  column: string
+  storedPath: string
+  absolutePath: string
+}>
+
+async function classifyOutillageUploadCommit(
+  row: Record<string, unknown> | undefined,
+  expected: readonly ExpectedOutillageUpload[],
+  operation: "create" | "update"
+): Promise<UploadCommitReconciliation> {
+  if (!row) return "not-committed"
+  if (expected.length === 0) return operation === "create" ? "committed" : "uncertain"
+
+  const matches = expected.filter(({ column, storedPath }) =>
+    normalizeStoredImagePath(typeof row[column] === "string" ? row[column] as string : null) === storedPath
+  )
+  if (matches.length === 0) return operation === "create" ? "uncertain" : "not-committed"
+  if (matches.length !== expected.length) return "uncertain"
+
+  const present = await Promise.all(
+    expected.map(({ absolutePath }) => fs.stat(absolutePath).then((stat) => stat.isFile()).catch(() => false))
+  )
+  return present.every(Boolean) ? "committed" : "uncertain"
+}
+
+function toolUploadFiles(files: OutillageToolUploadFiles): Express.Multer.File[] {
+  return [files.esquisse, files.plan, files.image].filter((file): file is Express.Multer.File => Boolean(file))
+}
+
+function expectedToolUploads(
+  promoted: Awaited<ReturnType<typeof promoteOutillageToolFiles>>
+): ExpectedOutillageUpload[] {
+  return (["esquisse", "plan", "image"] as const).flatMap((column) => {
+    const entry = promoted[column]
+    return entry ? [{ column, storedPath: entry.storedPath, absolutePath: entry.absolutePath }] : []
+  })
+}
+
+type SingleUploadTransactionOptions<T> = Readonly<{
+  context: string
+  operation: "create" | "update"
+  file?: Express.Multer.File
+  column: string
+  promote: (file: Express.Multer.File) => Promise<PromotedOutillageFile>
+  mutate: (client: PoolClient) => Promise<T>
+  persist: (client: PoolClient, result: T, storedPath: string) => Promise<void>
+  readFresh: (result: T) => Promise<Record<string, unknown> | undefined>
+  decorate?: (result: T, storedPath: string) => T
+}>
+
+async function withSingleOutillageUpload<T>(options: SingleUploadTransactionOptions<T>): Promise<T> {
+  const client = await db.connect()
+  let expected: ExpectedOutillageUpload[] = []
+  return withUploadTransaction({
+    client,
+    files: options.file ? [options.file] : [],
+    context: options.context,
+    work: async () => {
+      let result = await options.mutate(client) as T
+      if (!options.file) return result
+
+      const promoted = await options.promote(options.file)
+      await options.persist(client, result, promoted.storedPath)
+      expected = [{
+        column: options.column,
+        storedPath: promoted.storedPath,
+        absolutePath: promoted.absolutePath,
+      }]
+      if (options.decorate) result = options.decorate(result, promoted.storedPath)
+      return result
+    },
+    reconcile: async (result) => classifyOutillageUploadCommit(
+      await options.readFresh(result),
+      expected,
+      options.operation
+    ),
+  })
+}
+
 export const outilService = {
   async getAllOutils() {
     return outilRepository.findAll()
@@ -145,47 +241,84 @@ export const outilService = {
 
   async createOutil(
     data: CreateOutilInput & {
-      esquisse?: string | null
-      plan?: string | null
-      image?: string | null
       utilisateur: string
       user_id?: number | null
-    }
+    },
+    files: OutillageToolUploadFiles = {}
   ) {
     assertUser(data.utilisateur)
 
     const client = await db.connect()
-    try {
-      await client.query("BEGIN")
-      const id_outil = await outilRepository.create(data, client)
-      await client.query("COMMIT")
-      return { id_outil }
-    } catch (error) {
-      await client.query("ROLLBACK")
-      throw error
-    } finally {
-      client.release()
-    }
+    let expected: ExpectedOutillageUpload[] = []
+    return withUploadTransaction({
+      client,
+      files: toolUploadFiles(files),
+      context: "outillage.outils.create",
+      work: async () => {
+        // All referential and uniqueness validation is executed before a file
+        // leaves staging. The paths are attached only after that succeeds.
+        const id_outil = await outilRepository.create({
+          ...data,
+          esquisse: null,
+          plan: null,
+          image: null,
+        }, client)
+        const promoted = await promoteOutillageToolFiles(files)
+        expected = expectedToolUploads(promoted)
+        await outilRepository.setOutilUploadPaths(client, id_outil, {
+          esquisse: promoted.esquisse?.storedPath,
+          plan: promoted.plan?.storedPath,
+          image: promoted.image?.storedPath,
+        })
+        return { id_outil }
+      },
+      reconcile: async ({ id_outil }) => {
+        const result = await db.query(
+          `SELECT esquisse, plan, image FROM gestion_outils_outil WHERE id_outil = $1`,
+          [id_outil]
+        )
+        return classifyOutillageUploadCommit(result.rows[0], expected, "create")
+      },
+    })
   },
 
   async updateOutil(
     id_outil: number,
-    data: UpdateOutilInput & { esquisse?: string | null; plan?: string | null; image?: string | null }
+    data: UpdateOutilInput,
+    files: OutillageToolUploadFiles = {}
   ) {
     assertPositiveInt(id_outil, "ID outil")
 
     const client = await db.connect()
-    try {
-      await client.query("BEGIN")
-      await outilRepository.update(id_outil, data, client)
-      await client.query("COMMIT")
-      return { id_outil }
-    } catch (error) {
-      await client.query("ROLLBACK")
-      throw error
-    } finally {
-      client.release()
-    }
+    let expected: ExpectedOutillageUpload[] = []
+    return withUploadTransaction({
+      client,
+      files: toolUploadFiles(files),
+      context: "outillage.outils.update",
+      work: async () => {
+        await outilRepository.update(id_outil, {
+          ...data,
+          esquisse: undefined,
+          plan: undefined,
+          image: undefined,
+        }, client)
+        const promoted = await promoteOutillageToolFiles(files)
+        expected = expectedToolUploads(promoted)
+        await outilRepository.setOutilUploadPaths(client, id_outil, {
+          esquisse: promoted.esquisse?.storedPath,
+          plan: promoted.plan?.storedPath,
+          image: promoted.image?.storedPath,
+        })
+        return { id_outil }
+      },
+      reconcile: async () => {
+        const result = await db.query(
+          `SELECT esquisse, plan, image FROM gestion_outils_outil WHERE id_outil = $1`,
+          [id_outil]
+        )
+        return classifyOutillageUploadCommit(result.rows[0], expected, "update")
+      },
+    })
   },
 
   async deleteOutil(id_outil: number) {
@@ -450,16 +583,78 @@ export const outilService = {
 
 export const outilSupportService = {
   getFamilles: () => outilRepository.getFamilles(),
-  createFamille: (nom_famille: string, image_path: string | null) =>
-    outilRepository.createFamille(normalizeTaxonomyLabel(nom_famille), image_path),
-  updateFamille: (id_famille: number, nom_famille: string, image_path?: string | null) =>
-    outilRepository.updateFamille(id_famille, normalizeTaxonomyLabel(nom_famille), image_path),
+  async createFamille(nom_famille: string, file?: Express.Multer.File) {
+    const normalizedName = normalizeTaxonomyLabel(nom_famille)
+    return withSingleOutillageUpload({
+      context: "outillage.familles.create",
+      operation: "create",
+      file,
+      column: "image_path",
+      promote: promoteOutillageFamilleFile,
+      mutate: (client) => outilRepository.createFamille(normalizedName, null, client),
+      persist: (client, result, storedPath) => outilRepository.setFamilleImagePath(client, result.value, storedPath),
+      readFresh: async (result) => (await db.query(
+        `SELECT image_path FROM gestion_outils_famille WHERE id_famille = $1`,
+        [result.value]
+      )).rows[0],
+      decorate: (result, storedPath) => ({ ...result, imagePath: buildPublicImageUrl(storedPath) }),
+    })
+  },
+  async updateFamille(id_famille: number, nom_famille: string, file?: Express.Multer.File) {
+    const normalizedName = normalizeTaxonomyLabel(nom_famille)
+    return withSingleOutillageUpload({
+      context: "outillage.familles.update",
+      operation: "update",
+      file,
+      column: "image_path",
+      promote: promoteOutillageFamilleFile,
+      mutate: (client) => outilRepository.updateFamille(id_famille, normalizedName, null, client),
+      persist: (client, _result, storedPath) => outilRepository.setFamilleImagePath(client, id_famille, storedPath),
+      readFresh: async () => (await db.query(
+        `SELECT image_path FROM gestion_outils_famille WHERE id_famille = $1`,
+        [id_famille]
+      )).rows[0],
+      decorate: (result, storedPath) => ({ ...result, imagePath: buildPublicImageUrl(storedPath) }),
+    })
+  },
   getFabricants: () => outilRepository.getFabricants(),
   getFournisseurs: (fabricantId?: number) => outilRepository.getFournisseurs(fabricantId),
-  createFabricant: (nom: string, logo: string | null, fournisseurs: number[]) =>
-    outilRepository.createFabricant(nom, logo, fournisseurs),
-  updateFabricant: (id_fabricant: number, nom: string, logo: string | null, fournisseurs: number[]) =>
-    outilRepository.updateFabricant(id_fabricant, nom, logo, fournisseurs),
+  async createFabricant(nom: string, file: Express.Multer.File | undefined, fournisseurs: number[]) {
+    return withSingleOutillageUpload({
+      context: "outillage.fabricants.create",
+      operation: "create",
+      file,
+      column: "logo",
+      promote: promoteOutillageFabricantFile,
+      mutate: (client) => outilRepository.createFabricant(nom, null, fournisseurs, client),
+      persist: (client, id, storedPath) => outilRepository.setFabricantLogo(client, id, storedPath),
+      readFresh: async (id) => (await db.query(
+        `SELECT logo FROM gestion_outils_fabricant WHERE id_fabricant = $1`,
+        [id]
+      )).rows[0],
+    })
+  },
+  async updateFabricant(
+    id_fabricant: number,
+    nom: string,
+    file: Express.Multer.File | undefined,
+    fournisseurs: number[]
+  ) {
+    return withSingleOutillageUpload({
+      context: "outillage.fabricants.update",
+      operation: "update",
+      file,
+      column: "logo",
+      promote: promoteOutillageFabricantFile,
+      mutate: (client) => outilRepository.updateFabricant(id_fabricant, nom, null, fournisseurs, client),
+      persist: (client, _result, storedPath) => outilRepository.setFabricantLogo(client, id_fabricant, storedPath),
+      readFresh: async () => (await db.query(
+        `SELECT logo FROM gestion_outils_fabricant WHERE id_fabricant = $1`,
+        [id_fabricant]
+      )).rows[0],
+      decorate: (result, storedPath) => ({ ...result, logo: buildPublicImageUrl(storedPath) }),
+    })
+  },
   createFournisseur: (data: {
     nom: string
     adresse_ligne?: string
@@ -483,10 +678,45 @@ export const outilSupportService = {
     nom_commercial?: string
   }) => outilRepository.updateFournisseur(id_fournisseur, data),
   getGeometries: (id_famille?: number) => outilRepository.getGeometries(id_famille),
-  createGeometrie: (nom_geometrie: string, id_famille: number, image_path: string | null) =>
-    outilRepository.createGeometrie(normalizeTaxonomyLabel(nom_geometrie), id_famille, image_path),
-  updateGeometrie: (id_geometrie: number, nom_geometrie: string, id_famille: number, image_path?: string | null) =>
-    outilRepository.updateGeometrie(id_geometrie, normalizeTaxonomyLabel(nom_geometrie), id_famille, image_path),
+  async createGeometrie(nom_geometrie: string, id_famille: number, file?: Express.Multer.File) {
+    const normalizedName = normalizeTaxonomyLabel(nom_geometrie)
+    return withSingleOutillageUpload({
+      context: "outillage.geometries.create",
+      operation: "create",
+      file,
+      column: "image_path",
+      promote: promoteOutillageGeometrieFile,
+      mutate: (client) => outilRepository.createGeometrie(normalizedName, id_famille, null, client),
+      persist: (client, result, storedPath) => outilRepository.setGeometrieImagePath(client, result.value, storedPath),
+      readFresh: async (result) => (await db.query(
+        `SELECT image_path FROM gestion_outils_geometrie WHERE id_geometrie = $1`,
+        [result.value]
+      )).rows[0],
+      decorate: (result, storedPath) => ({ ...result, imagePath: buildPublicImageUrl(storedPath) }),
+    })
+  },
+  async updateGeometrie(
+    id_geometrie: number,
+    nom_geometrie: string,
+    id_famille: number,
+    file?: Express.Multer.File
+  ) {
+    const normalizedName = normalizeTaxonomyLabel(nom_geometrie)
+    return withSingleOutillageUpload({
+      context: "outillage.geometries.update",
+      operation: "update",
+      file,
+      column: "image_path",
+      promote: promoteOutillageGeometrieFile,
+      mutate: (client) => outilRepository.updateGeometrie(id_geometrie, normalizedName, id_famille, null, client),
+      persist: (client, _result, storedPath) => outilRepository.setGeometrieImagePath(client, id_geometrie, storedPath),
+      readFresh: async () => (await db.query(
+        `SELECT image_path FROM gestion_outils_geometrie WHERE id_geometrie = $1`,
+        [id_geometrie]
+      )).rows[0],
+      decorate: (result, storedPath) => ({ ...result, imagePath: buildPublicImageUrl(storedPath) }),
+    })
+  },
   getRevetements: (id_fabricant?: number) => outilRepository.getRevetements(id_fabricant),
   getAretes: (id_geometrie?: number) => outilRepository.getAretes(id_geometrie),
   createRevetement: (nom: string, id_fabricant: number) => outilRepository.createRevetement(nom, id_fabricant),

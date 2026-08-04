@@ -91,4 +91,62 @@ describe("CA-SEC-04 — errorHandler ne fuite pas d'internes sur 5xx", () => {
     expect(payload.code).toBe("DB_DOWN");
     expect(JSON.stringify(payload)).not.toContain("10.0.0.5");
   });
+
+  it.each([
+    ["UPLOAD_SCAN_UNAVAILABLE", "Le contrôle antivirus est temporairement indisponible. Réessayez plus tard."],
+    ["UPLOAD_STAGING_PERMISSION_FAILED", "La zone sécurisée de dépôt est temporairement indisponible. Réessayez plus tard ou contactez l’administrateur."],
+    ["UPLOAD_CLEANUP_FAILED", "Le nettoyage sécurisé du fichier n’a pas pu être confirmé. Ne relancez pas l’envoi et contactez l’administrateur."],
+    ["UPLOAD_COMMIT_UNCERTAIN", "Le résultat de l’enregistrement doit être vérifié. Ne relancez pas l’opération avant actualisation."],
+    ["UPLOAD_ROLLBACK_UNCERTAIN", "L’annulation n’a pas pu être confirmée. Le fichier est préservé ; une vérification est requise avant toute nouvelle tentative."],
+    ["GED_COMMIT_UNCERTAIN", "Le résultat du dépôt GED doit être vérifié. Ne relancez pas le dépôt avant actualisation."],
+    ["GED_UPLOAD_COMMIT_UNCERTAIN", "Le résultat du dépôt GED doit être vérifié. Ne relancez pas le dépôt avant actualisation."],
+    ["GED_ROLLBACK_UNCERTAIN", "L’annulation du dépôt GED n’a pas pu être confirmée. Le fichier est préservé ; contactez l’administrateur."],
+    ["GED_BLOB_CLEANUP_UNCERTAIN", "Le rapprochement du fichier GED n’a pas pu être confirmé. Ne relancez pas le dépôt et contactez l’administrateur."],
+    ["GED_VAULT_STAGING_CLEANUP_FAILED", "Le nettoyage du staging GED n’a pas pu être confirmé. Ne relancez pas le dépôt et contactez l’administrateur."],
+    ["METROLOGY_COMMIT_UNCERTAIN", "Le résultat du dépôt métrologique doit être vérifié. Ne relancez pas l’opération avant actualisation."],
+    ["METROLOGY_ROLLBACK_UNCERTAIN", "L’annulation du dépôt métrologique n’a pas pu être confirmée. La preuve est préservée ; contactez l’administrateur."],
+    ["PO_COMMIT_UNCERTAIN", "Le résultat du dépôt Project Office doit être vérifié. Ne relancez pas l’opération avant actualisation."],
+    ["PO_UPLOAD_COMMIT_UNCERTAIN", "Le résultat du dépôt Project Office doit être vérifié. Ne relancez pas l’opération avant actualisation."],
+    ["PO_UPLOAD_COMMIT_NOT_APPLIED", "Le dépôt Project Office n’a pas été appliqué. Vous pouvez réessayer."],
+    ["PO_ROLLBACK_UNCERTAIN", "L’annulation du dépôt Project Office n’a pas pu être confirmée. Le fichier est préservé ; contactez l’administrateur."],
+    ["LIVRAISON_PDF_COMMIT_UNCERTAIN", "Le résultat de l’enregistrement du PDF de livraison doit être vérifié. Ne relancez pas la génération avant actualisation."],
+    ["OF_COMMIT_UNCERTAIN", "Le résultat de l’opération OF doit être vérifié. Ne relancez pas l’opération avant actualisation."],
+    ["OF_DOCUMENT_COMMIT_UNCERTAIN", "Le résultat de l’émission du document OF doit être vérifié. Ne relancez pas l’émission avant actualisation."],
+    ["OF_ROLLBACK_UNCERTAIN", "L’annulation de l’opération OF n’a pas pu être confirmée. Les fichiers sont préservés ; contactez l’administrateur."],
+    ["OF_DOCUMENT_COMMIT_NOT_APPLIED", "L’émission du document OF n’a pas été appliquée. Vous pouvez réessayer."],
+  ])("publie un conseil constant et sans fuite pour la 503 opérationnelle %s", (code, expectedMessage) => {
+    const { req, res, json } = mockReqRes("/api/v1/ged?title=secret-client");
+    const privateMessage = "EACCES C:\\private\\tenant-42\\document.pdf";
+    const error = new HttpError(503, code, privateMessage, { absolutePath: "C:\\private\\tenant-42" });
+
+    errorHandler(error, req, res, () => {});
+
+    const payload = json.mock.calls[0][0];
+    expect(payload).toEqual({
+      success: false,
+      message: expectedMessage,
+      code,
+      path: "/api/v1/ged",
+    });
+    expect(JSON.stringify(payload)).not.toContain("tenant-42");
+    expect(JSON.stringify(payload)).not.toContain("absolutePath");
+  });
+
+  it.each([
+    "GED_COMMIT_UNCERTAIN_DEBUG",
+    "constructor",
+    "toString",
+    "__proto__",
+  ])("garde une 5xx au message générique pour le code non autorisé %s", (code) => {
+    const { req, res, json } = mockReqRes();
+
+    errorHandler(
+      new HttpError(503, code, "internal transaction detail"),
+      req,
+      res,
+      () => {}
+    );
+
+    expect(json.mock.calls[0][0].message).toBe("Erreur serveur.");
+  });
 });

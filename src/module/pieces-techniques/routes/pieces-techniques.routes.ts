@@ -1,10 +1,9 @@
 // src/module/pieces-techniques/routes/pieces-techniques.routes.ts
 import { Router, type RequestHandler } from "express"
 import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
-import multer from "multer"
 
 import { authenticateToken, authorizeRole } from "../../auth/middlewares/auth.middleware"
-import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
+import { createSecureUpload } from "../../../shared/uploads/secure-upload"
 import { HttpError } from "../../../utils/httpError"
 import {
   canValidatePieceTechnique,
@@ -138,14 +137,7 @@ const requireVersionApproval: RequestHandler = (req, _res, next) => {
   next()
 }
 
-const docsBaseDir = ensureDocumentStoragePath("pieces-techniques")
-
-const upload = multer({
-  dest: docsBaseDir,
-  limits: {
-    fileSize: 25 * 1024 * 1024,
-  },
-})
+const upload = createSecureUpload("technical-document")
 
 router.use(authenticateToken)
 

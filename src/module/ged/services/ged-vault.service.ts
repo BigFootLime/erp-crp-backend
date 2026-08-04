@@ -14,11 +14,18 @@
 // répertoire local de repli que personne ne sauvegarderait.
 
 import crypto from "node:crypto";
-import fs from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
 
 import { HttpError } from "../../../utils/httpError";
 import { isPathInsideDirectory } from "../../../utils/cerpStorage";
+import {
+  cleanupUploadsAfterConfirmedRollback,
+  ensurePrivateUploadDirectory,
+  registerUploadDestination,
+  removeOwnedPathSafely,
+} from "../../../shared/uploads/secure-upload";
 
 const VAULT_SUBDIR = "vault";
 const STAGING_SUBDIR = "staging";
@@ -96,8 +103,8 @@ export async function ensureVaultReady(): Promise<string> {
   const root = getVaultRoot();
   await assertSentinel(root);
   try {
-    await fs.mkdir(path.join(root, VAULT_SUBDIR), { recursive: true });
-    await fs.mkdir(path.join(root, STAGING_SUBDIR), { recursive: true });
+    ensurePrivateUploadDirectory(path.join(root, VAULT_SUBDIR), root);
+    ensurePrivateUploadDirectory(path.join(root, STAGING_SUBDIR), root);
   } catch (err) {
     const detail = err instanceof Error ? err.message : "accès impossible";
     throw new HttpError(
@@ -115,6 +122,44 @@ export async function ensureVaultReady(): Promise<string> {
 
 export function computeSha256(buffer: Buffer): string {
   return crypto.createHash("sha256").update(buffer).digest("hex");
+}
+
+export async function computeFileSha256(filePath: string): Promise<string> {
+  const hash = crypto.createHash("sha256");
+  const stream = createReadStream(filePath);
+  for await (const chunk of stream) hash.update(chunk as Buffer);
+  return hash.digest("hex");
+}
+
+async function computeFileHandleSha256(handle: FileHandle): Promise<string> {
+  const hash = crypto.createHash("sha256");
+  const stream = handle.createReadStream({ start: 0, autoClose: false });
+  for await (const chunk of stream) hash.update(chunk as Buffer);
+  return hash.digest("hex");
+}
+
+async function copyFileHandle(source: FileHandle, destination: FileHandle): Promise<void> {
+  const buffer = Buffer.allocUnsafe(64 * 1024);
+  let position = 0;
+  while (true) {
+    const { bytesRead } = await source.read(buffer, 0, buffer.length, position);
+    if (bytesRead === 0) break;
+    let written = 0;
+    while (written < bytesRead) {
+      const result = await destination.write(
+        buffer,
+        written,
+        bytesRead - written,
+        position + written
+      );
+      if (result.bytesWritten <= 0) {
+        throw Object.assign(new Error("GED vault copy made no progress"), { code: "EIO" });
+      }
+      written += result.bytesWritten;
+    }
+    position += bytesRead;
+  }
+  await destination.sync();
 }
 
 /** Clé interne opaque, relative à la racine. N'est jamais retournée par l'API. */
@@ -142,39 +187,316 @@ export type WrittenBlob = {
   storage_key: string;
   size_bytes: number;
   deduplicated: boolean;
+  ownership: VaultBlobOwnership;
 };
+
+export type VaultBlobOwnership =
+  | Readonly<{
+      kind: "created";
+      destination: string;
+      dev: string;
+      ino: string;
+    }>
+  | Readonly<{ kind: "deduplicated" }>;
+
+function vaultIdentityMatches(
+  ownership: Extract<VaultBlobOwnership, { kind: "created" }>,
+  stat: Readonly<{ dev: string | number | bigint; ino: string | number | bigint }>
+): boolean {
+  return ownership.dev === String(stat.dev) && ownership.ino === String(stat.ino);
+}
+
+type VaultIdentityInput = Readonly<{
+  dev: string | number | bigint;
+  ino: string | number | bigint;
+}>;
+
+function createdVaultOwnership(
+  destination: string,
+  identity: VaultIdentityInput
+): Extract<VaultBlobOwnership, { kind: "created" }> {
+  return {
+    kind: "created",
+    destination,
+    dev: String(identity.dev),
+    ino: String(identity.ino),
+  };
+}
+
+async function assertVaultPathIdentity(
+  destination: string,
+  identity: VaultIdentityInput
+): Promise<void> {
+  let current;
+  try {
+    current = await fs.lstat(destination, { bigint: true });
+  } catch {
+    throw new HttpError(
+      409,
+      "GED_FILE_CHANGED",
+      "Le blob du coffre a changé pendant sa publication."
+    );
+  }
+  if (
+    !current.isFile()
+    || String(current.dev) !== String(identity.dev)
+    || String(current.ino) !== String(identity.ino)
+  ) {
+    throw new HttpError(
+      409,
+      "GED_FILE_CHANGED",
+      "Le blob du coffre a été remplacé pendant sa publication."
+    );
+  }
+}
+
+/**
+ * Delete only the exact vault inode created by this writer. Reference checks
+ * and the shared SHA lock are the caller's responsibility.
+ */
+export async function cleanupOwnedVaultBlob(ownership: VaultBlobOwnership): Promise<void> {
+  if (ownership.kind === "deduplicated") return;
+  await removeOwnedPathSafely(ownership.destination, ownership);
+}
+
+function mapVaultWriteError(error: unknown): unknown {
+  if ((error as NodeJS.ErrnoException)?.code === "ENOSPC") {
+    return new HttpError(507, "GED_VAULT_FULL", "Le coffre documentaire est plein.");
+  }
+  if ((error as NodeJS.ErrnoException)?.code === "EROFS") {
+    return new HttpError(503, "GED_VAULT_UNAVAILABLE", "Le coffre documentaire est en lecture seule.");
+  }
+  return error;
+}
 
 /**
  * Écrit un blob. Le contenu étant adressé par son empreinte, deux dépôts
  * identiques convergent naturellement vers le même fichier : `EEXIST` n'est pas
  * une erreur, c'est de la déduplication.
  *
- * `flag: "wx"` garantit qu'un blob existant n'est jamais écrasé.
+ * Le buffer est d'abord écrit intégralement dans un staging privé `0600`, puis
+ * publié par lien dur exclusif. Le nom final n'existe donc jamais à l'état
+ * partiel, même si l'écriture échoue avec ENOSPC.
  */
 export async function writeBlob(buffer: Buffer): Promise<WrittenBlob> {
+  const snapshot = Buffer.from(buffer);
   const root = await ensureVaultReady();
-  const sha256 = computeSha256(buffer);
+  const sha256 = computeSha256(snapshot);
   const storageKey = storageKeyForSha256(sha256);
   const destination = resolveInsideVault(root, storageKey);
+  const stagingDirectory = path.join(root, STAGING_SUBDIR, "buffer");
+  const stagingPath = path.join(stagingDirectory, `${crypto.randomUUID()}.part`);
 
-  await fs.mkdir(path.dirname(destination), { recursive: true });
+  ensurePrivateUploadDirectory(path.dirname(destination), path.join(root, VAULT_SUBDIR));
+  ensurePrivateUploadDirectory(stagingDirectory, path.join(root, STAGING_SUBDIR));
 
+  let stagingHandle: FileHandle | null = null;
+  let createdOwnership: Extract<VaultBlobOwnership, { kind: "created" }> | null = null;
+  let result: WrittenBlob | null = null;
+  let primaryError: unknown = null;
   try {
-    await fs.writeFile(destination, buffer, { flag: "wx" });
-    return { sha256, storage_key: storageKey, size_bytes: buffer.byteLength, deduplicated: false };
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException)?.code === "EEXIST") {
-      // Le contenu est déjà présent : on vérifie qu'il est bien identique avant
-      // de le réutiliser. Une collision de taille signalerait une corruption.
-      const existing = await fs.readFile(destination);
-      if (computeSha256(existing) !== sha256) {
+    stagingHandle = await fs.open(stagingPath, "wx", 0o600);
+    await stagingHandle.writeFile(snapshot);
+    await stagingHandle.sync();
+    const stagingStat = await stagingHandle.stat({ bigint: true });
+    await stagingHandle.close();
+    stagingHandle = null;
+
+    let created = false;
+    try {
+      await fs.link(stagingPath, destination);
+      created = true;
+      createdOwnership = {
+        kind: "created",
+        destination,
+        dev: String(stagingStat.dev),
+        ino: String(stagingStat.ino),
+      };
+    } catch (publishError) {
+      if ((publishError as NodeJS.ErrnoException).code !== "EEXIST") throw publishError;
+    }
+
+    if (createdOwnership) await assertVaultPathIdentity(destination, createdOwnership);
+    const storedHash = await computeFileSha256(destination);
+    if (storedHash !== sha256) {
+      throw new HttpError(
+        409,
+        "GED_INTEGRITY",
+        "Le contenu déjà présent dans le coffre ne correspond pas à son empreinte."
+      );
+    }
+    if (createdOwnership) await assertVaultPathIdentity(destination, createdOwnership);
+
+    const ownership: VaultBlobOwnership = createdOwnership ?? { kind: "deduplicated" };
+    result = {
+      sha256,
+      storage_key: storageKey,
+      size_bytes: snapshot.byteLength,
+      deduplicated: !created,
+      ownership,
+    };
+  } catch (error) {
+    primaryError = mapVaultWriteError(error);
+  } finally {
+    await stagingHandle?.close().catch(() => undefined);
+  }
+
+  let stagingCleanupError: unknown = null;
+  try {
+    await fs.unlink(stagingPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") stagingCleanupError = error;
+  }
+
+  if (primaryError || stagingCleanupError) {
+    if (createdOwnership) {
+      try {
+        await cleanupOwnedVaultBlob(createdOwnership);
+      } catch (cleanupError) {
         throw new HttpError(
-          409,
-          "GED_INTEGRITY",
-          "Le contenu déjà présent dans le coffre ne correspond pas à son empreinte."
+          503,
+          "GED_BLOB_CLEANUP_UNCERTAIN",
+          "Le nettoyage du blob GED n'a pas pu être confirmé."
         );
       }
-      return { sha256, storage_key: storageKey, size_bytes: buffer.byteLength, deduplicated: true };
+    }
+    if (stagingCleanupError) {
+      throw new HttpError(
+        503,
+        "GED_VAULT_STAGING_CLEANUP_FAILED",
+        "Le nettoyage du staging GED n'a pas pu être confirmé."
+      );
+    }
+    throw primaryError;
+  }
+
+  if (!result) throw new Error("GED buffer blob writer returned no result");
+  return result;
+}
+
+/**
+ * Move a staged HTTP upload into the content-addressed vault with bounded
+ * memory. A hard link is used on the same filesystem; EXDEV falls back to a
+ * streamed exclusive copy. The durable path is never overwritten.
+ */
+export async function writeBlobFromPath(
+  sourceFile: Readonly<{ path: string }>,
+  expectedSha256?: string
+): Promise<WrittenBlob> {
+  const sourcePath = path.resolve(sourceFile.path);
+  const root = await ensureVaultReady();
+  let sourceHandle: FileHandle | null = null;
+  let destinationHandle: FileHandle | null = null;
+  let created = false;
+  let createdIdentity: Extract<VaultBlobOwnership, { kind: "created" }> | null = null;
+  try {
+    try {
+      sourceHandle = await fs.open(sourcePath, "r");
+    } catch {
+      throw new HttpError(400, "GED_FILE_REQUIRED", "Le fichier déposé est introuvable.");
+    }
+    const sourceStat = await sourceHandle.stat({ bigint: true });
+    if (!sourceStat.isFile()) {
+      throw new HttpError(400, "GED_FILE_REQUIRED", "Le fichier déposé est introuvable.");
+    }
+
+    const sha256 = await computeFileHandleSha256(sourceHandle);
+    if (expectedSha256 !== undefined && sha256 !== expectedSha256) {
+      throw new HttpError(
+        409,
+        "GED_FILE_CHANGED",
+        "Le fichier déposé a changé après son contrôle de sécurité."
+      );
+    }
+    const storageKey = storageKeyForSha256(sha256);
+    const destination = resolveInsideVault(root, storageKey);
+    ensurePrivateUploadDirectory(path.dirname(destination), path.join(root, VAULT_SUBDIR));
+
+    try {
+      await fs.link(sourcePath, destination);
+      created = true;
+      createdIdentity = createdVaultOwnership(destination, sourceStat);
+      // A successful link must publish the inode held by sourceHandle. Transfer
+      // that exact identity synchronously before any fallible open/chmod/hash.
+      registerUploadDestination(sourceFile, destination, sourceStat);
+      destinationHandle = await fs.open(destination, "r");
+      const acquired = await destinationHandle.stat({ bigint: true });
+      if (!vaultIdentityMatches(createdIdentity, acquired)) {
+        throw new HttpError(
+          409,
+          "GED_FILE_CHANGED",
+          "Le blob du coffre a été remplacé pendant sa publication."
+        );
+      }
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (created) {
+        throw error;
+      } else if (code === "EEXIST") {
+        created = false;
+      } else if (code === "EXDEV" || code === "EPERM" || code === "ENOTSUP") {
+        try {
+          destinationHandle = await fs.open(destination, "wx", 0o600);
+          created = true;
+        } catch (openError) {
+          if ((openError as NodeJS.ErrnoException).code !== "EEXIST") throw openError;
+          created = false;
+        }
+
+        if (destinationHandle) {
+          const acquired = await destinationHandle.stat({ bigint: true });
+          createdIdentity = createdVaultOwnership(destination, acquired);
+          // fs.open("wx") is the exclusive creation point for EXDEV copies.
+          // Register its fstat identity before the first byte is copied so a
+          // partial write remains compensable but a replacement never is.
+          registerUploadDestination(sourceFile, destination, acquired);
+          await copyFileHandle(sourceHandle, destinationHandle);
+        }
+      } else {
+        throw error;
+      }
+    }
+
+    if (!destinationHandle) destinationHandle = await fs.open(destination, "r");
+    const acquiredDestination = await destinationHandle.stat({ bigint: true });
+    if (createdIdentity && !vaultIdentityMatches(createdIdentity, acquiredDestination)) {
+      throw new HttpError(
+        409,
+        "GED_FILE_CHANGED",
+        "Le blob du coffre a été remplacé pendant sa publication."
+      );
+    }
+    await assertVaultPathIdentity(destination, acquiredDestination);
+    if (created) await destinationHandle.chmod(0o600);
+
+    const storedHash = await computeFileHandleSha256(destinationHandle);
+    if (storedHash !== sha256) {
+      throw new HttpError(409, "GED_INTEGRITY", "Le blob du coffre ne correspond pas à son empreinte.");
+    }
+    await assertVaultPathIdentity(destination, acquiredDestination);
+    await destinationHandle.close();
+    destinationHandle = null;
+
+    await removeOwnedPathSafely(sourcePath, sourceStat);
+    return {
+      sha256,
+      storage_key: storageKey,
+      size_bytes: Number(sourceStat.size),
+      deduplicated: !created,
+      ownership: createdIdentity ?? { kind: "deduplicated" },
+    };
+  } catch (err) {
+    if (created) {
+      try {
+        // The promotion did not complete and no metadata mutation can yet
+        // reference this newly owned destination. GED callers also still hold
+        // the SHA advisory lock here. Strict central cleanup either removes the
+        // destination or preserves a retryable registry record and throws a
+        // privacy-safe 503 for reconciliation.
+        await cleanupUploadsAfterConfirmedRollback([sourceFile]);
+      } catch (cleanupError) {
+        throw cleanupError;
+      }
     }
     if ((err as NodeJS.ErrnoException)?.code === "ENOSPC") {
       throw new HttpError(507, "GED_VAULT_FULL", "Le coffre documentaire est plein.");
@@ -183,7 +505,15 @@ export async function writeBlob(buffer: Buffer): Promise<WrittenBlob> {
       throw new HttpError(503, "GED_VAULT_UNAVAILABLE", "Le coffre documentaire est en lecture seule.");
     }
     throw err;
+  } finally {
+    await destinationHandle?.close().catch(() => undefined);
+    await sourceHandle?.close().catch(() => undefined);
   }
+}
+
+export async function resolveBlobForDownload(storageKey: string): Promise<{ file_path: string; allowed_root: string }> {
+  const root = await ensureVaultReady();
+  return { file_path: resolveInsideVault(root, storageKey), allowed_root: root };
 }
 
 /**
@@ -209,21 +539,6 @@ export async function readBlob(storageKey: string, expectedSha256: string): Prom
     );
   }
   return buffer;
-}
-
-/**
- * Supprime un blob. Réservé à la compensation d'une transaction échouée juste
- * après l'écriture : un blob déjà référencé n'est jamais supprimé.
- */
-export async function removeBlobIfOrphan(storageKey: string): Promise<void> {
-  try {
-    const root = getVaultRoot();
-    const target = resolveInsideVault(root, storageKey);
-    await fs.unlink(target);
-  } catch {
-    // La compensation est un filet, pas une garantie : un échec ici ne doit pas
-    // masquer l'erreur d'origine. Le rapport d'intégrité détectera l'orphelin.
-  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -268,7 +583,7 @@ export async function checkVaultHealth(): Promise<VaultHealth> {
 
   if (rootPresent) {
     try {
-      await fs.mkdir(path.join(root, VAULT_SUBDIR), { recursive: true });
+      ensurePrivateUploadDirectory(path.join(root, VAULT_SUBDIR), root);
       writable = true;
     } catch {
       if (detail === null) detail = "Le coffre n'est pas accessible en écriture.";

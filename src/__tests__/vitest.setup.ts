@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import nodeFs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -30,6 +31,10 @@ const workerIdentity = [
 
 const workerRoot = path.join(testRunRoot, `worker-${workerIdentity}`);
 const storageRoot = path.join(workerRoot, "storage");
+nodeFs.mkdirSync(path.join(storageRoot, "tmp"), { recursive: true, mode: 0o700 });
+nodeFs.chmodSync(workerRoot, 0o700);
+nodeFs.chmodSync(storageRoot, 0o700);
+nodeFs.chmodSync(path.join(storageRoot, "tmp"), 0o700);
 
 Object.assign(process.env, {
   CERP_ROOT: workerRoot,

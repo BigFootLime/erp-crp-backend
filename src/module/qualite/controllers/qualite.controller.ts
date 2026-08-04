@@ -1,11 +1,11 @@
 import type { Request, RequestHandler } from "express";
-import fs from "node:fs/promises";
 
 import { asyncHandler } from "../../../utils/asyncHandler";
-import { isPathInsideDirectory, resolveCerpStoragePath } from "../../../utils/cerpStorage";
+import { resolveCerpStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { getClientIp, parseDevice } from "../../../utils/requestMeta";
 import { emitEntityChanged } from "../../../shared/realtime/realtime.service";
+import { sendSecureStoredFile } from "../../../shared/uploads/secure-download";
 
 import type { AuditContext } from "../repository/qualite.repository";
 import {
@@ -322,19 +322,15 @@ async function downloadDocHandler(req: Request, res: Parameters<RequestHandler>[
 
   const baseDir = svcQualityDocumentBaseDir();
   const absPath = resolveCerpStoragePath(doc.storage_path, baseDir);
-  if (!isPathInsideDirectory(baseDir, absPath)) {
-    throw new HttpError(400, "INVALID_STORAGE_PATH", "Invalid document storage path");
-  }
-  await fs.access(absPath);
-
-  res.setHeader("Content-Type", doc.mime_type);
   const rawDownload = (req.query as { download?: unknown } | undefined)?.download;
   const download = rawDownload === true || rawDownload === "true" || rawDownload === "1" || rawDownload === 1;
-  res.setHeader(
-    "Content-Disposition",
-    `${download ? "attachment" : "inline"}; filename="${encodeURIComponent(doc.original_name)}"`
-  );
-  res.sendFile(absPath);
+  await sendSecureStoredFile(res, {
+    filePath: absPath,
+    allowedRoots: [baseDir],
+    filename: doc.original_name,
+    mimeType: doc.mime_type,
+    download,
+  });
 }
 
 export const listControlDocuments = asyncHandler(async (req, res) => {

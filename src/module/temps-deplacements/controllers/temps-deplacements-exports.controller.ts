@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import { asyncHandler } from "../../../utils/asyncHandler";
+import { buildContentDisposition } from "../../../shared/uploads/secure-download";
 import * as svc from "../services/temps-deplacements-exports.service";
 import { exportBodySchema, uuidParamsSchema } from "../validators/temps-deplacements.validators";
 import { buildAuditContext, requireUser } from "./temps-deplacements.controller";
@@ -19,7 +20,7 @@ export const downloadExport = asyncHandler(async (req: Request, res: Response) =
   const { id } = uuidParamsSchema.parse(req.params);
   const file = await svc.getExportFile(requireUser(req), id);
   res.setHeader("Content-Type", file.contentType);
-  res.setHeader("Content-Disposition", `attachment; filename="${file.filename}"`);
+  res.setHeader("Content-Disposition", buildContentDisposition(file.filename, true));
   res.setHeader("X-Checksum-SHA256", file.checksum);
   res.send(file.buffer);
 });

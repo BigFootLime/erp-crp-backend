@@ -21,25 +21,91 @@ import type { NotificationRoutingRule } from "../../../shared/notifications/rout
 
 export type DbQueryer = Pick<PoolClient, "query">;
 
-/** Transaction bornée : commit au succès, rollback à la moindre exception. */
-export async function withOfTransaction<T>(fn: (tx: PoolClient) => Promise<T>): Promise<T> {
+export class OfCommitUncertainError<T> extends HttpError {
+  readonly transactionResult: T;
+  readonly originalError: unknown;
+
+  constructor(transactionResult: T, originalError: unknown) {
+    super(
+      503,
+      "OF_COMMIT_UNCERTAIN",
+      "Le résultat du COMMIT de l'ordre de fabrication doit être rapproché."
+    );
+    this.name = "OfCommitUncertainError";
+    this.transactionResult = transactionResult;
+    this.originalError = originalError;
+  }
+}
+
+export class OfRollbackUncertainError extends HttpError {
+  readonly originalError: unknown;
+
+  constructor(originalError: unknown) {
+    super(
+      503,
+      "OF_ROLLBACK_UNCERTAIN",
+      "Le rollback de l'ordre de fabrication n'a pas pu être confirmé."
+    );
+    this.name = "OfRollbackUncertainError";
+    this.originalError = originalError;
+  }
+}
+
+export type OfTransactionHooks = Readonly<{
+  afterConfirmedRollback?: () => void | Promise<void>;
+  afterRollbackUncertain?: () => void | Promise<void>;
+}>;
+
+/**
+ * Transaction bornée. Aucune commande n'est envoyée sur un client ayant perdu
+ * l'ACK de COMMIT : cette session est détruite et seul un rapprochement frais
+ * par l'appelant peut décider entre succès, compensation ou préservation.
+ */
+export async function withOfTransaction<T>(
+  fn: (tx: PoolClient) => Promise<T>,
+  hooks: OfTransactionHooks = {}
+): Promise<T> {
   const client = await pool.connect();
+  let released = false;
+  const release = (destroy = false) => {
+    if (released) return;
+    released = true;
+    client.release(destroy);
+  };
+
   try {
     await client.query("BEGIN");
-    const result = await fn(client);
-    await client.query("COMMIT");
-    return result;
-  } catch (err) {
+  } catch (error) {
+    release(true);
+    throw error;
+  }
+
+  let result: T;
+  try {
+    result = await fn(client);
+  } catch (error) {
     try {
       await client.query("ROLLBACK");
     } catch {
-      // Le rollback peut échouer si la connexion est déjà tombée : l'erreur
-      // d'origine reste la seule intéressante.
+      release(true);
+      await hooks.afterRollbackUncertain?.();
+      throw new OfRollbackUncertainError(error);
     }
-    throw err;
-  } finally {
-    client.release();
+    // Release the rolled-back writer before compensation obtains a fresh
+    // connection and the transaction-scoped GED SHA lock.
+    release();
+    await hooks.afterConfirmedRollback?.();
+    throw error;
   }
+
+  try {
+    await client.query("COMMIT");
+  } catch (error) {
+    release(true);
+    throw new OfCommitUncertainError(result, error);
+  }
+  release();
+  return result;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1023,6 +1089,108 @@ export type OfDocumentRow = {
   reprint_count: number;
   last_reprinted_at: string | null;
 };
+
+export type OfDocumentCommitExpectation = Readonly<{
+  documentId: string;
+  ofId: number;
+  revisionId: string;
+  payloadSha256: string;
+  pdfSha256: string;
+  pdfByteSize: number;
+  gedDocumentId: string | null;
+  gedVersionId: string | null;
+  gedBlobStorageKey: string | null;
+  gedVersionStatus: "BROUILLON" | null;
+  gedDocumentWasPreexisting: boolean;
+}>;
+
+export type OfDocumentCommitReconciliation = "committed" | "not-committed" | "uncertain";
+
+/**
+ * Fresh exact reconciliation after a lost COMMIT acknowledgement. The query
+ * always returns one row so absence of both the business row and the exact GED
+ * version can be distinguished from any partial/mismatching state.
+ */
+export async function reconcileOfDocumentMetadataCommit(
+  expected: OfDocumentCommitExpectation
+): Promise<OfDocumentCommitReconciliation> {
+  const res = await pool.query<{
+    document_id: string | null;
+    of_id: number | null;
+    revision_id: string | null;
+    payload_sha256: string | null;
+    pdf_sha256: string | null;
+    pdf_byte_size: number | null;
+    ged_document_id: string | null;
+    ged_version_id: string | null;
+    ged_document_row_id: string | null;
+    ged_document_current_version_id: string | null;
+    ged_document_archived_at: string | null;
+    ged_version_document_id: string | null;
+    ged_version_status: string | null;
+    ged_blob_sha256: string | null;
+    ged_blob_storage_key: string | null;
+    ged_blob_size_bytes: string | null;
+  }>(
+    `SELECT
+       d.id::text AS document_id,
+       d.of_id::int AS of_id,
+       d.revision_id::text AS revision_id,
+       d.payload_sha256,
+       d.pdf_sha256,
+       d.pdf_byte_size::int AS pdf_byte_size,
+       d.ged_document_id::text AS ged_document_id,
+       d.ged_version_id::text AS ged_version_id,
+       gd.id::text AS ged_document_row_id,
+       gd.current_version_id::text AS ged_document_current_version_id,
+       gd.archived_at::text AS ged_document_archived_at,
+       gv.document_id::text AS ged_version_document_id,
+       gv.status::text AS ged_version_status,
+       gb.sha256 AS ged_blob_sha256,
+       gb.storage_key AS ged_blob_storage_key,
+       gb.size_bytes::bigint::text AS ged_blob_size_bytes
+     FROM (SELECT 1) anchor
+     LEFT JOIN public.of_documents d ON d.id = $1::uuid
+     LEFT JOIN public.ged_document_versions gv ON gv.id = $2::uuid
+     LEFT JOIN public.ged_blobs gb ON gb.id = gv.blob_id
+     LEFT JOIN public.ged_documents gd ON gd.id = $3::uuid`,
+    [expected.documentId, expected.gedVersionId, expected.gedDocumentId]
+  );
+  const row = res.rows[0];
+  if (!row) return "uncertain";
+
+  if (!row.document_id) {
+    if (row.ged_version_document_id) return "uncertain";
+    if (!expected.gedDocumentId || expected.gedDocumentWasPreexisting) return "not-committed";
+    return row.ged_document_row_id ? "uncertain" : "not-committed";
+  }
+
+  const businessMatches = row.document_id === expected.documentId
+    && Number(row.of_id) === expected.ofId
+    && row.revision_id === expected.revisionId
+    && row.payload_sha256 === expected.payloadSha256
+    && row.pdf_sha256 === expected.pdfSha256
+    && Number(row.pdf_byte_size) === expected.pdfByteSize
+    && row.ged_document_id === expected.gedDocumentId
+    && row.ged_version_id === expected.gedVersionId;
+  if (!businessMatches) return "uncertain";
+
+  if (!expected.gedVersionId) {
+    return row.ged_version_document_id === null && row.ged_document_row_id === null
+      ? "committed"
+      : "uncertain";
+  }
+
+  const gedMatches = row.ged_document_row_id === expected.gedDocumentId
+    && row.ged_document_current_version_id === expected.gedVersionId
+    && row.ged_document_archived_at === null
+    && row.ged_version_document_id === expected.gedDocumentId
+    && (expected.gedVersionStatus === null || row.ged_version_status === expected.gedVersionStatus)
+    && row.ged_blob_sha256 === expected.pdfSha256
+    && row.ged_blob_storage_key === expected.gedBlobStorageKey
+    && Number(row.ged_blob_size_bytes) === expected.pdfByteSize;
+  return gedMatches ? "committed" : "uncertain";
+}
 
 const DOCUMENT_SELECT = `
   SELECT id::text              AS id,

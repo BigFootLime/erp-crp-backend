@@ -1,6 +1,8 @@
 import type { Request, RequestHandler } from "express"
 
 import { HttpError } from "../../../utils/httpError"
+import { getDocumentStoragePath } from "../../../utils/cerpStorage"
+import { sendSecureStoredFile } from "../../../shared/uploads/secure-download"
 import { packGenerateBodySchema, packPreviewParamsSchema, packRevokeParamsSchema } from "../validators/pack.validators"
 import { repoFindDocumentFilePath, repoGetDocumentName, repoIsLivraisonDocumentLinked } from "../repository/livraisons.repository"
 import { svcGenerateLivraisonPack, svcGetLivraisonPackPreview, svcRevokeLivraisonPackVersion } from "../services/pack.service"
@@ -73,10 +75,13 @@ export const downloadLivraisonPackDocument: RequestHandler = async (req, res, ne
       return
     }
     const name = (await repoGetDocumentName(documentId)) ?? `document-${id}.pdf`
-    const disposition = download ? "attachment" : "inline"
-    res.setHeader("Content-Type", "application/pdf")
-    res.setHeader("Content-Disposition", `${disposition}; filename=\"${name.replace(/\"/g, "")}\"`)
-    res.sendFile(filePath)
+    await sendSecureStoredFile(res, {
+      filePath,
+      allowedRoots: [getDocumentStoragePath("livraisons")],
+      filename: name,
+      mimeType: "application/pdf",
+      download,
+    })
   } catch (e) {
     next(e)
   }

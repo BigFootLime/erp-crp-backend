@@ -14,6 +14,7 @@
 import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
+import type { UploadCommitReconciliation } from "../../../shared/uploads/upload-transaction";
 import { HttpError } from "../../../utils/httpError";
 import { formatDocumentCode, type GedVersionStatus } from "../domain/ged-policy";
 import type {
@@ -46,18 +47,107 @@ function rethrowGed(err: unknown): never {
   throw err;
 }
 
-export async function withGedTransaction<T>(fn: (tx: PoolClient) => Promise<T>): Promise<T> {
-  const client = await pool.connect();
+export class GedCommitUncertainError<T> extends HttpError {
+  readonly transactionResult: T;
+  readonly originalError: unknown;
+
+  constructor(transactionResult: T, originalError: unknown) {
+    super(
+      503,
+      "GED_COMMIT_UNCERTAIN",
+      "Le résultat du COMMIT GED doit être rapproché avant toute compensation de fichier."
+    );
+    this.transactionResult = transactionResult;
+    this.originalError = originalError;
+  }
+}
+
+export class GedRollbackUncertainError extends HttpError {
+  readonly originalError: unknown;
+
+  constructor(originalError: unknown) {
+    super(
+      503,
+      "GED_ROLLBACK_UNCERTAIN",
+      "Le rollback GED n’a pas pu être confirmé ; le fichier est préservé pour rapprochement."
+    );
+    this.originalError = originalError;
+  }
+}
+
+export class GedBlobCleanupUncertainError extends HttpError {
+  readonly originalError: unknown;
+
+  constructor(originalError: unknown) {
+    super(
+      503,
+      "GED_BLOB_CLEANUP_UNCERTAIN",
+      "Le rapprochement du blob GED n'a pas pu être confirmé ; le fichier est préservé pour intervention."
+    );
+    this.originalError = originalError;
+  }
+}
+
+export type GedTransactionHooks = Readonly<{
+  beforeCommit?: () => void | Promise<void>;
+  afterCommit?: () => void | Promise<void>;
+  afterConfirmedRollback?: () => void | Promise<void>;
+  afterRollbackUncertain?: () => void | Promise<void>;
+}>;
+
+export async function withGedTransaction<T>(
+  fn: (tx: PoolClient) => Promise<T>,
+  hooks: GedTransactionHooks = {}
+): Promise<T> {
+  let client!: PoolClient;
+  let released = false;
+  const release = (destroy = false) => {
+    if (!client || released) return;
+    released = true;
+    client.release(destroy);
+  };
   try {
+    client = await pool.connect();
     await client.query("BEGIN");
-    const out = await fn(client);
-    await client.query("COMMIT");
-    return out;
   } catch (err) {
-    await client.query("ROLLBACK").catch(() => undefined);
+    release(true);
+    await hooks.afterConfirmedRollback?.();
     return rethrowGed(err);
+  }
+  try {
+    let out: T;
+    try {
+      out = await fn(client);
+      await hooks.beforeCommit?.();
+    } catch (err) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        release(true);
+        await hooks.afterRollbackUncertain?.();
+        throw new GedRollbackUncertainError(err);
+      }
+      // The advisory transaction locks are released by ROLLBACK. Return the
+      // client before compensation opens its own fresh transaction; otherwise
+      // a saturated pool could deadlock with every failed writer waiting for a
+      // cleanup connection while still retaining its writer connection.
+      release();
+      await hooks.afterConfirmedRollback?.();
+      return rethrowGed(err);
+    }
+
+    try {
+      await client.query("COMMIT");
+    } catch (err) {
+      // Never issue ROLLBACK after COMMIT was sent: PostgreSQL may have applied
+      // it and only the acknowledgement may have been lost.
+      release(true);
+      throw new GedCommitUncertainError(out, err);
+    }
+    await hooks.afterCommit?.();
+    return out;
   } finally {
-    client.release();
+    release();
   }
 }
 
@@ -191,6 +281,122 @@ export async function repoGetClass(
 /* -------------------------------------------------------------------------- */
 /* Blobs                                                                      */
 /* -------------------------------------------------------------------------- */
+
+const GED_BLOB_LOCK_NAMESPACE = "ged_blob_sha256:";
+
+function assertGedBlobSha256(sha256: string): void {
+  if (!/^[a-f0-9]{64}$/.test(sha256)) {
+    throw new HttpError(500, "GED_BLOB_SHA256", "Empreinte de blob GED invalide.");
+  }
+}
+
+/**
+ * Serialize every filesystem promotion, metadata writer, and compensation for
+ * a content-addressed blob. The transaction-scoped lock is intentionally held
+ * through COMMIT/ROLLBACK so no cleanup can observe another writer's
+ * uncommitted reference and delete the shared durable file underneath it.
+ */
+export async function repoLockGedBlobSha256(
+  tx: Pick<PoolClient, "query">,
+  sha256: string
+): Promise<void> {
+  assertGedBlobSha256(sha256);
+  await tx.query(
+    `SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))`,
+    [`${GED_BLOB_LOCK_NAMESPACE}${sha256}`]
+  );
+}
+
+export type GedBlobReferenceState = Readonly<{
+  blob_present: boolean;
+  reference_count: number;
+}>;
+
+/** Must be called while holding `repoLockGedBlobSha256` for the same SHA. */
+export async function repoGetGedBlobReferenceState(
+  tx: Pick<PoolClient, "query">,
+  sha256: string
+): Promise<GedBlobReferenceState> {
+  assertGedBlobSha256(sha256);
+  try {
+    const res = await tx.query<{ blob_present: boolean; reference_count: string | number }>(
+      `SELECT
+         EXISTS (
+           SELECT 1 FROM public.ged_blobs b WHERE b.sha256 = $1
+         ) AS blob_present,
+         (
+           SELECT COUNT(*)::bigint
+             FROM public.ged_document_versions v
+             JOIN public.ged_blobs b ON b.id = v.blob_id
+            WHERE b.sha256 = $1
+         ) AS reference_count`,
+      [sha256]
+    );
+    const row = res.rows[0];
+    if (!row) throw new Error("GED blob reference query returned no row");
+    const referenceCount = Number(row.reference_count);
+    if (!Number.isSafeInteger(referenceCount) || referenceCount < 0) {
+      throw new Error("GED blob reference count is invalid");
+    }
+    return { blob_present: Boolean(row.blob_present), reference_count: referenceCount };
+  } catch (err) {
+    return rethrowGed(err);
+  }
+}
+
+/**
+ * Run post-rollback filesystem reconciliation under the exact same SHA lock as
+ * writers, using a fresh connection and snapshot after the writer transaction
+ * has released its lock.
+ */
+export async function withGedBlobSha256Coordination<T>(
+  sha256: string,
+  fn: (tx: PoolClient) => Promise<T>
+): Promise<T> {
+  assertGedBlobSha256(sha256);
+  const client = await pool.connect();
+  let released = false;
+  const release = (destroy = false) => {
+    if (released) return;
+    released = true;
+    client.release(destroy);
+  };
+
+  try {
+    await client.query("BEGIN");
+    await repoLockGedBlobSha256(client, sha256);
+  } catch (err) {
+    release(true);
+    throw err;
+  }
+
+  let result: T;
+  try {
+    result = await fn(client);
+  } catch (err) {
+    try {
+      await client.query("ROLLBACK");
+      release();
+    } catch {
+      release(true);
+    }
+    throw err;
+  }
+
+  try {
+    await client.query("ROLLBACK");
+    release();
+  } catch {
+    // This transaction performs no database mutation. The filesystem decision
+    // already completed while the lock was held, and destroying the session
+    // releases that lock before another writer can proceed. A lost ROLLBACK ACK
+    // therefore cannot make the completed cleanup/preserve decision uncertain.
+    release(true);
+  } finally {
+    release();
+  }
+  return result;
+}
 
 export async function repoUpsertBlob(
   tx: Pick<PoolClient, "query">,
@@ -646,12 +852,13 @@ export async function repoInternalGetVersionContentRef(versionId: string): Promi
   original_name: string;
   mime_type: string;
   sha256: string;
+  size_bytes: number;
   storage_key: string;
 } | null> {
   try {
     const res = await pool.query(
       `SELECT v.id::text AS version_id, v.document_id::text AS document_id, v.status::text AS status,
-              v.original_name, b.mime_type, b.sha256, b.storage_key
+              v.original_name, b.mime_type, b.sha256, b.size_bytes, b.storage_key
          FROM public.ged_document_versions v
          JOIN public.ged_blobs b ON b.id = v.blob_id
         WHERE v.id = $1::uuid`,
@@ -666,8 +873,35 @@ export async function repoInternalGetVersionContentRef(versionId: string): Promi
       original_name: String(r.original_name),
       mime_type: String(r.mime_type),
       sha256: String(r.sha256),
+      size_bytes: Number(r.size_bytes),
       storage_key: String(r.storage_key),
     };
+  } catch (err) {
+    return rethrowGed(err);
+  }
+}
+
+/** Fresh-connection reconciliation used only after a COMMIT acknowledgement loss. */
+export async function repoIsVersionBlobCommitted(
+  versionId: string,
+  sha256: string
+): Promise<UploadCommitReconciliation> {
+  try {
+    const res = await pool.query<{ version_sha256: string | null; blob_present: boolean }>(
+      `SELECT
+         (SELECT b.sha256
+            FROM public.ged_document_versions v
+            JOIN public.ged_blobs b ON b.id = v.blob_id
+           WHERE v.id = $1::uuid) AS version_sha256,
+         EXISTS (
+           SELECT 1 FROM public.ged_blobs b WHERE b.sha256 = $2
+         ) AS blob_present`,
+      [versionId, sha256]
+    );
+    const row = res.rows[0];
+    if (row?.version_sha256 === sha256) return "committed";
+    if (row?.version_sha256 || row?.blob_present) return "uncertain";
+    return "not-committed";
   } catch (err) {
     return rethrowGed(err);
   }

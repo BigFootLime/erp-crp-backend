@@ -1,9 +1,9 @@
 import type { Request, RequestHandler } from "express";
-import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { HttpError } from "../../../utils/httpError";
-import { getDocumentStoragePath, isPathInsideDirectory } from "../../../utils/cerpStorage";
+import { getDocumentStoragePath } from "../../../utils/cerpStorage";
+import { sendSecureStoredFile } from "../../../shared/uploads/secure-download";
 import {
   createCommandeSVC,
   createCadreReleaseSVC,
@@ -603,20 +603,15 @@ export const getCommandeDocumentFile: RequestHandler = async (req, res, next) =>
 
     const baseDir = getDocumentStoragePath();
     const absPath = path.resolve(baseDir, `${doc.id}${safeExtFromName(doc.document_name)}`);
-    if (!isPathInsideDirectory(baseDir, absPath)) {
-      throw new HttpError(400, "INVALID_STORAGE_PATH", "Invalid document storage path");
-    }
-
-    await fs.access(absPath);
-
-    res.setHeader("Content-Type", resolveMimeType(doc.type));
     const rawDownload = (req.query as { download?: unknown } | undefined)?.download;
     const download = rawDownload === true || rawDownload === "true" || rawDownload === "1" || rawDownload === 1;
-    res.setHeader(
-      "Content-Disposition",
-      `${download ? "attachment" : "inline"}; filename="${encodeURIComponent(doc.document_name)}"`
-    );
-    res.sendFile(absPath);
+    await sendSecureStoredFile(res, {
+      filePath: absPath,
+      allowedRoots: [baseDir],
+      filename: doc.document_name,
+      mimeType: resolveMimeType(doc.type),
+      download,
+    });
   } catch (err) {
     if (err && typeof err === "object" && "code" in err && (err as { code?: unknown }).code === "ENOENT") {
       next(new HttpError(404, "FILE_NOT_FOUND", "File not found"));

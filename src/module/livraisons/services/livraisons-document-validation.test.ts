@@ -8,6 +8,10 @@ import {
   removeTemporaryLivraisonDocuments,
   validateLivraisonDocuments,
 } from "./livraisons-document-validation"
+import {
+  registerIncomingUploadStagingForTests,
+  setOwnedPathRemovalHookForTests,
+} from "../../../shared/uploads/secure-upload"
 
 const temporaryDirectories: string[] = []
 
@@ -35,6 +39,7 @@ async function fileFixture(
 }
 
 afterEach(async () => {
+  setOwnedPathRemovalHookForTests(null)
   await Promise.all(
     temporaryDirectories.splice(0).map((directory) =>
       fs.rm(directory, { recursive: true, force: true })
@@ -116,15 +121,34 @@ describe("validation des documents Livraison #226", () => {
     })
   })
 
-  it("supprime le fichier temporaire après traitement", async () => {
+  it("supprime par identité le staging enregistré après traitement", async () => {
     const file = await fileFixture(
       "preuve.pdf",
       "application/pdf",
       Buffer.from("%PDF-1.7")
     )
 
+    await registerIncomingUploadStagingForTests([file])
     await removeTemporaryLivraisonDocuments([file])
 
     await expect(fs.stat(file.path)).rejects.toMatchObject({ code: "ENOENT" })
+  })
+
+  it("remonte un 503 et préserve le staging si le cleanup identitaire échoue", async () => {
+    const file = await fileFixture(
+      "preuve.pdf",
+      "application/pdf",
+      Buffer.from("%PDF-1.7")
+    )
+    await registerIncomingUploadStagingForTests([file])
+    setOwnedPathRemovalHookForTests(() => {
+      throw Object.assign(new Error("injected cleanup failure"), { code: "EACCES" })
+    })
+
+    await expect(removeTemporaryLivraisonDocuments([file])).rejects.toMatchObject({
+      status: 503,
+      code: "UPLOAD_CLEANUP_FAILED",
+    })
+    await expect(fs.readFile(file.path, "utf8")).resolves.toBe("%PDF-1.7")
   })
 })
