@@ -20,6 +20,7 @@ import {
   deleteLivraisonLineAllocation,
   generateLivraisonPdf,
   getLivraison,
+  getLivraisonPdfAvailability,
   getLivraisonShipmentPreview,
   getLivraisonDocumentFile,
   getLivraisonPdf,
@@ -139,6 +140,11 @@ router.get(
   getLivraisonDocumentFile
 )
 
+router.get(
+  "/:id/pdf/availability",
+  requireLivraisonCapability("read"),
+  getLivraisonPdfAvailability
+)
 router.get("/:id/pdf", requireLivraisonCapability("read"), getLivraisonPdf)
 router.post(
   "/:id/pdf",

@@ -1,6 +1,4 @@
 import type { Request, RequestHandler } from "express"
-import fs from "node:fs/promises"
-
 import { HttpError } from "../../../utils/httpError"
 import {
   createLivraisonBodySchema,
@@ -11,6 +9,7 @@ import {
   livraisonIdParamsSchema,
   livraisonLineIdParamsSchema,
   livraisonLineAllocationIdParamsSchema,
+  livraisonPdfQuerySchema,
   livraisonStatusBodySchema,
   livraisonProofBodySchema,
   shipLivraisonBodySchema,
@@ -385,10 +384,26 @@ export const generateLivraisonPdf: RequestHandler = async (req, res, next) => {
   try {
     const userId = getUserId(req)
     const { id } = livraisonIdParamsSchema.parse(req.params)
-    const out = await pdfService.svcGenerateLivraisonPdf(id, userId)
+    const out = await pdfService.svcGenerateLivraisonPdf(
+      id,
+      userId,
+      getRequiredIdempotencyKey(req)
+    )
 
     emitLivraisonChanged(req, { entityId: id, action: "updated" })
-    res.status(201).json(out)
+    res.status(out.idempotent_replay ? 200 : 201).json(out)
+  } catch (e) {
+    next(e)
+  }
+}
+
+export const getLivraisonPdfAvailability: RequestHandler = async (req, res, next) => {
+  try {
+    getUserId(req)
+    const { id } = livraisonIdParamsSchema.parse(req.params)
+    const out = await pdfService.svcGetLivraisonPdfAvailability(id)
+    res.setHeader("Cache-Control", "private, no-store, max-age=0")
+    res.status(200).json(out)
   } catch (e) {
     next(e)
   }
@@ -396,30 +411,25 @@ export const generateLivraisonPdf: RequestHandler = async (req, res, next) => {
 
 export const getLivraisonPdf: RequestHandler = async (req, res, next) => {
   try {
-    const userId = getUserId(req)
+    getUserId(req)
     const { id } = livraisonIdParamsSchema.parse(req.params)
-    const download = coerceBool((req.query as { download?: unknown } | undefined)?.download)
-
-    let latest = await pdfService.svcGetLatestLivraisonPdfDocument(id)
-    if (!latest) {
-      const created = await pdfService.svcGenerateLivraisonPdf(id, userId)
-      latest = { document_id: created.document_id, version: created.version }
+    const query = livraisonPdfQuerySchema.parse(req.query)
+    const download = coerceBool(query.download)
+    const archive = await pdfService.svcReadLivraisonPdf(id, query.version)
+    if (!archive.available) {
+      throw new HttpError(
+        404,
+        "LIVRAISON_PDF_NOT_GENERATED",
+        "Aucun PDF n'a encore ete genere pour ce bon de livraison."
+      )
     }
 
-    let filePath = await pdfService.svcGetPdfFilePath(latest.document_id)
-    try {
-      await fs.stat(filePath)
-    } catch {
-      const regenerated = await pdfService.svcGenerateLivraisonPdf(id, userId)
-      latest = { document_id: regenerated.document_id, version: regenerated.version }
-      filePath = await pdfService.svcGetPdfFilePath(latest.document_id)
-    }
-
-    const docName = (await pdfService.svcGetDocumentName(latest.document_id)) ?? `bon-livraison-${id}.pdf`
+    const docName = (await pdfService.svcGetDocumentName(archive.document_id)) ?? `bon-livraison-${id}.pdf`
     const disposition = download ? "attachment" : "inline"
     res.setHeader("Content-Type", "application/pdf")
     res.setHeader("Content-Disposition", `${disposition}; filename=\"${docName.replace(/\"/g, "")}\"`)
-    res.sendFile(filePath)
+    res.setHeader("Cache-Control", "private, no-store, max-age=0")
+    res.send(archive.bytes)
   } catch (e) {
     next(e)
   }

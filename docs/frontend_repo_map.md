@@ -425,6 +425,7 @@ POST	/api/v1/livraisons/:id/pack/generate	authenticateToken	controller
 GET	/api/v1/livraisons/:id/pack/preview	authenticateToken	controller
 POST	/api/v1/livraisons/:id/pack/revoke/:versionId	authenticateToken	controller
 GET	/api/v1/livraisons/:id/pdf	authenticateToken	controller
+GET	/api/v1/livraisons/:id/pdf/availability	authenticateToken	controller
 POST	/api/v1/livraisons/:id/pdf	authenticateToken	controller
 POST	/api/v1/livraisons/:id/status	authenticateToken	controller
 POST	/api/v1/livraisons/from-commande/:commandeId	authenticateToken	controller

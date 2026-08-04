@@ -189,6 +189,28 @@ export type BonLivraisonDetail = {
   events: BonLivraisonEventLog[]
 }
 
+export type LivraisonPdfAvailability =
+  | {
+      available: false
+      status: "NOT_GENERATED"
+      document_id: null
+      version: null
+      generated_at: null
+    }
+  | {
+      available: true
+      status: "AVAILABLE"
+      document_id: string
+      version: number
+      generated_at: string
+    }
+
+export type LivraisonPdfGenerationResult = {
+  document_id: string
+  version: number
+  idempotent_replay: boolean
+}
+
 export type ShipmentPreviewBlocker = {
   code: string
   message: string
