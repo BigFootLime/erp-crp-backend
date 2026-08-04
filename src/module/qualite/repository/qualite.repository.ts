@@ -7,6 +7,7 @@ import path from "node:path";
 import pool from "../../../config/database";
 import { generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
 import { canonicalizeStockUnitCode } from "../../../shared/stock-unit";
+import { registerUploadDestination } from "../../../shared/uploads/secure-upload";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
@@ -1466,6 +1467,7 @@ export async function repoAttachDocuments(params: {
         await fs.copyFile(tempPath, absPath);
         await fs.unlink(tempPath);
       }
+      registerUploadDestination(doc, absPath);
 
       const hash = await sha256File(absPath);
 

@@ -1,5 +1,7 @@
 import type { RequestHandler } from "express";
 import fs from "node:fs/promises";
+import { getDocumentStoragePath } from "../../../utils/cerpStorage";
+import { sendSecureStoredFile } from "../../../shared/uploads/secure-download";
 import {
   createFactureBodySchema,
   factureIdParamsSchema,
@@ -130,10 +132,13 @@ export const getFacturePdf: RequestHandler = async (req, res, next) => {
     }
 
     const docName = (await svcGetDocumentName(documentId)) ?? `facture-${id}.pdf`;
-    const disposition = download ? "attachment" : "inline";
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `${disposition}; filename="${docName.replace(/\"/g, "")}"`);
-    res.sendFile(filePath);
+    await sendSecureStoredFile(res, {
+      filePath,
+      allowedRoots: [getDocumentStoragePath()],
+      filename: docName,
+      mimeType: "application/pdf",
+      download,
+    });
   } catch (err) {
     next(err);
   }

@@ -1,12 +1,11 @@
 import { Router, type RequestHandler } from "express";
-import multer from "multer";
 
 import {
   hasGrantedAccountModuleAccess,
   requestHasGrantedAccountModuleAccess,
 } from "../../access-control/context/account-module-access.context";
 import { upload } from "../../../middlewares/upload";
-import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
+import { createSecureUpload } from "../../../shared/uploads/secure-upload";
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
 import { HttpError } from "../../../utils/httpError";
 import { roleHasMachineCapability, type MachineCapability } from "../domain/machine-rbac";
@@ -165,10 +164,7 @@ const requireAnyOfCapability = (capabilities: readonly OfCapability[]): RequestH
 };
 
 const router = Router();
-const machineDocumentUpload = multer({
-  dest: ensureDocumentStoragePath("machines"),
-  limits: { fileSize: 50 * 1024 * 1024, files: 1 },
-});
+const machineDocumentUpload = createSecureUpload("machine-document", { maxFiles: 1 });
 
 router.use(authenticateToken);
 

@@ -1,9 +1,8 @@
 import { Router, type RequestHandler } from "express";
 import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
-import multer from "multer";
 
 import { authenticateToken, authorizeRole } from "../../auth/middlewares/auth.middleware";
-import { ensureTmpStoragePath } from "../../../utils/cerpStorage";
+import { createSecureUpload } from "../../../shared/uploads/secure-upload";
 import { HttpError } from "../../../utils/httpError";
 import {
   attachStockArticleDocuments,
@@ -99,14 +98,7 @@ import { roleHasStockCapability, type StockCapability } from "../domain/stock-rb
 
 const router = Router();
 
-const tmpBaseDir = ensureTmpStoragePath("stock");
-
-const upload = multer({
-  dest: tmpBaseDir,
-  limits: {
-    fileSize: 25 * 1024 * 1024,
-  },
-});
+const upload = createSecureUpload("business-document");
 
 router.use(authenticateToken);
 

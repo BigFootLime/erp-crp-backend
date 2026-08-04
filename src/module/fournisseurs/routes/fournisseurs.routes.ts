@@ -1,8 +1,7 @@
 import { Router } from "express"
-import multer from "multer"
 
 import { authenticateToken, authorizeRole } from "../../auth/middlewares/auth.middleware"
-import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
+import { createSecureUpload } from "../../../shared/uploads/secure-upload"
 import {
   archiveFournisseur,
   attachFournisseurDocuments,
@@ -41,11 +40,7 @@ const WRITE: string[] = ["Directeur", "Administrateur Systeme et Reseau", "Secre
 const QUALIF: string[] = ["Directeur", "Administrateur Systeme et Reseau", "Responsable Qualité"]
 const ARCHIVE: string[] = ["Directeur", "Administrateur Systeme et Reseau"]
 
-const docsBaseDir = ensureDocumentStoragePath("fournisseurs")
-const upload = multer({
-  dest: docsBaseDir,
-  limits: { fileSize: 25 * 1024 * 1024, files: 10 },
-})
+const upload = createSecureUpload("business-document")
 
 const router = Router()
 router.use(authenticateToken)

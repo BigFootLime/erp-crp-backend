@@ -3,6 +3,7 @@
 import type { Request, RequestHandler } from "express";
 
 import { HttpError } from "../../../utils/httpError";
+import { buildContentDisposition } from "../../../shared/uploads/secure-download";
 import { CLIENT_DOCUMENT_POLICIES, CLIENT_DOCUMENT_POLICY_LABELS } from "../domain/document-policy";
 import { describePieceTechniquePermissions } from "../pieces-techniques.permissions";
 import {
@@ -191,7 +192,7 @@ export const downloadPieceDocumentDossierPdf: RequestHandler = async (req, res, 
     // `inline` : l'impression se fait depuis le visualiseur, sans détour par le disque.
     res.setHeader(
       "Content-Disposition",
-      `${req.query.download === "true" ? "attachment" : "inline"}; filename="${filename}"`
+      buildContentDisposition(filename, req.query.download === "true")
     );
     res.end(pdf);
   } catch (err) {

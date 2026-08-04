@@ -12,6 +12,7 @@ import path from "node:path";
 import type { PoolClient } from "pg";
 
 import { generateMetrologieExecutionCode } from "../../../shared/codes/code-generator.service";
+import { registerUploadDestination } from "../../../shared/uploads/secure-upload";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 
@@ -1376,6 +1377,7 @@ export async function repoUploadCertificate(params: {
     await fs.copyFile(path.resolve(file.path), absPath);
     await fs.unlink(path.resolve(file.path));
   }
+  registerUploadDestination(file, absPath);
   const hash = await sha256File(absPath);
 
   try {

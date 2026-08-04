@@ -3,6 +3,7 @@
 import type { NextFunction, Request, Response } from "express";
 
 import { HttpError } from "../../../utils/httpError";
+import { setSecureDownloadHeaders } from "../../../shared/uploads/secure-download";
 import * as service from "../services/ged.service";
 import {
   listQuerySchema,
@@ -182,15 +183,10 @@ export async function downloadVersion(req: Request, res: Response, next: NextFun
 
     // `attachment` + `nosniff` : un document n'est jamais interprété par le
     // navigateur, quel que soit son type déclaré.
-    res.setHeader("Content-Type", result.mime_type);
     res.setHeader("Content-Length", String(result.buffer.byteLength));
-    res.setHeader("X-Content-Type-Options", "nosniff");
-    res.setHeader("Content-Security-Policy", "sandbox; default-src 'none'");
     res.setHeader("X-CERP-Document-SHA256", result.sha256);
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="${result.original_name.replace(/"/g, "")}"`
-    );
+    setSecureDownloadHeaders(res, { filename: result.original_name, mimeType: result.mime_type, download: true });
+    res.setHeader("Content-Security-Policy", "sandbox; default-src 'none'");
     res.send(result.buffer);
   } catch (err) {
     next(err);

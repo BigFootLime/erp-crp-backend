@@ -8,6 +8,7 @@ import db from "../../../config/database"
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
 import { generateFournisseurCode } from "../../../shared/codes/code-generator.service"
+import { registerUploadDestination } from "../../../shared/uploads/secure-upload"
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators"
 import type {
@@ -1487,6 +1488,7 @@ export async function repoAttachFournisseurDocuments(
       const absPath = path.join(docsDirAbs, storedName)
       const tempPath = path.resolve(doc.path)
       try { await fs.rename(tempPath, absPath) } catch { await fs.copyFile(tempPath, absPath); await fs.unlink(tempPath) }
+      registerUploadDestination(doc, absPath)
       movedFiles.push(absPath)
       const hash = await sha256File(absPath)
       const ins = await client.query<DocumentRow>(

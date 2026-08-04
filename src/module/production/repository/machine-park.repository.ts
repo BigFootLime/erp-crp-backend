@@ -11,6 +11,7 @@ import {
   sha256DocumentFile,
   toPosixStoragePath,
 } from "../../../shared/documents/document-upload";
+import { registerUploadDestination } from "../../../shared/uploads/secure-upload";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 import type { AuditContext } from "./production.repository";
@@ -500,6 +501,7 @@ export async function repoUploadMachineDocument(params: {
       await fs.copyFile(path.resolve(params.file.path), finalPath);
       await fs.unlink(path.resolve(params.file.path));
     }
+    registerUploadDestination(params.file, finalPath);
     moved = true;
     const sha256 = await sha256DocumentFile(finalPath);
     const b = params.body;

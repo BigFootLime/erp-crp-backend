@@ -1,9 +1,10 @@
 import type { Request } from "express"
 import type { RequestHandler } from "express"
 import fs from "node:fs/promises"
-import path from "node:path"
 
 import { HttpError } from "../../../utils/httpError"
+import { getDocumentStoragePath } from "../../../utils/cerpStorage"
+import { sendSecureStoredFile } from "../../../shared/uploads/secure-download"
 import {
   createOperationDossierVersionBodySchema,
   dossierIdParamsSchema,
@@ -11,7 +12,6 @@ import {
   getOperationDossierQuerySchema,
 } from "../validators/operation-dossiers.validators"
 import {
-  computeContentDisposition,
   getDownloadFlag,
   pickMimeType,
   repoFindOperationDossierDocumentFilePath,
@@ -106,11 +106,14 @@ export const downloadOperationDossierDocument: RequestHandler = async (req, res,
       return
     }
 
-    await fs.access(filePath)
     const download = getDownloadFlag((req.query as { download?: unknown } | undefined)?.download)
-    res.setHeader("Content-Type", pickMimeType(meta?.mime_type ?? null))
-    res.setHeader("Content-Disposition", computeContentDisposition({ download, filename: name }))
-    res.sendFile(path.resolve(filePath))
+    await sendSecureStoredFile(res, {
+      filePath,
+      allowedRoots: [getDocumentStoragePath("operation-dossiers")],
+      filename: name,
+      mimeType: pickMimeType(meta?.mime_type ?? null),
+      download,
+    })
   } catch (err) {
     if (err && typeof err === "object" && "code" in err && (err as { code?: unknown }).code === "ENOENT") {
       next(new HttpError(404, "FILE_NOT_FOUND", "File not found"))

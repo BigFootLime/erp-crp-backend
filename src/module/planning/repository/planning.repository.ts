@@ -5,6 +5,7 @@ import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
 import { emitAppNotificationCreated, emitEntityChanged } from "../../../shared/realtime/realtime.service";
+import { registerUploadDestination } from "../../../shared/uploads/secure-upload";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
@@ -2441,6 +2442,7 @@ async function insertPlanningEventDocuments(tx: PoolClient, params: {
       await fs.copyFile(doc.path, finalPath);
       await fs.unlink(doc.path);
     }
+    registerUploadDestination(doc, finalPath);
 
     await tx.query(
       `INSERT INTO public.documents_clients (id, document_name, type) VALUES ($1, $2, $3)`,

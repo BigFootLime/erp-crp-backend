@@ -6,21 +6,16 @@
 // vérifient ensuite — quand ils vérifient.
 
 import { Router } from "express";
-import multer from "multer";
 
 import * as controller from "../controllers/ged.controller";
 import { requireGedCapability } from "../middlewares/require-ged-capability";
+import { createSecureUpload } from "../../../shared/uploads/secure-upload";
 
 const router = Router();
 
 // Plafond global du transport. Le plafond RÉEL est celui de la classe
 // documentaire, appliqué ensuite par `assertAcceptedFile`.
-const MAX_TRANSPORT_BYTES = 512 * 1024 * 1024;
-
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: MAX_TRANSPORT_BYTES, files: 1, fields: 12, fieldSize: 64 * 1024 },
-});
+const upload = createSecureUpload("ged-deferred", { storage: "memory" });
 
 /* Référentiel et navigation */
 router.get("/classes", requireGedCapability("read"), controller.getClasses);

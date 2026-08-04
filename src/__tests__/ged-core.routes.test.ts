@@ -152,24 +152,6 @@ describe("GED — coffre indisponible", () => {
 
 describe("GED — contrôle de contenu au niveau route", () => {
   it("refuse un exécutable renommé en .pdf avant toute écriture", async () => {
-    mocks.poolQuery.mockResolvedValueOnce({
-      rows: [
-        {
-          class_key: "PLAN_CLIENT",
-          domain: "TECHNIQUE",
-          label: "Plan client",
-          nature: "SOURCE",
-          allowed_mime_types: ["application/pdf"],
-          allowed_extensions: [".pdf"],
-          max_size_bytes: "104857600",
-          approvals_required: 1,
-          retention_months: 120,
-          hold_on_publish: false,
-          is_active: true,
-        },
-      ],
-    });
-
     const res = await request(app)
       .post("/api/v1/ged/documents")
       .set("x-test-role", "administrateur")
@@ -181,7 +163,8 @@ describe("GED — contrôle de contenu au niveau route", () => {
       });
 
     expect(res.status).toBe(415);
-    expect(JSON.stringify(res.body)).toContain("GED_FILE_SIGNATURE");
+    expect(JSON.stringify(res.body)).toContain("UPLOAD_EXECUTABLE_FORBIDDEN");
+    expect(mocks.poolQuery).not.toHaveBeenCalled();
   });
 });
 

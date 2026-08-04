@@ -3,7 +3,7 @@ import { toStoredImagePath } from "../../../utils/imageStorage"
 
 const OUTILLAGE_ROOT = "outillage"
 
-export const outillageToolUpload = createImageUpload(`${OUTILLAGE_ROOT}/outils`)
+export const outillageToolUpload = createImageUpload(`${OUTILLAGE_ROOT}/outils`, "tool-media")
 export const outillageFabricantUpload = createImageUpload(`${OUTILLAGE_ROOT}/fabricants`)
 export const outillageFamilleUpload = createImageUpload(`${OUTILLAGE_ROOT}/familles`)
 export const outillageGeometrieUpload = createImageUpload(`${OUTILLAGE_ROOT}/geometries`)

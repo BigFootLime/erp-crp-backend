@@ -7,6 +7,7 @@ import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { generateAffaireCode, generateCommandeCode, generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
+import { registerUploadDestination } from "../../../shared/uploads/secure-upload";
 import { emitAppNotificationCreated, emitEntityChanged } from "../../../shared/realtime/realtime.service";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
@@ -2979,6 +2980,7 @@ async function insertCommandeDocuments(client: PoolClient, commandeId: string, d
       await fs.copyFile(doc.path, finalPath);
       await fs.unlink(doc.path);
     }
+    registerUploadDestination(doc, finalPath);
 
     await client.query(
       `

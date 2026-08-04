@@ -6,6 +6,7 @@ import pool from "../../../config/database";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { generateCommandeCode, generateDevisCode } from "../../../shared/codes/code-generator.service";
+import { registerUploadDestination } from "../../../shared/uploads/secure-upload";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 import { computeDevisTotals, computeLineTotals } from "../lib/totals";
@@ -1063,6 +1064,7 @@ async function insertDevisDocuments(client: PoolClient, devisId: number, documen
       await fs.copyFile(doc.path, finalPath);
       await fs.unlink(doc.path);
     }
+    registerUploadDestination(doc, finalPath);
 
     await client.query(
       `

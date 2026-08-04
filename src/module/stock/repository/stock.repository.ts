@@ -22,6 +22,7 @@ import {
   type MaterialProfileCode,
 } from "../../../shared/codes/material-article-code";
 import { canonicalizeStockUnitCode } from "../../../shared/stock-unit";
+import { registerUploadDestination } from "../../../shared/uploads/secure-upload";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
@@ -7584,6 +7585,7 @@ async function insertStockDocuments(
       await fs.copyFile(tempPath, absPath);
       await fs.unlink(tempPath);
     }
+    registerUploadDestination(doc, absPath);
 
     const hash = await sha256File(absPath);
 

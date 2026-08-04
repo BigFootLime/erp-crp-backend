@@ -1,8 +1,7 @@
 import { Router, type RequestHandler } from "express";
 import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
-import multer from "multer";
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
-import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
+import { createSecureUpload } from "../../../shared/uploads/secure-upload";
 import { HttpError } from "../../../utils/httpError";
 import { roleHasPlanningAccess } from "../domain/planning-rbac";
 import {
@@ -33,7 +32,7 @@ const requireProductionOrAdmin: RequestHandler = (req, _res, next) => {
   next();
 };
 
-const uploadDocs = multer({ dest: ensureDocumentStoragePath() });
+const uploadDocs = createSecureUpload("business-document");
 
 const router = Router();
 

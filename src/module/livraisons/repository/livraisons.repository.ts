@@ -5,6 +5,7 @@ import type { PoolClient } from "pg"
 
 import pool from "../../../config/database"
 import { canonicalizeStockUnitCode } from "../../../shared/stock-unit"
+import { registerUploadDestination } from "../../../shared/uploads/secure-upload"
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
 import { normalizeCommandeWorkflowStatus } from "../../commande-client/workflow/commande-client-workflow.definition"
@@ -2824,6 +2825,7 @@ export async function repoAttachLivraisonDocuments(params: {
         await fs.copyFile(doc.path, finalPath)
         await fs.unlink(doc.path)
       }
+      registerUploadDestination(doc, finalPath)
       storedPaths.push(finalPath)
 
       await db.query(`INSERT INTO documents_clients (id, document_name, type) VALUES ($1, $2, $3)`, [

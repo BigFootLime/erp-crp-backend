@@ -1,8 +1,7 @@
 import { Router } from "express";
-import multer from "multer";
 
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
-import { ensureTmpStoragePath } from "../../../utils/cerpStorage";
+import { createSecureUpload } from "../../../shared/uploads/secure-upload";
 import { requireMetrologyCapability } from "../middlewares/metrology-authorization.middleware";
 import {
   attachCertificats,
@@ -20,14 +19,7 @@ import {
   upsertPlan,
 } from "../controllers/metrologie.controller";
 
-const tmpBaseDir = ensureTmpStoragePath("metrologie");
-
-const upload = multer({
-  dest: tmpBaseDir,
-  limits: {
-    fileSize: 25 * 1024 * 1024,
-  },
-});
+const upload = createSecureUpload("quality-document");
 
 /**
  * Routeur historique du module Métrologie.
