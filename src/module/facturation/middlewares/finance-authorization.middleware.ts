@@ -1,4 +1,4 @@
-import type { RequestHandler } from "express";
+import type { Request, RequestHandler } from "express";
 
 import { HttpError } from "../../../utils/httpError";
 import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
@@ -29,3 +29,22 @@ export function requireFinanceCapability(capability: FinanceCapability): Request
     next();
   };
 }
+
+export function requireFinanceCapabilityWhen(
+  capability: FinanceCapability,
+  isRequired: (req: Request) => boolean
+): RequestHandler {
+  const requireCapability = requireFinanceCapability(capability);
+  return (req, res, next) => {
+    if (!isRequired(req)) {
+      next();
+      return;
+    }
+    requireCapability(req, res, next);
+  };
+}
+
+export const requirePaymentAllocationCapabilityForInlineAllocations = requireFinanceCapabilityWhen(
+  "payment_allocate",
+  (req) => Array.isArray(req.body?.allocations) && req.body.allocations.length > 0
+);

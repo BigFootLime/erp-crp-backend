@@ -155,6 +155,80 @@ export function paiementNetPredicate(p: Params, alias = "p"): string {
         AND ${alias}.reversal_of_id IS NULL`;
 }
 
+type PaiementAvailabilityOptions = {
+  /** Expression SQL de date incluse, par exemple `$1::date`. Sans valeur, toutes les allocations comptent. */
+  allocationAsOfDateSql?: string;
+};
+
+function paiementNetReadPredicate(alias: string): string {
+  const excluded = PAIEMENT_EXCLUDED_STATUSES.map((status) => `'${status}'`).join(", ");
+  return `${alias}.status NOT IN (${excluded})
+        AND ${alias}.workflow_status <> 'REVERSED'
+        AND ${alias}.reversal_of_id IS NULL`;
+}
+
+function paiementDirectLegacyPredicate(alias: string): string {
+  return `${alias}.facture_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM paiement_allocations pa2
+          WHERE pa2.paiement_id = ${alias}.id
+        )`;
+}
+
+/**
+ * Montant économiquement affecté d'une source de règlement.
+ *
+ * Le rattachement direct hérité constitue une preuve d'affectation complète quand
+ * aucune ligne d'allocation moderne n'existe. Il ne doit donc jamais réapparaître
+ * dans une file « à affecter », même si son statut brut historique vaut UNALLOCATED.
+ */
+export function paiementAllocatedAmountExpression(
+  alias = "p",
+  options: PaiementAvailabilityOptions = {}
+): string {
+  const cutoff = options.allocationAsOfDateSql
+    ? `AND ${parisDate("pa.created_at")} <= ${options.allocationAsOfDateSql}`
+    : "";
+  return `CASE
+        WHEN ${paiementDirectLegacyPredicate(alias)}
+          THEN ${alias}.montant::numeric(18,2)
+        ELSE COALESCE((
+          SELECT SUM(pa.amount_ttc)
+          FROM paiement_allocations pa
+          WHERE pa.paiement_id = ${alias}.id
+            ${cutoff}
+        ), 0)::numeric(18,2)
+      END`;
+}
+
+/** Solde encore affectable : règlement net − montant économiquement affecté. */
+export function paiementAvailableAmountExpression(
+  alias = "p",
+  options: PaiementAvailabilityOptions = {}
+): string {
+  return `CASE
+        WHEN ${paiementNetReadPredicate(alias)}
+          THEN GREATEST(
+            ${alias}.montant::numeric(18,2) - (${paiementAllocatedAmountExpression(alias, options)}),
+            0::numeric
+          )
+        ELSE 0::numeric
+      END`;
+}
+
+/**
+ * Vue de lecture compatible : la preuve directe héritée est affichée ALLOCATED,
+ * sans modifier le statut brut conservé en base.
+ */
+export function paiementProjectedStatusExpression(alias = "p"): string {
+  return `CASE
+        WHEN ${paiementNetReadPredicate(alias)}
+          AND ${paiementDirectLegacyPredicate(alias)}
+          THEN 'ALLOCATED'
+        ELSE ${alias}.status
+      END`;
+}
+
 /**
  * CTE `settled` : montants réellement imputés à chaque facture À LA DATE D'ARRÊTÉ.
  *

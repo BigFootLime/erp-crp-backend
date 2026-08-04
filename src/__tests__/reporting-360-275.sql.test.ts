@@ -133,6 +133,23 @@ describe("#275 encours — stricte antériorité à la date d'arrêté", () => {
     expect(sql).toContain("NOT EXISTS (SELECT 1 FROM avoir_source_allocations asa2");
   });
 
+  it("compte le solde d'un règlement partiellement affecté dans le KPI non affecté", async () => {
+    captured.length = 0;
+    await repoReceivables(CTX);
+    const sql = allSql();
+    expect(sql).toContain("p.montant::numeric(18,2) - (CASE");
+    expect(sql).toContain("SELECT SUM(pa.amount_ttc)");
+    expect(sql).toContain("SUM(available)");
+  });
+
+  it("neutralise dans ce KPI la preuve directe héritée, économiquement déjà affectée", async () => {
+    captured.length = 0;
+    await repoReceivables(CTX);
+    const sql = allSql();
+    expect(sql).toMatch(/WHEN p\.facture_id IS NOT NULL[\s\S]*NOT EXISTS[\s\S]*THEN p\.montant::numeric\(18,2\)/);
+    expect(sql).toContain("p.status NOT IN ('REJECTED', 'REVERSED')");
+  });
+
   it("agrège en NUMERIC et jamais en float8", async () => {
     captured.length = 0;
     await repoReceivables(CTX);
@@ -458,10 +475,39 @@ describe("#275 drill-down", () => {
     expect(allSql()).toContain("cl.delai_client IS NOT NULL AND cl.delai_client <");
   });
 
-  it("un scope « non affecté » filtre réellement côté serveur", async () => {
+  it("un scope « non affecté » filtre le solde disponible et conserve les paiements partiels", async () => {
     captured.length = 0;
     await repoDrilldown(CTX, "payments", "unallocated");
-    expect(allSql()).toContain("p.facture_id IS NULL");
+    const sql = allSql();
+    expect(sql).toContain("AS allocated_amount");
+    expect(sql).toContain("AS available_amount");
+    expect(sql).toContain("WHERE pr.available_amount > 0::numeric");
+    expect(sql).toContain("SELECT SUM(pa.amount_ttc)");
+    expect(sql).not.toContain("p.facture_id IS NULL");
+  });
+
+  it("projette le direct legacy en ALLOCATED et l'exclut du drill-down non affecté", async () => {
+    captured.length = 0;
+    await repoDrilldown(CTX, "payments", "unallocated");
+    const sql = allSql();
+    expect(sql).toContain("p.facture_id IS NOT NULL");
+    expect(sql).toContain("FROM paiement_allocations pa2");
+    expect(sql).toContain("THEN 'ALLOCATED'");
+    expect(sql).toContain("pr.projected_status AS status");
+    expect(sql).toContain("p.status NOT IN ('REJECTED', 'REVERSED')");
+  });
+
+  it("expose les montants total, affecté et disponible dans le drill-down", async () => {
+    captured.length = 0;
+    mocks.poolQuery.mockImplementation((sql: string, values: unknown[] = []) => {
+      captured.push({ sql, values });
+      return Promise.resolve({
+        rows: [{ id: "9", montant: "100.00", allocated_amount: "60.00", available_amount: "40.00", total_rows: 1 }],
+      });
+    });
+
+    const result = await repoDrilldown(CTX, "payments", "unallocated");
+    expect(result.rows[0]).toMatchObject({ montant: 100, allocated_amount: 60, available_amount: 40 });
   });
 });
 

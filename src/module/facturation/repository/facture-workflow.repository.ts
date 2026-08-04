@@ -905,6 +905,7 @@ async function transitionFacture(params: {
       `
         UPDATE public.facture
         SET statut = $2,
+            document_status = $2,
             validation_requested_at = CASE WHEN $2 = 'PENDING_VALIDATION' THEN now() ELSE validation_requested_at END,
             validation_requested_by = CASE WHEN $2 = 'PENDING_VALIDATION' THEN $3 ELSE validation_requested_by END,
             row_version = row_version + 1,
@@ -1007,6 +1008,7 @@ export async function repoValidateFacture(params: {
       `
         UPDATE public.facture
         SET statut = $2,
+            document_status = $2,
             approved_at = CASE WHEN $2 = 'APPROVED' THEN now() ELSE NULL END,
             approved_by = CASE WHEN $2 = 'APPROVED' THEN $3 ELSE NULL END,
             validation_reason = $4,
@@ -1183,6 +1185,8 @@ export async function repoIssueFacture(params: {
             legal_sequence_value = $4,
             date_emission = $5::date,
             statut = 'ISSUED',
+            document_status = 'ISSUED',
+            settlement_status = 'UNPAID',
             issued_at = now(),
             issued_by = $6,
             immutable_snapshot = $7::jsonb,

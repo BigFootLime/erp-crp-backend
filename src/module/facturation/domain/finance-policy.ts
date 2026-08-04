@@ -15,6 +15,60 @@ export const FACTURE_WORKFLOW_STATUSES = [
 
 export type FactureWorkflowStatus = (typeof FACTURE_WORKFLOW_STATUSES)[number];
 
+export const FACTURE_DOCUMENT_STATUSES = [
+  "DRAFT",
+  "PENDING_VALIDATION",
+  "APPROVED",
+  "ISSUED",
+  "CANCELLED",
+] as const;
+
+export type FactureDocumentStatus = (typeof FACTURE_DOCUMENT_STATUSES)[number];
+
+export const FACTURE_SETTLEMENT_STATUSES = [
+  "UNPAID",
+  "PARTIALLY_PAID",
+  "PAID",
+] as const;
+
+export type FactureSettlementStatus = (typeof FACTURE_SETTLEMENT_STATUSES)[number];
+
+/** Statuts réellement présents avant le workflow #227 et encore supportés en lecture. */
+export const FACTURE_LEGACY_STATUSES = [
+  "brouillon",
+  "emis",
+  "emise",
+  "envoyee",
+  "partielle",
+  "payee",
+  "annule",
+  "annulee",
+] as const;
+
+export const FACTURE_LEGACY_ISSUED_STATUSES = [
+  "emis",
+  "emise",
+  "envoyee",
+  "partielle",
+  "payee",
+] as const;
+
+export const FACTURE_LIST_FILTER_STATUSES = [
+  ...FACTURE_WORKFLOW_STATUSES,
+  "LEGACY",
+  ...FACTURE_LEGACY_STATUSES,
+] as const;
+
+export function isInvoiceIssuedForSettlement(params: {
+  documentStatus: string | null | undefined;
+  legacyStatus: string | null | undefined;
+}): boolean {
+  if (params.documentStatus === "ISSUED") return true;
+  return (FACTURE_LEGACY_ISSUED_STATUSES as readonly string[]).includes(
+    (params.legacyStatus ?? "").trim()
+  );
+}
+
 export const AVOIR_WORKFLOW_STATUSES = [
   "DRAFT",
   "PENDING_VALIDATION",
@@ -205,7 +259,16 @@ export function invoiceStatusFromBalance(params: {
   totalCents: bigint;
   settledCents: bigint;
 }): "ISSUED" | "PARTIALLY_PAID" | "PAID" {
-  if (params.settledCents <= 0n) return "ISSUED";
+  const settlementStatus = invoiceSettlementStatusFromBalance(params);
+  if (settlementStatus === "UNPAID") return "ISSUED";
+  return settlementStatus;
+}
+
+export function invoiceSettlementStatusFromBalance(params: {
+  totalCents: bigint;
+  settledCents: bigint;
+}): FactureSettlementStatus {
+  if (params.settledCents <= 0n) return "UNPAID";
   if (params.settledCents < params.totalCents) return "PARTIALLY_PAID";
   return "PAID";
 }

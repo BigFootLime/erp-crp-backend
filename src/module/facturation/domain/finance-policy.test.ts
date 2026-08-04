@@ -2,11 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import { HttpError } from "../../../utils/httpError";
 import {
+  FACTURE_LIST_FILTER_STATUSES,
   assertAvoirTransition,
   assertFactureTransition,
   decideReceipt,
   financeRequestHash,
+  invoiceSettlementStatusFromBalance,
   invoiceStatusFromBalance,
+  isInvoiceIssuedForSettlement,
   paymentStatusFromAllocation,
   roleHasFinanceCapability,
 } from "./finance-policy";
@@ -119,6 +122,26 @@ describe("issue #227 — RBAC fail-closed", () => {
 });
 
 describe("issue #227 — idempotence et soldes", () => {
+  it("reconnaît les factures historiques émises sans élargir le vocabulaire arbitrairement", () => {
+    for (const legacyStatus of ["emis", "emise", "envoyee", "partielle", "payee"]) {
+      expect(isInvoiceIssuedForSettlement({ documentStatus: "ISSUED", legacyStatus })).toBe(true);
+      expect(FACTURE_LIST_FILTER_STATUSES).toContain(legacyStatus);
+    }
+    expect(isInvoiceIssuedForSettlement({ documentStatus: "LEGACY", legacyStatus: "custom" })).toBe(false);
+    expect(FACTURE_LIST_FILTER_STATUSES).not.toContain("custom" as never);
+  });
+
+  it.each(["partielle", "payee"])(
+    "conserve %s comme preuve documentaire sans inventer de règlement",
+    (legacyStatus) => {
+      expect(isInvoiceIssuedForSettlement({ documentStatus: "ISSUED", legacyStatus })).toBe(true);
+      expect(invoiceSettlementStatusFromBalance({
+        totalCents: 10_000n,
+        settledCents: 0n,
+      })).toBe("UNPAID");
+    }
+  );
+
   it("stabilise le hash malgré l'ordre des propriétés", () => {
     expect(financeRequestHash("PAYMENT_REGISTER", { b: 2, a: 1 })).toBe(
       financeRequestHash("PAYMENT_REGISTER", { a: 1, b: 2 })
@@ -140,6 +163,15 @@ describe("issue #227 — idempotence et soldes", () => {
     [10_000n, 10_000n, "PAID"],
   ] as const)("statut facture %s/%s", (totalCents, settledCents, expected) => {
     expect(invoiceStatusFromBalance({ totalCents, settledCents })).toBe(expected);
+  });
+
+  it.each([
+    [10_000n, 0n, "UNPAID"],
+    [10_000n, 1n, "PARTIALLY_PAID"],
+    [10_000n, 9_999n, "PARTIALLY_PAID"],
+    [10_000n, 10_000n, "PAID"],
+  ] as const)("état de règlement facture %s/%s", (totalCents, settledCents, expected) => {
+    expect(invoiceSettlementStatusFromBalance({ totalCents, settledCents })).toBe(expected);
   });
 
   it.each([

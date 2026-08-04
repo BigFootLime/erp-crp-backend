@@ -30,7 +30,10 @@ import {
   ledgerFactureCte,
   lineValueExpression,
   money,
+  paiementAllocatedAmountExpression,
+  paiementAvailableAmountExpression,
   paiementNetPredicate,
+  paiementProjectedStatusExpression,
   ratio,
   settledCte,
   shippedLinesCte,
@@ -924,21 +927,9 @@ async function repoUnallocated(
 
   const res = await pool.query(
     `WITH pay AS (
-       SELECT p.montant::numeric(18,2) AS montant,
-              (
-                COALESCE((
-                  SELECT SUM(pa.amount_ttc) FROM paiement_allocations pa
-                  WHERE pa.paiement_id = p.id
-                    AND (pa.created_at AT TIME ZONE 'Europe/Paris')::date <= ${asOf}::date
-                ), 0)
-                -- Rattachement direct hérité : un règlement lié à une facture sans
-                -- ligne de lettrage est affecté, pas en attente d'affectation.
-                + CASE
-                    WHEN p.facture_id IS NOT NULL
-                      AND NOT EXISTS (SELECT 1 FROM paiement_allocations pa2 WHERE pa2.paiement_id = p.id)
-                    THEN p.montant ELSE 0
-                  END
-              )::numeric(18,2) AS allocated
+       SELECT ${paiementAvailableAmountExpression("p", {
+         allocationAsOfDateSql: `${asOf}::date`,
+       })}::numeric(18,2) AS available
        FROM paiement p
        WHERE p.date_paiement <= ${asOf}::date AND ${net} ${clientPay}
      ),
@@ -955,7 +946,7 @@ async function repoUnallocated(
          AND a.facture_id IS NULL ${clientCred}
      )
      SELECT
-       COALESCE((SELECT SUM(GREATEST(montant - allocated, 0)) FROM pay), 0)::numeric(18,2)::text  AS payments_ttc,
+       COALESCE((SELECT SUM(available) FROM pay), 0)::numeric(18,2)::text AS payments_ttc,
        COALESCE((SELECT SUM(GREATEST(montant - allocated, 0)) FROM cred), 0)::numeric(18,2)::text AS credits_ttc`,
     p.values
   );
@@ -1516,29 +1507,38 @@ async function drilldownPayments(ctx: ReportingContext, scope: string): Promise<
   const net = paiementNetPredicate(p, "p");
   const from = p.push(ctx.period.from);
   const to = p.push(ctx.period.to);
+  const asOf = p.push(ctx.asOf);
   const clientFilter = ctx.clientId ? `AND p.client_id = ${p.push(ctx.clientId)}` : "";
   const limit = p.push(ctx.limit);
-  const unallocatedFilter =
-    scope === "unallocated"
-      ? `AND p.facture_id IS NULL AND NOT EXISTS (SELECT 1 FROM paiement_allocations pa WHERE pa.paiement_id = p.id)`
-      : "";
+  const allocationOptions = { allocationAsOfDateSql: `${asOf}::date` };
+  const unallocatedFilter = scope === "unallocated" ? "WHERE pr.available_amount > 0::numeric" : "";
 
   const res = await pool.query(
-    `SELECT p.id::text AS id, p.code, p.client_id, c.company_name,
-            p.date_paiement::text AS date_paiement,
-            p.montant::numeric(18,2)::text AS montant,
-            p.mode, p.status, p.workflow_status, p.currency,
-            p.facture_id::text AS facture_id,
+    `WITH payment_read AS (
+       SELECT p.*,
+              ${paiementAllocatedAmountExpression("p", allocationOptions)}::numeric(18,2) AS allocated_amount,
+              ${paiementAvailableAmountExpression("p", allocationOptions)}::numeric(18,2) AS available_amount,
+              ${paiementProjectedStatusExpression("p")} AS projected_status
+       FROM paiement p
+       WHERE p.date_paiement BETWEEN ${from}::date AND ${to}::date
+         AND ${net} ${clientFilter}
+     )
+     SELECT pr.id::text AS id, pr.code, pr.client_id, c.company_name,
+            pr.date_paiement::text AS date_paiement,
+            pr.montant::numeric(18,2)::text AS montant,
+            pr.allocated_amount::text AS allocated_amount,
+            pr.available_amount::text AS available_amount,
+            pr.mode, pr.projected_status AS status, pr.workflow_status, pr.currency,
+            pr.facture_id::text AS facture_id,
             COUNT(*) OVER ()::int AS total_rows
-     FROM paiement p
-     LEFT JOIN clients c ON c.client_id = p.client_id
-     WHERE p.date_paiement BETWEEN ${from}::date AND ${to}::date
-       AND ${net} ${clientFilter} ${unallocatedFilter}
-     ORDER BY p.date_paiement DESC, p.id DESC
+     FROM payment_read pr
+     LEFT JOIN clients c ON c.client_id = pr.client_id
+     ${unallocatedFilter}
+     ORDER BY pr.date_paiement DESC, pr.id DESC
      LIMIT ${limit}`,
     p.values
   );
-  return buildDrilldown("payments", scope, res.rows, ["montant"]);
+  return buildDrilldown("payments", scope, res.rows, ["montant", "allocated_amount", "available_amount"]);
 }
 
 function buildDrilldown(
