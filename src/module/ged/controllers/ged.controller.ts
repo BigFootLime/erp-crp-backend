@@ -187,7 +187,7 @@ export async function downloadVersion(req: Request, res: Response, next: NextFun
     res.setHeader("X-CERP-Document-SHA256", result.sha256);
     res.setHeader("Content-Security-Policy", "sandbox; default-src 'none'");
     try {
-      await sendSecureStoredFile(res, {
+      const delivery = await sendSecureStoredFile(res, {
         filePath: result.file_path,
         allowedRoots: [result.allowed_root],
         filename: result.original_name,
@@ -200,13 +200,15 @@ export async function downloadVersion(req: Request, res: Response, next: NextFun
           message: "L'intégrité du document ne peut pas être vérifiée. Le contenu ne sera pas servi.",
         },
       });
+      if (delivery === "completed") {
+        await service.recordVersionDownload(actor, result, "DOWNLOAD");
+      }
     } catch (error) {
       if (error instanceof HttpError && error.code === "GED_INTEGRITY") {
         await service.recordVersionDownload(actor, result, "INTEGRITY_FAILURE");
       }
       throw error;
     }
-    await service.recordVersionDownload(actor, result, "DOWNLOAD");
   } catch (err) {
     next(err);
   }

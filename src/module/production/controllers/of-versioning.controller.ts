@@ -14,6 +14,7 @@ import { buildAuditContext } from "../../project-office/controllers/project-offi
 import { readMachineFamilies } from "../repository/of-versioning.repository";
 import { roleHasOfCapability, type OfCapability } from "../domain/of-rbac";
 import * as service from "../services/of-versioning.service";
+import { publicOfDocumentArchiveResult } from "../services/of-document-archive";
 import { idempotencyKeyOf } from "../middlewares/of-versioning-authorization.middleware";
 import {
   assessVarianceSchema,
@@ -336,7 +337,7 @@ export const emitDocument = asyncHandler(async (req: Request, res: Response) => 
   res.status(result.replayed ? 200 : 201).json({
     document: result.document,
     replayed: result.replayed,
-    archive: "archive" in result ? result.archive : null,
+    archive: "archive" in result ? publicOfDocumentArchiveResult(result.archive) : null,
   });
 });
 

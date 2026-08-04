@@ -4,7 +4,7 @@ import path from "node:path"
 import type { PoolClient } from "pg"
 
 import pool from "../../../config/database"
-import { registerUploadDestination } from "../../../shared/uploads/secure-upload"
+import { transferSecureUploadToDestination } from "../../../shared/uploads/secure-upload"
 import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction"
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
@@ -539,13 +539,7 @@ export async function repoCreateOperationDossierVersion(params: {
         const safeExt = safeExtFromName(file.originalname)
         const finalPath = path.join(docsDir, `${documentId}${safeExt}`)
 
-        try {
-          await fs.rename(file.path, finalPath)
-        } catch {
-          await fs.copyFile(file.path, finalPath)
-          await fs.unlink(file.path)
-        }
-        registerUploadDestination(file, finalPath)
+        await transferSecureUploadToDestination(file, finalPath)
 
         await tx.query(`INSERT INTO public.documents_clients (id, document_name, type) VALUES ($1, $2, $3)`, [
           documentId,

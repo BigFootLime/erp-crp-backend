@@ -22,7 +22,7 @@ import {
   type MaterialProfileCode,
 } from "../../../shared/codes/material-article-code";
 import { canonicalizeStockUnitCode } from "../../../shared/stock-unit";
-import { registerUploadDestination } from "../../../shared/uploads/secure-upload";
+import { transferSecureUploadToDestination } from "../../../shared/uploads/secure-upload";
 import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
@@ -7578,15 +7578,7 @@ async function insertStockDocuments(
     const storedName = `${documentId}${safeExt}`;
     const relPath = toPosixPath(path.join(baseDirRel, storedName));
     const absPath = path.join(baseDirAbs, storedName);
-    const tempPath = path.resolve(doc.path);
-
-    try {
-      await fs.rename(tempPath, absPath);
-    } catch {
-      await fs.copyFile(tempPath, absPath);
-      await fs.unlink(tempPath);
-    }
-    registerUploadDestination(doc, absPath);
+    await transferSecureUploadToDestination(doc, absPath);
 
     const hash = await sha256File(absPath);
 

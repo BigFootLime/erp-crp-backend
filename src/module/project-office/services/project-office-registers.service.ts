@@ -11,6 +11,12 @@ import {
 import { HttpError } from "../../../utils/httpError";
 import logger from "../../../utils/logger";
 import {
+  cleanupSecureBufferDestination,
+  verifySecureBufferDestination,
+  writeSecureBufferToDestination,
+  type SecureBufferDestinationOwnership,
+} from "../../../shared/uploads/secure-upload";
+import {
   insertAuditLog,
   insertProjectActivity,
   isPgUniqueViolation,
@@ -445,6 +451,13 @@ export function assertAcceptedEvidenceFile(
   if (file.size <= 0 || file.size > MAX_EVIDENCE_FILE_SIZE) {
     throw new HttpError(413, "PO_EVIDENCE_FILE_SIZE", "Le fichier doit peser entre 1 octet et 25 Mo.");
   }
+  if (file.size !== file.buffer.byteLength) {
+    throw new HttpError(
+      409,
+      "PO_EVIDENCE_FILE_CHANGED",
+      "Le fichier de preuve a changé après son contrôle de sécurité."
+    );
+  }
   if (!ALLOWED_EVIDENCE_MIME_TYPES.has(file.mimetype)) {
     throw new HttpError(415, "PO_EVIDENCE_FILE_TYPE", "Type de fichier non autorisé pour une preuve.");
   }
@@ -526,10 +539,9 @@ export async function uploadEvidenceFile(
     throw new HttpError(400, "PO_EVIDENCE_FILE_PATH", "Chemin de stockage invalide.");
   }
 
-  let written = false;
+  let ownership: SecureBufferDestinationOwnership | null = null;
   try {
-    await fs.writeFile(destination, file.buffer, { flag: "wx" });
-    written = true;
+    ownership = await writeSecureBufferToDestination(file.buffer, destination);
     return await withTransaction(async (tx) => {
       const evidence = await repoCreateEvidence(tx, {
         project_id: projectId,
@@ -575,33 +587,62 @@ export async function uploadEvidenceFile(
       };
       try {
         const persisted = await repoGetEvidenceFileById(result.file.id);
-        if (persisted && persisted.sha256 === sha256 && persisted.storage_key === storageKey) {
-          const durableFilePresent = await fs.stat(destination).then((stat) => stat.isFile()).catch(() => false);
-          if (durableFilePresent) return result;
-          logger.error("[PO_UPLOAD_COMMIT_UNCERTAIN] metadata committed but durable file missing", JSON.stringify({
+        const metadataExact = persisted
+          && persisted.id === result.file.id
+          && persisted.evidence_id === result.evidence.id
+          && persisted.project_id === projectId
+          && persisted.storage_key === storageKey
+          && persisted.sha256 === sha256
+          && persisted.size_bytes === file.buffer.byteLength;
+        if (metadataExact) {
+          const durableFileExact = ownership
+            ? await verifySecureBufferDestination(ownership, sha256, file.buffer.byteLength)
+            : false;
+          if (durableFileExact) return result;
+          logger.error("[PO_UPLOAD_COMMIT_UNCERTAIN] metadata committed but durable file mismatch", JSON.stringify({
             file_id: result.file.id,
           }));
-          throw err;
+          throw new HttpError(
+            503,
+            "PO_UPLOAD_COMMIT_UNCERTAIN",
+            "Le résultat du dépôt Project Office doit être rapproché."
+          );
         }
         if (!persisted) {
-          if (written) await fs.unlink(destination).catch(() => undefined);
-          throw err.originalError;
+          if (ownership) await cleanupSecureBufferDestination(ownership);
+          throw new HttpError(
+            503,
+            "PO_UPLOAD_COMMIT_NOT_APPLIED",
+            "Le dépôt Project Office n'a pas été appliqué. Vous pouvez réessayer."
+          );
         }
         logger.error("[PO_UPLOAD_COMMIT_UNCERTAIN] metadata mismatch; durable file preserved", JSON.stringify({
           file_id: result.file.id,
         }));
-        throw err;
+        throw new HttpError(
+          503,
+          "PO_UPLOAD_COMMIT_UNCERTAIN",
+          "Le résultat du dépôt Project Office doit être rapproché."
+        );
       } catch (reconcileError) {
-        if (reconcileError === err.originalError || reconcileError === err) throw reconcileError;
+        if (
+          reconcileError instanceof HttpError
+          && ["PO_UPLOAD_COMMIT_UNCERTAIN", "PO_UPLOAD_COMMIT_NOT_APPLIED", "UPLOAD_CLEANUP_FAILED"]
+            .includes(reconcileError.code)
+        ) throw reconcileError;
         logger.error("[PO_UPLOAD_COMMIT_UNCERTAIN] reconciliation failed; durable file preserved", JSON.stringify({
           file_id: result.file.id,
         }));
-        throw err;
+        throw new HttpError(
+          503,
+          "PO_UPLOAD_COMMIT_UNCERTAIN",
+          "Le résultat du dépôt Project Office doit être rapproché."
+        );
       }
     }
-    if (written && !(err instanceof PoRollbackUncertainError)) {
+    if (ownership && !(err instanceof PoRollbackUncertainError)) {
       // withTransaction only yields the original error after a confirmed ROLLBACK.
-      await fs.unlink(destination).catch(() => undefined);
+      await cleanupSecureBufferDestination(ownership);
     }
     if (isPgUniqueViolation(err)) {
       throw new HttpError(409, "PO_EVIDENCE_FILE_DUPLICATE", "Ce fichier est déjà enregistré dans ce projet.");

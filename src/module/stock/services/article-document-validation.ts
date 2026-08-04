@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { HttpError } from "../../../utils/httpError";
+import { cleanupIncomingUploadStaging } from "../../../shared/uploads/secure-upload";
 
 const MIME_BY_EXTENSION: Record<string, readonly string[]> = {
   ".pdf": ["application/pdf"],
@@ -67,5 +68,5 @@ export async function validateArticleDocuments(files: Express.Multer.File[]): Pr
 }
 
 export async function removeTemporaryArticleDocuments(files: Express.Multer.File[]): Promise<void> {
-  await Promise.all(files.map((file) => fs.unlink(file.path).catch(() => undefined)));
+  await cleanupIncomingUploadStaging(files);
 }

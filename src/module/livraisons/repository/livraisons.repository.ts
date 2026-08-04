@@ -5,7 +5,7 @@ import type { PoolClient } from "pg"
 
 import pool from "../../../config/database"
 import { canonicalizeStockUnitCode } from "../../../shared/stock-unit"
-import { registerUploadDestination } from "../../../shared/uploads/secure-upload"
+import { transferSecureUploadToDestination } from "../../../shared/uploads/secure-upload"
 import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction"
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
@@ -2823,13 +2823,7 @@ export async function repoAttachLivraisonDocuments(params: {
       const safeExt = /^\.[a-z0-9]+$/.test(extCandidate) && extCandidate.length <= 10 ? extCandidate : ""
       const finalPath = path.join(docsDir, `${documentId}${safeExt}`)
 
-      try {
-        await fs.rename(doc.path, finalPath)
-      } catch {
-        await fs.copyFile(doc.path, finalPath)
-        await fs.unlink(doc.path)
-      }
-      registerUploadDestination(doc, finalPath)
+      await transferSecureUploadToDestination(doc, finalPath)
 
       await db.query(`INSERT INTO documents_clients (id, document_name, type) VALUES ($1, $2, $3)`, [
         documentId,

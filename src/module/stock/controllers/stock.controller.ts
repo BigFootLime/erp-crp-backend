@@ -161,6 +161,7 @@ import {
 } from "../services/stock.service";
 import { canViewArticleCosts } from "../stock-article.permissions";
 import { removeTemporaryArticleDocuments, validateArticleDocuments } from "../services/article-document-validation";
+import { UploadDestinationCleanupError } from "../../../shared/uploads/secure-upload";
 
 export const listStockInventorySessions: RequestHandler = async (req, res, next) => {
   try {
@@ -1210,7 +1211,16 @@ export const attachStockArticleDocuments: RequestHandler = async (req, res, next
     }
     res.status(201).json(out);
   } catch (err) {
-    await removeTemporaryArticleDocuments(files);
+    if (err instanceof UploadDestinationCleanupError) {
+      next(err);
+      return;
+    }
+    try {
+      await removeTemporaryArticleDocuments(files);
+    } catch (cleanupError) {
+      next(cleanupError);
+      return;
+    }
     next(err);
   }
 };

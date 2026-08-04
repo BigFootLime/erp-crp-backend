@@ -11,7 +11,10 @@ import {
   sha256DocumentFile,
   toPosixStoragePath,
 } from "../../../shared/documents/document-upload";
-import { registerUploadDestination } from "../../../shared/uploads/secure-upload";
+import {
+  cleanupIncomingUploadStaging,
+  transferSecureUploadToDestination,
+} from "../../../shared/uploads/secure-upload";
 import { withUploadTransaction } from "../../../shared/uploads/upload-transaction";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
@@ -484,7 +487,7 @@ export async function repoUploadMachineDocument(params: {
   try {
     extension = await assertDocumentUploadAllowed(params.file);
   } catch (error) {
-    await fs.unlink(params.file.path).catch(() => undefined);
+    await cleanupIncomingUploadStaging([params.file]);
     throw error;
   }
 
@@ -500,13 +503,7 @@ export async function repoUploadMachineDocument(params: {
     context: "production.machines.document.upload",
     work: async () => {
     await requireActiveMachine(client, params.machineId);
-    try {
-      await fs.rename(path.resolve(params.file.path), finalPath);
-    } catch {
-      await fs.copyFile(path.resolve(params.file.path), finalPath);
-      await fs.unlink(path.resolve(params.file.path));
-    }
-    registerUploadDestination(params.file, finalPath);
+    await transferSecureUploadToDestination(params.file, finalPath);
     const sha256 = await sha256DocumentFile(finalPath);
     expectedSha256 = sha256;
     const b = params.body;

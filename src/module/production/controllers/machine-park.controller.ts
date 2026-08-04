@@ -1,9 +1,8 @@
-import fs from "node:fs/promises";
-
 import { asyncHandler } from "../../../utils/asyncHandler";
 import { getDocumentStoragePath, resolveCerpStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { sendSecureStoredFile } from "../../../shared/uploads/secure-download";
+import { cleanupIncomingUploadStaging } from "../../../shared/uploads/secure-upload";
 import { buildAuditContext } from "./production.controller";
 import {
   createMachineMaintenanceEventSchema,
@@ -110,20 +109,25 @@ export const uploadMachineDocument = asyncHandler(async (req, res) => {
   if (!req.file) throw new HttpError(400, "MACHINE_DOCUMENT_FILE_REQUIRED", "A document file is required.");
   const rawData = typeof req.body?.data === "string" ? req.body.data : null;
   if (!rawData) {
-    await fs.unlink(req.file.path).catch(() => undefined);
+    await cleanupIncomingUploadStaging([req.file]);
     throw new HttpError(400, "MACHINE_DOCUMENT_METADATA_REQUIRED", "Document metadata is required.");
   }
   let parsedData: unknown;
   try {
     parsedData = JSON.parse(rawData);
   } catch {
-    await fs.unlink(req.file.path).catch(() => undefined);
+    await cleanupIncomingUploadStaging([req.file]);
     throw new HttpError(400, "INVALID_JSON", "Invalid JSON payload in 'data'.");
   }
   const validation = uploadMachineDocumentSchema.safeParse({ body: parsedData });
   if (!validation.success) {
-    await fs.unlink(req.file.path).catch(() => undefined);
-    throw validation.error;
+    await cleanupIncomingUploadStaging([req.file]);
+    throw new HttpError(
+      400,
+      "VALIDATION_ERROR",
+      "Document metadata is invalid.",
+      validation.error.flatten()
+    );
   }
   const body = validation.data.body;
   res.status(201).json(await svcUploadMachineDocument({ machineId: id, body, file: req.file, audit: buildAuditContext(req) }));

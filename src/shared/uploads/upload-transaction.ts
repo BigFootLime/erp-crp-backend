@@ -5,6 +5,7 @@ import logger from "../../utils/logger";
 import {
   cleanupUploadsAfterConfirmedRollback,
   cleanupUploadsAfterReconciledNoCommit,
+  markUploadCommitUncertain,
   markUploadCommitAttempted,
   markUploadRollbackUncertain,
   markUploadsCommitted,
@@ -77,7 +78,6 @@ export async function withUploadTransaction<T>(options: UploadTransactionOptions
   } catch (error) {
     try {
       await client.query("ROLLBACK");
-      await cleanupUploadsAfterConfirmedRollback(files);
     } catch (rollbackError) {
       markUploadRollbackUncertain(files);
       release(true);
@@ -86,6 +86,19 @@ export async function withUploadTransaction<T>(options: UploadTransactionOptions
         error: privacySafeErrorName(rollbackError),
       }));
       throw new UploadRollbackUncertainError();
+    }
+    // A confirmed database rollback and a failed durable-file compensation are
+    // distinct outcomes. The cleanup helper preserves registry state and
+    // surfaces its own safe error instead of misreporting rollback uncertainty.
+    try {
+      await cleanupUploadsAfterConfirmedRollback(files);
+    } catch (cleanupError) {
+      release();
+      logger.error("[UPLOAD_TRANSACTION] durable cleanup failed after rollback", JSON.stringify({
+        context,
+        error: privacySafeErrorName(cleanupError),
+      }));
+      throw cleanupError;
     }
     release();
     throw error;
@@ -125,6 +138,7 @@ export async function withUploadTransaction<T>(options: UploadTransactionOptions
       context,
       error: privacySafeErrorName(commitError),
     }));
+    markUploadCommitUncertain(files);
     throw new UploadCommitUncertainError();
   }
 }

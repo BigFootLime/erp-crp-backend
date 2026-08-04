@@ -1,10 +1,10 @@
 import type { Request } from "express"
 import type { RequestHandler } from "express"
-import fs from "node:fs/promises"
 
 import { HttpError } from "../../../utils/httpError"
 import { getDocumentStoragePath } from "../../../utils/cerpStorage"
 import { sendSecureStoredFile } from "../../../shared/uploads/secure-download"
+import { cleanupIncomingUploadStaging } from "../../../shared/uploads/secure-upload"
 import {
   createOperationDossierVersionBodySchema,
   dossierIdParamsSchema,
@@ -76,7 +76,7 @@ export const createOperationDossierVersion: RequestHandler = async (req, res, ne
 
     for (const f of files) {
       if (!/^documents\[DOC_\d{2}\]$/.test(f.fieldname)) {
-        await fs.unlink(f.path).catch(() => undefined)
+        await cleanupIncomingUploadStaging(files)
         throw new HttpError(400, "INVALID_FILE_FIELD", `Invalid file field: ${f.fieldname}`)
       }
     }

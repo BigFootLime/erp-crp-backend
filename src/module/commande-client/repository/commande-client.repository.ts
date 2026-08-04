@@ -7,7 +7,7 @@ import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { generateAffaireCode, generateCommandeCode, generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
-import { registerUploadDestination } from "../../../shared/uploads/secure-upload";
+import { transferSecureUploadToDestination } from "../../../shared/uploads/secure-upload";
 import { withUploadTransaction } from "../../../shared/uploads/upload-transaction";
 import { emitAppNotificationCreated, emitEntityChanged } from "../../../shared/realtime/realtime.service";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
@@ -2985,14 +2985,7 @@ async function insertCommandeDocuments(
     const uploadDir = ensureDocumentStoragePath();
     const finalPath = path.join(uploadDir, `${documentId}${safeExt}`);
 
-    try {
-      await fs.rename(doc.path, finalPath);
-    } catch {
-      // Fallback for cross-device issues
-      await fs.copyFile(doc.path, finalPath);
-      await fs.unlink(doc.path);
-    }
-    registerUploadDestination(doc, finalPath);
+    await transferSecureUploadToDestination(doc, finalPath);
     movedDocuments.push({ file: doc, documentId, finalPath });
 
     await client.query(

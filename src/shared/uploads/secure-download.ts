@@ -53,10 +53,15 @@ async function realExistingDirectory(directory: string): Promise<string> {
   }
 }
 
-type SecureDownloadHookPhase = "after-validation" | "after-open";
+type SecureDownloadHookPhase = "after-validation" | "after-open" | "during-integrity" | "before-stream";
 type SecureDownloadHook = (
   phase: SecureDownloadHookPhase,
-  context: Readonly<{ candidatePath: string; realPath: string }>
+  context: Readonly<{
+    candidatePath: string;
+    realPath: string;
+    response?: Response;
+    fileHandle?: FileHandle;
+  }>
 ) => void | Promise<void>;
 
 let secureDownloadHook: SecureDownloadHook | null = null;
@@ -145,7 +150,7 @@ async function openSecureDownloadPath(filePath: string, allowedRoots: readonly s
     if (resolvedAfterOpen !== realPath) throw invalidPath();
     if (!roots.some((root) => isPathInsideDirectory(root, resolvedAfterOpen))) throw invalidPath();
 
-    await secureDownloadHook?.("after-open", { candidatePath, realPath });
+    await secureDownloadHook?.("after-open", { candidatePath, realPath, fileHandle: handle });
 
     const finalStat = await handle.stat();
     if (!sameIdentity(openedStat, finalStat)) throw invalidPath();
@@ -162,6 +167,8 @@ export async function assertSecureDownloadPath(filePath: string, allowedRoots: r
   return opened.realPath;
 }
 
+export type SecureStoredFileSendOutcome = "completed" | "aborted";
+
 export async function sendSecureStoredFile(
   res: Response,
   options: {
@@ -173,21 +180,71 @@ export async function sendSecureStoredFile(
     expectedSha256?: string;
     integrityError?: Readonly<{ status: number; code: string; message: string }>;
   }
-): Promise<void> {
-  const opened = await openSecureDownloadPath(options.filePath, options.allowedRoots);
+): Promise<SecureStoredFileSendOutcome> {
+  let opened: SecureOpenedFile | null = null;
+  let verifier: ReturnType<typeof createReadStream> | null = null;
   let stream: ReturnType<typeof createReadStream> | null = null;
+  let responseClosed = res.destroyed;
+  let settleStreaming: ((outcome: SecureStoredFileSendOutcome) => void) | null = null;
+  let closeHandlePromise: Promise<void> | null = null;
+
+  const closeHandleOnce = (): Promise<void> => {
+    if (!opened) return Promise.resolve();
+    if (!closeHandlePromise) {
+      closeHandlePromise = opened.handle.close().catch(() => undefined);
+    }
+    return closeHandlePromise;
+  };
+
+  const onResponseClose = () => {
+    responseClosed = true;
+    verifier?.destroy();
+    stream?.destroy();
+    settleStreaming?.("aborted");
+    void closeHandleOnce();
+  };
+
+  // Arm cancellation before path validation/opening and, crucially, before
+  // the potentially long integrity pass.
+  res.once("close", onResponseClose);
   try {
+    if (responseClosed || res.destroyed) return "aborted";
+    opened = await openSecureDownloadPath(options.filePath, options.allowedRoots);
+    if (responseClosed || res.destroyed) return "aborted";
+
     if (options.expectedSha256) {
       const hash = createHash("sha256");
       if (opened.size > 0) {
-        const verifier = createReadStream(opened.realPath, {
+        verifier = createReadStream(opened.realPath, {
           fd: opened.handle.fd,
           autoClose: false,
           start: 0,
           end: opened.size - 1,
         });
-        for await (const chunk of verifier) hash.update(chunk as Buffer);
+        let integrityHookCalled = false;
+        try {
+          for await (const chunk of verifier) {
+            if (responseClosed || res.destroyed) return "aborted";
+            hash.update(chunk as Buffer);
+            if (!integrityHookCalled && secureDownloadHook) {
+              integrityHookCalled = true;
+              await secureDownloadHook("during-integrity", {
+                candidatePath: path.resolve(options.filePath),
+                realPath: opened.realPath,
+                response: res,
+              });
+              if (responseClosed || res.destroyed) return "aborted";
+            }
+          }
+        } catch (error) {
+          if (responseClosed || res.destroyed) return "aborted";
+          throw error;
+        } finally {
+          verifier.destroy();
+          verifier = null;
+        }
       }
+      if (responseClosed || res.destroyed) return "aborted";
       if (hash.digest("hex") !== options.expectedSha256.toLowerCase()) {
         const failure = options.integrityError ?? {
           status: 503,
@@ -198,11 +255,32 @@ export async function sendSecureStoredFile(
       }
     }
 
+    await secureDownloadHook?.("before-stream", {
+      candidatePath: path.resolve(options.filePath),
+      realPath: opened.realPath,
+      response: res,
+    });
+    if (responseClosed || res.destroyed) return "aborted";
+
     setSecureDownloadHeaders(res, options);
     res.setHeader("Content-Length", String(opened.size));
+    if (responseClosed || res.destroyed) return "aborted";
     if (opened.size === 0) {
-      res.end();
-      return;
+      return await new Promise<SecureStoredFileSendOutcome>((resolve) => {
+        let settled = false;
+        const settle = (outcome: SecureStoredFileSendOutcome) => {
+          if (settled) return;
+          settled = true;
+          res.off("finish", finish);
+          res.off("close", close);
+          resolve(outcome);
+        };
+        const finish = () => settle("completed");
+        const close = () => settle(res.writableFinished ? "completed" : "aborted");
+        res.once("finish", finish);
+        res.once("close", close);
+        res.end();
+      });
     }
 
     stream = createReadStream(opened.realPath, {
@@ -212,32 +290,38 @@ export async function sendSecureStoredFile(
       end: opened.size - 1,
     });
 
-    await new Promise<void>((resolve, reject) => {
+    return await new Promise<SecureStoredFileSendOutcome>((resolve, reject) => {
+      let settled = false;
       const cleanup = () => {
         res.off("finish", finish);
-        res.off("close", close);
         stream?.off("error", fail);
+        settleStreaming = null;
+      };
+      const settle = (callback: () => void) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        callback();
       };
       const finish = () => {
-        cleanup();
-        resolve();
-      };
-      const close = () => {
-        stream?.destroy();
-        cleanup();
-        resolve();
+        settle(() => resolve("completed"));
       };
       const fail = (error: Error) => {
-        cleanup();
-        reject(error);
+        settle(() => reject(error));
       };
+      settleStreaming = (outcome) => settle(() => resolve(outcome));
       res.once("finish", finish);
-      res.once("close", close);
       stream?.once("error", fail);
+      if (responseClosed || res.destroyed) {
+        settleStreaming("aborted");
+        return;
+      }
       stream?.pipe(res);
     });
   } finally {
+    res.off("close", onResponseClose);
+    verifier?.destroy();
     stream?.destroy();
-    await opened.handle.close().catch(() => undefined);
+    await closeHandleOnce();
   }
 }

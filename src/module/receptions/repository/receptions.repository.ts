@@ -6,7 +6,7 @@ import path from "node:path"
 
 import db from "../../../config/database"
 import { generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service"
-import { registerUploadDestination } from "../../../shared/uploads/secure-upload"
+import { transferSecureUploadToDestination } from "../../../shared/uploads/secure-upload"
 import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction"
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
@@ -1101,15 +1101,7 @@ export async function repoAttachDocuments(
       const storedName = `${documentId}${safeExt}`
       const relPath = toPosixPath(path.join(docsDirRel, storedName))
       const absPath = path.join(docsDirAbs, storedName)
-      const tempPath = path.resolve(doc.path)
-
-      try {
-        await fs.rename(tempPath, absPath)
-      } catch {
-        await fs.copyFile(tempPath, absPath)
-        await fs.unlink(tempPath)
-      }
-      registerUploadDestination(doc, absPath)
+      await transferSecureUploadToDestination(doc, absPath)
 
       const hash = await sha256File(absPath)
 

@@ -325,7 +325,12 @@ export const uploadLivraisonDocuments: RequestHandler = async (req, res, next) =
     emitLivraisonChanged(req, { entityId: id, action: "updated" })
     res.status(201).json({ documents: out })
   } catch (e) {
-    await removeTemporaryLivraisonDocuments(files)
+    try {
+      await removeTemporaryLivraisonDocuments(files)
+    } catch (cleanupError) {
+      next(cleanupError)
+      return
+    }
     next(e)
   }
 }

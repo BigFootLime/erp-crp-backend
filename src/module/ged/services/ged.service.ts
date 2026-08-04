@@ -1,9 +1,9 @@
 // GED centrale CERP (ADR-0037) — orchestration.
 //
-// Ordre invariant du dépôt : contrôle de contenu -> écriture du blob ->
-// transaction base. Si la transaction échoue après l'écriture, le blob est
-// compensé. L'inverse (base d'abord) laisserait des métadonnées sans fichier,
-// c'est-à-dire des documents fantômes.
+// Ordre invariant du dépôt : contrôle + empreinte -> transaction + verrou SHA
+// -> promotion du blob -> métadonnées -> COMMIT. Une compensation post-rollback
+// reprend le même verrou sur une connexion fraîche avant de décider de supprimer
+// ou préserver le blob partagé.
 
 import fs from "node:fs/promises";
 
@@ -16,7 +16,10 @@ import {
   cleanupUploadsAfterConfirmedRollback,
   cleanupUploadsAfterReconciledNoCommit,
   markUploadCommitAttempted,
+  markUploadCommitUncertain,
+  markUploadRollbackUncertain,
   markUploadsCommitted,
+  UploadDestinationCleanupError,
 } from "../../../shared/uploads/secure-upload";
 import { assertAcceptedFileOnDisk } from "../domain/ged-content";
 import {
@@ -30,6 +33,7 @@ import {
   repoAddVersion,
   repoCreateDocumentWithVersion,
   repoFindDocumentByBlobHash,
+  repoGetGedBlobReferenceState,
   repoGetClass,
   repoGetDocumentDetail,
   repoGetTree,
@@ -37,6 +41,7 @@ import {
   repoInsertApproval,
   repoInternalGetVersionContentRef,
   repoIsVersionBlobCommitted,
+  repoLockGedBlobSha256,
   repoListAccessEvents,
   repoListClasses,
   repoListDocuments,
@@ -45,7 +50,9 @@ import {
   repoSetCurrentVersion,
   repoSetVersionStatus,
   repoUpsertBlob,
+  withGedBlobSha256Coordination,
   withGedTransaction,
+  GedBlobCleanupUncertainError,
   GedCommitUncertainError,
 } from "../repository/ged.repository";
 import type {
@@ -58,20 +65,61 @@ import type {
 } from "../types/ged.types";
 import {
   checkVaultHealth,
+  computeFileSha256,
   resolveBlobForDownload,
+  storageKeyForSha256,
   writeBlobFromPath,
 } from "./ged-vault.service";
 
 export type GedActor = { id: number; role: string | null };
 
-type UploadedFile = { path?: string; originalname?: string; mimetype?: string; size?: number };
+type UploadedFile = {
+  path?: string;
+  originalname?: string;
+  mimetype?: string;
+  size?: number;
+  uploadSecurity?: { sha256: string };
+};
 type GedUploadTransactionResult = { documentId: string; versionId: string };
 
-function uploadTransactionHooks(files: readonly { path: string }[]) {
+async function coordinateGedBlobCleanup(
+  sha256: string,
+  files: readonly { path: string }[],
+  mode: "confirmed-rollback" | "reconciled-no-commit"
+): Promise<void> {
+  const outcome = await withGedBlobSha256Coordination(sha256, async (tx) => {
+    const state = await repoGetGedBlobReferenceState(tx, sha256);
+    if (state.blob_present || state.reference_count > 0) return "preserved" as const;
+    if (mode === "confirmed-rollback") {
+      await cleanupUploadsAfterConfirmedRollback(files);
+    } else {
+      await cleanupUploadsAfterReconciledNoCommit(files);
+    }
+    return "cleaned" as const;
+  });
+  if (outcome === "preserved") markUploadsCommitted(files);
+}
+
+function uploadTransactionHooks(
+  files: readonly { path: string }[],
+  sha256: string,
+  promotionCompleted: () => boolean
+) {
   return {
     beforeCommit: () => markUploadCommitAttempted(files),
     afterCommit: () => markUploadsCommitted(files),
-    afterConfirmedRollback: () => cleanupUploadsAfterConfirmedRollback(files),
+    afterConfirmedRollback: async () => {
+      if (!promotionCompleted()) return;
+      try {
+        await coordinateGedBlobCleanup(sha256, files, "confirmed-rollback");
+      } catch (error) {
+        if (error instanceof UploadDestinationCleanupError) throw error;
+        logger.error("[GED_BLOB_CLEANUP_UNCERTAIN] rollback compensation could not be coordinated");
+        markUploadRollbackUncertain(files);
+        throw new GedBlobCleanupUncertainError(error);
+      }
+    },
+    afterRollbackUncertain: () => markUploadRollbackUncertain(files),
   };
 }
 
@@ -93,6 +141,7 @@ async function reconcileGedCommit(
     logger.error("[GED_UPLOAD_COMMIT_UNCERTAIN] fresh-connection reconciliation failed", JSON.stringify({
       version_id: error.transactionResult.versionId,
     }));
+    markUploadCommitUncertain(files);
     throw error;
   }
   if (outcome === "committed") {
@@ -100,18 +149,29 @@ async function reconcileGedCommit(
       logger.error("[GED_UPLOAD_COMMIT_UNCERTAIN] metadata committed but durable blob missing", JSON.stringify({
         version_id: error.transactionResult.versionId,
       }));
+      markUploadCommitUncertain(files);
       throw error;
     }
     markUploadsCommitted(files);
     return error.transactionResult;
   }
   if (outcome === "not-committed") {
-    await cleanupUploadsAfterReconciledNoCommit(files);
+    try {
+      await coordinateGedBlobCleanup(sha256, files, "reconciled-no-commit");
+    } catch (cleanupError) {
+      if (cleanupError instanceof UploadDestinationCleanupError) throw cleanupError;
+      logger.error("[GED_UPLOAD_COMMIT_UNCERTAIN] no-commit cleanup could not be coordinated", JSON.stringify({
+        version_id: error.transactionResult.versionId,
+      }));
+      markUploadCommitUncertain(files);
+      throw error;
+    }
     throw error.originalError;
   }
   logger.error("[GED_UPLOAD_COMMIT_UNCERTAIN] metadata mismatch; durable blob preserved", JSON.stringify({
     version_id: error.transactionResult.versionId,
   }));
+  markUploadCommitUncertain(files);
   throw error;
 }
 
@@ -219,14 +279,26 @@ export async function uploadDocument(
     max_size_bytes: documentClass.max_size_bytes,
   });
 
-  // 1) Écriture du contenu AVANT la transaction : un blob orphelin se détecte
-  //    et se nettoie ; une métadonnée sans fichier est un mensonge durable.
-  const written = await writeBlobFromPath(accepted.path);
-  const uploadedFiles = [{ path: accepted.path }];
+  // `accepted` is validated metadata, but lifecycle ownership must keep the
+  // original Multer object so a close-before-registration race is observable.
+  // The central security hash is computed before waiting for the database
+  // lock; direct service tests fall back to a bounded streaming hash.
+  const uploadedFile = file as UploadedFile & { path: string };
+  const uploadedFiles = [uploadedFile];
+  const expectedSha256 = uploadedFile.uploadSecurity?.sha256
+    ?? await computeFileSha256(uploadedFile.path);
+  const storageKey = storageKeyForSha256(expectedSha256);
+  let promotionCompleted = false;
 
   let transactionResult: GedUploadTransactionResult;
   try {
     transactionResult = await withGedTransaction(async (tx: PoolClient) => {
+      // Every writer takes the same transaction-scoped SHA lock before touching
+      // the content-addressed path. It remains held through COMMIT/ROLLBACK.
+      await repoLockGedBlobSha256(tx, expectedSha256);
+      const written = await writeBlobFromPath(uploadedFile, expectedSha256);
+      promotionCompleted = true;
+
       const duplicate = await repoFindDocumentByBlobHash(tx, written.sha256);
       if (duplicate) {
         throw new HttpError(
@@ -280,13 +352,13 @@ export async function uploadDocument(
       });
 
       return { documentId: created.document_id, versionId: created.version_id };
-    }, uploadTransactionHooks(uploadedFiles));
+    }, uploadTransactionHooks(uploadedFiles, expectedSha256, () => promotionCompleted));
   } catch (err) {
     if (err instanceof GedCommitUncertainError) {
       transactionResult = await reconcileGedCommit(
         err as GedCommitUncertainError<GedUploadTransactionResult>,
-        written.sha256,
-        written.storage_key,
+        expectedSha256,
+        storageKey,
         uploadedFiles
       );
     } else {
@@ -334,12 +406,20 @@ export async function uploadNewVersion(
     max_size_bytes: documentClass.max_size_bytes,
   });
 
-  const written = await writeBlobFromPath(accepted.path);
-  const uploadedFiles = [{ path: accepted.path }];
+  const uploadedFile = file as UploadedFile & { path: string };
+  const uploadedFiles = [uploadedFile];
+  const expectedSha256 = uploadedFile.uploadSecurity?.sha256
+    ?? await computeFileSha256(uploadedFile.path);
+  const storageKey = storageKeyForSha256(expectedSha256);
+  let promotionCompleted = false;
 
   let transactionResult: GedUploadTransactionResult;
   try {
     transactionResult = await withGedTransaction(async (tx: PoolClient) => {
+      await repoLockGedBlobSha256(tx, expectedSha256);
+      const written = await writeBlobFromPath(uploadedFile, expectedSha256);
+      promotionCompleted = true;
+
       const blob = await repoUpsertBlob(tx, {
         sha256: written.sha256,
         size_bytes: written.size_bytes,
@@ -365,13 +445,13 @@ export async function uploadNewVersion(
       });
 
       return { documentId, versionId: version.version_id };
-    }, uploadTransactionHooks(uploadedFiles));
+    }, uploadTransactionHooks(uploadedFiles, expectedSha256, () => promotionCompleted));
   } catch (err) {
     if (err instanceof GedCommitUncertainError) {
       transactionResult = await reconcileGedCommit(
         err as GedCommitUncertainError<GedUploadTransactionResult>,
-        written.sha256,
-        written.storage_key,
+        expectedSha256,
+        storageKey,
         uploadedFiles
       );
     } else {
