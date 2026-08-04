@@ -12,11 +12,22 @@ BEGIN
 END $$;
 
 BEGIN;
+DO $$
+BEGIN
+  IF to_regclass('public.app_modules') IS NOT NULL THEN
+    UPDATE public.app_modules
+       SET api_prefixes = array_remove(api_prefixes, '/replenishment-proposals'),
+           updated_at = now()
+     WHERE module_key = 'commandes-fournisseurs';
+  END IF;
+END $$;
 ALTER TABLE public.commande_fournisseur DROP CONSTRAINT IF EXISTS commande_fournisseur_replenishment_fkey;
 DROP INDEX IF EXISTS public.commande_fournisseur_replenishment_idx;
 ALTER TABLE public.commande_fournisseur DROP COLUMN IF EXISTS replenishment_proposal_id;
 DROP TABLE IF EXISTS public.replenishment_proposal_idempotence;
 DROP TABLE IF EXISTS public.replenishment_proposal_events;
+DROP INDEX IF EXISTS public.replenishment_proposals_article_site_uniq;
+DROP INDEX IF EXISTS public.replenishment_proposals_article_unmapped_uniq;
 DROP TABLE IF EXISTS public.replenishment_proposals;
 DROP TABLE IF EXISTS public.replenishment_budgets;
 DROP FUNCTION IF EXISTS public.fn_replenishment_event_immutable();

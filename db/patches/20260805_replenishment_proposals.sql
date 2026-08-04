@@ -14,6 +14,17 @@ BEGIN
   END IF;
 END $$;
 
+DO $$
+BEGIN
+  IF to_regclass('public.app_modules') IS NOT NULL THEN
+    UPDATE public.app_modules
+       SET api_prefixes = array_append(api_prefixes, '/replenishment-proposals'),
+           updated_at = now()
+     WHERE module_key = 'commandes-fournisseurs'
+       AND NOT ('/replenishment-proposals' = ANY(api_prefixes));
+  END IF;
+END $$;
+
 ALTER TABLE public.stock_levels
   ADD COLUMN IF NOT EXISTS safety_stock_qty numeric(18,3),
   ADD COLUMN IF NOT EXISTS target_stock_qty numeric(18,3),
@@ -62,9 +73,8 @@ CREATE TABLE IF NOT EXISTS public.replenishment_budgets (
 
 CREATE TABLE IF NOT EXISTS public.replenishment_proposals (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  stock_level_id uuid NOT NULL REFERENCES public.stock_levels(id) ON DELETE RESTRICT,
+  stock_level_ids uuid[] NOT NULL,
   article_id uuid NOT NULL REFERENCES public.articles(id) ON DELETE RESTRICT,
-  location_id uuid,
   magasin_id uuid REFERENCES public.magasins(id) ON DELETE RESTRICT,
   status text NOT NULL DEFAULT 'PROPOSEE',
   version integer NOT NULL DEFAULT 1,
@@ -101,11 +111,11 @@ CREATE TABLE IF NOT EXISTS public.replenishment_proposals (
   resolution_reason text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT replenishment_proposals_stock_level_uniq UNIQUE (stock_level_id),
   CONSTRAINT replenishment_proposals_status_chk CHECK (status IN ('PROPOSEE','A_COMPLETER','CONVERTIE','RESOLUE')),
   CONSTRAINT replenishment_proposals_budget_chk CHECK (budget_status IN ('OK','EXCEEDED','MISSING','NOT_APPLICABLE')),
   CONSTRAINT replenishment_proposals_values_chk CHECK (
-    version > 0 AND qty_on_hand >= 0 AND qty_reserved >= 0 AND qty_available >= 0
+    version > 0 AND cardinality(stock_level_ids) > 0
+    AND qty_on_hand >= 0 AND qty_reserved >= 0 AND qty_available >= 0
     AND qty_open_orders >= 0 AND net_requirement_qty >= 0
     AND (stock_units_per_purchase_unit IS NULL OR stock_units_per_purchase_unit > 0)
     AND (proposed_purchase_qty IS NULL OR proposed_purchase_qty > 0)
@@ -155,7 +165,12 @@ CREATE INDEX IF NOT EXISTS commande_fournisseur_replenishment_idx
   ON public.commande_fournisseur(replenishment_proposal_id)
   WHERE replenishment_proposal_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS replenishment_proposals_status_idx ON public.replenishment_proposals(status, updated_at DESC);
-CREATE INDEX IF NOT EXISTS replenishment_proposals_article_site_idx ON public.replenishment_proposals(article_id, magasin_id);
+CREATE UNIQUE INDEX IF NOT EXISTS replenishment_proposals_article_site_uniq
+  ON public.replenishment_proposals(article_id, magasin_id)
+  WHERE magasin_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS replenishment_proposals_article_unmapped_uniq
+  ON public.replenishment_proposals(article_id)
+  WHERE magasin_id IS NULL;
 CREATE INDEX IF NOT EXISTS replenishment_proposal_events_proposal_idx ON public.replenishment_proposal_events(proposal_id, created_at DESC);
 
 CREATE OR REPLACE FUNCTION public.fn_replenishment_event_immutable()
@@ -180,7 +195,9 @@ BEGIN
 END $$;
 
 COMMENT ON TABLE public.replenishment_proposals IS
-  'FEAT-CERP-0003 current explainable proposal, unique per stock level (article/site). Validation always recalculates before creating a BCF draft.';
+  'FEAT-CERP-0003 current explainable proposal, unique per aggregated article/site scope. Validation always recalculates before creating a BCF draft.';
+COMMENT ON COLUMN public.replenishment_proposals.stock_level_ids IS
+  'Auditable source stock levels aggregated into the unique article/site proposal; order-independent UUID array.';
 COMMENT ON COLUMN public.fournisseur_catalogue.coef_conversion IS
   'Number of stock units represented by one supplier purchase unit. Required with unite_stock when units differ.';
 

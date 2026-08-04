@@ -26,7 +26,8 @@ export type ReplenishmentProposal = {
   article_id: string
   article_code: string
   article_designation: string
-  stock_level_id: string
+  stock_level_ids: string[]
+  stock_level_count: number
   magasin_id: string | null
   magasin_name: string | null
   emplacement_name: string | null

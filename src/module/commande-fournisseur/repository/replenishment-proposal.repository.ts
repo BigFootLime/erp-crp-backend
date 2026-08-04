@@ -22,19 +22,20 @@ import type {
 type Queryer = Pick<PoolClient, "query">
 
 type StockContext = {
-  stock_level_id: string
+  stock_level_ids: string[]
+  stock_level_count: number
   article_id: string
   article_code: string
   article_designation: string
   stock_unit: string | null
-  location_id: string | null
   magasin_id: string | null
   magasin_name: string | null
-  emplacement_name: string | null
   qty_on_hand: number
   qty_reserved: number
   qty_available: number
   qty_open_orders: number
+  open_order_conversion_missing: boolean
+  stock_unit_conflict: boolean
   min_qty: number | null
   safety_stock_qty: number | null
   target_stock_qty: number | null
@@ -83,74 +84,135 @@ async function audit(tx: Queryer, context: AuditContext, action: string, entityI
 
 async function readStockContexts(
   queryer: Queryer,
-  filters: RefreshReplenishmentProposalsDTO & { stock_level_id?: string }
+  filters: RefreshReplenishmentProposalsDTO & {
+    scope?: { article_id: string; magasin_id: string | null }
+  }
 ): Promise<StockContext[]> {
   const values: unknown[] = []
   const where = ["sl.managed_in_stock IS TRUE"]
   const push = (value: unknown) => { values.push(value); return `$${values.length}` }
-  if (filters.magasin_id) where.push(`m.id = ${push(filters.magasin_id)}::uuid`)
-  if (filters.article_id) where.push(`sl.article_id = ${push(filters.article_id)}::uuid`)
-  if (filters.stock_level_id) where.push(`sl.id = ${push(filters.stock_level_id)}::uuid`)
+  if (filters.scope) {
+    where.push(`sl.article_id = ${push(filters.scope.article_id)}::uuid`)
+    where.push(filters.scope.magasin_id
+      ? `m.id = ${push(filters.scope.magasin_id)}::uuid`
+      : "m.id IS NULL")
+  } else {
+    if (filters.magasin_id) where.push(`m.id = ${push(filters.magasin_id)}::uuid`)
+    if (filters.article_id) where.push(`sl.article_id = ${push(filters.article_id)}::uuid`)
+  }
   values.push(filters.limit)
 
   const result = await queryer.query(
-    `SELECT
-       sl.id::text AS stock_level_id, sl.article_id::text AS article_id,
-       a.code AS article_code, a.designation AS article_designation,
-       COALESCE(u.code::text, a.unite)::text AS stock_unit,
-       sl.location_id::text AS location_id, m.id::text AS magasin_id,
-       COALESCE(m.name, m.libelle, m.code_magasin)::text AS magasin_name,
-       COALESCE(e.name, e.libelle, e.code)::text AS emplacement_name,
-       COALESCE(av.qty_on_hand, sl.qty_total, 0)::float8 AS qty_on_hand,
-       COALESCE(av.qty_reserved, sl.qty_reserved, 0)::float8 AS qty_reserved,
-       COALESCE(av.qty_available, GREATEST(sl.qty_total - sl.qty_reserved, 0), 0)::float8 AS qty_available,
-       COALESCE(po.qty_open_orders, 0)::float8 AS qty_open_orders,
-       COALESCE(sl.min_qty, app.min_stock)::float8 AS min_qty,
-       sl.safety_stock_qty::float8 AS safety_stock_qty,
-       COALESCE(sl.target_stock_qty, app.max_stock)::float8 AS target_stock_qty,
-       sl.reorder_qty::float8 AS reorder_qty,
-       sl.order_lot_size::float8 AS order_lot_size,
-       app.preferred_catalogue_id::text AS preferred_catalogue_id,
-       sl.supplier_id::text AS preferred_supplier_id
-     FROM public.stock_levels sl
-     JOIN public.articles a ON a.id = sl.article_id
-     LEFT JOIN public.units u ON u.id = sl.unit_id
-     LEFT JOIN public.emplacements e ON e.location_id = sl.location_id
-     LEFT JOIN public.magasins m ON m.id = e.magasin_id
-     LEFT JOIN public.article_procurement_profile app ON app.article_id = sl.article_id
-     LEFT JOIN LATERAL (
-       SELECT SUM(GREATEST(line.quantite - line.qty_annulee - COALESCE(received.qty, 0), 0)) AS qty_open_orders
-       FROM public.commande_fournisseur_ligne line
-       JOIN public.commande_fournisseur po_header ON po_header.id = line.commande_id
+    `WITH stock_rows AS (
+       SELECT
+         sl.id, sl.article_id, a.code AS article_code, a.designation AS article_designation,
+         COALESCE(u.code::text, a.unite)::text AS stock_unit,
+         m.id AS magasin_id, COALESCE(m.name, m.libelle, m.code_magasin)::text AS magasin_name,
+         COALESCE(av.qty_on_hand, sl.qty_total, 0)::numeric AS qty_on_hand,
+         COALESCE(av.qty_reserved, sl.qty_reserved, 0)::numeric AS qty_reserved,
+         COALESCE(av.qty_available, GREATEST(sl.qty_total - sl.qty_reserved, 0), 0)::numeric AS qty_available,
+         sl.min_qty, app.min_stock AS profile_min_qty, sl.safety_stock_qty,
+         sl.target_stock_qty, app.max_stock AS profile_target_qty,
+         sl.reorder_qty, sl.order_lot_size, app.preferred_catalogue_id, sl.supplier_id
+       FROM public.stock_levels sl
+       JOIN public.articles a ON a.id = sl.article_id
+       LEFT JOIN public.units u ON u.id = sl.unit_id
+       LEFT JOIN public.emplacements e ON e.location_id = sl.location_id
+       LEFT JOIN public.magasins m ON m.id = e.magasin_id
+       LEFT JOIN public.article_procurement_profile app ON app.article_id = sl.article_id
        LEFT JOIN LATERAL (
-         SELECT SUM(reception_line.qty_received) AS qty
-         FROM public.reception_fournisseur_lignes reception_line
-         WHERE reception_line.commande_fournisseur_ligne_id = line.id
-       ) received ON TRUE
-       WHERE line.article_id = sl.article_id
-         AND line.statut_ligne = 'ACTIVE'
-         AND po_header.statut IN ('BROUILLON','A_VALIDER','APPROUVEE','ENVOYEE','ACCUSE_RECU','PARTIELLEMENT_RECUE')
-         AND m.id IS NOT NULL
-         AND COALESCE(line.magasin_id, po_header.magasin_livraison_id) = m.id
-     ) po ON TRUE
+         SELECT SUM(v.qty_on_hand) AS qty_on_hand,
+                SUM(v.qty_reserved) AS qty_reserved,
+                SUM(v.qty_available) AS qty_available
+         FROM public.v_stock_availability_225 v
+         WHERE v.stock_level_id = sl.id
+       ) av ON TRUE
+       WHERE ${where.join(" AND ")}
+     ), stock_scopes AS (
+       SELECT
+         article_id, magasin_id,
+         MAX(article_code)::text AS article_code,
+         MAX(article_designation)::text AS article_designation,
+         array_agg(id::text ORDER BY id::text) AS stock_level_ids,
+         COUNT(*)::int AS stock_level_count,
+         CASE
+           WHEN COUNT(stock_unit) = COUNT(*) AND COUNT(DISTINCT
+             CASE WHEN lower(btrim(stock_unit)) IN ('pce','pcs','pc','piece','pièce') THEN 'u' ELSE lower(btrim(stock_unit)) END
+           ) = 1
+             THEN MIN(stock_unit)
+           ELSE NULL
+         END::text AS stock_unit,
+         (COUNT(stock_unit) <> COUNT(*) OR COUNT(DISTINCT
+           CASE WHEN lower(btrim(stock_unit)) IN ('pce','pcs','pc','piece','pièce') THEN 'u' ELSE lower(btrim(stock_unit)) END
+         ) > 1) AS stock_unit_conflict,
+         MAX(magasin_name)::text AS magasin_name,
+         SUM(qty_on_hand)::float8 AS qty_on_hand,
+         SUM(qty_reserved)::float8 AS qty_reserved,
+         SUM(qty_available)::float8 AS qty_available,
+         CASE WHEN COUNT(min_qty) > 0 THEN SUM(COALESCE(min_qty, 0)) ELSE MAX(profile_min_qty) END::float8 AS min_qty,
+         CASE WHEN COUNT(safety_stock_qty) > 0 THEN SUM(COALESCE(safety_stock_qty, 0)) ELSE NULL END::float8 AS safety_stock_qty,
+         CASE WHEN COUNT(target_stock_qty) > 0 THEN SUM(COALESCE(target_stock_qty, 0)) ELSE MAX(profile_target_qty) END::float8 AS target_stock_qty,
+         CASE WHEN COUNT(reorder_qty) > 0 THEN SUM(COALESCE(reorder_qty, 0)) ELSE NULL END::float8 AS reorder_qty,
+         MAX(order_lot_size)::float8 AS order_lot_size,
+         MAX(preferred_catalogue_id::text) AS preferred_catalogue_id,
+         CASE WHEN COUNT(DISTINCT supplier_id) = 1 THEN MIN(supplier_id::text) ELSE NULL END AS preferred_supplier_id
+       FROM stock_rows
+       GROUP BY article_id, magasin_id
+     )
+     SELECT scope.*,
+            COALESCE(incoming.qty_open_orders_stock, 0)::float8 AS qty_open_orders,
+            COALESCE(incoming.conversion_missing, false) AS open_order_conversion_missing
+     FROM stock_scopes scope
      LEFT JOIN LATERAL (
-       SELECT SUM(v.qty_on_hand)::float8 AS qty_on_hand,
-              SUM(v.qty_reserved)::float8 AS qty_reserved,
-              SUM(v.qty_available)::float8 AS qty_available
-       FROM public.v_stock_availability_225 v
-       WHERE v.stock_level_id = sl.id
-     ) av ON TRUE
-     WHERE ${where.join(" AND ")}
-     ORDER BY a.code, m.name NULLS LAST, e.code NULLS LAST
+       SELECT
+         SUM(open_line.remaining_purchase_qty * open_line.stock_units_per_purchase_unit)
+           FILTER (WHERE open_line.stock_units_per_purchase_unit IS NOT NULL)::float8 AS qty_open_orders_stock,
+         BOOL_OR(open_line.remaining_purchase_qty > 0 AND open_line.stock_units_per_purchase_unit IS NULL) AS conversion_missing
+       FROM (
+         SELECT
+           GREATEST(line.quantite - line.qty_annulee - COALESCE(received.qty, 0), 0) AS remaining_purchase_qty,
+           CASE
+             WHEN
+               (CASE WHEN lower(btrim(COALESCE(line.unite, ''))) IN ('pce','pcs','pc','piece','pièce') THEN 'u' ELSE lower(btrim(COALESCE(line.unite, ''))) END)
+               =
+               (CASE WHEN lower(btrim(COALESCE(scope.stock_unit, ''))) IN ('pce','pcs','pc','piece','pièce') THEN 'u' ELSE lower(btrim(COALESCE(scope.stock_unit, ''))) END)
+               AND btrim(COALESCE(scope.stock_unit, '')) <> ''
+               THEN 1::numeric
+             WHEN line.coef_conversion > 0
+               AND line.unite_stock IS NOT NULL
+               AND (CASE WHEN lower(btrim(line.unite_stock)) IN ('pce','pcs','pc','piece','pièce') THEN 'u' ELSE lower(btrim(line.unite_stock)) END)
+                 =
+                 (CASE WHEN lower(btrim(COALESCE(scope.stock_unit, ''))) IN ('pce','pcs','pc','piece','pièce') THEN 'u' ELSE lower(btrim(COALESCE(scope.stock_unit, ''))) END)
+               THEN line.coef_conversion
+             ELSE NULL
+           END AS stock_units_per_purchase_unit
+         FROM public.commande_fournisseur_ligne line
+         JOIN public.commande_fournisseur po_header ON po_header.id = line.commande_id
+         LEFT JOIN LATERAL (
+           SELECT SUM(reception_line.qty_received) AS qty
+           FROM public.reception_fournisseur_lignes reception_line
+           WHERE reception_line.commande_fournisseur_ligne_id = line.id
+         ) received ON TRUE
+         WHERE line.article_id = scope.article_id
+           AND line.statut_ligne = 'ACTIVE'
+           AND po_header.statut IN ('BROUILLON','A_VALIDER','APPROUVEE','ENVOYEE','ACCUSE_RECU','PARTIELLEMENT_RECUE')
+           AND COALESCE(line.magasin_id, po_header.magasin_livraison_id) IS NOT DISTINCT FROM scope.magasin_id
+       ) open_line
+     ) incoming ON TRUE
+     ORDER BY scope.article_code, scope.magasin_name NULLS LAST
      LIMIT $${values.length}`,
     values
   )
   return result.rows.map((row) => ({
     ...row,
+    stock_level_ids: Array.isArray(row.stock_level_ids) ? row.stock_level_ids : [],
+    stock_level_count: n(row.stock_level_count),
     qty_on_hand: n(row.qty_on_hand), qty_reserved: n(row.qty_reserved), qty_available: n(row.qty_available),
     qty_open_orders: n(row.qty_open_orders), min_qty: nullableNumber(row.min_qty),
     safety_stock_qty: nullableNumber(row.safety_stock_qty), target_stock_qty: nullableNumber(row.target_stock_qty),
     reorder_qty: nullableNumber(row.reorder_qty), order_lot_size: nullableNumber(row.order_lot_size),
+    open_order_conversion_missing: Boolean(row.open_order_conversion_missing),
+    stock_unit_conflict: Boolean(row.stock_unit_conflict),
   })) as StockContext[]
 }
 
@@ -241,6 +303,41 @@ async function budgetFor(queryer: Queryer, context: StockContext, candidate: Rep
   return { status: estimate > remaining ? "EXCEEDED" as const : "OK" as const, remaining }
 }
 
+function addScopeMissingData(
+  calculation: ReturnType<typeof calculateReplenishment>,
+  context: StockContext,
+  hasSupplier: boolean
+) {
+  if (!context.magasin_id) calculation.missing_data.push("SITE")
+  if (context.stock_unit_conflict) calculation.missing_data.push("STOCK_UNIT_CONFLICT")
+  if (!hasSupplier) calculation.missing_data.push("SUPPLIER")
+  calculation.missing_data = [...new Set(calculation.missing_data)].sort()
+  calculation.warnings = [...new Set(calculation.warnings)].sort()
+}
+
+function hasBlockingScopeData(calculation: ReturnType<typeof calculateReplenishment>): boolean {
+  return calculation.missing_data.some((item) => [
+    "MINIMUM_STOCK",
+    "STOCK_UNIT",
+    "STOCK_UNIT_CONFLICT",
+    "OPEN_ORDER_UNIT_CONVERSION",
+    "SITE",
+  ].includes(item))
+}
+
+function allocateCoverage(total: number, stockLevelIds: string[]): Array<{ stock_level_id: string; quantity: number }> {
+  if (!stockLevelIds.length || total <= 0) return []
+  const base = Math.max(0.001, Math.floor((total * 1000) / stockLevelIds.length) / 1000)
+  let allocated = 0
+  return stockLevelIds.map((stockLevelId, index) => {
+    const quantity = index === stockLevelIds.length - 1
+      ? Math.max(0.001, Math.round((total - allocated) * 1000) / 1000)
+      : base
+    allocated += quantity
+    return { stock_level_id: stockLevelId, quantity }
+  })
+}
+
 async function upsertProposal(queryer: Queryer, context: StockContext, actorId: number | null) {
   const candidates = await loadCandidates(queryer, context)
   const selected = candidates.find((candidate) => candidate.preferred && candidate.blockers.length === 0)
@@ -248,7 +345,8 @@ async function upsertProposal(queryer: Queryer, context: StockContext, actorId: 
     ?? null
   const calculation = calculateReplenishment({
     qty_on_hand: context.qty_on_hand, qty_reserved: context.qty_reserved, qty_available: context.qty_available,
-    qty_open_orders: context.qty_open_orders, minimum_stock_qty: context.min_qty,
+    qty_open_orders: context.qty_open_orders, open_order_conversion_missing: context.open_order_conversion_missing,
+    minimum_stock_qty: context.min_qty,
     safety_stock_qty: context.safety_stock_qty, target_stock_qty: context.target_stock_qty,
     reorder_qty: context.reorder_qty, stock_unit: context.stock_unit,
     purchase_unit: selected?.purchase_unit ?? null,
@@ -256,31 +354,37 @@ async function upsertProposal(queryer: Queryer, context: StockContext, actorId: 
     supplier_moq: selected?.moq ?? null, purchase_lot_size: selected?.purchase_lot_size ?? null,
     unit_price: selected?.unit_price ?? null,
   })
-  if (!context.magasin_id) calculation.missing_data.push("SITE")
-  if (!selected) calculation.missing_data.push("SUPPLIER")
-  calculation.missing_data = [...new Set(calculation.missing_data)].sort()
+  addScopeMissingData(calculation, context, Boolean(selected))
   const budget = await budgetFor(queryer, context, selected, calculation.estimated_total)
   if (budget.status === "MISSING") calculation.warnings.push("BUDGET_MISSING")
   if (selected?.price_source === "HISTORICAL") calculation.warnings.push("HISTORICAL_PRICE")
-  const status = calculation.net_requirement_qty <= 0
-    ? "RESOLUE"
-    : calculation.missing_data.length > 0
-      ? "A_COMPLETER"
+  calculation.warnings = [...new Set(calculation.warnings)].sort()
+  const status = hasBlockingScopeData(calculation) || (calculation.net_requirement_qty > 0 && calculation.missing_data.length > 0)
+    ? "A_COMPLETER"
+    : calculation.net_requirement_qty <= 0
+      ? "RESOLUE"
       : "PROPOSEE"
   const calcJson = { ...calculation, inputs: context }
-  const existing = await queryer.query(`SELECT id::text, status FROM public.replenishment_proposals WHERE stock_level_id = $1::uuid`, [context.stock_level_id])
+  const existing = await queryer.query(
+    `SELECT id::text, status FROM public.replenishment_proposals
+      WHERE article_id = $1::uuid AND magasin_id IS NOT DISTINCT FROM $2::uuid`,
+    [context.article_id, context.magasin_id]
+  )
+  const conflictTarget = context.magasin_id
+    ? "(article_id, magasin_id) WHERE magasin_id IS NOT NULL"
+    : "(article_id) WHERE magasin_id IS NULL"
   const result = await queryer.query<{ id: string }>(
     `INSERT INTO public.replenishment_proposals (
-       stock_level_id, article_id, location_id, magasin_id, status, reason_code, stock_unit,
+       stock_level_ids, article_id, magasin_id, status, reason_code, stock_unit,
        qty_on_hand, qty_reserved, qty_available, qty_open_orders, minimum_stock_qty, safety_stock_qty,
        target_stock_qty, net_requirement_qty, selected_catalogue_id, selected_supplier_id,
        purchase_unit, stock_units_per_purchase_unit, proposed_purchase_qty, proposed_stock_qty,
        unit_price, currency, estimated_total, budget_status, budget_remaining, missing_data, warnings, calculation,
        resolution_reason)
-     VALUES ($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
-       $16::uuid,$17::uuid,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27::text[],$28::text[],$29::jsonb,$30)
-     ON CONFLICT (stock_level_id) DO UPDATE SET
-       article_id=EXCLUDED.article_id, location_id=EXCLUDED.location_id, magasin_id=EXCLUDED.magasin_id,
+     VALUES ($1::uuid[],$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
+       $15::uuid,$16::uuid,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26::text[],$27::text[],$28::jsonb,$29)
+     ON CONFLICT ${conflictTarget} DO UPDATE SET
+       stock_level_ids=EXCLUDED.stock_level_ids,
        status=EXCLUDED.status, version=replenishment_proposals.version+1, reason_code=EXCLUDED.reason_code,
        stock_unit=EXCLUDED.stock_unit, qty_on_hand=EXCLUDED.qty_on_hand, qty_reserved=EXCLUDED.qty_reserved,
        qty_available=EXCLUDED.qty_available, qty_open_orders=EXCLUDED.qty_open_orders,
@@ -294,14 +398,14 @@ async function upsertProposal(queryer: Queryer, context: StockContext, actorId: 
        missing_data=EXCLUDED.missing_data, warnings=EXCLUDED.warnings, calculation=EXCLUDED.calculation,
        resolution_reason=EXCLUDED.resolution_reason, last_recalculated_at=now(), updated_at=now()
      RETURNING id::text`,
-    [context.stock_level_id, context.article_id, context.location_id, context.magasin_id, status,
+    [context.stock_level_ids, context.article_id, context.magasin_id, status,
       calculation.reason_code, context.stock_unit, context.qty_on_hand, context.qty_reserved, context.qty_available,
       context.qty_open_orders, context.min_qty, context.safety_stock_qty, calculation.target_stock_qty,
       calculation.net_requirement_qty, selected?.catalogue_id ?? null, selected?.supplier_id ?? null,
       selected?.purchase_unit ?? null, calculation.stock_units_per_purchase_unit,
       calculation.proposed_purchase_qty, calculation.proposed_stock_qty, selected?.unit_price ?? null,
       selected?.currency ?? null, calculation.estimated_total, budget.status, budget.remaining,
-      calculation.missing_data, [...new Set(calculation.warnings)].sort(), JSON.stringify(calcJson),
+      calculation.missing_data, calculation.warnings, JSON.stringify(calcJson),
       status === "RESOLUE" ? "Stock disponible et commandes ouvertes couvrent la cible" : null]
   )
   const id = result.rows[0].id
@@ -311,7 +415,12 @@ async function upsertProposal(queryer: Queryer, context: StockContext, actorId: 
          (proposal_id,event_type,from_status,to_status,calculation,details,actor_id)
        VALUES ($1::uuid,$2,$3,$4,$5::jsonb,$6::jsonb,$7)`,
       [id, existing.rows[0] ? "RECALCULATED" : "GENERATED", existing.rows[0]?.status ?? null, status,
-        JSON.stringify(calcJson), JSON.stringify({ selected_catalogue_id: selected?.catalogue_id ?? null }), actorId]
+        JSON.stringify(calcJson), JSON.stringify({
+          article_id: context.article_id,
+          magasin_id: context.magasin_id,
+          stock_level_ids: context.stock_level_ids,
+          selected_catalogue_id: selected?.catalogue_id ?? null,
+        }), actorId]
     )
   }
   return { id, status }
@@ -329,12 +438,10 @@ async function hydrateProposals(queryer: Queryer, filters: ListReplenishmentProp
   const result = await queryer.query(
     `SELECT p.*, a.code AS article_code, a.designation AS article_designation,
             COALESCE(m.name,m.libelle,m.code_magasin)::text AS magasin_name,
-            COALESCE(e.name,e.libelle,e.code)::text AS emplacement_name,
             cf.code AS commande_fournisseur_code
        FROM public.replenishment_proposals p
        JOIN public.articles a ON a.id = p.article_id
        LEFT JOIN public.magasins m ON m.id = p.magasin_id
-       LEFT JOIN public.emplacements e ON e.location_id = p.location_id
        LEFT JOIN public.commande_fournisseur cf ON cf.id = p.commande_fournisseur_id
       WHERE ${where.join(" AND ")}
       ORDER BY CASE p.status WHEN 'A_COMPLETER' THEN 0 WHEN 'PROPOSEE' THEN 1 ELSE 2 END,
@@ -344,13 +451,18 @@ async function hydrateProposals(queryer: Queryer, filters: ListReplenishmentProp
   )
   const items: ReplenishmentProposal[] = []
   for (const row of result.rows) {
-    const contexts = await readStockContexts(queryer, { stock_level_id: row.stock_level_id, limit: 1 })
+    const contexts = await readStockContexts(queryer, {
+      scope: { article_id: row.article_id, magasin_id: row.magasin_id ?? null },
+      limit: 1,
+    })
     const candidates = contexts[0] ? await loadCandidates(queryer, contexts[0]) : []
     items.push({
       id: row.id, status: row.status, version: Number(row.version), reason_code: row.reason_code,
       article_id: row.article_id, article_code: row.article_code, article_designation: row.article_designation,
-      stock_level_id: row.stock_level_id, magasin_id: row.magasin_id ?? null, magasin_name: row.magasin_name ?? null,
-      emplacement_name: row.emplacement_name ?? null, stock_unit: row.stock_unit ?? null,
+      stock_level_ids: row.stock_level_ids ?? [], stock_level_count: (row.stock_level_ids ?? []).length,
+      magasin_id: row.magasin_id ?? null, magasin_name: row.magasin_name ?? null,
+      emplacement_name: (row.stock_level_ids ?? []).length > 1 ? `${row.stock_level_ids.length} emplacements` : null,
+      stock_unit: row.stock_unit ?? null,
       qty_on_hand: n(row.qty_on_hand), qty_reserved: n(row.qty_reserved), qty_available: n(row.qty_available),
       qty_open_orders: n(row.qty_open_orders), minimum_stock_qty: nullableNumber(row.minimum_stock_qty),
       safety_stock_qty: nullableNumber(row.safety_stock_qty), target_stock_qty: nullableNumber(row.target_stock_qty),
@@ -438,21 +550,44 @@ export async function repoValidateReplenishmentProposal(
       return { ...result, idempotent_replay: true }
     }
 
-    await client.query(`SELECT id FROM public.stock_levels WHERE id=$1::uuid FOR UPDATE`, [proposal.stock_level_id])
-    const stock = (await readStockContexts(client, { stock_level_id: proposal.stock_level_id, limit: 1 }))[0]
-    if (!stock) throw new HttpError(409, "REPLENISHMENT_SOURCE_CHANGED", "Le niveau de stock n'est plus géré.")
+    const stockLevelIds = Array.isArray(proposal.stock_level_ids) ? proposal.stock_level_ids as string[] : []
+    if (!stockLevelIds.length) {
+      throw new HttpError(409, "REPLENISHMENT_SOURCE_CHANGED", "Le périmètre article/site n'a plus de niveaux de stock.")
+    }
+    const lockedLevels = await client.query(
+      `SELECT id FROM public.stock_levels WHERE id = ANY($1::uuid[]) ORDER BY id FOR UPDATE`,
+      [stockLevelIds]
+    )
+    if (lockedLevels.rowCount !== stockLevelIds.length) {
+      throw new HttpError(409, "REPLENISHMENT_SOURCE_CHANGED", "Le périmètre article/site a changé; relancez le calcul.")
+    }
+    const stock = (await readStockContexts(client, {
+      scope: { article_id: proposal.article_id, magasin_id: proposal.magasin_id ?? null },
+      limit: 1,
+    }))[0]
+    if (!stock) throw new HttpError(409, "REPLENISHMENT_SOURCE_CHANGED", "Le périmètre article/site n'est plus géré.")
+    if (stock.stock_level_ids.join(",") !== [...stockLevelIds].sort().join(",")) {
+      throw new HttpError(409, "REPLENISHMENT_SOURCE_CHANGED", "Les niveaux du périmètre article/site ont changé; relancez le calcul.")
+    }
     const candidates = await loadCandidates(client, stock)
     const candidate = candidates.find((item) => item.catalogue_id === body.catalogue_id)
     if (!candidate) throw new HttpError(422, "SUPPLIER_CANDIDATE_INVALID", "Le fournisseur ou son catalogue n'est plus disponible.")
     if (candidate.blockers.length) throw new HttpError(422, "UNIT_CONVERSION_REQUIRED", "La conversion d'unité du catalogue est incomplète.", { blockers: candidate.blockers })
     const calculation = calculateReplenishment({
       qty_on_hand: stock.qty_on_hand, qty_reserved: stock.qty_reserved, qty_available: stock.qty_available,
-      qty_open_orders: stock.qty_open_orders, minimum_stock_qty: stock.min_qty,
+      qty_open_orders: stock.qty_open_orders, open_order_conversion_missing: stock.open_order_conversion_missing,
+      minimum_stock_qty: stock.min_qty,
       safety_stock_qty: stock.safety_stock_qty, target_stock_qty: stock.target_stock_qty,
       reorder_qty: stock.reorder_qty, stock_unit: stock.stock_unit, purchase_unit: candidate.purchase_unit,
       stock_units_per_purchase_unit: candidate.stock_units_per_purchase_unit, supplier_moq: candidate.moq,
       purchase_lot_size: candidate.purchase_lot_size, unit_price: candidate.unit_price,
     })
+    addScopeMissingData(calculation, stock, true)
+    if (hasBlockingScopeData(calculation)) {
+      throw new HttpError(422, "REPLENISHMENT_DATA_INCOMPLETE", "Le périmètre article/site ou un reliquat historique exige une correction avant validation.", {
+        missing_data: calculation.missing_data,
+      })
+    }
     if (calculation.net_requirement_qty <= 0) {
       await client.query(
         `UPDATE public.replenishment_proposals SET status='RESOLUE',version=version+1,
@@ -505,12 +640,14 @@ export async function repoValidateReplenishmentProposal(
         stock.stock_unit, calculation.stock_units_per_purchase_unit, calculation.proposed_purchase_qty,
         candidate.unit_price ?? 0, candidate.lead_time_days, stock.magasin_id, context.user_id]
     )
-    await client.query(
-      `INSERT INTO public.commande_fournisseur_ligne_besoin
-        (ligne_id,besoin_type,besoin_ref,besoin_of_id,quantite_couverte)
-       VALUES($1::uuid,'STOCK_LEVEL',$2,0,$3)`,
-      [line.rows[0].id, stock.stock_level_id, calculation.proposed_stock_qty]
-    )
+    for (const coverage of allocateCoverage(calculation.proposed_stock_qty, stock.stock_level_ids)) {
+      await client.query(
+        `INSERT INTO public.commande_fournisseur_ligne_besoin
+          (ligne_id,besoin_type,besoin_ref,besoin_of_id,quantite_couverte)
+         VALUES($1::uuid,'STOCK_LEVEL',$2,0,$3)`,
+        [line.rows[0].id, coverage.stock_level_id, coverage.quantity]
+      )
+    }
     await client.query(
       `INSERT INTO public.commande_fournisseur_transition(commande_id,from_statut,to_statut,motif,acteur_id)
        VALUES($1::uuid,NULL,'BROUILLON','Validation humaine d''une proposition de réapprovisionnement',$2)`, [orderId, context.user_id]

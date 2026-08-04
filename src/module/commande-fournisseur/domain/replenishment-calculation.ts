@@ -3,6 +3,7 @@ export type ReplenishmentCalculationInput = {
   qty_reserved: number
   qty_available: number
   qty_open_orders: number
+  open_order_conversion_missing?: boolean
   minimum_stock_qty: number | null
   safety_stock_qty: number | null
   target_stock_qty: number | null
@@ -31,6 +32,15 @@ export type ReplenishmentCalculation = {
 
 const EPS = 1e-9
 
+export type OpenOrderRemainderInput = {
+  ordered_purchase_qty: number
+  cancelled_purchase_qty: number
+  received_purchase_qty: number
+  purchase_unit: string | null
+  stock_unit: string | null
+  stock_units_per_purchase_unit: number | null
+}
+
 export function normalizeUnit(value: string | null | undefined): string | null {
   const unit = value?.trim().toLowerCase()
   if (!unit) return null
@@ -50,6 +60,36 @@ export function roundMoney(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100
 }
 
+export function convertOpenOrderRemainderToStock(input: OpenOrderRemainderInput): {
+  remaining_purchase_qty: number
+  remaining_stock_qty: number
+  coefficient: number | null
+  conversion_missing: boolean
+} {
+  const remainingPurchase = roundQty(Math.max(
+    0,
+    nonNegative(input.ordered_purchase_qty)
+      - nonNegative(input.cancelled_purchase_qty)
+      - nonNegative(input.received_purchase_qty)
+  ))
+  if (remainingPurchase <= EPS) {
+    return { remaining_purchase_qty: 0, remaining_stock_qty: 0, coefficient: null, conversion_missing: false }
+  }
+  const purchaseUnit = normalizeUnit(input.purchase_unit)
+  const stockUnit = normalizeUnit(input.stock_unit)
+  const coefficient = purchaseUnit && stockUnit && purchaseUnit === stockUnit
+    ? 1
+    : input.stock_units_per_purchase_unit && input.stock_units_per_purchase_unit > 0
+      ? input.stock_units_per_purchase_unit
+      : null
+  return {
+    remaining_purchase_qty: remainingPurchase,
+    remaining_stock_qty: coefficient ? roundQty(remainingPurchase * coefficient) : 0,
+    coefficient,
+    conversion_missing: coefficient == null,
+  }
+}
+
 function ceilToLot(value: number, lot: number | null): number {
   if (!lot || lot <= 0) return roundQty(value)
   return roundQty(Math.ceil((value - EPS) / lot) * lot)
@@ -64,6 +104,7 @@ export function calculateReplenishment(input: ReplenishmentCalculationInput): Re
   const safety = input.safety_stock_qty == null ? 0 : nonNegative(input.safety_stock_qty)
 
   if (minimum == null || minimum <= 0) missing.add("MINIMUM_STOCK")
+  if (input.open_order_conversion_missing) missing.add("OPEN_ORDER_UNIT_CONVERSION")
   if (input.safety_stock_qty == null) warnings.add("SAFETY_STOCK_MISSING")
   if (!normalizeUnit(input.stock_unit)) missing.add("STOCK_UNIT")
 

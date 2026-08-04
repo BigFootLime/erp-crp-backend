@@ -185,6 +185,7 @@ describe("Catalogue de modules #326", () => {
     // « /commandes » ne doit jamais capter « /commandes-fournisseurs ».
     expect(resolveModuleKeyForPath("/commandes/17")).toBe("commandes-clients");
     expect(resolveModuleKeyForPath("/commandes-fournisseurs/17")).toBe("commandes-fournisseurs");
+    expect(resolveModuleKeyForPath("/replenishment-proposals/17/validate")).toBe("commandes-fournisseurs");
     expect(resolveModuleKeyForPath("/piece-technique-versions/9")).toBe("pieces-techniques");
     expect(resolveModuleKeyForPath("/pieces-techniques/9")).toBe("pieces-techniques");
     expect(resolveModuleKeyForPath("/finitions/9")).toBe("finitions");
