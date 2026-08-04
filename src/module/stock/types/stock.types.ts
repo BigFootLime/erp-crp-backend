@@ -480,10 +480,24 @@ export type StockMovementDetail = {
 };
 
 export type StockMovementCompensationPreview = {
+  authoritative: true;
+  as_of: string;
   original_movement_id: string;
   original_movement_no: string | null;
+  outcome: "ELIGIBLE" | "INELIGIBLE" | "ALREADY_COMPENSATED";
   compensable: boolean;
   blockers: Array<{ code: string; message: string }>;
+  prerequisites: Array<{
+    code: string;
+    label: string;
+    satisfied: boolean;
+    message: string;
+  }>;
+  existing_compensation: {
+    id: string;
+    movement_no: string | null;
+    status: string;
+  } | null;
   proposed_movement: {
     movement_type: StockMovementType;
     source_document_type: "STOCK_COMPENSATION";

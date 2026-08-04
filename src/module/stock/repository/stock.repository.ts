@@ -6219,43 +6219,108 @@ export async function repoPreviewMovement(
 function buildCompensatingMovementBody(
   detail: StockMovementDetail,
   body: CompensateMovementBodyDTO
-): { movement: CreateMovementBodyDTO | null; blockers: Array<{ code: string; message: string }> } {
+): {
+  movement: CreateMovementBodyDTO | null;
+  blockers: Array<{ code: string; message: string }>;
+  prerequisites: StockMovementCompensationPreview["prerequisites"];
+} {
   const blockers: Array<{ code: string; message: string }> = [];
-  if (detail.movement.status !== "POSTED") {
-    blockers.push({ code: "INVALID_STATUS", message: "Only POSTED movements can be compensated" });
-  }
-  if (!detail.movement.posted_at) {
-    blockers.push({ code: "POSTED_AT_MISSING", message: "Posted movement timestamp is missing" });
-  } else if (
-    new Date(detail.movement.posted_at).getTime() !== new Date(body.expected_posted_at).getTime()
-  ) {
-    blockers.push({
+  const prerequisites: StockMovementCompensationPreview["prerequisites"] = [];
+  const addPrerequisite = (args: {
+    code: string;
+    label: string;
+    satisfied: boolean;
+    successMessage: string;
+    failureMessage: string;
+  }) => {
+    const message = args.satisfied ? args.successMessage : args.failureMessage;
+    prerequisites.push({
+      code: args.code,
+      label: args.label,
+      satisfied: args.satisfied,
+      message,
+    });
+    if (!args.satisfied) blockers.push({ code: args.code, message });
+  };
+
+  addPrerequisite({
+    code: "INVALID_STATUS",
+    label: "Mouvement comptabilisé",
+    satisfied: detail.movement.status === "POSTED",
+    successMessage: "Le mouvement d'origine est comptabilisé et reste immuable.",
+    failureMessage:
+      "Le mouvement doit être comptabilisé (statut POSTED) avant de préparer une compensation.",
+  });
+
+  const hasPostedAt = Boolean(detail.movement.posted_at);
+  addPrerequisite({
+    code: "POSTED_AT_MISSING",
+    label: "Date de comptabilisation disponible",
+    satisfied: hasPostedAt,
+    successMessage: "La date de comptabilisation de l'écriture d'origine est disponible.",
+    failureMessage:
+      "La date de comptabilisation est absente. Rechargez le mouvement ou contactez le support Stock avant de continuer.",
+  });
+
+  if (detail.movement.posted_at) {
+    const postingTimestampMatches =
+      new Date(detail.movement.posted_at).getTime() ===
+      new Date(body.expected_posted_at).getTime();
+    addPrerequisite({
       code: "CONCURRENT_MODIFICATION",
-      message: "Movement posting timestamp no longer matches the preview",
+      label: "Aperçu à jour",
+      satisfied: postingTimestampMatches,
+      successMessage: "Le mouvement n'a pas changé depuis son chargement.",
+      failureMessage:
+        "Le mouvement a changé depuis son chargement. Rechargez la fiche puis relancez la prévisualisation.",
     });
   }
-  if (!detail.lines.length) {
-    blockers.push({ code: "MOVEMENT_LINES_MISSING", message: "Movement has no traceable lines" });
-  }
-  if (
-    detail.movement.movement_type === "SCRAP" ||
-    detail.movement.movement_type === "DEPRECIATE"
-  ) {
-    blockers.push({
-      code: "QUALITY_FLOW_REQUIRED",
-      message: "Scrap and depreciation reversals require a dedicated quality decision",
-    });
-  }
-  if (
-    detail.movement.movement_type === "RESERVE" ||
-    detail.movement.movement_type === "UNRESERVE"
-  ) {
-    blockers.push({
-      code: "RESERVATION_FLOW_REQUIRED",
-      message: "Reservation corrections must use the reservation lifecycle",
-    });
-  }
-  if (blockers.length) return { movement: null, blockers };
+
+  addPrerequisite({
+    code: "MOVEMENT_LINES_MISSING",
+    label: "Lignes de stock traçables",
+    satisfied: detail.lines.length > 0,
+    successMessage: "Les lignes de l'écriture d'origine sont traçables.",
+    failureMessage:
+      "Aucune ligne traçable n'est disponible. Vérifiez l'écriture d'origine avant de continuer.",
+  });
+
+  const movementType = detail.movement.movement_type;
+  const movementTypePrerequisite = (() => {
+    if (movementType === "SCRAP" || movementType === "DEPRECIATE") {
+      return {
+        code: "QUALITY_FLOW_REQUIRED",
+        failureMessage:
+          "Les rebuts et dépréciations se corrigent depuis le flux Qualité dédié.",
+      };
+    }
+    if (movementType === "RESERVE" || movementType === "UNRESERVE") {
+      return {
+        code: "RESERVATION_FLOW_REQUIRED",
+        failureMessage:
+          "Les réservations se corrigent depuis leur cycle de vie dédié.",
+      };
+    }
+    const supported = new Set(["IN", "OUT", "TRANSFER", "ADJUST", "ADJUSTMENT"]);
+    return supported.has(movementType)
+      ? null
+      : {
+          code: "MOVEMENT_NOT_COMPENSABLE",
+          failureMessage:
+            "Ce type de mouvement ne peut pas être compensé automatiquement. Contactez le responsable Stock.",
+        };
+  })();
+  addPrerequisite({
+    code: movementTypePrerequisite?.code ?? "MOVEMENT_TYPE_SUPPORTED",
+    label: "Type de mouvement pris en charge",
+    satisfied: movementTypePrerequisite === null,
+    successMessage: "Le type de mouvement peut produire un brouillon inverse.",
+    failureMessage:
+      movementTypePrerequisite?.failureMessage ??
+      "Ce type de mouvement ne peut pas être compensé automatiquement.",
+  });
+
+  if (blockers.length) return { movement: null, blockers, prerequisites };
 
   let reverseType: CreateMovementBodyDTO["movement_type"];
   switch (detail.movement.movement_type) {
@@ -6275,7 +6340,14 @@ function buildCompensatingMovementBody(
     default:
       return {
         movement: null,
-        blockers: [{ code: "MOVEMENT_NOT_COMPENSABLE", message: "Movement type cannot be compensated" }],
+        blockers: [
+          {
+            code: "MOVEMENT_NOT_COMPENSABLE",
+            message:
+              "Ce type de mouvement ne peut pas être compensé automatiquement. Contactez le responsable Stock.",
+          },
+        ],
+        prerequisites,
       };
   }
 
@@ -6340,6 +6412,7 @@ function buildCompensatingMovementBody(
 
   return {
     blockers,
+    prerequisites,
     movement: {
       movement_type: reverseType,
       effective_at: new Date().toISOString(),
@@ -6372,13 +6445,24 @@ export async function repoPreviewMovementCompensation(
     [id]
   );
   const built = buildCompensatingMovementBody(detail, body);
-  if (existing.rows[0]) {
+  const existingCompensation = existing.rows[0] ?? null;
+  const noExistingCompensation = !existingCompensation;
+  const existingMessage = existingCompensation
+    ? `La compensation ${existingCompensation.movement_no ?? existingCompensation.id} existe déjà au statut ${existingCompensation.status}. Ouvrez-la au lieu de créer un doublon.`
+    : "Aucune compensation active n'existe pour ce mouvement.";
+  built.prerequisites.push({
+    code: "COMPENSATION_ALREADY_EXISTS",
+    label: "Aucune compensation déjà active",
+    satisfied: noExistingCompensation,
+    message: existingMessage,
+  });
+  if (existingCompensation) {
     built.blockers.push({
       code: "COMPENSATION_ALREADY_EXISTS",
-      message: `A ${existing.rows[0].status} compensation already exists`,
+      message: existingMessage,
     });
   }
-  const proposed = built.movement
+  const proposed = built.blockers.length === 0 && built.movement
     ? {
         movement_type: built.movement.movement_type,
         source_document_type: "STOCK_COMPENSATION" as const,
@@ -6400,10 +6484,19 @@ export async function repoPreviewMovementCompensation(
     : null;
 
   return {
+    authoritative: true,
+    as_of: new Date().toISOString(),
     original_movement_id: id,
     original_movement_no: detail.movement.movement_no,
+    outcome: existingCompensation
+      ? "ALREADY_COMPENSATED"
+      : built.blockers.length === 0
+        ? "ELIGIBLE"
+        : "INELIGIBLE",
     compensable: built.blockers.length === 0,
     blockers: built.blockers,
+    prerequisites: built.prerequisites,
+    existing_compensation: existingCompensation,
     proposed_movement: proposed,
   };
 }
@@ -6441,7 +6534,7 @@ export async function repoCompensateMovement(
     if (!preview.compensable || !preview.proposed_movement) {
       const blocker = preview.blockers[0] ?? {
         code: "MOVEMENT_NOT_COMPENSABLE",
-        message: "Movement cannot be compensated",
+        message: "Le mouvement ne peut pas être compensé.",
       };
       throw new HttpError(409, blocker.code, blocker.message, { blockers: preview.blockers });
     }
@@ -6450,7 +6543,11 @@ export async function repoCompensateMovement(
     if (!detail) return null;
     const built = buildCompensatingMovementBody(detail, body);
     if (!built.movement) {
-      throw new HttpError(409, "MOVEMENT_NOT_COMPENSABLE", "Movement cannot be compensated");
+      throw new HttpError(
+        409,
+        "MOVEMENT_NOT_COMPENSABLE",
+        "Le mouvement ne peut pas être compensé."
+      );
     }
     const derivedKeyHash = hashStockCommand("MOVEMENT_COMPENSATION_CREATE_KEY", {
       actor_user_id: audit.user_id,
