@@ -114,18 +114,16 @@ export async function svcUpdateLivraisonStatus(id: string, body: LivraisonStatus
   const current = await repoGetLivraisonStatut(id)
   if (!current) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
   assertAllowedTransition(current, body.statut)
-  if (
-    current === "READY" &&
-    body.statut === "CANCELLED" &&
-    !body.commentaire?.trim()
-  ) {
+  if (body.statut === "CANCELLED" && !body.commentaire?.trim()) {
     throw new HttpError(
       422,
       "CANCELLATION_REASON_REQUIRED",
-      "Un motif est obligatoire pour annuler une préparation READY."
+      "Un motif est obligatoire pour annuler un bon de livraison."
     )
   }
-  return repoUpdateLivraisonStatus(id, body.statut, userId, { commentaire: body.commentaire ?? null })
+  return repoUpdateLivraisonStatus(id, body.statut, userId, {
+    commentaire: body.commentaire?.trim() || null,
+  })
 }
 
 export async function svcGetLivraisonShipmentPreview(id: string) {

@@ -733,25 +733,61 @@ export async function releaseLivraisonReservationsInTransaction(
     qty_reserved: number
   }>(
     `
+      WITH target_reservation_ids AS (
+        SELECT reservation.id
+        FROM public.stock_reservations reservation
+        JOIN public.bon_livraison_ligne line
+          ON line.id = reservation.bon_livraison_ligne_id
+        WHERE line.bon_livraison_id = $1::uuid
+          AND reservation.status = 'ACTIVE'
+
+        UNION
+
+        SELECT reservation.id
+        FROM public.bon_livraison_ligne_allocations allocation
+        JOIN public.bon_livraison_ligne line
+          ON line.id = allocation.bon_livraison_ligne_id
+        JOIN public.stock_reservations reservation
+          ON reservation.id = allocation.reservation_id
+        WHERE line.bon_livraison_id = $1::uuid
+          AND reservation.status = 'ACTIVE'
+      )
       SELECT
         reservation.id::text AS id,
-        allocation.stock_level_id::text AS stock_level_id,
-        allocation.stock_batch_id::text AS stock_batch_id,
+        level.id::text AS stock_level_id,
+        reservation.stock_batch_id::text AS stock_batch_id,
         reservation.qty_reserved::float8 AS qty_reserved
-      FROM public.bon_livraison_ligne_allocations allocation
-      JOIN public.bon_livraison_ligne line ON line.id = allocation.bon_livraison_ligne_id
-      JOIN public.stock_reservations reservation ON reservation.id = allocation.reservation_id
-      WHERE line.bon_livraison_id = $1::uuid
-        AND reservation.status = 'ACTIVE'
-      ORDER BY allocation.stock_level_id, allocation.stock_batch_id, reservation.id
+      FROM target_reservation_ids target
+      JOIN public.stock_reservations reservation ON reservation.id = target.id
+      JOIN public.stock_levels level
+        ON level.article_id = reservation.article_id
+       AND level.location_id = reservation.location_id
+      WHERE reservation.status = 'ACTIVE'
+      ORDER BY level.id, reservation.stock_batch_id, reservation.id
       FOR UPDATE OF reservation
     `,
     [bonLivraisonId]
   )
-  if (!reservations.rows.length) return
+  const reservationsById = new Map<string, (typeof reservations.rows)[number]>()
+  for (const reservation of reservations.rows) {
+    const existing = reservationsById.get(reservation.id)
+    if (existing) {
+      if (
+        existing.stock_level_id !== reservation.stock_level_id ||
+        existing.stock_batch_id !== reservation.stock_batch_id ||
+        existing.qty_reserved !== reservation.qty_reserved
+      ) {
+        throw new Error("Conflicting stock targets for delivery reservation")
+      }
+      continue
+    }
+    reservationsById.set(reservation.id, reservation)
+  }
+  const targetReservations = [...reservationsById.values()]
+  if (!targetReservations.length) return
 
   const grouped = new Map<string, { level: string; batch: string | null; qty: number }>()
-  for (const reservation of reservations.rows) {
+  for (const reservation of targetReservations) {
     const key = `${reservation.stock_level_id}:${reservation.stock_batch_id ?? "-"}`
     const current = grouped.get(key) ?? {
       level: reservation.stock_level_id,
@@ -789,19 +825,24 @@ export async function releaseLivraisonReservationsInTransaction(
       )
     }
   }
-  await client.query(
+  const released = await client.query(
     `
       UPDATE public.stock_reservations
       SET status = 'RELEASED',
           reason = $2,
           released_at = now(),
           released_by = $3,
+          row_version = row_version + 1,
           updated_at = now(),
           updated_by = $3
       WHERE id = ANY($1::uuid[])
+        AND status = 'ACTIVE'
     `,
-    [reservations.rows.map((row) => row.id), reason, userId]
+    [targetReservations.map((row) => row.id), reason, userId]
   )
+  if ((released.rowCount ?? 0) !== targetReservations.length) {
+    throw new Error("Active delivery reservation count changed while releasing stock")
+  }
 }
 
 export async function repoShipLivraison(
