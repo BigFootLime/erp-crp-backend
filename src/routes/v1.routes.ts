@@ -55,6 +55,7 @@ import pieceTechniqueVersionsRoutes from "../module/gammes/routes/piece-techniqu
 import methodesRoutes from "../module/methodes/routes/methodes.routes"
 import importAssistantRoutes from "../module/import-assistant/routes/import-assistant.routes"
 import accessControlRoutes from "../module/access-control/routes/access-control.routes"
+import dashboardGovernanceRoutes from "../module/dashboard-governance/routes/dashboard-governance.routes"
 import { moduleAccessGate } from "../module/access-control/middlewares/module-access-gate"
 import { runWithAccountModuleAccessScope } from "../module/access-control/context/account-module-access.context"
 const router = Router()
@@ -73,6 +74,10 @@ router.use(authenticateToken)
 // module métier pour qu'aucune surface future n'y échappe par oubli. Une fois le
 // module autorisé, les anciens gardes de rôle deviennent de simples compatibilités.
 router.use(moduleAccessGate)
+
+// Gouvernance transverse de l'accueil : rollback ARIANE/V2 et métriques
+// d'adoption agrégées. Ce n'est pas un module métier restrictible.
+router.use("/dashboard-governance", dashboardGovernanceRoutes)
 
 router.use("/outils", outilRoutes)
 router.use("/banking-info", bankingInfoRoutes)  
