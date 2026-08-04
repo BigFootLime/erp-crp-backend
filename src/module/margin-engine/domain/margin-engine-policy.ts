@@ -13,3 +13,16 @@ export function roleHasMarginCapability(role: string | null | undefined, capabil
   const normalized = role?.trim().toLocaleLowerCase("fr") ?? "";
   return normalized.length > 0 && CAPABILITY_ROLE_NEEDLES[capability].some((needle) => normalized.includes(needle));
 }
+
+/**
+ * L'accès au module reporting est seulement un filtre de navigation/lecture.
+ * Il ne confère jamais une capacité financière d'écriture, de preuve ou d'export.
+ */
+export function canUseMarginCapability(
+  role: string | null | undefined,
+  capability: MarginCapability,
+  hasReportingModuleAccess: boolean,
+): boolean {
+  if (roleHasMarginCapability(role, capability)) return true;
+  return capability === "read_costs" && hasReportingModuleAccess;
+}

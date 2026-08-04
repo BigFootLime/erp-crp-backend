@@ -69,6 +69,8 @@ CREATE TABLE IF NOT EXISTS public.margin_input_versions (
   amount_ht numeric(18,6) NULL CHECK (amount_ht IS NULL OR amount_ht >= 0),
   quantity numeric(18,6) NULL CHECK (quantity IS NULL OR quantity >= 0),
   rate_id uuid NULL REFERENCES public.margin_rates(id) ON DELETE RESTRICT,
+  rate_effective_at date NULL,
+  rate_validation_snapshot jsonb NULL,
   currency char(3) NOT NULL DEFAULT 'EUR' CHECK (currency = 'EUR'),
   source_type text NOT NULL CHECK (btrim(source_type) <> ''),
   source_ref text NULL,
@@ -83,8 +85,18 @@ CREATE TABLE IF NOT EXISTS public.margin_input_versions (
     (input_kind = 'COST' AND category IS NOT NULL)
   ),
   CONSTRAINT margin_input_versions_value_ck CHECK (
-    (availability = 'NOT_APPLICABLE' AND amount_ht IS NULL AND quantity IS NULL AND rate_id IS NULL) OR
-    (availability = 'PROVIDED' AND (amount_ht IS NOT NULL OR rate_id IS NOT NULL))
+    (availability = 'NOT_APPLICABLE'
+      AND amount_ht IS NULL AND quantity IS NULL AND rate_id IS NULL
+      AND rate_effective_at IS NULL AND rate_validation_snapshot IS NULL) OR
+    (availability = 'PROVIDED' AND (
+      (amount_ht IS NOT NULL AND rate_id IS NULL AND quantity IS NULL
+        AND rate_effective_at IS NULL AND rate_validation_snapshot IS NULL) OR
+      (amount_ht IS NULL AND rate_id IS NOT NULL
+        AND rate_effective_at IS NOT NULL AND rate_validation_snapshot IS NOT NULL)
+    ))
+  ),
+  CONSTRAINT margin_input_versions_rate_snapshot_ck CHECK (
+    rate_validation_snapshot IS NULL OR jsonb_typeof(rate_validation_snapshot) = 'object'
   ),
   CONSTRAINT margin_input_versions_assumption_ck CHECK (
     assumption IS NULL OR (btrim(assumption) <> '' AND assumption_date IS NOT NULL)

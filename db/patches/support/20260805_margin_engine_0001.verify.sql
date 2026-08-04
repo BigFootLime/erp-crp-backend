@@ -6,6 +6,10 @@ SELECT
   to_regclass('public.margin_recalculations') IS NOT NULL AS recalculations_ready;
 
 SELECT
+  EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='margin_input_versions' AND column_name='rate_effective_at') AS rate_effective_at_ready,
+  EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='margin_input_versions' AND column_name='rate_validation_snapshot') AS rate_validation_snapshot_ready;
+
+SELECT
   EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_margin_rate_versions_append_only' AND NOT tgisinternal) AS rate_versions_append_only,
   EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_margin_rates_append_only' AND NOT tgisinternal) AS rates_append_only,
   EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_margin_input_versions_append_only' AND NOT tgisinternal) AS inputs_append_only,

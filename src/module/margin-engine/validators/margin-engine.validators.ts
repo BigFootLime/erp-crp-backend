@@ -11,6 +11,10 @@ export const marginReadQuerySchema = z.object({
   as_of: z.string().date().optional(),
 });
 export const marginSnapshotBodySchema = z.object({ basis: marginBasisSchema });
+export const marginSnapshotListQuerySchema = z.object({
+  basis: marginBasisSchema.optional(),
+  as_of: z.string().date().optional(),
+});
 
 const availabilitySchema = z.enum(["PROVIDED", "NOT_APPLICABLE"]);
 const amountSchema = z.coerce.number().finite().nonnegative().transform(String);
@@ -26,6 +30,7 @@ export const createMarginInputSchema = z.object({
   amount_ht: amountSchema.nullable().optional(),
   quantity: amountSchema.nullable().optional(),
   rate_id: z.string().uuid().nullable().optional(),
+  rate_effective_at: z.string().date().nullable().optional(),
   source_type: z.string().trim().min(1).max(80),
   source_ref: z.string().trim().max(200).nullable().optional(),
   observed_at: z.string().datetime({ offset: true }).nullable().optional(),
@@ -36,11 +41,17 @@ export const createMarginInputSchema = z.object({
   if ((value.input_kind === "REVENUE") !== (value.category == null)) {
     ctx.addIssue({ code: "custom", path: ["category"], message: "La catégorie est requise uniquement pour un coût." });
   }
-  if (value.availability === "NOT_APPLICABLE" && (value.amount_ht != null || value.quantity != null || value.rate_id != null)) {
+  if (value.availability === "NOT_APPLICABLE" && (value.amount_ht != null || value.quantity != null || value.rate_id != null || value.rate_effective_at != null)) {
     ctx.addIssue({ code: "custom", path: ["availability"], message: "NOT_APPLICABLE ne porte aucune valeur." });
   }
-  if (value.availability === "PROVIDED" && value.amount_ht == null && value.rate_id == null) {
-    ctx.addIssue({ code: "custom", path: ["amount_ht"], message: "Un montant ou un taux versionné est requis." });
+  if (value.availability === "PROVIDED" && ((value.amount_ht == null) === (value.rate_id == null))) {
+    ctx.addIssue({ code: "custom", path: ["amount_ht"], message: "Fournir exactement un montant ou un taux versionné." });
+  }
+  if ((value.rate_id == null) !== (value.rate_effective_at == null)) {
+    ctx.addIssue({ code: "custom", path: ["rate_effective_at"], message: "Tout taux doit porter sa date d'application." });
+  }
+  if (value.amount_ht != null && value.quantity != null) {
+    ctx.addIssue({ code: "custom", path: ["quantity"], message: "Une quantité ne s'applique qu'à un taux versionné." });
   }
   if ((value.assumption == null) !== (value.assumption_date == null)) {
     ctx.addIssue({ code: "custom", path: ["assumption_date"], message: "Toute hypothèse doit être datée." });
@@ -66,9 +77,20 @@ export const createRateVersionSchema = z.object({
     source_ref: z.string().trim().max(500).nullable().optional(),
   })).min(1).max(100),
 }).superRefine((value, ctx) => {
+  if (value.effective_to && value.effective_to < value.effective_from) {
+    ctx.addIssue({ code: "custom", path: ["effective_to"], message: "La date de fin doit suivre la date d'effet." });
+  }
   value.rates.forEach((rate, index) => {
     if ((rate.scope_type === "GLOBAL") !== (rate.scope_ref == null)) {
       ctx.addIssue({ code: "custom", path: ["rates", index, "scope_ref"], message: "GLOBAL n'a pas de référence; les autres portées en exigent une." });
+    }
+    const unitMatches = rate.unit === "PERCENT_OF_DIRECT_COST"
+      ? rate.category === "OVERHEAD"
+      : rate.unit === "EUR_PER_HOUR"
+        ? ["MACHINE", "OPERATOR", "CONTROL"].includes(rate.category)
+        : !["OVERHEAD", "OPERATOR", "CONTROL"].includes(rate.category);
+    if (!unitMatches) {
+      ctx.addIssue({ code: "custom", path: ["rates", index, "unit"], message: "L'unité n'est pas compatible avec la catégorie de coût." });
     }
   });
 });

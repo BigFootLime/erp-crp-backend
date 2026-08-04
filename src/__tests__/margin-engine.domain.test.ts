@@ -15,6 +15,10 @@ const EVIDENCE: MarginEvidence = {
   assumption: null,
   assumption_date: null,
   rate_version_id: null,
+  rate_id: null,
+  rate_effective_at: null,
+  rate_scope_type: null,
+  rate_scope_ref: null,
 };
 
 function na(category: MarginCostInput["category"]): MarginCostInput {
@@ -96,6 +100,33 @@ describe("margin engine formulas", () => {
     expect(result.cost_total_ht).toBeNull();
     expect(result.gross_margin_ht).toBeNull();
     expect(result.missing_inputs.map((row) => row.category)).toContain("MACHINE");
+  });
+
+  it("keeps a category incomplete when any rate-driven entry is unresolved", () => {
+    const costs = MARGIN_COST_CATEGORIES.map(na);
+    costs.push(provided("OPERATOR", "25"));
+    costs.push({
+      ...provided("OPERATOR", "0"),
+      key: "operator:unresolved-rate",
+      amount_ht: null,
+      quantity: null,
+      rate: "50",
+      rate_unit: "EUR_PER_HOUR",
+    });
+    const result = calculateMargin(input(costs));
+    expect(result.components.find((row) => row.category === "OPERATOR")?.status).toBe("MISSING");
+    expect(result.cost_total_ht).toBeNull();
+    expect(result.missing_inputs.map((row) => row.code)).toContain("OPERATOR_MISSING");
+  });
+
+  it("uses the frozen operation cost once after preparation, quantity and coefficient", () => {
+    // 0.5 h préparation + (0.1 h × 10 pièces × coef 1.5) = 2 h; 2 h × 50 €/h = 100 €.
+    // `cout_mo=100` est déjà ce total autoritaire : la quantité du devis ne doit pas le remultiplier.
+    const costs = MARGIN_COST_CATEGORIES.map(na);
+    costs.push(provided("OPERATOR", "100"));
+    const result = calculateMargin(input(costs));
+    expect(result.components.find((row) => row.category === "OPERATOR")?.amount_ht).toBe("100.00");
+    expect(result.cost_total_ht).toBe("100.00");
   });
 
   it("computes planned/actual variance only when both calculations are complete", () => {

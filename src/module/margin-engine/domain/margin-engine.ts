@@ -88,6 +88,10 @@ export type MarginEvidence = {
   assumption: string | null;
   assumption_date: string | null;
   rate_version_id: string | null;
+  rate_id: string | null;
+  rate_effective_at: string | null;
+  rate_scope_type: string | null;
+  rate_scope_ref: string | null;
 };
 
 export type MarginCostInput = {
@@ -151,6 +155,7 @@ export type MarginCalculation = {
   currency: string;
   availability: "COMPLETE" | "PARTIAL" | "UNAVAILABLE";
   revenue_ht: string | null;
+  revenue_evidence: MarginEvidence | null;
   cost_total_ht: string | null;
   partial_cost_total_ht: string;
   gross_margin_ht: string | null;
@@ -189,7 +194,7 @@ export function calculateMargin(input: MarginCalculationInput): MarginCalculatio
     const provided = categoryRows.filter((entry) => entry.row.availability === "PROVIDED" && entry.amount !== null);
     const explicitNa = categoryRows.some((entry) => entry.row.availability === "NOT_APPLICABLE");
     const invalid = categoryRows.some((entry) => entry.row.availability === "PROVIDED" && entry.amount === null);
-    const status = provided.length > 0 ? "PROVIDED" : explicitNa && !invalid ? "NOT_APPLICABLE" : "MISSING";
+    const status = invalid ? "MISSING" : provided.length > 0 ? "PROVIDED" : explicitNa ? "NOT_APPLICABLE" : "MISSING";
     const amount = provided.reduce((sum, entry) => sum + (entry.amount ?? 0n), 0n);
     if (required.includes(category) && status === "MISSING") {
       missing.push({
@@ -225,6 +230,7 @@ export function calculateMargin(input: MarginCalculationInput): MarginCalculatio
     currency: input.revenue?.currency ?? MARGIN_CURRENCY,
     availability,
     revenue_ht: revenue === null ? null : money(revenue),
+    revenue_evidence: input.revenue?.evidence ?? null,
     cost_total_ht: costTotal === null ? null : money(costTotal),
     partial_cost_total_ht: money(partialCost),
     gross_margin_ht: grossMargin === null ? null : money(grossMargin),

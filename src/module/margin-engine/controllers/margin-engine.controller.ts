@@ -1,14 +1,15 @@
 import type { Request, RequestHandler } from "express";
 import { HttpError } from "../../../utils/httpError";
 import { getClientIp, parseDevice } from "../../../utils/requestMeta";
-import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { MarginScopeType } from "../domain/margin-engine";
+import type { MarginAuditContext } from "../repository/margin-engine.repository";
 import {
   createMarginInputSchema,
   createRateVersionSchema,
   marginReadQuerySchema,
   marginScopeParamsSchema,
   marginSnapshotBodySchema,
+  marginSnapshotListQuerySchema,
 } from "../validators/margin-engine.validators";
 import {
   svcCreateMarginInput,
@@ -17,6 +18,7 @@ import {
   svcExportMargin,
   svcGetMargin,
   svcListRateVersions,
+  svcListMarginSnapshots,
 } from "../services/margin-engine.service";
 
 const SCOPE_MAP: Record<"devis-line" | "devis" | "affaire" | "of", MarginScopeType> = {
@@ -31,27 +33,24 @@ function actorId(req: Request): number {
   return req.user.id;
 }
 
-async function auditMutation(req: Request, action: string, entityType: string, entityId: string, details: Record<string, unknown>) {
+function buildAuditContext(req: Request): MarginAuditContext {
   const userAgent = typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : null;
   const device = parseDevice(userAgent);
-  await repoInsertAuditLog({
+  const rawSessionId = typeof req.headers["x-client-session-id"] === "string" ? req.headers["x-client-session-id"] : null;
+  const clientSessionId = rawSessionId && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(rawSessionId)
+    ? rawSessionId
+    : null;
+  return {
     user_id: actorId(req),
     ip: getClientIp(req),
     user_agent: userAgent,
     device_type: device.device_type,
     os: device.os,
     browser: device.browser,
-    body: {
-      event_type: "ACTION",
-      action,
-      page_key: "margin-engine",
-      entity_type: entityType,
-      entity_id: entityId,
-      path: req.originalUrl,
-      client_session_id: typeof req.headers["x-client-session-id"] === "string" ? req.headers["x-client-session-id"] : null,
-      details,
-    },
-  });
+    path: req.originalUrl ?? null,
+    page_key: "margin-engine",
+    client_session_id: clientSessionId,
+  };
 }
 
 export const getMargin: RequestHandler = async (req, res, next) => {
@@ -76,11 +75,7 @@ export const exportMargin: RequestHandler = async (req, res, next) => {
 export const createMarginInput: RequestHandler = async (req, res, next) => {
   try {
     const input = createMarginInputSchema.parse(req.body);
-    const created = await svcCreateMarginInput(input, actorId(req));
-    await auditMutation(req, "MARGIN_INPUT_VERSION_CREATED", "margin_input_version", created.id, {
-      scope_type: input.scope_type, scope_ref: input.scope_ref, basis: input.basis,
-      input_key: input.input_key, supersedes_id: input.supersedes_id ?? null,
-    });
+    const created = await svcCreateMarginInput(input, buildAuditContext(req));
     res.status(201).json(created);
   } catch (error) { next(error); }
 };
@@ -88,11 +83,7 @@ export const createMarginInput: RequestHandler = async (req, res, next) => {
 export const createRateVersion: RequestHandler = async (req, res, next) => {
   try {
     const input = createRateVersionSchema.parse(req.body);
-    const created = await svcCreateRateVersion(input, actorId(req));
-    await auditMutation(req, "MARGIN_RATE_VERSION_CREATED", "margin_rate_version", created.id, {
-      code: input.code, version: input.version, effective_from: input.effective_from,
-      supersedes_id: input.supersedes_id ?? null, rate_count: input.rates.length,
-    });
+    const created = await svcCreateRateVersion(input, buildAuditContext(req));
     res.status(201).json(created);
   } catch (error) { next(error); }
 };
@@ -109,11 +100,18 @@ export const createMarginSnapshot: RequestHandler = async (req, res, next) => {
     const params = marginScopeParamsSchema.parse(req.params);
     const body = marginSnapshotBodySchema.parse(req.body);
     const query = marginReadQuerySchema.parse(req.query);
-    const asOf = query.as_of ?? new Date().toISOString().slice(0, 10);
-    const created = await svcCreateMarginSnapshot(SCOPE_MAP[params.scopeType], params.scopeRef, body.basis, asOf, actorId(req));
-    await auditMutation(req, "MARGIN_RECALCULATION_SNAPSHOTTED", "margin_recalculation", created.id, {
-      scope_type: SCOPE_MAP[params.scopeType], scope_ref: params.scopeRef, basis: body.basis, as_of: asOf,
-    });
+    const created = await svcCreateMarginSnapshot(
+      SCOPE_MAP[params.scopeType], params.scopeRef, body.basis, query.as_of, buildAuditContext(req),
+    );
     res.status(201).json(created);
+  } catch (error) { next(error); }
+};
+
+export const listMarginSnapshots: RequestHandler = async (req, res, next) => {
+  try {
+    const params = marginScopeParamsSchema.parse(req.params);
+    const query = marginSnapshotListQuerySchema.parse(req.query);
+    const items = await svcListMarginSnapshots(SCOPE_MAP[params.scopeType], params.scopeRef, query);
+    res.json({ items });
   } catch (error) { next(error); }
 };
