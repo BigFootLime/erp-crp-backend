@@ -201,15 +201,34 @@ BEGIN
   ) THEN
     RAISE EXCEPTION '#469 issued due-date protection is missing or incomplete';
   END IF;
-  IF NOT EXISTS (
+  IF EXISTS (
+    WITH expected(trigger_name, table_name, function_name, trigger_type) AS (
+      VALUES
+        ('trg_protect_facture_ligne_227', 'facture_ligne', 'fn_protect_facturation_child_227', 31),
+        ('trg_protect_avoir_ligne_227', 'avoir_ligne', 'fn_protect_facturation_child_227', 31),
+        ('trg_protect_facture_source_227', 'facture_source_allocations', 'fn_protect_facturation_child_227', 31),
+        ('trg_protect_facture_echeance_227', 'facture_echeance', 'fn_protect_facturation_child_227', 31),
+        ('trg_protect_avoir_source_227', 'avoir_source_allocations', 'fn_protect_facturation_child_227', 31),
+        ('trg_validate_facture_source_allocation_227', 'facture_source_allocations', 'fn_validate_facturation_allocation_227', 7),
+        ('trg_validate_paiement_allocation_227', 'paiement_allocations', 'fn_validate_facturation_allocation_227', 7),
+        ('trg_validate_avoir_allocation_227', 'avoir_source_allocations', 'fn_validate_facturation_allocation_227', 23),
+        ('trg_protect_paiement_227', 'paiement', 'fn_protect_paiement_227', 27)
+    )
     SELECT 1
-    FROM pg_trigger t
-    WHERE t.tgname = 'trg_validate_avoir_allocation_227'
-      AND t.tgrelid = 'public.avoir_source_allocations'::regclass
-      AND NOT t.tgisinternal
-      AND pg_get_triggerdef(t.oid) LIKE '%BEFORE INSERT OR UPDATE%'
+    FROM expected e
+    LEFT JOIN pg_trigger t
+      ON t.tgname = e.trigger_name
+     AND t.tgrelid = to_regclass('public.' || e.table_name)
+    LEFT JOIN pg_proc p ON p.oid = t.tgfoid
+    LEFT JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE t.oid IS NULL
+       OR t.tgisinternal
+       OR t.tgenabled IS DISTINCT FROM 'O'
+       OR t.tgtype <> e.trigger_type
+       OR p.proname IS DISTINCT FROM e.function_name
+       OR n.nspname IS DISTINCT FROM 'public'
   ) THEN
-    RAISE EXCEPTION '#469 consumed-credit transition validator trigger is missing or incomplete';
+    RAISE EXCEPTION '#469 Finance trigger bindings are missing, disabled, or misconfigured';
   END IF;
 END $$;
 

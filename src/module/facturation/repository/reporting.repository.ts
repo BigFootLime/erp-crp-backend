@@ -33,6 +33,7 @@ import {
   creditedCte,
   ledgerFactureCte,
   money,
+  paiementAvailableAmountExpression,
   paiementNetPredicate,
   settledCte,
 } from "./reporting-sql";
@@ -302,22 +303,9 @@ export async function repoUnallocatedAtDate(
     WITH pay AS (
       SELECT
         p.id,
-        p.montant::numeric(18,2) AS montant,
-        (
-          COALESCE((
-            SELECT SUM(pa.amount_ttc)
-            FROM paiement_allocations pa
-            WHERE pa.paiement_id = p.id
-              AND (pa.created_at AT TIME ZONE 'Europe/Paris')::date <= ${asOfParam}::date
-          ), 0)
-          -- Rattachement direct hérité : un règlement lié à une facture sans ligne
-          -- de lettrage est affecté, pas en attente d'affectation.
-          + CASE
-              WHEN p.facture_id IS NOT NULL
-                AND NOT EXISTS (SELECT 1 FROM paiement_allocations pa2 WHERE pa2.paiement_id = p.id)
-              THEN p.montant ELSE 0
-            END
-        )::numeric(18,2) AS allocated
+        ${paiementAvailableAmountExpression("p", {
+          allocationAsOfDateSql: `${asOfParam}::date`,
+        })}::numeric(18,2) AS available
       FROM paiement p
       WHERE p.date_paiement <= ${asOfParam}::date
         AND ${net}
@@ -339,7 +327,7 @@ export async function repoUnallocatedAtDate(
         AND a.facture_id IS NULL
     )
     SELECT
-      COALESCE((SELECT SUM(GREATEST(montant - allocated, 0)) FROM pay), 0)::numeric(18,2)::text  AS payments_ttc,
+      COALESCE((SELECT SUM(available) FROM pay), 0)::numeric(18,2)::text AS payments_ttc,
       COALESCE((SELECT SUM(GREATEST(montant - allocated, 0)) FROM cred), 0)::numeric(18,2)::text AS credits_ttc
   `;
 

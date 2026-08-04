@@ -566,10 +566,53 @@ BEGIN
 END;
 $$;
 
+-- Rebind every trigger that depends on a function replaced by this patch. This
+-- makes a replay repair missing or misbound #227 triggers instead of silently
+-- installing new function bodies that never execute.
+DROP TRIGGER IF EXISTS trg_protect_facture_ligne_227 ON public.facture_ligne;
+CREATE TRIGGER trg_protect_facture_ligne_227
+BEFORE INSERT OR UPDATE OR DELETE ON public.facture_ligne
+FOR EACH ROW EXECUTE FUNCTION public.fn_protect_facturation_child_227();
+
+DROP TRIGGER IF EXISTS trg_protect_avoir_ligne_227 ON public.avoir_ligne;
+CREATE TRIGGER trg_protect_avoir_ligne_227
+BEFORE INSERT OR UPDATE OR DELETE ON public.avoir_ligne
+FOR EACH ROW EXECUTE FUNCTION public.fn_protect_facturation_child_227();
+
+DROP TRIGGER IF EXISTS trg_protect_facture_source_227 ON public.facture_source_allocations;
+CREATE TRIGGER trg_protect_facture_source_227
+BEFORE INSERT OR UPDATE OR DELETE ON public.facture_source_allocations
+FOR EACH ROW EXECUTE FUNCTION public.fn_protect_facturation_child_227();
+
+DROP TRIGGER IF EXISTS trg_protect_facture_echeance_227 ON public.facture_echeance;
+CREATE TRIGGER trg_protect_facture_echeance_227
+BEFORE INSERT OR UPDATE OR DELETE ON public.facture_echeance
+FOR EACH ROW EXECUTE FUNCTION public.fn_protect_facturation_child_227();
+
+DROP TRIGGER IF EXISTS trg_protect_avoir_source_227 ON public.avoir_source_allocations;
+CREATE TRIGGER trg_protect_avoir_source_227
+BEFORE INSERT OR UPDATE OR DELETE ON public.avoir_source_allocations
+FOR EACH ROW EXECUTE FUNCTION public.fn_protect_facturation_child_227();
+
+DROP TRIGGER IF EXISTS trg_validate_facture_source_allocation_227 ON public.facture_source_allocations;
+CREATE TRIGGER trg_validate_facture_source_allocation_227
+BEFORE INSERT ON public.facture_source_allocations
+FOR EACH ROW EXECUTE FUNCTION public.fn_validate_facturation_allocation_227();
+
+DROP TRIGGER IF EXISTS trg_validate_paiement_allocation_227 ON public.paiement_allocations;
+CREATE TRIGGER trg_validate_paiement_allocation_227
+BEFORE INSERT ON public.paiement_allocations
+FOR EACH ROW EXECUTE FUNCTION public.fn_validate_facturation_allocation_227();
+
 DROP TRIGGER IF EXISTS trg_validate_avoir_allocation_227 ON public.avoir_source_allocations;
 CREATE TRIGGER trg_validate_avoir_allocation_227
 BEFORE INSERT OR UPDATE ON public.avoir_source_allocations
 FOR EACH ROW EXECUTE FUNCTION public.fn_validate_facturation_allocation_227();
+
+DROP TRIGGER IF EXISTS trg_protect_paiement_227 ON public.paiement;
+CREATE TRIGGER trg_protect_paiement_227
+BEFORE UPDATE OR DELETE ON public.paiement
+FOR EACH ROW EXECUTE FUNCTION public.fn_protect_paiement_227();
 
 COMMENT ON COLUMN public.facture.document_status IS
   'Authoritative document lifecycle. ISSUED remains immutable after legal emission.';

@@ -52,8 +52,21 @@ describe("repoListPaiements — visibilite des reglements non affectes", () => {
     await repoListPaiements({ ...baseFilters });
 
     const [, dataSql] = capturedSql();
-    expect(dataSql.text).toContain("p.status");
+    expect(dataSql.text).toContain("THEN 'ALLOCATED'");
+    expect(dataSql.text).toContain("AS status");
     expect(dataSql.text).toContain("p.workflow_status");
+  });
+
+  it("projette le rattachement direct hérité en ALLOCATED sans réécrire la preuve brute", async () => {
+    query.mockResolvedValueOnce({ rows: [{ total: 0 }] }).mockResolvedValueOnce({ rows: [] });
+
+    await repoListPaiements({ ...baseFilters });
+
+    const [, dataSql] = capturedSql();
+    expect(dataSql.text).toContain("p.facture_id IS NOT NULL");
+    expect(dataSql.text).toContain("NOT EXISTS");
+    expect(dataSql.text).toContain("FROM paiement_allocations pa2");
+    expect(dataSql.text).toContain("THEN 'ALLOCATED'");
   });
 
   it("renvoie facture_id null et facture null sans lever, pour un reglement non affecte", async () => {
@@ -121,11 +134,12 @@ describe("repoListPaiements — visibilite des reglements non affectes", () => {
     await repoListPaiements({ ...baseFilters, status: "UNALLOCATED" });
 
     const [countSql] = capturedSql();
-    expect(countSql.text).toContain("p.status =");
+    expect(countSql.text).toContain("THEN 'ALLOCATED'");
+    expect(countSql.text).toMatch(/END\s*=\s*\$\d+/);
     expect(countSql.values).toContain("UNALLOCATED");
   });
 
-  it("expose un raccourci `unallocated` qui filtre sur l'absence de facture", async () => {
+  it("filtre `unallocated` sur le solde disponible, donc conserve les paiements partiels", async () => {
     query
       .mockResolvedValueOnce({ rows: [{ total: 0 }] })
       .mockResolvedValueOnce({ rows: [] });
@@ -133,7 +147,23 @@ describe("repoListPaiements — visibilite des reglements non affectes", () => {
     await repoListPaiements({ ...baseFilters, unallocated: true });
 
     const [countSql] = capturedSql();
-    expect(countSql.text).toContain("p.facture_id IS NULL");
+    expect(countSql.text).toContain("GREATEST(");
+    expect(countSql.text).toContain("p.montant::numeric(18,2)");
+    expect(countSql.text).toContain("SELECT SUM(pa.amount_ttc)");
+    expect(countSql.text).toContain("> 0::numeric");
+    expect(countSql.text).not.toContain("p.facture_id IS NULL");
+  });
+
+  it("écarte de la file les rejets, extournes et rattachements directs hérités", async () => {
+    query.mockResolvedValueOnce({ rows: [{ total: 0 }] }).mockResolvedValueOnce({ rows: [] });
+
+    await repoListPaiements({ ...baseFilters, unallocated: true });
+
+    const [countSql] = capturedSql();
+    expect(countSql.text).toContain("p.status NOT IN ('REJECTED', 'REVERSED')");
+    expect(countSql.text).toContain("p.workflow_status <> 'REVERSED'");
+    expect(countSql.text).toContain("p.reversal_of_id IS NULL");
+    expect(countSql.text).toMatch(/WHEN p\.facture_id IS NOT NULL[\s\S]*THEN p\.montant::numeric\(18,2\)/);
   });
 });
 
@@ -170,5 +200,17 @@ describe("repoGetPaiement — lecture d'un reglement non affecte", () => {
     expect(paiement?.facture_id).toBeNull();
     expect(paiement?.status).toBe("UNALLOCATED");
     expect(capturedSql()[0].text).toContain("LEFT JOIN facture");
+  });
+
+  it("projette aussi le statut ALLOCATED sur le détail direct hérité", async () => {
+    query.mockResolvedValueOnce({ rows: [] });
+
+    await repoGetPaiement(7, "");
+
+    const sql = capturedSql()[0].text;
+    expect(sql).toContain("p.facture_id IS NOT NULL");
+    expect(sql).toContain("FROM paiement_allocations pa2");
+    expect(sql).toContain("THEN 'ALLOCATED'");
+    expect(sql).toContain("AS status");
   });
 });

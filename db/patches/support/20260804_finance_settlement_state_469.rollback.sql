@@ -196,9 +196,35 @@ BEGIN
 END;
 $$;
 
+-- Restore every original #227 binding for the three restored function bodies.
+DROP TRIGGER IF EXISTS trg_protect_facture_ligne_227 ON public.facture_ligne;
+CREATE TRIGGER trg_protect_facture_ligne_227 BEFORE INSERT OR UPDATE OR DELETE ON public.facture_ligne
+FOR EACH ROW EXECUTE FUNCTION public.fn_protect_facturation_child_227();
+DROP TRIGGER IF EXISTS trg_protect_avoir_ligne_227 ON public.avoir_ligne;
+CREATE TRIGGER trg_protect_avoir_ligne_227 BEFORE INSERT OR UPDATE OR DELETE ON public.avoir_ligne
+FOR EACH ROW EXECUTE FUNCTION public.fn_protect_facturation_child_227();
+DROP TRIGGER IF EXISTS trg_protect_facture_source_227 ON public.facture_source_allocations;
+CREATE TRIGGER trg_protect_facture_source_227 BEFORE INSERT OR UPDATE OR DELETE ON public.facture_source_allocations
+FOR EACH ROW EXECUTE FUNCTION public.fn_protect_facturation_child_227();
+DROP TRIGGER IF EXISTS trg_protect_facture_echeance_227 ON public.facture_echeance;
+CREATE TRIGGER trg_protect_facture_echeance_227 BEFORE INSERT OR UPDATE OR DELETE ON public.facture_echeance
+FOR EACH ROW EXECUTE FUNCTION public.fn_protect_facturation_child_227();
+DROP TRIGGER IF EXISTS trg_protect_avoir_source_227 ON public.avoir_source_allocations;
+CREATE TRIGGER trg_protect_avoir_source_227 BEFORE INSERT OR UPDATE OR DELETE ON public.avoir_source_allocations
+FOR EACH ROW EXECUTE FUNCTION public.fn_protect_facturation_child_227();
+
+DROP TRIGGER IF EXISTS trg_validate_facture_source_allocation_227 ON public.facture_source_allocations;
+CREATE TRIGGER trg_validate_facture_source_allocation_227 BEFORE INSERT ON public.facture_source_allocations
+FOR EACH ROW EXECUTE FUNCTION public.fn_validate_facturation_allocation_227();
+DROP TRIGGER IF EXISTS trg_validate_paiement_allocation_227 ON public.paiement_allocations;
+CREATE TRIGGER trg_validate_paiement_allocation_227 BEFORE INSERT ON public.paiement_allocations
+FOR EACH ROW EXECUTE FUNCTION public.fn_validate_facturation_allocation_227();
 DROP TRIGGER IF EXISTS trg_validate_avoir_allocation_227 ON public.avoir_source_allocations;
 CREATE TRIGGER trg_validate_avoir_allocation_227 BEFORE INSERT ON public.avoir_source_allocations
 FOR EACH ROW EXECUTE FUNCTION public.fn_validate_facturation_allocation_227();
+DROP TRIGGER IF EXISTS trg_protect_paiement_227 ON public.paiement;
+CREATE TRIGGER trg_protect_paiement_227 BEFORE UPDATE OR DELETE ON public.paiement
+FOR EACH ROW EXECUTE FUNCTION public.fn_protect_paiement_227();
 
 ALTER TABLE public.facture
   DROP COLUMN IF EXISTS settlement_status,

@@ -54,6 +54,99 @@ function normalizedSql(source: string): string {
     .trim();
 }
 
+const replacedFunctionTriggerBindings = [
+  {
+    name: "trg_protect_facture_ligne_227",
+    table: "facture_ligne",
+    functionName: "fn_protect_facturation_child_227",
+    forwardEvents: "INSERT OR UPDATE OR DELETE",
+    forwardType: 31,
+    rollbackEvents: "INSERT OR UPDATE OR DELETE",
+    rollbackType: 31,
+  },
+  {
+    name: "trg_protect_avoir_ligne_227",
+    table: "avoir_ligne",
+    functionName: "fn_protect_facturation_child_227",
+    forwardEvents: "INSERT OR UPDATE OR DELETE",
+    forwardType: 31,
+    rollbackEvents: "INSERT OR UPDATE OR DELETE",
+    rollbackType: 31,
+  },
+  {
+    name: "trg_protect_facture_source_227",
+    table: "facture_source_allocations",
+    functionName: "fn_protect_facturation_child_227",
+    forwardEvents: "INSERT OR UPDATE OR DELETE",
+    forwardType: 31,
+    rollbackEvents: "INSERT OR UPDATE OR DELETE",
+    rollbackType: 31,
+  },
+  {
+    name: "trg_protect_facture_echeance_227",
+    table: "facture_echeance",
+    functionName: "fn_protect_facturation_child_227",
+    forwardEvents: "INSERT OR UPDATE OR DELETE",
+    forwardType: 31,
+    rollbackEvents: "INSERT OR UPDATE OR DELETE",
+    rollbackType: 31,
+  },
+  {
+    name: "trg_protect_avoir_source_227",
+    table: "avoir_source_allocations",
+    functionName: "fn_protect_facturation_child_227",
+    forwardEvents: "INSERT OR UPDATE OR DELETE",
+    forwardType: 31,
+    rollbackEvents: "INSERT OR UPDATE OR DELETE",
+    rollbackType: 31,
+  },
+  {
+    name: "trg_validate_facture_source_allocation_227",
+    table: "facture_source_allocations",
+    functionName: "fn_validate_facturation_allocation_227",
+    forwardEvents: "INSERT",
+    forwardType: 7,
+    rollbackEvents: "INSERT",
+    rollbackType: 7,
+  },
+  {
+    name: "trg_validate_paiement_allocation_227",
+    table: "paiement_allocations",
+    functionName: "fn_validate_facturation_allocation_227",
+    forwardEvents: "INSERT",
+    forwardType: 7,
+    rollbackEvents: "INSERT",
+    rollbackType: 7,
+  },
+  {
+    name: "trg_validate_avoir_allocation_227",
+    table: "avoir_source_allocations",
+    functionName: "fn_validate_facturation_allocation_227",
+    forwardEvents: "INSERT OR UPDATE",
+    forwardType: 23,
+    rollbackEvents: "INSERT",
+    rollbackType: 7,
+  },
+  {
+    name: "trg_protect_paiement_227",
+    table: "paiement",
+    functionName: "fn_protect_paiement_227",
+    forwardEvents: "UPDATE OR DELETE",
+    forwardType: 27,
+    rollbackEvents: "UPDATE OR DELETE",
+    rollbackType: 27,
+  },
+] as const;
+
+function triggerBindingPattern(binding: typeof replacedFunctionTriggerBindings[number], rollback = false) {
+  const events = rollback ? binding.rollbackEvents : binding.forwardEvents;
+  return new RegExp(
+    `DROP TRIGGER IF EXISTS ${binding.name} ON public\\.${binding.table};` +
+      `[\\s\\S]*?CREATE TRIGGER ${binding.name}\\s+BEFORE ${events} ON public\\.${binding.table}` +
+      `\\s+FOR EACH ROW EXECUTE FUNCTION public\\.${binding.functionName}\\(\\);`
+  );
+}
+
 describe("#469 settlement-state guards", () => {
   it("preserves historical statuses and constrains future writes", () => {
     expect(patch).toContain("Historical `statut` values are never rewritten");
@@ -137,6 +230,30 @@ describe("#469 settlement-state guards", () => {
     expect(patch).toContain("WHEN NEW.allocation_status = 'CONSUMED' THEN NEW.amount_ttc");
   });
 
+  it("rebinds every trigger that depends on a replaced #227 function", () => {
+    const preflight = supportScripts[0];
+    const verify = supportScripts[1];
+    const rollback = supportScripts[2];
+
+    for (const binding of replacedFunctionTriggerBindings) {
+      expect(patch).toMatch(triggerBindingPattern(binding));
+      expect(rollback).toMatch(triggerBindingPattern(binding, true));
+      expect(preflight).toContain(
+        `('${binding.name}', '${binding.table}', '${binding.functionName}', ${binding.rollbackType})`
+      );
+      expect(verify).toContain(
+        `('${binding.name}', '${binding.table}', '${binding.functionName}', ${binding.forwardType})`
+      );
+    }
+
+    for (const script of [preflight, verify]) {
+      expect(script).toContain("t.tgenabled IS DISTINCT FROM 'O'");
+      expect(script).toContain("t.tgtype <> e.trigger_type");
+      expect(script).toContain("p.proname IS DISTINCT FROM e.function_name");
+      expect(script).toContain("n.nspname IS DISTINCT FROM 'public'");
+    }
+  });
+
   it("allows only monotone due-date settlement updates on issued legacy invoices", () => {
     expect(patch).toContain("CREATE OR REPLACE FUNCTION public.fn_protect_facturation_child_227()");
     expect(patch).toContain("parent_document_status = 'ISSUED'");
@@ -162,7 +279,7 @@ describe("#469 settlement-state guards", () => {
     );
     expect(rollback).not.toContain("direct legacy payment evidence cannot be deleted");
     expect(verify).toContain("pg_get_functiondef");
-    expect(verify).toContain("pg_get_triggerdef");
+    expect(verify).toContain("LEFT JOIN pg_trigger t");
   });
 
   it("restores the prior #227 function and trigger contracts on rollback", () => {
