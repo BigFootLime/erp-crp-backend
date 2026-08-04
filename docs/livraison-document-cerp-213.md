@@ -101,10 +101,13 @@ navigateur ou un proxy ne réutilise pas un état d'autorisation ou une version 
 Le fichier final est renommé avant le `COMMIT` qui archive ses métadonnées. Si PostgreSQL rend
 le commit durable mais que son accusé réseau est perdu, la connexion d'origine est considérée
 comme incertaine et n'est jamais « prouvée » par un `ROLLBACK`. Le service la détruit, prend une
-connexion fraîche, attend la résolution du verrou du BL, puis recherche l'événement et le
-document par livraison, auteur, empreinte d'`Idempotency-Key`, identifiant et version :
+connexion fraîche et ouvre une transaction dédiée. Cette transaction attend la résolution du
+verrou du BL, recherche l'événement et le document, puis vérifie avant son propre `COMMIT` que
+livraison, auteur, empreinte d'`Idempotency-Key`, identifiant, version et SHA-256 concordent. Le
+SHA-256 attendu reste celui calculé en mémoire avant le commit original :
 
-- identité exacte retrouvée et fichier intègre : le résultat est finalisé et le fichier reste ;
+- identité exacte `résultat attendu = événement = document` retrouvée, puis octets du fichier
+  conformes au SHA-256 attendu : le résultat est finalisé et le fichier reste ;
 - aucune métadonnée après la barrière de verrou : le commit n'a pas été durable et le fichier
   orphelin est supprimé ;
 - connexion, recherche ou identité incohérente : réponse
