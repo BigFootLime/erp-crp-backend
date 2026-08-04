@@ -1,12 +1,34 @@
 import request from "supertest";
 import { describe, it, expect, vi } from "vitest";
 
+const rateLimitState = vi.hoisted(() => ({ loginChecks: 0 }));
+
 // Fichier isolé : les maps de rate-limit (module-level) sont fraîches dans ce worker vitest.
 vi.mock("pg", () => {
   const pool = { on: vi.fn(), query: vi.fn().mockResolvedValue({ rows: [] }), connect: vi.fn() };
   return { Pool: vi.fn(() => pool) };
 });
 vi.mock("../utils/checkNetworkDrive", () => ({ checkNetworkDrive: vi.fn(() => Promise.resolve()) }));
+vi.mock("../module/auth/services/auth.service", () => ({
+  loginUser: vi.fn(async (username: string) => ({
+    token: "test-token",
+    user: { id: 1, username },
+  })),
+  registerUser: vi.fn(),
+  requestPasswordReset: vi.fn(),
+  resetPasswordWithToken: vi.fn(),
+}));
+vi.mock("../module/auth/services/auth-rate-limit.service", () => ({
+  authRateLimiter: {
+    check: vi.fn(async (endpoint: string) => {
+      if (endpoint !== "login") return { status: "allowed", endpoint, disabled: false };
+      rateLimitState.loginChecks += 1;
+      return rateLimitState.loginChecks > 10
+        ? { status: "blocked", endpoint, retryAfterSeconds: 60 }
+        : { status: "allowed", endpoint, disabled: false };
+    }),
+  },
+}));
 
 import app from "../config/app";
 

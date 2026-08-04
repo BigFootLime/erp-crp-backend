@@ -4,6 +4,7 @@ import { createServer } from 'http';
 import { initSocketServer } from './sockets/sockeServer'
 import { startAuditNotifyListener } from "./shared/realtime/audit-notify.listener";
 import { assertUploadScannerConfiguration } from "./shared/uploads/upload-scanner";
+import { startAuthRateLimitMaintenance } from "./module/auth/services/auth-rate-limit.service";
 
 
 const uploadScanner = assertUploadScannerConfiguration();
@@ -12,6 +13,8 @@ const PORT = parseInt(process.env.PORT || '5000', 10);
 
 // 🛠 Serveur HTTP de base
 const httpServer = createServer(app);
+const stopAuthRateLimitMaintenance = startAuthRateLimitMaintenance();
+httpServer.on("close", stopAuthRateLimitMaintenance);
 
 // 🔌 Initialisation du serveur WebSocket
 initSocketServer(httpServer);

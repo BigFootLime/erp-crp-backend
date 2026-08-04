@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { canonicalizeAuthEmail } from "../domain/auth-identity";
 
 export const trimString = (min: number, message: string) =>
   z.string({ required_error: message, invalid_type_error: message })
@@ -7,9 +8,8 @@ export const trimString = (min: number, message: string) =>
 
 export const strictEmail = z
   .string({ required_error: "Email requis", invalid_type_error: "Email invalide" })
-  .trim()
-  .toLowerCase()
-  .email("Email invalide");
+  .transform(canonicalizeAuthEmail)
+  .pipe(z.string().email("Email invalide"));
 
 export const strongPassword = z
   .string({ required_error: "Mot de passe requis", invalid_type_error: "Mot de passe invalide" })
