@@ -256,6 +256,56 @@ describe("#227 — idempotence de création : le double clic ne crée pas deux p
     ensemble: false,
   };
 
+  const replayBom = {
+    id: "44444444-4444-4444-8444-444444444444",
+    child_piece_id: "55555555-5555-4555-8555-555555555555",
+    rang: 10,
+    quantite: 2,
+    repere: "R1",
+    designation: "Sous-ensemble",
+  };
+  const replayOperation = {
+    id: "66666666-6666-4666-8666-666666666666",
+    phase: 10,
+    designation: "Usinage",
+    designation_2: null,
+    cf_id: null,
+    prix: 0,
+    coef: 1,
+    tp: 1,
+    tf_unit: 2,
+    qte: 1,
+    taux_horaire: 50,
+    temps_total: 3,
+    cout_mo: 150,
+  };
+  const replayAchat = {
+    id: "77777777-7777-4777-8777-777777777777",
+    phase: 10,
+    type_achat: "MATIERE",
+    famille_piece_id: null,
+    nom: "Aluminium",
+    fournisseur_id: null,
+    fournisseur_nom: null,
+    fournisseur_code: null,
+    quantite: 1,
+    quantite_brut_mm: null,
+    longueur_mm: null,
+    coefficient_chute: null,
+    quantite_pieces: null,
+    prix_par_quantite: null,
+    tarif: null,
+    prix: 10,
+    unite_prix: "kg",
+    pu_achat: 10,
+    tva_achat: 20,
+    total_achat_ht: 10,
+    total_achat_ttc: 12,
+    designation: "Aluminium",
+    designation_2: null,
+    designation_3: null,
+  };
+
   it("rejette une clé d'idempotence malformée", async () => {
     const res = await request(app)
       .post("/api/v1/pieces-techniques")
@@ -284,7 +334,16 @@ describe("#227 — idempotence de création : le double clic ne crée pas deux p
           rowCount: 1,
         });
       }
-      if (String(sql).includes("FROM pieces_techniques") || String(sql).includes("FROM public.pieces_techniques")) {
+      if (String(sql).includes("FROM pieces_techniques_nomenclature")) {
+        return Promise.resolve({ rows: [replayBom], rowCount: 1 });
+      }
+      if (String(sql).includes("FROM pieces_techniques_operations")) {
+        return Promise.resolve({ rows: [replayOperation], rowCount: 1 });
+      }
+      if (String(sql).includes("FROM pieces_techniques_achats")) {
+        return Promise.resolve({ rows: [replayAchat], rowCount: 1 });
+      }
+      if (String(sql).includes("FROM pieces_techniques p") || String(sql).includes("FROM public.pieces_techniques p")) {
         return Promise.resolve({
           rows: [
             {
@@ -327,6 +386,9 @@ describe("#227 — idempotence de création : le double clic ne crée pas deux p
 
     expect(res.status).toBe(200);
     expect(res.body.id).toBe(PIECE_ID);
+    expect(res.body.bom).toEqual([expect.objectContaining({ id: replayBom.id })]);
+    expect(res.body.operations).toEqual([expect.objectContaining({ id: replayOperation.id })]);
+    expect(res.body.achats).toEqual([expect.objectContaining({ id: replayAchat.id })]);
     // Aucune connexion transactionnelle : la pièce n'a PAS été recréée.
     expect(mocks.poolConnect).not.toHaveBeenCalled();
   });
@@ -349,6 +411,187 @@ describe("#227 — idempotence de création : le double clic ne crée pas deux p
       .send(body);
 
     expect(res.status).toBe(409);
+  });
+
+  it.each([
+    {
+      caseName: "rejoue en 200 deux créations concurrentes identiques",
+      secondBody: body,
+      expectedCode: null,
+    },
+    {
+      caseName: "refuse en 409 deux créations concurrentes de payloads différents",
+      secondBody: { ...body, designation: "Carter aluminium révisé" },
+      expectedCode: "IDEMPOTENCY_KEY_REUSED",
+    },
+  ])("#309 — $caseName", async ({ secondBody, expectedCode }) => {
+    const idempotencyKey = "wizard-309-concurrent-01";
+    let earlyReadCount = 0;
+    let releaseEarlyReads: (() => void) | undefined;
+    const bothEarlyReads = new Promise<void>((resolve) => {
+      releaseEarlyReads = resolve;
+    });
+    let stored:
+      | { key: string; requestHash: string; pieceId: string; core: Record<string, unknown> }
+      | null = null;
+    const transactionQueries: string[][] = [];
+    const releases: ReturnType<typeof vi.fn>[] = [];
+    let advisoryTail = Promise.resolve();
+
+    // Force les DEUX contrôleurs à observer « aucune clé » avant de laisser les
+    // transactions avancer : c'est exactement la fenêtre de course de la régression.
+    mocks.poolQuery.mockImplementation(async (sql: unknown) => {
+      const query = String(sql);
+      if (query.includes("piece_technique_create_idempotence")) {
+        earlyReadCount += 1;
+        if (earlyReadCount <= 2) {
+          if (earlyReadCount === 2) releaseEarlyReads?.();
+          await bothEarlyReads;
+          return { rows: [], rowCount: 0 };
+        }
+        return {
+          rows: stored
+            ? [{ piece_technique_id: stored.pieceId, request_hash: stored.requestHash }]
+            : [],
+          rowCount: stored ? 1 : 0,
+        };
+      }
+      if (query.includes("FROM pieces_techniques p") && stored) {
+        return { rows: [stored.core], rowCount: 1 };
+      }
+      if (query.includes("FROM pieces_techniques_nomenclature")) {
+        return { rows: [replayBom], rowCount: 1 };
+      }
+      if (query.includes("FROM pieces_techniques_operations")) {
+        return { rows: [replayOperation], rowCount: 1 };
+      }
+      if (query.includes("FROM pieces_techniques_achats")) {
+        return { rows: [replayAchat], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+
+    mocks.poolConnect.mockImplementation(async () => {
+      const queries: string[] = [];
+      transactionQueries.push(queries);
+      let localCore: Record<string, unknown> | null = null;
+      let releaseAdvisory: (() => void) | null = null;
+      const query = vi.fn(async (sql: unknown, params?: unknown[]) => {
+        const statement = String(sql);
+        queries.push(statement);
+        if (statement === "BEGIN") {
+          return { rows: [], rowCount: 0 };
+        }
+        if (statement.includes("pg_advisory_xact_lock")) {
+          const previous = advisoryTail;
+          advisoryTail = new Promise<void>((resolve) => {
+            releaseAdvisory = resolve;
+          });
+          await previous;
+          return { rows: [{ pg_advisory_xact_lock: null }], rowCount: 1 };
+        }
+        if (statement === "COMMIT" || statement === "ROLLBACK") {
+          const release = releaseAdvisory;
+          releaseAdvisory = null;
+          release?.();
+          return { rows: [], rowCount: 0 };
+        }
+        if (statement.includes("piece_technique_create_idempotence") && statement.includes("FOR UPDATE")) {
+          return {
+            rows: stored
+              ? [{ piece_technique_id: stored.pieceId, request_hash: stored.requestHash }]
+              : [],
+            rowCount: stored ? 1 : 0,
+          };
+        }
+        if (statement.includes("SELECT client_code FROM public.clients")) {
+          return { rows: [{ client_code: "045" }], rowCount: 1 };
+        }
+        if (statement.includes("INSERT INTO pieces_techniques (")) {
+          const pieceId = String(params?.[0]);
+          localCore = {
+            id: pieceId,
+            article_id: null,
+            root_piece_technique_id: pieceId,
+            parent_piece_technique_id: null,
+            version_number: 1,
+            created_at: "2026-08-04T00:00:00.000Z",
+            updated_at: "2026-08-04T00:00:00.000Z",
+            client_id: "045",
+            created_by: 42,
+            updated_by: 42,
+            famille_id: null,
+            name_piece: String(params?.[9]),
+            code_piece: "045-10233-000",
+            designation: String(params?.[11]),
+            designation_2: null,
+            prix_unitaire: 0,
+            statut: "DRAFT",
+            en_fabrication: 0,
+            cycle: null,
+            cycle_fabrication: null,
+            code_client: null,
+            client_name: "ACME",
+            ensemble: false,
+          };
+          return { rows: [localCore], rowCount: 1 };
+        }
+        if (statement.includes("INSERT INTO pieces_techniques_historique")) {
+          return {
+            rows: [{ id: "history-1", date_action: "2026-08-04T00:00:00.000Z" }],
+            rowCount: 1,
+          };
+        }
+        if (statement.includes("INSERT INTO public.piece_technique_create_idempotence")) {
+          if (stored) {
+            throw Object.assign(new Error("duplicate key"), {
+              code: "23505",
+              constraint: "piece_technique_create_idempotence_pkey",
+            });
+          }
+          stored = {
+            key: String(params?.[0]),
+            requestHash: String(params?.[1]),
+            pieceId: String(params?.[2]),
+            core: localCore ?? {},
+          };
+          return { rows: [], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      });
+      const release = vi.fn();
+      releases.push(release);
+      return { query, release };
+    });
+
+    const makeRequest = (requestBody: typeof body) =>
+      request(app)
+        .post("/api/v1/pieces-techniques")
+        .set("x-test-role", roleHeader("Directeur"))
+        .set("Idempotency-Key", idempotencyKey)
+        .send(requestBody);
+
+    const [first, second] = await Promise.all([makeRequest(body), makeRequest(secondBody)]);
+
+    expect([first.status, second.status].sort()).toEqual(expectedCode ? [201, 409] : [200, 201]);
+    if (expectedCode) {
+      const conflict = [first, second].find((response) => response.status === 409);
+      expect(conflict?.body.code).toBe(expectedCode);
+      expect(conflict?.body.code).not.toBe("CODE_ALREADY_EXISTS");
+    } else {
+      expect(first.body.id).toBe(second.body.id);
+      const replay = [first, second].find((response) => response.status === 200);
+      expect(replay?.body.bom).toEqual([expect.objectContaining({ id: replayBom.id })]);
+      expect(replay?.body.operations).toEqual([expect.objectContaining({ id: replayOperation.id })]);
+      expect(replay?.body.achats).toEqual([expect.objectContaining({ id: replayAchat.id })]);
+    }
+    expect(stored?.key).toBe(idempotencyKey);
+    const flattened = transactionQueries.flat();
+    expect(flattened.filter((query) => query === "COMMIT")).toHaveLength(1);
+    expect(flattened.filter((query) => query === "ROLLBACK").length).toBeGreaterThanOrEqual(1);
+    expect(flattened.filter((query) => query.includes("INSERT INTO erp_audit_logs"))).toHaveLength(1);
+    expect(releases).toHaveLength(2);
+    releases.forEach((release) => expect(release).toHaveBeenCalledTimes(1));
   });
 });
 
