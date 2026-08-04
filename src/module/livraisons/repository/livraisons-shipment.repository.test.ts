@@ -1,7 +1,10 @@
 import type { PoolClient } from "pg";
 import { describe, expect, it, vi } from "vitest";
 
-import { prepareLivraisonInTransaction } from "./livraisons-shipment.repository";
+import {
+  prepareLivraisonInTransaction,
+  releaseLivraisonReservationsInTransaction,
+} from "./livraisons-shipment.repository";
 import {
   attachActiveCommandeReservationsToLivraison,
   repoCreateLivraisonFromCommande,
@@ -179,6 +182,69 @@ describe("prepareLivraisonInTransaction", () => {
       query.mock.calls.some(([sql]) =>
         String(sql).includes("SET statut = 'READY'"))
     ).toBe(true);
+  });
+});
+
+describe("releaseLivraisonReservationsInTransaction", () => {
+  it("libère toutes les réservations ACTIVE liées au BL et décrémente les quantités agrégées", async () => {
+    const stockLevelId = "88888888-8888-4888-8888-888888888888";
+    const stockBatchId = "99999999-9999-4999-8999-999999999999";
+    const lotId = "22222222-2222-4222-8222-222222222222";
+    const reservationIds = [
+      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    ];
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes("FROM public.bon_livraison_ligne_allocations allocation")) {
+        return {
+          rows: reservationIds.map((id, index) => ({
+            id,
+            stock_level_id: stockLevelId,
+            stock_batch_id: stockBatchId,
+            qty_reserved: index === 0 ? 1.25 : 0.75,
+          })),
+        };
+      }
+      if (sql.includes("FROM public.stock_levels")) {
+        return { rows: [{ qty_total: 10, qty_reserved: 4, qty_depreciated: 0 }] };
+      }
+      if (sql.includes("FROM public.stock_batches")) {
+        return {
+          rows: [{
+            stock_level_id: stockLevelId,
+            lot_id: lotId,
+            qty_total: 10,
+            qty_reserved: 4,
+            qty_depreciated: 0,
+          }],
+        };
+      }
+      if (sql.includes("FROM public.lots")) return { rows: [{ lot_status: "LIBERE" }] };
+      return { rows: [], rowCount: 2 };
+    });
+    const client = { query } as unknown as PoolClient;
+
+    await expect(
+      releaseLivraisonReservationsInTransaction(
+        client,
+        "44444444-4444-4444-8444-444444444444",
+        7,
+        "BL annulé"
+      )
+    ).resolves.toBeUndefined();
+
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining("SET qty_reserved = qty_reserved - $2"),
+      [stockLevelId, 2, 7]
+    );
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE public.stock_batches SET qty_reserved = qty_reserved - $2"),
+      [stockBatchId, 2]
+    );
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining("SET status = 'RELEASED'"),
+      [reservationIds, "BL annulé", 7]
+    );
   });
 });
 
