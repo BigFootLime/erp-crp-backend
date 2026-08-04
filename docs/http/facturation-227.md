@@ -11,12 +11,23 @@ un même document ni les écritures d'audit.
 
 ## Facture
 
+Le contrat conserve la version HTTP `/api/v1`. Il n'existe pas de route
+workflow v2 implicite : `preview_version: 1` versionne le calcul serveur, les
+mutations portent `expected_version` pour le verrou optimiste et les réponses
+de commande exposent `row_version`. Cette livraison ne modifie donc ni les
+URLs ni les payloads déjà consommés par le frontend.
+
 - `GET /factures/workflow/eligible-sources`
 - `POST /factures/workflow/preview`
 - `POST /factures/workflow/drafts`
 - `POST /factures/workflow/:id/request-validation`
 - `POST /factures/workflow/:id/validate`
 - `POST /factures/workflow/:id/issue`
+
+`eligible-sources` retourne uniquement des lignes de BL `SHIPPED` ou
+`DELIVERED`. Une commande `INTERNE` est exclue de la liste, de l'aperçu et de
+l'émission, y compris pour un ancien brouillon. Les lignes incomplètes restent
+visibles avec des `blockers` typés ; elles ne peuvent pas produire de brouillon.
 
 L'aperçu reçoit le client, la devise, les lignes source BL, les quantités et
 l'échéancier. Pour une échéance unique, le montant absent est rempli par le

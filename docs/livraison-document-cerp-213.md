@@ -67,6 +67,57 @@ les deux chemins produisent **le même binaire** — vérifié par un test, pas 
 `pdf.service.ts` ne s'occupe plus que du versionnement, du stockage, de l'empreinte et du
 journal.
 
+### Disponibilité et génération sont deux opérations distinctes
+
+- `GET /livraisons/:id/pdf/availability` indique si une archive lisible existe, sans créer de
+  fichier ni de version. Une absence ordinaire renvoie `NOT_GENERATED` ; une archive référencée
+  mais absente ou invalide reste une erreur d'intégrité explicite.
+- `GET /livraisons/:id/pdf?version=N` est strictement en lecture : il sert uniquement une version
+  déjà archivée et ne régénère jamais silencieusement un document manquant.
+- `POST /livraisons/:id/pdf` est la seule opération de génération. Elle exige la capacité
+  `documents_manage` et une clé `Idempotency-Key`. Un verrou sur le BL sérialise les demandes
+  concurrentes ; la même intention rejouée rend la même version, une nouvelle intention crée la
+  version suivante. Ses archives `GENERATED_SIMPLE_BL_PDF` restent séparées des BL du pack
+  figé (`GENERATED_BL_PDF`), dont le cycle de version est autonome.
+
+Le même verrou charge le statut courant avant tout rejeu ou rendu. Une annulation qui obtient le
+verrou en premier interdit génération et régénération avec
+`LIVRAISON_CANCELLED_PDF_FORBIDDEN` (`409`). Une génération déjà verrouillée peut terminer avant
+l'annulation ; son archive devient alors une pièce historique lisible, mais aucun nouveau rendu
+ne peut être produit après le passage à `CANCELLED`.
+
+La disponibilité, la lecture d'une version exacte et le rejeu relisent les octets stockés et
+vérifient leur signature, leur taille et leur SHA-256 persistant. Une altération conservant la
+même taille et l'en-tête `%PDF-` est donc rejetée avec `LIVRAISON_PDF_INTEGRITY_ERROR`, au lieu
+d'être confondue avec une absence ordinaire. Le GET exact envoie directement le buffer ainsi
+validé : il ne rouvre jamais le chemin du fichier après le contrôle, ce qui ferme la fenêtre de
+substitution entre validation et réponse HTTP.
+
+Les réponses PDF et de disponibilité portent `Cache-Control: private, no-store` afin qu'un
+navigateur ou un proxy ne réutilise pas un état d'autorisation ou une version obsolète.
+
+### Commit PostgreSQL incertain
+
+Le fichier final est renommé avant le `COMMIT` qui archive ses métadonnées. Si PostgreSQL rend
+le commit durable mais que son accusé réseau est perdu, la connexion d'origine est considérée
+comme incertaine et n'est jamais « prouvée » par un `ROLLBACK`. Le service la détruit, prend une
+connexion fraîche et ouvre une transaction dédiée. Cette transaction attend la résolution du
+verrou du BL, recherche l'événement et le document, puis vérifie avant son propre `COMMIT` que
+livraison, auteur, empreinte d'`Idempotency-Key`, identifiant, version et SHA-256 concordent. Le
+SHA-256 attendu reste celui calculé en mémoire avant le commit original :
+
+- identité exacte `résultat attendu = événement = document` retrouvée, puis octets du fichier
+  conformes au SHA-256 attendu : le résultat est finalisé et le fichier reste ;
+- aucune métadonnée après la barrière de verrou : le commit n'a pas été durable et le fichier
+  orphelin est supprimé ;
+- connexion, recherche ou identité incohérente : réponse
+  `LIVRAISON_PDF_COMMIT_UNCERTAIN` (`503`), fichier conservé par sécurité et alerte structurée.
+
+Runbook opérateur pour le dernier cas : rejouer d'abord la même `Idempotency-Key`, vérifier
+l'événement `PDF_GENERATED` et `bon_livraison_documents.document_id`, puis comparer taille et
+SHA-256 du fichier. Ne jamais supprimer le fichier tant qu'une référence durable n'a pas été
+exclue après verrouillage du BL.
+
 ## 4. Ce qui ne doit jamais figurer sur ces documents
 
 | Fuite trouvée | Corrigé en |
@@ -108,6 +159,13 @@ Le texte est relu **dans les flux de contenu du PDF**, décompressés et décod�
 donc ce que le document affiche, pas ce que le code croit avoir écrit. C'est ce qui permet
 d'affirmer qu'aucun UUID n'y figure.
 
+`src/module/livraisons/services/pdf.service.test.ts` couvre en complément le brouillon vide,
+un BL complet, la régénération, le rejeu idempotent, l'archive manquante, la corruption SHA-256
+à taille identique, deux générations concurrentes et les deux ordres de verrou entre annulation
+et génération. Le contrôleur vérifie séparément que `GET` reste sans effet de bord et ne masque
+pas les erreurs d'autorisation ou de stockage, puis qu'un remplacement du fichier après sa
+validation ne peut pas substituer les octets servis.
+
 Suite complète : **2968 tests verts sur 2969**. L'échec restant
 (`src/__tests__/surface-finish-210.migration-guards.test.ts`) est **antérieur** à ce chantier —
 vérifié en remisant les modifications et en relançant sur `origin/dev` seul.
@@ -116,5 +174,5 @@ vérifié en remisant les modifications et en relançant sur `origin/dev` seul.
 
 - Aucune recette navigateur.
 - Aucun déploiement, aucune modification de production.
-- **Aucune migration de base** : ces documents ne changent pas de schéma, le contrat d'API non
-  plus.
+- **Aucune migration de base** : le contrat HTTP évolue, mais les tables existantes suffisent au
+  versionnement, à l'empreinte et au journal d'idempotence.

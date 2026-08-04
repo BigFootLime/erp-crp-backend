@@ -28,6 +28,13 @@ export const livraisonDocParamsSchema = z.object({
   docId: uuid,
 }).strict()
 
+export const livraisonPdfQuerySchema = z
+  .object({
+    version: z.coerce.number().int().positive().optional(),
+    download: z.union([z.string(), z.number(), z.boolean()]).optional(),
+  })
+  .strict()
+
 export const fromCommandeParamsSchema = z.object({
   commandeId: z.coerce.number().int().positive(),
 }).strict()
