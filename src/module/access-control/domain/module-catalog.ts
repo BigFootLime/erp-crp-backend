@@ -80,7 +80,7 @@ export const MODULE_CATALOG: readonly ModuleCatalogEntry[] = [
     label: "Reporting commercial",
     description: "Indicateurs commerciaux et exports gouvernés.",
     category: "Commerce",
-    api_prefixes: ["/reporting"],
+    api_prefixes: ["/reporting", "/margins"],
     nav_page_keys: ["reporting-commercial"],
     is_protected: false,
     sort_order: 70,
