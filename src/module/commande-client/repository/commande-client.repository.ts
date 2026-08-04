@@ -2816,7 +2816,20 @@ async function insertCommandeLignes(
       sourceDossierDevisId = bundle.source_dossier_devis_id;
 
       const officialPieceId = await ensureOfficialPieceFromPreparatory(client, bundle, options.commande_id_int);
-      resolved = await ensureOfficialArticleFromPreparatory(client, bundle, options.commande_id_int, officialPieceId);
+      const promoted = await ensureOfficialArticleFromPreparatory(
+        client,
+        bundle,
+        options.commande_id_int,
+        officialPieceId
+      );
+      // Une promotion ne vaut pas éligibilité Commande. Relire l'article officiel par le
+      // resolver canonique garantit le même prédicat et les mêmes erreurs structurées que
+      // pour une ligne non préparatoire (POST comme PATCH).
+      resolved = await resolveCommandeLineArticle(
+        client,
+        { ...l, article_id: promoted.article_id, code_piece: undefined },
+        lineIndex
+      );
     } else {
       resolved = await resolveCommandeLineArticle(client, l, lineIndex);
     }
