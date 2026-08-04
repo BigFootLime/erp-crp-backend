@@ -215,6 +215,7 @@ function installQueryRouter(scenario: Scenario = {}) {
         : one(scenario.existingRequirement ?? requirementRow());
     }
     if (/fn_next_issued_code_value/.test(sql)) return one({ v: "123" });
+    if (/FROM public\.units/.test(sql)) return one({ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", code: "u" });
     if (/INSERT INTO public\.articles\b/.test(sql)) return one({ id: ARTICLE_ID });
     if (/INSERT INTO erp_audit_logs/.test(sql)) {
       return one({ id: "audit-1", created_at: "2026-07-28T08:05:00.000Z" });
@@ -789,6 +790,12 @@ describe("#210 confirmation", () => {
       }
       if (/FROM public\.articles_traitement t/.test(sql)) return Promise.resolve({ rows: [], rowCount: 0 });
       if (/fn_next_issued_code_value/.test(sql)) return Promise.resolve({ rows: [{ v: "123" }], rowCount: 1 });
+      if (/FROM public\.units/.test(sql)) {
+        return Promise.resolve({
+          rows: [{ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", code: "u" }],
+          rowCount: 1,
+        });
+      }
       if (/INSERT INTO public\.articles\b/.test(sql)) return Promise.resolve({ rows: [{ id: ARTICLE_ID }], rowCount: 1 });
       if (/INSERT INTO erp_audit_logs/.test(sql)) {
         return Promise.resolve({ rows: [{ id: "a", created_at: "x" }], rowCount: 1 });

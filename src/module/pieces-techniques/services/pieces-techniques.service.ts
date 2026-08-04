@@ -1,4 +1,5 @@
 // src/module/pieces-techniques/services/pieces-techniques.service.ts
+import crypto from "node:crypto";
 import { HttpError } from "../../../utils/httpError";
 import type { PieceTechniqueStatut } from "../types/pieces-techniques.types";
 import type {
@@ -42,7 +43,9 @@ import {
   repoUpdatePieceTechnique,
   repoUpdatePieceTechniqueStatus,
   repoCreatePieceTechnique,
+  PIECE_TECHNIQUE_IDEMPOTENCY_CONSTRAINT,
   type AuditContext,
+  type RepoCreatePieceTechniqueResult,
 } from "../repository/pieces-techniques.repository";
 
 type UploadedDocument = Express.Multer.File;
@@ -96,11 +99,45 @@ export const getPieceTechniqueSVC = (id: string, includes: Set<string>) => repoG
 
 export const getPieceTechniqueFabricationTreeSVC = (id: string) => repoGetFabricationTree(id);
 
+/** Hash du DTO validé, commun au pré-contrôle HTTP et à la transaction de création. */
+export function pieceTechniqueCreateRequestHash(body: CreatePieceTechniqueBodyDTO): string {
+  return crypto.createHash("sha256").update(JSON.stringify(body)).digest("hex");
+}
+
+/**
+ * Avant #309, le contrôleur stockait le hash du DTO validé mais l'assistant d'import
+ * passait directement par le repository, qui hashait le DTO enrichi. Les deux formes
+ * restent acceptées pour que les clés déjà émises continuent à rejouer leur pièce.
+ */
+export function pieceTechniqueCreateCompatibleRequestHashes(body: CreatePieceTechniqueBodyDTO): string[] {
+  const statut = body.statut ?? "DRAFT";
+  const enriched = {
+    ...body,
+    statut,
+    en_fabrication: statut === "IN_FABRICATION",
+    operations: (body.operations ?? []).map((operation) => ({ ...operation, ...computeOperation(operation) })),
+    achats: (body.achats ?? []).map((achat) => ({ ...achat, ...computeAchat(achat) })),
+  };
+  return [
+    pieceTechniqueCreateRequestHash(body),
+    crypto.createHash("sha256").update(JSON.stringify(enriched)).digest("hex"),
+  ];
+}
+
 export async function createPieceTechniqueSVC(
   body: CreatePieceTechniqueBodyDTO,
   audit: AuditContext,
   idempotencyKey?: string | null
 ) {
+  return (await createPieceTechniqueWithReplaySVC(body, audit, idempotencyKey)).piece;
+}
+
+/** Variante HTTP : conserve l'information 201 (création) / 200 (rejeu). */
+export async function createPieceTechniqueWithReplaySVC(
+  body: CreatePieceTechniqueBodyDTO,
+  audit: AuditContext,
+  idempotencyKey?: string | null
+): Promise<RepoCreatePieceTechniqueResult> {
   const statut = body.statut ?? "DRAFT";
   const enFabrication = statut === "IN_FABRICATION";
 
@@ -123,13 +160,15 @@ export async function createPieceTechniqueSVC(
         achats,
       },
       audit,
-      idempotencyKey
+      idempotencyKey,
+      pieceTechniqueCreateRequestHash(body),
+      pieceTechniqueCreateCompatibleRequestHashes(body)
     );
   } catch (err: unknown) {
     // pg unique violation
-    const code = (err as { code?: unknown } | null)?.code;
-    const detail = (err as { detail?: unknown } | null)?.detail;
-    if (code === "23505") {
+    const pg = err as { code?: unknown; constraint?: unknown; detail?: unknown } | null;
+    if (pg?.code === "23505" && pg.constraint !== PIECE_TECHNIQUE_IDEMPOTENCY_CONSTRAINT) {
+      const detail = pg.detail;
       const msg = typeof detail === "string" && detail.includes("code_piece") ? "Code de pièce déjà utilisé" : "Conflit de contrainte";
       throw new HttpError(409, "CODE_ALREADY_EXISTS", msg);
     }

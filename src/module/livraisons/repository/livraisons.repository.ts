@@ -4,6 +4,7 @@ import crypto from "node:crypto"
 import type { PoolClient } from "pg"
 
 import pool from "../../../config/database"
+import { canonicalizeStockUnitCode } from "../../../shared/stock-unit"
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
 
@@ -186,7 +187,7 @@ async function reserveStockMovementNo(db: Queryable): Promise<string> {
   return stockMovementNoFromSeq(n)
 }
 
-async function resolveUnitIdForArticle(
+export async function resolveUnitIdForArticle(
   db: Queryable,
   articleId: string,
   preferredUnitCode: string | null | undefined
@@ -198,9 +199,12 @@ async function resolveUnitIdForArticle(
     const a = await db.query<{ unite: string | null }>(`SELECT unite FROM public.articles WHERE id = $1::uuid`, [articleId])
     code = a.rows[0]?.unite?.trim() ? a.rows[0].unite.trim() : null
   }
-  if (!code) code = "u"
+  code = canonicalizeStockUnitCode(code) ?? "u"
 
-  const u = await db.query<{ id: string }>(`SELECT id::text AS id FROM public.units WHERE code = $1`, [code])
+  const u = await db.query<{ id: string }>(
+    `SELECT id::text AS id FROM public.units WHERE lower(code::text) = lower($1) LIMIT 1`,
+    [code]
+  )
   const unitId = u.rows[0]?.id
   if (!unitId) {
     throw new HttpError(400, "UNKNOWN_UNIT", `Unknown unit code: ${code}`)
