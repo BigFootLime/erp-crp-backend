@@ -33,6 +33,7 @@ vi.mock("./bon-livraison-document", () => ({
 import {
   svcGenerateLivraisonPdf,
   svcGetLivraisonPdfAvailability,
+  svcReadLivraisonPdf,
 } from "./pdf.service"
 
 const BL_ID = "11111111-1111-4111-8111-111111111111"
@@ -248,6 +249,35 @@ describe("livraison PDF availability", () => {
       version: 3,
       generated_at: "2026-08-04T12:00:00.000Z",
     })
+  })
+
+  it("returns the exact validated bytes for a version-specific read", async () => {
+    await storePdf()
+    mocks.poolQuery.mockResolvedValue({
+      rows: [{
+        bon_livraison_id: BL_ID,
+        document_id: DOC_ID,
+        version: 3,
+        generated_at: "2026-08-04T12:00:00.000Z",
+        file_size_bytes: PDF_BYTES.byteLength,
+        checksum_sha256: PDF_CHECKSUM,
+      }],
+    })
+
+    const result = await svcReadLivraisonPdf(BL_ID, 3)
+
+    expect(result).toMatchObject({
+      available: true,
+      status: "AVAILABLE",
+      document_id: DOC_ID,
+      version: 3,
+      generated_at: "2026-08-04T12:00:00.000Z",
+    })
+    expect(result.bytes).toEqual(PDF_BYTES)
+    expect(mocks.poolQuery).toHaveBeenCalledWith(
+      expect.stringContaining("latest.checksum_sha256"),
+      [BL_ID, 3],
+    )
   })
 
   it("surfaces a missing archived file as an integrity error, not ordinary unavailability", async () => {

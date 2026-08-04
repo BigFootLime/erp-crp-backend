@@ -415,8 +415,8 @@ export const getLivraisonPdf: RequestHandler = async (req, res, next) => {
     const { id } = livraisonIdParamsSchema.parse(req.params)
     const query = livraisonPdfQuerySchema.parse(req.query)
     const download = coerceBool(query.download)
-    const availability = await pdfService.svcGetLivraisonPdfAvailability(id, query.version)
-    if (!availability.available) {
+    const archive = await pdfService.svcReadLivraisonPdf(id, query.version)
+    if (!archive.available) {
       throw new HttpError(
         404,
         "LIVRAISON_PDF_NOT_GENERATED",
@@ -424,13 +424,12 @@ export const getLivraisonPdf: RequestHandler = async (req, res, next) => {
       )
     }
 
-    const filePath = pdfService.svcGetPdfFilePath(availability.document_id)
-    const docName = (await pdfService.svcGetDocumentName(availability.document_id)) ?? `bon-livraison-${id}.pdf`
+    const docName = (await pdfService.svcGetDocumentName(archive.document_id)) ?? `bon-livraison-${id}.pdf`
     const disposition = download ? "attachment" : "inline"
     res.setHeader("Content-Type", "application/pdf")
     res.setHeader("Content-Disposition", `${disposition}; filename=\"${docName.replace(/\"/g, "")}\"`)
     res.setHeader("Cache-Control", "private, no-store, max-age=0")
-    res.sendFile(filePath)
+    res.send(archive.bytes)
   } catch (e) {
     next(e)
   }

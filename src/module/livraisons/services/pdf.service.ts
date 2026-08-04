@@ -31,6 +31,10 @@ type PdfDocumentRow = {
   checksum_sha256: string | null
 }
 
+type LivraisonPdfReadResult =
+  | (Extract<LivraisonPdfAvailability, { available: false }> & { bytes: null })
+  | (Extract<LivraisonPdfAvailability, { available: true }> & { bytes: Buffer })
+
 const generatedPdfPredicate = `
   (
     document.type = 'GENERATED_SIMPLE_BL_PDF'
@@ -103,7 +107,7 @@ async function assertStoredPdf(
   documentId: string,
   expectedSize: number | null,
   expectedChecksum: string | null
-): Promise<void> {
+): Promise<Buffer> {
   const filePath = svcGetPdfFilePath(documentId)
   try {
     const bytes = await fs.readFile(filePath)
@@ -135,6 +139,7 @@ async function assertStoredPdf(
         )
       }
     }
+    return bytes
   } catch (error) {
     if (error instanceof HttpError) throw error
     const code = typeof error === "object" && error !== null && "code" in error
@@ -151,10 +156,10 @@ async function assertStoredPdf(
   }
 }
 
-export async function svcGetLivraisonPdfAvailability(
+async function readLivraisonPdf(
   bonLivraisonId: string,
   version?: number
-): Promise<LivraisonPdfAvailability> {
+): Promise<LivraisonPdfReadResult> {
   const row = await queryPdfDocument(bonLivraisonId, version)
   if (!row) {
     throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
@@ -173,17 +178,53 @@ export async function svcGetLivraisonPdfAvailability(
       document_id: null,
       version: null,
       generated_at: null,
+      bytes: null,
     }
   }
 
-  await assertStoredPdf(row.document_id, row.file_size_bytes, row.checksum_sha256)
+  const bytes = await assertStoredPdf(
+    row.document_id,
+    row.file_size_bytes,
+    row.checksum_sha256
+  )
   return {
     available: true,
     status: "AVAILABLE",
     document_id: row.document_id,
     version: row.version,
     generated_at: row.generated_at,
+    bytes,
   }
+}
+
+export async function svcGetLivraisonPdfAvailability(
+  bonLivraisonId: string,
+  version?: number
+): Promise<LivraisonPdfAvailability> {
+  const result = await readLivraisonPdf(bonLivraisonId, version)
+  if (!result.available) {
+    return {
+      available: false,
+      status: result.status,
+      document_id: null,
+      version: null,
+      generated_at: null,
+    }
+  }
+  return {
+    available: true,
+    status: result.status,
+    document_id: result.document_id,
+    version: result.version,
+    generated_at: result.generated_at,
+  }
+}
+
+export async function svcReadLivraisonPdf(
+  bonLivraisonId: string,
+  version?: number
+): Promise<LivraisonPdfReadResult> {
+  return readLivraisonPdf(bonLivraisonId, version)
 }
 
 export function svcGetPdfFilePath(documentId: string): string {

@@ -89,7 +89,9 @@ ne peut être produit après le passage à `CANCELLED`.
 La disponibilité, la lecture d'une version exacte et le rejeu relisent les octets stockés et
 vérifient leur signature, leur taille et leur SHA-256 persistant. Une altération conservant la
 même taille et l'en-tête `%PDF-` est donc rejetée avec `LIVRAISON_PDF_INTEGRITY_ERROR`, au lieu
-d'être confondue avec une absence ordinaire.
+d'être confondue avec une absence ordinaire. Le GET exact envoie directement le buffer ainsi
+validé : il ne rouvre jamais le chemin du fichier après le contrôle, ce qui ferme la fenêtre de
+substitution entre validation et réponse HTTP.
 
 Les réponses PDF et de disponibilité portent `Cache-Control: private, no-store` afin qu'un
 navigateur ou un proxy ne réutilise pas un état d'autorisation ou une version obsolète.
@@ -139,7 +141,8 @@ d'affirmer qu'aucun UUID n'y figure.
 un BL complet, la régénération, le rejeu idempotent, l'archive manquante, la corruption SHA-256
 à taille identique, deux générations concurrentes et les deux ordres de verrou entre annulation
 et génération. Le contrôleur vérifie séparément que `GET` reste sans effet de bord et ne masque
-pas les erreurs d'autorisation ou de stockage.
+pas les erreurs d'autorisation ou de stockage, puis qu'un remplacement du fichier après sa
+validation ne peut pas substituer les octets servis.
 
 Suite complète : **2968 tests verts sur 2969**. L'échec restant
 (`src/__tests__/surface-finish-210.migration-guards.test.ts`) est **antérieur** à ce chantier —
