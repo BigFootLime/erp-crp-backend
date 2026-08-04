@@ -80,7 +80,7 @@ vi.mock("../module/auth/middlewares/auth.middleware", async (importOriginal) => 
 vi.mock("../module/access-control/repository/access-control.repository", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("../module/access-control/repository/access-control.repository")>();
-  return { ...actual, repoResolveAccessProfile: vi.fn() };
+  return { ...actual, repoAuthorizationEpoch: vi.fn(), repoResolveAccessProfile: vi.fn() };
 });
 
 import type { NextFunction, Request, Response } from "express";
@@ -159,6 +159,7 @@ beforeEach(() => {
   mocks.poolQuery.mockResolvedValue({ rows: [] });
   mocks.poolConnect.mockResolvedValue({ query: mocks.clientQuery, release: mocks.clientRelease });
   mocks.clientQuery.mockResolvedValue({ rows: [] });
+  repo.repoAuthorizationEpoch.mockResolvedValue(1n);
   repo.repoResolveAccessProfile.mockResolvedValue([profileRow({ module_key: "clients" })]);
 });
 

@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from "express"
-import { emitModuleRealtimeEvent } from "../../../shared/realtime/realtime.service"
+import { isRealtimeCommitUncertainError } from "../../../shared/realtime/realtime-outbox-transaction"
 import { HttpError } from "../../../utils/httpError"
 import { parseId } from "../../../utils/parseId"
 import { parseString } from "../../../utils/parseString"
@@ -74,6 +74,23 @@ function extractUploadedToolPaths(files: Request["files"]) {
 
   const uploadedPaths = [paths.esquisse, paths.plan, paths.image].filter((value): value is string => Boolean(value))
   return { paths, uploadedPaths }
+}
+
+async function cleanupUploadsAfterFailure(
+  error: unknown,
+  uploadedPaths: readonly (string | null | undefined)[],
+  operation: string
+) {
+  const paths = uploadedPaths.filter((value): value is string => Boolean(value))
+  if (isRealtimeCommitUncertainError(error)) {
+    console.error(JSON.stringify({
+      type: "outillage_upload_cleanup_deferred",
+      operation,
+      uploaded_file_count: paths.length,
+    }))
+    return
+  }
+  await Promise.allSettled(paths.map((value) => deleteStoredImageFile(value)))
 }
 
 function parseLimit(value: unknown, fallback: number, max: number) {
@@ -218,11 +235,9 @@ export const outilController = {
         user_id: user.id ?? null,
       })
 
-      await emitModuleRealtimeEvent("outillage", "outilCreated", { id_outil: result.id_outil })
-
       return res.status(201).json(result)
     } catch (error) {
-      await Promise.all(uploadedPaths.map((value) => deleteStoredImageFile(value)))
+      await cleanupUploadsAfterFailure(error, uploadedPaths, "outil.create")
 
       if (isPgUniqueViolation(error)) {
         return res.status(409).json({
@@ -248,11 +263,9 @@ export const outilController = {
         image: paths.image,
       })
 
-      await emitModuleRealtimeEvent("outillage", "outilUpdated", { id_outil: id })
-
       return res.status(200).json({ id_outil: id })
     } catch (error) {
-      await Promise.all(uploadedPaths.map((value) => deleteStoredImageFile(value)))
+      await cleanupUploadsAfterFailure(error, uploadedPaths, "outil.update")
 
       if (isPgUniqueViolation(error)) {
         return res.status(409).json({
@@ -269,8 +282,6 @@ export const outilController = {
     try {
       const id = parseId(req.params.id, "ID Outil")
       await outilService.deleteOutil(id)
-
-      await emitModuleRealtimeEvent("outillage", "outilDeleted", { id_outil: id })
 
       return res.status(200).json({ success: true })
     } catch (error) {
@@ -292,13 +303,6 @@ export const outilController = {
         source: "manual",
         note: payload.note ?? null,
         affaire_id: payload.affaire_id ?? null,
-      })
-
-      await emitModuleRealtimeEvent("outillage", "stockUpdated", {
-        id_outil: payload.id,
-        quantity: payload.quantity,
-        type: "sortie",
-        date: new Date().toISOString(),
       })
 
       return res.status(200).json({
@@ -326,13 +330,6 @@ export const outilController = {
         affaire_id: payload.affaire_id ?? null,
       })
 
-      await emitModuleRealtimeEvent("outillage", "stockUpdated", {
-        id_outil: payload.id,
-        quantity: payload.quantity,
-        type: "retour",
-        date: new Date().toISOString(),
-      })
-
       return res.status(200).json({
         success: true,
         message: `Retour outil ${payload.id} enregistre, quantite : ${payload.quantity}`,
@@ -355,13 +352,6 @@ export const outilController = {
         source: "manual",
         note: payload.note ?? null,
         affaire_id: payload.affaire_id ?? null,
-      })
-
-      await emitModuleRealtimeEvent("outillage", "stockUpdated", {
-        id_outil: payload.id_outil,
-        quantity: payload.quantite,
-        type: "entree",
-        date: new Date().toISOString(),
       })
 
       return res.status(200).json({
@@ -387,14 +377,6 @@ export const outilController = {
         source: "scan",
         note: payload.note ?? null,
         affaire_id: payload.affaire_id ?? null,
-      })
-
-      await emitModuleRealtimeEvent("outillage", "stockUpdated", {
-        id_outil: result.id_outil,
-        quantity: payload.quantity,
-        type: "sortie",
-        date: new Date().toISOString(),
-        source: "scan",
       })
 
       return res.status(200).json({
@@ -425,14 +407,6 @@ export const outilController = {
         affaire_id: payload.affaire_id ?? null,
       })
 
-      await emitModuleRealtimeEvent("outillage", "stockUpdated", {
-        id_outil: result.id_outil,
-        quantity: payload.quantity,
-        type: "entree",
-        date: new Date().toISOString(),
-        source: "scan",
-      })
-
       return res.status(200).json({
         success: true,
         ...result,
@@ -456,13 +430,6 @@ export const outilController = {
         reason: payload.reason ?? "inventaire",
         source: "manual",
         note: payload.note ?? null,
-      })
-
-      await emitModuleRealtimeEvent("outillage", "stockUpdated", {
-        id_outil: payload.id_outil,
-        quantity: payload.new_qty,
-        type: "inventaire",
-        date: new Date().toISOString(),
       })
 
       return res.status(200).json({ success: true, message: `Inventaire OK (outil ${payload.id_outil} => ${payload.new_qty})` })
@@ -491,7 +458,7 @@ export const outilSupportController = {
       const famille = await outilSupportService.createFamille(parsed.nom_famille, uploadedImage)
       return res.status(201).json(famille)
     } catch (error) {
-      await deleteStoredImageFile(uploadedImage)
+      await cleanupUploadsAfterFailure(error, [uploadedImage], "famille.create")
       next(error)
     }
   },
@@ -506,7 +473,7 @@ export const outilSupportController = {
       const famille = await outilSupportService.updateFamille(id, parsed.nom_famille, uploadedImage)
       return res.status(200).json(famille)
     } catch (error) {
-      await deleteStoredImageFile(uploadedImage)
+      await cleanupUploadsAfterFailure(error, [uploadedImage], "famille.update")
       next(error)
     }
   },
@@ -542,7 +509,7 @@ export const outilSupportController = {
       const id = await outilSupportService.createFabricant(parsed.nom_fabricant, uploadedLogo, parsed.id_fournisseurs)
       return res.status(201).json({ message: "Fabricant cree", id })
     } catch (error) {
-      await deleteStoredImageFile(uploadedLogo)
+      await cleanupUploadsAfterFailure(error, [uploadedLogo], "fabricant.create")
       next(error)
     }
   },
@@ -574,11 +541,9 @@ export const outilSupportController = {
         parsed.id_fournisseurs
       )
 
-      await emitModuleRealtimeEvent("outillage", "fabricantUpdated", { id })
-
       return res.status(200).json(fabricant)
     } catch (error) {
-      await deleteStoredImageFile(uploadedLogo)
+      await cleanupUploadsAfterFailure(error, [uploadedLogo], "fabricant.update")
       next(error)
     }
   },
@@ -598,7 +563,6 @@ export const outilSupportController = {
       requireUser(req)
       const parsed = createFournisseurSchema.parse(req.body)
       await outilSupportService.createFournisseur(parsed)
-      await emitModuleRealtimeEvent("outillage", "fournisseurAdded")
       return res.status(201).json({ message: "Fournisseur cree" })
     } catch (error) {
       next(error)
@@ -611,8 +575,6 @@ export const outilSupportController = {
       const id = parseId(req.params.id, "ID Fournisseur")
       const parsed = updateFournisseurSchema.parse(req.body)
       const fournisseur = await outilSupportService.updateFournisseur(id, parsed)
-
-      await emitModuleRealtimeEvent("outillage", "fournisseurUpdated", { id })
 
       return res.status(200).json(fournisseur)
     } catch (error) {
@@ -639,7 +601,7 @@ export const outilSupportController = {
       const geometrie = await outilSupportService.createGeometrie(parsed.nom_geometrie, parsed.id_famille, uploadedImage)
       return res.status(201).json(geometrie)
     } catch (error) {
-      await deleteStoredImageFile(uploadedImage)
+      await cleanupUploadsAfterFailure(error, [uploadedImage], "geometrie.create")
       next(error)
     }
   },
@@ -659,7 +621,7 @@ export const outilSupportController = {
       )
       return res.status(200).json(geometrie)
     } catch (error) {
-      await deleteStoredImageFile(uploadedImage)
+      await cleanupUploadsAfterFailure(error, [uploadedImage], "geometrie.update")
       next(error)
     }
   },
@@ -689,8 +651,6 @@ export const outilSupportController = {
       requireUser(req)
       const parsed = createRevetementSchema.parse(req.body)
       const id = await outilSupportService.createRevetement(parsed.nom, parsed.id_fabricant)
-
-      await emitModuleRealtimeEvent("outillage", "revetementAdded")
 
       return res.status(201).json({ message: "Revetement cree", id })
     } catch (error) {

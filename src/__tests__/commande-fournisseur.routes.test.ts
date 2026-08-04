@@ -24,6 +24,10 @@ vi.mock("../utils/checkNetworkDrive", () => ({
   checkNetworkDrive: vi.fn(() => Promise.resolve()),
 }));
 
+vi.mock("../module/access-control/middlewares/module-access-gate", () => ({
+  moduleAccessGate: (_req: unknown, _res: unknown, next: () => void) => next(),
+}));
+
 // Auth mock : rôle injecté via l'en-tête `x-test-role` (refus par défaut testé avec Employee).
 vi.mock("../module/auth/middlewares/auth.middleware", () => ({
   authenticateToken: (
@@ -40,6 +44,7 @@ vi.mock("../module/auth/middlewares/auth.middleware", () => ({
 }));
 
 import app from "../config/app";
+import { withRealtimeOutboxDbMock } from "./helpers/realtime-outbox-db-mock";
 
 const UUID = "3b9f2a44-6d3e-4f7a-9c2d-1e5b8a7c6d90";
 
@@ -95,7 +100,10 @@ beforeEach(() => {
   mocks.poolConnect.mockReset();
   mocks.clientQuery.mockReset();
   mocks.clientRelease.mockReset();
-  mocks.poolConnect.mockResolvedValue({ query: mocks.clientQuery, release: mocks.clientRelease });
+  mocks.poolConnect.mockResolvedValue({
+    query: withRealtimeOutboxDbMock(mocks.clientQuery),
+    release: mocks.clientRelease,
+  });
   mocks.poolQuery.mockImplementation(async (sql: unknown) => dispatch(sql));
   mocks.clientQuery.mockImplementation(async (sql: unknown) => dispatch(sql));
   state.header = {

@@ -5,7 +5,6 @@ import { asyncHandler } from "../../../utils/asyncHandler";
 import { isPathInsideDirectory, resolveCerpStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { getClientIp, parseDevice } from "../../../utils/requestMeta";
-import { emitEntityChanged } from "../../../shared/realtime/realtime.service";
 
 import type { AuditContext } from "../repository/qualite.repository";
 import {
@@ -84,37 +83,6 @@ function buildAuditContext(req: Request): AuditContext {
     page_key: pageKey,
     client_session_id: clientSessionId,
   };
-}
-
-function emitNcChanged(_req: Request, params: { ncId: string; action: "created" | "updated" | "deleted" | "status_changed" }) {
-  const ncId = params.ncId;
-  emitEntityChanged({
-    entityType: "NCR",
-    entityId: ncId,
-    action: params.action,
-    module: "qualite",
-    at: new Date().toISOString(),
-    invalidateKeys: [
-      "qualite:non-conformities",
-      "qualite:kpis",
-      "qualite:dashboard",
-      "qualite:controls",
-      `qualite:non-conformity:${ncId}`,
-      `qualite:non-conformity:${ncId}:dispositions`,
-    ],
-  });
-}
-
-function emitCapaChanged(_req: Request, params: { actionId: string; action: "created" | "updated" | "deleted" | "status_changed" }) {
-  const actionId = params.actionId;
-  emitEntityChanged({
-    entityType: "CAPA",
-    entityId: actionId,
-    action: params.action,
-    module: "qualite",
-    at: new Date().toISOString(),
-    invalidateKeys: ["qualite:actions", `qualite:action:${actionId}`],
-  });
 }
 
 function isMulterFile(value: unknown): value is Express.Multer.File {
@@ -216,7 +184,6 @@ export const createNonConformity = asyncHandler(async (req, res) => {
   const audit = buildAuditContext(req);
   const body = createNonConformitySchema.parse({ body: req.body }).body;
   const out = await svcCreateNonConformity({ body, audit });
-  emitNcChanged(req, { ncId: out.id, action: "created" });
   res.status(201).json(out);
 });
 
@@ -229,7 +196,6 @@ export const patchNonConformity = asyncHandler(async (req, res) => {
     res.status(404).json({ error: "Not found" });
     return;
   }
-  emitNcChanged(req, { ncId: id, action: "updated" });
   res.json(out);
 });
 
@@ -242,7 +208,6 @@ export const updateNonConformityStatus = asyncHandler(async (req, res) => {
     res.status(404).json({ error: "Not found" });
     return;
   }
-  emitNcChanged(req, { ncId: id, action: "status_changed" });
   res.json(out);
 });
 
@@ -257,7 +222,6 @@ export const createNonConformityDisposition = asyncHandler(async (req, res) => {
   const { id } = nonConformityIdParamSchema.parse({ params: req.params }).params;
   const body = createNonConformityDispositionSchema.parse({ body: req.body }).body;
   const out = await svcCreateNonConformityDisposition({ id, body, audit });
-  emitNcChanged(req, { ncId: id, action: "updated" });
   res.status(201).json(out);
 });
 
@@ -282,7 +246,6 @@ export const createAction = asyncHandler(async (req, res) => {
   const audit = buildAuditContext(req);
   const body = createActionSchema.parse({ body: req.body }).body;
   const out = await svcCreateAction({ body, audit });
-  emitCapaChanged(req, { actionId: out.id, action: "created" });
   res.status(201).json(out);
 });
 
@@ -295,7 +258,6 @@ export const patchAction = asyncHandler(async (req, res) => {
     res.status(404).json({ error: "Not found" });
     return;
   }
-  emitCapaChanged(req, { actionId: id, action: "updated" });
   res.json(out);
 });
 
@@ -378,7 +340,6 @@ export const attachNonConformityDocuments = asyncHandler(async (req, res) => {
     documents: files,
     audit,
   });
-  emitNcChanged(req, { ncId: id, action: "updated" });
   res.status(201).json(out);
 });
 
@@ -390,7 +351,6 @@ export const removeNonConformityDocument = asyncHandler(async (req, res) => {
     res.status(404).json({ error: "Not found" });
     return;
   }
-  emitNcChanged(req, { ncId: id, action: "updated" });
   res.status(204).send();
 });
 

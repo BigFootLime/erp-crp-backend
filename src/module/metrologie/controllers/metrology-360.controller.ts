@@ -12,7 +12,6 @@ import { asyncHandler } from "../../../utils/asyncHandler";
 import { isPathInsideDirectory, resolveCerpStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { getClientIp, parseDevice } from "../../../utils/requestMeta";
-import { emitEntityChanged } from "../../../shared/realtime/realtime.service";
 
 import type { MetrologyActor } from "../repository/metrology-shared.repository";
 import {
@@ -136,26 +135,6 @@ function notFound(entity: string): never {
   throw new HttpError(404, "NOT_FOUND", `${entity} introuvable.`);
 }
 
-function emitChanged(
-  _req: Request,
-  params: { equipementId: string; action: "created" | "updated" | "deleted" | "status_changed" }
-) {
-  emitEntityChanged({
-    entityType: "METROLOGIE_EQUIPEMENT",
-    entityId: params.equipementId,
-    action: params.action,
-    module: "metrologie",
-    at: new Date().toISOString(),
-    invalidateKeys: [
-      "metrologie:equipements",
-      "metrologie:kpis",
-      "metrologie:alerts",
-      "metrologie:center",
-      `metrologie:equipement:${params.equipementId}`,
-    ],
-  });
-}
-
 function firstFile(req: Request): Express.Multer.File | null {
   const single = (req as Request & { file?: Express.Multer.File }).file;
   if (single) return single;
@@ -226,7 +205,6 @@ export const createEquipment: RequestHandler = asyncHandler(async (req, res) => 
   const actor = buildActor(req);
   const { body } = parseOrThrow(createEquipmentSchema, { body: req.body });
   const out = await svcCreateEquipment({ body, actor, idempotencyKey: idempotencyKey(req) });
-  emitChanged(req, { equipementId: out.equipement.id, action: "created" });
   res.status(201).json(out);
 });
 
@@ -237,7 +215,6 @@ export const updateEquipment: RequestHandler = asyncHandler(async (req, res) => 
     { params: req.params, body: req.body }
   );
   const out = await svcUpdateEquipment({ id: params.id, body, actor });
-  emitChanged(req, { equipementId: params.id, action: "updated" });
   res.json(out);
 });
 
@@ -253,7 +230,6 @@ export const transitionEquipment: RequestHandler = asyncHandler(async (req, res)
     actor,
     idempotencyKey: idempotencyKey(req),
   });
-  emitChanged(req, { equipementId: params.id, action: "status_changed" });
   res.json(out);
 });
 
@@ -269,7 +245,6 @@ export const quarantineEquipment: RequestHandler = asyncHandler(async (req, res)
     actor,
     idempotencyKey: idempotencyKey(req),
   });
-  emitChanged(req, { equipementId: params.id, action: "status_changed" });
   res.json(out);
 });
 
@@ -333,7 +308,6 @@ export const transitionPlan: RequestHandler = asyncHandler(async (req, res) => {
     actor,
     idempotencyKey: idempotencyKey(req),
   });
-  emitChanged(req, { equipementId: params.id, action: "status_changed" });
   res.json(out);
 });
 
@@ -371,7 +345,6 @@ export const createExecution: RequestHandler = asyncHandler(async (req, res) => 
     actor,
     idempotencyKey: idempotencyKey(req),
   });
-  emitChanged(req, { equipementId: params.id, action: "updated" });
   res.status(201).json(out);
 });
 
@@ -407,7 +380,6 @@ export const validateExecution: RequestHandler = asyncHandler(async (req, res) =
     actor,
     idempotencyKey: idempotencyKey(req),
   });
-  emitChanged(req, { equipementId: out.execution.equipement_id, action: "status_changed" });
   res.json(out);
 });
 
@@ -443,7 +415,6 @@ export const uploadCertificate: RequestHandler = asyncHandler(async (req, res) =
     actor,
     idempotencyKey: idempotencyKey(req),
   });
-  emitChanged(req, { equipementId: params.id, action: "updated" });
   res.status(201).json(out);
 });
 
@@ -460,7 +431,6 @@ export const cancelCertificate: RequestHandler = asyncHandler(async (req, res) =
     actor,
     idempotencyKey: idempotencyKey(req),
   });
-  emitChanged(req, { equipementId: params.id, action: "updated" });
   res.json(out);
 });
 

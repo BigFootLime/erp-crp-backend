@@ -5,7 +5,6 @@ import { asyncHandler } from "../../../utils/asyncHandler";
 import { isPathInsideDirectory, resolveCerpStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { getClientIp, parseDevice } from "../../../utils/requestMeta";
-import { emitEntityChanged } from "../../../shared/realtime/realtime.service";
 
 import type { AuditContext } from "../repository/metrologie.repository";
 import {
@@ -64,23 +63,6 @@ function buildAuditContext(req: Request): AuditContext {
   };
 }
 
-function emitEquipementChanged(_req: Request, params: { equipementId: string; action: "created" | "updated" | "deleted" | "status_changed" }) {
-  const equipementId = params.equipementId;
-  emitEntityChanged({
-    entityType: "METROLOGIE_EQUIPEMENT",
-    entityId: equipementId,
-    action: params.action,
-    module: "metrologie",
-    at: new Date().toISOString(),
-    invalidateKeys: [
-      "metrologie:equipements",
-      "metrologie:kpis",
-      "metrologie:alerts",
-      `metrologie:equipement:${equipementId}`,
-    ],
-  });
-}
-
 function isMulterFile(value: unknown): value is Express.Multer.File {
   if (typeof value !== "object" || value === null) return false;
   const v = value as { path?: unknown; originalname?: unknown; mimetype?: unknown; size?: unknown };
@@ -128,7 +110,6 @@ export const createEquipement: RequestHandler = asyncHandler(async (req, res) =>
   const audit = buildAuditContext(req);
   const body = createEquipementSchema.parse({ body: req.body }).body;
   const out = await svcCreateEquipement(body, audit);
-  emitEquipementChanged(req, { equipementId: out.equipement.id, action: "created" });
   res.status(201).json(out);
 });
 
@@ -141,7 +122,6 @@ export const patchEquipement: RequestHandler = asyncHandler(async (req, res) => 
     res.status(404).json({ error: "Not found" });
     return;
   }
-  emitEquipementChanged(req, { equipementId: id, action: "updated" });
   res.json(out);
 });
 
@@ -153,7 +133,6 @@ export const deleteEquipement: RequestHandler = asyncHandler(async (req, res) =>
     res.status(404).json({ error: "Not found" });
     return;
   }
-  emitEquipementChanged(req, { equipementId: id, action: "deleted" });
   res.status(204).send();
 });
 
@@ -166,7 +145,6 @@ export const upsertPlan: RequestHandler = asyncHandler(async (req, res) => {
     res.status(404).json({ error: "Not found" });
     return;
   }
-  emitEquipementChanged(req, { equipementId: id, action: "status_changed" });
   res.json(out);
 });
 
@@ -190,7 +168,6 @@ export const attachCertificats: RequestHandler = asyncHandler(async (req, res) =
     res.status(404).json({ error: "Not found" });
     return;
   }
-  emitEquipementChanged(req, { equipementId: id, action: "updated" });
   res.status(201).json(out);
 });
 
@@ -206,7 +183,6 @@ export const removeCertificat: RequestHandler = asyncHandler(async (req, res) =>
     res.status(404).json({ error: "Not found" });
     return;
   }
-  emitEquipementChanged(req, { equipementId: id, action: "updated" });
   res.status(204).send();
 });
 

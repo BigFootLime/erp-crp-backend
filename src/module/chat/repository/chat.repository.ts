@@ -1,9 +1,40 @@
 import type { PoolClient } from "pg";
 import pool from "../../../config/database";
+import {
+  enqueueChatConversationRead,
+  enqueueChatConversationUpsert,
+  enqueueChatMessageCreated,
+} from "../../../shared/realtime/realtime-outbox.service";
+import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
 
 import type { ChatConversation, ChatDirectConversation, ChatGroupConversation, ChatMessage, ChatUser } from "../types/chat.types";
 
 type DbQueryer = Pick<PoolClient, "query">;
+const CHAT_TRANSACTION_NOOP = Symbol("CHAT_TRANSACTION_NOOP");
+
+async function enqueueGroupConversationUpserts(params: {
+  tx: DbQueryer;
+  conversationId: string;
+  groupName: string | null;
+  userIds: readonly number[];
+  mutationKey: string;
+}): Promise<void> {
+  const userIds = [...new Set(params.userIds)].sort((left, right) => left - right);
+  for (const userId of userIds) {
+    await enqueueChatConversationUpsert(
+      params.tx,
+      userId,
+      {
+        conversation_id: params.conversationId,
+        type: "group",
+        group_name: params.groupName,
+      },
+      {
+        deduplicationKey: `chat:conversation:${params.conversationId}:${params.mutationKey}:recipient:${userId}`,
+      }
+    );
+  }
+}
 
 type ChatUserRow = {
   id: number;
@@ -381,65 +412,181 @@ export async function repoUpdateGroupConversationName(params: {
   conversation_id: string;
   name: string;
 }): Promise<boolean> {
-  const res = await pool.query<{ ok: number }>(
-    `
-      UPDATE public.chat_conversations
-      SET
-        group_name = $2::text,
-        updated_at = now()
-      WHERE id = $1::uuid
-        AND type = 'group'
-      RETURNING 1 AS ok
-    `,
-    [params.conversation_id, params.name]
-  );
-  return Boolean(res.rows[0]?.ok);
+  const client = await pool.connect();
+  try {
+    return await withRealtimeOutboxTransaction(client, async (tx) => {
+    const res = await tx.query<{ updated_at: string }>(
+      `
+        UPDATE public.chat_conversations
+        SET
+          group_name = $2::text,
+          updated_at = clock_timestamp()
+        WHERE id = $1::uuid
+          AND type = 'group'
+        RETURNING updated_at::text AS updated_at
+      `,
+      [params.conversation_id, params.name]
+    );
+    const updatedAt = res.rows[0]?.updated_at;
+    if (!updatedAt) throw CHAT_TRANSACTION_NOOP;
+    const participants = await tx.query<{ user_id: number }>(
+      `SELECT user_id::int AS user_id
+         FROM public.chat_conversation_participants
+        WHERE conversation_id = $1::uuid
+        ORDER BY user_id`,
+      [params.conversation_id]
+    );
+    await enqueueGroupConversationUpserts({
+      tx,
+      conversationId: params.conversation_id,
+      groupName: params.name,
+      userIds: participants.rows.map((row) => row.user_id),
+      mutationKey: `renamed:${updatedAt}`,
+    });
+    return true;
+    });
+  } catch (error) {
+    if (error === CHAT_TRANSACTION_NOOP) return false;
+    throw error;
+  }
 }
 
 export async function repoAddGroupConversationMembers(params: {
   conversation_id: string;
   user_ids: number[];
 }): Promise<void> {
-  await pool.query(
-    `
-      INSERT INTO public.chat_conversation_participants (conversation_id, user_id, joined_at)
-      SELECT $1::uuid, u::int, now()
-      FROM unnest($2::int[]) AS u
-      ON CONFLICT (conversation_id, user_id) DO NOTHING
-    `,
-    [params.conversation_id, params.user_ids]
-  );
+  const client = await pool.connect();
+  await withRealtimeOutboxTransaction(client, async (tx) => {
+    const group = await tx.query<{ group_name: string | null }>(
+      `SELECT group_name
+         FROM public.chat_conversations
+        WHERE id = $1::uuid AND type = 'group'
+        FOR UPDATE`,
+      [params.conversation_id]
+    );
+    const inserted = await tx.query<{ user_id: number; joined_at: string }>(
+      `
+        INSERT INTO public.chat_conversation_participants (conversation_id, user_id, joined_at)
+        SELECT $1::uuid, u::int, clock_timestamp()
+        FROM unnest($2::int[]) AS u
+        ON CONFLICT (conversation_id, user_id) DO NOTHING
+        RETURNING user_id::int AS user_id, joined_at::text AS joined_at
+      `,
+      [params.conversation_id, params.user_ids]
+    );
+    if (inserted.rows.length > 0) {
+      const participants = await tx.query<{ user_id: number }>(
+        `SELECT user_id::int AS user_id
+           FROM public.chat_conversation_participants
+          WHERE conversation_id = $1::uuid
+          ORDER BY user_id`,
+        [params.conversation_id]
+      );
+      const added = inserted.rows
+        .map((row) => `${row.user_id}:${row.joined_at}`)
+        .sort((left, right) => left.localeCompare(right));
+      await enqueueGroupConversationUpserts({
+        tx,
+        conversationId: params.conversation_id,
+        groupName: group.rows[0]?.group_name ?? null,
+        userIds: participants.rows.map((row) => row.user_id),
+        mutationKey: `members-added:${added.join(",")}`,
+      });
+    }
+  });
 }
 
 export async function repoRemoveGroupConversationMember(params: {
   conversation_id: string;
   user_id: number;
 }): Promise<boolean> {
-  const res = await pool.query<{ ok: number }>(
-    `
-      DELETE FROM public.chat_conversation_participants
-      WHERE conversation_id = $1::uuid
-        AND user_id = $2::int
-      RETURNING 1 AS ok
-    `,
-    [params.conversation_id, params.user_id]
-  );
-  return Boolean(res.rows[0]?.ok);
+  const client = await pool.connect();
+  try {
+    return await withRealtimeOutboxTransaction(client, async (tx) => {
+    const group = await tx.query<{ group_name: string | null }>(
+      `SELECT group_name
+         FROM public.chat_conversations
+        WHERE id = $1::uuid AND type = 'group'
+        FOR UPDATE`,
+      [params.conversation_id]
+    );
+    const removed = await tx.query<{ joined_at: string }>(
+      `
+        DELETE FROM public.chat_conversation_participants
+        WHERE conversation_id = $1::uuid
+          AND user_id = $2::int
+        RETURNING joined_at::text AS joined_at
+      `,
+      [params.conversation_id, params.user_id]
+    );
+    const joinedAt = removed.rows[0]?.joined_at;
+    if (!joinedAt) throw CHAT_TRANSACTION_NOOP;
+    const participants = await tx.query<{ user_id: number }>(
+      `SELECT user_id::int AS user_id
+         FROM public.chat_conversation_participants
+        WHERE conversation_id = $1::uuid
+        ORDER BY user_id`,
+      [params.conversation_id]
+    );
+    await enqueueGroupConversationUpserts({
+      tx,
+      conversationId: params.conversation_id,
+      groupName: group.rows[0]?.group_name ?? null,
+      userIds: [...participants.rows.map((row) => row.user_id), params.user_id],
+      mutationKey: `member-removed:${params.user_id}:${joinedAt}`,
+    });
+    return true;
+    });
+  } catch (error) {
+    if (error === CHAT_TRANSACTION_NOOP) return false;
+    throw error;
+  }
 }
 
 export async function repoDeleteGroupConversation(params: {
   conversation_id: string;
 }): Promise<boolean> {
-  const res = await pool.query<{ ok: number }>(
-    `
-      DELETE FROM public.chat_conversations
-      WHERE id = $1::uuid
-        AND type = 'group'
-      RETURNING 1 AS ok
-    `,
-    [params.conversation_id]
-  );
-  return Boolean(res.rows[0]?.ok);
+  const client = await pool.connect();
+  try {
+    return await withRealtimeOutboxTransaction(client, async (tx) => {
+    const group = await tx.query<{ group_name: string | null }>(
+      `SELECT group_name
+         FROM public.chat_conversations
+        WHERE id = $1::uuid AND type = 'group'
+        FOR UPDATE`,
+      [params.conversation_id]
+    );
+    if (!group.rows[0]) throw CHAT_TRANSACTION_NOOP;
+    const participants = await tx.query<{ user_id: number }>(
+      `SELECT user_id::int AS user_id
+         FROM public.chat_conversation_participants
+        WHERE conversation_id = $1::uuid
+        ORDER BY user_id`,
+      [params.conversation_id]
+    );
+    const removed = await tx.query<{ ok: number }>(
+      `
+        DELETE FROM public.chat_conversations
+        WHERE id = $1::uuid
+          AND type = 'group'
+        RETURNING 1 AS ok
+      `,
+      [params.conversation_id]
+    );
+    if (!removed.rows[0]?.ok) throw new Error("CHAT_GROUP_DELETE_LOST");
+    await enqueueGroupConversationUpserts({
+      tx,
+      conversationId: params.conversation_id,
+      groupName: group.rows[0].group_name,
+      userIds: participants.rows.map((row) => row.user_id),
+      mutationKey: "deleted",
+    });
+    return true;
+    });
+  } catch (error) {
+    if (error === CHAT_TRANSACTION_NOOP) return false;
+    throw error;
+  }
 }
 
 export async function repoGetOrCreateDirectConversation(params: { user_id: number; other_user_id: number }): Promise<string> {
@@ -447,10 +594,8 @@ export async function repoGetOrCreateDirectConversation(params: { user_id: numbe
   const high = Math.max(params.user_id, params.other_user_id);
 
   const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-
-    const convRes = await client.query<{ id: string }>(
+  return withRealtimeOutboxTransaction(client, async (tx) => {
+    const convRes = await tx.query<{ id: string }>(
       `
         INSERT INTO public.chat_conversations (
           type,
@@ -470,7 +615,7 @@ export async function repoGetOrCreateDirectConversation(params: { user_id: numbe
     const conversationId = convRes.rows[0]?.id;
     if (!conversationId) throw new Error("Failed to create conversation");
 
-    await client.query(
+    await tx.query(
       `
         INSERT INTO public.chat_conversation_participants (conversation_id, user_id, joined_at)
         VALUES
@@ -481,18 +626,8 @@ export async function repoGetOrCreateDirectConversation(params: { user_id: numbe
       [conversationId, params.user_id, params.other_user_id]
     );
 
-    await client.query("COMMIT");
     return conversationId;
-  } catch (err) {
-    try {
-      await client.query("ROLLBACK");
-    } catch {
-      // ignore
-    }
-    throw err;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function repoCreateGroupConversation(params: {
@@ -501,10 +636,8 @@ export async function repoCreateGroupConversation(params: {
   participant_user_ids: number[];
 }): Promise<{ conversation_id: string; participant_user_ids: number[] }> {
   const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-
-    const convRes = await client.query<{ id: string }>(
+  return withRealtimeOutboxTransaction(client, async (tx) => {
+    const convRes = await tx.query<{ id: string }>(
       `
         INSERT INTO public.chat_conversations (
           type,
@@ -522,7 +655,7 @@ export async function repoCreateGroupConversation(params: {
     const conversationId = convRes.rows[0]?.id;
     if (!conversationId) throw new Error("Failed to create group conversation");
 
-    await client.query(
+    await tx.query(
       `
         INSERT INTO public.chat_conversation_participants (conversation_id, user_id, joined_at)
         SELECT $1::uuid, u::int, now()
@@ -532,18 +665,15 @@ export async function repoCreateGroupConversation(params: {
       [conversationId, params.participant_user_ids]
     );
 
-    await client.query("COMMIT");
+    await enqueueGroupConversationUpserts({
+      tx,
+      conversationId,
+      groupName: params.group_name,
+      userIds: params.participant_user_ids,
+      mutationKey: "created",
+    });
     return { conversation_id: conversationId, participant_user_ids: params.participant_user_ids };
-  } catch (err) {
-    try {
-      await client.query("ROLLBACK");
-    } catch {
-      // ignore
-    }
-    throw err;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 type ChatMessageRow = {
@@ -663,9 +793,8 @@ export async function repoSendChatMessage(params: {
 > {
   const client = await pool.connect();
   try {
-    await client.query("BEGIN");
-
-    const memberRes = await client.query<{ ok: number }>(
+    return await withRealtimeOutboxTransaction(client, async (tx) => {
+    const memberRes = await tx.query<{ ok: number }>(
       `
         SELECT 1 AS ok
         FROM public.chat_conversation_participants
@@ -676,12 +805,9 @@ export async function repoSendChatMessage(params: {
       [params.conversation_id, params.sender_user_id]
     );
 
-    if (!memberRes.rows[0]?.ok) {
-      await client.query("ROLLBACK");
-      return null;
-    }
+    if (!memberRes.rows[0]?.ok) throw CHAT_TRANSACTION_NOOP;
 
-    const msgRes = await client.query<ChatMessageRow>(
+    const msgRes = await tx.query<ChatMessageRow>(
       `
         INSERT INTO public.chat_messages (
           conversation_id,
@@ -706,7 +832,7 @@ export async function repoSendChatMessage(params: {
     const msgRow = msgRes.rows[0];
     if (!msgRow) throw new Error("Failed to insert message");
 
-    await client.query(
+    await tx.query(
       `
         UPDATE public.chat_conversations
         SET
@@ -717,7 +843,7 @@ export async function repoSendChatMessage(params: {
       [params.conversation_id, msgRow.created_at]
     );
 
-    const partsRes = await client.query<{ user_id: number }>(
+    const partsRes = await tx.query<{ user_id: number }>(
       `
         SELECT user_id::int AS user_id
         FROM public.chat_conversation_participants
@@ -727,7 +853,7 @@ export async function repoSendChatMessage(params: {
       [params.conversation_id]
     );
 
-    const senderRes = await client.query<ChatUserRow>(
+    const senderRes = await tx.query<ChatUserRow>(
       `
         SELECT
           id::int AS id,
@@ -748,28 +874,42 @@ export async function repoSendChatMessage(params: {
     const senderRow = senderRes.rows[0];
     if (!senderRow) throw new Error("Sender not found");
 
-    await client.query("COMMIT");
-
     const sender = mapUser(senderRow);
+    const message = mapMessage(msgRow, {
+      id: sender.id,
+      username: sender.username,
+      name: sender.name,
+      surname: sender.surname,
+    });
+    const { sender: _embeddedSender, ...realtimeMessage } = message;
+    const participantUserIds = partsRes.rows.map((row) => row.user_id);
+    for (const userId of participantUserIds) {
+      await enqueueChatMessageCreated(
+        tx,
+        userId,
+        {
+          conversation_id: message.conversation_id,
+          message: realtimeMessage,
+          sender: {
+            id: sender.id,
+            username: sender.username,
+            name: sender.name,
+            surname: sender.surname,
+          },
+        },
+        { deduplicationKey: `chat:message:${message.id}:recipient:${userId}` }
+      );
+    }
+
     return {
-      message: mapMessage(msgRow, {
-        id: sender.id,
-        username: sender.username,
-        name: sender.name,
-        surname: sender.surname,
-      }),
-      participant_user_ids: partsRes.rows.map((r) => r.user_id),
+      message,
+      participant_user_ids: participantUserIds,
       sender,
     };
+    });
   } catch (err) {
-    try {
-      await client.query("ROLLBACK");
-    } catch {
-      // ignore
-    }
+    if (err === CHAT_TRANSACTION_NOOP) return null;
     throw err;
-  } finally {
-    client.release();
   }
 }
 
@@ -777,19 +917,36 @@ export async function repoMarkConversationRead(params: {
   user_id: number;
   conversation_id: string;
 }): Promise<{ read_at: string } | null> {
-  const res = await pool.query<{ read_at: string }>(
-    `
-      UPDATE public.chat_conversation_participants
-      SET last_read_at = now()
-      WHERE conversation_id = $1::uuid
-        AND user_id = $2::int
-      RETURNING last_read_at::text AS read_at
-    `,
-    [params.conversation_id, params.user_id]
-  );
+  const client = await pool.connect();
+  try {
+    return await withRealtimeOutboxTransaction(client, async (tx) => {
+    const res = await tx.query<{ read_at: string }>(
+      `
+        UPDATE public.chat_conversation_participants
+        SET last_read_at = clock_timestamp()
+        WHERE conversation_id = $1::uuid
+          AND user_id = $2::int
+        RETURNING last_read_at::text AS read_at
+      `,
+      [params.conversation_id, params.user_id]
+    );
 
-  const row = res.rows[0] ?? null;
-  return row ? { read_at: row.read_at } : null;
+    const row = res.rows[0] ?? null;
+    if (!row) throw CHAT_TRANSACTION_NOOP;
+    await enqueueChatConversationRead(
+      tx,
+      params.user_id,
+      { conversation_id: params.conversation_id, read_at: row.read_at },
+      {
+        deduplicationKey: `chat:read:${params.conversation_id}:user:${params.user_id}:at:${row.read_at}`,
+      }
+    );
+    return { read_at: row.read_at };
+    });
+  } catch (error) {
+    if (error === CHAT_TRANSACTION_NOOP) return null;
+    throw error;
+  }
 }
 
 export async function repoGetUnreadCount(params: { user_id: number }): Promise<number> {

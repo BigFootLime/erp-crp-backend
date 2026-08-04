@@ -1,6 +1,8 @@
 import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
+import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
+import { enqueueAuditNew } from "../../../shared/realtime/realtime-outbox.service";
 import type { AuditLogRow, Paginated } from "../types/audit-logs.types";
 import type { CreateAuditLogBodyDTO, ListAuditLogsQueryDTO } from "../validators/audit-logs.validators";
 
@@ -15,10 +17,18 @@ export async function repoInsertAuditLog(params: {
   os: string | null;
   browser: string | null;
   tx?: DbQueryer;
-}) {
+}): Promise<{ id: string; created_at: string } | null> {
+  if (!params.tx) {
+    const client = await pool.connect();
+    return withRealtimeOutboxTransaction(client, async () => {
+      const inserted: { id: string; created_at: string } | null = await repoInsertAuditLog({ ...params, tx: client });
+      return inserted;
+    });
+  }
+
   const { body } = params;
 
-  const q = params.tx ?? pool;
+  const q = params.tx;
 
   const ins = await q.query<{ id: string; created_at: string }>(
     `
@@ -61,14 +71,11 @@ export async function repoInsertAuditLog(params: {
 
   const inserted = ins.rows[0] ?? null;
   if (inserted?.id) {
-    try {
-      await q.query("SELECT pg_notify('erp_audit_new', $1)", [JSON.stringify({ auditId: inserted.id })]);
-    } catch (err) {
-      console.warn("[audit_notify] pg_notify failed", {
-        error: err instanceof Error ? err.name : "unknown",
-        auditId: inserted.id,
-      });
-    }
+    // Audit delivery stays in the caller's business transaction. Entity
+    // invalidations belong to the module repository that owns the mutation;
+    // deriving them here made reads-with-audit look like writes and duplicated
+    // modules that already maintain a durable domain event log.
+    await enqueueAuditNew(q, { auditId: String(inserted.id) });
   }
 
   return inserted;

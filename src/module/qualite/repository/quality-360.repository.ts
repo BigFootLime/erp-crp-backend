@@ -7,6 +7,8 @@
 import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
+import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
+import { enqueueEntityChanged } from "../../../shared/realtime/realtime-outbox.service";
 import { generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
@@ -144,7 +146,7 @@ async function insertQualityEvent(
     reason?: string | null;
   }
 ): Promise<void> {
-  await tx.query(
+  const inserted = await tx.query<{ id: string; created_at: string }>(
     `
       INSERT INTO public.quality_event_log (
         entity_type, entity_id, event_type, old_values, new_values, user_id,
@@ -154,6 +156,7 @@ async function insertQualityEvent(
         $1::public.quality_entity_type, $2::uuid, $3, $4::jsonb, $5::jsonb, $6,
         $7::uuid, $8, $9, $10, $11, 'api'
       )
+      RETURNING id::text AS id, created_at::text AS created_at
     `,
     [
       params.entity_type,
@@ -169,6 +172,57 @@ async function insertQualityEvent(
       params.actor.request_id,
     ]
   );
+  const event = inserted.rows[0];
+  if (!event) throw new Error("QUALITY_360_EVENT_INSERT_FAILED");
+  if (params.entity_type === "NON_CONFORMITY" || params.entity_type === "ACTION") {
+    await enqueueQuality360EntityChanged(tx, {
+      entityType: params.entity_type,
+      entityId: params.entity_id,
+      eventId: event.id,
+      eventType: params.event_type,
+      occurredAt: event.created_at,
+    });
+  }
+}
+
+export async function enqueueQuality360EntityChanged(
+  tx: DbQueryer,
+  params: {
+    entityType: "NON_CONFORMITY" | "ACTION";
+    entityId: string;
+    eventId: string;
+    eventType: string;
+    occurredAt: string;
+  }
+): Promise<void> {
+  const normalized = params.eventType.toUpperCase();
+  const action = normalized === "CREATE"
+    ? "created"
+    : normalized.includes("DELETE") || normalized.includes("REMOVE")
+      ? "deleted"
+      : normalized.includes("TRANSITION")
+          || normalized.includes("STATUS")
+          || normalized.includes("CLOSE")
+        ? "status_changed"
+        : "updated";
+  const isNc = params.entityType === "NON_CONFORMITY";
+  await enqueueEntityChanged(tx, {
+    entityType: isNc ? "NCR" : "CAPA",
+    entityId: params.entityId,
+    action,
+    module: "qualite",
+    at: params.occurredAt,
+    invalidateKeys: isNc
+      ? [
+          "qualite:non-conformities",
+          "qualite:kpis",
+          "qualite:dashboard",
+          "qualite:controls",
+          `qualite:non-conformity:${params.entityId}`,
+          `qualite:non-conformity:${params.entityId}:dispositions`,
+        ]
+      : ["qualite:actions", `qualite:action:${params.entityId}`],
+  }, { deduplicationKey: `quality-360-event:${params.eventId}` });
 }
 
 async function acquireIdempotency(params: {
@@ -240,17 +294,7 @@ async function saveReceipt(params: {
 
 async function withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
   const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    const out = await fn(client);
-    await client.query("COMMIT");
-    return out;
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+  return withRealtimeOutboxTransaction(client, fn);
 }
 
 function toNumber(value: unknown, fallback = 0): number {

@@ -10,6 +10,9 @@ const ROOT_DIR = path.resolve(__dirname, "..");
 const DEFAULT_PATCH_DIR = path.join(ROOT_DIR, "db", "patches");
 const MIGRATION_TABLE = "public.cerp_schema_migrations";
 const LOCK_NAME = "cerp_schema_migrations";
+const REALTIME_V1_FILENAME = "20260804_realtime_shared_control_plane.sql";
+const REALTIME_V1_SHA256 = "a532c87aa9962b6171b65db421ee82069ed177bf6f5becb52295df4dacbc76f6";
+const REALTIME_V2_FILENAME = "20260804_realtime_control_plane_v2.sql";
 
 dotenv.config({ path: path.join(ROOT_DIR, ".env") });
 
@@ -127,6 +130,41 @@ function buildStatuses(patches, applied) {
   });
 }
 
+async function assertImmutableRealtimeV1Provenance(client, patches, applied) {
+  if (!patches.some((patch) => patch.filename === REALTIME_V2_FILENAME)) return;
+  const v1 = applied.get(REALTIME_V1_FILENAME);
+  if (v1 && v1.sha256 !== REALTIME_V1_SHA256) {
+    throw new Error(
+      `Refusing ${REALTIME_V2_FILENAME}: ${REALTIME_V1_FILENAME} has unexpected ledger checksum ${v1.sha256}.`
+    );
+  }
+  if (!applied.has(REALTIME_V2_FILENAME)) return;
+  const relation = await client.query(
+    "SELECT to_regclass('public.realtime_control_plane_v2_provenance') IS NOT NULL AS relation_exists"
+  );
+  if (relation.rows[0]?.relation_exists !== true) {
+    throw new Error(`Refusing ${REALTIME_V2_FILENAME}: immutable v1 provenance relation is missing.`);
+  }
+  const result = await client.query(`
+    SELECT inherited_v1, source_v1_sha256
+    FROM public.realtime_control_plane_v2_provenance
+    WHERE singleton
+  `);
+  const provenance = result.rows[0];
+  const valid = provenance
+    && (
+      (provenance.inherited_v1 === true
+        && provenance.source_v1_sha256 === REALTIME_V1_SHA256
+        && v1?.sha256 === REALTIME_V1_SHA256)
+      || (provenance.inherited_v1 === false
+        && provenance.source_v1_sha256 === null
+        && !v1)
+    );
+  if (!valid) {
+    throw new Error(`Refusing ${REALTIME_V2_FILENAME}: immutable v1 provenance does not match the migration ledger.`);
+  }
+}
+
 function printStatuses(statuses) {
   const counts = statuses.reduce((acc, item) => {
     acc[item.status] = (acc[item.status] || 0) + 1;
@@ -167,6 +205,7 @@ async function withMigrationLock(client, fn) {
 
 async function runStatus(client, patches, { check }) {
   const applied = await getApplied(client);
+  await assertImmutableRealtimeV1Provenance(client, patches, applied);
   const statuses = buildStatuses(patches, applied);
   printStatuses(statuses);
 
@@ -180,6 +219,7 @@ async function runStatus(client, patches, { check }) {
 async function runUp(client, patches, { dryRun }) {
   if (dryRun) {
     const applied = await getApplied(client);
+    await assertImmutableRealtimeV1Provenance(client, patches, applied);
     const statuses = buildStatuses(patches, applied);
     const pending = statuses.filter((item) => item.status === "pending");
     printStatuses(statuses);
@@ -191,6 +231,7 @@ async function runUp(client, patches, { dryRun }) {
   await withMigrationLock(client, async () => {
     await ensureMigrationTable(client);
     const applied = await getApplied(client);
+    await assertImmutableRealtimeV1Provenance(client, patches, applied);
     const statuses = buildStatuses(patches, applied);
     const mismatches = statuses.filter((item) => item.status === "checksum-mismatch");
     if (mismatches.length > 0) {
@@ -223,6 +264,7 @@ async function runUp(client, patches, { dryRun }) {
 async function runBaseline(client, patches, { dryRun }) {
   if (dryRun) {
     const applied = await getApplied(client);
+    await assertImmutableRealtimeV1Provenance(client, patches, applied);
     const statuses = buildStatuses(patches, applied);
     printStatuses(statuses);
     console.log("");
@@ -233,6 +275,7 @@ async function runBaseline(client, patches, { dryRun }) {
   await withMigrationLock(client, async () => {
     await ensureMigrationTable(client);
     const applied = await getApplied(client);
+    await assertImmutableRealtimeV1Provenance(client, patches, applied);
     const statuses = buildStatuses(patches, applied);
     const mismatches = statuses.filter((item) => item.status === "checksum-mismatch");
     if (mismatches.length > 0) {

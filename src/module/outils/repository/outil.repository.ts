@@ -1,4 +1,7 @@
+import crypto from "node:crypto";
 import db from "../../../config/database";
+import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
+import { enqueueEntityChanged } from "../../../shared/realtime/realtime-outbox.service";
 import { HttpError } from "../../../utils/httpError";
 import { buildPublicImageUrl, normalizeStoredImagePath } from "../../../utils/imageStorage";
 import type {
@@ -1023,7 +1026,7 @@ export const outilRepository = {
     // On tente d'insérer avec les colonnes enrichies.
     // Si ta BDD n'a pas encore les colonnes, on fallback sur l'ancien INSERT.
     try {
-      await client.query(
+      const result = await client.query(
         `
         INSERT INTO gestion_outils_mouvement_stock
           (
@@ -1043,6 +1046,7 @@ export const outilRepository = {
           )
         VALUES
           ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
+        RETURNING id_mouvement::text AS id_mouvement, date_mouvement::text AS date_mouvement
         `,
         [
           payload.id_outil,
@@ -1059,17 +1063,24 @@ export const outilRepository = {
           payload.note ?? payload.reason ?? null,
         ]
       );
+      const row = result.rows[0];
+      if (!row?.id_mouvement) throw new Error("OUTILLAGE_MOVEMENT_INSERT_FAILED");
+      return { id: String(row.id_mouvement), date: String(row.date_mouvement) };
     } catch (err: unknown) {
       if (!isUndefinedColumnError(err)) throw err;
 
       // fallback ancien schéma
-      await client.query(
+      const result = await client.query(
         `
         INSERT INTO gestion_outils_mouvement_stock (id_outil, quantite, type_mouvement, utilisateur, date_mouvement)
         VALUES ($1, $2, $3, $4, NOW())
+        RETURNING id_mouvement::text AS id_mouvement, date_mouvement::text AS date_mouvement
         `,
         [payload.id_outil, payload.quantite, payload.type, payload.utilisateur]
       );
+      const row = result.rows[0];
+      if (!row?.id_mouvement) throw new Error("OUTILLAGE_MOVEMENT_INSERT_FAILED");
+      return { id: String(row.id_mouvement), date: String(row.date_mouvement) };
     }
   },
 
@@ -1222,10 +1233,9 @@ export const outilRepository = {
   },
 
   async updateFabricant(id_fabricant: number, nom_fabricant: string, logo: string | null, id_fournisseurs: number[]) {
+    const realtimeMutationId = crypto.randomUUID();
     const client = await db.connect();
-    try {
-      await client.query("BEGIN");
-
+    return withRealtimeOutboxTransaction(client, async () => {
       const result = await client.query(
         `
         UPDATE gestion_outils_fabricant
@@ -1252,19 +1262,23 @@ export const outilRepository = {
         );
       }
 
-      await client.query("COMMIT");
+      await enqueueEntityChanged(client, {
+        entityType: "OUTIL_FABRICANT",
+        entityId: String(id_fabricant),
+        action: "updated",
+        module: "outillage",
+        at: new Date().toISOString(),
+        invalidateKeys: ["outils-fabricants", "outils"],
+      }, {
+        deduplicationKey: `outillage:fabricant:${id_fabricant}:updated:${realtimeMutationId}`,
+      });
       const row = result.rows[0];
       return {
         value: asInteger(row.id_fabricant),
         label: asNullableString(row.name) ?? "",
         logo: buildPublicImageUrl(asNullableString(row.logo)),
       };
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   },
 
   // 🤝 Fournisseurs
@@ -1302,15 +1316,32 @@ export const outilRepository = {
       nom_commercial,
     } = data;
 
-    await db.query(
-      `
-      INSERT INTO gestion_outils_fournisseur
-        (nom, adresse_ligne, house_no, postcode, city, country, phone_num, email, nom_commercial)
-      VALUES
-        ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-      `,
-      [nom, adresse_ligne, house_no, postcode, city, country, phone_num, email, nom_commercial]
-    );
+    const client = await db.connect();
+    return withRealtimeOutboxTransaction(client, async () => {
+      const result = await client.query(
+        `
+        INSERT INTO gestion_outils_fournisseur
+          (nom, adresse_ligne, house_no, postcode, city, country, phone_num, email, nom_commercial)
+        VALUES
+          ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        RETURNING id_fournisseur::text AS id_fournisseur
+        `,
+        [nom, adresse_ligne, house_no, postcode, city, country, phone_num, email, nom_commercial]
+      );
+      const id = String(result.rows[0]?.id_fournisseur ?? "");
+      if (!id) throw new Error("OUTILLAGE_SUPPLIER_INSERT_FAILED");
+      await enqueueEntityChanged(client, {
+        entityType: "OUTIL_FOURNISSEUR",
+        entityId: id,
+        action: "created",
+        module: "outillage",
+        at: new Date().toISOString(),
+        invalidateKeys: ["outils-fournisseurs", "outils", "outil-pricing"],
+      }, {
+        deduplicationKey: `outillage:fournisseur:${id}:created`,
+      });
+      return id;
+    });
   },
 
   async updateFournisseur(id_fournisseur: number, data: any) {
@@ -1326,31 +1357,43 @@ export const outilRepository = {
       nom_commercial,
     } = data;
 
-    const result = await db.query(
-      `
-      UPDATE gestion_outils_fournisseur
-      SET
-        nom = $2,
-        adresse_ligne = $3,
-        house_no = $4,
-        postcode = $5,
-        city = $6,
-        country = $7,
-        phone_num = $8,
-        email = $9,
-        nom_commercial = $10
-      WHERE id_fournisseur = $1
-      RETURNING id_fournisseur, nom
-      `,
-      [id_fournisseur, nom, adresse_ligne, house_no, postcode, city, country, phone_num, email, nom_commercial]
-    );
-
-    if (!result.rows[0]) throw new HttpError(404, "FOURNISSEUR_NOT_FOUND", "Fournisseur introuvable");
-
-    return {
-      value: asInteger(result.rows[0].id_fournisseur),
-      label: asNullableString(result.rows[0].nom) ?? "",
-    };
+    const realtimeMutationId = crypto.randomUUID();
+    const client = await db.connect();
+    return withRealtimeOutboxTransaction(client, async () => {
+      const result = await client.query(
+        `
+        UPDATE gestion_outils_fournisseur
+        SET
+          nom = $2,
+          adresse_ligne = $3,
+          house_no = $4,
+          postcode = $5,
+          city = $6,
+          country = $7,
+          phone_num = $8,
+          email = $9,
+          nom_commercial = $10
+        WHERE id_fournisseur = $1
+        RETURNING id_fournisseur, nom
+        `,
+        [id_fournisseur, nom, adresse_ligne, house_no, postcode, city, country, phone_num, email, nom_commercial]
+      );
+      if (!result.rows[0]) throw new HttpError(404, "FOURNISSEUR_NOT_FOUND", "Fournisseur introuvable");
+      await enqueueEntityChanged(client, {
+        entityType: "OUTIL_FOURNISSEUR",
+        entityId: String(id_fournisseur),
+        action: "updated",
+        module: "outillage",
+        at: new Date().toISOString(),
+        invalidateKeys: ["outils-fournisseurs", "outils", "outil-pricing"],
+      }, {
+        deduplicationKey: `outillage:fournisseur:${id_fournisseur}:updated:${realtimeMutationId}`,
+      });
+      return {
+        value: asInteger(result.rows[0].id_fournisseur),
+        label: asNullableString(result.rows[0].nom) ?? "",
+      };
+    });
   },
 
   // 🧠 Géométries (par famille)
@@ -1435,11 +1478,26 @@ export const outilRepository = {
   },
 
   async createRevetement(nom: string, id_fabricant: number) {
-    const result = await db.query(
-      `INSERT INTO gestion_outils_revetement (nom, id_fabricant) VALUES ($1, $2) RETURNING id_revetement`,
-      [nom, id_fabricant]
-    );
-    return result.rows[0].id_revetement;
+    const client = await db.connect();
+    return withRealtimeOutboxTransaction(client, async () => {
+      const result = await client.query(
+        `INSERT INTO gestion_outils_revetement (nom, id_fabricant) VALUES ($1, $2) RETURNING id_revetement`,
+        [nom, id_fabricant]
+      );
+      const id = asInteger(result.rows[0]?.id_revetement);
+      if (!id) throw new Error("OUTILLAGE_COATING_INSERT_FAILED");
+      await enqueueEntityChanged(client, {
+        entityType: "OUTIL_REVETEMENT",
+        entityId: String(id),
+        action: "created",
+        module: "outillage",
+        at: new Date().toISOString(),
+        invalidateKeys: ["outils-revetements", "outils"],
+      }, {
+        deduplicationKey: `outillage:revetement:${id}:created`,
+      });
+      return id;
+    });
   },
 
   // 🪓 Arêtes (par géométrie)

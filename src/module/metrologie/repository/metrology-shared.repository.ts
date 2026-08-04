@@ -8,6 +8,8 @@
 import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
+import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
+import { enqueueEntityChanged } from "../../../shared/realtime/realtime-outbox.service";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 
@@ -51,17 +53,7 @@ export const METROLOGY_SETTING_KEY = "metrologie.block_on_overdue_critical";
 
 export async function withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
   const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    const out = await fn(client);
-    await client.query("COMMIT");
-    return out;
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+  return withRealtimeOutboxTransaction(client, fn);
 }
 
 export function db(): typeof pool {
@@ -120,7 +112,7 @@ export async function insertMetrologyEvent(
     reason?: string | null;
   }
 ): Promise<void> {
-  await tx.query(
+  const inserted = await tx.query<{ id: string; created_at: string }>(
     `
       INSERT INTO public.metrologie_event_log (
         equipement_id, entity_type, entity_id, event_type,
@@ -132,6 +124,7 @@ export async function insertMetrologyEvent(
         $5::jsonb, $6::jsonb, $7,
         $8::uuid, $9, $10, $11, $12, 'api'
       )
+      RETURNING id::text AS id, created_at::text AS created_at
     `,
     [
       params.equipement_id,
@@ -148,6 +141,47 @@ export async function insertMetrologyEvent(
       params.actor.request_id,
     ]
   );
+  const event = inserted.rows[0];
+  if (!event) throw new Error("METROLOGY_EVENT_INSERT_FAILED");
+  if (params.equipement_id) {
+    await enqueueMetrologyEquipmentChanged(tx, {
+      equipementId: params.equipement_id,
+      eventId: event.id,
+      eventType: params.event_type,
+      occurredAt: event.created_at,
+    });
+  }
+}
+
+export async function enqueueMetrologyEquipmentChanged(
+  tx: DbQueryer,
+  params: { equipementId: string; eventId: string; eventType: string; occurredAt: string }
+): Promise<void> {
+  const normalized = params.eventType.toUpperCase();
+  const action = /^EQUIPEMENT_(?:CREATE|CREATED|REGISTER|REGISTERED)$/.test(normalized)
+    ? "created"
+    : /^EQUIPEMENT_(?:DELETE|DELETED|REMOVE|REMOVED)$/.test(normalized)
+      ? "deleted"
+      : normalized.includes("TRANSITION")
+          || normalized.includes("VALIDAT")
+          || normalized.includes("QUARANTIN")
+          || normalized.includes("STATUS")
+        ? "status_changed"
+        : "updated";
+  await enqueueEntityChanged(tx, {
+    entityType: "METROLOGIE_EQUIPEMENT",
+    entityId: params.equipementId,
+    action,
+    module: "metrologie",
+    at: params.occurredAt,
+    invalidateKeys: [
+      "metrologie:equipements",
+      "metrologie:kpis",
+      "metrologie:alerts",
+      "metrologie:center",
+      `metrologie:equipement:${params.equipementId}`,
+    ],
+  }, { deduplicationKey: `metrology-event:${params.eventId}` });
 }
 
 /* ========================================================================== */

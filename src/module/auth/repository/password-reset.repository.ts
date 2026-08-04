@@ -54,18 +54,28 @@ export async function repoInsertPasswordReset(params: {
 export async function repoGetPasswordResetForUpdate(params: {
   token_hash: string;
   tx: DbQueryer;
-}): Promise<Pick<PasswordResetRow, "id" | "user_id"> | null> {
-  const res = await params.tx.query<Pick<PasswordResetRow, "id" | "user_id">>(
+}): Promise<Pick<PasswordResetRow, "id" | "user_id"> & {
+  password_hash: string;
+  session_epoch: number;
+} | null> {
+  const res = await params.tx.query<Pick<PasswordResetRow, "id" | "user_id"> & {
+    password_hash: string;
+    session_epoch: number;
+  }>(
     `
       SELECT
-        id::text AS id,
-        user_id
-      FROM public.password_resets
-      WHERE token_hash = $1::text
-        AND used = FALSE
-        AND expires_at > now()
+        reset.id::text AS id,
+        reset.user_id,
+        users.password AS password_hash,
+        COALESCE(epoch.session_epoch, 0)::int AS session_epoch
+      FROM public.password_resets reset
+      JOIN public.users users ON users.id = reset.user_id
+      LEFT JOIN public.realtime_session_epochs epoch ON epoch.user_id = reset.user_id
+      WHERE reset.token_hash = $1::text
+        AND reset.used = FALSE
+        AND reset.expires_at > now()
       LIMIT 1
-      FOR UPDATE
+      FOR UPDATE OF reset, users
     `,
     [params.token_hash]
   );

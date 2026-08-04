@@ -3,7 +3,6 @@ import fs from "node:fs/promises"
 
 import { getDocumentStoragePath, isPathInsideDirectory, resolveCerpStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
-import { emitEntityChanged } from "../../../shared/realtime/realtime.service"
 import type { AuditContext } from "../repository/receptions.repository"
 import {
   addMeasurementSchema,
@@ -76,21 +75,6 @@ function getRequiredIdempotencyKey(req: Request): string {
   return value.trim()
 }
 
-function emitReceptionChanged(
-  _req: Request,
-  params: { receptionId: string; action: "created" | "updated" | "deleted" | "status_changed" }
-) {
-  const receptionId = params.receptionId
-  emitEntityChanged({
-    entityType: "RECEPTION",
-    entityId: receptionId,
-    action: params.action,
-    module: "qualite",
-    at: new Date().toISOString(),
-    invalidateKeys: ["receptions:list", "receptions:kpis", `receptions:detail:${receptionId}`],
-  })
-}
-
 function isMulterFile(value: unknown): value is Express.Multer.File {
   if (typeof value !== "object" || value === null) return false
   const v = value as { path?: unknown; originalname?: unknown; mimetype?: unknown; size?: unknown }
@@ -155,7 +139,6 @@ export const createReception: RequestHandler = async (req, res, next) => {
     const body = createReceptionSchema.parse({ body: req.body }).body
     const out = await createReceptionSVC(body, audit)
 
-    emitReceptionChanged(req, { receptionId: out.id, action: "created" })
     res.status(201).json(out)
   } catch (err) {
     next(err)
@@ -187,7 +170,6 @@ export const patchReception: RequestHandler = async (req, res, next) => {
       return
     }
 
-    emitReceptionChanged(req, { receptionId: id, action: "updated" })
     res.json(out)
   } catch (err) {
     next(err)
@@ -205,7 +187,6 @@ export const createReceptionLine: RequestHandler = async (req, res, next) => {
       return
     }
 
-    emitReceptionChanged(req, { receptionId: id, action: "updated" })
     res.status(201).json(out)
   } catch (err) {
     next(err)
@@ -223,7 +204,6 @@ export const createLotForReceptionLine: RequestHandler = async (req, res, next) 
       return
     }
 
-    emitReceptionChanged(req, { receptionId: id, action: "updated" })
     res.status(201).json(out)
   } catch (err) {
     next(err)
@@ -242,7 +222,6 @@ export const attachReceptionDocuments: RequestHandler = async (req, res, next) =
       return
     }
 
-    emitReceptionChanged(req, { receptionId: id, action: "updated" })
     res.status(201).json(out)
   } catch (err) {
     next(err)
@@ -259,7 +238,6 @@ export const removeReceptionDocument: RequestHandler = async (req, res, next) =>
       return
     }
 
-    emitReceptionChanged(req, { receptionId: id, action: "updated" })
     res.status(204).send()
   } catch (err) {
     next(err)
@@ -291,7 +269,6 @@ export const startIncomingInspection: RequestHandler = async (req, res, next) =>
       return
     }
 
-    emitReceptionChanged(req, { receptionId: id, action: "updated" })
     res.status(200).json(out)
   } catch (err) {
     next(err)
@@ -305,7 +282,6 @@ export const addIncomingMeasurement: RequestHandler = async (req, res, next) => 
     const body = addMeasurementSchema.parse({ body: req.body }).body
     const out = await addIncomingMeasurementSVC(id, lineId, body, audit)
 
-    emitReceptionChanged(req, { receptionId: id, action: "updated" })
     res.status(201).json(out)
   } catch (err) {
     next(err)
@@ -319,7 +295,6 @@ export const decideIncomingInspection: RequestHandler = async (req, res, next) =
     const body = decideInspectionSchema.parse({ body: req.body }).body
     const out = await decideIncomingInspectionSVC(id, lineId, body, audit)
 
-    emitReceptionChanged(req, { receptionId: id, action: "status_changed" })
     res.status(200).json(out)
   } catch (err) {
     next(err)
@@ -337,7 +312,6 @@ export const createReceptionStockReceipt: RequestHandler = async (req, res, next
       return
     }
 
-    emitReceptionChanged(req, { receptionId: id, action: "updated" })
     res.status(201).json(out)
   } catch (err) {
     next(err)

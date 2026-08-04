@@ -4,6 +4,11 @@ import crypto from "node:crypto"
 import type { PoolClient } from "pg"
 
 import pool from "../../../config/database"
+import {
+  isRealtimeCommitUncertainError,
+  withRealtimeOutboxTransaction,
+} from "../../../shared/realtime/realtime-outbox-transaction"
+import { enqueueEntityChanged } from "../../../shared/realtime/realtime-outbox.service"
 import { canonicalizeStockUnitCode } from "../../../shared/stock-unit"
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
@@ -1029,10 +1034,11 @@ async function insertEvent(
     new_values?: unknown | null
   }
 ) {
-  await client.query(
+  const inserted = await client.query<{ id: string; created_at: string }>(
     `
     INSERT INTO bon_livraison_event_log (bon_livraison_id, event_type, old_values, new_values, user_id)
     VALUES ($1::uuid, $2, $3::jsonb, $4::jsonb, $5)
+    RETURNING id::text AS id, created_at::text AS created_at
     `,
     [
       params.bon_livraison_id,
@@ -1042,6 +1048,20 @@ async function insertEvent(
       params.user_id,
     ]
   )
+  const event = inserted.rows[0]
+  if (!event) throw new Error("Failed to persist livraison event")
+  await enqueueEntityChanged(client, {
+    entityType: "BON_LIVRAISON",
+    entityId: params.bon_livraison_id,
+    action: params.event_type === "CREATED"
+      ? "created"
+      : params.event_type.includes("STATUS") || params.event_type.includes("SHIPMENT")
+        ? "status_changed"
+        : "updated",
+    module: "livraisons",
+    at: event.created_at,
+    invalidateKeys: ["livraisons:list", `livraisons:detail:${params.bon_livraison_id}`],
+  }, { deduplicationKey: `livraison-event:${event.id}` })
 }
 
 type InsertLineInput = Pick<CreateLivraisonLineBodyDTO, "designation" | "quantite"> &
@@ -1092,9 +1112,7 @@ async function insertLines(client: PoolClient, bonLivraisonId: string, lignes: I
 
 export async function repoCreateLivraison(input: CreateLivraisonBodyDTO, userId: number): Promise<{ id: string }> {
   const db = await pool.connect()
-  try {
-    await db.query("BEGIN")
-
+  return withRealtimeOutboxTransaction(db, async (db) => {
     const seqRes = await db.query<{ n: string }>(`SELECT nextval('public.bon_livraison_no_seq')::text AS n`)
     const raw = seqRes.rows[0]?.n
     const n = raw ? Number(raw) : NaN
@@ -1169,23 +1187,15 @@ export async function repoCreateLivraison(input: CreateLivraisonBodyDTO, userId:
       },
     })
 
-    await db.query("COMMIT")
     return { id }
-  } catch (err) {
-    await db.query("ROLLBACK")
-    throw err
-  } finally {
-    db.release()
-  }
+  })
 }
 
 export async function repoUpdateLivraisonHeader(id: string, patch: UpdateLivraisonBodyDTO, userId: number): Promise<{ id: string } | null> {
   const db = await pool.connect()
-  try {
-    await db.query("BEGIN")
+  return withRealtimeOutboxTransaction(db, async (db) => {
     const current = await getHeader(db, id, { forUpdate: true })
     if (!current) {
-      await db.query("ROLLBACK")
       return null
     }
     if (current.statut !== "DRAFT" && current.statut !== "READY") {
@@ -1260,7 +1270,6 @@ export async function repoUpdateLivraisonHeader(id: string, patch: UpdateLivrais
     setIfDefined("reception_date_signature", "reception_date_signature", "::timestamptz")
 
     if (fields.length === 0) {
-      await db.query("ROLLBACK")
       return { id }
     }
 
@@ -1277,14 +1286,8 @@ export async function repoUpdateLivraisonHeader(id: string, patch: UpdateLivrais
       new_values: newValues,
     })
 
-    await db.query("COMMIT")
     return { id }
-  } catch (err) {
-    await db.query("ROLLBACK")
-    throw err
-  } finally {
-    db.release()
-  }
+  })
 }
 
 export async function repoAddLivraisonLine(
@@ -1293,8 +1296,7 @@ export async function repoAddLivraisonLine(
   userId: number
 ): Promise<{ lineId: string }> {
   const db = await pool.connect()
-  try {
-    await db.query("BEGIN")
+  return withRealtimeOutboxTransaction(db, async (db) => {
     const current = await getHeader(db, bonLivraisonId, { forUpdate: true })
     if (!current) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
     if (current.statut !== "DRAFT") {
@@ -1348,14 +1350,8 @@ export async function repoAddLivraisonLine(
       new_values: { line_id: lineId, ordre, ...input },
     })
 
-    await db.query("COMMIT")
     return { lineId }
-  } catch (err) {
-    await db.query("ROLLBACK")
-    throw err
-  } finally {
-    db.release()
-  }
+  })
 }
 
 export async function repoUpdateLivraisonLine(
@@ -1365,11 +1361,9 @@ export async function repoUpdateLivraisonLine(
   userId: number
 ): Promise<{ lineId: string } | null> {
   const db = await pool.connect()
-  try {
-    await db.query("BEGIN")
+  return withRealtimeOutboxTransaction(db, async (db) => {
     const header = await getHeader(db, bonLivraisonId, { forUpdate: true })
     if (!header) {
-      await db.query("ROLLBACK")
       return null
     }
     if (header.statut !== "DRAFT") {
@@ -1404,7 +1398,6 @@ export async function repoUpdateLivraisonLine(
     )
     const current = currentRes.rows[0] ?? null
     if (!current) {
-      await db.query("ROLLBACK")
       return null
     }
 
@@ -1456,7 +1449,6 @@ export async function repoUpdateLivraisonLine(
     setIfDefined("delai_client", "delai_client")
 
     if (fields.length === 0) {
-      await db.query("ROLLBACK")
       return { lineId }
     }
 
@@ -1478,23 +1470,15 @@ export async function repoUpdateLivraisonLine(
       new_values: { line_id: lineId, ...newValues },
     })
 
-    await db.query("COMMIT")
     return { lineId }
-  } catch (err) {
-    await db.query("ROLLBACK")
-    throw err
-  } finally {
-    db.release()
-  }
+  })
 }
 
 export async function repoDeleteLivraisonLine(bonLivraisonId: string, lineId: string, userId: number): Promise<boolean> {
   const db = await pool.connect()
-  try {
-    await db.query("BEGIN")
+  return withRealtimeOutboxTransaction(db, async (db) => {
     const header = await getHeader(db, bonLivraisonId, { forUpdate: true })
     if (!header) {
-      await db.query("ROLLBACK")
       return false
     }
     if (header.statut !== "DRAFT") {
@@ -1514,14 +1498,8 @@ export async function repoDeleteLivraisonLine(bonLivraisonId: string, lineId: st
       })
     }
 
-    await db.query("COMMIT")
     return ok
-  } catch (err) {
-    await db.query("ROLLBACK")
-    throw err
-  } finally {
-    db.release()
-  }
+  })
 }
 
 export async function repoCreateLivraisonLineAllocation(
@@ -1531,8 +1509,7 @@ export async function repoCreateLivraisonLineAllocation(
   userId: number
 ): Promise<{ allocationId: string }> {
   const db = await pool.connect()
-  try {
-    await db.query("BEGIN")
+  return withRealtimeOutboxTransaction(db, async (db) => {
     const header = await getHeader(db, bonLivraisonId, { forUpdate: true })
     if (!header) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
     if (header.statut !== "DRAFT") {
@@ -1760,14 +1737,8 @@ export async function repoCreateLivraisonLineAllocation(
       },
     })
 
-    await db.query("COMMIT")
     return { allocationId }
-  } catch (err) {
-    await db.query("ROLLBACK")
-    throw err
-  } finally {
-    db.release()
-  }
+  })
 }
 
 export async function repoDeleteLivraisonLineAllocation(
@@ -1777,11 +1748,9 @@ export async function repoDeleteLivraisonLineAllocation(
   userId: number
 ): Promise<boolean> {
   const db = await pool.connect()
-  try {
-    await db.query("BEGIN")
+  return withRealtimeOutboxTransaction(db, async (db) => {
     const header = await getHeader(db, bonLivraisonId, { forUpdate: true })
     if (!header) {
-      await db.query("ROLLBACK")
       return false
     }
     if (header.statut !== "DRAFT") {
@@ -1806,7 +1775,6 @@ export async function repoDeleteLivraisonLineAllocation(
     )
     const locked = lockRes.rows[0] ?? null
     if (!locked) {
-      await db.query("ROLLBACK")
       return false
     }
     if (locked.stock_movement_line_id) {
@@ -1829,14 +1797,8 @@ export async function repoDeleteLivraisonLineAllocation(
       })
     }
 
-    await db.query("COMMIT")
     return ok
-  } catch (err) {
-    await db.query("ROLLBACK")
-    throw err
-  } finally {
-    db.release()
-  }
+  })
 }
 
 async function repoUpdateLivraisonStatusLegacy(
@@ -1846,8 +1808,7 @@ async function repoUpdateLivraisonStatusLegacy(
   meta?: { commentaire?: string | null }
 ): Promise<{ id: string; statut: BonLivraisonStatut }> {
   const db = await pool.connect()
-  try {
-    await db.query("BEGIN")
+  return withRealtimeOutboxTransaction(db, async (db) => {
     const current = await getHeader(db, bonLivraisonId, { forUpdate: true })
     if (!current) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
 
@@ -2173,14 +2134,8 @@ async function repoUpdateLivraisonStatusLegacy(
        })
      }
 
-    await db.query("COMMIT")
     return { id: bonLivraisonId, statut }
-  } catch (err) {
-    await db.query("ROLLBACK")
-    throw err
-  } finally {
-    db.release()
-  }
+  })
 }
 
 export async function repoUpdateLivraisonStatus(
@@ -2198,8 +2153,7 @@ export async function repoUpdateLivraisonStatus(
   }
 
   const db = await pool.connect()
-  try {
-    await db.query("BEGIN")
+  return withRealtimeOutboxTransaction(db, async (db) => {
     const current = await getHeader(db, bonLivraisonId, { forUpdate: true })
     if (!current) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
     const cancellationReason = statut === "CANCELLED" ? meta?.commentaire?.trim() ?? "" : ""
@@ -2211,7 +2165,6 @@ export async function repoUpdateLivraisonStatus(
       )
     }
     if (current.statut === statut) {
-      await db.query("COMMIT")
       return { id: bonLivraisonId, statut }
     }
     if (!isLivraisonTransitionAllowed(current.statut, statut)) {
@@ -2223,7 +2176,6 @@ export async function repoUpdateLivraisonStatus(
     }
     if (current.statut === "DRAFT" && statut === "READY") {
       await prepareLivraisonInTransaction(db, bonLivraisonId, userId)
-      await db.query("COMMIT")
       return { id: bonLivraisonId, statut: "READY" }
     }
 
@@ -2310,14 +2262,8 @@ export async function repoUpdateLivraisonStatus(
         tx: db,
       })
     }
-    await db.query("COMMIT")
     return { id: bonLivraisonId, statut }
-  } catch (error) {
-    await db.query("ROLLBACK")
-    throw error
-  } finally {
-    db.release()
-  }
+  })
 
 }
 
@@ -2531,11 +2477,7 @@ export async function repoCreateLivraisonFromCommande(
   transaction?: PoolClient,
   quantitiesByCommandeLine?: ReadonlyMap<number, number>
 ): Promise<{ id: string }> {
-  const ownsTransaction = transaction === undefined
-  const db = transaction ?? await pool.connect()
-  try {
-    if (ownsTransaction) await db.query("BEGIN")
-
+  const work = async (db: PoolClient): Promise<{ id: string }> => {
     const cmdRes = await db.query<{
       id: number
       numero: string
@@ -2766,14 +2708,12 @@ export async function repoCreateLivraisonFromCommande(
       },
     })
 
-    if (ownsTransaction) await db.query("COMMIT")
     return { id }
-  } catch (err) {
-    if (ownsTransaction) await db.query("ROLLBACK")
-    throw err
-  } finally {
-    if (ownsTransaction) db.release()
   }
+
+  if (transaction) return work(transaction)
+  const db = await pool.connect()
+  return withRealtimeOutboxTransaction(db, work)
 }
 
 async function ensureDocsDir(): Promise<string> {
@@ -2792,8 +2732,8 @@ export async function repoAttachLivraisonDocuments(params: {
   const docsDir = await ensureDocsDir()
   const storedPaths: string[] = []
   try {
-    await db.query("BEGIN")
-    const header = await getHeader(db, params.bonLivraisonId, { forUpdate: true })
+    return await withRealtimeOutboxTransaction(db, async (db) => {
+      const header = await getHeader(db, params.bonLivraisonId, { forUpdate: true })
     if (!header) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
     if (header.statut === "DELIVERED" || header.statut === "CANCELLED") {
       throw new HttpError(
@@ -2919,14 +2859,13 @@ export async function repoAttachLivraisonDocuments(params: {
       }))
     }
 
-    await db.query("COMMIT")
-    return docsOut
+      return docsOut
+    })
   } catch (err) {
-    await db.query("ROLLBACK")
-    await Promise.all(storedPaths.map((filePath) => fs.unlink(filePath).catch(() => undefined)))
+    if (!isRealtimeCommitUncertainError(err)) {
+      await Promise.all(storedPaths.map((filePath) => fs.unlink(filePath).catch(() => undefined)))
+    }
     throw err
-  } finally {
-    db.release()
   }
 }
 
@@ -2936,11 +2875,9 @@ export async function repoRemoveLivraisonDocument(params: {
   userId: number
 }): Promise<boolean> {
   const db = await pool.connect()
-  try {
-    await db.query("BEGIN")
+  return withRealtimeOutboxTransaction(db, async (db) => {
     const header = await getHeader(db, params.bonLivraisonId, { forUpdate: true })
     if (!header) {
-      await db.query("ROLLBACK")
       return false
     }
     if (header.statut !== "DRAFT") {
@@ -2967,14 +2904,8 @@ export async function repoRemoveLivraisonDocument(params: {
       })
     }
 
-    await db.query("COMMIT")
     return ok
-  } catch (err) {
-    await db.query("ROLLBACK")
-    throw err
-  } finally {
-    db.release()
-  }
+  })
 }
 
 export async function repoGetDocumentName(documentId: string): Promise<string | null> {

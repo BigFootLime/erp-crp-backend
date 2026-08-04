@@ -4,6 +4,7 @@ import path from "node:path";
 
 import pool from "../../../config/database";
 import { generateMachineCode, generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
+import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
@@ -49,6 +50,7 @@ import {
 } from "../domain/of-status";
 import { capabilityForOfTransition, roleHasOfCapability } from "../domain/of-rbac";
 import { copyPieceOperationsToOf, loadApplicableTechnicalSnapshot } from "../domain/of-generation";
+import { enqueueProductionOfChanged, productionRealtimeActionFromAudit } from "./production-realtime.repository";
 
 export type AuditContext = {
   user_id: number;
@@ -91,7 +93,7 @@ async function insertAuditLog(tx: DbQueryer, audit: AuditContext, entry: {
     details: entry.details ?? null,
   };
 
-  await repoInsertAuditLog({
+  const inserted = await repoInsertAuditLog({
     user_id: audit.user_id,
     body,
     ip: audit.ip,
@@ -101,6 +103,20 @@ async function insertAuditLog(tx: DbQueryer, audit: AuditContext, entry: {
     browser: audit.browser,
     tx,
   });
+  const rawOfId = entry.entity_type === "ordres_fabrication"
+    ? entry.entity_id
+    : entry.entity_type === "of_operations" || entry.entity_type === "of_time_logs"
+      ? entry.details?.of_id
+      : null;
+  if ((typeof rawOfId === "string" || typeof rawOfId === "number") && String(rawOfId).length > 0) {
+    if (!inserted) throw new Error("PRODUCTION_AUDIT_INSERT_FAILED");
+    await enqueueProductionOfChanged(tx, {
+      ofId: rawOfId,
+      auditId: inserted.id,
+      action: productionRealtimeActionFromAudit(entry.action),
+      occurredAt: inserted.created_at,
+    });
+  }
 }
 
 function isPgUniqueViolation(err: unknown): boolean {
@@ -3127,8 +3143,7 @@ export async function repoCreateOrdreFabrication(params: {
 }): Promise<OrdreFabricationDetail> {
   const client = await pool.connect();
   try {
-    await client.query("BEGIN");
-
+    const ofId = await withRealtimeOutboxTransaction(client, async (client) => {
     const pt = await client.query<{ id: string }>(
       `SELECT id::text AS id FROM pieces_techniques WHERE id = $1::uuid LIMIT 1`,
       [params.body.piece_technique_id]
@@ -3267,19 +3282,16 @@ export async function repoCreateOrdreFabrication(params: {
       },
     });
 
-    await client.query("COMMIT");
-
+      return ofId;
+    });
     const out = await repoGetOrdreFabrication({ id: ofId, user_id: params.audit.user_id });
     if (!out) throw new Error("Failed to load created OF");
     return out;
   } catch (err) {
-    await client.query("ROLLBACK");
     if (isPgUniqueViolation(err)) {
       throw new HttpError(409, "OF_NUMERO_EXISTS", "An OF with this number already exists");
     }
     throw err;
-  } finally {
-    client.release();
   }
 }
 
@@ -3289,9 +3301,7 @@ export async function repoUpdateOrdreFabrication(params: {
   audit: AuditContext;
 }): Promise<OrdreFabricationDetail | null> {
   const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-
+  const updated = await withRealtimeOutboxTransaction(client, async (client) => {
     const exists = await client.query<{
       id: string;
       commande_id: string | null;
@@ -3312,8 +3322,7 @@ export async function repoUpdateOrdreFabrication(params: {
     );
     const ofRow = exists.rows[0] ?? null;
     if (!ofRow?.id) {
-      await client.query("ROLLBACK");
-      return null;
+      return false;
     }
 
     // #170 : verrou optimiste — même mécanique que affaire/devis/machines.
@@ -3440,8 +3449,7 @@ export async function repoUpdateOrdreFabrication(params: {
       values
     );
     if (!upd.rows[0]?.id) {
-      await client.query("ROLLBACK");
-      return null;
+      return false;
     }
 
     await insertAuditLog(client, params.audit, {
@@ -3453,15 +3461,10 @@ export async function repoUpdateOrdreFabrication(params: {
       },
     });
 
-    await client.query("COMMIT");
-
-    return repoGetOrdreFabrication({ id: params.id, user_id: params.audit.user_id });
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+    return true;
+  });
+  if (!updated) return null;
+  return repoGetOrdreFabrication({ id: params.id, user_id: params.audit.user_id });
 }
 
 export async function repoUpdateOrdreFabricationOperation(params: {
@@ -3471,9 +3474,7 @@ export async function repoUpdateOrdreFabricationOperation(params: {
   audit: AuditContext;
 }): Promise<OfOperation | null> {
   const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-
+  const updated = await withRealtimeOutboxTransaction(client, async (client) => {
     const before = await client.query<{ id: string; status: OfOperation["status"] }>(
       `
         SELECT id::text AS id, status::text AS status
@@ -3485,8 +3486,7 @@ export async function repoUpdateOrdreFabricationOperation(params: {
     );
     const existing = before.rows[0];
     if (!existing) {
-      await client.query("ROLLBACK");
-      return null;
+      return false;
     }
 
     const sets: string[] = [];
@@ -3548,8 +3548,7 @@ export async function repoUpdateOrdreFabricationOperation(params: {
       values
     );
     if (!upd.rows[0]?.id) {
-      await client.query("ROLLBACK");
-      return null;
+      return false;
     }
 
     await client.query(
@@ -3570,15 +3569,10 @@ export async function repoUpdateOrdreFabricationOperation(params: {
       },
     });
 
-    await client.query("COMMIT");
-
-    return selectOfOperation(pool, { of_id: params.of_id, op_id: params.op_id, user_id: params.audit.user_id });
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+    return true;
+  });
+  if (!updated) return null;
+  return selectOfOperation(pool, { of_id: params.of_id, op_id: params.op_id, user_id: params.audit.user_id });
 }
 
 export async function repoStartOfOperationTimeLog(params: {
@@ -3589,8 +3583,7 @@ export async function repoStartOfOperationTimeLog(params: {
 }): Promise<OfOperation | null> {
   const client = await pool.connect();
   try {
-    await client.query("BEGIN");
-
+    const updated = await withRealtimeOutboxTransaction(client, async (client) => {
     // #170 : le pointage verrouille aussi l'OF — la règle d'admissibilité se
     // joue sur son statut, et le démarrage fait basculer un OF encore
     // BROUILLON/PLANIFIE en EN_COURS (transition serveur auditée).
@@ -3605,8 +3598,7 @@ export async function repoStartOfOperationTimeLog(params: {
     );
     const ofRow = ofRes.rows[0] ?? null;
     if (!ofRow?.id) {
-      await client.query("ROLLBACK");
-      return null;
+      return false;
     }
     const ofStatut = ofRow.statut as OfStatut;
     if (!ofStatutAllowsExecution(ofStatut)) {
@@ -3629,8 +3621,7 @@ export async function repoStartOfOperationTimeLog(params: {
     );
     const existing = op.rows[0];
     if (!existing) {
-      await client.query("ROLLBACK");
-      return null;
+      return false;
     }
     if (existing.status === "DONE") {
       throw new HttpError(
@@ -3710,17 +3701,15 @@ export async function repoStartOfOperationTimeLog(params: {
       },
     });
 
-    await client.query("COMMIT");
-
+      return true;
+    });
+    if (!updated) return null;
     return selectOfOperation(pool, { of_id: params.of_id, op_id: params.op_id, user_id: params.audit.user_id });
   } catch (err) {
-    await client.query("ROLLBACK");
     if (isPgUniqueViolation(err)) {
       throw new HttpError(409, "OF_TIME_LOG_ALREADY_RUNNING", "A time log is already running for this operation");
     }
     throw err;
-  } finally {
-    client.release();
   }
 }
 
@@ -3731,9 +3720,7 @@ export async function repoStopOfOperationTimeLog(params: {
   audit: AuditContext;
 }): Promise<OfOperation | null> {
   const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-
+  const updated = await withRealtimeOutboxTransaction(client, async (client) => {
     const op = await client.query<{ id: string }>(
       `
         SELECT id::text AS id
@@ -3744,8 +3731,7 @@ export async function repoStopOfOperationTimeLog(params: {
       [params.of_id, params.op_id]
     );
     if (!op.rows[0]?.id) {
-      await client.query("ROLLBACK");
-      return null;
+      return false;
     }
 
     const open = await client.query<{ id: string }>(
@@ -3810,15 +3796,10 @@ export async function repoStopOfOperationTimeLog(params: {
       },
     });
 
-    await client.query("COMMIT");
-
-    return selectOfOperation(pool, { of_id: params.of_id, op_id: params.op_id, user_id: params.audit.user_id });
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+    return true;
+  });
+  if (!updated) return null;
+  return selectOfOperation(pool, { of_id: params.of_id, op_id: params.op_id, user_id: params.audit.user_id });
 }
 
 /**
@@ -3835,9 +3816,7 @@ export async function repoReorderOfOperations(params: {
   audit: AuditContext;
 }): Promise<OrdreFabricationDetail | null> {
   const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-
+  const updated = await withRealtimeOutboxTransaction(client, async (client) => {
     const ofRes = await client.query<{ id: string; statut: string; updated_at: string | null }>(
       `
         SELECT id::text AS id, statut::text AS statut, updated_at::text AS updated_at
@@ -3849,8 +3828,7 @@ export async function repoReorderOfOperations(params: {
     );
     const ofRow = ofRes.rows[0] ?? null;
     if (!ofRow?.id) {
-      await client.query("ROLLBACK");
-      return null;
+      return false;
     }
 
     if (ofRow.updated_at && params.body.expected_updated_at !== ofRow.updated_at) {
@@ -3931,13 +3909,8 @@ export async function repoReorderOfOperations(params: {
       },
     });
 
-    await client.query("COMMIT");
-
-    return repoGetOrdreFabrication({ id: params.of_id, user_id: params.audit.user_id });
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+    return true;
+  });
+  if (!updated) return null;
+  return repoGetOrdreFabrication({ id: params.of_id, user_id: params.audit.user_id });
 }

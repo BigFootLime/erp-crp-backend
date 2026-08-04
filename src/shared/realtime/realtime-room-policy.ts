@@ -30,6 +30,10 @@ const ENTITY_MODULES: Readonly<Record<string, string>> = {
   METROLOGIE_EQUIPEMENT: "metrologie",
   NCR: "qualite",
   OF: "production",
+  OUTIL: "outillage",
+  OUTIL_FABRICANT: "outillage",
+  OUTIL_FOURNISSEUR: "outillage",
+  OUTIL_REVETEMENT: "outillage",
   PIECE_TECHNIQUE: "pieces-techniques",
   PLANNING_EVENTS: "production",
   RECEPTION: "qualite",
@@ -69,6 +73,22 @@ export function moduleForRealtimeEntity(entityType: unknown): string | null {
   return normalized ? ENTITY_MODULES[normalized] ?? null : null;
 }
 
+export type RealtimeModuleAccessProfile = {
+  is_superadmin: boolean;
+  modules: ReadonlyArray<{ module_key: string; allowed: boolean }>;
+};
+
+/** Shared fail-closed module decision used by room ACLs and HTTP lock ACLs. */
+export function realtimeAccessProfileAllowsModule(
+  profile: RealtimeModuleAccessProfile | null,
+  moduleKey: string
+): boolean {
+  return Boolean(profile && (
+    profile.is_superadmin
+    || profile.modules.some((entry) => entry.module_key === moduleKey && entry.allowed)
+  ));
+}
+
 export function normalizeClientRealtimeSubscription(value: unknown): ClientRealtimeSubscription | null {
   if (!isRecord(value) || typeof value.scope !== "string") return null;
 
@@ -97,6 +117,37 @@ export function normalizeClientRealtimeSubscription(value: unknown): ClientRealt
   return null;
 }
 
+/**
+ * Canonicalizes every subscription shape that may cross the durable control
+ * plane. Keeping this in the room policy makes persistence and Socket.IO use
+ * the exact same allow-list instead of accepting structurally valid targets
+ * that no recipient can ever authorize.
+ */
+export function normalizeRealtimeSubscription(value: unknown): RealtimeSubscription | null {
+  if (!isRecord(value) || typeof value.scope !== "string") return null;
+
+  if (value.scope === "user") {
+    if (!hasOnlyKeys(value, ["scope", "userId"])) return null;
+    const userId = value.userId;
+    return typeof userId === "number" && Number.isSafeInteger(userId) && userId > 0
+      ? { scope: "user", userId }
+      : null;
+  }
+
+  if (value.scope === "capability") {
+    if (!hasOnlyKeys(value, ["scope", "capability"])) return null;
+    if (value.capability === REALTIME_CAPABILITIES.AUDIT_READ) {
+      return { scope: "capability", capability: REALTIME_CAPABILITIES.AUDIT_READ };
+    }
+    if (value.capability === REALTIME_CAPABILITIES.CHAT_PRESENCE) {
+      return { scope: "capability", capability: REALTIME_CAPABILITIES.CHAT_PRESENCE };
+    }
+    return null;
+  }
+
+  return normalizeClientRealtimeSubscription(value);
+}
+
 export function realtimeRoomName(subscription: RealtimeSubscription): string {
   switch (subscription.scope) {
     case "module":
@@ -110,6 +161,38 @@ export function realtimeRoomName(subscription: RealtimeSubscription): string {
     case "capability":
       return `rt:capability:${subscription.capability}`;
   }
+}
+
+/** Parses only room names produced by realtimeRoomName; Socket.IO private rooms return null. */
+export function parseRealtimeRoomName(room: string): RealtimeSubscription | null {
+  if (room.startsWith("rt:module:")) {
+    const moduleKey = normalizeRealtimeModuleKey(room.slice("rt:module:".length));
+    return moduleKey ? { scope: "module", moduleKey } : null;
+  }
+  if (room.startsWith("rt:entity:")) {
+    const [entityType, entityId, ...extra] = room.slice("rt:entity:".length).split(":");
+    if (extra.length > 0) return null;
+    return normalizeClientRealtimeSubscription({ scope: "entity", entityType, entityId });
+  }
+  if (room.startsWith("rt:station:")) {
+    const [kind, id, ...extra] = room.slice("rt:station:".length).split(":");
+    if (extra.length > 0) return null;
+    return normalizeClientRealtimeSubscription({ scope: "station", kind, id });
+  }
+  if (room.startsWith("rt:user:")) {
+    const raw = room.slice("rt:user:".length);
+    const userId = Number(raw);
+    return /^\d+$/.test(raw) && Number.isSafeInteger(userId) && userId > 0
+      ? { scope: "user", userId }
+      : null;
+  }
+  if (room === `rt:capability:${REALTIME_CAPABILITIES.AUDIT_READ}`) {
+    return { scope: "capability", capability: REALTIME_CAPABILITIES.AUDIT_READ };
+  }
+  if (room === `rt:capability:${REALTIME_CAPABILITIES.CHAT_PRESENCE}`) {
+    return { scope: "capability", capability: REALTIME_CAPABILITIES.CHAT_PRESENCE };
+  }
+  return null;
 }
 
 export function realtimeSubscriptionKey(subscription: RealtimeSubscription): string {

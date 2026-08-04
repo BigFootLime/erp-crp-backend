@@ -2,6 +2,8 @@
 import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
+import { bumpRealtimeAuthorizationEpoch } from "../../../shared/realtime/realtime-control-plane";
+import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
 import type {
   AccessEventRow,
   AccessEventType,
@@ -51,23 +53,23 @@ export function isUndefinedTable(err: unknown): boolean {
   return (err as { code?: unknown } | null)?.code === "42P01";
 }
 
+/** Shared revision incremented in the same transaction as every ACL mutation. */
+export async function repoAuthorizationEpoch(tx?: DbQueryer): Promise<bigint | null> {
+  const q = tx ?? pool;
+  try {
+    const { rows } = await q.query<{ epoch: string }>(
+      "SELECT epoch::text FROM public.realtime_authorization_epoch WHERE singleton = true"
+    );
+    return rows[0] ? BigInt(rows[0].epoch) : null;
+  } catch (err) {
+    if (isUndefinedTable(err)) return null;
+    throw err;
+  }
+}
+
 export async function withTransaction<T>(fn: (tx: PoolClient) => Promise<T>): Promise<T> {
   const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    const result = await fn(client);
-    await client.query("COMMIT");
-    return result;
-  } catch (err) {
-    try {
-      await client.query("ROLLBACK");
-    } catch {
-      // La transaction est déjà perdue : l'erreur d'origine prime.
-    }
-    throw err;
-  } finally {
-    client.release();
-  }
+  return withRealtimeOutboxTransaction(client, fn);
 }
 
 /**
@@ -271,7 +273,9 @@ export async function repoSetModuleDefault(
     `,
     [params.moduleKey, params.enabled]
   );
-  return (rowCount ?? 0) > 0;
+  const changed = (rowCount ?? 0) > 0;
+  if (changed) await bumpRealtimeAuthorizationEpoch(tx);
+  return changed;
 }
 
 export async function repoUpsertUserModuleAccess(
@@ -294,6 +298,7 @@ export async function repoUpsertUserModuleAccess(
     `,
     [params.userId, params.moduleKey, params.access, params.updatedBy]
   );
+  await bumpRealtimeAuthorizationEpoch(tx);
 }
 
 export async function repoDeleteUserModuleAccess(
@@ -307,7 +312,9 @@ export async function repoDeleteUserModuleAccess(
     `,
     [params.userId, params.moduleKey]
   );
-  return (rowCount ?? 0) > 0;
+  const changed = (rowCount ?? 0) > 0;
+  if (changed) await bumpRealtimeAuthorizationEpoch(tx);
+  return changed;
 }
 
 export async function repoDeleteAllDenials(
@@ -320,6 +327,7 @@ export async function repoDeleteAllDenials(
       RETURNING user_id::int AS user_id, module_key
     `
   );
+  if (rows.length > 0) await bumpRealtimeAuthorizationEpoch(tx);
   return rows;
 }
 
@@ -332,6 +340,7 @@ export async function repoRestoreAllDefaults(tx: DbQueryer): Promise<string[]> {
       RETURNING module_key
     `
   );
+  if (rows.length > 0) await bumpRealtimeAuthorizationEpoch(tx);
   return rows.map((row) => row.module_key);
 }
 

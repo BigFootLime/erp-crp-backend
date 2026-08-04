@@ -1,9 +1,8 @@
-// src/module/admin/services/admin.service.ts
 import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
+
 import { revokeUserRealtimeSessions } from "../../../sockets/sockeServer";
 import * as adminRepo from "../repository/admin.repository";
-import { HttpError } from "../../../utils/httpError";
 
 export async function listUsers() {
   return adminRepo.repoListUsers();
@@ -73,20 +72,21 @@ export async function updateUserByAdmin(
   patch: Record<string, unknown>,
   assignedBy: number | null
 ) {
-  // Controller/validator ensures correct shape; keep narrow casting here.
   const updated = await adminRepo.repoUpdateUser(userId, {
     ...(patch as Parameters<typeof adminRepo.repoUpdateUser>[1]),
     assignedBy,
   });
   if ("role" in patch || "roles" in patch || "status" in patch) {
-    await revokeUserRealtimeSessions(userId, { durable: false });
+    // The durable transaction already bumped the session epoch. Local Socket.IO
+    // delivery is best-effort and must not fail an otherwise committed mutation.
+    await revokeUserRealtimeSessions(userId, { durable: false }).catch(() => undefined);
   }
   return updated;
 }
 
 export async function deleteUserByAdmin(userId: number) {
   const deleted = await adminRepo.repoDeleteUser(userId);
-  await revokeUserRealtimeSessions(userId, { durable: false });
+  await revokeUserRealtimeSessions(userId, { durable: false }).catch(() => undefined);
   return deleted;
 }
 
@@ -94,13 +94,11 @@ export async function createPasswordResetTokenByAdmin(params: { userId: number }
   const raw = crypto.randomBytes(24).toString("hex");
   const hash = crypto.createHash("sha256").update(raw).digest("hex");
   const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
-
   const created = await adminRepo.repoCreatePasswordResetToken({
     userId: params.userId,
     tokenHash: hash,
     expiresAt,
   });
-
   return {
     token: raw,
     expires_at: created.expires_at,
@@ -112,7 +110,7 @@ export async function createPasswordResetTokenByAdmin(params: { userId: number }
 export async function listLoginLogs(filters: {
   from: string;
   to: string;
-  success: string; // "true" | "false" | ""
+  success: string;
   username: string;
 }) {
   return adminRepo.repoListLoginLogs(filters);
@@ -122,31 +120,16 @@ export async function resetUserPasswordByAdmin(input: {
   userId: string;
   token: string;
   newPassword: string;
-  // adminId?: string | null;
 }) {
-  // 1) verify token row
-  const tokenRow = await adminRepo.repoFindResetTokenForUser(input.userId, input.token);
-
-  if (!tokenRow) {
-    throw new HttpError(400, "RESET_TOKEN_INVALID", "Token invalide ou expiré.");
-  }
-  if (tokenRow.used_at) {
-    throw new HttpError(400, "RESET_TOKEN_USED", "Ce token a déjà été utilisé.");
-  }
-  if (new Date(tokenRow.expires_at).getTime() < Date.now()) {
-    throw new HttpError(400, "RESET_TOKEN_EXPIRED", "Token expiré. Demandez une nouvelle réinitialisation.");
-  }
-
-  // 2) update password hash
   const hash = await bcrypt.hash(input.newPassword, 12);
-  await adminRepo.repoUpdateUserPassword(input.userId, hash);
-  await revokeUserRealtimeSessions(Number(input.userId), { durable: false });
-
-  // 3) mark token used
-  await adminRepo.repoMarkResetTokenUsed(tokenRow.id);
-
-  // optional audit log if you have a table
-  // await adminRepo.repoInsertAdminAudit({ adminId: input.adminId, action: "RESET_PASSWORD", targetUserId: input.userId });
+  const userId = await adminRepo.repoResetUserPasswordWithToken({
+    userId: input.userId,
+    rawToken: input.token,
+    passwordHash: hash,
+  });
+  // Durable password + epoch + token consumption is committed (or proven
+  // committed) before local fan-out. Socket runtime failure cannot undo it.
+  await revokeUserRealtimeSessions(userId, { durable: false }).catch(() => undefined);
 }
 
 export async function getAnalytics(filters: {

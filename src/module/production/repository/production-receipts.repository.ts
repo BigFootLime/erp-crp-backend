@@ -3,11 +3,13 @@ import { createHash, randomUUID } from "crypto";
 
 import pool from "../../../config/database";
 import { generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
+import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
 import { canonicalizeStockUnitCode } from "../../../shared/stock-unit";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 import type { AuditContext } from "./production.repository";
+import { enqueueProductionOfChanged, productionRealtimeActionFromAudit } from "./production-realtime.repository";
 import type { OfReceiptBodyDTO } from "../validators/production.validators";
 import { ofStatutAllowsReceipt, type OfStatut } from "../domain/of-status";
 
@@ -140,7 +142,7 @@ async function insertAuditLog(tx: Pick<PoolClient, "query">, audit: AuditContext
     details: entry.details ?? null,
   };
 
-  await repoInsertAuditLog({
+  const inserted = await repoInsertAuditLog({
     user_id: audit.user_id,
     body,
     ip: audit.ip,
@@ -150,6 +152,15 @@ async function insertAuditLog(tx: Pick<PoolClient, "query">, audit: AuditContext
     browser: audit.browser,
     tx,
   });
+  if (entry.entity_type === "ordres_fabrication" && entry.entity_id) {
+    if (!inserted) throw new Error("PRODUCTION_RECEIPT_AUDIT_INSERT_FAILED");
+    await enqueueProductionOfChanged(tx, {
+      ofId: entry.entity_id,
+      auditId: inserted.id,
+      action: productionRealtimeActionFromAudit(entry.action),
+      occurredAt: inserted.created_at,
+    });
+  }
 }
 
 async function resolveArticleForPieceTechnique(client: Pick<PoolClient, "query">, pieceTechniqueId: string): Promise<{ id: string; unite: string | null }> {
@@ -725,8 +736,7 @@ export async function repoCreateOfReceipt(params: {
 }): Promise<OfReceiptResult> {
   const client = await pool.connect();
   const requestHash = receiptRequestHash(params.of_id, params.body);
-  try {
-    await client.query("BEGIN");
+  return withRealtimeOutboxTransaction(client, async (client) => {
     await client.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
       `of-receipt:${params.audit.user_id}:${params.idempotency_key}`,
     ]);
@@ -750,7 +760,6 @@ export async function repoCreateOfReceipt(params: {
           "Cette cle d'idempotence a deja ete utilisee avec un contenu different."
         );
       }
-      await client.query("COMMIT");
       return { ...replay.result_payload, idempotent_replay: true };
     }
 
@@ -1222,14 +1231,8 @@ export async function repoCreateOfReceipt(params: {
       },
     });
 
-    await client.query("COMMIT");
     return receiptResult;
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function repoGetOfTraceability(params: { of_id: number }): Promise<OfTraceability> {

@@ -2,6 +2,8 @@ import crypto from "node:crypto"
 import type { PoolClient } from "pg"
 
 import pool from "../../../config/database"
+import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction"
+import { enqueueEntityChanged } from "../../../shared/realtime/realtime-outbox.service"
 import { HttpError } from "../../../utils/httpError"
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
 import { syncCommandeAfterShipment } from "../../commande-client/repository/commande-fulfillment.repository"
@@ -456,12 +458,13 @@ async function insertLivraisonEvent(
     new_values?: unknown
   }
 ) {
-  await client.query(
+  const inserted = await client.query<{ id: string; created_at: string }>(
     `
       INSERT INTO public.bon_livraison_event_log (
         bon_livraison_id, event_type, old_values, new_values, user_id
       )
       VALUES ($1::uuid,$2,$3::jsonb,$4::jsonb,$5)
+      RETURNING id::text AS id, created_at::text AS created_at
     `,
     [
       args.bon_livraison_id,
@@ -471,6 +474,18 @@ async function insertLivraisonEvent(
       args.user_id,
     ]
   )
+  const event = inserted.rows[0]
+  if (!event) throw new Error("Failed to persist livraison event")
+  await enqueueEntityChanged(client, {
+    entityType: "BON_LIVRAISON",
+    entityId: args.bon_livraison_id,
+    action: args.event_type.includes("STATUS") || args.event_type.includes("PREPARATION") || args.event_type.includes("SHIPMENT")
+      ? "status_changed"
+      : "updated",
+    module: "livraisons",
+    at: event.created_at,
+    invalidateKeys: ["livraisons:list", `livraisons:detail:${args.bon_livraison_id}`],
+  }, { deduplicationKey: `livraison-event:${event.id}` })
 }
 
 async function insertMovementEvent(
@@ -852,8 +867,7 @@ export async function repoShipLivraison(
   idempotencyKeyRaw: string
 ): Promise<BonLivraisonShipResult> {
   const client = await pool.connect()
-  try {
-    await client.query("BEGIN")
+  return withRealtimeOutboxTransaction(client, async (client) => {
     const idempotencyKey = normalizeIdempotencyKey(idempotencyKeyRaw)
     const requestPayload = { bon_livraison_id: bonLivraisonId, ...body }
     const requestHash = hashStockCommand("DELIVERY_SHIP", requestPayload)
@@ -884,7 +898,6 @@ export async function repoShipLivraison(
       )
     }
     if (receiptDecision === "REPLAY" && receipt) {
-      await client.query("COMMIT")
       return { ...receipt.result_payload, idempotent_replay: true }
     }
 
@@ -1250,14 +1263,8 @@ export async function repoShipLivraison(
         correlationId,
       ]
     )
-    await client.query("COMMIT")
     return result
-  } catch (error) {
-    await client.query("ROLLBACK")
-    throw error
-  } finally {
-    client.release()
-  }
+  })
 }
 
 export async function repoListLivraisonProofs(
@@ -1304,8 +1311,7 @@ export async function repoCreateLivraisonProof(
   userId: number
 ): Promise<BonLivraisonDeliveryProof> {
   const client = await pool.connect()
-  try {
-    await client.query("BEGIN")
+  const proofId = await withRealtimeOutboxTransaction(client, async (client) => {
     const delivery = await client.query<{ statut: string }>(
       `SELECT statut FROM public.bon_livraison WHERE id = $1::uuid FOR UPDATE`,
       [bonLivraisonId]
@@ -1398,15 +1404,10 @@ export async function repoCreateLivraisonProof(
       browser: null,
       tx: client,
     })
-    await client.query("COMMIT")
-    const proofs = await repoListLivraisonProofs(bonLivraisonId)
-    const proof = proofs.find((item) => item.id === proofId)
-    if (!proof) throw new Error("Failed to reload delivery proof")
-    return proof
-  } catch (error) {
-    await client.query("ROLLBACK")
-    throw error
-  } finally {
-    client.release()
-  }
+    return proofId
+  })
+  const proofs = await repoListLivraisonProofs(bonLivraisonId)
+  const proof = proofs.find((item) => item.id === proofId)
+  if (!proof) throw new Error("Failed to reload delivery proof")
+  return proof
 }

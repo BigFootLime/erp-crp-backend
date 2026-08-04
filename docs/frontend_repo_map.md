@@ -176,6 +176,7 @@ public.commande_client_event_log
 public.commande_ligne_affaire_allocation
 public.emplacements
 public.entity_locks
+public.erp_outbox_events
 public.erp_settings
 public.fournisseur_catalogue
 public.fournisseur_contacts
@@ -218,6 +219,11 @@ public.quality_control
 public.quality_control_points
 public.quality_documents
 public.quality_event_log
+public.realtime_authorization_epoch
+public.realtime_chat_presence
+public.realtime_event_log
+public.realtime_event_sequence_state
+public.realtime_session_epochs
 public.reception_fournisseur_documents
 public.reception_fournisseur_lignes
 public.reception_fournisseur_stock_receipts
@@ -720,17 +726,22 @@ Foreign keys are defined extensively in patches (hundreds). Examples of central 
 ### Socket.IO
 
 - Socket server: `src/sockets/sockeServer.ts`
-  - JWT verification for the handshake (token from `socket.handshake.auth.token` or `Authorization` header)
-  - Room model: global `erp:global`, module rooms `module:<key>`, entity rooms `<EntityType>:<EntityId>`
-- DB -> realtime bridge: Postgres `LISTEN` + `pg_notify` for audit events
-  - Listener: `src/shared/realtime/audit-notify.listener.ts`
-  - Notify on insert: `src/module/audit-logs/repository/audit-logs.repository.ts` (`pg_notify('erp_audit_new', ...)`)
+  - JWT signature, expiry and durable session epoch verification on handshake and revalidation
+  - Clients submit structured descriptors only; the server creates internal `rt:module:*`, `rt:entity:*`, `rt:user:*`, `rt:station:*` and `rt:capability:*` rooms
+  - No global business room and no client-supplied raw room names
+  - Authorized replay uses a durable sequence cursor; bootstrap/retention gaps require full refetch
+- Durable bridge: `src/shared/realtime/realtime-outbox.service.ts`, `realtime-control-plane.ts`, `realtime-outbox-transaction.ts`
+  - Business mutation + deterministic `erp_outbox_events` envelope share one transaction
+  - Valid envelopes are promoted to commit-ordered `realtime_event_log`; `LISTEN/NOTIFY` is only a wake-up optimization over polling
+  - Audit is produced transactionally by `audit-logs.repository.ts`; mandatory privileged triggers cover non-application writers
+- Shared ephemeral presence: `src/shared/realtime/chat-presence.registry.ts`
+- Server lock expiry maintenance: `src/module/locks/services/locks.service.ts`
 
 ## G) Important Files Index
 
 ### Core runtime
 
-- `src/index.ts` (HTTP + Socket.IO init + audit listener)
+- `src/index.ts` (HTTP + Socket.IO init + bounded maintenance jobs)
 - `src/config/app.ts` (Express stack + `/api/v1` mount + `/docs` + `/images` + error handlers)
 - `src/routes/v1.routes.ts` (module mounting)
 - `src/config/database.ts` (pg Pool)

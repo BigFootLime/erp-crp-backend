@@ -1,5 +1,15 @@
 import { publishRealtimeEvent, type PublishRealtimeOptions } from "../../sockets/sockeServer";
 import {
+  REALTIME_EVENTS,
+  type AppNotificationCreatedPayload,
+  type AuditNewPayload,
+  type ChatConversationReadPayload,
+  type ChatConversationUpsertPayload,
+  type ChatMessageCreatedPayload,
+  type EntityChangedPayload,
+  type LockUpdatedPayload,
+} from "./realtime-outbox.service";
+import {
   REALTIME_CAPABILITIES,
   entityRealtimeSubscription,
   moduleForRealtimeEntity,
@@ -8,96 +18,7 @@ import {
   type RealtimeSubscription,
 } from "./realtime-room-policy";
 
-export const REALTIME_EVENTS = {
-  ENTITY_CHANGED: "entity:changed",
-  AUDIT_NEW: "audit:new",
-  LOCK_UPDATED: "lock:updated",
-  APP_NOTIFICATION_CREATED: "app-notification:created",
-  CHAT_MESSAGE_CREATED: "chat:message:created",
-  CHAT_CONVERSATION_READ: "chat:conversation:read",
-  CHAT_CONVERSATION_UPSERT: "chat:conversation:upsert",
-} as const;
-
-export type RealtimeUserRef = {
-  id: number;
-  name: string;
-};
-
-export type EntityChangedPayload = {
-  entityType: string;
-  entityId: string;
-  action: "created" | "updated" | "deleted" | "status_changed";
-  module: string;
-  at: string;
-  invalidateKeys: string[];
-};
-
-export type RealtimeDeliveryMetadata = {
-  event_id: string;
-  sequence: string;
-  stream_id: string;
-  occurred_at: string;
-};
-
-export type AuditNewPayload = { auditId: string };
-
-export type LockRef = {
-  id: string;
-  entityType: string;
-  entityId: string;
-  lockedBy: RealtimeUserRef;
-  lockedAt: string;
-  expiresAt: string;
-};
-
-export type LockUpdatedPayload = {
-  entityType: string;
-  entityId: string;
-  locked: boolean;
-  lock: LockRef | null;
-};
-
-export type AppNotificationCreatedPayload = {
-  id: string;
-  user_id: number;
-  kind: string;
-  title: string;
-  message: string;
-  severity: "info" | "success" | "warning" | "error";
-  action_url: string | null;
-  action_label: string | null;
-  payload: Record<string, unknown>;
-  created_at: string;
-  read_at: string | null;
-};
-
-export type ChatMessageCreatedPayload = {
-  conversation_id: string;
-  message: {
-    id: string;
-    conversation_id: string;
-    sender_user_id: number;
-    message_type: "text";
-    content: string;
-    created_at: string;
-  };
-  sender: {
-    id: number;
-    username: string;
-    name: string | null;
-    surname: string | null;
-    email: string | null;
-    role: string | null;
-    status: string | null;
-  };
-};
-
-export type ChatConversationReadPayload = { conversation_id: string; read_at: string };
-export type ChatConversationUpsertPayload = {
-  conversation_id: string;
-  type: "direct" | "group";
-  group_name: string | null;
-};
+export * from "./realtime-outbox.service";
 
 function dispatch(
   event: string,
@@ -157,7 +78,7 @@ export function emitChatConversationUpsert(userId: number, payload: ChatConversa
   return dispatch(REALTIME_EVENTS.CHAT_CONVERSATION_UPSERT, payload, [{ scope: "user", userId }]);
 }
 
-/** Compatibility bridge for legacy event names, now constrained to one module. */
+/** Compatibility bridge. Production repositories use the outbox-only module. */
 export function emitModuleRealtimeEvent(moduleKey: string, event: string, payload?: unknown): Promise<void> {
   const canonical = normalizeRealtimeModuleKey(moduleKey);
   const subscription = canonical ? moduleRealtimeSubscription(canonical) : null;
