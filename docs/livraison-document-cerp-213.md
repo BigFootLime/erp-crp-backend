@@ -67,6 +67,22 @@ les deux chemins produisent **le même binaire** — vérifié par un test, pas 
 `pdf.service.ts` ne s'occupe plus que du versionnement, du stockage, de l'empreinte et du
 journal.
 
+### Disponibilité et génération sont deux opérations distinctes
+
+- `GET /livraisons/:id/pdf/availability` indique si une archive lisible existe, sans créer de
+  fichier ni de version. Une absence ordinaire renvoie `NOT_GENERATED` ; une archive référencée
+  mais absente ou invalide reste une erreur d'intégrité explicite.
+- `GET /livraisons/:id/pdf?version=N` est strictement en lecture : il sert uniquement une version
+  déjà archivée et ne régénère jamais silencieusement un document manquant.
+- `POST /livraisons/:id/pdf` est la seule opération de génération. Elle exige la capacité
+  `documents_manage` et une clé `Idempotency-Key`. Un verrou sur le BL sérialise les demandes
+  concurrentes ; la même intention rejouée rend la même version, une nouvelle intention crée la
+  version suivante. Ses archives `GENERATED_SIMPLE_BL_PDF` restent séparées des BL du pack
+  figé (`GENERATED_BL_PDF`), dont le cycle de version est autonome.
+
+Les réponses PDF et de disponibilité portent `Cache-Control: private, no-store` afin qu'un
+navigateur ou un proxy ne réutilise pas un état d'autorisation ou une version obsolète.
+
 ## 4. Ce qui ne doit jamais figurer sur ces documents
 
 | Fuite trouvée | Corrigé en |
@@ -108,6 +124,11 @@ Le texte est relu **dans les flux de contenu du PDF**, décompressés et décod�
 donc ce que le document affiche, pas ce que le code croit avoir écrit. C'est ce qui permet
 d'affirmer qu'aucun UUID n'y figure.
 
+`src/module/livraisons/services/pdf.service.test.ts` couvre en complément le brouillon vide,
+un BL complet, la régénération, le rejeu idempotent, l'archive manquante et deux générations
+concurrentes. Le contrôleur vérifie séparément que `GET` reste sans effet de bord et ne masque
+pas les erreurs d'autorisation ou de stockage.
+
 Suite complète : **2968 tests verts sur 2969**. L'échec restant
 (`src/__tests__/surface-finish-210.migration-guards.test.ts`) est **antérieur** à ce chantier —
 vérifié en remisant les modifications et en relançant sur `origin/dev` seul.
@@ -116,5 +137,5 @@ vérifié en remisant les modifications et en relançant sur `origin/dev` seul.
 
 - Aucune recette navigateur.
 - Aucun déploiement, aucune modification de production.
-- **Aucune migration de base** : ces documents ne changent pas de schéma, le contrat d'API non
-  plus.
+- **Aucune migration de base** : le contrat HTTP évolue, mais les tables existantes suffisent au
+  versionnement, à l'empreinte et au journal d'idempotence.

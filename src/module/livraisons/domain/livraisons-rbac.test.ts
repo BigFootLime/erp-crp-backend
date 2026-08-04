@@ -9,6 +9,7 @@ describe("livraisons RBAC", () => {
     ["Responsable Logistique", "allocate"],
     ["Magasinier", "deliver"],
     ["Responsable Qualité", "read"],
+    ["Responsable Qualité", "documents_manage"],
     ["Secretaire", "proof_manage"],
   ] as const)("accorde %s -> %s", (role, capability) => {
     expect(roleHasLivraisonCapability(role, capability)).toBe(true)
@@ -18,6 +19,7 @@ describe("livraisons RBAC", () => {
     [null, "read"],
     ["", "read"],
     ["Employe", "ship"],
+    ["Employe", "documents_manage"],
     ["Responsable Qualité", "ship"],
     ["Comptable", "allocate"],
     ["Commercial", "cancel"],
