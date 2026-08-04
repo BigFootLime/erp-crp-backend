@@ -833,6 +833,13 @@ export async function repoListArticleCategories(): Promise<StockArticleCategoryO
   return ARTICLE_CATEGORY_OPTIONS;
 }
 
+export async function repoListStockUnits(): Promise<Array<{ code: string; label: string }>> {
+  const res = await db.query<{ code: string; label: string }>(
+    `SELECT code, label FROM public.units ORDER BY code ASC`
+  );
+  return res.rows;
+}
+
 export async function repoListArticleFamilies(
   filters: ListArticleFamiliesQueryDTO = {}
 ): Promise<StockArticleFamily[]> {
@@ -1894,7 +1901,32 @@ function parseEffectiveAt(raw: string | null | undefined): Date {
   return dt;
 }
 
-async function resolveUnitIdForArticle(
+/**
+ * `public.units.code` is the single stock-unit referential. Articles retain
+ * their unit as a code so every creation/update must check that code before it
+ * can later be used by a stock movement.
+ */
+export async function assertCanonicalArticleUnit(
+  client: Pick<PoolClient, "query">,
+  unitCode: string | null | undefined
+): Promise<void> {
+  const code = unitCode?.trim() ? unitCode.trim() : null;
+  if (!code) return;
+
+  const unit = await client.query<{ code: string }>(
+    `SELECT code FROM public.units WHERE code = $1`,
+    [code]
+  );
+  if (!unit.rows[0]) {
+    throw new HttpError(
+      400,
+      "INVALID_ARTICLE_UNIT",
+      `L'unité article « ${code} » est inconnue. Choisissez un code du référentiel public.units.`
+    );
+  }
+}
+
+export async function resolveUnitIdForArticle(
   client: Pick<PoolClient, "query">,
   articleId: string,
   preferredUnitCode: string | null | undefined
@@ -3122,6 +3154,8 @@ export async function repoCreateArticleTx(
   body: CreateArticleBodyDTO,
   audit: AuditContext
 ): Promise<CreatedArticleSummary> {
+  await assertCanonicalArticleUnit(client, body.unite);
+
   const normalized = await normalizeArticleState({
     article_type: body.article_type,
     article_category: body.article_category,
@@ -3524,6 +3558,10 @@ export async function repoUpdateArticle(
 
     if (current.stock_managed && !normalized.stock_managed) {
       await ensureArticleCanDisableStockManagement(client, id);
+    }
+
+    if (patch.unite !== undefined) {
+      await assertCanonicalArticleUnit(client, patch.unite);
     }
 
     if (patch.designation !== undefined) sets.push(`designation = ${push(patch.designation)}`);

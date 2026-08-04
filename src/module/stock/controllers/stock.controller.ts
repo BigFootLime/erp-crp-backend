@@ -116,6 +116,7 @@ import {
   getStockArticleSVC,
   getStockArticlesKpisSVC,
   listStockArticleCategoriesSVC,
+  listStockUnitsSVC,
   listStockArticleFamiliesSVC,
   listStockMatiereEtatsSVC,
   listStockMatiereNuancesSVC,
@@ -438,6 +439,15 @@ export const listSimilarStockArticles: RequestHandler = async (req, res, next) =
 export const listStockArticleCategories: RequestHandler = async (_req, res, next) => {
   try {
     const out = await listStockArticleCategoriesSVC();
+    res.json({ items: out, total: out.length });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const listStockUnits: RequestHandler = async (_req, res, next) => {
+  try {
+    const out = await listStockUnitsSVC();
     res.json({ items: out, total: out.length });
   } catch (err) {
     next(err);

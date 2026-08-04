@@ -37,6 +37,7 @@ import {
   getStockInventorySession,
   getStockArticle,
   listStockArticleCategories,
+  listStockUnits,
   listStockArticleFamilies,
   getStockArticlesKpis,
   getStockLot,
@@ -130,6 +131,7 @@ router.get("/positions", requireStockCapability("read"), listConsolidatedInvento
 router.get("/inventory", requireStockCapability("read"), listConsolidatedInventory);
 router.post("/historical-imports", requireStockCapability("movement_create"), createHistoricalImport);
 router.get("/article-categories", requireStockCapability("read"), listStockArticleCategories);
+router.get("/units", requireStockCapability("read"), listStockUnits);
 router.get("/article-families", requireStockCapability("read"), listStockArticleFamilies);
 router.post("/article-families", requireArticleWrite, createStockArticleFamily);
 router.get("/matiere-nuances", requireStockCapability("read"), listStockMatiereNuances);
