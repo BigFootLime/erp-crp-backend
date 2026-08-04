@@ -11,6 +11,7 @@ import {
   getDocumentStoragePath,
 } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
+import logger from "../../../utils/logger"
 import { repoGetLivraisonDetail, repoGetDocumentName } from "../repository/livraisons.repository"
 import type {
   BonLivraisonStatut,
@@ -29,6 +30,18 @@ type PdfDocumentRow = {
   generated_at: string | null
   file_size_bytes: number | null
   checksum_sha256: string | null
+}
+
+type PdfReplayRow = PdfDocumentRow & {
+  event_document_id: string | null
+  event_version: number | null
+  event_checksum_sha256: string | null
+}
+
+type PendingPdfResult = {
+  result: LivraisonPdfGenerationResult
+  expected_checksum_sha256: string
+  expected_file_size_bytes: number | null
 }
 
 type LivraisonPdfReadResult =
@@ -236,11 +249,18 @@ async function findIdempotentReplay(
   bonLivraisonId: string,
   userId: number,
   keyHash: string
-): Promise<PdfDocumentRow | null> {
-  const result = await db.query<PdfDocumentRow>(
+): Promise<PdfReplayRow | null> {
+  const result = await db.query<PdfReplayRow>(
     `
       SELECT
         event.bon_livraison_id::text AS bon_livraison_id,
+        event.new_values ->> 'document_id' AS event_document_id,
+        CASE
+          WHEN COALESCE(event.new_values ->> 'version', '') ~ '^[1-9][0-9]*$'
+            THEN (event.new_values ->> 'version')::int
+          ELSE NULL
+        END AS event_version,
+        event.new_values ->> 'checksum_sha256' AS event_checksum_sha256,
         document.document_id::text AS document_id,
         document.version::int AS version,
         document.created_at::text AS generated_at,
@@ -260,6 +280,128 @@ async function findIdempotentReplay(
     [bonLivraisonId, userId, keyHash]
   )
   return result.rows[0] ?? null
+}
+
+function normalizeChecksum(value: string | null): string | null {
+  const normalized = value?.trim().toLowerCase() ?? ""
+  return /^[a-f0-9]{64}$/.test(normalized) ? normalized : null
+}
+
+function assertReplayIdentity(row: PdfReplayRow): string {
+  const eventChecksum = normalizeChecksum(row.event_checksum_sha256)
+  const documentChecksum = normalizeChecksum(row.checksum_sha256)
+  if (
+    !row.document_id ||
+    !row.version ||
+    row.event_document_id !== row.document_id ||
+    row.event_version !== row.version ||
+    !eventChecksum ||
+    eventChecksum !== documentChecksum
+  ) {
+    throw new HttpError(
+      500,
+      "LIVRAISON_PDF_INTEGRITY_ERROR",
+      "Les metadonnees archivees du PDF sont incoherentes. Une reconciliation est requise."
+    )
+  }
+  return documentChecksum
+}
+
+function assertReconciledIdentity(expected: PendingPdfResult, row: PdfReplayRow): void {
+  const expectedChecksum = normalizeChecksum(expected.expected_checksum_sha256)
+  const eventChecksum = normalizeChecksum(row.event_checksum_sha256)
+  const documentChecksum = normalizeChecksum(row.checksum_sha256)
+  if (
+    !expectedChecksum ||
+    row.document_id !== expected.result.document_id ||
+    row.event_document_id !== expected.result.document_id ||
+    row.version !== expected.result.version ||
+    row.event_version !== expected.result.version ||
+    eventChecksum !== expectedChecksum ||
+    documentChecksum !== expectedChecksum ||
+    (expected.expected_file_size_bytes !== null &&
+      row.file_size_bytes !== expected.expected_file_size_bytes)
+  ) {
+    throw new Error(
+      "The reconciled event/document identity does not match the pending PDF document, version, checksum, or size"
+    )
+  }
+}
+
+async function reconcilePdfCommit(args: {
+  bonLivraisonId: string
+  userId: number
+  keyHash: string
+  pending: PendingPdfResult
+}): Promise<PdfReplayRow | null> {
+  const reconciliationDb = await pool.connect()
+  let transactionOpen = false
+  let released = false
+  try {
+    await reconciliationDb.query("BEGIN")
+    transactionOpen = true
+    const delivery = await reconciliationDb.query<{ id: string }>(
+      `SELECT id::text AS id FROM public.bon_livraison WHERE id = $1::uuid FOR UPDATE`,
+      [args.bonLivraisonId]
+    )
+    if (!delivery.rows[0]) {
+      throw new Error("Delivery disappeared while reconciling an uncertain PDF commit")
+    }
+    const reconciled = await findIdempotentReplay(
+      reconciliationDb,
+      args.bonLivraisonId,
+      args.userId,
+      args.keyHash
+    )
+    if (reconciled) assertReconciledIdentity(args.pending, reconciled)
+    await reconciliationDb.query("COMMIT")
+    transactionOpen = false
+    reconciliationDb.release()
+    released = true
+    return reconciled
+  } catch (error) {
+    if (transactionOpen) await reconciliationDb.query("ROLLBACK").catch(() => undefined)
+    reconciliationDb.release(error instanceof Error ? error : true)
+    released = true
+    throw error
+  } finally {
+    if (!released) reconciliationDb.release()
+  }
+}
+
+function uncertainPdfCommitError(args: {
+  pending: PendingPdfResult
+  bonLivraisonId: string
+  userId: number
+  keyHash: string
+  commitError: unknown
+  reconciliationError?: unknown
+}): HttpError {
+  logger.error("livraison_pdf_commit_uncertain", {
+    bon_livraison_id: args.bonLivraisonId,
+    user_id: args.userId,
+    idempotency_key_hash: args.keyHash,
+    document_id: args.pending.result.document_id,
+    version: args.pending.result.version,
+    expected_checksum_sha256: args.pending.expected_checksum_sha256,
+    commit_error: args.commitError instanceof Error ? args.commitError.message : String(args.commitError),
+    reconciliation_error:
+      args.reconciliationError instanceof Error
+        ? args.reconciliationError.message
+        : args.reconciliationError === undefined
+          ? null
+          : String(args.reconciliationError),
+  })
+  return new HttpError(
+    503,
+    "LIVRAISON_PDF_COMMIT_UNCERTAIN",
+    "L'etat de la generation PDF doit etre reconcilie. Rejouez la meme Idempotency-Key et suivez le runbook sans supprimer le fichier archive.",
+    {
+      document_id: args.pending.result.document_id,
+      version: args.pending.result.version,
+      runbook: "docs/livraison-document-cerp-213.md#commit-postgresql-incertain",
+    }
+  )
 }
 
 async function nextPdfVersion(db: Queryable, bonLivraisonId: string): Promise<number> {
@@ -296,6 +438,10 @@ export async function svcGenerateLivraisonPdf(
   let filePath: string | null = null
   let temporaryPath: string | null = null
   let committed = false
+  let commitAttempted = false
+  let primaryConnectionReleased = false
+  let cleanupAllowed = true
+  let pendingResult: PendingPdfResult | null = null
 
   try {
     await db.query("BEGIN")
@@ -317,18 +463,25 @@ export async function svcGenerateLivraisonPdf(
 
     const replay = await findIdempotentReplay(db, bonLivraisonId, userId, keyHash)
     if (replay?.document_id && replay.version) {
+      const expectedChecksum = assertReplayIdentity(replay)
       await assertStoredPdf(
         replay.document_id,
         replay.file_size_bytes,
-        replay.checksum_sha256
+        expectedChecksum
       )
+      pendingResult = {
+        result: {
+          document_id: replay.document_id,
+          version: replay.version,
+          idempotent_replay: true,
+        },
+        expected_checksum_sha256: expectedChecksum,
+        expected_file_size_bytes: replay.file_size_bytes,
+      }
+      commitAttempted = true
       await db.query("COMMIT")
       committed = true
-      return {
-        document_id: replay.document_id,
-        version: replay.version,
-        idempotent_replay: true,
-      }
+      return pendingResult.result
     }
 
     const detail = await repoGetLivraisonDetail(bonLivraisonId)
@@ -403,15 +556,65 @@ export async function svcGenerateLivraisonPdf(
       `UPDATE public.bon_livraison SET updated_at = now(), updated_by = $2 WHERE id = $1::uuid`,
       [bonLivraisonId, userId]
     )
+    pendingResult = {
+      result: { document_id: documentId, version, idempotent_replay: false },
+      expected_checksum_sha256: checksumSha256,
+      expected_file_size_bytes: pdfBytes.byteLength,
+    }
+    commitAttempted = true
     await db.query("COMMIT")
     committed = true
-    return { document_id: documentId, version, idempotent_replay: false }
+    return pendingResult.result
   } catch (error) {
-    if (!committed) await db.query("ROLLBACK").catch(() => undefined)
-    throw error
+    if (!commitAttempted) {
+      await db.query("ROLLBACK").catch(() => undefined)
+      throw error
+    }
+
+    db.release(error instanceof Error ? error : true)
+    primaryConnectionReleased = true
+    if (!pendingResult) {
+      cleanupAllowed = false
+      throw new HttpError(
+        503,
+        "LIVRAISON_PDF_COMMIT_UNCERTAIN",
+        "L'etat de la generation PDF est incertain et doit etre reconcilie manuellement."
+      )
+    }
+
+    let reconciled: PdfReplayRow | null
+    try {
+      reconciled = await reconcilePdfCommit({
+        bonLivraisonId,
+        userId,
+        keyHash,
+        pending: pendingResult,
+      })
+    } catch (reconciliationError) {
+      cleanupAllowed = false
+      throw uncertainPdfCommitError({
+        pending: pendingResult,
+        bonLivraisonId,
+        userId,
+        keyHash,
+        commitError: error,
+        reconciliationError,
+      })
+    }
+
+    if (!reconciled) {
+      throw error
+    }
+    committed = true
+    await assertStoredPdf(
+      pendingResult.result.document_id,
+      pendingResult.expected_file_size_bytes,
+      pendingResult.expected_checksum_sha256
+    )
+    return pendingResult.result
   } finally {
-    db.release()
-    if (!committed) {
+    if (!primaryConnectionReleased) db.release()
+    if (!committed && cleanupAllowed) {
       await Promise.all(
         [temporaryPath, filePath]
           .filter((candidate): candidate is string => Boolean(candidate))

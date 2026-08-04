@@ -96,6 +96,28 @@ substitution entre validation et réponse HTTP.
 Les réponses PDF et de disponibilité portent `Cache-Control: private, no-store` afin qu'un
 navigateur ou un proxy ne réutilise pas un état d'autorisation ou une version obsolète.
 
+### Commit PostgreSQL incertain
+
+Le fichier final est renommé avant le `COMMIT` qui archive ses métadonnées. Si PostgreSQL rend
+le commit durable mais que son accusé réseau est perdu, la connexion d'origine est considérée
+comme incertaine et n'est jamais « prouvée » par un `ROLLBACK`. Le service la détruit, prend une
+connexion fraîche et ouvre une transaction dédiée. Cette transaction attend la résolution du
+verrou du BL, recherche l'événement et le document, puis vérifie avant son propre `COMMIT` que
+livraison, auteur, empreinte d'`Idempotency-Key`, identifiant, version et SHA-256 concordent. Le
+SHA-256 attendu reste celui calculé en mémoire avant le commit original :
+
+- identité exacte `résultat attendu = événement = document` retrouvée, puis octets du fichier
+  conformes au SHA-256 attendu : le résultat est finalisé et le fichier reste ;
+- aucune métadonnée après la barrière de verrou : le commit n'a pas été durable et le fichier
+  orphelin est supprimé ;
+- connexion, recherche ou identité incohérente : réponse
+  `LIVRAISON_PDF_COMMIT_UNCERTAIN` (`503`), fichier conservé par sécurité et alerte structurée.
+
+Runbook opérateur pour le dernier cas : rejouer d'abord la même `Idempotency-Key`, vérifier
+l'événement `PDF_GENERATED` et `bon_livraison_documents.document_id`, puis comparer taille et
+SHA-256 du fichier. Ne jamais supprimer le fichier tant qu'une référence durable n'a pas été
+exclue après verrouillage du BL.
+
 ## 4. Ce qui ne doit jamais figurer sur ces documents
 
 | Fuite trouvée | Corrigé en |

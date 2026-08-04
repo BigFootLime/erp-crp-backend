@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   repoGetLivraisonDetail: vi.fn(),
   repoGetDocumentName: vi.fn(),
   renderBonLivraisonDocument: vi.fn(),
+  loggerError: vi.fn(),
 }))
 
 vi.mock("../../../config/database", () => ({
@@ -28,6 +29,11 @@ vi.mock("../repository/livraisons.repository", () => ({
 }))
 vi.mock("./bon-livraison-document", () => ({
   renderBonLivraisonDocument: (...args: unknown[]) => mocks.renderBonLivraisonDocument(...args),
+}))
+vi.mock("../../../utils/logger", () => ({
+  default: {
+    error: (...args: unknown[]) => mocks.loggerError(...args),
+  },
 }))
 
 import {
@@ -91,7 +97,13 @@ function generationDb(options: {
     if (sql.includes("idempotency_key_hash") && sql.includes("SELECT")) {
       return {
         rows: options.replay
-          ? [{ bon_livraison_id: BL_ID, ...options.replay }]
+          ? [{
+              bon_livraison_id: BL_ID,
+              event_document_id: options.replay.document_id,
+              event_version: options.replay.version,
+              event_checksum_sha256: options.replay.checksum_sha256,
+              ...options.replay,
+            }]
           : [],
       }
     }
@@ -101,6 +113,90 @@ function generationDb(options: {
     return { rows: [] }
   })
   return { query, release: vi.fn() }
+}
+
+function uncertainCommitDatabase(options: {
+  durable: boolean
+  reconciliationError?: Error
+  reconciledDocumentId?: string
+  reconciledVersion?: number
+  reconciledEventChecksum?: string
+  reconciledDocumentChecksum?: string
+  beforeReconciliationLookup?: () => Promise<void>
+  afterReconciliationCommit?: () => Promise<void>
+}) {
+  let documentId: string | null = null
+  let persisted: {
+    document_id: string
+    version: number
+    generated_at: string
+    file_size_bytes: number
+    checksum_sha256: string
+  } | null = null
+
+  const primaryQuery = vi.fn(async (sqlValue: unknown, values?: unknown[]) => {
+    const sql = String(sqlValue)
+    if (sql.includes("SELECT id::text AS id") && sql.includes("statut") && sql.includes("FOR UPDATE")) {
+      return { rows: [{ id: BL_ID, statut: "DRAFT" }] }
+    }
+    if (sql.includes("idempotency_key_hash") && sql.includes("SELECT")) return { rows: [] }
+    if (sql.includes("COALESCE(MAX(document.version)")) return { rows: [{ version: 1 }] }
+    if (sql.includes("INSERT INTO public.bon_livraison_documents")) {
+      documentId = String(values?.[1])
+      persisted = {
+        document_id: documentId,
+        version: Number(values?.[2]),
+        generated_at: "2026-08-04T12:00:00.000Z",
+        file_size_bytes: Number(values?.[5]),
+        checksum_sha256: String(values?.[4]),
+      }
+    }
+    if (sql === "COMMIT") {
+      if (!options.durable) persisted = null
+      throw Object.assign(new Error("commit acknowledgement lost"), { code: "ECONNRESET" })
+    }
+    return { rows: [] }
+  })
+  const reconciliationQuery = vi.fn(async (sqlValue: unknown) => {
+    const sql = String(sqlValue)
+    if (sql === "COMMIT") {
+      await options.afterReconciliationCommit?.()
+      return { rows: [] }
+    }
+    if (sql.includes("FROM public.bon_livraison") && sql.includes("FOR UPDATE")) {
+      return { rows: [{ id: BL_ID }] }
+    }
+    if (sql.includes("idempotency_key_hash") && sql.includes("SELECT")) {
+      await options.beforeReconciliationLookup?.()
+      if (options.reconciliationError) throw options.reconciliationError
+      return {
+        rows: persisted
+          ? [{
+              bon_livraison_id: BL_ID,
+              event_document_id: persisted.document_id,
+              event_version: persisted.version,
+              event_checksum_sha256:
+                options.reconciledEventChecksum ?? persisted.checksum_sha256,
+              ...persisted,
+              document_id: options.reconciledDocumentId ?? persisted.document_id,
+              version: options.reconciledVersion ?? persisted.version,
+              checksum_sha256:
+                options.reconciledDocumentChecksum ?? persisted.checksum_sha256,
+            }]
+          : [],
+      }
+    }
+    return { rows: [] }
+  })
+  const primary: TestPoolClient = { query: primaryQuery, release: vi.fn() }
+  const reconciliation: TestPoolClient = { query: reconciliationQuery, release: vi.fn() }
+
+  return {
+    primary,
+    reconciliation,
+    getDocumentId: () => documentId,
+    getPersisted: () => persisted,
+  }
 }
 
 async function storePdf(documentId = DOC_ID, bytes = PDF_BYTES) {
@@ -393,6 +489,288 @@ describe("livraison PDF generation", () => {
     expect(
       db.query.mock.calls.some(([sql]) => String(sql).includes("INSERT INTO public.documents_clients")),
     ).toBe(false)
+  })
+
+  it("keeps a durable PDF when COMMIT succeeds but its acknowledgement is lost", async () => {
+    const scenario = uncertainCommitDatabase({ durable: true })
+    mocks.poolConnect
+      .mockResolvedValueOnce(scenario.primary)
+      .mockResolvedValueOnce(scenario.reconciliation)
+
+    const result = await svcGenerateLivraisonPdf(BL_ID, 7, "durable-commit-reconcile")
+
+    expect(result).toMatchObject({ version: 1, idempotent_replay: false })
+    expect(result.document_id).toBe(scenario.getDocumentId())
+    await expect(
+      fs.readFile(path.join(documentsRoot, "livraisons", `${result.document_id}.pdf`)),
+    ).resolves.toEqual(PDF_BYTES)
+    expect(scenario.primary.query).not.toHaveBeenCalledWith("ROLLBACK")
+    expect(scenario.primary.release).toHaveBeenCalledWith(expect.any(Error))
+    expect(scenario.reconciliation.query).toHaveBeenCalledWith(
+      expect.stringContaining("FOR UPDATE"),
+      [BL_ID],
+    )
+    const reconciliationStatements = scenario.reconciliation.query.mock.calls.map(([sql]) =>
+      String(sql),
+    )
+    expect(reconciliationStatements[0]).toBe("BEGIN")
+    expect(reconciliationStatements.findIndex((sql) => sql.includes("FOR UPDATE"))).toBe(1)
+    expect(
+      reconciliationStatements.findIndex((sql) => sql.includes("idempotency_key_hash")),
+    ).toBe(2)
+    expect(reconciliationStatements[3]).toBe("COMMIT")
+    expect(scenario.reconciliation.release).toHaveBeenCalledWith()
+
+    const persisted = scenario.getPersisted()
+    expect(persisted).not.toBeNull()
+    const retryDb = generationDb({ replay: persisted ?? undefined })
+    mocks.poolConnect.mockResolvedValueOnce(retryDb)
+
+    await expect(
+      svcGenerateLivraisonPdf(BL_ID, 7, "durable-commit-reconcile"),
+    ).resolves.toEqual({
+      document_id: result.document_id,
+      version: 1,
+      idempotent_replay: true,
+    })
+    expect(mocks.renderBonLivraisonDocument).toHaveBeenCalledTimes(1)
+  })
+
+  it("holds the reconciliation transaction across the lock barrier and proof lookup", async () => {
+    const lookupStarted = deferred()
+    const allowLookup = deferred()
+    const scenario = uncertainCommitDatabase({
+      durable: true,
+      beforeReconciliationLookup: async () => {
+        lookupStarted.resolve()
+        await allowLookup.promise
+      },
+    })
+    mocks.poolConnect
+      .mockResolvedValueOnce(scenario.primary)
+      .mockResolvedValueOnce(scenario.reconciliation)
+
+    const generation = svcGenerateLivraisonPdf(BL_ID, 7, "atomic-commit-reconcile")
+    await lookupStarted.promise
+
+    const pendingStatements = scenario.reconciliation.query.mock.calls.map(([sql]) => String(sql))
+    expect(pendingStatements[0]).toBe("BEGIN")
+    expect(pendingStatements[1]).toContain("FOR UPDATE")
+    expect(pendingStatements[2]).toContain("idempotency_key_hash")
+    expect(pendingStatements).not.toContain("COMMIT")
+    expect(scenario.reconciliation.release).not.toHaveBeenCalled()
+
+    allowLookup.resolve()
+    await expect(generation).resolves.toMatchObject({ version: 1, idempotent_replay: false })
+    expect(scenario.reconciliation.query).toHaveBeenLastCalledWith("COMMIT")
+    expect(scenario.reconciliation.release).toHaveBeenCalledWith()
+  })
+
+  it("cleans the file when a failed COMMIT is proven non-durable", async () => {
+    const scenario = uncertainCommitDatabase({ durable: false })
+    mocks.poolConnect
+      .mockResolvedValueOnce(scenario.primary)
+      .mockResolvedValueOnce(scenario.reconciliation)
+
+    await expect(
+      svcGenerateLivraisonPdf(BL_ID, 7, "non-durable-commit"),
+    ).rejects.toMatchObject({ code: "ECONNRESET" })
+
+    const documentId = scenario.getDocumentId()
+    expect(documentId).not.toBeNull()
+    await expect(
+      fs.access(path.join(documentsRoot, "livraisons", `${documentId}.pdf`)),
+    ).rejects.toMatchObject({ code: "ENOENT" })
+    expect(scenario.getPersisted()).toBeNull()
+    expect(scenario.primary.query).not.toHaveBeenCalledWith("ROLLBACK")
+    expect(mocks.loggerError).not.toHaveBeenCalled()
+  })
+
+  it("preserves a potentially referenced file when commit reconciliation fails", async () => {
+    const scenario = uncertainCommitDatabase({
+      durable: true,
+      reconciliationError: new Error("reconciliation database unavailable"),
+    })
+    mocks.poolConnect
+      .mockResolvedValueOnce(scenario.primary)
+      .mockResolvedValueOnce(scenario.reconciliation)
+
+    await expect(
+      svcGenerateLivraisonPdf(BL_ID, 7, "uncertain-commit-lookup"),
+    ).rejects.toMatchObject({
+      status: 503,
+      code: "LIVRAISON_PDF_COMMIT_UNCERTAIN",
+    })
+
+    const documentId = scenario.getDocumentId()
+    expect(documentId).not.toBeNull()
+    await expect(
+      fs.readFile(path.join(documentsRoot, "livraisons", `${documentId}.pdf`)),
+    ).resolves.toEqual(PDF_BYTES)
+    expect(scenario.getPersisted()).not.toBeNull()
+    expect(scenario.primary.query).not.toHaveBeenCalledWith("ROLLBACK")
+    expect(mocks.loggerError).toHaveBeenCalledWith(
+      "livraison_pdf_commit_uncertain",
+      expect.objectContaining({ document_id: documentId, version: 1 }),
+    )
+  })
+
+  it("preserves the file and fails closed when reconciliation resolves another document identity", async () => {
+    const scenario = uncertainCommitDatabase({
+      durable: true,
+      reconciledDocumentId: "99999999-9999-4999-8999-999999999999",
+    })
+    mocks.poolConnect
+      .mockResolvedValueOnce(scenario.primary)
+      .mockResolvedValueOnce(scenario.reconciliation)
+
+    await expect(
+      svcGenerateLivraisonPdf(BL_ID, 7, "uncertain-commit-identity"),
+    ).rejects.toMatchObject({
+      status: 503,
+      code: "LIVRAISON_PDF_COMMIT_UNCERTAIN",
+    })
+
+    const documentId = scenario.getDocumentId()
+    expect(documentId).not.toBeNull()
+    await expect(
+      fs.readFile(path.join(documentsRoot, "livraisons", `${documentId}.pdf`)),
+    ).resolves.toEqual(PDF_BYTES)
+    expect(scenario.getPersisted()).not.toBeNull()
+    expect(mocks.loggerError).toHaveBeenCalledWith(
+      "livraison_pdf_commit_uncertain",
+      expect.objectContaining({ document_id: documentId, version: 1 }),
+    )
+    expect(scenario.reconciliation.query).toHaveBeenCalledWith("ROLLBACK")
+    expect(scenario.reconciliation.release).toHaveBeenCalledWith(expect.any(Error))
+  })
+
+  it("preserves the file and fails closed when reconciliation resolves another version", async () => {
+    const scenario = uncertainCommitDatabase({ durable: true, reconciledVersion: 2 })
+    mocks.poolConnect
+      .mockResolvedValueOnce(scenario.primary)
+      .mockResolvedValueOnce(scenario.reconciliation)
+
+    await expect(
+      svcGenerateLivraisonPdf(BL_ID, 7, "uncertain-commit-version"),
+    ).rejects.toMatchObject({
+      status: 503,
+      code: "LIVRAISON_PDF_COMMIT_UNCERTAIN",
+    })
+
+    const documentId = scenario.getDocumentId()
+    expect(documentId).not.toBeNull()
+    await expect(
+      fs.readFile(path.join(documentsRoot, "livraisons", `${documentId}.pdf`)),
+    ).resolves.toEqual(PDF_BYTES)
+    expect(scenario.reconciliation.query).toHaveBeenCalledWith("ROLLBACK")
+    expect(scenario.reconciliation.release).toHaveBeenCalledWith(expect.any(Error))
+  })
+
+  it.each([
+    { label: "event checksum", overrides: { reconciledEventChecksum: "a".repeat(64) } },
+    { label: "document checksum", overrides: { reconciledDocumentChecksum: "b".repeat(64) } },
+    {
+      label: "pending checksum",
+      overrides: {
+        reconciledEventChecksum: "c".repeat(64),
+        reconciledDocumentChecksum: "c".repeat(64),
+      },
+    },
+  ])("preserves the file when the $label does not match the three-way proof", async ({ label, overrides }) => {
+    const scenario = uncertainCommitDatabase({ durable: true, ...overrides })
+    mocks.poolConnect
+      .mockResolvedValueOnce(scenario.primary)
+      .mockResolvedValueOnce(scenario.reconciliation)
+
+    await expect(
+      svcGenerateLivraisonPdf(BL_ID, 7, `uncertain-${label.replace(" ", "-")}`),
+    ).rejects.toMatchObject({
+      status: 503,
+      code: "LIVRAISON_PDF_COMMIT_UNCERTAIN",
+    })
+
+    const documentId = scenario.getDocumentId()
+    expect(documentId).not.toBeNull()
+    await expect(
+      fs.readFile(path.join(documentsRoot, "livraisons", `${documentId}.pdf`)),
+    ).resolves.toEqual(PDF_BYTES)
+    expect(scenario.reconciliation.query).toHaveBeenCalledWith("ROLLBACK")
+    expect(scenario.reconciliation.release).toHaveBeenCalledWith(expect.any(Error))
+    expect(mocks.loggerError).toHaveBeenCalledWith(
+      "livraison_pdf_commit_uncertain",
+      expect.objectContaining({
+        document_id: documentId,
+        version: 1,
+        expected_checksum_sha256: PDF_CHECKSUM,
+      }),
+    )
+  })
+
+  it("validates durable bytes against the pre-commit checksum and preserves corruption", async () => {
+    const corruptedBytes = Buffer.from(PDF_BYTES)
+    corruptedBytes[corruptedBytes.byteLength - 1] ^= 1
+    let scenario!: ReturnType<typeof uncertainCommitDatabase>
+    scenario = uncertainCommitDatabase({
+      durable: true,
+      afterReconciliationCommit: async () => {
+        const documentId = scenario.getDocumentId()
+        if (!documentId) throw new Error("test document id unavailable")
+        await fs.writeFile(
+          path.join(documentsRoot, "livraisons", `${documentId}.pdf`),
+          corruptedBytes,
+        )
+      },
+    })
+    mocks.poolConnect
+      .mockResolvedValueOnce(scenario.primary)
+      .mockResolvedValueOnce(scenario.reconciliation)
+
+    await expect(
+      svcGenerateLivraisonPdf(BL_ID, 7, "durable-file-corruption"),
+    ).rejects.toMatchObject({
+      status: 500,
+      code: "LIVRAISON_PDF_INTEGRITY_ERROR",
+    })
+
+    const documentId = scenario.getDocumentId()
+    expect(documentId).not.toBeNull()
+    await expect(
+      fs.readFile(path.join(documentsRoot, "livraisons", `${documentId}.pdf`)),
+    ).resolves.toEqual(corruptedBytes)
+    expect(scenario.reconciliation.query).toHaveBeenLastCalledWith("COMMIT")
+    expect(scenario.reconciliation.query).not.toHaveBeenCalledWith("ROLLBACK")
+    expect(mocks.loggerError).not.toHaveBeenCalled()
+  })
+
+  it("preserves the file when no fresh connection can reconcile the commit", async () => {
+    const scenario = uncertainCommitDatabase({ durable: true })
+    mocks.poolConnect
+      .mockResolvedValueOnce(scenario.primary)
+      .mockRejectedValueOnce(new Error("reconciliation pool unavailable"))
+
+    await expect(
+      svcGenerateLivraisonPdf(BL_ID, 7, "uncertain-commit-connect"),
+    ).rejects.toMatchObject({
+      status: 503,
+      code: "LIVRAISON_PDF_COMMIT_UNCERTAIN",
+    })
+
+    const documentId = scenario.getDocumentId()
+    expect(documentId).not.toBeNull()
+    await expect(
+      fs.readFile(path.join(documentsRoot, "livraisons", `${documentId}.pdf`)),
+    ).resolves.toEqual(PDF_BYTES)
+    expect(scenario.getPersisted()).not.toBeNull()
+    expect(scenario.primary.query).not.toHaveBeenCalledWith("ROLLBACK")
+    expect(mocks.loggerError).toHaveBeenCalledWith(
+      "livraison_pdf_commit_uncertain",
+      expect.objectContaining({
+        document_id: documentId,
+        version: 1,
+        reconciliation_error: "reconciliation pool unavailable",
+      }),
+    )
   })
 
   it("rejects a same-size checksum corruption during idempotent replay", async () => {
