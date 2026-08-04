@@ -1,10 +1,13 @@
-import 'dotenv/config';
-import { createServer } from 'http';
-import { initSocketServer } from './sockets/sockeServer'
-import { startAuditNotifyListener } from "./shared/realtime/audit-notify.listener";
+import "dotenv/config";
+import { createServer } from "http";
+
+import pool from "./config/database";
+import { startAuthRateLimitMaintenance } from "./module/auth/services/auth-rate-limit.service";
+import { startExpiredLockMaintenance } from "./module/locks/services/locks.service";
+import { createApplicationShutdown } from "./shared/runtime/application-shutdown";
 import { preflightSecureUploadStorageRoots } from "./shared/uploads/secure-upload";
 import { getUploadScannerStartupConfiguration } from "./shared/uploads/upload-scanner";
-import { startAuthRateLimitMaintenance } from "./module/auth/services/auth-rate-limit.service";
+import { initSocketServer, shutdownRealtimeSocketServer } from "./sockets/sockeServer";
 
 async function start(): Promise<void> {
   // Run before importing routes: several upload middlewares allocate their
@@ -13,7 +16,7 @@ async function start(): Promise<void> {
   console.log(`[upload_storage] preflight ready roots=${uploadRoots.length}`);
 
   const [{ default: app }, uploadScanner] = await Promise.all([
-    import('./config/app'),
+    import("./config/app"),
     Promise.resolve(getUploadScannerStartupConfiguration()),
   ]);
   if (!uploadScanner.ready) {
@@ -24,21 +27,50 @@ async function start(): Promise<void> {
     });
   }
 
-  const port = parseInt(process.env.PORT || '5000', 10);
+  const port = Number.parseInt(process.env.PORT || "5000", 10);
   const httpServer = createServer(app);
   const stopAuthRateLimitMaintenance = startAuthRateLimitMaintenance();
-  httpServer.on("close", stopAuthRateLimitMaintenance);
 
   initSocketServer(httpServer);
-  startAuditNotifyListener().catch((err) => {
-    console.error("[audit_notify] failed to start", err);
+  const stopExpiredLockMaintenance = startExpiredLockMaintenance();
+
+  httpServer.listen(port, "0.0.0.0", () => {
+    console.log(`[upload_scan] mode=${uploadScanner.mode} provider=${uploadScanner.provider} ready=${uploadScanner.ready}`);
+    console.log(`Serveur CERP lance sur http://0.0.0.0:${port}`);
+    console.log(`Acces local prevu : http://10.90.0.2:${port}`);
   });
 
-  httpServer.listen(port, '0.0.0.0', () => {
-    console.log(`[upload_scan] mode=${uploadScanner.mode} provider=${uploadScanner.provider} ready=${uploadScanner.ready}`);
-    console.log(`🚀 Serveur CERP lancé sur http://0.0.0.0:${port}`);
-    console.log(`🌐 Accès local prévu : http://10.90.0.2:${port}`);
-  });
+  const configuredShutdownTimeout = Number.parseInt(process.env.SHUTDOWN_TIMEOUT_MS ?? "10000", 10);
+  const shutdownTimeoutMs = Number.isSafeInteger(configuredShutdownTimeout) && configuredShutdownTimeout > 0
+    ? configuredShutdownTimeout
+    : 10_000;
+  const shutdown = createApplicationShutdown({
+    httpServer,
+    stopRealtime: shutdownRealtimeSocketServer,
+    stopMaintenance: [stopAuthRateLimitMaintenance, stopExpiredLockMaintenance],
+    closeDatabase: () => pool.end(),
+    log: (type, fields) => console.error(JSON.stringify({ type, ...fields })),
+  }, shutdownTimeoutMs);
+
+  let terminationStarted = false;
+  const terminate = (signal: "SIGTERM" | "SIGINT" | "HTTP_CLOSE"): void => {
+    if (terminationStarted) return;
+    terminationStarted = true;
+    void shutdown(signal).then(
+      ({ exitCode }) => {
+        process.exitCode = exitCode;
+        process.exit(exitCode);
+      },
+      () => {
+        process.exitCode = 1;
+        process.exit(1);
+      }
+    );
+  };
+
+  process.once("SIGTERM", () => terminate("SIGTERM"));
+  process.once("SIGINT", () => terminate("SIGINT"));
+  httpServer.once("close", () => terminate("HTTP_CLOSE"));
 }
 
 void start().catch((error) => {

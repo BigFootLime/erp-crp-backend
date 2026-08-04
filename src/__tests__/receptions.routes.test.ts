@@ -1,6 +1,12 @@
 import request from "supertest"
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { EventEmitter } from "events"
+
+vi.mock("../shared/realtime/realtime-outbox.service", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../shared/realtime/realtime-outbox.service")>(),
+  enqueueAuditNew: vi.fn().mockResolvedValue("audit-outbox-event"),
+  enqueueEntityChanged: vi.fn().mockResolvedValue("entity-outbox-event"),
+}))
 import jwt from "jsonwebtoken"
 
 const mocks = vi.hoisted(() => ({

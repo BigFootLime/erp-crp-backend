@@ -3,7 +3,6 @@ import path from "node:path";
 
 import { HttpError } from "../../../utils/httpError";
 import { getDocumentStoragePath } from "../../../utils/cerpStorage";
-import { emitAppNotificationCreated, emitEntityChanged } from "../../../shared/realtime/realtime.service";
 import { sendTransactionalEmail, type ResendSendResult } from "../../../shared/email/resend.service";
 import { readIssuerParty } from "../../../shared/documents/issuer-identity.repository";
 import {
@@ -302,16 +301,6 @@ export async function svcGenerateCommandeAr(params: {
       recipient_suggestions: recipientSuggestions,
     });
 
-    emitEntityChanged({
-      entityType: "commande_client",
-      entityId: String(params.commande_id),
-      action: "updated",
-      module: "commandes",
-      at: new Date().toISOString(),
-      by: { id: params.user_id, name: `User #${params.user_id}` },
-      invalidateKeys: ["commandes:list", `commandes:detail:${params.commande_id}`],
-    });
-
     return {
       ar_id: draft.ar_id,
       commande_id: params.commande_id,
@@ -409,19 +398,6 @@ export async function svcSendCommandeAr(params: {
       recipient_contact_ids: params.body.recipient_contact_ids,
       email_provider_id: emailResult.id ?? null,
       commentaire: `AR envoyé à ${params.body.recipient_emails.join(", ")}`,
-    });
-
-    for (const notification of finalized.notifications) {
-      emitAppNotificationCreated(notification.user_id, notification);
-    }
-    emitEntityChanged({
-      entityType: "commande_client",
-      entityId: String(params.commande_id),
-      action: "status_changed",
-      module: "commandes",
-      at: new Date().toISOString(),
-      by: { id: params.user_id, name: `User #${params.user_id}` },
-      invalidateKeys: ["commandes:list", `commandes:detail:${params.commande_id}`],
     });
 
     return finalized.result;

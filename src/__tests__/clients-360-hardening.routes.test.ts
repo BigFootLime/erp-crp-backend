@@ -30,6 +30,10 @@ vi.mock("../utils/checkNetworkDrive", () => ({
   checkNetworkDrive: vi.fn(() => Promise.resolve()),
 }));
 
+vi.mock("../module/access-control/middlewares/module-access-gate", () => ({
+  moduleAccessGate: (_req: unknown, _res: unknown, next: () => void) => next(),
+}));
+
 // authenticateToken simulé (401 sans en-tête de test, req.user sinon) ;
 // authorizeRole RÉEL — c'est précisément le RBAC qu'on veut tester.
 vi.mock("../module/auth/middlewares/auth.middleware", async (importOriginal) => {
@@ -53,6 +57,7 @@ vi.mock("../module/auth/middlewares/auth.middleware", async (importOriginal) => 
 });
 
 import app from "../config/app";
+import { withRealtimeOutboxDbMock } from "./helpers/realtime-outbox-db-mock";
 import { stripQueryFromUrl } from "../utils/logPath";
 import { maskIban } from "../module/client/client.permissions";
 
@@ -76,7 +81,10 @@ beforeEach(() => {
   mocks.clientRelease.mockReset();
 
   mocks.poolQuery.mockResolvedValue({ rows: [] });
-  mocks.poolConnect.mockResolvedValue({ query: mocks.clientQuery, release: mocks.clientRelease });
+  mocks.poolConnect.mockResolvedValue({
+    query: withRealtimeOutboxDbMock(mocks.clientQuery),
+    release: mocks.clientRelease,
+  });
   mocks.clientQuery.mockImplementation((sql: unknown) => {
     const s = String(sql);
     if (s.includes("fn_next_issued_code_value")) return Promise.resolve({ rows: [{ v: "7" }] });

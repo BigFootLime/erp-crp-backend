@@ -1,5 +1,4 @@
 import type { NextFunction, Request, Response } from "express"
-import { getIO } from "../../../sockets/sockeServer"
 import { HttpError } from "../../../utils/httpError"
 import { parseId } from "../../../utils/parseId"
 import { parseString } from "../../../utils/parseString"
@@ -203,13 +202,6 @@ export const outilController = {
         user_id: user.id ?? null,
       }, extractUploadedToolFiles(req.files))
 
-      try {
-        const io = getIO()
-        io.emit("outilCreated", { id_outil: result.id_outil })
-      } catch {
-        // noop
-      }
-
       return res.status(201).json(result)
     } catch (error) {
       if (isPgUniqueViolation(error)) {
@@ -230,13 +222,6 @@ export const outilController = {
       const parsed = parseMultipartJsonBody(req.body.data, outilUpsertSchema)
       await outilService.updateOutil(id, parsed, extractUploadedToolFiles(req.files))
 
-      try {
-        const io = getIO()
-        io.emit("outilUpdated", { id_outil: id })
-      } catch {
-        // noop
-      }
-
       return res.status(200).json({ id_outil: id })
     } catch (error) {
       if (isPgUniqueViolation(error)) {
@@ -254,13 +239,6 @@ export const outilController = {
     try {
       const id = parseId(req.params.id, "ID Outil")
       await outilService.deleteOutil(id)
-
-      try {
-        const io = getIO()
-        io.emit("outilDeleted", { id_outil: id })
-      } catch {
-        // noop
-      }
 
       return res.status(200).json({ success: true })
     } catch (error) {
@@ -283,19 +261,6 @@ export const outilController = {
         note: payload.note ?? null,
         affaire_id: payload.affaire_id ?? null,
       })
-
-      try {
-        const io = getIO()
-        io.emit("stockUpdated", {
-          id_outil: payload.id,
-          quantity: payload.quantity,
-          user: user.username,
-          type: "sortie",
-          date: new Date().toISOString(),
-        })
-      } catch {
-        // noop
-      }
 
       return res.status(200).json({
         success: true,
@@ -322,18 +287,6 @@ export const outilController = {
         affaire_id: payload.affaire_id ?? null,
       })
 
-      try {
-        const io = getIO()
-        io.emit("stockUpdated", {
-          id_outil: payload.id,
-          quantity: payload.quantity,
-          user: user.username,
-          type: "retour",
-          date: new Date().toISOString(),
-        })
-      } catch {
-      }
-
       return res.status(200).json({
         success: true,
         message: `Retour outil ${payload.id} enregistre, quantite : ${payload.quantity}`,
@@ -357,19 +310,6 @@ export const outilController = {
         note: payload.note ?? null,
         affaire_id: payload.affaire_id ?? null,
       })
-
-      try {
-        const io = getIO()
-        io.emit("stockUpdated", {
-          id_outil: payload.id_outil,
-          quantity: payload.quantite,
-          user: user.username,
-          type: "entree",
-          date: new Date().toISOString(),
-        })
-      } catch {
-        // noop
-      }
 
       return res.status(200).json({
         success: true,
@@ -395,20 +335,6 @@ export const outilController = {
         note: payload.note ?? null,
         affaire_id: payload.affaire_id ?? null,
       })
-
-      try {
-        const io = getIO()
-        io.emit("stockUpdated", {
-          id_outil: result.id_outil,
-          quantity: payload.quantity,
-          user: user.username,
-          type: "sortie",
-          date: new Date().toISOString(),
-          source: "scan",
-        })
-      } catch {
-        // noop
-      }
 
       return res.status(200).json({
         success: true,
@@ -438,20 +364,6 @@ export const outilController = {
         affaire_id: payload.affaire_id ?? null,
       })
 
-      try {
-        const io = getIO()
-        io.emit("stockUpdated", {
-          id_outil: result.id_outil,
-          quantity: payload.quantity,
-          user: user.username,
-          type: "entree",
-          date: new Date().toISOString(),
-          source: "scan",
-        })
-      } catch {
-        // noop
-      }
-
       return res.status(200).json({
         success: true,
         ...result,
@@ -476,19 +388,6 @@ export const outilController = {
         source: "manual",
         note: payload.note ?? null,
       })
-
-      try {
-        const io = getIO()
-        io.emit("stockUpdated", {
-          id_outil: payload.id_outil,
-          quantity: payload.new_qty,
-          user: user.username,
-          type: "inventaire",
-          date: new Date().toISOString(),
-        })
-      } catch {
-        // noop
-      }
 
       return res.status(200).json({ success: true, message: `Inventaire OK (outil ${payload.id_outil} => ${payload.new_qty})` })
     } catch (error) {
@@ -588,13 +487,6 @@ export const outilSupportController = {
         parsed.id_fournisseurs
       )
 
-      try {
-        const io = getIO()
-        io.emit("fabricantUpdated", { id })
-      } catch {
-        // noop
-      }
-
       return res.status(200).json(fabricant)
     } catch (error) {
       next(error)
@@ -616,14 +508,7 @@ export const outilSupportController = {
       requireUser(req)
       const parsed = createFournisseurSchema.parse(req.body)
       await outilSupportService.createFournisseur(parsed)
-      res.status(201).json({ message: "Fournisseur cree" })
-
-      try {
-        const io = getIO()
-        io.emit("fournisseurAdded")
-      } catch {
-        // noop
-      }
+      return res.status(201).json({ message: "Fournisseur cree" })
     } catch (error) {
       next(error)
     }
@@ -635,13 +520,6 @@ export const outilSupportController = {
       const id = parseId(req.params.id, "ID Fournisseur")
       const parsed = updateFournisseurSchema.parse(req.body)
       const fournisseur = await outilSupportService.updateFournisseur(id, parsed)
-
-      try {
-        const io = getIO()
-        io.emit("fournisseurUpdated", { id })
-      } catch {
-        // noop
-      }
 
       return res.status(200).json(fournisseur)
     } catch (error) {
@@ -712,13 +590,6 @@ export const outilSupportController = {
       requireUser(req)
       const parsed = createRevetementSchema.parse(req.body)
       const id = await outilSupportService.createRevetement(parsed.nom, parsed.id_fabricant)
-
-      try {
-        const io = getIO()
-        io.emit("revetementAdded")
-      } catch {
-        // noop
-      }
 
       return res.status(201).json({ message: "Revetement cree", id })
     } catch (error) {

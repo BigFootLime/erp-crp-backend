@@ -64,6 +64,7 @@ vi.mock("../module/access-control/repository/access-control.repository", async (
     withTransaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
       fn({ query: mocks.txQuery })
     ),
+    repoAuthorizationEpoch: vi.fn(),
     repoResolveAccessProfile: vi.fn(),
     repoIsSuperadmin: vi.fn(),
     repoListCatalogModules: vi.fn(),
@@ -90,6 +91,7 @@ import {
   resolveModuleKeyForPath,
 } from "../module/access-control/domain/module-catalog";
 import * as service from "../module/access-control/services/access-control.service";
+import { withRealtimeOutboxDbMock } from "./helpers/realtime-outbox-db-mock";
 
 const repo = vi.mocked(baseRepo);
 
@@ -148,9 +150,12 @@ beforeEach(() => {
   mocks.poolQuery.mockResolvedValue({ rows: [] });
   mocks.poolConnect.mockResolvedValue({ query: mocks.clientQuery, release: mocks.clientRelease });
   mocks.clientQuery.mockResolvedValue({ rows: [] });
-  mocks.txQuery.mockResolvedValue({ rows: [{ id: "audit-1", created_at: "2026-07-27T00:00:00Z" }] });
+  mocks.txQuery.mockImplementation(withRealtimeOutboxDbMock(async () => {
+    return { rows: [{ id: "audit-1", created_at: "2026-07-27T00:00:00Z" }] };
+  }));
 
   repo.repoIsSuperadmin.mockResolvedValue(false);
+  repo.repoAuthorizationEpoch.mockResolvedValue(1n);
   repo.repoListCatalogModules.mockResolvedValue([CATALOG_ROW, PROTECTED_ROW]);
   repo.repoListAccessUsers.mockResolvedValue([USER_ROW, SUPERADMIN_ROW]);
   repo.repoListAccessOverrides.mockResolvedValue([]);
@@ -437,6 +442,20 @@ describe("Résolution du profil d'accès", () => {
     expect(repo.repoResolveAccessProfile).toHaveBeenCalledTimes(2);
   });
 
+  it("relit le profil quand l'epoch partage change meme si la notification locale est perdue", async () => {
+    repo.repoResolveAccessProfile.mockResolvedValue(profileRows({}));
+    await service.getAccessProfile(OPERATEUR_ID);
+    await service.getAccessProfile(OPERATEUR_ID);
+    expect(repo.repoResolveAccessProfile).toHaveBeenCalledTimes(1);
+
+    repo.repoAuthorizationEpoch.mockResolvedValue(2n);
+    repo.repoResolveAccessProfile.mockResolvedValue(profileRows({ access: "DENIED" }));
+    const refreshed = await service.getAccessProfile(OPERATEUR_ID);
+
+    expect(repo.repoResolveAccessProfile).toHaveBeenCalledTimes(2);
+    expect(refreshed.modules[0]).toMatchObject({ allowed: false, source: "OVERRIDE" });
+  });
+
   it("une mutation invalide le cache du compte visé", async () => {
     repo.repoResolveAccessProfile.mockResolvedValue(profileRows({}));
     await service.getAccessProfile(OPERATEUR_ID);
@@ -609,5 +628,21 @@ describe("Profil d'accès et exposition du marqueur superadmin", () => {
 
     expect(res.status).toBe(400);
     expect(res.body).toMatchObject({ error: "VALIDATION_ERROR" });
+  });
+
+  it("conserve les routes de reset admin derrière le RBAC administrateur", async () => {
+    const anonymous = await request(app).post("/api/v1/admin/users/9/password-reset-token");
+    expect(anonymous.status).toBe(401);
+
+    const tokenAsEmployee = await request(app)
+      .post("/api/v1/admin/users/9/password-reset-token")
+      .set("x-test-role", "Employee");
+    expect(tokenAsEmployee.status).toBe(403);
+
+    const resetAsEmployee = await request(app)
+      .patch("/api/v1/admin/users/9/password")
+      .set("x-test-role", "Employee")
+      .send({ token: "one-use-admin-token", newPassword: "S3cure-password!" });
+    expect(resetAsEmployee.status).toBe(403);
   });
 });

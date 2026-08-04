@@ -5,6 +5,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 
 import db from "../../../config/database"
+import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction"
 import { generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service"
 import { transferSecureUploadToDestination } from "../../../shared/uploads/secure-upload"
 import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction"
@@ -40,6 +41,7 @@ import type {
   ReceptionKpis,
   ReceptionStockReceipt,
 } from "../types/receptions.types"
+import { enqueueReceptionChanged, receptionRealtimeActionFromAudit } from "./receptions-realtime.repository"
 
 export type AuditContext = {
   user_id: number
@@ -115,7 +117,7 @@ async function insertAuditLog(tx: DbQueryer, audit: AuditContext, entry: {
     details: entry.details ?? null,
   }
 
-  await repoInsertAuditLog({
+  const inserted = await repoInsertAuditLog({
     user_id: audit.user_id,
     body,
     ip: audit.ip,
@@ -125,6 +127,22 @@ async function insertAuditLog(tx: DbQueryer, audit: AuditContext, entry: {
     browser: audit.browser,
     tx,
   })
+  const rawReceptionId = entry.entity_type?.toUpperCase() === "RECEPTION_FOURNISSEUR"
+    ? entry.entity_id
+    : entry.details?.reception_id
+  if (
+    !entry.action.toLowerCase().includes("download")
+    && (typeof rawReceptionId === "string" || typeof rawReceptionId === "number")
+    && String(rawReceptionId).length > 0
+  ) {
+    if (!inserted) throw new Error("RECEPTION_AUDIT_INSERT_FAILED")
+    await enqueueReceptionChanged(tx, {
+      receptionId: String(rawReceptionId),
+      auditId: inserted.id,
+      action: receptionRealtimeActionFromAudit(entry.action),
+      occurredAt: inserted.created_at,
+    })
+  }
 }
 
 async function ensureReceptionExists(tx: DbQueryer, id: string): Promise<boolean> {
@@ -646,14 +664,13 @@ export async function repoGetReception(id: string): Promise<ReceptionFournisseur
 
 export async function repoCreateReception(body: CreateReceptionBodyDTO, audit: AuditContext): Promise<ReceptionFournisseur> {
   const client = await db.connect()
-  try {
-    await client.query("BEGIN")
-    const receptionNo = await reserveReceptionNo(client)
+  return withRealtimeOutboxTransaction(client, async (tx) => {
+    const receptionNo = await reserveReceptionNo(tx)
 
     // #172 — rattachement facultatif à une commande fournisseur : même fournisseur, et la
     // commande doit avoir été réellement envoyée (jamais de réception sur un brouillon).
     if (body.commande_fournisseur_id) {
-      const cf = await client.query<{ fournisseur_id: string; statut: string; code: string }>(
+      const cf = await tx.query<{ fournisseur_id: string; statut: string; code: string }>(
         `SELECT fournisseur_id::text AS fournisseur_id, statut, code
            FROM public.commande_fournisseur WHERE id = $1::uuid`,
         [body.commande_fournisseur_id]
@@ -676,7 +693,7 @@ export async function repoCreateReception(body: CreateReceptionBodyDTO, audit: A
       }
     }
 
-    const ins = await client.query<ReceptionRow>(
+    const ins = await tx.query<ReceptionRow>(
       `
         INSERT INTO public.receptions_fournisseurs (
           reception_no,
@@ -716,21 +733,15 @@ export async function repoCreateReception(body: CreateReceptionBodyDTO, audit: A
     const row = ins.rows[0] ?? null
     if (!row) throw new Error("Failed to create reception")
 
-    await insertAuditLog(client, audit, {
+    await insertAuditLog(tx, audit, {
       action: "receptions.create",
       entity_type: "RECEPTION_FOURNISSEUR",
       entity_id: row.id,
       details: { reception_no: row.reception_no, fournisseur_id: row.fournisseur_id },
     })
 
-    await client.query("COMMIT")
     return mapReceptionRow(row)
-  } catch (err) {
-    await client.query("ROLLBACK")
-    throw err
-  } finally {
-    client.release()
-  }
+  })
 }
 
 export async function repoPatchReception(id: string, patch: PatchReceptionBodyDTO, audit: AuditContext): Promise<ReceptionFournisseur | null> {
@@ -749,9 +760,8 @@ export async function repoPatchReception(id: string, patch: PatchReceptionBodyDT
   sets.push("updated_at = now()")
   sets.push(`updated_by = ${push(audit.user_id)}`)
 
-  try {
-    await client.query("BEGIN")
-    const upd = await client.query<ReceptionRow>(
+  return withRealtimeOutboxTransaction(client, async (tx) => {
+    const upd = await tx.query<ReceptionRow>(
       `
         UPDATE public.receptions_fournisseurs
         SET ${sets.join(", ")}
@@ -772,42 +782,29 @@ export async function repoPatchReception(id: string, patch: PatchReceptionBodyDT
       values
     )
     const row = upd.rows[0] ?? null
-    if (!row) {
-      await client.query("ROLLBACK")
-      return null
-    }
+    if (!row) return null
 
-    await insertAuditLog(client, audit, {
+    await insertAuditLog(tx, audit, {
       action: "receptions.patch",
       entity_type: "RECEPTION_FOURNISSEUR",
       entity_id: id,
       details: { patch },
     })
 
-    await client.query("COMMIT")
     return mapReceptionRow(row)
-  } catch (err) {
-    await client.query("ROLLBACK")
-    throw err
-  } finally {
-    client.release()
-  }
+  })
 }
 
 export async function repoCreateLine(receptionId: string, body: CreateLineBodyDTO, audit: AuditContext): Promise<ReceptionFournisseurLine | null> {
   const client = await db.connect()
-  try {
-    await client.query("BEGIN")
-    const lockReception = await client.query<{ ok: number }>(
+  return withRealtimeOutboxTransaction(client, async (tx) => {
+    const lockReception = await tx.query<{ ok: number }>(
       `SELECT 1::int AS ok FROM public.receptions_fournisseurs WHERE id = $1::uuid FOR UPDATE`,
       [receptionId]
     )
-    if (!lockReception.rows[0]?.ok) {
-      await client.query("ROLLBACK")
-      return null
-    }
+    if (!lockReception.rows[0]?.ok) return null
 
-    const next = await client.query<{ next_no: number }>(
+    const next = await tx.query<{ next_no: number }>(
       `
         SELECT (COALESCE(MAX(line_no), 0) + 1)::int AS next_no
         FROM public.reception_fournisseur_lignes
@@ -822,7 +819,7 @@ export async function repoCreateLine(receptionId: string, body: CreateLineBodyDT
     // commande (sur-réception bloquée sans la capacité dédiée — motif requis).
     let commandeIdToRefresh: string | null = null
     if (body.commande_fournisseur_ligne_id) {
-      const cfl = await client.query<{
+      const cfl = await tx.query<{
         ligne_id: string
         commande_id: string
         statut_ligne: string
@@ -863,7 +860,7 @@ export async function repoCreateLine(receptionId: string, body: CreateLineBodyDT
       commandeIdToRefresh = link.commande_id
     }
 
-    const ins = await client.query<{ id: string }>(
+    const ins = await tx.query<{ id: string }>(
       `
         INSERT INTO public.reception_fournisseur_lignes (
           reception_id,
@@ -897,7 +894,7 @@ export async function repoCreateLine(receptionId: string, body: CreateLineBodyDT
     const lineId = ins.rows[0]?.id
     if (!lineId) throw new Error("Failed to create reception line")
 
-    await insertAuditLog(client, audit, {
+    await insertAuditLog(tx, audit, {
       action: "receptions.lines.create",
       entity_type: "RECEPTION_FOURNISSEUR_LINE",
       entity_id: lineId,
@@ -907,29 +904,23 @@ export async function repoCreateLine(receptionId: string, body: CreateLineBodyDT
     if (commandeIdToRefresh) {
       // Sur-réception : autorisée uniquement si le rôle porte la capacité dédiée ET qu'un
       // motif est saisi dans les notes de la ligne (permission + motif explicites, #172).
-      const roleRes = await client.query<{ role: string | null }>(
+      const roleRes = await tx.query<{ role: string | null }>(
         `SELECT role FROM public.users WHERE id = $1`,
         [audit.user_id]
       )
       const role = roleRes.rows[0]?.role ?? null
       const allowOverReceipt =
         roleHasCommandeFournisseurCapability(role, "over_receipt") && Boolean(body.notes && body.notes.trim().length >= 3)
-      await repoRefreshCommandeReceptionState(client, commandeIdToRefresh, {
+      await repoRefreshCommandeReceptionState(tx, commandeIdToRefresh, {
         allowOverReceipt,
         audit: { ...audit, role },
       })
     }
 
-    const detail = await selectLineDetail(client, lineId)
+    const detail = await selectLineDetail(tx, lineId)
 
-    await client.query("COMMIT")
     return detail
-  } catch (err) {
-    await client.query("ROLLBACK")
-    throw err
-  } finally {
-    client.release()
-  }
+  })
 }
 
 export async function repoCreateLotForLine(
@@ -939,10 +930,8 @@ export async function repoCreateLotForLine(
   audit: AuditContext
 ): Promise<ReceptionFournisseurLine | null> {
   const client = await db.connect()
-  try {
-    await client.query("BEGIN")
-
-    const row = await client.query<{
+  return withRealtimeOutboxTransaction(client, async (tx) => {
+    const row = await tx.query<{
       id: string
       reception_id: string
       line_no: number
@@ -969,21 +958,18 @@ export async function repoCreateLotForLine(
       [lineId, receptionId]
     )
     const line = row.rows[0] ?? null
-    if (!line) {
-      await client.query("ROLLBACK")
-      return null
-    }
+    if (!line) return null
     if (line.lot_id) throw new HttpError(409, "LOT_ALREADY_SET", "Un lot est deja rattache a cette ligne")
 
     if (body.lot_code?.trim()) {
       throw new HttpError(400, "LOT_CODE_SERVER_MANAGED", "Le numéro de lot interne est attribué automatiquement.")
     }
-    const lotCode = await generateTransactionalBusinessCode(client, { prefix: "LOT" })
+    const lotCode = await generateTransactionalBusinessCode(tx, { prefix: "LOT" })
     const supplierLotCode = body.supplier_lot_code ?? line.supplier_lot_code ?? null
 
     let lotId: string
     try {
-      const ins = await client.query<{ id: string }>(
+      const ins = await tx.query<{ id: string }>(
         `
           INSERT INTO public.lots (
             article_id,
@@ -1023,7 +1009,7 @@ export async function repoCreateLotForLine(
       throw err
     }
 
-    await client.query(
+    await tx.query(
       `
         UPDATE public.reception_fournisseur_lignes
         SET
@@ -1036,23 +1022,17 @@ export async function repoCreateLotForLine(
       [lotId, supplierLotCode, audit.user_id, lineId]
     )
 
-    await insertAuditLog(client, audit, {
+    await insertAuditLog(tx, audit, {
       action: "receptions.lines.create_lot",
       entity_type: "lots",
       entity_id: lotId,
       details: { reception_id: receptionId, line_id: lineId, lot_code: lotCode, lot_status: "EN_ATTENTE" },
     })
 
-    const detail = await selectLineDetail(client, lineId)
+    const detail = await selectLineDetail(tx, lineId)
 
-    await client.query("COMMIT")
     return detail
-  } catch (err) {
-    await client.query("ROLLBACK")
-    throw err
-  } finally {
-    client.release()
-  }
+  })
 }
 
 export async function repoAttachDocuments(
@@ -1070,13 +1050,14 @@ export async function repoAttachDocuments(
     files: documents,
     context: "receptions.documents.attach",
     work: async () => {
+    const tx = client
     const exists = await ensureReceptionExists(client, receptionId)
     if (!exists) {
       return null
     }
 
     if (body.reception_line_id) {
-      const line = await client.query<{ ok: number }>(
+      const line = await tx.query<{ ok: number }>(
         `
           SELECT 1::int AS ok
           FROM public.reception_fournisseur_lignes
@@ -1105,7 +1086,7 @@ export async function repoAttachDocuments(
 
       const hash = await sha256File(absPath)
 
-      const ins = await client.query<DocumentRow>(
+      const ins = await tx.query<DocumentRow>(
         `
           INSERT INTO public.reception_fournisseur_documents (
             reception_id,
@@ -1169,7 +1150,7 @@ export async function repoAttachDocuments(
       inserted.push(mapDocumentRow(row))
     }
 
-    await insertAuditLog(client, audit, {
+    await insertAuditLog(tx, audit, {
       action: "receptions.documents.attach",
       entity_type: "RECEPTION_FOURNISSEUR",
       entity_id: receptionId,
@@ -1206,15 +1187,11 @@ export async function repoAttachDocuments(
 
 export async function repoRemoveDocument(receptionId: string, documentId: string, audit: AuditContext): Promise<boolean | null> {
   const client = await db.connect()
-  try {
-    await client.query("BEGIN")
-    const exists = await ensureReceptionExists(client, receptionId)
-    if (!exists) {
-      await client.query("ROLLBACK")
-      return null
-    }
+  return withRealtimeOutboxTransaction(client, async (tx) => {
+    const exists = await ensureReceptionExists(tx, receptionId)
+    if (!exists) return null
 
-    const current = await client.query<Pick<DocumentRow, "original_name" | "storage_path">>(
+    const current = await tx.query<Pick<DocumentRow, "original_name" | "storage_path">>(
       `
         SELECT original_name, storage_path
         FROM public.reception_fournisseur_documents
@@ -1224,12 +1201,9 @@ export async function repoRemoveDocument(receptionId: string, documentId: string
       [documentId, receptionId]
     )
     const doc = current.rows[0] ?? null
-    if (!doc) {
-      await client.query("ROLLBACK")
-      return false
-    }
+    if (!doc) return false
 
-    const upd = await client.query(
+    const upd = await tx.query(
       `
         UPDATE public.reception_fournisseur_documents
         SET removed_at = now(), removed_by = $3, updated_at = now(), updated_by = $3
@@ -1237,26 +1211,17 @@ export async function repoRemoveDocument(receptionId: string, documentId: string
       `,
       [documentId, receptionId, audit.user_id]
     )
-    if ((upd.rowCount ?? 0) === 0) {
-      await client.query("ROLLBACK")
-      return false
-    }
+    if ((upd.rowCount ?? 0) === 0) return false
 
-    await insertAuditLog(client, audit, {
+    await insertAuditLog(tx, audit, {
       action: "receptions.documents.remove",
       entity_type: "RECEPTION_FOURNISSEUR_DOCUMENT",
       entity_id: documentId,
       details: { reception_id: receptionId, original_name: doc.original_name, storage_path: doc.storage_path },
     })
 
-    await client.query("COMMIT")
     return true
-  } catch (err) {
-    await client.query("ROLLBACK")
-    throw err
-  } finally {
-    client.release()
-  }
+  })
 }
 
 export async function repoGetDocumentForDownload(
@@ -1265,15 +1230,11 @@ export async function repoGetDocumentForDownload(
   audit: AuditContext
 ): Promise<ReceptionFournisseurDocument | null> {
   const client = await db.connect()
-  try {
-    await client.query("BEGIN")
-    const exists = await ensureReceptionExists(client, receptionId)
-    if (!exists) {
-      await client.query("ROLLBACK")
-      return null
-    }
+  return withRealtimeOutboxTransaction(client, async (tx) => {
+    const exists = await ensureReceptionExists(tx, receptionId)
+    if (!exists) return null
 
-    const res = await client.query<DocumentRow>(
+    const res = await tx.query<DocumentRow>(
       `
         SELECT
           id::text AS id,
@@ -1304,33 +1265,23 @@ export async function repoGetDocumentForDownload(
       [documentId, receptionId]
     )
     const row = res.rows[0] ?? null
-    if (!row) {
-      await client.query("ROLLBACK")
-      return null
-    }
+    if (!row) return null
 
-    await insertAuditLog(client, audit, {
+    await insertAuditLog(tx, audit, {
       action: "receptions.documents.download",
       entity_type: "RECEPTION_FOURNISSEUR_DOCUMENT",
       entity_id: documentId,
       details: { reception_id: receptionId, original_name: row.original_name },
     })
 
-    await client.query("COMMIT")
     return mapDocumentRow(row)
-  } catch (err) {
-    await client.query("ROLLBACK")
-    throw err
-  } finally {
-    client.release()
-  }
+  })
 }
 
 export async function repoStartInspection(receptionId: string, lineId: string, audit: AuditContext): Promise<ReceptionIncomingInspection | null> {
   const client = await db.connect()
-  try {
-    await client.query("BEGIN")
-    const lineRes = await client.query<{ lot_id: string | null }>(
+  return withRealtimeOutboxTransaction(client, async (tx) => {
+    const lineRes = await tx.query<{ lot_id: string | null }>(
       `
         SELECT l.lot_id::text AS lot_id
         FROM public.reception_fournisseur_lignes l
@@ -1340,13 +1291,10 @@ export async function repoStartInspection(receptionId: string, lineId: string, a
       [lineId, receptionId]
     )
     const line = lineRes.rows[0] ?? null
-    if (!line) {
-      await client.query("ROLLBACK")
-      return null
-    }
+    if (!line) return null
     if (!line.lot_id) throw new HttpError(409, "LOT_REQUIRED", "Veuillez d'abord creer le lot avant de demarrer le controle")
 
-    const existing = await client.query<InspectionRow>(
+    const existing = await tx.query<InspectionRow>(
       `
         SELECT
           id::text AS id,
@@ -1372,8 +1320,7 @@ export async function repoStartInspection(receptionId: string, lineId: string, a
     )
     const cur = existing.rows[0] ?? null
     if (cur) {
-      await client.query("COMMIT")
-      const meas = await db.query<MeasurementRow>(
+      const meas = await tx.query<MeasurementRow>(
         `
           SELECT
             id::text AS id,
@@ -1399,7 +1346,7 @@ export async function repoStartInspection(receptionId: string, lineId: string, a
       return mapInspectionRow(cur, meas.rows.map(mapMeasurementRow))
     }
 
-    const ins = await client.query<{ id: string }>(
+    const ins = await tx.query<{ id: string }>(
       `
         INSERT INTO public.reception_incoming_inspections (
           reception_id,
@@ -1418,15 +1365,14 @@ export async function repoStartInspection(receptionId: string, lineId: string, a
     const inspectionId = ins.rows[0]?.id
     if (!inspectionId) throw new Error("Failed to start inspection")
 
-    await insertAuditLog(client, audit, {
+    await insertAuditLog(tx, audit, {
       action: "receptions.inspections.start",
       entity_type: "RECEPTION_INCOMING_INSPECTION",
       entity_id: inspectionId,
       details: { reception_id: receptionId, line_id: lineId, lot_id: line.lot_id },
     })
 
-    await client.query("COMMIT")
-    const after = await db.query<InspectionRow>(
+    const after = await tx.query<InspectionRow>(
       `
         SELECT
           id::text AS id,
@@ -1451,12 +1397,7 @@ export async function repoStartInspection(receptionId: string, lineId: string, a
     const i = after.rows[0] ?? null
     if (!i) throw new Error("Failed to read started inspection")
     return mapInspectionRow(i, [])
-  } catch (err) {
-    await client.query("ROLLBACK")
-    throw err
-  } finally {
-    client.release()
-  }
+  })
 }
 
 export async function repoAddMeasurement(
@@ -1466,10 +1407,8 @@ export async function repoAddMeasurement(
   audit: AuditContext
 ): Promise<ReceptionIncomingMeasurement | null> {
   const client = await db.connect()
-  try {
-    await client.query("BEGIN")
-
-    const inspectionRes = await client.query<{ id: string; status: string }>(
+  return withRealtimeOutboxTransaction(client, async (tx) => {
+    const inspectionRes = await tx.query<{ id: string; status: string }>(
       `
         SELECT i.id::text AS id, i.status
         FROM public.reception_incoming_inspections i
@@ -1483,7 +1422,7 @@ export async function repoAddMeasurement(
     if (!inspection) throw new HttpError(409, "INSPECTION_NOT_STARTED", "Le controle n'a pas ete demarre")
     if (inspection.status === "DECIDED") throw new HttpError(409, "INSPECTION_DECIDED", "Le controle est deja termine")
 
-    const ins = await client.query<MeasurementRow>(
+    const ins = await tx.query<MeasurementRow>(
       `
         INSERT INTO public.reception_incoming_measurements (
           inspection_id,
@@ -1531,21 +1470,15 @@ export async function repoAddMeasurement(
     const row = ins.rows[0] ?? null
     if (!row) throw new Error("Failed to create measurement")
 
-    await insertAuditLog(client, audit, {
+    await insertAuditLog(tx, audit, {
       action: "receptions.inspections.measurements.add",
       entity_type: "RECEPTION_INCOMING_MEASUREMENT",
       entity_id: row.id,
       details: { reception_id: receptionId, line_id: lineId, inspection_id: inspection.id, characteristic: row.characteristic },
     })
 
-    await client.query("COMMIT")
     return mapMeasurementRow(row)
-  } catch (err) {
-    await client.query("ROLLBACK")
-    throw err
-  } finally {
-    client.release()
-  }
+  })
 }
 
 export async function repoDecideInspection(
@@ -1555,10 +1488,8 @@ export async function repoDecideInspection(
   audit: AuditContext
 ): Promise<ReceptionIncomingInspection | null> {
   const client = await db.connect()
-  try {
-    await client.query("BEGIN")
-
-    const lock = await client.query<InspectionRow>(
+  return withRealtimeOutboxTransaction(client, async (tx) => {
+    const lock = await tx.query<InspectionRow>(
       `
         SELECT
           id::text AS id,
@@ -1586,7 +1517,7 @@ export async function repoDecideInspection(
     if (!inspection) throw new HttpError(409, "INSPECTION_NOT_STARTED", "Le controle n'a pas ete demarre")
     if (inspection.status === "DECIDED") throw new HttpError(409, "INSPECTION_ALREADY_DECIDED", "Une decision a deja ete prise")
 
-    await client.query(
+    await tx.query(
       `
         UPDATE public.reception_incoming_inspections
         SET
@@ -1602,7 +1533,7 @@ export async function repoDecideInspection(
       [inspection.id, body.decision, body.decision_note ?? null, audit.user_id]
     )
 
-    await client.query(
+    await tx.query(
       `
         UPDATE public.lots
         SET
@@ -1615,16 +1546,14 @@ export async function repoDecideInspection(
       [inspection.lot_id, body.decision, body.decision_note ?? null, audit.user_id]
     )
 
-    await insertAuditLog(client, audit, {
+    await insertAuditLog(tx, audit, {
       action: "receptions.inspections.decide",
       entity_type: "RECEPTION_INCOMING_INSPECTION",
       entity_id: inspection.id,
       details: { reception_id: receptionId, line_id: lineId, lot_id: inspection.lot_id, decision: body.decision },
     })
 
-    await client.query("COMMIT")
-
-    const after = await db.query<InspectionRow>(
+    const after = await tx.query<InspectionRow>(
       `
         SELECT
           id::text AS id,
@@ -1648,7 +1577,7 @@ export async function repoDecideInspection(
     )
     const i = after.rows[0] ?? null
     if (!i) throw new Error("Failed to read decided inspection")
-    const meas = await db.query<MeasurementRow>(
+    const meas = await tx.query<MeasurementRow>(
       `
         SELECT
           id::text AS id,
@@ -1672,12 +1601,7 @@ export async function repoDecideInspection(
       [inspection.id]
     )
     return mapInspectionRow(i, meas.rows.map(mapMeasurementRow))
-  } catch (err) {
-    await client.query("ROLLBACK")
-    throw err
-  } finally {
-    client.release()
-  }
+  })
 }
 
 async function sumReceiptedQty(lineId: string): Promise<number> {

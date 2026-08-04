@@ -18,6 +18,11 @@ vi.mock("../../audit-logs/repository/audit-logs.repository", () => ({
   repoInsertAuditLog: testState.insertAudit,
 }))
 
+vi.mock("../../../shared/realtime/realtime.service", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../../../shared/realtime/realtime.service")>(),
+  enqueueEntityChanged: vi.fn().mockResolvedValue("event-17"),
+}))
+
 vi.mock("./livraisons-shipment.repository", () => ({
   prepareLivraisonInTransaction: vi.fn(),
   releaseLivraisonReservationsInTransaction: testState.releaseReservations,
@@ -25,13 +30,15 @@ vi.mock("./livraisons-shipment.repository", () => ({
 }))
 
 import { repoUpdateLivraisonStatus } from "./livraisons.repository"
+import { withRealtimeOutboxDbMock } from "../../../__tests__/helpers/realtime-outbox-db-mock"
 
 const BON_LIVRAISON_ID = "00000000-0000-4000-8000-000000000017"
 const USER_ID = 17
 
 function createClient(currentStatus: "DRAFT" | "READY" | "CANCELLED", updateRowCount = 1) {
-  const query = vi.fn(async (sql: string, _values?: unknown[]) => {
-    if (sql.includes("FROM bon_livraison bl")) {
+  const query = vi.fn(withRealtimeOutboxDbMock(async (sql: unknown) => {
+    const statement = String(sql)
+    if (statement.includes("FROM bon_livraison bl")) {
       return {
         rows: [{
           id: BON_LIVRAISON_ID,
@@ -41,11 +48,14 @@ function createClient(currentStatus: "DRAFT" | "READY" | "CANCELLED", updateRowC
         }],
       }
     }
-    if (sql.includes("UPDATE public.bon_livraison")) {
+    if (statement.includes("UPDATE public.bon_livraison")) {
       return { rows: [], rowCount: updateRowCount }
     }
+    if (statement.includes("INSERT INTO bon_livraison_event_log")) {
+      return { rows: [{ id: "event-17", created_at: "2026-08-04T12:00:00.000Z" }], rowCount: 1 }
+    }
     return { rows: [], rowCount: 0 }
-  })
+  }))
   const client = { query, release: vi.fn() } as unknown as PoolClient
   return { client, query }
 }

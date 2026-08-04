@@ -6,6 +6,7 @@ import express, { type ErrorRequestHandler } from "express"
 import request from "supertest"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
+import { withRealtimeOutboxDbMock } from "./helpers/realtime-outbox-db-mock"
 import { HttpError } from "../utils/httpError"
 
 const database = vi.hoisted(() => ({
@@ -74,7 +75,12 @@ let temporaryRoot: string
 let sequence = 0
 
 function client() {
-  return { query: database.clientQuery, release: database.release }
+  return {
+    query: withRealtimeOutboxDbMock((sql, params) =>
+      params === undefined ? database.clientQuery(sql) : database.clientQuery(sql, params)
+    ),
+    release: database.release,
+  }
 }
 
 function toolPayload() {

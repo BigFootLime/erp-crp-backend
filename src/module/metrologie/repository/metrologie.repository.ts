@@ -7,6 +7,8 @@ import path from "node:path";
 import pool from "../../../config/database";
 import { transferSecureUploadToDestination } from "../../../shared/uploads/secure-upload";
 import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction";
+import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
+import { enqueueEntityChanged } from "../../../shared/realtime/realtime-outbox.service";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
@@ -121,7 +123,7 @@ async function insertMetrologieEvent(
     new_values: unknown | null;
   }
 ) {
-  await tx.query(
+  const inserted = await tx.query<{ id: string; created_at: string }>(
     `
       INSERT INTO public.metrologie_event_log (
         equipement_id,
@@ -131,6 +133,7 @@ async function insertMetrologieEvent(
         user_id
       )
       VALUES ($1::uuid,$2,$3::jsonb,$4::jsonb,$5)
+      RETURNING id::text AS id, created_at::text AS created_at
     `,
     [
       params.equipement_id,
@@ -140,6 +143,43 @@ async function insertMetrologieEvent(
       params.user_id,
     ]
   );
+  const event = inserted.rows[0];
+  if (!event) throw new Error("METROLOGIE_EVENT_INSERT_FAILED");
+  if (params.equipement_id) {
+    await enqueueMetrologieEquipmentChanged(tx, {
+      equipementId: params.equipement_id,
+      eventId: event.id,
+      eventType: params.event_type,
+      occurredAt: event.created_at,
+    });
+  }
+}
+
+export async function enqueueMetrologieEquipmentChanged(
+  tx: DbQueryer,
+  params: { equipementId: string; eventId: string; eventType: string; occurredAt: string }
+): Promise<void> {
+  const normalized = params.eventType.toUpperCase();
+  const action = /^EQUIPEMENT_CREATE(?:D)?$/.test(normalized)
+    ? "created"
+    : /^EQUIPEMENT_DELETE(?:D)?$/.test(normalized)
+      ? "deleted"
+      : normalized.includes("PLAN") || normalized.includes("STATUS") || normalized.includes("VALIDATE")
+        ? "status_changed"
+        : "updated";
+  await enqueueEntityChanged(tx, {
+    entityType: "METROLOGIE_EQUIPEMENT",
+    entityId: params.equipementId,
+    action,
+    module: "metrologie",
+    at: params.occurredAt,
+    invalidateKeys: [
+      "metrologie:equipements",
+      "metrologie:kpis",
+      "metrologie:alerts",
+      `metrologie:equipement:${params.equipementId}`,
+    ],
+  }, { deduplicationKey: `metrologie-event:${params.eventId}` });
 }
 
 export function repoMetrologieDocsBaseDir(): string {
@@ -755,9 +795,8 @@ export async function repoGetEquipementDetail(id: string): Promise<MetrologieEqu
 export async function repoCreateEquipement(body: CreateEquipementBodyDTO, audit: AuditContext): Promise<MetrologieEquipementDetail> {
   const client = await pool.connect();
   try {
-    await client.query("BEGIN");
-
-    const ins = await client.query<{ id: string }>(
+    const id = await withRealtimeOutboxTransaction(client, async (tx) => {
+    const ins = await tx.query<{ id: string }>(
       `
         INSERT INTO public.metrologie_equipements (
           code,
@@ -793,7 +832,7 @@ export async function repoCreateEquipement(body: CreateEquipementBodyDTO, audit:
     const id = ins.rows[0]?.id;
     if (!id) throw new Error("Failed to create equipement");
 
-    await insertMetrologieEvent(client, {
+    await insertMetrologieEvent(tx, {
       equipement_id: id,
       event_type: "EQUIPEMENT_CREATE",
       user_id: audit.user_id,
@@ -801,26 +840,24 @@ export async function repoCreateEquipement(body: CreateEquipementBodyDTO, audit:
       new_values: { id, ...body },
     });
 
-    await insertAuditLog(client, audit, {
+    await insertAuditLog(tx, audit, {
       action: "metrologie.equipements.create",
       entity_type: "metrologie_equipements",
       entity_id: id,
       details: { code: body.code ?? null, designation: body.designation, criticite: body.criticite, statut: body.statut },
     });
 
-    await client.query("COMMIT");
+    return id;
+    });
     const out = await repoGetEquipementDetail(id);
     if (!out) throw new Error("Failed to reload equipement");
     return out;
   } catch (err) {
-    await client.query("ROLLBACK");
     const { code, constraint } = getPgErrorInfo(err);
     if (code === "23505" && constraint === "metrologie_equipements_code_uniq") {
       throw new HttpError(409, "DUPLICATE", "Equipement code already exists");
     }
     throw err;
-  } finally {
-    client.release();
   }
 }
 
@@ -831,9 +868,8 @@ export async function repoPatchEquipement(
 ): Promise<MetrologieEquipementDetail | null> {
   const client = await pool.connect();
   try {
-    await client.query("BEGIN");
-
-    const currentRes = await client.query<{
+    const updated = await withRealtimeOutboxTransaction(client, async (tx) => {
+    const currentRes = await tx.query<{
       code: string | null;
       designation: string;
       categorie: string | null;
@@ -865,10 +901,7 @@ export async function repoPatchEquipement(
       [id]
     );
     const current = currentRes.rows[0] ?? null;
-    if (!current) {
-      await client.query("ROLLBACK");
-      return null;
-    }
+    if (!current) return false;
 
     const patch = body.patch;
     const sets: string[] = [];
@@ -903,13 +936,13 @@ export async function repoPatchEquipement(
     if (sets.length) {
       sets.push(`updated_at = now()`);
       sets.push(`updated_by = ${push(audit.user_id)}`);
-      await client.query(
+      await tx.query(
         `UPDATE public.metrologie_equipements SET ${sets.join(", ")} WHERE id = ${push(id)}::uuid`,
         values
       );
     }
 
-    await insertMetrologieEvent(client, {
+    await insertMetrologieEvent(tx, {
       equipement_id: id,
       event_type: "EQUIPEMENT_UPDATE",
       user_id: audit.user_id,
@@ -917,41 +950,35 @@ export async function repoPatchEquipement(
       new_values: sets.length ? newValues : null,
     });
 
-    await insertAuditLog(client, audit, {
+    await insertAuditLog(tx, audit, {
       action: "metrologie.equipements.update",
       entity_type: "metrologie_equipements",
       entity_id: id,
       details: { note: body.note ?? null, patch: newValues },
     });
 
-    await client.query("COMMIT");
-    return repoGetEquipementDetail(id);
+    return true;
+    });
+    return updated ? repoGetEquipementDetail(id) : null;
   } catch (err) {
-    await client.query("ROLLBACK");
     const { code, constraint } = getPgErrorInfo(err);
     if (code === "23505" && constraint === "metrologie_equipements_code_uniq") {
       throw new HttpError(409, "DUPLICATE", "Equipement code already exists");
     }
     throw err;
-  } finally {
-    client.release();
   }
 }
 
 export async function repoDeleteEquipement(id: string, audit: AuditContext): Promise<boolean> {
   const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    const currentRes = await client.query<{ ok: number }>(
+  return withRealtimeOutboxTransaction(client, async (tx) => {
+    const currentRes = await tx.query<{ ok: number }>(
       `SELECT 1::int AS ok FROM public.metrologie_equipements WHERE id = $1::uuid AND deleted_at IS NULL FOR UPDATE`,
       [id]
     );
-    if (!currentRes.rows[0]?.ok) {
-      await client.query("ROLLBACK");
-      return false;
-    }
+    if (!currentRes.rows[0]?.ok) return false;
 
-    await client.query(
+    await tx.query(
       `
         UPDATE public.metrologie_equipements
         SET
@@ -965,45 +992,34 @@ export async function repoDeleteEquipement(id: string, audit: AuditContext): Pro
       [id, audit.user_id]
     );
 
-    await insertMetrologieEvent(client, {
+    await insertMetrologieEvent(tx, {
       equipement_id: id,
       event_type: "EQUIPEMENT_DELETE",
       user_id: audit.user_id,
       old_values: { id },
       new_values: null,
     });
-    await insertAuditLog(client, audit, {
+    await insertAuditLog(tx, audit, {
       action: "metrologie.equipements.delete",
       entity_type: "metrologie_equipements",
       entity_id: id,
       details: null,
     });
 
-    await client.query("COMMIT");
     return true;
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function repoUpsertPlan(equipementId: string, body: UpsertPlanBodyDTO, audit: AuditContext): Promise<MetrologiePlan | null> {
   const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-
-    const equipOk = await client.query<{ ok: number }>(
+  const planId = await withRealtimeOutboxTransaction(client, async (tx) => {
+    const equipOk = await tx.query<{ ok: number }>(
       `SELECT 1::int AS ok FROM public.metrologie_equipements WHERE id = $1::uuid AND deleted_at IS NULL LIMIT 1`,
       [equipementId]
     );
-    if (!equipOk.rows[0]?.ok) {
-      await client.query("ROLLBACK");
-      return null;
-    }
+    if (!equipOk.rows[0]?.ok) return null;
 
-    const currentRes = await client.query<{
+    const currentRes = await tx.query<{
       id: string;
       periodicite_mois: number;
       last_done_date: string | null;
@@ -1035,7 +1051,7 @@ export async function repoUpsertPlan(equipementId: string, body: UpsertPlanBodyD
 
     let planId: string;
     if (current) {
-      await client.query(
+      await tx.query(
         `
           UPDATE public.metrologie_plan
           SET
@@ -1068,7 +1084,7 @@ export async function repoUpsertPlan(equipementId: string, body: UpsertPlanBodyD
       );
       planId = current.id;
     } else {
-      const ins = await client.query<{ id: string }>(
+      const ins = await tx.query<{ id: string }>(
         `
           INSERT INTO public.metrologie_plan (
             equipement_id,
@@ -1110,23 +1126,25 @@ export async function repoUpsertPlan(equipementId: string, body: UpsertPlanBodyD
       if (!planId) throw new Error("Failed to insert plan");
     }
 
-    await insertMetrologieEvent(client, {
+    await insertMetrologieEvent(tx, {
       equipement_id: equipementId,
       event_type: "PLAN_UPSERT",
       user_id: audit.user_id,
       old_values: current,
       new_values: { equipement_id: equipementId, ...body },
     });
-    await insertAuditLog(client, audit, {
+    await insertAuditLog(tx, audit, {
       action: "metrologie.plan.upsert",
       entity_type: "metrologie_plan",
       entity_id: planId,
       details: { equipement_id: equipementId, periodicite_mois: body.periodicite_mois },
     });
 
-    await client.query("COMMIT");
+    return planId;
+  });
+  if (!planId) return null;
 
-    const planRes = await db.query<PlanRow>(
+  const planRes = await db.query<PlanRow>(
       `
         SELECT
           p.id::text AS id,
@@ -1155,14 +1173,8 @@ export async function repoUpsertPlan(equipementId: string, body: UpsertPlanBodyD
       [planId]
     );
 
-    const row = planRes.rows[0] ?? null;
-    return row ? mapPlanRow(row) : null;
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+  const row = planRes.rows[0] ?? null;
+  return row ? mapPlanRow(row) : null;
 }
 
 function safeDocExtension(originalName: string): string {
@@ -1245,6 +1257,7 @@ export async function repoAttachCertificats(params: {
     files: documents,
     context: "metrologie.certificats.attach",
     work: async () => {
+    const tx = client;
     const equipOk = await client.query<{ ok: number }>(
       `SELECT 1::int AS ok FROM public.metrologie_equipements WHERE id = $1::uuid AND deleted_at IS NULL LIMIT 1`,
       [equipement_id]
@@ -1270,7 +1283,7 @@ export async function repoAttachCertificats(params: {
 
       const hash = await sha256File(absPath);
 
-      const ins = await client.query<CertRow>(
+      const ins = await tx.query<CertRow>(
         `
           INSERT INTO public.metrologie_certificats (
             id,
@@ -1354,7 +1367,7 @@ export async function repoAttachCertificats(params: {
     }
 
     // Update plan when present
-    const planRes = await client.query<{ id: string; periodicite_mois: number }>(
+    const planRes = await tx.query<{ id: string; periodicite_mois: number }>(
       `
         SELECT id::text AS id, periodicite_mois
         FROM public.metrologie_plan
@@ -1366,7 +1379,7 @@ export async function repoAttachCertificats(params: {
     );
     const plan = planRes.rows[0] ?? null;
     if (plan) {
-      await client.query(
+      await tx.query(
         `
           UPDATE public.metrologie_plan
           SET
@@ -1383,7 +1396,7 @@ export async function repoAttachCertificats(params: {
       );
 
       if (body.resultat === "NON_CONFORME" || body.resultat === "CONFORME") {
-        await client.query(
+        await tx.query(
           `
             UPDATE public.metrologie_plan
             SET
@@ -1403,7 +1416,7 @@ export async function repoAttachCertificats(params: {
       }
     }
 
-    await insertMetrologieEvent(client, {
+    await insertMetrologieEvent(tx, {
       equipement_id,
       event_type: "CERTIFICAT_ATTACH",
       user_id: audit.user_id,
@@ -1413,7 +1426,7 @@ export async function repoAttachCertificats(params: {
         certificats: inserted.map((c) => ({ id: c.id, date_etalonnage: c.date_etalonnage, resultat: c.resultat })),
       },
     });
-    await insertAuditLog(client, audit, {
+    await insertAuditLog(tx, audit, {
       action: "metrologie.certificats.attach",
       entity_type: "metrologie_certificats",
       entity_id: equipement_id,
@@ -1451,9 +1464,8 @@ export async function repoRemoveCertificat(params: {
 }): Promise<boolean | null> {
   const { equipement_id, certificat_id, audit } = params;
   const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    const currentRes = await client.query<{ file_original_name: string | null; storage_path: string | null }>(
+  return withRealtimeOutboxTransaction(client, async (tx) => {
+    const currentRes = await tx.query<{ file_original_name: string | null; storage_path: string | null }>(
       `
         SELECT file_original_name, storage_path
         FROM public.metrologie_certificats
@@ -1465,12 +1477,9 @@ export async function repoRemoveCertificat(params: {
       [certificat_id, equipement_id]
     );
     const current = currentRes.rows[0] ?? null;
-    if (!current) {
-      await client.query("ROLLBACK");
-      return false;
-    }
+    if (!current) return false;
 
-    const upd = await client.query(
+    const upd = await tx.query(
       `
         UPDATE public.metrologie_certificats
         SET deleted_at = now(), deleted_by = $3, updated_at = now(), updated_by = $3
@@ -1480,33 +1489,24 @@ export async function repoRemoveCertificat(params: {
       `,
       [certificat_id, equipement_id, audit.user_id]
     );
-    if ((upd.rowCount ?? 0) === 0) {
-      await client.query("ROLLBACK");
-      return false;
-    }
+    if ((upd.rowCount ?? 0) === 0) return false;
 
-    await insertMetrologieEvent(client, {
+    await insertMetrologieEvent(tx, {
       equipement_id,
       event_type: "CERTIFICAT_REMOVE",
       user_id: audit.user_id,
       old_values: { certificat_id, file_original_name: current.file_original_name, storage_path: current.storage_path },
       new_values: null,
     });
-    await insertAuditLog(client, audit, {
+    await insertAuditLog(tx, audit, {
       action: "metrologie.certificats.remove",
       entity_type: "metrologie_certificats",
       entity_id: certificat_id,
       details: { equipement_id, certificat_id },
     });
 
-    await client.query("COMMIT");
     return true;
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function repoGetCertificatForDownload(params: {
@@ -1516,9 +1516,8 @@ export async function repoGetCertificatForDownload(params: {
 }): Promise<{ storage_path: string | null; mime_type: string | null; file_original_name: string | null } | null> {
   const { equipement_id, certificat_id, audit } = params;
   const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    const res = await client.query<{ storage_path: string | null; mime_type: string | null; file_original_name: string | null }>(
+  return withRealtimeOutboxTransaction(client, async (tx) => {
+    const res = await tx.query<{ storage_path: string | null; mime_type: string | null; file_original_name: string | null }>(
       `
         SELECT storage_path, mime_type, file_original_name
         FROM public.metrologie_certificats
@@ -1530,25 +1529,16 @@ export async function repoGetCertificatForDownload(params: {
       [certificat_id, equipement_id]
     );
     const row = res.rows[0] ?? null;
-    if (!row) {
-      await client.query("ROLLBACK");
-      return null;
-    }
+    if (!row) return null;
 
-    await insertAuditLog(client, audit, {
+    await insertAuditLog(tx, audit, {
       action: "metrologie.certificats.download",
       entity_type: "metrologie_certificats",
       entity_id: certificat_id,
       details: { equipement_id, certificat_id },
     });
-    await client.query("COMMIT");
     return row;
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 const METROLOGIE_BLOCK_SETTING_KEY = "metrologie.block_on_overdue_critical";

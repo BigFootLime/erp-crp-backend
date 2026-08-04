@@ -25,6 +25,10 @@ vi.mock("../utils/checkNetworkDrive", () => ({
   checkNetworkDrive: vi.fn(() => Promise.resolve()),
 }));
 
+vi.mock("../module/access-control/middlewares/module-access-gate", () => ({
+  moduleAccessGate: (_req: unknown, _res: unknown, next: () => void) => next(),
+}));
+
 // #167 — la conversion délègue au moteur commande ; mock partiel (contrat de délégation).
 const commandeEngine = vi.hoisted(() => ({ repoCreateCommande: vi.fn() }));
 vi.mock("../module/commande-client/repository/commande-client.repository", async (importOriginal) => {
@@ -48,6 +52,7 @@ vi.mock("../module/auth/middlewares/auth.middleware", () => ({
 }));
 
 import app from "../config/app";
+import { withRealtimeOutboxDbMock } from "./helpers/realtime-outbox-db-mock";
 
 /** Dispatcher SQL par contenu — voir devis.routes.test.ts (même pattern #172). */
 const defaultState = () => ({
@@ -141,9 +146,14 @@ beforeEach(() => {
   mocks.poolConnect.mockReset();
   mocks.clientQuery.mockReset();
   mocks.clientRelease.mockReset();
-  mocks.poolConnect.mockResolvedValue({ query: mocks.clientQuery, release: mocks.clientRelease });
+  mocks.poolConnect.mockResolvedValue({
+    query: withRealtimeOutboxDbMock(mocks.clientQuery),
+    release: mocks.clientRelease,
+  });
   state = defaultState();
-  mocks.poolQuery.mockImplementation(async (sql: unknown, params?: unknown[]) => dispatch(sql, params));
+  mocks.poolQuery.mockImplementation(
+    withRealtimeOutboxDbMock(async (sql: unknown, params?: unknown[]) => dispatch(sql, params))
+  );
   mocks.clientQuery.mockImplementation(async (sql: unknown, params?: unknown[]) => dispatch(sql, params));
   commandeEngine.repoCreateCommande.mockReset();
   commandeEngine.repoCreateCommande.mockResolvedValue({ id: 55 });
@@ -531,14 +541,14 @@ describe("#167 — conversion contrôlée devis → commande", () => {
     );
     // Après l'échec du moteur, la commande gagnante est visible.
     let raced = false;
-    mocks.poolQuery.mockImplementation(async (sql: unknown, params?: unknown[]) => {
+    mocks.poolQuery.mockImplementation(withRealtimeOutboxDbMock(async (sql: unknown, params?: unknown[]) => {
       if (/FROM commande_client cc\s+WHERE cc\.devis_id/.test(String(sql))) {
         if (raced) return { rows: [{ id: "77", numero: "CMD-2026-0077" }] };
         raced = true;
         return { rows: [] };
       }
       return dispatch(sql, params);
-    });
+    }));
 
     const res = await request(app).post("/api/v1/devis/7/convert-to-commande").send({});
     expect(res.status).toBe(200);

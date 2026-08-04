@@ -17,10 +17,16 @@ vi.mock("../../audit-logs/repository/audit-logs.repository", () => ({
   repoInsertAuditLog: dependencies.insertAudit,
 }))
 
+vi.mock("../../../shared/realtime/realtime.service", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../../../shared/realtime/realtime.service")>(),
+  enqueueEntityChanged: vi.fn().mockResolvedValue("event-orphan"),
+}))
+
 import {
   repoDeleteLivraisonLineAllocation,
   repoUpdateLivraisonStatus,
 } from "./livraisons.repository"
+import { withRealtimeOutboxDbMock } from "../../../__tests__/helpers/realtime-outbox-db-mock"
 
 const BON_LIVRAISON_ID = "44444444-4444-4444-8444-444444444444"
 const LINE_ID = "55555555-5555-4555-8555-555555555555"
@@ -50,21 +56,23 @@ function createReservationAllocationLifecycle() {
   let snapshot: LifecycleState | null = null
   let failCancellationStatusUpdate = false
 
-  const query = vi.fn(async (sql: string, values: unknown[] = []) => {
-    if (sql === "BEGIN") {
+  const query = vi.fn(withRealtimeOutboxDbMock(async (sql: unknown, rawValues?: unknown[]) => {
+    const statement = String(sql)
+    const values = rawValues ?? []
+    if (statement === "BEGIN") {
       snapshot = { ...state }
       return { rows: [], rowCount: 0 }
     }
-    if (sql === "COMMIT") {
+    if (statement === "COMMIT") {
       snapshot = null
       return { rows: [], rowCount: 0 }
     }
-    if (sql === "ROLLBACK") {
+    if (statement === "ROLLBACK") {
       if (snapshot) Object.assign(state, snapshot)
       snapshot = null
       return { rows: [], rowCount: 0 }
     }
-    if (sql.includes("FROM bon_livraison bl")) {
+    if (statement.includes("FROM bon_livraison bl")) {
       return {
         rows: [{
           id: BON_LIVRAISON_ID,
@@ -75,18 +83,18 @@ function createReservationAllocationLifecycle() {
         rowCount: 1,
       }
     }
-    if (sql.includes("SELECT a.stock_movement_line_id")) {
+    if (statement.includes("SELECT a.stock_movement_line_id")) {
       return {
         rows: state.allocationExists ? [{ stock_movement_line_id: null }] : [],
         rowCount: state.allocationExists ? 1 : 0,
       }
     }
-    if (sql.includes("DELETE FROM public.bon_livraison_ligne_allocations")) {
+    if (statement.includes("DELETE FROM public.bon_livraison_ligne_allocations")) {
       const existed = state.allocationExists
       state.allocationExists = false
       return { rows: [], rowCount: existed ? 1 : 0 }
     }
-    if (sql.includes("WITH target_reservation_ids AS")) {
+    if (statement.includes("WITH target_reservation_ids AS")) {
       if (state.reservationStatus !== "ACTIVE") return { rows: [], rowCount: 0 }
       const row = {
         id: RESERVATION_ID,
@@ -97,13 +105,13 @@ function createReservationAllocationLifecycle() {
       // The duplicate exercises the defensive ID deduplication in addition to SQL UNION.
       return { rows: [row, { ...row }], rowCount: 2 }
     }
-    if (sql.includes("FROM public.stock_levels") && sql.includes("FOR UPDATE")) {
+    if (statement.includes("FROM public.stock_levels") && statement.includes("FOR UPDATE")) {
       return {
         rows: [{ qty_total: 10, qty_reserved: state.stockLevelReserved, qty_depreciated: 0 }],
         rowCount: 1,
       }
     }
-    if (sql.includes("FROM public.stock_batches") && sql.includes("FOR UPDATE")) {
+    if (statement.includes("FROM public.stock_batches") && statement.includes("FOR UPDATE")) {
       return {
         rows: [{
           stock_level_id: STOCK_LEVEL_ID,
@@ -115,28 +123,31 @@ function createReservationAllocationLifecycle() {
         rowCount: 1,
       }
     }
-    if (sql.includes("FROM public.lots")) {
+    if (statement.includes("FROM public.lots")) {
       return { rows: [{ lot_status: "LIBERE" }], rowCount: 1 }
     }
-    if (sql.includes("UPDATE public.stock_levels")) {
+    if (statement.includes("UPDATE public.stock_levels")) {
       state.stockLevelReserved -= Number(values[1])
       return { rows: [], rowCount: 1 }
     }
-    if (sql.includes("UPDATE public.stock_batches")) {
+    if (statement.includes("UPDATE public.stock_batches")) {
       state.stockBatchReserved -= Number(values[1])
       return { rows: [], rowCount: 1 }
     }
-    if (sql.includes("UPDATE public.stock_reservations")) {
+    if (statement.includes("UPDATE public.stock_reservations")) {
       state.reservationStatus = "RELEASED"
       return { rows: [], rowCount: 1 }
     }
-    if (sql.includes("UPDATE public.bon_livraison") && sql.includes("SET statut = $2")) {
+    if (statement.includes("UPDATE public.bon_livraison") && statement.includes("SET statut = $2")) {
       if (failCancellationStatusUpdate) throw new Error("status update failed")
       state.deliveryStatus = "CANCELLED"
       return { rows: [], rowCount: 1 }
     }
+    if (statement.includes("INSERT INTO bon_livraison_event_log")) {
+      return { rows: [{ id: "event-orphan", created_at: "2026-08-04T12:00:00.000Z" }], rowCount: 1 }
+    }
     return { rows: [], rowCount: 1 }
-  })
+  }))
   const client = { query, release: vi.fn() } as unknown as PoolClient
   return {
     client,

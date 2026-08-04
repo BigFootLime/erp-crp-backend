@@ -4,6 +4,11 @@ import path from "node:path";
 import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
+import {
+  enqueueAppNotificationCreated,
+  enqueueEntityChanged,
+} from "../../../shared/realtime/realtime-outbox.service";
+import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
 import { getDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import {
@@ -389,9 +394,8 @@ export async function repoCreateCommandeArDraft(params: {
   const filePath = path.resolve(getDocumentStoragePath(), `${documentId}.pdf`);
 
   try {
-    await client.query("BEGIN");
-
-    const exists = await client.query<{ id: number }>(
+    return await withRealtimeOutboxTransaction(client, async (tx) => {
+    const exists = await tx.query<{ id: number }>(
       `SELECT id::int AS id FROM public.commande_client WHERE id = $1 FOR UPDATE`,
       [params.commande_id]
     );
@@ -403,7 +407,7 @@ export async function repoCreateCommandeArDraft(params: {
     // active checkpoint and actor after acquiring the command lock so a send
     // that committed in the meantime cannot be followed by a stale draft.
     await repoAuthorizeCommandeArGeneration({
-      tx: client,
+      tx,
       commande_id: params.commande_id,
       user_id: params.user_id,
       user_role: params.user_role,
@@ -412,17 +416,17 @@ export async function repoCreateCommandeArDraft(params: {
     await fs.mkdir(path.dirname(filePath), { recursive: true });
     await fs.writeFile(filePath, params.pdf_buffer);
 
-    await client.query(
+    await tx.query(
       `INSERT INTO public.documents_clients (id, document_name, type) VALUES ($1, $2, $3)`,
       [documentId, params.document_name, "PDF"]
     );
 
-    await client.query(
+    await tx.query(
       `INSERT INTO public.commande_documents (commande_id, document_id, type) VALUES ($1, $2, $3)`,
       [params.commande_id, documentId, "AR"]
     );
 
-    const ins = await client.query<{
+    const ins = await tx.query<{
       id: string;
       generated_at: string;
       generated_by: number | null;
@@ -458,8 +462,10 @@ export async function repoCreateCommandeArDraft(params: {
         JSON.stringify({ recipient_suggestions: params.recipient_suggestions }),
       ]
     );
+    const row = ins.rows[0];
+    if (!row) throw new Error("Failed to create AR draft");
 
-    await insertCommandeEvent(client, {
+    await insertCommandeEvent(tx, {
       commande_id: params.commande_id,
       event_type: "AR_GENERATED",
       new_values: {
@@ -471,12 +477,19 @@ export async function repoCreateCommandeArDraft(params: {
       user_id: params.user_id,
     });
 
-    await client.query(`UPDATE public.commande_client SET updated_at = now() WHERE id = $1`, [params.commande_id]);
-    await client.query("COMMIT");
-
-    const row = ins.rows[0];
-    if (!row) throw new Error("Failed to create AR draft");
-
+    await tx.query(`UPDATE public.commande_client SET updated_at = now() WHERE id = $1`, [params.commande_id]);
+    await enqueueEntityChanged(
+      tx,
+      {
+        entityType: "COMMANDE_CLIENT",
+        entityId: String(params.commande_id),
+        action: "updated",
+        module: "commandes-clients",
+        at: row.generated_at,
+        invalidateKeys: ["commandes:list", `commandes:detail:${params.commande_id}`],
+      },
+      { deduplicationKey: `commande-ar:${arId}:generated` }
+    );
     return {
       ar_id: row.id,
       commande_id: params.commande_id,
@@ -492,16 +505,16 @@ export async function repoCreateCommandeArDraft(params: {
       email_provider_id: null,
       preview_path: `/commandes/${params.commande_id}/documents/${documentId}/file`,
     };
+    });
   } catch (err) {
-    await client.query("ROLLBACK");
-    try {
-      await fs.unlink(filePath);
-    } catch {
-      // ignore cleanup errors
+    if (!(err instanceof HttpError && err.code === "REALTIME_COMMIT_OUTCOME_UNKNOWN")) {
+      try {
+        await fs.unlink(filePath);
+      } catch {
+        // ignore cleanup errors
+      }
     }
     throw err;
-  } finally {
-    client.release();
   }
 }
 
@@ -576,8 +589,7 @@ export async function repoMarkCommandeArFailed(params: {
   error_message: string;
   claim?: CommandeArSendClaim;
 }): Promise<void> {
-  const db = params.claim?.client ?? pool;
-  try {
+  const markFailed = async (db: DbQueryer) => {
     await db.query(
       `
         UPDATE public.commande_ar_log
@@ -588,13 +600,16 @@ export async function repoMarkCommandeArFailed(params: {
       `,
       [params.commande_id, params.ar_id, params.error_message]
     );
-    if (params.claim) await params.claim.client.query("COMMIT");
-  } catch (err) {
-    if (params.claim) await params.claim.client.query("ROLLBACK");
-    throw err;
-  } finally {
-    if (params.claim) params.claim.client.release();
+  };
+  if (!params.claim) {
+    await markFailed(pool);
+    return;
   }
+  await withRealtimeOutboxTransaction(
+    params.claim.client,
+    markFailed,
+    { transactionAlreadyStarted: true }
+  );
 }
 
 export type CommandeArSendClaim = {
@@ -688,9 +703,11 @@ export async function repoClaimCommandeArSend(params: {
     }
     assertCommandeArCheckpointAccess({ checkpoint: activeCheckpoint, user_id: params.user_id, user_role: params.user_role });
     if (draft.status === "SENT") {
-      await client.query("COMMIT");
-      client.release();
-      return { kind: "replay", draft };
+      return withRealtimeOutboxTransaction(
+        client,
+        async () => ({ kind: "replay" as const, draft }),
+        { transactionAlreadyStarted: true }
+      );
     }
     if (currentStatus !== "AR_PRET") {
       throw new HttpError(
@@ -737,8 +754,8 @@ export async function repoFinalizeCommandeArSend(params: {
 }): Promise<{ result: CommandeArSendResult; notifications: AppNotification[] }> {
   const client = params.claim.client;
   const draft = params.claim.draft;
-  try {
-    const updateRes = await client.query<{ sent_at: string }>(
+  return withRealtimeOutboxTransaction(client, async (tx) => {
+    const updateRes = await tx.query<{ sent_at: string }>(
       `
         UPDATE public.commande_ar_log
         SET
@@ -761,7 +778,7 @@ export async function repoFinalizeCommandeArSend(params: {
     }
 
     const statusOut = await repoApplyCommandeWorkflowMilestone({
-      tx: client,
+      tx,
       commande_id: params.commande_id,
       nouveau_statut: "AR_ENVOYE",
       cause: "ar_send",
@@ -771,7 +788,7 @@ export async function repoFinalizeCommandeArSend(params: {
       active_checkpoint_code: "production_launch",
     });
 
-    await insertCommandeEvent(client, {
+    await insertCommandeEvent(tx, {
       commande_id: params.commande_id,
       event_type: "AR_SENT",
       new_values: {
@@ -783,7 +800,27 @@ export async function repoFinalizeCommandeArSend(params: {
       user_id: params.sent_by,
     });
 
-    await client.query("COMMIT");
+    for (const notification of statusOut.notifications) {
+      await enqueueAppNotificationCreated(
+        tx,
+        notification.user_id,
+        notification,
+        { deduplicationKey: `notification:${notification.id}` }
+      );
+    }
+    const sentAt = updateRes.rows[0].sent_at;
+    await enqueueEntityChanged(
+      tx,
+      {
+        entityType: "COMMANDE_CLIENT",
+        entityId: String(params.commande_id),
+        action: "status_changed",
+        module: "commandes-clients",
+        at: sentAt,
+        invalidateKeys: ["commandes:list", `commandes:detail:${params.commande_id}`],
+      },
+      { deduplicationKey: `commande-ar:${params.ar_id}:sent` }
+    );
 
     return {
       result: {
@@ -791,16 +828,11 @@ export async function repoFinalizeCommandeArSend(params: {
         commande_id: params.commande_id,
         document_id: draft.document_id,
         status: "AR_ENVOYE",
-        sent_at: updateRes.rows[0]?.sent_at ?? new Date().toISOString(),
+        sent_at: sentAt,
         recipient_emails: params.recipient_emails,
         email_provider_id: params.email_provider_id,
       },
       notifications: statusOut.notifications,
     };
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+  }, { transactionAlreadyStarted: true });
 }
