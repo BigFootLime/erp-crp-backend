@@ -12,7 +12,7 @@ import {
   type FinanceActorContext,
 } from "./workflow.repository.shared";
 
-type InvoiceSettlementRow = {
+type InvoiceSettlementHeaderRow = {
   id: number;
   uuid: string | null;
   client_id: string;
@@ -21,6 +21,9 @@ type InvoiceSettlementRow = {
   document_status: string | null;
   settlement_status: string | null;
   total_ttc: string;
+};
+
+type InvoiceSettlementEvidenceRow = {
   allocated_payment_ttc: string;
   legacy_direct_payment_ttc: string;
   consumed_credit_ttc: string;
@@ -51,7 +54,10 @@ export async function lockInvoiceSettlement(
   client: Pick<PoolClient, "query">,
   factureId: number
 ): Promise<LockedInvoiceSettlement | null> {
-  const result = await client.query<InvoiceSettlementRow>(
+  // Le verrou est volontairement une requête dédiée. Sous READ COMMITTED, si
+  // elle attend un autre writer, la requête d'agrégats suivante obtient un
+  // nouveau snapshot après l'acquisition du verrou.
+  const headerResult = await client.query<InvoiceSettlementHeaderRow>(
     `
       SELECT
         f.id,
@@ -61,16 +67,35 @@ export async function lockInvoiceSettlement(
         f.statut,
         f.document_status,
         f.settlement_status,
-        f.total_ttc::numeric(18,2)::text AS total_ttc,
+        f.total_ttc::numeric(18,2)::text AS total_ttc
+      FROM public.facture f
+      WHERE f.id = $1
+      FOR UPDATE
+    `,
+    [factureId]
+  );
+  const header = headerResult.rows[0];
+  if (!header) return null;
+
+  const evidenceResult = await client.query<InvoiceSettlementEvidenceRow>(
+    `
+      SELECT
         COALESCE((
           SELECT SUM(pa.amount_ttc)
           FROM public.paiement_allocations pa
+          JOIN public.paiement allocated_payment ON allocated_payment.id = pa.paiement_id
           WHERE pa.facture_id = f.id
+            AND allocated_payment.status NOT IN ('REJECTED','REVERSED')
+            AND allocated_payment.workflow_status <> 'REVERSED'
+            AND allocated_payment.reversal_of_id IS NULL
         ), 0)::numeric(18,2)::text AS allocated_payment_ttc,
         COALESCE((
           SELECT SUM(p.montant)
           FROM public.paiement p
           WHERE p.facture_id = f.id
+            AND p.status NOT IN ('REJECTED','REVERSED')
+            AND p.workflow_status <> 'REVERSED'
+            AND p.reversal_of_id IS NULL
             AND NOT EXISTS (
               SELECT 1
               FROM public.paiement_allocations existing_payment_allocation
@@ -96,26 +121,25 @@ export async function lockInvoiceSettlement(
         ), 0)::numeric(18,2)::text AS legacy_direct_credit_ttc
       FROM public.facture f
       WHERE f.id = $1
-      FOR UPDATE
     `,
     [factureId]
   );
-  const row = result.rows[0];
-  if (!row) return null;
+  const evidence = evidenceResult.rows[0];
+  if (!evidence) throw new HttpError(404, "FACTURE_NOT_FOUND", "Facture introuvable.");
   const settledCents =
-    moneyToCents(row.allocated_payment_ttc, "Paiements alloués") +
-    moneyToCents(row.legacy_direct_payment_ttc, "Paiements historiques") +
-    moneyToCents(row.consumed_credit_ttc, "Avoirs consommés") +
-    moneyToCents(row.legacy_direct_credit_ttc, "Avoirs historiques");
+    moneyToCents(evidence.allocated_payment_ttc, "Paiements alloués") +
+    moneyToCents(evidence.legacy_direct_payment_ttc, "Paiements historiques") +
+    moneyToCents(evidence.consumed_credit_ttc, "Avoirs consommés") +
+    moneyToCents(evidence.legacy_direct_credit_ttc, "Avoirs historiques");
   return {
-    id: row.id,
-    uuid: row.uuid,
-    clientId: row.client_id,
-    currency: row.currency,
-    status: row.statut,
-    documentStatus: row.document_status,
-    settlementStatus: row.settlement_status,
-    totalCents: moneyToCents(row.total_ttc, "Total facture"),
+    id: header.id,
+    uuid: header.uuid,
+    clientId: header.client_id,
+    currency: header.currency,
+    status: header.statut,
+    documentStatus: header.document_status,
+    settlementStatus: header.settlement_status,
+    totalCents: moneyToCents(header.total_ttc, "Total facture"),
     settledCents,
     settledAmount: formatDecimal(settledCents, 2),
   };

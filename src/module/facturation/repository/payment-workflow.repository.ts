@@ -34,6 +34,7 @@ type LockedPayment = {
   id: number;
   uuid: string;
   code: string;
+  facture_id: number | null;
   client_id: string;
   montant: string;
   currency: string;
@@ -47,7 +48,7 @@ async function lockPayment(client: PoolClient, paymentId: number): Promise<Locke
   const result = await client.query<LockedPayment>(
     `
       SELECT
-        id, uuid::text AS uuid, code, client_id,
+        id, uuid::text AS uuid, code, facture_id, client_id,
         montant::numeric(18,2)::text AS montant,
         currency, status, row_version
       FROM public.paiement
@@ -59,16 +60,24 @@ async function lockPayment(client: PoolClient, paymentId: number): Promise<Locke
   return result.rows[0] ?? null;
 }
 
-async function allocatedPaymentCents(client: PoolClient, paymentId: number): Promise<bigint> {
-  const result = await client.query<{ amount: string }>(
+async function allocatedPaymentEvidence(
+  client: PoolClient,
+  paymentId: number
+): Promise<{ allocatedCents: bigint; allocationCount: number }> {
+  const result = await client.query<{ amount: string; allocation_count: number }>(
     `
-      SELECT COALESCE(SUM(amount_ttc), 0)::numeric(18,2)::text AS amount
+      SELECT
+        COALESCE(SUM(amount_ttc), 0)::numeric(18,2)::text AS amount,
+        COUNT(*)::int AS allocation_count
       FROM public.paiement_allocations
       WHERE paiement_id = $1
     `,
     [paymentId]
   );
-  return moneyToCents(result.rows[0]?.amount ?? "0.00", "Montant alloué");
+  return {
+    allocatedCents: moneyToCents(result.rows[0]?.amount ?? "0.00", "Montant alloué"),
+    allocationCount: result.rows[0]?.allocation_count ?? 0,
+  };
 }
 
 type ResolvedAllocation = {
@@ -435,6 +444,7 @@ export async function repoRegisterPayment(params: {
       id,
       uuid,
       code,
+      facture_id: firstFactureId,
       client_id: params.input.client_id,
       montant: params.input.amount,
       currency: params.input.currency,
@@ -537,7 +547,18 @@ export async function repoAllocatePayment(params: {
       throw new HttpError(409, "CONCURRENT_MODIFICATION", "Le paiement a changé.");
     }
     const amountCents = moneyToCents(payment.montant, "Montant du paiement");
-    const alreadyAllocated = await allocatedPaymentCents(client, payment.id);
+    const paymentEvidence = await allocatedPaymentEvidence(client, payment.id);
+    // Un lien facture direct sans allocation est la preuve complète pré-#227.
+    // Le rendre partiellement alloué supprimerait le fallback de la facture
+    // historique et réécrirait son solde économique sans preuve de migration.
+    if (payment.facture_id !== null && paymentEvidence.allocationCount === 0) {
+      throw new HttpError(
+        409,
+        "PAYMENT_LEGACY_DIRECT_IMMUTABLE",
+        "Ce paiement historique est déjà intégralement affecté à sa facture d'origine."
+      );
+    }
+    const alreadyAllocated = paymentEvidence.allocatedCents;
     const allocations = await resolveAndValidateAllocations({
       client,
       clientId: payment.client_id,

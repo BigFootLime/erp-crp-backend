@@ -131,6 +131,17 @@ describe("issue #227 — idempotence et soldes", () => {
     expect(FACTURE_LIST_FILTER_STATUSES).not.toContain("custom" as never);
   });
 
+  it.each(["partielle", "payee"])(
+    "conserve %s comme preuve documentaire sans inventer de règlement",
+    (legacyStatus) => {
+      expect(isInvoiceIssuedForSettlement({ documentStatus: "ISSUED", legacyStatus })).toBe(true);
+      expect(invoiceSettlementStatusFromBalance({
+        totalCents: 10_000n,
+        settledCents: 0n,
+      })).toBe("UNPAID");
+    }
+  );
+
   it("stabilise le hash malgré l'ordre des propriétés", () => {
     expect(financeRequestHash("PAYMENT_REGISTER", { b: 2, a: 1 })).toBe(
       financeRequestHash("PAYMENT_REGISTER", { a: 1, b: 2 })

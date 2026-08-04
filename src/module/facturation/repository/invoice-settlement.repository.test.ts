@@ -35,10 +35,39 @@ describe("#469 invoice settlement repository", () => {
 
     expect(invoice?.settledCents).toBe(6_500n);
     expect(invoice?.settledAmount).toBe("65.00");
-    const sql = String(query.mock.calls[0]?.[0]);
-    expect(sql).toContain("legacy_direct_payment_ttc");
-    expect(sql).toContain("legacy_direct_credit_ttc");
-    expect(sql.match(/NOT EXISTS/g)).toHaveLength(2);
+    const lockSql = String(query.mock.calls[0]?.[0]);
+    const evidenceSql = String(query.mock.calls[1]?.[0]);
+    expect(lockSql).toContain("FOR UPDATE");
+    expect(lockSql).not.toContain("paiement_allocations");
+    expect(lockSql).not.toContain("avoir_source_allocations");
+    expect(evidenceSql).not.toContain("FOR UPDATE");
+    expect(evidenceSql).toContain("legacy_direct_payment_ttc");
+    expect(evidenceSql).toContain("legacy_direct_credit_ttc");
+    expect(evidenceSql.match(/NOT EXISTS/g)).toHaveLength(2);
+    expect(evidenceSql).toContain("allocated_payment.status NOT IN ('REJECTED','REVERSED')");
+    expect(evidenceSql).toContain("allocated_payment.workflow_status <> 'REVERSED'");
+    expect(evidenceSql).toContain("allocated_payment.reversal_of_id IS NULL");
+    expect(evidenceSql).toContain("p.status NOT IN ('REJECTED','REVERSED')");
+  });
+
+  it("libère le solde après exclusion des paiements rejetés ou inversés", async () => {
+    const query = vi.fn(async () => ({
+      rows: [invoiceRow({
+        allocated_payment_ttc: "0.00",
+        legacy_direct_payment_ttc: "0.00",
+        consumed_credit_ttc: "0.00",
+        legacy_direct_credit_ttc: "0.00",
+      })],
+      rowCount: 1,
+    }));
+
+    const invoice = await lockInvoiceSettlement(
+      { query } as unknown as Pick<PoolClient, "query">,
+      42
+    );
+
+    expect(invoice?.settledCents).toBe(0n);
+    expect(() => assertInvoiceCreditWithinBalance(invoice!, 10_000n)).not.toThrow();
   });
 
   it("refuse un avoir qui dépasserait le solde économique unifié", async () => {

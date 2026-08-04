@@ -19,11 +19,20 @@ BEGIN
     SELECT 1
     FROM public.facture f
     WHERE COALESCE((
-      SELECT SUM(pa.amount_ttc) FROM public.paiement_allocations pa WHERE pa.facture_id = f.id
+      SELECT SUM(pa.amount_ttc)
+      FROM public.paiement_allocations pa
+      JOIN public.paiement allocated_payment ON allocated_payment.id = pa.paiement_id
+      WHERE pa.facture_id = f.id
+        AND allocated_payment.status NOT IN ('REJECTED','REVERSED')
+        AND allocated_payment.workflow_status <> 'REVERSED'
+        AND allocated_payment.reversal_of_id IS NULL
     ), 0) + COALESCE((
       SELECT SUM(p.montant)
       FROM public.paiement p
       WHERE p.facture_id = f.id
+        AND p.status NOT IN ('REJECTED','REVERSED')
+        AND p.workflow_status <> 'REVERSED'
+        AND p.reversal_of_id IS NULL
         AND NOT EXISTS (
           SELECT 1 FROM public.paiement_allocations existing_pa
           WHERE existing_pa.paiement_id = p.id
@@ -44,6 +53,23 @@ BEGIN
     ), 0) > f.total_ttc
   ) THEN
     RAISE EXCEPTION '#469 preflight refused: an invoice is already over-allocated';
+  END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM public.paiement p
+    WHERE p.facture_id IS NOT NULL
+      AND NOT (
+        p.uuid IS NOT NULL
+        AND p.code IS NOT NULL
+        AND p.correlation_id IS NOT NULL
+        AND p.idempotency_key IS NOT NULL
+        AND p.request_hash IS NOT NULL
+      )
+      AND EXISTS (
+        SELECT 1 FROM public.paiement_allocations pa WHERE pa.paiement_id = p.id
+      )
+  ) THEN
+    RAISE EXCEPTION '#469 preflight refused: direct legacy payment evidence was already converted to allocations';
   END IF;
 END $$;
 

@@ -80,6 +80,12 @@ function factureProjectedStatusSql(alias = "f") {
   END`;
 }
 
+function netPaymentSql(alias: string): string {
+  return `${alias}.status NOT IN ('REJECTED','REVERSED')
+    AND ${alias}.workflow_status <> 'REVERSED'
+    AND ${alias}.reversal_of_id IS NULL`;
+}
+
 type ListWhere = { whereSql: string; values: unknown[] };
 export function buildListWhere(filters: ListFacturesQueryDTO, includeClientInSearch: boolean): ListWhere {
   const where: string[] = [];
@@ -214,12 +220,15 @@ export async function repoListFactures(filters: ListFacturesQueryDTO): Promise<P
         COALESCE((
           SELECT SUM(pa.amount_ttc)
           FROM paiement_allocations pa
+          JOIN paiement allocated_payment ON allocated_payment.id = pa.paiement_id
           WHERE pa.facture_id = f.id
+            AND ${netPaymentSql("allocated_payment")}
         ), 0)
         + COALESCE((
           SELECT SUM(p.montant)
           FROM paiement p
           WHERE p.facture_id = f.id
+            AND ${netPaymentSql("p")}
             AND NOT EXISTS (
               SELECT 1 FROM paiement_allocations pa WHERE pa.paiement_id = p.id
             )
@@ -325,12 +334,15 @@ export async function repoGetFacture(id: number, includeValue: string): Promise<
         COALESCE((
           SELECT SUM(pa.amount_ttc)
           FROM paiement_allocations pa
+          JOIN paiement allocated_payment ON allocated_payment.id = pa.paiement_id
           WHERE pa.facture_id = f.id
+            AND ${netPaymentSql("allocated_payment")}
         ), 0)
         + COALESCE((
           SELECT SUM(p.montant)
           FROM paiement p
           WHERE p.facture_id = f.id
+            AND ${netPaymentSql("p")}
             AND NOT EXISTS (
               SELECT 1 FROM paiement_allocations pa WHERE pa.paiement_id = p.id
             )
