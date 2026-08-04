@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   poolConnect: vi.fn(),
   clientQuery: vi.fn(),
   clientRelease: vi.fn(),
+  currentRole: { value: "Administrateur Systeme et Reseau" },
 }));
 
 vi.mock("pg", () => {
@@ -35,7 +36,7 @@ vi.mock("../utils/checkNetworkDrive", () => ({
 
 vi.mock("../module/auth/middlewares/auth.middleware", () => ({
   authenticateToken: (req: { user?: { id: number; role: string } }, _res: unknown, next: () => void) => {
-    req.user = { id: 1, role: "Administrateur Systeme et Reseau" };
+    req.user = { id: 1, role: mocks.currentRole.value };
     next();
   },
   authorizeRole:
@@ -63,6 +64,7 @@ beforeEach(() => {
   mocks.poolConnect.mockReset();
   mocks.clientQuery.mockReset();
   mocks.clientRelease.mockReset();
+  mocks.currentRole.value = "Administrateur Systeme et Reseau";
 
   mocks.poolConnect.mockResolvedValue({
     query: mocks.clientQuery,
@@ -71,6 +73,19 @@ beforeEach(() => {
 });
 
 describe("/api/v1/stock", () => {
+  it("GET /api/v1/stock/units returns the canonical referential behind stock read access", async () => {
+    mocks.poolQuery.mockResolvedValueOnce({ rows: [{ code: "PCE", label: "Pièce" }, { code: "u", label: "Unité" }, { code: "MM", label: "Millimètre" }] });
+
+    const allowed = await request(app).get("/api/v1/stock/units").set("Authorization", "Bearer fake");
+    expect(allowed.status).toBe(200);
+    expect(allowed.body.items).toEqual([{ code: "mm", label: "Millimètre" }, { code: "u", label: "Unité" }]);
+
+    mocks.currentRole.value = "Commercial";
+    const denied = await request(app).get("/api/v1/stock/units").set("Authorization", "Bearer fake");
+    expect(denied.status).toBe(403);
+    expect(denied.body.code).toBe("STOCK_FORBIDDEN");
+  });
+
   it("GET /api/v1/stock/positions exposes the consolidated OLD/NEW read model", async () => {
     mocks.poolQuery
       .mockResolvedValueOnce({ rows: [{ total: 0 }] })
@@ -358,6 +373,34 @@ describe("/api/v1/stock", () => {
         String(call[0]).includes("LEFT JOIN LATERAL")
       )
     ).toBe(false);
+  });
+
+  it("PATCH /api/v1/stock/articles/:id rejects an unknown unit before UPDATE", async () => {
+    const articleId = "11111111-1111-1111-1111-111111111111";
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const q = String(sql);
+      if (q === "BEGIN" || q === "ROLLBACK") return { rows: [] };
+      if (q.includes("FROM public.articles") && q.includes("FOR UPDATE")) {
+        return { rows: [{
+          id: articleId, code: "ART-ACH-000001", designation: "Vis", article_type: "APPROVISIONNE",
+          article_category: "achat", article_categories: ["achat_revente"], root_article_id: articleId,
+          version_number: 1, plan_index: 1, status: "VALIDE", projet_id: null, family_code: "ACH",
+          piece_technique_id: null, stock_managed: true, lot_tracking: false, row_version: 2,
+          designation_secondary: null, is_sold: true,
+        }] };
+      }
+      if (q.includes("FROM public.units")) return { rows: [] };
+      return { rows: [] };
+    });
+
+    const res = await request(app)
+      .patch(`/api/v1/stock/articles/${articleId}`)
+      .set("Authorization", "Bearer fake")
+      .send({ expected_row_version: 2, unite: "banane" });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({ code: "INVALID_ARTICLE_UNIT" });
+    expect(mocks.clientQuery.mock.calls.some(([sql]) => String(sql).includes("UPDATE public.articles"))).toBe(false);
   });
 
   it("PATCH /api/v1/stock/articles/:id persists Fourniture Client fields and returns them", async () => {

@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "crypto";
 
 import pool from "../../../config/database";
 import { generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
+import { canonicalizeStockUnitCode } from "../../../shared/stock-unit";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
@@ -354,7 +355,7 @@ export async function reserveProducedQtyForCommandeLine(
   return reservationId ? { reservation_id: reservationId, qty_reserved: qtyToReserve } : null;
 }
 
-async function resolveUnitIdForArticle(
+export async function resolveUnitIdForArticle(
   client: Pick<PoolClient, "query">,
   articleId: string,
   preferredUnitCode: string | null | undefined
@@ -370,12 +371,13 @@ async function resolveUnitIdForArticle(
     code = a.rows[0]?.unite?.trim() ? a.rows[0].unite!.trim() : null;
   }
 
+  code = canonicalizeStockUnitCode(code);
   if (!code) {
     throw new HttpError(422, "UNIT_REQUIRED", "Veuillez renseigner l'unite pour la mise en stock");
   }
 
   const u = await client.query<{ id: string }>(
-    `SELECT id::text AS id FROM public.units WHERE code = $1::citext LIMIT 1`,
+    `SELECT id::text AS id FROM public.units WHERE lower(code::text) = lower($1) LIMIT 1`,
     [code]
   );
   const unitId = u.rows[0]?.id;

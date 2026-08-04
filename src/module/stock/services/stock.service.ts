@@ -99,6 +99,7 @@ import {
   repoGetStockAnalytics,
   repoGetArticle,
   repoListArticleCategories,
+  repoListStockUnits,
   repoListArticleFamilies,
   repoPreviewMaterialArticleCode,
   repoListMatiereEtats,
@@ -255,6 +256,10 @@ export async function getStockArticlesKpisSVC(): Promise<StockArticleKpis> {
 
 export async function listStockArticleCategoriesSVC(): Promise<StockArticleCategoryOption[]> {
   return repoListArticleCategories();
+}
+
+export async function listStockUnitsSVC(): Promise<Array<{ code: string; label: string }>> {
+  return repoListStockUnits();
 }
 
 export async function listStockArticleFamiliesSVC(filters: ListArticleFamiliesQueryDTO): Promise<StockArticleFamily[]> {
