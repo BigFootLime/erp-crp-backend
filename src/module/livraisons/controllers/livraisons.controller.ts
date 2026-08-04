@@ -59,13 +59,7 @@ function routeParam(req: Request, name: string): string {
   throw new HttpError(400, "INVALID_ROUTE_PARAM", `${name} must be a string`)
 }
 
-function getUserRef(req: Express.Request): { id: number; name: string } {
-  const id = getUserId(req)
-  const name = typeof req.user?.username === "string" && req.user.username.trim() ? req.user.username.trim() : String(id)
-  return { id, name }
-}
-
-function emitLivraisonChanged(req: Express.Request, params: { entityId: string; action: "created" | "updated" | "deleted" | "status_changed" }) {
+function emitLivraisonChanged(_req: Express.Request, params: { entityId: string; action: "created" | "updated" | "deleted" | "status_changed" }) {
   const entityId = params.entityId
   emitEntityChanged({
     entityType: "BON_LIVRAISON",
@@ -73,7 +67,6 @@ function emitLivraisonChanged(req: Express.Request, params: { entityId: string; 
     action: params.action,
     module: "livraisons",
     at: new Date().toISOString(),
-    by: getUserRef(req),
     invalidateKeys: ["livraisons:list", `livraisons:detail:${entityId}`],
   })
 }

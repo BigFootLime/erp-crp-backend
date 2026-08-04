@@ -64,13 +64,6 @@ function buildAuditContext(req: Request): AuditContext {
   }
 }
 
-function getUserRef(req: Request): { id: number; name: string } {
-  const user = req.user
-  if (!user || typeof user.id !== "number") throw new HttpError(401, "UNAUTHORIZED", "Authentication required")
-  const name = typeof user.username === "string" && user.username.trim() ? user.username.trim() : String(user.id)
-  return { id: user.id, name }
-}
-
 function getRequiredIdempotencyKey(req: Request): string {
   const value = req.headers["idempotency-key"]
   if (typeof value !== "string" || value.trim().length < 8 || value.trim().length > 200) {
@@ -84,7 +77,7 @@ function getRequiredIdempotencyKey(req: Request): string {
 }
 
 function emitReceptionChanged(
-  req: Request,
+  _req: Request,
   params: { receptionId: string; action: "created" | "updated" | "deleted" | "status_changed" }
 ) {
   const receptionId = params.receptionId
@@ -92,9 +85,8 @@ function emitReceptionChanged(
     entityType: "RECEPTION",
     entityId: receptionId,
     action: params.action,
-    module: "receptions",
+    module: "qualite",
     at: new Date().toISOString(),
-    by: getUserRef(req),
     invalidateKeys: ["receptions:list", "receptions:kpis", `receptions:detail:${receptionId}`],
   })
 }

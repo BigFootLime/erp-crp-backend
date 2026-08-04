@@ -1,6 +1,7 @@
 // src/module/admin/services/admin.service.ts
 import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
+import { revokeUserRealtimeSessions } from "../../../sockets/sockeServer";
 import * as adminRepo from "../repository/admin.repository";
 import { HttpError } from "../../../utils/httpError";
 
@@ -73,14 +74,20 @@ export async function updateUserByAdmin(
   assignedBy: number | null
 ) {
   // Controller/validator ensures correct shape; keep narrow casting here.
-  return adminRepo.repoUpdateUser(userId, {
+  const updated = await adminRepo.repoUpdateUser(userId, {
     ...(patch as Parameters<typeof adminRepo.repoUpdateUser>[1]),
     assignedBy,
   });
+  if ("role" in patch || "roles" in patch || "status" in patch) {
+    revokeUserRealtimeSessions(userId);
+  }
+  return updated;
 }
 
 export async function deleteUserByAdmin(userId: number) {
-  return adminRepo.repoDeleteUser(userId);
+  const deleted = await adminRepo.repoDeleteUser(userId);
+  revokeUserRealtimeSessions(userId);
+  return deleted;
 }
 
 export async function createPasswordResetTokenByAdmin(params: { userId: number }) {
@@ -133,6 +140,7 @@ export async function resetUserPasswordByAdmin(input: {
   // 2) update password hash
   const hash = await bcrypt.hash(input.newPassword, 12);
   await adminRepo.repoUpdateUserPassword(input.userId, hash);
+  revokeUserRealtimeSessions(Number(input.userId));
 
   // 3) mark token used
   await adminRepo.repoMarkResetTokenUsed(tokenRow.id);

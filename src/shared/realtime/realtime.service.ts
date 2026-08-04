@@ -1,6 +1,12 @@
-import type { Server as SocketIOServer } from "socket.io";
-
-import { getIO } from "../../sockets/sockeServer";
+import { emitToAuthorizedSubscribers } from "../../sockets/sockeServer";
+import {
+  REALTIME_CAPABILITIES,
+  entityRealtimeSubscription,
+  moduleForRealtimeEntity,
+  moduleRealtimeSubscription,
+  normalizeRealtimeModuleKey,
+  type RealtimeSubscription,
+} from "./realtime-room-policy";
 
 export const REALTIME_EVENTS = {
   ENTITY_CHANGED: "entity:changed",
@@ -10,10 +16,6 @@ export const REALTIME_EVENTS = {
   CHAT_MESSAGE_CREATED: "chat:message:created",
   CHAT_CONVERSATION_READ: "chat:conversation:read",
   CHAT_CONVERSATION_UPSERT: "chat:conversation:upsert",
-} as const;
-
-export const REALTIME_ROOMS = {
-  GLOBAL: "erp:global",
 } as const;
 
 export type RealtimeUserRef = {
@@ -27,13 +29,10 @@ export type EntityChangedPayload = {
   action: "created" | "updated" | "deleted" | "status_changed";
   module: string;
   at: string;
-  by: RealtimeUserRef;
   invalidateKeys: string[];
 };
 
-export type AuditNewPayload = {
-  auditId: string;
-};
+export type AuditNewPayload = { auditId: string };
 
 export type LockRef = {
   id: string;
@@ -86,80 +85,68 @@ export type ChatMessageCreatedPayload = {
   };
 };
 
-export type ChatConversationReadPayload = {
-  conversation_id: string;
-  read_at: string;
-};
-
+export type ChatConversationReadPayload = { conversation_id: string; read_at: string };
 export type ChatConversationUpsertPayload = {
   conversation_id: string;
   type: "direct" | "group";
   group_name: string | null;
 };
 
-function tryGetIO(): SocketIOServer | null {
-  try {
-    return getIO();
-  } catch {
-    // Tests often mount Express without Socket.IO.
-    return null;
-  }
-}
-
-function entityRoom(entityType: string, entityId: string): string {
-  return `${entityType}:${entityId}`;
-}
-
-function moduleRoom(moduleKey: string): string {
-  return `module:${moduleKey}`;
-}
-
-function userRoom(userId: number): string {
-  return `USER:${userId}`;
+function dispatch(event: string, payload: unknown, targets: readonly RealtimeSubscription[]): void {
+  void emitToAuthorizedSubscribers(event, payload, targets).catch((error: unknown) => {
+    console.error(JSON.stringify({
+      type: "realtime_emission_failed",
+      event,
+      error: error instanceof Error ? error.name : "unknown",
+    }));
+  });
 }
 
 export function emitEntityChanged(payload: EntityChangedPayload): void {
-  const io = tryGetIO();
-  if (!io) return;
-
-  io.to(REALTIME_ROOMS.GLOBAL).emit(REALTIME_EVENTS.ENTITY_CHANGED, payload);
-  io.to(entityRoom(payload.entityType, payload.entityId)).emit(REALTIME_EVENTS.ENTITY_CHANGED, payload);
-  io.to(moduleRoom(payload.module)).emit(REALTIME_EVENTS.ENTITY_CHANGED, payload);
+  const moduleSubscription = moduleRealtimeSubscription(payload.module);
+  const entitySubscription = entityRealtimeSubscription(payload.entityType, payload.entityId);
+  const entityModule = moduleForRealtimeEntity(payload.entityType);
+  if (!moduleSubscription || !entitySubscription || entityModule !== moduleSubscription.moduleKey) {
+    dispatch(REALTIME_EVENTS.ENTITY_CHANGED, payload, []);
+    return;
+  }
+  dispatch(REALTIME_EVENTS.ENTITY_CHANGED, {
+    ...payload,
+    module: moduleSubscription.moduleKey,
+    entityType: entitySubscription.entityType,
+  }, [moduleSubscription, entitySubscription]);
 }
 
 export function emitAuditNew(payload: AuditNewPayload): void {
-  const io = tryGetIO();
-  if (!io) return;
-  io.to(REALTIME_ROOMS.GLOBAL).emit(REALTIME_EVENTS.AUDIT_NEW, payload);
+  dispatch(REALTIME_EVENTS.AUDIT_NEW, payload, [
+    { scope: "capability", capability: REALTIME_CAPABILITIES.AUDIT_READ },
+  ]);
 }
 
 export function emitLockUpdated(payload: LockUpdatedPayload): void {
-  const io = tryGetIO();
-  if (!io) return;
-  io.to(REALTIME_ROOMS.GLOBAL).emit(REALTIME_EVENTS.LOCK_UPDATED, payload);
-  io.to(entityRoom(payload.entityType, payload.entityId)).emit(REALTIME_EVENTS.LOCK_UPDATED, payload);
+  const entitySubscription = entityRealtimeSubscription(payload.entityType, payload.entityId);
+  dispatch(REALTIME_EVENTS.LOCK_UPDATED, payload, entitySubscription ? [entitySubscription] : []);
 }
 
 export function emitAppNotificationCreated(userId: number, payload: AppNotificationCreatedPayload): void {
-  const io = tryGetIO();
-  if (!io) return;
-  io.to(userRoom(userId)).emit(REALTIME_EVENTS.APP_NOTIFICATION_CREATED, payload);
+  dispatch(REALTIME_EVENTS.APP_NOTIFICATION_CREATED, payload, [{ scope: "user", userId }]);
 }
 
 export function emitChatMessageCreated(userId: number, payload: ChatMessageCreatedPayload): void {
-  const io = tryGetIO();
-  if (!io) return;
-  io.to(userRoom(userId)).emit(REALTIME_EVENTS.CHAT_MESSAGE_CREATED, payload);
+  dispatch(REALTIME_EVENTS.CHAT_MESSAGE_CREATED, payload, [{ scope: "user", userId }]);
 }
 
 export function emitChatConversationRead(userId: number, payload: ChatConversationReadPayload): void {
-  const io = tryGetIO();
-  if (!io) return;
-  io.to(userRoom(userId)).emit(REALTIME_EVENTS.CHAT_CONVERSATION_READ, payload);
+  dispatch(REALTIME_EVENTS.CHAT_CONVERSATION_READ, payload, [{ scope: "user", userId }]);
 }
 
 export function emitChatConversationUpsert(userId: number, payload: ChatConversationUpsertPayload): void {
-  const io = tryGetIO();
-  if (!io) return;
-  io.to(userRoom(userId)).emit(REALTIME_EVENTS.CHAT_CONVERSATION_UPSERT, payload);
+  dispatch(REALTIME_EVENTS.CHAT_CONVERSATION_UPSERT, payload, [{ scope: "user", userId }]);
+}
+
+/** Compatibility bridge for legacy event names, now constrained to one module. */
+export function emitModuleRealtimeEvent(moduleKey: string, event: string, payload?: unknown): void {
+  const canonical = normalizeRealtimeModuleKey(moduleKey);
+  const subscription = canonical ? moduleRealtimeSubscription(canonical) : null;
+  dispatch(event, payload, subscription ? [subscription] : []);
 }

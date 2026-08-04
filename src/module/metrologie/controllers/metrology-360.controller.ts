@@ -137,20 +137,15 @@ function notFound(entity: string): never {
 }
 
 function emitChanged(
-  req: Request,
+  _req: Request,
   params: { equipementId: string; action: "created" | "updated" | "deleted" | "status_changed" }
 ) {
-  const user = req.user;
   emitEntityChanged({
     entityType: "METROLOGIE_EQUIPEMENT",
     entityId: params.equipementId,
     action: params.action,
     module: "metrologie",
     at: new Date().toISOString(),
-    by: {
-      id: typeof user?.id === "number" ? user.id : 0,
-      name: typeof user?.username === "string" ? user.username : "",
-    },
     invalidateKeys: [
       "metrologie:equipements",
       "metrologie:kpis",

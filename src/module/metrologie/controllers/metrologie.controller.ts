@@ -64,16 +64,7 @@ function buildAuditContext(req: Request): AuditContext {
   };
 }
 
-function getUserRef(req: Request): { id: number; name: string } {
-  const user = req.user;
-  if (!user || typeof user.id !== "number") {
-    throw new HttpError(401, "UNAUTHORIZED", "Authentication required");
-  }
-  const name = typeof user.username === "string" && user.username.trim() ? user.username.trim() : String(user.id);
-  return { id: user.id, name };
-}
-
-function emitEquipementChanged(req: Request, params: { equipementId: string; action: "created" | "updated" | "deleted" | "status_changed" }) {
+function emitEquipementChanged(_req: Request, params: { equipementId: string; action: "created" | "updated" | "deleted" | "status_changed" }) {
   const equipementId = params.equipementId;
   emitEntityChanged({
     entityType: "METROLOGIE_EQUIPEMENT",
@@ -81,7 +72,6 @@ function emitEquipementChanged(req: Request, params: { equipementId: string; act
     action: params.action,
     module: "metrologie",
     at: new Date().toISOString(),
-    by: getUserRef(req),
     invalidateKeys: [
       "metrologie:equipements",
       "metrologie:kpis",

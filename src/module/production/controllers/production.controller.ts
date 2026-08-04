@@ -129,14 +129,7 @@ export function buildAuditContext(req: Request): AuditContext {
   };
 }
 
-function getUserRef(req: Request): { id: number; name: string } {
-  const user = req.user;
-  if (!user || typeof user.id !== "number") throw new HttpError(401, "UNAUTHORIZED", "Authentication required");
-  const name = typeof user.username === "string" && user.username.trim() ? user.username.trim() : String(user.id);
-  return { id: user.id, name };
-}
-
-function emitOfChanged(req: Request, params: { ofId: number; action: "created" | "updated" | "deleted" | "status_changed" }) {
+function emitOfChanged(_req: Request, params: { ofId: number; action: "created" | "updated" | "deleted" | "status_changed" }) {
   const entityId = String(params.ofId);
   emitEntityChanged({
     entityType: "OF",
@@ -144,7 +137,6 @@ function emitOfChanged(req: Request, params: { ofId: number; action: "created" |
     action: params.action,
     module: "production",
     at: new Date().toISOString(),
-    by: getUserRef(req),
     invalidateKeys: [
       "production:ofs",
       `production:of:${entityId}`,

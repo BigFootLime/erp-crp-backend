@@ -86,16 +86,7 @@ function buildAuditContext(req: Request): AuditContext {
   };
 }
 
-function getUserRef(req: Request): { id: number; name: string } {
-  const user = req.user;
-  if (!user || typeof user.id !== "number") {
-    throw new HttpError(401, "UNAUTHORIZED", "Authentication required");
-  }
-  const name = typeof user.username === "string" && user.username.trim() ? user.username.trim() : String(user.id);
-  return { id: user.id, name };
-}
-
-function emitNcChanged(req: Request, params: { ncId: string; action: "created" | "updated" | "deleted" | "status_changed" }) {
+function emitNcChanged(_req: Request, params: { ncId: string; action: "created" | "updated" | "deleted" | "status_changed" }) {
   const ncId = params.ncId;
   emitEntityChanged({
     entityType: "NCR",
@@ -103,7 +94,6 @@ function emitNcChanged(req: Request, params: { ncId: string; action: "created" |
     action: params.action,
     module: "qualite",
     at: new Date().toISOString(),
-    by: getUserRef(req),
     invalidateKeys: [
       "qualite:non-conformities",
       "qualite:kpis",
@@ -115,7 +105,7 @@ function emitNcChanged(req: Request, params: { ncId: string; action: "created" |
   });
 }
 
-function emitCapaChanged(req: Request, params: { actionId: string; action: "created" | "updated" | "deleted" | "status_changed" }) {
+function emitCapaChanged(_req: Request, params: { actionId: string; action: "created" | "updated" | "deleted" | "status_changed" }) {
   const actionId = params.actionId;
   emitEntityChanged({
     entityType: "CAPA",
@@ -123,7 +113,6 @@ function emitCapaChanged(req: Request, params: { actionId: string; action: "crea
     action: params.action,
     module: "qualite",
     at: new Date().toISOString(),
-    by: getUserRef(req),
     invalidateKeys: ["qualite:actions", `qualite:action:${actionId}`],
   });
 }

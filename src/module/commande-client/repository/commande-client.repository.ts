@@ -2101,12 +2101,11 @@ export async function repoUpdateCommandeWorkflowCheckpoint(
       emitAppNotificationCreated(notification.user_id, notification);
     }
     emitEntityChanged({
-      entityType: "commande_client",
+      entityType: "COMMANDE_CLIENT",
       entityId: String(commandeId),
       action: "updated",
-      module: "commandes",
+      module: "commandes-clients",
       at: new Date().toISOString(),
-      by: { id: userId, name: `User #${userId}` },
       invalidateKeys: ["commandes:list", `commandes:detail:${commandeId}`, `commandes:workflow:${commandeId}`],
     });
 
@@ -2318,12 +2317,11 @@ export async function repoRunCommandeWorkflowAction(
       emitAppNotificationCreated(notification.user_id, notification);
     }
     emitEntityChanged({
-      entityType: "commande_client",
+      entityType: "COMMANDE_CLIENT",
       entityId: String(commandeId),
       action: "updated",
-      module: "commandes",
+      module: "commandes-clients",
       at: new Date().toISOString(),
-      by: { id: userId, name: `User #${userId}` },
       invalidateKeys: ["commandes:list", `commandes:detail:${commandeId}`, `commandes:workflow:${commandeId}`],
     });
 

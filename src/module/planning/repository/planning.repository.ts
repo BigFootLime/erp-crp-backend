@@ -897,12 +897,11 @@ function emitPlanningRealtime(params: {
   }
 
   emitEntityChanged({
-    entityType: "planning_events",
+    entityType: "PLANNING_EVENTS",
     entityId: params.event_id,
     action: params.action,
-    module: "planning",
+    module: "production",
     at: new Date().toISOString(),
-    by: { id: params.user_id, name: `User #${params.user_id}` },
     invalidateKeys,
   });
 }
@@ -1099,12 +1098,11 @@ export async function repoValidatePlanningForAr(params: {
     }
     for (const item of validated) {
       emitEntityChanged({
-        entityType: "commande_client",
+        entityType: "COMMANDE_CLIENT",
         entityId: String(item.commande_id),
         action: "updated",
-        module: "planning",
+        module: "commandes-clients",
         at: new Date().toISOString(),
-        by: { id: params.audit.user_id, name: `User #${params.audit.user_id}` },
         invalidateKeys: ["commandes:list", `commandes:detail:${item.commande_id}`, `commandes:workflow:${item.commande_id}`],
       });
     }

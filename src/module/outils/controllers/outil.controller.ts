@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from "express"
-import { getIO } from "../../../sockets/sockeServer"
+import { emitModuleRealtimeEvent } from "../../../shared/realtime/realtime.service"
 import { HttpError } from "../../../utils/httpError"
 import { parseId } from "../../../utils/parseId"
 import { parseString } from "../../../utils/parseString"
@@ -219,8 +219,7 @@ export const outilController = {
       })
 
       try {
-        const io = getIO()
-        io.emit("outilCreated", { id_outil: result.id_outil })
+        emitModuleRealtimeEvent("outillage", "outilCreated", { id_outil: result.id_outil })
       } catch {
         // noop
       }
@@ -254,8 +253,7 @@ export const outilController = {
       })
 
       try {
-        const io = getIO()
-        io.emit("outilUpdated", { id_outil: id })
+        emitModuleRealtimeEvent("outillage", "outilUpdated", { id_outil: id })
       } catch {
         // noop
       }
@@ -281,8 +279,7 @@ export const outilController = {
       await outilService.deleteOutil(id)
 
       try {
-        const io = getIO()
-        io.emit("outilDeleted", { id_outil: id })
+        emitModuleRealtimeEvent("outillage", "outilDeleted", { id_outil: id })
       } catch {
         // noop
       }
@@ -310,8 +307,7 @@ export const outilController = {
       })
 
       try {
-        const io = getIO()
-        io.emit("stockUpdated", {
+        emitModuleRealtimeEvent("outillage", "stockUpdated", {
           id_outil: payload.id,
           quantity: payload.quantity,
           user: user.username,
@@ -348,8 +344,7 @@ export const outilController = {
       })
 
       try {
-        const io = getIO()
-        io.emit("stockUpdated", {
+        emitModuleRealtimeEvent("outillage", "stockUpdated", {
           id_outil: payload.id,
           quantity: payload.quantity,
           user: user.username,
@@ -384,8 +379,7 @@ export const outilController = {
       })
 
       try {
-        const io = getIO()
-        io.emit("stockUpdated", {
+        emitModuleRealtimeEvent("outillage", "stockUpdated", {
           id_outil: payload.id_outil,
           quantity: payload.quantite,
           user: user.username,
@@ -422,8 +416,7 @@ export const outilController = {
       })
 
       try {
-        const io = getIO()
-        io.emit("stockUpdated", {
+        emitModuleRealtimeEvent("outillage", "stockUpdated", {
           id_outil: result.id_outil,
           quantity: payload.quantity,
           user: user.username,
@@ -464,8 +457,7 @@ export const outilController = {
       })
 
       try {
-        const io = getIO()
-        io.emit("stockUpdated", {
+        emitModuleRealtimeEvent("outillage", "stockUpdated", {
           id_outil: result.id_outil,
           quantity: payload.quantity,
           user: user.username,
@@ -503,8 +495,7 @@ export const outilController = {
       })
 
       try {
-        const io = getIO()
-        io.emit("stockUpdated", {
+        emitModuleRealtimeEvent("outillage", "stockUpdated", {
           id_outil: payload.id_outil,
           quantity: payload.new_qty,
           user: user.username,
@@ -625,8 +616,7 @@ export const outilSupportController = {
       )
 
       try {
-        const io = getIO()
-        io.emit("fabricantUpdated", { id })
+        emitModuleRealtimeEvent("outillage", "fabricantUpdated", { id })
       } catch {
         // noop
       }
@@ -656,8 +646,7 @@ export const outilSupportController = {
       res.status(201).json({ message: "Fournisseur cree" })
 
       try {
-        const io = getIO()
-        io.emit("fournisseurAdded")
+        emitModuleRealtimeEvent("outillage", "fournisseurAdded")
       } catch {
         // noop
       }
@@ -674,8 +663,7 @@ export const outilSupportController = {
       const fournisseur = await outilSupportService.updateFournisseur(id, parsed)
 
       try {
-        const io = getIO()
-        io.emit("fournisseurUpdated", { id })
+        emitModuleRealtimeEvent("outillage", "fournisseurUpdated", { id })
       } catch {
         // noop
       }
@@ -757,8 +745,7 @@ export const outilSupportController = {
       const id = await outilSupportService.createRevetement(parsed.nom, parsed.id_fabricant)
 
       try {
-        const io = getIO()
-        io.emit("revetementAdded")
+        emitModuleRealtimeEvent("outillage", "revetementAdded")
       } catch {
         // noop
       }

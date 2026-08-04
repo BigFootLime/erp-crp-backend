@@ -21,6 +21,7 @@ import {
 import { sendPasswordResetEmail } from "./password-reset-email.service";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import { authorizationRole, normalizeAssignedRoles } from "../domain/roles";
+import { revokeUserRealtimeSessions } from "../../../sockets/sockeServer";
 
 export const registerUser = async (data: CreateUserDTO) => {
   // 🔐 Hash du mot de passe
@@ -270,6 +271,7 @@ export async function resetPasswordWithToken(
     await repoDeleteOtherActivePasswordResetsForUser({ user_id: row.user_id, keep_id: row.id, tx: client });
 
     await client.query("COMMIT");
+    revokeUserRealtimeSessions(row.user_id);
 
     try {
       await repoInsertAuditLog({

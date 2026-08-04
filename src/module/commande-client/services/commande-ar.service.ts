@@ -303,12 +303,11 @@ export async function svcGenerateCommandeAr(params: {
     });
 
     emitEntityChanged({
-      entityType: "commande_client",
+      entityType: "COMMANDE_CLIENT",
       entityId: String(params.commande_id),
       action: "updated",
-      module: "commandes",
+      module: "commandes-clients",
       at: new Date().toISOString(),
-      by: { id: params.user_id, name: `User #${params.user_id}` },
       invalidateKeys: ["commandes:list", `commandes:detail:${params.commande_id}`],
     });
 
@@ -415,12 +414,11 @@ export async function svcSendCommandeAr(params: {
       emitAppNotificationCreated(notification.user_id, notification);
     }
     emitEntityChanged({
-      entityType: "commande_client",
+      entityType: "COMMANDE_CLIENT",
       entityId: String(params.commande_id),
       action: "status_changed",
-      module: "commandes",
+      module: "commandes-clients",
       at: new Date().toISOString(),
-      by: { id: params.user_id, name: `User #${params.user_id}` },
       invalidateKeys: ["commandes:list", `commandes:detail:${params.commande_id}`],
     });
 
