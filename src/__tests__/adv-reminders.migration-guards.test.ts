@@ -39,6 +39,7 @@ describe("FEAT-CERP-0002 migration and runtime guards", () => {
   it("pins lifecycle scripts to the exact immutable migration", () => {
     for (const support of [preflight, verify, rollback]) expect(support).toContain(sha256);
     expect(preflight).toContain("BEGIN TRANSACTION READ ONLY");
+    expect(preflight).toContain("finance settlement-state prerequisite is missing");
     expect(verify).toContain("BEGIN TRANSACTION READ ONLY");
     expect(rollback).toContain("cerp.allow_adv_reminder_rollback");
     expect(rollback).toContain("usage evidence exists; rollback refused");
