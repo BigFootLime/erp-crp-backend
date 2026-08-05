@@ -43,6 +43,10 @@ const patchFilename = "20260804_auth_rate_limit_buckets.sql";
 const planningPatchFilename = "20260805_planning_convergence_governance.sql";
 const wave9PatchChecksums = new Map([
   [
+    "20260216_planning_visuals_programmation.sql",
+    "e220d040caae9b18bb42d3c970104b2d2612bce53dac6b43c4aac60268491a1b",
+  ],
+  [
     "20260805_programmation_safe_reschedule_0004.sql",
     "341f7911a7bcb479fce6602d0567c51d47f083a08b37409e55d05cf3110f01b5",
   ],
