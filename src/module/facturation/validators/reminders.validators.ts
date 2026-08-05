@@ -1,12 +1,13 @@
 import { z } from "zod";
 
 const uuid = z.string().uuid();
+const clientId = z.string().trim().min(1).max(3);
 const strictDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const idempotencyKey = z.string().trim().min(8).max(200);
 
 export const reminderIdParamsSchema = z.object({ id: uuid }).strict();
 export const reminderFactureParamsSchema = z.object({ id: z.coerce.number().int().positive() }).strict();
-export const reminderClientParamsSchema = z.object({ id: uuid }).strict();
+export const reminderClientParamsSchema = z.object({ id: clientId }).strict();
 export const reminderHistoryQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(100),
 }).strict();
@@ -43,7 +44,7 @@ export const listReminderSuggestionsSchema = z.object({
     "FAILED_RETRYABLE", "FAILED_FINAL", "CANCELLED",
   ]).optional(),
   facture_id: z.coerce.number().int().positive().optional(),
-  client_id: uuid.optional(),
+  client_id: clientId.optional(),
   from_due_date: strictDate.optional(),
   to_due_date: strictDate.optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
