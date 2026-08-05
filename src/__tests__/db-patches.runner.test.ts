@@ -40,6 +40,7 @@ type RunnerModule = {
 const require = createRequire(import.meta.url);
 const runner = require(resolve(repoRoot, "scripts/db-patches.js")) as RunnerModule;
 const patchFilename = "20260804_auth_rate_limit_buckets.sql";
+const planningPatchFilename = "20260805_planning_convergence_governance.sql";
 
 function queryText(value: unknown): string {
   return String(value).replace(/\s+/g, " ").trim();
@@ -99,6 +100,11 @@ describe("database patch runner", () => {
       "f61120b4068a36138b1d85c0269f764061a525aab6141f99df9c93ad6c5d27a2"
     );
 
+    const planningPatch = readFileSync(resolve(repoRoot, "db/patches", planningPatchFilename), "utf8");
+    expect(runner.sha256Sql(planningPatch)).toBe(
+      "4ac0aa05dc489ae5f882491e7b41cc6e96ac3bcaabd554ecddfb82d6580734dc"
+    );
+
     const previouslyRecordedPatch = readFileSync(
       resolve(repoRoot, "db/patches/20260731_stock_old_new_446.sql"),
       "utf8"
@@ -116,6 +122,13 @@ describe("database patch runner", () => {
       filename: patchFilename,
       sha256: "f61120b4068a36138b1d85c0269f764061a525aab6141f99df9c93ad6c5d27a2",
     });
+    expect(runner.immutableOnlyPatch(patches, planningPatchFilename)).toMatchObject({
+      filename: planningPatchFilename,
+      sha256: "4ac0aa05dc489ae5f882491e7b41cc6e96ac3bcaabd554ecddfb82d6580734dc",
+    });
+    expect(runner.parseArgs(["up", "--only", planningPatchFilename]).only).toBe(
+      planningPatchFilename
+    );
     expect(runner.parseArgs(["up", "--only", patchFilename]).only).toBe(patchFilename);
     expect(() => runner.parseArgs(["up", "--only", `db/patches/${patchFilename}`])).toThrow(
       /exact patch basename/
