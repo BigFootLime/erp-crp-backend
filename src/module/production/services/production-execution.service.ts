@@ -31,6 +31,7 @@ import {
   repoSubmitExecution,
   repoTransitionSegment,
   repoValidateExecution,
+  type ProductionQuantitySourceContext,
   type ProductionExecutionTransactionHooks,
 } from "../repository/production-execution.repository";
 import type {
@@ -295,6 +296,7 @@ export async function svcDeclareQuantity(params: {
   body: DeclareQuantityBodyDTO;
   idempotencyKey: string;
   audit: AuditContext;
+  sourceContext?: ProductionQuantitySourceContext;
   transactionHooks?: ProductionExecutionTransactionHooks<{ id: string }>;
 }) {
   assertProductionExecutionCapability(params.actor.role, "declare_quantity");
@@ -302,6 +304,7 @@ export async function svcDeclareQuantity(params: {
     body: params.body,
     idempotencyKey: params.idempotencyKey,
     audit: params.audit,
+    sourceContext: params.sourceContext,
     transactionHooks: params.transactionHooks,
   });
 }

@@ -368,6 +368,146 @@ describe("#274 idempotence", () => {
 });
 
 /* -------------------------------------------------------------------------- */
+/* Intégrité transactionnelle des quantités                                  */
+/* -------------------------------------------------------------------------- */
+
+describe("#274 intégrité des quantités", () => {
+  const quantityRequest = (body: Record<string, unknown>, key = `${KEY}-quantity`) => request(app)
+    .post(`${BASE}/quantities`)
+    .set("x-test-role", OPERATOR)
+    .set("x-test-user-id", "7")
+    .set("Idempotency-Key", key)
+    .send(body);
+
+  function mockQuantityQueries(params: {
+    ofStatus?: string;
+    operationStatus?: string;
+    alreadyGood?: number;
+    pointageOwner?: number;
+  } = {}) {
+    let inserts = 0;
+    mocks.clientQuery.mockImplementation((sql: string) => {
+      if (sql.includes("FROM public.production_execution_idempotency")) return { rows: [] };
+      if (sql.includes("FROM public.ordres_fabrication") && sql.includes("FOR UPDATE")) {
+        return {
+          rows: [{
+            id: "10",
+            statut: params.ofStatus ?? "EN_COURS",
+            quantite_lancee: 10,
+          }],
+        };
+      }
+      if (sql.includes("FROM public.of_operations") && sql.includes("FOR UPDATE")) {
+        return {
+          rows: [{
+            id: OP_ID,
+            status: params.operationStatus ?? "RUNNING",
+            phase: 10,
+            of_id: "10",
+          }],
+        };
+      }
+      if (sql.includes("FROM public.production_pointages") && sql.includes("WHERE id = $1::uuid")) {
+        return { rows: [executionRow({ operator_user_id: params.pointageOwner ?? 7 })] };
+      }
+      if (sql.includes("FROM public.production_quantity_declarations")) {
+        return { rows: [{ qty_good: params.alreadyGood ?? 0, qty_scrap: 0 }] };
+      }
+      if (sql.includes("INSERT INTO public.production_quantity_declarations")) {
+        inserts += 1;
+        return { rows: [{ id: `44444444-4444-4444-8444-${String(inserts).padStart(12, "0")}` }] };
+      }
+      return { rows: [] };
+    });
+    return () => inserts;
+  }
+
+  it("refuse une quantité sur un OF clos", async () => {
+    const inserts = mockQuantityQueries({ ofStatus: "TERMINE" });
+    const res = await quantityRequest({ of_id: 10, qty_good: 1 });
+    expect(res.status).toBe(422);
+    expect(res.body.code ?? res.body.error?.code).toBe("PRODUCTION_EXECUTION_OF_NOT_EXECUTABLE");
+    expect(inserts()).toBe(0);
+  });
+
+  it("refuse une quantité sur une opération terminée", async () => {
+    const inserts = mockQuantityQueries({ operationStatus: "DONE" });
+    const res = await quantityRequest({ of_id: 10, operation_id: OP_ID, qty_good: 1 });
+    expect(res.status).toBe(409);
+    expect(res.body.code ?? res.body.error?.code).toBe("OF_OPERATION_ALREADY_DONE");
+    expect(inserts()).toBe(0);
+  });
+
+  it("refuse la surproduction après relecture du cumul sous verrou", async () => {
+    const inserts = mockQuantityQueries({ alreadyGood: 9 });
+    const res = await quantityRequest({ of_id: 10, qty_good: 2 });
+    expect(res.status).toBe(422);
+    expect(res.body.code ?? res.body.error?.code).toBe("PRODUCTION_QUANTITY_EXCEEDS_REMAINING");
+    expect(inserts()).toBe(0);
+  });
+
+  it("refuse un pointage appartenant à un autre opérateur", async () => {
+    const inserts = mockQuantityQueries({ pointageOwner: 99 });
+    const res = await quantityRequest({
+      of_id: 10,
+      operation_id: OP_ID,
+      pointage_id: POINTAGE_ID,
+      qty_good: 1,
+    });
+    expect(res.status).toBe(409);
+    expect(res.body.code ?? res.body.error?.code).toBe("PRODUCTION_QUANTITY_POINTAGE_OPERATOR_CONFLICT");
+    expect(inserts()).toBe(0);
+  });
+
+  it("sérialise deux déclarations concurrentes et refuse celle qui dépasse le restant", async () => {
+    let connectionCount = 0;
+    let committedGood = 0;
+    let insertCount = 0;
+    let releaseFirstLock!: () => void;
+    let firstLocked!: () => void;
+    const firstHasLock = new Promise<void>((resolve) => { firstLocked = resolve; });
+    const firstCommitted = new Promise<void>((resolve) => { releaseFirstLock = resolve; });
+
+    mocks.poolConnect.mockImplementation(() => {
+      const connectionId = ++connectionCount;
+      let pendingGood = 0;
+      const query = vi.fn(async (sql: string, values?: unknown[]) => {
+        if (sql.includes("FROM public.production_execution_idempotency")) return { rows: [] };
+        if (sql.includes("FROM public.ordres_fabrication") && sql.includes("FOR UPDATE")) {
+          if (connectionId === 1) firstLocked();
+          if (connectionId === 2) await firstCommitted;
+          return { rows: [{ id: "10", statut: "EN_COURS", quantite_lancee: 10 }] };
+        }
+        if (sql.includes("FROM public.production_quantity_declarations")) {
+          return { rows: [{ qty_good: committedGood, qty_scrap: 0 }] };
+        }
+        if (sql.includes("INSERT INTO public.production_quantity_declarations")) {
+          insertCount += 1;
+          pendingGood = Number(values?.[3] ?? 0);
+          return { rows: [{ id: "55555555-5555-4555-8555-555555555555" }] };
+        }
+        if (sql === "COMMIT" && connectionId === 1) {
+          committedGood += pendingGood;
+          releaseFirstLock();
+        }
+        return { rows: [] };
+      });
+      return Promise.resolve({ query, release: vi.fn() });
+    });
+
+    const first = quantityRequest({ of_id: 10, qty_good: 6 }, `${KEY}-concurrent-a`).then((res) => res);
+    await firstHasLock;
+    const second = quantityRequest({ of_id: 10, qty_good: 6 }, `${KEY}-concurrent-b`).then((res) => res);
+    const [firstRes, secondRes] = await Promise.all([first, second]);
+
+    expect(firstRes.status).toBe(201);
+    expect(secondRes.status).toBe(422);
+    expect(secondRes.body.code ?? secondRes.body.error?.code).toBe("PRODUCTION_QUANTITY_EXCEEDS_REMAINING");
+    expect(insertCount).toBe(1);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
 /* Validation Zod et erreurs structurées                                      */
 /* -------------------------------------------------------------------------- */
 

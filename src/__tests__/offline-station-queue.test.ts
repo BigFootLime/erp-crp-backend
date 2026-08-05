@@ -376,13 +376,22 @@ describe("GPT56-FEAT-CERP-0006 — contrat borné", () => {
     expect(result.results[0]).toMatchObject({ status: "SYNCED", server_entity_id: ENTITY });
     expect(mocks.quantity).toHaveBeenCalledWith(expect.objectContaining({
       body: expect.objectContaining({ pointage_id: ENTITY }),
+      sourceContext: {
+        operatorUserId: 7,
+        machineId: MACHINE,
+        executionSessionId: expect.any(String),
+      },
     }));
     expect(mocks.quantity.mock.calls[0]?.[0].body).not.toHaveProperty("start_event_id");
   });
 
-  it("autorise une quantité sans pointage mais jamais deux références", () => {
-    expect(quantityBatch({ pointage_id: null, start_event_id: null }).events[0]?.type).toBe("QUANTITY_DECLARE");
+  it("refuse à l'exécution une quantité offline sans pointage et jamais deux références", async () => {
+    const withoutPointage = quantityBatch({ pointage_id: null, start_event_id: null });
+    expect(withoutPointage.events[0]?.type).toBe("QUANTITY_DECLARE");
     expect(() => quantityBatch({ pointage_id: ENTITY, start_event_id: EVENT })).toThrow();
+    const result = await svcSyncOfflineStation({ body: withoutPointage, station, audit });
+    expect(result.results[0]).toMatchObject({ status: "REJECTED", code: "OFFLINE_POINTAGE_REQUIRED" });
+    expect(mocks.quantity).not.toHaveBeenCalled();
   });
 
   it.each([

@@ -226,11 +226,23 @@ async function applyCanonicalEvent(params: {
     event,
     params.executionSessionId
   );
+  if (!pointageId) {
+    throw new HttpError(
+      409,
+      "OFFLINE_POINTAGE_REQUIRED",
+      "Une quantité hors ligne doit référencer son pointage de production."
+    );
+  }
   const { start_event_id: _dependencyId, ...quantityBody } = event.payload;
   const result = await svcDeclareQuantity({
     actor,
     idempotencyKey: event.idempotency_key,
     audit: params.audit,
+    sourceContext: {
+      operatorUserId: event.user_id,
+      machineId: event.machine_id,
+      executionSessionId: params.executionSessionId,
+    },
     transactionHooks: params.transactionHooks,
     body: { ...quantityBody, pointage_id: pointageId },
   });
