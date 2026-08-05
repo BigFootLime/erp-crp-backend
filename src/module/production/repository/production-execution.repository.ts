@@ -190,9 +190,10 @@ async function reserveIdempotencyKey<T>(
   const existing = await tx.query<{
     request_fingerprint: string;
     response_body: T | null;
+    user_id: number;
   }>(
     `
-      SELECT request_fingerprint, response_body
+      SELECT request_fingerprint, response_body, user_id
       FROM public.production_execution_idempotency
       WHERE idempotency_key = $1
       FOR UPDATE
@@ -202,6 +203,13 @@ async function reserveIdempotencyKey<T>(
 
   const row = existing.rows[0];
   if (row) {
+    if (row.user_id !== params.user_id) {
+      throw new HttpError(
+        409,
+        "PRODUCTION_EXECUTION_IDEMPOTENCY_ACTOR_CONFLICT",
+        "Cette clé d'idempotence appartient à un autre utilisateur."
+      );
+    }
     assertIdempotencyMatch({
       key: params.key,
       storedFingerprint: row.request_fingerprint,

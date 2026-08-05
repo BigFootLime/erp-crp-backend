@@ -289,6 +289,7 @@ describe("#274 idempotence", () => {
                 )
                 .digest("hex"),
               response_body: { id: POINTAGE_ID },
+              user_id: 7,
             },
           ],
         };
@@ -320,7 +321,7 @@ describe("#274 idempotence", () => {
     mocks.clientQuery.mockImplementation((sql: string) => {
       if (sql.includes("FROM public.production_execution_idempotency")) {
         return {
-          rows: [{ request_fingerprint: "a".repeat(64), response_body: { id: POINTAGE_ID } }],
+          rows: [{ request_fingerprint: "a".repeat(64), response_body: { id: POINTAGE_ID }, user_id: 1 }],
         };
       }
       return { rows: [] };
@@ -334,6 +335,35 @@ describe("#274 idempotence", () => {
 
     expect(res.status).toBe(409);
     expect(res.body.code ?? res.body.error?.code).toBe("PRODUCTION_EXECUTION_IDEMPOTENCY_CONFLICT");
+  });
+
+  it.each([
+    ["STOP", `${BASE}/${POINTAGE_ID}/stop`, {}],
+    ["QUANTITY", `${BASE}/quantities`, { of_id: 10, qty_good: 1 }],
+  ])("ne rejoue jamais la réponse %s d'un autre opérateur", async (_kind, endpoint, body) => {
+    mocks.clientQuery.mockImplementation((sql: string) => {
+      if (sql.includes("FROM public.production_execution_idempotency")) {
+        return {
+          rows: [{
+            request_fingerprint: "a".repeat(64),
+            response_body: { id: POINTAGE_ID },
+            user_id: 99,
+          }],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const res = await request(app)
+      .post(endpoint)
+      .set("x-test-role", OPERATOR)
+      .set("x-test-user-id", "7")
+      .set("Idempotency-Key", KEY)
+      .send(body);
+
+    expect(res.status).toBe(409);
+    expect(res.body.code ?? res.body.error?.code).toBe("PRODUCTION_EXECUTION_IDEMPOTENCY_ACTOR_CONFLICT");
+    expect(mocks.clientQuery).not.toHaveBeenCalledWith("COMMIT");
   });
 });
 

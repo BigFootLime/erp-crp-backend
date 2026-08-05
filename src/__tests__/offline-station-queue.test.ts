@@ -179,7 +179,16 @@ beforeEach(() => {
   mocks.assertClaim.mockResolvedValue(undefined);
   mocks.releaseClaim.mockResolvedValue(undefined);
   mocks.canonicalExists.mockResolvedValue(false);
-  mocks.sourceSession.mockResolvedValue(null);
+  mocks.sourceSession.mockResolvedValue({
+    id: SESSION,
+    device_id: DEVICE,
+    user_id: 7,
+    machine_id: MACHINE,
+    state: "ACTIVE",
+    started_at: new Date(Date.now() - 7 * 86_400_000).toISOString(),
+    closed_at: null,
+    expires_at: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+  });
   mocks.purge.mockResolvedValue(0);
   mocks.audit.mockResolvedValue(undefined);
   const runCanonical = async (params: {
@@ -225,6 +234,38 @@ describe("GPT56-FEAT-CERP-0006 — contrat borné", () => {
         payload: { of_id: 42, qty_good: 0 },
       }],
     })).toThrow();
+  });
+
+  it("canonicalise tous les UUID avant réservation et recherche de dépendance", async () => {
+    const event = stopBatch().events[0]!;
+    const uppercaseEventId = "ABCDEFAB-CDEF-4ABC-8DEF-ABCDEFABCDEF";
+    const canonicalEventId = uppercaseEventId.toLowerCase();
+    const body = offlineStationSyncSchema.parse({
+      client_batch_id: BATCH.toUpperCase(),
+      events: [{
+        ...event,
+        event_id: uppercaseEventId,
+        device_id: DEVICE.toUpperCase(),
+        station_session_id: SESSION.toUpperCase(),
+        machine_id: MACHINE.toUpperCase(),
+        payload: { pointage_id: null, start_event_id: EVENT.toUpperCase() },
+      }],
+    });
+    mocks.dependency.mockImplementation(() => Promise.resolve(currentSyncedStartDependency()));
+
+    const result = await svcSyncOfflineStation({ body, station, audit });
+
+    expect(body.client_batch_id).toBe(BATCH);
+    expect(body.events[0]).toMatchObject({
+      event_id: canonicalEventId,
+      device_id: DEVICE,
+      station_session_id: SESSION,
+      machine_id: MACHINE,
+      payload: { start_event_id: EVENT },
+    });
+    expect(mocks.reserve.mock.calls[0]?.[0].event.event_id).toBe(canonicalEventId);
+    expect(mocks.dependency).toHaveBeenCalledWith(EVENT);
+    expect(result.results[0]).toMatchObject({ status: "SYNCED" });
   });
 
   it("double sync: applique une fois puis renvoie le reçu synchronisé", async () => {
@@ -524,6 +565,30 @@ describe("GPT56-FEAT-CERP-0006 — contrat borné", () => {
     expect(executionId).toBe(mocks.reserve.mock.calls[0]?.[0].executionSessionId);
     expect(executionId).not.toBe(SESSION);
     expect(executionId).not.toBe(OLD_SESSION);
+  });
+
+  it("refuse aussi l'antidatage antérieur à l'ouverture de la session courante", async () => {
+    const startedAt = new Date();
+    mocks.sourceSession.mockResolvedValue({
+      id: SESSION,
+      device_id: DEVICE,
+      user_id: 7,
+      machine_id: MACHINE,
+      state: "ACTIVE",
+      started_at: startedAt.toISOString(),
+      closed_at: null,
+      expires_at: new Date(startedAt.getTime() + 8 * 3_600_000).toISOString(),
+    });
+    const result = await svcSyncOfflineStation({
+      body: startBatch({ occurred_at: new Date(startedAt.getTime() - 61_000).toISOString() }),
+      station,
+      audit,
+    });
+    expect(result.results[0]).toMatchObject({
+      status: "REJECTED",
+      code: "OFFLINE_SOURCE_SESSION_TIME_CONFLICT",
+    });
+    expect(mocks.start).not.toHaveBeenCalled();
   });
 
   it("fige le rejet si la session source ne correspond pas au contexte déclaré", async () => {

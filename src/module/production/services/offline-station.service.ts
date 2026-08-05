@@ -29,6 +29,7 @@ import type {
 
 const OFFLINE_REASON = "Synchronisation différée depuis une station hors ligne.";
 const OFFLINE_EXECUTION_NAMESPACE = Buffer.from("6ba7b8109dad11d180b400c04fd430c8", "hex");
+const SOURCE_SESSION_CLOCK_TOLERANCE_MS = 60_000;
 const RETRYABLE_DEPENDENCY_CODES = new Set(["OFFLINE_DEPENDENCY_MISSING", "OFFLINE_DEPENDENCY_PENDING"]);
 
 export type OfflineSyncResult = {
@@ -79,11 +80,8 @@ async function assertIdentity(station: StationContext, event: OfflineStationEven
   if (event.user_id !== station.user.id) {
     throw new HttpError(409, "OFFLINE_OPERATOR_CONFLICT", "L'opérateur doit se réauthentifier avant la synchronisation.");
   }
-  if (event.station_session_id === station.session_id) {
-    if (event.machine_id !== station.machine_id) {
-      throw new HttpError(409, "OFFLINE_MACHINE_CONFLICT", "La machine confirmée a changé depuis la capture hors ligne.");
-    }
-    return;
+  if (event.station_session_id === station.session_id && event.machine_id !== station.machine_id) {
+    throw new HttpError(409, "OFFLINE_MACHINE_CONFLICT", "La machine confirmée a changé depuis la capture hors ligne.");
   }
 
   const source = await repoOfflineSourceSession(event.station_session_id);
@@ -101,8 +99,10 @@ async function assertIdentity(station: StationContext, event: OfflineStationEven
   const occurredAt = Date.parse(event.occurred_at);
   const startedAt = Date.parse(source.started_at);
   const endedAt = Date.parse(source.closed_at ?? source.expires_at);
-  const lifecycleToleranceMs = 60_000;
-  if (occurredAt < startedAt - lifecycleToleranceMs || occurredAt > endedAt + lifecycleToleranceMs) {
+  if (
+    occurredAt < startedAt - SOURCE_SESSION_CLOCK_TOLERANCE_MS
+    || occurredAt > endedAt + SOURCE_SESSION_CLOCK_TOLERANCE_MS
+  ) {
     throw new HttpError(
       409,
       "OFFLINE_SOURCE_SESSION_TIME_CONFLICT",
