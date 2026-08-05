@@ -4,6 +4,7 @@ import { createServer } from "http";
 import pool from "./config/database";
 import { startAuthRateLimitMaintenance } from "./module/auth/services/auth-rate-limit.service";
 import { startExpiredLockMaintenance } from "./module/locks/services/locks.service";
+import { startReminderMaintenance } from "./module/facturation/services/reminder-job.service";
 import { createApplicationShutdown } from "./shared/runtime/application-shutdown";
 import { preflightSecureUploadStorageRoots } from "./shared/uploads/secure-upload";
 import { getUploadScannerStartupConfiguration } from "./shared/uploads/upload-scanner";
@@ -30,6 +31,7 @@ async function start(): Promise<void> {
   const port = Number.parseInt(process.env.PORT || "5000", 10);
   const httpServer = createServer(app);
   const stopAuthRateLimitMaintenance = startAuthRateLimitMaintenance();
+  const stopReminderMaintenance = startReminderMaintenance();
 
   initSocketServer(httpServer);
   const stopExpiredLockMaintenance = startExpiredLockMaintenance();
@@ -47,7 +49,7 @@ async function start(): Promise<void> {
   const shutdown = createApplicationShutdown({
     httpServer,
     stopRealtime: shutdownRealtimeSocketServer,
-    stopMaintenance: [stopAuthRateLimitMaintenance, stopExpiredLockMaintenance],
+    stopMaintenance: [stopAuthRateLimitMaintenance, stopExpiredLockMaintenance, stopReminderMaintenance],
     closeDatabase: () => pool.end(),
     log: (type, fields) => console.error(JSON.stringify({ type, ...fields })),
   }, shutdownTimeoutMs);
