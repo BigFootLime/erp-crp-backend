@@ -17,6 +17,10 @@ const IMMUTABLE_ONLY_PATCHES = Object.freeze({
     "060e1e8a3dcaaa673bb24beebb4701af0e82ca165ceaf3fe9466138f19cfcc2d",
   "20260805_planning_convergence_governance.sql":
     "4ac0aa05dc489ae5f882491e7b41cc6e96ac3bcaabd554ecddfb82d6580734dc",
+  "20260805_programmation_safe_reschedule_0004.sql":
+    "341f7911a7bcb479fce6602d0567c51d47f083a08b37409e55d05cf3110f01b5",
+  "20260805_quality_delivery_release_gate_0005.sql":
+    "ceff91b88820e9943d199f71a73e32fd4f994d383f76aabb620ea648c9d1ae53",
 });
 const REALTIME_V1_FILENAME = "20260804_realtime_shared_control_plane.sql";
 const REALTIME_V1_SHA256 = "a532c87aa9962b6171b65db421ee82069ed177bf6f5becb52295df4dacbc76f6";
