@@ -170,6 +170,8 @@ export async function svcStartExecution(params: {
   body: StartExecutionBodyDTO;
   idempotencyKey: string;
   audit: AuditContext;
+  stationSessionId?: string | null;
+  source?: string;
 }) {
   assertProductionExecutionCapability(params.actor.role, "start_self");
   const operatorUserId = resolveOperator(params.actor, params.body);
@@ -178,6 +180,8 @@ export async function svcStartExecution(params: {
     operatorUserId,
     idempotencyKey: params.idempotencyKey,
     audit: params.audit,
+    sessionId: params.stationSessionId,
+    source: params.source,
   });
 }
 
