@@ -1011,6 +1011,8 @@ export const STATION_AUDIT_EVENTS = [
   "DOSSIER_OPENED",
   "PLAN_OPENED",
   "HEARTBEAT",
+  "OFFLINE_EVENT_SYNCED",
+  "OFFLINE_EVENT_REJECTED",
 ] as const;
 
 export type StationAuditEventType = (typeof STATION_AUDIT_EVENTS)[number];

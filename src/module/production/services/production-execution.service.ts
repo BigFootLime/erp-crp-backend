@@ -31,6 +31,8 @@ import {
   repoSubmitExecution,
   repoTransitionSegment,
   repoValidateExecution,
+  type ProductionQuantitySourceContext,
+  type ProductionExecutionTransactionHooks,
 } from "../repository/production-execution.repository";
 import type {
   CancelExecutionBodyDTO,
@@ -170,6 +172,9 @@ export async function svcStartExecution(params: {
   body: StartExecutionBodyDTO;
   idempotencyKey: string;
   audit: AuditContext;
+  executionSessionId?: string | null;
+  source?: string;
+  transactionHooks?: ProductionExecutionTransactionHooks<{ id: string }>;
 }) {
   assertProductionExecutionCapability(params.actor.role, "start_self");
   const operatorUserId = resolveOperator(params.actor, params.body);
@@ -178,6 +183,9 @@ export async function svcStartExecution(params: {
     operatorUserId,
     idempotencyKey: params.idempotencyKey,
     audit: params.audit,
+    sessionId: params.executionSessionId,
+    source: params.source,
+    transactionHooks: params.transactionHooks,
   });
 }
 
@@ -187,6 +195,7 @@ export async function svcStopExecution(params: {
   body: StopExecutionBodyDTO;
   idempotencyKey: string;
   audit: AuditContext;
+  transactionHooks?: ProductionExecutionTransactionHooks<{ id: string }>;
 }) {
   assertProductionExecutionCapability(params.actor.role, "stop_self");
   return repoStopExecution({
@@ -195,6 +204,7 @@ export async function svcStopExecution(params: {
     idempotencyKey: params.idempotencyKey,
     actorRole: params.actor.role,
     audit: params.audit,
+    transactionHooks: params.transactionHooks,
   });
 }
 
@@ -286,12 +296,16 @@ export async function svcDeclareQuantity(params: {
   body: DeclareQuantityBodyDTO;
   idempotencyKey: string;
   audit: AuditContext;
+  sourceContext?: ProductionQuantitySourceContext;
+  transactionHooks?: ProductionExecutionTransactionHooks<{ id: string }>;
 }) {
   assertProductionExecutionCapability(params.actor.role, "declare_quantity");
   return repoDeclareQuantity({
     body: params.body,
     idempotencyKey: params.idempotencyKey,
     audit: params.audit,
+    sourceContext: params.sourceContext,
+    transactionHooks: params.transactionHooks,
   });
 }
 
