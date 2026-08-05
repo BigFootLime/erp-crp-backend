@@ -35,6 +35,8 @@ import {
   shipmentBillingBoundary,
   shipmentReceiptDecision,
 } from "../domain/livraisons-policy"
+import type { DeliveryQualityRelease } from "../domain/quality-release-gate"
+import { repoGetDeliveryQualityRelease } from "./quality-release.repository"
 
 type Queryable = Pick<PoolClient, "query">
 
@@ -191,7 +193,10 @@ async function loadShipmentSnapshot(
       SELECT
         id::text AS version_id,
         version,
-        checksum_sha256
+        checksum_sha256,
+        quality_release_state,
+        quality_release_preview_sha256,
+        quality_policy_sha256
       FROM public.bon_livraison_pack_versions
       WHERE bon_livraison_id = $1::uuid
         AND status = 'GENERATED'
@@ -244,7 +249,11 @@ function buildGroups(rows: AllocationRow[]): AllocationGroup[] {
   return [...groups.values()].sort((left, right) => left.key.localeCompare(right.key))
 }
 
-function buildPreview(snapshot: ShipmentSnapshot): BonLivraisonShipmentPreview {
+function buildPreview(
+  snapshot: ShipmentSnapshot,
+  qualityRelease: DeliveryQualityRelease | null = null,
+  enforceQuality = false
+): BonLivraisonShipmentPreview {
   const blockers: ShipmentPreviewBlocker[] = []
   const byLine = new Map<string, AllocationRow[]>()
   for (const allocation of snapshot.allocations) {
@@ -267,6 +276,34 @@ function buildPreview(snapshot: ShipmentSnapshot): BonLivraisonShipmentPreview {
       code: "DOCUMENT_PACK_REQUIRED",
       message: "Un pack documentaire figé doit être généré avant l’expédition.",
     })
+  }
+  if (enforceQuality) {
+    if (!qualityRelease || (qualityRelease.state !== "READY" && qualityRelease.state !== "DEROGATED")) {
+      const qualityReasons = qualityRelease?.reasons ?? []
+      if (qualityReasons.length) {
+        for (const reason of qualityReasons) {
+          blockers.push({ code: reason.code, message: reason.message })
+        }
+      } else {
+        blockers.push({
+          code: "QUALITY_RELEASE_UNKNOWN",
+          message: "La décision Qualité canonique est indisponible.",
+        })
+      }
+    }
+    if (
+      snapshot.document_pack &&
+      (!qualityRelease ||
+        !snapshot.document_pack.quality_release_preview_sha256 ||
+        snapshot.document_pack.quality_release_preview_sha256 !== qualityRelease.preview_sha256 ||
+        snapshot.document_pack.quality_release_state !== qualityRelease.state ||
+        snapshot.document_pack.quality_policy_sha256 !== qualityRelease.policy?.rules_sha256)
+    ) {
+      blockers.push({
+        code: "DOCUMENT_PACK_QUALITY_STALE",
+        message: "Le pack documentaire ne correspond plus à l'état Qualité courant et doit être régénéré.",
+      })
+    }
   }
 
   for (const line of snapshot.lines) {
@@ -402,6 +439,9 @@ function buildPreview(snapshot: ShipmentSnapshot): BonLivraisonShipmentPreview {
     })),
     blockers: blockers.map((blocker) => blocker.code).sort(),
     document_pack: snapshot.document_pack,
+    quality_release: qualityRelease
+      ? { state: qualityRelease.state, preview_sha256: qualityRelease.preview_sha256 }
+      : null,
   }
 
   const reliquats = snapshot.lines.map((line) => ({
@@ -440,6 +480,7 @@ function buildPreview(snapshot: ShipmentSnapshot): BonLivraisonShipmentPreview {
     reliquats,
     simulated_movements: simulatedMovements,
     document_pack: snapshot.document_pack,
+    quality_release: qualityRelease,
     totals: {
       lines: snapshot.lines.length,
       allocations: snapshot.allocations.length,
@@ -540,7 +581,9 @@ export async function repoGetLivraisonShipmentPreview(
   bonLivraisonId: string
 ): Promise<BonLivraisonShipmentPreview | null> {
   const snapshot = await loadShipmentSnapshot(pool, bonLivraisonId)
-  return snapshot ? buildPreview(snapshot) : null
+  if (!snapshot) return null
+  const qualityRelease = await repoGetDeliveryQualityRelease(bonLivraisonId)
+  return buildPreview(snapshot, qualityRelease, true)
 }
 
 export async function prepareLivraisonInTransaction(
@@ -868,6 +911,7 @@ export async function repoShipLivraison(
 ): Promise<BonLivraisonShipResult> {
   const client = await pool.connect()
   return withRealtimeOutboxTransaction(client, async (client) => {
+    await client.query("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
     const idempotencyKey = normalizeIdempotencyKey(idempotencyKeyRaw)
     const requestPayload = { bon_livraison_id: bonLivraisonId, ...body }
     const requestHash = hashStockCommand("DELIVERY_SHIP", requestPayload)
@@ -903,7 +947,8 @@ export async function repoShipLivraison(
 
     const snapshot = await loadShipmentSnapshot(client, bonLivraisonId, true)
     if (!snapshot) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
-    const preview = buildPreview(snapshot)
+    const qualityRelease = await repoGetDeliveryQualityRelease(bonLivraisonId, client)
+    const preview = buildPreview(snapshot, qualityRelease, true)
     if (
       !shipmentConfirmationMatches({
         expectedVersion: body.expected_version,
@@ -1164,6 +1209,12 @@ export async function repoShipLivraison(
         statut: "SHIPPED",
         stock_movement_ids: movementIds,
         document_pack: preview.document_pack,
+        quality_release: {
+          state: qualityRelease.state,
+          preview_sha256: qualityRelease.preview_sha256,
+          policy: qualityRelease.policy,
+          derogation_ids: qualityRelease.derogation_ids,
+        },
         correlation_id: correlationId,
         invoice_created: false,
         commentaire: body.commentaire ?? null,
@@ -1192,6 +1243,12 @@ export async function repoShipLivraison(
           affaire_id: snapshot.header.affaire_id,
           stock_movement_ids: movementIds,
           document_pack: preview.document_pack,
+          quality_release: {
+            state: qualityRelease.state,
+            preview_sha256: qualityRelease.preview_sha256,
+            policy: qualityRelease.policy,
+            derogation_ids: qualityRelease.derogation_ids,
+          },
           ...shipmentBillingBoundary(),
         }),
         correlationId,
@@ -1212,6 +1269,11 @@ export async function repoShipLivraison(
           stock_movement_ids: movementIds,
           correlation_id: correlationId,
           invoice_created: false,
+          quality_release_state: qualityRelease.state,
+          quality_release_preview_sha256: qualityRelease.preview_sha256,
+          quality_policy_id: qualityRelease.policy?.id ?? null,
+          quality_policy_sha256: qualityRelease.policy?.rules_sha256 ?? null,
+          quality_derogation_ids: qualityRelease.derogation_ids,
         },
       },
       ip: null,

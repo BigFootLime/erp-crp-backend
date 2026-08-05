@@ -1,9 +1,11 @@
 import type { BonLivraisonDocument, BonLivraisonHeader, BonLivraisonLigneAllocation, BonLivraisonLigne, UserLite } from "./livraisons.types"
+import type { DeliveryQualityRelease } from "../domain/quality-release-gate"
 
 export type LivraisonPackCheck = {
   allocations_ok: boolean
   shipped_or_ready: boolean
   stock_link_ok: boolean
+  quality_release_ok: boolean
   missing: string[]
 }
 
@@ -50,6 +52,11 @@ export type LivraisonPackVersion = {
     document_name: string | null
   } | null
   checksum_sha256: string | null
+  quality_release_state: "READY" | "DEROGATED" | null
+  quality_release_preview_sha256: string | null
+  quality_policy_id: string | null
+  quality_policy_sha256: string | null
+  quality_release_snapshot: DeliveryQualityRelease | null
 }
 
 export type LivraisonPackPreview = {
@@ -59,6 +66,7 @@ export type LivraisonPackPreview = {
   documents_attached: BonLivraisonDocument[]
   documents_generated: BonLivraisonDocument[]
   pack_versions: LivraisonPackVersion[]
+  quality_release: DeliveryQualityRelease
   checks: LivraisonPackCheck
 }
 
