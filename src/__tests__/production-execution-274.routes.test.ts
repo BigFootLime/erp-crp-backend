@@ -66,6 +66,7 @@ vi.mock("../module/access-control/middlewares/module-access-gate", () => ({
 }));
 
 import app from "../config/app";
+import { repoDeclareQuantity } from "../module/production/repository/production-execution.repository";
 
 const BASE = "/api/v1/production/execution";
 const OP_ID = "11111111-1111-1111-1111-111111111111";
@@ -456,6 +457,62 @@ describe("#274 intégrité des quantités", () => {
     });
     expect(res.status).toBe(409);
     expect(res.body.code ?? res.body.error?.code).toBe("PRODUCTION_QUANTITY_POINTAGE_OPERATOR_CONFLICT");
+    expect(inserts()).toBe(0);
+  });
+
+  it("accepte un pointage serveur actif direct sans imposer une session offline absente", async () => {
+    const inserts = mockQuantityQueries();
+    const result = await repoDeclareQuantity({
+      body: { of_id: 10, operation_id: OP_ID, pointage_id: POINTAGE_ID, qty_good: 1 },
+      idempotencyKey: `${KEY}-direct-active`,
+      audit: {
+        user_id: 7,
+        user_role: OPERATOR,
+        ip: null,
+        user_agent: null,
+        device_type: "tablet",
+        os: null,
+        browser: null,
+        path: `${BASE}/quantities`,
+        page_key: "atelier-offline-sync",
+        client_session_id: null,
+      },
+      sourceContext: {
+        operatorUserId: 7,
+        machineId: MACHINE_ID,
+        executionSessionId: null,
+      },
+    });
+    expect(result.id).toEqual(expect.any(String));
+    expect(inserts()).toBe(1);
+  });
+
+  it("refuse toujours une session de START résolue qui ne correspond pas au pointage", async () => {
+    const inserts = mockQuantityQueries();
+    await expect(repoDeclareQuantity({
+      body: { of_id: 10, operation_id: OP_ID, pointage_id: POINTAGE_ID, qty_good: 1 },
+      idempotencyKey: `${KEY}-resolved-start-mismatch`,
+      audit: {
+        user_id: 7,
+        user_role: OPERATOR,
+        ip: null,
+        user_agent: null,
+        device_type: "tablet",
+        os: null,
+        browser: null,
+        path: `${BASE}/quantities`,
+        page_key: "atelier-offline-sync",
+        client_session_id: null,
+      },
+      sourceContext: {
+        operatorUserId: 7,
+        machineId: MACHINE_ID,
+        executionSessionId: "66666666-6666-4666-8666-666666666666",
+      },
+    })).rejects.toMatchObject({
+      status: 409,
+      code: "OFFLINE_QUANTITY_POINTAGE_SESSION_CONFLICT",
+    });
     expect(inserts()).toBe(0);
   });
 

@@ -2094,7 +2094,14 @@ export async function repoDeclareQuantity(params: {
             "Le pointage ne correspond pas à la machine de la capture hors ligne."
           );
         }
-        if ((pointage.session_id ?? null) !== params.sourceContext.executionSessionId) {
+        // Un pointage direct déjà actif n'a pas de start_event_id dans la file :
+        // `executionSessionId` vaut alors null et ne doit pas imposer que la
+        // session serveur le soit aussi. Lorsqu'un START offline a été résolu,
+        // son identifiant déterministe reste en revanche obligatoire.
+        if (
+          params.sourceContext.executionSessionId !== null
+          && (pointage.session_id ?? null) !== params.sourceContext.executionSessionId
+        ) {
           throw new HttpError(
             409,
             "OFFLINE_QUANTITY_POINTAGE_SESSION_CONFLICT",
