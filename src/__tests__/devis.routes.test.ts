@@ -93,6 +93,7 @@ const defaultState = () => ({
   flags: { has_children: false, commande_id: null as string | null, commande_numero: null as string | null },
   commandeHeader: null as null | Record<string, unknown>,
   draftLines: [] as Record<string, unknown>[],
+  revisionLines: [] as Record<string, unknown>[],
   draftArticlesByCode: [] as Record<string, unknown>[],
   draftPreparatoryByCode: [] as Record<string, unknown>[],
   updateCurrent: null as null | Record<string, unknown>,
@@ -187,7 +188,7 @@ function dispatch(sqlRaw: unknown, params?: unknown[]): { rows: unknown[]; rowCo
 
   if (/AS position/.test(sql) && /FROM devis_ligne dl/.test(sql)) return { rows: state.detailLines };
   if (/FROM devis_ligne dl/.test(sql) && /source_article_devis_id/.test(sql)) return { rows: state.draftLines };
-  if (/SELECT quantite/.test(sql) && /FROM devis_ligne/.test(sql)) return { rows: [] };
+  if (/SELECT quantite/.test(sql) && /FROM devis_ligne/.test(sql)) return { rows: state.revisionLines };
 
   if (/jsonb_build_object/.test(sql) && /FROM devis_documents/.test(sql)) return { rows: state.documentRows };
   if (/JOIN documents_clients dc/.test(sql) && /dd\.document_id = \$2/.test(sql)) return { rows: state.docFileMeta };
@@ -815,7 +816,7 @@ describe("/api/v1/devis", () => {
     expect(updateSql).toContain("total_ht");
   });
 
-  it("POST /api/v1/devis/:id/revise clones devis into a new version", async () => {
+  it("POST /api/v1/devis/:id/revise clones lines and recalculates totals", async () => {
     state.commandeHeader = {
       id: "7",
       root_devis_id: "7",
@@ -838,13 +839,21 @@ describe("/api/v1/devis", () => {
     };
     state.devisSeqId = "8";
     state.insertDevisReturnId = "8";
+    state.revisionLines = [
+      { quantite: 1, prix_unitaire_ht: 100, remise_ligne: 0, taux_tva: 20 },
+      { quantite: 1, prix_unitaire_ht: 100, remise_ligne: 0, taux_tva: 20 },
+    ];
 
     const res = await request(app)
       .post("/api/v1/devis/7/revise")
-      .field("data", JSON.stringify({ user_id: 1 }));
+      .field("data", JSON.stringify({ user_id: 1, remise_globale: 10 }));
 
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({ id: 8, root_devis_id: 7, parent_devis_id: 7, version_number: 2 });
+
+    const headerInsert = mocks.clientQuery.mock.calls.find((c) => /INSERT INTO devis\s*\(/.test(String(c[0])));
+    expect(headerInsert?.[1]?.slice(15, 18)).toEqual([10, 180, 216]);
+    expect(mocks.clientQuery.mock.calls.some((c) => /SELECT quantite/.test(String(c[0])) && /FROM devis_ligne/.test(String(c[0])))).toBe(true);
 
     // Le clone conserve l'ordre persisté des lignes.
     const cloneSql = String(

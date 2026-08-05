@@ -2209,12 +2209,22 @@ export async function repoReviseDevis(
       );
     }
 
-    // Totaux recalculés côté serveur. Si de nouvelles lignes sont fournies, on recalcule ;
-    // sinon les lignes sont clonées de la source et on conserve ses totaux (ISO A.8.28).
+    // Totaux recalculés côté serveur, y compris lorsque les lignes sont clonées.
+    // Une remise modifiée ne doit jamais être associée aux anciens totaux (ISO A.8.28).
     const revisedRemise = input.remise_globale ?? source.remise_globale ?? 0;
-    const revisedTotals = input.lignes
-      ? computeDevisTotals(input.lignes, revisedRemise)
-      : { remise_pct: revisedRemise, total_ht: source.total_ht, total_ttc: source.total_ttc };
+    const revisionLines = input.lignes ?? (await client.query<{
+      quantite: number;
+      prix_unitaire_ht: number;
+      remise_ligne: number | null;
+      taux_tva: number | null;
+    }>(
+      `SELECT quantite::float8 AS quantite, prix_unitaire_ht::float8 AS prix_unitaire_ht,
+              remise_ligne::float8 AS remise_ligne, taux_tva::float8 AS taux_tva
+       FROM devis_ligne
+       WHERE devis_id = $1`,
+      [id]
+    )).rows;
+    const revisedTotals = computeDevisTotals(revisionLines, revisedRemise);
 
     const inserted = await client.query<{ id: string }>(
       `

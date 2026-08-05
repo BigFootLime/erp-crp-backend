@@ -140,11 +140,13 @@ push("numero fourni", { ...base, numero: "DEV-2026-0001" }, true);
 push("numero vide rejeté", { ...base, numero: "" }, false);
 push("numero trop long", { ...base, numero: "X".repeat(31) }, false);
 
-// --- Remise globale (>= 0) ---
+// --- Remise globale (0..100) ---
 for (const [value, valid] of [
   [undefined, true],
   [0, true],
   [15, true],
+  [100, true],
+  [100.01, false],
   [-2, false],
 ] as Array<[unknown, boolean]>) {
   push(`remise_globale=${String(value)}`, { ...base, remise_globale: value }, valid);
@@ -297,6 +299,11 @@ describe("#167 — updateDevisBodySchema (verrou optimiste additif)", () => {
 
   it("reste partiel : un payload vide est accepté par le schéma (le repo exige au moins un champ)", () => {
     expect(updateDevisBodySchema.safeParse({}).success).toBe(true);
+  });
+
+  it("borne aussi la remise globale partielle à 100 %", () => {
+    expect(updateDevisBodySchema.safeParse({ remise_globale: 100 }).success).toBe(true);
+    expect(updateDevisBodySchema.safeParse({ remise_globale: 100.01 }).success).toBe(false);
   });
 });
 

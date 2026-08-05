@@ -53,4 +53,22 @@ describe("devis totals (recalcul serveur — ISO A.8.28)", () => {
     expect(t.total_ht).toBe(200);
     expect(t.total_ttc).toBe(225.5);
   });
+
+  it("préserve les invariants monétaires pour toute remise globale entière de 0 à 100", () => {
+    const lines = [
+      { quantite: 3, prix_unitaire_ht: 19.99, remise_ligne: 7.5, taux_tva: 20 },
+      { quantite: 2, prix_unitaire_ht: 8.4, remise_ligne: 0, taux_tva: 5.5 },
+    ];
+    let previous = computeDevisTotals(lines, 0);
+
+    for (let remise = 0; remise <= 100; remise += 1) {
+      const totals = computeDevisTotals(lines, remise);
+      expect(totals.total_ht).toBeGreaterThanOrEqual(0);
+      expect(totals.total_ttc).toBeGreaterThanOrEqual(totals.total_ht);
+      expect(totals.total_tva).toBe(Math.round((totals.total_ttc - totals.total_ht + Number.EPSILON) * 100) / 100);
+      expect(totals.total_ht).toBeLessThanOrEqual(previous.total_ht);
+      expect(totals.total_ttc).toBeLessThanOrEqual(previous.total_ttc);
+      previous = totals;
+    }
+  });
 });
