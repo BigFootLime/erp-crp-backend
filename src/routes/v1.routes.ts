@@ -33,6 +33,7 @@ import programmationRoutes from "../module/programmation/routes/programmation.ro
 import operationDossiersRoutes from "../module/operation-dossiers/routes/operation-dossiers.routes";
 import fournisseursRoutes from "../module/fournisseurs/routes/fournisseurs.routes";
 import commandeFournisseurRoutes from "../module/commande-fournisseur/routes/commande-fournisseur.routes";
+import replenishmentProposalRoutes from "../module/commande-fournisseur/routes/replenishment-proposal.routes";
 import receptionsRoutes from "../module/receptions/routes/receptions.routes";
 import metrologieRoutes from "../module/metrologie/routes/metrologie.routes";
 import metrology360Routes from "../module/metrologie/routes/metrology-360.routes";
@@ -138,6 +139,7 @@ router.use("/stock", stockRoutes);
 router.use("/dossiers", operationDossiersRoutes);
 router.use("/fournisseurs", fournisseursRoutes);
 router.use("/commandes-fournisseurs", commandeFournisseurRoutes); // Module « Commandes fournisseurs » (#172) — BCF
+router.use("/replenishment-proposals", replenishmentProposalRoutes); // FEAT-CERP-0003 — suggestions sans achat automatique
 router.use("/receptions", receptionsRoutes);
 // Métrologie 360 (#229) monté AVANT le routeur historique : ses routes
 // déclarent des capacités fines (refus par défaut) et ne partagent pas les

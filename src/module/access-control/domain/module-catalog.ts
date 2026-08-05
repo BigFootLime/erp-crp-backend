@@ -100,7 +100,7 @@ export const MODULE_CATALOG: readonly ModuleCatalogEntry[] = [
     label: "Commandes fournisseurs",
     description: "Bons de commande fournisseurs et suivi des accusés.",
     category: "Achats",
-    api_prefixes: ["/commandes-fournisseurs"],
+    api_prefixes: ["/commandes-fournisseurs", "/replenishment-proposals"],
     nav_page_keys: ["commandes-fournisseurs"],
     is_protected: false,
     sort_order: 90,
