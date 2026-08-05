@@ -212,10 +212,10 @@ BEGIN
        'ISSUED', 'PARTIALLY_PAID', 'PAID',
        'emise', 'envoyee', 'partielle', 'payee', 'emis'
      )
-     AND NEW.statut = CASE
-       WHEN NEW.settlement_status = 'UNPAID' THEN 'ISSUED'
-       ELSE NEW.settlement_status
-     END
+     AND (
+       (NEW.settlement_status = 'UNPAID' AND NEW.statut = 'ISSUED')
+       OR (NEW.settlement_status <> 'UNPAID' AND NEW.statut = NEW.settlement_status)
+     )
      AND NEW.row_version = OLD.row_version + 1
      AND current_setting('cerp.finance_settlement_correlation_id', true) IS NOT NULL
      AND current_setting('cerp.finance_settlement_correlation_id', true)
@@ -282,11 +282,15 @@ BEGIN
         ))
        AND NEW.amount_allocated >= OLD.amount_allocated
        AND NEW.amount_allocated <= NEW.amount_due
-       AND NEW.status = CASE
-         WHEN NEW.amount_allocated >= NEW.amount_due THEN 'PAID'
-         WHEN NEW.amount_allocated > 0 THEN 'PARTIALLY_PAID'
-         ELSE OLD.status
-       END
+       AND (
+         (NEW.amount_allocated >= NEW.amount_due AND NEW.status = 'PAID')
+         OR (
+           NEW.amount_allocated > 0
+           AND NEW.amount_allocated < NEW.amount_due
+           AND NEW.status = 'PARTIALLY_PAID'
+         )
+         OR (NEW.amount_allocated <= 0 AND NEW.status = OLD.status)
+       )
        AND (to_jsonb(NEW) - 'amount_allocated' - 'status')
            IS NOT DISTINCT FROM
            (to_jsonb(OLD) - 'amount_allocated' - 'status') THEN

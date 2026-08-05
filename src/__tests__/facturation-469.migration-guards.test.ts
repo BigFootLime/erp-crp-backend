@@ -182,6 +182,8 @@ describe("#469 settlement-state guards", () => {
       /current_setting\('cerp\.finance_settlement_correlation_id', true\)\s*= NEW\.correlation_id::text/
     );
     expect(patch).toContain("NEW.row_version = OLD.row_version + 1");
+    expect(patch).toContain("NEW.settlement_status = 'UNPAID' AND NEW.statut = 'ISSUED'");
+    expect(patch).not.toContain("NEW.statut = CASE");
     expect(patch).toContain("'emise', 'envoyee', 'partielle', 'payee', 'emis'");
   });
 
@@ -259,6 +261,8 @@ describe("#469 settlement-state guards", () => {
     expect(patch).toContain("parent_document_status = 'ISSUED'");
     expect(patch).toContain("NEW.amount_allocated >= OLD.amount_allocated");
     expect(patch).toContain("NEW.amount_allocated <= NEW.amount_due");
+    expect(patch).toContain("NEW.amount_allocated < NEW.amount_due");
+    expect(patch).not.toContain("NEW.status = CASE");
     expect(patch).toContain("to_jsonb(NEW) - 'amount_allocated' - 'status'");
   });
 
