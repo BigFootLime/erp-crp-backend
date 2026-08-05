@@ -34,6 +34,16 @@ BEGIN
   IF (SELECT COUNT(*) FROM public.app_modules WHERE module_key='facturation') <> 1 THEN
     RAISE EXCEPTION 'FEAT-CERP-0002 preflight: facturation module entry is missing';
   END IF;
+  IF NOT EXISTS (
+       SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='facture' AND column_name='document_status'
+     )
+     OR NOT EXISTS (
+       SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='facture' AND column_name='settlement_status'
+     ) THEN
+    RAISE EXCEPTION 'FEAT-CERP-0002 preflight: finance settlement-state prerequisite is missing';
+  END IF;
 
   SELECT sha256 INTO registered_sha256
   FROM public.cerp_schema_migrations
