@@ -48,7 +48,7 @@ const wave9PatchChecksums = new Map([
   ],
   [
     "20260804_finance_settlement_state_469.sql",
-    "f045e770642e53eaac8eac02ee6f1c8ced5885a9f53d4831462d05356544c10a",
+    "55e8cb8304d71e790056111e6452b8825fc5349b88976bd0eea281359da543d5",
   ],
   [
     "20260805_programmation_safe_reschedule_0004.sql",

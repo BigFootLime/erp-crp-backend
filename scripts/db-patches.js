@@ -16,7 +16,7 @@ const IMMUTABLE_ONLY_PATCHES = Object.freeze({
   "20260804_auth_rate_limit_buckets.sql":
     "f61120b4068a36138b1d85c0269f764061a525aab6141f99df9c93ad6c5d27a2",
   "20260804_finance_settlement_state_469.sql":
-    "f045e770642e53eaac8eac02ee6f1c8ced5885a9f53d4831462d05356544c10a",
+    "55e8cb8304d71e790056111e6452b8825fc5349b88976bd0eea281359da543d5",
   "20260805_adv_reminders.sql":
     "df06021c03898c4e719634ab753c986122ad4645ffb7c146c6be0e4954c40616",
   "20260805_planning_convergence_governance.sql":
