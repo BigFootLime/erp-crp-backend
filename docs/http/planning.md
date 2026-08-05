@@ -1,10 +1,12 @@
 # API Planning de production — issue #171
 
-Base : `/api/v1/planning`. Toutes les routes exigent une session authentifiée et un rôle Planning
-exactement reconnu (direction, production/programmation, atelier, secrétariat ou administration
-système). Une chaîne contenant seulement le mot `admin`, telle que `administratif`, n'accorde aucun
-droit. Le chevauchement forcé reste limité à la direction, l'administration et la responsabilité
-production/atelier.
+Base : `/api/v1/planning`. Toutes les routes exigent une session authentifiée. L'accès compte ×
+module Production décidé par la Tour de contrôle est autoritaire conformément à l'ADR-0049 : une
+fois le module ouvert, le rôle affiché ne retire aucune action Planning. En l'absence de contexte
+module accordé, le fallback historique reconnaît seulement des rôles exacts
+(direction, production/programmation, atelier, secrétariat ou administration système) ; une chaîne
+contenant seulement le mot `admin`, telle que `administratif`, n'accorde aucun droit. Le
+chevauchement forcé suit lui aussi le module ouvert ; son fallback historique reste exact.
 
 ## Convention temporelle
 
@@ -17,6 +19,9 @@ deux événements adjacents sont autorisés, un chevauchement positif est un con
 
 | Méthode | Route | Objet |
 | --- | --- | --- |
+| GET | `/governance` | Décision de retrait fail-closed, route canonique et politique de mesure |
+| POST | `/governance/usage` | Incrément journalier borné (`surface`, `event_type`, `browser_family`) si le flag est actif |
+| GET | `/governance/metrics` | Agrégats 28 jours par défaut, réservés au superadmin |
 | GET | `/resources` | Machines et postes planifiables |
 | GET | `/events` | Fenêtre bornée ; `limit` 2 000 par défaut, 5 000 maximum, `offset`; `total` reste exhaustif |
 | GET | `/events/:id` | Détail, commentaires et documents |
@@ -29,6 +34,26 @@ deux événements adjacents sont autorisés, un chevauchement positif est un con
 | GET | `/events/:id/documents/:docId/file` | Lecture authentifiée du contenu d'un document |
 | POST | `/autoplan` | Application séquentielle avec créations, éléments ignorés et résumé partiel explicite |
 | POST | `/validate-for-ar` | Fait progresser vers `AR_PRET`; n'envoie jamais l'AR |
+
+## Convergence Premium / historique
+
+La décision `REMOVE-CERP-0004` est `no_go`. Le flag
+`PLANNING_LEGACY_DASHBOARD_RETIREMENT` est créé OFF et ne devient effectif qu'après une nouvelle
+décision de code `go`; un flag activé seul ne masque donc pas le board historique. La route de
+configuration répond avec `Cache-Control: no-store`. Le client conserve le rollback en cas de
+réponse absente ou incohérente.
+
+`PLANNING_USAGE_METRICS` est également créé OFF. Quand il est explicitement approuvé, le serveur
+ne stocke que des compteurs quotidiens par surface, événement, famille navigateur bornée et famille
+de rôle dérivée. Aucun champ `user_id`, IP, URL, user-agent brut, session ou texte libre n'est
+accepté dans le payload de mesure ni persisté par cette capacité.
+La rétention indépendante appelle `pnpm maintenance:planning-usage` et reste fixée à 90 jours.
+Les compteurs sont indicatifs et ne peuvent jamais décider d'un retrait.
+
+Le patch canonique est `20260805_planning_convergence_governance.sql`; preflight et verify sont en
+lecture seule. Le rollback de schéma refuse toute base autre que `cerp_dev`/`cerp_test`, toute
+provenance différente, tout flag/override actif et toute preuve d'usage non exportée. Le rollback
+normal consiste uniquement à remettre le flag de retrait OFF.
 
 ## Concurrence, archive et autoplan
 

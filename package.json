@@ -15,6 +15,7 @@
     "db:patches:up": "node scripts/db-patches.js up",
     "db:patches:baseline": "node scripts/db-patches.js baseline",
     "maintenance:dashboard-usage": "node scripts/prune-dashboard-usage.js",
+    "maintenance:planning-usage": "node scripts/prune-planning-usage.js",
     "test": "vitest --config vitest.config.ts",
     "test:run": "vitest run --config vitest.config.ts",
     "test:list": "vitest list --filesOnly --config vitest.config.ts",

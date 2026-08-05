@@ -4,6 +4,7 @@ import {
   roleCanForcePlanningOverlap,
   roleHasPlanningAccess,
 } from "../module/planning/domain/planning-rbac";
+import { runWithAccountModuleAccess } from "../module/access-control/context/account-module-access.context";
 
 describe("planning RBAC uses exact normalized roles", () => {
   it.each([
@@ -12,6 +13,8 @@ describe("planning RBAC uses exact normalized roles", () => {
     "Directeur",
     "Responsable Production",
     "Responsable Programmation",
+    "Planning",
+    "Planification",
     "Responsable Atelier",
     "Chef Atelier",
     "Operateur Atelier",
@@ -46,4 +49,15 @@ describe("planning RBAC uses exact normalized roles", () => {
       expect(roleCanForcePlanningOverlap(role)).toBe(false);
     }
   );
+
+  it("lets an account-level Production grant supersede legacy role fallbacks", () => {
+    runWithAccountModuleAccess(
+      { userId: 42, moduleKey: "Production" },
+      () => {
+        expect(roleHasPlanningAccess("Employee")).toBe(true);
+        expect(roleCanForcePlanningOverlap("Employee")).toBe(true);
+      }
+    );
+  });
+
 });

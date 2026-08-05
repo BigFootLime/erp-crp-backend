@@ -1,4 +1,5 @@
 import { effectiveRoleParts } from "../../auth/domain/roles";
+import { hasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 
 function normalizeRole(role: string | null | undefined): string {
   return String(role ?? "")
@@ -17,6 +18,8 @@ const PLANNING_ACCESS_ROLES = new Set([
   "production",
   "responsableproduction",
   "responsableprogrammation",
+  "planning",
+  "planification",
   "atelier",
   "operateuratelier",
   "responsableatelier",
@@ -41,7 +44,7 @@ export function roleHasPlanningAccess(role: string | null | undefined): boolean 
 }
 
 export function roleCanForcePlanningOverlap(role: string | null | undefined): boolean {
+  // ADR-0049: an account-level module grant supersedes this legacy role fallback.
   if (hasGrantedAccountModuleAccess()) return true;
   return effectiveRoleParts(role).some((part) => FORCE_OVERLAP_ROLES.has(normalizeRole(part)));
 }
-import { hasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";

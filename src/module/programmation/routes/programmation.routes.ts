@@ -1,38 +1,21 @@
 import { Router, type RequestHandler } from "express";
 import {
-  hasGrantedAccountModuleAccess,
   requestHasGrantedAccountModuleAccess,
 } from "../../access-control/context/account-module-access.context";
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
 import { HttpError } from "../../../utils/httpError";
+import { roleHasPlanningAccess } from "../../planning/domain/planning-rbac";
 import { healthProgrammations, listProgrammations } from "../controllers/programmation.controller";
-
-function isAdminRole(role: string | undefined): boolean {
-  if (!role) return false;
-  const r = role.trim().toLowerCase();
-  return r.includes("admin") || r.includes("administrateur");
-}
-
-function isProductionRole(role: string | undefined): boolean {
-  if (!role) return false;
-  const r = role.trim().toLowerCase();
-  return r.includes("production") || r.includes("atelier") || r.includes("secretaire") || r.includes("secretariat");
-}
 
 const requireProductionOrAdmin: RequestHandler = (req, _res, next) => {
   if (
     requestHasGrantedAccountModuleAccess(req) ||
-    hasGrantedAccountModuleAccess()
+    roleHasPlanningAccess(req.user?.role)
   ) {
     next();
     return;
   }
-  const role = req.user?.role;
-  if (!isAdminRole(role) && !isProductionRole(role)) {
-    next(new HttpError(403, "FORBIDDEN", "Production, atelier, secretariat or admin role required"));
-    return;
-  }
-  next();
+  next(new HttpError(403, "FORBIDDEN", "Production, planning, atelier, secretariat or admin role required"));
 };
 
 const router = Router();

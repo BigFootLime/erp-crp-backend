@@ -78,6 +78,55 @@ describe("/api/v1/planning", () => {
     expect(res.body).toEqual({ ok: true });
   });
 
+  it("GET /api/v1/planning/governance fails closed when flags and usage storage are absent", async () => {
+    mocks.poolQuery
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ usage_table_ready: false }] });
+
+    const res = await request(app)
+      .get("/api/v1/planning/governance")
+      .set("Authorization", "Bearer fake");
+
+    expect(res.status).toBe(200);
+    expect(res.headers["cache-control"]).toBe("no-store");
+    expect(res.body).toMatchObject({
+      retirement_decision: "no_go",
+      legacy_dashboard_retirement_enabled: false,
+      legacy_dashboard_retired: false,
+      telemetry: { enabled: false, identifiers_collected: false },
+    });
+  });
+
+  it("POST /api/v1/planning/governance/usage acknowledges without writing while telemetry is OFF", async () => {
+    mocks.poolQuery
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ usage_table_ready: true }] });
+
+    const res = await request(app)
+      .post("/api/v1/planning/governance/usage")
+      .set("Authorization", "Bearer fake")
+      .send({ surface: "legacy_dashboard", event_type: "view", browser_family: "firefox" });
+
+    expect(res.status).toBe(202);
+    expect(res.body).toEqual({ recorded: false });
+    expect(mocks.poolQuery).toHaveBeenCalledTimes(2);
+  });
+
+  it("POST /api/v1/planning/governance/usage rejects identifying fields", async () => {
+    const res = await request(app)
+      .post("/api/v1/planning/governance/usage")
+      .set("Authorization", "Bearer fake")
+      .send({
+        surface: "legacy_dashboard",
+        event_type: "view",
+        browser_family: "firefox",
+        user_id: 1,
+      });
+
+    expect(res.status).toBe(400);
+    expect(mocks.poolQuery).not.toHaveBeenCalled();
+  });
+
   it("GET /api/v1/planning/resources returns machines + postes", async () => {
     mocks.poolQuery
       .mockResolvedValueOnce({
