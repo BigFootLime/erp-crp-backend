@@ -54,6 +54,11 @@ import type {
 
 type DbQueryer = Pick<PoolClient, "query">;
 
+export type ProductionExecutionTransactionHooks<T extends { id: string }> = {
+  beforeEffect: (tx: PoolClient) => Promise<void>;
+  beforeCommit: (tx: PoolClient, result: T) => Promise<void>;
+};
+
 /* -------------------------------------------------------------------------- */
 /* Utilitaires                                                                */
 /* -------------------------------------------------------------------------- */
@@ -985,10 +990,12 @@ export async function repoStartExecution(params: {
   previousSegmentId?: string | null;
   segmentIndex?: number;
   source?: string;
+  transactionHooks?: ProductionExecutionTransactionHooks<{ id: string }>;
 }): Promise<ExecutionListItem> {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    await params.transactionHooks?.beforeEffect(client);
 
     const replay = await reserveIdempotencyKey<{ id: string }>(client, {
       key: params.idempotencyKey,
@@ -997,6 +1004,7 @@ export async function repoStartExecution(params: {
       user_id: params.audit.user_id,
     });
     if (replay.replayed) {
+      await params.transactionHooks?.beforeCommit(client, replay.body);
       await client.query("COMMIT");
       const existing = await repoGetExecution({ id: replay.body.id });
       if (!existing) throw new HttpError(409, "PRODUCTION_EXECUTION_REPLAY_LOST", "Rejeu impossible.");
@@ -1161,6 +1169,7 @@ export async function repoStartExecution(params: {
     });
 
     await storeIdempotentResponse(client, params.idempotencyKey, { id });
+    await params.transactionHooks?.beforeCommit(client, { id });
     await client.query("COMMIT");
 
     const created = await repoGetExecution({ id });
@@ -1190,10 +1199,12 @@ export async function repoStopExecution(params: {
   actorRole: string | null | undefined;
   audit: AuditContext;
   eventType?: ExecutionEventType;
+  transactionHooks?: ProductionExecutionTransactionHooks<{ id: string }>;
 }): Promise<ExecutionListItem> {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    await params.transactionHooks?.beforeEffect(client);
 
     const replay = await reserveIdempotencyKey<{ id: string }>(client, {
       key: params.idempotencyKey,
@@ -1202,6 +1213,7 @@ export async function repoStopExecution(params: {
       user_id: params.audit.user_id,
     });
     if (replay.replayed) {
+      await params.transactionHooks?.beforeCommit(client, replay.body);
       await client.query("COMMIT");
       const existing = await repoGetExecution({ id: params.id });
       if (!existing) throw new HttpError(409, "PRODUCTION_EXECUTION_REPLAY_LOST", "Rejeu impossible.");
@@ -1289,6 +1301,7 @@ export async function repoStopExecution(params: {
     });
 
     await storeIdempotentResponse(client, params.idempotencyKey, { id: params.id });
+    await params.transactionHooks?.beforeCommit(client, { id: params.id });
     await client.query("COMMIT");
 
     const updated = await repoGetExecution({ id: params.id });
@@ -1962,10 +1975,12 @@ export async function repoDeclareQuantity(params: {
   body: DeclareQuantityBodyDTO;
   idempotencyKey: string;
   audit: AuditContext;
+  transactionHooks?: ProductionExecutionTransactionHooks<{ id: string }>;
 }): Promise<{ id: string }> {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    await params.transactionHooks?.beforeEffect(client);
 
     const replay = await reserveIdempotencyKey<{ id: string }>(client, {
       key: params.idempotencyKey,
@@ -1974,6 +1989,7 @@ export async function repoDeclareQuantity(params: {
       user_id: params.audit.user_id,
     });
     if (replay.replayed) {
+      await params.transactionHooks?.beforeCommit(client, replay.body);
       await client.query("COMMIT");
       return replay.body;
     }
@@ -2056,6 +2072,7 @@ export async function repoDeclareQuantity(params: {
     });
 
     await storeIdempotentResponse(client, params.idempotencyKey, { id });
+    await params.transactionHooks?.beforeCommit(client, { id });
     await client.query("COMMIT");
     return { id };
   } catch (err) {

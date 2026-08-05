@@ -1,17 +1,20 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { HttpError } from "../../../utils/httpError";
 import { fingerprintPayload } from "../domain/production-execution";
 import type { StationContext } from "../middlewares/station-authorization.middleware";
 import type { AuditContext } from "../repository/production.repository";
+import type { ProductionExecutionTransactionHooks } from "../repository/production-execution.repository";
 import { repoStationAudit } from "../repository/station.repository";
 import {
   repoCanonicalIdempotencyExists,
+  repoAssertOfflineEventClaim,
   repoCompleteOfflineEvent,
   repoOfflineDependency,
   repoOfflineSourceSession,
   repoOfflineSyncEnabled,
   repoPurgeOfflineEvents,
+  repoReleaseOfflineEventClaim,
   repoReserveOfflineEvent,
 } from "../repository/offline-station.repository";
 import {
@@ -25,6 +28,8 @@ import type {
 } from "../validators/offline-station.validators";
 
 const OFFLINE_REASON = "Synchronisation différée depuis une station hors ligne.";
+const OFFLINE_EXECUTION_NAMESPACE = Buffer.from("6ba7b8109dad11d180b400c04fd430c8", "hex");
+const RETRYABLE_DEPENDENCY_CODES = new Set(["OFFLINE_DEPENDENCY_MISSING", "OFFLINE_DEPENDENCY_PENDING"]);
 
 export type OfflineSyncResult = {
   event_id: string;
@@ -46,6 +51,25 @@ function envKillSwitchEnabled(): boolean {
 
 function rejection(eventId: string, code: string, message: string, replayed = false): OfflineSyncResult {
   return { event_id: eventId, status: "REJECTED", code, message, replayed };
+}
+
+function executionSessionIdForStartEvent(startEventId: string): string {
+  const bytes = createHash("sha1")
+    .update(OFFLINE_EXECUTION_NAMESPACE)
+    .update(`cerp:offline-execution:${startEventId}`, "utf8")
+    .digest()
+    .subarray(0, 16);
+  bytes[6] = (bytes[6]! & 0x0f) | 0x50;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function executionSessionId(event: OfflineStationEventDTO): string | null {
+  if (event.type === "POINTAGE_START") return executionSessionIdForStartEvent(event.event_id);
+  return event.payload.start_event_id
+    ? executionSessionIdForStartEvent(event.payload.start_event_id)
+    : null;
 }
 
 async function assertIdentity(station: StationContext, event: OfflineStationEventDTO): Promise<void> {
@@ -108,7 +132,8 @@ async function referencedPointage(
   directId: string | null | undefined,
   startEventId: string | null | undefined,
   batchId: string,
-  event: OfflineStationEventDTO
+  event: OfflineStationEventDTO,
+  expectedExecutionSessionId: string | null
 ): Promise<string | null> {
   if (directId) return directId;
   if (!startEventId) return null;
@@ -123,7 +148,9 @@ async function referencedPointage(
       || dependency.device_id !== event.device_id
       || dependency.operator_user_id !== event.user_id
       || dependency.station_session_id !== event.station_session_id
-      || dependency.machine_id !== event.machine_id) {
+      || dependency.machine_id !== event.machine_id
+      || !expectedExecutionSessionId
+      || dependency.execution_session_id !== expectedExecutionSessionId) {
     throw new HttpError(
       409,
       "OFFLINE_DEPENDENCY_CONTEXT_CONFLICT",
@@ -145,16 +172,20 @@ async function applyCanonicalEvent(params: {
   station: StationContext;
   audit: AuditContext;
   batchId: string;
+  executionSessionId: string | null;
+  transactionHooks: ProductionExecutionTransactionHooks<{ id: string }>;
 }): Promise<string> {
   const actor = { id: params.station.user.id, role: params.station.user.role };
   const { event } = params;
   if (event.type === "POINTAGE_START") {
+    if (!params.executionSessionId) throw new Error("Offline START execution session is missing");
     const result = await svcStartExecution({
       actor,
       idempotencyKey: event.idempotency_key,
       audit: params.audit,
-      stationSessionId: params.station.session_id,
+      executionSessionId: params.executionSessionId,
       source: "OFFLINE_STATION",
+      transactionHooks: params.transactionHooks,
       body: {
         ...event.payload,
         machine_id: event.machine_id,
@@ -169,7 +200,8 @@ async function applyCanonicalEvent(params: {
       event.payload.pointage_id,
       event.payload.start_event_id,
       params.batchId,
-      event
+      event,
+      params.executionSessionId
     );
     if (!pointageId) throw new HttpError(409, "OFFLINE_POINTAGE_REQUIRED", "Pointage à arrêter introuvable.");
     const result = await svcStopExecution({
@@ -177,6 +209,7 @@ async function applyCanonicalEvent(params: {
       id: pointageId,
       idempotencyKey: event.idempotency_key,
       audit: params.audit,
+      transactionHooks: params.transactionHooks,
       body: {
         comment: event.payload.comment,
         end_ts: event.occurred_at,
@@ -190,13 +223,15 @@ async function applyCanonicalEvent(params: {
     event.payload.pointage_id,
     event.payload.start_event_id,
     params.batchId,
-    event
+    event,
+    params.executionSessionId
   );
   const { start_event_id: _dependencyId, ...quantityBody } = event.payload;
   const result = await svcDeclareQuantity({
     actor,
     idempotencyKey: event.idempotency_key,
     audit: params.audit,
+    transactionHooks: params.transactionHooks,
     body: { ...quantityBody, pointage_id: pointageId },
   });
   return result.id;
@@ -214,12 +249,14 @@ async function processEvent(params: {
     event: params.event,
   });
   const drift = clockDriftSeconds(params.event, params.nowMs);
+  const stableExecutionSessionId = executionSessionId(params.event);
   const claimToken = randomUUID();
   const reservation = await repoReserveOfflineEvent({
     batchId: params.batchId,
     event: params.event,
     requestHash,
     clockDriftSeconds: drift,
+    executionSessionId: stableExecutionSessionId,
     claimToken,
     authenticatedDeviceId: params.station.device_id,
     authenticatedOperatorUserId: params.station.user.id,
@@ -250,36 +287,6 @@ async function processEvent(params: {
       true
     );
   }
-
-  try {
-    await assertIdentity(params.station, params.event);
-    assertClock(params.event, params.nowMs);
-  } catch (error) {
-    if (!(error instanceof HttpError) || error.status >= 500) throw error;
-    const message = error.message.slice(0, 500);
-    if (reservation.outcome.status === "PROCESSING") {
-      await repoCompleteOfflineEvent({
-        eventId: params.event.event_id,
-        requestHash,
-        claimToken,
-        status: "REJECTED",
-        errorCode: error.code,
-        errorMessage: message,
-      });
-    }
-    await repoStationAudit({
-      event_type: "OFFLINE_EVENT_REJECTED",
-      outcome: "DENIED",
-      reason_code: error.code,
-      device_id: params.station.device_id,
-      session_id: params.station.session_id,
-      user_id: params.station.user.id,
-      machine_id: params.station.machine_id,
-      detail: { event_id: params.event.event_id, event_type: params.event.type },
-    });
-    return rejection(params.event.event_id, error.code, message, reservation.outcome.status === "SYNCED");
-  }
-
   if (reservation.outcome.status === "SYNCED") {
     return {
       event_id: params.event.event_id,
@@ -290,15 +297,57 @@ async function processEvent(params: {
   }
 
   try {
-    const canonicalReplay = await repoCanonicalIdempotencyExists(params.event.idempotency_key);
-    const entityId = await applyCanonicalEvent(params);
+    await assertIdentity(params.station, params.event);
+    assertClock(params.event, params.nowMs);
+  } catch (error) {
+    if (!(error instanceof HttpError) || error.status >= 500) throw error;
+    const message = error.message.slice(0, 500);
     await repoCompleteOfflineEvent({
       eventId: params.event.event_id,
       requestHash,
       claimToken,
+      status: "REJECTED",
+      errorCode: error.code,
+      errorMessage: message,
+    });
+    await repoStationAudit({
+      event_type: "OFFLINE_EVENT_REJECTED",
+      outcome: "DENIED",
+      reason_code: error.code,
+      device_id: params.station.device_id,
+      session_id: params.station.session_id,
+      user_id: params.station.user.id,
+      machine_id: params.station.machine_id,
+      detail: { event_id: params.event.event_id, event_type: params.event.type },
+    });
+    return rejection(params.event.event_id, error.code, message);
+  }
+
+  const transactionHooks: ProductionExecutionTransactionHooks<{ id: string }> = {
+    beforeEffect: (tx) => repoAssertOfflineEventClaim(tx, {
+      eventId: params.event.event_id,
+      requestHash,
+      claimToken,
+    }),
+    beforeCommit: (tx, result) => repoCompleteOfflineEvent({
+      eventId: params.event.event_id,
+      requestHash,
+      claimToken,
       status: "SYNCED",
-      serverEntityId: entityId,
-      resultPayload: { server_entity_id: entityId },
+      serverEntityId: result.id,
+      resultPayload: {
+        server_entity_id: result.id,
+        execution_session_id: stableExecutionSessionId,
+      },
+    }, tx),
+  };
+
+  try {
+    const canonicalReplay = await repoCanonicalIdempotencyExists(params.event.idempotency_key);
+    const entityId = await applyCanonicalEvent({
+      ...params,
+      executionSessionId: stableExecutionSessionId,
+      transactionHooks,
     });
     await repoStationAudit({
       event_type: "OFFLINE_EVENT_SYNCED",
@@ -317,6 +366,14 @@ async function processEvent(params: {
   } catch (error) {
     if (!(error instanceof HttpError) || error.status >= 500) throw error;
     const message = error.message.slice(0, 500);
+    if (RETRYABLE_DEPENDENCY_CODES.has(error.code)) {
+      await repoReleaseOfflineEventClaim({
+        eventId: params.event.event_id,
+        requestHash,
+        claimToken,
+      });
+      throw new HttpError(503, error.code, message);
+    }
     await repoCompleteOfflineEvent({
       eventId: params.event.event_id,
       requestHash,
@@ -351,15 +408,25 @@ export async function svcSyncOfflineStation(params: {
   }
 
   const results: OfflineSyncResult[] = [];
+  let retryableError: HttpError | null = null;
   for (const event of params.body.events) {
-    results.push(await processEvent({
-      batchId: params.body.client_batch_id,
-      event,
-      station: params.station,
-      audit: params.audit,
-      nowMs: serverTime.getTime(),
-    }));
+    try {
+      results.push(await processEvent({
+        batchId: params.body.client_batch_id,
+        event,
+        station: params.station,
+        audit: params.audit,
+        nowMs: serverTime.getTime(),
+      }));
+    } catch (error) {
+      if (error instanceof HttpError && error.status === 503) {
+        retryableError ??= error;
+        continue;
+      }
+      throw error;
+    }
   }
+  if (retryableError) throw retryableError;
 
   const retentionDays = boundedEnv("STATION_OFFLINE_RECEIPT_RETENTION_DAYS", 30, 7, 365);
   void repoPurgeOfflineEvents(retentionDays).catch(() => undefined);

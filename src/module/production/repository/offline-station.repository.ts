@@ -1,4 +1,7 @@
+import type { PoolClient } from "pg";
+
 import pool from "../../../config/database";
+import { HttpError } from "../../../utils/httpError";
 
 import type { OfflineStationEventDTO } from "../validators/offline-station.validators";
 
@@ -9,7 +12,10 @@ export type OfflineStoredOutcome = {
   error_code: string | null;
   error_message: string | null;
   server_entity_id: string | null;
+  execution_session_id: string | null;
 };
+
+type DbQueryer = Pick<PoolClient, "query">;
 
 export type OfflineDependency = OfflineStoredOutcome & {
   client_batch_id: string;
@@ -44,14 +50,15 @@ export async function repoOfflineSyncEnabled(): Promise<boolean> {
 }
 
 /**
- * Reserve before applying the canonical command. A crash after reservation is
- * recoverable: the canonical execution idempotency key is replayed on retry.
+ * Reserve the transport claim. The canonical transaction locks this receipt
+ * again before any effect and finalizes it in the same commit.
  */
 export async function repoReserveOfflineEvent(params: {
   batchId: string;
   event: OfflineStationEventDTO;
   requestHash: string;
   clockDriftSeconds: number;
+  executionSessionId: string | null;
   claimToken: string;
   authenticatedDeviceId: string;
   authenticatedOperatorUserId: number;
@@ -62,16 +69,17 @@ export async function repoReserveOfflineEvent(params: {
   try {
     await client.query("BEGIN");
     const inserted = await client.query(
-       `INSERT INTO public.production_station_offline_events (
+      `INSERT INTO public.production_station_offline_events (
          event_id, idempotency_key, request_hash, client_batch_id, event_type,
          occurred_at, device_id, operator_user_id, station_session_id, machine_id,
+         execution_session_id,
          authenticated_device_id, authenticated_operator_user_id,
          authenticated_station_session_id, authenticated_machine_id,
          payload, clock_drift_seconds, status, attempt_count, last_attempt_at,
          processing_token, lease_expires_at
        ) VALUES (
-         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
-         $15::jsonb,$16,'PROCESSING',1,clock_timestamp(),$17,clock_timestamp() + interval '2 minutes'
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
+         $16::jsonb,$17,'PROCESSING',1,clock_timestamp(),$18,clock_timestamp() + interval '2 minutes'
        )
        ON CONFLICT DO NOTHING
        RETURNING event_id`,
@@ -86,6 +94,7 @@ export async function repoReserveOfflineEvent(params: {
         params.event.user_id,
         params.event.station_session_id,
         params.event.machine_id,
+        params.executionSessionId,
         params.authenticatedDeviceId,
         params.authenticatedOperatorUserId,
         params.authenticatedStationSessionId,
@@ -100,10 +109,14 @@ export async function repoReserveOfflineEvent(params: {
       idempotency_key: string;
       request_hash: string;
       client_batch_id: string;
+      authenticated_device_id: string;
+      authenticated_operator_user_id: number;
       lease_active: boolean;
     }>(
       `SELECT event_id::text, idempotency_key, request_hash, client_batch_id::text, status,
               result_payload, error_code, error_message, server_entity_id::text,
+              execution_session_id::text, authenticated_device_id::text,
+              authenticated_operator_user_id,
               (status = 'PROCESSING' AND lease_expires_at > clock_timestamp()) AS lease_active
          FROM public.production_station_offline_events
         WHERE event_id = $1::uuid OR idempotency_key = $2
@@ -115,6 +128,9 @@ export async function repoReserveOfflineEvent(params: {
       && found.rows[0]?.event_id === params.event.event_id
       && found.rows[0]?.idempotency_key === params.event.idempotency_key
       && found.rows[0]?.client_batch_id === params.batchId
+      && found.rows[0]?.execution_session_id === params.executionSessionId
+      && found.rows[0]?.authenticated_device_id === params.authenticatedDeviceId
+      && found.rows[0]?.authenticated_operator_user_id === params.authenticatedOperatorUserId
       && found.rows[0]?.request_hash === params.requestHash;
     if (!exact) {
       await client.query("COMMIT");
@@ -156,8 +172,8 @@ export async function repoCompleteOfflineEvent(params: {
   resultPayload?: Record<string, unknown> | null;
   errorCode?: string | null;
   errorMessage?: string | null;
-}): Promise<void> {
-  const result = await pool.query(
+}, tx?: DbQueryer): Promise<void> {
+  const result = await (tx ?? pool).query(
     `UPDATE public.production_station_offline_events
         SET status = $3,
             server_entity_id = $4::uuid,
@@ -186,10 +202,59 @@ export async function repoCompleteOfflineEvent(params: {
   }
 }
 
+export async function repoAssertOfflineEventClaim(
+  tx: DbQueryer,
+  params: { eventId: string; requestHash: string; claimToken: string }
+): Promise<void> {
+  const result = await tx.query(
+    `SELECT event_id
+       FROM public.production_station_offline_events
+      WHERE event_id = $1::uuid
+        AND request_hash = $2
+        AND processing_token = $3::uuid
+        AND status = 'PROCESSING'
+        AND lease_expires_at > clock_timestamp()
+      FOR UPDATE`,
+    [params.eventId, params.requestHash, params.claimToken]
+  );
+  if (result.rowCount !== 1) {
+    throw new HttpError(
+      503,
+      "OFFLINE_EVENT_CLAIM_LOST",
+      "Le bail de synchronisation a expiré; réessayez le même événement sans le modifier."
+    );
+  }
+}
+
+export async function repoReleaseOfflineEventClaim(params: {
+  eventId: string;
+  requestHash: string;
+  claimToken: string;
+}): Promise<void> {
+  const result = await pool.query(
+    `UPDATE public.production_station_offline_events
+        SET lease_expires_at = GREATEST(received_at + interval '1 microsecond', clock_timestamp()),
+            last_attempt_at = clock_timestamp()
+      WHERE event_id = $1::uuid
+        AND request_hash = $2
+        AND processing_token = $3::uuid
+        AND status = 'PROCESSING'`,
+    [params.eventId, params.requestHash, params.claimToken]
+  );
+  if (result.rowCount !== 1) {
+    throw new HttpError(
+      503,
+      "OFFLINE_EVENT_CLAIM_LOST",
+      "Le bail de synchronisation a été repris; réessayez le même événement sans le modifier."
+    );
+  }
+}
+
 export async function repoOfflineDependency(eventId: string): Promise<OfflineDependency | null> {
   const { rows } = await pool.query<OfflineDependency>(
     `SELECT event_id::text, status, result_payload, error_code, error_message,
-            server_entity_id::text, client_batch_id::text, event_type,
+            server_entity_id::text, execution_session_id::text,
+            client_batch_id::text, event_type,
             device_id::text, operator_user_id, station_session_id::text,
             machine_id::text
        FROM public.production_station_offline_events

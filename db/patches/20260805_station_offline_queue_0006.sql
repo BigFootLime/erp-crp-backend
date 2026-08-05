@@ -54,6 +54,7 @@ CREATE TABLE public.production_station_offline_events (
   operator_user_id integer NOT NULL,
   station_session_id uuid NOT NULL,
   machine_id uuid,
+  execution_session_id uuid,
   authenticated_device_id uuid NOT NULL,
   authenticated_operator_user_id integer NOT NULL,
   authenticated_station_session_id uuid NOT NULL,
@@ -89,6 +90,9 @@ CREATE TABLE public.production_station_offline_events (
   ),
   CONSTRAINT production_station_offline_events_payload_ck CHECK (jsonb_typeof(payload) = 'object'),
   CONSTRAINT production_station_offline_events_attempt_ck CHECK (attempt_count > 0),
+  CONSTRAINT production_station_offline_events_execution_session_ck CHECK (
+    event_type <> 'POINTAGE_START' OR execution_session_id IS NOT NULL
+  ),
   CONSTRAINT production_station_offline_events_lease_ck CHECK (lease_expires_at > received_at),
   CONSTRAINT production_station_offline_events_outcome_ck CHECK (
     (status = 'PROCESSING' AND processed_at IS NULL AND error_code IS NULL)
@@ -123,6 +127,7 @@ BEGIN
      OR NEW.operator_user_id IS DISTINCT FROM OLD.operator_user_id
      OR NEW.station_session_id IS DISTINCT FROM OLD.station_session_id
      OR NEW.machine_id IS DISTINCT FROM OLD.machine_id
+     OR NEW.execution_session_id IS DISTINCT FROM OLD.execution_session_id
      OR NEW.authenticated_device_id IS DISTINCT FROM OLD.authenticated_device_id
      OR NEW.authenticated_operator_user_id IS DISTINCT FROM OLD.authenticated_operator_user_id
      OR NEW.authenticated_station_session_id IS DISTINCT FROM OLD.authenticated_station_session_id

@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   enabled: vi.fn(),
   reserve: vi.fn(),
   complete: vi.fn(),
+  assertClaim: vi.fn(),
+  releaseClaim: vi.fn(),
   dependency: vi.fn(),
   sourceSession: vi.fn(),
   canonicalExists: vi.fn(),
@@ -24,6 +26,8 @@ vi.mock("../module/production/repository/offline-station.repository", () => ({
   repoOfflineSyncEnabled: mocks.enabled,
   repoReserveOfflineEvent: mocks.reserve,
   repoCompleteOfflineEvent: mocks.complete,
+  repoAssertOfflineEventClaim: mocks.assertClaim,
+  repoReleaseOfflineEventClaim: mocks.releaseClaim,
   repoOfflineDependency: mocks.dependency,
   repoOfflineSourceSession: mocks.sourceSession,
   repoCanonicalIdempotencyExists: mocks.canonicalExists,
@@ -148,6 +152,7 @@ function syncedStartDependency(overrides: Record<string, unknown> = {}) {
     error_code: null,
     error_message: null,
     server_entity_id: ENTITY,
+    execution_session_id: null,
     client_batch_id: BATCH,
     event_type: "POINTAGE_START" as const,
     device_id: DEVICE,
@@ -158,17 +163,39 @@ function syncedStartDependency(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function currentSyncedStartDependency(overrides: Record<string, unknown> = {}) {
+  return syncedStartDependency({
+    execution_session_id: mocks.reserve.mock.calls.at(-1)?.[0].executionSessionId ?? null,
+    ...overrides,
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   delete process.env.STATION_OFFLINE_SYNC_ENABLED;
   mocks.enabled.mockResolvedValue(true);
   mocks.reserve.mockResolvedValue(processing());
   mocks.complete.mockResolvedValue(undefined);
+  mocks.assertClaim.mockResolvedValue(undefined);
+  mocks.releaseClaim.mockResolvedValue(undefined);
   mocks.canonicalExists.mockResolvedValue(false);
   mocks.sourceSession.mockResolvedValue(null);
   mocks.purge.mockResolvedValue(0);
   mocks.audit.mockResolvedValue(undefined);
-  mocks.start.mockResolvedValue({ id: ENTITY });
+  const runCanonical = async (params: {
+    transactionHooks?: {
+      beforeEffect: (tx: { query: ReturnType<typeof vi.fn> }) => Promise<void>;
+      beforeCommit: (tx: { query: ReturnType<typeof vi.fn> }, result: { id: string }) => Promise<void>;
+    };
+  }) => {
+    const tx = { query: vi.fn() };
+    await params.transactionHooks?.beforeEffect(tx);
+    await params.transactionHooks?.beforeCommit(tx, { id: ENTITY });
+    return { id: ENTITY };
+  };
+  mocks.start.mockImplementation(runCanonical);
+  mocks.stop.mockImplementation(runCanonical);
+  mocks.quantity.mockImplementation(runCanonical);
 });
 
 describe("GPT56-FEAT-CERP-0006 — contrat borné", () => {
@@ -223,6 +250,31 @@ describe("GPT56-FEAT-CERP-0006 — contrat borné", () => {
     expect(mocks.start).toHaveBeenCalledTimes(1);
   });
 
+  it("rejoue un reçu SYNCED terminal avant tout contrôle volatil d'horloge ou de session source", async () => {
+    mocks.reserve.mockResolvedValue({
+      kind: "RESERVED",
+      existing: true,
+      outcome: {
+        ...processing().outcome,
+        status: "SYNCED",
+        server_entity_id: ENTITY,
+      },
+    });
+    const result = await svcSyncOfflineStation({
+      body: startBatch({
+        occurred_at: new Date(Date.now() - 48 * 3_600_000).toISOString(),
+        station_session_id: OLD_SESSION,
+        machine_id: OLD_MACHINE,
+      }),
+      station,
+      audit,
+    });
+    expect(result.results[0]).toMatchObject({ status: "SYNCED", server_entity_id: ENTITY, replayed: true });
+    expect(mocks.sourceSession).not.toHaveBeenCalled();
+    expect(mocks.start).not.toHaveBeenCalled();
+    expect(mocks.complete).not.toHaveBeenCalled();
+  });
+
   it("résout un STOP vers le START local synchronisé juste avant dans le même lot", async () => {
     const start = startBatch().events[0]!;
     const body = offlineStationSyncSchema.parse({
@@ -246,11 +298,15 @@ describe("GPT56-FEAT-CERP-0006 — contrat borné", () => {
       ...processing(),
       outcome: { ...processing().outcome, event_id: event.event_id },
     }));
-    mocks.dependency.mockResolvedValue(syncedStartDependency());
+    mocks.dependency.mockImplementation(() => Promise.resolve(currentSyncedStartDependency()));
     mocks.stop.mockResolvedValue({ id: ENTITY });
     const result = await svcSyncOfflineStation({ body, station, audit });
     expect(result.results.map((item) => item.status)).toEqual(["SYNCED", "SYNCED"]);
     expect(mocks.stop).toHaveBeenCalledWith(expect.objectContaining({ id: ENTITY }));
+    expect(mocks.reserve.mock.calls[0]?.[0].executionSessionId).toEqual(expect.any(String));
+    expect(mocks.reserve.mock.calls[1]?.[0].executionSessionId).toBe(
+      mocks.reserve.mock.calls[0]?.[0].executionSessionId
+    );
   });
 
   it.each([
@@ -261,7 +317,7 @@ describe("GPT56-FEAT-CERP-0006 — contrat borné", () => {
     ["session", { station_session_id: OLD_SESSION }, "OFFLINE_DEPENDENCY_CONTEXT_CONFLICT"],
     ["machine", { machine_id: OLD_MACHINE }, "OFFLINE_DEPENDENCY_CONTEXT_CONFLICT"],
   ])("refuse un start_event_id dont le %s diffère", async (_label, dependencyOverride, code) => {
-    mocks.dependency.mockResolvedValue(syncedStartDependency(dependencyOverride));
+    mocks.dependency.mockImplementation(() => Promise.resolve(currentSyncedStartDependency(dependencyOverride)));
     const result = await svcSyncOfflineStation({ body: stopBatch(), station, audit });
     expect(result.results[0]).toMatchObject({ status: "REJECTED", code });
     expect(mocks.complete).toHaveBeenCalledWith(expect.objectContaining({ status: "REJECTED" }));
@@ -269,7 +325,7 @@ describe("GPT56-FEAT-CERP-0006 — contrat borné", () => {
   });
 
   it("résout aussi start_event_id pour une déclaration de quantité", async () => {
-    mocks.dependency.mockResolvedValue(syncedStartDependency());
+    mocks.dependency.mockImplementation(() => Promise.resolve(currentSyncedStartDependency()));
     mocks.quantity.mockResolvedValue({ id: ENTITY });
     const result = await svcSyncOfflineStation({
       body: quantityBatch({ pointage_id: null, start_event_id: EVENT }),
@@ -288,11 +344,94 @@ describe("GPT56-FEAT-CERP-0006 — contrat borné", () => {
     expect(() => quantityBatch({ pointage_id: ENTITY, start_event_id: EVENT })).toThrow();
   });
 
-  it("reprend après un crash entre effet canonique et reçu sans nouvel effet logique", async () => {
+  it.each([
+    ["absente", null, "OFFLINE_DEPENDENCY_MISSING"],
+    ["encore en cours", "PROCESSING", "OFFLINE_DEPENDENCY_PENDING"],
+  ])("laisse une dépendance START %s rejouable sans reçu REJECTED", async (_label, dependencyStatus, code) => {
+    if (dependencyStatus) {
+      mocks.dependency.mockImplementation(() => Promise.resolve(currentSyncedStartDependency({
+        status: dependencyStatus,
+        server_entity_id: null,
+      })));
+    } else {
+      mocks.dependency.mockResolvedValue(null);
+    }
+    await expect(svcSyncOfflineStation({ body: stopBatch(), station, audit })).rejects.toMatchObject({
+      status: 503,
+      code,
+    });
+    expect(mocks.releaseClaim).toHaveBeenCalledWith(expect.objectContaining({
+      eventId: STOP_EVENT,
+      claimToken: expect.any(String),
+    }));
+    expect(mocks.complete).not.toHaveBeenCalled();
+    expect(mocks.stop).not.toHaveBeenCalled();
+  });
+
+  it("synchronise le STOP au retry dès que son START intermittent est disponible", async () => {
     mocks.reserve.mockResolvedValueOnce(processing()).mockResolvedValueOnce(processing(true));
-    mocks.complete.mockRejectedValueOnce(new Error("network lost after commit")).mockResolvedValueOnce(undefined);
-    mocks.canonicalExists.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
-    await expect(svcSyncOfflineStation({ body: startBatch(), station, audit })).rejects.toThrow("network lost");
+    mocks.dependency
+      .mockResolvedValueOnce(null)
+      .mockImplementation(() => Promise.resolve(currentSyncedStartDependency()));
+    await expect(svcSyncOfflineStation({ body: stopBatch(), station, audit })).rejects.toMatchObject({
+      status: 503,
+      code: "OFFLINE_DEPENDENCY_MISSING",
+    });
+    const result = await svcSyncOfflineStation({ body: stopBatch(), station, audit });
+    expect(result.results[0]).toMatchObject({ status: "SYNCED", server_entity_id: ENTITY, replayed: true });
+    expect(mocks.releaseClaim).toHaveBeenCalledTimes(1);
+    expect(mocks.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("continue le lot après une dépendance transitoire pour laisser arriver son START", async () => {
+    const stop = stopBatch().events[0]!;
+    const start = startBatch().events[0]!;
+    const body = offlineStationSyncSchema.parse({ client_batch_id: BATCH, events: [stop, start] });
+    mocks.reserve.mockImplementation(({ event }: { event: { event_id: string } }) => Promise.resolve({
+      ...processing(),
+      outcome: { ...processing().outcome, event_id: event.event_id },
+    }));
+    mocks.dependency.mockResolvedValue(null);
+    await expect(svcSyncOfflineStation({ body, station, audit })).rejects.toMatchObject({
+      status: 503,
+      code: "OFFLINE_DEPENDENCY_MISSING",
+    });
+    expect(mocks.releaseClaim).toHaveBeenCalledTimes(1);
+    expect(mocks.stop).not.toHaveBeenCalled();
+    expect(mocks.start).toHaveBeenCalledTimes(1);
+    expect(mocks.complete).toHaveBeenCalledWith(
+      expect.objectContaining({ eventId: EVENT, status: "SYNCED" }),
+      expect.anything()
+    );
+  });
+
+  it("verrouille le fencing avant l'effet puis finalise le reçu dans la même transaction", async () => {
+    const order: string[] = [];
+    const tx = { query: vi.fn() };
+    mocks.assertClaim.mockImplementation(async () => { order.push("claim"); });
+    mocks.complete.mockImplementation(async () => { order.push("receipt"); });
+    mocks.start.mockImplementation(async (params: {
+      transactionHooks: {
+        beforeEffect: (client: typeof tx) => Promise<void>;
+        beforeCommit: (client: typeof tx, result: { id: string }) => Promise<void>;
+      };
+    }) => {
+      await params.transactionHooks.beforeEffect(tx);
+      order.push("effect");
+      await params.transactionHooks.beforeCommit(tx, { id: ENTITY });
+      return { id: ENTITY };
+    });
+    await svcSyncOfflineStation({ body: startBatch(), station, audit });
+    expect(order).toEqual(["claim", "effect", "receipt"]);
+    expect(mocks.assertClaim.mock.calls[0]?.[0]).toBe(tx);
+    expect(mocks.complete.mock.calls[0]?.[1]).toBe(tx);
+  });
+
+  it("annule effet et reçu ensemble si la finalisation atomique échoue, puis reprend avec un nouveau token", async () => {
+    mocks.reserve.mockResolvedValueOnce(processing()).mockResolvedValueOnce(processing(true));
+    mocks.complete.mockRejectedValueOnce(new Error("atomic finalization failed")).mockResolvedValueOnce(undefined);
+    mocks.canonicalExists.mockResolvedValue(false);
+    await expect(svcSyncOfflineStation({ body: startBatch(), station, audit })).rejects.toThrow("atomic finalization failed");
     const resumed = await svcSyncOfflineStation({ body: startBatch(), station, audit });
     expect(resumed.results[0]).toMatchObject({ status: "SYNCED", replayed: true });
     expect(mocks.start).toHaveBeenNthCalledWith(2, expect.objectContaining({ idempotencyKey: "offline-start-000001" }));
@@ -301,6 +440,12 @@ describe("GPT56-FEAT-CERP-0006 — contrat borné", () => {
     expect(firstClaim).toEqual(expect.any(String));
     expect(resumedClaim).toEqual(expect.any(String));
     expect(resumedClaim).not.toBe(firstClaim);
+    expect(mocks.reserve.mock.calls[1]?.[0].executionSessionId).toBe(
+      mocks.reserve.mock.calls[0]?.[0].executionSessionId
+    );
+    expect(mocks.start.mock.calls[1]?.[0].executionSessionId).toBe(
+      mocks.start.mock.calls[0]?.[0].executionSessionId
+    );
     expect(mocks.complete.mock.calls[0]?.[0].claimToken).toBe(firstClaim);
     expect(mocks.complete.mock.calls[1]?.[0].claimToken).toBe(resumedClaim);
   });
@@ -372,9 +517,13 @@ describe("GPT56-FEAT-CERP-0006 — contrat borné", () => {
     expect(result.results[0]).toMatchObject({ status: "SYNCED", server_entity_id: ENTITY });
     expect(mocks.sourceSession).toHaveBeenCalledWith(OLD_SESSION);
     expect(mocks.start).toHaveBeenCalledWith(expect.objectContaining({
-      stationSessionId: SESSION,
+      executionSessionId: expect.any(String),
       body: expect.objectContaining({ machine_id: OLD_MACHINE }),
     }));
+    const executionId = mocks.start.mock.calls[0]?.[0].executionSessionId;
+    expect(executionId).toBe(mocks.reserve.mock.calls[0]?.[0].executionSessionId);
+    expect(executionId).not.toBe(SESSION);
+    expect(executionId).not.toBe(OLD_SESSION);
   });
 
   it("fige le rejet si la session source ne correspond pas au contexte déclaré", async () => {
@@ -483,6 +632,10 @@ describe("GPT56-FEAT-CERP-0006 — migration et frontières", () => {
     path.join(repoRoot, "src", "module", "production", "repository", "offline-station.repository.ts"),
     "utf8"
   );
+  const canonicalRepository = fs.readFileSync(
+    path.join(repoRoot, "src", "module", "production", "repository", "production-execution.repository.ts"),
+    "utf8"
+  );
 
   it("fournit migration, preflight, vérification et rollback test-only", () => {
     for (const suffix of ["preflight", "verify", "rollback"]) {
@@ -525,5 +678,25 @@ describe("GPT56-FEAT-CERP-0006 — migration et frontières", () => {
     expect(repository).toContain("lease_expires_at > clock_timestamp()");
     expect(repository).toContain("processing_token = $8::uuid");
     expect(repository).toContain("result.rowCount !== 1");
+  });
+
+  it("verrouille le reçu avant chaque transaction canonique et le finalise avant COMMIT", () => {
+    expect(repository).toMatch(/repoAssertOfflineEventClaim[\s\S]*FOR UPDATE/);
+    expect(repository).toContain("lease_expires_at > clock_timestamp()");
+    for (const functionName of ["repoStartExecution", "repoStopExecution", "repoDeclareQuantity"]) {
+      const start = canonicalRepository.indexOf(`export async function ${functionName}`);
+      const end = canonicalRepository.indexOf("\nexport async function ", start + 1);
+      const body = canonicalRepository.slice(start, end === -1 ? undefined : end);
+      expect(body.indexOf("beforeEffect(client)")).toBeGreaterThan(-1);
+      expect(body.indexOf("beforeEffect(client)")).toBeLessThan(body.indexOf("reserveIdempotencyKey"));
+      expect(body.lastIndexOf("beforeCommit(client")).toBeGreaterThan(body.indexOf("storeIdempotentResponse"));
+      expect(body.lastIndexOf("beforeCommit(client")).toBeLessThan(body.lastIndexOf('client.query("COMMIT")'));
+    }
+  });
+
+  it("porte une session d'exécution stable distincte de la session d'authentification", () => {
+    expect(migration).toContain("execution_session_id uuid");
+    expect(migration).toContain("event_type <> 'POINTAGE_START' OR execution_session_id IS NOT NULL");
+    expect(migration).toContain("NEW.execution_session_id IS DISTINCT FROM OLD.execution_session_id");
   });
 });

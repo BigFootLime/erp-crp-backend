@@ -6,11 +6,11 @@ Statut : accepté pour le MVP. Le mode hors ligne n'est pas un second moteur mé
 
 La station peut conserver localement, chiffrés par AES-GCM avec une clé non exportable, au plus quelques événements `POINTAGE_START`, `POINTAGE_STOP` et `QUANTITY_DECLARE`. Après retour réseau, l'opérateur se réauthentifie et envoie un lot de 1 à 25 événements à `POST /api/v1/production/station/offline/sync`.
 
-Le serveur exige une session vivante au moment de la reprise. La session d'origine peut être close après réauthentification, mais elle doit prouver le même appareil, le même opérateur, la machine déclarée et une date d'événement comprise dans son cycle de vie. Chaque événement est borné à 24 h par défaut, tolère au plus 60 s d'avance d'horloge, possède un `event_id` et une clé d'idempotence. Le moteur canonique de production applique chaque événement dans sa transaction existante. Le reçu de reprise peut rester `PROCESSING` après une panne entre l'effet et l'accusé : le retry rejoue alors la même clé canonique sans second effet.
+Le serveur exige une session vivante au premier traitement. La session d'origine peut être close après réauthentification, mais elle doit prouver le même appareil, le même opérateur, la machine déclarée et une date d'événement comprise dans son cycle de vie. Chaque événement est borné à 24 h par défaut, tolère au plus 60 s d'avance d'horloge, possède un `event_id` et une clé d'idempotence. Un reçu déjà terminal est rejoué à l'identique sans réévaluer ces conditions volatiles. Une session d'exécution UUID stable, dérivée du `POINTAGE_START` et distincte de la session d'authentification station, relie le démarrage et ses dépendants.
 
-Une réservation `PROCESSING` porte un bail de deux minutes et un jeton de fencing unique : un second appel reçoit `OFFLINE_EVENT_IN_PROGRESS` au lieu de concurrencer le premier. Après expiration, la reprise obtient un nouveau jeton; l'ancien propriétaire ne peut plus finaliser le reçu et l'idempotence canonique empêche un second effet.
+Une réservation `PROCESSING` porte un bail de deux minutes et un jeton de fencing unique : un second appel reçoit `OFFLINE_EVENT_IN_PROGRESS` au lieu de concurrencer le premier. La transaction canonique verrouille et vérifie ce jeton avant tout effet, puis écrit l'effet, la réponse idempotente et le reçu `SYNCED` dans le même commit. Après expiration, la reprise obtient un nouveau jeton; l'ancien propriétaire ne peut donc produire aucun effet visible.
 
-Un lot est volontairement partiel : chaque résultat est `SYNCED` ou `REJECTED`. Une dépendance, un changement d'identité ou une collision produit un conflit explicite; rien n'est écrasé. Aucun événement offline ne valide de qualité, ne réceptionne une production et ne crée de mouvement, lot, réservation ou décision de stock.
+Un lot est volontairement partiel : chaque résultat terminal est `SYNCED` ou `REJECTED`. Un START absent ou encore `PROCESSING` libère immédiatement le bail du dépendant et produit un HTTP 503 rejouable; le reste du lot est néanmoins tenté, ce qui autorise un ordre d'arrivée intermittent. Une dépendance rejetée ou incohérente, un changement d'identité initial ou une collision produit un conflit terminal explicite; rien n'est écrasé. Aucun événement offline ne valide de qualité, ne réceptionne une production et ne crée de mouvement, lot, réservation ou décision de stock.
 
 ## Menaces et contrôles
 
@@ -20,7 +20,7 @@ Un lot est volontairement partiel : chaque résultat est `SYNCED` ou `REJECTED`.
 | double clic, retry, double onglet | clé canonique et reçu serveur uniques; empreinte de requête immuable |
 | substitution d'opérateur/station | identité appareil/opérateur exacte; session source et période d'origine vérifiées après réauthentification |
 | horloge fausse | fenêtre passée/future bornée, dérive enregistrée, heure serveur retournée |
-| réseau intermittent ou crash | reçu `PROCESSING`, action canonique transactionnelle, reprise idempotente |
+| réseau intermittent ou crash | dépendance absente rejouable; effet canonique et reçu dans une transaction unique |
 | données altérées | conflit d'empreinte explicite; aucune mise à jour silencieuse |
 | accumulation de données | purge des reçus terminés après 30 jours par défaut (7–365) |
 | risque industriel | liste blanche de trois événements; aucune action stock/qualité irréversible |
