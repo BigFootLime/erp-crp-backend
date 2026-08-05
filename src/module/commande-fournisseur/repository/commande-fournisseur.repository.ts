@@ -1254,6 +1254,7 @@ export async function repoTransitionCommandeFournisseur(
     }
 
     // Effets par transition.
+    let releasedNeedLinks = 0;
     const sets: string[] = [`statut = $2`, `updated_by = $3`];
     const values: unknown[] = [id, to, audit.user_id];
     const pushSet = (fragment: string, value?: unknown) => {
@@ -1305,12 +1306,27 @@ export async function repoTransitionCommandeFournisseur(
     }
 
     await client.query(`UPDATE public.commande_fournisseur SET ${sets.join(", ")} WHERE id = $1::uuid`, values);
+    if (kind === "cancel") {
+      // La couverture est une protection anti double-commande, pas une preuve que le
+      // besoin reste couvert après annulation. La libération est atomique avec la
+      // transition; la ligne et le lien restent conservés pour l'audit.
+      const released = await client.query(
+        `UPDATE public.commande_fournisseur_ligne_besoin besoin
+            SET annule = true
+           FROM public.commande_fournisseur_ligne ligne
+          WHERE besoin.ligne_id = ligne.id
+            AND ligne.commande_id = $1::uuid
+            AND besoin.annule IS FALSE`,
+        [id]
+      );
+      releasedNeedLinks = released.rowCount ?? 0;
+    }
     await insertTransitionRow(client, id, from, to, motif, options?.system ? null : audit.user_id);
     await insertAuditLog(client, audit, {
       action: `commandes_fournisseurs.transition.${kind}`,
       entity_type: "commande_fournisseur",
       entity_id: id,
-      details: { from, to, motif, system: Boolean(options?.system) },
+      details: { from, to, motif, system: Boolean(options?.system), released_need_links: releasedNeedLinks },
     });
 
     const resultat = { statut: to };

@@ -397,3 +397,25 @@ describe("Gate d'accès module — application réelle", () => {
     expect(repo.repoResolveAccessProfile).not.toHaveBeenCalled();
   });
 });
+
+describe("Gate d'accès module — propositions de réapprovisionnement", () => {
+  it("rattache le préfixe au module commandes-fournisseurs et applique son refus", async () => {
+    repo.repoResolveAccessProfile.mockResolvedValue([
+      profileRow({ module_key: "commandes-fournisseurs", access: "DENIED" }),
+    ]);
+    const { res, next } = await run("/replenishment-proposals/refresh");
+    expect(repo.repoResolveAccessProfile).toHaveBeenCalledOnce();
+    expect(res.statusCode).toBe(403);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it("installe le contexte du module commandes-fournisseurs quand le compte est autorisé", async () => {
+    repo.repoResolveAccessProfile.mockResolvedValue([
+      profileRow({ module_key: "commandes-fournisseurs", access: "GRANTED" }),
+    ]);
+    const { res, next, accountPolicyInstalled } = await run("/replenishment-proposals");
+    expect(res.statusCode).toBe(0);
+    expect(next).toHaveBeenCalledOnce();
+    expect(accountPolicyInstalled).toBe(true);
+  });
+});

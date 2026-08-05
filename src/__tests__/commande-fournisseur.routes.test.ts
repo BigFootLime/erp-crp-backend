@@ -89,6 +89,7 @@ function dispatch(sqlRaw: unknown): { rows: unknown[]; rowCount?: number } {
   if (/FROM public\.fournisseurs WHERE id/.test(sql)) return { rows: [state.fournisseur] };
   if (/FROM public\.fournisseur_adresses/.test(sql)) return { rows: [] };
   if (/UPDATE public\.commande_fournisseur_document/.test(sql)) return { rows: [], rowCount: 0 };
+  if (/UPDATE public\.commande_fournisseur_ligne_besoin besoin/.test(sql)) return { rows: [], rowCount: 1 };
   if (/UPDATE public\.commande_fournisseur/.test(sql)) return { rows: [], rowCount: 1 };
   if (/erp_audit_logs/i.test(sql)) return { rows: [{ id: 99 }] };
   if (/pg_notify/i.test(sql)) return { rows: [] };
@@ -291,6 +292,10 @@ describe("/api/v1/commandes-fournisseurs — machine d'état", () => {
       .send({ to: "ANNULEE", motif: "Erreur de saisie fournisseur" });
     expect(avec.status).toBe(200);
     expect(avec.body.statut).toBe("ANNULEE");
+    expect(mocks.clientQuery).toHaveBeenCalledWith(
+      expect.stringMatching(/UPDATE public\.commande_fournisseur_ligne_besoin besoin[\s\S]*SET annule = true/),
+      [UUID]
+    );
   });
 
   it("annulation impossible si des quantités sont déjà reçues → 422", async () => {
@@ -360,5 +365,45 @@ describe("/api/v1/commandes-fournisseurs — totaux serveur", () => {
       });
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ total_ht: 205, total_remise: 20, total_tva: 41, total_ttc: 246 });
+  });
+});
+
+describe("/api/v1/replenishment-proposals — RBAC achat et prix", () => {
+  it("refuse la lecture à un rôle lecteur achat sans droit prix", async () => {
+    const res = await request(app)
+      .get("/api/v1/replenishment-proposals")
+      .set("x-test-role", "Responsable Qualité");
+    expect(res.status).toBe(403);
+  });
+
+  it("autorise lecture et recalcul au Responsable Programmation", async () => {
+    const read = await request(app)
+      .get("/api/v1/replenishment-proposals")
+      .set("x-test-role", "Responsable Programmation");
+    expect(read.status).toBe(200);
+    expect(read.body).toEqual([]);
+
+    const refresh = await request(app)
+      .post("/api/v1/replenishment-proposals/refresh")
+      .set("x-test-role", "Responsable Programmation")
+      .send({ limit: 10 });
+    expect(refresh.status).toBe(200);
+    expect(refresh.body).toMatchObject({ items: [], refreshed: 0, resolved: 0 });
+  });
+
+  it("refuse la validation sans droit de création et atteint le métier quand elle est autorisée", async () => {
+    const body = { catalogue_id: UUID, expected_version: 1, idempotency_key: "replenishment-rbac-01" };
+    const denied = await request(app)
+      .post(`/api/v1/replenishment-proposals/${UUID}/validate`)
+      .set("x-test-role", "Comptable")
+      .send(body);
+    expect(denied.status).toBe(403);
+
+    const allowed = await request(app)
+      .post(`/api/v1/replenishment-proposals/${UUID}/validate`)
+      .set("x-test-role", "Responsable Programmation")
+      .send(body);
+    expect(allowed.status).toBe(404);
+    expect(allowed.body.code).toBe("REPLENISHMENT_PROPOSAL_NOT_FOUND");
   });
 });
