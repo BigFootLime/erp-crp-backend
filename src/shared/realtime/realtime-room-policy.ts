@@ -36,6 +36,7 @@ const ENTITY_MODULES: Readonly<Record<string, string>> = {
   OUTIL_REVETEMENT: "outillage",
   PIECE_TECHNIQUE: "pieces-techniques",
   PLANNING_EVENTS: "production",
+  PROGRAMMATION: "production",
   RECEPTION: "qualite",
 };
 
