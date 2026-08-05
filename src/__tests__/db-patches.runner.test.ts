@@ -41,6 +41,16 @@ const require = createRequire(import.meta.url);
 const runner = require(resolve(repoRoot, "scripts/db-patches.js")) as RunnerModule;
 const patchFilename = "20260804_auth_rate_limit_buckets.sql";
 const planningPatchFilename = "20260805_planning_convergence_governance.sql";
+const wave9PatchChecksums = new Map([
+  [
+    "20260805_programmation_safe_reschedule_0004.sql",
+    "341f7911a7bcb479fce6602d0567c51d47f083a08b37409e55d05cf3110f01b5",
+  ],
+  [
+    "20260805_quality_delivery_release_gate_0005.sql",
+    "ceff91b88820e9943d199f71a73e32fd4f994d383f76aabb620ea648c9d1ae53",
+  ],
+]);
 
 function queryText(value: unknown): string {
   return String(value).replace(/\s+/g, " ").trim();
@@ -105,6 +115,11 @@ describe("database patch runner", () => {
       "4ac0aa05dc489ae5f882491e7b41cc6e96ac3bcaabd554ecddfb82d6580734dc"
     );
 
+    for (const [filename, checksum] of wave9PatchChecksums) {
+      const sql = readFileSync(resolve(repoRoot, "db/patches", filename), "utf8");
+      expect(runner.sha256Sql(sql)).toBe(checksum);
+    }
+
     const previouslyRecordedPatch = readFileSync(
       resolve(repoRoot, "db/patches/20260731_stock_old_new_446.sql"),
       "utf8"
@@ -129,6 +144,13 @@ describe("database patch runner", () => {
     expect(runner.parseArgs(["up", "--only", planningPatchFilename]).only).toBe(
       planningPatchFilename
     );
+    for (const [filename, checksum] of wave9PatchChecksums) {
+      expect(runner.immutableOnlyPatch(patches, filename)).toMatchObject({
+        filename,
+        sha256: checksum,
+      });
+      expect(runner.parseArgs(["up", "--only", filename]).only).toBe(filename);
+    }
     expect(runner.parseArgs(["up", "--only", patchFilename]).only).toBe(patchFilename);
     expect(() => runner.parseArgs(["up", "--only", `db/patches/${patchFilename}`])).toThrow(
       /exact patch basename/
