@@ -243,7 +243,23 @@ function preview(overrides: Partial<LivraisonPackPreview> = {}): LivraisonPackPr
     documents_attached: [],
     documents_generated: [],
     pack_versions: [],
-    checks: { allocations_ok: true, shipped_or_ready: true, stock_link_ok: true, missing: [] },
+    quality_release: {
+      state: "READY",
+      preview_sha256: "a".repeat(64),
+      policy: {
+        id: "10000000-0000-4000-8000-000000000001",
+        code: "SHIP-QUALITY",
+        version: 1,
+        rules_sha256: "b".repeat(64),
+        signature_reference: "SIG-Q-1",
+        signed_at: "2026-07-20T08:00:00.000Z",
+      },
+      reasons: [],
+      targets: [],
+      required_evidence: [],
+      derogation_ids: [],
+    },
+    checks: { allocations_ok: true, shipped_or_ready: true, stock_link_ok: true, quality_release_ok: true, missing: [] },
   }
 
   return { ...base, ...overrides }
