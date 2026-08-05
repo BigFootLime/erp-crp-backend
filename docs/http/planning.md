@@ -54,6 +54,14 @@ Le patch canonique est `20260805_planning_convergence_governance.sql`; preflight
 lecture seule. Le rollback de schéma refuse toute base autre que `cerp_dev`/`cerp_test`, toute
 provenance différente, tout flag/override actif et toute preuve d'usage non exportée. Le rollback
 normal consiste uniquement à remettre le flag de retrait OFF.
+Le déploiement contrôlé utilise le sélecteur immuable du runner afin de ne pas appliquer d'autres
+patches en attente :
+
+```bash
+npm run db:patches:up -- --dry-run --only 20260805_planning_convergence_governance.sql
+npm run db:patches:up -- --only 20260805_planning_convergence_governance.sql
+npm run db:patches:status -- --check --only 20260805_planning_convergence_governance.sql
+```
 
 ## Concurrence, archive et autoplan
 
