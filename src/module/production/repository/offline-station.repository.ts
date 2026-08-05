@@ -11,6 +11,26 @@ export type OfflineStoredOutcome = {
   server_entity_id: string | null;
 };
 
+export type OfflineDependency = OfflineStoredOutcome & {
+  client_batch_id: string;
+  event_type: OfflineStationEventDTO["type"];
+  device_id: string;
+  operator_user_id: number;
+  station_session_id: string;
+  machine_id: string | null;
+};
+
+export type OfflineSourceSession = {
+  id: string;
+  device_id: string;
+  user_id: number;
+  machine_id: string | null;
+  state: "ACTIVE" | "LOCKED" | "CLOSED" | "EXPIRED" | "REVOKED";
+  started_at: string;
+  closed_at: string | null;
+  expires_at: string;
+};
+
 export type OfflineReservation =
   | { kind: "CONFLICT" }
   | { kind: "BUSY" }
@@ -32,16 +52,27 @@ export async function repoReserveOfflineEvent(params: {
   event: OfflineStationEventDTO;
   requestHash: string;
   clockDriftSeconds: number;
+  claimToken: string;
+  authenticatedDeviceId: string;
+  authenticatedOperatorUserId: number;
+  authenticatedStationSessionId: string;
+  authenticatedMachineId: string | null;
 }): Promise<OfflineReservation> {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
     const inserted = await client.query(
-      `INSERT INTO public.production_station_offline_events (
+       `INSERT INTO public.production_station_offline_events (
          event_id, idempotency_key, request_hash, client_batch_id, event_type,
          occurred_at, device_id, operator_user_id, station_session_id, machine_id,
-         payload, clock_drift_seconds, status, attempt_count, last_attempt_at
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,'PROCESSING',1,now())
+         authenticated_device_id, authenticated_operator_user_id,
+         authenticated_station_session_id, authenticated_machine_id,
+         payload, clock_drift_seconds, status, attempt_count, last_attempt_at,
+         processing_token, lease_expires_at
+       ) VALUES (
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
+         $15::jsonb,$16,'PROCESSING',1,clock_timestamp(),$17,clock_timestamp() + interval '2 minutes'
+       )
        ON CONFLICT DO NOTHING
        RETURNING event_id`,
       [
@@ -55,19 +86,25 @@ export async function repoReserveOfflineEvent(params: {
         params.event.user_id,
         params.event.station_session_id,
         params.event.machine_id,
+        params.authenticatedDeviceId,
+        params.authenticatedOperatorUserId,
+        params.authenticatedStationSessionId,
+        params.authenticatedMachineId,
         JSON.stringify(params.event.payload),
         params.clockDriftSeconds,
+        params.claimToken,
       ]
     );
 
     const found = await client.query<OfflineStoredOutcome & {
       idempotency_key: string;
       request_hash: string;
+      client_batch_id: string;
       lease_active: boolean;
     }>(
-      `SELECT event_id::text, idempotency_key, request_hash, status,
+      `SELECT event_id::text, idempotency_key, request_hash, client_batch_id::text, status,
               result_payload, error_code, error_message, server_entity_id::text,
-              (status = 'PROCESSING' AND last_attempt_at > now() - interval '2 minutes') AS lease_active
+              (status = 'PROCESSING' AND lease_expires_at > clock_timestamp()) AS lease_active
          FROM public.production_station_offline_events
         WHERE event_id = $1::uuid OR idempotency_key = $2
         FOR UPDATE`,
@@ -77,6 +114,7 @@ export async function repoReserveOfflineEvent(params: {
     const exact = found.rows.length === 1
       && found.rows[0]?.event_id === params.event.event_id
       && found.rows[0]?.idempotency_key === params.event.idempotency_key
+      && found.rows[0]?.client_batch_id === params.batchId
       && found.rows[0]?.request_hash === params.requestHash;
     if (!exact) {
       await client.query("COMMIT");
@@ -91,9 +129,12 @@ export async function repoReserveOfflineEvent(params: {
       }
       await client.query(
         `UPDATE public.production_station_offline_events
-            SET attempt_count = attempt_count + 1, last_attempt_at = now()
-          WHERE event_id = $1::uuid`,
-        [params.event.event_id]
+            SET attempt_count = attempt_count + 1,
+                last_attempt_at = clock_timestamp(),
+                processing_token = $2::uuid,
+                lease_expires_at = clock_timestamp() + interval '2 minutes'
+          WHERE event_id = $1::uuid AND status = 'PROCESSING'`,
+        [params.event.event_id, params.claimToken]
       );
     }
     await client.query("COMMIT");
@@ -109,6 +150,7 @@ export async function repoReserveOfflineEvent(params: {
 export async function repoCompleteOfflineEvent(params: {
   eventId: string;
   requestHash: string;
+  claimToken: string;
   status: "SYNCED" | "REJECTED";
   serverEntityId?: string | null;
   resultPayload?: Record<string, unknown> | null;
@@ -124,7 +166,10 @@ export async function repoCompleteOfflineEvent(params: {
             error_message = $7,
             processed_at = now(),
             last_attempt_at = now()
-      WHERE event_id = $1::uuid AND request_hash = $2 AND status = 'PROCESSING'`,
+      WHERE event_id = $1::uuid
+        AND request_hash = $2
+        AND processing_token = $8::uuid
+        AND status = 'PROCESSING'`,
     [
       params.eventId,
       params.requestHash,
@@ -133,6 +178,7 @@ export async function repoCompleteOfflineEvent(params: {
       JSON.stringify(params.resultPayload ?? null),
       params.errorCode ?? null,
       params.errorMessage ?? null,
+      params.claimToken,
     ]
   );
   if (result.rowCount !== 1) {
@@ -140,13 +186,26 @@ export async function repoCompleteOfflineEvent(params: {
   }
 }
 
-export async function repoOfflineDependency(eventId: string): Promise<OfflineStoredOutcome | null> {
-  const { rows } = await pool.query<OfflineStoredOutcome>(
+export async function repoOfflineDependency(eventId: string): Promise<OfflineDependency | null> {
+  const { rows } = await pool.query<OfflineDependency>(
     `SELECT event_id::text, status, result_payload, error_code, error_message,
-            server_entity_id::text
+            server_entity_id::text, client_batch_id::text, event_type,
+            device_id::text, operator_user_id, station_session_id::text,
+            machine_id::text
        FROM public.production_station_offline_events
       WHERE event_id = $1::uuid`,
     [eventId]
+  );
+  return rows[0] ?? null;
+}
+
+export async function repoOfflineSourceSession(sessionId: string): Promise<OfflineSourceSession | null> {
+  const { rows } = await pool.query<OfflineSourceSession>(
+    `SELECT id::text, device_id::text, user_id, machine_id::text, state,
+            started_at::text, closed_at::text, expires_at::text
+       FROM public.operator_device_sessions
+      WHERE id = $1::uuid`,
+    [sessionId]
   );
   return rows[0] ?? null;
 }

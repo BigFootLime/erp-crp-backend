@@ -19,7 +19,9 @@ Route : `POST /api/v1/production/station/offline/sync`. Cookie ou en-tête de se
 }
 ```
 
-`POINTAGE_START.payload` contient `of_id`, `activity_code`, et facultativement `operation_id`, `poste_id`, `time_type`, `comment`. `POINTAGE_STOP.payload` contient exactement `pointage_id` ou `start_event_id`. `QUANTITY_DECLARE.payload` contient `of_id`, les deltas `qty_good`, `qty_scrap`, `qty_rework`, `qty_pending_control`, et facultativement `operation_id`, `pointage_id` ou `pointage_start_event_id`, unités/motifs/note.
+`POINTAGE_START.payload` contient `of_id`, `activity_code`, et facultativement `operation_id`, `poste_id`, `time_type`, `comment`. `POINTAGE_STOP.payload` contient exactement `pointage_id` ou `start_event_id`. `QUANTITY_DECLARE.payload` contient `of_id`, les deltas `qty_good`, `qty_scrap`, `qty_rework`, `qty_pending_control`, et facultativement `operation_id`, `pointage_id` ou `start_event_id`, unités/motifs/note. Pour une quantité, les deux références peuvent être absentes mais jamais présentes ensemble.
+
+Un `start_event_id` n'est résolu que vers un `POINTAGE_START` déjà synchronisé du même lot, appareil, opérateur, session source et machine. Une nouvelle session vivante peut authentifier la reprise si cette session source historique et sa période sont encore vérifiables côté serveur.
 
 Réponse HTTP 200 :
 

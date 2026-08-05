@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { HttpError } from "../../../utils/httpError";
 import { fingerprintPayload } from "../domain/production-execution";
 import type { StationContext } from "../middlewares/station-authorization.middleware";
@@ -7,6 +9,7 @@ import {
   repoCanonicalIdempotencyExists,
   repoCompleteOfflineEvent,
   repoOfflineDependency,
+  repoOfflineSourceSession,
   repoOfflineSyncEnabled,
   repoPurgeOfflineEvents,
   repoReserveOfflineEvent,
@@ -45,18 +48,42 @@ function rejection(eventId: string, code: string, message: string, replayed = fa
   return { event_id: eventId, status: "REJECTED", code, message, replayed };
 }
 
-function assertIdentity(station: StationContext, event: OfflineStationEventDTO): void {
+async function assertIdentity(station: StationContext, event: OfflineStationEventDTO): Promise<void> {
   if (event.device_id !== station.device_id) {
     throw new HttpError(409, "OFFLINE_DEVICE_CONFLICT", "L'appareil de l'événement ne correspond plus à la session active.");
   }
   if (event.user_id !== station.user.id) {
     throw new HttpError(409, "OFFLINE_OPERATOR_CONFLICT", "L'opérateur doit se réauthentifier avant la synchronisation.");
   }
-  if (event.station_session_id !== station.session_id) {
-    throw new HttpError(409, "OFFLINE_SESSION_CONFLICT", "La session d'origine n'est plus la session active.");
+  if (event.station_session_id === station.session_id) {
+    if (event.machine_id !== station.machine_id) {
+      throw new HttpError(409, "OFFLINE_MACHINE_CONFLICT", "La machine confirmée a changé depuis la capture hors ligne.");
+    }
+    return;
   }
-  if (event.machine_id !== station.machine_id) {
-    throw new HttpError(409, "OFFLINE_MACHINE_CONFLICT", "La machine confirmée a changé depuis la capture hors ligne.");
+
+  const source = await repoOfflineSourceSession(event.station_session_id);
+  if (!source
+      || source.device_id !== event.device_id
+      || source.user_id !== event.user_id
+      || source.machine_id !== event.machine_id) {
+    throw new HttpError(
+      409,
+      "OFFLINE_SOURCE_SESSION_CONFLICT",
+      "La session d'origine ne correspond pas à l'opérateur, l'appareil et la machine authentifiés."
+    );
+  }
+
+  const occurredAt = Date.parse(event.occurred_at);
+  const startedAt = Date.parse(source.started_at);
+  const endedAt = Date.parse(source.closed_at ?? source.expires_at);
+  const lifecycleToleranceMs = 60_000;
+  if (occurredAt < startedAt - lifecycleToleranceMs || occurredAt > endedAt + lifecycleToleranceMs) {
+    throw new HttpError(
+      409,
+      "OFFLINE_SOURCE_SESSION_TIME_CONFLICT",
+      "L'événement est hors de la période prouvée par sa session d'origine."
+    );
   }
 }
 
@@ -79,13 +106,29 @@ function assertClock(event: OfflineStationEventDTO, nowMs: number): number {
 
 async function referencedPointage(
   directId: string | null | undefined,
-  startEventId: string | null | undefined
+  startEventId: string | null | undefined,
+  batchId: string,
+  event: OfflineStationEventDTO
 ): Promise<string | null> {
   if (directId) return directId;
   if (!startEventId) return null;
   const dependency = await repoOfflineDependency(startEventId);
   if (!dependency) {
     throw new HttpError(409, "OFFLINE_DEPENDENCY_MISSING", "Le démarrage référencé n'a pas été synchronisé.");
+  }
+  if (dependency.event_type !== "POINTAGE_START") {
+    throw new HttpError(409, "OFFLINE_DEPENDENCY_TYPE_INVALID", "La dépendance référencée n'est pas un démarrage.");
+  }
+  if (dependency.client_batch_id !== batchId
+      || dependency.device_id !== event.device_id
+      || dependency.operator_user_id !== event.user_id
+      || dependency.station_session_id !== event.station_session_id
+      || dependency.machine_id !== event.machine_id) {
+    throw new HttpError(
+      409,
+      "OFFLINE_DEPENDENCY_CONTEXT_CONFLICT",
+      "Le démarrage référencé n'appartient pas au même lot et au même contexte opérateur."
+    );
   }
   if (dependency.status !== "SYNCED" || !dependency.server_entity_id) {
     throw new HttpError(
@@ -101,6 +144,7 @@ async function applyCanonicalEvent(params: {
   event: OfflineStationEventDTO;
   station: StationContext;
   audit: AuditContext;
+  batchId: string;
 }): Promise<string> {
   const actor = { id: params.station.user.id, role: params.station.user.role };
   const { event } = params;
@@ -121,7 +165,12 @@ async function applyCanonicalEvent(params: {
     return result.id;
   }
   if (event.type === "POINTAGE_STOP") {
-    const pointageId = await referencedPointage(event.payload.pointage_id, event.payload.start_event_id);
+    const pointageId = await referencedPointage(
+      event.payload.pointage_id,
+      event.payload.start_event_id,
+      params.batchId,
+      event
+    );
     if (!pointageId) throw new HttpError(409, "OFFLINE_POINTAGE_REQUIRED", "Pointage à arrêter introuvable.");
     const result = await svcStopExecution({
       actor,
@@ -137,8 +186,13 @@ async function applyCanonicalEvent(params: {
     return result.id;
   }
 
-  const pointageId = await referencedPointage(event.payload.pointage_id, event.payload.pointage_start_event_id);
-  const { pointage_start_event_id: _dependencyId, ...quantityBody } = event.payload;
+  const pointageId = await referencedPointage(
+    event.payload.pointage_id,
+    event.payload.start_event_id,
+    params.batchId,
+    event
+  );
+  const { start_event_id: _dependencyId, ...quantityBody } = event.payload;
   const result = await svcDeclareQuantity({
     actor,
     idempotencyKey: event.idempotency_key,
@@ -155,30 +209,22 @@ async function processEvent(params: {
   audit: AuditContext;
   nowMs: number;
 }): Promise<OfflineSyncResult> {
-  const requestHash = fingerprintPayload("production.station.offline.v1", params.event);
-  let drift: number;
-  try {
-    assertIdentity(params.station, params.event);
-    drift = assertClock(params.event, params.nowMs);
-  } catch (error) {
-    if (!(error instanceof HttpError) || error.status >= 500) throw error;
-    await repoStationAudit({
-      event_type: "OFFLINE_EVENT_REJECTED",
-      outcome: "DENIED",
-      reason_code: error.code,
-      device_id: params.station.device_id,
-      session_id: params.station.session_id,
-      user_id: params.station.user.id,
-      machine_id: params.station.machine_id,
-      detail: { event_id: params.event.event_id, event_type: params.event.type },
-    });
-    return rejection(params.event.event_id, error.code, error.message.slice(0, 500));
-  }
+  const requestHash = fingerprintPayload("production.station.offline.v1", {
+    client_batch_id: params.batchId,
+    event: params.event,
+  });
+  const drift = clockDriftSeconds(params.event, params.nowMs);
+  const claimToken = randomUUID();
   const reservation = await repoReserveOfflineEvent({
     batchId: params.batchId,
     event: params.event,
     requestHash,
     clockDriftSeconds: drift,
+    claimToken,
+    authenticatedDeviceId: params.station.device_id,
+    authenticatedOperatorUserId: params.station.user.id,
+    authenticatedStationSessionId: params.station.session_id,
+    authenticatedMachineId: params.station.machine_id,
   });
   if (reservation.kind === "CONFLICT") {
     await repoStationAudit({
@@ -196,14 +242,6 @@ async function processEvent(params: {
   if (reservation.kind === "BUSY") {
     throw new HttpError(503, "OFFLINE_EVENT_IN_PROGRESS", "Une synchronisation identique est déjà en cours; réessayez sans modifier l'événement.");
   }
-  if (reservation.outcome.status === "SYNCED") {
-    return {
-      event_id: params.event.event_id,
-      status: "SYNCED",
-      server_entity_id: reservation.outcome.server_entity_id ?? undefined,
-      replayed: true,
-    };
-  }
   if (reservation.outcome.status === "REJECTED") {
     return rejection(
       params.event.event_id,
@@ -214,11 +252,50 @@ async function processEvent(params: {
   }
 
   try {
+    await assertIdentity(params.station, params.event);
+    assertClock(params.event, params.nowMs);
+  } catch (error) {
+    if (!(error instanceof HttpError) || error.status >= 500) throw error;
+    const message = error.message.slice(0, 500);
+    if (reservation.outcome.status === "PROCESSING") {
+      await repoCompleteOfflineEvent({
+        eventId: params.event.event_id,
+        requestHash,
+        claimToken,
+        status: "REJECTED",
+        errorCode: error.code,
+        errorMessage: message,
+      });
+    }
+    await repoStationAudit({
+      event_type: "OFFLINE_EVENT_REJECTED",
+      outcome: "DENIED",
+      reason_code: error.code,
+      device_id: params.station.device_id,
+      session_id: params.station.session_id,
+      user_id: params.station.user.id,
+      machine_id: params.station.machine_id,
+      detail: { event_id: params.event.event_id, event_type: params.event.type },
+    });
+    return rejection(params.event.event_id, error.code, message, reservation.outcome.status === "SYNCED");
+  }
+
+  if (reservation.outcome.status === "SYNCED") {
+    return {
+      event_id: params.event.event_id,
+      status: "SYNCED",
+      server_entity_id: reservation.outcome.server_entity_id ?? undefined,
+      replayed: true,
+    };
+  }
+
+  try {
     const canonicalReplay = await repoCanonicalIdempotencyExists(params.event.idempotency_key);
     const entityId = await applyCanonicalEvent(params);
     await repoCompleteOfflineEvent({
       eventId: params.event.event_id,
       requestHash,
+      claimToken,
       status: "SYNCED",
       serverEntityId: entityId,
       resultPayload: { server_entity_id: entityId },
@@ -243,6 +320,7 @@ async function processEvent(params: {
     await repoCompleteOfflineEvent({
       eventId: params.event.event_id,
       requestHash,
+      claimToken,
       status: "REJECTED",
       errorCode: error.code,
       errorMessage: message,

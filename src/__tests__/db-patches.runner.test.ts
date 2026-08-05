@@ -60,7 +60,7 @@ const wave9PatchChecksums = new Map([
   ],
   [
     "20260805_station_offline_queue_0006.sql",
-    "a6517726c4a852bea43f1ea51aa1ca6cffbc6e97a8f29dd8eec49c4a9941eb80",
+    "41158624061dd93aa0fb4173ea7e3bc8a3c33e521705548969fb59dfe93ad4b4",
   ],
 ]);
 

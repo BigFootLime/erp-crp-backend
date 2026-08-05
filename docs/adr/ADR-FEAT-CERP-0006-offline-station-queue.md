@@ -6,9 +6,9 @@ Statut : accepté pour le MVP. Le mode hors ligne n'est pas un second moteur mé
 
 La station peut conserver localement, chiffrés par AES-GCM avec une clé non exportable, au plus quelques événements `POINTAGE_START`, `POINTAGE_STOP` et `QUANTITY_DECLARE`. Après retour réseau, l'opérateur se réauthentifie et envoie un lot de 1 à 25 événements à `POST /api/v1/production/station/offline/sync`.
 
-Le serveur vérifie à chaque reprise la session vivante, l'appareil, l'opérateur et la machine. Chaque événement est borné à 24 h par défaut, tolère au plus 60 s d'avance d'horloge, possède un `event_id` et une clé d'idempotence. Le moteur canonique de production applique chaque événement dans sa transaction existante. Le reçu de reprise peut rester `PROCESSING` après une panne entre l'effet et l'accusé : le retry rejoue alors la même clé canonique sans second effet.
+Le serveur exige une session vivante au moment de la reprise. La session d'origine peut être close après réauthentification, mais elle doit prouver le même appareil, le même opérateur, la machine déclarée et une date d'événement comprise dans son cycle de vie. Chaque événement est borné à 24 h par défaut, tolère au plus 60 s d'avance d'horloge, possède un `event_id` et une clé d'idempotence. Le moteur canonique de production applique chaque événement dans sa transaction existante. Le reçu de reprise peut rester `PROCESSING` après une panne entre l'effet et l'accusé : le retry rejoue alors la même clé canonique sans second effet.
 
-Une réservation `PROCESSING` récente agit comme bail de deux minutes : un second appel reçoit `OFFLINE_EVENT_IN_PROGRESS` au lieu de concurrencer le premier. Après expiration, la reprise est autorisée et reste protégée par l'idempotence canonique.
+Une réservation `PROCESSING` porte un bail de deux minutes et un jeton de fencing unique : un second appel reçoit `OFFLINE_EVENT_IN_PROGRESS` au lieu de concurrencer le premier. Après expiration, la reprise obtient un nouveau jeton; l'ancien propriétaire ne peut plus finaliser le reçu et l'idempotence canonique empêche un second effet.
 
 Un lot est volontairement partiel : chaque résultat est `SYNCED` ou `REJECTED`. Une dépendance, un changement d'identité ou une collision produit un conflit explicite; rien n'est écrasé. Aucun événement offline ne valide de qualité, ne réceptionne une production et ne crée de mouvement, lot, réservation ou décision de stock.
 
@@ -18,7 +18,7 @@ Un lot est volontairement partiel : chaque résultat est `SYNCED` ou `REJECTED`.
 |---|---|
 | appareil perdu ou volé | aucune session/secret persistant dans la file; révocation du device et session vivante contrôlées à chaque sync |
 | double clic, retry, double onglet | clé canonique et reçu serveur uniques; empreinte de requête immuable |
-| substitution d'opérateur/station | identité exacte comparée à la session réauthentifiée |
+| substitution d'opérateur/station | identité appareil/opérateur exacte; session source et période d'origine vérifiées après réauthentification |
 | horloge fausse | fenêtre passée/future bornée, dérive enregistrée, heure serveur retournée |
 | réseau intermittent ou crash | reçu `PROCESSING`, action canonique transactionnelle, reprise idempotente |
 | données altérées | conflit d'empreinte explicite; aucune mise à jour silencieuse |

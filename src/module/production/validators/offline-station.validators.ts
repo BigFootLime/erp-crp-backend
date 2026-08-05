@@ -50,8 +50,8 @@ const quantityDeclare = commonEvent.extend({
   payload: z.object({
     of_id: z.coerce.number().int().positive(),
     operation_id: nullableUuid.optional(),
-    pointage_id: uuid.optional(),
-    pointage_start_event_id: uuid.optional(),
+    pointage_id: uuid.nullable().optional(),
+    start_event_id: uuid.nullable().optional(),
     qty_good: z.coerce.number().finite().min(0).max(1_000_000).optional().default(0),
     qty_scrap: z.coerce.number().finite().min(0).max(1_000_000).optional().default(0),
     qty_rework: z.coerce.number().finite().min(0).max(1_000_000).optional().default(0),
@@ -68,8 +68,8 @@ const quantityDeclare = commonEvent.extend({
       { message: "La quantité totale doit être strictement positive" }
     )
     .refine(
-      (value) => !(value.pointage_id && value.pointage_start_event_id),
-      { message: "pointage_id et pointage_start_event_id sont mutuellement exclusifs" }
+      (value) => !(value.pointage_id && value.start_event_id),
+      { message: "pointage_id et start_event_id sont mutuellement exclusifs" }
     ),
 }).strict();
 

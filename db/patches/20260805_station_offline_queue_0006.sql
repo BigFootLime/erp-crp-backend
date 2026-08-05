@@ -54,24 +54,30 @@ CREATE TABLE public.production_station_offline_events (
   operator_user_id integer NOT NULL,
   station_session_id uuid NOT NULL,
   machine_id uuid,
+  authenticated_device_id uuid NOT NULL,
+  authenticated_operator_user_id integer NOT NULL,
+  authenticated_station_session_id uuid NOT NULL,
+  authenticated_machine_id uuid,
   payload jsonb NOT NULL,
-  clock_drift_seconds integer NOT NULL,
+  clock_drift_seconds bigint NOT NULL,
   status text NOT NULL DEFAULT 'PROCESSING',
   attempt_count integer NOT NULL DEFAULT 1,
   last_attempt_at timestamptz NOT NULL DEFAULT now(),
+  processing_token uuid NOT NULL,
+  lease_expires_at timestamptz NOT NULL,
   server_entity_id uuid,
   result_payload jsonb,
   error_code text,
   error_message text,
   CONSTRAINT production_station_offline_events_pkey PRIMARY KEY (event_id),
   CONSTRAINT production_station_offline_events_idem_uq UNIQUE (idempotency_key),
-  CONSTRAINT production_station_offline_events_device_fk FOREIGN KEY (device_id)
+  CONSTRAINT production_station_offline_events_authenticated_device_fk FOREIGN KEY (authenticated_device_id)
     REFERENCES public.production_devices(id) ON UPDATE RESTRICT ON DELETE RESTRICT,
-  CONSTRAINT production_station_offline_events_user_fk FOREIGN KEY (operator_user_id)
+  CONSTRAINT production_station_offline_events_authenticated_user_fk FOREIGN KEY (authenticated_operator_user_id)
     REFERENCES public.users(id) ON UPDATE RESTRICT ON DELETE RESTRICT,
-  CONSTRAINT production_station_offline_events_session_fk FOREIGN KEY (station_session_id)
+  CONSTRAINT production_station_offline_events_authenticated_session_fk FOREIGN KEY (authenticated_station_session_id)
     REFERENCES public.operator_device_sessions(id) ON UPDATE RESTRICT ON DELETE RESTRICT,
-  CONSTRAINT production_station_offline_events_machine_fk FOREIGN KEY (machine_id)
+  CONSTRAINT production_station_offline_events_authenticated_machine_fk FOREIGN KEY (authenticated_machine_id)
     REFERENCES public.machines(id) ON UPDATE RESTRICT ON DELETE RESTRICT,
   CONSTRAINT production_station_offline_events_idem_ck CHECK (char_length(idempotency_key) BETWEEN 8 AND 200),
   CONSTRAINT production_station_offline_events_hash_ck CHECK (request_hash ~ '^[0-9a-f]{64}$'),
@@ -83,6 +89,7 @@ CREATE TABLE public.production_station_offline_events (
   ),
   CONSTRAINT production_station_offline_events_payload_ck CHECK (jsonb_typeof(payload) = 'object'),
   CONSTRAINT production_station_offline_events_attempt_ck CHECK (attempt_count > 0),
+  CONSTRAINT production_station_offline_events_lease_ck CHECK (lease_expires_at > received_at),
   CONSTRAINT production_station_offline_events_outcome_ck CHECK (
     (status = 'PROCESSING' AND processed_at IS NULL AND error_code IS NULL)
     OR (status = 'SYNCED' AND processed_at IS NOT NULL AND server_entity_id IS NOT NULL AND error_code IS NULL)
@@ -93,7 +100,7 @@ CREATE TABLE public.production_station_offline_events (
 CREATE INDEX production_station_offline_events_device_idx
   ON public.production_station_offline_events(device_id, received_at DESC);
 CREATE INDEX production_station_offline_events_status_idx
-  ON public.production_station_offline_events(status, last_attempt_at);
+  ON public.production_station_offline_events(status, lease_expires_at);
 CREATE INDEX production_station_offline_events_expiry_idx
   ON public.production_station_offline_events(expires_at)
   WHERE status IN ('SYNCED','REJECTED');
@@ -116,6 +123,10 @@ BEGIN
      OR NEW.operator_user_id IS DISTINCT FROM OLD.operator_user_id
      OR NEW.station_session_id IS DISTINCT FROM OLD.station_session_id
      OR NEW.machine_id IS DISTINCT FROM OLD.machine_id
+     OR NEW.authenticated_device_id IS DISTINCT FROM OLD.authenticated_device_id
+     OR NEW.authenticated_operator_user_id IS DISTINCT FROM OLD.authenticated_operator_user_id
+     OR NEW.authenticated_station_session_id IS DISTINCT FROM OLD.authenticated_station_session_id
+     OR NEW.authenticated_machine_id IS DISTINCT FROM OLD.authenticated_machine_id
      OR NEW.payload IS DISTINCT FROM OLD.payload THEN
     RAISE EXCEPTION 'Offline receipt identity and payload are immutable' USING ERRCODE = '55000';
   END IF;

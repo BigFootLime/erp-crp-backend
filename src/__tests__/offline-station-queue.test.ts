@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   reserve: vi.fn(),
   complete: vi.fn(),
   dependency: vi.fn(),
+  sourceSession: vi.fn(),
   canonicalExists: vi.fn(),
   purge: vi.fn(),
   audit: vi.fn(),
@@ -24,6 +25,7 @@ vi.mock("../module/production/repository/offline-station.repository", () => ({
   repoReserveOfflineEvent: mocks.reserve,
   repoCompleteOfflineEvent: mocks.complete,
   repoOfflineDependency: mocks.dependency,
+  repoOfflineSourceSession: mocks.sourceSession,
   repoCanonicalIdempotencyExists: mocks.canonicalExists,
   repoPurgeOfflineEvents: mocks.purge,
 }));
@@ -39,7 +41,9 @@ import { offlineStationSyncSchema } from "../module/production/validators/offlin
 
 const DEVICE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const SESSION = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const OLD_SESSION = "abababab-abab-4bab-8bab-abababababab";
 const MACHINE = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+const OLD_MACHINE = "cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd";
 const EVENT = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 const STOP_EVENT = "12121212-1212-4121-8121-121212121212";
 const ENTITY = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
@@ -86,6 +90,41 @@ function startBatch(overrides: Record<string, unknown> = {}) {
   });
 }
 
+function stopBatch(overrides: Record<string, unknown> = {}) {
+  return offlineStationSyncSchema.parse({
+    client_batch_id: BATCH,
+    events: [{
+      event_id: STOP_EVENT,
+      idempotency_key: "offline-stop-000001",
+      type: "POINTAGE_STOP",
+      occurred_at: new Date().toISOString(),
+      device_id: DEVICE,
+      user_id: 7,
+      station_session_id: SESSION,
+      machine_id: MACHINE,
+      payload: { pointage_id: null, start_event_id: EVENT },
+      ...overrides,
+    }],
+  });
+}
+
+function quantityBatch(payloadOverrides: Record<string, unknown> = {}) {
+  return offlineStationSyncSchema.parse({
+    client_batch_id: BATCH,
+    events: [{
+      event_id: STOP_EVENT,
+      idempotency_key: "offline-quantity-0001",
+      type: "QUANTITY_DECLARE",
+      occurred_at: new Date().toISOString(),
+      device_id: DEVICE,
+      user_id: 7,
+      station_session_id: SESSION,
+      machine_id: MACHINE,
+      payload: { of_id: 42, qty_good: 1, ...payloadOverrides },
+    }],
+  });
+}
+
 function processing(existing = false) {
   return {
     kind: "RESERVED" as const,
@@ -101,6 +140,24 @@ function processing(existing = false) {
   };
 }
 
+function syncedStartDependency(overrides: Record<string, unknown> = {}) {
+  return {
+    event_id: EVENT,
+    status: "SYNCED" as const,
+    result_payload: { server_entity_id: ENTITY },
+    error_code: null,
+    error_message: null,
+    server_entity_id: ENTITY,
+    client_batch_id: BATCH,
+    event_type: "POINTAGE_START" as const,
+    device_id: DEVICE,
+    operator_user_id: 7,
+    station_session_id: SESSION,
+    machine_id: MACHINE,
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   delete process.env.STATION_OFFLINE_SYNC_ENABLED;
@@ -108,6 +165,7 @@ beforeEach(() => {
   mocks.reserve.mockResolvedValue(processing());
   mocks.complete.mockResolvedValue(undefined);
   mocks.canonicalExists.mockResolvedValue(false);
+  mocks.sourceSession.mockResolvedValue(null);
   mocks.purge.mockResolvedValue(0);
   mocks.audit.mockResolvedValue(undefined);
   mocks.start.mockResolvedValue({ id: ENTITY });
@@ -188,18 +246,46 @@ describe("GPT56-FEAT-CERP-0006 — contrat borné", () => {
       ...processing(),
       outcome: { ...processing().outcome, event_id: event.event_id },
     }));
-    mocks.dependency.mockResolvedValue({
-      event_id: EVENT,
-      status: "SYNCED",
-      result_payload: { server_entity_id: ENTITY },
-      error_code: null,
-      error_message: null,
-      server_entity_id: ENTITY,
-    });
+    mocks.dependency.mockResolvedValue(syncedStartDependency());
     mocks.stop.mockResolvedValue({ id: ENTITY });
     const result = await svcSyncOfflineStation({ body, station, audit });
     expect(result.results.map((item) => item.status)).toEqual(["SYNCED", "SYNCED"]);
     expect(mocks.stop).toHaveBeenCalledWith(expect.objectContaining({ id: ENTITY }));
+  });
+
+  it.each([
+    ["type", { event_type: "QUANTITY_DECLARE" }, "OFFLINE_DEPENDENCY_TYPE_INVALID"],
+    ["lot", { client_batch_id: "10101010-1010-4010-8010-101010101010" }, "OFFLINE_DEPENDENCY_CONTEXT_CONFLICT"],
+    ["appareil", { device_id: "20202020-2020-4020-8020-202020202020" }, "OFFLINE_DEPENDENCY_CONTEXT_CONFLICT"],
+    ["opérateur", { operator_user_id: 8 }, "OFFLINE_DEPENDENCY_CONTEXT_CONFLICT"],
+    ["session", { station_session_id: OLD_SESSION }, "OFFLINE_DEPENDENCY_CONTEXT_CONFLICT"],
+    ["machine", { machine_id: OLD_MACHINE }, "OFFLINE_DEPENDENCY_CONTEXT_CONFLICT"],
+  ])("refuse un start_event_id dont le %s diffère", async (_label, dependencyOverride, code) => {
+    mocks.dependency.mockResolvedValue(syncedStartDependency(dependencyOverride));
+    const result = await svcSyncOfflineStation({ body: stopBatch(), station, audit });
+    expect(result.results[0]).toMatchObject({ status: "REJECTED", code });
+    expect(mocks.complete).toHaveBeenCalledWith(expect.objectContaining({ status: "REJECTED" }));
+    expect(mocks.stop).not.toHaveBeenCalled();
+  });
+
+  it("résout aussi start_event_id pour une déclaration de quantité", async () => {
+    mocks.dependency.mockResolvedValue(syncedStartDependency());
+    mocks.quantity.mockResolvedValue({ id: ENTITY });
+    const result = await svcSyncOfflineStation({
+      body: quantityBatch({ pointage_id: null, start_event_id: EVENT }),
+      station,
+      audit,
+    });
+    expect(result.results[0]).toMatchObject({ status: "SYNCED", server_entity_id: ENTITY });
+    expect(mocks.quantity).toHaveBeenCalledWith(expect.objectContaining({
+      body: expect.objectContaining({ pointage_id: ENTITY }),
+    }));
+    expect(mocks.quantity.mock.calls[0]?.[0].body).not.toHaveProperty("start_event_id");
+  });
+
+  it("autorise une quantité sans pointage mais jamais deux références", () => {
+    expect(quantityBatch({ pointage_id: null, start_event_id: null }).events[0]?.type).toBe("QUANTITY_DECLARE");
+    expect(() => quantityBatch({ pointage_id: ENTITY, start_event_id: EVENT })).toThrow();
   });
 
   it("reprend après un crash entre effet canonique et reçu sans nouvel effet logique", async () => {
@@ -210,6 +296,13 @@ describe("GPT56-FEAT-CERP-0006 — contrat borné", () => {
     const resumed = await svcSyncOfflineStation({ body: startBatch(), station, audit });
     expect(resumed.results[0]).toMatchObject({ status: "SYNCED", replayed: true });
     expect(mocks.start).toHaveBeenNthCalledWith(2, expect.objectContaining({ idempotencyKey: "offline-start-000001" }));
+    const firstClaim = mocks.reserve.mock.calls[0]?.[0].claimToken;
+    const resumedClaim = mocks.reserve.mock.calls[1]?.[0].claimToken;
+    expect(firstClaim).toEqual(expect.any(String));
+    expect(resumedClaim).toEqual(expect.any(String));
+    expect(resumedClaim).not.toBe(firstClaim);
+    expect(mocks.complete.mock.calls[0]?.[0].claimToken).toBe(firstClaim);
+    expect(mocks.complete.mock.calls[1]?.[0].claimToken).toBe(resumedClaim);
   });
 
   it("rend les conflits explicites et persistants", async () => {
@@ -231,21 +324,138 @@ describe("GPT56-FEAT-CERP-0006 — contrat borné", () => {
     expect(mocks.complete).not.toHaveBeenCalled();
   });
 
-  it("exige l'identité exacte après réauthentification", async () => {
-    const result = await svcSyncOfflineStation({ body: startBatch({ user_id: 8 }), station, audit });
-    expect(result.results[0]).toMatchObject({ status: "REJECTED", code: "OFFLINE_OPERATOR_CONFLICT" });
-    expect(mocks.reserve).not.toHaveBeenCalled();
+  it("réserve et fige un rejet d'identité avant tout effet canonique", async () => {
+    mocks.reserve
+      .mockResolvedValueOnce(processing())
+      .mockResolvedValueOnce({
+        kind: "RESERVED",
+        existing: true,
+        outcome: {
+          ...processing().outcome,
+          status: "REJECTED",
+          error_code: "OFFLINE_OPERATOR_CONFLICT",
+          error_message: "Identité refusée.",
+        },
+      });
+    const body = startBatch({ user_id: 8 });
+    const first = await svcSyncOfflineStation({ body, station, audit });
+    const retry = await svcSyncOfflineStation({ body, station, audit });
+    expect(first.results[0]).toMatchObject({ status: "REJECTED", code: "OFFLINE_OPERATOR_CONFLICT", replayed: false });
+    expect(retry.results[0]).toMatchObject({ status: "REJECTED", code: "OFFLINE_OPERATOR_CONFLICT", replayed: true });
+    expect(mocks.reserve).toHaveBeenCalledTimes(2);
+    expect(mocks.complete).toHaveBeenCalledTimes(1);
+    expect(mocks.complete).toHaveBeenCalledWith(expect.objectContaining({ status: "REJECTED", claimToken: expect.any(String) }));
     expect(mocks.start).not.toHaveBeenCalled();
+  });
+
+  it("reprend après réauthentification si la session source prouve le même opérateur et appareil", async () => {
+    const occurredAt = new Date();
+    mocks.sourceSession.mockResolvedValue({
+      id: OLD_SESSION,
+      device_id: DEVICE,
+      user_id: 7,
+      machine_id: OLD_MACHINE,
+      state: "CLOSED",
+      started_at: new Date(occurredAt.getTime() - 3_600_000).toISOString(),
+      closed_at: new Date(occurredAt.getTime() + 1_000).toISOString(),
+      expires_at: new Date(occurredAt.getTime() + 7_200_000).toISOString(),
+    });
+    const result = await svcSyncOfflineStation({
+      body: startBatch({
+        station_session_id: OLD_SESSION,
+        machine_id: OLD_MACHINE,
+        occurred_at: occurredAt.toISOString(),
+      }),
+      station,
+      audit,
+    });
+    expect(result.results[0]).toMatchObject({ status: "SYNCED", server_entity_id: ENTITY });
+    expect(mocks.sourceSession).toHaveBeenCalledWith(OLD_SESSION);
+    expect(mocks.start).toHaveBeenCalledWith(expect.objectContaining({
+      stationSessionId: SESSION,
+      body: expect.objectContaining({ machine_id: OLD_MACHINE }),
+    }));
+  });
+
+  it("fige le rejet si la session source ne correspond pas au contexte déclaré", async () => {
+    mocks.sourceSession.mockResolvedValue({
+      id: OLD_SESSION,
+      device_id: DEVICE,
+      user_id: 99,
+      machine_id: OLD_MACHINE,
+      state: "CLOSED",
+      started_at: new Date(Date.now() - 3_600_000).toISOString(),
+      closed_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+    });
+    const result = await svcSyncOfflineStation({
+      body: startBatch({ station_session_id: OLD_SESSION, machine_id: OLD_MACHINE }),
+      station,
+      audit,
+    });
+    expect(result.results[0]).toMatchObject({ status: "REJECTED", code: "OFFLINE_SOURCE_SESSION_CONFLICT" });
+    expect(mocks.complete).toHaveBeenCalledWith(expect.objectContaining({ status: "REJECTED" }));
+    expect(mocks.start).not.toHaveBeenCalled();
+  });
+
+  it("refuse un événement hors de la fenêtre de sa session source", async () => {
+    const occurredAt = new Date();
+    mocks.sourceSession.mockResolvedValue({
+      id: OLD_SESSION,
+      device_id: DEVICE,
+      user_id: 7,
+      machine_id: OLD_MACHINE,
+      state: "CLOSED",
+      started_at: new Date(occurredAt.getTime() - 7_200_000).toISOString(),
+      closed_at: new Date(occurredAt.getTime() - 120_000).toISOString(),
+      expires_at: new Date(occurredAt.getTime() + 3_600_000).toISOString(),
+    });
+    const result = await svcSyncOfflineStation({
+      body: startBatch({
+        station_session_id: OLD_SESSION,
+        machine_id: OLD_MACHINE,
+        occurred_at: occurredAt.toISOString(),
+      }),
+      station,
+      audit,
+    });
+    expect(result.results[0]).toMatchObject({ status: "REJECTED", code: "OFFLINE_SOURCE_SESSION_TIME_CONFLICT" });
+    expect(mocks.complete).toHaveBeenCalledWith(expect.objectContaining({ status: "REJECTED" }));
   });
 
   it("rejette explicitement une horloge trop en avance ou un événement expiré", async () => {
     const future = new Date(Date.now() + 120_000).toISOString();
     const old = new Date(Date.now() - 25 * 3_600_000).toISOString();
-    const ahead = await svcSyncOfflineStation({ body: startBatch({ occurred_at: future }), station, audit });
-    const expired = await svcSyncOfflineStation({ body: startBatch({ occurred_at: old }), station, audit });
+    mocks.reserve
+      .mockResolvedValueOnce(processing())
+      .mockResolvedValueOnce({
+        kind: "RESERVED",
+        existing: true,
+        outcome: {
+          ...processing().outcome,
+          status: "REJECTED",
+          error_code: "OFFLINE_CLOCK_AHEAD",
+          error_message: "Horloge refusée.",
+        },
+      })
+      .mockResolvedValueOnce({
+        ...processing(),
+        outcome: { ...processing().outcome, event_id: STOP_EVENT },
+      });
+    const futureBody = startBatch({ occurred_at: future });
+    const ahead = await svcSyncOfflineStation({ body: futureBody, station, audit });
+    const aheadRetry = await svcSyncOfflineStation({ body: futureBody, station, audit });
+    const expired = await svcSyncOfflineStation({
+      body: startBatch({ occurred_at: old, event_id: STOP_EVENT, idempotency_key: "offline-start-expired-1" }),
+      station,
+      audit,
+    });
     expect(ahead.results[0]).toMatchObject({ status: "REJECTED", code: "OFFLINE_CLOCK_AHEAD" });
+    expect(aheadRetry.results[0]).toMatchObject({ status: "REJECTED", code: "OFFLINE_CLOCK_AHEAD", replayed: true });
     expect(expired.results[0]).toMatchObject({ status: "REJECTED", code: "OFFLINE_EVENT_EXPIRED" });
-    expect(mocks.reserve).not.toHaveBeenCalled();
+    expect(mocks.reserve).toHaveBeenCalledTimes(3);
+    expect(mocks.complete).toHaveBeenCalledTimes(2);
+    expect(mocks.start).not.toHaveBeenCalled();
   });
 
   it("le kill switch ne consomme aucun événement", async () => {
@@ -269,6 +479,10 @@ describe("GPT56-FEAT-CERP-0006 — contrat borné", () => {
 describe("GPT56-FEAT-CERP-0006 — migration et frontières", () => {
   const patchDir = path.join(repoRoot, "db", "patches");
   const migration = fs.readFileSync(path.join(patchDir, "20260805_station_offline_queue_0006.sql"), "utf8");
+  const repository = fs.readFileSync(
+    path.join(repoRoot, "src", "module", "production", "repository", "offline-station.repository.ts"),
+    "utf8"
+  );
 
   it("fournit migration, preflight, vérification et rollback test-only", () => {
     for (const suffix of ["preflight", "verify", "rollback"]) {
@@ -293,5 +507,23 @@ describe("GPT56-FEAT-CERP-0006 — migration et frontières", () => {
     expect(migration).toContain("fn_purge_production_station_offline_events");
     expect(migration).toContain("production_station_offline_config");
     expect(migration).toMatch(/GRANT SELECT ON TABLE public\.production_station_offline_config TO cerp_app/);
+  });
+
+  it("sépare les déclarations clientes de l'identité authentifiée persistée", () => {
+    expect(migration).toContain("authenticated_station_session_id uuid NOT NULL");
+    expect(migration).toContain("FOREIGN KEY (authenticated_device_id)");
+    expect(migration).toContain("FOREIGN KEY (authenticated_operator_user_id)");
+    expect(migration).not.toMatch(/FOREIGN KEY \(device_id\)/);
+    expect(migration).not.toMatch(/FOREIGN KEY \(operator_user_id\)/);
+    expect(migration).toContain("NEW.authenticated_station_session_id IS DISTINCT FROM OLD.authenticated_station_session_id");
+  });
+
+  it("fence chaque reprise et interdit à un ancien propriétaire de finaliser", () => {
+    expect(migration).toContain("processing_token uuid NOT NULL");
+    expect(migration).toContain("lease_expires_at timestamptz NOT NULL");
+    expect(repository).toContain("processing_token = $2::uuid");
+    expect(repository).toContain("lease_expires_at > clock_timestamp()");
+    expect(repository).toContain("processing_token = $8::uuid");
+    expect(repository).toContain("result.rowCount !== 1");
   });
 });
