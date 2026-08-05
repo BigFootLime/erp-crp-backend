@@ -304,7 +304,12 @@ BEGIN
   IF registered_sha256 IS DISTINCT FROM '7e574b34d6c795630b9c08be2d6aded2' THEN RAISE EXCEPTION 'FEAT-CERP-0003 rollback: owned trigger mapping/event is altered'; END IF;
   SELECT md5(format('%s|%s|%s|%s|%s|%s', pg_get_functiondef(p.oid), p.provolatile, p.proisstrict, p.prosecdef, p.proleakproof, coalesce(array_to_string(p.proconfig, E'\n'), '')))
     INTO registered_sha256 FROM pg_proc p WHERE p.oid = 'public.fn_replenishment_event_immutable()'::regprocedure;
-  IF registered_sha256 IS DISTINCT FROM '0e1298dced0e423190dfa3dc059ab371' THEN RAISE EXCEPTION 'FEAT-CERP-0003 rollback: immutable function definition/settings are altered'; END IF;
+  -- pg_get_functiondef() has different canonical formatting on PostgreSQL 16 and 17.
+  IF registered_sha256 IS DISTINCT FROM (CASE current_setting('server_version_num')::integer / 10000
+      WHEN 16 THEN '0e1298dced0e423190dfa3dc059ab371'
+      WHEN 17 THEN 'ccbe4b8458960dcbbd17d206a759d990'
+      ELSE NULL
+    END) THEN RAISE EXCEPTION 'FEAT-CERP-0003 rollback: immutable function definition/settings are altered'; END IF;
 
   SELECT (
     (SELECT COUNT(*) FROM public.replenishment_budgets)
