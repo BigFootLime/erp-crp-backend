@@ -152,6 +152,10 @@ describe("FEAT-CERP-0003 boundaries", () => {
       expect(lifecycleScript).toMatch(/owned index definition is altered/)
       expect(lifecycleScript).toMatch(/owned trigger mapping\/event is altered/)
       expect(lifecycleScript).toMatch(/immutable function definition\/settings are altered/)
+      expect(lifecycleScript).toMatch(/current_setting\('server_version_num'\)/)
+      expect(lifecycleScript).toContain("0e1298dced0e423190dfa3dc059ab371")
+      expect(lifecycleScript).toContain("ccbe4b8458960dcbbd17d206a759d990")
+      expect(lifecycleScript).toMatch(/WHEN 16[\s\S]*WHEN 17[\s\S]*ELSE NULL/)
     }
     expect(preflight).toMatch(/BEGIN TRANSACTION READ ONLY/)
     expect(preflight).toMatch(/target artifact exists without migration ledger provenance/)
