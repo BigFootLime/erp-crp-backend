@@ -9,7 +9,7 @@ BEGIN;
 
 DO $guard$
 DECLARE
-  expected_sha256 constant text := '060e1e8a3dcaaa673bb24beebb4701af0e82ca165ceaf3fe9466138f19cfcc2d';
+  expected_sha256 constant text := 'df06021c03898c4e719634ab753c986122ad4645ffb7c146c6be0e4954c40616';
   registered_sha256 text;
 BEGIN
   IF current_database() !~* '(test|dev|local|sandbox)' THEN

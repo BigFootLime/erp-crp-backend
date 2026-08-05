@@ -523,7 +523,7 @@ export async function repoListReminderSuggestions(
   };
   if (filters.status) where.push(`s.status=${push(filters.status)}`);
   if (filters.facture_id) where.push(`s.facture_id=${push(filters.facture_id)}`);
-  if (filters.client_id) where.push(`s.client_id=${push(filters.client_id)}::uuid`);
+  if (filters.client_id) where.push(`s.client_id=${push(filters.client_id)}`);
   if (filters.from_due_date) where.push(`s.due_date>=${push(filters.from_due_date)}::date`);
   if (filters.to_due_date) where.push(`s.due_date<=${push(filters.to_due_date)}::date`);
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
@@ -1295,7 +1295,7 @@ export async function repoListReminderHistory(params: {
   clientId?: string;
   limit: number;
 }): Promise<ReminderHistoryEvent[]> {
-  const where = params.factureId ? "s.facture_id=$1" : "s.client_id=$1::uuid";
+  const where = params.factureId ? "s.facture_id=$1" : "s.client_id=$1";
   const value = params.factureId ?? params.clientId;
   const result = await pool.query(
     `
@@ -1342,11 +1342,11 @@ export async function repoUpsertReminderClientPreference(params: {
       await client.query("COMMIT");
       return { ...command.replay, idempotent_replay: true };
     }
-    const clientExists = await client.query(`SELECT 1 FROM public.clients WHERE client_id=$1::uuid`, [params.clientId]);
+    const clientExists = await client.query(`SELECT 1 FROM public.clients WHERE client_id=$1`, [params.clientId]);
     if (!clientExists.rows[0]) throw new HttpError(404, "CLIENT_NOT_FOUND", "Client introuvable.");
     if (params.input.recipient_contact_id) {
       const contact = await client.query(
-        `SELECT 1 FROM public.contacts WHERE contact_id=$1::uuid AND client_id=$2::uuid AND archived_at IS NULL`,
+        `SELECT 1 FROM public.contacts WHERE contact_id=$1::uuid AND client_id=$2 AND archived_at IS NULL`,
         [params.input.recipient_contact_id, params.clientId]
       );
       if (!contact.rows[0]) {
@@ -1354,7 +1354,7 @@ export async function repoUpsertReminderClientPreference(params: {
       }
     }
     const existing = await client.query<{ row_version: number }>(
-      `SELECT row_version FROM public.adv_reminder_client_preferences WHERE client_id=$1::uuid FOR UPDATE`,
+      `SELECT row_version FROM public.adv_reminder_client_preferences WHERE client_id=$1 FOR UPDATE`,
       [params.clientId]
     );
     const actualVersion = existing.rows[0]?.row_version ?? 0;
@@ -1366,7 +1366,7 @@ export async function repoUpsertReminderClientPreference(params: {
         INSERT INTO public.adv_reminder_client_preferences (
           client_id,channel,recipient_contact_id,opted_out,restricted_processing,lawful_basis,
           consent_granted,consent_version,consent_source,consent_recorded_at,created_by,updated_by,row_version
-        ) VALUES ($1::uuid,$2,$3::uuid,$4,$5,$6,$7,$8,$9,
+        ) VALUES ($1,$2,$3::uuid,$4,$5,$6,$7,$8,$9,
           CASE WHEN $7 IS NULL THEN NULL ELSE now() END,$10,$10,1)
         ON CONFLICT (client_id) DO UPDATE SET
           channel=EXCLUDED.channel,recipient_contact_id=EXCLUDED.recipient_contact_id,
@@ -1396,7 +1396,7 @@ export async function repoUpsertReminderClientPreference(params: {
         `
           WITH candidates AS (
             SELECT id,status AS previous_status FROM public.adv_reminder_suggestions
-            WHERE client_id=$1::uuid AND status IN ('SUGGESTED','BLOCKED','APPROVED','FAILED_RETRYABLE','FAILED_FINAL')
+            WHERE client_id=$1 AND status IN ('SUGGESTED','BLOCKED','APPROVED','FAILED_RETRYABLE','FAILED_FINAL')
             FOR UPDATE
           ), updated AS (
             UPDATE public.adv_reminder_suggestions s
@@ -1464,12 +1464,12 @@ export async function repoGetReminderClientPreference(clientId: string): Promise
       SELECT client_id::text,channel,recipient_contact_id::text,opted_out,restricted_processing,
         lawful_basis,consent_granted,consent_version,consent_source,consent_recorded_at::text,row_version
       FROM public.adv_reminder_client_preferences
-      WHERE client_id=$1::uuid
+      WHERE client_id=$1
     `,
     [clientId]
   );
   if (result.rows[0]) return result.rows[0];
-  const exists = await pool.query(`SELECT 1 FROM public.clients WHERE client_id=$1::uuid`, [clientId]);
+  const exists = await pool.query(`SELECT 1 FROM public.clients WHERE client_id=$1`, [clientId]);
   if (!exists.rows[0]) throw new HttpError(404, "CLIENT_NOT_FOUND", "Client introuvable.");
   return {
     client_id: clientId,
