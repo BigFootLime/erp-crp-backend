@@ -28,6 +28,10 @@ const provider = readFileSync(
   resolve(repoRoot, "src/module/facturation/providers/reminder.provider.ts"),
   "utf8"
 );
+const validators = readFileSync(
+  resolve(repoRoot, "src/module/facturation/validators/reminders.validators.ts"),
+  "utf8"
+);
 
 const sha256 = createHash("sha256").update(patch.replace(/\r\n?/g, "\n")).digest("hex");
 
@@ -46,6 +50,13 @@ describe("FEAT-CERP-0002 migration and runtime guards", () => {
     expect(repository).toContain("FOR UPDATE OF s SKIP LOCKED");
     expect(repository).toContain("claim_token=$2::uuid");
     expect(verify).toContain("invoice/cadence idempotence is violated");
+  });
+
+  it("uses the canonical three-character CERP client identifier", () => {
+    expect(patch.match(/client_id varchar\(3\) NOT NULL/g)).toHaveLength(2);
+    expect(patch).not.toMatch(/client_id uuid/i);
+    expect(repository).not.toMatch(/client_id\s*=\s*\$\d+::uuid/);
+    expect(validators).toContain("z.string().trim().min(1).max(3)");
   });
 
   it("cancels pending or claimed work in the payment and credit transaction", () => {

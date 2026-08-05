@@ -108,7 +108,7 @@ CREATE UNIQUE INDEX adv_reminder_one_validated_policy_uniq
   ON public.adv_reminder_policies ((status)) WHERE status='VALIDATED';
 
 CREATE TABLE public.adv_reminder_client_preferences (
-  client_id uuid NOT NULL,
+  client_id varchar(3) NOT NULL,
   channel text NOT NULL DEFAULT 'EMAIL',
   recipient_contact_id uuid,
   opted_out boolean NOT NULL DEFAULT false,
@@ -141,7 +141,7 @@ CREATE TABLE public.adv_reminder_client_preferences (
 CREATE TABLE public.adv_reminder_suggestions (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   facture_id bigint NOT NULL,
-  client_id uuid NOT NULL,
+  client_id varchar(3) NOT NULL,
   policy_id uuid NOT NULL,
   policy_version integer NOT NULL,
   cadence_step_days smallint NOT NULL,
