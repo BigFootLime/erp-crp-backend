@@ -108,6 +108,13 @@ export type FinanceCapability =
   | "reporting_financial"
   | "reporting_client_detail"
   | "reporting_export"
+  | "reminder_read"
+  | "reminder_policy_manage"
+  | "reminder_approve"
+  | "reminder_send"
+  | "reminder_retry"
+  | "reminder_job_run"
+  | "reminder_opt_out_manage"
   | "settings_manage";
 
 const ROLES = {
@@ -139,6 +146,13 @@ const CAPABILITY_ROLES: Record<FinanceCapability, ReadonlySet<string>> = {
   reporting_client_detail: new Set([ROLES.accounting, ROLES.accountant, ROLES.director]),
   // Extraction de données hors de l'ERP : trace obligatoire, périmètre le plus étroit.
   reporting_export: new Set([ROLES.accounting, ROLES.accountant, ROLES.director]),
+  reminder_read: new Set([ROLES.secretary, ROLES.accounting, ROLES.accountant, ROLES.director, ROLES.administrator]),
+  reminder_policy_manage: new Set([ROLES.director, ROLES.administrator]),
+  reminder_approve: new Set([ROLES.accounting, ROLES.accountant, ROLES.director]),
+  reminder_send: new Set([ROLES.accounting, ROLES.accountant, ROLES.director]),
+  reminder_retry: new Set([ROLES.accounting, ROLES.accountant, ROLES.director]),
+  reminder_job_run: new Set([ROLES.director, ROLES.administrator]),
+  reminder_opt_out_manage: new Set([ROLES.secretary, ROLES.accounting, ROLES.accountant, ROLES.director]),
   settings_manage: new Set([ROLES.director, ROLES.administrator]),
 };
 
@@ -147,7 +161,13 @@ export function roleHasFinanceCapability(
   capability: FinanceCapability
 ): boolean {
   if (hasGrantedAccountModuleAccess()) return true;
-  if (effectiveRoleHasAny(role, [ROLES.administrator])) return true;
+  // The technical administrator remains a global compatibility fallback for
+  // existing Finance routes, but reminders explicitly separate configuration
+  // from the business decision to approve/send a customer communication.
+  if (
+    effectiveRoleHasAny(role, [ROLES.administrator]) &&
+    !capability.startsWith("reminder_")
+  ) return true;
   return effectiveRoleHasAny(role, [...CAPABILITY_ROLES[capability]]);
 }
 

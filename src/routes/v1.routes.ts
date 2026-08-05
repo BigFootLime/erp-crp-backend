@@ -20,6 +20,7 @@ import avoirsRoutes from "../module/facturation/routes/avoirs.routes";
 import paiementsRoutes from "../module/facturation/routes/paiements.routes";
 import tarificationRoutes from "../module/facturation/routes/tarification.routes";
 import reportingRoutes from "../module/facturation/routes/reporting.routes";
+import reminderRoutes from "../module/facturation/routes/reminders.routes";
 import productionRoutes from "../module/production/routes/production.routes";
 import productionExecutionRoutes from "../module/production/routes/production-execution.routes";
 import productionStationRoutes from "../module/production/routes/station.routes";
@@ -113,6 +114,7 @@ router.use("/avoirs", avoirsRoutes);
 router.use("/paiements", paiementsRoutes);
 router.use("/tarification", tarificationRoutes);
 router.use("/reporting", reportingRoutes);
+router.use("/adv-reminders", reminderRoutes);
 router.use("/margins", marginEngineRoutes);
 // Suivi et pointage de production 360 (#274) monté AVANT le routeur historique :
 // ses routes déclarent des capacités fines (refus par défaut) et exigent une
