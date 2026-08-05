@@ -261,6 +261,9 @@ export type ShipmentPreviewPack = {
   version_id: string
   version: number
   checksum_sha256: string
+  quality_release_state: "READY" | "DEROGATED" | null
+  quality_release_preview_sha256: string | null
+  quality_policy_sha256: string | null
 }
 
 export type BonLivraisonShipmentPreview = {
@@ -275,6 +278,7 @@ export type BonLivraisonShipmentPreview = {
   reliquats: ShipmentPreviewRemainder[]
   simulated_movements: ShipmentPreviewMovement[]
   document_pack: ShipmentPreviewPack | null
+  quality_release: import("../domain/quality-release-gate").DeliveryQualityRelease | null
   totals: {
     lines: number
     allocations: number

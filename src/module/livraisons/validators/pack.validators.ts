@@ -24,6 +24,7 @@ const includeDocumentsSchema = z
 
 export const packGenerateBodySchema = z
   .object({
+    quality_preview_sha256: z.string().trim().regex(/^[a-f0-9]{64}$/, "Empreinte Qualité invalide"),
     signataire_user_id: z.coerce.number().int().positive().optional(),
     include_documents: includeDocumentsSchema,
     commentaire_pack: z.string().trim().min(1).max(5000).optional().nullable(),

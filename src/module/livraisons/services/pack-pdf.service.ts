@@ -75,6 +75,8 @@ export async function svcRenderPackCofcPdf(args: {
   const issuer = await readIssuerParty({ at: bl.date_expedition ?? bl.date_creation })
   const company = pickMention(issuer, "company_name")
   const clientName = clean(bl.client.company_name) ?? "Client"
+  const quality = p.quality_release
+  const underDerogation = quality.state === "DEROGATED"
 
   const rows: CerpLineRow[] = p.lignes.map((line) => {
     const lots = lotCodesOf(line.allocations)
@@ -96,7 +98,7 @@ export async function svcRenderPackCofcPdf(args: {
       name: bl.numero,
       code: `Version ${args.version}`,
       subtitle: clientName,
-      status: "Conforme",
+      status: underDerogation ? "Conformité sous dérogation" : "Conforme",
       monogramName: clientName,
       generatedAt: formatDateFR(bl.date_expedition ?? bl.date_creation),
       generatedBy: clean(args.signataireLabel),
@@ -116,9 +118,48 @@ export async function svcRenderPackCofcPdf(args: {
 
       ctx.section("Attestation", { cohesion: 70 })
       ctx.notes(
-        `${company ?? "Croix Rousse Precision"} certifie que les pièces livrées au titre du bon de livraison ` +
-          `${bl.numero} sont conformes aux exigences contractuelles et aux contrôles réalisés.`
+        underDerogation
+          ? `${company ?? "Croix Rousse Precision"} certifie que les pièces livrées au titre du bon de livraison ` +
+              `${bl.numero} sont acceptées sous la ou les dérogations approuvées référencées ci-dessous.`
+          : `${company ?? "Croix Rousse Precision"} certifie que les pièces livrées au titre du bon de livraison ` +
+              `${bl.numero} sont conformes aux exigences contractuelles et aux contrôles réalisés.`
       )
+
+      ctx.section("Décision Qualité", { cohesion: 70 })
+      ctx.legalStrip([
+        { label: "État", value: underDerogation ? "Sous dérogation" : "Libéré" },
+        {
+          label: "Politique signée",
+          value: quality.policy ? `${quality.policy.code} v${quality.policy.version}` : "—",
+        },
+        { label: "Signature", value: quality.policy?.signature_reference ?? "—" },
+        { label: "Empreinte", value: quality.preview_sha256 },
+      ])
+
+      if (quality.derogation_ids.length) {
+        ctx.notes(`Dérogation(s) approuvée(s) : ${quality.derogation_ids.join(", ")}`)
+      }
+
+      if (quality.required_evidence.length) {
+        ctx.section("Preuves Qualité incluses")
+        ctx.linesTable({
+          columns: [
+            { key: "nom", label: "Document", flex: 4 },
+            { key: "type", label: "Type", flex: 2 },
+            { key: "revision", label: "Révision", flex: 1.3 },
+            { key: "sha", label: "SHA-256", flex: 4 },
+          ],
+          rows: quality.required_evidence.map((document) => ({
+            cells: {
+              nom: document.original_name,
+              type: document.document_type,
+              revision: document.revision ?? `v${document.version}`,
+              sha: document.sha256,
+            },
+          })),
+          emptyLabel: "Aucune preuve Qualité requise par la politique signée.",
+        })
+      }
 
       if (clean(args.commentairePack)) {
         ctx.section("Observations")
