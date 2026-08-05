@@ -31,6 +31,7 @@ import {
   updateDevice,
   worklist,
 } from "../controllers/station.controller";
+import { syncOfflineStation } from "../controllers/offline-station.controller";
 
 /**
  * Surface « CERP Atelier — Mon poste » (#159), montée sous `/production/station`.
@@ -88,6 +89,15 @@ router.get(
   worklist
 );
 router.post("/scan", requireStationSession, requireStationCapability("read_own_station"), scan);
+
+// Reprise bornée : la session de poste vivante constitue la réauthentification.
+// Chaque événement garde ensuite sa propre clé d'idempotence dans le corps.
+router.post(
+  "/offline/sync",
+  requireStationSession,
+  requireStationCapability("read_own_station"),
+  syncOfflineStation
+);
 
 router.get(
   "/dossier/:ofId/:operationId",

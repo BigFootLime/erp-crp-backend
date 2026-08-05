@@ -54,6 +54,18 @@ import type {
 
 type DbQueryer = Pick<PoolClient, "query">;
 
+export type ProductionExecutionTransactionHooks<T extends { id: string }> = {
+  beforeEffect: (tx: PoolClient) => Promise<void>;
+  beforeCommit: (tx: PoolClient, result: T) => Promise<void>;
+};
+
+/** Contexte fiable ajouté par la reprise offline, jamais lu dans le payload client. */
+export type ProductionQuantitySourceContext = {
+  operatorUserId: number;
+  machineId: string | null;
+  executionSessionId: string | null;
+};
+
 /* -------------------------------------------------------------------------- */
 /* Utilitaires                                                                */
 /* -------------------------------------------------------------------------- */
@@ -185,9 +197,10 @@ async function reserveIdempotencyKey<T>(
   const existing = await tx.query<{
     request_fingerprint: string;
     response_body: T | null;
+    user_id: number;
   }>(
     `
-      SELECT request_fingerprint, response_body
+      SELECT request_fingerprint, response_body, user_id
       FROM public.production_execution_idempotency
       WHERE idempotency_key = $1
       FOR UPDATE
@@ -197,6 +210,13 @@ async function reserveIdempotencyKey<T>(
 
   const row = existing.rows[0];
   if (row) {
+    if (row.user_id !== params.user_id) {
+      throw new HttpError(
+        409,
+        "PRODUCTION_EXECUTION_IDEMPOTENCY_ACTOR_CONFLICT",
+        "Cette clé d'idempotence appartient à un autre utilisateur."
+      );
+    }
     assertIdempotencyMatch({
       key: params.key,
       storedFingerprint: row.request_fingerprint,
@@ -867,8 +887,9 @@ async function lockExecutionContext(
   tx: DbQueryer,
   params: { of_id: number; operation_id?: string | null; operator_user_id: number; machine_id?: string | null }
 ) {
-  const ofRes = await tx.query<{ id: string; statut: string }>(
-    `SELECT id::text AS id, statut::text AS statut FROM public.ordres_fabrication WHERE id = $1::bigint FOR UPDATE`,
+  const ofRes = await tx.query<{ id: string; statut: string; quantite_lancee: number }>(
+    `SELECT id::text AS id, statut::text AS statut, quantite_lancee::float8 AS quantite_lancee
+       FROM public.ordres_fabrication WHERE id = $1::bigint FOR UPDATE`,
     [params.of_id]
   );
   const of = ofRes.rows[0];
@@ -985,10 +1006,12 @@ export async function repoStartExecution(params: {
   previousSegmentId?: string | null;
   segmentIndex?: number;
   source?: string;
+  transactionHooks?: ProductionExecutionTransactionHooks<{ id: string }>;
 }): Promise<ExecutionListItem> {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    await params.transactionHooks?.beforeEffect(client);
 
     const replay = await reserveIdempotencyKey<{ id: string }>(client, {
       key: params.idempotencyKey,
@@ -997,6 +1020,7 @@ export async function repoStartExecution(params: {
       user_id: params.audit.user_id,
     });
     if (replay.replayed) {
+      await params.transactionHooks?.beforeCommit(client, replay.body);
       await client.query("COMMIT");
       const existing = await repoGetExecution({ id: replay.body.id });
       if (!existing) throw new HttpError(409, "PRODUCTION_EXECUTION_REPLAY_LOST", "Rejeu impossible.");
@@ -1161,6 +1185,7 @@ export async function repoStartExecution(params: {
     });
 
     await storeIdempotentResponse(client, params.idempotencyKey, { id });
+    await params.transactionHooks?.beforeCommit(client, { id });
     await client.query("COMMIT");
 
     const created = await repoGetExecution({ id });
@@ -1190,10 +1215,12 @@ export async function repoStopExecution(params: {
   actorRole: string | null | undefined;
   audit: AuditContext;
   eventType?: ExecutionEventType;
+  transactionHooks?: ProductionExecutionTransactionHooks<{ id: string }>;
 }): Promise<ExecutionListItem> {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    await params.transactionHooks?.beforeEffect(client);
 
     const replay = await reserveIdempotencyKey<{ id: string }>(client, {
       key: params.idempotencyKey,
@@ -1202,6 +1229,7 @@ export async function repoStopExecution(params: {
       user_id: params.audit.user_id,
     });
     if (replay.replayed) {
+      await params.transactionHooks?.beforeCommit(client, replay.body);
       await client.query("COMMIT");
       const existing = await repoGetExecution({ id: params.id });
       if (!existing) throw new HttpError(409, "PRODUCTION_EXECUTION_REPLAY_LOST", "Rejeu impossible.");
@@ -1289,6 +1317,7 @@ export async function repoStopExecution(params: {
     });
 
     await storeIdempotentResponse(client, params.idempotencyKey, { id: params.id });
+    await params.transactionHooks?.beforeCommit(client, { id: params.id });
     await client.query("COMMIT");
 
     const updated = await repoGetExecution({ id: params.id });
@@ -1962,27 +1991,125 @@ export async function repoDeclareQuantity(params: {
   body: DeclareQuantityBodyDTO;
   idempotencyKey: string;
   audit: AuditContext;
+  sourceContext?: ProductionQuantitySourceContext;
+  transactionHooks?: ProductionExecutionTransactionHooks<{ id: string }>;
 }): Promise<{ id: string }> {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    await params.transactionHooks?.beforeEffect(client);
 
     const replay = await reserveIdempotencyKey<{ id: string }>(client, {
       key: params.idempotencyKey,
       scope: "production.execution.declare-quantity",
-      payload: params.body,
+      payload: params.sourceContext
+        ? { ...params.body, source_context: params.sourceContext }
+        : params.body,
       user_id: params.audit.user_id,
     });
     if (replay.replayed) {
+      await params.transactionHooks?.beforeCommit(client, replay.body);
       await client.query("COMMIT");
       return replay.body;
     }
 
-    await lockExecutionContext(client, {
+    if (params.sourceContext && !params.body.pointage_id) {
+      throw new HttpError(
+        409,
+        "OFFLINE_POINTAGE_REQUIRED",
+        "Une quantité hors ligne doit référencer son pointage de production."
+      );
+    }
+
+    // Si l'opération n'est pas répétée dans le payload, le pointage fournit un
+    // indice non verrouillé. La valeur définitive est relue sous verrou après
+    // l'ordre global OF → opération → pointage, afin d'éviter les deadlocks.
+    let operationId = params.body.operation_id ?? null;
+    if (params.body.pointage_id && !operationId) {
+      const hint = await client.query<{ operation_id: string | null }>(
+        `SELECT operation_id::text AS operation_id
+           FROM public.production_pointages
+          WHERE id = $1::uuid`,
+        [params.body.pointage_id]
+      );
+      if (!hint.rows[0]) {
+        throw new HttpError(404, "PRODUCTION_EXECUTION_NOT_FOUND", "Pointage introuvable.", {
+          id: params.body.pointage_id,
+        });
+      }
+      operationId = hint.rows[0].operation_id;
+    }
+
+    const { of, operation } = await lockExecutionContext(client, {
       of_id: params.body.of_id,
-      operation_id: params.body.operation_id ?? null,
+      operation_id: operationId,
       operator_user_id: params.audit.user_id,
     });
+    assertOfExecutable(of.statut);
+    assertOperationExecutable(operation);
+
+    let pointage: LockedPointage | null = null;
+    if (params.body.pointage_id) {
+      pointage = await lockPointage(client, params.body.pointage_id);
+      if (pointage.operator_user_id !== params.audit.user_id) {
+        throw new HttpError(
+          409,
+          "PRODUCTION_QUANTITY_POINTAGE_OPERATOR_CONFLICT",
+          "Ce pointage appartient à un autre opérateur."
+        );
+      }
+      if (Number(pointage.of_id) !== Number(params.body.of_id)) {
+        throw new HttpError(
+          422,
+          "PRODUCTION_QUANTITY_POINTAGE_OF_CONFLICT",
+          "Le pointage ne concerne pas l'ordre de fabrication indiqué."
+        );
+      }
+      if ((pointage.operation_id ?? null) !== operationId) {
+        throw new HttpError(
+          422,
+          "PRODUCTION_QUANTITY_POINTAGE_OPERATION_CONFLICT",
+          "Le pointage ne concerne pas l'opération indiquée."
+        );
+      }
+      if (pointage.status === "CANCELLED" || pointage.status === "CORRECTED") {
+        throw new HttpError(
+          409,
+          "PRODUCTION_QUANTITY_POINTAGE_NOT_ELIGIBLE",
+          "Un pointage annulé ou corrigé ne peut pas recevoir de quantité."
+        );
+      }
+      if (params.sourceContext) {
+        if (pointage.operator_user_id !== params.sourceContext.operatorUserId) {
+          throw new HttpError(
+            409,
+            "OFFLINE_QUANTITY_POINTAGE_OPERATOR_CONFLICT",
+            "Le pointage ne correspond pas à l'opérateur de la capture hors ligne."
+          );
+        }
+        if ((pointage.machine_id ?? null) !== params.sourceContext.machineId) {
+          throw new HttpError(
+            409,
+            "OFFLINE_QUANTITY_POINTAGE_MACHINE_CONFLICT",
+            "Le pointage ne correspond pas à la machine de la capture hors ligne."
+          );
+        }
+        // Un pointage direct déjà actif n'a pas de start_event_id dans la file :
+        // `executionSessionId` vaut alors null et ne doit pas imposer que la
+        // session serveur le soit aussi. Lorsqu'un START offline a été résolu,
+        // son identifiant déterministe reste en revanche obligatoire.
+        if (
+          params.sourceContext.executionSessionId !== null
+          && (pointage.session_id ?? null) !== params.sourceContext.executionSessionId
+        ) {
+          throw new HttpError(
+            409,
+            "OFFLINE_QUANTITY_POINTAGE_SESSION_CONFLICT",
+            "Le pointage ne correspond pas au démarrage de la capture hors ligne."
+          );
+        }
+      }
+    }
 
     const delta = {
       qty_good: params.body.qty_good ?? 0,
@@ -1999,6 +2126,28 @@ export async function repoDeclareQuantity(params: {
       throw new HttpError(422, "PRODUCTION_QUANTITY_REWORK_REASON_REQUIRED", "Une cause de reprise est obligatoire.");
     }
 
+    // L'OF est encore verrouillé : deux déclarations concurrentes relisent le
+    // cumul l'une après l'autre et ne peuvent pas dépasser ensemble le restant.
+    const declaredRes = await client.query<{ qty_good: number; qty_scrap: number }>(
+      `
+        SELECT COALESCE(SUM(qty_good), 0)::float8 AS qty_good,
+               COALESCE(SUM(qty_scrap), 0)::float8 AS qty_scrap
+          FROM public.production_quantity_declarations
+         WHERE of_id = $1::bigint
+           AND operation_id IS NOT DISTINCT FROM $2::uuid
+      `,
+      [params.body.of_id, operationId]
+    );
+    const alreadyDeclared = Number(declaredRes.rows[0]?.qty_good ?? 0)
+      + Number(declaredRes.rows[0]?.qty_scrap ?? 0);
+    assertWithinRemaining({
+      declared: delta.qty_good + delta.qty_scrap,
+      alreadyDeclared,
+      quantityTarget: Number(of.quantite_lancee),
+      overproductionTolerance: 0,
+      reason: params.body.overproduction_reason ?? null,
+    });
+
     const ins = await client.query<{ id: string }>(
       `
         INSERT INTO public.production_quantity_declarations (
@@ -2013,7 +2162,7 @@ export async function repoDeclareQuantity(params: {
       [
         params.body.pointage_id ?? null,
         params.body.of_id,
-        params.body.operation_id ?? null,
+        operationId,
         delta.qty_good,
         delta.qty_scrap,
         delta.qty_rework,
@@ -2052,10 +2201,11 @@ export async function repoDeclareQuantity(params: {
       action: "production.execution.declare-quantity",
       entity_type: "production_quantity_declarations",
       entity_id: id,
-      details: { of_id: params.body.of_id, operation_id: params.body.operation_id ?? null, ...delta, no_stock_movement: true },
+      details: { of_id: params.body.of_id, operation_id: operationId, ...delta, no_stock_movement: true },
     });
 
     await storeIdempotentResponse(client, params.idempotencyKey, { id });
+    await params.transactionHooks?.beforeCommit(client, { id });
     await client.query("COMMIT");
     return { id };
   } catch (err) {
