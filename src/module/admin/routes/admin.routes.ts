@@ -1,10 +1,11 @@
 // src/module/admin/routes/admin.routes.ts
 import { Router } from "express";
-import { authenticateToken, authorizeRole } from "../../auth/middlewares/auth.middleware";
+import { authenticateToken } from "../../auth/middlewares/auth.middleware";
+import { requireSuperadmin } from "../../access-control/middlewares/require-superadmin";
 import {
   createPasswordResetTokenAdmin,
+  createAccountInvitationAdmin,
   createUserAdmin,
-  deleteUserAdmin,
   getUserAdmin,
   listRolesAdmin,
   listUsersAdmin,
@@ -17,14 +18,17 @@ import {
 const router = Router();
 
 router.use(authenticateToken);
-router.use(authorizeRole("Administrateur Systeme et Reseau", "Directeur"));
+// Account administration is a sensitive exception to the open-by-default
+// module model. The live database marker is authoritative; role labels and a
+// granted Administration module can never authorize account provisioning.
+router.use(requireSuperadmin);
 
 router.get("/users", listUsersAdmin);
 router.get("/roles", listRolesAdmin);
 router.get("/users/:id", getUserAdmin);
 router.post("/users", createUserAdmin);
 router.patch("/users/:id", patchUserAdmin);
-router.delete("/users/:id", deleteUserAdmin);
+router.post("/users/:id/invitations", createAccountInvitationAdmin);
 
 router.get("/login-logs", listLoginLogsAdmin);
 router.get("/analytics", getAdminAnalytics);

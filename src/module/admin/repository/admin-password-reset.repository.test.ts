@@ -78,6 +78,7 @@ describe("admin password reset transaction", () => {
 
     await expect(repoResetUserPasswordWithToken({
       userId: "7",
+      actorUserId: 4,
       rawToken: TOKEN,
       passwordHash: "new-hash",
     })).resolves.toBe(7);
@@ -102,8 +103,8 @@ describe("admin password reset transaction", () => {
     const second = makeClient(state, { waitForFirstCommit: firstCommitted });
     mocks.connect.mockResolvedValueOnce(first).mockResolvedValueOnce(second);
 
-    const firstReset = repoResetUserPasswordWithToken({ userId: "7", rawToken: TOKEN, passwordHash: "new-a" });
-    const secondReset = repoResetUserPasswordWithToken({ userId: "7", rawToken: TOKEN, passwordHash: "new-b" });
+    const firstReset = repoResetUserPasswordWithToken({ userId: "7", actorUserId: 4, rawToken: TOKEN, passwordHash: "new-a" });
+    const secondReset = repoResetUserPasswordWithToken({ userId: "7", actorUserId: 4, rawToken: TOKEN, passwordHash: "new-b" });
 
     await expect(firstReset).resolves.toBe(7);
     await expect(secondReset).rejects.toMatchObject({ status: 400, code: "RESET_TOKEN_USED" });

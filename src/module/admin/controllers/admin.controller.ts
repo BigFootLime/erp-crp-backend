@@ -5,6 +5,8 @@ import { HttpError } from "../../../utils/httpError";
 import * as adminService from "../services/admin.service";
 import {
   adminCreateUserSchema,
+  adminCreateInvitationSchema,
+  adminCreatePasswordResetSchema,
   adminUpdateUserSchema,
   adminUserIdParamSchema,
   resetPasswordByAdminSchema,
@@ -72,29 +74,50 @@ export const createUserAdmin: RequestHandler = asyncHandler(async (req, res) => 
 export const patchUserAdmin: RequestHandler = asyncHandler(async (req, res) => {
   const dto = adminUpdateUserSchema.parse({ params: req.params, body: req.body });
   const userId = Number(dto.params.id);
-  const user = await adminService.updateUserByAdmin(userId, dto.body, req.user?.id ?? null);
+  if (!req.user) throw new HttpError(401, "AUTH_REQUIRED", "Authentification requise");
+  const user = await adminService.updateUserByAdmin(userId, dto.body, req.user.id);
   if (!user) throw new HttpError(404, "USER_NOT_FOUND", "User not found");
   res.json({ user });
 });
 
-export const deleteUserAdmin: RequestHandler = asyncHandler(async (req, res) => {
-  const dto = adminUserIdParamSchema.parse({ params: req.params });
-  const ok = await adminService.deleteUserByAdmin(Number(dto.params.id));
-  if (!ok) throw new HttpError(404, "USER_NOT_FOUND", "User not found");
-  res.status(204).end();
+export const createAccountInvitationAdmin: RequestHandler = asyncHandler(async (req, res) => {
+  const dto = adminCreateInvitationSchema.parse({
+    headers: { idempotencyKey: req.get("Idempotency-Key") },
+    params: req.params,
+    body: req.body,
+  });
+  if (!req.user) throw new HttpError(401, "AUTH_REQUIRED", "Authentification requise");
+  const result = await adminService.createAccountInvitationByAdmin({
+    userId: Number(dto.params.id),
+    actorUserId: req.user.id,
+    idempotencyKey: dto.headers.idempotencyKey,
+  });
+  res.setHeader("Idempotency-Replayed", result.replayed ? "true" : "false");
+  res.status(result.replayed ? 200 : 201).json(result);
 });
 
 export const createPasswordResetTokenAdmin: RequestHandler = asyncHandler(async (req, res) => {
-  const dto = adminUserIdParamSchema.parse({ params: req.params });
-  res.status(201).json(await adminService.createPasswordResetTokenByAdmin({
+  const dto = adminCreatePasswordResetSchema.parse({
+    headers: { idempotencyKey: req.get("Idempotency-Key") },
+    params: req.params,
+    body: req.body,
+  });
+  if (!req.user) throw new HttpError(401, "AUTH_REQUIRED", "Authentification requise");
+  const result = await adminService.createPasswordResetTokenByAdmin({
     userId: Number(dto.params.id),
-  }));
+    actorUserId: req.user.id,
+    idempotencyKey: dto.headers.idempotencyKey,
+  });
+  res.setHeader("Idempotency-Replayed", result.replayed ? "true" : "false");
+  res.status(result.replayed ? 200 : 201).json(result);
 });
 
 export const resetUserPasswordAdmin: RequestHandler = asyncHandler(async (req, res) => {
   const dto = resetPasswordByAdminSchema.parse({ params: req.params, body: req.body });
+  if (!req.user) throw new HttpError(401, "AUTH_REQUIRED", "Authentification requise");
   await adminService.resetUserPasswordByAdmin({
     userId: dto.params.id,
+    actorUserId: req.user.id,
     token: dto.body.token,
     newPassword: dto.body.newPassword,
   });

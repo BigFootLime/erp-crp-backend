@@ -10,7 +10,6 @@ describe("administrative user provisioning validator", () => {
       headers: { idempotencyKey },
       body: {
         username: " atelier.test ",
-        password: "P@ssword12",
         name: "Compte",
         surname: "Atelier",
         email: "atelier.test@example.test",
@@ -35,7 +34,6 @@ describe("administrative user provisioning validator", () => {
         headers: { idempotencyKey },
         body: {
           username: "ATELIER.TEST",
-          password: "P@ssword12",
           name: "Compte",
           surname: "Atelier",
           email: "atelier.test@example.test",
@@ -51,7 +49,6 @@ describe("administrative user provisioning validator", () => {
       headers: { idempotencyKey },
       body: {
         username: "ATELIER.TEST",
-        password: "P@ssword12",
         name: "Compte",
         surname: "Atelier",
         email: "atelier.test@example.test",
@@ -69,7 +66,6 @@ describe("administrative user provisioning validator", () => {
         headers: { idempotencyKey: "retry-me" },
         body: {
           username: "ATELIER.TEST",
-          password: "P@ssword12",
           name: "Compte",
           surname: "Atelier",
           email: "atelier.test@example.test",
@@ -77,5 +73,25 @@ describe("administrative user provisioning validator", () => {
         },
       }),
     ).toThrow();
+  });
+
+  it("rejects administrator-selected passwords and active provisioning", () => {
+    for (const forbidden of [
+      { password: "P@ssword12" },
+      { status: "Active" },
+    ]) {
+      expect(() => adminCreateUserSchema.parse({
+        headers: { idempotencyKey },
+        body: {
+          username: "ATELIER.TEST",
+          name: "Compte",
+          surname: "Atelier",
+          email: "atelier.test@example.test",
+          role: "Employee",
+          roles: ["Employee"],
+          ...forbidden,
+        },
+      })).toThrow();
+    }
   });
 });

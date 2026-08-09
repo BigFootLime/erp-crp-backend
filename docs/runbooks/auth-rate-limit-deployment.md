@@ -58,9 +58,9 @@ into Git, issues, logs or evidence.
 | `AUTH_RATE_LIMIT_LOGIN_WINDOW_MS` | `900000` | Login fixed window |
 | `AUTH_RATE_LIMIT_LOGIN_IP_LIMIT` | `50` | Login client-network threshold |
 | `AUTH_RATE_LIMIT_LOGIN_IDENTIFIER_LIMIT` | `10` | Login username threshold |
-| `AUTH_RATE_LIMIT_REGISTER_WINDOW_MS` | `3600000` | Registration fixed window |
-| `AUTH_RATE_LIMIT_REGISTER_IP_LIMIT` | `10` | Registration client-network threshold |
-| `AUTH_RATE_LIMIT_REGISTER_IDENTIFIER_LIMIT` | `3` | Per-dimension registration username/email threshold |
+| `AUTH_RATE_LIMIT_REGISTER_WINDOW_MS` | `3600000` | Legacy unused setting; public registration is not routed |
+| `AUTH_RATE_LIMIT_REGISTER_IP_LIMIT` | `10` | Legacy unused setting; public registration is not routed |
+| `AUTH_RATE_LIMIT_REGISTER_IDENTIFIER_LIMIT` | `3` | Legacy unused setting; public registration is not routed |
 | `AUTH_RATE_LIMIT_FORGOT_WINDOW_MS` | `3600000` | Forgot-password fixed window |
 | `AUTH_RATE_LIMIT_FORGOT_IP_LIMIT` | `20` | Forgot-password client-network threshold |
 | `AUTH_RATE_LIMIT_FORGOT_IDENTIFIER_LIMIT` | `5` | Per-candidate forgot-password username/email threshold |
@@ -91,7 +91,7 @@ characters; an absent or unexpected `NODE_ENV` never enables a public fallback.
    restarting A, returns a numeric `Retry-After`, and expires after its window.
 9. Use the deterministic injected failing store from the automated tests; do
    not stop or disconnect the shared database. Confirm `503` for
-   login/register/reset and generic `200` without mail for forgot-password.
+   login/activate/reset and generic `200` without mail for forgot-password.
 10. Confirm logs contain endpoint/outcome only and no synthetic identifier/IP.
 
 Promotion to production repeats backup, preflight, patch and verify through the

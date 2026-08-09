@@ -621,6 +621,7 @@ describe("Profil d'accès et exposition du marqueur superadmin", () => {
   });
 
   it("PATCH /admin/users/:id refuse explicitement is_superadmin (aucune ignorance silencieuse)", async () => {
+    repo.repoIsSuperadmin.mockResolvedValue(true);
     const res = await request(app)
       .patch("/api/v1/admin/users/9")
       .set("x-test-role", "Directeur")

@@ -12,6 +12,7 @@ vi.mock('../module/auth/controllers/auth.controller', () => ({
     res.status(200).json({ message: 'Si ce compte existe, un lien de réinitialisation a été envoyé.' })
   ),
   resetPassword: vi.fn((req, res) => res.status(200).json({ message: 'Mot de passe réinitialisé' })),
+  activateAccount: vi.fn((req, res) => res.status(200).json({ message: 'Compte activé', replayed: false })),
 }))
 
 vi.mock('../module/auth/services/auth-rate-limit.service', () => ({

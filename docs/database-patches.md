@@ -623,3 +623,7 @@ vérifiée avant toute écriture ; préflight en lecture seule confirmant 0 fact
 complète réussie — 11 contraintes, une seule version en vigueur, instantané portant les
 treize clés obligatoires, résolution hors période rendant l'identité **sans** mentions, et
 `finance_legal_mentions` possédée par `cerp_app`. **`cerp_prod` n'a pas été modifiée.**
+
+# 20260809 — Account invitation and administrative reset idempotency (SOL-02)
+
+`20260809_account_invitation_activation.sql` adds one-use administrative invitations and idempotency metadata for administrative password-reset creation. Run the matching support preflight, take a restorable backup, apply, then run verify. The rollback is intentionally refused once account-lifecycle evidence exists; disable application routes and preserve evidence instead.

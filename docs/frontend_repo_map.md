@@ -327,7 +327,7 @@ POST	/api/v1/audit-logs	authenticateToken	controller
 POST	/api/v1/auth/forgot-password	-	controller
 POST	/api/v1/auth/login	-	controller
 GET	/api/v1/auth/me	authenticateToken, authorizeRole('Administrateur Systeme et Reseau', 'Directeur')	controller
-POST	/api/v1/auth/register	-	controller
+POST	/api/v1/auth/activate	resetPasswordRateLimit	controller
 POST	/api/v1/auth/reset-password	-	controller
 GET	/api/v1/avoirs	-	controller
 POST	/api/v1/avoirs	-	controller

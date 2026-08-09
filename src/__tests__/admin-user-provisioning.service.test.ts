@@ -20,7 +20,6 @@ import {
 
 const body = {
   username: "COMPTE.INTERNE",
-  password: "Initial1!Password",
   name: "Compte",
   surname: "Interne",
   email: "compte.interne@example.test",
@@ -39,14 +38,15 @@ describe("administrative user provisioning service", () => {
     });
   });
 
-  it("never forwards the clear-text password to the repository", async () => {
+  it("creates an unusable bootstrap secret without accepting an administrator password", async () => {
     await createUserByAdmin({
       ...body,
       actorUserId: 7,
       idempotencyKey: "7eb84d7e-9df1-4ee7-a8e9-3ee6c85b2bee",
     });
 
-    expect(hashPassword).toHaveBeenCalledWith(body.password, 12);
+    expect(hashPassword).toHaveBeenCalledWith(expect.any(String), 12);
+    expect(String(hashPassword.mock.calls[0]?.[0])).toHaveLength(64);
     expect(repoProvisionUser).toHaveBeenCalledOnce();
     const persisted = repoProvisionUser.mock.calls[0]?.[0];
     expect(persisted).not.toHaveProperty("password");
@@ -58,14 +58,15 @@ describe("administrative user provisioning service", () => {
   });
 
   it("uses a deterministic non-secret request fingerprint", () => {
-    const first = buildProvisioningRequestHash(body);
-    const sameAccountWithAnotherInitialPassword = buildProvisioningRequestHash({
+    const input = {
       ...body,
-      password: "Another2!Password",
-    });
+      actorUserId: 7,
+      idempotencyKey: "7eb84d7e-9df1-4ee7-a8e9-3ee6c85b2bee",
+    };
+    const first = buildProvisioningRequestHash(input);
+    const sameAccount = buildProvisioningRequestHash({ ...input });
 
     expect(first).toMatch(/^[0-9a-f]{64}$/);
-    expect(sameAccountWithAnotherInitialPassword).toBe(first);
-    expect(first).not.toContain(body.password);
+    expect(sameAccount).toBe(first);
   });
 });

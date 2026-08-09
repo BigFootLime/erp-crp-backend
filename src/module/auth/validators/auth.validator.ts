@@ -37,3 +37,16 @@ export const resetPasswordSchema = z
   .strict();
 
 export type ResetPasswordDTO = z.infer<typeof resetPasswordSchema>;
+
+export const activateAccountSchema = z
+  .object({
+    token: z
+      .string({ required_error: "Invitation requise" })
+      .min(1, "Invitation requise")
+      .max(2048, "Invitation invalide")
+      .transform(preserveOpaqueAuthToken),
+    newPassword: strongPasswordReset,
+  })
+  .strict();
+
+export type ActivateAccountDTO = z.infer<typeof activateAccountSchema>;

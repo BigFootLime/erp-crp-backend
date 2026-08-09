@@ -26,6 +26,7 @@ describe("admin password reset service", () => {
 
     const pending = resetUserPasswordByAdmin({
       userId: "7",
+      actorUserId: 4,
       token: "one-use-admin-token",
       newPassword: "S3cure-password!",
     });

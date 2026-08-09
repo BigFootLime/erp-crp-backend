@@ -21,7 +21,6 @@ import {
 
 const validUserBody = {
   username: "LAMBERT",
-  password: "Atelier1**",
   name: "THOMASSONI",
   surname: "Lambert",
   email: "lambert@croix-rousse-precision.fr",
@@ -35,7 +34,7 @@ const validUserBody = {
   postcode: "69000",
   country: "France",
   date_of_birth: "1990-01-01",
-  status: "Active",
+  status: "Inactive",
   social_security_number: "100000000000001",
 };
 

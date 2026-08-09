@@ -1,8 +1,7 @@
 import { Router } from 'express';
-import { login, forgotPassword, resetPassword } from '../controllers/auth.controller';
+import { activateAccount, login, forgotPassword, resetPassword } from '../controllers/auth.controller';
 import {
     authenticateToken,
-    authorizeRole
   } from '../middlewares/auth.middleware';
 import { getProfile } from '../controllers/user.controller';
 import { getAccessProfile } from '../../access-control/controllers/access-control.controller';
@@ -17,10 +16,10 @@ const router: Router = Router();
 router.post('/login', loginRateLimit, login);
 router.post('/forgot-password', forgotPasswordRateLimit, forgotPassword);
 router.post('/reset-password', resetPasswordRateLimit, resetPassword);
+router.post('/activate', resetPasswordRateLimit, activateAccount);
 router.get(
   '/me',
   authenticateToken,
-  authorizeRole('Administrateur Systeme et Reseau', 'Directeur'),
   getProfile
 );
 

@@ -1,6 +1,16 @@
 import { Request, Response } from "express";
-import { forgotPasswordSchema, loginSchema, resetPasswordSchema } from "../validators/auth.validator";
-import { loginUser, requestPasswordReset, resetPasswordWithToken } from "../services/auth.service";
+import {
+  activateAccountSchema,
+  forgotPasswordSchema,
+  loginSchema,
+  resetPasswordSchema,
+} from "../validators/auth.validator";
+import {
+  activateAccountWithInvitation,
+  loginUser,
+  requestPasswordReset,
+  resetPasswordWithToken,
+} from "../services/auth.service";
 import { asyncHandler } from "../../../utils/asyncHandler";
 import { getClientIp, parseDevice } from "../../../utils/requestMeta";
 
@@ -88,4 +98,22 @@ export const resetPassword = asyncHandler(async (req: Request, res: Response) =>
   });
 
   return res.status(200).json({ message: "Mot de passe réinitialisé" });
+});
+
+export const activateAccount = asyncHandler(async (req: Request, res: Response) => {
+  const { token, newPassword } = activateAccountSchema.parse(req.body);
+  const user_agent = req.headers["user-agent"]?.toString() ?? null;
+  const device = parseDevice(user_agent);
+  const result = await activateAccountWithInvitation(token, newPassword, {
+    ip: getClientIp(req),
+    user_agent,
+    device_type: device.device_type,
+    os: device.os,
+    browser: device.browser,
+  });
+  res.setHeader("Idempotency-Replayed", result.replayed ? "true" : "false");
+  return res.status(200).json({
+    message: result.replayed ? "Compte déjà activé" : "Compte activé",
+    replayed: result.replayed,
+  });
 });

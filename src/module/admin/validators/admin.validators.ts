@@ -110,8 +110,10 @@ function refineEmploymentDates(
 
 const userCreateBody = userCoreObject
   .extend({
-    password: adminNewPasswordSchema,
-    status: z.enum(statuses).default("Inactive"),
+    // Provisioning and activation are intentionally separate security events.
+    // A newly provisioned account cannot authenticate before accepting an
+    // administrator-issued invitation.
+    status: z.literal("Inactive").default("Inactive"),
   })
   .superRefine(refineEmploymentDates);
 
@@ -134,6 +136,19 @@ export const adminUpdateUserSchema = z
     }
   });
 export type AdminUpdateUserDTO = z.infer<typeof adminUpdateUserSchema>;
+
+export const adminCreateInvitationSchema = z.object({
+  headers: z.object({ idempotencyKey: provisioningIdempotencyKeySchema }),
+  params: z.object({ id: userIdParam }),
+  body: z.object({}).strict().default({}),
+});
+export type AdminCreateInvitationDTO = z.infer<typeof adminCreateInvitationSchema>;
+
+export const adminCreatePasswordResetSchema = z.object({
+  headers: z.object({ idempotencyKey: provisioningIdempotencyKeySchema }),
+  params: z.object({ id: userIdParam }),
+  body: z.object({}).strict().default({}),
+});
 
 export const resetPasswordByAdminSchema = z.object({
   params: z.object({ id: userIdParam }),

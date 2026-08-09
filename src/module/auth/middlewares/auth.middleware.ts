@@ -10,6 +10,7 @@ import {
   hasAnyAssignedRole,
   normalizeAssignedRoles,
 } from "../domain/roles";
+import { findAuthenticatedAccountState } from "../repository/auth.repository";
 
 interface JwtPayload {
   id: number;
@@ -18,6 +19,7 @@ interface JwtPayload {
   role: string;
   primary_role?: string;
   roles?: string[];
+  session_epoch?: number;
 }
 
 declare global {
@@ -48,7 +50,7 @@ export const authenticateToken: RequestHandler = (req, res, next) => {
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET as string) as JwtPayload;
     req.user = decoded;
-    next();
+    requireActiveAccount(req, res, next);
   } catch (err) {
     console.warn(
       JSON.stringify({
@@ -60,6 +62,46 @@ export const authenticateToken: RequestHandler = (req, res, next) => {
     );
     res.status(401).json({ error: "Token invalide ou expiré" });
   }
+};
+
+/**
+ * Enforce the live account lifecycle after JWT verification. The token proves
+ * identity; it does not keep an inactive, blocked or suspended account alive.
+ */
+export const requireActiveAccount: RequestHandler = (req, res, next) => {
+  const user = req.user;
+  if (!user || typeof user.id !== "number") {
+    res.status(401).json({ error: "Utilisateur non authentifié" });
+    return;
+  }
+
+  findAuthenticatedAccountState(user.id)
+    .then((state) => {
+      if (!state || state.status !== "Active") {
+        console.warn(
+          JSON.stringify({
+            type: "auth_forbidden",
+            reason: "account_not_active",
+            requestId: req.requestId ?? null,
+            method: req.method,
+            path: stripQueryFromUrl(req.originalUrl),
+            userId: user.id,
+          }),
+        );
+        res.status(403).json({ error: "Accès interdit" });
+        return;
+      }
+
+      if (
+        typeof user.session_epoch === "number"
+        && user.session_epoch !== state.session_epoch
+      ) {
+        res.status(401).json({ error: "Token invalide ou expiré" });
+        return;
+      }
+      next();
+    })
+    .catch(next);
 };
 
 /**

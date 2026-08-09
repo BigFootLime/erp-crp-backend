@@ -69,6 +69,26 @@ export type AdminRoleRow = {
   description: string;
 };
 
+export type AdminAccountInvitationRow = {
+  id: string;
+  user_id: number;
+  username: string;
+  created_by: number;
+  idempotency_key: string;
+  request_hash: string;
+  token_hash: string;
+  created_at: string;
+  expires_at: string;
+  accepted_at: string | null;
+  revoked_at: string | null;
+};
+
+type AdminInvitationMutation = {
+  invitation: AdminAccountInvitationRow;
+  replayed: boolean;
+  noOp?: boolean;
+};
+
 type PgErrorLike = { code?: unknown; constraint?: unknown };
 
 type AdminEpochMutation<T> = {
@@ -152,6 +172,42 @@ async function loadAdminMutationSnapshot(
 function sameAdminState(left: AdminMutationSnapshot, right: AdminMutationSnapshot): boolean {
   return isDeepStrictEqual(left.userState, right.userState)
     && isDeepStrictEqual(left.roles, right.roles);
+}
+
+async function reconcileAdminInvitation(
+  verifier: PoolClient,
+  mutation: AdminInvitationMutation,
+): Promise<RealtimeCommitReconciliation> {
+  if (mutation.noOp) return "committed";
+  const { rows } = await verifier.query<AdminAccountInvitationRow>(
+    `
+      SELECT
+        invitation.id::text AS id,
+        invitation.user_id::int AS user_id,
+        users.username,
+        invitation.created_by::int AS created_by,
+        invitation.idempotency_key::text AS idempotency_key,
+        invitation.request_hash,
+        invitation.token_hash,
+        invitation.created_at::text AS created_at,
+        invitation.expires_at::text AS expires_at,
+        invitation.accepted_at::text AS accepted_at,
+        invitation.revoked_at::text AS revoked_at
+      FROM public.admin_account_invitations invitation
+      JOIN public.users users ON users.id = invitation.user_id
+      WHERE invitation.id = $1::uuid
+    `,
+    [mutation.invitation.id],
+  );
+  const visible = rows[0];
+  if (!visible) return "not_committed";
+  return visible.user_id === mutation.invitation.user_id
+    && visible.created_by === mutation.invitation.created_by
+    && visible.idempotency_key === mutation.invitation.idempotency_key
+    && visible.request_hash === mutation.invitation.request_hash
+    && visible.token_hash === mutation.invitation.token_hash
+    ? "committed"
+    : "unknown";
 }
 
 async function reconcileAdminEpochMutation(
@@ -503,7 +559,7 @@ export async function repoProvisionUser(input: {
           ) VALUES (
             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
             $11, $12, COALESCE(NULLIF($13, ''), 'France'), $14, $15::date,
-            $16::date, $17::date, $18, COALESCE(NULLIF($19, ''), 'Inactive'), $20
+            $16::date, $17::date, $18, 'Inactive', $19
           )
           RETURNING id::int AS id, role, status
         `,
@@ -526,7 +582,6 @@ export async function repoProvisionUser(input: {
           input.employment_date ?? null,
           input.employment_end_date ?? null,
           input.national_id ?? null,
-          input.status ?? null,
           input.social_security_number ?? null,
         ],
       );
@@ -604,6 +659,151 @@ export async function repoProvisionUser(input: {
   }
 }
 
+export async function repoCreateAccountInvitation(input: {
+  id: string;
+  userId: number;
+  actorUserId: number;
+  idempotencyKey: string;
+  requestHash: string;
+  tokenHash: string;
+  createdAt: string;
+  expiresAt: string;
+}): Promise<{ invitation: AdminAccountInvitationRow; replayed: boolean }> {
+  const client = await pool.connect();
+  const mutation = await withRealtimeOutboxTransaction(client, async (tx) => {
+    const target = await tx.query<{ id: number; username: string; status: string | null }>(
+      `
+        SELECT id::int AS id, username, status
+        FROM public.users
+        WHERE id = $1
+        FOR UPDATE
+      `,
+      [input.userId],
+    );
+    const user = target.rows[0];
+    if (!user) throw new HttpError(404, "USER_NOT_FOUND", "User not found");
+
+    const existing = await tx.query<AdminAccountInvitationRow>(
+      `
+        SELECT
+          invitation.id::text AS id,
+          invitation.user_id::int AS user_id,
+          users.username,
+          invitation.created_by::int AS created_by,
+          invitation.idempotency_key::text AS idempotency_key,
+          invitation.request_hash,
+          invitation.token_hash,
+          invitation.created_at::text AS created_at,
+          invitation.expires_at::text AS expires_at,
+          invitation.accepted_at::text AS accepted_at,
+          invitation.revoked_at::text AS revoked_at
+        FROM public.admin_account_invitations invitation
+        JOIN public.users users ON users.id = invitation.user_id
+        WHERE invitation.created_by = $1
+          AND invitation.idempotency_key = $2::uuid
+        FOR UPDATE OF invitation
+      `,
+      [input.actorUserId, input.idempotencyKey],
+    );
+    const replay = existing.rows[0];
+    if (replay) {
+      if (replay.user_id !== input.userId || replay.request_hash !== input.requestHash) {
+        throw new HttpError(
+          409,
+          "IDEMPOTENCY_CONFLICT",
+          "Cette demande ne peut pas être rejouée avec ces informations.",
+        );
+      }
+      return { invitation: replay, replayed: true, noOp: true } satisfies AdminInvitationMutation;
+    }
+
+    if (user.status !== "Inactive") {
+      throw new HttpError(
+        409,
+        "ACCOUNT_NOT_INVITABLE",
+        "Seul un compte inactif peut recevoir une invitation.",
+      );
+    }
+
+    await tx.query(
+      `
+        UPDATE public.admin_account_invitations
+        SET revoked_at = $2::timestamptz
+        WHERE user_id = $1
+          AND accepted_at IS NULL
+          AND revoked_at IS NULL
+      `,
+      [input.userId, input.createdAt],
+    );
+
+    const inserted = await tx.query<AdminAccountInvitationRow>(
+      `
+        INSERT INTO public.admin_account_invitations (
+          id,
+          user_id,
+          created_by,
+          idempotency_key,
+          request_hash,
+          token_hash,
+          created_at,
+          expires_at
+        ) VALUES ($1::uuid, $2, $3, $4::uuid, $5, $6, $7::timestamptz, $8::timestamptz)
+        RETURNING
+          id::text AS id,
+          user_id::int AS user_id,
+          $9::text AS username,
+          created_by::int AS created_by,
+          idempotency_key::text AS idempotency_key,
+          request_hash,
+          token_hash,
+          created_at::text AS created_at,
+          expires_at::text AS expires_at,
+          accepted_at::text AS accepted_at,
+          revoked_at::text AS revoked_at
+      `,
+      [
+        input.id,
+        input.userId,
+        input.actorUserId,
+        input.idempotencyKey,
+        input.requestHash,
+        input.tokenHash,
+        input.createdAt,
+        input.expiresAt,
+        user.username,
+      ],
+    );
+    const invitation = inserted.rows[0];
+    if (!invitation) throw new Error("Failed to create account invitation");
+
+    await repoInsertAuditLog({
+      user_id: input.actorUserId,
+      body: {
+        event_type: "ACTION",
+        action: "ADMIN_USER_INVITED",
+        page_key: "administration",
+        entity_type: "user",
+        entity_id: String(input.userId),
+        path: `/api/v1/admin/users/${input.userId}/invitations`,
+        details: {
+          invitation_id: invitation.id,
+          expires_at: invitation.expires_at,
+        },
+      },
+      ip: null,
+      user_agent: null,
+      device_type: null,
+      os: null,
+      browser: null,
+      tx,
+    });
+
+    return { invitation, replayed: false } satisfies AdminInvitationMutation;
+  }, { reconcileCommit: reconcileAdminInvitation });
+
+  return { invitation: mutation.invitation, replayed: mutation.replayed };
+}
+
 export async function repoListRoles(): Promise<AdminRoleRow[]> {
   const { rows } = await pool.query<AdminRoleRow>(
     `
@@ -640,7 +840,8 @@ export async function repoUpdateUser(
     national_id: string | null;
     status: string | null;
     social_security_number: string | null;
-  }>
+  }>,
+  actorUserId: number,
 ): Promise<AdminUserDetailRow | null> {
   const sets: string[] = [];
   const values: unknown[] = [];
@@ -674,8 +875,8 @@ export async function repoUpdateUser(
   const client = await pool.connect();
   try {
     const mutation = await withRealtimeOutboxTransaction(client, async (tx) => {
-    const current = await tx.query<{ role: string }>(
-      `SELECT role FROM public.users WHERE id = $1 FOR UPDATE`,
+    const current = await tx.query<{ role: string; status: string | null; is_superadmin: boolean }>(
+      `SELECT role, status, is_superadmin FROM public.users WHERE id = $1 FOR UPDATE`,
       [userId]
     );
     const currentRole = current.rows[0]?.role;
@@ -705,6 +906,26 @@ export async function repoUpdateUser(
       });
     }
 
+    const candidateSnapshot = await loadAdminMutationSnapshot(tx, userId);
+    if (sameAdminState(previousSnapshot, candidateSnapshot)) {
+      return {
+        value: true,
+        userId,
+        noOp: true,
+      } satisfies AdminEpochMutation<boolean>;
+    }
+    if (
+      current.rows[0]?.is_superadmin
+      && patch.status !== undefined
+      && patch.status !== current.rows[0].status
+    ) {
+      throw new HttpError(
+        409,
+        "SUPERADMIN_LIFECYCLE_IMMUTABLE",
+        "Le statut du compte superadministrateur est protégé par la procédure de récupération.",
+      );
+    }
+
     const authorizationChanged = patch.role !== undefined
       || patch.roles !== undefined
       || patch.status !== undefined;
@@ -713,6 +934,50 @@ export async function repoUpdateUser(
       await bumpRealtimeAuthorizationEpoch(tx);
     }
     const expectedSnapshot = await loadAdminMutationSnapshot(tx, userId);
+    const changedFields = Object.keys(patch)
+      .filter((field) => field !== "assignedBy")
+      .filter((field) => {
+        if (field === "roles") {
+          return !isDeepStrictEqual(previousSnapshot.roles, expectedSnapshot.roles);
+        }
+        return !isDeepStrictEqual(
+          previousSnapshot.userState?.[field],
+          expectedSnapshot.userState?.[field],
+        );
+      })
+      .sort();
+    const previousStatus = previousSnapshot.userState?.status;
+    const nextStatus = expectedSnapshot.userState?.status;
+    const lifecycleAction = previousStatus !== nextStatus
+      ? nextStatus === "Active"
+        ? "ADMIN_USER_ACTIVATED"
+        : nextStatus === "Inactive" || nextStatus === "Blocked" || nextStatus === "Suspended"
+          ? "ADMIN_USER_DEACTIVATED"
+          : null
+      : null;
+    await repoInsertAuditLog({
+      user_id: actorUserId,
+      body: {
+        event_type: "ACTION",
+        action: lifecycleAction ?? "ADMIN_USER_UPDATED",
+        page_key: "administration",
+        entity_type: "user",
+        entity_id: String(userId),
+        path: `/api/v1/admin/users/${userId}`,
+        details: {
+          changed_fields: changedFields,
+          ...(lifecycleAction
+            ? { previous_status: previousStatus, status: nextStatus }
+            : {}),
+        },
+      },
+      ip: null,
+      user_agent: null,
+      device_type: null,
+      os: null,
+      browser: null,
+      tx,
+    });
     return {
       value: true,
       userId,
@@ -738,54 +1003,134 @@ export async function repoUpdateUser(
   }
 }
 
-export async function repoDeleteUser(userId: number): Promise<boolean> {
-  const client = await pool.connect();
-  try {
-    const mutation = await withRealtimeOutboxTransaction(client, async (tx) => {
-      const { rows } = await tx.query<{ id: number }>(
-        `DELETE FROM public.users WHERE id = $1 RETURNING id::int AS id`,
-        [userId]
-      );
-      if (!rows[0]) return { value: false, userId, noOp: true } satisfies AdminEpochMutation<boolean>;
-      await bumpRealtimeSessionEpoch(tx, userId);
-      await bumpRealtimeAuthorizationEpoch(tx);
-      return {
-        value: true,
-        userId,
-        kind: "delete",
-      } satisfies AdminEpochMutation<boolean>;
-    }, { reconcileCommit: reconcileAdminEpochMutation });
-    return mutation.value;
-  } catch (err) {
-    if (isPgForeignKeyViolation(err)) {
-      throw new HttpError(409, "USER_IN_USE", "User is referenced and cannot be deleted");
-    }
-    throw err;
-  }
-}
-
 export async function repoCreatePasswordResetToken(params: {
+  tokenId: string;
   userId: number;
+  actorUserId: number;
+  idempotencyKey: string;
+  requestHash: string;
   tokenHash: string;
+  createdAt: Date;
   expiresAt: Date;
-}): Promise<{ token_id: string; user_id: number; username: string; expires_at: string }> {
-  const userRes = await pool.query<{ id: number; username: string }>(
-    `SELECT id::int AS id, username FROM public.users WHERE id = $1 LIMIT 1`,
-    [params.userId]
-  );
-  const user = userRes.rows[0];
-  if (!user) throw new HttpError(404, "USER_NOT_FOUND", "User not found");
+}): Promise<{
+  token_id: string;
+  user_id: number;
+  username: string;
+  created_at: string;
+  expires_at: string;
+  token_hash: string;
+  replayed: boolean;
+}> {
+  const client = await pool.connect();
+  return withRealtimeOutboxTransaction(client, async (tx) => {
+    const existing = await tx.query<{
+      token_id: string;
+      user_id: number;
+      username: string;
+      created_at: string;
+      expires_at: string;
+      token_hash: string;
+      request_hash: string;
+    }>(
+      `
+        SELECT
+          reset.id::text AS token_id,
+          reset.user_id::int AS user_id,
+          users.username,
+          reset.created_at::text AS created_at,
+          reset.expires_at::text AS expires_at,
+          reset.token_hash,
+          reset.request_hash
+        FROM public.password_reset_tokens reset
+        JOIN public.users users ON users.id = reset.user_id
+        WHERE reset.created_by = $1
+          AND reset.idempotency_key = $2::uuid
+        FOR UPDATE OF reset
+      `,
+      [params.actorUserId, params.idempotencyKey],
+    );
+    const replay = existing.rows[0];
+    if (replay) {
+      if (replay.user_id !== params.userId || replay.request_hash !== params.requestHash) {
+        throw new HttpError(
+          409,
+          "IDEMPOTENCY_CONFLICT",
+          "Cette demande ne peut pas être rejouée avec ces informations.",
+        );
+      }
+      return { ...replay, replayed: true };
+    }
 
-  const tokenId = crypto.randomUUID();
-  const expiresAtIso = params.expiresAt.toISOString();
-  await pool.query(
-    `
-      INSERT INTO public.password_reset_tokens (id, user_id, token_hash, expires_at)
-      VALUES ($1::uuid, $2::int, $3, $4::timestamp)
-    `,
-    [tokenId, params.userId, params.tokenHash, expiresAtIso]
-  );
-  return { token_id: tokenId, user_id: user.id, username: user.username, expires_at: expiresAtIso };
+    const userRes = await tx.query<{ id: number; username: string }>(
+      `SELECT id::int AS id, username FROM public.users WHERE id = $1 FOR UPDATE`,
+      [params.userId],
+    );
+    const user = userRes.rows[0];
+    if (!user) throw new HttpError(404, "USER_NOT_FOUND", "User not found");
+    await tx.query(
+      `
+        UPDATE public.password_reset_tokens
+        SET used_at = $2::timestamp
+        WHERE user_id = $1
+          AND used_at IS NULL
+      `,
+      [params.userId, params.createdAt.toISOString()],
+    );
+    const inserted = await tx.query<{
+      token_id: string;
+      user_id: number;
+      username: string;
+      created_at: string;
+      expires_at: string;
+      token_hash: string;
+    }>(
+      `
+        INSERT INTO public.password_reset_tokens (
+          id, user_id, token_hash, expires_at, created_at,
+          created_by, idempotency_key, request_hash
+        ) VALUES ($1::uuid, $2::int, $3, $4::timestamp, $5::timestamp, $6, $7::uuid, $8)
+        RETURNING
+          id::text AS token_id,
+          user_id::int AS user_id,
+          $9::text AS username,
+          created_at::text AS created_at,
+          expires_at::text AS expires_at,
+          token_hash
+      `,
+      [
+        params.tokenId,
+        params.userId,
+        params.tokenHash,
+        params.expiresAt.toISOString(),
+        params.createdAt.toISOString(),
+        params.actorUserId,
+        params.idempotencyKey,
+        params.requestHash,
+        user.username,
+      ],
+    );
+    const created = inserted.rows[0];
+    if (!created) throw new Error("Failed to create admin password reset token");
+    await repoInsertAuditLog({
+      user_id: params.actorUserId,
+      body: {
+        event_type: "ACTION",
+        action: "ADMIN_PASSWORD_RESET_TOKEN_CREATED",
+        page_key: "administration",
+        entity_type: "user",
+        entity_id: String(params.userId),
+        path: `/api/v1/admin/users/${params.userId}/password-reset-token`,
+        details: { expires_at: created.expires_at },
+      },
+      ip: null,
+      user_agent: null,
+      device_type: null,
+      os: null,
+      browser: null,
+      tx,
+    });
+    return { ...created, replayed: false };
+  });
 }
 
 export async function repoListLoginLogs(filters: {
@@ -832,6 +1177,7 @@ export async function repoListLoginLogs(filters: {
 
 export async function repoResetUserPasswordWithToken(params: {
   userId: string;
+  actorUserId: number;
   rawToken: string;
   passwordHash: string;
 }): Promise<number> {
@@ -885,6 +1231,23 @@ export async function repoResetUserPasswordWithToken(params: {
     if ((consumed.rowCount ?? 0) !== 1) {
       throw new HttpError(400, "RESET_TOKEN_USED", "Ce token a déjà été utilisé.");
     }
+    await repoInsertAuditLog({
+      user_id: params.actorUserId,
+      body: {
+        event_type: "ACTION",
+        action: "ADMIN_PASSWORD_RESET_COMPLETED",
+        page_key: "administration",
+        entity_type: "user",
+        entity_id: String(parsedUserId),
+        path: `/api/v1/admin/users/${parsedUserId}/password`,
+      },
+      ip: null,
+      user_agent: null,
+      device_type: null,
+      os: null,
+      browser: null,
+      tx,
+    });
     const expectedSnapshot = await loadAdminMutationSnapshot(tx, parsedUserId);
     return {
       value: parsedUserId,

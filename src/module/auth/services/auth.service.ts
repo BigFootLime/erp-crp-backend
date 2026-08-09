@@ -29,6 +29,11 @@ import {
   canonicalizeAuthUsername,
   preserveOpaqueAuthToken,
 } from "../domain/auth-identity";
+import {
+  hashAccountInvitationToken,
+  verifyAccountInvitationToken,
+} from "../domain/account-invitation";
+import { repoActivateAccountInvitation } from "../repository/account-invitation.repository";
 
 export const loginUser = async (
   username: string,
@@ -66,6 +71,17 @@ export const loginUser = async (
       username_attempt: normalizedUsername,
       success: false,
       failure_reason: "BAD_PASSWORD",
+      ...meta,
+    });
+    throw new ApiError(401, "AUTH_INVALID", invalidMsg);
+  }
+
+  if (user.status !== "Active") {
+    await insertLoginLog({
+      user_id: user.id,
+      username_attempt: normalizedUsername,
+      success: false,
+      failure_reason: "ACCOUNT_NOT_ACTIVE",
       ...meta,
     });
     throw new ApiError(401, "AUTH_INVALID", invalidMsg);
@@ -110,6 +126,33 @@ export const loginUser = async (
   };
 };
 
+export async function activateAccountWithInvitation(
+  token: string,
+  newPassword: string,
+  meta: {
+    ip: string | null;
+    user_agent: string | null;
+    device_type: string | null;
+    os: string | null;
+    browser: string | null;
+  },
+) {
+  const opaqueToken = preserveOpaqueAuthToken(token);
+  const claims = verifyAccountInvitationToken(opaqueToken);
+  const passwordHash = await bcrypt.hash(newPassword, 12);
+  const result = await repoActivateAccountInvitation({
+    invitationId: claims.invitationId,
+    userId: claims.userId,
+    tokenHash: hashAccountInvitationToken(opaqueToken),
+    passwordHash,
+    meta,
+  });
+  if (!result.replayed) {
+    await revokeUserRealtimeSessions(result.userId, { durable: false }).catch(() => undefined);
+  }
+  return result;
+}
+
 const RESET_TOKEN_BYTES = 32;
 const RESET_TOKEN_TTL_MS = 15 * 60 * 1000;
 
@@ -152,6 +195,24 @@ export async function requestPasswordReset(
       user_id: user.id,
       token_hash,
       expires_at: expiresAt,
+      tx,
+    });
+    await repoInsertAuditLog({
+      user_id: user.id,
+      body: {
+        event_type: "ACTION",
+        action: "AUTH_PASSWORD_RESET_REQUESTED",
+        page_key: "auth",
+        entity_type: "user",
+        entity_id: String(user.id),
+        path: "/api/v1/auth/forgot-password",
+        details: { expires_at: expiresAt.toISOString() },
+      },
+      ip: meta.ip,
+      user_agent: meta.user_agent,
+      device_type: meta.device_type,
+      os: meta.os,
+      browser: meta.browser,
       tx,
     });
     return { resetId, userId: user.id, tokenHash: token_hash, expiresAt };
@@ -217,23 +278,9 @@ export async function requestPasswordReset(
     }
   }
 
-  try {
-    await repoInsertAuditLog({
-      user_id: user.id,
-      body: {
-        event_type: "ACTION",
-        action: "AUTH_PASSWORD_RESET_REQUESTED",
-        page_key: "auth",
-        entity_type: "user",
-        entity_id: String(user.id),
-        path: "/api/v1/auth/forgot-password",
-        details: { expires_at: expiresAt.toISOString(), email: emailDetails },
-      },
-      ...meta,
-    });
-  } catch {
-    // ignore audit failures
-  }
+  // Delivery outcome is operational telemetry only. The durable request audit
+  // was committed atomically with the token and never contains recipient data.
+  void emailDetails;
 }
 
 async function reconcilePasswordResetRequestCommit(
@@ -292,6 +339,19 @@ export async function resetPasswordWithToken(
     const passwordMutation = await updateUserPassword({ userId: row.user_id, passwordHash, tx });
     await repoMarkPasswordResetUsed({ id: row.id, tx });
     await repoDeleteOtherActivePasswordResetsForUser({ user_id: row.user_id, keep_id: row.id, tx });
+    await repoInsertAuditLog({
+      user_id: row.user_id,
+      body: {
+        event_type: "ACTION",
+        action: "AUTH_PASSWORD_RESET_COMPLETED",
+        page_key: "auth",
+        entity_type: "user",
+        entity_id: String(row.user_id),
+        path: "/api/v1/auth/reset-password",
+      },
+      ...meta,
+      tx,
+    });
 
     return {
       userId: row.user_id,
@@ -307,23 +367,6 @@ export async function resetPasswordWithToken(
   // Durable revocation is part of the reconciled transaction. Local fan-out
   // happens only after COMMIT is acknowledged or proven committed.
   await revokeUserRealtimeSessions(mutation.userId, { durable: false }).catch(() => undefined);
-
-    try {
-      await repoInsertAuditLog({
-        user_id: mutation.userId,
-        body: {
-          event_type: "ACTION",
-          action: "AUTH_PASSWORD_RESET_COMPLETED",
-          page_key: "auth",
-          entity_type: "user",
-          entity_id: String(mutation.userId),
-          path: "/api/v1/auth/reset-password",
-        },
-        ...meta,
-      });
-    } catch {
-      // ignore audit failures
-    }
 
   return;
 }

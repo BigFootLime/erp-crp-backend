@@ -115,7 +115,13 @@ export async function repoResolveAccessProfile(
 export async function repoIsSuperadmin(userId: number, tx?: DbQueryer): Promise<boolean> {
   const q = tx ?? pool;
   const { rows } = await q.query<{ is_superadmin: boolean }>(
-    `SELECT COALESCE(is_superadmin, false) AS is_superadmin FROM public.users WHERE id = $1 LIMIT 1`,
+    `
+      SELECT COALESCE(is_superadmin, false) AS is_superadmin
+      FROM public.users
+      WHERE id = $1
+        AND status = 'Active'
+      LIMIT 1
+    `,
     [userId]
   );
   return rows[0]?.is_superadmin === true;

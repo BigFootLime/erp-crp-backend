@@ -96,6 +96,43 @@ export type AuthUserLookupRow = {
   password?: string;
 };
 
+export type AuthenticatedAccountState = {
+  status: string | null;
+  session_epoch: number;
+};
+
+/**
+ * Resolve the live account state for an already verified JWT. This check stays
+ * database-backed so disabling an account takes effect immediately for HTTP
+ * requests instead of waiting for the access token to expire.
+ */
+export const findAuthenticatedAccountState = async (
+  userId: number,
+): Promise<AuthenticatedAccountState | null> => {
+  const { rows } = await pool.query<{
+    status: string | null;
+    session_epoch: string;
+  }>(
+    `
+      SELECT
+        users.status,
+        COALESCE(epochs.session_epoch, 0)::text AS session_epoch
+      FROM public.users
+      LEFT JOIN public.realtime_session_epochs epochs ON epochs.user_id = users.id
+      WHERE users.id = $1
+      LIMIT 1
+    `,
+    [userId],
+  );
+  const row = rows[0];
+  if (!row) return null;
+  const sessionEpoch = Number.parseInt(row.session_epoch, 10);
+  return {
+    status: row.status,
+    session_epoch: Number.isSafeInteger(sessionEpoch) && sessionEpoch >= 0 ? sessionEpoch : 0,
+  };
+};
+
 export const findUserByUsernameOrEmail = async (usernameOrEmail: string): Promise<AuthUserLookupRow | null> => {
   const raw = typeof usernameOrEmail === "string" ? usernameOrEmail : "";
   if (!raw) return null;
