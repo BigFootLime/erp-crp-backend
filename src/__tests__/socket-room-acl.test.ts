@@ -722,9 +722,11 @@ describe("Socket.IO shared room ACL", () => {
     });
     controlPlane.prunedThrough = 1n;
     controlPlane.latestSequenceFailures = 1;
+    controlPlane.readAfterUnavailable = true;
 
     controlPlane.emitControlSignal({ kind: "full_resync_required" });
     await eventually(() => expect(server.runtime.isReady()).toBe(false));
+    controlPlane.readAfterUnavailable = false;
     await eventually(() => expect(resync).toHaveBeenCalledWith(expect.objectContaining({ lastSequence: "1" })));
     expect(server.runtime.isReady()).toBe(true);
     expect(server.runtime.getMetrics().controlPlanePollFailures).toBeGreaterThanOrEqual(1);
