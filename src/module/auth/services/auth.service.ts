@@ -1,8 +1,6 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import crypto from "node:crypto";
-import { CreateUserDTO } from '../types/user.type';
-import { createUser } from '../repository/auth.repository';
 import { findUserByUsername } from '../repository/auth.repository';
 import { findUserByUsernameOrEmail, updateUserPassword } from "../repository/auth.repository";
 import { ApiError } from "../../../utils/apiError";
@@ -31,16 +29,6 @@ import {
   canonicalizeAuthUsername,
   preserveOpaqueAuthToken,
 } from "../domain/auth-identity";
-
-export const registerUser = async (data: CreateUserDTO) => {
-  // 🔐 Hash du mot de passe
-  const salt = await bcrypt.genSalt(10);
-  const hashedPassword = await bcrypt.hash(data.password, salt);
-
-  // 📤 Enregistrement en base
-  const user = await createUser(data, hashedPassword);
-  return user;
-};
 
 export const loginUser = async (
   username: string,

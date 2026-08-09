@@ -1,5 +1,7 @@
-// src/module/admin/controllers/admin.controller.ts
 import type { RequestHandler } from "express";
+
+import { asyncHandler } from "../../../utils/asyncHandler";
+import { HttpError } from "../../../utils/httpError";
 import * as adminService from "../services/admin.service";
 import {
   adminCreateUserSchema,
@@ -7,17 +9,13 @@ import {
   adminUserIdParamSchema,
   resetPasswordByAdminSchema,
 } from "../validators/admin.validators";
-import { asyncHandler } from "../../../utils/asyncHandler";
-import { HttpError } from "../../../utils/httpError";
 
 export const listUsersAdmin: RequestHandler = asyncHandler(async (_req, res) => {
-  const rows = await adminService.listUsers();
-  res.json(rows);
+  res.json(await adminService.listUsers());
 });
 
 export const listRolesAdmin: RequestHandler = asyncHandler(async (_req, res) => {
-  const rows = await adminService.listRoles();
-  res.json(rows);
+  res.json(await adminService.listRoles());
 });
 
 export const listLoginLogsAdmin: RequestHandler = asyncHandler(async (req, res) => {
@@ -25,14 +23,12 @@ export const listLoginLogsAdmin: RequestHandler = asyncHandler(async (req, res) 
   const to = (req.query as { to?: unknown }).to;
   const success = (req.query as { success?: unknown }).success;
   const username = (req.query as { username?: unknown }).username;
-
-  const rows = await adminService.listLoginLogs({
+  res.json(await adminService.listLoginLogs({
     from: typeof from === "string" ? from : "",
     to: typeof to === "string" ? to : "",
     success: typeof success === "string" ? success : "",
     username: typeof username === "string" ? username : "",
-  });
-  res.json(rows);
+  }));
 });
 
 export const getAdminAnalytics: RequestHandler = asyncHandler(async (req, res) => {
@@ -41,52 +37,36 @@ export const getAdminAnalytics: RequestHandler = asyncHandler(async (req, res) =
   const success = (req.query as { success?: unknown }).success;
   const role = (req.query as { role?: unknown }).role;
   const status = (req.query as { status?: unknown }).status;
-
-  const data = await adminService.getAnalytics({
+  res.json(await adminService.getAnalytics({
     from: typeof from === "string" ? from : "",
     to: typeof to === "string" ? to : "",
     success: typeof success === "string" ? success : "",
     role: typeof role === "string" ? role : "",
     status: typeof status === "string" ? status : "",
-  });
-  res.json(data);
+  }));
 });
 
 export const getUserAdmin: RequestHandler = asyncHandler(async (req, res) => {
   const dto = adminUserIdParamSchema.parse({ params: req.params });
-  const userId = Number(dto.params.id);
-  const user = await adminService.getUser(userId);
+  const user = await adminService.getUser(Number(dto.params.id));
   if (!user) throw new HttpError(404, "USER_NOT_FOUND", "User not found");
   res.json({ user });
 });
 
 export const createUserAdmin: RequestHandler = asyncHandler(async (req, res) => {
-  const dto = adminCreateUserSchema.parse({ body: req.body });
-  const user = await adminService.createUserByAdmin({
-    username: dto.body.username,
-    password: dto.body.password,
-    name: dto.body.name,
-    surname: dto.body.surname,
-    email: dto.body.email,
-    tel_no: dto.body.tel_no ?? null,
-    role: dto.body.role,
-    roles: dto.body.roles,
-    assignedBy: req.user?.id ?? null,
-    gender: dto.body.gender ?? null,
-    address: dto.body.address ?? null,
-    lane: dto.body.lane ?? null,
-    house_no: dto.body.house_no ?? null,
-    postcode: dto.body.postcode ?? null,
-    country: dto.body.country ?? "France",
-    salary: dto.body.salary === undefined ? null : dto.body.salary,
-    date_of_birth: dto.body.date_of_birth ?? null,
-    employment_date: dto.body.employment_date ?? null,
-    employment_end_date: dto.body.employment_end_date ?? null,
-    national_id: dto.body.national_id ?? null,
-    status: dto.body.status ?? null,
-    social_security_number: dto.body.social_security_number ?? null,
+  const dto = adminCreateUserSchema.parse({
+    headers: { idempotencyKey: req.get("Idempotency-Key") },
+    body: req.body,
   });
-  res.status(201).json({ user });
+  if (!req.user) throw new HttpError(401, "AUTH_REQUIRED", "Authentification requise");
+
+  const result = await adminService.createUserByAdmin({
+    ...dto.body,
+    actorUserId: req.user.id,
+    idempotencyKey: dto.headers.idempotencyKey,
+  });
+  res.setHeader("Idempotency-Replayed", result.replayed ? "true" : "false");
+  res.status(result.replayed ? 200 : 201).json(result);
 });
 
 export const patchUserAdmin: RequestHandler = asyncHandler(async (req, res) => {
@@ -99,24 +79,20 @@ export const patchUserAdmin: RequestHandler = asyncHandler(async (req, res) => {
 
 export const deleteUserAdmin: RequestHandler = asyncHandler(async (req, res) => {
   const dto = adminUserIdParamSchema.parse({ params: req.params });
-  const userId = Number(dto.params.id);
-  const ok = await adminService.deleteUserByAdmin(userId);
+  const ok = await adminService.deleteUserByAdmin(Number(dto.params.id));
   if (!ok) throw new HttpError(404, "USER_NOT_FOUND", "User not found");
   res.status(204).end();
 });
 
 export const createPasswordResetTokenAdmin: RequestHandler = asyncHandler(async (req, res) => {
   const dto = adminUserIdParamSchema.parse({ params: req.params });
-  const userId = Number(dto.params.id);
-  const out = await adminService.createPasswordResetTokenByAdmin({ userId });
-  res.status(201).json(out);
+  res.status(201).json(await adminService.createPasswordResetTokenByAdmin({
+    userId: Number(dto.params.id),
+  }));
 });
 
 export const resetUserPasswordAdmin: RequestHandler = asyncHandler(async (req, res) => {
-  const dto = resetPasswordByAdminSchema.parse({
-    params: req.params,
-    body: req.body,
-  });
+  const dto = resetPasswordByAdminSchema.parse({ params: req.params, body: req.body });
   await adminService.resetUserPasswordByAdmin({
     userId: dto.params.id,
     token: dto.body.token,

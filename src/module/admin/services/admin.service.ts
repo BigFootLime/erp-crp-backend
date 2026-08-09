@@ -1,8 +1,15 @@
 import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
 
+import { normalizeAssignedRoles } from "../../auth/domain/roles";
 import { revokeUserRealtimeSessions } from "../../../sockets/sockeServer";
 import * as adminRepo from "../repository/admin.repository";
+import type { AdminCreateUserDTO } from "../validators/admin.validators";
+
+type ProvisionUserInput = AdminCreateUserDTO["body"] & {
+  actorUserId: number;
+  idempotencyKey: string;
+};
 
 export async function listUsers() {
   return adminRepo.repoListUsers();
@@ -16,69 +23,42 @@ export async function getUser(userId: number) {
   return adminRepo.repoGetUserById(userId);
 }
 
-export async function createUserByAdmin(input: {
-  username: string;
-  password: string;
-  name: string;
-  surname: string;
-  email: string;
-  tel_no: string | null;
-  role: string;
-  roles: string[];
-  assignedBy: number | null;
-  gender: string | null;
-  address: string | null;
-  lane: string | null;
-  house_no: string | null;
-  postcode: string | null;
-  country: string | null;
-  salary: number | null;
-  date_of_birth: string | null;
-  employment_date: string | null;
-  employment_end_date: string | null;
-  national_id: string | null;
-  status: string | null;
-  social_security_number: string | null;
-}) {
-  const hash = await bcrypt.hash(input.password, 12);
-  return adminRepo.repoCreateUser({
-    username: input.username,
-    passwordHash: hash,
-    name: input.name,
-    surname: input.surname,
-    email: input.email,
-    tel_no: input.tel_no,
-    role: input.role,
-    roles: input.roles,
-    assignedBy: input.assignedBy,
-    gender: input.gender,
-    address: input.address,
-    lane: input.lane,
-    house_no: input.house_no,
-    postcode: input.postcode,
-    country: input.country,
-    salary: input.salary,
-    date_of_birth: input.date_of_birth,
-    employment_date: input.employment_date,
-    employment_end_date: input.employment_end_date,
-    national_id: input.national_id,
-    status: input.status,
-    social_security_number: input.social_security_number,
+export function buildProvisioningRequestHash(input: ProvisionUserInput): string {
+  const {
+    password: _password,
+    actorUserId: _actorUserId,
+    idempotencyKey: _idempotencyKey,
+    ...nonSecretFields
+  } = input;
+  const canonical = JSON.stringify({
+    ...nonSecretFields,
+    roles: normalizeAssignedRoles(input.role, input.roles),
+  });
+  return crypto.createHash("sha256").update(canonical).digest("hex");
+}
+
+export async function createUserByAdmin(input: ProvisionUserInput) {
+  const passwordHash = await bcrypt.hash(input.password, 12);
+  const { password: _password, ...provisioningInput } = input;
+  return adminRepo.repoProvisionUser({
+    ...provisioningInput,
+    roles: normalizeAssignedRoles(input.role, input.roles),
+    assignedBy: input.actorUserId,
+    passwordHash,
+    requestHash: buildProvisioningRequestHash(input),
   });
 }
 
 export async function updateUserByAdmin(
   userId: number,
   patch: Record<string, unknown>,
-  assignedBy: number | null
+  assignedBy: number | null,
 ) {
   const updated = await adminRepo.repoUpdateUser(userId, {
     ...(patch as Parameters<typeof adminRepo.repoUpdateUser>[1]),
     assignedBy,
   });
   if ("role" in patch || "roles" in patch || "status" in patch) {
-    // The durable transaction already bumped the session epoch. Local Socket.IO
-    // delivery is best-effort and must not fail an otherwise committed mutation.
     await revokeUserRealtimeSessions(userId, { durable: false }).catch(() => undefined);
   }
   return updated;
@@ -127,8 +107,6 @@ export async function resetUserPasswordByAdmin(input: {
     rawToken: input.token,
     passwordHash: hash,
   });
-  // Durable password + epoch + token consumption is committed (or proven
-  // committed) before local fan-out. Socket runtime failure cannot undo it.
   await revokeUserRealtimeSessions(userId, { durable: false }).catch(() => undefined);
 }
 

@@ -1,11 +1,8 @@
-// src/module/admin/validators/admin.validators.ts
 import { z } from "zod";
-import { isoDate, strictEmail, trimString } from "../../auth/validators/_helpers";
-import {
-  ASSIGNABLE_USER_ROLES,
-  PRIMARY_USER_ROLES,
-} from "../../auth/domain/roles";
+
 import { canonicalizeAuthUsername } from "../../auth/domain/auth-identity";
+import { ASSIGNABLE_USER_ROLES, PRIMARY_USER_ROLES } from "../../auth/domain/roles";
+import { isoDate, strictEmail, trimString } from "../../auth/validators/_helpers";
 
 const userIdParam = z
   .string({ required_error: "ID utilisateur requis", invalid_type_error: "ID utilisateur invalide" })
@@ -14,15 +11,15 @@ const userIdParam = z
 
 const usernameSchema = trimString(3, "Nom d'utilisateur requis (min 3 caractères)")
   .transform(canonicalizeAuthUsername)
-  .refine((v) => /^[A-Z0-9._-]+$/.test(v), "Username: caractères autorisés A-Z 0-9 . _ -");
+  .refine((value) => /^[A-Z0-9._-]+$/.test(value), "Username: caractères autorisés A-Z 0-9 . _ -");
 
 const phoneFR = z
-  .string({ required_error: "Téléphone requis", invalid_type_error: "Téléphone invalide" })
+  .string({ invalid_type_error: "Téléphone invalide" })
   .trim()
   .regex(/^(?:\+33|0)[1-9]\d{8}$/, "Téléphone invalide (ex: 06XXXXXXXX ou +33XXXXXXXXX)");
 
 const nir = z
-  .string({ required_error: "Numéro de sécurité sociale requis", invalid_type_error: "Numéro de sécurité sociale invalide" })
+  .string({ invalid_type_error: "Numéro de sécurité sociale invalide" })
   .trim()
   .regex(/^\d{15}$/, "Le numéro de sécurité sociale doit contenir 15 chiffres");
 
@@ -37,10 +34,13 @@ export const adminNewPasswordSchema = z
   .regex(/[0-9]/, "Le mot de passe doit contenir au moins 1 chiffre.")
   .regex(/[^A-Za-z0-9]/, "Le mot de passe doit contenir au moins 1 symbole.");
 
+export const provisioningIdempotencyKeySchema = z
+  .string({ required_error: "Clé d'idempotence requise" })
+  .trim()
+  .uuid("Clé d'idempotence invalide");
+
 export const adminUserIdParamSchema = z.object({
-  params: z.object({
-    id: userIdParam,
-  }),
+  params: z.object({ id: userIdParam }),
 });
 
 const userCoreObject = z
@@ -55,31 +55,20 @@ const userCoreObject = z
       .array(z.enum(ASSIGNABLE_USER_ROLES))
       .min(1, "Au moins un rôle est requis")
       .max(20, "Trop de rôles attribués"),
-    gender: z
-      .enum(genders, { errorMap: () => ({ message: "Le genre doit être 'Male' ou 'Female'" }) })
-      .optional()
-      .nullable(),
+    gender: z.enum(genders).optional().nullable(),
     address: trimString(3, "Adresse invalide (min 3 caractères)").optional().nullable(),
     lane: trimString(2, "Rue invalide (min 2 caractères)").optional().nullable(),
     house_no: z.string().trim().min(1, "Numéro de voie invalide").optional().nullable(),
-    postcode: z
-      .string()
-      .trim()
-      .regex(/^\d{5}$/, "Le code postal doit contenir 5 chiffres")
-      .optional()
-      .nullable(),
+    postcode: z.string().trim().regex(/^\d{5}$/, "Le code postal doit contenir 5 chiffres").optional().nullable(),
     country: z.string().trim().min(1).optional().default("France"),
     salary: z
       .union([
-        z.coerce
-          .number({ invalid_type_error: "Salaire invalide" })
-          .min(0, "Le salaire doit être positif")
-          .max(1_000_000, "Salaire incohérent"),
+        z.coerce.number({ invalid_type_error: "Salaire invalide" }).min(0).max(1_000_000),
         z.null(),
       ])
       .optional(),
     date_of_birth: isoDate("Date de naissance")
-      .refine((v) => new Date(v) <= new Date(), "La date de naissance ne peut pas être dans le futur")
+      .refine((value) => new Date(value) <= new Date(), "La date de naissance ne peut pas être dans le futur")
       .optional()
       .nullable(),
     employment_date: isoDate("Date d'embauche").optional().nullable(),
@@ -97,7 +86,7 @@ function refineEmploymentDates(
     employment_date?: string | null;
     employment_end_date?: string | null;
   },
-  ctx: z.RefinementCtx
+  ctx: z.RefinementCtx,
 ) {
   if (data.role && data.roles && !data.roles.includes(data.role)) {
     ctx.addIssue({
@@ -122,12 +111,14 @@ function refineEmploymentDates(
 const userCreateBody = userCoreObject
   .extend({
     password: adminNewPasswordSchema,
+    status: z.enum(statuses).default("Inactive"),
   })
   .superRefine(refineEmploymentDates);
 
 const userPatchBody = userCoreObject.partial().superRefine(refineEmploymentDates);
 
 export const adminCreateUserSchema = z.object({
+  headers: z.object({ idempotencyKey: provisioningIdempotencyKeySchema }),
   body: userCreateBody,
 });
 export type AdminCreateUserDTO = z.infer<typeof adminCreateUserSchema>;

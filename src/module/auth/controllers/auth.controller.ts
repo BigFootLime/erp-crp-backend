@@ -1,24 +1,8 @@
 import { Request, Response } from "express";
 import { forgotPasswordSchema, loginSchema, resetPasswordSchema } from "../validators/auth.validator";
-import { registerSchema } from "../validators/user.validator";
-import { registerUser, loginUser, requestPasswordReset, resetPasswordWithToken } from "../services/auth.service";
+import { loginUser, requestPasswordReset, resetPasswordWithToken } from "../services/auth.service";
 import { asyncHandler } from "../../../utils/asyncHandler";
 import { getClientIp, parseDevice } from "../../../utils/requestMeta";
-
-export const register = asyncHandler(async (req: Request, res: Response) => {
-  const validated = registerSchema.parse(req.body);
-
-  // Sécurité (ISO A.5.15 / A.8.2) : l'inscription publique ne doit JAMAIS permettre
-  // l'auto-attribution d'un rôle. Tout `role` fourni par le client est ignoré et forcé
-  // à "Employee". La création de comptes avec rôle privilégié passe exclusivement par
-  // le module admin (POST /admin/users, protégé par authenticateToken + authorizeRole).
-  const user = await registerUser({ ...validated, role: "Employee" });
-
-  return res.status(201).json({
-    message: "Utilisateur créé avec succès",
-    user,
-  });
-});
 
 export const login = asyncHandler(async (req: Request, res: Response) => {
   const { username, password } = loginSchema.parse(req.body);

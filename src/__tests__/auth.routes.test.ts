@@ -7,7 +7,6 @@ const rateLimitMocks = vi.hoisted(() => ({
 
 // 🛑 Place les mocks AVANT d'importer app
 vi.mock('../module/auth/controllers/auth.controller', () => ({
-  register: vi.fn((req, res) => res.status(201).json({ message: 'Utilisateur enregistré' })),
   login: vi.fn((req, res) => res.status(200).json({ token: 'fake-jwt-token' })),
   forgotPassword: vi.fn((req, res) =>
     res.status(200).json({ message: 'Si ce compte existe, un lien de réinitialisation a été envoyé.' })
@@ -40,7 +39,7 @@ vi.mock('../module/auth/middlewares/auth.middleware', () => ({
 import app from '../config/app'
 
 describe('🧪 Routes Authentification (/auth)', () => {
-  it('✅ POST /api/v1/auth/register retourne 201', async () => {
+  it('🔒 POST /api/v1/auth/register est fermé et retourne 404', async () => {
     const res = await request(app)
       .post('/api/v1/auth/register')
       .send({
@@ -49,8 +48,7 @@ describe('🧪 Routes Authentification (/auth)', () => {
         password: 'password123'
       })
 
-    expect(res.status).toBe(201)
-    expect(res.body.message).toBe('Utilisateur enregistré')
+    expect(res.status).toBe(404)
   })
 
   it('✅ POST /api/v1/auth/login retourne 200 avec un token', async () => {

@@ -1,22 +1,19 @@
-import { Router, Request, Response } from 'express';
-import { register, login, forgotPassword, resetPassword } from '../controllers/auth.controller';
+import { Router } from 'express';
+import { login, forgotPassword, resetPassword } from '../controllers/auth.controller';
 import {
     authenticateToken,
     authorizeRole
   } from '../middlewares/auth.middleware';
-import {asyncHandler} from '../../../utils/asyncHandler';
 import { getProfile } from '../controllers/user.controller';
 import { getAccessProfile } from '../../access-control/controllers/access-control.controller';
 import {
   forgotPasswordRateLimit,
   loginRateLimit,
-  registerRateLimit,
   resetPasswordRateLimit,
 } from '../middlewares/auth-rate-limit.middleware';
 
 const router: Router = Router();
 
-router.post('/register', registerRateLimit, register);
 router.post('/login', loginRateLimit, login);
 router.post('/forgot-password', forgotPasswordRateLimit, forgotPassword);
 router.post('/reset-password', resetPasswordRateLimit, resetPassword);

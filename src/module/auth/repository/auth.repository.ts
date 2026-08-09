@@ -6,7 +6,6 @@ import {
   type RealtimeDbQueryer,
 } from '../../../shared/realtime/realtime-control-plane';
 import { withRealtimeOutboxTransaction } from '../../../shared/realtime/realtime-outbox-transaction';
-import { CreateUserDTO } from '../types/user.type';
 import {
   canonicalizeAuthEmail,
   canonicalizeAuthUsername,
@@ -59,45 +58,6 @@ async function reconcileAuthEpochMutation(verifier: PoolClient, mutation: AuthEp
   ) return 'not_committed' as const;
   return 'unknown' as const;
 }
-
-export const createUser = async (user: CreateUserDTO, hashedPassword: string) => {
-  const client = await pool.connect();
-  const mutation = await withRealtimeOutboxTransaction(client, async (tx) => {
-    const {
-      username, name, surname, email, tel_no, gender, address, lane,
-      house_no, postcode, country = 'France', salary = 0,
-      date_of_birth, role = 'Utilisateur', social_security_number
-    } = user;
-    const canonicalUsername = canonicalizeAuthUsername(username);
-    const canonicalEmail = canonicalizeAuthEmail(email);
-
-    const result = await tx.query<{ id: number; username: string; email: string; role: string }>(
-      `INSERT INTO users (
-        username, password, name, surname, email, tel_no, gender, address,
-        lane, house_no, postcode, country, salary, date_of_birth, role, social_security_number
-      ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8,
-        $9, $10, $11, $12, $13, $14, $15, $16
-      ) RETURNING id, username, email, role;`,
-      [
-        canonicalUsername, hashedPassword, name, surname, canonicalEmail, tel_no, gender, address,
-        lane, house_no, postcode, country, salary, date_of_birth, role, social_security_number
-      ]
-    );
-
-    const created = result.rows[0];
-    if (!created) throw new Error("AUTH_USER_INSERT_FAILED");
-    const expectedSessionEpoch = await bumpRealtimeSessionEpoch(tx, created.id);
-    await bumpRealtimeAuthorizationEpoch(tx);
-    return {
-      value: created,
-      userId: created.id,
-      kind: 'create',
-      expectedSessionEpoch,
-    } satisfies AuthEpochMutation<typeof created>;
-  }, { reconcileCommit: reconcileAuthEpochMutation });
-  return mutation.value;
-};
 
 // 🔍 Cherche un utilisateur par email
 export const findUserByUsername = async (username: string) => {

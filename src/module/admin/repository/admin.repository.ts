@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type { PoolClient } from "pg";
 
+import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import {
   bumpRealtimeAuthorizationEpoch,
   bumpRealtimeSessionEpoch,
@@ -390,135 +391,215 @@ export async function repoGetUserById(userId: number): Promise<AdminUserDetailRo
   return row ? { ...row, is_superadmin: superadminIds.has(row.id) } : null;
 }
 
-export async function repoCreateUser(input: {
-  username: string;
+export async function repoProvisionUser(input: {
+  actorUserId: number;
+  idempotencyKey: string;
+  requestHash: string;
   passwordHash: string;
+  username: string;
   name: string;
   surname: string;
   email: string;
-  tel_no: string | null;
+  tel_no?: string | null;
   role: string;
   roles: string[];
   assignedBy: number | null;
-  gender: string | null;
-  address: string | null;
-  lane: string | null;
-  house_no: string | null;
-  postcode: string | null;
-  country: string | null;
-  salary: number | null;
-  date_of_birth: string | null;
-  employment_date: string | null;
-  employment_end_date: string | null;
-  national_id: string | null;
-  status: string | null;
-  social_security_number: string | null;
-}): Promise<AdminUserDetailRow> {
+  gender?: string | null;
+  address?: string | null;
+  lane?: string | null;
+  house_no?: string | null;
+  postcode?: string | null;
+  country?: string | null;
+  salary?: number | null;
+  date_of_birth?: string | null;
+  employment_date?: string | null;
+  employment_end_date?: string | null;
+  national_id?: string | null;
+  status?: string | null;
+  social_security_number?: string | null;
+}): Promise<{ user: AdminUserDetailRow; replayed: boolean }> {
   const client = await pool.connect();
   try {
     const mutation = await withRealtimeOutboxTransaction(client, async (tx) => {
-    const { rows } = await tx.query<{ id: number }>(
-      `
-        INSERT INTO public.users (
-          username,
-          password,
-          name,
-          surname,
-          email,
-          tel_no,
-          role,
-          gender,
-          address,
-          lane,
-          house_no,
-          postcode,
-          country,
-          salary,
-          date_of_birth,
-          employment_date,
-          employment_end_date,
-          national_id,
-          status,
-          social_security_number
-        ) VALUES (
-          $1,
-          $2,
-          $3,
-          $4,
-          $5,
-          $6,
-          $7,
-          $8,
-          $9,
-          $10,
-          $11,
-          $12,
-          COALESCE(NULLIF($13, ''), 'France'),
-          $14,
-          $15::date,
-          COALESCE($16::date, CURRENT_DATE),
-          $17::date,
-          $18,
-          COALESCE(NULLIF($19, ''), 'Active'),
-          $20
-        )
-        RETURNING id::int AS id
-      `,
-      [
-        canonicalizeAuthUsername(input.username),
-        input.passwordHash,
-        input.name,
-        input.surname,
-        canonicalizeAuthEmail(input.email),
-        input.tel_no,
-        input.role,
-        input.gender,
-        input.address,
-        input.lane,
-        input.house_no,
-        input.postcode,
-        input.country,
-        input.salary,
-        input.date_of_birth,
-        input.employment_date,
-        input.employment_end_date,
-        input.national_id,
-        input.status,
-        input.social_security_number,
-      ]
+    await tx.query(
+      `DELETE FROM public.admin_user_provisioning_requests
+       WHERE idempotency_key = $1::uuid AND expires_at <= now()`,
+      [input.idempotencyKey],
     );
 
-    const row = rows[0];
-    if (!row) throw new Error("Failed to create user");
+    const claim = await tx.query<{ idempotency_key: string }>(
+      `
+        INSERT INTO public.admin_user_provisioning_requests (
+          idempotency_key,
+          actor_user_id,
+          request_hash
+        ) VALUES ($1::uuid, $2::int, $3)
+        ON CONFLICT (idempotency_key) DO NOTHING
+        RETURNING idempotency_key::text AS idempotency_key
+      `,
+      [input.idempotencyKey, input.actorUserId, input.requestHash],
+    );
+
+    if ((claim.rowCount ?? 0) === 0) {
+      const existing = await tx.query<{
+        actor_user_id: number;
+        request_hash: string;
+        user_id: number | null;
+      }>(
+        `
+          SELECT actor_user_id::int AS actor_user_id, request_hash, user_id::int AS user_id
+          FROM public.admin_user_provisioning_requests
+          WHERE idempotency_key = $1::uuid
+          FOR UPDATE
+        `,
+        [input.idempotencyKey],
+      );
+      const row = existing.rows[0];
+      if (
+        !row ||
+        row.actor_user_id !== input.actorUserId ||
+        row.request_hash !== input.requestHash ||
+        row.user_id === null
+      ) {
+        throw new HttpError(
+          409,
+          "IDEMPOTENCY_CONFLICT",
+          "Cette demande ne peut pas être rejouée avec ces informations.",
+        );
+      }
+
+      return {
+        value: { userId: row.user_id, replayed: true },
+        userId: row.user_id,
+        noOp: true,
+      } satisfies AdminEpochMutation<{ userId: number; replayed: boolean }>;
+    }
+
+    let created: { id: number; role: string; status: string | null };
+    try {
+      const { rows } = await tx.query<{ id: number; role: string; status: string | null }>(
+        `
+          INSERT INTO public.users (
+            username,
+            password,
+            name,
+            surname,
+            email,
+            tel_no,
+            role,
+            gender,
+            address,
+            lane,
+            house_no,
+            postcode,
+            country,
+            salary,
+            date_of_birth,
+            employment_date,
+            employment_end_date,
+            national_id,
+            status,
+            social_security_number
+          ) VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+            $11, $12, COALESCE(NULLIF($13, ''), 'France'), $14, $15::date,
+            $16::date, $17::date, $18, COALESCE(NULLIF($19, ''), 'Inactive'), $20
+          )
+          RETURNING id::int AS id, role, status
+        `,
+        [
+          canonicalizeAuthUsername(input.username),
+          input.passwordHash,
+          input.name,
+          input.surname,
+          canonicalizeAuthEmail(input.email),
+          input.tel_no ?? null,
+          input.role,
+          input.gender ?? null,
+          input.address ?? null,
+          input.lane ?? null,
+          input.house_no ?? null,
+          input.postcode ?? null,
+          input.country ?? null,
+          input.salary ?? null,
+          input.date_of_birth ?? null,
+          input.employment_date ?? null,
+          input.employment_end_date ?? null,
+          input.national_id ?? null,
+          input.status ?? null,
+          input.social_security_number ?? null,
+        ],
+      );
+      const row = rows[0];
+      if (!row) throw new Error("Failed to provision user");
+      created = row;
+    } catch (err) {
+      if (isPgUniqueViolation(err)) {
+        throw new HttpError(
+          409,
+          "ACCOUNT_CONFLICT",
+          "Impossible de provisionner ce compte avec ces informations.",
+        );
+      }
+      throw err;
+    }
+
     await replaceUserRoles(tx, {
-      userId: row.id,
+      userId: created.id,
       primaryRole: input.role,
       roles: input.roles,
       assignedBy: input.assignedBy,
     });
-    await bumpRealtimeSessionEpoch(tx, row.id);
+
+    await tx.query(
+      `UPDATE public.admin_user_provisioning_requests
+       SET user_id = $2::int
+       WHERE idempotency_key = $1::uuid`,
+      [input.idempotencyKey, created.id],
+    );
+
+    const profileIncomplete = [
+      input.tel_no,
+      input.address,
+      input.date_of_birth,
+      input.social_security_number,
+    ].some((value) => value == null || value === "");
+    await repoInsertAuditLog({
+      user_id: input.actorUserId,
+      body: {
+        event_type: "ACTION",
+        action: "ADMIN_USER_PROVISIONED",
+        page_key: "administration",
+        entity_type: "user",
+        entity_id: String(created.id),
+        path: "/api/v1/admin/users",
+        details: {
+          role: created.role,
+          status: created.status,
+          profile_incomplete: profileIncomplete,
+        },
+      },
+      ip: null,
+      user_agent: null,
+      device_type: null,
+      os: null,
+      browser: null,
+      tx,
+    });
+
+    await bumpRealtimeSessionEpoch(tx, created.id);
     await bumpRealtimeAuthorizationEpoch(tx);
     return {
-      value: row.id,
-      userId: row.id,
+      value: { userId: created.id, replayed: false },
+      userId: created.id,
       kind: "create",
-    } satisfies AdminEpochMutation<number>;
+    } satisfies AdminEpochMutation<{ userId: number; replayed: boolean }>;
     }, { reconcileCommit: reconcileAdminEpochMutation });
 
-    const created = await repoGetUserById(mutation.value);
-    if (!created) throw new Error("Failed to reload created user");
-    return created;
+    const user = await repoGetUserById(mutation.value.userId);
+    if (!user) throw new Error("Failed to reload provisioned user");
+    return { user, replayed: mutation.value.replayed };
   } catch (err) {
-    if (isPgUniqueViolation(err)) {
-      const constraint = pgConstraint(err);
-      if (constraint === "users_username_key") throw new HttpError(409, "USERNAME_EXISTS", "Username already exists");
-      if (constraint === "users_email_key") throw new HttpError(409, "EMAIL_EXISTS", "Email already exists");
-      if (constraint === "users_tel_no_key") throw new HttpError(409, "TEL_EXISTS", "Phone number already exists");
-      if (constraint === "users_national_id_key") throw new HttpError(409, "NATIONAL_ID_EXISTS", "National ID already exists");
-      if (constraint === "users_social_security_number_key")
-        throw new HttpError(409, "NIR_EXISTS", "Social security number already exists");
-      throw new HttpError(409, "DUPLICATE", "User already exists");
-    }
     throw err;
   }
 }
