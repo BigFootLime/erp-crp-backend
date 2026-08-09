@@ -39,6 +39,10 @@ const validUserBody = {
   social_security_number: "100000000000001",
 };
 
+const provisioningHeaders = {
+  idempotencyKey: "31500000-0000-4000-8000-000000000001",
+};
+
 describe("RBAC multi-rôles #315", () => {
   it("normalise les rôles sans doublon et conserve le rôle principal en premier", () => {
     expect(normalizeAssignedRoles("Directeur", ["Commerce", "Directeur", "Achats"])).toEqual([
@@ -169,8 +173,11 @@ describe("RBAC multi-rôles #315", () => {
   });
 
   it("valide le rôle principal dans l'ensemble des rôles attribués", () => {
-    expect(adminCreateUserSchema.safeParse({ body: validUserBody }).success).toBe(true);
+    expect(
+      adminCreateUserSchema.safeParse({ headers: provisioningHeaders, body: validUserBody }).success
+    ).toBe(true);
     const invalid = adminCreateUserSchema.safeParse({
+      headers: provisioningHeaders,
       body: { ...validUserBody, roles: ["Commerce", "Achats"] },
     });
     expect(invalid.success).toBe(false);
@@ -179,11 +186,13 @@ describe("RBAC multi-rôles #315", () => {
   it("refuse les rôles inconnus au lieu de fabriquer une autorisation", () => {
     expect(
       adminCreateUserSchema.safeParse({
+        headers: provisioningHeaders,
         body: { ...validUserBody, role: "Directeur Technique Inconnu" },
       }).success
     ).toBe(false);
     expect(
       adminCreateUserSchema.safeParse({
+        headers: provisioningHeaders,
         body: { ...validUserBody, roles: ["Directeur", "Role-Inconnu"] },
       }).success
     ).toBe(false);
@@ -202,7 +211,9 @@ describe("RBAC multi-rôles #315", () => {
       date_of_birth: null,
       social_security_number: null,
     };
-    expect(adminCreateUserSchema.safeParse({ body: accountOnly }).success).toBe(true);
+    expect(
+      adminCreateUserSchema.safeParse({ headers: provisioningHeaders, body: accountOnly }).success
+    ).toBe(true);
   });
 
   it("cumule les capacités des rôles fonctionnels historiques", () => {
