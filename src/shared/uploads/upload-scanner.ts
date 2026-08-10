@@ -307,6 +307,35 @@ export function getUploadScannerStartupConfiguration(): UploadScannerStartupConf
   }
 }
 
+/** Non-blocking liveness probe used by readiness and supervision after startup. */
+export async function probeUploadScannerHealth(
+  startup = getUploadScannerStartupConfiguration()
+): Promise<UploadScannerStartupConfiguration> {
+  if (!startup.ready || startup.provider !== "clamdscan" || !startup.command) return startup;
+  if (process.env.NODE_ENV === "test") return startup;
+
+  return await new Promise((resolve) => {
+    const child = spawn(startup.command as string, ["--ping=1:1"], {
+      shell: false,
+      windowsHide: true,
+      stdio: "ignore",
+    });
+    let settled = false;
+    const finish = (ready: boolean, reason?: UploadScannerAvailabilityReason) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ ...startup, ready, ...(reason ? { reason } : {}) });
+    };
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      finish(false, "probe_timeout");
+    }, SCANNER_STARTUP_PROBE_TIMEOUT_MS);
+    child.once("error", () => finish(false, "command_unavailable"));
+    child.once("exit", (code) => finish(code === 0, code === 0 ? undefined : "daemon_unavailable"));
+  });
+}
+
 function configuredScanner(): UploadScanner {
   if (scannerOverride) return scannerOverride;
   const provider = process.env.CERP_UPLOAD_SCAN_PROVIDER?.trim().toLowerCase();

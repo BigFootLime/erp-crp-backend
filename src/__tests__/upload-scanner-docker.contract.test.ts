@@ -46,7 +46,7 @@ describe("autonomous ClamAV Docker contract", () => {
     expect(dockerfile).not.toMatch(/RUN\s+freshclam/);
     expect(dockerfile).toContain("addgroup node clamav");
     expect(dockerfile).toContain('ENV CERP_UPLOAD_SCAN_MODE=enforce');
-    expect(dockerfile).toContain("clamdscan --config-file=/etc/clamav/clamd.conf --ping=1:1");
+    expect(dockerfile).toContain("/health/ready");
     expect(dockerfile).toContain('ENTRYPOINT ["/sbin/tini"');
     expect(dockerfile).toContain('"/var/lib/clamav"');
 

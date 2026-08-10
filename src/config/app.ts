@@ -3,7 +3,6 @@ import swaggerUi from "swagger-ui-express";
 import path from "path";
 import cors from "cors";
 import helmet from "helmet";
-import morgan from "morgan";
 import v1Router from "../routes/v1.routes";
 import { errorHandler } from "../middlewares/errorHandler";
 import { checkNetworkDrive } from "../utils/checkNetworkDrive";
@@ -17,7 +16,10 @@ import { stripQueryFromUrl } from "../utils/logPath";
 import pool from "./database";
 import { resolveTrustProxySetting } from "./trust-proxy";
 import { getRealtimeReadiness } from "../sockets/sockeServer";
+import { installStructuredConsole, logger } from "../shared/observability/logger";
+import { createObservabilityRouter } from "../shared/observability/routes";
 
+installStructuredConsole();
 const app = express();
 
 // Reverse proxy (Nginx/Traefik) support: trust X-Forwarded-* headers.
@@ -70,15 +72,11 @@ const corsOptionsDelegate: cors.CorsOptionsDelegate = (req, cb) => {
   );
 
   if (origin && !allowed) {
-    console.warn(
-      JSON.stringify({
-        type: "cors_reject",
-        requestId,
-        origin,
-        method: req.method,
-        path: reqPath ?? null,
-      })
-    );
+    logger.warn("cors_request_rejected", {
+      request_id: requestId,
+      http_method: req.method,
+      http_route: reqPath ?? null,
+    });
   }
 
   cb(null, {
@@ -90,12 +88,13 @@ const corsOptionsDelegate: cors.CorsOptionsDelegate = (req, cb) => {
       "Authorization",
       "X-CERP-Database",
       "X-Request-Id",
+      "X-Correlation-Id",
       "X-Page-Key",
       "X-Client-Session-Id",
       "X-Session-Id",
       "Idempotency-Key",
     ],
-    exposedHeaders: ["X-Request-Id"],
+    exposedHeaders: ["X-Request-Id", "X-Correlation-Id"],
     optionsSuccessStatus: 204,
   });
 };
@@ -108,10 +107,6 @@ app.use(requestLogger);
 // Logger — format "dev" mais avec l'URL débarrassée de sa query string :
 // morgan(":url") rejouerait les PII des recherches (?q=email, ?siret=...) dans
 // la console, y compris en prod où NODE_ENV vaut "development" (cf. errorHandler).
-morgan.token("pathname", (req) => stripQueryFromUrl((req as { originalUrl?: string }).originalUrl) ?? "-");
-if (process.env.NODE_ENV === "development") {
-  app.use(morgan(":method :pathname :status :res[content-length] - :response-time ms"));
-}
 
 /* --------- 2) Parsers: JSON + urlencoded (sans casser multipart) --------- */
 
@@ -189,6 +184,8 @@ app.get("/api/v1/realtime/readiness", (_req, res) => {
   res.status(readiness.ready ? 200 : 503).json(readiness);
 });
 
+app.use(createObservabilityRouter(pool));
+
 // Routes API v1
 app.use("/api/v1/", v1Router);
 
@@ -223,13 +220,11 @@ app.use(
 app.use(validationErrorMiddleware);
 
 
-console.log("📂 Dossier exposé pour les images :", imagePath);
+logger.info("image_storage_configured", { storage_path: imagePath });
 
 // Vérifie que le dossier réseau est bien monté
 checkNetworkDrive().catch(() => {
-  console.error(
-    "🚨 Le dossier réseau est inaccessible. Le serveur démarre quand même, mais les images ne seront pas servies."
-  );
+  logger.error("image_storage_unavailable", { affected_scope: "product_images" });
 });
 
 /* ------------------ 6) Error handler (TOUJOURS EN DERNIER) ------------------ */

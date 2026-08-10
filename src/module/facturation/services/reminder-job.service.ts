@@ -11,6 +11,12 @@ import {
 import type { FinanceActorContext } from "../repository/workflow.repository.shared";
 import type { ReminderCycleResult, ReminderSuggestion } from "../types/reminders.types";
 import { createReminderProvider, type ReminderProvider } from "../providers/reminder.provider";
+import crypto from "node:crypto";
+import { runWithObservabilityContext } from "../../../shared/observability/context";
+import { errorFingerprint, logger, safeErrorCode } from "../../../shared/observability/logger";
+import { markJobFinished, markJobStarted } from "../../../shared/observability/metrics";
+
+const REMINDER_JOB_NAME = "advanced_reminders";
 
 async function deliverClaim(
   claim: ReminderClaim,
@@ -124,18 +130,41 @@ export function startReminderMaintenance(environment = process.env): () => void 
   const limit = boundedInteger(environment.ADV_REMINDERS_JOB_BATCH_SIZE, 100, 1, 500);
   let running = false;
   const timer = setInterval(() => {
-    if (running) return;
+    if (running) {
+      logger.warn("critical_job_overlap_skipped", { job: REMINDER_JOB_NAME });
+      return;
+    }
     running = true;
-    void runReminderCycle({ now: new Date(), limit, actor: null })
-      .catch((error: unknown) => {
-        const code = (error as { code?: unknown } | null)?.code;
-        console.error("[adv_reminders] bounded cycle failed", {
-          code: typeof code === "string" ? code : "REMINDER_CYCLE_FAILURE",
+    const correlationId = crypto.randomUUID();
+    const startedAt = Date.now();
+    runWithObservabilityContext({ requestId: correlationId, correlationId }, () => {
+      markJobStarted(REMINDER_JOB_NAME, startedAt);
+      logger.info("critical_job_started", { job: REMINDER_JOB_NAME, batch_limit: limit });
+      void runReminderCycle({ now: new Date(), limit, actor: null })
+        .then((result) => {
+          markJobFinished(REMINDER_JOB_NAME, true);
+          logger.info("critical_job_succeeded", {
+            job: REMINDER_JOB_NAME,
+            duration_ms: Date.now() - startedAt,
+            processed: result.processed,
+            sent: result.sent,
+            retryable_failures: result.retryable_failures,
+            final_failures: result.final_failures,
+          });
+        })
+        .catch((error: unknown) => {
+          markJobFinished(REMINDER_JOB_NAME, false);
+          logger.error("critical_job_failed", {
+            job: REMINDER_JOB_NAME,
+            duration_ms: Date.now() - startedAt,
+            failure_code: safeErrorCode(error) ?? "REMINDER_CYCLE_FAILURE",
+            error_fingerprint: errorFingerprint(error),
+          });
+        })
+        .finally(() => {
+          running = false;
         });
-      })
-      .finally(() => {
-        running = false;
-      });
+    });
   }, intervalMs);
   timer.unref();
   return () => clearInterval(timer);

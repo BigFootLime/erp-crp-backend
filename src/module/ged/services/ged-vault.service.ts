@@ -39,6 +39,11 @@ export type VaultHealth = {
   writable: boolean;
   healthy: boolean;
   detail: string | null;
+  capacity_bytes: number | null;
+  available_bytes: number | null;
+  used_ratio: number | null;
+  inode_total: number | null;
+  inode_free: number | null;
 };
 
 function cleanEnv(value: string | undefined): string | null {
@@ -556,6 +561,11 @@ export async function checkVaultHealth(): Promise<VaultHealth> {
       writable: false,
       healthy: false,
       detail: "CERP_GED_VAULT_ROOT n'est pas configuré.",
+      capacity_bytes: null,
+      available_bytes: null,
+      used_ratio: null,
+      inode_total: null,
+      inode_free: null,
     };
   }
 
@@ -564,6 +574,11 @@ export async function checkVaultHealth(): Promise<VaultHealth> {
   let sentinelPresent = false;
   let writable = false;
   let detail: string | null = null;
+  let capacityBytes: number | null = null;
+  let availableBytes: number | null = null;
+  let usedRatio: number | null = null;
+  let inodeTotal: number | null = null;
+  let inodeFree: number | null = null;
 
   try {
     const stat = await fs.stat(root);
@@ -588,6 +603,16 @@ export async function checkVaultHealth(): Promise<VaultHealth> {
     } catch {
       if (detail === null) detail = "Le coffre n'est pas accessible en écriture.";
     }
+    try {
+      const capacity = await fs.statfs(root);
+      capacityBytes = capacity.blocks * capacity.bsize;
+      availableBytes = capacity.bavail * capacity.bsize;
+      usedRatio = capacityBytes > 0 ? (capacityBytes - availableBytes) / capacityBytes : null;
+      inodeTotal = capacity.files;
+      inodeFree = capacity.ffree;
+    } catch {
+      if (detail === null) detail = "La capacité disponible du coffre ne peut pas être mesurée.";
+    }
   }
 
   const healthy = rootPresent && writable && (!sentinelRequired() || sentinelPresent);
@@ -599,5 +624,10 @@ export async function checkVaultHealth(): Promise<VaultHealth> {
     writable,
     healthy,
     detail: healthy ? null : detail,
+    capacity_bytes: capacityBytes,
+    available_bytes: availableBytes,
+    used_ratio: usedRatio,
+    inode_total: inodeTotal,
+    inode_free: inodeFree,
   };
 }

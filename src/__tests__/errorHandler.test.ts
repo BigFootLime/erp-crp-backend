@@ -4,6 +4,7 @@ import type { Request, Response } from "express";
 import { errorHandler } from "../middlewares/errorHandler";
 import { HttpError } from "../utils/httpError";
 import { ApiError } from "../utils/apiError";
+import { setLogSinkForTests } from "../shared/observability/logger";
 
 // CA-SEC-04 — le gestionnaire d'erreurs ne doit JAMAIS renvoyer d'internes (message
 // d'exception brut, nom de colonne/table, adresse, stack) au client sur une 5xx / erreur
@@ -20,10 +21,14 @@ function mockReqRes(originalUrl = "/api/v1/production/ofs") {
 
 describe("CA-SEC-04 — errorHandler ne fuite pas d'internes sur 5xx", () => {
   let errSpy: ReturnType<typeof vi.spyOn>;
+  let logLines: string[];
   beforeEach(() => {
+    logLines = [];
+    setLogSinkForTests((line) => logLines.push(line));
     errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   });
   afterEach(() => {
+    setLogSinkForTests(null);
     errSpy.mockRestore();
   });
 
@@ -52,7 +57,8 @@ describe("CA-SEC-04 — errorHandler ne fuite pas d'internes sur 5xx", () => {
     errorHandler(new Error(leak), req, res, () => {});
 
     // présent dans les logs serveur (console.error), absent de la réponse client
-    expect(JSON.stringify(errSpy.mock.calls.flat())).toContain("due_date");
+    expect(logLines.join("\n")).toContain('"error_fingerprint"');
+    expect(logLines.join("\n")).not.toContain("due_date");
   });
 
   it("HttpError < 500 conserve son message volontaire (ex. 404)", () => {

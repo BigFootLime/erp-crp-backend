@@ -2,6 +2,8 @@ import type { Request, Response, NextFunction } from "express";
 import { HttpError } from "../utils/httpError";
 import { ApiError } from "../utils/apiError";
 import { stripQueryFromUrl } from "../utils/logPath";
+import { errorFingerprint, logger, safeErrorCode } from "../shared/observability/logger";
+import { observabilityRoute } from "./requestLogger";
 
 // Message générique renvoyé au client pour toute erreur serveur (5xx) ou inconnue.
 // CA-SEC-04 : ne jamais fuiter d'internes (message d'exception brut, nom de colonne/table,
@@ -121,7 +123,7 @@ const PUBLIC_OPERATIONAL_5XX_MESSAGES = new Map<string, string>([
   ],
 ]);
 
-export function errorHandler(err: any, req: Request, res: Response, _next: NextFunction) {
+export function errorHandler(err: unknown, req: Request, res: Response, _next: NextFunction) {
   const mappedReferenceDataError = mapReferenceDataError(err);
   const handledError = mappedReferenceDataError ?? err;
   const isKnown = handledError instanceof HttpError || handledError instanceof ApiError;
@@ -156,16 +158,14 @@ export function errorHandler(err: any, req: Request, res: Response, _next: NextF
   };
 
   // logs détaillés côté serveur (JAMAIS renvoyés au client) — inclut le message réel + la stack.
-  console.error("[ERROR]", {
-    status,
-    code,
-    message: err?.message ?? null,
-    clientMessage: message,
-    method: req.method,
-    path: safePath,
-    requestId: req.requestId ?? null,
-    details: mappedReferenceDataError?.details ?? err?.details,
-    stack: err?.stack,
+  logger.error("http_request_failed", {
+    http_status: status,
+    error_code: code,
+    failure_code: safeErrorCode(err),
+    failure_type: err instanceof Error ? err.name : "UnknownError",
+    error_fingerprint: errorFingerprint(err),
+    http_method: req.method,
+    http_route: observabilityRoute(req),
   });
 
   res.status(status).json(payload);

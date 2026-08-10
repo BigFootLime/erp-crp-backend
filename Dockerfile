@@ -78,8 +78,7 @@ EXPOSE 5000
 VOLUME ["/app/data", "/app/uploads", "/var/lib/clamav"]
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
-  CMD clamdscan --config-file=/etc/clamav/clamd.conf --ping=1:1 >/dev/null 2>&1 \
-    && node -e "require('http').get('http://127.0.0.1:'+(process.env.PORT||5000)+'/',r=>{if(r.statusCode<400)process.exit(0);process.exit(1)}).on('error',()=>process.exit(1))"
+  CMD node -e "require('http').get('http://127.0.0.1:'+(process.env.PORT||5000)+'/health/ready',r=>{if(r.statusCode===200)process.exit(0);process.exit(1)}).on('error',()=>process.exit(1))"
 
 ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/cerp-entrypoint.sh"]
 CMD ["node", "dist/index.js"]

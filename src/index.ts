@@ -1,4 +1,5 @@
 import "dotenv/config";
+import crypto from "node:crypto";
 import { createServer } from "http";
 
 import pool from "./config/database";
@@ -10,23 +11,30 @@ import { createApplicationShutdown } from "./shared/runtime/application-shutdown
 import { preflightSecureUploadStorageRoots } from "./shared/uploads/secure-upload";
 import { getUploadScannerStartupConfiguration } from "./shared/uploads/upload-scanner";
 import { initSocketServer, shutdownRealtimeSocketServer } from "./sockets/sockeServer";
+import { runWithObservabilityContext } from "./shared/observability/context";
+import { setScannerStartupState } from "./shared/observability/health";
+import { errorFingerprint, installStructuredConsole, logger, safeErrorCode } from "./shared/observability/logger";
+
+installStructuredConsole();
 
 async function start(): Promise<void> {
   assertE2EIsolation();
   // Run before importing routes: several upload middlewares allocate their
   // private quarantine during module initialization.
   const uploadRoots = preflightSecureUploadStorageRoots();
-  console.log(`[upload_storage] preflight ready roots=${uploadRoots.length}`);
+  logger.info("upload_storage_preflight_succeeded", { root_count: uploadRoots.length });
 
   const [{ default: app }, uploadScanner] = await Promise.all([
     import("./config/app"),
     Promise.resolve(getUploadScannerStartupConfiguration()),
   ]);
+  setScannerStartupState(uploadScanner);
   if (!uploadScanner.ready) {
-    console.error("[upload_scan] startup degraded; enforced uploads remain blocked", {
+    logger.error("upload_scanner_degraded", {
       mode: uploadScanner.mode,
       provider: uploadScanner.provider,
-      reason: uploadScanner.reason,
+      reason_code: uploadScanner.reason,
+      affected_scope: "file_uploads",
     });
   }
 
@@ -40,11 +48,12 @@ async function start(): Promise<void> {
 
   const listenHost = process.env.CERP_E2E_ISOLATED === "1" ? "127.0.0.1" : "0.0.0.0";
   httpServer.listen(port, listenHost, () => {
-    console.log(`[upload_scan] mode=${uploadScanner.mode} provider=${uploadScanner.provider} ready=${uploadScanner.ready}`);
-    console.log(`Serveur CERP lance sur http://${listenHost}:${port}`);
-    if (process.env.CERP_E2E_ISOLATED !== "1") {
-      console.log(`Acces local prevu : http://10.90.0.2:${port}`);
-    }
+    logger.info("upload_scanner_initialized", {
+      mode: uploadScanner.mode,
+      provider: uploadScanner.provider,
+      ready: uploadScanner.ready,
+    });
+    logger.info("service_listening", { listen_host: listenHost, listen_port: port });
   });
 
   const configuredShutdownTimeout = Number.parseInt(process.env.SHUTDOWN_TIMEOUT_MS ?? "10000", 10);
@@ -56,7 +65,7 @@ async function start(): Promise<void> {
     stopRealtime: shutdownRealtimeSocketServer,
     stopMaintenance: [stopAuthRateLimitMaintenance, stopExpiredLockMaintenance, stopReminderMaintenance],
     closeDatabase: () => pool.end(),
-    log: (type, fields) => console.error(JSON.stringify({ type, ...fields })),
+    log: (type, fields) => logger.error(type, fields),
   }, shutdownTimeoutMs);
 
   let terminationStarted = false;
@@ -81,6 +90,12 @@ async function start(): Promise<void> {
 }
 
 void start().catch((error) => {
-  console.error("[startup] fatal preflight failure", error);
+  const correlationId = crypto.randomUUID();
+  runWithObservabilityContext({ requestId: correlationId, correlationId }, () => {
+    logger.error("startup_preflight_failed", {
+      failure_code: safeErrorCode(error),
+      error_fingerprint: errorFingerprint(error),
+    });
+  });
   process.exitCode = 1;
 });

@@ -1,5 +1,6 @@
 import { Pool } from 'pg';
 import dotenv from 'dotenv';
+import { errorFingerprint, logger, safeErrorCode } from '../shared/observability/logger';
 
 dotenv.config();
 
@@ -24,11 +25,17 @@ const pool = new Pool({
 });
 
 pool.on('connect', () => {
-  console.log('🟢 Connecté à PostgreSQL avec succès');
+  logger.info('database_connection_opened');
 });
 
 pool.on('error', (err) => {
-  console.error('❌ Erreur de connexion PostgreSQL', err);
+  logger.error('database_pool_error', {
+    failure_code: safeErrorCode(err),
+    error_fingerprint: errorFingerprint(err),
+    pool_total: pool.totalCount,
+    pool_idle: pool.idleCount,
+    pool_waiting: pool.waitingCount,
+  });
 });
 
 export default pool;

@@ -60,6 +60,7 @@ import app from "../config/app";
 import { withRealtimeOutboxDbMock } from "./helpers/realtime-outbox-db-mock";
 import { stripQueryFromUrl } from "../utils/logPath";
 import { maskIban } from "../module/client/client.permissions";
+import { setLogSinkForTests } from "../shared/observability/logger";
 
 const VALID_CREATE_PAYLOAD = {
   company_name: "Usinage Fictif SAS",
@@ -348,18 +349,18 @@ describe("P0-7 — aucune query string dans les logs HTTP", () => {
   });
 
   it("le log http_request d'une recherche ne contient pas l'email cherché", async () => {
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const httpLines: string[] = [];
+    setLogSinkForTests((line) => httpLines.push(line));
     await request(app).get("/api/v1/clients?q=jane%40doe.fr").set("x-test-role", "Employee");
-    const httpLines = logSpy.mock.calls
-      .map((c) => String(c[0]))
-      .filter((line) => line.includes("http_request"));
-    expect(httpLines.length).toBeGreaterThan(0);
-    for (const line of httpLines) {
+    setLogSinkForTests(null);
+    const requestLines = httpLines.filter((line) => line.includes("http_request_completed"));
+    expect(requestLines.length).toBeGreaterThan(0);
+    for (const line of requestLines) {
       expect(line).not.toContain("jane");
       expect(line).not.toContain("q=");
     }
-    const parsed = JSON.parse(httpLines[httpLines.length - 1]);
-    expect(parsed.path).toBe("/api/v1/clients");
+    const parsed = JSON.parse(requestLines[requestLines.length - 1]);
+    expect(parsed.http_route).toBe("/api/v1/clients");
   });
 });
 

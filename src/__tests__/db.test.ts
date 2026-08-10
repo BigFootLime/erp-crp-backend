@@ -1,6 +1,14 @@
 import { describe, test, vi, expect, beforeEach, afterEach, afterAll } from 'vitest'
 import { EventEmitter } from 'events'
 
+const loggerMocks = vi.hoisted(() => ({ info: vi.fn(), error: vi.fn() }))
+
+vi.mock('../shared/observability/logger', () => ({
+    logger: loggerMocks,
+    errorFingerprint: vi.fn(() => 'fingerprint-test'),
+    safeErrorCode: vi.fn(() => 'ECONNREFUSED'),
+}))
+
 vi.mock('pg', () => {
     const emitter = new EventEmitter()
 
@@ -98,26 +106,25 @@ describe('Connexion PostgreSQL', () => {
     })
 
     test('evenement connect declenche log', async () => {
-        const logSpy = vi.spyOn(console, 'log').mockImplementation(() => { })
-
         const pg = await import('pg')
         await import('../config/database')
 
         ; (pg as any).__emitter__.emit('connect')
 
-        expect(logSpy).toHaveBeenCalledWith('🟢 Connecté à PostgreSQL avec succès')
+        expect(loggerMocks.info).toHaveBeenCalledWith('database_connection_opened')
     })
 
     test('evenement error declenche erreur console', async () => {
-        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => { })
-
         const pg = await import('pg')
         await import('../config/database')
 
         const fakeError = new Error('Connexion refusée')
         ; (pg as any).__emitter__.emit('error', fakeError)
 
-        expect(errorSpy).toHaveBeenCalledWith('❌ Erreur de connexion PostgreSQL', fakeError)
+        expect(loggerMocks.error).toHaveBeenCalledWith('database_pool_error', expect.objectContaining({
+            failure_code: 'ECONNREFUSED',
+            error_fingerprint: 'fingerprint-test',
+        }))
     })
 
     afterAll(() => {
