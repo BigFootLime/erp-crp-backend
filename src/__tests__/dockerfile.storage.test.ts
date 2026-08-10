@@ -8,6 +8,14 @@ const entrypoint = fs.readFileSync(repoPath("docker/entrypoint.sh"), "utf8");
 const storagePreflight = fs.readFileSync(repoPath("docker/storage-preflight.mjs"), "utf8");
 
 describe("Dockerfile storage permissions", () => {
+  it("copies every build-time security guard before npm run build", () => {
+    const securityScriptsIndex = dockerfile.indexOf("COPY scripts/security ./scripts/security");
+    const buildIndex = dockerfile.indexOf("RUN npm run build");
+
+    expect(securityScriptsIndex).toBeGreaterThanOrEqual(0);
+    expect(buildIndex).toBeGreaterThan(securityScriptsIndex);
+  });
+
   it("creates image defaults and revalidates runtime mounts before dropping privileges", () => {
     const mkdirIndex = dockerfile.indexOf("RUN mkdir -p");
     const dataIndex = dockerfile.indexOf("/app/data/documents");
