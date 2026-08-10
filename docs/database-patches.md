@@ -106,6 +106,15 @@ Ce nouveau patch de navigation peut être appliqué seul avec
 `cerp_test` puis `cerp_prod` reste soumise aux sauvegardes, contrôles et décisions
 humaines décrits plus haut.
 
+Application `cerp_test` réalisée le 2026-08-10 à 16:16 CEST : préflight et
+vérification réussis, empreinte enregistrée
+`4900f01411ab89349874fcd6d28993aa34a1ec560320d4d32b05489800bf3b9b`.
+Sauvegarde de retour arrière conservée sous
+`/var/backups/cerp/cerp_test_pre_446_nav_20260810-161340.dump` (SHA-256
+`aabbb8c377db2f1b9fcaf5213fd9168fe54599b337329287da60d99a9c2a83e7`).
+`cerp_prod` n'est pas appliquée tant que cette seconde cible n'est pas
+explicitement confirmée.
+
 `20260731_stock_old_new_446.sql` is additive and was applied to both
 `cerp_test` and `cerp_prod` on 2026-07-31. It adds the four fixed functional stores
 `OLD-PF`, `OLD-MP`, `NEW-PF`, `NEW-MP`, lot opening provenance/traceability,
