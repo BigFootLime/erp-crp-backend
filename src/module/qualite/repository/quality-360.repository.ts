@@ -1851,10 +1851,13 @@ async function recomputeExecutionLedger(
       UPDATE public.quality_control
       SET qty_controlled = $2, qty_conforming = $3, verdict_computed = $4,
           verdict = CASE WHEN validation_date IS NULL THEN $4 ELSE verdict END,
-          status = CASE WHEN validation_date IS NULL THEN $5::public.quality_control_status ELSE status END
+          status = CASE
+            WHEN validation_date IS NULL THEN 'IN_PROGRESS'::public.quality_control_status
+            ELSE status
+          END
       WHERE id = $1::uuid
     `,
-    [controlId, controlled, conforming, computation.verdict, executionStatusForVerdict(computation.verdict)]
+    [controlId, controlled, conforming, computation.verdict]
   );
 
   return { verdict: computation.verdict, controlled, conforming };

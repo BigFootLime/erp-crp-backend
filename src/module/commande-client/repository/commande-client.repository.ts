@@ -363,6 +363,25 @@ async function getOfficialArticleMetaById(db: Queryable, articleId: string): Pro
   return res.rows[0] ?? null;
 }
 
+async function ensureManufacturedArticleSubtype(
+  db: Queryable,
+  articleId: string,
+  familyCode: string,
+  pieceTechniqueId: string | null
+): Promise<void> {
+  await db.query(
+    `
+      INSERT INTO public.articles_fabrique (article_id, family_code, piece_technique_id)
+      VALUES ($1::uuid,$2,$3::uuid)
+      ON CONFLICT (article_id) DO UPDATE
+      SET family_code = EXCLUDED.family_code,
+          piece_technique_id = EXCLUDED.piece_technique_id,
+          updated_at = now()
+    `,
+    [articleId, familyCode, pieceTechniqueId]
+  );
+}
+
 async function loadPreparatorySourceBundle(
   db: Queryable,
   line: CreateCommandeInput["lignes"][number]
@@ -564,7 +583,7 @@ async function ensureOfficialPieceFromPreparatory(
           $6,
           $7,
           'ACTIVE',
-          0,
+          false,
           NULL,
           NULL,
           $8,
@@ -2824,6 +2843,15 @@ async function insertCommandeLignes(
         client,
         { ...l, article_id: promoted.article_id, code_piece: undefined },
         lineIndex
+      );
+      // Le resolver canonique doit rester l'autorité sur l'éligibilité et son
+      // contrat d'erreur. Une fois l'article accepté, garantir le sous-type
+      // dans la même transaction avant la FK commande_ligne.article_id.
+      await ensureManufacturedArticleSubtype(
+        client,
+        resolved.article_id,
+        resolved.family_code,
+        resolved.piece_technique_id
       );
     } else {
       resolved = await resolveCommandeLineArticle(client, l, lineIndex);

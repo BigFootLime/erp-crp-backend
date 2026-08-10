@@ -441,6 +441,10 @@ export function normalizeQualityIdempotencyKey(value: string | null | undefined)
 }
 
 function canonicalize(value: unknown): unknown {
+  // node-postgres materialise les timestamptz en Date avant l'INSERT JSONB,
+  // puis en chaîne ISO après relecture. Sans normalisation explicite, un
+  // snapshot fraîchement créé est immédiatement signalé comme altéré.
+  if (value instanceof Date) return value.toISOString();
   if (Array.isArray(value)) return value.map(canonicalize);
   if (value && typeof value === "object") {
     return Object.fromEntries(

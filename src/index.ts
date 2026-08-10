@@ -2,6 +2,7 @@ import "dotenv/config";
 import { createServer } from "http";
 
 import pool from "./config/database";
+import { assertE2EIsolation } from "./config/e2e-isolation";
 import { startAuthRateLimitMaintenance } from "./module/auth/services/auth-rate-limit.service";
 import { startExpiredLockMaintenance } from "./module/locks/services/locks.service";
 import { startReminderMaintenance } from "./module/facturation/services/reminder-job.service";
@@ -11,6 +12,7 @@ import { getUploadScannerStartupConfiguration } from "./shared/uploads/upload-sc
 import { initSocketServer, shutdownRealtimeSocketServer } from "./sockets/sockeServer";
 
 async function start(): Promise<void> {
+  assertE2EIsolation();
   // Run before importing routes: several upload middlewares allocate their
   // private quarantine during module initialization.
   const uploadRoots = preflightSecureUploadStorageRoots();
@@ -36,10 +38,13 @@ async function start(): Promise<void> {
   initSocketServer(httpServer);
   const stopExpiredLockMaintenance = startExpiredLockMaintenance();
 
-  httpServer.listen(port, "0.0.0.0", () => {
+  const listenHost = process.env.CERP_E2E_ISOLATED === "1" ? "127.0.0.1" : "0.0.0.0";
+  httpServer.listen(port, listenHost, () => {
     console.log(`[upload_scan] mode=${uploadScanner.mode} provider=${uploadScanner.provider} ready=${uploadScanner.ready}`);
-    console.log(`Serveur CERP lance sur http://0.0.0.0:${port}`);
-    console.log(`Acces local prevu : http://10.90.0.2:${port}`);
+    console.log(`Serveur CERP lance sur http://${listenHost}:${port}`);
+    if (process.env.CERP_E2E_ISOLATED !== "1") {
+      console.log(`Acces local prevu : http://10.90.0.2:${port}`);
+    }
   });
 
   const configuredShutdownTimeout = Number.parseInt(process.env.SHUTDOWN_TIMEOUT_MS ?? "10000", 10);

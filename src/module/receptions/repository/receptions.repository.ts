@@ -15,8 +15,8 @@ import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repos
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators"
 import { roleHasCommandeFournisseurCapability } from "../../commande-fournisseur/domain/commande-fournisseur-rbac"
 import { repoRefreshCommandeReceptionState } from "../../commande-fournisseur/repository/commande-fournisseur.repository"
-import { repoCreateMovement, repoPostMovement } from "../../stock/repository/stock.repository"
-import { hashStockCommand } from "../../stock/domain/stock-command"
+import { repoCreateMovement, repoGetMovement, repoPostMovement } from "../../stock/repository/stock.repository"
+import { hashStockCommand, normalizeIdempotencyKey } from "../../stock/domain/stock-command"
 import type { StockMovementDetail } from "../../stock/types/stock.types"
 import type {
   AddMeasurementBodyDTO,
@@ -1616,7 +1616,7 @@ async function sumReceiptedQty(lineId: string): Promise<number> {
   return res.rows[0]?.qty ?? 0
 }
 
-export async function repoCreateStockReceipt(
+async function repoCreateStockReceiptLocked(
   receptionId: string,
   lineId: string,
   body: StockReceiptBodyDTO,
@@ -1658,18 +1658,11 @@ export async function repoCreateStockReceipt(
     throw new HttpError(409, "LOT_NOT_RELEASED", "Mise en stock impossible: le lot n'est pas libere")
   }
 
-  const already = await sumReceiptedQty(lineId)
-  const remaining = (line.qty_received ?? 0) - already
-  if (body.qty > remaining + 1e-9) {
-    throw new HttpError(409, "OVER_RECEIPT", "Quantite superieure a la quantite restante a mettre en stock")
-  }
-
   const stockCommandKey = hashStockCommand("RECEPTION_STOCK_KEY", {
     actor_user_id: audit.user_id,
     idempotency_key: idempotencyKey,
   })
-  const created = await repoCreateMovement(
-    {
+  const movementBody: Parameters<typeof repoCreateMovement>[0] = {
       movement_type: "IN",
       effective_at: body.effective_at ?? null,
       source_document_type: "RECEPTION_FOURNISSEUR",
@@ -1692,10 +1685,54 @@ export async function repoCreateStockReceipt(
           note: null,
         },
       ],
-    },
-    audit,
-    { trusted_source_flow: true }
+  }
+  const normalizedCreateKey = normalizeIdempotencyKey(movementBody.idempotency_key ?? "")
+  const { idempotency_key: _idempotencyKey, ...movementRequestPayload } = movementBody
+  const expectedRequestHash = hashStockCommand("MOVEMENT_CREATE", movementRequestPayload)
+  const existingCommand = await db.query<{ request_hash: string; resource_id: string }>(
+    `
+      SELECT request_hash, resource_id
+      FROM public.stock_command_receipts
+      WHERE actor_user_id = $1 AND idempotency_key = $2
+      LIMIT 1
+    `,
+    [audit.user_id, normalizedCreateKey]
   )
+  const existing = existingCommand.rows[0]
+  if (existing) {
+    if (existing.request_hash !== expectedRequestHash) {
+      throw new HttpError(409, "IDEMPOTENCY_KEY_REUSED", "This Idempotency-Key was already used with a different stock command")
+    }
+    const linkedReceipt = await db.query(
+      `
+        SELECT 1
+        FROM public.reception_fournisseur_stock_receipts
+        WHERE reception_id = $1::uuid
+          AND reception_line_id = $2::uuid
+          AND stock_movement_id = $3::uuid
+        LIMIT 1
+      `,
+      [receptionId, lineId, existing.resource_id]
+    )
+    if (!linkedReceipt.rows[0]) {
+      throw new Error("Idempotent reception movement exists without its reception receipt")
+    }
+    const posted = await repoGetMovement(existing.resource_id)
+    if (!posted) throw new Error("Idempotent reception receipt points to a missing stock movement")
+    return {
+      stock_movement_id: posted.movement.id,
+      movement_no: posted.movement.movement_no,
+      posted,
+    }
+  }
+
+  const already = await sumReceiptedQty(lineId)
+  const remaining = (line.qty_received ?? 0) - already
+  if (body.qty > remaining + 1e-9) {
+    throw new HttpError(409, "OVER_RECEIPT", "Quantite superieure a la quantite restante a mettre en stock")
+  }
+
+  const created = await repoCreateMovement(movementBody, audit, { trusted_source_flow: true })
 
   const posted = await repoPostMovement(
     created.movement.id,
@@ -1730,5 +1767,26 @@ export async function repoCreateStockReceipt(
     stock_movement_id: posted.movement.id,
     movement_no: posted.movement.movement_no,
     posted,
+  }
+}
+
+export async function repoCreateStockReceipt(
+  receptionId: string,
+  lineId: string,
+  body: StockReceiptBodyDTO,
+  audit: AuditContext,
+  idempotencyKey: string
+): Promise<{ stock_movement_id: string; movement_no: string | null; posted: StockMovementDetail } | null> {
+  const lockClient = await db.connect()
+  const lockKey = `reception-stock-receipt:${audit.user_id}:${idempotencyKey}`
+  try {
+    await lockClient.query(`SELECT pg_advisory_lock(hashtextextended($1, 0))`, [lockKey])
+    return await repoCreateStockReceiptLocked(receptionId, lineId, body, audit, idempotencyKey)
+  } finally {
+    try {
+      await lockClient.query(`SELECT pg_advisory_unlock(hashtextextended($1, 0))`, [lockKey])
+    } finally {
+      lockClient.release()
+    }
   }
 }

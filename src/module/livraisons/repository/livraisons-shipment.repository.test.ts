@@ -1,5 +1,8 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import type { PoolClient } from "pg";
 import { describe, expect, it, vi } from "vitest";
+import { repoRoot } from "../../../__tests__/helpers/repo-paths";
 
 vi.mock("../../../shared/realtime/realtime.service", async (importOriginal) => ({
   ...await importOriginal<typeof import("../../../shared/realtime/realtime.service")>(),
@@ -15,6 +18,22 @@ import {
   repoCreateLivraisonFromCommande,
 } from "./livraisons.repository";
 import { withRealtimeOutboxDbMock } from "../../../__tests__/helpers/realtime-outbox-db-mock";
+
+const shipmentRepositorySource = readFileSync(
+  resolve(repoRoot, "src/module/livraisons/repository/livraisons-shipment.repository.ts"),
+  "utf8"
+);
+
+describe("shipment stock movement audit contract", () => {
+  it("writes the canonical stock_movement_id audit column", () => {
+    expect(shipmentRepositorySource).toContain(
+      "stock_movement_id, event_type, old_values, new_values, user_id, correlation_id"
+    );
+    expect(shipmentRepositorySource).not.toMatch(
+      /INSERT INTO public\.stock_movement_event_log \(\s*movement_id,/
+    );
+  });
+});
 
 describe("internal order delivery gate", () => {
   it("creates no BL artifact before the post-quality PRET_LIVRAISON milestone", async () => {
@@ -309,6 +328,9 @@ describe("attachActiveCommandeReservationsToLivraison", () => {
         7,
       ]
     );
+    expect(
+      query.mock.calls.some(([sql]) => String(sql).includes("source_id = $2::text"))
+    ).toBe(true);
     expect(
       query.mock.calls.some(([sql]) =>
         String(sql).includes("INSERT INTO public.bon_livraison_ligne_allocations"))

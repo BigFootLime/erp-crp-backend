@@ -519,10 +519,18 @@ describe("/api/v1/commandes", () => {
     const articleCreateCalls = mocks.clientQuery.mock.calls.filter((c) =>
       String(c[0]).includes("INSERT INTO public.articles (") && String(c[0]).includes("status")
     );
+    const articleSubtypeUpsertCalls = mocks.clientQuery.mock.calls.filter((c) =>
+      String(c[0]).includes("INSERT INTO public.articles_fabrique")
+    );
 
     expect(pieceCreateCalls.length).toBe(1);
     expect(articleCreateCalls.length).toBe(1);
+    expect(articleSubtypeUpsertCalls.length).toBe(2);
+    expect(String(articleSubtypeUpsertCalls[0]?.[0])).toContain("ON CONFLICT (article_id) DO UPDATE");
     expect(pieceCreateCalls[0]?.[1]).not.toContain("33333333-3333-3333-3333-333333333333");
+    // La colonne pieces_techniques.en_fabrication est booléenne sur le schéma réel.
+    // PostgreSQL refuse un entier ici : le test fige le contrat que les mocks n'exécutent pas.
+    expect(String(pieceCreateCalls[0]?.[0])).toMatch(/'ACTIVE',\s*false,\s*NULL/i);
   });
 
   it("PATCH /api/v1/commandes/:id works and replaces lignes", async () => {

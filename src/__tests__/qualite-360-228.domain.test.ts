@@ -566,6 +566,15 @@ describe("#228 idempotence et empreintes", () => {
     expect(canonicalJson({ a: 1, b: null })).not.toBe(canonicalJson({ a: 1 }));
   });
 
+  it("normalise un timestamptz node-postgres avant et après persistance JSONB", () => {
+    const timestamp = new Date("2026-01-01T00:00:00.000Z");
+    const materialized = { published_at: timestamp };
+    const persisted = JSON.parse(JSON.stringify(materialized)) as { published_at: string };
+
+    expect(canonicalJson(materialized)).toBe(canonicalJson(persisted));
+    expect(qualitySha256(materialized)).toBe(qualitySha256(persisted));
+  });
+
   it("préserve l'ordre des tableaux", () => {
     expect(qualitySha256([1, 2])).not.toBe(qualitySha256([2, 1]));
   });

@@ -134,7 +134,7 @@ async function loadAvoirSources(
       LEFT JOIN LATERAL (
         SELECT COALESCE(SUM(source.quantity_credited), 0) AS quantity
         FROM public.avoir_source_allocations source
-        WHERE source.facture_line_id = fl.id
+        WHERE source.facture_ligne_id = fl.id
           AND source.allocation_status = 'CONSUMED'
       ) credited ON TRUE
       WHERE f.id = $1
@@ -403,7 +403,7 @@ export async function repoCreateAvoirDraft(params: {
       await client.query(
         `
           INSERT INTO public.avoir_source_allocations (
-            avoir_id, avoir_line_id, facture_id, facture_line_id,
+            avoir_id, avoir_line_id, facture_id, facture_ligne_id,
             source_type, source_line_id, quantity_selected,
             quantity_credited, amount_ttc, allocation_status, created_by
           )
@@ -516,7 +516,7 @@ async function savedAvoirInput(client: PoolClient, avoirId: number): Promise<Avo
   if (!row) throw new HttpError(404, "AVOIR_NOT_FOUND", "Avoir introuvable.");
   const lines = await client.query<{ facture_line_id: number; quantity: string }>(
     `
-      SELECT facture_line_id, quantity_selected::text AS quantity
+      SELECT facture_ligne_id AS facture_line_id, quantity_selected::text AS quantity
       FROM public.avoir_source_allocations
       WHERE avoir_id = $1
       ORDER BY avoir_line_id, id
@@ -674,7 +674,7 @@ export async function repoValidateAvoir(params: {
         UPDATE public.avoir
         SET statut = $2,
             approved_at = CASE WHEN $2 = 'APPROVED' THEN now() ELSE NULL END,
-            approved_by = CASE WHEN $2 = 'APPROVED' THEN $3 ELSE NULL END,
+            approved_by = CASE WHEN $2 = 'APPROVED' THEN $3::integer ELSE NULL END,
             validation_reason = $4,
             row_version = row_version + 1,
             updated_at = now()
@@ -851,8 +851,8 @@ export async function repoIssueAvoir(params: {
     const updated = await client.query<{ row_version: number }>(
       `
         UPDATE public.avoir
-        SET numero = $2,
-            legal_number = $2,
+        SET numero = $2::varchar,
+            legal_number = $2::text,
             legal_period = $3,
             legal_sequence_value = $4,
             date_emission = $5::date,

@@ -81,6 +81,22 @@ describe("#229 authentification", () => {
   });
 });
 
+describe("#229 command center — contrat des paramètres SQL", () => {
+  it("n'envoie aucun paramètre aux requêtes sans placeholder", async () => {
+    mocks.poolQuery.mockImplementation(async (sql: unknown, values?: unknown[]) => {
+      const placeholders = [...String(sql).matchAll(/\$(\d+)/g)].map((match) => Number(match[1]));
+      const expectedCount = placeholders.length > 0 ? Math.max(...placeholders) : 0;
+      expect(values ?? []).toHaveLength(expectedCount);
+      return { rows: [] };
+    });
+
+    const res = await request(app).get(`${BASE}/center?site=ATELIER&categorie_code=MICROMETRE&horizon_days=45`);
+
+    expect(res.status).toBe(200);
+    expect(mocks.poolQuery).toHaveBeenCalled();
+  });
+});
+
 describe("#229 RBAC — refus par défaut", () => {
   const readRoutes: Array<[string, string]> = [
     ["get", `${BASE}/center`],

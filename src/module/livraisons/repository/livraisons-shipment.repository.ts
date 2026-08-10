@@ -543,7 +543,7 @@ async function insertMovementEvent(
   await client.query(
     `
       INSERT INTO public.stock_movement_event_log (
-        movement_id, event_type, old_values, new_values, user_id, correlation_id
+        stock_movement_id, event_type, old_values, new_values, user_id, correlation_id
       )
       VALUES ($1::uuid,$2,$3::jsonb,$4::jsonb,$5,$6::uuid)
     `,

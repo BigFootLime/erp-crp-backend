@@ -348,7 +348,7 @@ export async function reserveProducedQtyForCommandeLine(
         stock_batch_id,
         created_by,
         updated_by
-      ) VALUES ($1::uuid,$2::uuid,$3,'COMMANDE_LIGNE',$4,$4::bigint,'ACTIVE',$5::uuid,$6::uuid,$7,$7)
+      ) VALUES ($1::uuid,$2::uuid,$3,'COMMANDE_LIGNE',$4::text,$4::bigint,'ACTIVE',$5::uuid,$6::uuid,$7,$7)
       RETURNING id::text AS id
     `,
     [

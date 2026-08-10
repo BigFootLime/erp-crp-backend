@@ -864,6 +864,86 @@ describe("/api/v1/devis", () => {
     expect(cloneSql).toContain("dl.position");
   });
 
+  it("POST /api/v1/devis/:id/revise versions preparatory entities with fresh ids", async () => {
+    const sourceArticleId = "11111111-1111-4111-8111-111111111111";
+    const sourceDossierId = "22222222-2222-4222-8222-222222222222";
+    state.commandeHeader = {
+      id: "7",
+      root_devis_id: "7",
+      numero: "DV-7",
+      client_id: "001",
+      contact_id: null,
+      adresse_facturation_id: null,
+      adresse_livraison_id: null,
+      mode_reglement_id: null,
+      compte_vente_id: null,
+      date_validite: null,
+      statut: "ENVOYE",
+      remise_globale: 0,
+      total_ht: 100,
+      total_ttc: 120,
+      commentaires: null,
+      conditions_paiement_id: null,
+      biller_id: null,
+      updated_at: "2026-03-24T10:00:00.000Z",
+    };
+    state.devisSeqId = "8";
+    state.insertDevisReturnId = "8";
+
+    const res = await request(app)
+      .post("/api/v1/devis/7/revise")
+      .field("data", JSON.stringify({
+        user_id: 1,
+        lignes: [{
+          description: "Pièce préparatoire",
+          prix_unitaire_ht: 100,
+          article_devis: {
+            id: sourceArticleId,
+            root_article_devis_id: sourceArticleId,
+            version_number: 1,
+            code: "ART-1",
+            designation: "Article préparatoire",
+            primary_category: "piece_finie_fabriquee",
+            article_categories: ["piece_finie_fabriquee"],
+            family_code: "PF",
+            plan_index: 1,
+          },
+          dossier_technique_piece_devis: {
+            id: sourceDossierId,
+            root_dossier_devis_id: sourceDossierId,
+            version_number: 1,
+            code_piece: "PT-1",
+            designation: "Dossier préparatoire",
+            payload: {},
+          },
+        }],
+      }));
+
+    expect(res.status).toBe(201);
+    const articleInsert = mocks.clientQuery.mock.calls.find((call) =>
+      /INSERT INTO public\.article_devis\s*\(/.test(String(call[0]))
+    );
+    const dossierInsert = mocks.clientQuery.mock.calls.find((call) =>
+      /INSERT INTO public\.dossier_technique_piece_devis\s*\(/.test(String(call[0]))
+    );
+    expect(articleInsert?.[1]?.slice(0, 6)).toEqual([
+      expect.not.stringMatching(sourceArticleId),
+      8,
+      1,
+      sourceArticleId,
+      sourceArticleId,
+      2,
+    ]);
+    expect(dossierInsert?.[1]?.slice(0, 6)).toEqual([
+      expect.not.stringMatching(sourceDossierId),
+      articleInsert?.[1]?.[0],
+      8,
+      sourceDossierId,
+      sourceDossierId,
+      2,
+    ]);
+  });
+
   it("DELETE /api/v1/devis/:id returns 204", async () => {
     state.deleteCurrent = { numero: "DV-7", statut: "BROUILLON", has_children: false, converted: false };
 

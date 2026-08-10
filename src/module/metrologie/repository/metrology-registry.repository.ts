@@ -2265,6 +2265,18 @@ export async function repoCenter(params: {
   if (params.categorieCode) filters.push(`e.categorie_code = ${push(params.categorieCode)}`);
   const whereSql = `WHERE ${filters.join(" AND ")}`;
 
+  // The quarantine query does not consume the horizon. Build its placeholders
+  // independently so optional filters remain contiguous from `$1`.
+  const quarantinedValues: unknown[] = [];
+  const quarantinedFilters: string[] = ["e.deleted_at IS NULL"];
+  const pushQuarantined = (value: unknown) => {
+    quarantinedValues.push(value);
+    return `$${quarantinedValues.length}`;
+  };
+  if (params.site) quarantinedFilters.push(`e.site = ${pushQuarantined(params.site)}`);
+  if (params.categorieCode) quarantinedFilters.push(`e.categorie_code = ${pushQuarantined(params.categorieCode)}`);
+  const quarantinedWhereSql = `WHERE ${quarantinedFilters.join(" AND ")}`;
+
   const kpiRes = await db().query<Record<string, string>>(
     `
       WITH scoped AS (
@@ -2366,11 +2378,11 @@ export async function repoCenter(params: {
   );
 
   const quarantined = await db().query<EquipmentListRow>(
-    `${EQUIPMENT_LIST_SELECT} ${whereSql}
+    `${EQUIPMENT_LIST_SELECT} ${quarantinedWhereSql}
        AND e.etat IN ('QUARANTINE','OUT_OF_TOLERANCE','UNDER_REPAIR')
      ORDER BY e.updated_at DESC
      LIMIT 12`,
-    values
+    quarantinedValues
   );
 
   const openImpacts = await db().query(

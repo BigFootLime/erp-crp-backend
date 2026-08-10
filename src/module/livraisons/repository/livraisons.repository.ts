@@ -2377,7 +2377,7 @@ export async function attachActiveCommandeReservationsToLivraison(
             bon_livraison_ligne_id, affaire_id, reason, created_by, updated_by
           )
           SELECT
-            article_id, location_id, $2, 'BON_LIVRAISON_LIGNE', $3, 'ACTIVE',
+            article_id, location_id, $2, 'BON_LIVRAISON_LIGNE', $3::text, 'ACTIVE',
             lot_id, stock_batch_id, correlation_id, commande_ligne_id, of_id,
             $3::uuid, $4::bigint, 'Affectée au bon de livraison ' || $5, $6, $6
           FROM public.stock_reservations
@@ -2400,7 +2400,7 @@ export async function attachActiveCommandeReservationsToLivraison(
         `
           UPDATE public.stock_reservations
           SET source_type = 'BON_LIVRAISON_LIGNE',
-              source_id = $2,
+              source_id = $2::text,
               bon_livraison_ligne_id = $2::uuid,
               affaire_id = $3::bigint,
               reason = 'Affectée au bon de livraison ' || $4,

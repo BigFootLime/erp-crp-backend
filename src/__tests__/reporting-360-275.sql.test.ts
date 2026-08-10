@@ -433,6 +433,17 @@ describe("#275 drill-down", () => {
   // les deux sont des bornes serveur, aucune n'est une troncature côté interface.
   const BOUNDED = /LIMIT \$\d+|rn <= \$\d+/;
 
+  it.each(["all", "outstanding", "overdue", "credit_balance"])(
+    "génère des paramètres PostgreSQL contigus pour le drill-down factures (%s)",
+    async (scope) => {
+      captured.length = 0;
+      await repoDrilldown(CTX, "invoices", scope);
+      const [{ sql, values }] = lastQueries(1);
+      const placeholders = [...sql.matchAll(/\$(\d+)/g)].map((match) => Number(match[1]));
+      expect(new Set(placeholders)).toEqual(new Set(Array.from({ length: values.length }, (_, index) => index + 1)));
+    }
+  );
+
   for (const entity of entities) {
     it(`borne le drill-down « ${entity} » côté serveur`, async () => {
       captured.length = 0;

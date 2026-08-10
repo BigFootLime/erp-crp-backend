@@ -1434,17 +1434,16 @@ async function drilldownInvoices(ctx: ReportingContext, scope: string): Promise<
   });
   const settled = settledCte(p, ctx.asOf);
   const credited = creditedCte(p, ctx.asOf, ctx.basis);
-  const asOf = p.push(ctx.asOf);
-  const limit = p.push(ctx.limit);
 
   const balanceFilter =
     scope === "overdue"
-      ? `WHERE b.balance_ttc > 0 AND b.due_date < ${asOf}::date`
+      ? `WHERE b.balance_ttc > 0 AND b.due_date < ${p.push(ctx.asOf)}::date`
       : scope === "outstanding"
         ? `WHERE b.balance_ttc > 0`
         : scope === "credit_balance"
           ? `WHERE b.balance_ttc < 0`
           : "";
+  const limit = p.push(ctx.limit);
 
   const res = await pool.query(
     `WITH ${ledger}, ${settled}, ${credited}, ${balancesCte()}

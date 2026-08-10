@@ -18,6 +18,10 @@ const rollback = readFileSync(
   resolve(root, "db/patches/support/20260725_qualite_360_228.rollback.sql"),
   "utf8"
 );
+const repository = readFileSync(
+  resolve(root, "src/module/qualite/repository/quality-360.repository.ts"),
+  "utf8"
+);
 
 describe("#228 migration guards", () => {
   it("keeps the forward patch transactional, additive and inactive", () => {
@@ -70,6 +74,15 @@ describe("#228 migration guards", () => {
     expect(patch).toContain("qty_conforming <= qty_controlled");
     expect(patch).toContain("qty_released <= qty_conforming");
     expect(patch).toContain("qty_consumed <= qty_released");
+  });
+
+  it("keeps a computed verdict pending until an audited release decision", () => {
+    expect(repository).toContain(
+      "WHEN validation_date IS NULL THEN 'IN_PROGRESS'::public.quality_control_status"
+    );
+    expect(repository).not.toMatch(
+      /status = CASE WHEN validation_date IS NULL THEN \$5::public\.quality_control_status/
+    );
   });
 
   it("keeps published plans, measurements and evidence immutable", () => {

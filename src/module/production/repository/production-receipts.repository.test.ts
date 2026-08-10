@@ -58,6 +58,7 @@ describe("reserveProducedQtyForCommandeLine", () => {
     const reservationInsert = client.query.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO public.stock_reservations"));
     expect(levelUpdate?.[1]).toEqual([ids.level, 5, 7]);
     expect(reservationInsert?.[1]).toEqual(expect.arrayContaining([5, "10"]));
+    expect(String(reservationInsert?.[0])).toContain("$4::text,$4::bigint");
   });
 
   it("SHIP_ALL_TOGETHER: keeps the stock reservation and reserves only the production remainder", async () => {

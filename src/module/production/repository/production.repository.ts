@@ -2521,7 +2521,10 @@ async function selectOfHeader(
         o.date_fin_reelle::text AS date_fin_reelle,
         o.notes,
         o.created_at::text AS created_at,
-        o.updated_at::text AS updated_at,
+        to_char(
+          o.updated_at AT TIME ZONE 'UTC',
+          'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+        ) AS updated_at,
         o.created_by,
         o.updated_by
       FROM ordres_fabrication o
@@ -3413,7 +3416,10 @@ export async function repoUpdateOrdreFabrication(params: {
           id::text AS id,
           commande_id::text AS commande_id,
           statut::text AS statut,
-          updated_at::text AS updated_at
+          to_char(
+            updated_at AT TIME ZONE 'UTC',
+            'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+          ) AS updated_at
         FROM ordres_fabrication
         WHERE id = $1::bigint
         FOR UPDATE

@@ -860,7 +860,12 @@ type InsertedDevisLine = {
   input: DevisLineWithPreparatoryInput;
 };
 
-async function insertDevisPreparatoryEntities(client: PoolClient, devisId: number, lines: InsertedDevisLine[]) {
+async function insertDevisPreparatoryEntities(
+  client: PoolClient,
+  devisId: number,
+  lines: InsertedDevisLine[],
+  options: { revision: boolean } = { revision: false }
+) {
   for (const line of lines) {
     const source = line.input;
     if (!source.article_devis) {
@@ -875,9 +880,12 @@ async function insertDevisPreparatoryEntities(client: PoolClient, devisId: numbe
     }
 
     const a = source.article_devis;
-    const articleDevisId = a.id ?? crypto.randomUUID();
-    const rootArticleDevisId = a.root_article_devis_id ?? articleDevisId;
-    const articleVersion = a.version_number ?? 1;
+    const sourceArticleDevisId = a.id ?? null;
+    const revisesArticle = options.revision && sourceArticleDevisId !== null;
+    const articleDevisId = revisesArticle ? crypto.randomUUID() : sourceArticleDevisId ?? crypto.randomUUID();
+    const rootArticleDevisId = a.root_article_devis_id ?? sourceArticleDevisId ?? articleDevisId;
+    const parentArticleDevisId = revisesArticle ? sourceArticleDevisId : a.parent_article_devis_id ?? null;
+    const articleVersion = revisesArticle ? (a.version_number ?? 1) + 1 : a.version_number ?? 1;
     const articleCategories = normalizeArticleCategories(a.article_categories, a.primary_category);
 
     await client.query(
@@ -906,7 +914,7 @@ async function insertDevisPreparatoryEntities(client: PoolClient, devisId: numbe
         devisId,
         line.devis_ligne_id,
         rootArticleDevisId,
-        a.parent_article_devis_id ?? null,
+        parentArticleDevisId,
         articleVersion,
         a.code.trim(),
         a.designation.trim(),
@@ -921,9 +929,12 @@ async function insertDevisPreparatoryEntities(client: PoolClient, devisId: numbe
 
     if (!source.dossier_technique_piece_devis) continue;
     const d = source.dossier_technique_piece_devis;
-    const dossierDevisId = d.id ?? crypto.randomUUID();
-    const rootDossierDevisId = d.root_dossier_devis_id ?? dossierDevisId;
-    const dossierVersion = d.version_number ?? 1;
+    const sourceDossierDevisId = d.id ?? null;
+    const revisesDossier = options.revision && sourceDossierDevisId !== null;
+    const dossierDevisId = revisesDossier ? crypto.randomUUID() : sourceDossierDevisId ?? crypto.randomUUID();
+    const rootDossierDevisId = d.root_dossier_devis_id ?? sourceDossierDevisId ?? dossierDevisId;
+    const parentDossierDevisId = revisesDossier ? sourceDossierDevisId : d.parent_dossier_devis_id ?? null;
+    const dossierVersion = revisesDossier ? (d.version_number ?? 1) + 1 : d.version_number ?? 1;
 
     await client.query(
       `
@@ -947,7 +958,7 @@ async function insertDevisPreparatoryEntities(client: PoolClient, devisId: numbe
         articleDevisId,
         devisId,
         rootDossierDevisId,
-        d.parent_dossier_devis_id ?? null,
+        parentDossierDevisId,
         dossierVersion,
         d.code_piece.trim(),
         d.designation.trim(),
@@ -979,7 +990,12 @@ async function hasPublicColumn(client: Pick<PoolClient, "query">, tableName: str
   return res.rows[0]?.exists === true;
 }
 
-async function insertDevisLines(client: PoolClient, devisId: number, lignes: CreateDevisBodyDTO["lignes"]) {
+async function insertDevisLines(
+  client: PoolClient,
+  devisId: number,
+  lignes: CreateDevisBodyDTO["lignes"],
+  options: { revision?: boolean } = {}
+) {
   if (!lignes.length) return [] as InsertedDevisLine[];
 
   const hasCodePieceColumn = await hasPublicColumn(client, "devis_ligne", "code_piece");
@@ -1042,7 +1058,7 @@ async function insertDevisLines(client: PoolClient, devisId: number, lignes: Cre
     inserted.push({ devis_ligne_id: toInt(insertedId, "devis_ligne.id"), input: line });
   }
 
-  await insertDevisPreparatoryEntities(client, devisId, inserted);
+  await insertDevisPreparatoryEntities(client, devisId, inserted, { revision: options.revision === true });
   return inserted;
 }
 
@@ -2281,7 +2297,7 @@ export async function repoReviseDevis(
     );
 
     if (input.lignes) {
-      await insertDevisLines(client, newDevisId, input.lignes);
+      await insertDevisLines(client, newDevisId, input.lignes, { revision: true });
     } else {
       // Clone : la position et les totaux de ligne suivent la source (colonnes gardées —
       // patch 20260722 / schéma legacy).

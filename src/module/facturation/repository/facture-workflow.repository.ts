@@ -609,7 +609,7 @@ export async function repoCreateFactureDraft(params: {
           created_by
         )
         VALUES (
-          $1,$2::uuid,$3,$3,NULL,$4,
+          $1,$2::uuid,$3::varchar,$3::text,NULL,$4,
           $5::bigint,$6::bigint,CURRENT_DATE,$7::date,'DRAFT',
           $8,$9,$10,$11,$12,
           $13,$14,1,$15,
@@ -674,7 +674,7 @@ export async function repoCreateFactureDraft(params: {
       await client.query(
         `
           INSERT INTO public.facture_source_allocations (
-            facture_id, facture_line_id, source_type, source_id, source_line_id,
+            facture_id, facture_ligne_id, source_type, source_id, source_line_id,
             quantity_selected, quantity_consumed, amount_ex_tax, amount_incl_tax,
             allocation_status, source_snapshot, rule_code, created_by
           )
@@ -834,7 +834,7 @@ async function savedPreviewInput(client: PoolClient, factureId: number): Promise
       SELECT source_type, source_id, source_line_id, quantity_selected::text AS quantity
       FROM public.facture_source_allocations
       WHERE facture_id = $1
-      ORDER BY facture_line_id, id
+      ORDER BY facture_ligne_id, id
     `,
     [factureId]
   );
@@ -1048,7 +1048,7 @@ export async function repoValidateFacture(params: {
         SET statut = $2,
             document_status = $2,
             approved_at = CASE WHEN $2 = 'APPROVED' THEN now() ELSE NULL END,
-            approved_by = CASE WHEN $2 = 'APPROVED' THEN $3 ELSE NULL END,
+            approved_by = CASE WHEN $2 = 'APPROVED' THEN $3::integer ELSE NULL END,
             validation_reason = $4,
             row_version = row_version + 1,
             updated_at = now()
@@ -1218,8 +1218,8 @@ export async function repoIssueFacture(params: {
     const updated = await client.query<{ row_version: number }>(
       `
         UPDATE public.facture
-        SET numero = $2,
-            legal_number = $2,
+        SET numero = $2::varchar,
+            legal_number = $2::text,
             legal_period = $3,
             legal_sequence_value = $4,
             date_emission = $5::date,
