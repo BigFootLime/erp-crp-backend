@@ -55,8 +55,8 @@ and `applied_at` together. A registry-write failure therefore rolls the patch ba
 `baseline` remains a separate metadata-only operation: it never executes patch
 SQL and is allowed only after the represented schema has been verified manually.
 
-For the rate-limit rollout, `--only 20260804_auth_rate_limit_buckets.sql` is an
-immutable selector: the runner accepts the exact basename only, verifies its
+For targeted rollouts, registered `--only` patch basenames are immutable
+selectors. The runner accepts the exact basename only, verifies its
 canonical LF SHA-256, still evaluates the complete patch inventory for checksum
 mismatches, and applies zero or one selected patch according to its
 `pending`/`applied` status. The selector always reads the repository's canonical
@@ -101,7 +101,8 @@ Correctif applicatif du 2026-08-10 :
   Stock, sans remplacer les clés déjà présentes. Son preflight et sa vérification
   sont en lecture seule ; son rollback est limité à `cerp_test`.
 
-Ce nouveau patch de navigation est livré non appliqué. Son exécution sur
+Ce nouveau patch de navigation peut être appliqué seul avec
+`--only 20260810_stock_old_new_navigation_446.sql`. Son exécution sur
 `cerp_test` puis `cerp_prod` reste soumise aux sauvegardes, contrôles et décisions
 humaines décrits plus haut.
 

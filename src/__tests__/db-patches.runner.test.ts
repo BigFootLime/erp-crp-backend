@@ -41,6 +41,9 @@ const require = createRequire(import.meta.url);
 const runner = require(resolve(repoRoot, "scripts/db-patches.js")) as RunnerModule;
 const patchFilename = "20260804_auth_rate_limit_buckets.sql";
 const planningPatchFilename = "20260805_planning_convergence_governance.sql";
+const stockNavigationPatchFilename = "20260810_stock_old_new_navigation_446.sql";
+const stockNavigationPatchChecksum =
+  "4900f01411ab89349874fcd6d28993aa34a1ec560320d4d32b05489800bf3b9b";
 const wave9PatchChecksums = new Map([
   [
     "20260216_planning_visuals_programmation.sql",
@@ -127,6 +130,12 @@ describe("database patch runner", () => {
       "4ac0aa05dc489ae5f882491e7b41cc6e96ac3bcaabd554ecddfb82d6580734dc"
     );
 
+    const stockNavigationPatch = readFileSync(
+      resolve(repoRoot, "db/patches", stockNavigationPatchFilename),
+      "utf8"
+    );
+    expect(runner.sha256Sql(stockNavigationPatch)).toBe(stockNavigationPatchChecksum);
+
     for (const [filename, checksum] of wave9PatchChecksums) {
       const sql = readFileSync(resolve(repoRoot, "db/patches", filename), "utf8");
       expect(runner.sha256Sql(sql)).toBe(checksum);
@@ -155,6 +164,13 @@ describe("database patch runner", () => {
     });
     expect(runner.parseArgs(["up", "--only", planningPatchFilename]).only).toBe(
       planningPatchFilename
+    );
+    expect(runner.immutableOnlyPatch(patches, stockNavigationPatchFilename)).toMatchObject({
+      filename: stockNavigationPatchFilename,
+      sha256: stockNavigationPatchChecksum,
+    });
+    expect(runner.parseArgs(["up", "--only", stockNavigationPatchFilename]).only).toBe(
+      stockNavigationPatchFilename
     );
     for (const [filename, checksum] of wave9PatchChecksums) {
       expect(runner.immutableOnlyPatch(patches, filename)).toMatchObject({
