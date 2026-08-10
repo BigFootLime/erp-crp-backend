@@ -112,8 +112,11 @@ vérification réussis, empreinte enregistrée
 Sauvegarde de retour arrière conservée sous
 `/var/backups/cerp/cerp_test_pre_446_nav_20260810-161340.dump` (SHA-256
 `aabbb8c377db2f1b9fcaf5213fd9168fe54599b337329287da60d99a9c2a83e7`).
-`cerp_prod` n'est pas appliquée tant que cette seconde cible n'est pas
-explicitement confirmée.
+Application `cerp_prod` réalisée le 2026-08-10 à 17:03 CEST après confirmation
+explicite de la cible : préflight et vérification réussis, même empreinte de
+migration, six clés de navigation Stock distinctes. Sauvegarde production
+conservée sous `/var/backups/cerp/cerp_prod_20260810-170142.dump` (SHA-256
+`3ab2e6887e47a47e096c08862dddc255fd53ec65f73b54dc531a3abb92326a36`).
 
 `20260731_stock_old_new_446.sql` is additive and was applied to both
 `cerp_test` and `cerp_prod` on 2026-07-31. It adds the four fixed functional stores
