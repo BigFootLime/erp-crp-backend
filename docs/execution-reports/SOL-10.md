@@ -58,7 +58,10 @@ en état `healthy`. Le preflight login public répond `204` et autorise/expose l
 deux IDs de corrélation ; `/health/live` répond `200`. La readiness a mis en
 évidence que la GED locale VPS était exigée alors que la GED production est
 routée vers HYPERBOX2. Une variable Coolify runtime-only unique exige désormais
-DB, antivirus et temps réel ; son redéploiement final doit encore être attesté.
+DB, antivirus et temps réel. Le redéploiement de configuration a terminé
+`healthy` et le probe public répond `200 ready` : DB, antivirus et temps réel
+`up`, GED locale `degraded` et non requise. Le push documentaire final applique
+la configuration persistée dédupliquée sans modifier le code applicatif.
 
 Sur HYPERBOX2, `/srv/cerp/releases/20260810-d7cb2ef` est construit et vérifié,
 mais le service reste volontairement sur `20260805-f0ee008`. Le dépôt ancien
