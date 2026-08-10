@@ -55,7 +55,7 @@ import {
   FIXTURE_EXPECTED_TOTAL_TF,
   FIXTURE_EXPECTED_TOTAL_TP,
   FIXTURE_OPERATIONS,
-} from "../module/production/domain/__fixtures__/of-document.fixture";
+} from "../../test-support/production/of-document.fixture";
 
 const baseOperation = (over: Partial<OfRevisionOperation> = {}): OfRevisionOperation => ({
   phase: 10,

@@ -5,8 +5,8 @@
 // `fabrication = temps_unitaire x quantité_base x coefficient` doit redonner
 // exactement les TF imprimés, et leur somme les totaux 12,00 / 59,00 / 71,00 h.
 
-import type { MachineFamilyRef, OfRevisionOperation } from "../of-revision";
-import type { OfDocumentBuildInput } from "../of-document";
+import type { MachineFamilyRef, OfRevisionOperation } from "../../src/module/production/domain/of-revision";
+import type { OfDocumentBuildInput } from "../../src/module/production/domain/of-document";
 
 export const FIXTURE_QUANTITE_BASE = 40;
 

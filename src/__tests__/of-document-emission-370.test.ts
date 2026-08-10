@@ -19,7 +19,7 @@ import {
   buildFixtureInput,
   FIXTURE_FAMILLES,
   FIXTURE_OPERATIONS_TFT,
-} from "../module/production/domain/__fixtures__/of-document.fixture";
+} from "../../test-support/production/of-document.fixture";
 
 describe("#370 — l'aperçu et l'émission partagent le même read-model", () => {
   it("ne sérialise jamais l'ownership interne du blob GED", () => {

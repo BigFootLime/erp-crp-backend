@@ -26,7 +26,7 @@ import {
   FIXTURE_EXPECTED_TOTAL_TF,
   FIXTURE_EXPECTED_TOTAL_TP,
   FIXTURE_QUANTITE_BASE,
-} from "../module/production/domain/__fixtures__/of-document.fixture";
+} from "../../test-support/production/of-document.fixture";
 import type { OfRevisionOperation } from "../module/production/domain/of-revision";
 
 /**
