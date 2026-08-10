@@ -201,12 +201,14 @@ describe("Catalogue de modules #326", () => {
     const finitions = MODULE_CATALOG.find((entry) => entry.module_key === "finitions");
     const costCenters = MODULE_CATALOG.find((entry) => entry.module_key === "methodes-centres-frais");
     const machines = MODULE_CATALOG.find((entry) => entry.module_key === "methodes-parc-machines");
+    const stock = MODULE_CATALOG.find((entry) => entry.module_key === "stock");
     const ged = MODULE_CATALOG.find((entry) => entry.module_key === "ged");
 
     expect(technicalData?.nav_page_keys).toEqual(["pieces-techniques"]);
     expect(finitions).toMatchObject({ nav_page_keys: ["finitions"], api_prefixes: ["/finitions"] });
     expect(costCenters).toMatchObject({ nav_page_keys: ["methodes-centres-frais"] });
     expect(machines).toMatchObject({ nav_page_keys: ["methodes-parc-machines"] });
+    expect(stock?.nav_page_keys).toEqual(expect.arrayContaining(["stock-base-old", "stock-base-new"]));
     expect(ged).toMatchObject({
       is_protected: false,
       api_prefixes: ["/ged"],
