@@ -88,6 +88,23 @@ every owner other than `cerp_app`.
 
 ## Issue #446 - Stock functional scopes OLD/NEW
 
+Correctif applicatif du 2026-08-10 :
+
+- l’alimentation PF de Base OLD utilise désormais le statut technique canonique
+  `DRAFT`, accepté par la contrainte de `pieces_techniques`, au lieu de la valeur
+  historique invalide `EN_DEVIS` qui provoquait le `500 INTERNAL_ERROR` ;
+- une reprise OLD reste un mouvement d’ouverture autonome, sans clé étrangère
+  vers une Affaire, une commande ou un OF ; les numéros éventuellement saisis
+  sont seulement des repères texte sur le lot ;
+- `20260810_stock_old_new_navigation_446.sql` ajoute de façon idempotente les
+  clés `stock-base-old` et `stock-base-new` au catalogue persistant du module
+  Stock, sans remplacer les clés déjà présentes. Son preflight et sa vérification
+  sont en lecture seule ; son rollback est limité à `cerp_test`.
+
+Ce nouveau patch de navigation est livré non appliqué. Son exécution sur
+`cerp_test` puis `cerp_prod` reste soumise aux sauvegardes, contrôles et décisions
+humaines décrits plus haut.
+
 `20260731_stock_old_new_446.sql` is additive and was applied to both
 `cerp_test` and `cerp_prod` on 2026-07-31. It adds the four fixed functional stores
 `OLD-PF`, `OLD-MP`, `NEW-PF`, `NEW-MP`, lot opening provenance/traceability,

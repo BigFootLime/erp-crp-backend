@@ -20,6 +20,26 @@ const rollback = readFileSync(
   resolve(repoRoot, "db/patches/support/20260731_stock_old_new_446.rollback.sql"),
   "utf8"
 );
+const navigationPatch = readFileSync(
+  resolve(repoRoot, "db/patches/20260810_stock_old_new_navigation_446.sql"),
+  "utf8"
+);
+const navigationPreflight = readFileSync(
+  resolve(repoRoot, "db/patches/support/20260810_stock_old_new_navigation_446.preflight.sql"),
+  "utf8"
+);
+const navigationVerify = readFileSync(
+  resolve(repoRoot, "db/patches/support/20260810_stock_old_new_navigation_446.verify.sql"),
+  "utf8"
+);
+const navigationRollback = readFileSync(
+  resolve(repoRoot, "db/patches/support/20260810_stock_old_new_navigation_446.rollback.sql"),
+  "utf8"
+);
+const stockRepository = readFileSync(
+  resolve(repoRoot, "src/module/stock/repository/stock.repository.ts"),
+  "utf8"
+);
 
 describe("#446 stock OLD/NEW migration guards", () => {
   it("reste additive, transactionnelle et idempotente", () => {
@@ -100,5 +120,54 @@ describe("#446 stock OLD/NEW migration guards", () => {
     expect(rollback).toMatch(/rollback refused/i);
     expect(rollback).toMatch(/OR code_magasin IN/i);
     expect(rollback).toMatch(/DROP TABLE IF EXISTS public\.stock_lot_trace_references/i);
+  });
+});
+
+describe("#446 Base OLD corrective guards", () => {
+  it("creates a historical PF with the canonical technical-piece status", () => {
+    const historicalPieceStart = stockRepository.indexOf("async function ensureHistoricalPieceTechniqueTx");
+    const historicalPieceEnd = stockRepository.indexOf("export async function repoCreateHistoricalImport");
+    const historicalPieceSource = stockRepository.slice(historicalPieceStart, historicalPieceEnd);
+
+    expect(historicalPieceStart).toBeGreaterThanOrEqual(0);
+    expect(historicalPieceEnd).toBeGreaterThan(historicalPieceStart);
+    expect(historicalPieceSource).toContain("'DRAFT'");
+    expect(historicalPieceSource).not.toContain("'EN_DEVIS'");
+  });
+
+  it("keeps OLD imports independent from orders, affairs and fabrication orders", () => {
+    const historicalImportStart = stockRepository.indexOf("export async function repoCreateHistoricalImport");
+    const historicalImportEnd = stockRepository.indexOf("export async function repoListBalances");
+    const historicalImportSource = stockRepository.slice(historicalImportStart, historicalImportEnd);
+
+    expect(historicalImportSource).toContain("CERP_HISTORICAL_OPENING");
+    expect(historicalImportSource).toContain("stock_lot_trace_references");
+    expect(historicalImportSource).not.toMatch(/\b(?:affaire_id|of_id|commande_id)\b/);
+  });
+
+  it("adds the OLD and NEW navigation shortcuts without replacing existing keys", () => {
+    expect(navigationPatch).toContain("BEGIN;");
+    expect(navigationPatch).toContain("COMMIT;");
+    expect(navigationPatch).toContain("'stock-base-old'");
+    expect(navigationPatch).toContain("'stock-base-new'");
+    expect(navigationPatch).toContain("COALESCE(nav_page_keys");
+    expect(navigationPatch).toContain("|| CASE");
+    expect(navigationPatch).not.toMatch(/\b(DROP|TRUNCATE|DELETE)\b/i);
+  });
+
+  it("keeps navigation preflight and verification read-only", () => {
+    for (const script of [navigationPreflight, navigationVerify]) {
+      expect(script).toMatch(/BEGIN TRANSACTION READ ONLY;/i);
+      expect(script).toMatch(/COMMIT;/i);
+      expect(script).not.toMatch(/^\s*(INSERT|UPDATE|DELETE|ALTER|CREATE|DROP|TRUNCATE)\b/im);
+    }
+  });
+
+  it("limits the navigation rollback to cerp_test and only removes the two shortcuts", () => {
+    expect(navigationRollback).toMatch(/current_database\(\) <> 'cerp_test'/i);
+    expect(navigationRollback).toContain("array_remove");
+    expect(navigationRollback).toContain("'stock-base-old'");
+    expect(navigationRollback).toContain("'stock-base-new'");
+    expect(navigationRollback).not.toMatch(/\b(DROP|TRUNCATE|DELETE)\b/i);
   });
 });
