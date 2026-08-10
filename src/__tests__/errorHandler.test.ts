@@ -80,6 +80,43 @@ describe("CA-SEC-04 — errorHandler ne fuite pas d'internes sur 5xx", () => {
     expect(payload.code).toBe("ALREADY_LINKED");
   });
 
+  it("traduit le SQLSTATE SOL-06 en refus métier actionnable sans exposer le SQL", () => {
+    const { req, res, status, json } = mockReqRes("/api/v1/stock/movements");
+    const prerequisite = {
+      prerequisite_code: "STOCK_VALUATION_POLICY",
+      ready: false,
+      definition: "Méthode de valorisation sourcée.",
+      unit: "METHOD",
+      period_start: null,
+      period_end: null,
+      source: "public.erp_settings",
+      freshness_at: null,
+      reliability: "MISSING",
+      actual_value: {},
+      expected_value: "WEIGHTED_AVERAGE, FIFO ou SPECIFIC_IDENTIFICATION",
+      remediation: "Renseignez stock.valuation_method.",
+    };
+
+    errorHandler({
+      code: "P2606",
+      detail: JSON.stringify([prerequisite]),
+      message: "internal trigger at C:\\private\\database.sql:42",
+    }, req, res, () => {});
+
+    expect(status).toHaveBeenCalledWith(409);
+    expect(json.mock.calls[0][0]).toEqual({
+      success: false,
+      message: "Le flux ne peut pas démarrer : des référentiels obligatoires sont incomplets.",
+      code: "BUSINESS_PREREQUISITES_MISSING",
+      path: "/api/v1/stock/movements",
+      details: {
+        prerequisites: [prerequisite],
+        suggested_action: "Corrigez les prérequis listés puis relancez la même commande idempotente.",
+      },
+    });
+    expect(JSON.stringify(json.mock.calls[0][0])).not.toContain("private");
+  });
+
   it("HttpError >= 500 est aussi masquée (message générique, mais code conservé)", () => {
     const { req, res, status, json } = mockReqRes();
 

@@ -6,6 +6,17 @@ const crypto = require("node:crypto");
 const PASSWORD_HASH = "$2b$10$M6.b9HVIHwTCt3xOYQ9uJeIFFOSM5tkLY8m9pfHCUiMZDu9Fqilfe";
 const FINANCE_ISSUER_ID = "b7c1e5a2-3f4d-4e8b-9a06-380569012000";
 const FINANCE_YEAR = new Date().getUTCFullYear();
+const REFERENCE_PERIOD_START = `${FINANCE_YEAR}-01-01`;
+const STOCK_VALUATION_POLICY = {
+  method: "WEIGHTED_AVERAGE",
+  definition: "Coût moyen pondéré recalculé à chaque entrée valorisée dans la fixture isolée SOL-06.",
+  unit: "METHOD",
+  period_start: REFERENCE_PERIOD_START,
+  period_end: null,
+  source: "Fixture déterministe SOL-06 — aucune donnée de production",
+  freshness_at: `${FINANCE_YEAR}-01-01T00:00:00.000Z`,
+  reliability: "VERIFIED",
+};
 const DELIVERY_QUALITY_RULES = {
   aggregate_scope: "ALL_DELIVERY_ALLOCATIONS",
   derogation_mode: "FORBIDDEN",
@@ -52,12 +63,14 @@ async function main() {
         [username, PASSWORD_HASH, name, surname, email, role, superadmin]
       );
       const userId = result.rows[0].id;
-      await client.query(
-        `INSERT INTO public.user_role_assignments (user_id,role_key,assigned_by)
-         VALUES ($1,$2,(SELECT id FROM public.users WHERE username='KEENAN'))
-         ON CONFLICT (user_id,role_key) DO NOTHING`,
-        [userId, assignedRole]
-      );
+      for (const roleKey of new Set([role, assignedRole])) {
+        await client.query(
+          `INSERT INTO public.user_role_assignments (user_id,role_key,assigned_by)
+           VALUES ($1,$2,(SELECT id FROM public.users WHERE username='KEENAN'))
+           ON CONFLICT (user_id,role_key) DO NOTHING`,
+          [userId, roleKey]
+        );
+      }
       if (!superadmin) {
         await client.query(
           `INSERT INTO public.app_module_user_access (user_id,module_key,access,updated_by)
@@ -67,6 +80,82 @@ async function main() {
         );
       }
     }
+
+    await client.query(
+      `INSERT INTO public.erp_settings (key,value_text,value_json,created_by,updated_by)
+       VALUES (
+         'stock.valuation_method',$1,$2::jsonb,
+         (SELECT id FROM public.users WHERE username='KEENAN'),
+         (SELECT id FROM public.users WHERE username='KEENAN')
+       )
+       ON CONFLICT (key) DO UPDATE SET
+         value_text=EXCLUDED.value_text,value_json=EXCLUDED.value_json,
+         updated_by=EXCLUDED.updated_by,updated_at=now()`,
+      [STOCK_VALUATION_POLICY.method, JSON.stringify(STOCK_VALUATION_POLICY)]
+    );
+    const readinessColumns = await client.query(
+      `SELECT count(*)::int AS count
+       FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='erp_settings'
+         AND column_name = ANY (ARRAY[
+           'definition','unit','period_start','period_end','source','freshness_at','reliability'
+         ])`
+    );
+    if (readinessColumns.rows[0]?.count === 7) {
+      await client.query(
+        `UPDATE public.erp_settings SET
+           definition=$1,unit=$2,period_start=$3::date,period_end=$4::date,
+           source=$5,freshness_at=$6::timestamptz,reliability=$7,updated_at=now()
+         WHERE key='stock.valuation_method'`,
+        [
+          STOCK_VALUATION_POLICY.definition,
+          STOCK_VALUATION_POLICY.unit,
+          STOCK_VALUATION_POLICY.period_start,
+          STOCK_VALUATION_POLICY.period_end,
+          STOCK_VALUATION_POLICY.source,
+          STOCK_VALUATION_POLICY.freshness_at,
+          STOCK_VALUATION_POLICY.reliability,
+        ]
+      );
+    }
+
+    await client.query(
+      `INSERT INTO public.programmation_calendars (
+         id,code,label,timezone,working_days,day_start,day_end,active,created_by,updated_by
+       ) VALUES (
+         '31000000-0000-4000-8000-000000000001','SOL06-E2E','Calendrier industriel isolé SOL-06',
+         'Europe/Paris',ARRAY[1,2,3,4,5]::smallint[],'06:00','22:00',true,
+         (SELECT id FROM public.users WHERE username='KEENAN'),
+         (SELECT id FROM public.users WHERE username='KEENAN')
+       ) ON CONFLICT (id) DO UPDATE SET
+         label=EXCLUDED.label,timezone=EXCLUDED.timezone,working_days=EXCLUDED.working_days,
+         day_start=EXCLUDED.day_start,day_end=EXCLUDED.day_end,active=true,updated_by=EXCLUDED.updated_by`
+    );
+    await client.query(
+      `INSERT INTO public.centres_frais (
+         id,code,name,statut,devise,commentaire,created_by,updated_by
+       ) VALUES (
+         '32000000-0000-4000-8000-000000000001','SOL06-CF-E2E','Centre de frais isolé SOL-06',
+         'ACTIF','EUR','Fixture déterministe, sans valeur de production',
+         (SELECT id FROM public.users WHERE username='KEENAN'),
+         (SELECT id FROM public.users WHERE username='KEENAN')
+       ) ON CONFLICT (id) DO UPDATE SET
+         code=EXCLUDED.code,name=EXCLUDED.name,statut='ACTIF',devise='EUR',archived_at=NULL,
+         commentaire=EXCLUDED.commentaire,updated_by=EXCLUDED.updated_by`
+    );
+    await client.query(
+      `INSERT INTO public.production_cost_center_rates (
+         id,cf_id,taux_horaire,devise,date_effet,date_fin,source,commentaire,created_by
+       ) VALUES (
+         '33000000-0000-4000-8000-000000000001','32000000-0000-4000-8000-000000000001',
+         50,'EUR',$1::date,NULL,'Fixture déterministe SOL-06',
+         'Valeur de test uniquement, jamais présentée comme donnée réelle',
+         (SELECT id FROM public.users WHERE username='KEENAN')
+       ) ON CONFLICT (id) DO UPDATE SET
+         taux_horaire=EXCLUDED.taux_horaire,devise='EUR',date_effet=EXCLUDED.date_effet,
+         date_fin=NULL,source=EXCLUDED.source,commentaire=EXCLUDED.commentaire`,
+      [REFERENCE_PERIOD_START]
+    );
 
     await client.query(
       `INSERT INTO public.clients (client_id,client_code,company_name,status,document_policy)

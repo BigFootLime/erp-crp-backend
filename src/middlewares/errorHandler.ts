@@ -12,6 +12,46 @@ import { stripQueryFromUrl } from "../utils/logPath";
 // dans tous les environnements — le dev garde le détail complet dans les logs serveur.
 const GENERIC_SERVER_ERROR_MESSAGE = "Erreur serveur.";
 
+const REFERENCE_DATA_SQLSTATE = "P2606";
+const REFERENCE_DATA_FIELDS = [
+  "prerequisite_code", "ready", "definition", "unit", "period_start", "period_end",
+  "source", "freshness_at", "reliability", "actual_value", "expected_value", "remediation",
+] as const;
+
+function mapReferenceDataError(error: unknown): HttpError | null {
+  if (!error || typeof error !== "object" || !("code" in error) || error.code !== REFERENCE_DATA_SQLSTATE) {
+    return null;
+  }
+  const rawDetail = "detail" in error && typeof error.detail === "string" ? error.detail : "";
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawDetail);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0 || parsed.length > 20) return null;
+  const prerequisites = parsed.map((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+    const safe: Record<string, unknown> = {};
+    for (const field of REFERENCE_DATA_FIELDS) {
+      if (field in entry) safe[field] = (entry as Record<string, unknown>)[field];
+    }
+    return typeof safe.prerequisite_code === "string" && typeof safe.remediation === "string"
+      ? safe
+      : null;
+  });
+  if (prerequisites.some((entry) => entry === null)) return null;
+  return new HttpError(
+    409,
+    "BUSINESS_PREREQUISITES_MISSING",
+    "Le flux ne peut pas démarrer : des référentiels obligatoires sont incomplets.",
+    {
+      prerequisites,
+      suggested_action: "Corrigez les prérequis listés puis relancez la même commande idempotente.",
+    }
+  );
+}
+
 // Closed allowlist for operational upload/commit failures where a generic 5xx
 // would hide safety-critical retry guidance. Values are public constants: the
 // exception's own message, details, path, and stack are never reused here.
@@ -82,9 +122,11 @@ const PUBLIC_OPERATIONAL_5XX_MESSAGES = new Map<string, string>([
 ]);
 
 export function errorHandler(err: any, req: Request, res: Response, _next: NextFunction) {
-  const isKnown = err instanceof HttpError || err instanceof ApiError;
-  const status = isKnown ? err.status : 500;
-  const code = isKnown ? err.code : "INTERNAL_ERROR";
+  const mappedReferenceDataError = mapReferenceDataError(err);
+  const handledError = mappedReferenceDataError ?? err;
+  const isKnown = handledError instanceof HttpError || handledError instanceof ApiError;
+  const status = isKnown ? handledError.status : 500;
+  const code = isKnown ? handledError.code : "INTERNAL_ERROR";
 
   // Les erreurs connues < 500 portent un message volontaire. Une 5xx ne devient
   // actionnable que si son code figure exactement dans l'allowlist ci-dessus.
@@ -93,7 +135,7 @@ export function errorHandler(err: any, req: Request, res: Response, _next: NextF
     ? PUBLIC_OPERATIONAL_5XX_MESSAGES.get(code)
     : undefined;
   const message = isKnown && status < 500
-    ? (err.message ?? GENERIC_SERVER_ERROR_MESSAGE)
+    ? (handledError.message ?? GENERIC_SERVER_ERROR_MESSAGE)
     : (operationalMessage ?? GENERIC_SERVER_ERROR_MESSAGE);
 
   // Path sans query string : les recherches métier mettent des PII en query
@@ -108,8 +150,8 @@ export function errorHandler(err: any, req: Request, res: Response, _next: NextF
     message,
     code,
     path: safePath,
-    ...(err instanceof HttpError && status < 500 && typeof err.details !== "undefined"
-      ? { details: err.details }
+    ...(handledError instanceof HttpError && status < 500 && typeof handledError.details !== "undefined"
+      ? { details: handledError.details }
       : {}),
   };
 
@@ -122,7 +164,7 @@ export function errorHandler(err: any, req: Request, res: Response, _next: NextF
     method: req.method,
     path: safePath,
     requestId: req.requestId ?? null,
-    details: err?.details,
+    details: mappedReferenceDataError?.details ?? err?.details,
     stack: err?.stack,
   });
 

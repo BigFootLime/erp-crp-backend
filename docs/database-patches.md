@@ -6,6 +6,16 @@ database is PostgreSQL on HYPERBOX2, database `cerp_prod`.
 Do not make schema changes directly on the VPS. The VPS must not become a
 second writable database.
 
+## Gate de release SOL-06
+
+Toute mise à niveau suit désormais `docs/runbooks/database-upgrade-sol06.md`.
+Les commandes `db:migrations:inventory`, `db:migrations:preflight`,
+`db:migrations:integrity` et `db:migrations:rehearse` couvrent respectivement
+l'inventaire statique, la sauvegarde/prérequis en lecture seule, les comptages
+et orphelins post-migration, puis la preuve complète dans PostgreSQL jetable.
+Le patch `20260810_system_reference_data_readiness.sql` bloque côté base les
+flux stock, planning et production dont les référentiels sont incomplets.
+
 ## Commands
 
 Show patch status:

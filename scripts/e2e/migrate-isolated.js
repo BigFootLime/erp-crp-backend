@@ -13,6 +13,7 @@ const NORMALIZE = path.join(ROOT, 'db', 'e2e', 'normalize-empty-uuid-spine.sql')
 const HISTORICAL_RUNTIME_CONTRACT = path.join(ROOT, 'db', 'e2e', 'historical-runtime-contract.sql');
 const DATA_ONLY_BASELINES = new Set(['20260727_repair_article_category_orphans_168.sql']);
 const NORMALIZE_BEFORE = '20260219_commande_affaires_livraison_production.sql';
+const REHEARSAL_STOP_PATCH = '20260810_system_reference_data_readiness.sql';
 
 function fail(message) {
   throw new Error(`[SOL-05 migration] ${message}`);
@@ -69,6 +70,13 @@ async function executeFile(client, filename) {
 
 async function main() {
   assertIsolatedUrl(process.env.DATABASE_URL);
+  const stopBefore = process.env.CERP_E2E_STOP_BEFORE_PATCH || null;
+  if (stopBefore && (
+    process.env.CERP_MIGRATION_REHEARSAL !== '1'
+    || stopBefore !== REHEARSAL_STOP_PATCH
+  )) {
+    fail(`stop-before is reserved for the SOL-06 isolated rehearsal (${REHEARSAL_STOP_PATCH})`);
+  }
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   try {
@@ -81,7 +89,12 @@ async function main() {
   }
 
   let normalized = false;
+  let stopBoundaryFound = false;
   for (const filename of orderedPatches()) {
+    if (filename === stopBefore) {
+      stopBoundaryFound = true;
+      break;
+    }
     if (!normalized && filename === NORMALIZE_BEFORE) {
       const normalizer = new Client({ connectionString: process.env.DATABASE_URL });
       await normalizer.connect();
@@ -97,6 +110,7 @@ async function main() {
   }
 
   if (!normalized) fail(`normalization boundary ${NORMALIZE_BEFORE} was not found`);
+  if (stopBefore && !stopBoundaryFound) fail(`rehearsal boundary ${stopBefore} was not found`);
   const contract = new Client({ connectionString: process.env.DATABASE_URL });
   await contract.connect();
   try {
@@ -107,7 +121,7 @@ async function main() {
   }
   const status = spawnSync(
     process.execPath,
-    [path.join(ROOT, 'scripts', 'db-patches.js'), 'status', '--check'],
+    [path.join(ROOT, 'scripts', 'db-patches.js'), 'status', ...(stopBefore ? [] : ['--check'])],
     { cwd: ROOT, env: process.env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
   );
   if (status.stdout) {
@@ -122,6 +136,7 @@ async function main() {
     if (status.stderr) process.stderr.write(status.stderr);
     fail('final patch inventory check failed');
   }
+  if (stopBefore) process.stdout.write(`SOL-06 rehearsal source stopped before ${stopBefore}.\n`);
 }
 
 main().catch((error) => {
