@@ -5568,8 +5568,7 @@ export async function repoCreateHistoricalImport(body: HistoricalImportBodyDTO, 
       const existing = await client.query<{ id: string }>(`SELECT id::text AS id FROM public.articles WHERE piece_technique_id=$1::uuid LIMIT 1 FOR UPDATE`, [ptId]);
       if (existing.rows[0]?.id) articleId = existing.rows[0].id;
       else {
-        const family = body.family_code ?? (await client.query<{ code: string }>(`SELECT code FROM public.article_families WHERE category='fabrique' AND is_active=true ORDER BY code LIMIT 1`)).rows[0]?.code;
-        if (!family) throw new HttpError(422, "PF_FAMILY_REQUIRED", "Aucune famille active de produits fabriqués n'est disponible.");
+        const family = body.family_code ?? defaultFamilyCodeForCategory("fabrique");
         articleId = (await repoCreateArticleTx(client, { designation: body.designation, article_type: "PIECE_TECHNIQUE", article_category: "fabrique", article_categories: ["piece_finie_fabriquee"], family_code: family, piece_technique_id: ptId, stock_managed: true, lot_tracking: true, is_sold: true, is_active: true, status: "VALIDE" }, audit)).id;
       }
       shelf = body.client_number.trim();

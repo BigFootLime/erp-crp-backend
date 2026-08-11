@@ -154,6 +154,15 @@ describe("#446 Base OLD corrective guards", () => {
     expect(historicalImportSource).not.toContain("public.matiere_nuances");
   });
 
+  it("creates a historical PF without depending on the obsolete central family catalog", () => {
+    const historicalImportStart = stockRepository.indexOf("export async function repoCreateHistoricalImport");
+    const historicalImportEnd = stockRepository.indexOf("export async function repoListBalances");
+    const historicalImportSource = stockRepository.slice(historicalImportStart, historicalImportEnd);
+
+    expect(historicalImportSource).toContain('defaultFamilyCodeForCategory("fabrique")');
+    expect(historicalImportSource).not.toContain("public.article_families");
+  });
+
   it("adds the OLD and NEW navigation shortcuts without replacing existing keys", () => {
     expect(navigationPatch).toContain("BEGIN;");
     expect(navigationPatch).toContain("COMMIT;");
