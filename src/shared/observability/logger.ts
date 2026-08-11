@@ -89,6 +89,12 @@ export function safeErrorCode(error: unknown): string | null {
   return SAFE_IDENTIFIER.test(code) ? code : null;
 }
 
+export function safeErrorConstraint(error: unknown): string | null {
+  if (!error || typeof error !== "object" || !("constraint" in error)) return null;
+  const constraint = String((error as { constraint?: unknown }).constraint ?? "").trim();
+  return SAFE_IDENTIFIER.test(constraint) ? constraint : null;
+}
+
 export function errorFingerprint(error: unknown): string {
   const errorObject = error && typeof error === "object" ? error as { name?: unknown; message?: unknown; code?: unknown } : null;
   const input = [errorObject?.name, errorObject?.code, errorObject?.message]

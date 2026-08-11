@@ -102,6 +102,22 @@ describe("SOL-06 migration release gate", () => {
     expect(migrator).toContain("stop-before is reserved for the SOL-06 isolated rehearsal");
   });
 
+  it("ecrit le rapport de repetition hors du worktree quand le gate le demande", () => {
+    const source = fs.readFileSync(path.join(ROOT, "scripts", "migrations", "release-gate.js"), "utf8");
+
+    expect(source).toContain('options["report-dir"]');
+    expect(source).toContain('path.join(reportDir, "MIGRATION_REHEARSAL_SOL_06.json")');
+    expect(source).toContain('path.join(reportDir, "MIGRATION_REHEARSAL_SOL_06.md")');
+  });
+
+  it("attend le serveur PostgreSQL final au lieu du serveur temporaire d'initialisation", () => {
+    const source = fs.readFileSync(path.join(ROOT, "scripts", "migrations", "release-gate.js"), "utf8");
+
+    expect(source).toContain("PostgreSQL init process complete; ready for start up")
+    expect(source).toContain("consecutiveReady >= 2")
+    expect(source).toContain("final server did not become stably ready")
+  });
+
   it("refuse une sauvegarde vide ou dont le SHA-256 ne correspond pas", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "cerp-sol06-test-"));
     temporaryDirectories.push(directory);

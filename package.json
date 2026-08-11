@@ -8,6 +8,7 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "build": "node scripts/security/check-production-data-boundary.mjs && tsc -p tsconfig.json && node scripts/security/check-production-data-boundary.mjs --dist",
     "security:production-data": "node scripts/security/check-production-data-boundary.mjs",
     "contract:generate": "npm run build && node scripts/generate-commande-workflow-contract.mjs",

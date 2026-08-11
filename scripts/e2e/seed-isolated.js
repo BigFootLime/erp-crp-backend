@@ -282,7 +282,9 @@ async function main() {
     );
     await client.query(
       `INSERT INTO public.articles_fabrique_families (code,designation,is_active)
-       VALUES ('piece_finie','Piece finie E2E',true)
+       VALUES
+         ('piece_finie','Piece finie E2E',true),
+         ('PT','Piece technique E2E',true)
        ON CONFLICT (code) DO UPDATE SET designation=EXCLUDED.designation,is_active=true`
     );
     await client.query(
