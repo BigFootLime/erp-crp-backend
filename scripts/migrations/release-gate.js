@@ -595,9 +595,10 @@ async function rehearse(options = {}) {
 
     report.status = "passed";
     report.completed_at = new Date().toISOString();
-    fs.mkdirSync(DEFAULT_REPORT_DIR, { recursive: true });
-    fs.writeFileSync(path.join(DEFAULT_REPORT_DIR, "MIGRATION_REHEARSAL_SOL_06.json"), `${JSON.stringify(report, null, 2)}\n`);
-    fs.writeFileSync(path.join(DEFAULT_REPORT_DIR, "MIGRATION_REHEARSAL_SOL_06.md"), rehearsalMarkdown(report));
+    const reportDir = options["report-dir"] ? path.resolve(options["report-dir"]) : DEFAULT_REPORT_DIR;
+    fs.mkdirSync(reportDir, { recursive: true });
+    fs.writeFileSync(path.join(reportDir, "MIGRATION_REHEARSAL_SOL_06.json"), `${JSON.stringify(report, null, 2)}\n`);
+    fs.writeFileSync(path.join(reportDir, "MIGRATION_REHEARSAL_SOL_06.md"), rehearsalMarkdown(report));
     return report;
   } finally {
     if (containerStarted) spawnSync("docker", ["rm", "-f", container], { env: systemEnv(), stdio: "ignore", windowsHide: true });
