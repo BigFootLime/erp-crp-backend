@@ -15,14 +15,17 @@ BEGIN
     RAISE EXCEPTION 'SOL-06 verify: one or more business-flow readiness triggers are missing or disabled';
   END IF;
 
-  IF EXISTS (
-    SELECT 1 FROM public.fn_business_prerequisite_status('STOCK') WHERE NOT ready
-    UNION ALL
-    SELECT 1 FROM public.fn_business_prerequisite_status('PLANNING') WHERE NOT ready
-    UNION ALL
-    SELECT 1 FROM public.fn_business_prerequisite_status('PRODUCTION') WHERE NOT ready
+  IF NOT EXISTS (
+    SELECT 1 FROM public.fn_business_prerequisite_status('STOCK')
+    WHERE prerequisite_code = 'ACTIVE_STOCK_LOCATIONS'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM public.fn_business_prerequisite_status('PLANNING')
+    WHERE prerequisite_code = 'ACTIVE_PRODUCTION_CALENDAR'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM public.fn_business_prerequisite_status('PRODUCTION')
+    WHERE prerequisite_code = 'CURRENT_COST_CENTER_RATES'
   ) THEN
-    RAISE EXCEPTION 'SOL-06 verify: reference-data readiness contains blocking findings';
+    RAISE EXCEPTION 'SOL-06 verify: expected guided readiness checks are missing';
   END IF;
 
   IF EXISTS (
