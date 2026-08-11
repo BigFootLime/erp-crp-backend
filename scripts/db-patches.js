@@ -29,6 +29,14 @@ const IMMUTABLE_ONLY_PATCHES = Object.freeze({
     "3e223c43698bdf3399ab2d37e6493d0d014952eb0fe877cdeb1c4b4f7f7db3da",
   "20260810_stock_old_new_navigation_446.sql":
     "4900f01411ab89349874fcd6d28993aa34a1ec560320d4d32b05489800bf3b9b",
+  "20260803_admin_user_provisioning_boundary.sql":
+    "c1b706a1d9ba046e63e7e0b05dfc132272bb27fccda7bd0efe8cf481ffbd5ca5",
+  "20260809_account_invitation_activation.sql":
+    "07fb4d08c4cd0bcf07abd1eb295a30db61b5d64f66d00406f4a24a4291fa4911",
+  "20260810_stock_movement_event_correlation.sql":
+    "736887f658a39504d7cd499cd6b630e05eba0e7fcaa8ecda9f3d92083a1278be",
+  "20260810_system_reference_data_readiness.sql":
+    "9be8c63bf5c0a1a12ac43c2e684ef7d6ffe454171fd58461ee8c8c25c03004f9",
   "20260811_ged_antivirus_quarantine.sql":
     "7e1e026c8a16be2609f072434d1930afbd248a543d96e3b013e89426fdaa1336",
 });
