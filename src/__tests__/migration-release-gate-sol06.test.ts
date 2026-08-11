@@ -84,7 +84,11 @@ describe("SOL-06 migration release gate", () => {
 
     expect(preflight).toContain("BEGIN TRANSACTION READ ONLY");
     expect(preflight).toContain("stock.valuation_method");
-    expect(verify).toContain("WHERE NOT ready");
+    expect(verify).toContain("expected guided readiness checks are missing");
+    expect(verify).toContain("ACTIVE_STOCK_LOCATIONS");
+    expect(verify).toContain("ACTIVE_PRODUCTION_CALENDAR");
+    expect(verify).toContain("CURRENT_COST_CENTER_RATES");
+    expect(verify).not.toContain("reference-data readiness contains blocking findings");
     expect(verify).toContain("contype = 'f' AND NOT convalidated");
     expect(rollback).toContain("current_database() <> 'cerp_test'");
     expect(rollback).toContain("cerp.migration_rehearsal");
