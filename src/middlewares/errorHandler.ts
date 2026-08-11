@@ -2,7 +2,7 @@ import type { Request, Response, NextFunction } from "express";
 import { HttpError } from "../utils/httpError";
 import { ApiError } from "../utils/apiError";
 import { stripQueryFromUrl } from "../utils/logPath";
-import { errorFingerprint, logger, safeErrorCode } from "../shared/observability/logger";
+import { errorFingerprint, logger, safeErrorCode, safeErrorConstraint } from "../shared/observability/logger";
 import { observabilityRoute } from "./requestLogger";
 
 // Message générique renvoyé au client pour toute erreur serveur (5xx) ou inconnue.
@@ -165,6 +165,7 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
     http_status: status,
     error_code: code,
     failure_code: safeErrorCode(err),
+    failure_constraint: safeErrorConstraint(err),
     failure_type: err instanceof Error ? err.name : "UnknownError",
     error_fingerprint: errorFingerprint(err),
     http_method: req.method,

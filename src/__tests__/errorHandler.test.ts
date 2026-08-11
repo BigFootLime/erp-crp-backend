@@ -61,6 +61,21 @@ describe("CA-SEC-04 — errorHandler ne fuite pas d'internes sur 5xx", () => {
     expect(logLines.join("\n")).not.toContain("due_date");
   });
 
+  it("journalise seulement le nom sûr de la contrainte SQL", () => {
+    const { req, res } = mockReqRes();
+
+    errorHandler({
+      name: "error",
+      code: "23503",
+      constraint: "commande_ligne_article_id_fkey",
+      detail: "Key (article_id)=(sensitive) is not present",
+    }, req, res, () => {});
+
+    const log = logLines.join("\n");
+    expect(log).toContain('"failure_constraint":"commande_ligne_article_id_fkey"');
+    expect(log).not.toContain("sensitive");
+  });
+
   it("HttpError < 500 conserve son message volontaire (ex. 404)", () => {
     const { req, res, status, json } = mockReqRes();
 
