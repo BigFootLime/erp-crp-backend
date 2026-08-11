@@ -163,7 +163,8 @@ describe("#275 synthèse — cloisonnement des blocs", () => {
   it("ne renvoie jamais une marge chiffrée", async () => {
     const res = await request(app).get(`${BASE}/overview`);
     expect(res.body.data.margin.available).toBe(false);
-    expect(res.body.data.margin.message).toContain("Marge réelle indisponible");
+    expect(res.body.data.margin.reason_code).toBe("CROSS_OBJECT_MARGIN_AGGREGATION_NOT_VALIDATED");
+    expect(res.body.data.margin.message).toContain("Marge client indisponible");
     expect(typeof res.body.data.margin.value).toBe("undefined");
   });
 });

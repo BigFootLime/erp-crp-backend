@@ -450,11 +450,17 @@ describe("#275 catalogue de métriques", () => {
 describe("#275 marge", () => {
   it("est déclarée indisponible, jamais nulle", () => {
     expect(MARGIN_UNAVAILABLE.available).toBe(false);
-    expect(MARGIN_UNAVAILABLE.message).toContain("Marge réelle indisponible");
+    expect(MARGIN_UNAVAILABLE.reason_code).toBe("CROSS_OBJECT_MARGIN_AGGREGATION_NOT_VALIDATED");
+    expect(MARGIN_UNAVAILABLE.message).toContain("Marge client indisponible");
   });
 
-  it("énumère les entrées manquantes du modèle de coût", () => {
-    for (const input of ["temps_reel_par_of", "taux_horaires_dates", "frais_indirects"]) {
+  it("énumère les réconciliations manquantes du reporting client", () => {
+    for (const input of [
+      "allocation_objet_vers_client",
+      "allocation_frais_indirects",
+      "traitement_retours_et_avoirs",
+      "reconciliation_facture_objet_marge",
+    ]) {
       expect(MARGIN_UNAVAILABLE.missing_inputs).toContain(input);
     }
   });
