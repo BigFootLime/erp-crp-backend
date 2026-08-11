@@ -139,12 +139,46 @@ avant preuve de restauration.
 
 ## Reste réellement à faire
 
-- appliquer la migration en environnement de validation puis en production
-  uniquement dans une fenêtre SOL-06 avec sauvegarde et contrôles opérateur ;
-- configurer les destinataires d'alertes et vérifier les ressources ClamAV sur
-  HYPERBOX2 et Coolify ;
+- configurer les destinataires externes d'alertes et effectuer un test de
+  notification contrôlé ;
 - effectuer un exercice pilote de réanalyse/libération/suppression avec un
   administrateur désigné ;
 - planifier le backscan des versions historiques et le reconciler des nettoyages
   post-commit ;
 - construire, si souhaité, le panneau admin de quarantaine en réutilisant ces API.
+
+## Promotion, bases et déploiements réels du 11/08/2026
+
+Les correctifs SOL-11 et les réparations de registre associées ont été fusionnés
+dans `dev`, puis dans `main` par les PR backend `#381` à `#387`. La base de
+release vérifiée est `main` `ebb8d7509a53f7eeca270c1e7bf8101681911c0f` ; son
+arbre est identique à celui de `dev` au moment de la promotion.
+
+Après les sauvegardes et restaurations décrites dans le rapport SOL-06, les
+patches suivants ont été exécutés par le rôle applicatif et vérifiés sur
+`cerp_test` puis `cerp_prod` : réparation de l'unité canonique, réparation du
+schéma de provisioning, frontière admin, invitations, contrat unités/articles,
+corrélation stock et quarantaine antivirus GED. État final du registre :
+`cerp_test` 128 appliqués / 16 en attente / 0 mismatch ; `cerp_prod` 123
+appliqués / 21 en attente / 0 mismatch. Les patches historiques restants n'ont
+pas été appliqués aveuglément. Le smoke GED transactionnel a réussi sur les deux
+bases et s'est terminé par `ROLLBACK`.
+
+HYPERBOX2 exécute l'artefact backend immuable
+`/srv/cerp/releases/20260811-ebb8d750` ; `cerp-api` et `cerp-api-test` sont actifs,
+les endpoints live/ready répondent 200, PostgreSQL, GED, ClamAV et realtime sont
+`up`. Le build de cet artefact a vérifié 625 fichiers source et 625 fichiers
+émis.
+
+Sur le VPS Coolify, l'image `rcccokw0wgcw0ck44g0wk0ck:ebb8d750...` a été
+construite avec succès. Le volume `/app/data` porte désormais un répertoire GED
+persistant et un témoin de montage ; Coolify enregistre
+`CERP_GED_VAULT_ROOT`, `CERP_GED_SENTINEL`,
+`CERP_GED_REQUIRE_SENTINEL=true` et configure
+`CERP_READINESS_REQUIRED_DEPENDENCIES=database,ged_storage,antivirus,realtime`.
+Le déploiement Coolify `e4xx2p0g8x9ohjr6uh59k6i9` a réussi en 3 min 12 s. Le
+conteneur final `edbe168429b1` est seul actif et sain ; `/health/live` est
+`alive`, `/health/ready` est `ready` et les quatre composants database,
+`ged_storage`, antivirus et realtime sont tous `up` et `required=true`. Le
+preflight CORS de `POST /api/auth/login` répond 204 pour l'origine frontend et
+propage les identifiants de corrélation.
