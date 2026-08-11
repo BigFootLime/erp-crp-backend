@@ -13,6 +13,8 @@ export type UploadScanResult = Readonly<{
   status: UploadScanStatus;
   provider: string;
   reason?: string;
+  /** Sanitized ClamAV engine/signature identifier; never file content. */
+  signature_version?: string;
 }>;
 
 export interface UploadScanner {
@@ -172,12 +174,31 @@ const SCANNER_STARTUP_PROBE_TIMEOUT_MS = 2_000;
 const DEFAULT_SCANNER_TIMEOUT_MS = 120_000;
 const MIN_SCANNER_TIMEOUT_MS = 1_000;
 const MAX_SCANNER_TIMEOUT_MS = 300_000;
+const scannerSignatureVersions = new Map<string, string | null>();
 
 function getUploadScannerTimeoutMs(): number {
   const value = Number(process.env.CERP_UPLOAD_SCANNER_TIMEOUT_MS ?? DEFAULT_SCANNER_TIMEOUT_MS);
   return Number.isSafeInteger(value) && value >= MIN_SCANNER_TIMEOUT_MS && value <= MAX_SCANNER_TIMEOUT_MS
     ? value
     : DEFAULT_SCANNER_TIMEOUT_MS;
+}
+
+function scannerSignatureVersion(command: string): string | undefined {
+  if (process.env.NODE_ENV === "test") return undefined;
+  if (!scannerSignatureVersions.has(command)) {
+    const result = spawnSync(command, ["--version"], {
+      shell: false,
+      windowsHide: true,
+      encoding: "utf8",
+      maxBuffer: 16 * 1024,
+      timeout: SCANNER_STARTUP_PROBE_TIMEOUT_MS,
+      killSignal: "SIGKILL",
+    });
+    const raw = result.status === 0 ? `${result.stdout ?? ""} ${result.stderr ?? ""}`.trim() : "";
+    const sanitized = raw.replace(/[^a-zA-Z0-9./:+ _-]+/g, " ").replace(/\s+/g, " ").trim();
+    scannerSignatureVersions.set(command, sanitized ? sanitized.slice(0, 160) : null);
+  }
+  return scannerSignatureVersions.get(command) ?? undefined;
 }
 
 function assertClamdscanAvailable(command: string): void {
@@ -343,7 +364,11 @@ function configuredScanner(): UploadScanner {
   return new UnavailableScanner();
 }
 
-export async function scanUpload(input: UploadScanInput): Promise<UploadScanResult & { mode: UploadScanMode }> {
+export async function scanUpload(input: UploadScanInput): Promise<UploadScanResult & {
+  mode: UploadScanMode;
+  duration_ms: number;
+}> {
+  const startedAt = Date.now();
   const mode = getUploadScanMode();
   const rawMode = process.env.CERP_UPLOAD_SCAN_MODE?.trim().toLowerCase();
   if (process.env.NODE_ENV !== "test" && (rawMode === "off" || rawMode === "monitor")) {
@@ -355,9 +380,26 @@ export async function scanUpload(input: UploadScanInput): Promise<UploadScanResu
       provider: "configuration",
       reason: "mode_interdit_hors_tests",
       mode: "enforce",
+      duration_ms: Date.now() - startedAt,
     };
   }
-  if (mode === "off") return { status: "unavailable", provider: "disabled", reason: "scan_desactive", mode };
+  if (mode === "off") {
+    return {
+      status: "unavailable",
+      provider: "disabled",
+      reason: "scan_desactive",
+      mode,
+      duration_ms: Date.now() - startedAt,
+    };
+  }
   const result = await configuredScanner().scan(input);
-  return { ...result, mode };
+  const command = process.env.CERP_UPLOAD_SCANNER_COMMAND?.trim() || "clamdscan";
+  const signatureVersion = result.signature_version
+    ?? (result.provider === "clamdscan" ? scannerSignatureVersion(command) : undefined);
+  return {
+    ...result,
+    ...(signatureVersion ? { signature_version: signatureVersion } : {}),
+    mode,
+    duration_ms: Date.now() - startedAt,
+  };
 }

@@ -11,9 +11,11 @@ import { logger, setLogSinkForTests } from "../shared/observability/logger";
 import {
   markJobFinished,
   markJobStarted,
+  observeDocumentScan,
   observeHttpRequest,
   renderPrometheusMetrics,
   resetMetricsForTests,
+  setGedQuarantineMetrics,
 } from "../shared/observability/metrics";
 import { requireMetricsToken } from "../shared/observability/routes";
 
@@ -132,6 +134,26 @@ describe("SOL-09 — corrélation et journaux sûrs", () => {
     expect(metrics).toContain('cerp_http_requests_total{method="GET",route="/api/v1/commandes/:id",status_class="5xx"} 1');
     expect(metrics).toContain('cerp_db_pool_connections{state="waiting"} 4');
     expect(metrics).toContain('cerp_job_failures_total{job="advanced_reminders"} 1');
+  });
+
+  it("expose les verdicts documentaires et le backlog sans label sensible", () => {
+    observeDocumentScan("infected", 1_250);
+    observeDocumentScan("unavailable", 500);
+    setGedQuarantineMetrics({
+      pending: 1,
+      clean: 2,
+      infected: 3,
+      scanFailed: 4,
+      oldestAgeSeconds: 3_601,
+    });
+
+    const metrics = renderPrometheusMetrics();
+    expect(metrics).toContain('cerp_document_scans_total{outcome="infected"} 1');
+    expect(metrics).toContain('cerp_document_scans_total{outcome="scan_failed"} 1');
+    expect(metrics).toContain('cerp_ged_quarantine_items{scan_status="infected"} 3');
+    expect(metrics).toContain('cerp_ged_quarantine_items{scan_status="scan_failed"} 4');
+    expect(metrics).toContain("cerp_ged_quarantine_oldest_age_seconds 3601");
+    expect(metrics).not.toMatch(/filename|document_id|actor_id|quarantine_id/);
   });
 });
 

@@ -122,6 +122,27 @@ peut jamais être déclarée propre. `MaxRecursion 16` et `MaxFiles 10000` borne
 les conteneurs, tandis que les plafonds `550M` couvrent le transport GED de
 512 Mio ; une archive qui dépasse ces bornes est volontairement rejetée.
 
+### Quarantaine GED durable (SOL-11)
+
+La GED utilise le mode transport `deferred` : le staging reste privé, les
+contrôles de taille/type/signature et le SHA-256 sont déjà acquis, mais le scan
+est orchestré par le service après création d'une session `pending`. Aucune
+version n'est créée tant que le verdict n'est pas `clean`; le trigger
+`trg_ged_version_requires_clean_scan` répète cette barrière en base.
+
+`infected` et `scan_failed` promeuvent le fichier dans le sous-répertoire privé
+`quarantine/` et renvoient respectivement `422 GED_SCAN_INFECTED` et
+`503 GED_SCAN_FAILED`. Il n'existe aucune route de téléchargement de
+quarantaine. Les opérations liste, réanalyse, libération et suppression exigent
+la capacité GED `admin`; la libération exige une nouvelle analyse serveur
+`clean`, vérifie le SHA-256 et ne retire l'original qu'après commit.
+
+Le verdict persistant inclut fournisseur, version des signatures, durée,
+tentatives, date et acteur. Les métriques n'utilisent que les labels bornés
+`clean|infected|scan_failed|pending`; aucun nom, chemin ou identifiant de
+document n'est un label. Les versions antérieures restent
+`HISTORICAL_UNVERIFIED`, sans verdict synthétique.
+
 ### Propriété et permissions des stockages
 
 Deux profils sont intentionnels ; aucun préflight n'ajoute un bit d'écriture
