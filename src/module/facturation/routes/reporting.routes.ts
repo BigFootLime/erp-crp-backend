@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { commercialOutstanding, commercialRevenue, commercialTopClients } from "../controllers/reporting.controller";
+import { directionDashboardOverview } from "../controllers/direction-dashboard.controller";
 import {
   reportingClients,
   reportingDefinitions,
@@ -38,5 +39,14 @@ v2.get("/drilldown", requireFinanceCapability("reporting_read"), reportingDrilld
 v2.get("/export", requireFinanceCapability("reporting_export"), reportingExport);
 
 router.use("/commercial/v2", v2);
+
+// --- Cockpit Direction ARIANE (SOL-16) ------------------------------------
+// Les montants et le détail nominatif imposent la capacité financière ; le
+// frontend n'est jamais la frontière d'autorisation.
+router.get(
+  "/direction/overview",
+  requireFinanceCapability("reporting_financial"),
+  directionDashboardOverview
+);
 
 export default router;
