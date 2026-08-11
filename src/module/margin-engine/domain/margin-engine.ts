@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 
-export const MARGIN_FORMULA_VERSION = "CERP-MARGIN-1.0.0" as const;
+export const MARGIN_FORMULA_VERSION = "CERP-MARGIN-2.0.0" as const;
 export const MARGIN_CURRENCY = "EUR" as const;
 
 export const MARGIN_COST_CATEGORIES = [
@@ -14,10 +14,14 @@ export const MARGIN_COST_CATEGORIES = [
   "PACKAGING",
   "TRANSPORT",
   "SCRAP",
+  "REWORK",
   "OVERHEAD",
 ] as const;
 export type MarginCostCategory = (typeof MARGIN_COST_CATEGORIES)[number];
-export type MarginBasis = "PLANNED" | "ACTUAL";
+export const MARGIN_BASES = ["QUOTED", "STANDARD", "UPDATED", "ACTUAL"] as const;
+export type MarginBasis = (typeof MARGIN_BASES)[number];
+export type MarginReliability = "ESTIMATED" | "PARTIAL" | "ACTUAL";
+export type MarginSourceReliability = "ESTIMATED" | "DECLARED" | "VERIFIED" | "UNKNOWN";
 export type MarginScopeType = "DEVIS_LINE" | "DEVIS" | "AFFAIRE" | "OF";
 export type MarginInputAvailability = "PROVIDED" | "NOT_APPLICABLE";
 export type MarginRateUnit = "EUR_PER_HOUR" | "EUR_PER_UNIT" | "PERCENT_OF_DIRECT_COST";
@@ -82,6 +86,12 @@ function percentage(numerator: bigint, denominator: bigint): string | null {
 }
 
 export type MarginEvidence = {
+  definition: string;
+  unit: string;
+  period_start: string;
+  period_end: string;
+  freshness_at: string | null;
+  source_reliability: MarginSourceReliability;
   source_type: string;
   source_ref: string | null;
   observed_at: string | null;
@@ -92,6 +102,8 @@ export type MarginEvidence = {
   rate_effective_at: string | null;
   rate_scope_type: string | null;
   rate_scope_ref: string | null;
+  source_document_type: string | null;
+  source_document_ref: string | null;
 };
 
 export type MarginCostInput = {
@@ -154,6 +166,16 @@ export type MarginCalculation = {
   as_of: string;
   currency: string;
   availability: "COMPLETE" | "PARTIAL" | "UNAVAILABLE";
+  reliability: MarginReliability;
+  reliability_reasons: string[];
+  definition: string;
+  period: { start: string; end: string };
+  freshness_at: string | null;
+  formula: {
+    gross_margin: "revenue_ht - cost_total_ht";
+    margin_rate: "gross_margin_ht / cost_total_ht * 100";
+    mark_rate: "gross_margin_ht / revenue_ht * 100";
+  };
   revenue_ht: string | null;
   revenue_evidence: MarginEvidence | null;
   cost_total_ht: string | null;
@@ -169,8 +191,74 @@ export type MarginCalculation = {
   }>;
   missing_inputs: Array<{ code: string; category: MarginCostCategory | "REVENUE"; message: string }>;
   measurements: Record<string, string | number | null>;
+  waterfall: Array<{
+    code: "PRICE" | "MATERIAL" | "TIME" | "SUBCONTRACTING" | "SCRAP_REWORK" | "OTHER" | "MARGIN";
+    label: string;
+    amount_ht: string | null;
+    running_total_ht: string | null;
+    available: boolean;
+    source_categories: MarginCostCategory[];
+  }>;
   calculation_hash: string;
 };
+
+function limitingFreshness(evidenceRows: Array<MarginEvidence | null>): string | null {
+  const values = evidenceRows.flatMap((row) => row?.freshness_at ? [row.freshness_at] : []);
+  return values.length > 0 ? values.sort().at(0)! : null;
+}
+
+function sumCategories(
+  components: MarginCalculation["components"],
+  categories: MarginCostCategory[],
+): { amount: bigint | null; available: boolean } {
+  const selected = components.filter((component) => categories.includes(component.category));
+  if (selected.some((component) => component.status === "MISSING")) return { amount: null, available: false };
+  return {
+    amount: selected.reduce((sum, component) => sum + (component.amount_ht === null ? 0n : decimal(component.amount_ht)), 0n),
+    available: true,
+  };
+}
+
+function buildWaterfall(
+  revenue: bigint | null,
+  components: MarginCalculation["components"],
+  grossMargin: bigint | null,
+): MarginCalculation["waterfall"] {
+  const groups: Array<{
+    code: MarginCalculation["waterfall"][number]["code"];
+    label: string;
+    categories: MarginCostCategory[];
+  }> = [
+    { code: "MATERIAL", label: "Matière et achats", categories: ["MATERIAL", "PURCHASE"] },
+    { code: "TIME", label: "Temps machine et main-d'œuvre", categories: ["MACHINE", "OPERATOR", "CONTROL"] },
+    { code: "SUBCONTRACTING", label: "Sous-traitance", categories: ["SUBCONTRACTING"] },
+    { code: "SCRAP_REWORK", label: "Rebuts et retouches", categories: ["SCRAP", "REWORK"] },
+    { code: "OTHER", label: "Autres coûts", categories: ["TOOLING", "PACKAGING", "TRANSPORT", "OVERHEAD"] },
+  ];
+  let running = revenue;
+  const rows: MarginCalculation["waterfall"] = [{
+    code: "PRICE", label: "Prix de vente HT", amount_ht: revenue === null ? null : money(revenue),
+    running_total_ht: revenue === null ? null : money(revenue), available: revenue !== null, source_categories: [],
+  }];
+  for (const group of groups) {
+    const value = sumCategories(components, group.categories);
+    if (running !== null && value.amount !== null) running -= value.amount;
+    else running = null;
+    rows.push({
+      code: group.code,
+      label: group.label,
+      amount_ht: value.amount === null ? null : money(-value.amount),
+      running_total_ht: running === null ? null : money(running),
+      available: value.available,
+      source_categories: group.categories,
+    });
+  }
+  rows.push({
+    code: "MARGIN", label: "Marge brute HT", amount_ht: grossMargin === null ? null : money(grossMargin),
+    running_total_ht: grossMargin === null ? null : money(grossMargin), available: grossMargin !== null, source_categories: [],
+  });
+  return rows;
+}
 
 export function calculateMargin(input: MarginCalculationInput): MarginCalculation {
   const required = input.required_categories ?? MARGIN_COST_CATEGORIES;
@@ -222,6 +310,26 @@ export function calculateMargin(input: MarginCalculationInput): MarginCalculatio
       ? "UNAVAILABLE"
       : "PARTIAL";
 
+  const providedEvidence = resolved
+    .filter((entry) => entry.row.availability === "PROVIDED")
+    .map((entry) => entry.row.evidence);
+  if (input.revenue?.availability === "PROVIDED") providedEvidence.push(input.revenue.evidence);
+  const reliabilityReasons: string[] = [];
+  let reliability: MarginReliability;
+  if (!complete) {
+    reliability = "PARTIAL";
+    reliabilityReasons.push("Au moins une donnée requise est absente ou non valorisable.");
+  } else if (input.basis === "ACTUAL" && providedEvidence.every((row) => row.source_reliability === "VERIFIED")) {
+    reliability = "ACTUAL";
+    reliabilityReasons.push("Toutes les valeurs publiées proviennent de sources constatées et vérifiées.");
+  } else {
+    reliability = "ESTIMATED";
+    reliabilityReasons.push(input.basis === "ACTUAL"
+      ? "Le périmètre réel contient au moins une donnée déclarée ou estimée."
+      : "Cette perspective utilise par définition des hypothèses ou paramètres prévisionnels.");
+  }
+  const freshnessAt = limitingFreshness(providedEvidence);
+
   const unsigned = {
     formula_version: MARGIN_FORMULA_VERSION,
     scope: { type: input.scope_type, ref: input.scope_ref, label: input.label },
@@ -229,6 +337,22 @@ export function calculateMargin(input: MarginCalculationInput): MarginCalculatio
     as_of: input.as_of,
     currency: input.revenue?.currency ?? MARGIN_CURRENCY,
     availability,
+    reliability,
+    reliability_reasons: reliabilityReasons,
+    definition: input.basis === "QUOTED"
+      ? "Marge issue des coûts et du prix figés dans le devis."
+      : input.basis === "STANDARD"
+        ? "Marge calculée avec les quantités prévues et les paramètres de coût applicables à la date."
+        : input.basis === "UPDATED"
+          ? "Marge actualisée à date : coûts engagés disponibles et temps à terminaison valorisé sur max(prévu, réel), sans remplacer les inconnues par zéro."
+          : "Marge constatée à partir des consommations, temps, achats, rebuts et retouches enregistrés.",
+    period: { start: input.as_of, end: input.as_of },
+    freshness_at: freshnessAt,
+    formula: {
+      gross_margin: "revenue_ht - cost_total_ht" as const,
+      margin_rate: "gross_margin_ht / cost_total_ht * 100" as const,
+      mark_rate: "gross_margin_ht / revenue_ht * 100" as const,
+    },
     revenue_ht: revenue === null ? null : money(revenue),
     revenue_evidence: input.revenue?.evidence ?? null,
     cost_total_ht: costTotal === null ? null : money(costTotal),
@@ -240,39 +364,64 @@ export function calculateMargin(input: MarginCalculationInput): MarginCalculatio
     components,
     missing_inputs: missing,
     measurements: input.measurements ?? {},
+    waterfall: buildWaterfall(revenue, components, grossMargin),
   };
   const calculation_hash = crypto.createHash("sha256").update(JSON.stringify(unsigned)).digest("hex");
   return { ...unsigned, calculation_hash };
 }
 
 export type MarginComparison = {
-  planned: MarginCalculation;
+  quoted: MarginCalculation;
+  standard: MarginCalculation;
+  updated: MarginCalculation;
   actual: MarginCalculation;
-  variance: {
-    available: boolean;
-    cost_ht: string | null;
-    gross_margin_ht: string | null;
-    reason: string | null;
+  variances: {
+    actual_vs_standard: {
+      available: boolean;
+      cost_ht: string | null;
+      gross_margin_ht: string | null;
+      reason: string | null;
+    };
+    updated_vs_quoted: {
+      available: boolean;
+      cost_ht: string | null;
+      gross_margin_ht: string | null;
+      reason: string | null;
+    };
   };
 };
 
-export function compareMargins(planned: MarginCalculation, actual: MarginCalculation): MarginComparison {
-  const canCompare = planned.cost_total_ht !== null && actual.cost_total_ht !== null && planned.gross_margin_ht !== null && actual.gross_margin_ht !== null;
+function variance(left: MarginCalculation, right: MarginCalculation) {
+  const canCompare = left.cost_total_ht !== null && right.cost_total_ht !== null && left.gross_margin_ht !== null && right.gross_margin_ht !== null;
+  return canCompare
+    ? {
+        available: true,
+        cost_ht: money(decimal(right.cost_total_ht!) - decimal(left.cost_total_ht!)),
+        gross_margin_ht: money(decimal(right.gross_margin_ht!) - decimal(left.gross_margin_ht!)),
+        reason: null,
+      }
+    : {
+        available: false,
+        cost_ht: null,
+        gross_margin_ht: null,
+        reason: "Écart indisponible tant que les deux perspectives ne sont pas complètes.",
+      };
+}
+
+export function compareMargins(
+  quoted: MarginCalculation,
+  standard: MarginCalculation,
+  updated: MarginCalculation,
+  actual: MarginCalculation,
+): MarginComparison {
   return {
-    planned,
+    quoted,
+    standard,
+    updated,
     actual,
-    variance: canCompare
-      ? {
-          available: true,
-          cost_ht: money(decimal(actual.cost_total_ht!) - decimal(planned.cost_total_ht!)),
-          gross_margin_ht: money(decimal(actual.gross_margin_ht!) - decimal(planned.gross_margin_ht!)),
-          reason: null,
-        }
-      : {
-          available: false,
-          cost_ht: null,
-          gross_margin_ht: null,
-          reason: "Écart indisponible tant que les entrées prévues et réelles ne sont pas complètes.",
-        },
+    variances: {
+      actual_vs_standard: variance(standard, actual),
+      updated_vs_quoted: variance(quoted, updated),
+    },
   };
 }

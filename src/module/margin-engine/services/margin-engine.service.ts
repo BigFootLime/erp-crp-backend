@@ -30,11 +30,18 @@ export async function svcGetMargin(scopeType: MarginScopeType, scopeRef: string,
   assertCurrentMarginDate(asOf);
   const identity = await repoLoadScopeIdentity(scopeType, scopeRef);
   if (!identity) throw new HttpError(404, "MARGIN_SCOPE_NOT_FOUND", "Périmètre de marge introuvable.");
-  const [plannedInput, actualInput] = await Promise.all([
-    repoBuildCalculationInput(identity, "PLANNED", asOf),
+  const [quotedInput, standardInput, updatedInput, actualInput] = await Promise.all([
+    repoBuildCalculationInput(identity, "QUOTED", asOf),
+    repoBuildCalculationInput(identity, "STANDARD", asOf),
+    repoBuildCalculationInput(identity, "UPDATED", asOf),
     repoBuildCalculationInput(identity, "ACTUAL", asOf),
   ]);
-  const comparison = compareMargins(calculateMargin(plannedInput), calculateMargin(actualInput));
+  const comparison = compareMargins(
+    calculateMargin(quotedInput),
+    calculateMargin(standardInput),
+    calculateMargin(updatedInput),
+    calculateMargin(actualInput),
+  );
   return { ...comparison, generated_at: new Date().toISOString() };
 }
 
@@ -46,70 +53,69 @@ function csvCell(value: unknown): string {
 type GeneratedMarginComparison = MarginComparison & { generated_at: string };
 
 export function renderMarginCsv(result: GeneratedMarginComparison): string {
-  const rows: unknown[][] = [[
+  const headers = [
     "record_type", "scope_type", "scope_ref", "scope_label", "basis", "as_of", "generated_at", "availability",
+    "reliability", "reliability_reasons", "calculation_definition", "period_start", "period_end", "calculation_freshness_at",
     "category", "component_status", "component_amount_ht", "input_key", "resolved_input_amount_ht",
     "input_quantity", "rate_amount", "rate_unit", "input_currency",
-    "source_type", "source_ref", "observed_at", "assumption", "assumption_date",
+    "evidence_definition", "evidence_unit", "evidence_period_start", "evidence_period_end", "evidence_freshness_at", "source_reliability",
+    "source_type", "source_ref", "source_document_type", "source_document_ref", "observed_at", "assumption", "assumption_date",
     "rate_id", "rate_version_id", "rate_effective_at", "rate_scope_type", "rate_scope_ref",
     "missing_code", "missing_message", "measurement_key", "measurement_value",
     "revenue_ht", "cost_total_ht", "partial_cost_total_ht", "gross_margin_ht",
     "taux_de_marge_pct", "taux_de_marque_pct", "formula_version", "calculation_hash",
-  ]];
-  for (const calculation of [result.planned, result.actual]) {
-    const base = [
-      calculation.scope.type, calculation.scope.ref, calculation.scope.label, calculation.basis,
-      calculation.as_of, result.generated_at, calculation.availability,
-    ];
-    const totals = [
-      calculation.revenue_ht, calculation.cost_total_ht, calculation.partial_cost_total_ht,
-      calculation.gross_margin_ht, calculation.margin_rate_pct, calculation.mark_rate_pct,
-      calculation.formula_version, calculation.calculation_hash,
-    ];
+  ] as const;
+  const records: Array<Record<string, unknown>> = [];
+  for (const calculation of [result.quoted, result.standard, result.updated, result.actual]) {
+    const base: Record<string, unknown> = {
+      scope_type: calculation.scope.type, scope_ref: calculation.scope.ref, scope_label: calculation.scope.label,
+      basis: calculation.basis, as_of: calculation.as_of, generated_at: result.generated_at,
+      availability: calculation.availability, reliability: calculation.reliability,
+      reliability_reasons: calculation.reliability_reasons.join(" | "),
+      calculation_definition: calculation.definition,
+      period_start: calculation.period.start, period_end: calculation.period.end,
+      calculation_freshness_at: calculation.freshness_at,
+      revenue_ht: calculation.revenue_ht, cost_total_ht: calculation.cost_total_ht,
+      partial_cost_total_ht: calculation.partial_cost_total_ht, gross_margin_ht: calculation.gross_margin_ht,
+      taux_de_marge_pct: calculation.margin_rate_pct, taux_de_marque_pct: calculation.mark_rate_pct,
+      formula_version: calculation.formula_version, calculation_hash: calculation.calculation_hash,
+    };
+    const evidenceFields = (proof: typeof calculation.revenue_evidence): Record<string, unknown> => proof ? ({
+      evidence_definition: proof.definition, evidence_unit: proof.unit,
+      evidence_period_start: proof.period_start, evidence_period_end: proof.period_end,
+      evidence_freshness_at: proof.freshness_at, source_reliability: proof.source_reliability,
+      source_type: proof.source_type, source_ref: proof.source_ref,
+      source_document_type: proof.source_document_type, source_document_ref: proof.source_document_ref,
+      observed_at: proof.observed_at, assumption: proof.assumption, assumption_date: proof.assumption_date,
+      rate_id: proof.rate_id, rate_version_id: proof.rate_version_id, rate_effective_at: proof.rate_effective_at,
+      rate_scope_type: proof.rate_scope_type, rate_scope_ref: proof.rate_scope_ref,
+    }) : {};
     const revenueEvidence = calculation.revenue_evidence;
-    rows.push([
-      "REVENUE", ...base, "REVENUE", calculation.revenue_ht === null ? "MISSING" : "PROVIDED",
-      calculation.revenue_ht, "revenue", calculation.revenue_ht,
-      null, null, null, calculation.currency,
-      revenueEvidence?.source_type, revenueEvidence?.source_ref, revenueEvidence?.observed_at,
-      revenueEvidence?.assumption, revenueEvidence?.assumption_date,
-      revenueEvidence?.rate_id, revenueEvidence?.rate_version_id, revenueEvidence?.rate_effective_at,
-      revenueEvidence?.rate_scope_type, revenueEvidence?.rate_scope_ref,
-      null, null, null, null, ...totals,
-    ]);
+    records.push({ ...base, record_type: "REVENUE", category: "REVENUE",
+      component_status: calculation.revenue_ht === null ? "MISSING" : "PROVIDED",
+      component_amount_ht: calculation.revenue_ht, input_key: "revenue",
+      resolved_input_amount_ht: calculation.revenue_ht, input_currency: calculation.currency,
+      ...evidenceFields(revenueEvidence) });
     for (const component of calculation.components) {
       const inputs = component.inputs.length > 0 ? component.inputs : [null];
       for (const input of inputs) {
-        rows.push([
-          "COMPONENT", ...base, component.category, component.status, component.amount_ht,
-          input?.key, input?.resolved_amount_ht,
-          input?.quantity, input?.rate, input?.rate_unit, input?.currency,
-          input?.evidence.source_type, input?.evidence.source_ref, input?.evidence.observed_at,
-          input?.evidence.assumption, input?.evidence.assumption_date,
-          input?.evidence.rate_id, input?.evidence.rate_version_id, input?.evidence.rate_effective_at,
-          input?.evidence.rate_scope_type, input?.evidence.rate_scope_ref,
-          null, null, null, null, ...totals,
-        ]);
+        records.push({ ...base, record_type: "COMPONENT", category: component.category,
+          component_status: component.status, component_amount_ht: component.amount_ht,
+          input_key: input?.key, resolved_input_amount_ht: input?.resolved_amount_ht,
+          input_quantity: input?.quantity, rate_amount: input?.rate, rate_unit: input?.rate_unit,
+          input_currency: input?.currency, ...evidenceFields(input?.evidence ?? null) });
       }
     }
     for (const missing of calculation.missing_inputs) {
-      rows.push([
-        "MISSING", ...base, missing.category, "MISSING", null, null, null,
-        null, null, null, null,
-        null, null, null, null, null, null, null, null, null, null,
-        missing.code, missing.message, null, null, ...totals,
-      ]);
+      records.push({ ...base, record_type: "MISSING", category: missing.category,
+        component_status: "MISSING", missing_code: missing.code, missing_message: missing.message });
     }
     for (const [key, value] of Object.entries(calculation.measurements)) {
-      rows.push([
-        "MEASUREMENT", ...base, null, null, null, null, null,
-        null, null, null, null,
-        null, null, null, null, null, null, null, null, null, null,
-        null, null, key, value, ...totals,
-      ]);
+      records.push({ ...base, record_type: "MEASUREMENT", measurement_key: key, measurement_value: value });
     }
   }
-  return `\ufeff${rows.map((row) => row.map(csvCell).join(";")).join("\r\n")}\r\n`;
+  const rows = [headers.map(csvCell), ...records.map((record) => headers.map((header) => csvCell(record[header] ?? null)))];
+  return `\ufeff${rows.map((row) => row.join(";")).join("\r\n")}\r\n`;
 }
 
 export async function svcExportMargin(scopeType: MarginScopeType, scopeRef: string, asOf?: string): Promise<string> {

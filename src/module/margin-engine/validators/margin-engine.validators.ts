@@ -1,8 +1,8 @@
 import { z } from "zod";
-import { MARGIN_COST_CATEGORIES } from "../domain/margin-engine";
+import { MARGIN_BASES, MARGIN_COST_CATEGORIES } from "../domain/margin-engine";
 
 export const marginScopeTypeSchema = z.enum(["DEVIS_LINE", "DEVIS", "AFFAIRE", "OF"]);
-export const marginBasisSchema = z.enum(["PLANNED", "ACTUAL"]);
+export const marginBasisSchema = z.enum(MARGIN_BASES);
 export const marginScopeParamsSchema = z.object({
   scopeType: z.enum(["devis-line", "devis", "affaire", "of"]),
   scopeRef: z.string().regex(/^\d+$/, "Identifiant numérique attendu."),
@@ -34,10 +34,26 @@ export const createMarginInputSchema = z.object({
   source_type: z.string().trim().min(1).max(80),
   source_ref: z.string().trim().max(200).nullable().optional(),
   observed_at: z.string().datetime({ offset: true }).nullable().optional(),
+  definition: z.string().trim().min(1).max(500),
+  unit: z.string().trim().min(1).max(80),
+  period_start: z.string().date(),
+  period_end: z.string().date(),
+  source_reliability: z.enum(["ESTIMATED", "DECLARED", "VERIFIED"]),
+  source_document_type: z.string().trim().min(1).max(80).nullable().optional(),
+  source_document_ref: z.string().trim().min(1).max(200).nullable().optional(),
   assumption: z.string().trim().min(1).max(1000).nullable().optional(),
   assumption_date: z.string().date().nullable().optional(),
   supersedes_id: z.string().uuid().nullable().optional(),
 }).superRefine((value, ctx) => {
+  if (value.period_end < value.period_start) {
+    ctx.addIssue({ code: "custom", path: ["period_end"], message: "La fin de période doit suivre son début." });
+  }
+  if (value.source_reliability === "VERIFIED" && value.observed_at == null) {
+    ctx.addIssue({ code: "custom", path: ["observed_at"], message: "Une source vérifiée doit être datée." });
+  }
+  if (value.source_reliability === "VERIFIED" && (value.source_document_type == null || value.source_document_ref == null)) {
+    ctx.addIssue({ code: "custom", path: ["source_document_ref"], message: "Une source vérifiée doit référencer son document métier." });
+  }
   if ((value.input_kind === "REVENUE") !== (value.category == null)) {
     ctx.addIssue({ code: "custom", path: ["category"], message: "La catégorie est requise uniquement pour un coût." });
   }
@@ -64,6 +80,7 @@ export const createRateVersionSchema = z.object({
   effective_from: z.string().date(),
   effective_to: z.string().date().nullable().optional(),
   source: z.string().trim().min(1).max(500),
+  source_reliability: z.enum(["ESTIMATED", "DECLARED", "VERIFIED"]),
   assumption_date: z.string().date(),
   notes: z.string().trim().max(2000).nullable().optional(),
   supersedes_id: z.string().uuid().nullable().optional(),

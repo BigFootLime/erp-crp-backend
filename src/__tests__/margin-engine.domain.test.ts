@@ -9,6 +9,12 @@ import {
 } from "../module/margin-engine/domain/margin-engine";
 
 const EVIDENCE: MarginEvidence = {
+  definition: "Valeur de test",
+  unit: "EUR_HT",
+  period_start: "2026-08-05",
+  period_end: "2026-08-05",
+  freshness_at: "2026-08-05T08:00:00.000Z",
+  source_reliability: "VERIFIED",
   source_type: "TEST",
   source_ref: "TEST_TD_MARGIN_001",
   observed_at: "2026-08-05T08:00:00.000Z",
@@ -19,6 +25,8 @@ const EVIDENCE: MarginEvidence = {
   rate_effective_at: null,
   rate_scope_type: null,
   rate_scope_ref: null,
+  source_document_type: "TEST_CASE",
+  source_document_ref: "TEST_TD_MARGIN_001",
 };
 
 function na(category: MarginCostInput["category"]): MarginCostInput {
@@ -39,7 +47,7 @@ function provided(category: MarginCostInput["category"], amount: string): Margin
   return { ...na(category), key: `value:${category}`, availability: "PROVIDED", amount_ht: amount };
 }
 
-function input(costs: MarginCostInput[], basis: "PLANNED" | "ACTUAL" = "PLANNED"): MarginCalculationInput {
+function input(costs: MarginCostInput[], basis: "QUOTED" | "STANDARD" | "UPDATED" | "ACTUAL" = "STANDARD"): MarginCalculationInput {
   return {
     scope_type: "DEVIS",
     scope_ref: "1",
@@ -129,17 +137,51 @@ describe("margin engine formulas", () => {
     expect(result.cost_total_ht).toBe("100.00");
   });
 
-  it("computes planned/actual variance only when both calculations are complete", () => {
+  it("computes actual/standard variance only when both calculations are complete", () => {
     const complete = MARGIN_COST_CATEGORIES.map(na);
-    const planned = calculateMargin(input([...complete, provided("MATERIAL", "60")], "PLANNED"));
+    const quoted = calculateMargin(input([...complete, provided("MATERIAL", "60")], "QUOTED"));
+    const standard = calculateMargin(input([...complete, provided("MATERIAL", "60")], "STANDARD"));
+    const updated = calculateMargin(input([...complete, provided("MATERIAL", "62")], "UPDATED"));
     const actual = calculateMargin(input([...complete, provided("MATERIAL", "65")], "ACTUAL"));
-    expect(compareMargins(planned, actual).variance).toMatchObject({
+    expect(compareMargins(quoted, standard, updated, actual).variances.actual_vs_standard).toMatchObject({
       available: true,
       cost_ht: "5.00",
       gross_margin_ht: "-5.00",
     });
 
     const partialActual = calculateMargin(input([provided("MATERIAL", "65")], "ACTUAL"));
-    expect(compareMargins(planned, partialActual).variance.available).toBe(false);
+    expect(compareMargins(quoted, standard, updated, partialActual).variances.actual_vs_standard.available).toBe(false);
+  });
+
+  it("publishes reliability and a server-side waterfall without inventing missing steps", () => {
+    const complete = MARGIN_COST_CATEGORIES.map(na);
+    const actual = calculateMargin(input([
+      ...complete,
+      provided("MATERIAL", "20"),
+      provided("OPERATOR", "30"),
+      provided("SUBCONTRACTING", "10"),
+    ], "ACTUAL"));
+    expect(actual.reliability).toBe("ACTUAL");
+    expect(actual.waterfall.map((row) => [row.code, row.amount_ht, row.running_total_ht])).toEqual([
+      ["PRICE", "100.00", "100.00"],
+      ["MATERIAL", "-20.00", "80.00"],
+      ["TIME", "-30.00", "50.00"],
+      ["SUBCONTRACTING", "-10.00", "40.00"],
+      ["SCRAP_REWORK", "0.00", "40.00"],
+      ["OTHER", "0.00", "40.00"],
+      ["MARGIN", "40.00", "40.00"],
+    ]);
+    const partial = calculateMargin(input([provided("MATERIAL", "20")], "ACTUAL"));
+    expect(partial.reliability).toBe("PARTIAL");
+    expect(partial.waterfall.find((row) => row.code === "TIME")?.amount_ht).toBeNull();
+  });
+
+  it("publishes the oldest source freshness as the calculation freshness", () => {
+    const oldCost = {
+      ...provided("MATERIAL", "20"),
+      evidence: { ...EVIDENCE, freshness_at: "2026-08-01T08:00:00.000Z" },
+    };
+    const result = calculateMargin(input([...MARGIN_COST_CATEGORIES.map(na), oldCost]));
+    expect(result.freshness_at).toBe("2026-08-01T08:00:00.000Z");
   });
 });

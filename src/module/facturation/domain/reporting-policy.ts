@@ -407,25 +407,20 @@ export type ReportingCapability = (typeof REPORTING_CAPABILITIES)[number];
 // ---------------------------------------------------------------------------
 
 /**
- * Aucun coût réel transverse (matière consommée, temps réel, taux horaires,
- * sous-traitance, rebuts, valorisation stock, frais indirects) n'est modélisé de
- * façon exhaustive et datée. Toute marge affichée serait une fiction.
- * L'API renvoie donc l'indisponibilité explicitement — jamais zéro.
+ * Le moteur de marge objet publie des perspectives traçables, mais le reporting
+ * client ne dispose pas encore d'une allocation exhaustive et réconciliée des
+ * avoirs, retours, frais indirects et objets multi-clients. Agréger partiellement
+ * ces objets fabriquerait un total trompeur ; l'API reste donc indisponible.
  */
 export const MARGIN_UNAVAILABLE = {
   available: false,
-  reason_code: "REAL_COST_MODEL_NOT_VALIDATED",
+  reason_code: "CROSS_OBJECT_MARGIN_AGGREGATION_NOT_VALIDATED",
   message:
-    "Marge réelle indisponible — modèle de coût réel non validé (matière consommée, temps réel, taux horaires, sous-traitance, rebuts, valorisation stock, frais indirects).",
+    "Marge client indisponible — l'allocation exhaustive des objets de marge, retours, avoirs et frais indirects n'est pas encore réconciliée.",
   missing_inputs: [
-    "matiere_reellement_consommee",
-    "temps_reel_par_of",
-    "taux_horaires_dates",
-    "sous_traitance",
-    "rebuts_et_reprises",
-    "valorisation_stock",
-    "frais_indirects",
-    "cout_applicable_a_la_date",
+    "allocation_objet_vers_client",
+    "allocation_frais_indirects",
     "traitement_retours_et_avoirs",
+    "reconciliation_facture_objet_marge",
   ],
 } as const;
