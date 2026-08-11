@@ -4,7 +4,7 @@ Date d'exécution : 2026-08-10
 
 Branche de travail : `fix/sol-06-migration-reliability`
 
-Statut : **candidate fusionnable ; aucune écriture production effectuée**
+Statut : **code fusionné ; décision CUMP enregistrée sur les deux bases ; gate SOL-06 non activé tant que calendriers et taux réels manquent**
 
 ## Diagnostic et cause racine
 
@@ -97,5 +97,38 @@ La procédure exacte est dans `docs/runbooks/database-upgrade-sol06.md`. Le fich
 
 - Avant toute production : répéter sur une copie de staging anonymisée représentative de la volumétrie et fixer la fenêtre de verrou.
 - Traiter les 25 contrats historiques manquants et les 10 `CHECK NOT VALID` selon les propriétaires/échéances de `MIGRATION_EXCEPTIONS_SOL_06.md`.
-- Faire approuver et renseigner la méthode de valorisation réelle avec sa définition, sa source, sa période, sa fraîcheur et sa fiabilité.
-- Aucun autre changement SOL-06 n'est connu comme non intégré.
+- Créer puis faire valider les calendriers de production et les taux horaires réels des centres de coûts ; ces données ne doivent pas être inventées par une migration.
+- Activer ensuite le patch SOL-06 et ses triggers sur les deux bases avec un nouveau preflight.
+
+## Validation métier et application contrôlée du 11/08/2026
+
+Keenan Martin a validé la méthode CUMP. La valeur canonique enregistrée est
+`WEIGHTED_AVERAGE`, définie comme le coût moyen pondéré recalculé à chaque
+réception valorisée ; les sorties de stock et consommations d'OF utilisent le
+coût moyen courant. Provenance : « Décision dirigeant Keenan Martin — validation
+de release SOL-06 du 2026-08-11 », période à compter du 11/08/2026, fraîcheur
+11/08/2026, fiabilité `DECLARED`.
+
+La décision a été écrite de façon idempotente dans `cerp_test` et `cerp_prod`
+après sauvegarde complète et répétition sur deux restaurations jetables. Le patch
+`20260810_system_reference_data_readiness.sql` n'a volontairement pas été
+appliqué aux bases actives : le preflight réaliste prouve l'absence de
+calendriers de production actifs et de centres de coûts/taux horaires actifs ;
+le schéma réel des magasins/emplacements ne porte pas encore le contrat
+`is_active` attendu. Activer les triggers dans cet état bloquerait des flux
+métier légitimes. Cette retenue est un gate de sécurité, pas un échec de
+migration.
+
+Sauvegardes opérateur avant écriture :
+
+- `cerp_test_pre_sol11_20260811-120450.dump`, 72 779 738 octets, SHA-256
+  `05844614cac0e3ac7e81bc11735aa9e70f80ab3cbc46a8655660fe6751ef1373` ;
+- `cerp_prod_pre_sol11_20260811-120450.dump`, 49 314 521 octets, SHA-256
+  `9c35b2a3eb80390a74a19c06e80d7967333066d4a024215fb8024feef28220a7`.
+
+Les deux dumps ont passé `pg_restore --list`, ont été restaurés dans des bases
+neuves, migrés, vérifiés, puis la restauration production a été refaite depuis
+le dump original avant le second passage. Les unités canoniques `u`, `mm`, `m`
+et `kg` sont présentes sur les deux bases actives ; la réparation du drift de
+l'unité `u` et la réparation du schéma de provisioning sont enregistrées dans le
+ledger avec empreintes immuables.
