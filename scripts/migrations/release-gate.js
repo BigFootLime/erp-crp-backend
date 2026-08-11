@@ -370,14 +370,22 @@ function command(name, args, options = {}) {
 
 async function waitForPostgres(container) {
   const deadline = Date.now() + 60_000;
+  let consecutiveReady = 0;
   while (Date.now() < deadline) {
+    const logs = spawnSync("docker", ["logs", container], {
+      env: systemEnv(), encoding: "utf8", windowsHide: true,
+    });
+    const initializationComplete = /PostgreSQL init process complete; ready for start up/i.test(
+      `${logs.stdout ?? ""}\n${logs.stderr ?? ""}`
+    );
     const result = spawnSync("docker", ["exec", container, "pg_isready", "-U", "cerp_e2e", "-d", "cerp_test"], {
       env: systemEnv(), stdio: "ignore", windowsHide: true,
     });
-    if (result.status === 0) return;
+    consecutiveReady = initializationComplete && result.status === 0 ? consecutiveReady + 1 : 0;
+    if (consecutiveReady >= 2) return;
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  fail("PostgreSQL did not become ready within 60 seconds");
+  fail("PostgreSQL final server did not become stably ready within 60 seconds");
 }
 
 function rehearsalMarkdown(report) {
