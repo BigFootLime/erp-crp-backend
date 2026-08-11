@@ -5560,7 +5560,7 @@ export async function repoCreateHistoricalImport(body: HistoricalImportBodyDTO, 
       if (body.article_id) articleId = body.article_id;
       else if (body.article) articleId = (await repoCreateArticleTx(client, body.article, audit)).id;
       else throw new HttpError(400, "ARTICLE_REQUIRED", "Article matière requis.");
-      const a = await client.query<{ category: string; nuance: string | null }>(`SELECT a.article_category::text AS category, n.code AS nuance FROM public.articles a LEFT JOIN public.articles_matiere am ON am.article_id=a.id LEFT JOIN public.stock_nuances n ON n.id=am.nuance_id WHERE a.id=$1::uuid FOR UPDATE`, [articleId]);
+      const a = await client.query<{ category: string; nuance: string | null }>(`SELECT a.article_category::text AS category, n.code AS nuance FROM public.articles a LEFT JOIN public.articles_matiere am ON am.article_id=a.id LEFT JOIN public.stock_nuances n ON n.id=am.nuance_id WHERE a.id=$1::uuid FOR UPDATE OF a`, [articleId]);
       if (a.rows[0]?.category !== "matiere") throw new HttpError(422, "MP_ARTICLE_REQUIRED", "L'import MP requiert un article matière première.");
       shelf = a.rows[0]?.nuance?.trim() || "SANS-NUANCE";
     } else {
