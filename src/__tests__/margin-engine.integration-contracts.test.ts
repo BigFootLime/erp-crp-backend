@@ -49,6 +49,13 @@ const rateRow: ManualInputRow = {
   rate_effective_from: "2026-01-01",
   rate_effective_to: "2026-12-31",
   created_by: 7,
+  definition: "Temps opérateur constaté",
+  unit: "HOUR",
+  period_start: "2026-08-05",
+  period_end: "2026-08-05",
+  source_reliability: "VERIFIED",
+  source_document_type: "OF_OPERATION",
+  source_document_ref: "42",
 };
 
 describe("margin rate resolution", () => {
@@ -73,6 +80,8 @@ describe("margin rate resolution", () => {
       scope_type: "OF", scope_ref: "42", basis: "ACTUAL", input_key: "operator-rate",
       input_kind: "COST", category: "OPERATOR", availability: "PROVIDED",
       quantity: 2, rate_id: rateRow.rate_id, rate_effective_at: "2026-08-05", source_type: "RATE_INPUT",
+      definition: "Temps opérateur valorisé", unit: "HOUR",
+      period_start: "2026-08-05", period_end: "2026-08-05", source_reliability: "DECLARED",
     });
     const globalRate = {
       id: rateRow.rate_id!, category: "OPERATOR" as const, unit: "EUR_PER_HOUR" as const,
@@ -115,15 +124,21 @@ describe("margin historical contract", () => {
 describe("margin governed CSV", () => {
   it("exports evidence, dated assumptions, rate proof, missing inputs, measurements and as_of", () => {
     const revenueEvidence: MarginEvidence = {
+      definition: "Prix de vente HT", unit: "EUR_HT", period_start: "2026-08-05", period_end: "2026-08-05",
+      freshness_at: "2026-08-05T08:00:00Z", source_reliability: "VERIFIED",
       source_type: "DEVIS_TOTAL_HT", source_ref: "7", observed_at: "2026-08-05T08:00:00Z",
       assumption: null, assumption_date: null, rate_version_id: null, rate_id: null,
       rate_effective_at: null, rate_scope_type: null, rate_scope_ref: null,
+      source_document_type: "DEVIS", source_document_ref: "7",
     };
     const costEvidence: MarginEvidence = {
+      definition: "Temps opérateur valorisé", unit: "EUR_HT", period_start: "2026-08-05", period_end: "2026-08-05",
+      freshness_at: "2026-08-05T09:00:00Z", source_reliability: "DECLARED",
       source_type: "RATE_INPUT", source_ref: "OF-42", observed_at: "2026-08-05T09:00:00Z",
       assumption: "Budget validé", assumption_date: "2026-08-01",
       rate_id: rateRow.rate_id, rate_version_id: rateRow.rate_version_id,
       rate_effective_at: rateRow.rate_effective_at, rate_scope_type: "GLOBAL", rate_scope_ref: null,
+      source_document_type: "OF", source_document_ref: "42",
     };
     const base = {
       scope_type: "OF" as const, scope_ref: "42", label: "TEST_TD_MARGIN_42",
@@ -134,11 +149,14 @@ describe("margin governed CSV", () => {
       }],
       measurements: { actual_hours: "2.0" },
     };
-    const planned = calculateMargin({ ...base, basis: "PLANNED" });
+    const quoted = calculateMargin({ ...base, basis: "QUOTED" });
+    const standard = calculateMargin({ ...base, basis: "STANDARD" });
+    const updated = calculateMargin({ ...base, basis: "UPDATED" });
     const actual = calculateMargin({ ...base, basis: "ACTUAL" });
-    const csv = renderMarginCsv({ ...compareMargins(planned, actual), generated_at: "2026-08-05T10:00:00Z" });
+    const csv = renderMarginCsv({ ...compareMargins(quoted, standard, updated, actual), generated_at: "2026-08-05T10:00:00Z" });
 
     for (const expected of [
+      "definition", "unit", "period_start", "period_end", "source_reliability",
       "source_type", "observed_at", "assumption_date", "rate_version_id", "rate_effective_at",
       "missing_code", "measurement_key", "as_of", "DEVIS_TOTAL_HT", "Budget validé",
       "MACHINE_MISSING", "actual_hours", "2026-08-05",

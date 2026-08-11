@@ -18,6 +18,7 @@ type ScopeIdentity = {
   scope_ref: string;
   label: string;
   revenue_ht: string | null;
+  source_observed_at: string | null;
 };
 
 export type MarginAuditContext = {
@@ -61,7 +62,21 @@ async function auditMutation(
   });
 }
 
-const evidence = (sourceType: string, sourceRef: string | null, observedAt: string | null = null): MarginEvidence => ({
+const evidence = (
+  sourceType: string,
+  sourceRef: string | null,
+  observedAt: string | null = null,
+  metadata: Partial<Pick<MarginEvidence,
+    "definition" | "unit" | "period_start" | "period_end" | "freshness_at" |
+    "source_reliability" | "source_document_type" | "source_document_ref"
+  >> = {},
+): MarginEvidence => ({
+  definition: metadata.definition ?? `Valeur issue de ${sourceType}.`,
+  unit: metadata.unit ?? "EUR_HT",
+  period_start: metadata.period_start ?? observedAt?.slice(0, 10) ?? "non-renseignée",
+  period_end: metadata.period_end ?? observedAt?.slice(0, 10) ?? "non-renseignée",
+  freshness_at: metadata.freshness_at ?? observedAt,
+  source_reliability: metadata.source_reliability ?? "UNKNOWN",
   source_type: sourceType,
   source_ref: sourceRef,
   observed_at: observedAt,
@@ -72,12 +87,14 @@ const evidence = (sourceType: string, sourceRef: string | null, observedAt: stri
   rate_effective_at: null,
   rate_scope_type: null,
   rate_scope_ref: null,
+  source_document_type: metadata.source_document_type ?? sourceType,
+  source_document_ref: metadata.source_document_ref ?? sourceRef,
 });
 
 function automaticCost(row: {
   key: string;
   category: MarginCostInput["category"];
-  amount_ht: string;
+  amount_ht: string | null;
   source_type: string;
   source_ref: string | null;
   observed_at: string | null;
@@ -92,7 +109,15 @@ function automaticCost(row: {
     rate: null,
     rate_unit: null,
     currency: "EUR",
-    evidence: { ...evidence(row.source_type, row.source_ref, row.observed_at), rate_version_id: row.rate_version_id ?? null },
+    evidence: {
+      ...evidence(row.source_type, row.source_ref, row.observed_at, {
+        definition: `Coût HT calculé depuis ${row.source_type}.`,
+        source_reliability: row.source_type.includes("RECALC") || row.source_type.includes("STOCK") || row.source_type.includes("RECEPTION")
+          ? "VERIFIED"
+          : "ESTIMATED",
+      }),
+      rate_version_id: row.rate_version_id ?? null,
+    },
   };
 }
 
@@ -101,7 +126,8 @@ export async function repoLoadScopeIdentity(scopeType: MarginScopeType, scopeRef
     const result = await pool.query<ScopeIdentity>(`
       SELECT 'DEVIS_LINE'::text AS scope_type, dl.id::text AS scope_ref,
              concat(d.numero, ' · ', COALESCE(NULLIF(dl.description, ''), 'ligne ' || dl.id::text)) AS label,
-             round(dl.total_ht * (1 - COALESCE(d.remise_globale, 0) / 100.0), 6)::text AS revenue_ht
+             round(dl.total_ht * (1 - COALESCE(d.remise_globale, 0) / 100.0), 6)::text AS revenue_ht,
+             d.updated_at::text AS source_observed_at
       FROM public.devis_ligne dl
       JOIN public.devis d ON d.id = dl.devis_id
       WHERE dl.id = $1::bigint
@@ -111,20 +137,23 @@ export async function repoLoadScopeIdentity(scopeType: MarginScopeType, scopeRef
   if (scopeType === "DEVIS") {
     const result = await pool.query<ScopeIdentity>(`
       SELECT 'DEVIS'::text AS scope_type, id::text AS scope_ref, numero::text AS label,
-             total_ht::text AS revenue_ht FROM public.devis WHERE id = $1::bigint
+             total_ht::text AS revenue_ht, updated_at::text AS source_observed_at
+      FROM public.devis WHERE id = $1::bigint
     `, [scopeRef]);
     return result.rows[0] ?? null;
   }
   if (scopeType === "AFFAIRE") {
     const result = await pool.query<ScopeIdentity>(`
       SELECT 'AFFAIRE'::text AS scope_type, id::text AS scope_ref, reference::text AS label,
-             NULL::text AS revenue_ht FROM public.affaire WHERE id = $1::bigint
+             NULL::text AS revenue_ht, NULL::text AS source_observed_at
+      FROM public.affaire WHERE id = $1::bigint
     `, [scopeRef]);
     return result.rows[0] ?? null;
   }
   const result = await pool.query<ScopeIdentity>(`
     SELECT 'OF'::text AS scope_type, id::text AS scope_ref, numero::text AS label,
-           NULL::text AS revenue_ht FROM public.ordres_fabrication WHERE id = $1::bigint
+           NULL::text AS revenue_ht, NULL::text AS source_observed_at
+    FROM public.ordres_fabrication WHERE id = $1::bigint
   `, [scopeRef]);
   return result.rows[0] ?? null;
 }
@@ -132,7 +161,7 @@ export async function repoLoadScopeIdentity(scopeType: MarginScopeType, scopeRef
 type CostRow = {
   key: string;
   category: MarginCostInput["category"];
-  amount_ht: string;
+  amount_ht: string | null;
   source_type: string;
   source_ref: string | null;
   observed_at: string | null;
@@ -179,12 +208,20 @@ async function loadDevisCosts(scopeType: "DEVIS_LINE" | "DEVIS", scopeRef: strin
 }
 
 async function loadOfCosts(scopeRef: string, basis: MarginBasis): Promise<{ costs: MarginCostInput[]; measurements: Record<string, string | number | null> }> {
-  const hoursColumn = basis === "PLANNED" ? "op.temps_total_planned" : "op.temps_total_real";
+  const hoursColumn = basis === "STANDARD"
+    ? "op.temps_total_planned"
+    : basis === "UPDATED"
+      ? "GREATEST(op.temps_total_planned, op.temps_total_real)"
+      : "op.temps_total_real";
   const result = await pool.query<CostRow>(`
     SELECT concat('of-operation:', op.id::text) AS key,
            CASE WHEN op.designation ILIKE '%contrôle%' OR op.designation ILIKE '%controle%' THEN 'CONTROL' ELSE 'OPERATOR' END::text AS category,
            round(op.hourly_rate_applied * ${hoursColumn}, 6)::text AS amount_ht,
-           ${basis === "PLANNED" ? "'OF_OPERATION_PLAN'" : "'PRODUCTION_POINTAGES_RECALC'"}::text AS source_type,
+           ${basis === "STANDARD"
+             ? "'OF_OPERATION_STANDARD'"
+             : basis === "UPDATED"
+               ? "'OF_OPERATION_ESTIMATE_AT_COMPLETION'"
+               : "'PRODUCTION_POINTAGES_RECALC'"}::text AS source_type,
            op.id::text AS source_ref,
            op.updated_at::text AS observed_at
     FROM public.of_operations op
@@ -194,23 +231,108 @@ async function loadOfCosts(scopeRef: string, basis: MarginBasis): Promise<{ cost
     ORDER BY op.phase, op.id
   `, [scopeRef]);
   const measureResult = await pool.query<{
-    planned_hours: string;
-    actual_hours: string;
-    good_quantity: string;
-    scrap_quantity: string;
-    rework_quantity: string;
+    planned_hours: string | null;
+    actual_hours: string | null;
+    good_quantity: string | null;
+    scrap_quantity: string | null;
+    rework_quantity: string | null;
+    declaration_count: number;
+    declaration_freshness: string | null;
   }>(`
     SELECT
-      COALESCE((SELECT sum(temps_total_planned) FROM public.of_operations WHERE of_id = $1::bigint), 0)::text AS planned_hours,
-      COALESCE((SELECT sum(temps_total_real) FROM public.of_operations WHERE of_id = $1::bigint), 0)::text AS actual_hours,
-      COALESCE((SELECT sum(qty_good) FROM public.production_quantity_declarations WHERE of_id = $1::bigint), 0)::text AS good_quantity,
-      COALESCE((SELECT sum(qty_scrap) FROM public.production_quantity_declarations WHERE of_id = $1::bigint), 0)::text AS scrap_quantity,
-      COALESCE((SELECT sum(qty_rework) FROM public.production_quantity_declarations WHERE of_id = $1::bigint), 0)::text AS rework_quantity
+      (SELECT sum(temps_total_planned) FROM public.of_operations WHERE of_id = $1::bigint)::text AS planned_hours,
+      (SELECT sum(temps_total_real) FROM public.of_operations WHERE of_id = $1::bigint)::text AS actual_hours,
+      (SELECT sum(qty_good) FROM public.production_quantity_declarations WHERE of_id = $1::bigint)::text AS good_quantity,
+      (SELECT sum(qty_scrap) FROM public.production_quantity_declarations WHERE of_id = $1::bigint)::text AS scrap_quantity,
+      (SELECT sum(qty_rework) FROM public.production_quantity_declarations WHERE of_id = $1::bigint)::text AS rework_quantity,
+      (SELECT count(*)::integer FROM public.production_quantity_declarations WHERE of_id = $1::bigint) AS declaration_count,
+      (SELECT max(declared_at)::text FROM public.production_quantity_declarations WHERE of_id = $1::bigint) AS declaration_freshness
   `, [scopeRef]);
-  return {
-    costs: result.rows.map(automaticCost),
-    measurements: measureResult.rows[0] ?? {},
+  const measures = measureResult.rows[0] ?? {
+    planned_hours: null, actual_hours: null, good_quantity: null,
+    scrap_quantity: null, rework_quantity: null, declaration_count: 0, declaration_freshness: null,
   };
+  const quantityCosts: MarginCostInput[] = [];
+  if ((basis === "ACTUAL" || basis === "UPDATED") && measures.declaration_count > 0) {
+    for (const [category, quantity] of [["SCRAP", measures.scrap_quantity], ["REWORK", measures.rework_quantity]] as const) {
+      quantityCosts.push({
+        key: `production-quantity:${category.toLowerCase()}`,
+        category,
+        availability: quantity !== null && Number(quantity) === 0 ? "NOT_APPLICABLE" : "PROVIDED",
+        amount_ht: null,
+        quantity,
+        rate: null,
+        rate_unit: null,
+        currency: "EUR",
+        evidence: evidence("PRODUCTION_QUANTITY_DECLARATIONS", scopeRef, measures.declaration_freshness, {
+          definition: `${category === "SCRAP" ? "Rebuts" : "Retouches"} déclarés sur l'OF ; une quantité positive exige une valorisation versionnée.`,
+          unit: "UNIT",
+          source_reliability: "VERIFIED",
+          source_document_type: "OF",
+          source_document_ref: scopeRef,
+        }),
+      });
+    }
+  }
+  const actualCosts = basis === "ACTUAL" || basis === "UPDATED"
+    ? [...await loadActualMaterialCosts(scopeRef), ...await loadActualSubcontractingCosts(scopeRef)]
+    : [];
+  return {
+    costs: [...result.rows.map(automaticCost), ...actualCosts, ...quantityCosts],
+    measurements: measures,
+  };
+}
+
+async function loadActualMaterialCosts(scopeRef: string): Promise<MarginCostInput[]> {
+  const rows = await pool.query<CostRow>(`
+    SELECT concat('stock-consumption:', line.id::text) AS key,
+           'MATERIAL'::text AS category,
+           CASE WHEN line.unit_cost IS NULL THEN NULL
+                ELSE round(abs(line.qty) * line.unit_cost, 6)::text END AS amount_ht,
+           'STOCK_CUMP_CONSUMPTION'::text AS source_type,
+           movement.id::text AS source_ref,
+           movement.posted_at::text AS observed_at
+    FROM public.stock_movement_lines line
+    JOIN public.stock_movements movement ON movement.id = line.movement_id
+    WHERE movement.status::text = 'POSTED'
+      AND movement.movement_type::text = 'OUT'
+      AND EXISTS (
+        SELECT 1 FROM public.stock_reservations reservation
+        WHERE reservation.of_id = $1::bigint
+          AND reservation.status::text = 'CONSUMED'
+          AND reservation.consumed_stock_movement_id = movement.id
+      )
+    ORDER BY line.id
+  `, [scopeRef]);
+  return rows.rows.map(automaticCost);
+}
+
+async function loadActualSubcontractingCosts(scopeRef: string): Promise<MarginCostInput[]> {
+  const rows = await pool.query<CostRow>(`
+    SELECT concat('supplier-receipt:', receipt_line.id::text) AS key,
+           'SUBCONTRACTING'::text AS category,
+           CASE WHEN order_line.prix_unitaire_ht <= 0 THEN NULL
+                ELSE round(
+                  receipt_line.qty_received * order_line.prix_unitaire_ht * (1 - order_line.remise_pct / 100.0)
+                  + CASE WHEN order_line.quantite > 0
+                      THEN order_line.frais_ht * receipt_line.qty_received / order_line.quantite ELSE 0 END,
+                  6
+                )::text END AS amount_ht,
+           'SUPPLIER_RECEPTION_ACTUAL'::text AS source_type,
+           receipt.id::text AS source_ref,
+           receipt_line.updated_at::text AS observed_at
+    FROM public.reception_fournisseur_lignes receipt_line
+    JOIN public.receptions_fournisseurs receipt ON receipt.id = receipt_line.reception_id
+    JOIN public.commande_fournisseur_ligne order_line
+      ON order_line.id = receipt_line.commande_fournisseur_ligne_id
+    WHERE order_line.of_id = $1::bigint
+      AND order_line.type IN ('SOUS_TRAITANCE','PRESTATION')
+      AND order_line.statut_ligne <> 'ANNULEE'
+      AND receipt.status::text <> 'CANCELLED'
+      AND receipt_line.qty_received > 0
+    ORDER BY receipt_line.id
+  `, [scopeRef]);
+  return rows.rows.map(automaticCost);
 }
 
 export type ManualInputRow = {
@@ -238,6 +360,13 @@ export type ManualInputRow = {
   rate_effective_from: string | null;
   rate_effective_to: string | null;
   created_by: number;
+  definition: string | null;
+  unit: string | null;
+  period_start: string | null;
+  period_end: string | null;
+  source_reliability: MarginEvidence["source_reliability"] | null;
+  source_document_type: string | null;
+  source_document_ref: string | null;
 };
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -282,6 +411,8 @@ async function loadManualInputs(scopeType: MarginScopeType, scopeRef: string, ba
       i.amount_ht::text, i.quantity::text, i.currency,
       i.source_type, i.source_ref, i.observed_at::text,
       i.assumption, i.assumption_date::text,
+      i.definition, i.unit, i.period_start::text, i.period_end::text,
+      i.source_reliability, i.source_document_type, i.source_document_ref,
       i.created_by,
       i.rate_id::text, i.rate_effective_at::text, i.rate_validation_snapshot,
       r.amount::text AS rate_amount, r.unit AS rate_unit,
@@ -294,10 +425,11 @@ async function loadManualInputs(scopeType: MarginScopeType, scopeRef: string, ba
      AND successor.created_at < ($4::date + interval '1 day')
     LEFT JOIN public.margin_rates r ON r.id = i.rate_id
     LEFT JOIN public.margin_rate_versions v ON v.id = r.rate_version_id
-    WHERE i.scope_type = $1 AND i.scope_ref = $2 AND i.basis = $3
+    WHERE i.scope_type = $1 AND i.scope_ref = $2
+      AND (i.basis = $3 OR ($3 = 'STANDARD' AND i.basis = 'PLANNED'))
       AND i.created_at < ($4::date + interval '1 day')
       AND successor.id IS NULL
-    ORDER BY i.input_key, i.created_at DESC, i.id DESC
+    ORDER BY i.input_key, (i.basis = $3) DESC, i.created_at DESC, i.id DESC
   `, [scopeType, scopeRef, basis, asOf]);
   let revenue: MarginRevenueInput | null = null;
   const costs: MarginCostInput[] = [];
@@ -312,6 +444,12 @@ async function loadManualInputs(scopeType: MarginScopeType, scopeRef: string, ba
       );
     }
     const sourceEvidence: MarginEvidence = {
+      definition: row.definition ?? `Entrée versionnée ${row.input_key}.`,
+      unit: row.unit ?? (row.input_kind === "REVENUE" || row.amount_ht !== null ? "EUR_HT" : row.rate_unit ?? "non-renseignée"),
+      period_start: row.period_start ?? row.assumption_date ?? row.observed_at?.slice(0, 10) ?? "non-renseignée",
+      period_end: row.period_end ?? row.assumption_date ?? row.observed_at?.slice(0, 10) ?? "non-renseignée",
+      freshness_at: row.observed_at,
+      source_reliability: row.source_reliability ?? "UNKNOWN",
       source_type: row.source_type,
       source_ref: row.source_ref,
       observed_at: row.observed_at,
@@ -322,6 +460,8 @@ async function loadManualInputs(scopeType: MarginScopeType, scopeRef: string, ba
       rate_effective_at: row.rate_effective_at,
       rate_scope_type: row.rate_scope_type,
       rate_scope_ref: row.rate_scope_ref,
+      source_document_type: row.source_document_type,
+      source_document_ref: row.source_document_ref,
     };
     if (row.input_kind === "REVENUE") {
       revenue = { availability: row.availability, amount_ht: row.amount_ht, currency: row.currency, evidence: sourceEvidence };
@@ -346,9 +486,9 @@ export async function repoBuildCalculationInput(identity: ScopeIdentity, basis: 
   const manual = await loadManualInputs(identity.scope_type, identity.scope_ref, basis, asOf);
   let automaticCosts: MarginCostInput[] = [];
   let measurements: Record<string, string | number | null> = {};
-  if (basis === "PLANNED" && (identity.scope_type === "DEVIS" || identity.scope_type === "DEVIS_LINE")) {
+  if ((basis === "QUOTED" || basis === "STANDARD") && (identity.scope_type === "DEVIS" || identity.scope_type === "DEVIS_LINE")) {
     automaticCosts = await loadDevisCosts(identity.scope_type, identity.scope_ref);
-  } else if (identity.scope_type === "OF") {
+  } else if (identity.scope_type === "OF" && basis !== "QUOTED") {
     const ofData = await loadOfCosts(identity.scope_ref, basis);
     automaticCosts = ofData.costs;
     measurements = ofData.measurements;
@@ -357,7 +497,14 @@ export async function repoBuildCalculationInput(identity: ScopeIdentity, basis: 
     availability: "PROVIDED",
     amount_ht: identity.revenue_ht,
     currency: "EUR",
-    evidence: evidence(identity.scope_type === "DEVIS" ? "DEVIS_TOTAL_HT" : "DEVIS_LINE_TOTAL_HT", identity.scope_ref),
+    evidence: evidence(identity.scope_type === "DEVIS" ? "DEVIS_TOTAL_HT" : "DEVIS_LINE_TOTAL_HT", identity.scope_ref, identity.source_observed_at, {
+      definition: "Prix de vente HT après remises porté par le devis.",
+      period_start: asOf,
+      period_end: asOf,
+      source_reliability: "VERIFIED",
+      source_document_type: identity.scope_type,
+      source_document_ref: identity.scope_ref,
+    }),
   };
   return {
     scope_type: identity.scope_type,
@@ -506,15 +653,20 @@ export async function repoCreateMarginInput(input: CreateMarginInput, audit: Mar
       INSERT INTO public.margin_input_versions (
         scope_type, scope_ref, basis, input_key, input_kind, category, availability,
         amount_ht, quantity, rate_id, rate_effective_at, rate_validation_snapshot,
-        source_type, source_ref, observed_at, assumption, assumption_date, supersedes_id, created_by
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::numeric,$9::numeric,$10::uuid,$11::date,$12::jsonb,$13,$14,$15::timestamptz,$16,$17::date,$18::uuid,$19)
+        source_type, source_ref, observed_at, assumption, assumption_date,
+        definition, unit, period_start, period_end, source_reliability,
+        source_document_type, source_document_ref, supersedes_id, created_by
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::numeric,$9::numeric,$10::uuid,$11::date,$12::jsonb,$13,$14,$15::timestamptz,$16,$17::date,$18,$19,$20::date,$21::date,$22,$23,$24,$25::uuid,$26)
       RETURNING id::text, created_at::text
     `, [
       input.scope_type, input.scope_ref, input.basis, input.input_key, input.input_kind,
       input.category ?? null, input.availability, input.amount_ht ?? null, input.quantity ?? null,
       input.rate_id ?? null, input.rate_effective_at ?? null, rateSnapshot ? JSON.stringify(rateSnapshot) : null,
       input.source_type, input.source_ref ?? null, input.observed_at ?? null,
-      input.assumption ?? null, input.assumption_date ?? null, input.supersedes_id ?? null, audit.user_id,
+      input.assumption ?? null, input.assumption_date ?? null,
+      input.definition, input.unit, input.period_start, input.period_end, input.source_reliability,
+      input.source_document_type ?? null, input.source_document_ref ?? null,
+      input.supersedes_id ?? null, audit.user_id,
     ]);
     const created = result.rows[0]!;
     await auditMutation(client, audit, "MARGIN_INPUT_VERSION_CREATED", "margin_input_version", created.id, {
@@ -547,10 +699,11 @@ export async function repoCreateRateVersion(input: CreateRateVersion, audit: Mar
     }
     const version = await client.query<{ id: string; created_at: string }>(`
       INSERT INTO public.margin_rate_versions
-        (code, version, effective_from, effective_to, source, assumption_date, notes, supersedes_id, created_by)
-      VALUES ($1,$2,$3::date,$4::date,$5,$6::date,$7,$8::uuid,$9)
+        (code, version, effective_from, effective_to, source, source_reliability, assumption_date, notes, supersedes_id, created_by)
+      VALUES ($1,$2,$3::date,$4::date,$5,$6,$7::date,$8,$9::uuid,$10)
       RETURNING id::text, created_at::text
-    `, [input.code, input.version, input.effective_from, input.effective_to ?? null, input.source, input.assumption_date, input.notes ?? null, input.supersedes_id ?? null, audit.user_id]);
+    `, [input.code, input.version, input.effective_from, input.effective_to ?? null, input.source, input.source_reliability,
+      input.assumption_date, input.notes ?? null, input.supersedes_id ?? null, audit.user_id]);
     const versionId = version.rows[0]!.id;
     for (const rate of input.rates) {
       await client.query(`
@@ -577,7 +730,7 @@ export async function repoCreateRateVersion(input: CreateRateVersion, audit: Mar
 export async function repoListRateVersions(asOf: string): Promise<unknown[]> {
   const result = await pool.query(`
     SELECT v.id::text, v.code, v.version, v.currency, v.effective_from::text, v.effective_to::text,
-           v.source, v.assumption_date::text, v.notes, v.supersedes_id::text, v.created_by, v.created_at::text,
+           v.source, v.source_reliability, v.assumption_date::text, v.notes, v.supersedes_id::text, v.created_by, v.created_at::text,
            COALESCE(jsonb_agg(jsonb_build_object(
              'id', r.id::text, 'rate_code', r.rate_code, 'category', r.category,
              'scope_type', r.scope_type, 'scope_ref', r.scope_ref, 'amount', r.amount::text,

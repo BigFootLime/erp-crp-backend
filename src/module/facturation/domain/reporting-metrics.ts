@@ -929,7 +929,7 @@ const CATALOG: MetricDefinition[] = [
     owner: "Contrôle de gestion",
     availability: "deferred",
     limitations: [
-      "Bloquant : aucun coût réel transverse et exhaustif n'est modélisé (voir MARGIN_UNAVAILABLE).",
+      "Bloquant : l'allocation et la réconciliation multi-objets par client ne sont pas exhaustives (voir MARGIN_UNAVAILABLE).",
       "Interdit d'afficher une marge estimée sous le libellé « marge réelle », « rentabilité » ou « contribution ».",
     ],
   },

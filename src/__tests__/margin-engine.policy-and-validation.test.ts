@@ -2,6 +2,14 @@ import { describe, expect, it } from "vitest";
 import { canUseMarginCapability, roleHasMarginCapability } from "../module/margin-engine/domain/margin-engine-policy";
 import { createMarginInputSchema, createRateVersionSchema } from "../module/margin-engine/validators/margin-engine.validators";
 
+const evidenceContract = {
+  definition: "Décision de coût documentée",
+  unit: "EUR_HT",
+  period_start: "2026-08-01",
+  period_end: "2026-08-31",
+  source_reliability: "DECLARED" as const,
+};
+
 describe("margin engine RBAC", () => {
   it("denies unknown roles by default and separates read from administration", () => {
     expect(roleHasMarginCapability(null, "read_costs")).toBe(false);
@@ -33,9 +41,10 @@ describe("margin engine write contracts", () => {
 
   it("accepts explicit not-applicable and rejects a hidden value on it", () => {
     const base = {
-      scope_type: "DEVIS" as const, scope_ref: "1", basis: "PLANNED" as const,
+      scope_type: "DEVIS" as const, scope_ref: "1", basis: "QUOTED" as const,
       input_key: "tooling", input_kind: "COST" as const, category: "TOOLING" as const,
       source_type: "USER_DECISION", availability: "NOT_APPLICABLE" as const,
+      ...evidenceContract,
     };
     expect(createMarginInputSchema.safeParse(base).success).toBe(true);
     expect(createMarginInputSchema.safeParse({ ...base, amount_ht: 0 }).success).toBe(false);
@@ -44,7 +53,7 @@ describe("margin engine write contracts", () => {
   it("requires a source and effective date on every rate version", () => {
     const result = createRateVersionSchema.safeParse({
       code: "OPERATOR_2026", version: 1, effective_from: "2026-08-01",
-      assumption_date: "2026-07-31", source: "Budget validé DG",
+      assumption_date: "2026-07-31", source: "Budget validé DG", source_reliability: "DECLARED",
       rates: [{ rate_code: "OP", category: "OPERATOR", scope_type: "GLOBAL", amount: 55, unit: "EUR_PER_HOUR" }],
     });
     expect(result.success).toBe(true);
@@ -56,6 +65,7 @@ describe("margin engine write contracts", () => {
       input_key: "operator", input_kind: "COST" as const, category: "OPERATOR" as const,
       availability: "PROVIDED" as const, source_type: "RATE_INPUT",
       rate_id: "11111111-1111-4111-8111-111111111111", quantity: 2,
+      ...evidenceContract,
     };
     expect(createMarginInputSchema.safeParse(base).success).toBe(false);
     expect(createMarginInputSchema.safeParse({ ...base, rate_effective_at: "2026-08-05" }).success).toBe(true);
