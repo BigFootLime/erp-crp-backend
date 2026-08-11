@@ -48,6 +48,8 @@ La valorisation matière retenue est le CUMP, source : décision du dirigeant Ke
 - Les rebuts/retouches positifs bloquent une marge complète tant qu'ils ne sont pas valorisés : c'est un garde-fou, pas une panne.
 - La migration prend brièvement des verrous exclusifs et abandonne après 5 secondes.
 
+Le premier gate SOL-12 exécuté après fusion sur `dev` a été bloqué avant E2E par un artefact TypeScript ancien resté dans `dist` après le déplacement d'une fixture. Le build nettoie désormais exclusivement le répertoire généré `dist` avant `tsc`; un test garantit que les fichiers voisins ne sont jamais supprimés.
+
 ## Rollback
 
 En `cerp_dev`/`cerp_test`, le rollback vérifie le SHA du ledger, prend le verrou de migration, refuse toute preuve v2 ou nouvelle perspective, retire les objets puis supprime exactement l'entrée ledger SOL-13. En production, arrêter les écritures et restaurer le dump pré-migration vérifié; ne pas exécuter un SQL inverse après création de preuves v2.
