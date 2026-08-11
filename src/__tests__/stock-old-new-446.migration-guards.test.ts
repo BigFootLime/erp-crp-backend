@@ -152,6 +152,8 @@ describe("#446 Base OLD corrective guards", () => {
 
     expect(historicalImportSource).toContain("public.stock_nuances");
     expect(historicalImportSource).not.toContain("public.matiere_nuances");
+    expect(historicalImportSource).toContain("FOR UPDATE OF a");
+    expect(historicalImportSource).not.toMatch(/WHERE a\.id=\$1::uuid FOR UPDATE`/);
   });
 
   it("creates a historical PF without depending on the obsolete central family catalog", () => {
