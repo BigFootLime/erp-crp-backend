@@ -47,6 +47,24 @@ const stockNavigationPatchChecksum =
 const gedAntivirusPatchFilename = "20260811_ged_antivirus_quarantine.sql";
 const gedAntivirusPatchChecksum =
   "7e1e026c8a16be2609f072434d1930afbd248a543d96e3b013e89426fdaa1336";
+const recentSolPatchChecksums = new Map([
+  [
+    "20260803_admin_user_provisioning_boundary.sql",
+    "c1b706a1d9ba046e63e7e0b05dfc132272bb27fccda7bd0efe8cf481ffbd5ca5",
+  ],
+  [
+    "20260809_account_invitation_activation.sql",
+    "07fb4d08c4cd0bcf07abd1eb295a30db61b5d64f66d00406f4a24a4291fa4911",
+  ],
+  [
+    "20260810_stock_movement_event_correlation.sql",
+    "736887f658a39504d7cd499cd6b630e05eba0e7fcaa8ecda9f3d92083a1278be",
+  ],
+  [
+    "20260810_system_reference_data_readiness.sql",
+    "9be8c63bf5c0a1a12ac43c2e684ef7d6ffe454171fd58461ee8c8c25c03004f9",
+  ],
+]);
 const wave9PatchChecksums = new Map([
   [
     "20260216_planning_visuals_programmation.sql",
@@ -145,6 +163,11 @@ describe("database patch runner", () => {
     );
     expect(runner.sha256Sql(gedAntivirusPatch)).toBe(gedAntivirusPatchChecksum);
 
+    for (const [filename, checksum] of recentSolPatchChecksums) {
+      const sql = readFileSync(resolve(repoRoot, "db/patches", filename), "utf8");
+      expect(runner.sha256Sql(sql)).toBe(checksum);
+    }
+
     for (const [filename, checksum] of wave9PatchChecksums) {
       const sql = readFileSync(resolve(repoRoot, "db/patches", filename), "utf8");
       expect(runner.sha256Sql(sql)).toBe(checksum);
@@ -188,6 +211,13 @@ describe("database patch runner", () => {
     expect(runner.parseArgs(["up", "--only", gedAntivirusPatchFilename]).only).toBe(
       gedAntivirusPatchFilename
     );
+    for (const [filename, checksum] of recentSolPatchChecksums) {
+      expect(runner.immutableOnlyPatch(patches, filename)).toMatchObject({
+        filename,
+        sha256: checksum,
+      });
+      expect(runner.parseArgs(["up", "--only", filename]).only).toBe(filename);
+    }
     for (const [filename, checksum] of wave9PatchChecksums) {
       expect(runner.immutableOnlyPatch(patches, filename)).toMatchObject({
         filename,
