@@ -22,6 +22,7 @@ import tarificationRoutes from "../module/facturation/routes/tarification.routes
 import reportingRoutes from "../module/facturation/routes/reporting.routes";
 import reminderRoutes from "../module/facturation/routes/reminders.routes";
 import productionRoutes from "../module/production/routes/production.routes";
+import productionReadinessRoutes from "../module/production-readiness/routes/production-readiness.routes";
 import productionExecutionRoutes from "../module/production/routes/production-execution.routes";
 import productionStationRoutes from "../module/production/routes/station.routes";
 import ofVersioningRoutes from "../module/production/routes/of-versioning.routes";
@@ -129,6 +130,9 @@ router.use("/production/station", productionStationRoutes);
 // révisions, le VISA de phase, la dérive de temps, le brouillon de planning, le
 // dossier d'AR à recaler et le document d'OF figé.
 router.use("/production/of-versioning", ofVersioningRoutes);
+// Centre guidé de préparation : lecture des prérequis et calendriers audités.
+// Monté avant le routeur historique pour conserver une frontière RBAC dédiée.
+router.use("/production/readiness", productionReadinessRoutes);
 router.use("/production", productionRoutes);
 router.use("/planning", planningRoutes);
 router.use("/programmations", programmationRoutes);

@@ -160,6 +160,8 @@ export const MODULE_CATALOG: readonly ModuleCatalogEntry[] = [
       "production-dashboard",
       "machines-postes",
       "production-planning",
+      "production-calendars",
+      "production-readiness",
       "production-execution",
       "atelier-station",
       "production-pointages",

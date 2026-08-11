@@ -60,7 +60,7 @@ npm run db:patches:status
 npm run db:patches:up -- --dry-run
 ```
 
-Le preflight vérifie : PostgreSQL 14+, extensions, registre et SHA des patches, sauvegarde, espace disque, FK non validées, doublons de codes, unités, chaîne magasin/emplacement, calendrier, taux de centres de frais, rôles et politique de valorisation. Un seul échec interdit l'application.
+Le preflight vérifie : PostgreSQL 14+, extensions, registre et SHA des patches, sauvegarde, espace disque, FK non validées, doublons de codes, unités, chaîne magasin/emplacement, calendrier, taux de centres de frais, rôles et politique de valorisation. Un échec structurel interdit l'application. L'absence de calendrier réel ou de taux strictement positif est rapportée comme prérequis métier manquant, mais n'empêche pas l'installation du centre guidé qui permettra de le corriger.
 
 ## 4. Fenêtre de migration
 
@@ -68,7 +68,7 @@ Le preflight vérifie : PostgreSQL 14+, extensions, registre et SHA des patches,
 2. conserver l'ancien artefact frontend/backend ;
 3. vérifier à nouveau le SHA-256 de la sauvegarde ;
 4. exécuter `npm run db:patches:up` ;
-5. exécuter le fichier `db/patches/support/20260810_system_reference_data_readiness.verify.sql` avec `ON_ERROR_STOP=1` ;
+5. exécuter les fichiers `db/patches/support/20260810_system_reference_data_readiness.verify.sql` puis `db/patches/support/20260811_production_readiness_center.verify.sql` avec `ON_ERROR_STOP=1` ;
 6. exécuter `npm run db:migrations:integrity` ;
 7. redémarrer le backend de la même release, puis le frontend ;
 8. vérifier un mouvement stock, une planification et un lancement OF ;
@@ -100,7 +100,20 @@ Puis :
 
 Le script `20260810_system_reference_data_readiness.rollback.sql` est uniquement une preuve sur `cerp_test` avec `SET cerp.migration_rehearsal = on`. Il ne remplace jamais la restauration en production.
 
-## 7. Répétition locale complète
+Le script `20260811_production_readiness_center.rollback.sql` suit la même règle : il restaure le gate v1 uniquement dans la base jetable de répétition. En production, le rollback reste une restauration complète dans une base neuve afin de conserver un retour cohérent entre schéma et données.
+
+## 7. Paramétrage guidé après migration
+
+1. ouvrir `/administration/preparation-production` ;
+2. traiter chaque prérequis signalé avec le bouton proposé ;
+3. saisir les calendriers réels dans `/planning/parametres/calendriers` ;
+4. saisir les centres de frais et leurs taux strictement positifs dans `/methodes/centres-frais` avec source et date d'effet ;
+5. revenir au centre de préparation et vérifier que chaque état est prêt ;
+6. réaliser un lancement OF de recette avant de sortir de maintenance.
+
+L'alerte est visible par les utilisateurs Production, mais seuls les rôles autorisés peuvent modifier chaque référentiel. Ne jamais saisir une valeur temporaire pour faire disparaître le blocage.
+
+## 8. Répétition locale complète
 
 ```bash
 npm run db:migrations:rehearse

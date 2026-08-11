@@ -10,6 +10,7 @@ const ROOT = path.resolve(__dirname, "..", "..");
 const PATCH_DIR = path.join(ROOT, "db", "patches");
 const SUPPORT_DIR = path.join(PATCH_DIR, "support");
 const SOL06_PATCH = "20260810_system_reference_data_readiness.sql";
+const PRODUCTION_READINESS_PATCH = "20260811_production_readiness_center.sql";
 const SOL06_SUPPORT = path.join(SUPPORT_DIR, "20260810_system_reference_data_readiness");
 const POSTGRES_IMAGE = "postgres@sha256:16bc17c64a573ef34162af9298258d1aec548232985b33ed7b1eac33ba35c229";
 const DEFAULT_REPORT_DIR = path.join(ROOT, "docs", "release");
@@ -42,6 +43,13 @@ function orderedPatches() {
       if (a.startsWith(`${b}_`)) return 1;
       return a.localeCompare(b, "en", { numeric: true, sensitivity: "base" });
     });
+}
+
+function expectedRehearsalPatches() {
+  const patches = orderedPatches();
+  const start = patches.indexOf(SOL06_PATCH);
+  if (start < 0) fail(`canonical patch ${SOL06_PATCH} is missing`);
+  return patches.slice(start);
 }
 
 function inventory() {
@@ -180,6 +188,11 @@ function validateBackup(backupFile, expectedSha) {
 
 function supportSql(name) {
   return fs.readFileSync(`${SOL06_SUPPORT}.${name}.sql`, "utf8");
+}
+
+function patchSupportSql(filename, name) {
+  const supportFile = path.join(SUPPORT_DIR, `${filename.slice(0, -4)}.${name}.sql`);
+  return fs.existsSync(supportFile) ? fs.readFileSync(supportFile, "utf8") : null;
 }
 
 async function runSqlFile(client, sql) {
@@ -420,12 +433,22 @@ async function proveRollback(databaseUrl) {
   await client.connect();
   try {
     await client.query("SET cerp.migration_rehearsal = 'on'");
+    const readinessRollback = patchSupportSql(PRODUCTION_READINESS_PATCH, "rollback");
+    const readinessObject = await client.query(
+      "SELECT to_regprocedure('public.fn_business_prerequisite_status_v2(text)') IS NOT NULL AS present"
+    );
+    if (readinessRollback && readinessObject.rows[0].present) {
+      await runSqlFile(client, readinessRollback);
+    }
     await runSqlFile(client, supportSql("rollback"));
     const objects = await client.query(
       `SELECT to_regprocedure('public.fn_business_prerequisite_status(text)') IS NULL AS function_removed,
+              to_regprocedure('public.fn_business_prerequisite_status_v2(text)') IS NULL AS function_v2_removed,
               NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname='trg_stock_reference_readiness_2606') AS trigger_removed`
     );
-    if (!objects.rows[0].function_removed || !objects.rows[0].trigger_removed) fail("rollback left SOL-06 objects behind");
+    if (!objects.rows[0].function_removed || !objects.rows[0].function_v2_removed || !objects.rows[0].trigger_removed) {
+      fail("rollback left SOL-06 objects behind");
+    }
     return { status: "passed", ...objects.rows[0] };
   } finally {
     await client.end();
@@ -479,8 +502,9 @@ async function rehearse(options = {}) {
     const preflightStarted = Date.now();
     report.source = await preflight({ databaseUrl, backup: backupFile, backupSha });
     report.durations.preflight = Date.now() - preflightStarted;
-    if (report.source.ledger.pending.length !== 1 || report.source.ledger.pending[0] !== SOL06_PATCH) {
-      fail(`expected only ${SOL06_PATCH} pending, found ${report.source.ledger.pending.join(", ")}`);
+    const expectedPending = expectedRehearsalPatches();
+    if (JSON.stringify(report.source.ledger.pending) !== JSON.stringify(expectedPending)) {
+      fail(`expected pending chain ${expectedPending.join(", ")}, found ${report.source.ledger.pending.join(", ")}`);
     }
 
     const beforeStarted = Date.now();
@@ -513,7 +537,10 @@ async function rehearse(options = {}) {
     await verifyClient.connect();
     const verifyStarted = Date.now();
     try {
-      await runSqlFile(verifyClient, supportSql("verify"));
+      for (const patch of expectedPending) {
+        const verifySql = patchSupportSql(patch, "verify");
+        if (verifySql) await runSqlFile(verifyClient, verifySql);
+      }
     } finally {
       await verifyClient.end();
     }
@@ -620,6 +647,7 @@ if (require.main === module) {
 
 module.exports = {
   SOL06_PATCH,
+  expectedRehearsalPatches,
   inventory,
   inventoryMarkdown,
   validateBackup,

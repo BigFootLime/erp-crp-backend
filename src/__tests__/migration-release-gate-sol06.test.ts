@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 const require = createRequire(import.meta.url);
 const gate = require("../../scripts/migrations/release-gate.js") as {
   SOL06_PATCH: string;
+  expectedRehearsalPatches: () => string[];
   inventory: () => {
     patches: Array<{
       filename: string;
@@ -44,6 +45,8 @@ describe("SOL-06 migration release gate", () => {
     const filenames = report.patches.map((patch) => patch.filename);
     expect(filenames).toEqual([...filenames].sort());
     expect(filenames.indexOf(gate.SOL06_PATCH)).toBeGreaterThanOrEqual(0);
+    expect(gate.expectedRehearsalPatches()).toEqual(filenames.slice(filenames.indexOf(gate.SOL06_PATCH)));
+    expect(gate.expectedRehearsalPatches()).toContain("20260811_production_readiness_center.sql");
   });
 
   it("porte les métadonnées décisionnelles et bloque les trois flux côté base", () => {
