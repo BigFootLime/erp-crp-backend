@@ -72,6 +72,10 @@ const recentSolPatchChecksums = new Map([
     "20260811_account_provisioning_schema_repair.sql",
     "e4a994888e3ff0dc38923a128216647f76919d4001efc70e26219742befca116",
   ],
+  [
+    "20260811_base_unit_drift_repair.sql",
+    "53e6d11928dcd329b80fd493932aa29d2f0f65874b20a2cd1daa4e9a8847eb66",
+  ],
 ]);
 const wave9PatchChecksums = new Map([
   [
