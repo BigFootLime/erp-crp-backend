@@ -44,6 +44,9 @@ const planningPatchFilename = "20260805_planning_convergence_governance.sql";
 const stockNavigationPatchFilename = "20260810_stock_old_new_navigation_446.sql";
 const stockNavigationPatchChecksum =
   "4900f01411ab89349874fcd6d28993aa34a1ec560320d4d32b05489800bf3b9b";
+const gedAntivirusPatchFilename = "20260811_ged_antivirus_quarantine.sql";
+const gedAntivirusPatchChecksum =
+  "7e1e026c8a16be2609f072434d1930afbd248a543d96e3b013e89426fdaa1336";
 const wave9PatchChecksums = new Map([
   [
     "20260216_planning_visuals_programmation.sql",
@@ -136,6 +139,12 @@ describe("database patch runner", () => {
     );
     expect(runner.sha256Sql(stockNavigationPatch)).toBe(stockNavigationPatchChecksum);
 
+    const gedAntivirusPatch = readFileSync(
+      resolve(repoRoot, "db/patches", gedAntivirusPatchFilename),
+      "utf8"
+    );
+    expect(runner.sha256Sql(gedAntivirusPatch)).toBe(gedAntivirusPatchChecksum);
+
     for (const [filename, checksum] of wave9PatchChecksums) {
       const sql = readFileSync(resolve(repoRoot, "db/patches", filename), "utf8");
       expect(runner.sha256Sql(sql)).toBe(checksum);
@@ -171,6 +180,13 @@ describe("database patch runner", () => {
     });
     expect(runner.parseArgs(["up", "--only", stockNavigationPatchFilename]).only).toBe(
       stockNavigationPatchFilename
+    );
+    expect(runner.immutableOnlyPatch(patches, gedAntivirusPatchFilename)).toMatchObject({
+      filename: gedAntivirusPatchFilename,
+      sha256: gedAntivirusPatchChecksum,
+    });
+    expect(runner.parseArgs(["up", "--only", gedAntivirusPatchFilename]).only).toBe(
+      gedAntivirusPatchFilename
     );
     for (const [filename, checksum] of wave9PatchChecksums) {
       expect(runner.immutableOnlyPatch(patches, filename)).toMatchObject({
