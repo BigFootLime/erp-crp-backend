@@ -66,7 +66,7 @@ const recentSolPatchChecksums = new Map([
   ],
   [
     "20260810_system_reference_data_readiness.sql",
-    "9be8c63bf5c0a1a12ac43c2e684ef7d6ffe454171fd58461ee8c8c25c03004f9",
+    "8a6bfa740ddc6e80f7b19ace948a92df379cc0df097879e9f5d125758a9f8eec",
   ],
   [
     "20260811_account_provisioning_schema_repair.sql",

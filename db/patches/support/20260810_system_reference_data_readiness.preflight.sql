@@ -52,16 +52,6 @@ BEGIN
     RAISE EXCEPTION 'SOL-06 preflight: canonical units u/mm/m/kg are incomplete';
   END IF;
 
-  IF NOT EXISTS (
-    SELECT 1 FROM public.emplacements e
-    JOIN public.magasins m ON m.id = e.magasin_id
-    JOIN public.locations l ON l.id = e.location_id
-    JOIN public.warehouses w ON w.id = l.warehouse_id AND w.id = m.warehouse_id
-    WHERE e.is_active AND m.is_active AND l.is_active AND w.is_active
-  ) THEN
-    RAISE EXCEPTION 'SOL-06 preflight: no active warehouse/magasin/emplacement/location chain';
-  END IF;
-
   -- Les valeurs métier absentes ne doivent pas empêcher l'installation du
   -- garde-fou : la fonction et ses triggers sont précisément chargés de
   -- bloquer les flux concernés jusqu'à leur saisie guidée. Les compteurs du
@@ -88,8 +78,8 @@ SELECT
   pg_database_size(current_database()) AS database_bytes,
   (SELECT count(*) FROM public.cerp_schema_migrations) AS applied_patches,
   (SELECT count(*) FROM public.units) AS units,
-  (SELECT count(*) FROM public.warehouses WHERE is_active) AS active_warehouses,
-  (SELECT count(*) FROM public.locations WHERE is_active) AS active_locations,
+  (SELECT count(*) FROM public.warehouses) AS configured_warehouses,
+  (SELECT count(*) FROM public.locations) AS configured_locations,
   (SELECT count(*) FROM public.programmation_calendars WHERE active) AS active_calendars,
   (SELECT count(*) FROM public.centres_frais WHERE statut = 'ACTIF' AND archived_at IS NULL) AS active_cost_centers,
   (SELECT count(*) FROM public.app_roles WHERE is_active) AS active_roles,

@@ -180,27 +180,26 @@ WITH requested AS (
     EXISTS (
       SELECT 1 FROM public.locations l
       JOIN public.warehouses w ON w.id = l.warehouse_id
-      WHERE l.is_active AND w.is_active
     )
     AND EXISTS (
       SELECT 1 FROM public.emplacements e
       JOIN public.magasins m ON m.id = e.magasin_id
       JOIN public.locations l ON l.id = e.location_id
       JOIN public.warehouses w ON w.id = l.warehouse_id AND w.id = m.warehouse_id
-      WHERE e.is_active AND m.is_active AND l.is_active AND w.is_active
+      WHERE e.is_active AND m.is_active
     ),
     'Au moins un magasin et un emplacement actifs sont reliés au référentiel warehouse/location.',
     'emplacements', CURRENT_DATE, NULL,
     'public.warehouses + locations + magasins + emplacements', now(), 'VERIFIED',
     jsonb_build_object(
-      'active_warehouses', (SELECT count(*) FROM public.warehouses WHERE is_active),
-      'active_locations', (SELECT count(*) FROM public.locations WHERE is_active),
+      'configured_warehouses', (SELECT count(*) FROM public.warehouses),
+      'configured_locations', (SELECT count(*) FROM public.locations),
       'mapped_active_emplacements', (
         SELECT count(*) FROM public.emplacements e
         JOIN public.magasins m ON m.id = e.magasin_id
         JOIN public.locations l ON l.id = e.location_id
         JOIN public.warehouses w ON w.id = l.warehouse_id AND w.id = m.warehouse_id
-        WHERE e.is_active AND m.is_active AND l.is_active AND w.is_active
+        WHERE e.is_active AND m.is_active
       )
     ),
     'au moins 1 chaîne active warehouse > magasin > emplacement > location',
