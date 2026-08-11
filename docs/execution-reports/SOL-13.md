@@ -50,11 +50,13 @@ La valorisation matière retenue est le CUMP, source : décision du dirigeant Ke
 
 Le premier gate SOL-12 exécuté après fusion sur `dev` a été bloqué avant E2E par un artefact TypeScript ancien resté dans `dist` après le déplacement d'une fixture. Le build nettoie désormais exclusivement le répertoire généré `dist` avant `tsc`; un test garantit que les fichiers voisins ne sont jamais supprimés.
 
+Le second passage a atteint Playwright et a correctement bloqué sur un ancien contrat frontend qui attendait « Marge réelle indisponible ». Ce test a été corrigé sans timeout ni retry pour vérifier « Marge client indisponible » et l'orientation vers le moteur autoritaire. Le gate final `20260811T174656Z-test-a9d68d42-fde2c8bb` est `PASSED` sur frontend `a9d68d42b6ab9060cf85febfa980f4069cedd734` et backend `fde2c8bbe8261492e79067a7d0bdff3a9289ccfc` : 63 scénarios Playwright réussis, répétition migration/rollback/restauration réussie et manifeste d'intégrité SHA-256 `f2d66cf146106b806dfd9ad922ae1b24f5c7822d0c620c6e011721c8bf42c974`.
+
 ## Rollback
 
 En `cerp_dev`/`cerp_test`, le rollback vérifie le SHA du ledger, prend le verrou de migration, refuse toute preuve v2 ou nouvelle perspective, retire les objets puis supprime exactement l'entrée ledger SOL-13. En production, arrêter les écritures et restaurer le dump pré-migration vérifié; ne pas exécuter un SQL inverse après création de preuves v2.
 
 ## Reste réellement à faire
 
-- faire exécuter le gate SOL-12 de promotion sur les commits propres après fusion;
+- promouvoir les SHA validés vers `main`, puis exécuter le gate SOL-12 avec la cible `production` sur les branches promues;
 - appliquer la migration sur une base persistante uniquement pendant une fenêtre autorisée avec sauvegarde vérifiée.
