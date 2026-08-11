@@ -15,6 +15,7 @@ RUN npm run build
 
 # --------- Runtime ------------
 FROM node:24.18.0-alpine3.24@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd AS runtime
+ARG SOURCE_COMMIT=unknown
 WORKDIR /app
 RUN printf '%s\n' \
       "https://dl-cdn.alpinelinux.org/alpine/v3.24/main" \
@@ -75,6 +76,7 @@ RUN mkdir -p \
     /app/data/tmp \
     /app/uploads
 ENV PORT=5000
+ENV CERP_RELEASE_VERSION=${SOURCE_COMMIT}
 ENV CERP_DOCUMENTS_ROOT=/app/data/documents
 ENV CERP_UPLOAD_SCAN_MODE=enforce
 ENV CERP_UPLOAD_SCAN_PROVIDER=clamdscan

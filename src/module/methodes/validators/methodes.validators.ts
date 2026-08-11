@@ -117,7 +117,7 @@ export type UpdateCostCenterBodyDTO = z.infer<typeof updateCostCenterSchema>;
 export const addCostCenterRateSchema = z.object({
   // Un taux à 0 reste possible (poste non valorisé assumé) mais exige, comme
   // tout autre taux, une provenance écrite : ADR-0020 §6.
-  taux_horaire: z.coerce.number().min(0, "Un taux horaire négatif n'existe pas").max(100_000),
+  taux_horaire: z.coerce.number().positive("Le taux horaire doit être strictement positif").max(100_000),
   devise: z.string().trim().length(3).toUpperCase().optional(),
   date_effet: isoDate,
   source: z.string().trim().min(3, "La provenance du taux est obligatoire (au moins 3 caractères)").max(200),
