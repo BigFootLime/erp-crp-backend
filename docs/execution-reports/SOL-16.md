@@ -5,6 +5,15 @@
 - Issue : [#415](https://github.com/BigFootLime/erp-crp-backend/issues/415)
 - Branche : `feature/415-sol16-ariane-direction`
 - Contrat : `direction-dashboard/1.0`
+- Statut : promu sur `dev` et `main`
+
+## Preuve de promotion Git
+
+- commit fonctionnel : `ce383b900eb19148bcc6fc7129a49db64c69d7ca` ;
+- PR vers `dev` : [#416](https://github.com/BigFootLime/erp-crp-backend/pull/416), merge `87b3a67d3c77c5be4cb9480fb6a804350a6ab1d9` ;
+- PR `dev` vers `main` : [#417](https://github.com/BigFootLime/erp-crp-backend/pull/417), merge `5b5bce4e3da1b3d40800f72b596725c2a84cf810`.
+
+Le commit fonctionnel est un ancêtre vérifié de `origin/dev` et `origin/main`. Aucun push direct sur `main` n'a été utilisé.
 
 ## Diagnostic et architecture
 
