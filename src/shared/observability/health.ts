@@ -7,7 +7,7 @@ import {
   type UploadScannerStartupConfiguration,
 } from "../uploads/upload-scanner";
 import { getRealtimeReadiness } from "../../sockets/sockeServer";
-import { setDependencyState, setGedCapacity } from "./metrics";
+import { setDependencyState, setGedCapacity, setGedQuarantineMetrics } from "./metrics";
 import { runtimeMetadata } from "./runtime";
 
 export type HealthStatus = "up" | "down" | "degraded";
@@ -123,10 +123,22 @@ export async function collectReadiness(
     ...overrides,
   };
 
-  const [databaseProbe, gedProbe, scannerProbe] = await Promise.all([
+  const [databaseProbe, gedProbe, scannerProbe, quarantineProbe] = await Promise.all([
     timedProbe(dependencies.queryDatabase),
     timedProbe(dependencies.checkGed),
     timedProbe(dependencies.scanner, 2_500),
+    timedProbe(async () => {
+      const result = await pool.query(
+        `SELECT
+           COUNT(*) FILTER (WHERE quarantine_status = 'quarantined' AND scan_status = 'pending')::int AS pending,
+           COUNT(*) FILTER (WHERE quarantine_status = 'quarantined' AND scan_status = 'clean')::int AS clean,
+           COUNT(*) FILTER (WHERE quarantine_status = 'quarantined' AND scan_status = 'infected')::int AS infected,
+           COUNT(*) FILTER (WHERE quarantine_status = 'quarantined' AND scan_status = 'scan_failed')::int AS scan_failed,
+           COALESCE(EXTRACT(EPOCH FROM (now() - MIN(created_at) FILTER (WHERE quarantine_status = 'quarantined'))), 0)::bigint AS oldest_age_seconds
+         FROM public.ged_upload_sessions`
+      );
+      return result.rows[0] as Record<string, string | number>;
+    }),
   ]);
 
   const realtimeStartedAt = Date.now();
@@ -147,6 +159,16 @@ export async function collectReadiness(
     inodeTotal: gedProbe.value?.inode_total ?? null,
     inodeFree: gedProbe.value?.inode_free ?? null,
   });
+  const quarantine = quarantineProbe.value;
+  setGedQuarantineMetrics(quarantine
+    ? {
+        pending: Number(quarantine.pending ?? 0),
+        clean: Number(quarantine.clean ?? 0),
+        infected: Number(quarantine.infected ?? 0),
+        scanFailed: Number(quarantine.scan_failed ?? 0),
+        oldestAgeSeconds: Number(quarantine.oldest_age_seconds ?? 0),
+      }
+    : null);
   const checks: Record<HealthDependency, HealthCheck> = {
     database: buildCheck(
       "database",

@@ -26,7 +26,10 @@ import type {
   GedDocumentVersion,
   GedListFilters,
   GedListResult,
+  GedQuarantineItem,
+  GedQuarantineStatus,
   GedRetentionHold,
+  GedScanStatus,
 } from "../types/ged.types";
 
 const UNDEFINED_TABLE = "42P01";
@@ -178,6 +181,12 @@ const VERSION_SELECT = `
   v.approved_at::text              AS approved_at,
   v.published_at::text             AS published_at,
   v.obsoleted_at::text             AS obsoleted_at,
+  s.scan_status                    AS scan_status,
+  s.quarantine_status              AS quarantine_status,
+  s.scan_provider                  AS scan_provider,
+  s.signature_version              AS signature_version,
+  s.scan_duration_ms               AS scan_duration_ms,
+  s.scanned_at::text               AS scanned_at,
   cu.id                            AS cu_id, cu.username AS cu_username, cu.name AS cu_name, cu.surname AS cu_surname,
   au.id                            AS au_id, au.username AS au_username, au.name AS au_name, au.surname AS au_surname
 `;
@@ -187,6 +196,9 @@ type VersionRow = {
   original_name: string; mime_type: string; size_bytes: string; sha256: string;
   change_reason: string | null; created_at: string; submitted_at: string | null;
   approved_at: string | null; published_at: string | null; obsoleted_at: string | null;
+  scan_status: GedScanStatus | null; quarantine_status: GedQuarantineStatus | null;
+  scan_provider: string | null; signature_version: string | null;
+  scan_duration_ms: number | null; scanned_at: string | null;
   cu_id: number | null; cu_username: string | null; cu_name: string | null; cu_surname: string | null;
   au_id: number | null; au_username: string | null; au_name: string | null; au_surname: string | null;
 };
@@ -209,6 +221,29 @@ function mapVersion(r: VersionRow): GedDocumentVersion {
     approved_by: mapActor({ id: r.au_id, username: r.au_username, name: r.au_name, surname: r.au_surname }),
     published_at: r.published_at,
     obsoleted_at: r.obsoleted_at,
+    antivirus: r.scan_status && r.quarantine_status
+      ? {
+          status: r.scan_status,
+          quarantine_status: r.quarantine_status,
+          provider: r.scan_provider,
+          signature_version: r.signature_version,
+          duration_ms: r.scan_duration_ms == null ? null : Number(r.scan_duration_ms),
+          scanned_at: r.scanned_at,
+          source: "server_upload_scanner",
+          freshness_at: r.scanned_at,
+          reliability: "MEASURED",
+        }
+      : {
+          status: "legacy_untracked",
+          quarantine_status: "legacy_untracked",
+          provider: null,
+          signature_version: null,
+          duration_ms: null,
+          scanned_at: null,
+          source: "historical_pre_sol_11",
+          freshness_at: null,
+          reliability: "HISTORICAL_UNVERIFIED",
+        },
   };
 }
 
@@ -464,6 +499,7 @@ export async function repoCreateDocumentWithVersion(
     original_name: string;
     change_reason: string | null;
     created_by: number | null;
+    upload_session_id?: string | null;
   }
 ): Promise<{ document_id: string; version_id: string; code: string }> {
   const code = await nextDocumentCode(tx, input.domain);
@@ -478,10 +514,10 @@ export async function repoCreateDocumentWithVersion(
 
   const verRes = await tx.query(
     `INSERT INTO public.ged_document_versions
-       (document_id, version_number, status, blob_id, original_name, change_reason, created_by)
-     VALUES ($1::uuid, 1, 'BROUILLON', $2::uuid, $3, $4, $5)
+       (document_id, version_number, status, blob_id, original_name, change_reason, created_by, upload_session_id)
+     VALUES ($1::uuid, 1, 'BROUILLON', $2::uuid, $3, $4, $5, $6::uuid)
      RETURNING id::text AS id`,
-    [documentId, input.blob_id, input.original_name, input.change_reason, input.created_by]
+    [documentId, input.blob_id, input.original_name, input.change_reason, input.created_by, input.upload_session_id ?? null]
   );
   const versionId = String(verRes.rows[0].id);
 
@@ -501,6 +537,7 @@ export async function repoAddVersion(
     original_name: string;
     change_reason: string | null;
     created_by: number | null;
+    upload_session_id?: string | null;
   }
 ): Promise<{ version_id: string; version_number: number }> {
   const nextRes = await tx.query(
@@ -512,10 +549,18 @@ export async function repoAddVersion(
 
   const res = await tx.query(
     `INSERT INTO public.ged_document_versions
-       (document_id, version_number, status, blob_id, original_name, change_reason, created_by)
-     VALUES ($1::uuid, $2, 'BROUILLON', $3::uuid, $4, $5, $6)
+       (document_id, version_number, status, blob_id, original_name, change_reason, created_by, upload_session_id)
+     VALUES ($1::uuid, $2, 'BROUILLON', $3::uuid, $4, $5, $6, $7::uuid)
      RETURNING id::text AS id`,
-    [input.document_id, versionNumber, input.blob_id, input.original_name, input.change_reason, input.created_by]
+    [
+      input.document_id,
+      versionNumber,
+      input.blob_id,
+      input.original_name,
+      input.change_reason,
+      input.created_by,
+      input.upload_session_id ?? null,
+    ]
   );
 
   await tx.query(`UPDATE public.ged_documents SET updated_at = now() WHERE id = $1::uuid`, [input.document_id]);
@@ -621,6 +666,242 @@ export async function repoAddLink(
 /* -------------------------------------------------------------------------- */
 /* Journal d'accès                                                            */
 /* -------------------------------------------------------------------------- */
+
+export type GedUploadSessionInternal = GedQuarantineItem & {
+  status: "OPEN" | "QUARANTINE" | "READY" | "PUBLISHED" | "EXPIRED" | "REJECTED";
+  mime_type: string | null;
+  quarantine_key: string | null;
+  request_metadata: Record<string, unknown> | null;
+  document_id: string | null;
+  reject_reason: string | null;
+};
+
+export async function repoCreateUploadSession(
+  tx: Pick<PoolClient, "query">,
+  input: {
+    id: string;
+    class_key: string;
+    document_id: string | null;
+    title: string | null;
+    sha256: string;
+    size_bytes: number;
+    mime_type: string;
+    original_name: string;
+    request_metadata: Record<string, unknown>;
+    quarantine_key: string;
+    created_by: number;
+  }
+): Promise<{ id: string }> {
+  try {
+    const result = await tx.query(
+      `INSERT INTO public.ged_upload_sessions
+         (id, class_key, document_id, title, status, sha256, size_bytes, mime_type,
+          original_name, scan_status, quarantine_status, scan_attempts,
+          quarantine_key, request_metadata, created_by, expires_at)
+       VALUES
+         ($1::uuid, $2, $3::uuid, $4, 'QUARANTINE', $5, $6, $7,
+          $8, 'pending', 'quarantined', 0, $9, $10::jsonb, $11, now() + interval '7 days')
+       RETURNING id::text AS id`,
+      [
+        input.id,
+        input.class_key,
+        input.document_id,
+        input.title,
+        input.sha256,
+        input.size_bytes,
+        input.mime_type,
+        input.original_name,
+        input.quarantine_key,
+        JSON.stringify(input.request_metadata),
+        input.created_by,
+      ]
+    );
+    return { id: String(result.rows[0].id) };
+  } catch (err) {
+    return rethrowGed(err);
+  }
+}
+
+export async function repoRecordUploadScan(
+  db: Pick<PoolClient, "query">,
+  input: {
+    session_id: string;
+    status: "QUARANTINE" | "READY" | "REJECTED";
+    scan_status: GedScanStatus;
+    quarantine_status: GedQuarantineStatus;
+    scan_provider: string;
+    signature_version: string | null;
+    scan_duration_ms: number;
+    quarantine_key: string | null;
+    reject_reason: string | null;
+  }
+): Promise<void> {
+  try {
+    const result = await db.query(
+      `UPDATE public.ged_upload_sessions
+          SET status = $2, scan_status = $3, quarantine_status = $4,
+              scan_provider = $5, signature_version = $6, scan_duration_ms = $7,
+              scan_attempts = scan_attempts + 1, scanned_at = now(),
+              quarantine_key = $8, reject_reason = $9, updated_at = now()
+        WHERE id = $1::uuid AND status <> 'PUBLISHED'`,
+      [
+        input.session_id,
+        input.status,
+        input.scan_status,
+        input.quarantine_status,
+        input.scan_provider,
+        input.signature_version,
+        input.scan_duration_ms,
+        input.quarantine_key,
+        input.reject_reason,
+      ]
+    );
+    if (result.rowCount !== 1) {
+      throw new HttpError(409, "GED_QUARANTINE_STATE", "La session de quarantaine n'est plus modifiable.");
+    }
+  } catch (err) {
+    return rethrowGed(err);
+  }
+}
+
+export async function repoFinalizeUploadSession(
+  tx: Pick<PoolClient, "query">,
+  sessionId: string,
+  documentId: string,
+  clearQuarantineKey = true
+): Promise<void> {
+  const result = await tx.query(
+    `UPDATE public.ged_upload_sessions
+        SET status = 'PUBLISHED', document_id = $2::uuid,
+            quarantine_status = 'released',
+            quarantine_key = CASE WHEN $3::boolean THEN NULL ELSE quarantine_key END,
+            reject_reason = NULL, updated_at = now()
+      WHERE id = $1::uuid AND scan_status = 'clean'
+        AND status IN ('READY', 'QUARANTINE')`,
+    [sessionId, documentId, clearQuarantineKey]
+  );
+  if (result.rowCount !== 1) {
+    throw new HttpError(409, "GED_SCAN_REQUIRED", "Le document ne peut pas être publié sans verdict antivirus sain.");
+  }
+}
+
+function mapQuarantineRow(row: Record<string, unknown>): GedUploadSessionInternal {
+  return {
+    id: String(row.id),
+    class_key: String(row.class_key),
+    title: (row.title as string | null) ?? null,
+    original_name: (row.original_name as string | null) ?? null,
+    size_bytes: row.size_bytes == null ? null : Number(row.size_bytes),
+    sha256: (row.sha256 as string | null) ?? null,
+    scan_status: row.scan_status as GedScanStatus,
+    quarantine_status: row.quarantine_status as GedQuarantineStatus,
+    scan_provider: (row.scan_provider as string | null) ?? null,
+    signature_version: (row.signature_version as string | null) ?? null,
+    scan_duration_ms: row.scan_duration_ms == null ? null : Number(row.scan_duration_ms),
+    scan_attempts: Number(row.scan_attempts ?? 0),
+    scanned_at: (row.scanned_at as string | null) ?? null,
+    created_at: String(row.created_at),
+    created_by: mapActor({
+      id: row.u_id == null ? null : Number(row.u_id),
+      username: (row.u_username as string | null) ?? null,
+      name: (row.u_name as string | null) ?? null,
+      surname: (row.u_surname as string | null) ?? null,
+    }),
+    status: row.status as GedUploadSessionInternal["status"],
+    mime_type: (row.mime_type as string | null) ?? null,
+    quarantine_key: (row.quarantine_key as string | null) ?? null,
+    request_metadata: (row.request_metadata as Record<string, unknown> | null) ?? null,
+    document_id: (row.document_id as string | null) ?? null,
+    reject_reason: (row.reject_reason as string | null) ?? null,
+  };
+}
+
+const QUARANTINE_SELECT = `
+  s.id::text AS id, s.class_key, s.document_id::text AS document_id, s.title,
+  s.status, s.original_name, s.size_bytes::bigint::text AS size_bytes,
+  s.mime_type, s.sha256, s.scan_status, s.quarantine_status,
+  s.scan_provider, s.signature_version, s.scan_duration_ms, s.scan_attempts,
+  s.scanned_at::text AS scanned_at, s.created_at::text AS created_at,
+  s.quarantine_key, s.request_metadata, s.reject_reason,
+  u.id AS u_id, u.username AS u_username, u.name AS u_name, u.surname AS u_surname
+`;
+
+export async function repoListQuarantine(): Promise<GedUploadSessionInternal[]> {
+  try {
+    const result = await pool.query(
+      `SELECT ${QUARANTINE_SELECT}
+         FROM public.ged_upload_sessions s
+         LEFT JOIN public.users u ON u.id = s.created_by
+        WHERE s.quarantine_status = 'quarantined'
+        ORDER BY s.created_at ASC
+        LIMIT 250`
+    );
+    return result.rows.map(mapQuarantineRow);
+  } catch (err) {
+    return rethrowGed(err);
+  }
+}
+
+export async function repoGetQuarantineSessionForUpdate(
+  tx: Pick<PoolClient, "query">,
+  sessionId: string
+): Promise<GedUploadSessionInternal | null> {
+  try {
+    const result = await tx.query(
+      `SELECT ${QUARANTINE_SELECT}
+         FROM public.ged_upload_sessions s
+         LEFT JOIN public.users u ON u.id = s.created_by
+        WHERE s.id = $1::uuid
+        FOR UPDATE OF s`,
+      [sessionId]
+    );
+    return result.rows[0] ? mapQuarantineRow(result.rows[0]) : null;
+  } catch (err) {
+    return rethrowGed(err);
+  }
+}
+
+export async function repoGetQuarantineSession(sessionId: string): Promise<GedUploadSessionInternal | null> {
+  try {
+    const result = await pool.query(
+      `SELECT ${QUARANTINE_SELECT}
+         FROM public.ged_upload_sessions s
+         LEFT JOIN public.users u ON u.id = s.created_by
+        WHERE s.id = $1::uuid`,
+      [sessionId]
+    );
+    return result.rows[0] ? mapQuarantineRow(result.rows[0]) : null;
+  } catch (err) {
+    return rethrowGed(err);
+  }
+}
+
+export async function repoMarkQuarantineDeleted(
+  tx: Pick<PoolClient, "query">,
+  sessionId: string,
+  reason: string
+): Promise<void> {
+  const result = await tx.query(
+    `UPDATE public.ged_upload_sessions
+        SET status = 'REJECTED', quarantine_status = 'deleted',
+            reject_reason = $2, updated_at = now()
+      WHERE id = $1::uuid AND quarantine_status = 'quarantined'`,
+    [sessionId, reason]
+  );
+  if (result.rowCount !== 1) {
+    throw new HttpError(409, "GED_QUARANTINE_STATE", "Le fichier n'est plus en quarantaine.");
+  }
+}
+
+
+export async function repoClearQuarantineKey(sessionId: string): Promise<void> {
+  await pool.query(
+    `UPDATE public.ged_upload_sessions
+        SET quarantine_key = NULL, updated_at = now()
+      WHERE id = $1::uuid AND quarantine_status IN ('deleted', 'released')`,
+    [sessionId]
+  );
+}
 
 export async function repoLogAccess(
   db: Pick<PoolClient, "query">,
@@ -771,6 +1052,7 @@ export async function repoGetDocumentDetail(documentId: string): Promise<GedDocu
       `SELECT ${VERSION_SELECT}
          FROM public.ged_document_versions v
          JOIN public.ged_blobs b ON b.id = v.blob_id
+         LEFT JOIN public.ged_upload_sessions s ON s.id = v.upload_session_id
          LEFT JOIN public.users cu ON cu.id = v.created_by
          LEFT JOIN public.users au ON au.id = v.approved_by
         WHERE v.document_id = $1::uuid
@@ -854,13 +1136,17 @@ export async function repoInternalGetVersionContentRef(versionId: string): Promi
   sha256: string;
   size_bytes: number;
   storage_key: string;
+  scan_status: GedScanStatus | null;
+  quarantine_status: GedQuarantineStatus | null;
 } | null> {
   try {
     const res = await pool.query(
       `SELECT v.id::text AS version_id, v.document_id::text AS document_id, v.status::text AS status,
-              v.original_name, b.mime_type, b.sha256, b.size_bytes, b.storage_key
+              v.original_name, b.mime_type, b.sha256, b.size_bytes, b.storage_key,
+              s.scan_status, s.quarantine_status
          FROM public.ged_document_versions v
          JOIN public.ged_blobs b ON b.id = v.blob_id
+         LEFT JOIN public.ged_upload_sessions s ON s.id = v.upload_session_id
         WHERE v.id = $1::uuid`,
       [versionId]
     );
@@ -875,6 +1161,8 @@ export async function repoInternalGetVersionContentRef(versionId: string): Promi
       sha256: String(r.sha256),
       size_bytes: Number(r.size_bytes),
       storage_key: String(r.storage_key),
+      scan_status: (r.scan_status as GedScanStatus | null) ?? null,
+      quarantine_status: (r.quarantine_status as GedQuarantineStatus | null) ?? null,
     };
   } catch (err) {
     return rethrowGed(err);

@@ -59,7 +59,7 @@ describe("durable upload ownership coverage", () => {
 
     for (const writer of [uploadDocument, uploadNewVersion]) {
       expect(writer.indexOf("repoLockGedBlobSha256(tx, expectedSha256)")).toBeGreaterThanOrEqual(0);
-      expect(writer.indexOf("writeBlobFromPath(uploadedFile, expectedSha256)"))
+      expect(writer.indexOf("writeBlobFromPath(publicationFile, expectedSha256)"))
         .toBeGreaterThan(writer.indexOf("repoLockGedBlobSha256(tx, expectedSha256)"));
     }
     expect(ofArchive.indexOf("repoLockGedBlobSha256(tx, pdfSha256)"))

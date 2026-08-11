@@ -101,6 +101,19 @@ describe("GED — RBAC des routes", () => {
       .send({});
     expect(res.status).toBe(403);
   });
+
+  it("refuse toutes les actions de quarantaine à un utilisateur non administrateur", async () => {
+    const sessionId = "11111111-1111-4111-8111-111111111111";
+    const responses = await Promise.all([
+      request(app).get("/api/v1/ged/quarantine").set("x-test-role", "Atelier"),
+      request(app).post(`/api/v1/ged/quarantine/${sessionId}/rescan`).set("x-test-role", "Atelier"),
+      request(app).post(`/api/v1/ged/quarantine/${sessionId}/release`).set("x-test-role", "Atelier"),
+      request(app).delete(`/api/v1/ged/quarantine/${sessionId}`).set("x-test-role", "Atelier"),
+    ]);
+
+    expect(responses.map((response) => response.status)).toEqual([403, 403, 403, 403]);
+    expect(mocks.poolQuery).not.toHaveBeenCalled();
+  });
 });
 
 describe("GED — schéma absent", () => {
@@ -169,6 +182,50 @@ describe("GED — contrôle de contenu au niveau route", () => {
 });
 
 describe("GED — contrat : aucune fuite de chemin", () => {
+  it("ne renvoie pas la clé privée dans la liste de quarantaine administrateur", async () => {
+    mocks.poolQuery.mockResolvedValueOnce({
+      rows: [{
+        id: "11111111-1111-4111-8111-111111111111",
+        class_key: "PLAN_CLIENT",
+        document_id: null,
+        title: "Plan suspect",
+        status: "QUARANTINE",
+        original_name: "plan.pdf",
+        size_bytes: "68",
+        mime_type: "application/pdf",
+        sha256: SHA,
+        scan_status: "infected",
+        quarantine_status: "quarantined",
+        scan_provider: "clamdscan",
+        signature_version: "ClamAV 1.4.5/27000",
+        scan_duration_ms: 12,
+        scan_attempts: 1,
+        scanned_at: "2026-08-11T10:00:00.000Z",
+        created_at: "2026-08-11T09:59:59.000Z",
+        quarantine_key: "quarantine/private.quarantine",
+        request_metadata: { kind: "new_document" },
+        reject_reason: "Eicar-Signature FOUND",
+        u_id: 1,
+        u_username: "test-admin",
+        u_name: "Test",
+        u_surname: "Admin",
+      }],
+    });
+
+    const res = await request(app).get("/api/v1/ged/quarantine").set("x-test-role", "administrateur");
+    expect(res.status).toBe(200);
+    expect(res.body.data[0]).toMatchObject({
+      id: "11111111-1111-4111-8111-111111111111",
+      scan_status: "infected",
+      quarantine_status: "quarantined",
+      scan_provider: "clamdscan",
+    });
+    expect(JSON.stringify(res.body)).not.toContain("quarantine_key");
+    expect(JSON.stringify(res.body)).not.toContain("private.quarantine");
+    expect(JSON.stringify(res.body)).not.toContain("request_metadata");
+    expect(JSON.stringify(res.body)).not.toContain("Eicar-Signature FOUND");
+  });
+
   it("ne renvoie aucun marqueur de chemin dans la liste des documents", async () => {
     mocks.poolQuery
       .mockResolvedValueOnce({ rows: [{ total: 1 }] })

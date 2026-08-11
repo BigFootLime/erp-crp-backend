@@ -41,7 +41,9 @@ describe("SOL-06 migration release gate", () => {
     expect(entry).toBeDefined();
     expect(entry?.support).toEqual({ preflight: true, verify: true, rollback: true });
     expect(entry?.sha256).toMatch(/^[a-f0-9]{64}$/);
-    expect(report.patches.at(-1)?.filename).toBe(gate.SOL06_PATCH);
+    const filenames = report.patches.map((patch) => patch.filename);
+    expect(filenames).toEqual([...filenames].sort());
+    expect(filenames.indexOf(gate.SOL06_PATCH)).toBeGreaterThanOrEqual(0);
   });
 
   it("porte les métadonnées décisionnelles et bloque les trois flux côté base", () => {

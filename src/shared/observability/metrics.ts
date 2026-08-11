@@ -20,6 +20,15 @@ const requestDurationSums = new Map<string, number>();
 const requestDurationBuckets = new Map<string, number[]>();
 const dependencies = new Map<DependencyName, DependencyState>();
 const jobs = new Map<string, JobState>();
+const documentScanTotals = new Map<string, number>();
+const documentScanDurationSums = new Map<string, number>();
+let gedQuarantine: Readonly<{
+  pending: number;
+  clean: number;
+  infected: number;
+  scanFailed: number;
+  oldestAgeSeconds: number;
+}> | null = null;
 let gedCapacity: Readonly<{
   capacityBytes: number;
   availableBytes: number;
@@ -103,6 +112,22 @@ export function markJobFinished(name: string, success: boolean, atMs = Date.now(
   });
 }
 
+export function observeDocumentScan(outcome: "clean" | "infected" | "unavailable", durationMs: number): void {
+  const normalized = outcome === "unavailable" ? "scan_failed" : outcome;
+  increment(documentScanTotals, normalized);
+  increment(documentScanDurationSums, normalized, Math.max(0, durationMs) / 1_000);
+}
+
+export function setGedQuarantineMetrics(input: {
+  pending: number;
+  clean: number;
+  infected: number;
+  scanFailed: number;
+  oldestAgeSeconds: number;
+} | null): void {
+  gedQuarantine = input;
+}
+
 export function renderPrometheusMetrics(pool?: Pool): string {
   const lines: string[] = [
     "# HELP cerp_build_info CERP service build metadata.",
@@ -164,6 +189,32 @@ export function renderPrometheusMetrics(pool?: Pool): string {
     );
   }
 
+  lines.push(
+    "# HELP cerp_document_scans_total Server-side document antivirus scans by outcome.",
+    "# TYPE cerp_document_scans_total counter",
+    "# HELP cerp_document_scan_duration_seconds_total Cumulative server-side scan duration by outcome.",
+    "# TYPE cerp_document_scan_duration_seconds_total counter"
+  );
+  for (const [outcome, value] of documentScanTotals) {
+    const outcomeLabels = labels({ outcome });
+    lines.push(`cerp_document_scans_total${outcomeLabels} ${value}`);
+    lines.push(`cerp_document_scan_duration_seconds_total${outcomeLabels} ${documentScanDurationSums.get(outcome) ?? 0}`);
+  }
+
+  if (gedQuarantine) {
+    lines.push(
+      "# HELP cerp_ged_quarantine_items Durable GED quarantine items by scan status.",
+      "# TYPE cerp_ged_quarantine_items gauge",
+      `cerp_ged_quarantine_items${labels({ scan_status: "pending" })} ${gedQuarantine.pending}`,
+      `cerp_ged_quarantine_items${labels({ scan_status: "clean" })} ${gedQuarantine.clean}`,
+      `cerp_ged_quarantine_items${labels({ scan_status: "infected" })} ${gedQuarantine.infected}`,
+      `cerp_ged_quarantine_items${labels({ scan_status: "scan_failed" })} ${gedQuarantine.scanFailed}`,
+      "# HELP cerp_ged_quarantine_oldest_age_seconds Age of the oldest durable quarantine item.",
+      "# TYPE cerp_ged_quarantine_oldest_age_seconds gauge",
+      `cerp_ged_quarantine_oldest_age_seconds ${gedQuarantine.oldestAgeSeconds}`
+    );
+  }
+
   if (pool) {
     lines.push(
       "# HELP cerp_db_pool_connections PostgreSQL pool connections by state.",
@@ -207,5 +258,8 @@ export function resetMetricsForTests(): void {
   requestDurationBuckets.clear();
   dependencies.clear();
   jobs.clear();
+  documentScanTotals.clear();
+  documentScanDurationSums.clear();
   gedCapacity = null;
+  gedQuarantine = null;
 }

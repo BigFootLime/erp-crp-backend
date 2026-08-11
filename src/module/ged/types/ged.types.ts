@@ -6,6 +6,21 @@
 
 import type { GedVersionStatus } from "../domain/ged-policy";
 
+export type GedScanStatus = "pending" | "clean" | "infected" | "scan_failed";
+export type GedQuarantineStatus = "pending" | "quarantined" | "released" | "deleted";
+
+export type GedAntivirusVerdict = {
+  status: GedScanStatus | "legacy_untracked";
+  quarantine_status: GedQuarantineStatus | "legacy_untracked";
+  provider: string | null;
+  signature_version: string | null;
+  duration_ms: number | null;
+  scanned_at: string | null;
+  source: "server_upload_scanner" | "historical_pre_sol_11";
+  freshness_at: string | null;
+  reliability: "MEASURED" | "HISTORICAL_UNVERIFIED";
+};
+
 export type GedDocumentClass = {
   class_key: string;
   domain: string;
@@ -44,6 +59,7 @@ export type GedDocumentVersion = {
   approved_by: GedActorLite;
   published_at: string | null;
   obsoleted_at: string | null;
+  antivirus: GedAntivirusVerdict;
 };
 
 export type GedDocumentLink = {
@@ -126,4 +142,22 @@ export type GedAccessEvent = {
   actor: GedActorLite;
   occurred_at: string;
   details: Record<string, unknown> | null;
+};
+
+export type GedQuarantineItem = {
+  id: string;
+  class_key: string;
+  title: string | null;
+  original_name: string | null;
+  size_bytes: number | null;
+  sha256: string | null;
+  scan_status: GedScanStatus;
+  quarantine_status: GedQuarantineStatus;
+  scan_provider: string | null;
+  signature_version: string | null;
+  scan_duration_ms: number | null;
+  scan_attempts: number;
+  scanned_at: string | null;
+  created_at: string;
+  created_by: GedActorLite;
 };
