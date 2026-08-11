@@ -40,6 +40,10 @@ import {
   commandeArticleEligibleSql,
   commandeArticleIneligibilityCodeSql,
 } from "../domain/commande-article-eligibility";
+import {
+  buildOldMaterialDefinition,
+  type OldMaterialDefinitionSource,
+} from "../domain/old-material-definition";
 import type {
   ArticleCategory,
   ArticleBusinessCategory,
@@ -122,6 +126,37 @@ import type {
   HistoricalImportBodyDTO,
   ListConsolidatedInventoryQueryDTO,
 } from "../validators/stock.validators";
+
+type OldMaterialDefinitionProjection = {
+  material_article_category: string | null;
+  material_designation: string;
+  material_profile_code: string | null;
+  material_nuance_code: string | null;
+  material_etat_code: string | null;
+  material_sous_etat_code: string | null;
+  material_longueur_mm: number | null;
+  material_largeur_mm: number | null;
+  material_hauteur_mm: number | null;
+  material_epaisseur_mm: number | null;
+  material_diametre_mm: number | null;
+};
+
+function oldMaterialDefinitionFromProjection(row: OldMaterialDefinitionProjection): string | null {
+  const source: OldMaterialDefinitionSource = {
+    article_category: row.material_article_category,
+    designation: row.material_designation,
+    profile_code: row.material_profile_code,
+    nuance_code: row.material_nuance_code,
+    etat_code: row.material_etat_code,
+    sous_etat_code: row.material_sous_etat_code,
+    longueur_mm: row.material_longueur_mm,
+    largeur_mm: row.material_largeur_mm,
+    hauteur_mm: row.material_hauteur_mm,
+    epaisseur_mm: row.material_epaisseur_mm,
+    diametre_mm: row.material_diametre_mm,
+  };
+  return buildOldMaterialDefinition(source);
+}
 
 export type AuditContext = {
   user_id: number;
@@ -2745,6 +2780,22 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
       a.projet_id::int AS projet_id,
       a.code,
       a.designation,
+      a.article_category::text AS material_article_category,
+      a.designation AS material_designation,
+      COALESCE(article_material.family_code, a.family_code)::text AS material_profile_code,
+      material_nuance.code::text AS material_nuance_code,
+      material_etat.code::text AS material_etat_code,
+      material_sous_etat.code::text AS material_sous_etat_code,
+      COALESCE(
+        article_material.longueur_brut_mm,
+        article_material.longueur_coupe_mm,
+        article_material.longueur_mm,
+        article_material.longueur_unitaire_mm
+      )::float8 AS material_longueur_mm,
+      article_material.largeur_mm::float8 AS material_largeur_mm,
+      article_material.hauteur_mm::float8 AS material_hauteur_mm,
+      article_material.epaisseur_mm::float8 AS material_epaisseur_mm,
+      article_material.diametre_mm::float8 AS material_diametre_mm,
       a.designation_secondary,
       CASE WHEN ${normalizedArticleCategorySql("a.article_category")} = 'fabrique' THEN 'PIECE_TECHNIQUE' ELSE 'PURCHASED' END AS article_type,
       ${normalizedArticleCategorySql("a.article_category")} AS article_category,
@@ -2779,6 +2830,14 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
     FROM public.articles a
     LEFT JOIN public.pieces_techniques pt
       ON pt.id = a.piece_technique_id
+    LEFT JOIN public.articles_matiere article_material
+      ON article_material.article_id = a.id
+    LEFT JOIN public.stock_nuances material_nuance
+      ON material_nuance.id = article_material.nuance_id
+    LEFT JOIN public.stock_etats material_etat
+      ON material_etat.id = article_material.etat_id
+    LEFT JOIN public.stock_sous_etats material_sous_etat
+      ON material_sous_etat.id = article_material.sous_etat_id
     LEFT JOIN LATERAL (
       SELECT v.id, v.indice, v.statut, v.plan_reference, v.date_application::text AS date_application
       FROM public.piece_technique_versions v
@@ -2808,8 +2867,39 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
     OFFSET $${values.length + 2}
   `;
 
-  const rows = await db.query<StockArticleListItem>(dataSql, [...values, pageSize, offset]);
-  return { items: rows.rows, total };
+  type ArticleRow = Omit<StockArticleListItem, "old_material_definition"> & OldMaterialDefinitionProjection;
+  const rows = await db.query<ArticleRow>(dataSql, [...values, pageSize, offset]);
+  const items = rows.rows.map((row): StockArticleListItem => {
+    const {
+      material_article_category,
+      material_designation,
+      material_profile_code,
+      material_nuance_code,
+      material_etat_code,
+      material_sous_etat_code,
+      material_longueur_mm,
+      material_largeur_mm,
+      material_hauteur_mm,
+      material_epaisseur_mm,
+      material_diametre_mm,
+      ...article
+    } = row;
+    const projection: OldMaterialDefinitionProjection = {
+      material_article_category,
+      material_designation,
+      material_profile_code,
+      material_nuance_code,
+      material_etat_code,
+      material_sous_etat_code,
+      material_longueur_mm,
+      material_largeur_mm,
+      material_hauteur_mm,
+      material_epaisseur_mm,
+      material_diametre_mm,
+    };
+    return { ...article, old_material_definition: oldMaterialDefinitionFromProjection(projection) };
+  });
+  return { items, total };
 }
 
 export async function repoGetArticle(id: string, includeCosts = false): Promise<StockArticleDetail | null> {
@@ -5323,11 +5413,32 @@ export async function repoListConsolidatedInventory(
     LEFT JOIN public.emplacements e ON e.location_id = b.location_id
     LEFT JOIN public.magasins m ON m.id = e.magasin_id
     LEFT JOIN public.lots l ON l.id = b.lot_id
+    LEFT JOIN public.articles_matiere article_material ON article_material.article_id = a.id
+    LEFT JOIN public.stock_nuances material_nuance ON material_nuance.id = article_material.nuance_id
+    LEFT JOIN public.stock_etats material_etat ON material_etat.id = article_material.etat_id
+    LEFT JOIN public.stock_sous_etats material_sous_etat ON material_sous_etat.id = article_material.sous_etat_id
   `;
   const count = await db.query<{ total: number }>(`SELECT COUNT(*)::int AS total ${fromSql} ${whereSql}`, values);
-  const rows = await db.query<ConsolidatedInventoryRow>(
+  type InventoryRow = Omit<ConsolidatedInventoryRow, "old_material_definition"> & OldMaterialDefinitionProjection;
+  const rows = await db.query<InventoryRow>(
     `SELECT
        b.article_id::text AS article_id, a.code AS article_code, a.designation AS article_designation,
+       a.article_category::text AS material_article_category,
+       a.designation AS material_designation,
+       COALESCE(article_material.family_code, a.family_code)::text AS material_profile_code,
+       material_nuance.code::text AS material_nuance_code,
+       material_etat.code::text AS material_etat_code,
+       material_sous_etat.code::text AS material_sous_etat_code,
+       COALESCE(
+         article_material.longueur_brut_mm,
+         article_material.longueur_coupe_mm,
+         article_material.longueur_mm,
+         article_material.longueur_unitaire_mm
+       )::float8 AS material_longueur_mm,
+       article_material.largeur_mm::float8 AS material_largeur_mm,
+       article_material.hauteur_mm::float8 AS material_hauteur_mm,
+       article_material.epaisseur_mm::float8 AS material_epaisseur_mm,
+       article_material.diametre_mm::float8 AS material_diametre_mm,
        COALESCE(m.stock_scope, w.stock_scope, 'NEW')::text AS scope,
        COALESCE(m.id, '00000000-0000-0000-0000-000000000000')::text AS magasin_id,
        COALESCE(m.code, m.code_magasin, w.code)::text AS magasin_code,
@@ -5340,7 +5451,41 @@ export async function repoListConsolidatedInventory(
      LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
     [...values, pageSize, offset]
   );
-  return { items: rows.rows, total: count.rows[0]?.total ?? 0 };
+  const items = rows.rows.map((row): ConsolidatedInventoryRow => {
+    const {
+      material_article_category,
+      material_designation,
+      material_profile_code,
+      material_nuance_code,
+      material_etat_code,
+      material_sous_etat_code,
+      material_longueur_mm,
+      material_largeur_mm,
+      material_hauteur_mm,
+      material_epaisseur_mm,
+      material_diametre_mm,
+      ...inventoryRow
+    } = row;
+    const projection: OldMaterialDefinitionProjection = {
+      material_article_category,
+      material_designation,
+      material_profile_code,
+      material_nuance_code,
+      material_etat_code,
+      material_sous_etat_code,
+      material_longueur_mm,
+      material_largeur_mm,
+      material_hauteur_mm,
+      material_epaisseur_mm,
+      material_diametre_mm,
+    };
+    return {
+      ...inventoryRow,
+      old_material_definition:
+        inventoryRow.scope === "OLD" ? oldMaterialDefinitionFromProjection(projection) : null,
+    };
+  });
+  return { items, total: count.rows[0]?.total ?? 0 };
 }
 
 async function ensureHistoricalPositionTx(client: PoolClient, kind: "PF" | "MP", shelf: string, audit: AuditContext) {
@@ -5415,7 +5560,7 @@ export async function repoCreateHistoricalImport(body: HistoricalImportBodyDTO, 
       if (body.article_id) articleId = body.article_id;
       else if (body.article) articleId = (await repoCreateArticleTx(client, body.article, audit)).id;
       else throw new HttpError(400, "ARTICLE_REQUIRED", "Article matière requis.");
-      const a = await client.query<{ category: string; nuance: string | null }>(`SELECT a.article_category::text AS category, n.code AS nuance FROM public.articles a LEFT JOIN public.articles_matiere am ON am.article_id=a.id LEFT JOIN public.matiere_nuances n ON n.id=am.nuance_id WHERE a.id=$1::uuid FOR UPDATE`, [articleId]);
+      const a = await client.query<{ category: string; nuance: string | null }>(`SELECT a.article_category::text AS category, n.code AS nuance FROM public.articles a LEFT JOIN public.articles_matiere am ON am.article_id=a.id LEFT JOIN public.stock_nuances n ON n.id=am.nuance_id WHERE a.id=$1::uuid FOR UPDATE`, [articleId]);
       if (a.rows[0]?.category !== "matiere") throw new HttpError(422, "MP_ARTICLE_REQUIRED", "L'import MP requiert un article matière première.");
       shelf = a.rows[0]?.nuance?.trim() || "SANS-NUANCE";
     } else {

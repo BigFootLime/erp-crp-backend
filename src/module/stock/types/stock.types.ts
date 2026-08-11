@@ -8,7 +8,7 @@ export type Paginated<T> = {
 
 export type HistoricalStockImport = { article_id: string; lot_id: string; movement_id: string; stock_trace_code: string; qr_payload: string; replayed: boolean };
 export type ConsolidatedInventoryRow = {
-  article_id: string; article_code: string; article_designation: string; scope: "OLD" | "NEW";
+  article_id: string; article_code: string; article_designation: string; old_material_definition: string | null; scope: "OLD" | "NEW";
   magasin_id: string; magasin_code: string; rayon_code: string; lot_id: string | null; lot_code: string | null;
   stock_trace_code: string | null; qr_payload: string | null; qty_total: number; qty_reserved: number; qty_available: number;
   updated_at: string;
@@ -162,6 +162,7 @@ export type StockArticleListItem = {
   projet_id: number | null;
   code: string;
   designation: string;
+  old_material_definition?: string | null;
   designation_secondary: string | null;
   article_type: ArticleType;
   article_category: ArticleCategory;
