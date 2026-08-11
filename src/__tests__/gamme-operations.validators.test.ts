@@ -105,11 +105,11 @@ describe("Référentiels Méthodes — contrat d'entrée", () => {
       addCostCenterRateSchema.safeParse({ taux_horaire: 50, date_effet: "2026-07-01", source: "Décision gestion 2026" })
         .success
     ).toBe(true)
-    // Y compris un taux à zéro : il est assumé, pas subi.
+    // Un taux à zéro ressemble à une donnée renseignée mais fausse la valorisation.
     expect(
       addCostCenterRateSchema.safeParse({ taux_horaire: 0, date_effet: "2026-07-01", source: "Poste non valorisé" })
         .success
-    ).toBe(true)
+    ).toBe(false)
   })
 
   it("refuse une date d'effet hors format ISO", () => {

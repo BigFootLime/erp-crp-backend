@@ -46,6 +46,11 @@ describe("Dockerfile storage permissions", () => {
     expect(dockerfile).toContain('VOLUME ["/app/data", "/app/uploads", "/var/lib/clamav"]');
   });
 
+  it("embeds the deployed source commit in runtime health metadata", () => {
+    expect(dockerfile).toContain("ARG SOURCE_COMMIT=unknown");
+    expect(dockerfile).toContain("ENV CERP_RELEASE_VERSION=${SOURCE_COMMIT}");
+  });
+
   it("normalizes shell entrypoints for images built from a Windows checkout", () => {
     expect(gitAttributes).toContain("*.sh text eol=lf");
     expect(gitAttributes).toContain("docker/*.conf text eol=lf");

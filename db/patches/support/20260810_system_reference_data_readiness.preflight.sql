@@ -62,23 +62,10 @@ BEGIN
     RAISE EXCEPTION 'SOL-06 preflight: no active warehouse/magasin/emplacement/location chain';
   END IF;
 
-  IF NOT EXISTS (SELECT 1 FROM public.programmation_calendars WHERE active) THEN
-    RAISE EXCEPTION 'SOL-06 preflight: no active production calendar';
-  END IF;
-
-  IF NOT EXISTS (SELECT 1 FROM public.centres_frais WHERE statut = 'ACTIF' AND archived_at IS NULL)
-     OR EXISTS (
-       SELECT 1 FROM public.centres_frais cf
-       WHERE cf.statut = 'ACTIF' AND cf.archived_at IS NULL
-         AND NOT EXISTS (
-           SELECT 1 FROM public.production_cost_center_rates rate
-           WHERE rate.cf_id = cf.id AND rate.date_effet <= CURRENT_DATE
-             AND (rate.date_fin IS NULL OR rate.date_fin >= CURRENT_DATE)
-             AND rate.taux_horaire >= 0 AND btrim(rate.source) <> ''
-         )
-     ) THEN
-    RAISE EXCEPTION 'SOL-06 preflight: every active cost center needs a current source-backed hourly rate';
-  END IF;
+  -- Les valeurs métier absentes ne doivent pas empêcher l'installation du
+  -- garde-fou : la fonction et ses triggers sont précisément chargés de
+  -- bloquer les flux concernés jusqu'à leur saisie guidée. Les compteurs du
+  -- rapport ci-dessous rendent ces écarts visibles sans inventer de données.
 
   IF NOT EXISTS (SELECT 1 FROM public.app_roles WHERE is_active)
      OR EXISTS (
