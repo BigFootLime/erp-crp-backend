@@ -1,6 +1,6 @@
 {
   "status": "passed",
-  "started_at": "2026-08-11T12:05:11.341Z",
+  "started_at": "2026-08-11T12:43:48.592Z",
   "postgres_image": "postgres@sha256:16bc17c64a573ef34162af9298258d1aec548232985b33ed7b1eac33ba35c229",
   "isolated_target": {
     "host": "127.0.0.1",
@@ -9,23 +9,23 @@
     "storage": "tmpfs"
   },
   "durations": {
-    "source_migration": 19566,
-    "source_seed": 186,
-    "backup": 739,
-    "preflight": 133,
-    "integrity_before": 596,
-    "migration": 175,
-    "verify": 117,
-    "replay": 126,
-    "integrity_after": 1351,
-    "negative_gate": 42,
-    "rollback": 24,
-    "restore": 4094
+    "source_migration": 19393,
+    "source_seed": 206,
+    "backup": 827,
+    "preflight": 190,
+    "integrity_before": 674,
+    "migration": 239,
+    "verify": 132,
+    "replay": 191,
+    "integrity_after": 1401,
+    "negative_gate": 43,
+    "rollback": 22,
+    "restore": 4083
   },
   "source": {
     "status": "passed",
-    "checked_at": "2026-08-11T12:05:33.827Z",
-    "duration_ms": 84,
+    "checked_at": "2026-08-11T12:44:11.086Z",
+    "duration_ms": 138,
     "identity": {
       "database": "cerp_test",
       "database_user": "cerp_e2e",
@@ -33,10 +33,10 @@
       "database_bytes": "36199447"
     },
     "backup": {
-      "file": "C:\\Users\\KEENAN~1\\AppData\\Local\\Temp\\cerp-sol06-Zf3bMy\\cerp-test-before-sol06.dump",
-      "bytes": 1954228,
-      "sha256": "d758b5290e1c831f98bf1274f64d53fc8d351e7de7aee7bf9f4a52aa253ed5b8",
-      "free_bytes": 438071201792
+      "file": "C:\\Users\\KEENAN~1\\AppData\\Local\\Temp\\cerp-sol06-2rVOBD\\cerp-test-before-sol06.dump",
+      "bytes": 1954334,
+      "sha256": "fa9157465fb67e3a9c44b4d4dfd23682af809f440f1650760b44def70e45f283",
+      "free_bytes": 437795725312
     },
     "ledger": {
       "applied": 140,
@@ -439,8 +439,8 @@
   },
   "after": {
     "status": "passed",
-    "checked_at": "2026-08-11T12:05:36.197Z",
-    "duration_ms": 1336,
+    "checked_at": "2026-08-11T12:44:13.730Z",
+    "duration_ms": 1386,
     "table_counts": {
       "admin_account_invitations": "0",
       "admin_user_provisioning_migration_state": "12",
@@ -892,7 +892,7 @@
         "period_start": "2026-08-10T22:00:00.000Z",
         "period_end": null,
         "source": "public.programmation_calendars",
-        "freshness_at": "2026-08-11T12:05:34.862Z",
+        "freshness_at": "2026-08-11T12:44:12.345Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "active_calendars": 1
@@ -909,7 +909,7 @@
         "period_start": "2026-08-10T22:00:00.000Z",
         "period_end": null,
         "source": "public.app_roles + public.user_role_assignments",
-        "freshness_at": "2026-08-11T12:05:34.862Z",
+        "freshness_at": "2026-08-11T12:44:12.345Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "active_roles": 33,
@@ -927,7 +927,7 @@
         "period_start": "2026-08-10T22:00:00.000Z",
         "period_end": null,
         "source": "pg_catalog.pg_enum + pg_catalog.pg_constraint",
-        "freshness_at": "2026-08-11T12:05:34.862Z",
+        "freshness_at": "2026-08-11T12:44:12.345Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "of_statuses": [
@@ -953,7 +953,7 @@
         "period_start": "2026-08-10T22:00:00.000Z",
         "period_end": null,
         "source": "public.programmation_calendars",
-        "freshness_at": "2026-08-11T12:05:34.862Z",
+        "freshness_at": "2026-08-11T12:44:12.345Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "active_calendars": 1
@@ -970,7 +970,7 @@
         "period_start": "2026-08-10T22:00:00.000Z",
         "period_end": null,
         "source": "public.app_roles + public.user_role_assignments",
-        "freshness_at": "2026-08-11T12:05:34.862Z",
+        "freshness_at": "2026-08-11T12:44:12.345Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "active_roles": 33,
@@ -988,7 +988,7 @@
         "period_start": "2026-08-10T22:00:00.000Z",
         "period_end": null,
         "source": "public.units",
-        "freshness_at": "2026-08-11T12:05:34.862Z",
+        "freshness_at": "2026-08-11T12:44:12.345Z",
         "reliability": "VERIFIED",
         "actual_value": [
           "kg",
@@ -1008,7 +1008,7 @@
         "period_start": "2026-08-10T22:00:00.000Z",
         "period_end": null,
         "source": "public.centres_frais + public.production_cost_center_rates",
-        "freshness_at": "2026-08-11T12:05:34.862Z",
+        "freshness_at": "2026-08-11T12:44:12.345Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "active_cost_centers": 1,
@@ -1026,7 +1026,7 @@
         "period_start": "2026-08-10T22:00:00.000Z",
         "period_end": null,
         "source": "pg_catalog.pg_enum + pg_catalog.pg_constraint",
-        "freshness_at": "2026-08-11T12:05:34.862Z",
+        "freshness_at": "2026-08-11T12:44:12.345Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "of_statuses": [
@@ -1052,7 +1052,7 @@
         "period_start": "2026-08-10T22:00:00.000Z",
         "period_end": null,
         "source": "public.app_roles + public.user_role_assignments",
-        "freshness_at": "2026-08-11T12:05:34.862Z",
+        "freshness_at": "2026-08-11T12:44:12.345Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "active_roles": 33,
@@ -1070,11 +1070,11 @@
         "period_start": "2026-08-10T22:00:00.000Z",
         "period_end": null,
         "source": "public.warehouses + locations + magasins + emplacements",
-        "freshness_at": "2026-08-11T12:05:34.862Z",
+        "freshness_at": "2026-08-11T12:44:12.345Z",
         "reliability": "VERIFIED",
         "actual_value": {
-          "active_locations": 1,
-          "active_warehouses": 4,
+          "configured_locations": 1,
+          "configured_warehouses": 4,
           "mapped_active_emplacements": 1
         },
         "expected_value": "au moins 1 chaîne active warehouse > magasin > emplacement > location",
@@ -1089,7 +1089,7 @@
         "period_start": "2026-08-10T22:00:00.000Z",
         "period_end": null,
         "source": "public.units",
-        "freshness_at": "2026-08-11T12:05:34.862Z",
+        "freshness_at": "2026-08-11T12:44:12.345Z",
         "reliability": "VERIFIED",
         "actual_value": [
           "kg",
@@ -1127,7 +1127,7 @@
         "period_start": "2026-08-10T22:00:00.000Z",
         "period_end": null,
         "source": "pg_catalog.pg_enum + pg_catalog.pg_constraint",
-        "freshness_at": "2026-08-11T12:05:34.862Z",
+        "freshness_at": "2026-08-11T12:44:12.345Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "of_statuses": [
@@ -1199,5 +1199,5 @@
       "unknown_applied": []
     }
   },
-  "completed_at": "2026-08-11T12:05:40.539Z"
+  "completed_at": "2026-08-11T12:44:18.150Z"
 }

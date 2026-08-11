@@ -62,6 +62,21 @@ describe("SOL-06 migration release gate", () => {
     expect(sql).not.toMatch(/INSERT INTO public\.erp_settings[\s\S]*stock\.valuation_method/i);
   });
 
+  it("reste compatible avec le schéma terrain warehouse/location sans statut actif", () => {
+    const sql = fs.readFileSync(PATCH, "utf8");
+    const preflight = fs.readFileSync(`${SUPPORT}.preflight.sql`, "utf8");
+    const bootstrap = fs.readFileSync(path.join(ROOT, "db", "e2e", "legacy-bootstrap.sql"), "utf8");
+
+    expect(sql).not.toMatch(/(?:l|w)\.is_active/);
+    expect(preflight).not.toMatch(/(?:l|w)\.is_active/);
+    expect(preflight).not.toContain("no active warehouse/magasin/emplacement/location chain");
+    const warehouseTable = bootstrap.match(/CREATE TABLE public\.warehouses \([\s\S]*?\n\);/)?.[0];
+    const locationTable = bootstrap.match(/CREATE TABLE public\.locations \([\s\S]*?\n\);/)?.[0];
+    expect(warehouseTable).not.toContain("is_active");
+    expect(locationTable).not.toContain("is_active");
+    expect(locationTable).toContain("description text");
+  });
+
   it("rend le preflight lecture seule et le rollback explicitement test-only", () => {
     const preflight = fs.readFileSync(`${SUPPORT}.preflight.sql`, "utf8");
     const verify = fs.readFileSync(`${SUPPORT}.verify.sql`, "utf8");

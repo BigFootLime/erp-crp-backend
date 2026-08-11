@@ -203,10 +203,10 @@ async function main() {
        ON CONFLICT (id) DO UPDATE SET code=EXCLUDED.code,nom=EXCLUDED.nom,actif=true,status='actif'`
     );
     await client.query(
-      `INSERT INTO public.locations (id,warehouse_id,code,name,is_active)
-       SELECT '10000000-0000-4000-8000-000000000001',id,'E2E-RECEPTION','Emplacement reception SOL-05',true
+      `INSERT INTO public.locations (id,warehouse_id,code,description)
+       SELECT '10000000-0000-4000-8000-000000000001',id,'E2E-RECEPTION','Emplacement reception SOL-05'
        FROM public.warehouses WHERE code='NEW-MP'
-       ON CONFLICT (id) DO UPDATE SET code=EXCLUDED.code,name=EXCLUDED.name,is_active=true`
+       ON CONFLICT (id) DO UPDATE SET code=EXCLUDED.code,description=EXCLUDED.description`
     );
     await client.query(
       `INSERT INTO public.magasins (
