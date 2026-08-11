@@ -35,7 +35,7 @@ import { scanUpload, type UploadScanStatus } from "./upload-scanner";
 export type UploadSecurityMetadata = Readonly<{
   usage: UploadUsage;
   sha256: string;
-  scanStatus: UploadScanStatus;
+  scanStatus: UploadScanStatus | "pending";
   scanProvider: string;
 }>;
 
@@ -50,10 +50,17 @@ declare global {
 }
 
 type SecureUploadStorage = "memory" | "staging";
+type SecureUploadScan = "immediate" | "deferred";
 
 export type SecureUploadOptions = Readonly<{
   storage?: SecureUploadStorage;
   maxFiles?: number;
+  /**
+   * `deferred` is reserved for a server-side owner that persists the pending
+   * verdict before scanning and keeps rejected bytes in a durable quarantine.
+   * Every other upload remains scanned inside this middleware.
+   */
+  scan?: SecureUploadScan;
 }>;
 
 export type SecureUpload = Readonly<{
@@ -1799,7 +1806,8 @@ export async function promoteSecureUpload(
 async function validateFiles(
   files: Express.Multer.File[],
   policy: UploadPolicy,
-  signal: AbortSignal
+  signal: AbortSignal,
+  scanMode: SecureUploadScan
 ): Promise<void> {
   throwIfUploadAborted(signal);
   if (files.length > policy.maxFiles) {
@@ -1834,6 +1842,16 @@ async function validateFiles(
       throw new HttpError(409, "UPLOAD_DUPLICATE_FILE", "Le même fichier apparaît plusieurs fois dans cet envoi.");
     }
     hashes.add(digest);
+
+    if (scanMode === "deferred") {
+      file.uploadSecurity = {
+        usage: policy.usage,
+        sha256: digest,
+        scanStatus: "pending",
+        scanProvider: "deferred",
+      };
+      continue;
+    }
 
     const scan = await scanUpload({
       ...(file.buffer ? { buffer: file.buffer } : { path: file.path }),
@@ -2029,6 +2047,7 @@ export function createSecureUpload(usage: UploadUsage, options: SecureUploadOpti
     ? Object.freeze({ ...basePolicy, maxFiles: Math.min(options.maxFiles, basePolicy.maxFiles) })
     : basePolicy;
   const storage = options.storage ?? "staging";
+  const scanMode = options.scan ?? "immediate";
   const isMemory = storage === "memory";
   const stagingPathsByRequest = new WeakMap<Request, Set<string>>();
   const quarantineDirectory = isMemory ? null : ensurePrivateQuarantineDirectory(usage);
@@ -2186,7 +2205,7 @@ export function createSecureUpload(usage: UploadUsage, options: SecureUploadOpti
         if (uploadError) throw translateMulterError(uploadError, policy);
         if (!isMemory) await hardenStagingFilePermissions(files);
         throwIfUploadAborted(abortController.signal);
-        await validateFiles(files, policy, abortController.signal);
+        await validateFiles(files, policy, abortController.signal, scanMode);
         throwIfUploadAborted(abortController.signal);
         settleValidation();
         auditUpload(req, usage, "accepted", {

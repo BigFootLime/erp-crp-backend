@@ -38,7 +38,12 @@ COPY docker/storage-preflight.mjs /usr/local/lib/cerp-storage-preflight.mjs
 COPY docker/upload-storage-security-smoke.mjs /usr/local/lib/cerp-upload-storage-security-smoke.mjs
 COPY docker/upload-preflight-security-smoke.mjs /usr/local/lib/cerp-upload-preflight-security-smoke.mjs
 COPY docker/upload-storage-security-smoke.sh /usr/local/bin/cerp-upload-storage-security-smoke.sh
-RUN chmod 0755 /usr/local/bin/cerp-entrypoint.sh /usr/local/bin/cerp-upload-storage-security-smoke.sh
+RUN sed -i 's/\r$//' \
+      /etc/clamav/clamd.conf \
+      /etc/clamav/freshclam.conf \
+      /usr/local/bin/cerp-entrypoint.sh \
+      /usr/local/bin/cerp-upload-storage-security-smoke.sh \
+  && chmod 0755 /usr/local/bin/cerp-entrypoint.sh /usr/local/bin/cerp-upload-storage-security-smoke.sh
 
 # ne force PAS NODE_ENV ici: laisse Coolify le définir côté runtime
 COPY package*.json ./

@@ -23,12 +23,14 @@ import { isPathInsideDirectory } from "../../../utils/cerpStorage";
 import {
   cleanupUploadsAfterConfirmedRollback,
   ensurePrivateUploadDirectory,
+  promoteSecureUpload,
   registerUploadDestination,
   removeOwnedPathSafely,
 } from "../../../shared/uploads/secure-upload";
 
 const VAULT_SUBDIR = "vault";
 const STAGING_SUBDIR = "staging";
+const QUARANTINE_SUBDIR = "quarantine";
 const SENTINEL_DEFAULT_NAME = ".cerp-ged-volume";
 
 export type VaultHealth = {
@@ -110,6 +112,7 @@ export async function ensureVaultReady(): Promise<string> {
   try {
     ensurePrivateUploadDirectory(path.join(root, VAULT_SUBDIR), root);
     ensurePrivateUploadDirectory(path.join(root, STAGING_SUBDIR), root);
+    ensurePrivateUploadDirectory(path.join(root, QUARANTINE_SUBDIR), root);
   } catch (err) {
     const detail = err instanceof Error ? err.message : "accès impossible";
     throw new HttpError(
@@ -181,6 +184,101 @@ function resolveInsideVault(root: string, storageKey: string): string {
     throw new HttpError(400, "GED_VAULT_PATH", "Chemin de stockage invalide.");
   }
   return absolute;
+}
+
+function resolveQuarantineKey(root: string, quarantineKey: string): string {
+  const normalized = quarantineKey.replace(/\\/g, "/");
+  if (!normalized.startsWith(`${QUARANTINE_SUBDIR}/`)) {
+    throw new HttpError(400, "GED_QUARANTINE_PATH", "Clé de quarantaine invalide.");
+  }
+  const absolute = resolveInsideVault(root, normalized);
+  const quarantineRoot = path.join(root, QUARANTINE_SUBDIR);
+  if (!isPathInsideDirectory(quarantineRoot, absolute)) {
+    throw new HttpError(400, "GED_QUARANTINE_PATH", "Clé de quarantaine invalide.");
+  }
+  return absolute;
+}
+
+export async function persistQuarantinedUpload(
+  file: Express.Multer.File,
+  sessionId: string
+): Promise<{ quarantine_key: string; file_path: string }> {
+  if (!/^[a-f0-9-]{36}$/i.test(sessionId)) {
+    throw new HttpError(400, "GED_QUARANTINE_ID", "Identifiant de quarantaine invalide.");
+  }
+  const root = await ensureVaultReady();
+  const directory = path.join(root, QUARANTINE_SUBDIR);
+  const filename = `${sessionId}.quarantine`;
+  const filePath = await promoteSecureUpload(file, directory, filename);
+  return { quarantine_key: `${QUARANTINE_SUBDIR}/${filename}`, file_path: filePath };
+}
+
+export async function resolveQuarantinedFile(quarantineKey: string): Promise<string> {
+  const root = await ensureVaultReady();
+  const filePath = resolveQuarantineKey(root, quarantineKey);
+  const stat = await fs.lstat(filePath).catch(() => null);
+  if (!stat?.isFile()) {
+    throw new HttpError(404, "GED_QUARANTINE_FILE_MISSING", "Le fichier de quarantaine est introuvable.");
+  }
+  return filePath;
+}
+
+export async function deleteQuarantinedFile(quarantineKey: string): Promise<void> {
+  const filePath = await resolveQuarantinedFile(quarantineKey);
+  const stat = await fs.lstat(filePath, { bigint: true });
+  if (!stat.isFile()) {
+    throw new HttpError(409, "GED_QUARANTINE_FILE_CHANGED", "Le fichier de quarantaine a changé.");
+  }
+  await removeOwnedPathSafely(filePath, { dev: String(stat.dev), ino: String(stat.ino) });
+}
+
+export async function stageQuarantinedFileForRelease(
+  quarantineKey: string,
+  expectedSha256: string
+): Promise<string> {
+  const root = await ensureVaultReady();
+  const sourcePath = resolveQuarantineKey(root, quarantineKey);
+  const stagingRoot = path.join(root, STAGING_SUBDIR, "quarantine-release");
+  ensurePrivateUploadDirectory(stagingRoot, path.join(root, STAGING_SUBDIR));
+  const stagingPath = path.join(stagingRoot, `${crypto.randomUUID()}.part`);
+  let source: FileHandle | null = null;
+  let destination: FileHandle | null = null;
+  try {
+    source = await fs.open(sourcePath, "r");
+    const sourceStat = await source.stat({ bigint: true });
+    if (!sourceStat.isFile()) {
+      throw new HttpError(404, "GED_QUARANTINE_FILE_MISSING", "Le fichier de quarantaine est introuvable.");
+    }
+    destination = await fs.open(stagingPath, "wx+", 0o600);
+    await copyFileHandle(source, destination);
+    const copiedHash = await computeFileHandleSha256(destination);
+    if (copiedHash !== expectedSha256) {
+      throw new HttpError(409, "GED_QUARANTINE_FILE_CHANGED", "Le fichier de quarantaine a changé depuis son analyse.");
+    }
+    await assertVaultPathIdentity(sourcePath, sourceStat);
+    return stagingPath;
+  } catch (error) {
+    await fs.unlink(stagingPath).catch(() => undefined);
+    throw error;
+  } finally {
+    await destination?.close().catch(() => undefined);
+    await source?.close().catch(() => undefined);
+  }
+}
+
+export async function cleanupQuarantineReleaseStaging(stagingPath: string): Promise<void> {
+  const root = await ensureVaultReady();
+  const stagingRoot = path.join(root, STAGING_SUBDIR, "quarantine-release");
+  const resolved = path.resolve(stagingPath);
+  if (!isPathInsideDirectory(stagingRoot, resolved)) {
+    throw new HttpError(400, "GED_QUARANTINE_PATH", "Chemin de staging de quarantaine invalide.");
+  }
+  const stat = await fs.lstat(resolved, { bigint: true }).catch(() => null);
+  if (!stat) return;
+  if (!stat.isFile()) {
+    throw new HttpError(409, "GED_QUARANTINE_FILE_CHANGED", "Le staging de quarantaine a changé.");
+  }
+  await removeOwnedPathSafely(resolved, { dev: String(stat.dev), ino: String(stat.ino) });
 }
 
 /* -------------------------------------------------------------------------- */

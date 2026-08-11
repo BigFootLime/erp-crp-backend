@@ -65,6 +65,42 @@ export async function getVaultStatus(req: Request, res: Response, next: NextFunc
   }
 }
 
+export async function listQuarantine(req: Request, res: Response, next: NextFunction) {
+  try {
+    res.json({ data: await service.listQuarantine(actorFrom(req)) });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function rescanQuarantine(req: Request, res: Response, next: NextFunction) {
+  try {
+    const sessionId = parseUuid(req.params.sessionId, "Identifiant de quarantaine");
+    res.json({ data: await service.rescanQuarantine(actorFrom(req), sessionId) });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function releaseQuarantine(req: Request, res: Response, next: NextFunction) {
+  try {
+    const sessionId = parseUuid(req.params.sessionId, "Identifiant de quarantaine");
+    res.status(201).json({ data: await service.releaseQuarantine(actorFrom(req), sessionId) });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function deleteQuarantine(req: Request, res: Response, next: NextFunction) {
+  try {
+    const sessionId = parseUuid(req.params.sessionId, "Identifiant de quarantaine");
+    await service.deleteQuarantine(actorFrom(req), sessionId);
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function listDocuments(req: Request, res: Response, next: NextFunction) {
   try {
     const parsed = listQuerySchema.safeParse(req.query ?? {});

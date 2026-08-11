@@ -6,6 +6,7 @@ import { repoPath } from "./helpers/repo-paths";
 const dockerfile = fs.readFileSync(repoPath("Dockerfile"), "utf8");
 const entrypoint = fs.readFileSync(repoPath("docker/entrypoint.sh"), "utf8");
 const storagePreflight = fs.readFileSync(repoPath("docker/storage-preflight.mjs"), "utf8");
+const gitAttributes = fs.readFileSync(repoPath(".gitattributes"), "utf8");
 
 describe("Dockerfile storage permissions", () => {
   it("copies every build-time security guard before npm run build", () => {
@@ -43,6 +44,16 @@ describe("Dockerfile storage permissions", () => {
 
   it("declares storage and ClamAV signatures as runtime volumes", () => {
     expect(dockerfile).toContain('VOLUME ["/app/data", "/app/uploads", "/var/lib/clamav"]');
+  });
+
+  it("normalizes shell entrypoints for images built from a Windows checkout", () => {
+    expect(gitAttributes).toContain("*.sh text eol=lf");
+    expect(gitAttributes).toContain("docker/*.conf text eol=lf");
+    expect(dockerfile).toContain("sed -i 's/\\r$//' ");
+    expect(dockerfile).toContain("/etc/clamav/freshclam.conf");
+    expect(dockerfile.indexOf("sed -i 's/\\r$//' ")).toBeLessThan(
+      dockerfile.indexOf("chmod 0755 /usr/local/bin/cerp-entrypoint.sh")
+    );
   });
 
   it("inventories legacy mounts before a bounded descriptor-based migration", () => {

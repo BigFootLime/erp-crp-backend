@@ -14,12 +14,16 @@ const router = Router();
 
 // Plafond global du transport. Le plafond RÉEL est celui de la classe
 // documentaire, appliqué ensuite par `assertAcceptedFile`.
-const upload = createSecureUpload("ged-deferred", { storage: "staging" });
+const upload = createSecureUpload("ged-deferred", { storage: "staging", scan: "deferred" });
 
 /* Référentiel et navigation */
 router.get("/classes", requireGedCapability("read"), controller.getClasses);
 router.get("/tree", requireGedCapability("read"), controller.getTree);
 router.get("/health", requireGedCapability("read"), controller.getVaultStatus);
+router.get("/quarantine", requireGedCapability("admin"), controller.listQuarantine);
+router.post("/quarantine/:sessionId/rescan", requireGedCapability("admin"), controller.rescanQuarantine);
+router.post("/quarantine/:sessionId/release", requireGedCapability("admin"), controller.releaseQuarantine);
+router.delete("/quarantine/:sessionId", requireGedCapability("admin"), controller.deleteQuarantine);
 
 /* Documents */
 router.get("/documents", requireGedCapability("read"), controller.listDocuments);

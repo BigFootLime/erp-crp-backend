@@ -44,6 +44,39 @@ const planningPatchFilename = "20260805_planning_convergence_governance.sql";
 const stockNavigationPatchFilename = "20260810_stock_old_new_navigation_446.sql";
 const stockNavigationPatchChecksum =
   "4900f01411ab89349874fcd6d28993aa34a1ec560320d4d32b05489800bf3b9b";
+const gedAntivirusPatchFilename = "20260811_ged_antivirus_quarantine.sql";
+const gedAntivirusPatchChecksum =
+  "7e1e026c8a16be2609f072434d1930afbd248a543d96e3b013e89426fdaa1336";
+const recentSolPatchChecksums = new Map([
+  [
+    "20260803_admin_user_provisioning_boundary.sql",
+    "c1b706a1d9ba046e63e7e0b05dfc132272bb27fccda7bd0efe8cf481ffbd5ca5",
+  ],
+  [
+    "20260804_article_unit_stock_contract.sql",
+    "cd7b4bba961e2b9783cb3046e3f3dba794b8ce68c8252377f3ecbe105007d607",
+  ],
+  [
+    "20260809_account_invitation_activation.sql",
+    "07fb4d08c4cd0bcf07abd1eb295a30db61b5d64f66d00406f4a24a4291fa4911",
+  ],
+  [
+    "20260810_stock_movement_event_correlation.sql",
+    "736887f658a39504d7cd499cd6b630e05eba0e7fcaa8ecda9f3d92083a1278be",
+  ],
+  [
+    "20260810_system_reference_data_readiness.sql",
+    "9be8c63bf5c0a1a12ac43c2e684ef7d6ffe454171fd58461ee8c8c25c03004f9",
+  ],
+  [
+    "20260811_account_provisioning_schema_repair.sql",
+    "e4a994888e3ff0dc38923a128216647f76919d4001efc70e26219742befca116",
+  ],
+  [
+    "20260811_base_unit_drift_repair.sql",
+    "53e6d11928dcd329b80fd493932aa29d2f0f65874b20a2cd1daa4e9a8847eb66",
+  ],
+]);
 const wave9PatchChecksums = new Map([
   [
     "20260216_planning_visuals_programmation.sql",
@@ -136,6 +169,17 @@ describe("database patch runner", () => {
     );
     expect(runner.sha256Sql(stockNavigationPatch)).toBe(stockNavigationPatchChecksum);
 
+    const gedAntivirusPatch = readFileSync(
+      resolve(repoRoot, "db/patches", gedAntivirusPatchFilename),
+      "utf8"
+    );
+    expect(runner.sha256Sql(gedAntivirusPatch)).toBe(gedAntivirusPatchChecksum);
+
+    for (const [filename, checksum] of recentSolPatchChecksums) {
+      const sql = readFileSync(resolve(repoRoot, "db/patches", filename), "utf8");
+      expect(runner.sha256Sql(sql)).toBe(checksum);
+    }
+
     for (const [filename, checksum] of wave9PatchChecksums) {
       const sql = readFileSync(resolve(repoRoot, "db/patches", filename), "utf8");
       expect(runner.sha256Sql(sql)).toBe(checksum);
@@ -172,6 +216,20 @@ describe("database patch runner", () => {
     expect(runner.parseArgs(["up", "--only", stockNavigationPatchFilename]).only).toBe(
       stockNavigationPatchFilename
     );
+    expect(runner.immutableOnlyPatch(patches, gedAntivirusPatchFilename)).toMatchObject({
+      filename: gedAntivirusPatchFilename,
+      sha256: gedAntivirusPatchChecksum,
+    });
+    expect(runner.parseArgs(["up", "--only", gedAntivirusPatchFilename]).only).toBe(
+      gedAntivirusPatchFilename
+    );
+    for (const [filename, checksum] of recentSolPatchChecksums) {
+      expect(runner.immutableOnlyPatch(patches, filename)).toMatchObject({
+        filename,
+        sha256: checksum,
+      });
+      expect(runner.parseArgs(["up", "--only", filename]).only).toBe(filename);
+    }
     for (const [filename, checksum] of wave9PatchChecksums) {
       expect(runner.immutableOnlyPatch(patches, filename)).toMatchObject({
         filename,
