@@ -41,6 +41,8 @@ const IMMUTABLE_ONLY_PATCHES = Object.freeze({
     "9be8c63bf5c0a1a12ac43c2e684ef7d6ffe454171fd58461ee8c8c25c03004f9",
   "20260811_account_provisioning_schema_repair.sql":
     "e4a994888e3ff0dc38923a128216647f76919d4001efc70e26219742befca116",
+  "20260811_base_unit_drift_repair.sql":
+    "53e6d11928dcd329b80fd493932aa29d2f0f65874b20a2cd1daa4e9a8847eb66",
   "20260811_ged_antivirus_quarantine.sql":
     "7e1e026c8a16be2609f072434d1930afbd248a543d96e3b013e89426fdaa1336",
 });
