@@ -5,6 +5,16 @@
 - Branche : `feature/420-sol17-commercial-reliability`
 - Commits fonctionnels avant documentation : `2112e95`, `c5f332f`
 
+## Preuve de promotion Git
+
+- tête finale de la branche SOL-17 : `72c7cc4316523bdcd10b516485972faee9b15a0b` ;
+- PR vers `dev` : [#424](https://github.com/BigFootLime/erp-crp-backend/pull/424),
+  merge `fdc069c9695ae19c9921c73c93ae96355dc64f3e` ;
+- PR `dev` vers `main` : [#425](https://github.com/BigFootLime/erp-crp-backend/pull/425),
+  merge `f4a1f01b8b822fb397a9c1f3047a5aa12ed8c959` ;
+- la tête SOL-17 est ancêtre de `origin/dev` et `origin/main`, et les arbres de
+  ces deux branches étaient identiques après promotion.
+
 ## Diagnostic et cause racine
 
 Les sources commerciales existaient mais n'avaient ni journal commun des décisions
