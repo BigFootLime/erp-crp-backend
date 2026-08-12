@@ -19,6 +19,7 @@ import {
   roleHasCommandeFournisseurCapability,
 } from "../domain/commande-fournisseur-rbac";
 import { computeCommandeTotaux, computeLigneTotaux, roundMoney } from "../domain/commande-fournisseur-totaux";
+import { repoRecordInitialPromiseEvent } from "../../procurement-reliability/repository/procurement-reliability.repository";
 import type {
   AccuseBodyDTO,
   AddLigneBodyDTO,
@@ -163,11 +164,12 @@ type HeaderLockRow = {
   frais_port_ht: string;
   tva_frais_pct: string;
   updated_at_token: string;
+  date_promesse: string | null;
 };
 
 async function lockHeader(tx: DbQueryer, id: string): Promise<HeaderLockRow> {
   const res = await tx.query<HeaderLockRow>(
-    `SELECT id, code, statut, fournisseur_id, devise, version_document,
+    `SELECT id, code, statut, fournisseur_id, devise, version_document, date_promesse::text,
             frais_port_ht::text, tva_frais_pct::text, updated_at::text AS updated_at_token
        FROM public.commande_fournisseur
       WHERE id = $1::uuid
@@ -1375,12 +1377,24 @@ export async function repoAccuseReception(
         WHERE id = $1::uuid`,
       [id, body.reference_fournisseur, body.date_accuse ?? null, body.date_promesse ?? null, audit.user_id]
     );
+    if (body.date_promesse) {
+      await repoRecordInitialPromiseEvent(client, {
+        orderId: id,
+        previousDate: header.date_promesse,
+        promisedDate: body.date_promesse,
+        actorUserId: audit.user_id,
+      });
+    }
     await insertTransitionRow(client, id, "ENVOYEE", "ACCUSE_RECU", null, audit.user_id);
     await insertAuditLog(client, audit, {
       action: "commandes_fournisseurs.transition.acknowledge",
       entity_type: "commande_fournisseur",
       entity_id: id,
-      details: { reference_fournisseur: body.reference_fournisseur },
+      details: {
+        reference_fournisseur: body.reference_fournisseur,
+        promised_date: body.date_promesse ?? header.date_promesse,
+        promise_versioned: Boolean(body.date_promesse),
+      },
     });
     await client.query("COMMIT");
     return { statut: "ACCUSE_RECU" };

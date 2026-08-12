@@ -1,33 +1,33 @@
 # Répétition de migration isolée — SOL-06
 
 - Statut : **passed**
-- Exécutée : 2026-08-12T15:46:57.637Z
+- Exécutée : 2026-08-12T20:33:32.002Z
 - PostgreSQL : postgres@sha256:16bc17c64a573ef34162af9298258d1aec548232985b33ed7b1eac33ba35c229
 - Base source : cerp_test, 36199447 octets
-- Sauvegarde : 1954319 octets, SHA-256 `97efcd6ac410312fe0ea5d5c61c6cdc4a2a4477e8d3f951e46cb3ae454518eca`
-- Patches avant/après : 140 / 147
+- Sauvegarde : 1954339 octets, SHA-256 `ac0e6f9884f6296c408af4cc0146f322f99501afb80a1e823c637f9dfc4cfd82`
+- Patches avant/après : 140 / 148
 - Intégrité avant/après : passed / passed
 - Rejeu du runner : 0 patch (conforme)
 - Refus métier négatif : SQLSTATE P2606
 - Rollback test-only : passed
 - Restauration vers base neuve : passed
-- Empreinte source/restaurée : `d33b4e782dab383bc42a7a6d32f5b842080fb9e800d2bc27c415598bdfe1f00f` / `d33b4e782dab383bc42a7a6d32f5b842080fb9e800d2bc27c415598bdfe1f00f`
+- Empreinte source/restaurée : `95604517cb6cd91ff263ce0dce1ffeabd091c7fa45e9151c6f7c09761a635f09` / `95604517cb6cd91ff263ce0dce1ffeabd091c7fa45e9151c6f7c09761a635f09`
 
 ## Durées réelles
 
 | Étape | Durée (ms) |
 |---|---:|
-| source_migration | 18274 |
-| source_seed | 189 |
-| backup | 728 |
-| preflight | 162 |
-| integrity_before | 642 |
-| migration | 223 |
-| verify | 132 |
-| replay | 122 |
-| integrity_after | 1342 |
-| negative_gate | 40 |
-| rollback | 72 |
-| restore | 3861 |
+| source_migration | 19319 |
+| source_seed | 221 |
+| backup | 762 |
+| preflight | 147 |
+| integrity_before | 649 |
+| migration | 277 |
+| verify | 146 |
+| replay | 140 |
+| integrity_after | 1491 |
+| negative_gate | 41 |
+| rollback | 110 |
+| restore | 4233 |
 
 La pile PostgreSQL était liée à `127.0.0.1`, stockée en tmpfs et détruite en fin d'exécution. Aucune URL ni donnée de production n'a été utilisée.
