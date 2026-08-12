@@ -41,4 +41,14 @@ describe("BUG-CERP-0015 - filtre GET /stock/articles", () => {
     expect(countSql).toContain("IS NOT TRUE");
     expect(countSql).toContain("a.article_category IN ('fabrique', 'PIECE_TECHNIQUE')");
   });
+
+  it("filtre les articles PF par code client métier", async () => {
+    await repoListArticles({ client_code: "CLI-0042" });
+
+    expect(normalized(queryMock.mock.calls[0]?.[0])).toContain(
+      "LOWER(TRIM(COALESCE(pt.code_client, ''))) = LOWER(TRIM($1))"
+    );
+    expect(queryMock.mock.calls[0]?.[1]).toEqual(["CLI-0042"]);
+    expect(normalized(queryMock.mock.calls[1]?.[0])).toContain("latest_version.plan_reference AS piece_plan_reference");
+  });
 });

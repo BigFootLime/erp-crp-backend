@@ -81,6 +81,7 @@ export const docIdParamSchema = z.object({
 
 export const listArticlesQuerySchema = z.object({
   q: z.string().trim().optional(),
+  client_code: z.string().trim().min(1).max(40).optional(),
   article_type: articleTypeSchema.optional(),
   article_category: articleCategorySchema.optional(),
   status: articleWorkflowStatusSchema.optional(),
@@ -757,10 +758,11 @@ export type StockScopeDTO = z.infer<typeof stockScopeSchema>;
 const historicalPfImportSchema = z.object({
     kind: z.literal("PF"),
     client_number: z.string().trim().min(1).max(40),
-    reference: z.string().trim().min(1).max(120),
+    article_id: uuid.optional(),
+    reference: z.string().trim().min(1).max(120).optional(),
     indice: z.string().trim().min(1).max(40).optional().nullable(),
     family_code: z.string().trim().min(1).max(40).optional(),
-    designation: z.string().trim().min(1).max(400),
+    designation: z.string().trim().min(1).max(400).optional(),
     quantity: z.coerce.number().positive(),
     of_affaire_refs: z.array(z.string().trim().min(1).max(120)).max(4).optional().default([]),
     mp_lot_refs: z.array(z.string().trim().min(1).max(120)).max(4).optional().default([]),
@@ -777,7 +779,14 @@ const historicalMpImportSchema = z.object({
     notes: z.string().trim().min(1).max(2000).optional().nullable(),
   }).strict();
 export const historicalImportSchema = z.object({ body: z.discriminatedUnion("kind", [historicalPfImportSchema, historicalMpImportSchema]) }).superRefine((value, ctx) => {
-  if (value.body.kind !== "MP") return;
+  if (value.body.kind === "PF") {
+    if (!value.body.article_id && !value.body.reference) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["body", "reference"], message: "reference is required when article_id is absent" });
+    if (!value.body.article_id && !value.body.designation) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["body", "designation"], message: "designation is required when article_id is absent" });
+    if (value.body.article_id && (value.body.reference || value.body.indice || value.body.family_code || value.body.designation)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["body", "article_id"], message: "article_id and article creation fields are mutually exclusive" });
+    }
+    return;
+  }
   if (!value.body.article_id && !value.body.article) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["body", "article_id"], message: "article_id or article is required" });
   if (value.body.article_id && value.body.article) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["body", "article"], message: "article_id and article are mutually exclusive" });
 });

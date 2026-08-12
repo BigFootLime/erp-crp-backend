@@ -2722,6 +2722,9 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
       )
     )`);
   }
+  if (filters.client_code) {
+    where.push(`LOWER(TRIM(COALESCE(pt.code_client, ''))) = LOWER(TRIM(${push(filters.client_code)}))`);
+  }
   if (filters.article_type) {
     where.push(
       filters.article_type === "PIECE_TECHNIQUE"
@@ -2805,6 +2808,9 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
       a.piece_technique_id::text AS piece_technique_id,
       pt.code_piece AS piece_code,
       pt.designation AS piece_designation,
+      pt.code_client AS piece_client_code,
+      latest_version.plan_reference AS piece_plan_reference,
+      latest_version.indice AS piece_indice,
       a.unite,
       a.lot_tracking,
       a.is_sold,
@@ -2846,6 +2852,13 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
       ORDER BY v.date_application DESC NULLS LAST, v.created_at DESC
       LIMIT 1
     ) av ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT v.indice, v.plan_reference
+      FROM public.piece_technique_versions v
+      WHERE v.piece_technique_id = a.piece_technique_id
+      ORDER BY v.is_current DESC, v.version_interne DESC, v.created_at DESC
+      LIMIT 1
+    ) latest_version ON TRUE
     LEFT JOIN (
       SELECT
         article_id::text AS article_id,
@@ -5564,12 +5577,35 @@ export async function repoCreateHistoricalImport(body: HistoricalImportBodyDTO, 
       if (a.rows[0]?.category !== "matiere") throw new HttpError(422, "MP_ARTICLE_REQUIRED", "L'import MP requiert un article matière première.");
       shelf = a.rows[0]?.nuance?.trim() || "SANS-NUANCE";
     } else {
-      const ptId = await ensureHistoricalPieceTechniqueTx(client, { clientNumber: body.client_number, reference: body.reference, indice: body.indice ?? null, designation: body.designation }, audit);
-      const existing = await client.query<{ id: string }>(`SELECT id::text AS id FROM public.articles WHERE piece_technique_id=$1::uuid LIMIT 1 FOR UPDATE`, [ptId]);
-      if (existing.rows[0]?.id) articleId = existing.rows[0].id;
-      else {
-        const family = body.family_code ?? defaultFamilyCodeForCategory("fabrique");
-        articleId = (await repoCreateArticleTx(client, { designation: body.designation, article_type: "PIECE_TECHNIQUE", article_category: "fabrique", article_categories: ["piece_finie_fabriquee"], family_code: family, piece_technique_id: ptId, stock_managed: true, lot_tracking: true, is_sold: true, is_active: true, status: "VALIDE" }, audit)).id;
+      if (body.article_id) {
+        const selected = await client.query<{ id: string; category: string; is_active: boolean; piece_technique_id: string | null; client_code: string | null }>(
+          `SELECT a.id::text AS id, ${normalizedArticleCategorySql("a.article_category")} AS category,
+                  a.is_active, a.piece_technique_id::text AS piece_technique_id, pt.code_client AS client_code
+           FROM public.articles a
+           LEFT JOIN public.pieces_techniques pt ON pt.id = a.piece_technique_id
+           WHERE a.id = $1::uuid
+           FOR UPDATE OF a`,
+          [body.article_id]
+        );
+        const article = selected.rows[0];
+        if (!article) throw new HttpError(422, "PF_ARTICLE_NOT_FOUND", "L'article PF sélectionné est introuvable.");
+        if (article.category !== "fabrique" || !article.piece_technique_id) {
+          throw new HttpError(422, "PF_ARTICLE_REQUIRED", "La reprise PF requiert un article fabriqué relié à une pièce technique.");
+        }
+        if (!article.is_active) throw new HttpError(422, "PF_ARTICLE_INACTIVE", "L'article PF sélectionné est inactif.");
+        if ((article.client_code ?? "").trim().toLowerCase() !== body.client_number.trim().toLowerCase()) {
+          throw new HttpError(422, "PF_ARTICLE_CLIENT_MISMATCH", "L'article PF sélectionné n'appartient pas au client indiqué.");
+        }
+        articleId = article.id;
+      } else {
+        if (!body.reference || !body.designation) throw new HttpError(400, "PF_ARTICLE_DETAILS_REQUIRED", "Référence et désignation PF requises.");
+        const ptId = await ensureHistoricalPieceTechniqueTx(client, { clientNumber: body.client_number, reference: body.reference, indice: body.indice ?? null, designation: body.designation }, audit);
+        const existing = await client.query<{ id: string }>(`SELECT id::text AS id FROM public.articles WHERE piece_technique_id=$1::uuid LIMIT 1 FOR UPDATE`, [ptId]);
+        if (existing.rows[0]?.id) articleId = existing.rows[0].id;
+        else {
+          const family = body.family_code ?? defaultFamilyCodeForCategory("fabrique");
+          articleId = (await repoCreateArticleTx(client, { designation: body.designation, article_type: "PIECE_TECHNIQUE", article_category: "fabrique", article_categories: ["piece_finie_fabriquee"], family_code: family, piece_technique_id: ptId, stock_managed: true, lot_tracking: true, is_sold: true, is_active: true, status: "VALIDE" }, audit)).id;
+        }
       }
       shelf = body.client_number.trim();
     }
