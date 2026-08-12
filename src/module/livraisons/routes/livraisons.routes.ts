@@ -21,10 +21,13 @@ import {
   getLivraison,
   getLivraisonPdfAvailability,
   getLivraisonShipmentPreview,
+  getLivraisonPreparation,
   getLivraisonDocumentFile,
   getLivraisonPdf,
   listLivraisons,
   shipLivraison,
+  confirmLivraisonPreparation,
+  resetLivraisonPreparation,
   updateLivraison,
   updateLivraisonLine,
   updateLivraisonStatus,
@@ -103,6 +106,22 @@ router.delete(
   "/:id/lignes/:lineId/allocations/:allocationId",
   requireLivraisonCapability("allocate"),
   deleteLivraisonLineAllocation
+)
+
+router.get(
+  "/:id/preparation",
+  requireLivraisonCapability("read"),
+  getLivraisonPreparation
+)
+router.post(
+  "/:id/preparation/allocations/:allocationId/confirm",
+  requireLivraisonCapability("prepare"),
+  confirmLivraisonPreparation
+)
+router.post(
+  "/:id/preparation/allocations/:allocationId/reset",
+  requireLivraisonCapability("prepare"),
+  resetLivraisonPreparation
 )
 
 router.get(

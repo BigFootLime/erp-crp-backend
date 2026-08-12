@@ -82,6 +82,7 @@ type AllocationRow = {
   qty_on_hand: number | null
   qty_reserved: number | null
   qty_depreciated: number | null
+  pick_confirmed: boolean
 }
 
 type ShipmentSnapshot = {
@@ -174,13 +175,23 @@ async function loadShipmentSnapshot(
         allocation.unite,
         level.qty_total::float8 AS qty_on_hand,
         level.qty_reserved::float8 AS qty_reserved,
-        level.qty_depreciated::float8 AS qty_depreciated
+        level.qty_depreciated::float8 AS qty_depreciated,
+        COALESCE(latest_pick.event_type = 'PICK_CONFIRMED', false) AS pick_confirmed
       FROM public.bon_livraison_ligne_allocations allocation
       JOIN public.bon_livraison_ligne line
         ON line.id = allocation.bon_livraison_ligne_id
       LEFT JOIN public.lots lot ON lot.id = allocation.lot_id
       LEFT JOIN public.stock_levels level ON level.id = allocation.stock_level_id
       LEFT JOIN public.stock_reservations reservation ON reservation.id = allocation.reservation_id
+      LEFT JOIN LATERAL (
+        SELECT event.event_type
+        FROM public.bon_livraison_event_log event
+        WHERE event.bon_livraison_id = line.bon_livraison_id
+          AND event.event_type IN ('PICK_CONFIRMED', 'PICK_RESET')
+          AND event.new_values->>'allocation_id' = allocation.id::text
+        ORDER BY event.created_at DESC, event.id DESC
+        LIMIT 1
+      ) latest_pick ON TRUE
       WHERE line.bon_livraison_id = $1::uuid
       ORDER BY line.ordre, allocation.id
       ${forUpdate ? "FOR UPDATE OF allocation" : ""}
@@ -252,7 +263,8 @@ function buildGroups(rows: AllocationRow[]): AllocationGroup[] {
 function buildPreview(
   snapshot: ShipmentSnapshot,
   qualityRelease: DeliveryQualityRelease | null = null,
-  enforceQuality = false
+  enforceQuality = false,
+  enforcePicking = false
 ): BonLivraisonShipmentPreview {
   const blockers: ShipmentPreviewBlocker[] = []
   const byLine = new Map<string, AllocationRow[]>()
@@ -387,6 +399,14 @@ function buildPreview(
         allocation_id: allocation.id,
       })
     }
+    if (enforcePicking && !allocation.pick_confirmed) {
+      blockers.push({
+        code: "PREPARATION_CONFIRMATION_REQUIRED",
+        message: "Le prélèvement physique de cette allocation doit être validé avant expédition.",
+        allocation_id: allocation.id,
+        line_id: allocation.bon_livraison_ligne_id,
+      })
+    }
 
     const available = deliveryQuantityAvailable({
       qty_on_hand: Number(allocation.qty_on_hand ?? 0),
@@ -436,6 +456,9 @@ function buildPreview(
       reservation_id: allocation.reservation_id,
       quantity: allocation.quantity,
       quantity_available: allocation.quantity_available,
+      pick_confirmed: snapshot.allocations.find(
+        (row) => row.id === allocation.allocation_id
+      )?.pick_confirmed ?? false,
     })),
     blockers: blockers.map((blocker) => blocker.code).sort(),
     document_pack: snapshot.document_pack,
@@ -583,7 +606,7 @@ export async function repoGetLivraisonShipmentPreview(
   const snapshot = await loadShipmentSnapshot(pool, bonLivraisonId)
   if (!snapshot) return null
   const qualityRelease = await repoGetDeliveryQualityRelease(bonLivraisonId)
-  return buildPreview(snapshot, qualityRelease, true)
+  return buildPreview(snapshot, qualityRelease, true, true)
 }
 
 export async function prepareLivraisonInTransaction(
@@ -948,7 +971,7 @@ export async function repoShipLivraison(
     const snapshot = await loadShipmentSnapshot(client, bonLivraisonId, true)
     if (!snapshot) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
     const qualityRelease = await repoGetDeliveryQualityRelease(bonLivraisonId, client)
-    const preview = buildPreview(snapshot, qualityRelease, true)
+    const preview = buildPreview(snapshot, qualityRelease, true, true)
     if (
       !shipmentConfirmationMatches({
         expectedVersion: body.expected_version,

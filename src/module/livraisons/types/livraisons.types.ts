@@ -296,3 +296,53 @@ export type BonLivraisonShipResult = {
   billing_event: "DELIVERY.SHIPPED"
   invoice_created: false
 }
+
+export type LivraisonPreparationInputMethod = "MANUAL" | "SCANNER"
+
+export type LivraisonPreparationConfirmation = {
+  event_id: string
+  input_method: LivraisonPreparationInputMethod
+  confirmed_at: string
+  confirmed_by: UserLite | null
+}
+
+export type LivraisonPreparationTask = {
+  allocation_id: string
+  line_id: string
+  line_order: number
+  designation: string
+  code_piece: string | null
+  article_id: string
+  article_code: string | null
+  article_designation: string | null
+  lot_id: string | null
+  lot_code: string | null
+  lot_status: string | null
+  stock_trace_code: string | null
+  magasin_code: string | null
+  emplacement_code: string | null
+  quantity: number
+  unit: string | null
+  reservation_status: string | null
+  affaire_refs: string[]
+  mp_lot_refs: string[]
+  traitement_lot_refs: string[]
+  confirmation: LivraisonPreparationConfirmation | null
+  can_confirm: boolean
+}
+
+export type BonLivraisonPreparation = {
+  bon_livraison_id: string
+  numero: string
+  status: BonLivraisonStatut
+  row_version: number
+  state: "NOT_READY" | "TO_PREPARE" | "IN_PROGRESS" | "COMPLETE" | "BLOCKED"
+  can_ship: boolean
+  progress: {
+    total: number
+    confirmed: number
+    remaining: number
+    percent: number
+  }
+  tasks: LivraisonPreparationTask[]
+}
