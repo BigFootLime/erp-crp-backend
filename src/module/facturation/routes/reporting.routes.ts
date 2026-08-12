@@ -14,8 +14,14 @@ import {
   reportingReceivables,
 } from "../controllers/reporting-v2.controller";
 import { requireFinanceCapability } from "../middlewares/finance-authorization.middleware";
+import commercialReliabilityRoutes from "../../commercial-reliability/routes/commercial-reliability.routes";
 
 const router = Router();
+
+// SOL-17 — projection commerciale transverse et commandes sensibles auditables.
+// Montée sous /reporting pour réutiliser la frontière module existante, avec RBAC
+// d'action supplémentaire sur chaque mutation.
+router.use("/commercial/reliability", commercialReliabilityRoutes);
 
 // --- Surface historique (#227), conservée pour ses consommateurs ---------------
 // Contrat inchangé ; les agrégats sous-jacents ont été corrigés par #275.

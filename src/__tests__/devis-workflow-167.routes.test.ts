@@ -36,6 +36,14 @@ vi.mock("../module/commande-client/repository/commande-client.repository", async
   return { ...actual, repoCreateCommande: commandeEngine.repoCreateCommande };
 });
 
+const commercialReliability = vi.hoisted(() => ({
+  assertDiscountApproved: vi.fn(),
+}));
+vi.mock("../module/commercial-reliability/repository/commercial-reliability.repository", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../module/commercial-reliability/repository/commercial-reliability.repository")>();
+  return { ...actual, assertQuoteDiscountApprovedForSubmission: commercialReliability.assertDiscountApproved };
+});
+
 // RBAC réel testé : le rôle vient de l'en-tête `x-test-role` (défaut : administrateur).
 vi.mock("../module/auth/middlewares/auth.middleware", () => ({
   authenticateToken: (
@@ -157,6 +165,8 @@ beforeEach(() => {
   mocks.clientQuery.mockImplementation(async (sql: unknown, params?: unknown[]) => dispatch(sql, params));
   commandeEngine.repoCreateCommande.mockReset();
   commandeEngine.repoCreateCommande.mockResolvedValue({ id: 55 });
+  commercialReliability.assertDiscountApproved.mockReset();
+  commercialReliability.assertDiscountApproved.mockResolvedValue(undefined);
 });
 
 const plainDraftLine = (over: Record<string, unknown> = {}) => ({
@@ -180,6 +190,7 @@ const draftCurrent = (over: Record<string, unknown> = {}) => ({
   numero: "DEV-2026-0007",
   statut: "BROUILLON",
   remise_globale: 0,
+  has_discount: false,
   updated_at: "2026-07-22T08:00:00+00:00",
   has_children: false,
   ...over,
@@ -270,6 +281,29 @@ describe("#167 — automate de statuts appliqué au write-path", () => {
     const auditCall = mocks.clientQuery.mock.calls.find((c) => /erp_audit_logs/i.test(String(c[0])));
     expect(auditCall).toBeTruthy();
     expect(String((auditCall?.[1] as unknown[])?.[2])).toBe("devis.statut_transition");
+  });
+
+  it("refuse ENVOYE → REFUSE sans motif de perte structuré", async () => {
+    state.updateCurrent = draftCurrent({ statut: "ENVOYE" });
+    const res = await patchDevis({ statut: "REFUSE" });
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe("STRUCTURED_LOSS_REASON_REQUIRED");
+    expect(mocks.clientQuery.mock.calls.some(([sql]) => /UPDATE devis\s+SET/i.test(String(sql)))).toBe(false);
+  });
+
+  it("soumet un devis remisé uniquement après validation de sa version exacte", async () => {
+    state.updateCurrent = draftCurrent({ has_discount: true, remise_globale: 5 });
+    const accepted = await patchDevis({ statut: "ENVOYE" });
+    expect(accepted.status).toBe(200);
+    expect(commercialReliability.assertDiscountApproved).toHaveBeenCalledWith(expect.anything(), 7);
+
+    commercialReliability.assertDiscountApproved.mockRejectedValueOnce(
+      new HttpError(409, "QUOTE_DISCOUNT_APPROVAL_REQUIRED", "Validation requise"),
+    );
+    state.updateCurrent = draftCurrent({ has_discount: true, remise_globale: 5 });
+    const rejected = await patchDevis({ statut: "ENVOYE" });
+    expect(rejected.status).toBe(409);
+    expect(rejected.body.code).toBe("QUOTE_DISCOUNT_APPROVAL_REQUIRED");
   });
 
   it("ENVOYE → ACCEPTE (statut seul) passe même sur devis engagé", async () => {

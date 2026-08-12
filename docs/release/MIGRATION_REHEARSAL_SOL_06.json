@@ -1,6 +1,6 @@
 {
   "status": "passed",
-  "started_at": "2026-08-11T12:50:06.203Z",
+  "started_at": "2026-08-12T15:46:29.303Z",
   "postgres_image": "postgres@sha256:16bc17c64a573ef34162af9298258d1aec548232985b33ed7b1eac33ba35c229",
   "isolated_target": {
     "host": "127.0.0.1",
@@ -9,23 +9,23 @@
     "storage": "tmpfs"
   },
   "durations": {
-    "source_migration": 19039,
-    "source_seed": 197,
-    "backup": 744,
-    "preflight": 174,
-    "integrity_before": 609,
-    "migration": 219,
-    "verify": 123,
-    "replay": 164,
-    "integrity_after": 1364,
-    "negative_gate": 41,
-    "rollback": 23,
-    "restore": 4160
+    "source_migration": 18274,
+    "source_seed": 189,
+    "backup": 728,
+    "preflight": 162,
+    "integrity_before": 642,
+    "migration": 223,
+    "verify": 132,
+    "replay": 122,
+    "integrity_after": 1342,
+    "negative_gate": 40,
+    "rollback": 72,
+    "restore": 3861
   },
   "source": {
     "status": "passed",
-    "checked_at": "2026-08-11T12:50:28.169Z",
-    "duration_ms": 126,
+    "checked_at": "2026-08-12T15:46:51.043Z",
+    "duration_ms": 93,
     "identity": {
       "database": "cerp_test",
       "database_user": "cerp_e2e",
@@ -33,10 +33,10 @@
       "database_bytes": "36199447"
     },
     "backup": {
-      "file": "C:\\Users\\KEENAN~1\\AppData\\Local\\Temp\\cerp-sol06-7Y3yyZ\\cerp-test-before-sol06.dump",
-      "bytes": 1954302,
-      "sha256": "cfb03d3edfacf61fc8bbf63c218aee069a443c38a094e1c766b8ba9cd1d73d58",
-      "free_bytes": 437792104448
+      "file": "C:\\Users\\KEENAN~1\\AppData\\Local\\Temp\\cerp-sol06-WZ1gmU\\cerp-test-before-sol06.dump",
+      "bytes": 1954319,
+      "sha256": "97efcd6ac410312fe0ea5d5c61c6cdc4a2a4477e8d3f951e46cb3ae454518eca",
+      "free_bytes": 427947581440
     },
     "ledger": {
       "applied": 140,
@@ -45,7 +45,9 @@
         "20260811_account_provisioning_schema_repair.sql",
         "20260811_base_unit_drift_repair.sql",
         "20260811_ged_antivirus_quarantine.sql",
-        "20260811_production_readiness_center.sql"
+        "20260811_margin_traceability_0002.sql",
+        "20260811_production_readiness_center.sql",
+        "20260812_commercial_reliability_sol17.sql"
       ],
       "checksum_mismatches": [],
       "unknown_applied": []
@@ -86,7 +88,7 @@
       "articles_achat": "0",
       "articles_achat_families": "0",
       "articles_fabrique": "1",
-      "articles_fabrique_families": "1",
+      "articles_fabrique_families": "2",
       "articles_matiere": "0",
       "articles_matiere_families": "7",
       "articles_traitement": "0",
@@ -426,12 +428,14 @@
         "20260811_account_provisioning_schema_repair.sql",
         "20260811_base_unit_drift_repair.sql",
         "20260811_ged_antivirus_quarantine.sql",
-        "20260811_production_readiness_center.sql"
+        "20260811_margin_traceability_0002.sql",
+        "20260811_production_readiness_center.sql",
+        "20260812_commercial_reliability_sol17.sql"
       ],
       "checksum_mismatches": [],
       "unknown_applied": []
     },
-    "fingerprint": "ed3d10df6ba7c504198adf1892a5380425537598d84751db416355285314c9b3"
+    "fingerprint": "d33b4e782dab383bc42a7a6d32f5b842080fb9e800d2bc27c415598bdfe1f00f"
   },
   "replay": {
     "applied_zero": true,
@@ -439,8 +443,8 @@
   },
   "after": {
     "status": "passed",
-    "checked_at": "2026-08-11T12:50:30.653Z",
-    "duration_ms": 1349,
+    "checked_at": "2026-08-12T15:46:53.509Z",
+    "duration_ms": 1328,
     "table_counts": {
       "admin_account_invitations": "0",
       "admin_user_provisioning_migration_state": "12",
@@ -474,7 +478,7 @@
       "articles_achat": "0",
       "articles_achat_families": "0",
       "articles_fabrique": "1",
-      "articles_fabrique_families": "1",
+      "articles_fabrique_families": "2",
       "articles_matiere": "0",
       "articles_matiere_families": "7",
       "articles_traitement": "0",
@@ -497,7 +501,7 @@
       "centres_frais": "1",
       "cerp_patch_20260804_stock_units": "3",
       "cerp_patch_20260811_base_unit_repair": "1",
-      "cerp_schema_migrations": "145",
+      "cerp_schema_migrations": "147",
       "chat_conversation_participants": "0",
       "chat_conversations": "0",
       "chat_messages": "0",
@@ -528,6 +532,9 @@
       "commande_ligne": "0",
       "commande_ligne_affaire_allocation": "0",
       "commande_to_affaire": "0",
+      "commercial_command_receipts": "0",
+      "commercial_order_cancellations": "0",
+      "commercial_quote_events": "0",
       "contacts": "1",
       "currencies": "4",
       "dashboard_usage_daily": "0",
@@ -808,7 +815,7 @@
       "users": "7",
       "warehouses": "4"
     },
-    "table_count": 365,
+    "table_count": 368,
     "unvalidated_constraints": [
       {
         "table_name": "avoir",
@@ -880,7 +887,7 @@
         "groups": 0
       }
     ],
-    "foreign_key_count": 1058,
+    "foreign_key_count": 1064,
     "orphans": [],
     "readiness": [
       {
@@ -889,10 +896,10 @@
         "ready": true,
         "definition": "Calendrier de capacité actif avec jours et horaires explicites.",
         "unit": "calendriers",
-        "period_start": "2026-08-10T22:00:00.000Z",
+        "period_start": "2026-08-11T22:00:00.000Z",
         "period_end": null,
         "source": "public.programmation_calendars",
-        "freshness_at": "2026-08-11T12:50:29.303Z",
+        "freshness_at": "2026-08-12T15:46:52.182Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "active_calendars": 1
@@ -906,10 +913,10 @@
         "ready": true,
         "definition": "Chaque compte actif possède un rôle principal issu du catalogue actif.",
         "unit": "comptes",
-        "period_start": "2026-08-10T22:00:00.000Z",
+        "period_start": "2026-08-11T22:00:00.000Z",
         "period_end": null,
         "source": "public.app_roles + public.user_role_assignments",
-        "freshness_at": "2026-08-11T12:50:29.303Z",
+        "freshness_at": "2026-08-12T15:46:52.182Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "active_roles": 33,
@@ -924,10 +931,10 @@
         "ready": true,
         "definition": "Les statuts canoniques OF et stock sont présents et leur contrainte est validée.",
         "unit": "contrats",
-        "period_start": "2026-08-10T22:00:00.000Z",
+        "period_start": "2026-08-11T22:00:00.000Z",
         "period_end": null,
         "source": "pg_catalog.pg_enum + pg_catalog.pg_constraint",
-        "freshness_at": "2026-08-11T12:50:29.303Z",
+        "freshness_at": "2026-08-12T15:46:52.182Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "of_statuses": [
@@ -950,10 +957,10 @@
         "ready": true,
         "definition": "Calendrier de capacité actif avec jours et horaires explicites.",
         "unit": "calendriers",
-        "period_start": "2026-08-10T22:00:00.000Z",
+        "period_start": "2026-08-11T22:00:00.000Z",
         "period_end": null,
         "source": "public.programmation_calendars",
-        "freshness_at": "2026-08-11T12:50:29.303Z",
+        "freshness_at": "2026-08-12T15:46:52.182Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "active_calendars": 1
@@ -967,10 +974,10 @@
         "ready": true,
         "definition": "Chaque compte actif possède un rôle principal issu du catalogue actif.",
         "unit": "comptes",
-        "period_start": "2026-08-10T22:00:00.000Z",
+        "period_start": "2026-08-11T22:00:00.000Z",
         "period_end": null,
         "source": "public.app_roles + public.user_role_assignments",
-        "freshness_at": "2026-08-11T12:50:29.303Z",
+        "freshness_at": "2026-08-12T15:46:52.182Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "active_roles": 33,
@@ -985,10 +992,10 @@
         "ready": true,
         "definition": "Unités canoniques utilisables sans conversion implicite.",
         "unit": "unités",
-        "period_start": "2026-08-10T22:00:00.000Z",
+        "period_start": "2026-08-11T22:00:00.000Z",
         "period_end": null,
         "source": "public.units",
-        "freshness_at": "2026-08-11T12:50:29.303Z",
+        "freshness_at": "2026-08-12T15:46:52.182Z",
         "reliability": "VERIFIED",
         "actual_value": [
           "kg",
@@ -1005,10 +1012,10 @@
         "ready": true,
         "definition": "Chaque centre de frais actif possède un taux horaire versionné applicable et sourcé.",
         "unit": "EUR/heure",
-        "period_start": "2026-08-10T22:00:00.000Z",
+        "period_start": "2026-08-11T22:00:00.000Z",
         "period_end": null,
         "source": "public.centres_frais + public.production_cost_center_rates",
-        "freshness_at": "2026-08-11T12:50:29.303Z",
+        "freshness_at": "2026-08-12T15:46:52.182Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "active_cost_centers": 1,
@@ -1023,10 +1030,10 @@
         "ready": true,
         "definition": "Les statuts canoniques OF et stock sont présents et leur contrainte est validée.",
         "unit": "contrats",
-        "period_start": "2026-08-10T22:00:00.000Z",
+        "period_start": "2026-08-11T22:00:00.000Z",
         "period_end": null,
         "source": "pg_catalog.pg_enum + pg_catalog.pg_constraint",
-        "freshness_at": "2026-08-11T12:50:29.303Z",
+        "freshness_at": "2026-08-12T15:46:52.182Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "of_statuses": [
@@ -1049,10 +1056,10 @@
         "ready": true,
         "definition": "Chaque compte actif possède un rôle principal issu du catalogue actif.",
         "unit": "comptes",
-        "period_start": "2026-08-10T22:00:00.000Z",
+        "period_start": "2026-08-11T22:00:00.000Z",
         "period_end": null,
         "source": "public.app_roles + public.user_role_assignments",
-        "freshness_at": "2026-08-11T12:50:29.303Z",
+        "freshness_at": "2026-08-12T15:46:52.182Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "active_roles": 33,
@@ -1067,10 +1074,10 @@
         "ready": true,
         "definition": "Au moins un magasin et un emplacement actifs sont reliés au référentiel warehouse/location.",
         "unit": "emplacements",
-        "period_start": "2026-08-10T22:00:00.000Z",
+        "period_start": "2026-08-11T22:00:00.000Z",
         "period_end": null,
         "source": "public.warehouses + locations + magasins + emplacements",
-        "freshness_at": "2026-08-11T12:50:29.303Z",
+        "freshness_at": "2026-08-12T15:46:52.182Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "configured_locations": 1,
@@ -1086,10 +1093,10 @@
         "ready": true,
         "definition": "Unités canoniques utilisables sans conversion implicite.",
         "unit": "unités",
-        "period_start": "2026-08-10T22:00:00.000Z",
+        "period_start": "2026-08-11T22:00:00.000Z",
         "period_end": null,
         "source": "public.units",
-        "freshness_at": "2026-08-11T12:50:29.303Z",
+        "freshness_at": "2026-08-12T15:46:52.182Z",
         "reliability": "VERIFIED",
         "actual_value": [
           "kg",
@@ -1124,10 +1131,10 @@
         "ready": true,
         "definition": "Les statuts canoniques OF et stock sont présents et leur contrainte est validée.",
         "unit": "contrats",
-        "period_start": "2026-08-10T22:00:00.000Z",
+        "period_start": "2026-08-11T22:00:00.000Z",
         "period_end": null,
         "source": "pg_catalog.pg_enum + pg_catalog.pg_constraint",
-        "freshness_at": "2026-08-11T12:50:29.303Z",
+        "freshness_at": "2026-08-12T15:46:52.182Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "of_statuses": [
@@ -1146,12 +1153,12 @@
       }
     ],
     "ledger": {
-      "applied": 145,
+      "applied": 147,
       "pending": [],
       "checksum_mismatches": [],
       "unknown_applied": []
     },
-    "fingerprint": "7668d0ea59b45b4d6e086a7c9a0b97e4ffb15c2c7596e1e53c9b896609ea9740"
+    "fingerprint": "dea7aa51eb37205fc5be7dc0008dd578d6fa9f9f9b1854500524eb378534e746"
   },
   "negative_gate": {
     "status": "passed",
@@ -1180,11 +1187,13 @@
     "status": "passed",
     "function_removed": true,
     "function_v2_removed": true,
+    "margin_traceability_removed": true,
+    "commercial_reliability_removed": true,
     "trigger_removed": true
   },
   "restore": {
     "status": "passed",
-    "fingerprint": "ed3d10df6ba7c504198adf1892a5380425537598d84751db416355285314c9b3",
+    "fingerprint": "d33b4e782dab383bc42a7a6d32f5b842080fb9e800d2bc27c415598bdfe1f00f",
     "table_counts_equal": true,
     "ledger": {
       "applied": 140,
@@ -1193,11 +1202,13 @@
         "20260811_account_provisioning_schema_repair.sql",
         "20260811_base_unit_drift_repair.sql",
         "20260811_ged_antivirus_quarantine.sql",
-        "20260811_production_readiness_center.sql"
+        "20260811_margin_traceability_0002.sql",
+        "20260811_production_readiness_center.sql",
+        "20260812_commercial_reliability_sol17.sql"
       ],
       "checksum_mismatches": [],
       "unknown_applied": []
     }
   },
-  "completed_at": "2026-08-11T12:50:35.056Z"
+  "completed_at": "2026-08-12T15:46:57.637Z"
 }
