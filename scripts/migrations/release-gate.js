@@ -12,6 +12,7 @@ const SUPPORT_DIR = path.join(PATCH_DIR, "support");
 const SOL06_PATCH = "20260810_system_reference_data_readiness.sql";
 const PRODUCTION_READINESS_PATCH = "20260811_production_readiness_center.sql";
 const MARGIN_TRACEABILITY_PATCH = "20260811_margin_traceability_0002.sql";
+const COMMERCIAL_RELIABILITY_PATCH = "20260812_commercial_reliability_sol17.sql";
 const SOL06_SUPPORT = path.join(SUPPORT_DIR, "20260810_system_reference_data_readiness");
 const POSTGRES_IMAGE = "postgres@sha256:16bc17c64a573ef34162af9298258d1aec548232985b33ed7b1eac33ba35c229";
 const DEFAULT_REPORT_DIR = path.join(ROOT, "docs", "release");
@@ -442,6 +443,14 @@ async function proveRollback(databaseUrl) {
   await client.connect();
   try {
     await client.query("SET cerp.migration_rehearsal = 'on'");
+    const commercialReliabilityRollback = patchSupportSql(COMMERCIAL_RELIABILITY_PATCH, "rollback");
+    const commercialReliabilityObject = await client.query(
+      "SELECT to_regclass('public.commercial_quote_events') IS NOT NULL AS present"
+    );
+    if (commercialReliabilityRollback && commercialReliabilityObject.rows[0].present) {
+      await client.query("SET cerp.allow_sol17_rollback = 'SOL-17'");
+      await runSqlFile(client, commercialReliabilityRollback);
+    }
     const marginTraceabilityRollback = patchSupportSql(MARGIN_TRACEABILITY_PATCH, "rollback");
     const marginEvidenceColumn = await client.query(
       `SELECT EXISTS (
@@ -469,10 +478,16 @@ async function proveRollback(databaseUrl) {
                 WHERE table_schema='public' AND table_name='margin_input_versions'
                   AND column_name='evidence_contract_version'
               ) AS margin_traceability_removed,
+              to_regclass('public.commercial_quote_events') IS NULL
+                AND to_regclass('public.commercial_order_cancellations') IS NULL
+                AND to_regclass('public.commercial_command_receipts') IS NULL
+                AND to_regprocedure('public.fn_commercial_evidence_append_only()') IS NULL
+                AS commercial_reliability_removed,
               NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname='trg_stock_reference_readiness_2606') AS trigger_removed`
     );
     if (!objects.rows[0].function_removed || !objects.rows[0].function_v2_removed
-        || !objects.rows[0].margin_traceability_removed || !objects.rows[0].trigger_removed) {
+        || !objects.rows[0].margin_traceability_removed || !objects.rows[0].commercial_reliability_removed
+        || !objects.rows[0].trigger_removed) {
       fail("rollback left SOL-06 objects behind");
     }
     return { status: "passed", ...objects.rows[0] };
@@ -675,6 +690,7 @@ if (require.main === module) {
 module.exports = {
   SOL06_PATCH,
   MARGIN_TRACEABILITY_PATCH,
+  COMMERCIAL_RELIABILITY_PATCH,
   expectedRehearsalPatches,
   inventory,
   inventoryMarkdown,

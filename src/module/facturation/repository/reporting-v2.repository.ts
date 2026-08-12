@@ -102,12 +102,28 @@ export type QuotesSummary = {
 };
 
 function quoteScope(p: Params, ctx: ReportingContext, bounded: boolean): string[] {
-  const where: string[] = [`d.statut <> ALL(${p.push(["BROUILLON", "ANNULE"])}::text[])`];
+  const where: string[] = [
+    `d.statut <> ALL(${p.push(["BROUILLON", "ANNULE"])}::text[])`,
+    `NOT EXISTS (
+      SELECT 1
+      FROM devis newer_quote
+      WHERE COALESCE(newer_quote.root_devis_id,newer_quote.id)=COALESCE(d.root_devis_id,d.id)
+        AND (newer_quote.version_number>d.version_number
+          OR (newer_quote.version_number=d.version_number AND newer_quote.id>d.id))
+    )`,
+  ];
   if (bounded) {
     where.push(`d.date_creation::date >= ${p.push(ctx.period.from)}::date`);
     where.push(`d.date_creation::date <= ${p.push(ctx.period.to)}::date`);
   }
   if (ctx.clientId) where.push(`d.client_id = ${p.push(ctx.clientId)}`);
+  if (ctx.currency) {
+    where.push(`EXISTS (
+      SELECT 1 FROM clients quote_client
+      WHERE quote_client.client_id=d.client_id
+        AND UPPER(COALESCE(NULLIF(BTRIM(quote_client.devise), ''), 'EUR')) = ${p.push(ctx.currency)}
+    )`);
+  }
   if (ctx.commercialId) where.push(`d.user_id = ${p.push(ctx.commercialId)}`);
   return where;
 }
@@ -264,12 +280,25 @@ export type OrdersSummary = {
 };
 
 function orderScope(p: Params, ctx: ReportingContext, bounded: boolean, alias = "cc"): string[] {
-  const where: string[] = [];
+  const where: string[] = [
+    `COALESCE((
+      SELECT ch.nouveau_statut FROM commande_historique ch
+      WHERE ch.commande_id=${alias}.id
+      ORDER BY ch.date_action DESC,ch.id DESC LIMIT 1
+    ),'BROUILLON') <> 'ANNULE'`,
+  ];
   if (bounded) {
     where.push(`${alias}.date_commande >= ${p.push(ctx.period.from)}::date`);
     where.push(`${alias}.date_commande <= ${p.push(ctx.period.to)}::date`);
   }
   if (ctx.clientId) where.push(`${alias}.client_id = ${p.push(ctx.clientId)}`);
+  if (ctx.currency) {
+    where.push(`EXISTS (
+      SELECT 1 FROM clients order_client
+      WHERE order_client.client_id=${alias}.client_id
+        AND UPPER(COALESCE(NULLIF(BTRIM(order_client.devise), ''), 'EUR')) = ${p.push(ctx.currency)}
+    )`);
+  }
   if (ctx.orderType) where.push(`COALESCE(${alias}.order_type, 'FERME') = ${p.push(ctx.orderType)}`);
   return where;
 }
@@ -1021,7 +1050,7 @@ export async function repoClients(ctx: ReportingContext): Promise<ClientsSummary
       LEFT JOIN settled  s ON s.facture_id = lo.id
       LEFT JOIN credited c ON c.facture_id = lo.id
     ),
-    per_client AS (
+    document_totals AS (
       SELECT client_id,
              SUM(net_ht)::numeric(18,2) AS net_ht,
              SUM(net_ttc)::numeric(18,2) AS net_ttc,
@@ -1033,6 +1062,20 @@ export async function repoClients(ctx: ReportingContext): Promise<ClientsSummary
         SELECT client_id, -total_ht, -total_ttc, 0, 1 FROM ledger_avoir
       ) u
       GROUP BY client_id
+    ),
+    financial_clients AS (
+      SELECT client_id FROM document_totals
+      UNION
+      SELECT client_id FROM open_balances WHERE balance_ttc > 0
+    ),
+    per_client AS (
+      SELECT fc.client_id,
+             COALESCE(dt.net_ht,0)::numeric(18,2) AS net_ht,
+             COALESCE(dt.net_ttc,0)::numeric(18,2) AS net_ttc,
+             COALESCE(dt.invoice_count,0)::int AS invoice_count,
+             COALESCE(dt.credit_count,0)::int AS credit_count
+      FROM financial_clients fc
+      LEFT JOIN document_totals dt ON dt.client_id=fc.client_id
     ),
     ranked AS (
       SELECT pc.*, ROW_NUMBER() OVER (ORDER BY pc.net_ht DESC, pc.client_id ASC) AS rn
