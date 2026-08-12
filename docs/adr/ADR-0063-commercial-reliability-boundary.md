@@ -75,4 +75,3 @@ avec le jeton de session SOL-17 et seulement si aucune preuve commerciale n'exis
 En production, après la première preuve, le retour arrière consiste à redéployer
 l'artefact précédent compatible et conserver les tables ; si un retour de schéma est
 indispensable, restaurer la sauvegarde complète prise avant la fenêtre.
-

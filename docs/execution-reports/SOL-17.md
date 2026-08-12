@@ -111,4 +111,3 @@ son jeton de session, puis vérifier l'absence des quatre objets. Après créati
 preuve en production, ne pas supprimer les tables : redéployer les artefacts
 précédents compatibles. Pour un retour de schéma imposé, arrêter les écritures et
 restaurer le recovery set pré-migration dont le checksum a été vérifié.
-
