@@ -16,6 +16,7 @@ export const COMMANDE_WORKFLOW_STATUSES = [
   "FACTURE",
   "ARCHIVE",
   "BLOQUE",
+  "ANNULE",
 ] as const;
 
 export type CommandeWorkflowStatus = (typeof COMMANDE_WORKFLOW_STATUSES)[number];
@@ -38,6 +39,7 @@ export const COMMANDE_WORKFLOW_STATUS_LABELS: Record<CommandeWorkflowStatus, str
   FACTURE: "Facturé",
   ARCHIVE: "Archivé",
   BLOQUE: "Bloqué",
+  ANNULE: "Annulé",
 };
 
 export const COMMANDE_WORKFLOW_STATUS_ORDER: Record<CommandeWorkflowStatus, number> = {
@@ -58,6 +60,7 @@ export const COMMANDE_WORKFLOW_STATUS_ORDER: Record<CommandeWorkflowStatus, numb
   FACTURE: 14,
   ARCHIVE: 15,
   BLOQUE: 99,
+  ANNULE: 100,
 };
 
 export const COMMANDE_WORKFLOW_LEGACY_STATUS_ALIASES: Record<string, CommandeWorkflowStatus> = {
@@ -80,6 +83,7 @@ export const COMMANDE_WORKFLOW_TRANSITION_CAUSES = [
   "invoice_sync",
   "block",
   "resume",
+  "cancel",
 ] as const;
 
 export type CommandeWorkflowTransitionCause = (typeof COMMANDE_WORKFLOW_TRANSITION_CAUSES)[number];
@@ -109,12 +113,18 @@ const CHECKPOINT_TRANSITIONS: CommandeWorkflowTransitionRule[] = [
   { from: "FACTURE", to: "ARCHIVE", cause: "checkpoint" },
 ];
 
+const CANCELLATION_TRANSITIONS: CommandeWorkflowTransitionRule[] = COMMANDE_WORKFLOW_STATUSES
+  .filter((status) => !["LIVRE", "FACTURE", "ARCHIVE", "ANNULE"].includes(status))
+  .map((from) => ({ from, to: "ANNULE", cause: "cancel" }));
+
 export const COMMANDE_WORKFLOW_BLOCKABLE_STATUSES = COMMANDE_WORKFLOW_STATUSES.filter(
-  (status): status is Exclude<CommandeWorkflowStatus, "ARCHIVE" | "BLOQUE"> => status !== "ARCHIVE" && status !== "BLOQUE"
+  (status): status is Exclude<CommandeWorkflowStatus, "ARCHIVE" | "BLOQUE" | "ANNULE"> =>
+    status !== "ARCHIVE" && status !== "BLOQUE" && status !== "ANNULE"
 );
 
 export const COMMANDE_WORKFLOW_TRANSITIONS: readonly CommandeWorkflowTransitionRule[] = [
   ...CHECKPOINT_TRANSITIONS,
+  ...CANCELLATION_TRANSITIONS,
   { from: "ATTENTE_OF", to: "ATTENTE_PLANNING", cause: "customer_order_launch" },
   { from: "ATTENTE_OF", to: "PRET_LIVRAISON", cause: "customer_order_launch" },
   // A legacy invalid planning state can be recovered by reopening the launch
@@ -155,6 +165,9 @@ export function canCommandeWorkflowTransition(
   }
   if (cause === "resume") {
     return from === "BLOQUE" && context.resume_status === to;
+  }
+  if (cause === "cancel") {
+    return to === "ANNULE" && !["LIVRE", "FACTURE", "ARCHIVE", "ANNULE"].includes(from);
   }
   return COMMANDE_WORKFLOW_TRANSITIONS.some(
     (transition) => transition.from === from && transition.to === to && transition.cause === cause

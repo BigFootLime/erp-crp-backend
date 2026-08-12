@@ -18,7 +18,8 @@
     "LIVRE",
     "FACTURE",
     "ARCHIVE",
-    "BLOQUE"
+    "BLOQUE",
+    "ANNULE"
   ],
   "status_labels": {
     "BROUILLON": "Brouillon",
@@ -37,7 +38,8 @@
     "LIVRE": "Livré",
     "FACTURE": "Facturé",
     "ARCHIVE": "Archivé",
-    "BLOQUE": "Bloqué"
+    "BLOQUE": "Bloqué",
+    "ANNULE": "Annulé"
   },
   "status_order": {
     "BROUILLON": 0,
@@ -56,7 +58,8 @@
     "LIVRE": 13,
     "FACTURE": 14,
     "ARCHIVE": 15,
-    "BLOQUE": 99
+    "BLOQUE": 99,
+    "ANNULE": 100
   },
   "checkpoint_statuses": [
     "pending",
@@ -114,7 +117,8 @@
       "ARCHIVE"
     ],
     "ARCHIVE": [],
-    "BLOQUE": []
+    "BLOQUE": [],
+    "ANNULE": []
   },
   "transition_rules": [
     {
@@ -181,6 +185,76 @@
       "from": "FACTURE",
       "to": "ARCHIVE",
       "cause": "checkpoint"
+    },
+    {
+      "from": "BROUILLON",
+      "to": "ANNULE",
+      "cause": "cancel"
+    },
+    {
+      "from": "EN_ANALYSE",
+      "to": "ANNULE",
+      "cause": "cancel"
+    },
+    {
+      "from": "ATTENTE_TECHNIQUE",
+      "to": "ANNULE",
+      "cause": "cancel"
+    },
+    {
+      "from": "ATTENTE_STOCK",
+      "to": "ANNULE",
+      "cause": "cancel"
+    },
+    {
+      "from": "ATTENTE_OF",
+      "to": "ANNULE",
+      "cause": "cancel"
+    },
+    {
+      "from": "ATTENTE_PLANNING",
+      "to": "ANNULE",
+      "cause": "cancel"
+    },
+    {
+      "from": "PLANNING_VALIDE",
+      "to": "ANNULE",
+      "cause": "cancel"
+    },
+    {
+      "from": "AR_PRET",
+      "to": "ANNULE",
+      "cause": "cancel"
+    },
+    {
+      "from": "AR_ENVOYE",
+      "to": "ANNULE",
+      "cause": "cancel"
+    },
+    {
+      "from": "EN_PRODUCTION",
+      "to": "ANNULE",
+      "cause": "cancel"
+    },
+    {
+      "from": "PRODUCTION_TERMINEE",
+      "to": "ANNULE",
+      "cause": "cancel"
+    },
+    {
+      "from": "CONTROLE_QUALITE",
+      "to": "ANNULE",
+      "cause": "cancel"
+    },
+    {
+      "from": "PRET_LIVRAISON",
+      "to": "ANNULE",
+      "cause": "cancel"
+    },
+    {
+      "from": "BLOQUE",
+      "to": "ANNULE",
+      "cause": "cancel"
     },
     {
       "from": "ATTENTE_OF",

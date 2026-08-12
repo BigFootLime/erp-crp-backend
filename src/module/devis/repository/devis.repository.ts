@@ -35,6 +35,7 @@ import type {
 } from "../types/devis.types";
 import type { CreateCommandeInput } from "../../commande-client/types/commande-client.types";
 import { repoCreateCommande } from "../../commande-client/repository/commande-client.repository";
+import { assertQuoteDiscountApprovedForSubmission } from "../../commercial-reliability/repository/commercial-reliability.repository";
 
 type DevisCommandeHeaderRow = {
   id: string;
@@ -1888,6 +1889,7 @@ export async function repoUpdateDevis(
       numero: string;
       statut: string;
       remise_globale: number;
+      has_discount: boolean;
       updated_at: string | null;
       has_children: boolean;
     }>(
@@ -1897,6 +1899,13 @@ export async function repoUpdateDevis(
           d.numero,
           d.statut,
           d.remise_globale::float8 AS remise_globale,
+          (
+            d.remise_globale > 0
+            OR EXISTS (
+              SELECT 1 FROM devis_ligne discounted_line
+              WHERE discounted_line.devis_id=d.id AND COALESCE(discounted_line.remise_ligne,0)>0
+            )
+          ) AS has_discount,
           to_jsonb(d)->>'updated_at' AS updated_at,
           EXISTS (SELECT 1 FROM devis child WHERE child.parent_devis_id = d.id) AS has_children
         FROM devis d
@@ -1953,6 +1962,19 @@ export async function repoUpdateDevis(
         `Transition ${currentStatut} → ${requestedStatut} refusée par l'automate devis.`,
         { from: currentStatut, to: requestedStatut, allowed: DEVIS_STATUT_TRANSITIONS[currentStatut] }
       );
+    }
+
+    // SOL-17: a loss requires a structured reason, and a discounted quote needs
+    // approval tied to the exact content sent to the customer.
+    if (statutChanges && requestedStatut === "REFUSE") {
+      throw new HttpError(
+        409,
+        "STRUCTURED_LOSS_REASON_REQUIRED",
+        "Enregistrez la perte avec un motif structuré via l'action commerciale dédiée.",
+      );
+    }
+    if (statutChanges && requestedStatut === "ENVOYE" && current.has_discount === true) {
+      await assertQuoteDiscountApprovedForSubmission(client, id);
     }
 
     // RBAC fin dépendant de l'état (pattern #172) : re-vérifié ici, l'état source étant connu.
@@ -2067,6 +2089,21 @@ export async function repoUpdateDevis(
     expectedUploads = await insertDevisDocuments(client, id, documents);
 
     if (statutChanges) {
+      const commercialEventType = requestedStatut === "ENVOYE"
+        ? "SENT"
+        : requestedStatut === "ACCEPTE"
+          ? "ACCEPTED"
+          : requestedStatut === "EXPIRE"
+            ? "EXPIRED"
+            : null;
+      if (commercialEventType) {
+        await client.query(
+          `INSERT INTO public.commercial_quote_events
+             (devis_id,event_type,occurred_at,actor_user_id,owner_user_id)
+           VALUES ($1,$2,now(),$3,$4)`,
+          [id, commercialEventType, ctx.audit?.user_id ?? null, input.user_id ?? userId ?? null],
+        );
+      }
       await insertDevisAuditLog(client, ctx.audit, {
         action: "devis.statut_transition",
         entity_id: String(id),
