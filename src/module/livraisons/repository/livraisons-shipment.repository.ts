@@ -688,7 +688,7 @@ export async function prepareLivraisonInTransaction(
             $4::uuid,
             $5,
             'BON_LIVRAISON_LIGNE',
-            $6,
+            line.id::text,
             line.commande_ligne_id,
             line.id,
             delivery.affaire_id,
