@@ -9,6 +9,8 @@ import type {
   ListLivraisonsQueryDTO,
   LivraisonStatusBodyDTO,
   LivraisonProofBodyDTO,
+  ConfirmLivraisonPreparationBodyDTO,
+  ResetLivraisonPreparationBodyDTO,
   ShipLivraisonBodyDTO,
   UpdateLivraisonBodyDTO,
   UpdateLivraisonLineBodyDTO,
@@ -35,6 +37,11 @@ import {
   repoGetLivraisonShipmentPreview,
   repoShipLivraison,
 } from "../repository/livraisons-shipment.repository"
+import {
+  repoConfirmLivraisonPreparation,
+  repoGetLivraisonPreparation,
+  repoResetLivraisonPreparation,
+} from "../repository/livraisons-preparation.repository"
 
 function assertEditable(statut: BonLivraisonStatut, action: string) {
   if (statut === "DRAFT" || statut === "READY") return
@@ -132,6 +139,34 @@ export async function svcGetLivraisonShipmentPreview(id: string) {
     throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
   }
   return preview
+}
+
+export async function svcGetLivraisonPreparation(id: string) {
+  const preparation = await repoGetLivraisonPreparation(id)
+  if (!preparation) {
+    throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
+  }
+  return preparation
+}
+
+export function svcConfirmLivraisonPreparation(
+  id: string,
+  allocationId: string,
+  body: ConfirmLivraisonPreparationBodyDTO,
+  userId: number,
+  idempotencyKey: string
+) {
+  return repoConfirmLivraisonPreparation(id, allocationId, body, userId, idempotencyKey)
+}
+
+export function svcResetLivraisonPreparation(
+  id: string,
+  allocationId: string,
+  body: ResetLivraisonPreparationBodyDTO,
+  userId: number,
+  idempotencyKey: string
+) {
+  return repoResetLivraisonPreparation(id, allocationId, body, userId, idempotencyKey)
 }
 
 export function svcShipLivraison(
