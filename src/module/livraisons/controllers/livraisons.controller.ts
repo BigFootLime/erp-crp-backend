@@ -9,10 +9,13 @@ import {
   livraisonIdParamsSchema,
   livraisonLineIdParamsSchema,
   livraisonLineAllocationIdParamsSchema,
+  livraisonPreparationAllocationParamsSchema,
   livraisonPdfQuerySchema,
   livraisonStatusBodySchema,
   livraisonProofBodySchema,
   shipLivraisonBodySchema,
+  confirmLivraisonPreparationBodySchema,
+  resetLivraisonPreparationBodySchema,
   updateLivraisonBodySchema,
   updateLivraisonLineBodySchema,
 } from "../validators/livraisons.validators"
@@ -228,6 +231,54 @@ export const getLivraisonShipmentPreview: RequestHandler = async (req, res, next
     getUserId(req)
     const { id } = livraisonIdParamsSchema.parse(req.params)
     const out = await service.svcGetLivraisonShipmentPreview(id)
+    res.status(200).json(out)
+  } catch (e) {
+    next(e)
+  }
+}
+
+export const getLivraisonPreparation: RequestHandler = async (req, res, next) => {
+  try {
+    getUserId(req)
+    const { id } = livraisonIdParamsSchema.parse(req.params)
+    const out = await service.svcGetLivraisonPreparation(id)
+    res.setHeader("Cache-Control", "private, no-store, max-age=0")
+    res.status(200).json(out)
+  } catch (e) {
+    next(e)
+  }
+}
+
+export const confirmLivraisonPreparation: RequestHandler = async (req, res, next) => {
+  try {
+    const userId = getUserId(req)
+    const { id, allocationId } = livraisonPreparationAllocationParamsSchema.parse(req.params)
+    const body = confirmLivraisonPreparationBodySchema.parse(req.body)
+    const out = await service.svcConfirmLivraisonPreparation(
+      id,
+      allocationId,
+      body,
+      userId,
+      getRequiredIdempotencyKey(req)
+    )
+    res.status(200).json(out)
+  } catch (e) {
+    next(e)
+  }
+}
+
+export const resetLivraisonPreparation: RequestHandler = async (req, res, next) => {
+  try {
+    const userId = getUserId(req)
+    const { id, allocationId } = livraisonPreparationAllocationParamsSchema.parse(req.params)
+    const body = resetLivraisonPreparationBodySchema.parse(req.body)
+    const out = await service.svcResetLivraisonPreparation(
+      id,
+      allocationId,
+      body,
+      userId,
+      getRequiredIdempotencyKey(req)
+    )
     res.status(200).json(out)
   } catch (e) {
     next(e)

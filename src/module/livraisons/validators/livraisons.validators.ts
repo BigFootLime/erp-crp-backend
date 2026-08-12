@@ -23,6 +23,11 @@ export const livraisonLineAllocationIdParamsSchema = z.object({
   allocationId: uuid,
 }).strict()
 
+export const livraisonPreparationAllocationParamsSchema = z.object({
+  id: uuid,
+  allocationId: uuid,
+}).strict()
+
 export const livraisonDocParamsSchema = z.object({
   id: uuid,
   docId: uuid,
@@ -166,6 +171,40 @@ export const shipLivraisonBodySchema = z
   .strict()
 
 export type ShipLivraisonBodyDTO = z.infer<typeof shipLivraisonBodySchema>
+
+export const confirmLivraisonPreparationBodySchema = z
+  .object({
+    expected_version: z.coerce.number().int().positive(),
+    input_method: z.enum(["MANUAL", "SCANNER"]),
+    scan_code: z.string().trim().min(1).max(200).optional(),
+  })
+  .strict()
+  .superRefine((body, ctx) => {
+    if (body.input_method === "SCANNER" && !body.scan_code) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["scan_code"],
+        message: "Le code scanné est obligatoire en mode SCANNER.",
+      })
+    }
+    if (body.input_method === "MANUAL" && body.scan_code) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["scan_code"],
+        message: "Le mode MANUAL n’accepte pas de code scanné.",
+      })
+    }
+  })
+
+export type ConfirmLivraisonPreparationBodyDTO = z.infer<typeof confirmLivraisonPreparationBodySchema>
+
+export const resetLivraisonPreparationBodySchema = z
+  .object({
+    expected_version: z.coerce.number().int().positive(),
+  })
+  .strict()
+
+export type ResetLivraisonPreparationBodyDTO = z.infer<typeof resetLivraisonPreparationBodySchema>
 
 export const livraisonProofBodySchema = z
   .object({
