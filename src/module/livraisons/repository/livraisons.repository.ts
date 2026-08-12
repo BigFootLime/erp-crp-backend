@@ -2618,7 +2618,7 @@ export async function repoCreateLivraisonFromCommande(
     }
 
     const lignesRes = await db.query<{
-      id: number
+      id: string
       designation: string
       code_piece: string | null
       quantite: number
@@ -2627,7 +2627,7 @@ export async function repoCreateLivraisonFromCommande(
     }>(
       `
       SELECT
-        line.id,
+        line.id::text AS id,
         line.designation,
         line.code_piece,
         remainder.quantite_restante::float8 AS quantite,
@@ -2643,21 +2643,27 @@ export async function repoCreateLivraisonFromCommande(
       [commandeId]
     )
     const lignes = lignesRes.rows.flatMap((line) => {
+      // PostgreSQL BIGINT values are returned as strings by node-postgres. Normalize the
+      // identifier before consulting the numeric map produced by the stock analysis.
+      const commandeLineId = Number(line.id)
+      if (!Number.isSafeInteger(commandeLineId) || commandeLineId <= 0) {
+        throw new Error(`Invalid commande line identifier: ${line.id}`)
+      }
       const requestedQuantity = quantitiesByCommandeLine
-        ? Number(quantitiesByCommandeLine.get(line.id) ?? 0)
+        ? Number(quantitiesByCommandeLine.get(commandeLineId) ?? 0)
         : Number(line.quantite)
       if (!Number.isFinite(requestedQuantity) || requestedQuantity < 0) {
-        throw new HttpError(400, "INVALID_DELIVERY_QUANTITY", `Quantité de BL invalide pour la ligne ${line.id}.`)
+        throw new HttpError(400, "INVALID_DELIVERY_QUANTITY", `Quantité de BL invalide pour la ligne ${commandeLineId}.`)
       }
       if (requestedQuantity <= 1e-9) return []
       if (requestedQuantity > Number(line.quantite) + 1e-9) {
         throw new HttpError(
           409,
           "DELIVERY_QUANTITY_EXCEEDS_REMAINDER",
-          `La quantité de BL dépasse le reliquat de la ligne ${line.id}.`
+          `La quantité de BL dépasse le reliquat de la ligne ${commandeLineId}.`
         )
       }
-      return [{ ...line, quantite: requestedQuantity }]
+      return [{ ...line, id: commandeLineId, quantite: requestedQuantity }]
     })
     if (!lignes.length) {
       throw new HttpError(
