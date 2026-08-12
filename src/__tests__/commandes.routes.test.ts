@@ -1528,7 +1528,8 @@ describe("/api/v1/commandes", () => {
         return { rows: [{ id: "44444444-4444-4444-8444-444444444444" }] };
       }
       if (q.includes("v_bon_livraison_reliquats_226") && q.includes("remainder.quantite_restante::float8 AS quantite") && !q.includes("AS quantite_restante")) {
-        return { rows: [{ id: 1, designation: "Line", code_piece: "P1", quantite: 1, unite: "u", delai_client: null }] };
+        // BIGINT identifiers are strings at the node-postgres boundary.
+        return { rows: [{ id: "1", designation: "Line", code_piece: "P1", quantite: 1, unite: "u", delai_client: null }] };
       }
       if (q.includes("INSERT INTO bon_livraison_ligne (")) return { rows: [] };
       if (q.includes("SELECT id::text AS id, commande_ligne_id::bigint::int AS commande_ligne_id")) {

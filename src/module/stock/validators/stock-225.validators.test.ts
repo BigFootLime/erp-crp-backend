@@ -50,6 +50,18 @@ describe("#225 stock validators", () => {
       kind: "PF", client_number: "CLI-01", reference: "PLAN-42", designation: "Pièce reprise", quantity: 2,
       of_affaire_refs: ["OF-1"], mp_lot_refs: [], traitement_lot_refs: [],
     } }).success).toBe(true);
+    expect(historicalImportSchema.safeParse({ body: {
+      kind: "PF", client_number: "CLI-01", article_id: UUID_A, quantity: 2,
+      of_affaire_refs: [], mp_lot_refs: [], traitement_lot_refs: [],
+    } }).success).toBe(true);
+    expect(historicalImportSchema.safeParse({ body: {
+      kind: "PF", client_number: "CLI-01", quantity: 2,
+      of_affaire_refs: [], mp_lot_refs: [], traitement_lot_refs: [],
+    } }).success).toBe(false);
+    expect(historicalImportSchema.safeParse({ body: {
+      kind: "PF", client_number: "CLI-01", article_id: UUID_A, reference: "PLAN-42", designation: "Doublon", quantity: 2,
+      of_affaire_refs: [], mp_lot_refs: [], traitement_lot_refs: [],
+    } }).success).toBe(false);
     expect(historicalImportSchema.safeParse({ body: { kind: "MP", quantity: 1, lot_number: "F-1" } }).success).toBe(false);
     expect(historicalImportSchema.safeParse({ body: {
       kind: "MP", article_id: UUID_A, quantity: 1, lot_number: "F-1", unexpected: true,

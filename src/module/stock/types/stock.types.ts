@@ -172,6 +172,9 @@ export type StockArticleListItem = {
   piece_technique_id: string | null;
   piece_code: string | null;
   piece_designation: string | null;
+  piece_client_code: string | null;
+  piece_plan_reference: string | null;
+  piece_indice: string | null;
   unite: string | null;
   lot_tracking: boolean;
   is_sold: boolean;
