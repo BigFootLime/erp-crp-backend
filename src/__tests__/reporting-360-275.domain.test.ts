@@ -381,6 +381,12 @@ describe("#275 catalogue de métriques", () => {
     const deferred = listDeferredMetrics();
     expect(deferred.length).toBeGreaterThan(0);
     for (const metric of deferred) {
+      if (metric.id === "deliveries.otif_rate") {
+        expect(metric.formula).toContain("COUNT(commandes");
+        expect(metric.limitations.join(" ")).toContain("différée uniquement");
+        expect(metric.limitations.join(" ")).toContain("/reporting/direction/overview");
+        continue;
+      }
       expect(metric.formula).toBe("Indisponible.");
       expect(metric.limitations.join(" ")).toMatch(/[Bb]loquant/);
     }
