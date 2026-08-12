@@ -33,6 +33,17 @@ describe("shipment stock movement audit contract", () => {
       /INSERT INTO public\.stock_movement_event_log \(\s*movement_id,/
     );
   });
+
+  it("keeps the delivery-line parameter UUID-typed when creating a reservation (#428)", () => {
+    // PostgreSQL assigns one type to each bind parameter. Reusing $6 as both the
+    // TEXT source_id and the UUID line filter fails at parse time with 42P08.
+    expect(shipmentRepositorySource).toMatch(
+      /'BON_LIVRAISON_LIGNE',\s*line\.id::text,\s*line\.commande_ligne_id/
+    );
+    expect(shipmentRepositorySource).not.toMatch(
+      /'BON_LIVRAISON_LIGNE',\s*\$6,\s*line\.commande_ligne_id/
+    );
+  });
 });
 
 describe("internal order delivery gate", () => {
