@@ -13,6 +13,7 @@ const SOL06_PATCH = "20260810_system_reference_data_readiness.sql";
 const PRODUCTION_READINESS_PATCH = "20260811_production_readiness_center.sql";
 const MARGIN_TRACEABILITY_PATCH = "20260811_margin_traceability_0002.sql";
 const COMMERCIAL_RELIABILITY_PATCH = "20260812_commercial_reliability_sol17.sql";
+const PROCUREMENT_RELIABILITY_PATCH = "20260812_procurement_reliability_sol18.sql";
 const SOL06_SUPPORT = path.join(SUPPORT_DIR, "20260810_system_reference_data_readiness");
 const POSTGRES_IMAGE = "postgres@sha256:16bc17c64a573ef34162af9298258d1aec548232985b33ed7b1eac33ba35c229";
 const DEFAULT_REPORT_DIR = path.join(ROOT, "docs", "release");
@@ -443,6 +444,13 @@ async function proveRollback(databaseUrl) {
   await client.connect();
   try {
     await client.query("SET cerp.migration_rehearsal = 'on'");
+    const procurementReliabilityRollback = patchSupportSql(PROCUREMENT_RELIABILITY_PATCH, "rollback");
+    const procurementReliabilityObject = await client.query(
+      "SELECT to_regclass('public.procurement_promised_date_events') IS NOT NULL AS present"
+    );
+    if (procurementReliabilityRollback && procurementReliabilityObject.rows[0].present) {
+      await runSqlFile(client, procurementReliabilityRollback);
+    }
     const commercialReliabilityRollback = patchSupportSql(COMMERCIAL_RELIABILITY_PATCH, "rollback");
     const commercialReliabilityObject = await client.query(
       "SELECT to_regclass('public.commercial_quote_events') IS NOT NULL AS present"
@@ -483,10 +491,17 @@ async function proveRollback(databaseUrl) {
                 AND to_regclass('public.commercial_command_receipts') IS NULL
                 AND to_regprocedure('public.fn_commercial_evidence_append_only()') IS NULL
                 AS commercial_reliability_removed,
+              to_regclass('public.procurement_promised_date_events') IS NULL
+                AND to_regclass('public.procurement_anomaly_actions') IS NULL
+                AND to_regclass('public.procurement_policy_versions') IS NULL
+                AND to_regclass('public.procurement_command_receipts') IS NULL
+                AND to_regprocedure('public.fn_procurement_evidence_append_only()') IS NULL
+                AS procurement_reliability_removed,
               NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname='trg_stock_reference_readiness_2606') AS trigger_removed`
     );
     if (!objects.rows[0].function_removed || !objects.rows[0].function_v2_removed
         || !objects.rows[0].margin_traceability_removed || !objects.rows[0].commercial_reliability_removed
+        || !objects.rows[0].procurement_reliability_removed
         || !objects.rows[0].trigger_removed) {
       fail("rollback left SOL-06 objects behind");
     }
@@ -691,6 +706,7 @@ module.exports = {
   SOL06_PATCH,
   MARGIN_TRACEABILITY_PATCH,
   COMMERCIAL_RELIABILITY_PATCH,
+  PROCUREMENT_RELIABILITY_PATCH,
   expectedRehearsalPatches,
   inventory,
   inventoryMarkdown,
