@@ -6,6 +6,10 @@ const patch = fs.readFileSync(
   path.resolve(process.cwd(), "db/patches/20260812_commercial_reliability_sol17.sql"),
   "utf8",
 );
+const releaseGate = fs.readFileSync(
+  path.resolve(process.cwd(), "scripts/migrations/release-gate.js"),
+  "utf8",
+);
 
 describe("SOL-17 commercial migration guards", () => {
   it("creates append-only evidence and idempotency receipts", () => {
@@ -28,5 +32,13 @@ describe("SOL-17 commercial migration guards", () => {
     expect(patch).toContain("commercial_quote_reminder_daily_channel_uniq");
     expect(patch).toContain("commercial_quote_discount_content_request_uniq");
     expect(patch).toContain("commercial_quote_discount_decision_uniq");
+  });
+
+  it("exercises the guarded rollback in the isolated migration rehearsal", () => {
+    expect(releaseGate).toContain(
+      'const COMMERCIAL_RELIABILITY_PATCH = "20260812_commercial_reliability_sol17.sql"',
+    );
+    expect(releaseGate).toContain('SET cerp.allow_sol17_rollback = \'SOL-17\'');
+    expect(releaseGate).toContain("commercial_reliability_removed");
   });
 });
