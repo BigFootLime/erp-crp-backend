@@ -9,6 +9,14 @@ import {
   outillageGeometrieUpload,
   outillageToolUpload,
 } from "../utils/outillage-upload";
+import {
+  createToolParameterVersion,
+  getToolLifecycle,
+  listAllocations,
+  requireOutillageCapability,
+  reserveTool,
+  transitionAllocation,
+} from "../controllers/outillage-lifecycle.controller";
 
 const router = Router();
 
@@ -58,6 +66,18 @@ router.get("", asyncHandler(outilController.getFiltered));
 router.get("/summary", authenticateToken, asyncHandler(outilController.getSummary));
 router.get("/recent-movements", authenticateToken, asyncHandler(outilController.getRecentMovements));
 router.get("/import-batches/summary", authenticateToken, asyncHandler(outilController.getImportBatchesSummary));
+
+// SOL-20 — cycle de vie corrélé. Déclaré avant /:id pour ne jamais être
+// interprété comme un identifiant d'outil.
+router.get("/allocations", authenticateToken, requireOutillageCapability("read"), asyncHandler(listAllocations));
+router.post("/allocations", authenticateToken, requireOutillageCapability("operate"), asyncHandler(reserveTool));
+router.post("/allocations/:allocationId/issue", authenticateToken, requireOutillageCapability("operate"), asyncHandler(transitionAllocation("ISSUE")));
+router.post("/allocations/:allocationId/return", authenticateToken, requireOutillageCapability("operate"), asyncHandler(transitionAllocation("RETURN")));
+router.post("/allocations/:allocationId/break", authenticateToken, requireOutillageCapability("operate"), asyncHandler(transitionAllocation("BREAK")));
+router.post("/allocations/:allocationId/wear", authenticateToken, requireOutillageCapability("operate"), asyncHandler(transitionAllocation("WEAR")));
+router.post("/allocations/:allocationId/cancel", authenticateToken, requireOutillageCapability("operate"), asyncHandler(transitionAllocation("CANCEL")));
+router.get("/:id/lifecycle", authenticateToken, requireOutillageCapability("read"), asyncHandler(getToolLifecycle));
+router.post("/:id/parameter-versions", authenticateToken, requireOutillageCapability("configure"), asyncHandler(createToolParameterVersion));
 
 // ✅ Low stock
 router.get("/low-stock", authenticateToken, asyncHandler(outilController.getLowStock));

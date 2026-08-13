@@ -15,6 +15,7 @@ const MARGIN_TRACEABILITY_PATCH = "20260811_margin_traceability_0002.sql";
 const COMMERCIAL_RELIABILITY_PATCH = "20260812_commercial_reliability_sol17.sql";
 const PROCUREMENT_RELIABILITY_PATCH = "20260812_procurement_reliability_sol18.sql";
 const STOCK_INTELLIGENCE_PATCH = "20260813_stock_intelligence_sol19.sql";
+const TOOLING_TECHNICAL_GED_PATCH = "20260813_sol20_tooling_technical_ged.sql";
 const SOL06_SUPPORT = path.join(SUPPORT_DIR, "20260810_system_reference_data_readiness");
 const POSTGRES_IMAGE = "postgres@sha256:16bc17c64a573ef34162af9298258d1aec548232985b33ed7b1eac33ba35c229";
 const DEFAULT_REPORT_DIR = path.join(ROOT, "docs", "release");
@@ -445,6 +446,13 @@ async function proveRollback(databaseUrl) {
   await client.connect();
   try {
     await client.query("SET cerp.migration_rehearsal = 'on'");
+    const toolingTechnicalGedRollback = patchSupportSql(TOOLING_TECHNICAL_GED_PATCH, "rollback");
+    const toolingTechnicalGedObject = await client.query(
+      "SELECT to_regclass('public.outillage_allocations') IS NOT NULL AS present"
+    );
+    if (toolingTechnicalGedRollback && toolingTechnicalGedObject.rows[0].present) {
+      await runSqlFile(client, toolingTechnicalGedRollback);
+    }
     const stockIntelligenceRollback = patchSupportSql(STOCK_INTELLIGENCE_PATCH, "rollback");
     const stockIntelligenceObject = await client.query(
       "SELECT to_regclass('public.stock_intelligence_policy_versions') IS NOT NULL AS present"
@@ -509,12 +517,21 @@ async function proveRollback(databaseUrl) {
                 AND to_regclass('public.stock_intelligence_command_receipts') IS NULL
                 AND to_regprocedure('public.fn_stock_intelligence_evidence_append_only()') IS NULL
                 AS stock_intelligence_removed,
+              to_regclass('public.outillage_tool_parameter_versions') IS NULL
+                AND to_regclass('public.piece_version_tool_requirements') IS NULL
+                AND to_regclass('public.outillage_allocations') IS NULL
+                AND to_regclass('public.outillage_lifecycle_events') IS NULL
+                AND to_regprocedure('public.fn_outillage_lifecycle_event_immutable_20()') IS NULL
+                AND to_regprocedure('public.fn_outillage_parameter_period_no_overlap_20()') IS NULL
+                AND to_regprocedure('public.fn_ged_validate_canonical_entity_link_20()') IS NULL
+                AS tooling_technical_ged_removed,
               NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname='trg_stock_reference_readiness_2606') AS trigger_removed`
     );
     if (!objects.rows[0].function_removed || !objects.rows[0].function_v2_removed
         || !objects.rows[0].margin_traceability_removed || !objects.rows[0].commercial_reliability_removed
         || !objects.rows[0].procurement_reliability_removed
         || !objects.rows[0].stock_intelligence_removed
+        || !objects.rows[0].tooling_technical_ged_removed
         || !objects.rows[0].trigger_removed) {
       fail("rollback left SOL-06 objects behind");
     }

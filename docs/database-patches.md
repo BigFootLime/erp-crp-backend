@@ -16,6 +16,16 @@ et orphelins post-migration, puis la preuve complète dans PostgreSQL jetable.
 Le patch `20260810_system_reference_data_readiness.sql` bloque côté base les
 flux stock, planning et production dont les référentiels sont incomplets.
 
+## SOL-20 — Outillage, dossier technique et GED
+
+`20260813_sol20_tooling_technical_ged.sql` ajoute le cycle réservation/sortie/
+retour/casse/usure, les paramètres datés, les exigences d'outils par indice et la
+validation des liens GED canoniques. Utiliser le preflight, le verify et le rollback
+du même nom dans `db/patches/support/`, puis suivre
+`docs/runbooks/tooling-technical-ged-sol20-migration.md`. Le rollback refuse toute
+suppression après création d'une preuve métier ; la restauration du dump devient
+alors la seule stratégie de retrait de schéma.
+
 ## Commands
 
 Show patch status:

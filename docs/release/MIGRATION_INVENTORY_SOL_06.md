@@ -1,10 +1,10 @@
 # Inventaire des migrations — SOL-06
 
-- Généré : 2026-08-10T13:46:59.533Z
+- Généré : 2026-08-13T10:48:37.594Z
 - Source : filesystem scan of db/patches and db/patches/support
-- Patches exécutables : 141
-- Scripts auxiliaires : 214
-- Patches depuis 2026-07-01 : 83
+- Patches exécutables : 150
+- Scripts auxiliaires : 242
+- Patches depuis 2026-07-01 : 92
 
 ## Risques statiques à examiner
 
@@ -12,9 +12,9 @@
 |---|---:|
 | DDL destructif | 2 |
 | DML destructif | 8 |
-| Réécriture de données | 80 |
-| Verrou de table possible | 113 |
-| Index non concurrent | 106 |
+| Réécriture de données | 87 |
+| Verrou de table possible | 119 |
+| Index non concurrent | 112 |
 | Évolution d'enum | 1 |
 
 Ces détections sont volontairement conservatrices : elles servent de file de revue, pas de preuve de danger. Les durées réelles sont capturées par la répétition isolée.
