@@ -134,15 +134,35 @@ export async function assertCommandeQualityReleased(tx: Queryable, commandeId: n
         SELECT id, GREATEST(COALESCE(quantite_bonne, 0), 0)::numeric AS qty_required
         FROM public.ordres_fabrication
         WHERE commande_id = $1 AND statut::text <> 'ANNULE'
+      ), release_evidence AS (
+        SELECT decision.object_id AS of_id,
+               decision.qty,
+               decision.decision,
+               decision.verdict
+        FROM public.quality_release_decision decision
+        WHERE decision.object_type = 'OF'
+          AND decision.object_id IN (SELECT id::text FROM active_of)
+
+        UNION ALL
+
+        SELECT control.of_id::text AS of_id,
+               decision.qty,
+               decision.decision,
+               decision.verdict
+        FROM public.quality_release_decision decision
+        JOIN public.quality_control control ON control.id = decision.quality_control_id
+        WHERE control.of_id IN (SELECT id FROM active_of)
+          AND control.trigger_type = 'LOT_RELEASE'
+          AND control.delivery_allocation_id IS NOT NULL
+          AND decision.object_type = control.source_type
+          AND decision.object_id = control.source_id
       ), released AS (
-        SELECT object_id,
+        SELECT of_id AS object_id,
           COALESCE(SUM(qty) FILTER (
             WHERE decision IN ('FULL','PARTIAL') AND verdict IN ('CONFORME','PARTIEL')
           ), 0)::numeric AS qty_released
-        FROM public.quality_release_decision
-        WHERE object_type = 'OF'
-          AND object_id IN (SELECT id::text FROM active_of)
-        GROUP BY object_id
+        FROM release_evidence
+        GROUP BY of_id
       )
       SELECT
         (SELECT COUNT(*)::int FROM active_of) AS total,

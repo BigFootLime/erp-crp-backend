@@ -4,7 +4,7 @@ import { HttpError } from "../../../utils/httpError"
 import type { LivraisonPackPreview, LivraisonPackStockMovement, LivraisonPackVersion, LivraisonPackAllocation } from "../types/pack.types"
 import type { BonLivraisonDocument, BonLivraisonLigne } from "../types/livraisons.types"
 import { repoGetLivraisonDetail } from "./livraisons.repository"
-import { repoGetDeliveryQualityRelease } from "./quality-release.repository"
+import { repoGetDeliveryQualityDossier } from "./quality-dossier.repository"
 import type { DeliveryQualityRelease } from "../domain/quality-release-gate"
 
 function almostEqual(a: number, b: number, tolerance = 0.0001): boolean {
@@ -139,6 +139,7 @@ export async function repoGetLivraisonPackPreview(bonLivraisonId: string): Promi
     quality_policy_id: string | null
     quality_policy_sha256: string | null
     quality_release_snapshot: DeliveryQualityRelease | null
+    quality_dossier_version_id: string | null
   }
 
   const packVersionsRes = await pool.query<PackVersionRow>(
@@ -165,6 +166,7 @@ export async function repoGetLivraisonPackPreview(bonLivraisonId: string): Promi
         pv.quality_policy_id::text AS quality_policy_id,
         pv.quality_policy_sha256,
         pv.quality_release_snapshot
+        , pv.quality_dossier_version_id::text AS quality_dossier_version_id
       FROM public.bon_livraison_pack_versions pv
       LEFT JOIN public.users u ON u.id = pv.generated_by
       LEFT JOIN public.bon_livraison_documents blDoc ON blDoc.id = pv.bl_pdf_document_id
@@ -219,6 +221,7 @@ export async function repoGetLivraisonPackPreview(bonLivraisonId: string): Promi
       quality_policy_id: r.quality_policy_id,
       quality_policy_sha256: r.quality_policy_sha256,
       quality_release_snapshot: r.quality_release_snapshot,
+      quality_dossier_version_id: r.quality_dossier_version_id,
     }
   })
 
@@ -245,9 +248,11 @@ export async function repoGetLivraisonPackPreview(bonLivraisonId: string): Promi
   missing.push(...allocCheck.missing)
   if (!stock_link_ok) missing.push("STOCK_LINK_MISSING")
 
-  const quality_release = await repoGetDeliveryQualityRelease(bonLivraisonId)
+  const dossier = await repoGetDeliveryQualityDossier(bonLivraisonId)
+  const quality_release = dossier.release
   const quality_release_ok = quality_release.state === "READY" || quality_release.state === "DEROGATED"
   if (!quality_release_ok) missing.push(`QUALITY_RELEASE_${quality_release.state}`)
+  if (!dossier.is_current) missing.push("QUALITY_DOSSIER_NOT_FROZEN")
 
   return {
     bon_livraison: detail.bon_livraison,
@@ -257,6 +262,11 @@ export async function repoGetLivraisonPackPreview(bonLivraisonId: string): Promi
     documents_generated,
     pack_versions,
     quality_release,
+    quality_dossier: {
+      latest: dossier.latest,
+      versions: dossier.versions,
+      is_current: dossier.is_current,
+    },
     checks: {
       allocations_ok: allocCheck.allocations_ok,
       shipped_or_ready,

@@ -392,19 +392,25 @@ async function main() {
     );
     await client.query(
       `INSERT INTO public.quality_delivery_release_policy (
-         id,code,version,status,rules,rules_sha256,signature_reference,
-         signed_by,signed_at,valid_from,valid_to,created_by,updated_by
+         id,code,version,label,status,justification,rules,rules_sha256,signature_reference,
+         document_reference,signed_by,signed_at,activated_by,activated_at,
+         valid_from,valid_to,created_by,updated_by
        ) VALUES (
-         '2a000000-0000-4000-8000-000000000001','SOL05-DELIVERY-RELEASE',1,'SIGNED',
-         $1::jsonb,$2,'SOL05-E2E-SIGNATURE',
+         '2a000000-0000-4000-8000-000000000001','SOL05-DELIVERY-RELEASE',1,
+         'Politique livraison fixture SOL-05','ACTIVE','Fixture preexistante strictement isolee',
+         $1::jsonb,$2,'SOL05-E2E-SIGNATURE','SOL05-E2E-DOCUMENT',
+         (SELECT id FROM public.users WHERE username='KEENAN'),'2026-01-01T00:00:00Z',
          (SELECT id FROM public.users WHERE username='KEENAN'),'2026-01-01T00:00:00Z',
          '2026-01-01T00:00:00Z',NULL,
          (SELECT id FROM public.users WHERE username='KEENAN'),
          (SELECT id FROM public.users WHERE username='KEENAN')
        ) ON CONFLICT (code,version) DO UPDATE SET
-         status='SIGNED',rules=EXCLUDED.rules,rules_sha256=EXCLUDED.rules_sha256,
+         status='ACTIVE',label=EXCLUDED.label,justification=EXCLUDED.justification,
+         rules=EXCLUDED.rules,rules_sha256=EXCLUDED.rules_sha256,
          signature_reference=EXCLUDED.signature_reference,signed_by=EXCLUDED.signed_by,
-         signed_at=EXCLUDED.signed_at,valid_from=EXCLUDED.valid_from,valid_to=NULL,
+         document_reference=EXCLUDED.document_reference,signed_at=EXCLUDED.signed_at,
+         activated_by=EXCLUDED.activated_by,activated_at=EXCLUDED.activated_at,
+         valid_from=EXCLUDED.valid_from,valid_to=NULL,
          updated_by=EXCLUDED.updated_by`,
       [JSON.stringify(DELIVERY_QUALITY_RULES), DELIVERY_QUALITY_RULES_SHA256]
     );

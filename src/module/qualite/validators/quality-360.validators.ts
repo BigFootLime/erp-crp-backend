@@ -13,6 +13,7 @@ import {
 } from "../domain/quality-plan";
 import {
   QUALITY_DEROGATION_STATUSES,
+  QUALITY_DELIVERY_POLICY_STATUSES,
   QUALITY_DISPOSITION_TYPES,
   QUALITY_NC_STATUSES,
   QUALITY_PLAN_STATUSES,
@@ -197,6 +198,79 @@ export const planApplicabilityQuerySchema = z
 export type PlanApplicabilityQueryDTO = z.infer<typeof planApplicabilityQuerySchema>;
 
 /* -------------------------------------------------------------------------- */
+/* Politique globale de liberation des BL                                     */
+/* -------------------------------------------------------------------------- */
+
+export const deliveryReleasePolicyRulesSchema = z
+  .object({
+    schema: z.literal("cerp.quality.delivery-release-policy.v2"),
+    engine: z.literal("CERP_QUALITY_ELIGIBILITY_V1"),
+    aggregate_scope: z.literal("ALL_DELIVERY_ALLOCATIONS"),
+    derogation_mode: z.enum(["FORBIDDEN", "APPROVED_LINKED_RELEASE_ONLY"]),
+    required_control_triggers: z.tuple([z.literal("LOT_RELEASE")]),
+    require_independent_decider: z.literal(true),
+    required_documents: z
+      .array(
+        z
+          .object({
+            document_type: shortText(80),
+            scope: z.enum(["PER_DELIVERY", "PER_TARGET"]),
+            min_count: z.number().int().min(1).max(100),
+          })
+          .strict()
+      )
+      .max(50),
+  })
+  .strict();
+
+export const createDeliveryPolicySchema = z.object({
+  body: z
+    .object({
+      label: shortText(200),
+      justification: shortText(1000),
+      valid_from: isoDateTime,
+      valid_to: isoDateTime.nullable().optional(),
+      rules: deliveryReleasePolicyRulesSchema,
+    })
+    .strict(),
+});
+export type CreateDeliveryPolicyBodyDTO = z.infer<typeof createDeliveryPolicySchema>["body"];
+
+export const updateDeliveryPolicySchema = z.object({
+  params: z.object({ id: uuid }),
+  body: z
+    .object({
+      expected_updated_at: isoDateTime,
+      label: shortText(200),
+      justification: shortText(1000),
+      valid_from: isoDateTime,
+      valid_to: isoDateTime.nullable().optional(),
+      rules: deliveryReleasePolicyRulesSchema,
+    })
+    .strict(),
+});
+export type UpdateDeliveryPolicyBodyDTO = z.infer<typeof updateDeliveryPolicySchema>["body"];
+
+export const deliveryPolicyTransitionSchema = z.object({
+  params: z.object({ id: uuid }),
+  body: z
+    .object({
+      target_status: z.enum(QUALITY_DELIVERY_POLICY_STATUSES),
+      expected_updated_at: isoDateTime,
+      reason: shortText(1000),
+      signature_reference: z.string().trim().min(3).max(200).nullable().optional(),
+      document_reference: z.string().trim().min(3).max(500).nullable().optional(),
+    })
+    .strict(),
+});
+export type DeliveryPolicyTransitionBodyDTO = z.infer<typeof deliveryPolicyTransitionSchema>["body"];
+
+export const reviseDeliveryPolicySchema = z.object({
+  params: z.object({ id: uuid }),
+  body: z.object({ revision_reason: shortText(1000) }).strict(),
+});
+
+/* -------------------------------------------------------------------------- */
 /* Exécutions de contrôle                                                     */
 /* -------------------------------------------------------------------------- */
 
@@ -215,6 +289,8 @@ export const executionPreviewSchema = z.object({
       operation_code: z.string().trim().min(1).max(40).nullable().optional(),
       fournisseur_id: optionalUuid,
       lot_id: optionalUuid,
+      bon_livraison_id: optionalUuid,
+      delivery_allocation_id: optionalUuid,
       of_id: z.number().int().positive().nullable().optional(),
       reception_ligne_id: optionalUuid,
     })

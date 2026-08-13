@@ -259,6 +259,7 @@ function preview(overrides: Partial<LivraisonPackPreview> = {}): LivraisonPackPr
       required_evidence: [],
       derogation_ids: [],
     },
+    quality_dossier: { latest: null, versions: [], is_current: false },
     checks: { allocations_ok: true, shipped_or_ready: true, stock_link_ok: true, quality_release_ok: true, missing: [] },
   }
 

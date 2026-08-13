@@ -9,7 +9,7 @@ import { HttpError } from "../../../utils/httpError"
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
 
 import { repoGetLivraisonPackPreview } from "../repository/pack.repository"
-import { repoGetDeliveryQualityRelease } from "../repository/quality-release.repository"
+import { repoGetDeliveryQualityDossier } from "../repository/quality-dossier.repository"
 import type { PackGenerateBodyDTO } from "../validators/pack.validators"
 import type { LivraisonPackGenerateResult, LivraisonPackPreview } from "../types/pack.types"
 import { svcRenderPackBonLivraisonPdf, svcRenderPackCofcPdf } from "./pack-pdf.service"
@@ -174,6 +174,13 @@ export async function svcGenerateLivraisonPack(params: {
       quality_release: preview.quality_release,
     })
   }
+  if (!preview.quality_dossier.is_current || !preview.quality_dossier.latest) {
+    throw new HttpError(
+      409,
+      "QUALITY_DOSSIER_NOT_FROZEN",
+      "Figez la version courante du dossier qualite avant de generer le pack."
+    )
+  }
   if (preview.quality_release.preview_sha256 !== params.body.quality_preview_sha256) {
     throw new HttpError(409, "QUALITY_RELEASE_PREVIEW_STALE", "La décision Qualité a changé; actualisez l'aperçu.", {
       expected: params.body.quality_preview_sha256,
@@ -230,7 +237,9 @@ export async function svcGenerateLivraisonPack(params: {
       await db.query("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
       await db.query(`SELECT id FROM public.bon_livraison WHERE id = $1::uuid FOR UPDATE`, [params.bonLivraisonId])
 
-      const qualityRelease = await repoGetDeliveryQualityRelease(params.bonLivraisonId, db)
+      const qualityDossier = await repoGetDeliveryQualityDossier(params.bonLivraisonId, db)
+      const qualityRelease = qualityDossier.release
+      const frozenDossier = qualityDossier.latest
       if (qualityRelease.state !== "READY" && qualityRelease.state !== "DEROGATED") {
         throw new HttpError(409, "QUALITY_RELEASE_BLOCKED", "La Qualité bloque la génération du pack.", {
           quality_release: qualityRelease,
@@ -247,6 +256,13 @@ export async function svcGenerateLivraisonPack(params: {
       }
       if (!qualityRelease.policy) {
         throw new HttpError(409, "QUALITY_POLICY_MISSING", "Aucune politique Qualité signée ne permet cette émission.")
+      }
+      if (!qualityDossier.is_current || !frozenDossier) {
+        throw new HttpError(
+          409,
+          "QUALITY_DOSSIER_STALE",
+          "Le dossier qualite fige n'est plus la version courante."
+        )
       }
 
       await db.query(`INSERT INTO public.documents_clients (id, document_name, type) VALUES ($1, $2, $3)`, [
@@ -344,12 +360,13 @@ export async function svcGenerateLivraisonPack(params: {
             quality_policy_id,
             quality_policy_sha256,
             quality_release_snapshot,
+            quality_dossier_version_id,
             created_by,
             updated_by
           )
           VALUES (
             $1::uuid, $2, 'GENERATED', $3, $4::uuid, $5::uuid, $6::jsonb, $7,
-            $8, $9, $10::uuid, $11, $12::jsonb, $13, $13
+            $8, $9, $10::uuid, $11, $12::jsonb, $13::uuid, $14, $14
           )
           RETURNING id::text AS id
         `,
@@ -365,14 +382,15 @@ export async function svcGenerateLivraisonPack(params: {
           qualityRelease.preview_sha256,
           qualityRelease.policy.id,
           qualityRelease.policy.rules_sha256,
-          JSON.stringify(qualityRelease),
+          JSON.stringify(frozenDossier.release_snapshot),
+          frozenDossier.id,
           params.actorUserId,
         ]
       )
       const packVersionId = packIns.rows[0]?.id
       if (!packVersionId) throw new Error("Failed to create bon_livraison_pack_versions row")
 
-      for (const evidence of qualityRelease.required_evidence) {
+      for (const evidence of frozenDossier.evidence_manifest) {
         await db.query(
           `
             INSERT INTO public.bon_livraison_pack_quality_documents (
@@ -414,6 +432,8 @@ export async function svcGenerateLivraisonPack(params: {
           quality_release_preview_sha256: qualityRelease.preview_sha256,
           quality_policy_id: qualityRelease.policy.id,
           quality_policy_sha256: qualityRelease.policy.rules_sha256,
+          quality_dossier_version_id: frozenDossier.id,
+          quality_dossier_sha256: frozenDossier.dossier_sha256,
           quality_derogation_ids: qualityRelease.derogation_ids,
           quality_evidence_ids: qualityRelease.required_evidence.map((evidence) => evidence.id),
         },
@@ -445,6 +465,8 @@ export async function svcGenerateLivraisonPack(params: {
             quality_release_preview_sha256: qualityRelease.preview_sha256,
             quality_policy_id: qualityRelease.policy.id,
             quality_policy_sha256: qualityRelease.policy.rules_sha256,
+            quality_dossier_version_id: frozenDossier.id,
+            quality_dossier_sha256: frozenDossier.dossier_sha256,
             quality_derogation_ids: qualityRelease.derogation_ids,
             quality_evidence_ids: qualityRelease.required_evidence.map((evidence) => evidence.id),
           },

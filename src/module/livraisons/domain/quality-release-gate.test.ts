@@ -16,6 +16,8 @@ const CONTROL_ID = "10000000-0000-4000-8000-000000000003"
 const RELEASE_ID = "10000000-0000-4000-8000-000000000004"
 const DEROGATION_ID = "10000000-0000-4000-8000-000000000005"
 const CONSUMPTION_ID = "10000000-0000-4000-8000-000000000006"
+const ALLOCATION_ID = "10000000-0000-4000-8000-000000000007"
+const LINE_ID = "10000000-0000-4000-8000-000000000008"
 
 function rules(requiredDocuments: Array<Record<string, unknown>> = []) {
   return {
@@ -41,7 +43,23 @@ function policy(policyRules: unknown = rules()): DeliveryQualityPolicy {
 
 function target(overrides: Partial<DeliveryQualityTargetObservation["target"]> = {}): DeliveryQualityTargetObservation {
   return {
-    key: `LOT:${LOT_ID}`,
+    key: `ALLOCATION:${ALLOCATION_ID}`,
+    allocation_id: ALLOCATION_ID,
+    delivery_line_id: LINE_ID,
+    article_id: null,
+    article_code: null,
+    article_designation: null,
+    lot_id: LOT_ID,
+    lot_code: "LOT-42",
+    unite: "pce",
+    plan: null,
+    control_count: 1,
+    latest_decision: {
+      id: RELEASE_ID,
+      decision: "FULL",
+      qty: 5,
+      decided_at: "2026-08-05T08:00:00.000Z",
+    },
     target: {
       object_type: "LOT",
       object_id: LOT_ID,
@@ -72,7 +90,7 @@ function evidence(): DeliveryQualityEvidence {
     mime_type: "application/pdf",
     size_bytes: 2048,
     sha256: "c".repeat(64),
-    target_keys: [`LOT:${LOT_ID}`],
+    target_keys: [`ALLOCATION:${ALLOCATION_ID}`],
   }
 }
 
@@ -96,6 +114,8 @@ describe("delivery quality release gate", () => {
 
     expect(first.state).toBe("UNKNOWN")
     expect(first.reasons[0]?.code).toBe("QUALITY_POLICY_MISSING")
+    expect(first.targets).toHaveLength(1)
+    expect(first.targets[0]?.allocation_id).toBe(ALLOCATION_ID)
     expect(first.preview_sha256).toBe(later.preview_sha256)
   })
 

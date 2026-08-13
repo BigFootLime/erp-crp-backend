@@ -27,6 +27,21 @@ import {
   repoUpdatePlan,
   repoUpsertNcAnalysis,
 } from "../repository/quality-360.repository";
+import {
+  repoCreateDeliveryPolicy,
+  repoGetDeliveryPolicy,
+  repoListDeliveryPolicies,
+  repoReviseDeliveryPolicy,
+  repoTransitionDeliveryPolicy,
+  repoUpdateDeliveryPolicy,
+} from "../repository/quality-delivery-policy.repository";
+
+export const svcListDeliveryPolicies = repoListDeliveryPolicies;
+export const svcGetDeliveryPolicy = repoGetDeliveryPolicy;
+export const svcCreateDeliveryPolicy = repoCreateDeliveryPolicy;
+export const svcUpdateDeliveryPolicy = repoUpdateDeliveryPolicy;
+export const svcTransitionDeliveryPolicy = repoTransitionDeliveryPolicy;
+export const svcReviseDeliveryPolicy = repoReviseDeliveryPolicy;
 
 export const svcListPlans = repoListPlans;
 export const svcGetPlan = repoGetPlan;
