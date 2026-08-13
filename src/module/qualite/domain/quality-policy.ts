@@ -141,6 +141,56 @@ export function assertPlanSelectableForExecution(status: QualityPlanStatus): voi
 }
 
 /* -------------------------------------------------------------------------- */
+/* 2b) Politique globale de liberation des BL                                 */
+/* -------------------------------------------------------------------------- */
+
+export const QUALITY_DELIVERY_POLICY_STATUSES = [
+  "DRAFT",
+  "IN_REVIEW",
+  "SIGNED",
+  "ACTIVE",
+  "SUPERSEDED",
+  "REVOKED",
+] as const;
+
+export type QualityDeliveryPolicyStatus =
+  (typeof QUALITY_DELIVERY_POLICY_STATUSES)[number];
+
+const DELIVERY_POLICY_TRANSITIONS: Readonly<
+  Record<QualityDeliveryPolicyStatus, readonly QualityDeliveryPolicyStatus[]>
+> = {
+  DRAFT: ["IN_REVIEW"],
+  IN_REVIEW: ["DRAFT", "SIGNED"],
+  SIGNED: ["ACTIVE", "REVOKED"],
+  ACTIVE: ["SUPERSEDED", "REVOKED"],
+  SUPERSEDED: [],
+  REVOKED: [],
+};
+
+export function assertDeliveryPolicyTransition(
+  from: QualityDeliveryPolicyStatus,
+  to: QualityDeliveryPolicyStatus
+): void {
+  if (!DELIVERY_POLICY_TRANSITIONS[from]?.includes(to)) {
+    throw new HttpError(
+      409,
+      "QUALITY_DELIVERY_POLICY_TRANSITION_FORBIDDEN",
+      `Transition de politique de liberation interdite : ${from} vers ${to}.`
+    );
+  }
+}
+
+export function assertDeliveryPolicyContentMutable(status: QualityDeliveryPolicyStatus): void {
+  if (status !== "DRAFT" && status !== "IN_REVIEW") {
+    throw new HttpError(
+      409,
+      "QUALITY_DELIVERY_POLICY_IMMUTABLE",
+      "Une politique signee ne se modifie plus : creez une nouvelle revision."
+    );
+  }
+}
+
+/* -------------------------------------------------------------------------- */
 /* 3) Exécutions de contrôle — statuts et verdicts                            */
 /* -------------------------------------------------------------------------- */
 

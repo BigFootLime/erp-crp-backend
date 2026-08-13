@@ -44,10 +44,12 @@ export type DeliveryQualityPolicy = {
 }
 
 export type DeliveryQualityPolicyRules = {
-  schema: "cerp.quality.delivery-release-policy.v1"
+  schema: "cerp.quality.delivery-release-policy.v1" | "cerp.quality.delivery-release-policy.v2"
   engine: "CERP_QUALITY_ELIGIBILITY_V1"
   aggregate_scope: "ALL_DELIVERY_ALLOCATIONS"
   derogation_mode: "FORBIDDEN" | "APPROVED_LINKED_RELEASE_ONLY"
+  required_control_triggers: Array<"LOT_RELEASE">
+  require_independent_decider: boolean
   required_documents: Array<{
     document_type: string
     scope: "PER_DELIVERY" | "PER_TARGET"
@@ -74,6 +76,22 @@ export type DeliveryQualityDerogation = {
 export type DeliveryQualityTargetObservation = {
   key: string
   target: EligibilityTarget
+  allocation_id: string
+  delivery_line_id: string
+  article_id: string | null
+  article_code: string | null
+  article_designation: string | null
+  lot_id: string | null
+  lot_code: string | null
+  unite: string | null
+  plan: { id: string; code: string; version: number } | null
+  control_count: number
+  latest_decision: {
+    id: string
+    decision: "FULL" | "PARTIAL" | "HOLD" | "REJECT"
+    qty: number
+    decided_at: string
+  } | null
   derogation: DeliveryQualityDerogation | null
 }
 
@@ -100,11 +118,22 @@ export type DeliveryQualityRelease = {
   reasons: DeliveryQualityReleaseReason[]
   targets: Array<{
     key: string
+    allocation_id: string
+    delivery_line_id: string
+    article_id: string | null
+    article_code: string | null
+    article_designation: string | null
+    lot_id: string | null
+    lot_code: string | null
+    unite: string | null
     object_type: string
     object_id: string
     label: string | null
     qty_requested: number
     qty_allowed: number
+    plan: { id: string; code: string; version: number } | null
+    control_count: number
+    latest_decision: DeliveryQualityTargetObservation["latest_decision"]
     derogation_id: string | null
     release_decision_id: string | null
   }>
@@ -124,12 +153,33 @@ function hasExactKeys(value: Record<string, unknown>, keys: string[]): boolean {
 
 export function parseDeliveryQualityPolicyRules(value: unknown): DeliveryQualityPolicyRules | null {
   if (!isRecord(value)) return null
-  if (!hasExactKeys(value, ["schema", "engine", "aggregate_scope", "derogation_mode", "required_documents"])) return null
-  if (value.schema !== "cerp.quality.delivery-release-policy.v1") return null
+  const isV1 = value.schema === "cerp.quality.delivery-release-policy.v1"
+  const isV2 = value.schema === "cerp.quality.delivery-release-policy.v2"
+  if (!isV1 && !isV2) return null
+  const expectedKeys = isV1
+    ? ["schema", "engine", "aggregate_scope", "derogation_mode", "required_documents"]
+    : [
+        "schema",
+        "engine",
+        "aggregate_scope",
+        "derogation_mode",
+        "required_control_triggers",
+        "require_independent_decider",
+        "required_documents",
+      ]
+  if (!hasExactKeys(value, expectedKeys)) return null
   if (value.engine !== "CERP_QUALITY_ELIGIBILITY_V1") return null
   if (value.aggregate_scope !== "ALL_DELIVERY_ALLOCATIONS") return null
   if (value.derogation_mode !== "FORBIDDEN" && value.derogation_mode !== "APPROVED_LINKED_RELEASE_ONLY") return null
   if (!Array.isArray(value.required_documents)) return null
+  if (isV2) {
+    if (!Array.isArray(value.required_control_triggers)) return null
+    if (
+      value.required_control_triggers.length !== 1 ||
+      value.required_control_triggers[0] !== "LOT_RELEASE" ||
+      typeof value.require_independent_decider !== "boolean"
+    ) return null
+  }
 
   const requiredDocuments: DeliveryQualityPolicyRules["required_documents"] = []
   for (const raw of value.required_documents) {
@@ -145,12 +195,51 @@ export function parseDeliveryQualityPolicyRules(value: unknown): DeliveryQuality
   }
 
   return {
-    schema: value.schema,
+    schema: isV2
+      ? "cerp.quality.delivery-release-policy.v2"
+      : "cerp.quality.delivery-release-policy.v1",
     engine: value.engine,
     aggregate_scope: value.aggregate_scope,
     derogation_mode: value.derogation_mode,
+    required_control_triggers: isV2 ? ["LOT_RELEASE"] : [],
+    require_independent_decider: isV2 ? Boolean(value.require_independent_decider) : true,
     required_documents: requiredDocuments,
   }
+}
+
+function targetSnapshot(
+  observation: DeliveryQualityTargetObservation,
+  qtyAllowed = 0,
+  derogationId: string | null = null,
+  releaseDecisionId: string | null = null
+): DeliveryQualityRelease["targets"][number] {
+  return {
+    key: observation.key,
+    allocation_id: observation.allocation_id,
+    delivery_line_id: observation.delivery_line_id,
+    article_id: observation.article_id,
+    article_code: observation.article_code,
+    article_designation: observation.article_designation,
+    lot_id: observation.lot_id,
+    lot_code: observation.lot_code,
+    unite: observation.unite,
+    object_type: observation.target.object_type,
+    object_id: observation.target.object_id,
+    label: observation.target.label,
+    qty_requested: observation.target.qty_requested,
+    qty_allowed: qtyAllowed,
+    plan: observation.plan,
+    control_count: observation.control_count,
+    latest_decision: observation.latest_decision,
+    derogation_id: derogationId,
+    release_decision_id: releaseDecisionId,
+  }
+}
+
+function visibleTargets(input: DeliveryQualityReleaseInput): DeliveryQualityRelease["targets"] {
+  return [...input.targets]
+    .sort((left, right) => left.key.localeCompare(right.key))
+    .map((observation) => targetSnapshot(observation))
 }
 
 function blockingReason(params: Omit<DeliveryQualityReleaseReason, "severity">): DeliveryQualityReleaseReason {
@@ -219,7 +308,7 @@ export function evaluateDeliveryQualityRelease(input: DeliveryQualityReleaseInpu
           object_id: input.bon_livraison_id,
         }),
       ],
-      [],
+      visibleTargets(input),
       [],
       []
     )
@@ -243,7 +332,7 @@ export function evaluateDeliveryQualityRelease(input: DeliveryQualityReleaseInpu
           object_id: input.bon_livraison_id,
         }),
       ],
-      [],
+      visibleTargets(input),
       [],
       []
     )
@@ -266,7 +355,7 @@ export function evaluateDeliveryQualityRelease(input: DeliveryQualityReleaseInpu
           object_id: policy.id,
         }),
       ],
-      [],
+      visibleTargets(input),
       [],
       []
     )
@@ -286,7 +375,7 @@ export function evaluateDeliveryQualityRelease(input: DeliveryQualityReleaseInpu
           object_id: input.bon_livraison_id,
         }),
       ],
-      [],
+      visibleTargets(input),
       [],
       []
     )
@@ -307,7 +396,7 @@ export function evaluateDeliveryQualityRelease(input: DeliveryQualityReleaseInpu
           object_id: input.bon_livraison_id,
         }),
       ],
-      [],
+      visibleTargets(input),
       [],
       []
     )
@@ -318,6 +407,39 @@ export function evaluateDeliveryQualityRelease(input: DeliveryQualityReleaseInpu
   const derogationIds = new Set<string>()
 
   for (const observation of [...input.targets].sort((a, b) => a.key.localeCompare(b.key))) {
+    if (rules.required_control_triggers.includes("LOT_RELEASE")) {
+      if (!observation.plan) {
+        reasons.push(
+          blockingReason({
+            code: "QUALITY_PLAN_REQUIRED",
+            message: `Aucun plan LOT_RELEASE publie ne couvre ${observation.target.label ?? observation.target.object_id}.`,
+            expected_action: "Publier un plan LOT_RELEASE applicable a l'article puis demarrer le controle.",
+            object_type: observation.target.object_type,
+            object_id: observation.target.object_id,
+          })
+        )
+      } else if (observation.control_count === 0) {
+        reasons.push(
+          blockingReason({
+            code: "QUALITY_CONTROL_REQUIRED",
+            message: `Le controle LOT_RELEASE de ${observation.target.label ?? observation.target.object_id} n'a pas ete demarre.`,
+            expected_action: "Demarrer et renseigner le controle sur cette allocation exacte.",
+            object_type: observation.target.object_type,
+            object_id: observation.target.object_id,
+          })
+        )
+      } else if (!observation.latest_decision) {
+        reasons.push(
+          blockingReason({
+            code: "QUALITY_DECISION_REQUIRED",
+            message: `Aucune decision de liberation n'est prononcee pour ${observation.target.label ?? observation.target.object_id}.`,
+            expected_action: "Faire decider le controle par un utilisateur distinct de l'operateur.",
+            object_type: observation.target.object_type,
+            object_id: observation.target.object_id,
+          })
+        )
+      }
+    }
     const verdict = evaluateQualityEligibility(observation.target, "SHIP", at)
     for (const block of verdict.blocks) {
       reasons.push(
@@ -395,16 +517,14 @@ export function evaluateDeliveryQualityRelease(input: DeliveryQualityReleaseInpu
       }
     }
 
-    targets.push({
-      key: observation.key,
-      object_type: observation.target.object_type,
-      object_id: observation.target.object_id,
-      label: observation.target.label,
-      qty_requested: observation.target.qty_requested,
-      qty_allowed: verdict.qty_allowed,
-      derogation_id: acceptedDerogation?.state.id ?? null,
-      release_decision_id: acceptedDerogation?.release_decision_id ?? null,
-    })
+    targets.push(
+      targetSnapshot(
+        observation,
+        verdict.qty_allowed,
+        acceptedDerogation?.state.id ?? null,
+        observation.latest_decision?.id ?? acceptedDerogation?.release_decision_id ?? null
+      )
+    )
   }
 
   const requiredEvidence = new Map<string, DeliveryQualityEvidence>()

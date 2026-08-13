@@ -37,9 +37,12 @@ import {
 
 import {
   downloadLivraisonPackDocument,
+  freezeLivraisonQualityDossier,
   generateLivraisonPack,
   getLivraisonPackPreview,
+  getLivraisonQualityDossier,
   revokeLivraisonPackVersion,
+  revokeLivraisonQualityDossier,
 } from "../controllers/pack.controller"
 
 const upload = createSecureUpload("business-document")
@@ -160,6 +163,22 @@ router.post(
   "/:id/pdf",
   requireLivraisonCapability("documents_manage"),
   generateLivraisonPdf
+)
+
+router.get(
+  "/:id/quality-dossier",
+  requireLivraisonCapability("read"),
+  getLivraisonQualityDossier
+)
+router.post(
+  "/:id/quality-dossier/freeze",
+  requireLivraisonCapability("documents_manage"),
+  freezeLivraisonQualityDossier
+)
+router.post(
+  "/:id/quality-dossier/revoke/:versionId",
+  requireLivraisonCapability("documents_manage"),
+  revokeLivraisonQualityDossier
 )
 
 router.get(
