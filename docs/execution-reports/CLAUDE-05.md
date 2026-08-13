@@ -6,6 +6,15 @@
 - Branche : `fix/633-sol20-isolated-outillage-contract`
 - Checkpoint : `1e3e1e3`
 - Portée : environnement E2E jetable uniquement
+- Statut : validé et promu sur `dev` puis `main`.
+
+## Promotion Git
+
+- commit de travail après alignement sur `origin/dev` : `dfca937` ;
+- PR correctif → `dev` : [#444](https://github.com/BigFootLime/erp-crp-backend/pull/444), fusionnée dans `e750120` ;
+- PR `dev` → `main` : [#445](https://github.com/BigFootLime/erp-crp-backend/pull/445), revue Sourcery réussie puis fusionnée dans `0ebe464` ;
+- le correctif est ancêtre de `origin/dev` et de `origin/main` après récupération
+  des références distantes.
 
 ## Diagnostic et cause racine
 
