@@ -95,6 +95,11 @@ import {
   ARTICLE_WRITE_ROLES,
 } from "../stock-article.permissions";
 import { roleHasStockCapability, type StockCapability } from "../domain/stock-rbac";
+import {
+  createStockIntelligencePolicy,
+  simulateStockIntelligence,
+  stockIntelligenceOverview,
+} from "../../stock-intelligence/controllers/stock-intelligence.controller";
 
 const router = Router();
 
@@ -119,6 +124,13 @@ const requireStockCapability = (capability: StockCapability): RequestHandler => 
 };
 
 router.get("/analytics", requireStockCapability("read"), getStockAnalytics);
+router.get("/intelligence/overview", requireStockCapability("read"), stockIntelligenceOverview);
+router.post("/intelligence/simulate", requireStockCapability("read"), simulateStockIntelligence);
+router.post(
+  "/intelligence/policies",
+  requireStockCapability("referential_manage"),
+  createStockIntelligencePolicy
+);
 router.get("/positions", requireStockCapability("read"), listConsolidatedInventory);
 router.get("/inventory", requireStockCapability("read"), listConsolidatedInventory);
 router.post("/historical-imports", requireStockCapability("movement_create"), createHistoricalImport);
