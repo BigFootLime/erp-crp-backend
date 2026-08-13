@@ -2,6 +2,8 @@
 
 const { Client } = require("pg");
 const crypto = require("node:crypto");
+const fs = require("node:fs/promises");
+const path = require("node:path");
 
 const PASSWORD_HASH = "$2b$10$M6.b9HVIHwTCt3xOYQ9uJeIFFOSM5tkLY8m9pfHCUiMZDu9Fqilfe";
 const FINANCE_ISSUER_ID = "b7c1e5a2-3f4d-4e8b-9a06-380569012000";
@@ -37,6 +39,38 @@ const USERS = [
   ["E2E_PURCHASING", "Achats", "E2E", "purchasing.e2e@invalid.example", "Directeur", false, "Achats"],
   ["E2E_ACCOUNTANT", "Comptabilite", "E2E", "accounting.e2e@invalid.example", "Directeur", false, "RH-Financier"],
 ];
+
+const SOL20_PLAN_CONTENT = Buffer.from(
+  "%PDF-1.4\n% CERP SOL-20 isolated technical plan fixture\n1 0 obj<</Type/Catalog>>endobj\n%%EOF\n",
+  "utf8"
+);
+const SOL20_TECHNICAL_SNAPSHOT = {
+  schema_version: 1,
+  piece_technique_id: "21000000-0000-4000-8000-000000000001",
+  piece_technique_version_id: "23000000-0000-4000-8000-000000000001",
+  indice: "A",
+  source: "Fixture isolée SOL-20",
+};
+const SOL20_TECHNICAL_SNAPSHOT_JSON = JSON.stringify(SOL20_TECHNICAL_SNAPSHOT);
+const SOL20_TECHNICAL_SNAPSHOT_SHA256 = crypto
+  .createHash("sha256")
+  .update(SOL20_TECHNICAL_SNAPSHOT_JSON)
+  .digest("hex");
+
+async function ensureIsolatedGedBlob(storageKey, content) {
+  const root = process.env.CERP_GED_VAULT_ROOT;
+  if (!root) throw new Error("CERP_GED_VAULT_ROOT is required for the isolated SOL-20 GED fixture");
+  const target = path.resolve(root, storageKey);
+  const resolvedRoot = path.resolve(root);
+  if (!target.startsWith(`${resolvedRoot}${path.sep}`)) throw new Error("SOL-20 GED fixture escaped its isolated root");
+  await fs.mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
+  const existing = await fs.readFile(target).catch(() => null);
+  if (existing) {
+    if (!existing.equals(content)) throw new Error("SOL-20 GED fixture hash path contains different content");
+    return;
+  }
+  await fs.writeFile(target, content, { flag: "wx", mode: 0o600 });
+}
 
 function assertIsolated() {
   if (process.env.CERP_E2E_ISOLATED !== "1") throw new Error("CERP_E2E_ISOLATED=1 is required");
@@ -314,12 +348,12 @@ async function main() {
     );
     await client.query(
       `INSERT INTO public.piece_technique_versions (
-         id,piece_technique_id,indice,statut,is_current,date_revision,date_validation,
+         id,piece_technique_id,indice,plan_reference,matiere_prevue,statut,is_current,date_revision,date_validation,
          date_application,version_interne,code_metier,code_metier_normalise,
          document_requirements_frozen_at,document_requirements_policy
        ) VALUES (
          '23000000-0000-4000-8000-000000000001','21000000-0000-4000-8000-000000000001',
-         'A','APPLICABLE',true,now(),now(),CURRENT_DATE,1,'E2E-PT-001-A','E2E-PT-001-A',now(),'NONE'
+         'A','E2E-PLAN-SOL20-A','42CrMo4','APPLICABLE',true,now(),now(),CURRENT_DATE,1,'E2E-PT-001-A','E2E-PT-001-A',now(),'NONE'
        ) ON CONFLICT (id) DO NOTHING`
     );
     await client.query(
@@ -335,6 +369,166 @@ async function main() {
          plan_reference=EXCLUDED.plan_reference,statut='APPLICABLE',is_current=true,date_validation=EXCLUDED.date_validation,
          date_application=EXCLUDED.date_application`
     );
+
+    const sol20Available = await client.query(
+      `SELECT to_regclass('public.outillage_allocations') IS NOT NULL AS available`
+    );
+    if (sol20Available.rows[0].available) {
+      await client.query(
+        `INSERT INTO public.piece_technique_versions (
+           id,piece_technique_id,indice,plan_reference,matiere_prevue,statut,is_current,
+           date_revision,date_validation,date_application,version_interne,code_metier,
+           code_metier_normalise,document_requirements_frozen_at,document_requirements_policy
+         ) VALUES (
+           '92000000-0000-4000-8000-000000000009','21000000-0000-4000-8000-000000000001',
+           'Z','E2E-PLAN-OBSOLETE','42CrMo4','OBSOLETE',false,now(),now(),CURRENT_DATE,99,
+           'E2E-PT-001-Z','E2E-PT-001-Z',now(),'NONE'
+         ) ON CONFLICT (id) DO NOTHING`
+      );
+      await client.query(
+        `INSERT INTO public.gestion_outils_famille (id_famille,nom_famille,ordre)
+         VALUES (920001,'Fraises E2E SOL-20',1)
+         ON CONFLICT (id_famille) DO UPDATE SET nom_famille=EXCLUDED.nom_famille,ordre=EXCLUDED.ordre`
+      );
+      await client.query(
+        `INSERT INTO public.gestion_outils_geometrie (id_geometrie,id_famille,nom_geometrie,ordre)
+         VALUES (920001,920001,'Fraise carbure SOL-20',1)
+         ON CONFLICT (id_geometrie) DO UPDATE SET
+           id_famille=EXCLUDED.id_famille,nom_geometrie=EXCLUDED.nom_geometrie,ordre=EXCLUDED.ordre`
+      );
+      await client.query(
+        `INSERT INTO public.gestion_outils_outil (
+           id_outil,designation,id_famille,id_geometrie,reference_fabricant,designation_outil_cnc,codification
+         ) VALUES (
+           920001,'Fraise carbure preuve SOL-20',920001,920001,'SOL20-REF-001','Fraise carbure preuve SOL-20','SOL20-OUT-001'
+         ) ON CONFLICT (id_outil) DO UPDATE SET
+           designation=EXCLUDED.designation,id_famille=EXCLUDED.id_famille,id_geometrie=EXCLUDED.id_geometrie,
+           reference_fabricant=EXCLUDED.reference_fabricant,
+           designation_outil_cnc=EXCLUDED.designation_outil_cnc,codification=EXCLUDED.codification`
+      );
+      await client.query(
+        `INSERT INTO public.gestion_outils_stock (id_outil,quantite,quantite_minimale,date_maj)
+         VALUES (920001,5,1,now())
+         ON CONFLICT (id_outil) DO UPDATE SET quantite=5,quantite_minimale=1,date_maj=now()`
+      );
+      await client.query(
+        `INSERT INTO public.outillage_tool_parameter_versions (
+           id,id_outil,effective_from,unit_cost,expected_life_pieces,currency,source,
+           source_observed_at,reliability,change_reason,created_by
+         ) VALUES (
+           '92000000-0000-4000-8000-000000000001',920001,'2026-01-01T00:00:00Z',25,500,'EUR',
+           'Fixture isolée SOL-20 — fiche fabricant validée','2026-01-01T00:00:00Z','VERIFIED',
+           'Paramètres de preuve E2E',(SELECT id FROM public.users WHERE username='KEENAN')
+         ) ON CONFLICT (id) DO NOTHING`
+      );
+      await client.query(
+        `INSERT INTO public.piece_version_tool_requirements (
+           id,piece_technique_version_id,id_outil,required_quantity,usage_notes,created_by,updated_by
+         ) VALUES (
+           '92000000-0000-4000-8000-000000000002','23000000-0000-4000-8000-000000000001',
+           920001,2,'Finition de la pièce E2E',(SELECT id FROM public.users WHERE username='KEENAN'),
+           (SELECT id FROM public.users WHERE username='KEENAN')
+         ) ON CONFLICT (piece_technique_version_id,id_outil) DO NOTHING`
+      );
+      await client.query(
+        `INSERT INTO public.piece_version_tool_requirements (
+           id,piece_technique_version_id,id_outil,required_quantity,usage_notes,created_by,updated_by
+         ) VALUES (
+           '92000000-0000-4000-8000-000000000010','92000000-0000-4000-8000-000000000009',
+           920001,1,'Indice obsolète de preuve',(SELECT id FROM public.users WHERE username='KEENAN'),
+           (SELECT id FROM public.users WHERE username='KEENAN')
+         ) ON CONFLICT (piece_technique_version_id,id_outil) DO NOTHING`
+      );
+      await client.query(
+        `INSERT INTO public.gammes (
+           id,piece_technique_version_id,code,designation,statut,is_current,created_by,updated_by
+         ) VALUES (
+           '92000000-0000-4000-8000-000000000003','23000000-0000-4000-8000-000000000001',
+           'E2E-GAMME-SOL20','Gamme applicable preuve SOL-20','APPLICABLE',true,
+           (SELECT id FROM public.users WHERE username='KEENAN'),
+           (SELECT id FROM public.users WHERE username='KEENAN')
+         ) ON CONFLICT (id) DO NOTHING`
+      );
+      await client.query(
+        `INSERT INTO public.ordres_fabrication (
+           id,numero,piece_technique_id,piece_technique_version_id,quantite_lancee,quantite_bonne,
+           statut,technical_snapshot,technical_snapshot_sha256,technical_snapshot_at,created_by,updated_by
+         ) VALUES (
+           920001,'OF-E2E-SOL20','21000000-0000-4000-8000-000000000001',
+           '23000000-0000-4000-8000-000000000001',100,100,'TERMINE',$1::jsonb,$2,now(),
+           (SELECT id FROM public.users WHERE username='KEENAN'),
+           (SELECT id FROM public.users WHERE username='KEENAN')
+         ) ON CONFLICT (id) DO NOTHING`,
+        [SOL20_TECHNICAL_SNAPSHOT_JSON, SOL20_TECHNICAL_SNAPSHOT_SHA256]
+      );
+      await client.query(
+        `INSERT INTO public.of_technical_snapshots (
+           of_id,piece_technique_version_id,snapshot,snapshot_sha256,created_by
+         ) VALUES (
+           920001,'23000000-0000-4000-8000-000000000001',$1::jsonb,$2,
+           (SELECT id FROM public.users WHERE username='KEENAN')
+         ) ON CONFLICT (of_id) DO NOTHING`,
+        [SOL20_TECHNICAL_SNAPSHOT_JSON, SOL20_TECHNICAL_SNAPSHOT_SHA256]
+      );
+
+      const planSha256 = crypto.createHash("sha256").update(SOL20_PLAN_CONTENT).digest("hex");
+      const planStorageKey = `vault/sha256/${planSha256.slice(0, 2)}/${planSha256.slice(2, 4)}/${planSha256}`;
+      await ensureIsolatedGedBlob(planStorageKey, SOL20_PLAN_CONTENT);
+      await client.query(
+        `INSERT INTO public.ged_blobs (id,sha256,size_bytes,mime_type,storage_key,created_by)
+         VALUES ('92000000-0000-4000-8000-000000000004',$1,$2,'application/pdf',$3,
+           (SELECT id FROM public.users WHERE username='KEENAN'))
+         ON CONFLICT (id) DO NOTHING`,
+        [planSha256, SOL20_PLAN_CONTENT.byteLength, planStorageKey]
+      );
+      await client.query(
+        `INSERT INTO public.ged_documents (id,code,class_key,title,description,created_by)
+         VALUES ('92000000-0000-4000-8000-000000000005','GED-E2E-SOL20-PLAN','PLAN_CLIENT',
+           'Plan applicable E2E SOL-20','Document synthétique strictement isolé',
+           (SELECT id FROM public.users WHERE username='KEENAN'))
+         ON CONFLICT (id) DO NOTHING`
+      );
+      await client.query(
+        `INSERT INTO public.ged_upload_sessions (
+           id,class_key,document_id,title,status,sha256,size_bytes,mime_type,original_name,
+           created_by,expires_at,scan_status,quarantine_status,scan_provider,signature_version,
+           scan_duration_ms,scan_attempts,scanned_at
+         ) VALUES (
+           '92000000-0000-4000-8000-000000000006','PLAN_CLIENT',
+           '92000000-0000-4000-8000-000000000005','Plan applicable E2E SOL-20','PUBLISHED',
+           $1,$2,'application/pdf','plan-sol20.pdf',(SELECT id FROM public.users WHERE username='KEENAN'),
+           '2099-01-01T00:00:00Z','clean','released','isolated-e2e-scanner','E2E-SIGNATURES-1',1,1,now()
+         ) ON CONFLICT (id) DO NOTHING`,
+        [planSha256, SOL20_PLAN_CONTENT.byteLength]
+      );
+      await client.query(
+        `INSERT INTO public.ged_document_versions (
+           id,document_id,version_number,status,blob_id,original_name,change_reason,created_by,
+           submitted_at,submitted_by,approved_at,approved_by,published_at,upload_session_id
+         ) VALUES (
+           '92000000-0000-4000-8000-000000000007','92000000-0000-4000-8000-000000000005',1,
+           'APPLICABLE','92000000-0000-4000-8000-000000000004','plan-sol20.pdf','Preuve E2E SOL-20',
+           (SELECT id FROM public.users WHERE username='KEENAN'),now(),
+           (SELECT id FROM public.users WHERE username='KEENAN'),now(),
+           (SELECT id FROM public.users WHERE username='E2E_QUALITY'),now(),
+           '92000000-0000-4000-8000-000000000006'
+         ) ON CONFLICT (id) DO NOTHING`
+      );
+      await client.query(
+        `UPDATE public.ged_documents
+            SET current_version_id='92000000-0000-4000-8000-000000000007',updated_at=now()
+          WHERE id='92000000-0000-4000-8000-000000000005'`
+      );
+      await client.query(
+        `INSERT INTO public.ged_document_links (
+           id,document_id,entity_type,entity_id,link_role,created_by
+         ) VALUES (
+           '92000000-0000-4000-8000-000000000008','92000000-0000-4000-8000-000000000005',
+           'PIECE_TECHNIQUE_VERSION','23000000-0000-4000-8000-000000000001','PLAN',
+           (SELECT id FROM public.users WHERE username='KEENAN')
+         ) ON CONFLICT (document_id,entity_type,entity_id,link_role) DO NOTHING`
+      );
+    }
     await client.query(
       `INSERT INTO public.postes (id,code,label,currency,is_active)
        VALUES ('24000000-0000-4000-8000-000000000001','E2E-POSTE-001','Poste planning preuve SOL-05','EUR',true)
@@ -356,13 +550,15 @@ async function main() {
     );
     await client.query(
       `INSERT INTO public.quality_control_plan (
-         id,code,version,label,status,trigger_type,article_id,sampling_rule,
+       id,code,version,label,status,trigger_type,article_id,sampling_rule,
+         piece_technique_id,piece_version_id,
          owner_user_id,revision_reason,effective_from,published_at,published_by,
          created_by,updated_by
        ) VALUES (
          '28000000-0000-4000-8000-000000000001','SOL05-LOT-RELEASE',1,
          'Plan liberation lot preuve SOL-05','DRAFT','LOT_RELEASE',
          '22000000-0000-4000-8000-000000000001','ALL',
+         '21000000-0000-4000-8000-000000000001','23000000-0000-4000-8000-000000000001',
          (SELECT id FROM public.users WHERE username='KEENAN'),
          'Referentiel de validation E2E isole','2026-01-01T00:00:00Z',
          NULL,NULL,
@@ -390,8 +586,16 @@ async function main() {
            updated_by=(SELECT id FROM public.users WHERE username='KEENAN')
        WHERE code='SOL05-LOT-RELEASE' AND version=1 AND status='DRAFT'`
     );
-    await client.query(
-      `INSERT INTO public.quality_delivery_release_policy (
+    const deliveryPolicyV437 = await client.query(
+      `SELECT EXISTS (
+         SELECT 1 FROM information_schema.columns
+         WHERE table_schema='public' AND table_name='quality_delivery_release_policy'
+           AND column_name='label'
+       ) AS available`
+    );
+    if (deliveryPolicyV437.rows[0]?.available) {
+      await client.query(
+        `INSERT INTO public.quality_delivery_release_policy (
          id,code,version,label,status,justification,rules,rules_sha256,signature_reference,
          document_reference,signed_by,signed_at,activated_by,activated_at,
          valid_from,valid_to,created_by,updated_by
@@ -412,8 +616,9 @@ async function main() {
          activated_by=EXCLUDED.activated_by,activated_at=EXCLUDED.activated_at,
          valid_from=EXCLUDED.valid_from,valid_to=NULL,
          updated_by=EXCLUDED.updated_by`,
-      [JSON.stringify(DELIVERY_QUALITY_RULES), DELIVERY_QUALITY_RULES_SHA256]
-    );
+        [JSON.stringify(DELIVERY_QUALITY_RULES), DELIVERY_QUALITY_RULES_SHA256]
+      );
+    }
     await client.query(
       `INSERT INTO public.finance_billing_policies (
          id,policy_version,legal_entity_code,eligible_delivery_statuses,

@@ -102,7 +102,7 @@ Node LTS `24.18.0` sur Alpine `3.24`, via l'index OCI multi-architecture épingl
 Les dépôts sont explicitement les branches stables `v3.24/main` et
 `v3.24/community` ; aucun paquet `edge` n'est utilisé. Les paquets directs
 `curl 8.21.0-r0`, `tini 0.19.0-r3`, `su-exec 0.3-r0`, ainsi que `clamav`,
-`clamav-daemon`, `clamav-clamdscan` et `freshclam` en `1.4.5-r0`, sont épinglés.
+`clamav-daemon`, `clamav-clamdscan` et `freshclam` en `1.4.6-r0`, sont épinglés.
 L'image installe `clamd` et `clamdscan` mais n'embarque aucune base mutable ou
 datée : le build froid ne dépend donc pas du CDN de signatures. `freshclam`
 actualise le volume `/var/lib/clamav` à chaque démarrage, puis reste en tâche
