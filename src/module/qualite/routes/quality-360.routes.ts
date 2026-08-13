@@ -4,16 +4,19 @@ import { authenticateToken } from "../../auth/middlewares/auth.middleware";
 import { requireQualityCapability } from "../middlewares/quality-authorization.middleware";
 import {
   consumeDerogation,
+  createDeliveryPolicy,
   createDerogation,
   createExecution,
   createPlan,
   decideExecution,
   evaluateEligibility,
   getDerogation,
+  getDeliveryPolicy,
   getExecution,
   getNcAnalysis,
   getPlan,
   listDerogations,
+  listDeliveryPolicies,
   listExecutions,
   listPlans,
   planApplicability,
@@ -21,11 +24,14 @@ import {
   previewVerdict,
   qualityCenter,
   recordMeasurements,
+  reviseDeliveryPolicy,
   revisePlan,
   transitionDerogation,
+  transitionDeliveryPolicy,
   transitionNc,
   transitionPlan,
   updatePlan,
+  updateDeliveryPolicy,
   upsertNcAnalysis,
 } from "../controllers/quality-360.controller";
 
@@ -54,6 +60,14 @@ const requireDerogationTransitionCapability: RequestHandler = (req, res, next) =
 // Centre Qualité et éligibilité (lecture).
 router.get("/center", requireQualityCapability("read"), qualityCenter);
 router.get("/eligibility", requireQualityCapability("read"), evaluateEligibility);
+
+// Politique globale de liberation des BL : aucune valeur par defaut n'est creee.
+router.get("/delivery-release-policies", requireQualityCapability("read"), listDeliveryPolicies);
+router.get("/delivery-release-policies/:id", requireQualityCapability("read"), getDeliveryPolicy);
+router.post("/delivery-release-policies", requireQualityCapability("settings_manage"), createDeliveryPolicy);
+router.patch("/delivery-release-policies/:id", requireQualityCapability("settings_manage"), updateDeliveryPolicy);
+router.post("/delivery-release-policies/:id/revisions", requireQualityCapability("settings_manage"), reviseDeliveryPolicy);
+router.post("/delivery-release-policies/:id/transitions", requireQualityCapability("settings_manage"), transitionDeliveryPolicy);
 
 // Plans de contrôle.
 router.get("/plans", requireQualityCapability("read"), listPlans);

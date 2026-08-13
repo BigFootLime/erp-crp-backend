@@ -14,10 +14,12 @@ import { getClientIp, parseDevice } from "../../../utils/requestMeta";
 import type { QualityActor } from "../repository/quality-360.repository";
 import {
   consumeDerogationSchema,
+  createDeliveryPolicySchema,
   createDerogationSchema,
   createExecutionSchema,
   createPlanSchema,
   decideExecutionSchema,
+  deliveryPolicyTransitionSchema,
   derogationTransitionSchema,
   eligibilityQuerySchema,
   executionPreviewSchema,
@@ -30,22 +32,27 @@ import {
   planTransitionSchema,
   qualityCenterQuerySchema,
   recordMeasurementsSchema,
+  reviseDeliveryPolicySchema,
   revisePlanSchema,
   updatePlanSchema,
+  updateDeliveryPolicySchema,
   upsertAnalysisSchema,
 } from "../validators/quality-360.validators";
 import {
   svcConsumeDerogation,
+  svcCreateDeliveryPolicy,
   svcCreateDerogation,
   svcCreateExecution,
   svcCreatePlan,
   svcDecideExecution,
   svcEvaluateEligibility,
+  svcGetDeliveryPolicy,
   svcGetDerogation,
   svcGetExecution,
   svcGetNcAnalysis,
   svcGetPlan,
   svcListDerogations,
+  svcListDeliveryPolicies,
   svcListExecutions,
   svcListPlans,
   svcPlanApplicability,
@@ -53,13 +60,69 @@ import {
   svcPreviewVerdict,
   svcQualityCenter,
   svcRecordMeasurements,
+  svcReviseDeliveryPolicy,
   svcRevisePlan,
   svcTransitionDerogation,
+  svcTransitionDeliveryPolicy,
   svcTransitionNc,
   svcTransitionPlan,
   svcUpdatePlan,
+  svcUpdateDeliveryPolicy,
   svcUpsertNcAnalysis,
 } from "../services/quality-360.service";
+
+/* -------------------------------------------------------------------------- */
+/* Politique globale de liberation des BL                                     */
+/* -------------------------------------------------------------------------- */
+
+export const listDeliveryPolicies: RequestHandler = asyncHandler(async (_req, res) => {
+  const items = await svcListDeliveryPolicies();
+  res.json({ items, total: items.length });
+});
+
+export const getDeliveryPolicy: RequestHandler = asyncHandler(async (req, res) => {
+  const { params } = parseOrThrow(idParamSchema, { params: req.params });
+  const out = await svcGetDeliveryPolicy(params.id);
+  if (!out) notFound("Politique de liberation");
+  res.json(out);
+});
+
+export const createDeliveryPolicy: RequestHandler = asyncHandler(async (req, res) => {
+  const { body } = parseOrThrow(createDeliveryPolicySchema, { body: req.body });
+  const out = await svcCreateDeliveryPolicy({ body, actor: buildActor(req), idempotencyKey: idempotencyKey(req) });
+  res.status(201).json(out);
+});
+
+export const updateDeliveryPolicy: RequestHandler = asyncHandler(async (req, res) => {
+  const parsed = parseOrThrow(updateDeliveryPolicySchema, { params: req.params, body: req.body });
+  const out = await svcUpdateDeliveryPolicy({ id: parsed.params.id, body: parsed.body, actor: buildActor(req) });
+  if (!out) notFound("Politique de liberation");
+  res.json(out);
+});
+
+export const transitionDeliveryPolicy: RequestHandler = asyncHandler(async (req, res) => {
+  const parsed = parseOrThrow(deliveryPolicyTransitionSchema, { params: req.params, body: req.body });
+  const out = await svcTransitionDeliveryPolicy({
+    id: parsed.params.id,
+    body: parsed.body,
+    actor: buildActor(req),
+    idempotencyKey: idempotencyKey(req),
+  });
+  if (!out) notFound("Politique de liberation");
+  res.json(out);
+});
+
+export const reviseDeliveryPolicy: RequestHandler = asyncHandler(async (req, res) => {
+  const parsed = parseOrThrow(reviseDeliveryPolicySchema, { params: req.params, body: req.body });
+  const out = await svcReviseDeliveryPolicy({
+    id: parsed.params.id,
+    revisionReason: parsed.body.revision_reason,
+    actor: buildActor(req),
+    idempotencyKey: idempotencyKey(req),
+  });
+  if (!out) notFound("Politique de liberation");
+  res.status(201).json(out);
+});
 
 /**
  * Parse strict avec mapping par champ : le frontend peut recoller chaque

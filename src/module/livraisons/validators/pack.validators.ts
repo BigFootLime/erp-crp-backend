@@ -37,3 +37,12 @@ export const packRevokeParamsSchema = z.object({
   id: z.string().uuid(),
   versionId: z.string().uuid(),
 })
+
+export const qualityDossierFreezeBodySchema = z.object({
+  quality_preview_sha256: z.string().trim().regex(/^[a-f0-9]{64}$/),
+  reason: z.string().trim().min(10).max(2000),
+}).strict()
+
+export const qualityDossierRevokeBodySchema = z.object({
+  reason: z.string().trim().min(10).max(2000),
+}).strict()

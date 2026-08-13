@@ -1051,9 +1051,88 @@ export type ExecutionPreview = {
   characteristics: Array<QualityCharacteristicSpec & { required_samples: number }>;
 };
 
+async function resolveLotReleaseAllocation(
+  q: DbQueryer,
+  body: ExecutionPreviewBodyDTO
+): Promise<ExecutionPreviewBodyDTO> {
+  if (body.trigger !== "LOT_RELEASE") return body;
+  if (
+    body.source_type !== "LOT" ||
+    !body.lot_id ||
+    !body.article_id ||
+    !body.bon_livraison_id ||
+    !body.delivery_allocation_id ||
+    body.source_id !== body.lot_id
+  ) {
+    throw new HttpError(
+      422,
+      "QUALITY_DELIVERY_RELEASE_SCOPE_REQUIRED",
+      "LOT_RELEASE exige le BL, l'allocation, l'article et le lot exacts."
+    );
+  }
+  const result = await q.query<{
+    bon_livraison_id: string;
+    lot_id: string | null;
+    article_id: string | null;
+    quantite: string;
+    unite: string | null;
+    piece_technique_id: string | null;
+    famille_id: string | null;
+  }>(
+    `SELECT line.bon_livraison_id::text AS bon_livraison_id,
+            allocation.lot_id::text AS lot_id,
+            allocation.article_id::text AS article_id,
+            allocation.quantite::text AS quantite,
+            allocation.unite,
+            article.piece_technique_id::text AS piece_technique_id,
+            piece.famille_id::text AS famille_id
+     FROM public.bon_livraison_ligne_allocations allocation
+     JOIN public.bon_livraison_ligne line ON line.id = allocation.bon_livraison_ligne_id
+     JOIN public.articles article ON article.id = allocation.article_id
+     LEFT JOIN public.pieces_techniques piece ON piece.id = article.piece_technique_id
+     WHERE allocation.id = $1::uuid`,
+    [body.delivery_allocation_id]
+  );
+  const allocation = result.rows[0];
+  if (!allocation) {
+    throw new HttpError(404, "QUALITY_DELIVERY_ALLOCATION_NOT_FOUND", "Allocation de BL introuvable.");
+  }
+  if (
+    allocation.bon_livraison_id !== body.bon_livraison_id ||
+    allocation.lot_id !== body.lot_id ||
+    allocation.article_id !== body.article_id
+  ) {
+    throw new HttpError(
+      409,
+      "QUALITY_DELIVERY_ALLOCATION_SCOPE_MISMATCH",
+      "Le BL, l'allocation, l'article et le lot ne designent pas le meme perimetre."
+    );
+  }
+  if (body.population > toNumber(allocation.quantite)) {
+    throw new HttpError(
+      422,
+      "QUALITY_POPULATION_EXCEEDS_ALLOCATION",
+      "La population controlee depasse la quantite de l'allocation."
+    );
+  }
+  if (allocation.unite && allocation.unite !== body.unite) {
+    throw new HttpError(
+      422,
+      "QUALITY_ALLOCATION_UNIT_MISMATCH",
+      "L'unite du controle differe de celle de l'allocation."
+    );
+  }
+  return {
+    ...body,
+    piece_technique_id: body.piece_technique_id ?? allocation.piece_technique_id,
+    famille_id: body.famille_id ?? allocation.famille_id,
+  };
+}
+
 export async function repoPreviewExecution(body: ExecutionPreviewBodyDTO): Promise<ExecutionPreview> {
   assertSourceRef({ source_type: body.source_type, source_id: body.source_id });
-  const built = await buildExecutionSnapshot(pool, body);
+  const scopedBody = await resolveLotReleaseAllocation(pool, body);
+  const built = await buildExecutionSnapshot(pool, scopedBody);
   return {
     plan: { id: built.plan.id, code: built.plan.code, version: built.plan.version },
     snapshot_sha256: built.snapshot.sha256,
@@ -1087,6 +1166,8 @@ export type ExecutionDetail = {
   created_at: string;
   updated_at: string;
   controlled_by: number;
+  bon_livraison_id: string | null;
+  delivery_allocation_id: string | null;
   measurements: Array<{
     id: string;
     characteristic_key: string | null;
@@ -1135,6 +1216,8 @@ type ExecutionRow = {
   created_at: string;
   updated_at: string;
   controlled_by: number;
+  bon_livraison_id: string | null;
+  delivery_allocation_id: string | null;
   correlation_id: string;
 };
 
@@ -1144,7 +1227,8 @@ const EXECUTION_COLUMNS = `
   qc.source_type, qc.source_id, qc.plan_id, qc.plan_version, qc.plan_snapshot, qc.plan_snapshot_sha256,
   qc.unite, qc.qty_population, qc.qty_controlled, qc.qty_conforming, qc.qty_released, qc.qty_held,
   qc.qty_scrapped, qc.qty_reworked, qc.qty_sorted, qc.qty_returned, qc.qty_consumed,
-  qc.control_date, qc.validation_date, qc.created_at, qc.updated_at, qc.controlled_by, qc.correlation_id,
+  qc.control_date, qc.validation_date, qc.created_at, qc.updated_at, qc.controlled_by,
+  qc.bon_livraison_id, qc.delivery_allocation_id, qc.correlation_id,
   p.code AS plan_code
 `;
 
@@ -1239,6 +1323,8 @@ function buildExecutionDetail(row: ExecutionRow, measurements: ExecutionDetail["
     created_at: row.created_at,
     updated_at: row.updated_at,
     controlled_by: row.controlled_by,
+    bon_livraison_id: row.bon_livraison_id,
+    delivery_allocation_id: row.delivery_allocation_id,
     measurements,
   };
 }
@@ -1321,7 +1407,8 @@ export async function repoCreateExecution(params: {
       if (replayed) return buildExecutionDetail(replayed, await selectMeasurements(client, replayed.id));
     }
 
-    const built = await buildExecutionSnapshot(client, params.body);
+    const scopedBody = await resolveLotReleaseAllocation(client, params.body);
+    const built = await buildExecutionSnapshot(client, scopedBody);
     // L'aperçu doit encore correspondre au plan applicable : sinon le référentiel
     // a bougé entre l'aperçu et la confirmation.
     assertPreviewFresh({
@@ -1340,6 +1427,7 @@ export async function repoCreateExecution(params: {
           plan_id, plan_version, plan_snapshot, plan_snapshot_sha256,
           source_type, source_id, trigger_type,
           lot_id, article_id, fournisseur_id, reception_ligne_id,
+          bon_livraison_id, delivery_allocation_id,
           unite, qty_population, verdict, verdict_computed, comments,
           created_by, updated_by
         )
@@ -1349,8 +1437,9 @@ export async function repoCreateExecution(params: {
           $6::uuid, $7, $8::jsonb, $9,
           $10, $11, $12,
           $13::uuid, $14::uuid, $15::uuid, $16::uuid,
-          $17, $18, 'EN_ATTENTE', 'EN_ATTENTE', $19,
-          $20, $20
+          $17::uuid, $18::uuid,
+          $19, $20, 'EN_ATTENTE', 'EN_ATTENTE', $21,
+          $22, $22
         )
         RETURNING id, correlation_id
       `,
@@ -1371,6 +1460,8 @@ export async function repoCreateExecution(params: {
         params.body.article_id ?? null,
         params.body.fournisseur_id ?? null,
         params.body.reception_ligne_id ?? null,
+        params.body.bon_livraison_id ?? null,
+        params.body.delivery_allocation_id ?? null,
         params.body.unite,
         params.body.population,
         params.body.comments ?? null,
@@ -1940,11 +2031,16 @@ export async function repoDecideExecution(params: {
     assertSnapshotIntegrity(before.plan_snapshot, before.plan_snapshot_sha256);
 
     // L'auteur de l'exécution ne prononce pas lui-même la libération.
-    if (params.body.decision === "FULL" || params.body.decision === "PARTIAL") {
-      assertReleaseSeparation({
-        executorUserId: before.controlled_by,
-        deciderUserId: params.actor.user_id,
-      });
+    assertReleaseSeparation({
+      executorUserId: before.controlled_by,
+      deciderUserId: params.actor.user_id,
+    });
+    if (params.body.object_type !== before.source_type || params.body.object_id !== before.source_id) {
+      throw new HttpError(
+        409,
+        "QUALITY_RELEASE_SCOPE_MISMATCH",
+        "La decision doit porter sur la source exacte figee dans l'execution."
+      );
     }
 
     const specs = characteristicsFromSnapshot(before.plan_snapshot);

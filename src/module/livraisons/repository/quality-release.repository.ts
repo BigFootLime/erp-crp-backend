@@ -14,6 +14,8 @@ type Queryable = Pick<PoolClient, "query">
 
 type TargetRow = {
   target_key: string
+  allocation_id: string
+  delivery_line_id: string
   object_type: "LOT" | "DELIVERY_LINE"
   object_id: string
   label: string | null
@@ -21,12 +23,19 @@ type TargetRow = {
   unite: string | null
   lot_status: "LIBERE" | "EN_ATTENTE" | "QUARANTAINE" | "BLOQUE" | null
   article_id: string | null
+  article_code: string | null
+  article_designation: string | null
   lot_id: string | null
+  lot_code: string | null
   commande_id: string | null
+  plan_id: string | null
+  plan_code: string | null
+  plan_version: number | null
 }
 
 type ControlRow = {
   id: string
+  delivery_allocation_id: string | null
   source_type: string
   source_id: string
   qty_released: string
@@ -45,6 +54,9 @@ type NcRow = {
 
 type ReleaseRow = {
   id: string
+  quality_control_id: string
+  decision: "FULL" | "PARTIAL" | "HOLD" | "REJECT"
+  qty: string
   object_type: string
   object_id: string
   derogation_id: string | null
@@ -111,10 +123,6 @@ function unknownRelease(bonLivraisonId: string, reason: string): DeliveryQuality
   })
 }
 
-function targetKey(objectType: string, objectId: string): string {
-  return `${objectType}:${objectId}`
-}
-
 /**
  * Builds the canonical quality release aggregate for one delivery. All reads
  * can use the caller's transaction so generation and shipment re-check the
@@ -141,7 +149,7 @@ export async function repoGetDeliveryQualityRelease(
         SELECT id::text AS id, code, version, rules, rules_sha256,
                signature_reference, signed_at::text AS signed_at
         FROM public.quality_delivery_release_policy
-        WHERE status = 'SIGNED'
+        WHERE status = 'ACTIVE'
           AND signed_at IS NOT NULL
           AND valid_from <= clock_timestamp()
           AND (valid_to IS NULL OR valid_to >= clock_timestamp())
@@ -162,63 +170,88 @@ export async function repoGetDeliveryQualityRelease(
     const targetsRes = await db.query<TargetRow>(
       `
         SELECT
-          CASE WHEN a.lot_id IS NOT NULL
-            THEN 'LOT:' || a.lot_id::text
-            ELSE 'DELIVERY_LINE:' || bl.id::text
-          END AS target_key,
+          'ALLOCATION:' || a.id::text AS target_key,
+          a.id::text AS allocation_id,
+          bl.id::text AS delivery_line_id,
           CASE WHEN a.lot_id IS NOT NULL THEN 'LOT' ELSE 'DELIVERY_LINE' END AS object_type,
           COALESCE(a.lot_id::text, bl.id::text) AS object_id,
           CASE WHEN a.lot_id IS NOT NULL THEN l.lot_code ELSE 'Ligne ' || bl.ordre::text END AS label,
-          SUM(a.quantite)::text AS qty_requested,
-          CASE WHEN COUNT(DISTINCT COALESCE(a.unite, '')) = 1 THEN MIN(a.unite) ELSE NULL END AS unite,
+          a.quantite::text AS qty_requested,
+          a.unite,
           CASE WHEN a.lot_id IS NOT NULL THEN l.lot_status::text ELSE NULL END AS lot_status,
-          CASE WHEN COUNT(DISTINCT a.article_id) = 1
-            THEN (array_agg(DISTINCT a.article_id ORDER BY a.article_id))[1]::text
-            ELSE NULL
-          END AS article_id,
+          a.article_id::text AS article_id,
+          article.code AS article_code,
+          article.designation AS article_designation,
           a.lot_id::text AS lot_id,
-          b.commande_id::text AS commande_id
+          l.lot_code AS lot_code,
+          b.commande_id::text AS commande_id,
+          applicable_plan.id::text AS plan_id,
+          applicable_plan.code AS plan_code,
+          applicable_plan.version AS plan_version
         FROM public.bon_livraison b
         JOIN public.bon_livraison_ligne bl ON bl.bon_livraison_id = b.id
         JOIN public.bon_livraison_ligne_allocations a ON a.bon_livraison_ligne_id = bl.id
         LEFT JOIN public.lots l ON l.id = a.lot_id
+        LEFT JOIN public.articles article ON article.id = a.article_id
+        LEFT JOIN public.pieces_techniques piece ON piece.id = article.piece_technique_id
+        LEFT JOIN LATERAL (
+          SELECT p.id, p.code, p.version
+          FROM public.quality_control_plan p
+          WHERE p.status = 'PUBLISHED'
+            AND p.trigger_type = 'LOT_RELEASE'
+            AND (p.article_id IS NULL OR p.article_id = a.article_id)
+            AND (p.piece_technique_id IS NULL OR p.piece_technique_id = article.piece_technique_id)
+            AND (p.famille_id IS NULL OR p.famille_id = piece.famille_id)
+            AND p.piece_version_id IS NULL
+            AND p.operation_code IS NULL
+            AND p.fournisseur_id IS NULL
+            AND (p.effective_from IS NULL OR p.effective_from <= clock_timestamp())
+            AND (p.effective_to IS NULL OR p.effective_to >= clock_timestamp())
+          ORDER BY
+            ((p.article_id IS NOT NULL)::int * 8 +
+             (p.piece_technique_id IS NOT NULL)::int * 4 +
+             (p.famille_id IS NOT NULL)::int * 2) DESC,
+            p.version DESC,
+            p.id
+          LIMIT 1
+        ) applicable_plan ON true
         WHERE b.id = $1::uuid
-        GROUP BY b.commande_id, bl.id, bl.ordre, a.lot_id, l.lot_code, l.lot_status
-        ORDER BY target_key
+        ORDER BY bl.ordre, a.id
       `,
       [bonLivraisonId]
     )
 
     const targetRows = targetsRes.rows
-    const objectTypes = targetRows.map((row) => row.object_type)
-    const objectIds = targetRows.map((row) => row.object_id)
+    const allocationIds = targetRows.map((row) => row.allocation_id)
 
     const controlsRes =
       targetRows.length === 0
         ? { rows: [] as ControlRow[] }
         : await db.query<ControlRow>(
             `
-              SELECT qc.id::text AS id, qc.source_type, qc.source_id,
+              SELECT qc.id::text AS id, qc.delivery_allocation_id::text AS delivery_allocation_id,
+                     qc.source_type, qc.source_id,
                      qc.qty_released::text, qc.qty_held::text, qc.qty_consumed::text,
                      (qc.validation_date IS NULL OR COALESCE(qc.verdict, 'EN_ATTENTE') = 'EN_ATTENTE') AS pending
               FROM public.quality_control qc
-              WHERE (qc.source_type, qc.source_id) IN (
-                SELECT x.object_type, x.object_id
-                FROM unnest($1::text[], $2::text[]) AS x(object_type, object_id)
-              )
-              ORDER BY qc.source_type, qc.source_id, qc.control_date, qc.id
+              WHERE qc.delivery_allocation_id = ANY($1::uuid[])
+                AND qc.trigger_type = 'LOT_RELEASE'
+              ORDER BY qc.delivery_allocation_id, qc.control_date DESC, qc.id DESC
             `,
-            [objectTypes, objectIds]
+            [allocationIds]
           )
 
     const controlsByTarget = new Map<string, ControlRow[]>()
+    const targetKeyByControl = new Map<string, string>()
     const targetKeysByControl = new Map<string, string[]>()
     for (const row of controlsRes.rows) {
-      const key = targetKey(row.source_type, row.source_id)
+      if (!row.delivery_allocation_id) continue
+      const key = `ALLOCATION:${row.delivery_allocation_id}`
       const values = controlsByTarget.get(key) ?? []
       values.push(row)
       controlsByTarget.set(key, values)
       targetKeysByControl.set(row.id, [key])
+      targetKeyByControl.set(row.id, key)
     }
 
     const ncRes = await db.query<NcRow>(
@@ -248,9 +281,12 @@ export async function repoGetDeliveryQualityRelease(
     const releaseRes =
       targetRows.length === 0
         ? { rows: [] as ReleaseRow[] }
-        : await db.query<ReleaseRow>(
+        : controlsRes.rows.length === 0
+          ? { rows: [] as ReleaseRow[] }
+          : await db.query<ReleaseRow>(
             `
-              SELECT rd.id::text AS id, rd.object_type, rd.object_id,
+              SELECT rd.id::text AS id, rd.quality_control_id::text AS quality_control_id,
+                     rd.decision, rd.qty::text AS qty, rd.object_type, rd.object_id,
                      rd.derogation_id::text AS derogation_id, rd.justification,
                      rd.decided_at::text AS decided_at,
                      d.code AS d_code, d.status AS d_status,
@@ -274,33 +310,34 @@ export async function repoGetDeliveryQualityRelease(
               LEFT JOIN public.quality_derogation_consumption dc
                 ON dc.derogation_id = d.id
                AND dc.release_decision_id = rd.id
-               AND dc.bon_livraison_id = $3::uuid
-              WHERE (rd.object_type, rd.object_id) IN (
-                SELECT x.object_type, x.object_id
-                FROM unnest($1::text[], $2::text[]) AS x(object_type, object_id)
-              )
-                AND rd.decision IN ('FULL', 'PARTIAL')
-              ORDER BY rd.object_type, rd.object_id, rd.decided_at DESC, rd.id DESC
+               AND dc.bon_livraison_id = $2::uuid
+              WHERE rd.quality_control_id = ANY($1::uuid[])
+              ORDER BY rd.quality_control_id, rd.decided_at DESC, rd.id DESC
             `,
-            [objectTypes, objectIds, bonLivraisonId]
+            [controlsRes.rows.map((row) => row.id), bonLivraisonId]
           )
 
     const latestReleaseByTarget = new Map<string, ReleaseRow>()
     const targetKeysByRelease = new Map<string, string[]>()
     const targetKeysByDerogation = new Map<string, string[]>()
     for (const row of releaseRes.rows) {
-      const key = targetKey(row.object_type, row.object_id)
+      const key = targetKeyByControl.get(row.quality_control_id)
+      if (!key) continue
       targetKeysByRelease.set(row.id, [key])
       if (row.derogation_id) {
         const keys = targetKeysByDerogation.get(row.derogation_id) ?? []
         if (!keys.includes(key)) keys.push(key)
         targetKeysByDerogation.set(row.derogation_id, keys)
       }
-      if (!latestReleaseByTarget.has(key)) latestReleaseByTarget.set(key, row)
+      if (
+        !latestReleaseByTarget.has(key) &&
+        controlsByTarget.get(key)?.[0]?.id === row.quality_control_id
+      ) latestReleaseByTarget.set(key, row)
     }
 
     const observations: DeliveryQualityTargetObservation[] = targetRows.map((row) => {
       const controls = controlsByTarget.get(row.target_key) ?? []
+      const effectiveControl = controls[0] ?? null
       const openNc = ncRes.rows.filter((nc) => {
         if (!nc.open_without_disposition) return false
         if (nc.bon_livraison_id === bonLivraisonId && !nc.lot_id && !nc.control_id) return true
@@ -355,17 +392,37 @@ export async function repoGetDeliveryQualityRelease(
 
       return {
         key: row.target_key,
+        allocation_id: row.allocation_id,
+        delivery_line_id: row.delivery_line_id,
+        article_id: row.article_id,
+        article_code: row.article_code,
+        article_designation: row.article_designation,
+        lot_id: row.lot_id,
+        lot_code: row.lot_code,
+        unite: row.unite,
+        plan: row.plan_id && row.plan_code && row.plan_version
+          ? { id: row.plan_id, code: row.plan_code, version: row.plan_version }
+          : null,
+        control_count: controls.length,
+        latest_decision: release
+          ? {
+              id: release.id,
+              decision: release.decision,
+              qty: toNumber(release.qty),
+              decided_at: release.decided_at,
+            }
+          : null,
         target: {
           object_type: row.object_type,
           object_id: row.object_id,
           label: row.label,
           qty_requested: toNumber(row.qty_requested),
           lot_status: row.lot_status,
-          qty_released: controls.reduce((sum, control) => sum + toNumber(control.qty_released), 0),
-          qty_held: controls.reduce((sum, control) => sum + toNumber(control.qty_held), 0),
-          qty_consumed: controls.reduce((sum, control) => sum + toNumber(control.qty_consumed), 0),
+          qty_released: effectiveControl ? toNumber(effectiveControl.qty_released) : 0,
+          qty_held: effectiveControl ? toNumber(effectiveControl.qty_held) : 0,
+          qty_consumed: effectiveControl ? toNumber(effectiveControl.qty_consumed) : 0,
           open_nc_without_disposition: openNc,
-          pending_mandatory_controls: controls.filter((control) => control.pending).length,
+          pending_mandatory_controls: effectiveControl?.pending ? 1 : 0,
           derogation: derogation ? { status: derogation.state.status, valid_to: derogation.state.valid_to } : null,
         },
         derogation,

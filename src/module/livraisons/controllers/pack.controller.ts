@@ -3,8 +3,20 @@ import type { Request, RequestHandler } from "express"
 import { HttpError } from "../../../utils/httpError"
 import { getDocumentStoragePath } from "../../../utils/cerpStorage"
 import { sendSecureStoredFile } from "../../../shared/uploads/secure-download"
-import { packGenerateBodySchema, packPreviewParamsSchema, packRevokeParamsSchema } from "../validators/pack.validators"
+import { normalizeQualityIdempotencyKey } from "../../qualite/domain/quality-policy"
+import {
+  packGenerateBodySchema,
+  packPreviewParamsSchema,
+  packRevokeParamsSchema,
+  qualityDossierFreezeBodySchema,
+  qualityDossierRevokeBodySchema,
+} from "../validators/pack.validators"
 import { repoFindDocumentFilePath, repoGetDocumentName, repoIsLivraisonDocumentLinked } from "../repository/livraisons.repository"
+import {
+  repoFreezeDeliveryQualityDossier,
+  repoGetDeliveryQualityDossier,
+  repoRevokeDeliveryQualityDossier,
+} from "../repository/quality-dossier.repository"
 import { svcGenerateLivraisonPack, svcGetLivraisonPackPreview, svcRevokeLivraisonPackVersion } from "../services/pack.service"
 
 function coerceBool(value: unknown): boolean {
@@ -37,6 +49,53 @@ export const getLivraisonPackPreview: RequestHandler = async (req, res, next) =>
     res.json(out)
   } catch (e) {
     next(e)
+  }
+}
+
+export const getLivraisonQualityDossier: RequestHandler = async (req, res, next) => {
+  try {
+    getUserId(req)
+    const { id } = packPreviewParamsSchema.parse(req.params)
+    res.json(await repoGetDeliveryQualityDossier(id))
+  } catch (error) {
+    next(error)
+  }
+}
+
+export const freezeLivraisonQualityDossier: RequestHandler = async (req, res, next) => {
+  try {
+    const actorUserId = getUserId(req)
+    const { id } = packPreviewParamsSchema.parse(req.params)
+    const body = qualityDossierFreezeBodySchema.parse(req.body)
+    const key = normalizeQualityIdempotencyKey(
+      typeof req.headers["idempotency-key"] === "string" ? req.headers["idempotency-key"] : null
+    )
+    const out = await repoFreezeDeliveryQualityDossier({
+      bonLivraisonId: id,
+      expectedPreviewSha256: body.quality_preview_sha256,
+      reason: body.reason,
+      actorUserId,
+      idempotencyKey: key,
+    })
+    res.status(201).json(out)
+  } catch (error) {
+    next(error)
+  }
+}
+
+export const revokeLivraisonQualityDossier: RequestHandler = async (req, res, next) => {
+  try {
+    const actorUserId = getUserId(req)
+    const { id, versionId } = packRevokeParamsSchema.parse(req.params)
+    const body = qualityDossierRevokeBodySchema.parse(req.body)
+    res.json(await repoRevokeDeliveryQualityDossier({
+      bonLivraisonId: id,
+      versionId,
+      reason: body.reason,
+      actorUserId,
+    }))
+  } catch (error) {
+    next(error)
   }
 }
 

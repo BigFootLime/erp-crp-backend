@@ -42,6 +42,7 @@ import {
   repoGetLivraisonPreparation,
   repoResetLivraisonPreparation,
 } from "../repository/livraisons-preparation.repository"
+import { repoGetDeliveryQualityRelease } from "../repository/quality-release.repository"
 
 function assertEditable(statut: BonLivraisonStatut, action: string) {
   if (statut === "DRAFT" || statut === "READY") return
@@ -142,6 +143,7 @@ export async function svcGetLivraisonShipmentPreview(id: string) {
 }
 
 export async function svcGetLivraisonPreparation(id: string) {
+  await assertDeliveryQualityAllowsPreparation(id)
   const preparation = await repoGetLivraisonPreparation(id)
   if (!preparation) {
     throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
@@ -149,23 +151,37 @@ export async function svcGetLivraisonPreparation(id: string) {
   return preparation
 }
 
-export function svcConfirmLivraisonPreparation(
+async function assertDeliveryQualityAllowsPreparation(id: string): Promise<void> {
+  const release = await repoGetDeliveryQualityRelease(id)
+  if (release.state !== "READY" && release.state !== "DEROGATED") {
+    throw new HttpError(
+      409,
+      "QUALITY_PREPARATION_BLOCKED",
+      "La preparation est verrouillee tant que le dossier qualite n'est pas liberable.",
+      { quality_release: release }
+    )
+  }
+}
+
+export async function svcConfirmLivraisonPreparation(
   id: string,
   allocationId: string,
   body: ConfirmLivraisonPreparationBodyDTO,
   userId: number,
   idempotencyKey: string
 ) {
+  await assertDeliveryQualityAllowsPreparation(id)
   return repoConfirmLivraisonPreparation(id, allocationId, body, userId, idempotencyKey)
 }
 
-export function svcResetLivraisonPreparation(
+export async function svcResetLivraisonPreparation(
   id: string,
   allocationId: string,
   body: ResetLivraisonPreparationBodyDTO,
   userId: number,
   idempotencyKey: string
 ) {
+  await assertDeliveryQualityAllowsPreparation(id)
   return repoResetLivraisonPreparation(id, allocationId, body, userId, idempotencyKey)
 }
 
