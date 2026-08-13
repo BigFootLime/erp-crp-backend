@@ -26,10 +26,10 @@ RUN printf '%s\n' \
     "curl=8.21.0-r0" \
     "tini=0.19.0-r3" \
     "su-exec=0.3-r0" \
-    "clamav=1.4.5-r0" \
-    "clamav-daemon=1.4.5-r0" \
-    "clamav-clamdscan=1.4.5-r0" \
-    "freshclam=1.4.5-r0" \
+    "clamav=1.4.6-r0" \
+    "clamav-daemon=1.4.6-r0" \
+    "clamav-clamdscan=1.4.6-r0" \
+    "freshclam=1.4.6-r0" \
   && addgroup node clamav
 
 COPY docker/clamd.conf /etc/clamav/clamd.conf
