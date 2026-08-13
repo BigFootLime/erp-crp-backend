@@ -154,11 +154,17 @@ ALTER TABLE public.affaire
   ADD COLUMN IF NOT EXISTS commentaire text;
 
 ALTER TABLE public.centres_frais
-  ADD COLUMN IF NOT EXISTS designation text;
+  ADD COLUMN IF NOT EXISTS designation text,
+  ADD COLUMN IF NOT EXISTS type_cf text,
+  ADD COLUMN IF NOT EXISTS section text;
 
 UPDATE public.centres_frais
 SET designation = COALESCE(designation, name)
 WHERE designation IS NULL;
+
+ALTER TABLE public.pieces_families
+  ADD COLUMN IF NOT EXISTS type_famille text,
+  ADD COLUMN IF NOT EXISTS section text;
 
 ALTER TABLE public.commande_historique
   ADD COLUMN IF NOT EXISTS ancien_statut text,
@@ -198,6 +204,59 @@ CREATE TABLE IF NOT EXISTS public.gestion_outils_fournisseur_fabricant (
   id_fournisseur integer NOT NULL REFERENCES public.gestion_outils_fournisseur(id_fournisseur) ON DELETE CASCADE,
   PRIMARY KEY (id_fabricant, id_fournisseur)
 );
+
+-- These legacy catalogue tables predate the additive patch ledger too. The
+-- runtime detail and pricing endpoints nevertheless depend on their deployed
+-- names, so the disposable baseline must reproduce that historical contract.
+CREATE TABLE IF NOT EXISTS public.gestion_outils_revetement (
+  id_revetement serial PRIMARY KEY,
+  nom text NOT NULL,
+  id_fabricant integer NULL REFERENCES public.gestion_outils_fabricant(id_fabricant) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.gestion_outils_outil_revetement (
+  id_outil integer NOT NULL REFERENCES public.gestion_outils_outil(id_outil) ON DELETE CASCADE,
+  id_revetement integer NOT NULL REFERENCES public.gestion_outils_revetement(id_revetement) ON DELETE CASCADE,
+  PRIMARY KEY (id_outil, id_revetement)
+);
+
+CREATE TABLE IF NOT EXISTS public.gestion_outils_arete_coupe (
+  id_arete_coupe serial PRIMARY KEY,
+  nom_arete_coupe text NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.gestion_outils_geometrie_aretecoupe (
+  id_geometrie integer NOT NULL REFERENCES public.gestion_outils_geometrie(id_geometrie) ON DELETE CASCADE,
+  id_arete_coupe integer NOT NULL REFERENCES public.gestion_outils_arete_coupe(id_arete_coupe) ON DELETE CASCADE,
+  PRIMARY KEY (id_geometrie, id_arete_coupe)
+);
+
+CREATE TABLE IF NOT EXISTS public.gestion_outils_valeur_arete_coupe (
+  id_valeur_arete serial PRIMARY KEY,
+  id_outil integer NOT NULL REFERENCES public.gestion_outils_outil(id_outil) ON DELETE CASCADE,
+  id_arete_coupe integer NULL REFERENCES public.gestion_outils_arete_coupe(id_arete_coupe) ON DELETE SET NULL,
+  valeur numeric(18,6) NULL
+);
+
+-- The historical bootstrap intentionally starts from the oldest known name
+-- (`id`). Production repositories have long consumed `id_historique`.
+DO $outillage_history_key$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'gestion_outils_historique_prix'
+      AND column_name = 'id'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'gestion_outils_historique_prix'
+      AND column_name = 'id_historique'
+  ) THEN
+    ALTER TABLE public.gestion_outils_historique_prix RENAME COLUMN id TO id_historique;
+  END IF;
+END
+$outillage_history_key$;
 
 CREATE TABLE IF NOT EXISTS public.gestion_outils_stock (
   id_outil integer PRIMARY KEY REFERENCES public.gestion_outils_outil(id_outil) ON DELETE CASCADE,
@@ -240,6 +299,22 @@ BEGIN
       AND column_name IN ('profile_picture', 'last_login', 'created_at')
   ) <> 3 THEN
     RAISE EXCEPTION 'SOL-05 historical contract verification failed: account administration columns missing';
+  END IF;
+
+  IF (
+    SELECT count(*)
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'pieces_families'
+      AND column_name IN ('type_famille', 'section')
+  ) <> 2 OR (
+    SELECT count(*)
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'centres_frais'
+      AND column_name IN ('designation', 'type_cf', 'section')
+  ) <> 3 THEN
+    RAISE EXCEPTION 'SOL-05 historical contract verification failed: technical referential columns missing';
   END IF;
 
   IF NOT EXISTS (
@@ -291,8 +366,10 @@ BEGIN
   END IF;
 
   IF to_regclass('public.gestion_outils_outil_fournisseur') IS NULL
-     OR to_regclass('public.gestion_outils_fournisseur_fabricant') IS NULL THEN
-    RAISE EXCEPTION 'SOL-05 historical contract verification failed: outillage supplier links missing';
+     OR to_regclass('public.gestion_outils_fournisseur_fabricant') IS NULL
+     OR to_regclass('public.gestion_outils_outil_revetement') IS NULL
+     OR to_regclass('public.gestion_outils_valeur_arete_coupe') IS NULL THEN
+    RAISE EXCEPTION 'SOL-05 historical contract verification failed: outillage catalogue links missing';
   END IF;
 
   IF NOT EXISTS (
@@ -302,6 +379,15 @@ BEGIN
       AND column_name = 'id_mouvement'
   ) THEN
     RAISE EXCEPTION 'SOL-05 historical contract verification failed: outillage movement key missing';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'gestion_outils_historique_prix'
+      AND column_name = 'id_historique'
+  ) THEN
+    RAISE EXCEPTION 'SOL-05 historical contract verification failed: outillage price-history key missing';
   END IF;
 END
 $verify$;
