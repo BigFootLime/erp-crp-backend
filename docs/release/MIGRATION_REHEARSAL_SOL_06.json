@@ -1,6 +1,6 @@
 {
   "status": "passed",
-  "started_at": "2026-08-13T08:25:51.068Z",
+  "started_at": "2026-08-13T11:29:45.935Z",
   "postgres_image": "postgres@sha256:16bc17c64a573ef34162af9298258d1aec548232985b33ed7b1eac33ba35c229",
   "isolated_target": {
     "host": "127.0.0.1",
@@ -9,34 +9,34 @@
     "storage": "tmpfs"
   },
   "durations": {
-    "source_migration": 19162,
-    "source_seed": 181,
-    "backup": 716,
-    "preflight": 140,
-    "integrity_before": 572,
-    "migration": 264,
-    "verify": 166,
-    "replay": 116,
-    "integrity_after": 1327,
-    "negative_gate": 41,
-    "rollback": 121,
-    "restore": 3965
+    "source_migration": 18275,
+    "source_seed": 195,
+    "backup": 698,
+    "preflight": 144,
+    "integrity_before": 570,
+    "migration": 349,
+    "verify": 157,
+    "replay": 117,
+    "integrity_after": 1467,
+    "negative_gate": 42,
+    "rollback": 165,
+    "restore": 3905
   },
   "source": {
     "status": "passed",
-    "checked_at": "2026-08-13T08:26:13.698Z",
-    "duration_ms": 90,
+    "checked_at": "2026-08-13T11:30:07.881Z",
+    "duration_ms": 87,
     "identity": {
       "database": "cerp_test",
       "database_user": "cerp_e2e",
       "server_version": "16.14",
-      "database_bytes": "36199447"
+      "database_bytes": "36166679"
     },
     "backup": {
-      "file": "C:\\Users\\KEENAN~1\\AppData\\Local\\Temp\\cerp-sol06-nuzfcU\\cerp-test-before-sol06.dump",
-      "bytes": 1954339,
-      "sha256": "52275685164f28b972461fb5460a71e97315b86eff5d4265c038f43e61598de3",
-      "free_bytes": 432122372096
+      "file": "C:\\Users\\KEENAN~1\\AppData\\Local\\Temp\\cerp-sol06-PD9vR0\\cerp-test-before-sol06.dump",
+      "bytes": 1954052,
+      "sha256": "7dd8de175577c5d04a1f62cdea190ec53a4b4b5f4b9405ec35ee2a2e1a6c86a4",
+      "free_bytes": 430891192320
     },
     "ledger": {
       "applied": 140,
@@ -49,6 +49,8 @@
         "20260811_production_readiness_center.sql",
         "20260812_commercial_reliability_sol17.sql",
         "20260812_procurement_reliability_sol18.sql",
+        "20260813_quality_delivery_workflow_0437.sql",
+        "20260813_sol20_tooling_technical_ged.sql",
         "20260813_stock_intelligence_sol19.sql"
       ],
       "checksum_mismatches": [],
@@ -358,7 +360,7 @@
       "quality_control_plan": "1",
       "quality_control_plan_characteristic": "1",
       "quality_control_points": "0",
-      "quality_delivery_release_policy": "1",
+      "quality_delivery_release_policy": "0",
       "quality_derogation": "0",
       "quality_derogation_consumption": "0",
       "quality_documents": "0",
@@ -434,12 +436,14 @@
         "20260811_production_readiness_center.sql",
         "20260812_commercial_reliability_sol17.sql",
         "20260812_procurement_reliability_sol18.sql",
+        "20260813_quality_delivery_workflow_0437.sql",
+        "20260813_sol20_tooling_technical_ged.sql",
         "20260813_stock_intelligence_sol19.sql"
       ],
       "checksum_mismatches": [],
       "unknown_applied": []
     },
-    "fingerprint": "515c472ae6a05e2d5cedca4576ae1bd020d21d82569f8e9be41b31599335c84b"
+    "fingerprint": "ffba5ceb693763c901308b56f252bd5e498d8c53e2886ce4b9d76ba39e9bf49c"
   },
   "replay": {
     "applied_zero": true,
@@ -447,8 +451,8 @@
   },
   "after": {
     "status": "passed",
-    "checked_at": "2026-08-13T08:26:16.148Z",
-    "duration_ms": 1314,
+    "checked_at": "2026-08-13T11:30:10.545Z",
+    "duration_ms": 1453,
     "table_counts": {
       "admin_account_invitations": "0",
       "admin_user_provisioning_migration_state": "12",
@@ -505,7 +509,7 @@
       "centres_frais": "1",
       "cerp_patch_20260804_stock_units": "3",
       "cerp_patch_20260811_base_unit_repair": "1",
-      "cerp_schema_migrations": "149",
+      "cerp_schema_migrations": "151",
       "chat_conversation_participants": "0",
       "chat_conversations": "0",
       "chat_messages": "0",
@@ -670,6 +674,9 @@
       "operator_badge_credentials": "0",
       "operator_device_sessions": "0",
       "ordres_fabrication": "0",
+      "outillage_allocations": "0",
+      "outillage_lifecycle_events": "0",
+      "outillage_tool_parameter_versions": "0",
       "outillages": "0",
       "paiement": "0",
       "paiement_allocations": "0",
@@ -680,6 +687,7 @@
       "piece_technique_create_idempotence": "0",
       "piece_technique_versions": "2",
       "piece_version_document_requirements": "0",
+      "piece_version_tool_requirements": "0",
       "pieces_families": "1",
       "pieces_techniques": "2",
       "pieces_techniques_achats": "0",
@@ -758,7 +766,9 @@
       "quality_control_plan": "1",
       "quality_control_plan_characteristic": "1",
       "quality_control_points": "0",
-      "quality_delivery_release_policy": "1",
+      "quality_delivery_dossier_versions": "0",
+      "quality_delivery_release_policy": "0",
+      "quality_delivery_release_policy_event": "0",
       "quality_derogation": "0",
       "quality_derogation_consumption": "0",
       "quality_documents": "0",
@@ -825,7 +835,7 @@
       "users": "7",
       "warehouses": "4"
     },
-    "table_count": 374,
+    "table_count": 380,
     "unvalidated_constraints": [
       {
         "table_name": "avoir",
@@ -873,6 +883,11 @@
         "contype": "c"
       },
       {
+        "table_name": "quality_control",
+        "conname": "quality_control_delivery_release_scope_0437_ck",
+        "contype": "c"
+      },
+      {
         "table_name": "stock_reservations",
         "conname": "stock_reservations_status_225_ck",
         "contype": "c"
@@ -897,7 +912,7 @@
         "groups": 0
       }
     ],
-    "foreign_key_count": 1074,
+    "foreign_key_count": 1101,
     "orphans": [],
     "readiness": [
       {
@@ -909,7 +924,7 @@
         "period_start": "2026-08-12T22:00:00.000Z",
         "period_end": null,
         "source": "public.programmation_calendars",
-        "freshness_at": "2026-08-13T08:26:14.838Z",
+        "freshness_at": "2026-08-13T11:30:09.093Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "active_calendars": 1
@@ -926,7 +941,7 @@
         "period_start": "2026-08-12T22:00:00.000Z",
         "period_end": null,
         "source": "public.app_roles + public.user_role_assignments",
-        "freshness_at": "2026-08-13T08:26:14.838Z",
+        "freshness_at": "2026-08-13T11:30:09.093Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "active_roles": 33,
@@ -944,7 +959,7 @@
         "period_start": "2026-08-12T22:00:00.000Z",
         "period_end": null,
         "source": "pg_catalog.pg_enum + pg_catalog.pg_constraint",
-        "freshness_at": "2026-08-13T08:26:14.838Z",
+        "freshness_at": "2026-08-13T11:30:09.093Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "of_statuses": [
@@ -970,7 +985,7 @@
         "period_start": "2026-08-12T22:00:00.000Z",
         "period_end": null,
         "source": "public.programmation_calendars",
-        "freshness_at": "2026-08-13T08:26:14.838Z",
+        "freshness_at": "2026-08-13T11:30:09.093Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "active_calendars": 1
@@ -987,7 +1002,7 @@
         "period_start": "2026-08-12T22:00:00.000Z",
         "period_end": null,
         "source": "public.app_roles + public.user_role_assignments",
-        "freshness_at": "2026-08-13T08:26:14.838Z",
+        "freshness_at": "2026-08-13T11:30:09.093Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "active_roles": 33,
@@ -1005,7 +1020,7 @@
         "period_start": "2026-08-12T22:00:00.000Z",
         "period_end": null,
         "source": "public.units",
-        "freshness_at": "2026-08-13T08:26:14.838Z",
+        "freshness_at": "2026-08-13T11:30:09.093Z",
         "reliability": "VERIFIED",
         "actual_value": [
           "kg",
@@ -1025,7 +1040,7 @@
         "period_start": "2026-08-12T22:00:00.000Z",
         "period_end": null,
         "source": "public.centres_frais + public.production_cost_center_rates",
-        "freshness_at": "2026-08-13T08:26:14.838Z",
+        "freshness_at": "2026-08-13T11:30:09.093Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "active_cost_centers": 1,
@@ -1043,7 +1058,7 @@
         "period_start": "2026-08-12T22:00:00.000Z",
         "period_end": null,
         "source": "pg_catalog.pg_enum + pg_catalog.pg_constraint",
-        "freshness_at": "2026-08-13T08:26:14.838Z",
+        "freshness_at": "2026-08-13T11:30:09.093Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "of_statuses": [
@@ -1069,7 +1084,7 @@
         "period_start": "2026-08-12T22:00:00.000Z",
         "period_end": null,
         "source": "public.app_roles + public.user_role_assignments",
-        "freshness_at": "2026-08-13T08:26:14.838Z",
+        "freshness_at": "2026-08-13T11:30:09.093Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "active_roles": 33,
@@ -1087,7 +1102,7 @@
         "period_start": "2026-08-12T22:00:00.000Z",
         "period_end": null,
         "source": "public.warehouses + locations + magasins + emplacements",
-        "freshness_at": "2026-08-13T08:26:14.838Z",
+        "freshness_at": "2026-08-13T11:30:09.093Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "configured_locations": 1,
@@ -1106,7 +1121,7 @@
         "period_start": "2026-08-12T22:00:00.000Z",
         "period_end": null,
         "source": "public.units",
-        "freshness_at": "2026-08-13T08:26:14.838Z",
+        "freshness_at": "2026-08-13T11:30:09.093Z",
         "reliability": "VERIFIED",
         "actual_value": [
           "kg",
@@ -1144,7 +1159,7 @@
         "period_start": "2026-08-12T22:00:00.000Z",
         "period_end": null,
         "source": "pg_catalog.pg_enum + pg_catalog.pg_constraint",
-        "freshness_at": "2026-08-13T08:26:14.838Z",
+        "freshness_at": "2026-08-13T11:30:09.093Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "of_statuses": [
@@ -1163,12 +1178,12 @@
       }
     ],
     "ledger": {
-      "applied": 149,
+      "applied": 151,
       "pending": [],
       "checksum_mismatches": [],
       "unknown_applied": []
     },
-    "fingerprint": "796f6d83d17864f9f629b4dee542141cc2bc02b299fe7c51b76dad4298a68bd2"
+    "fingerprint": "3cdfc7d2ab8e1fa186abd6fa6464a927311f59039d66b85eede0121dd58fae45"
   },
   "negative_gate": {
     "status": "passed",
@@ -1201,11 +1216,12 @@
     "commercial_reliability_removed": true,
     "procurement_reliability_removed": true,
     "stock_intelligence_removed": true,
+    "tooling_technical_ged_removed": true,
     "trigger_removed": true
   },
   "restore": {
     "status": "passed",
-    "fingerprint": "515c472ae6a05e2d5cedca4576ae1bd020d21d82569f8e9be41b31599335c84b",
+    "fingerprint": "ffba5ceb693763c901308b56f252bd5e498d8c53e2886ce4b9d76ba39e9bf49c",
     "table_counts_equal": true,
     "ledger": {
       "applied": 140,
@@ -1218,11 +1234,13 @@
         "20260811_production_readiness_center.sql",
         "20260812_commercial_reliability_sol17.sql",
         "20260812_procurement_reliability_sol18.sql",
+        "20260813_quality_delivery_workflow_0437.sql",
+        "20260813_sol20_tooling_technical_ged.sql",
         "20260813_stock_intelligence_sol19.sql"
       ],
       "checksum_mismatches": [],
       "unknown_applied": []
     }
   },
-  "completed_at": "2026-08-13T08:26:20.403Z"
+  "completed_at": "2026-08-13T11:30:14.810Z"
 }

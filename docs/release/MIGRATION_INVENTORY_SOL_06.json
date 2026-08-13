@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-08-10T13:46:59.533Z",
+  "generated_at": "2026-08-13T10:48:37.594Z",
   "source": "filesystem scan of db/patches and db/patches/support",
-  "patch_count": 141,
-  "support_file_count": 214,
-  "recent_patch_count": 83,
+  "patch_count": 150,
+  "support_file_count": 242,
+  "recent_patch_count": 92,
   "recent_support_gaps": [
     {
       "filename": "20260706_affaire_allow_projet.sql",
@@ -209,9 +209,9 @@
   "risk_totals": {
     "destructive_ddl": 2,
     "destructive_dml": 8,
-    "data_rewrite": 80,
-    "table_lock": 113,
-    "blocking_index": 106,
+    "data_rewrite": 87,
+    "table_lock": 119,
+    "blocking_index": 112,
     "enum_change": 1
   },
   "patches": [
@@ -2623,8 +2623,8 @@
     {
       "order": 141,
       "filename": "20260810_system_reference_data_readiness.sql",
-      "sha256": "9be8c63bf5c0a1a12ac43c2e684ef7d6ffe454171fd58461ee8c8c25c03004f9",
-      "bytes": 15135,
+      "sha256": "8a6bfa740ddc6e80f7b19ace948a92df379cc0df097879e9f5d125758a9f8eec",
+      "bytes": 15007,
       "transaction_wrapped": true,
       "replay_markers": true,
       "support": {
@@ -2635,6 +2635,160 @@
       "risks": [
         "data-rewrite",
         "table-lock"
+      ]
+    },
+    {
+      "order": 142,
+      "filename": "20260811_account_provisioning_schema_repair.sql",
+      "sha256": "e4a994888e3ff0dc38923a128216647f76919d4001efc70e26219742befca116",
+      "bytes": 4386,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 143,
+      "filename": "20260811_base_unit_drift_repair.sql",
+      "sha256": "53e6d11928dcd329b80fd493932aa29d2f0f65874b20a2cd1daa4e9a8847eb66",
+      "bytes": 1426,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite"
+      ]
+    },
+    {
+      "order": 144,
+      "filename": "20260811_ged_antivirus_quarantine.sql",
+      "sha256": "7e1e026c8a16be2609f072434d1930afbd248a543d96e3b013e89426fdaa1336",
+      "bytes": 5525,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite",
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 145,
+      "filename": "20260811_margin_traceability_0002.sql",
+      "sha256": "8639afd24dfbf6ecd49131d2247c506ec1ca7acc17346bfdbacb61aaf6582d61",
+      "bytes": 4016,
+      "transaction_wrapped": true,
+      "replay_markers": false,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "table-lock"
+      ]
+    },
+    {
+      "order": 146,
+      "filename": "20260811_production_readiness_center.sql",
+      "sha256": "2657f0f1eeca1a708a32ec41ae4c2a9eb2755df074d0a7984ccebcfce6b2dde5",
+      "bytes": 6822,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite"
+      ]
+    },
+    {
+      "order": 147,
+      "filename": "20260812_commercial_reliability_sol17.sql",
+      "sha256": "9da8fc1d7a71a5cf1133995de85d2c2680eeec5f7d7ffbcaa826351d8f35e97e",
+      "bytes": 8765,
+      "transaction_wrapped": true,
+      "replay_markers": false,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite",
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 148,
+      "filename": "20260812_procurement_reliability_sol18.sql",
+      "sha256": "a6cc0910c4ae67cafd0b2be271df88cb52c12db6351f4a000914856ba1f72d3c",
+      "bytes": 7488,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite",
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 149,
+      "filename": "20260813_sol20_tooling_technical_ged.sql",
+      "sha256": "a62a19f35193361ed71d4669810bb8a766590399e119bf71df949b03fcc472ea",
+      "bytes": 10713,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 150,
+      "filename": "20260813_stock_intelligence_sol19.sql",
+      "sha256": "91601e1c609bdfd03f10a51c6dc241a0b75da4bc96bff403c556b1f1a90f9ec7",
+      "bytes": 4492,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite",
+        "table-lock",
+        "blocking-index"
       ]
     }
   ]

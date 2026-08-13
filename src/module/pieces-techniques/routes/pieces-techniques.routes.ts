@@ -110,6 +110,12 @@ import {
   versionStatusSchema,
   publishVersionSchema,
 } from "../validators/versions.validators"
+import {
+  getTechnicalCompleteness,
+  listToolRequirements,
+  replaceToolRequirements,
+  requireOutillageCapability,
+} from "../../outils/controllers/outillage-lifecycle.controller"
 
 const router = Router()
 
@@ -197,6 +203,21 @@ router.patch("/:id/versions/:versionId", validate(versionIdParamSchema), validat
 router.patch("/:id/versions/:versionId/status", requireVersionApproval, validate(versionIdParamSchema), validate(versionStatusSchema), updateVersionStatus)
 router.post("/:id/versions/:versionId/publish", requireVersionApproval, validate(versionIdParamSchema), validate(publishVersionSchema), publishVersion)
 router.post("/:id/versions/:versionId/create-next", validate(versionIdParamSchema), validate(createNextVersionSchema), createNextVersion)
+router.get(
+  "/:id/versions/:versionId/completeness",
+  requireOutillageCapability("read"),
+  getTechnicalCompleteness
+)
+router.put(
+  "/:id/versions/:versionId/tool-requirements",
+  requireOutillageCapability("configure"),
+  replaceToolRequirements
+)
+router.get(
+  "/:id/versions/:versionId/tool-requirements",
+  requireOutillageCapability("read"),
+  listToolRequirements
+)
 
 router.post("/:id/nomenclature", validate(idParamSchema), validate(addBomLineSchema), addBomLine)
 router.patch("/:id/nomenclature/:lineId", validate(bomLineIdParamSchema), validate(updateBomLineSchema), updateBomLine)
