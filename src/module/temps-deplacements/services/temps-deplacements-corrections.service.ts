@@ -1,5 +1,5 @@
 import { HttpError } from "../../../utils/httpError";
-import { hasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
+import { assertPeriodOpen, isHrPrivileged, type HrActor } from "../domain/temps-deplacements-policy";
 import {
   repoCreateAdjustment,
   repoDecideAdjustment,
@@ -23,16 +23,12 @@ import {
   type AuditContext,
 } from "../repository/temps-deplacements.repository";
 import type { CreateAdjustmentBody } from "../validators/temps-deplacements.validators";
+import { repoResolveAdjustmentPeriod } from "../repository/temps-deplacements-operations.repository";
 import { computeDailyTimesheet, todayParis } from "./temps-deplacements.service";
-
-export type Actor = { id: number; role: string };
+export type Actor = HrActor;
 
 // Miroir de isHrPrivileged du contrôleur T2 (rôle RH/Direction/Admin). Pur ⇒ testable directement.
-export function isHrPrivileged(role: string): boolean {
-  if (hasGrantedAccountModuleAccess()) return true;
-  const r = role.toLowerCase();
-  return r.includes("rh") || r.includes("directeur") || r.includes("direction") || r.includes("administrateur");
-}
+export { isHrPrivileged };
 
 // Lève 403 si l'appelant n'est ni le manager de l'employé ni un rôle privilégié (anti-IDOR périmètre).
 async function assertCanManageEmployee(actor: Actor, employeeId: string): Promise<void> {
@@ -53,6 +49,9 @@ export async function createAdjustment(
 ): Promise<HrAdjustment> {
   const targetEmployeeId = await repoResolveTargetEmployeeId(body.target_type, body.target_id);
   if (!targetEmployeeId) throw new HttpError(404, "HR_TARGET_NOT_FOUND", "Cible de correction introuvable.");
+  const targetPeriod = await repoResolveAdjustmentPeriod(body.target_type, body.target_id);
+  if (!targetPeriod) throw new HttpError(404, "HR_TARGET_NOT_FOUND", "Période de correction introuvable.");
+  await assertPeriodOpen(targetPeriod.employee_id, targetPeriod.from, targetPeriod.to);
 
   const emp = await repoGetEmployeeById(targetEmployeeId);
   const isSelf = emp?.user_id === actor.id;
@@ -95,6 +94,9 @@ export async function decideAdjustment(
   }
   const targetEmployeeId = await repoResolveTargetEmployeeId(adj.target_type, adj.target_id);
   if (!targetEmployeeId) throw new HttpError(404, "HR_TARGET_NOT_FOUND", "Cible de correction introuvable.");
+  const targetPeriod = await repoResolveAdjustmentPeriod(adj.target_type, adj.target_id);
+  if (!targetPeriod) throw new HttpError(404, "HR_TARGET_NOT_FOUND", "Période de correction introuvable.");
+  await assertPeriodOpen(targetPeriod.employee_id, targetPeriod.from, targetPeriod.to);
   await assertCanManageEmployee(actor, targetEmployeeId);
 
   return withTransaction(async (client) => {
@@ -118,7 +120,14 @@ export async function listTeamAdjustments(actor: Actor): Promise<HrAdjustmentWit
 export async function validateTimesheetDay(actor: Actor, dayId: string, audit: AuditContext): Promise<TimesheetRef> {
   const day = await repoGetTimesheetDayById(dayId);
   if (!day) throw new HttpError(404, "HR_TIMESHEET_NOT_FOUND", "Journée introuvable.");
+  const employee = await repoGetEmployeeById(day.employee_id);
+  if (employee?.user_id === actor.id) {
+    throw new HttpError(403, "HR_SELF_APPROVAL_FORBIDDEN", "Auto-validation de sa propre journée interdite.");
+  }
   await assertCanManageEmployee(actor, day.employee_id);
+  const targetPeriod = await repoResolveAdjustmentPeriod("DAY", dayId);
+  if (!targetPeriod) throw new HttpError(404, "HR_TIMESHEET_NOT_FOUND", "Journée introuvable.");
+  await assertPeriodOpen(day.employee_id, targetPeriod.from, targetPeriod.to);
   if (day.validation_status === "VALIDATED" || day.validation_status === "EXPORTED") {
     throw new HttpError(409, "HR_ALREADY_VALIDATED", "Journée déjà validée ou exportée.");
   }
@@ -138,7 +147,14 @@ export async function validateTimesheetDay(actor: Actor, dayId: string, audit: A
 export async function validateTimesheetWeek(actor: Actor, weekId: string, audit: AuditContext): Promise<TimesheetRef> {
   const week = await repoGetTimesheetWeekById(weekId);
   if (!week) throw new HttpError(404, "HR_TIMESHEET_NOT_FOUND", "Semaine introuvable.");
+  const employee = await repoGetEmployeeById(week.employee_id);
+  if (employee?.user_id === actor.id) {
+    throw new HttpError(403, "HR_SELF_APPROVAL_FORBIDDEN", "Auto-validation de sa propre semaine interdite.");
+  }
   await assertCanManageEmployee(actor, week.employee_id);
+  const targetPeriod = await repoResolveAdjustmentPeriod("WEEK", weekId);
+  if (!targetPeriod) throw new HttpError(404, "HR_TIMESHEET_NOT_FOUND", "Semaine introuvable.");
+  await assertPeriodOpen(week.employee_id, targetPeriod.from, targetPeriod.to);
   if (week.validation_status === "VALIDATED" || week.validation_status === "EXPORTED") {
     throw new HttpError(409, "HR_ALREADY_VALIDATED", "Semaine déjà validée ou exportée.");
   }

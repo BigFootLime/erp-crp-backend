@@ -14,6 +14,10 @@ vi.mock("../module/temps-deplacements/repository/temps-deplacements-corrections.
   repoListTeamAnomaliesForDate: vi.fn(),
   repoListTeamEmployees: vi.fn(),
 }));
+vi.mock("../module/temps-deplacements/repository/temps-deplacements-operations.repository", () => ({
+  repoFindActivePeriodClosure: vi.fn(async () => null),
+  repoResolveAdjustmentPeriod: vi.fn(async () => ({ employee_id: "emp-x", from: "2026-03-02", to: "2026-03-02" })),
+}));
 
 // Repository T2 : on garde le réel SAUF transaction/audit/lecture employé (pour ne pas toucher la DB).
 vi.mock("../module/temps-deplacements/repository/temps-deplacements.repository", async (importOriginal) => {
@@ -149,8 +153,15 @@ describe("T4 — validateTimesheetDay", () => {
     await expect(svc.validateTimesheetDay({ id: 5, role: "Responsable RH" }, UUID, AUDIT))
       .rejects.toMatchObject({ status: 409, code: "HR_ALREADY_VALIDATED" });
   });
+  it("interdit à un responsable de valider sa propre journée", async () => {
+    cor.repoGetTimesheetDayById.mockResolvedValue({ id: UUID, employee_id: "emp-self", validation_status: "DRAFT" });
+    base.repoGetEmployeeById.mockResolvedValue(emp({ user_id: 5 }));
+    await expect(svc.validateTimesheetDay({ id: 5, role: "Responsable RH" }, UUID, AUDIT))
+      .rejects.toMatchObject({ status: 403, code: "HR_SELF_APPROVAL_FORBIDDEN" });
+  });
   it("DRAFT → VALIDATED + audit 'day.validated'", async () => {
     cor.repoGetTimesheetDayById.mockResolvedValue({ id: UUID, employee_id: "emp-x", validation_status: "DRAFT" });
+    base.repoGetEmployeeById.mockResolvedValue(emp({ user_id: 1 }));
     cor.repoSetDayValidation.mockResolvedValue({ id: UUID, employee_id: "emp-x", validation_status: "VALIDATED" });
     const r = await svc.validateTimesheetDay({ id: 5, role: "Responsable RH" }, UUID, AUDIT);
     expect(r.validation_status).toBe("VALIDATED");

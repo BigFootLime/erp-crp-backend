@@ -10,6 +10,10 @@ vi.mock("../module/temps-deplacements/repository/temps-deplacements-km.repositor
   repoListVehicles: vi.fn(),
   repoCreateVehicle: vi.fn(),
 }));
+vi.mock("../module/temps-deplacements/repository/temps-deplacements-operations.repository", () => ({
+  repoFindActivePeriodClosure: vi.fn(async () => null),
+  repoGetEffectiveKilometerRate: vi.fn(async () => ({ id: "rate-1", currency: "EUR", rate_per_km: "0.50" })),
+}));
 vi.mock("../module/temps-deplacements/repository/temps-deplacements.repository", async (io) => {
   const actual = await io<typeof import("../module/temps-deplacements/repository/temps-deplacements.repository")>();
   return {
@@ -26,6 +30,7 @@ vi.mock("../module/temps-deplacements/services/temps-deplacements.service", asyn
 
 import * as kmRepo from "../module/temps-deplacements/repository/temps-deplacements-km.repository";
 import * as baseRepo from "../module/temps-deplacements/repository/temps-deplacements.repository";
+import * as operationsRepo from "../module/temps-deplacements/repository/temps-deplacements-operations.repository";
 import * as t2 from "../module/temps-deplacements/services/temps-deplacements.service";
 import * as svc from "../module/temps-deplacements/services/temps-deplacements-km.service";
 import { computeDistanceKm } from "../module/temps-deplacements/services/temps-deplacements-km.service";
@@ -82,6 +87,17 @@ describe("T6 — soumission & validation (ownership + périmètre + transitions)
     await expect(svc.decideKmEntry({ id: 5, role: "Employee" }, "k1", "VALIDATED", AUDIT)).rejects.toMatchObject({ status: 403 });
     km.repoDecideKmEntry.mockResolvedValue({ id: "k1", status: "VALIDATED" } as never);
     expect((await svc.decideKmEntry({ id: 5, role: "Responsable RH" }, "k1", "VALIDATED", AUDIT)).status).toBe("VALIDATED");
+  });
+  it("interdit l'auto-validation et exige un taux daté", async () => {
+    km.repoGetKmEntryById.mockResolvedValue({ id: "k1", employee_id: "E", status: "SUBMITTED", vehicle_id: "v1", date: "2026-03-02" } as never);
+    vi.mocked(baseRepo.repoGetEmployeeById).mockResolvedValue(emp({ user_id: 5 }));
+    await expect(svc.decideKmEntry({ id: 5, role: "Responsable RH" }, "k1", "VALIDATED", AUDIT))
+      .rejects.toMatchObject({ status: 403, code: "HR_SELF_APPROVAL_FORBIDDEN" });
+
+    vi.mocked(baseRepo.repoGetEmployeeById).mockResolvedValue(emp({ user_id: 1 }));
+    vi.mocked(operationsRepo.repoGetEffectiveKilometerRate).mockResolvedValueOnce(null);
+    await expect(svc.decideKmEntry({ id: 5, role: "Responsable RH" }, "k1", "VALIDATED", AUDIT))
+      .rejects.toMatchObject({ status: 409, code: "HR_KM_RATE_MISSING" });
   });
   it("valider une déclaration non soumise → 409", async () => {
     km.repoGetKmEntryById.mockResolvedValue({ id: "k1", employee_id: "E", status: "DRAFT" } as never);

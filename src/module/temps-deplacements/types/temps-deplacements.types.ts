@@ -55,6 +55,7 @@ export interface HrDailyTimesheet {
   worked_minutes: number;
   expected_minutes: number;
   overtime_minutes: number;
+  absence_minutes: number;
   missing_minutes: number;
   status: "OK" | "ANOMALY" | "MANUAL_REVIEW" | "VALIDATED";
   anomalies: HrTimeAnomaly[];
@@ -70,6 +71,7 @@ export interface HrWeeklyTimesheet {
   overtime_25_minutes: number; // T5 — HS taux 1 (règle configurable)
   overtime_50_minutes: number; // T5 — HS taux 2
   absence_minutes: number;
+  unclassified_missing_minutes: number;
   rule_set_name: string | null; // règle appliquée (traçabilité)
   days: HrDailyTimesheet[];
 }

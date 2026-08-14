@@ -51,6 +51,13 @@ describe("Dockerfile storage permissions", () => {
     expect(dockerfile).toContain("ENV CERP_RELEASE_VERSION=${SOURCE_COMMIT}");
   });
 
+  it("ships the commit-pinned migration runner and canonical patch inventory", () => {
+    expect(dockerfile).toContain("COPY scripts/db-patches.js ./scripts/db-patches.js");
+    expect(dockerfile).toContain("COPY db/patches ./db/patches");
+    expect(dockerfile.indexOf("COPY scripts/db-patches.js ./scripts/db-patches.js"))
+      .toBeLessThan(dockerfile.indexOf("COPY --from=builder /app/dist ./dist"));
+  });
+
   it("normalizes shell entrypoints for images built from a Windows checkout", () => {
     expect(gitAttributes).toContain("*.sh text eol=lf");
     expect(gitAttributes).toContain("docker/*.conf text eol=lf");

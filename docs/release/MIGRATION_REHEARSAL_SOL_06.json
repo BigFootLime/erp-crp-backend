@@ -1,6 +1,6 @@
 {
   "status": "passed",
-  "started_at": "2026-08-14T04:49:06.637Z",
+  "started_at": "2026-08-14T07:35:03.528Z",
   "postgres_image": "postgres@sha256:16bc17c64a573ef34162af9298258d1aec548232985b33ed7b1eac33ba35c229",
   "isolated_target": {
     "host": "127.0.0.1",
@@ -9,23 +9,23 @@
     "storage": "tmpfs"
   },
   "durations": {
-    "source_migration": 18356,
-    "source_seed": 193,
-    "backup": 726,
-    "preflight": 119,
-    "integrity_before": 586,
-    "migration": 457,
-    "verify": 195,
-    "replay": 119,
-    "integrity_after": 1401,
-    "negative_gate": 41,
-    "rollback": 248,
-    "restore": 3997
+    "source_migration": 20094,
+    "source_seed": 212,
+    "backup": 741,
+    "preflight": 135,
+    "integrity_before": 657,
+    "migration": 522,
+    "verify": 225,
+    "replay": 127,
+    "integrity_after": 1427,
+    "negative_gate": 43,
+    "rollback": 317,
+    "restore": 4067
   },
   "source": {
     "status": "passed",
-    "checked_at": "2026-08-14T04:49:28.456Z",
-    "duration_ms": 73,
+    "checked_at": "2026-08-14T07:35:27.351Z",
+    "duration_ms": 83,
     "identity": {
       "database": "cerp_test",
       "database_user": "cerp_e2e",
@@ -33,10 +33,10 @@
       "database_bytes": "36355095"
     },
     "backup": {
-      "file": "C:\\Users\\KEENAN~1\\AppData\\Local\\Temp\\cerp-sol06-8b8RIq\\cerp-test-before-sol06.dump",
-      "bytes": 1968404,
-      "sha256": "60bdbca8744707751f9888705711ba1f8e7a9fc832b281a7ebc0aec06c6f5909",
-      "free_bytes": 419015507968
+      "file": "C:\\Users\\KEENAN~1\\AppData\\Local\\Temp\\cerp-sol06-jObZsE\\cerp-test-before-sol06.dump",
+      "bytes": 1968391,
+      "sha256": "a5a0f52a892441d755aae43babfbc0e433696e60172cc337bd2680c71314bf7d",
+      "free_bytes": 416530526208
     },
     "ledger": {
       "applied": 140,
@@ -54,6 +54,7 @@
         "20260813_stock_intelligence_sol19.sql",
         "20260814_adv_reliability_sol23.sql",
         "20260814_planning_execution_intelligence_0021.sql",
+        "20260814_project_operations_sol24.sql",
         "20260814_sol22_quality_intelligence.sql"
       ],
       "checksum_mismatches": [],
@@ -449,12 +450,13 @@
         "20260813_stock_intelligence_sol19.sql",
         "20260814_adv_reliability_sol23.sql",
         "20260814_planning_execution_intelligence_0021.sql",
+        "20260814_project_operations_sol24.sql",
         "20260814_sol22_quality_intelligence.sql"
       ],
       "checksum_mismatches": [],
       "unknown_applied": []
     },
-    "fingerprint": "15817807200ec885da9cfab50277497674edd0f4b81e6c406a3e21325820771c"
+    "fingerprint": "d00101a59074e6361baa8e0aa947a9322a4b5f536dadd893c9178ce264ecb8a3"
   },
   "replay": {
     "applied_zero": true,
@@ -462,8 +464,8 @@
   },
   "after": {
     "status": "passed",
-    "checked_at": "2026-08-14T04:49:31.217Z",
-    "duration_ms": 1386,
+    "checked_at": "2026-08-14T07:35:30.313Z",
+    "duration_ms": 1413,
     "table_counts": {
       "admin_account_invitations": "0",
       "admin_user_provisioning_migration_state": "12",
@@ -526,7 +528,7 @@
       "centres_frais": "1",
       "cerp_patch_20260804_stock_units": "3",
       "cerp_patch_20260811_base_unit_repair": "1",
-      "cerp_schema_migrations": "154",
+      "cerp_schema_migrations": "155",
       "chat_conversation_participants": "0",
       "chat_conversations": "0",
       "chat_messages": "0",
@@ -635,11 +637,14 @@
       "gestion_outils_revetement": "0",
       "gestion_outils_stock": "0",
       "gestion_outils_valeur_arete_coupe": "0",
+      "hr_absence_records": "0",
       "hr_badge_credentials": "0",
       "hr_employees": "0",
       "hr_employment_contracts": "0",
       "hr_kilometer_entries": "0",
+      "hr_kilometer_rate_versions": "0",
       "hr_payroll_export_batches": "0",
+      "hr_period_closures": "0",
       "hr_time_adjustments": "0",
       "hr_time_anomalies": "0",
       "hr_time_clock_devices": "0",
@@ -758,6 +763,8 @@
       "programmation_user_skills": "0",
       "programmations": "0",
       "project_activity_log": "0",
+      "project_affaire_links": "0",
+      "project_budget_versions": "0",
       "project_comments": "0",
       "project_corrective_actions": "0",
       "project_decisions": "0",
@@ -861,7 +868,7 @@
       "users": "8",
       "warehouses": "4"
     },
-    "table_count": 395,
+    "table_count": 400,
     "unvalidated_constraints": [
       {
         "table_name": "avoir",
@@ -938,7 +945,7 @@
         "groups": 0
       }
     ],
-    "foreign_key_count": 1138,
+    "foreign_key_count": 1153,
     "orphans": [],
     "readiness": [
       {
@@ -950,7 +957,7 @@
         "period_start": "2026-08-13T22:00:00.000Z",
         "period_end": null,
         "source": "public.programmation_calendars",
-        "freshness_at": "2026-08-14T04:49:29.832Z",
+        "freshness_at": "2026-08-14T07:35:28.899Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "active_calendars": 1
@@ -967,7 +974,7 @@
         "period_start": "2026-08-13T22:00:00.000Z",
         "period_end": null,
         "source": "public.app_roles + public.user_role_assignments",
-        "freshness_at": "2026-08-14T04:49:29.832Z",
+        "freshness_at": "2026-08-14T07:35:28.899Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "active_roles": 33,
@@ -985,7 +992,7 @@
         "period_start": "2026-08-13T22:00:00.000Z",
         "period_end": null,
         "source": "pg_catalog.pg_enum + pg_catalog.pg_constraint",
-        "freshness_at": "2026-08-14T04:49:29.832Z",
+        "freshness_at": "2026-08-14T07:35:28.899Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "of_statuses": [
@@ -1011,7 +1018,7 @@
         "period_start": "2026-08-13T22:00:00.000Z",
         "period_end": null,
         "source": "public.programmation_calendars",
-        "freshness_at": "2026-08-14T04:49:29.832Z",
+        "freshness_at": "2026-08-14T07:35:28.899Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "active_calendars": 1
@@ -1028,7 +1035,7 @@
         "period_start": "2026-08-13T22:00:00.000Z",
         "period_end": null,
         "source": "public.app_roles + public.user_role_assignments",
-        "freshness_at": "2026-08-14T04:49:29.832Z",
+        "freshness_at": "2026-08-14T07:35:28.899Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "active_roles": 33,
@@ -1046,7 +1053,7 @@
         "period_start": "2026-08-13T22:00:00.000Z",
         "period_end": null,
         "source": "public.units",
-        "freshness_at": "2026-08-14T04:49:29.832Z",
+        "freshness_at": "2026-08-14T07:35:28.899Z",
         "reliability": "VERIFIED",
         "actual_value": [
           "kg",
@@ -1066,7 +1073,7 @@
         "period_start": "2026-08-13T22:00:00.000Z",
         "period_end": null,
         "source": "public.centres_frais + public.production_cost_center_rates",
-        "freshness_at": "2026-08-14T04:49:29.832Z",
+        "freshness_at": "2026-08-14T07:35:28.899Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "active_cost_centers": 1,
@@ -1084,7 +1091,7 @@
         "period_start": "2026-08-13T22:00:00.000Z",
         "period_end": null,
         "source": "pg_catalog.pg_enum + pg_catalog.pg_constraint",
-        "freshness_at": "2026-08-14T04:49:29.832Z",
+        "freshness_at": "2026-08-14T07:35:28.899Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "of_statuses": [
@@ -1110,7 +1117,7 @@
         "period_start": "2026-08-13T22:00:00.000Z",
         "period_end": null,
         "source": "public.app_roles + public.user_role_assignments",
-        "freshness_at": "2026-08-14T04:49:29.832Z",
+        "freshness_at": "2026-08-14T07:35:28.899Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "active_roles": 33,
@@ -1128,7 +1135,7 @@
         "period_start": "2026-08-13T22:00:00.000Z",
         "period_end": null,
         "source": "public.warehouses + locations + magasins + emplacements",
-        "freshness_at": "2026-08-14T04:49:29.832Z",
+        "freshness_at": "2026-08-14T07:35:28.899Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "configured_locations": 1,
@@ -1147,7 +1154,7 @@
         "period_start": "2026-08-13T22:00:00.000Z",
         "period_end": null,
         "source": "public.units",
-        "freshness_at": "2026-08-14T04:49:29.832Z",
+        "freshness_at": "2026-08-14T07:35:28.899Z",
         "reliability": "VERIFIED",
         "actual_value": [
           "kg",
@@ -1185,7 +1192,7 @@
         "period_start": "2026-08-13T22:00:00.000Z",
         "period_end": null,
         "source": "pg_catalog.pg_enum + pg_catalog.pg_constraint",
-        "freshness_at": "2026-08-14T04:49:29.832Z",
+        "freshness_at": "2026-08-14T07:35:28.899Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "of_statuses": [
@@ -1204,12 +1211,12 @@
       }
     ],
     "ledger": {
-      "applied": 154,
+      "applied": 155,
       "pending": [],
       "checksum_mismatches": [],
       "unknown_applied": []
     },
-    "fingerprint": "501d6bb85e60d9dd472ae428d3c1db3d27f7d9688b3cb939df3e2c1e6dec1274"
+    "fingerprint": "b04705f2bbf8ccc1ee24139b3c9fed6a46cde21b9907e81f64e3a490410c0378"
   },
   "negative_gate": {
     "status": "passed",
@@ -1244,11 +1251,12 @@
     "stock_intelligence_removed": true,
     "tooling_technical_ged_removed": true,
     "planning_execution_removed": true,
+    "project_operations_removed": true,
     "trigger_removed": true
   },
   "restore": {
     "status": "passed",
-    "fingerprint": "15817807200ec885da9cfab50277497674edd0f4b81e6c406a3e21325820771c",
+    "fingerprint": "d00101a59074e6361baa8e0aa947a9322a4b5f536dadd893c9178ce264ecb8a3",
     "table_counts_equal": true,
     "ledger": {
       "applied": 140,
@@ -1266,11 +1274,12 @@
         "20260813_stock_intelligence_sol19.sql",
         "20260814_adv_reliability_sol23.sql",
         "20260814_planning_execution_intelligence_0021.sql",
+        "20260814_project_operations_sol24.sql",
         "20260814_sol22_quality_intelligence.sql"
       ],
       "checksum_mismatches": [],
       "unknown_applied": []
     }
   },
-  "completed_at": "2026-08-14T04:49:35.668Z"
+  "completed_at": "2026-08-14T07:35:34.912Z"
 }

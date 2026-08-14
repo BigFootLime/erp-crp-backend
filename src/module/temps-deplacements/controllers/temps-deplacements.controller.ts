@@ -2,7 +2,7 @@ import type { Request, Response } from "express";
 import { asyncHandler } from "../../../utils/asyncHandler";
 import { HttpError } from "../../../utils/httpError";
 import { getClientIp, parseDevice } from "../../../utils/requestMeta";
-import { hasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
+import { isHrPrivileged } from "../domain/temps-deplacements-policy";
 import type { AuditContext } from "../repository/temps-deplacements.repository";
 import * as repo from "../repository/temps-deplacements.repository";
 import * as svc from "../services/temps-deplacements.service";
@@ -52,11 +52,7 @@ export function requireUser(req: Request): { id: number; role: string } {
 }
 
 // RBAC lecture d'un employé : soi-même, OU son manager, OU un rôle RH/Direction/Admin.
-export function isHrPrivileged(role: string): boolean {
-  if (hasGrantedAccountModuleAccess()) return true;
-  const r = role.toLowerCase();
-  return r.includes("rh") || r.includes("directeur") || r.includes("direction") || r.includes("administrateur");
-}
+export { isHrPrivileged };
 export function validateManagerScope(reqUser: { id: number; role: string }, target: HrEmployeeLite): boolean {
   return target.manager_user_id !== null && target.manager_user_id === reqUser.id;
 }

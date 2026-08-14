@@ -23,6 +23,9 @@ export interface KmEntry {
   created_at: string;
   validated_by: number | null;
   validated_at: string | null;
+  rate_version_id: string | null;
+  cost_amount: number | null;
+  cost_currency: string | null;
 }
 export type KmEntryWithEmployee = KmEntry & { matricule: string };
 
@@ -44,7 +47,8 @@ export interface KmEntryInput {
 
 const KM_COLS = `id::text, employee_id::text, date::text, type::text, vehicle_id::text,
   start_location, end_location, start_odometer, end_odometer, distance_km,
-  affaire_id, client_id, fournisseur_id, status::text, created_at::text, validated_by, validated_at::text`;
+  affaire_id, client_id, fournisseur_id, status::text, created_at::text, validated_by, validated_at::text,
+  rate_version_id::text, cost_amount, cost_currency`;
 
 function num(v: unknown): number | null {
   if (v === null || v === undefined) return null;
@@ -70,6 +74,9 @@ function mapKm(r: Record<string, unknown>): KmEntry {
     created_at: String(r.created_at),
     validated_by: num(r.validated_by),
     validated_at: (r.validated_at as string | null) ?? null,
+    rate_version_id: (r.rate_version_id as string | null) ?? null,
+    cost_amount: num(r.cost_amount),
+    cost_currency: r.cost_currency == null ? null : String(r.cost_currency).trim(),
   };
 }
 
@@ -116,11 +123,23 @@ export async function repoSubmitKmEntry(q: DbQueryer, id: string): Promise<KmEnt
 }
 
 // SUBMITTED → VALIDATED | REJECTED (par le responsable). Ne modifie que si SUBMITTED.
-export async function repoDecideKmEntry(q: DbQueryer, id: string, status: "VALIDATED" | "REJECTED", validatedBy: number): Promise<KmEntry | null> {
+export async function repoDecideKmEntry(
+  q: DbQueryer,
+  id: string,
+  status: "VALIDATED" | "REJECTED",
+  validatedBy: number,
+  rate: { id: string; currency: string } | null,
+): Promise<KmEntry | null> {
   const res = await q.query(
-    `UPDATE public.hr_kilometer_entries SET status=$2::hr_km_status, validated_by=$3, validated_at=now()
-      WHERE id=$1::uuid AND status='SUBMITTED'::hr_km_status RETURNING ${KM_COLS}`,
-    [id, status, validatedBy]
+    `UPDATE public.hr_kilometer_entries k
+        SET status=$2::hr_km_status, validated_by=$3, validated_at=now(),
+            rate_version_id=CASE WHEN $2='VALIDATED' THEN $4::uuid ELSE NULL END,
+            cost_amount=CASE WHEN $2='VALIDATED' THEN round(k.distance_km*(
+              SELECT r.rate_per_km FROM public.hr_kilometer_rate_versions r WHERE r.id=$4::uuid
+            ),6) ELSE NULL END,
+            cost_currency=CASE WHEN $2='VALIDATED' THEN $5 ELSE NULL END
+      WHERE k.id=$1::uuid AND k.status='SUBMITTED'::hr_km_status RETURNING ${KM_COLS}`,
+    [id, status, validatedBy, rate?.id ?? null, rate?.currency ?? null]
   );
   return res.rows[0] ? mapKm(res.rows[0]) : null;
 }

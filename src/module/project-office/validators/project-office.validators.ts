@@ -31,6 +31,28 @@ const httpUrl = z.string().trim().url().max(2048).refine((u) => /^https?:\/\//i.
 
 export const uuidParamsSchema = z.object({ id: z.string().uuid() }).strict();
 export const projectIdParamsSchema = z.object({ id: z.string().uuid() }).strict();
+export const projectAffaireLinkParamsSchema = z.object({
+  id: z.string().uuid(),
+  linkId: z.string().uuid(),
+}).strict();
+
+export const createProjectBudgetSchema = z.object({
+  amount: z.string().regex(/^\d{1,12}(?:\.\d{1,6})?$/, "Montant décimal positif attendu"),
+  currency: z.string().trim().toUpperCase().regex(/^[A-Z]{3}$/).default("EUR"),
+  effective_from: isoDate,
+  definition: trimmed(500),
+  source_type: z.enum(["DECLARATION", "CONTRACT", "DOCUMENT", "OTHER"]),
+  source_ref: z.string().trim().max(500).nullish(),
+  observed_at: z.string().datetime({ offset: true }),
+  reliability: z.enum(["DECLARED", "VERIFIED", "ESTIMATED"]),
+}).strict();
+export type CreateProjectBudgetDTO = z.infer<typeof createProjectBudgetSchema>;
+
+export const linkProjectAffaireSchema = z.object({
+  affaire_id: z.number().int().positive(),
+  source_ref: z.string().trim().max(500).nullish(),
+}).strict();
+export type LinkProjectAffaireDTO = z.infer<typeof linkProjectAffaireSchema>;
 
 export const paginationQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
