@@ -25,6 +25,9 @@ const API_WEBHOOKS_PATCH = "20260814_api_contract_webhooks_sol28.sql";
 const SOL06_SUPPORT = path.join(SUPPORT_DIR, "20260810_system_reference_data_readiness");
 const POSTGRES_IMAGE = "postgres@sha256:16bc17c64a573ef34162af9298258d1aec548232985b33ed7b1eac33ba35c229";
 const DEFAULT_REPORT_DIR = path.join(ROOT, "docs", "release");
+const KNOWN_EXTERNAL_APPLIED_PATCHES = Object.freeze({
+  "20260731_ged_fiches_360.sql": "bae97fdcb9629c67078cc3ff8da25bc84fa4d2749ee682678519992bea403ee3",
+});
 
 function databaseClient(options) {
   const { Client } = require("pg");
@@ -211,19 +214,51 @@ async function runSqlFile(client, sql) {
   return client.query(executable);
 }
 
+function classifyPatchLedgerRows(appliedRows, localPatches = inventory().patches) {
+  const local = new Map(localPatches.map((patch) => [patch.filename, patch.sha256]));
+  const applied = new Map(appliedRows.map((row) => [row.filename, row]));
+  const checksumMismatches = appliedRows
+    .filter((row) => {
+      const expected = local.get(row.filename) ?? KNOWN_EXTERNAL_APPLIED_PATCHES[row.filename];
+      return expected !== undefined && expected !== row.sha256;
+    })
+    .map((row) => row.filename);
+  const pending = [...local.keys()].filter((filename) => !applied.has(filename));
+  const knownExternalApplied = appliedRows
+    .filter((row) => !local.has(row.filename) && KNOWN_EXTERNAL_APPLIED_PATCHES[row.filename] === row.sha256)
+    .map((row) => row.filename);
+  const unknownApplied = appliedRows
+    .filter((row) => !local.has(row.filename) && KNOWN_EXTERNAL_APPLIED_PATCHES[row.filename] === undefined)
+    .map((row) => row.filename);
+  return {
+    applied: appliedRows.length,
+    pending,
+    checksum_mismatches: checksumMismatches,
+    known_external_applied: knownExternalApplied,
+    unknown_applied: unknownApplied,
+  };
+}
+
 async function patchLedger(client) {
   const appliedResult = await client.query(
     `SELECT filename,sha256,applied_at::text AS applied_at
      FROM public.cerp_schema_migrations ORDER BY filename`
   );
-  const local = new Map(inventory().patches.map((patch) => [patch.filename, patch.sha256]));
-  const applied = new Map(appliedResult.rows.map((row) => [row.filename, row]));
-  const checksumMismatches = appliedResult.rows
-    .filter((row) => local.has(row.filename) && local.get(row.filename) !== row.sha256)
-    .map((row) => row.filename);
-  const pending = [...local.keys()].filter((filename) => !applied.has(filename));
-  const unknownApplied = appliedResult.rows.filter((row) => !local.has(row.filename)).map((row) => row.filename);
-  return { applied: appliedResult.rows.length, pending, checksum_mismatches: checksumMismatches, unknown_applied: unknownApplied };
+  return classifyPatchLedgerRows(appliedResult.rows);
+}
+
+async function verifyKnownExternalAppliedPatches(client, ledger) {
+  if (!ledger.known_external_applied.includes("20260731_ged_fiches_360.sql")) return;
+  const state = await client.query(
+    `SELECT to_regclass('public.ged_entity_types') IS NOT NULL AS entity_types,
+            to_regclass('public.ged_entity_class_bindings') IS NOT NULL AS class_bindings,
+            to_regprocedure('public.fn_ged_link_guard()') IS NOT NULL AS link_guard,
+            EXISTS (SELECT 1 FROM pg_trigger WHERE tgname='trg_ged_link_guard' AND NOT tgisinternal) AS link_trigger`
+  );
+  if (!state.rows[0]?.entity_types || !state.rows[0]?.class_bindings
+      || !state.rows[0]?.link_guard || !state.rows[0]?.link_trigger) {
+    fail("known external patch 20260731_ged_fiches_360.sql has incomplete database evidence");
+  }
 }
 
 async function preflight(options = {}) {
@@ -246,6 +281,7 @@ async function preflight(options = {}) {
     if (ledger.checksum_mismatches.length || ledger.unknown_applied.length) {
       fail(`migration ledger divergence: ${JSON.stringify(ledger)}`);
     }
+    await verifyKnownExternalAppliedPatches(client, ledger);
     await runSqlFile(client, supportSql("preflight"));
     return {
       status: "passed",
@@ -836,4 +872,6 @@ module.exports = {
   inventory,
   inventoryMarkdown,
   validateBackup,
+  classifyPatchLedgerRows,
+  KNOWN_EXTERNAL_APPLIED_PATCHES,
 };

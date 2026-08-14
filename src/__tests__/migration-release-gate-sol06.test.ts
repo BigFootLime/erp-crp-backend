@@ -20,6 +20,15 @@ const gate = require("../../scripts/migrations/release-gate.js") as {
     bytes: number;
     sha256: string;
   };
+  KNOWN_EXTERNAL_APPLIED_PATCHES: Record<string, string>;
+  classifyPatchLedgerRows: (
+    applied: Array<{ filename: string; sha256: string }>,
+    local: Array<{ filename: string; sha256: string }>,
+  ) => {
+    checksum_mismatches: string[];
+    known_external_applied: string[];
+    unknown_applied: string[];
+  };
 };
 
 const ROOT = path.resolve(__dirname, "..", "..");
@@ -127,5 +136,21 @@ describe("SOL-06 migration release gate", () => {
 
     expect(gate.validateBackup(backup, validSha)).toMatchObject({ bytes: 21, sha256: validSha });
     expect(() => gate.validateBackup(backup, "0".repeat(64))).toThrow("backup SHA-256 mismatch");
+  });
+
+  it("reconnaît uniquement le patch GED historique avec son checksum terrain exact", () => {
+    const filename = "20260731_ged_fiches_360.sql";
+    const expected = gate.KNOWN_EXTERNAL_APPLIED_PATCHES[filename];
+    const exact = gate.classifyPatchLedgerRows([{ filename, sha256: expected }], []);
+    expect(exact.known_external_applied).toEqual([filename]);
+    expect(exact.checksum_mismatches).toEqual([]);
+    expect(exact.unknown_applied).toEqual([]);
+
+    const changed = gate.classifyPatchLedgerRows([{ filename, sha256: "0".repeat(64) }], []);
+    expect(changed.checksum_mismatches).toEqual([filename]);
+    expect(changed.known_external_applied).toEqual([]);
+
+    const unknown = gate.classifyPatchLedgerRows([{ filename: "untracked.sql", sha256: "1".repeat(64) }], []);
+    expect(unknown.unknown_applied).toEqual(["untracked.sql"]);
   });
 });
