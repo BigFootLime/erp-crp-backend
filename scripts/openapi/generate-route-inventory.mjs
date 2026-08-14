@@ -259,7 +259,11 @@ try {
   const routes = generatedInventory();
   const sources = [...moduleCache.keys()].sort();
   const sourceHash = crypto.createHash("sha256")
-    .update(sources.map((file) => `${path.relative(root, file)}\n${fs.readFileSync(file, "utf8")}`).join("\n"))
+    .update(sources.map((file) => {
+      const portablePath = path.relative(root, file).replace(/\\/g, "/");
+      const portableSource = fs.readFileSync(file, "utf8").replace(/\r\n?/g, "\n");
+      return `${portablePath}\n${portableSource}`;
+    }).join("\n"))
     .digest("hex");
   const outputs = [
     [outputFile, renderTypeScript(routes, sourceHash)],
