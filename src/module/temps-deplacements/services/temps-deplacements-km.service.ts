@@ -15,6 +15,8 @@ import {
 import { insertAuditLog, repoGetEmployeeById, withTransaction, type AuditContext } from "../repository/temps-deplacements.repository";
 import { isHrPrivileged, type Actor } from "./temps-deplacements-corrections.service";
 import { resolveEmployeeFromUser } from "./temps-deplacements.service";
+import { assertPeriodOpen } from "../domain/temps-deplacements-policy";
+import { repoGetEffectiveKilometerRate } from "../repository/temps-deplacements-operations.repository";
 
 async function assertCanManageEmployee(actor: Actor, employeeId: string): Promise<void> {
   if (isHrPrivileged(actor.role)) return;
@@ -50,6 +52,7 @@ export interface CreateKmInput {
 export async function createMyKmEntry(actor: Actor, input: CreateKmInput, audit: AuditContext): Promise<KmEntry> {
   const emp = await resolveEmployeeFromUser(actor.id);
   const distance = computeDistanceKm(input);
+  await assertPeriodOpen(emp.id, input.date);
   return withTransaction(async (client) => {
     const entry = await repoCreateKmEntry(client, {
       employee_id: emp.id,
@@ -86,6 +89,7 @@ export async function submitMyKmEntry(actor: Actor, id: string, audit: AuditCont
   if (!entry) throw new HttpError(404, "HR_KM_NOT_FOUND", "Déclaration introuvable.");
   const emp = await resolveEmployeeFromUser(actor.id);
   if (entry.employee_id !== emp.id) throw new HttpError(403, "HR_FORBIDDEN", "Vous ne pouvez soumettre que vos déclarations.");
+  await assertPeriodOpen(entry.employee_id, entry.date);
   return withTransaction(async (client) => {
     const updated = await repoSubmitKmEntry(client, id);
     if (!updated) throw new HttpError(409, "HR_KM_NOT_DRAFT", "Déclaration déjà soumise ou traitée.");
@@ -97,15 +101,33 @@ export async function submitMyKmEntry(actor: Actor, id: string, audit: AuditCont
 export async function decideKmEntry(actor: Actor, id: string, decision: "VALIDATED" | "REJECTED", audit: AuditContext): Promise<KmEntry> {
   const entry = await repoGetKmEntryById(id);
   if (!entry) throw new HttpError(404, "HR_KM_NOT_FOUND", "Déclaration introuvable.");
+  const employee = await repoGetEmployeeById(entry.employee_id);
+  if (employee?.user_id === actor.id) {
+    throw new HttpError(403, "HR_SELF_APPROVAL_FORBIDDEN", "Auto-validation de ses propres déplacements interdite.");
+  }
   await assertCanManageEmployee(actor, entry.employee_id);
+  await assertPeriodOpen(entry.employee_id, entry.date);
+  const rate = decision === "VALIDATED" ? await repoGetEffectiveKilometerRate(entry.vehicle_id, entry.date) : null;
+  if (decision === "VALIDATED" && !rate) {
+    throw new HttpError(
+      409,
+      "HR_KM_RATE_MISSING",
+      "Validation impossible : aucun taux kilométrique daté ne couvre le véhicule et la date du déplacement.",
+    );
+  }
   return withTransaction(async (client) => {
-    const updated = await repoDecideKmEntry(client, id, decision, actor.id);
+    const updated = await repoDecideKmEntry(client, id, decision, actor.id, rate ? { id: rate.id, currency: rate.currency } : null);
     if (!updated) throw new HttpError(409, "HR_KM_NOT_SUBMITTED", "La déclaration doit être soumise pour être traitée.");
     await insertAuditLog(client, audit, {
       action: decision === "VALIDATED" ? "temps-deplacements.km.validate" : "temps-deplacements.km.reject",
       entity_type: "hr_kilometer_entries",
       entity_id: id,
-      details: { decision },
+      details: {
+        decision,
+        rate_version_id: updated.rate_version_id,
+        cost_amount: updated.cost_amount,
+        cost_currency: updated.cost_currency,
+      },
     });
     return updated;
   });

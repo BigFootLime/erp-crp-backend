@@ -224,13 +224,15 @@ export async function repoListProjects(
   opts: { q?: string; status?: string; page: number; pageSize: number },
   q: DbQueryer = pool
 ): Promise<{ items: ProjectRow[]; total: number }> {
-  const conds: string[] = [
-    hasGrantedAccountModuleAccess()
-      ? "TRUE"
-      : `(p.owner_id = $1 OR p.visibility = 'INTERNAL' OR EXISTS (
-        SELECT 1 FROM public.project_members m WHERE m.project_id = p.id AND m.user_id = $1))`,
-  ];
-  const params: unknown[] = [userId];
+  const params: unknown[] = [];
+  const conds: string[] = [];
+  if (hasGrantedAccountModuleAccess()) {
+    conds.push("TRUE");
+  } else {
+    params.push(userId);
+    conds.push(`(p.owner_id = $1 OR p.visibility = 'INTERNAL' OR EXISTS (
+      SELECT 1 FROM public.project_members m WHERE m.project_id = p.id AND m.user_id = $1))`);
+  }
   if (opts.q) {
     params.push(`%${opts.q}%`);
     conds.push(`(p.name ILIKE $${params.length} OR p.code ILIKE $${params.length})`);
@@ -241,13 +243,13 @@ export async function repoListProjects(
   }
   const where = conds.join(" AND ");
   const totalRes = await q.query(`SELECT COUNT(*)::int AS n FROM public.project_projects p WHERE ${where}`, params);
-  params.push(opts.pageSize, (opts.page - 1) * opts.pageSize);
+  const listParams = [...params, opts.pageSize, (opts.page - 1) * opts.pageSize];
   const res = await q.query(
     `SELECT ${PROJECT_COLS} FROM public.project_projects p
       WHERE ${where}
       ORDER BY p.updated_at DESC
-      LIMIT $${params.length - 1} OFFSET $${params.length}`,
-    params
+      LIMIT $${listParams.length - 1} OFFSET $${listParams.length}`,
+    listParams
   );
   return { items: res.rows.map(mapProject), total: Number(totalRes.rows[0]?.n ?? 0) };
 }

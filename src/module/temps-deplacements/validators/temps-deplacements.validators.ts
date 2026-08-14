@@ -8,6 +8,15 @@ export const HR_EVENT_TYPES = ["IN", "OUT", "BREAK_START", "BREAK_END", "MISSION
 
 const eventTime = z.string().datetime({ offset: true }).optional(); // ISO 8601 ; défaut = now serveur
 const dateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date attendue au format YYYY-MM-DD");
+const timezone = z.string().trim().min(1).max(100).refine((value) => {
+  try {
+    new Intl.DateTimeFormat("fr-FR", { timeZone: value });
+    return true;
+  } catch {
+    return false;
+  }
+}, "Fuseau horaire IANA invalide");
+const decimalMoney = z.string().regex(/^\d{1,9}(?:\.\d{1,6})?$/, "Montant décimal positif attendu");
 
 // POST /time-clock/events (salarié) — aucun employee_id.
 export const createTimeEventSchema = z
@@ -191,3 +200,42 @@ export const exportBodySchema = z
 export type ExportBody = z.infer<typeof exportBodySchema>;
 export const listContractsQuerySchema = z.object({ employee_id: z.string().uuid().optional() });
 export const listSchedulesQuerySchema = z.object({ employee_id: z.string().uuid("employee_id (uuid) requis") });
+
+export const HR_ABSENCE_TYPES = ["PAID_LEAVE", "SICK_LEAVE", "RTT", "TRAINING", "OTHER"] as const;
+export const HR_ABSENCE_STATUSES = ["REQUESTED", "APPROVED", "REJECTED", "CANCELLED"] as const;
+
+export const createAbsenceSchema = z.object({
+  absence_date: dateOnly,
+  minutes: z.number().int().positive().max(1440),
+  absence_type: z.enum(HR_ABSENCE_TYPES),
+  timezone: timezone.default("Europe/Paris"),
+  reason: z.string().trim().min(3).max(2000),
+  source_ref: z.string().trim().max(500).nullish(),
+}).strict();
+export type CreateAbsenceBody = z.infer<typeof createAbsenceSchema>;
+
+export const absenceStatusQuerySchema = z.object({ status: z.enum(HR_ABSENCE_STATUSES).optional() }).strict();
+
+export const createPeriodClosureSchema = z.object({
+  period_start: dateOnly,
+  period_end: dateOnly,
+  employee_id: z.string().uuid().nullish(),
+  timezone: timezone.default("Europe/Paris"),
+  reason: z.string().trim().min(5).max(2000),
+}).strict().refine((value) => value.period_end >= value.period_start, {
+  message: "La fin de période doit suivre son début.", path: ["period_end"],
+});
+export type CreatePeriodClosureBody = z.infer<typeof createPeriodClosureSchema>;
+
+export const createKilometerRateSchema = z.object({
+  owner_type: z.enum(["COMPANY", "PERSONAL"]),
+  rate_per_km: decimalMoney,
+  currency: z.string().trim().toUpperCase().regex(/^[A-Z]{3}$/).default("EUR"),
+  effective_from: dateOnly,
+  definition: z.string().trim().min(5).max(500),
+  source_type: z.enum(["DECLARATION", "LEGAL_SCALE", "CONTRACT", "OTHER"]),
+  source_ref: z.string().trim().max(500).nullish(),
+  observed_at: z.string().datetime({ offset: true }),
+  reliability: z.enum(["DECLARED", "VERIFIED", "ESTIMATED"]),
+}).strict();
+export type CreateKilometerRateBody = z.infer<typeof createKilometerRateSchema>;
