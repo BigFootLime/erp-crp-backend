@@ -93,3 +93,57 @@ le test PostgreSQL réel ci-dessus ; l'interception navigateur ne la remplace pa
 3. Qualifier l'import réel, le rejet, le doublon, la contrepassation et le
    rapprochement ; ajouter ensuite un adaptateur fournisseur si nécessaire.
 4. Import final, lettrage, clôture, déclarations et paie restent hors CERP+.
+
+## Promotion, migration et déploiement réels
+
+Le commit fonctionnel `f1f5a3f5459d5e231fac26573988332e85083ddd` a été fusionné
+par la PR backend #481 vers `dev`, puis la PR #482 vers `main`. Après cette
+promotion, `dev=4b242021c22cf154d0416d34c651dbdbafa59593` et
+`main=b5790fb3b41993b7248721729a3b7a3f560aaf51`. Les worktrees officiels
+locaux ont été avancés en fast-forward, sans toucher aux arbres WIP.
+
+### Bases réelles HYPERBOX2
+
+Le preflight PostgreSQL 17.10 a réussi sur `cerp_test` (146 MB) et `cerp_prod`
+(103 MB). Aucune pièce n'était encore éligible. Il a signalé honnêtement 23 clients
+sans compte tiers en test et 22 en production ; un futur lot les bloquera jusqu'à
+configuration.
+
+| Base | Sauvegarde | Taille | SHA-256 | Catalogue |
+|---|---|---:|---|---:|
+| `cerp_test` | `/var/backups/cerp/cerp_test_pre_sol27_20260814-182357.dump` | 75 174 443 octets | `6a67f8c48d210f5652415e2c4c2bbc9f131fc036e3881b96c836fa927b604c78` | 4 441 entrées |
+| `cerp_prod` | `/var/backups/cerp/cerp_prod_pre_sol27_20260814-182357.dump` | 51 689 827 octets | `0a377333b0c48b8e9e93c8583cce23f749ce803a142341db433ca0a21b819f18` | 4 419 entrées |
+
+Le dry-run immuable a sélectionné exactement SOL-27. L'application a duré 99 ms
+sur `cerp_test`, puis 106 ms sur `cerp_prod`. Les vérifications confirment six
+tables, zéro lot, zéro claim et zéro groupe de devise déséquilibré. Le rejeu a
+appliqué zéro patch dans chaque base, sans divergence de checksum.
+
+Le dump production a été restauré dans
+`cerp_restore_verify_sol27_20260814` : 105 584 307 octets, 191 clients, zéro
+facture/avoir/paiement, schéma et ligne de registre SOL-27 absents comme attendu.
+La base temporaire explicitement identifiée a ensuite été supprimée.
+
+### Applications
+
+HYPERBOX2 exécute la release immuable
+`/srv/cerp/releases/20260814-b5790fb3` pour `cerp-api-test` et `cerp-api`.
+Les deux readiness retournent `200`, le SHA complet et les quatre dépendances DB,
+GED, antivirus et realtime à `up`. La route `/api/v1/accounting-exports/batches`
+retourne `401` sans JWT. Le frontend atelier pointe atomiquement vers
+`/srv/cerp/frontend-releases/20260814-43b1eb7f/dist` et répond `200`.
+
+Coolify a automatiquement construit les deux `main`. Les conteneurs frontend
+`o00cgcso04ww0ggsgkg4wgg8-161915576493` et backend
+`rcccokw0wgcw0ck44g0wk0ck-161916101918` sont `healthy`. Le backend public expose
+`b5790fb3b41993b7248721729a3b7a3f560aaf51`, le bundle public contient
+`43b1eb7ff8eae56531867f4f2bbabdbb261c02b2`, les pages répondent `200` et l'accès
+anonyme à l'export retourne `401`.
+
+### Observation connexe
+
+Lors du redémarrage de l'ancien backend test, son arrêt gracieux a atteint son délai
+interne de 10 secondes avant que systemd ne lance correctement la nouvelle release.
+Le nouveau service est resté sain. Ce défaut d'arrêt historique est P2, hors calcul
+comptable ; prochaine action : instrumenter les ressources encore ouvertes pendant
+`SIGTERM`, sans augmenter le timeout comme correctif unique.
