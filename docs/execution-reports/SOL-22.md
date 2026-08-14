@@ -79,6 +79,13 @@ délai de clôture, rebuts, retouches et COPQ ne deviennent jamais zéro en l'ab
 de preuve. Pareto et SPC restent explicitement indisponibles, et le drill-down du
 Centre Qualité ouvre la page de traçabilité canonique.
 
+Le preflight opérateur précédant l'application réelle a détecté que le patch
+SOL-22 n'était pas encore inscrit dans la liste immuable du runner `--only`. Le
+checksum LF canonique
+`adf2b97867ef23f9c40ecd5df7c271cd40cc4d4d67c04cc60e7444f2cf367264`
+est maintenant enregistré et couvert par le test du runner ; aucune base n'a été
+écrite avant cette correction.
+
 ## Risques, compatibilité et travail restant
 
 - les contrôles historiques sans source ou quantité rendent les ratios partiels ;
