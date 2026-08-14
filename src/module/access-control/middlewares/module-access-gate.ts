@@ -78,7 +78,7 @@ export function moduleAccessGate(req: Request, res: Response, next: NextFunction
   if (!moduleKey) {
     // Les surfaces partagées authentifiées (utilisateurs, codes,
     // notifications, capabilities…) ne sont pas restrictibles par module.
-    grantAccountModuleAccessToRequest(req, { userId, moduleKey: "shared" }, next);
+    grantAccountModuleAccessToRequest(req, { userId, moduleKey: "shared", elevated: true }, next);
     return;
   }
 
@@ -86,7 +86,7 @@ export function moduleAccessGate(req: Request, res: Response, next: NextFunction
     warnKillSwitchOnce();
     // Le kill-switch désactive seulement les refus nominatifs. Il ne doit
     // jamais réactiver les anciens refus par rôle dans la suite de la requête.
-    grantAccountModuleAccessToRequest(req, { userId, moduleKey }, next);
+    grantAccountModuleAccessToRequest(req, { userId, moduleKey, elevated: true }, next);
     return;
   }
 
@@ -98,7 +98,7 @@ export function moduleAccessGate(req: Request, res: Response, next: NextFunction
         return;
       }
       if (profile.is_superadmin) {
-        grantAccountModuleAccessToRequest(req, { userId, moduleKey }, next);
+        grantAccountModuleAccessToRequest(req, { userId, moduleKey, elevated: true }, next);
         return;
       }
 
@@ -111,7 +111,11 @@ export function moduleAccessGate(req: Request, res: Response, next: NextFunction
         return;
       }
       if (decision.allowed) {
-        grantAccountModuleAccessToRequest(req, { userId, moduleKey }, next);
+        grantAccountModuleAccessToRequest(req, {
+          userId,
+          moduleKey,
+          elevated: decision.source === "OVERRIDE" || decision.source === "SUPERADMIN",
+        }, next);
         return;
       }
 

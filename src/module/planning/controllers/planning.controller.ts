@@ -19,6 +19,10 @@ import {
   validatePlanningForArSchema,
 } from "../validators/planning.validators";
 import {
+  planningIntelligenceQuerySchema,
+  planningPreferencesBodySchema,
+} from "../validators/planning-intelligence.validators";
+import {
   svcAutoPlanPlanning,
   svcArchivePlanningEvent,
   svcCreatePlanningEvent,
@@ -32,8 +36,13 @@ import {
   svcUploadPlanningEventDocuments,
   svcValidatePlanningForAr,
 } from "../services/planning.service";
+import {
+  svcGetPlanningExecutionIntelligence,
+  svcGetPlanningPreferences,
+  svcPutPlanningPreferences,
+} from "../services/planning-intelligence.service";
 
-function buildAuditContext(req: Request): AuditContext {
+export function buildAuditContext(req: Request): AuditContext {
   const user = req.user;
   if (!user) throw new HttpError(401, "UNAUTHORIZED", "Authentication required");
 
@@ -61,6 +70,28 @@ function buildAuditContext(req: Request): AuditContext {
     client_session_id: clientSessionId,
   };
 }
+
+export const getPlanningExecutionIntelligence: RequestHandler = asyncHandler(async (req, res) => {
+  const query = planningIntelligenceQuerySchema.parse(req.query);
+  const out = await svcGetPlanningExecutionIntelligence({ query, role: req.user?.role });
+  res.setHeader("Cache-Control", "no-store");
+  res.json(out);
+});
+
+export const getPlanningPreferences: RequestHandler = asyncHandler(async (req, res) => {
+  if (!req.user) throw new HttpError(401, "UNAUTHORIZED", "Authentication required");
+  const out = await svcGetPlanningPreferences(req.user.id);
+  res.setHeader("Cache-Control", "no-store");
+  res.json(out);
+});
+
+export const putPlanningPreferences: RequestHandler = asyncHandler(async (req, res) => {
+  const audit = buildAuditContext(req);
+  const body = planningPreferencesBodySchema.parse({ body: req.body }).body;
+  const out = await svcPutPlanningPreferences({ body, audit });
+  res.setHeader("Cache-Control", "no-store");
+  res.json(out);
+});
 
 function resolveMimeType(value: string | null | undefined): string {
   const t = String(value ?? "").trim().toLowerCase();

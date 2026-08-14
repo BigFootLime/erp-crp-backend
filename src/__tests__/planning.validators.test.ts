@@ -6,6 +6,10 @@ import {
   isValidPlanningDateTime,
   listPlanningEventsQuerySchema,
 } from "../module/planning/validators/planning.validators";
+import {
+  planningIntelligenceQuerySchema,
+  planningPreferencesBodySchema,
+} from "../module/planning/validators/planning-intelligence.validators";
 
 describe("planning datetime validation", () => {
   it("accepts more than 100 offset-qualified ISO-8601 combinations", () => {
@@ -76,5 +80,48 @@ describe("planning request schemas", () => {
         limit: 5001,
       })
     ).toThrow();
+  });
+});
+
+describe("SOL-21 intelligence and preference schemas", () => {
+  it("accepts a timezone-qualified period up to 13 weeks", () => {
+    const parsed = planningIntelligenceQuerySchema.parse({
+      from: "2026-08-01T00:00:00+02:00",
+      to: "2026-10-30T00:00:00+01:00",
+      timezone: "Europe/Paris",
+      aged_wip_days: "14",
+    });
+    expect(parsed.aged_wip_days).toBe(14);
+  });
+
+  it("rejects reversed, oversized and unknown-timezone periods", () => {
+    expect(() => planningIntelligenceQuerySchema.parse({
+      from: "2026-08-02T00:00:00Z",
+      to: "2026-08-01T00:00:00Z",
+    })).toThrow();
+    expect(() => planningIntelligenceQuerySchema.parse({
+      from: "2026-01-01T00:00:00Z",
+      to: "2026-12-31T00:00:00Z",
+    })).toThrow();
+    expect(() => planningIntelligenceQuerySchema.parse({
+      from: "2026-08-01T00:00:00Z",
+      to: "2026-08-02T00:00:00Z",
+      timezone: "Mars/Olympus",
+    })).toThrow();
+  });
+
+  it("normalizes colors and rejects invalid preferences or unknown fields", () => {
+    const body = {
+      timezone: "Europe/Paris",
+      horizon_weeks: 6,
+      view_mode: "WEEK" as const,
+      show_weekends: false,
+      machine_ids: [],
+      status_colors: { RUNNING: "#aabbcc" },
+      client_color_overrides: {},
+    };
+    expect(planningPreferencesBodySchema.parse({ body }).body.status_colors.RUNNING).toBe("#AABBCC");
+    expect(() => planningPreferencesBodySchema.parse({ body: { ...body, timezone: "Not/AZone" } })).toThrow();
+    expect(() => planningPreferencesBodySchema.parse({ body: { ...body, injected_role: "admin" } })).toThrow();
   });
 });

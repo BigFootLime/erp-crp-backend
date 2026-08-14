@@ -19,6 +19,7 @@ import {
   assessOperationReadiness,
   canSubscribeStationRoom,
   compareWorklistEntries,
+  buildStationOperationScanIdentifier,
   evaluateMachineSelectability,
   evaluateSession,
   fingerprintCredential,
@@ -479,6 +480,24 @@ describe("#159 — préparation d'une opération", () => {
       { readiness: "READY" as const, due_date: "2027-01-01", phase: 20 },
     ].sort(compareWorklistEntries);
     expect(sorted[0].due_date).toBe("2027-01-01");
+  });
+
+  it("priorise l'encours de l'opérateur puis le prochain prêt et les saisies en attente", () => {
+    const sorted = [
+      { readiness: "BLOCKED" as const, due_date: "2026-08-10", phase: 40, pending_entry: false },
+      { readiness: "INCOMPLETE" as const, due_date: "2026-08-11", phase: 30, pending_entry: true },
+      { readiness: "READY" as const, due_date: "2026-08-12", phase: 20 },
+      { readiness: "BLOCKED" as const, due_date: "2026-08-13", phase: 10, mine: true },
+    ].sort(compareWorklistEntries);
+    expect(sorted.map((item) => item.phase)).toEqual([10, 20, 30, 40]);
+  });
+
+  it("uses one canonical identifier for QR and barcode scanning", () => {
+    expect(buildStationOperationScanIdentifier("OF-2026-0042", 30)).toEqual({
+      value: "OF-2026-0042/30",
+      symbologies: ["CODE128", "QR"],
+      resolver: "/production/station/scan",
+    });
   });
 });
 
