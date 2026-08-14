@@ -64,6 +64,29 @@ PostgreSQL 16 jetable issue du bootstrap réaliste, puis a validé le rejeu à z
 le rollback test-only et la restauration du dump. Empreinte source/restaurée :
 `9c0e994251c8898b13f9fb106c7675a1fdccd5b98cb5f1a436cf9c2a409b97dc`.
 
+La première tentative opérateur réelle a été arrêtée avant écriture : le patch
+n'était pas encore inscrit dans la liste `--only` immuable de `db-patches.js`.
+Le correctif `6510713` enregistre son SHA-256 canonique LF
+`03da2f92e7c99e1ffe437fb5443517585a9c20765322d85ab0cb83e378f7968e`
+et ajoute une garde de régression. Il a été promu par les PR #476 puis #477 ;
+la `main` backend fonctionnelle correspondante est `84ed905f4f94b64d1d6b22b548597b65674f288e`.
+
+Sur HYPERBOX2, les preflights PostgreSQL 17.10 ont réussi sur `cerp_test`
+(146 MB) et `cerp_prod` (102 MB). Deux sauvegardes custom, catalogues lisibles
+et permissions `0600 root:root`, ont précédé les écritures :
+
+| Base | Sauvegarde | Taille | SHA-256 |
+|---|---|---:|---|
+| `cerp_test` | `/var/backups/cerp/cerp_test_pre_sol26_20260814-163137.dump` | 72 972 417 octets | `176e6fe78feb125ca9f5d756e47f87a093bb1e3dcd439950ea100f4818017de7` |
+| `cerp_prod` | `/var/backups/cerp/cerp_prod_pre_sol26_20260814-163137.dump` | 49 501 647 octets | `7ed98ad63fbf51dcf7a2c17efc425a9320582aac0b9154edab7bece54ff86ca9` |
+
+Le dry-run immuable a sélectionné exactement un patch. L'application a duré
+0,09 s sur chaque base. Le post-contrôle confirme cinq tables, zéro statut,
+empreinte ou événement invalide, zéro connecteur configuré et zéro divergence de
+checksum. Le rejeu a appliqué zéro patch. États du registre après SOL-26 :
+`cerp_test` 137 appliqués / 20 historiques en attente ; `cerp_prod` 133 appliqués /
+24 historiques en attente. Ces autres patches restent hors périmètre SOL-26.
+
 ## Tests et résultats réels
 
 | Commande/scénario | Résultat |
@@ -74,6 +97,7 @@ le rollback test-only et la restauration du dump. Empreinte source/restaurée :
 | suite complète `vitest run` | PASS — 4 656 réussis, 4 ignorés, 0 échec |
 | `pnpm build` | PASS — frontière données production validée |
 | `pnpm db:migrations:rehearse` | PASS — backup, preflight, 17 patches, verify, replay 0, rollback, restore |
+| gate `db-patches --only` | PASS — 23/23 après correction de la sélection immuable |
 
 Preuve humaine et machine :
 `docs/release/sol26-rehearsal/MIGRATION_REHEARSAL_SOL_06.md` et `.json`.
@@ -88,6 +112,25 @@ plus 3 tests composants PASS.
 
 Un E2E contre le sandbox réel d'une PA n'a pas été exécuté : aucun fournisseur ni
 credential n'existe. Ce manque n'est pas masqué par un mock et interdit l'activation.
+
+## Promotion et vérification déployée
+
+Le socle a été intégré par la PR #474 (`dev` `dba5c75`) puis promu par la PR
+#475 (`main` `4ca5d94`). Le correctif du gate migration a suivi par #476
+(`dev` `92dbdc1`) et #477 (`main` `84ed905`). Les branches locales officielles
+ont été avancées en fast-forward et vérifiées à `0/0` de leurs références distantes.
+
+HYPERBOX2 exécute l'artefact immuable `/srv/cerp/releases/20260814-84ed905f`
+sur `cerp-api-test` et `cerp-api`. Les deux services sont actifs, publient le SHA
+complet et retournent readiness `200` avec PostgreSQL, GED, ClamAV et temps réel
+`up`. La route e-invoicing anonyme retourne `401`; aucun warning n'est présent
+dans les journaux depuis les redémarrages.
+
+Le premier webhook Coolify a livré le socle fonctionnel `4ca5d94` et l'a déclaré
+healthy. Le contrôle public retourne live/readiness `200`, les quatre dépendances
+`up`, l'origine CORS exacte `https://cerp.croix-rousse-precision.fr`, et `401`
+pour l'accès anonyme. La promotion documentaire/corrective suivante doit faire
+converger le SHA Coolify sans modifier le comportement du connecteur.
 
 ## Risques et compatibilité
 
