@@ -17,6 +17,7 @@ const PROCUREMENT_RELIABILITY_PATCH = "20260812_procurement_reliability_sol18.sq
 const STOCK_INTELLIGENCE_PATCH = "20260813_stock_intelligence_sol19.sql";
 const TOOLING_TECHNICAL_GED_PATCH = "20260813_sol20_tooling_technical_ged.sql";
 const PLANNING_EXECUTION_PATCH = "20260814_planning_execution_intelligence_0021.sql";
+const ADV_RELIABILITY_PATCH = "20260814_adv_reliability_sol23.sql";
 const SOL06_SUPPORT = path.join(SUPPORT_DIR, "20260810_system_reference_data_readiness");
 const POSTGRES_IMAGE = "postgres@sha256:16bc17c64a573ef34162af9298258d1aec548232985b33ed7b1eac33ba35c229";
 const DEFAULT_REPORT_DIR = path.join(ROOT, "docs", "release");
@@ -447,6 +448,13 @@ async function proveRollback(databaseUrl) {
   await client.connect();
   try {
     await client.query("SET cerp.migration_rehearsal = 'on'");
+    const advReliabilityRollback = patchSupportSql(ADV_RELIABILITY_PATCH, "rollback");
+    const advReliabilityObject = await client.query(
+      "SELECT to_regclass('public.adv_delivery_blocks') IS NOT NULL AS present"
+    );
+    if (advReliabilityRollback && advReliabilityObject.rows[0].present) {
+      await runSqlFile(client, advReliabilityRollback);
+    }
     const planningExecutionRollback = patchSupportSql(PLANNING_EXECUTION_PATCH, "rollback");
     const planningExecutionObject = await client.query(
       "SELECT to_regclass('public.planning_user_preferences') IS NOT NULL AS present"
@@ -752,6 +760,7 @@ module.exports = {
   PROCUREMENT_RELIABILITY_PATCH,
   STOCK_INTELLIGENCE_PATCH,
   PLANNING_EXECUTION_PATCH,
+  ADV_RELIABILITY_PATCH,
   expectedRehearsalPatches,
   inventory,
   inventoryMarkdown,
