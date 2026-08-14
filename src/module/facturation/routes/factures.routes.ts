@@ -22,8 +22,35 @@ import {
   createFinanceSequences,
   getFinanceConfigurationReadiness,
 } from "../controllers/finance-configuration.controller";
+import {
+  getElectronicInvoice,
+  getElectronicInvoiceReadiness,
+  queueElectronicInvoice,
+  reconcileElectronicInvoice,
+} from "../electronic-invoicing/electronic-invoice.controller";
 
 const router = Router();
+
+router.get(
+  "/electronic-invoicing/readiness",
+  requireFinanceCapability("einvoice_read"),
+  getElectronicInvoiceReadiness
+);
+router.get(
+  "/:id/electronic-invoicing",
+  requireFinanceCapability("einvoice_read"),
+  getElectronicInvoice
+);
+router.post(
+  "/:id/electronic-invoicing/submissions",
+  requireFinanceCapability("einvoice_submit"),
+  queueElectronicInvoice
+);
+router.post(
+  "/:id/electronic-invoicing/reconcile",
+  requireFinanceCapability("einvoice_reconcile"),
+  reconcileElectronicInvoice
+);
 
 router.get(
   "/workflow/eligible-sources",

@@ -45,6 +45,7 @@ import notificationsRoutes from "../module/notifications/routes/notifications.ro
 import chatRoutes from "../module/chat/routes/chat.routes";
 import usersRoutes from "../module/users/routes/users.routes";
 import marginEngineRoutes from "../module/margin-engine/routes/margin-engine.routes";
+import electronicInvoiceWebhookRoutes from "../module/facturation/electronic-invoicing/electronic-invoice-webhook.routes";
 
 import traceabilityRoutes from "../module/traceability/routes/traceability.routes"
 import traceability360Routes from "../module/traceability/routes/traceability-360.routes"
@@ -69,6 +70,7 @@ router.use((_req, _res, next) => runWithAccountModuleAccessScope(next))
 
 // --- Routes publiques (avant authentification) ---
 router.use("/auth", authRoutes)
+router.use("/electronic-invoicing/webhooks", electronicInvoiceWebhookRoutes)
 
 // 🔒 Socle d'authentification : toute route sous /api/v1 définie APRÈS cette
 // ligne exige un JWT valide. Les rôles restent descriptifs ; l'autorisation
