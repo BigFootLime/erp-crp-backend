@@ -15,6 +15,7 @@ import {
 } from "../controllers/reporting-v2.controller";
 import { requireFinanceCapability } from "../middlewares/finance-authorization.middleware";
 import commercialReliabilityRoutes from "../../commercial-reliability/routes/commercial-reliability.routes";
+import advReliabilityRoutes from "../../adv-reliability/routes/adv-reliability.routes";
 
 const router = Router();
 
@@ -22,6 +23,7 @@ const router = Router();
 // Montée sous /reporting pour réutiliser la frontière module existante, avec RBAC
 // d'action supplémentaire sur chaque mutation.
 router.use("/commercial/reliability", commercialReliabilityRoutes);
+router.use("/commercial/adv", advReliabilityRoutes);
 
 // --- Surface historique (#227), conservée pour ses consommateurs ---------------
 // Contrat inchangé ; les agrégats sous-jacents ont été corrigés par #275.
