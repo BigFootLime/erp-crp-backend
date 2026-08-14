@@ -330,7 +330,20 @@ async function loadFinance(query: AdvOverviewQueryDTO, asOf: string) {
 export async function repoAdvOverview(query: AdvOverviewQueryDTO) {
   await ensureInstalled();
   const asOf = query.as_of ?? new Date().toISOString().slice(0, 10);
-  const [deliveries, otif, finance] = await Promise.all([loadDeliveryQueue(query, asOf), loadOtif(query, asOf), loadFinance(query, asOf)]);
+  const environment = process.env.NODE_ENV === "production" ? "production" : "sandbox";
+  const [deliveries, otif, finance, connectorResult] = await Promise.all([
+    loadDeliveryQueue(query, asOf),
+    loadOtif(query, asOf),
+    loadFinance(query, asOf),
+    db.query<{ provider_code: string; environment: string; supported_formats: string[]; qualified_at: string }>(
+      `SELECT provider_code, environment, supported_formats, qualified_at
+       FROM public.einvoice_provider_connections
+       WHERE enabled = true AND environment = $1
+       LIMIT 1`,
+      [environment]
+    ),
+  ]);
+  const connector = connectorResult.rows[0] ?? null;
   const counts = { due: 0, ready: 0, blocked: 0, late: 0, planned: 0 };
   for (const item of deliveries) {
     if (item.state === "DUE") counts.due += 1;
@@ -354,7 +367,24 @@ export async function repoAdvOverview(query: AdvOverviewQueryDTO) {
         cash_30d: { unit: "currency", formula: "active promises first + due schedules on residual balance, capped at invoice balance", period: "as_of through as_of+30d", source: ["facture_echeance","adv_payment_promises","paiement_allocations","avoir_source_allocations"], reliability: "PARTIAL" },
       },
     },
-    electronic_invoicing: { scope: "INTERNAL_READINESS_ONLY", connector: { available: false, status: "UNAVAILABLE", reason: "NO_PROVIDER_SELECTED" }, statuses: ["NOT_ASSESSED","BLOCKED","READY_FOR_CONNECTOR"] },
+    electronic_invoicing: connector
+      ? {
+          scope: "INTERNAL_READINESS_AND_EXTERNAL_LIFECYCLE",
+          connector: {
+            available: true,
+            status: "QUALIFIED",
+            provider_code: connector.provider_code,
+            environment: connector.environment,
+            supported_formats: connector.supported_formats,
+            qualified_at: new Date(connector.qualified_at).toISOString(),
+          },
+          statuses: ["NOT_ASSESSED", "BLOCKED", "READY_FOR_CONNECTOR"],
+        }
+      : {
+          scope: "INTERNAL_READINESS_ONLY",
+          connector: { available: false, status: "UNAVAILABLE", reason: "NO_PROVIDER_SELECTED" },
+          statuses: ["NOT_ASSESSED", "BLOCKED", "READY_FOR_CONNECTOR"],
+        },
     existing_finance_capabilities: { partial_invoices: true, credit_notes: true, schedules: true, reconciled_payments: true },
   };
 }

@@ -19,6 +19,7 @@ const TOOLING_TECHNICAL_GED_PATCH = "20260813_sol20_tooling_technical_ged.sql";
 const PLANNING_EXECUTION_PATCH = "20260814_planning_execution_intelligence_0021.sql";
 const ADV_RELIABILITY_PATCH = "20260814_adv_reliability_sol23.sql";
 const PROJECT_OPERATIONS_PATCH = "20260814_project_operations_sol24.sql";
+const ELECTRONIC_INVOICING_PATCH = "20260814_electronic_invoicing_sol26.sql";
 const SOL06_SUPPORT = path.join(SUPPORT_DIR, "20260810_system_reference_data_readiness");
 const POSTGRES_IMAGE = "postgres@sha256:16bc17c64a573ef34162af9298258d1aec548232985b33ed7b1eac33ba35c229";
 const DEFAULT_REPORT_DIR = path.join(ROOT, "docs", "release");
@@ -449,6 +450,13 @@ async function proveRollback(databaseUrl) {
   await client.connect();
   try {
     await client.query("SET cerp.migration_rehearsal = 'on'");
+    const electronicInvoicingRollback = patchSupportSql(ELECTRONIC_INVOICING_PATCH, "rollback");
+    const electronicInvoicingObject = await client.query(
+      "SELECT to_regclass('public.einvoice_provider_connections') IS NOT NULL AS present"
+    );
+    if (electronicInvoicingRollback && electronicInvoicingObject.rows[0].present) {
+      await runSqlFile(client, electronicInvoicingRollback);
+    }
     const projectOperationsRollback = patchSupportSql(PROJECT_OPERATIONS_PATCH, "rollback");
     const projectOperationsObject = await client.query(
       "SELECT to_regclass('public.project_budget_versions') IS NOT NULL AS present"
@@ -563,6 +571,13 @@ async function proveRollback(databaseUrl) {
                   WHERE table_schema='public' AND table_name='hr_kilometer_entries'
                     AND column_name IN ('rate_version_id','cost_amount','cost_currency')
                 ) AS project_operations_removed,
+              to_regclass('public.einvoice_provider_connections') IS NULL
+                AND to_regclass('public.einvoice_documents') IS NULL
+                AND to_regclass('public.einvoice_submission_attempts') IS NULL
+                AND to_regclass('public.einvoice_provider_events') IS NULL
+                AND to_regclass('public.einvoice_command_receipts') IS NULL
+                AND to_regprocedure('public.fn_einvoice_evidence_append_only_sol26()') IS NULL
+                AS electronic_invoicing_removed,
               NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname='trg_stock_reference_readiness_2606') AS trigger_removed`
     );
     if (!objects.rows[0].function_removed || !objects.rows[0].function_v2_removed
@@ -572,6 +587,7 @@ async function proveRollback(databaseUrl) {
         || !objects.rows[0].tooling_technical_ged_removed
         || !objects.rows[0].planning_execution_removed
         || !objects.rows[0].project_operations_removed
+        || !objects.rows[0].electronic_invoicing_removed
         || !objects.rows[0].trigger_removed) {
       fail("rollback left SOL-06 objects behind");
     }

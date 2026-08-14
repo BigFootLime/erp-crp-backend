@@ -89,6 +89,10 @@ function testConfig(overrides: Partial<AuthRateLimitConfig> = {}): AuthRateLimit
         failurePolicy: "closed-error",
         dimensions: { token: { limit: 2, windowMs }, ip: { limit: 2, windowMs } },
       },
+      einvoiceWebhook: {
+        failurePolicy: "closed-error",
+        dimensions: { ip: { limit: 240, windowMs } },
+      },
     },
     ...overrides,
   };

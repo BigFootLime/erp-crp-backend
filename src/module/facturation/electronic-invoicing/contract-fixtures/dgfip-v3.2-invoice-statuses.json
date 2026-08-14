@@ -1,0 +1,21 @@
+{
+  "source": "https://www.impots.gouv.fr/specifications-externes-b2b",
+  "specification": "Dossier de spécifications externes de la facturation électronique V3.2, tableau 8",
+  "published_at": "2026-04-30",
+  "statuses": [
+    { "code": 200, "label": "Déposée", "mandatory": true },
+    { "code": 201, "label": "Émise par la plateforme", "mandatory": false },
+    { "code": 202, "label": "Reçue par la plateforme", "mandatory": false },
+    { "code": 203, "label": "Mise à disposition", "mandatory": false },
+    { "code": 204, "label": "Prise en charge", "mandatory": false },
+    { "code": 205, "label": "Approuvée", "mandatory": false },
+    { "code": 206, "label": "Approuvée partiellement", "mandatory": false },
+    { "code": 207, "label": "En litige", "mandatory": false },
+    { "code": 208, "label": "Suspendue", "mandatory": false },
+    { "code": 209, "label": "Complétée", "mandatory": false },
+    { "code": 210, "label": "Refusée", "mandatory": true },
+    { "code": 211, "label": "Paiement transmis", "mandatory": false },
+    { "code": 212, "label": "Encaissée", "mandatory": true },
+    { "code": 213, "label": "Rejetée", "mandatory": true }
+  ]
+}
