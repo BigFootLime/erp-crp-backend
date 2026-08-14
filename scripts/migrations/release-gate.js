@@ -21,6 +21,7 @@ const ADV_RELIABILITY_PATCH = "20260814_adv_reliability_sol23.sql";
 const PROJECT_OPERATIONS_PATCH = "20260814_project_operations_sol24.sql";
 const ELECTRONIC_INVOICING_PATCH = "20260814_electronic_invoicing_sol26.sql";
 const ACCOUNTING_EXPORT_PATCH = "20260814_accounting_export_sol27.sql";
+const API_WEBHOOKS_PATCH = "20260814_api_contract_webhooks_sol28.sql";
 const SOL06_SUPPORT = path.join(SUPPORT_DIR, "20260810_system_reference_data_readiness");
 const POSTGRES_IMAGE = "postgres@sha256:16bc17c64a573ef34162af9298258d1aec548232985b33ed7b1eac33ba35c229";
 const DEFAULT_REPORT_DIR = path.join(ROOT, "docs", "release");
@@ -451,6 +452,13 @@ async function proveRollback(databaseUrl) {
   await client.connect();
   try {
     await client.query("SET cerp.migration_rehearsal = 'on'");
+    const apiWebhooksRollback = patchSupportSql(API_WEBHOOKS_PATCH, "rollback");
+    const apiWebhooksObject = await client.query(
+      "SELECT to_regclass('public.api_webhook_subscriptions') IS NOT NULL AS present"
+    );
+    if (apiWebhooksRollback && apiWebhooksObject.rows[0].present) {
+      await runSqlFile(client, apiWebhooksRollback);
+    }
     const accountingExportRollback = patchSupportSql(ACCOUNTING_EXPORT_PATCH, "rollback");
     const accountingExportObject = await client.query(
       "SELECT to_regclass('public.accounting_export_batches') IS NOT NULL AS present"
@@ -593,6 +601,15 @@ async function proveRollback(databaseUrl) {
                 AND to_regclass('public.accounting_export_command_receipts') IS NULL
                 AND to_regprocedure('public.fn_protect_accounting_export_sol27()') IS NULL
                 AS accounting_export_removed,
+              to_regclass('public.api_webhook_subscriptions') IS NULL
+                AND to_regclass('public.api_webhook_events') IS NULL
+                AND to_regclass('public.api_webhook_deliveries') IS NULL
+                AND to_regclass('public.api_webhook_delivery_attempts') IS NULL
+                AND to_regclass('public.api_webhook_command_receipts') IS NULL
+                AND to_regclass('public.api_webhook_audit_events') IS NULL
+                AND to_regclass('public.api_webhook_ingestion_state') IS NULL
+                AND to_regprocedure('public.fn_api_webhook_evidence_immutable_sol28()') IS NULL
+                AS api_webhooks_removed,
               NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname='trg_stock_reference_readiness_2606') AS trigger_removed`
     );
     if (!objects.rows[0].function_removed || !objects.rows[0].function_v2_removed
@@ -604,6 +621,7 @@ async function proveRollback(databaseUrl) {
         || !objects.rows[0].project_operations_removed
         || !objects.rows[0].electronic_invoicing_removed
         || !objects.rows[0].accounting_export_removed
+        || !objects.rows[0].api_webhooks_removed
         || !objects.rows[0].trigger_removed) {
       fail("rollback left SOL-06 objects behind");
     }

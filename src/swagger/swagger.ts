@@ -1,4 +1,6 @@
-export const swaggerSpec = {
+import { buildOpenApiDocument } from "./openapi-contract";
+
+const legacySwaggerSpec = {
   openapi: '3.0.3',
   info: {
     title: 'CERP API',
@@ -22,7 +24,7 @@ export const swaggerSpec = {
         properties: {
           name: { type: 'string', minLength: 1 },
           street: { type: 'string', minLength: 1 },
-          house_number: { type: ['string', 'null'] },
+          house_number: { type: 'string', nullable: true },
           postal_code: { type: 'string', minLength: 1 },
           city: { type: 'string', minLength: 1 },
           country: { type: 'string', minLength: 1 },
@@ -45,9 +47,9 @@ export const swaggerSpec = {
           first_name: { type: 'string', minLength: 1 },
           last_name: { type: 'string', minLength: 1 },
           email: { type: 'string', format: 'email' },
-          phone_personal: { type: ['string', 'null'] },
-          role: { type: ['string', 'null'] },
-          civility: { type: ['string', 'null'] },
+          phone_personal: { type: 'string', nullable: true },
+          role: { type: 'string', nullable: true },
+          civility: { type: 'string', nullable: true },
         },
       },
       // src/swagger/swagger.ts (components.schemas.CreateClientDTO)
@@ -65,23 +67,23 @@ CreateClientDTO: {
   ],
   properties: {
     company_name: { type: 'string', minLength: 1 },
-    email: { type: ['string','null'], format: 'email' },
-    phone: { type: ['string','null'] },
-    website_url: { type: ['string','null'], format: 'uri' },
-    siret: { type: ['string','null'] },
-    vat_number: { type: ['string','null'] },
-    naf_code: { type: ['string','null'] },
+    email: { type: 'string', nullable: true, format: 'email' },
+    phone: { type: 'string', nullable: true },
+    website_url: { type: 'string', nullable: true, format: 'uri' },
+    siret: { type: 'string', nullable: true },
+    vat_number: { type: 'string', nullable: true },
+    naf_code: { type: 'string', nullable: true },
     status: { type: 'string', enum: ['prospect', 'client', 'inactif'] },
     blocked: { type: 'boolean' },
-    reason: { type: ['string','null'] },
+    reason: { type: 'string', nullable: true },
     creation_date: { type: 'string' },
 
     payment_mode_ids: { type: 'array', items: { type: 'string' }, default: [] },
 
     bank: { $ref: '#/components/schemas/BankInline' },
 
-    observations: { type: ['string','null'] },
-    provided_documents_id: { type: ['string','null'] },
+    observations: { type: 'string', nullable: true },
+    provided_documents_id: { type: 'string', nullable: true },
 
     bill_address: { $ref: '#/components/schemas/AddressInput' },
     delivery_address: { $ref: '#/components/schemas/AddressInput' },
@@ -135,8 +137,8 @@ CreateClientDTO: {
         properties: {
           client_id: { type: 'string' },
           company_name: { type: 'string' },
-          email: { type: ['string', 'null'] },
-          siret: { type: ['string', 'null'] },
+          email: { type: 'string', nullable: true },
+          siret: { type: 'string', nullable: true },
         },
         example: {
           client_id: '023',
@@ -157,18 +159,18 @@ CreateClientDTO: {
         properties: {
           client_id: { type: 'string' },
           company_name: { type: 'string' },
-          email: { type: ['string', 'null'] },
-          phone: { type: ['string', 'null'] },
-          website_url: { type: ['string', 'null'] },
-          siret: { type: ['string', 'null'] },
-          vat_number: { type: ['string', 'null'] },
-          naf_code: { type: ['string', 'null'] },
+          email: { type: 'string', nullable: true },
+          phone: { type: 'string', nullable: true },
+          website_url: { type: 'string', nullable: true },
+          siret: { type: 'string', nullable: true },
+          vat_number: { type: 'string', nullable: true },
+          naf_code: { type: 'string', nullable: true },
           status: { type: 'string', enum: ['prospect', 'client', 'inactif'] },
           blocked: { type: 'boolean' },
-          reason: { type: ['string', 'null'] },
+          reason: { type: 'string', nullable: true },
           creation_date: { type: 'string' },
-          observations: { type: ['string', 'null'] },
-          provided_documents_id: { type: ['string', 'null'] },
+          observations: { type: 'string', nullable: true },
+          provided_documents_id: { type: 'string', nullable: true },
         },
       },
       BillerRef: {
@@ -183,7 +185,7 @@ CreateClientDTO: {
           id: { type: 'string' },
           name: { type: 'string' },
           street: { type: 'string' },
-          house_number: { type: ['string', 'null'] },
+          house_number: { type: 'string', nullable: true },
           postal_code: { type: 'string' },
           city: { type: 'string' },
           country: { type: 'string' },
@@ -206,9 +208,9 @@ CreateClientDTO: {
           contact_id: { type: 'string' },
           first_name: { type: 'string' },
           last_name: { type: 'string' },
-          civility: { type: ['string', 'null'] },
-          role: { type: ['string', 'null'] },
-          phone_personal: { type: ['string', 'null'] },
+          civility: { type: 'string', nullable: true },
+          role: { type: 'string', nullable: true },
+          phone_personal: { type: 'string', nullable: true },
           email: { type: 'string' },
         },
       },
@@ -227,11 +229,11 @@ CreateClientDTO: {
         required: ['client', 'bill_address', 'delivery_address', 'bank', 'payment_modes'],
         properties: {
           client: { $ref: '#/components/schemas/ClientEntity' },
-          biller: { oneOf: [{ $ref: '#/components/schemas/BillerRef' }, { type: 'null' }] },
+          biller: { allOf: [{ $ref: '#/components/schemas/BillerRef' }], nullable: true },
           bill_address: { $ref: '#/components/schemas/AddressOut' },
           delivery_address: { $ref: '#/components/schemas/AddressOut' },
           bank: { $ref: '#/components/schemas/BankOut' },
-          primary_contact: { oneOf: [{ $ref: '#/components/schemas/PrimaryContactOut' }, { type: 'null' }] },
+          primary_contact: { allOf: [{ $ref: '#/components/schemas/PrimaryContactOut' }], nullable: true },
           payment_modes: {
             type: 'array',
             items: { $ref: '#/components/schemas/PaymentModeOut' },
@@ -329,3 +331,5 @@ CreateClientDTO: {
     },
   },
 };
+
+export const swaggerSpec = buildOpenApiDocument(legacySwaggerSpec);

@@ -1,0 +1,66 @@
+{
+  "info": {
+    "name": "CERP+ API v1 — contract and webhooks",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "No production URL or credential is embedded. Configure baseUrl, bearerToken and UUID idempotency keys in an isolated environment."
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://127.0.0.1:5000" },
+    { "key": "bearerToken", "value": "" },
+    { "key": "subscriptionId", "value": "" },
+    { "key": "deliveryId", "value": "" },
+    { "key": "idempotencyKey", "value": "00000000-0000-4000-8000-000000000001" }
+  ],
+  "item": [
+    {
+      "name": "OpenAPI deployed contract",
+      "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/openapi.json" }
+    },
+    {
+      "name": "Webhook readiness",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{bearerToken}}" }],
+        "url": "{{baseUrl}}/api/v1/admin/webhooks/readiness"
+      }
+    },
+    {
+      "name": "Create webhook subscription",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{bearerToken}}" },
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Idempotency-Key", "value": "{{idempotencyKey}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"name\":\"Sandbox receiver\",\"endpoint_url\":\"https://receiver.example.invalid/cerp\",\"event_types\":[\"erp.invoice.issued.v1\"]}"
+        },
+        "url": "{{baseUrl}}/api/v1/admin/webhooks/subscriptions"
+      }
+    },
+    {
+      "name": "Send sandbox test",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{bearerToken}}" },
+          { "key": "Idempotency-Key", "value": "{{idempotencyKey}}" }
+        ],
+        "url": "{{baseUrl}}/api/v1/admin/webhooks/subscriptions/{{subscriptionId}}/test"
+      }
+    },
+    {
+      "name": "Replay terminal delivery",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{bearerToken}}" },
+          { "key": "Idempotency-Key", "value": "{{idempotencyKey}}" }
+        ],
+        "url": "{{baseUrl}}/api/v1/admin/webhooks/deliveries/{{deliveryId}}/replay"
+      }
+    }
+  ]
+}

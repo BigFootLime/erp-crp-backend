@@ -47,6 +47,8 @@ import usersRoutes from "../module/users/routes/users.routes";
 import marginEngineRoutes from "../module/margin-engine/routes/margin-engine.routes";
 import electronicInvoiceWebhookRoutes from "../module/facturation/electronic-invoicing/electronic-invoice-webhook.routes";
 import accountingExportRoutes from "../module/accounting-export/accounting-export.routes";
+import openApiRoutes from "../swagger/openapi.routes";
+import webhookAdminRoutes from "../module/integrations/webhooks/webhook.routes";
 
 import traceabilityRoutes from "../module/traceability/routes/traceability.routes"
 import traceability360Routes from "../module/traceability/routes/traceability-360.routes"
@@ -72,6 +74,7 @@ router.use((_req, _res, next) => runWithAccountModuleAccessScope(next))
 // --- Routes publiques (avant authentification) ---
 router.use("/auth", authRoutes)
 router.use("/electronic-invoicing/webhooks", electronicInvoiceWebhookRoutes)
+router.use(openApiRoutes)
 
 // 🔒 Socle d'authentification : toute route sous /api/v1 définie APRÈS cette
 // ligne exige un JWT valide. Les rôles restent descriptifs ; l'autorisation
@@ -111,6 +114,7 @@ router.use("/audit-logs", auditLogsRoutes)
 // Tour de contrôle des accès (#326) montée AVANT le routeur admin historique : elle
 // est gardée par le statut superadmin et ne doit pas hériter de son authorizeRole.
 router.use("/admin/access", accessControlRoutes);
+router.use("/admin/webhooks", webhookAdminRoutes);
 router.use("/admin", adminRoutes);
 router.use("/affaires", affaireRoutes);
 router.use("/devis", devisRoutes);
