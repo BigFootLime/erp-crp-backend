@@ -21,14 +21,19 @@ const packageLock = JSON.parse(fs.readFileSync(repoPath("package-lock.json"), "u
 describe("Dockerfile storage permissions", () => {
   it("copies every build-time security guard before npm run build", () => {
     const openApiScriptsIndex = dockerfile.indexOf("COPY scripts/openapi ./scripts/openapi");
+    const openApiCoverageIndex = dockerfile.indexOf(
+      "COPY docs/http/openapi-route-coverage.json ./docs/http/openapi-route-coverage.json",
+    );
     const securityScriptsIndex = dockerfile.indexOf("COPY scripts/security ./scripts/security");
     const buildScriptsIndex = dockerfile.indexOf("COPY scripts/build ./scripts/build");
     const buildIndex = dockerfile.indexOf("RUN npm run build");
 
     expect(openApiScriptsIndex).toBeGreaterThanOrEqual(0);
+    expect(openApiCoverageIndex).toBeGreaterThan(openApiScriptsIndex);
     expect(securityScriptsIndex).toBeGreaterThanOrEqual(0);
     expect(buildScriptsIndex).toBeGreaterThanOrEqual(0);
     expect(buildIndex).toBeGreaterThan(openApiScriptsIndex);
+    expect(buildIndex).toBeGreaterThan(openApiCoverageIndex);
     expect(buildIndex).toBeGreaterThan(securityScriptsIndex);
     expect(buildIndex).toBeGreaterThan(buildScriptsIndex);
   });
