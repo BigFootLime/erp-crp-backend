@@ -4,7 +4,7 @@
 - Propriétaire : Keenan Martin
 - Issue de traçabilité : `BigFootLime/crp-systems-web#703`
 - Branche : `feature/703-sol28-openapi-webhooks`
-- Statut : implémentation et validation locale terminées ; promotion et recette déployée consignées dans la section finale après fusion.
+- Statut : terminé, migré et déployé sur HYPERBOX2 et Coolify ; preuves de clôture ci-dessous.
 
 ## Diagnostic et cause racine
 
@@ -70,9 +70,58 @@ Il n'y a pas de changement d'interface utilisateur. La vérification HTTP Supert
 
 Avant toute preuve webhook : arrêter le worker, vérifier la sauvegarde, exécuter le rollback fourni puis valider l'absence des objets. Dès qu'un abonnement, une livraison, un reçu ou un audit existe, le rollback SQL refuse volontairement la suppression. Le rollback opérationnel consiste alors à définir `CERP_WEBHOOK_DELIVERY_ENABLED=0`, redéployer la release précédente et conserver les tables pour rapprochement. Une restauration complète n'est utilisée qu'après décision d'incident et sauvegarde des preuves.
 
+## Promotion, migration et déploiement réels
+
+### Git et reproductibilité
+
+- implémentation : `815ca66033d2f632767ed603b601d40f5b1b3580` ;
+- correctifs de portabilité OpenAPI : `4dca211`, `8776b2b` ;
+- réconciliation stricte du patch GED historique : `60bf320` ;
+- vérification de l'immutabilité avec un rôle propriétaire : `4e7b922` ;
+- frontière Docker OpenAPI et lock npm : `b3199a0`, `fa334bf` et correctif de manifeste de couverture promu jusqu'au candidat `d37c2466fdab2aa0e6aa5e8c8e12326a974cda5a` ;
+- PR d'implémentation et de promotion : `#487` à `#503`, toujours feature → `dev` puis `dev` → `main` ;
+- à chaque promotion, les arbres `origin/dev` et `origin/main` ont été comparés identiques et les worktrees locaux officiels ont été avancés en fast-forward jusqu'aux refs distantes.
+
+Le SHA du commit qui contient ce rapport est par nature auto-référentiel et ne peut pas être inscrit dans son propre contenu. La version finale se résout avec `git rev-parse origin/main` et doit être identique à `health.version` après la dernière promotion documentaire. Le dernier SHA fonctionnel mesuré avant cette clôture documentaire est `d37c2466fdab2aa0e6aa5e8c8e12326a974cda5a`.
+
+### Base test
+
+- sauvegarde chiffrée : `/var/backups/cerp/cerp_test_pre_sol28_20260814-202430.dump.enc`, 73 023 104 octets, SHA-256 `2f09614505f6d1dfa7e1c32ad0696cf922c1c07906f02014164b686160d16b64` ;
+- clé séparée root-only : `/root/.cerp-migration-keys/sol28-20260814-202430-test.key`, mode `600` ;
+- déchiffrement en tmpfs et `pg_restore --list` réussis, puis suppression du dump en clair ;
+- preflight : PostgreSQL 17.10, 140 patches appliqués, aucune divergence de checksum, patch GED externe accepté uniquement avec son SHA exact et ses quatre preuves DB ;
+- sélection immuable : uniquement `20260814_api_contract_webhooks_sol28.sql` ; application : 1 ; rejeu : 0 ; vérification SQL : réussie ;
+- le test runtime de l'immutabilité insère une sonde, exige le rejet `SQLSTATE 55000`, puis annule la transaction. Les compteurs webhook restent tous à zéro.
+
+### Base production
+
+- sauvegarde chiffrée pré-migration : `/var/backups/cerp/cerp_prod_pre_sol28_20260814-204124.dump.enc`, 49 550 016 octets, SHA-256 `5588482899a0c910bbd2fbbec97f42ebb19344b8d9116b31e2b5c12feb92763b` ;
+- clé séparée root-only : `/root/.cerp-migration-keys/sol28-20260814-204124-prod.key`, mode `600` ;
+- validation réelle : déchiffrement en tmpfs et `pg_restore --list`, sans conservation de fichier en clair ;
+- preflight : base `cerp_prod`, rôle `cerp_app`, PostgreSQL 17.10, 108 050 099 octets, 135 patches appliqués, 24 en attente, 0 checksum divergent et 0 patch inconnu ;
+- la sélection `--only 20260814_api_contract_webhooks_sol28.sql` a appliqué exactement 1 patch sans appliquer les 23 autres patches en attente ; rejeu : 0 ;
+- ledger post-migration : SHA `42d9f33de100499836e7c1d58ef49e91daffa4af3861c59536bc2d0ab0f87f1f` ; vérification : 7 relations présentes, 3 triggers append-only présents, sonde d'immutabilité rejetée et annulée, 0 donnée webhook ;
+- restauration jetable `cerp_restore_verify_sol28_20260814_2042` : sauvegarde restaurée, absence pré-SOL-28 prouvée, migration puis rollback exécutés, absence post-rollback prouvée ; empreinte de comptage avant/après identique `1e0b47495556deb4bb90b4681f45f03039263e6fd04d6b7361fde218ab667b7c` ; base temporaire et fichiers tmpfs supprimés.
+
+### Services et contrôles HTTP
+
+- HYPERBOX2 test puis production : services actifs, readiness `200`, DB/GED/antivirus/temps réel `up`, environnement correct, contrat OpenAPI 3.0.3 de 1 024 opérations et accès anonyme à `/api/v1/admin/webhooks/subscriptions` refusé en `401` ;
+- clés test et production séparées dans `/etc/cerp/webhook-secrets-*.env`, root-only `600`. La valeur production est partagée sans affichage avec l'instance Coolify qui utilise la même base ;
+- Coolify : les échecs ont été reproduits puis attribués à trois entrées Docker absentes ou incohérentes : scripts OpenAPI non copiés, `package-lock.json` resté sur swagger-parser 10.0.3, puis manifeste de couverture non copié. Les trois défauts sont corrigés et couverts par test ;
+- rolling update Coolify `cbcm75gxyh8pfn9vyxg9oj78` terminé le 14/08/2026 à 19:00:09 UTC. Le conteneur candidat `d37c2466fdab2aa0e6aa5e8c8e12326a974cda5a` a été déclaré sain avant retrait de l'ancien ;
+- vérification interne et publique : liveness/readiness `200`, `health.version` et `info.version` égaux au SHA déployé, 1 024 opérations, extensions `x-cerp-route-coverage` et `x-cerp-contract-digest`, clé AES chargée (longueur contrôlée 64 sans affichage), worker activé et route admin anonyme `401` ;
+- CORS connexion : preflight `OPTIONS /api/v1/auth/login` depuis `https://cerp.croix-rousse-precision.fr` → `204` avec `Access-Control-Allow-Origin` exact ; origine `https://attacker.invalid` → aucun header d'autorisation.
+
+Le build Docker production installe 214 dépendances runtime avec 0 vulnérabilité connue. L'étage builder signale une alerte élevée limitée aux dépendances de développement ; le contrôle de production `pnpm audit --prod --audit-level high` reste à zéro et aucune dépendance de développement n'est copiée dans l'image runtime.
+
+## Rollback opérateur vérifié
+
+- application : remettre le drop-in systemd précédent ou redéployer l'image Coolify `679c691b6e4c116d7b927a40ae59a561210b8ce1`, puis vérifier liveness/readiness et version ;
+- worker uniquement : `CERP_WEBHOOK_DELIVERY_ENABLED=0`, redémarrage contrôlé, conservation des tables et preuves ;
+- base avant toute utilisation webhook : exécuter le script rollback fourni après sauvegarde ; son exécution a été prouvée sur la restauration réaliste ;
+- dès qu'une preuve webhook existe, le rollback SQL refuse la suppression. La procédure correcte est alors de désactiver le worker et de conserver les données pour rapprochement ;
+- dernier recours autorisé par décision d'incident : restaurer la sauvegarde chiffrée pré-SOL-28 avec sa clé séparée, puis exécuter les contrôles d'intégrité avant remise en service.
+
 ## Restant réellement à faire
 
-- fusionner la branche vers `dev`, puis promouvoir `dev` vers `main` par PR ;
-- sauvegarder, préflighter et appliquer le patch immuable sur la base test puis la base production autorisée ;
-- provisionner sans affichage la clé AES séparée sur HYPERBOX2 et Coolify, déployer le SHA `main`, puis vérifier health, version, OpenAPI et contrôles d'accès ;
-- compléter cette section avec les SHA, PR, sauvegardes et preuves déployées exactes.
+Aucun développement, changement de données ou déploiement SOL-28 n'est en attente. La clôture doit seulement conserver l'invariant automatisé `git rev-parse origin/main == health.version` après le commit documentaire auto-référentiel ; cette vérification est effectuée dans la passation finale et ne change ni le schéma ni le comportement.
