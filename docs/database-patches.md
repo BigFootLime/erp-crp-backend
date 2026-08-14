@@ -687,3 +687,13 @@ restaurer un dump vérifié, appliquer avec le runner de patches puis exécuter 
 verify. Le rollback support est limité à `cerp_test` et refuse toute suppression
 dès qu'une cause, un coût ou une politique SOL-22 est utilisé. La procédure complète
 est dans `docs/runbooks/quality-intelligence-sol22-migration.md`.
+
+# 2026-08-14 — API contract and signed outbound webhooks (SOL-28)
+
+`20260814_api_contract_webhooks_sol28.sql` adds the encrypted subscription,
+minimal event projection, delivery/retry/dead-letter, idempotency receipt and
+append-only audit boundary described by ADR-0074. Run the matching preflight
+after a verified encrypted backup, apply only the immutable registered patch,
+then run the verify script and an idempotent replay. Rollback is allowed only
+before any subscription, delivery, command receipt or audit evidence exists;
+after use, disable the worker and preserve evidence.

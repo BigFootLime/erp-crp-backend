@@ -9,7 +9,10 @@
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "build": "node scripts/security/check-production-data-boundary.mjs && node scripts/build/clean-dist.js && tsc -p tsconfig.json && node scripts/security/check-production-data-boundary.mjs --dist",
+    "openapi:generate": "node scripts/openapi/generate-route-inventory.mjs",
+    "openapi:check": "node scripts/openapi/generate-route-inventory.mjs --check",
+    "openapi:validate": "node scripts/openapi/validate-built-contract.mjs",
+    "build": "node scripts/openapi/generate-route-inventory.mjs --check && node scripts/security/check-production-data-boundary.mjs && node scripts/build/clean-dist.js && tsc -p tsconfig.json && node scripts/openapi/validate-built-contract.mjs && node scripts/security/check-production-data-boundary.mjs --dist",
     "security:production-data": "node scripts/security/check-production-data-boundary.mjs",
     "contract:generate": "npm run build && node scripts/generate-commande-workflow-contract.mjs",
     "start": "node dist/index.js",
@@ -55,6 +58,7 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@apidevtools/swagger-parser": "12.1.0",
     "@types/bcrypt": "^6.0.0",
     "@types/bcryptjs": "^2.4.6",
     "@types/cors": "^2.8.17",
