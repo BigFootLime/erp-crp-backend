@@ -25,7 +25,14 @@ describe("SOL-28 migration safety contract", () => {
     expect(preflight).toContain("gen_random_uuid");
     expect(preflight).toContain("pg_database_size");
     expect(verify).toContain("immutable evidence triggers are incomplete");
-    expect(verify).toContain("has_table_privilege");
+    expect(verify).toContain(
+      "NOT has_table_privilege('cerp_app', 'public.api_webhook_audit_events', 'SELECT,INSERT')",
+    );
+    expect(verify).not.toContain(
+      "has_table_privilege('cerp_app', 'public.api_webhook_audit_events', 'UPDATE,DELETE')",
+    );
+    expect(verify).toContain("WHEN SQLSTATE '55000'");
+    expect(verify).toMatch(/BEGIN;[\s\S]*SOL28_VERIFY_PROBE[\s\S]*ROLLBACK;/);
     expect(rollback).toContain("rollback refused: webhook business or audit evidence exists");
     expect(rollback).toContain("verify_rollback");
   });

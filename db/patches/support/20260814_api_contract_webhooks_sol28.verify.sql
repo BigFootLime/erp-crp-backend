@@ -43,12 +43,53 @@ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'cerp_app') AND (
     NOT has_table_privilege('cerp_app', 'public.api_webhook_subscriptions', 'SELECT,INSERT,UPDATE')
     OR NOT has_table_privilege('cerp_app', 'public.api_webhook_deliveries', 'SELECT,INSERT,UPDATE')
-    OR has_table_privilege('cerp_app', 'public.api_webhook_audit_events', 'UPDATE,DELETE')
+    OR NOT has_table_privilege('cerp_app', 'public.api_webhook_audit_events', 'SELECT,INSERT')
   ) THEN
     RAISE EXCEPTION 'SOL-28 verify: cerp_app grants are invalid';
   END IF;
 END
 $verify$;
+
+-- The migration role may own these relations, so ownership legitimately implies
+-- UPDATE/DELETE privileges even when those privileges were not explicitly granted.
+-- Prove append-only enforcement through the trigger itself, inside a rolled-back
+-- transaction, instead of inferring it from has_table_privilege().
+BEGIN;
+DO $verify_immutable_runtime$
+DECLARE
+  probe_id bigint;
+  immutable_enforced boolean := false;
+BEGIN
+  INSERT INTO public.api_webhook_audit_events (
+    actor_id,
+    action,
+    entity_type,
+    entity_id,
+    details
+  ) VALUES (
+    NULL,
+    'SOL28_VERIFY_PROBE',
+    'api_webhook_audit_event',
+    'rolled-back-probe',
+    '{"probe": true}'::jsonb
+  )
+  RETURNING id INTO probe_id;
+
+  BEGIN
+    UPDATE public.api_webhook_audit_events
+    SET details = '{"probe": false}'::jsonb
+    WHERE id = probe_id;
+  EXCEPTION
+    WHEN SQLSTATE '55000' THEN
+      immutable_enforced := true;
+  END;
+
+  IF NOT immutable_enforced THEN
+    RAISE EXCEPTION 'SOL-28 verify: immutable audit trigger did not reject an update';
+  END IF;
+END
+$verify_immutable_runtime$;
+ROLLBACK;
 
 SELECT current_database() AS database_name,
        (SELECT count(*) FROM public.api_webhook_subscriptions) AS subscriptions,
