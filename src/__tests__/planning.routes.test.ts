@@ -169,6 +169,59 @@ describe("/api/v1/planning", () => {
     expect(String(calls[1]?.[0])).toContain("FROM public.postes");
   });
 
+  it("GET /api/v1/planning/execution-intelligence exposes a source-backed empty state", async () => {
+    for (let index = 0; index < 7; index += 1) {
+      mocks.poolQuery.mockResolvedValueOnce({ rows: [] });
+    }
+    const res = await request(app)
+      .get("/api/v1/planning/execution-intelligence")
+      .set("Authorization", "Bearer fake")
+      .query({
+        from: "2026-08-10T00:00:00.000Z",
+        to: "2026-08-17T00:00:00.000Z",
+        timezone: "Europe/Paris",
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.headers["cache-control"]).toBe("no-store");
+    expect(res.body).toMatchObject({
+      metadata: {
+        definition_version: "SOL-21.v1",
+        period: { timezone: "Europe/Paris" },
+      },
+      capabilities: {
+        read_capacity: true,
+        manage_schedule: true,
+      },
+      kpis: {
+        wip: { value: 0, reliability: "VERIFIED" },
+        actual_time: { value: null, reliability: "UNAVAILABLE" },
+      },
+      capacity: [],
+      conflicts: [],
+    });
+    expect(res.body.metadata.sources).toContain("public.production_pointages");
+    expect(mocks.poolQuery).toHaveBeenCalledTimes(7);
+  });
+
+  it("GET /api/v1/planning/preferences returns non-business defaults when no row exists", async () => {
+    mocks.poolQuery.mockResolvedValueOnce({ rows: [] });
+    const res = await request(app)
+      .get("/api/v1/planning/preferences")
+      .set("Authorization", "Bearer fake");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      timezone: "Europe/Paris",
+      horizon_weeks: 6,
+      view_mode: "WEEK",
+      show_weekends: false,
+      machine_ids: [],
+      status_colors: {},
+      client_color_overrides: {},
+      updated_at: null,
+    });
+  });
+
   it("GET /api/v1/planning/events returns {items,total}", async () => {
     mocks.poolQuery
       .mockResolvedValueOnce({ rows: [{ total: 1 }] })

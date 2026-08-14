@@ -22,6 +22,9 @@ deux événements adjacents sont autorisés, un chevauchement positif est un con
 | GET | `/governance` | Décision de retrait fail-closed, route canonique et politique de mesure |
 | POST | `/governance/usage` | Incrément journalier borné (`surface`, `event_type`, `browser_family`) si le flag est actif |
 | GET | `/governance/metrics` | Agrégats 28 jours par défaut, réservés au superadmin |
+| GET | `/execution-intelligence` | KPI qualifiés, capacité hebdomadaire, conflits et file d'actions |
+| GET | `/preferences` | Préférences planning autoritaires de l'utilisateur |
+| PUT | `/preferences` | Mise à jour validée, auditée et protégée contre la concurrence |
 | GET | `/resources` | Machines et postes planifiables |
 | GET | `/events` | Fenêtre bornée ; `limit` 2 000 par défaut, 5 000 maximum, `offset`; `total` reste exhaustif |
 | GET | `/events/:id` | Détail, commentaires et documents |
@@ -34,6 +37,20 @@ deux événements adjacents sont autorisés, un chevauchement positif est un con
 | GET | `/events/:id/documents/:docId/file` | Lecture authentifiée du contenu d'un document |
 | POST | `/autoplan` | Application séquentielle avec créations, éléments ignorés et résumé partiel explicite |
 | POST | `/validate-for-ar` | Fait progresser vers `AR_PRET`; n'envoie jamais l'AR |
+
+## Intelligence d'exécution SOL-21
+
+`GET /execution-intelligence` exige la capacité `read_capacity` et une période
+ISO-8601 bornée. La réponse versionnée `SOL-21.v1` expose définition, unité,
+numérateur, dénominateur, source, fraîcheur, fiabilité et manquants pour chaque
+KPI. Les cellules de capacité contiennent la charge prévue/réelle et le drill-down
+jusqu'aux événements et OF. Une absence ou ambiguïté de calendrier rend la
+capacité `null`; une unité de rebut absente ou hétérogène empêche le taux global.
+
+Les préférences sont propres à l'utilisateur authentifié. Les couleurs acceptent
+uniquement `#RRGGBB`, avec au plus 200 entrées et des clés bornées. Les machines
+référencées doivent exister. Une version `updated_at` périmée renvoie un conflit
+au lieu d'écraser le réglage d'une autre session.
 
 ## Convergence Premium / historique
 

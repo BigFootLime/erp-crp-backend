@@ -24,6 +24,7 @@ import {
   assessOperationReadiness,
   BADGE_LOCK_SECONDS,
   BADGE_MAX_FAILED_ATTEMPTS,
+  buildStationOperationScanIdentifier,
   compareWorklistEntries,
   evaluateMachineSelectability,
   listStationCapabilities,
@@ -606,7 +607,6 @@ export async function svcWorklist(params: {
   query: StationWorklistQueryDTO;
 }): Promise<Record<string, unknown>> {
   const rows = await repoWorklist({
-    userId: params.station.user.id,
     machineId: params.station.machine_id,
     workshopZone: params.station.device_zone,
     q: params.query.q ?? null,
@@ -664,6 +664,21 @@ export async function svcWorklist(params: {
         readiness_headline: readiness.headline,
         readiness_reasons: readiness.reasons,
         qty_pending_control: row.qty_pending_control,
+        work_state: row.active_by_user_id === params.station.user.id
+          ? "IN_PROGRESS"
+          : row.qty_pending_control > 0
+            ? "PENDING_ENTRY"
+            : readiness.level === "READY"
+              ? "NEXT_READY"
+              : "BLOCKED",
+        next_action: row.active_by_user_id === params.station.user.id
+          ? "Reprendre l'exécution en cours et terminer les saisies attendues."
+          : row.qty_pending_control > 0
+            ? "Faire statuer la Qualité sur les quantités en attente."
+            : readiness.level === "READY"
+              ? "Ouvrir le dossier puis démarrer avec une clé d'idempotence."
+              : readiness.headline,
+        scan_identifier: buildStationOperationScanIdentifier(row.of_numero, row.phase),
         hierarchy: {
           parent_of_id: row.parent_of_id,
           child_count: row.child_of_count,
@@ -683,12 +698,12 @@ export async function svcWorklist(params: {
 
   filtered.sort((a, b) =>
     compareWorklistEntries(
-      { readiness: a.readiness, due_date: a.of.date_fin_prevue, phase: a.phase },
-      { readiness: b.readiness, due_date: b.of.date_fin_prevue, phase: b.phase }
+      { readiness: a.readiness, due_date: a.of.date_fin_prevue, phase: a.phase, mine: a.mine, pending_entry: a.qty_pending_control > 0 },
+      { readiness: b.readiness, due_date: b.of.date_fin_prevue, phase: b.phase, mine: b.mine, pending_entry: b.qty_pending_control > 0 }
     )
   );
 
-  const recommended = filtered.find((item) => item.readiness === "READY") ?? filtered[0] ?? null;
+  const recommended = filtered.find((item) => item.mine) ?? filtered.find((item) => item.readiness === "READY") ?? filtered[0] ?? null;
 
   return {
     server_time: new Date().toISOString(),
@@ -697,6 +712,7 @@ export async function svcWorklist(params: {
     ordering_explanation: WORKLIST_ORDERING_EXPLANATION,
     recommended_operation_id: recommended?.operation_id ?? null,
     recommendation_reason: recommended?.readiness_headline ?? null,
+    pending_entry_count: filtered.filter((item) => item.qty_pending_control > 0).length,
     total: filtered.length,
     items: filtered,
   };

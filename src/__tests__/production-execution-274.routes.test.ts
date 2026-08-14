@@ -901,7 +901,7 @@ describe("#274 concurrence", () => {
       if (sql.includes("FROM public.ordres_fabrication") && sql.includes("FOR UPDATE")) {
         return { rows: [{ id: "10", statut: "EN_COURS" }] };
       }
-      if (sql.includes("FROM public.machines WHERE id")) return { rows: [{ statut: "DISPONIBLE" }] };
+      if (sql.includes("FROM public.machines WHERE id")) return { rows: [{ status: "ACTIVE" }] };
       if (sql.includes("production_activity_categories")) return { rows: [CATEGORY_ROW] };
       if (sql.includes("INSERT INTO public.production_pointages")) {
         const err = new Error("duplicate key") as Error & { code: string; constraint: string };
@@ -960,7 +960,7 @@ describe("#274 concurrence", () => {
       if (sql.includes("FROM public.ordres_fabrication") && sql.includes("FOR UPDATE")) {
         return { rows: [{ id: "10", statut: "EN_COURS" }] };
       }
-      if (sql.includes("FROM public.machines WHERE id")) return { rows: [{ statut: "MAINTENANCE" }] };
+      if (sql.includes("FROM public.machines WHERE id")) return { rows: [{ status: "IN_MAINTENANCE" }] };
       return { rows: [] };
     });
 

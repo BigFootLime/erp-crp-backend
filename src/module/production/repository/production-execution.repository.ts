@@ -974,21 +974,28 @@ function assertOperationExecutable(operation: { status: string } | null) {
 /** Une maintenance bloquante interdit le démarrage : elle n'est pas contournable. */
 async function assertMachineAvailable(tx: DbQueryer, machineId: string | null | undefined) {
   if (!machineId) return;
-  const res = await tx.query<{ statut: string | null }>(
-    `SELECT statut::text AS statut FROM public.machines WHERE id = $1::uuid`,
+  const res = await tx.query<{ status: string | null }>(
+    `SELECT status::text AS status FROM public.machines WHERE id = $1::uuid`,
     [machineId]
   );
   const row = res.rows[0];
   if (!row) {
     throw new HttpError(404, "MACHINE_NOT_FOUND", "Machine introuvable.", { machine_id: machineId });
   }
-  const blocking = ["HORS_SERVICE", "MAINTENANCE", "EN_MAINTENANCE", "INDISPONIBLE"];
-  if (row.statut && blocking.includes(row.statut)) {
+  const blocking = [
+    "HORS_SERVICE",
+    "OUT_OF_SERVICE",
+    "MAINTENANCE",
+    "EN_MAINTENANCE",
+    "IN_MAINTENANCE",
+    "INDISPONIBLE",
+  ];
+  if (row.status && blocking.includes(row.status)) {
     throw new HttpError(
       409,
       "PRODUCTION_EXECUTION_MACHINE_UNAVAILABLE",
-      `Cette machine est en statut ${row.statut} : le pointage est refusé.`,
-      { machine_id: machineId, statut: row.statut }
+      `Cette machine est en statut ${row.status} : le pointage est refusé.`,
+      { machine_id: machineId, statut: row.status }
     );
   }
 }
@@ -1798,7 +1805,10 @@ export async function repoFinishOperation(params: {
     }
 
     const delta = preview.declared;
-    assertFiniteQuantities(delta);
+    // Completing an operation after an offline quantity declaration is a real
+    // state transition even when this confirmation adds no further quantity.
+    // Standalone quantity declarations still reject an empty delta.
+    assertFiniteQuantities(delta, { allowEmpty: true });
 
     if (delta.qty_scrap > 0 && !params.body.scrap_reason_code) {
       throw new HttpError(

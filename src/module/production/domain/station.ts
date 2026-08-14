@@ -699,12 +699,13 @@ export function assessOperationReadiness(signals: WorklistSignals): ReadinessAss
 }
 
 /**
- * Ordre d'affichage de la file. Trois critères vérifiables, dans cet ordre :
- * préparation, date cible, phase. Aucun poids arbitraire, aucun apprentissage,
+ * Ordre d'affichage de la file. Critères vérifiables, dans cet ordre : travail
+ * en cours, prochaine opération prête, saisie en attente, date cible, phase.
+ * Aucun poids arbitraire, aucun apprentissage,
  * aucun « score de pertinence » que personne ne pourrait auditer.
  */
 export const WORKLIST_ORDERING_EXPLANATION =
-  "Trié par : opérations prêtes d'abord, puis date de fin prévue la plus proche, puis numéro de phase.";
+  "Trié par : travail en cours de l'opérateur, prochain ordre prêt, saisies en attente, puis blocages ; à égalité, date cible puis phase.";
 
 const READINESS_RANK: Record<ReadinessLevel, number> = {
   READY: 0,
@@ -714,9 +715,17 @@ const READINESS_RANK: Record<ReadinessLevel, number> = {
 };
 
 export function compareWorklistEntries(
-  a: { readiness: ReadinessLevel; due_date: string | null; phase: number },
-  b: { readiness: ReadinessLevel; due_date: string | null; phase: number }
+  a: { readiness: ReadinessLevel; due_date: string | null; phase: number; mine?: boolean; pending_entry?: boolean },
+  b: { readiness: ReadinessLevel; due_date: string | null; phase: number; mine?: boolean; pending_entry?: boolean }
 ): number {
+  const queueRank = (item: typeof a): number => {
+    if (item.mine) return 0;
+    if (item.readiness === "READY") return 1;
+    if (item.pending_entry) return 2;
+    return 3;
+  };
+  const byQueue = queueRank(a) - queueRank(b);
+  if (byQueue !== 0) return byQueue;
   const byReadiness = READINESS_RANK[a.readiness] - READINESS_RANK[b.readiness];
   if (byReadiness !== 0) return byReadiness;
 
@@ -727,6 +736,19 @@ export function compareWorklistEntries(
   if (aDue !== bDue) return aDue - bDue;
 
   return a.phase - b.phase;
+}
+
+/** Une seule valeur alimente le code-barres et le QR code. */
+export function buildStationOperationScanIdentifier(ofNumero: string, phase: number): {
+  value: string;
+  symbologies: ["CODE128", "QR"];
+  resolver: "/production/station/scan";
+} {
+  return {
+    value: `${ofNumero}/${phase}`,
+    symbologies: ["CODE128", "QR"],
+    resolver: "/production/station/scan",
+  };
 }
 
 /* -------------------------------------------------------------------------- */

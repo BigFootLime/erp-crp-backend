@@ -35,6 +35,7 @@ const USERS = [
   ["E2E_STANDARD", "Standard", "E2E", "standard.e2e@invalid.example", "Employee", false, "Employee"],
   ["E2E_SALES", "Commerce", "E2E", "sales.e2e@invalid.example", "Secretaire", false, "Commerce"],
   ["E2E_PLANNER", "Planning", "E2E", "planner.e2e@invalid.example", "Responsable Programmation", false, "Planification"],
+  ["E2E_OPERATOR", "Operateur", "E2E", "operator.e2e@invalid.example", "Employee", false, "Opérateur atelier"],
   ["E2E_QUALITY", "Qualite", "E2E", "quality.e2e@invalid.example", "Responsable Qualité", false, "Qualité"],
   ["E2E_PURCHASING", "Achats", "E2E", "purchasing.e2e@invalid.example", "Directeur", false, "Achats"],
   ["E2E_ACCOUNTANT", "Comptabilite", "E2E", "accounting.e2e@invalid.example", "Directeur", false, "RH-Financier"],
@@ -369,6 +370,19 @@ async function main() {
          plan_reference=EXCLUDED.plan_reference,statut='APPLICABLE',is_current=true,date_validation=EXCLUDED.date_validation,
          date_application=EXCLUDED.date_application`
     );
+    // This applicable routing is a baseline production prerequisite, not a
+    // SOL-20-only document fixture.  Keeping it outside the optional SOL-20
+    // block lets the migration rehearsal seed a realistic pre-SOL-06 copy.
+    await client.query(
+      `INSERT INTO public.gammes (
+         id,piece_technique_version_id,code,designation,statut,is_current,created_by,updated_by
+       ) VALUES (
+         '92000000-0000-4000-8000-000000000003','23000000-0000-4000-8000-000000000001',
+         'E2E-GAMME-SOL20','Gamme applicable preuve SOL-20','APPLICABLE',true,
+         (SELECT id FROM public.users WHERE username='KEENAN'),
+         (SELECT id FROM public.users WHERE username='KEENAN')
+       ) ON CONFLICT (id) DO NOTHING`
+    );
 
     const sol20Available = await client.query(
       `SELECT to_regclass('public.outillage_allocations') IS NOT NULL AS available`
@@ -438,16 +452,6 @@ async function main() {
            920001,1,'Indice obsolète de preuve',(SELECT id FROM public.users WHERE username='KEENAN'),
            (SELECT id FROM public.users WHERE username='KEENAN')
          ) ON CONFLICT (piece_technique_version_id,id_outil) DO NOTHING`
-      );
-      await client.query(
-        `INSERT INTO public.gammes (
-           id,piece_technique_version_id,code,designation,statut,is_current,created_by,updated_by
-         ) VALUES (
-           '92000000-0000-4000-8000-000000000003','23000000-0000-4000-8000-000000000001',
-           'E2E-GAMME-SOL20','Gamme applicable preuve SOL-20','APPLICABLE',true,
-           (SELECT id FROM public.users WHERE username='KEENAN'),
-           (SELECT id FROM public.users WHERE username='KEENAN')
-         ) ON CONFLICT (id) DO NOTHING`
       );
       await client.query(
         `INSERT INTO public.ordres_fabrication (
@@ -530,21 +534,39 @@ async function main() {
       );
     }
     await client.query(
-      `INSERT INTO public.postes (id,code,label,currency,is_active)
-       VALUES ('24000000-0000-4000-8000-000000000001','E2E-POSTE-001','Poste planning preuve SOL-05','EUR',true)
-       ON CONFLICT (id) DO UPDATE SET code=EXCLUDED.code,label=EXCLUDED.label,is_active=true,archived_at=NULL`
+      `INSERT INTO public.machines (
+         id,code,name,type,status,is_available,workshop_zone,created_by,updated_by
+       ) VALUES (
+         '27000000-0000-4000-8000-000000000001','E2E-MACH-001','Machine atelier preuve SOL-21',
+         'MILLING','ACTIVE',true,'USINAGE',
+         (SELECT id FROM public.users WHERE username='KEENAN'),
+         (SELECT id FROM public.users WHERE username='KEENAN')
+       ) ON CONFLICT (id) DO UPDATE SET
+         code=EXCLUDED.code,name=EXCLUDED.name,status='ACTIVE',is_available=true,
+         workshop_zone='USINAGE',archived_at=NULL,updated_by=EXCLUDED.updated_by`
+    );
+    await client.query(
+      `INSERT INTO public.postes (id,code,label,machine_id,currency,is_active)
+       VALUES (
+         '24000000-0000-4000-8000-000000000001','E2E-POSTE-001','Poste planning preuve SOL-05',
+         '27000000-0000-4000-8000-000000000001','EUR',true
+       )
+       ON CONFLICT (id) DO UPDATE SET
+         code=EXCLUDED.code,label=EXCLUDED.label,machine_id=EXCLUDED.machine_id,
+         is_active=true,archived_at=NULL`
     );
     await client.query(
       `INSERT INTO public.pieces_techniques_operations (
-         id,piece_technique_id,phase,ordre,designation,type_operation,poste_id,
+         id,piece_technique_id,gamme_id,phase,ordre,designation,type_operation,poste_id,machine_id,
          coef,tp,tf_unit,qte,taux_horaire,temps_fabrication,temps_total,cout_mo
        ) VALUES (
          '26000000-0000-4000-8000-000000000001','21000000-0000-4000-8000-000000000001',
-         10,10,'Usinage preuve SOL-05','FRAISAGE','24000000-0000-4000-8000-000000000001',
+         '92000000-0000-4000-8000-000000000003',10,10,'Usinage preuve SOL-05','FRAISAGE',
+         '24000000-0000-4000-8000-000000000001','27000000-0000-4000-8000-000000000001',
          1,0.1,0.25,1,50,0.25,0.35,17.5
        ) ON CONFLICT (id) DO UPDATE SET
-         piece_technique_id=EXCLUDED.piece_technique_id,phase=EXCLUDED.phase,
-         ordre=EXCLUDED.ordre,designation=EXCLUDED.designation,poste_id=EXCLUDED.poste_id,
+         piece_technique_id=EXCLUDED.piece_technique_id,gamme_id=EXCLUDED.gamme_id,phase=EXCLUDED.phase,
+         ordre=EXCLUDED.ordre,designation=EXCLUDED.designation,poste_id=EXCLUDED.poste_id,machine_id=EXCLUDED.machine_id,
          temps_fabrication=EXCLUDED.temps_fabrication,temps_total=EXCLUDED.temps_total,
          cout_mo=EXCLUDED.cout_mo`
     );

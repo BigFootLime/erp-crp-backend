@@ -391,7 +391,10 @@ export type QuantityDelta = {
   qty_pending_control: number;
 };
 
-export function assertFiniteQuantities(delta: QuantityDelta): void {
+export function assertFiniteQuantities(
+  delta: QuantityDelta,
+  options: { allowEmpty?: boolean } = {},
+): void {
   for (const [key, value] of Object.entries(delta)) {
     if (!Number.isFinite(value)) {
       throw new HttpError(422, "PRODUCTION_QUANTITY_NOT_FINITE", `Quantité invalide : ${key}.`);
@@ -405,7 +408,7 @@ export function assertFiniteQuantities(delta: QuantityDelta): void {
     }
   }
   const total = delta.qty_good + delta.qty_scrap + delta.qty_rework + delta.qty_pending_control;
-  if (total <= 0) {
+  if (total <= 0 && !options.allowEmpty) {
     throw new HttpError(
       422,
       "PRODUCTION_QUANTITY_EMPTY",
