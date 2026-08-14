@@ -105,8 +105,42 @@ aux échecs dans `test-results/sol-05/`.
 - le cash reste `PARTIAL` car une promesse est une déclaration, non un paiement ;
 - le connecteur de facturation électronique reste volontairement indisponible
   jusqu'au choix et à la qualification d'un fournisseur réel ;
-- les migrations réelles, promotions et déploiements sont consignés dans la
-  mise à jour finale de ce rapport après vérification des SHA distants.
+
+## Promotion, migrations réelles et déploiements
+
+- code SOL-23 : `7cbd3e463b81a594b6a8f7412480fe8038f7c6bc`, promu par
+  PR [#456](https://github.com/BigFootLime/erp-crp-backend/pull/456) vers `dev`
+  puis [#457](https://github.com/BigFootLime/erp-crp-backend/pull/457) vers `main` ;
+- correctif du registre immuable : `aeeb41b`, promu par PR
+  [#458](https://github.com/BigFootLime/erp-crp-backend/pull/458) puis
+  [#459](https://github.com/BigFootLime/erp-crp-backend/pull/459) ;
+- état distant fonctionnel vérifié avant le présent ajout documentaire :
+  `origin/dev = origin/main = 345e44c4c171319878ec320b5d3151120b56139f` ;
+- sauvegarde `cerp_test` :
+  `/var/backups/cerp/cerp_test_pre_sol23_20260814-070629.dump`, 74 993 432 octets,
+  SHA-256 `cca79e7c2eab401b60cff6ec583f1e36e4da6e122f86cde076af033054fdc273` ;
+- sauvegarde `cerp_prod` :
+  `/var/backups/cerp/cerp_prod_pre_sol23_20260814-070629.dump`, 51 471 382 octets,
+  SHA-256 `b6e25af0ca1f72e7590b1fbe56409b9baa1fb1b6801ca0d4dd7a0c080b19c48b` ;
+- les deux catalogues `pg_restore -l` sont lisibles ; le patch SOL-23 a été
+  appliqué séparément à `cerp_test`, puis à `cerp_prod`, exclusivement via
+  `db-patches.js --only` et son checksum immuable ;
+- post-vérification : six tables, triggers et index présents, 0 orphelin,
+  0 donnée ADV synthétique ; `cerp_test` = 134 appliqués / 20 historiques en
+  attente, `cerp_prod` = 129 appliqués / 25 historiques en attente, 0 checksum
+  divergent sur les deux bases ;
+- HYPERBOX2 : release `/srv/cerp/releases/20260814-345e44c4`, services
+  `cerp-api` et `cerp-api-test` actifs, readiness 200 et version exacte
+  `345e44c4c171319878ec320b5d3151120b56139f` ;
+- Coolify/VPS : déploiement `345e44c` réussi le 14/08/2026 de 05:09:30 à
+  05:13:34 UTC ; `/health/live` et `/health/ready` retournent 200 avec DB, GED,
+  antivirus et temps réel `up`, et l'API ADV anonyme retourne 401 ;
+- le preflight CORS public depuis `https://cerp.croix-rousse-precision.fr`
+  retourne 204 avec l'origine exacte autorisée.
+
+Le commit qui ajoute ces preuves ne modifie que la documentation. Son SHA final
+et la redéploiement automatique correspondant sont vérifiés dans le handoff ;
+les résultats fonctionnels ci-dessus restent rattachés au code `345e44c4`.
 
 ## Traçabilité de pilotage
 
