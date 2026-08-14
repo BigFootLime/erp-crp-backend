@@ -22,6 +22,7 @@
     "db:migrations:rehearse": "node scripts/migrations/release-gate.js rehearse",
     "e2e:migrate:isolated": "node scripts/e2e/migrate-isolated.js",
     "e2e:seed:isolated": "node scripts/e2e/seed-isolated.js",
+    "e2e:accounting-export:isolated": "node scripts/e2e/accounting-export-sol27-run.js",
     "maintenance:dashboard-usage": "node scripts/prune-dashboard-usage.js",
     "maintenance:planning-usage": "node scripts/prune-planning-usage.js",
     "test": "vitest --config vitest.config.ts",
