@@ -94,7 +94,12 @@ const corsOptionsDelegate: cors.CorsOptionsDelegate = (req, cb) => {
       "X-Session-Id",
       "Idempotency-Key",
     ],
-    exposedHeaders: ["X-Request-Id", "X-Correlation-Id"],
+    exposedHeaders: [
+      "X-Request-Id",
+      "X-Correlation-Id",
+      "Content-Disposition",
+      "X-CERP-Document-SHA256",
+    ],
     optionsSuccessStatus: 204,
   });
 };

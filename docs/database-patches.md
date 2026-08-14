@@ -697,3 +697,7 @@ after a verified encrypted backup, apply only the immutable registered patch,
 then run the verify script and an idempotent replay. Rollback is allowed only
 before any subscription, delivery, command receipt or audit evidence exists;
 after use, disable the worker and preserve evidence.
+
+# 2026-08-14 — Portail client isolé (SOL-29)
+
+`20260814_client_portal_sol29.sql` ajoute les identités portail séparées des utilisateurs ERP, les jetons à usage unique, reçus idempotents, publications GED explicites, accusés et audits append-only, limites d’authentification persistées et trois projections commerciales en liste blanche. Le trigger `trg_client_portal_ack_tenant_guard_sol29` refuse aussi un accusé entre deux clients différents. Exécuter le preflight après une sauvegarde vérifiée, appliquer seulement le patch immuable, lancer le verify puis un replay. Le rollback est autorisé uniquement avant toute preuve portail ; après usage, désactiver les routes et conserver les données d’audit.
