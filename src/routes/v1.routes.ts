@@ -46,6 +46,7 @@ import chatRoutes from "../module/chat/routes/chat.routes";
 import usersRoutes from "../module/users/routes/users.routes";
 import marginEngineRoutes from "../module/margin-engine/routes/margin-engine.routes";
 import electronicInvoiceWebhookRoutes from "../module/facturation/electronic-invoicing/electronic-invoice-webhook.routes";
+import accountingExportRoutes from "../module/accounting-export/accounting-export.routes";
 
 import traceabilityRoutes from "../module/traceability/routes/traceability.routes"
 import traceability360Routes from "../module/traceability/routes/traceability-360.routes"
@@ -120,6 +121,7 @@ router.use("/tarification", tarificationRoutes);
 router.use("/reporting", reportingRoutes);
 router.use("/adv-reminders", reminderRoutes);
 router.use("/margins", marginEngineRoutes);
+router.use("/accounting-exports", accountingExportRoutes);
 // Suivi et pointage de production 360 (#274) monté AVANT le routeur historique :
 // ses routes déclarent des capacités fines (refus par défaut) et exigent une
 // clé d'idempotence. Le routeur hérité reste inchangé pour les écrans existants.
