@@ -5,6 +5,8 @@ export type AccountModuleAccessContext = {
   userId: number | null;
   moduleKey: string | null;
   granted: boolean;
+  /** Explicit override/superadmin/kill-switch, as opposed to ordinary default access. */
+  elevated: boolean;
 };
 
 const accountModuleAccessStorage = new AsyncLocalStorage<AccountModuleAccessContext>();
@@ -24,7 +26,7 @@ declare global {
  */
 export function runWithAccountModuleAccessScope(callback: () => void): void {
   accountModuleAccessStorage.run(
-    { userId: null, moduleKey: null, granted: false },
+    { userId: null, moduleKey: null, granted: false, elevated: false },
     callback
   );
 }
@@ -38,31 +40,39 @@ export function runWithAccountModuleAccessScope(callback: () => void): void {
  * without mutating the authenticated identity or weakening the superadmin guard.
  */
 export function runWithAccountModuleAccess(
-  context: Pick<AccountModuleAccessContext, "userId" | "moduleKey">,
+  context: Pick<AccountModuleAccessContext, "userId" | "moduleKey"> &
+    Partial<Pick<AccountModuleAccessContext, "elevated">>,
   callback: () => void
 ): void {
+  const elevated = context.elevated ?? true;
   const existing = accountModuleAccessStorage.getStore();
   if (existing) {
     existing.userId = context.userId;
     existing.moduleKey = context.moduleKey;
     existing.granted = true;
+    existing.elevated = elevated;
     callback();
     return;
   }
-  accountModuleAccessStorage.run({ ...context, granted: true }, callback);
+  accountModuleAccessStorage.run({ ...context, granted: true, elevated }, callback);
 }
 
 export function grantAccountModuleAccessToRequest(
   req: Request,
-  context: Pick<AccountModuleAccessContext, "userId" | "moduleKey">,
+  context: Pick<AccountModuleAccessContext, "userId" | "moduleKey"> &
+    Partial<Pick<AccountModuleAccessContext, "elevated">>,
   callback: () => void
 ): void {
-  req.accountModuleAccess = { ...context, granted: true };
+  req.accountModuleAccess = { ...context, granted: true, elevated: context.elevated ?? true };
   runWithAccountModuleAccess(context, callback);
 }
 
 export function requestHasGrantedAccountModuleAccess(req: Request): boolean {
   return req.accountModuleAccess?.granted === true;
+}
+
+export function requestHasElevatedAccountModuleAccess(req: Request): boolean {
+  return req.accountModuleAccess?.granted === true && req.accountModuleAccess.elevated === true;
 }
 
 export function hasGrantedAccountModuleAccess(): boolean {

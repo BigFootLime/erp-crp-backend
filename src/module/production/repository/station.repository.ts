@@ -1059,7 +1059,6 @@ export type WorklistRow = {
  * complète qu'il devrait filtrer lui-même.
  */
 export async function repoWorklist(params: {
-  userId: number;
   machineId: string | null;
   workshopZone: string | null;
   q: string | null;
@@ -1081,15 +1080,15 @@ export async function repoWorklist(params: {
         JOIN public.ordres_fabrication o ON o.id = op.of_id
        WHERE o.statut::text NOT IN ('BROUILLON', 'ANNULE', 'TERMINE')
          AND op.status::text NOT IN ('DONE', 'CANCELLED')
-         AND ($2::uuid IS NULL OR NOT $5::boolean OR op.machine_id = $2 OR op.machine_id IS NULL)
+         AND ($1::uuid IS NULL OR NOT $4::boolean OR op.machine_id = $1 OR op.machine_id IS NULL)
          AND (
-           $3::text IS NULL
-           OR o.numero ILIKE '%' || $3 || '%'
-           OR op.designation ILIKE '%' || $3 || '%'
+           $2::text IS NULL
+           OR o.numero ILIKE '%' || $2 || '%'
+           OR op.designation ILIKE '%' || $2 || '%'
            OR EXISTS (
              SELECT 1 FROM public.pieces_techniques pt
               WHERE pt.id = o.piece_technique_id
-                AND (pt.code_piece ILIKE '%' || $3 || '%' OR pt.designation ILIKE '%' || $3 || '%')
+                AND (pt.code_piece ILIKE '%' || $2 || '%' OR pt.designation ILIKE '%' || $2 || '%')
            )
          )
        LIMIT 500
@@ -1155,12 +1154,11 @@ export async function repoWorklist(params: {
           FROM public.production_quantity_declarations d
          WHERE d.operation_id = c.operation_id
       ) qc ON true
-     WHERE ($4::text IS NULL OR m.workshop_zone IS NULL OR m.workshop_zone = $4)
+     WHERE ($3::text IS NULL OR m.workshop_zone IS NULL OR m.workshop_zone = $3)
      ORDER BY c.date_fin_prevue NULLS LAST, c.phase
-     LIMIT $6
+     LIMIT $5
     `,
     [
-      params.userId,
       params.machineId,
       params.q,
       params.workshopZone,
