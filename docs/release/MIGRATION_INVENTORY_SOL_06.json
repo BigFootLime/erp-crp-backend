@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-08-14T11:07:49.191Z",
+  "generated_at": "2026-08-14T14:13:24.602Z",
   "source": "filesystem scan of db/patches and db/patches/support",
-  "patch_count": 156,
-  "support_file_count": 260,
-  "recent_patch_count": 98,
+  "patch_count": 157,
+  "support_file_count": 263,
+  "recent_patch_count": 99,
   "recent_support_gaps": [
     {
       "filename": "20260706_affaire_allow_projet.sql",
@@ -209,9 +209,9 @@
   "risk_totals": {
     "destructive_ddl": 2,
     "destructive_dml": 8,
-    "data_rewrite": 92,
+    "data_rewrite": 93,
     "table_lock": 126,
-    "blocking_index": 117,
+    "blocking_index": 118,
     "enum_change": 1
   },
   "patches": [
@@ -2848,6 +2848,23 @@
     },
     {
       "order": 154,
+      "filename": "20260814_electronic_invoicing_sol26.sql",
+      "sha256": "03da2f92e7c99e1ffe437fb5443517585a9c20765322d85ab0cb83e378f7968e",
+      "bytes": 9660,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 155,
       "filename": "20260814_planning_execution_intelligence_0021.sql",
       "sha256": "ca667814cae65e695ec45dccf407752432aa9e6f7e61b4d9a38ae6fcfd339107",
       "bytes": 5133,
@@ -2864,7 +2881,7 @@
       ]
     },
     {
-      "order": 155,
+      "order": 156,
       "filename": "20260814_project_operations_sol24.sql",
       "sha256": "e978abeb2b6758744d3824540b2552ef6b6ca90f0c634bc49dd7af403d4e8cd9",
       "bytes": 7897,
@@ -2881,7 +2898,7 @@
       ]
     },
     {
-      "order": 156,
+      "order": 157,
       "filename": "20260814_sol22_quality_intelligence.sql",
       "sha256": "adf2b97867ef23f9c40ecd5df7c271cd40cc4d4d67c04cc60e7444f2cf367264",
       "bytes": 10194,

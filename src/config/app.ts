@@ -111,7 +111,15 @@ app.use(requestLogger);
 /* --------- 2) Parsers: JSON + urlencoded (sans casser multipart) --------- */
 
 // 👇 Parser JSON UNIQUEMENT si Content-Type = application/json
-const jsonParser = express.json({ limit: "10mb" });
+const jsonParser = express.json({
+  limit: "10mb",
+  verify: (req, _res, buffer) => {
+    const expressRequest = req as express.Request;
+    if (expressRequest.originalUrl.startsWith("/api/v1/electronic-invoicing/webhooks/")) {
+      expressRequest.rawBody = Buffer.from(buffer);
+    }
+  },
+});
 
 app.use((req, res, next) => {
   if (req.is("application/json")) {

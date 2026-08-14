@@ -82,6 +82,8 @@ function subjectsFor(endpoint: AuthRateLimitEndpoint, req: Request): AuthRateLim
         { dimension: "token", value: token === null ? null : preserveOpaqueAuthToken(token) },
       ];
     }
+    case "einvoiceWebhook":
+      return [ip];
   }
 }
 
@@ -148,3 +150,4 @@ export const registerRateLimit = createAuthRateLimitMiddleware("register");
 export const loginRateLimit = createAuthRateLimitMiddleware("login");
 export const forgotPasswordRateLimit = createAuthRateLimitMiddleware("forgotPassword");
 export const resetPasswordRateLimit = createAuthRateLimitMiddleware("resetPassword");
+export const electronicInvoiceWebhookRateLimit = createAuthRateLimitMiddleware("einvoiceWebhook");

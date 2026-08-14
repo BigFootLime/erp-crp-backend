@@ -14,6 +14,7 @@ declare global {
     interface Request {
       requestId?: string;
       correlationId?: string;
+      rawBody?: Buffer;
     }
   }
 }

@@ -115,6 +115,10 @@ export type FinanceCapability =
   | "reminder_retry"
   | "reminder_job_run"
   | "reminder_opt_out_manage"
+  | "einvoice_read"
+  | "einvoice_submit"
+  | "einvoice_reconcile"
+  | "einvoice_admin"
   | "settings_manage";
 
 const ROLES = {
@@ -153,6 +157,10 @@ const CAPABILITY_ROLES: Record<FinanceCapability, ReadonlySet<string>> = {
   reminder_retry: new Set([ROLES.accounting, ROLES.accountant, ROLES.director]),
   reminder_job_run: new Set([ROLES.director, ROLES.administrator]),
   reminder_opt_out_manage: new Set([ROLES.secretary, ROLES.accounting, ROLES.accountant, ROLES.director]),
+  einvoice_read: new Set([ROLES.accounting, ROLES.accountant, ROLES.director, ROLES.administrator]),
+  einvoice_submit: new Set([ROLES.accounting, ROLES.accountant, ROLES.director]),
+  einvoice_reconcile: new Set([ROLES.accounting, ROLES.accountant, ROLES.director]),
+  einvoice_admin: new Set([ROLES.director, ROLES.administrator]),
   settings_manage: new Set([ROLES.director, ROLES.administrator]),
 };
 
@@ -166,7 +174,8 @@ export function roleHasFinanceCapability(
   // from the business decision to approve/send a customer communication.
   if (
     effectiveRoleHasAny(role, [ROLES.administrator]) &&
-    !capability.startsWith("reminder_")
+    !capability.startsWith("reminder_") &&
+    !capability.startsWith("einvoice_")
   ) return true;
   return effectiveRoleHasAny(role, [...CAPABILITY_ROLES[capability]]);
 }

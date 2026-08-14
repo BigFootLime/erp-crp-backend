@@ -30,6 +30,22 @@ function appWithDecision(endpoint: Parameters<typeof createAuthRateLimitMiddlewa
 afterEach(() => vi.restoreAllMocks());
 
 describe("auth rate limit middleware", () => {
+  it("limits electronic-invoice webhooks by client address without reading signed payload fields", async () => {
+    const { app, checkedSubjects } = appWithDecision("einvoiceWebhook", {
+      status: "allowed",
+      endpoint: "einvoiceWebhook",
+      disabled: false,
+    });
+
+    const response = await request(app)
+      .post("/auth")
+      .set("X-Forwarded-For", "198.51.100.26")
+      .send({ invoice: "must-not-become-a-rate-limit-subject" });
+
+    expect(response.status).toBe(200);
+    expect(checkedSubjects).toEqual([[{ dimension: "ip", value: "ipv4:198.51.100.26" }]]);
+  });
+
   it("returns a generic 429 with Retry-After for an explicit login block", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const { app } = appWithDecision("login", {

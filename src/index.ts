@@ -7,6 +7,7 @@ import { assertE2EIsolation } from "./config/e2e-isolation";
 import { startAuthRateLimitMaintenance } from "./module/auth/services/auth-rate-limit.service";
 import { startExpiredLockMaintenance } from "./module/locks/services/locks.service";
 import { startReminderMaintenance } from "./module/facturation/services/reminder-job.service";
+import { startElectronicInvoiceMaintenance } from "./module/facturation/electronic-invoicing/electronic-invoice.service";
 import { createApplicationShutdown } from "./shared/runtime/application-shutdown";
 import { preflightSecureUploadStorageRoots } from "./shared/uploads/secure-upload";
 import { getUploadScannerStartupConfiguration } from "./shared/uploads/upload-scanner";
@@ -42,6 +43,7 @@ async function start(): Promise<void> {
   const httpServer = createServer(app);
   const stopAuthRateLimitMaintenance = startAuthRateLimitMaintenance();
   const stopReminderMaintenance = startReminderMaintenance();
+  const stopElectronicInvoiceMaintenance = startElectronicInvoiceMaintenance();
 
   initSocketServer(httpServer);
   const stopExpiredLockMaintenance = startExpiredLockMaintenance();
@@ -63,7 +65,12 @@ async function start(): Promise<void> {
   const shutdown = createApplicationShutdown({
     httpServer,
     stopRealtime: shutdownRealtimeSocketServer,
-    stopMaintenance: [stopAuthRateLimitMaintenance, stopExpiredLockMaintenance, stopReminderMaintenance],
+    stopMaintenance: [
+      stopAuthRateLimitMaintenance,
+      stopExpiredLockMaintenance,
+      stopReminderMaintenance,
+      stopElectronicInvoiceMaintenance,
+    ],
     closeDatabase: () => pool.end(),
     log: (type, fields) => logger.error(type, fields),
   }, shutdownTimeoutMs);
