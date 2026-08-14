@@ -666,6 +666,126 @@ async function main() {
         [documentType, FINANCE_ISSUER_ID, String(FINANCE_YEAR), prefix]
       );
     }
+
+    // SOL-24 — preuves Project Office et temps/déplacements. Ces valeurs sont
+    // exclusivement injectées dans la base jetable cerp_test protégée par assertIsolated().
+    const sol24Tables = await client.query(
+      `SELECT to_regclass('public.project_budget_versions') IS NOT NULL
+          AND to_regclass('public.hr_kilometer_rate_versions') IS NOT NULL AS available`
+    );
+    if (sol24Tables.rows[0]?.available) {
+    await client.query(
+      `INSERT INTO public.project_projects (
+         id,code,name,description,owner_id,visibility,status,start_date,target_date
+       ) VALUES (
+         '41000000-0000-4000-8000-000000000024','SOL24-E2E','Projet opérations SOL-24',
+         'Fixture déterministe isolée — jamais une donnée de production',
+         (SELECT id FROM public.users WHERE username='KEENAN'),'PRIVATE','ACTIVE',$1::date,$2::date
+       ) ON CONFLICT (id) DO UPDATE SET
+         name=EXCLUDED.name,description=EXCLUDED.description,owner_id=EXCLUDED.owner_id,
+         visibility=EXCLUDED.visibility,status=EXCLUDED.status,start_date=EXCLUDED.start_date,
+         target_date=EXCLUDED.target_date,updated_at=now()`,
+      [`${FINANCE_YEAR}-01-01`, `${FINANCE_YEAR}-12-31`]
+    );
+    await client.query(
+      `INSERT INTO public.project_members (id,project_id,user_id,role)
+       VALUES (
+         '41000000-0000-4000-8000-000000000025','41000000-0000-4000-8000-000000000024',
+         (SELECT id FROM public.users WHERE username='KEENAN'),'OWNER'
+       ) ON CONFLICT (project_id,user_id) DO UPDATE SET role='OWNER'`
+    );
+    await client.query(
+      `INSERT INTO public.project_work_packages (
+         id,project_id,code,title,type,status,priority,assignee_id,reporter_id,
+         start_date,due_date,progress_percent,estimated_hours,spent_hours
+       ) VALUES
+       ('41000000-0000-4000-8000-000000000026','41000000-0000-4000-8000-000000000024',
+        'SOL24-READY','Préparer la recette','TASK','DONE','NORMAL',
+        (SELECT id FROM public.users WHERE username='KEENAN'),(SELECT id FROM public.users WHERE username='KEENAN'),
+        CURRENT_DATE-14,CURRENT_DATE-7,100,8,8),
+       ('41000000-0000-4000-8000-000000000027','41000000-0000-4000-8000-000000000024',
+        'SOL24-BLOCKED','Traiter la dépendance','TASK','BLOCKED','HIGH',
+        (SELECT id FROM public.users WHERE username='KEENAN'),(SELECT id FROM public.users WHERE username='KEENAN'),
+        CURRENT_DATE-7,CURRENT_DATE+7,30,12,4)
+       ON CONFLICT (id) DO UPDATE SET
+         title=EXCLUDED.title,status=EXCLUDED.status,priority=EXCLUDED.priority,
+         due_date=EXCLUDED.due_date,progress_percent=EXCLUDED.progress_percent,
+         estimated_hours=EXCLUDED.estimated_hours,spent_hours=EXCLUDED.spent_hours,updated_at=now()`
+    );
+    await client.query(
+      `INSERT INTO public.project_dependencies (id,source_work_package_id,target_work_package_id,dependency_type)
+       VALUES ('41000000-0000-4000-8000-000000000028',
+         '41000000-0000-4000-8000-000000000027','41000000-0000-4000-8000-000000000026','BLOCKS')
+       ON CONFLICT (source_work_package_id,target_work_package_id,dependency_type) DO NOTHING`
+    );
+    await client.query(
+      `INSERT INTO public.project_milestones (id,project_id,name,due_date,status)
+       VALUES ('41000000-0000-4000-8000-000000000029','41000000-0000-4000-8000-000000000024',
+         'Jalon de preuve en retard',CURRENT_DATE-3,'PLANNED')
+       ON CONFLICT (id) DO UPDATE SET due_date=EXCLUDED.due_date,status='PLANNED',updated_at=now()`
+    );
+    await client.query(
+      `INSERT INTO public.project_risks (id,project_id,title,description,probability,impact,mitigation,owner_id,status)
+       VALUES ('41000000-0000-4000-8000-000000000030','41000000-0000-4000-8000-000000000024',
+         'Dépendance externe de preuve','Risque isolé SOL-24',3,4,'Action E2E documentée',
+         (SELECT id FROM public.users WHERE username='KEENAN'),'OPEN')
+       ON CONFLICT (id) DO UPDATE SET probability=3,impact=4,status='OPEN',updated_at=now()`
+    );
+    await client.query(
+      `INSERT INTO public.project_budget_versions (
+         id,project_id,amount,currency,effective_from,definition,source_type,source_ref,
+         observed_at,reliability,created_by
+       ) SELECT
+         '41000000-0000-4000-8000-000000000031','41000000-0000-4000-8000-000000000024',
+         25000,'EUR',$1::date,'Budget de preuve exclusivement isolé','DECLARATION','SOL24-E2E-SEED',
+         $1::date,'DECLARED',(SELECT id FROM public.users WHERE username='KEENAN')
+       WHERE NOT EXISTS (
+         SELECT 1 FROM public.project_budget_versions
+         WHERE project_id='41000000-0000-4000-8000-000000000024' AND effective_to IS NULL
+       )`,
+      [REFERENCE_PERIOD_START]
+    );
+
+    await client.query(
+      `INSERT INTO public.hr_employees (id,user_id,matricule,service,manager_user_id,status)
+       VALUES
+       ('42000000-0000-4000-8000-000000000024',(SELECT id FROM public.users WHERE username='KEENAN'),
+        'E2E-ADMIN','Direction',NULL,'ACTIVE'),
+       ('42000000-0000-4000-8000-000000000025',(SELECT id FROM public.users WHERE username='E2E_STANDARD'),
+        'E2E-EMPLOYEE','Atelier',(SELECT id FROM public.users WHERE username='KEENAN'),'ACTIVE')
+       ON CONFLICT (id) DO UPDATE SET
+         user_id=EXCLUDED.user_id,matricule=EXCLUDED.matricule,service=EXCLUDED.service,
+         manager_user_id=EXCLUDED.manager_user_id,status='ACTIVE',updated_at=now()`
+    );
+    await client.query(
+      `INSERT INTO public.hr_employment_contracts (
+         id,employee_id,contract_type,weekly_hours_target,daily_hours_target,start_date,active
+       ) VALUES (
+         '42000000-0000-4000-8000-000000000026','42000000-0000-4000-8000-000000000024',
+         'H35',35,7,$1::date,true
+       ) ON CONFLICT (id) DO UPDATE SET
+         weekly_hours_target=35,daily_hours_target=7,start_date=EXCLUDED.start_date,end_date=NULL,active=true`,
+      [REFERENCE_PERIOD_START]
+    );
+    await client.query(
+      `INSERT INTO public.hr_vehicles (id,label,plate,owner_type,active)
+       VALUES ('42000000-0000-4000-8000-000000000027','Véhicule société SOL-24','E2E-024','COMPANY',true)
+       ON CONFLICT (id) DO UPDATE SET label=EXCLUDED.label,plate=EXCLUDED.plate,owner_type='COMPANY',active=true`
+    );
+    await client.query(
+      `INSERT INTO public.hr_kilometer_rate_versions (
+         id,owner_type,rate_per_km,currency,effective_from,definition,source_type,source_ref,
+         observed_at,reliability,created_by
+       ) SELECT
+         '42000000-0000-4000-8000-000000000028','COMPANY',0.650000,'EUR',$1::date,
+         'Taux de preuve exclusivement isolé','DECLARATION','SOL24-E2E-SEED',$1::date,'DECLARED',
+         (SELECT id FROM public.users WHERE username='KEENAN')
+       WHERE NOT EXISTS (
+         SELECT 1 FROM public.hr_kilometer_rate_versions WHERE owner_type='COMPANY' AND effective_to IS NULL
+       )`,
+      [REFERENCE_PERIOD_START]
+    );
+    }
     await client.query("COMMIT");
     process.stdout.write(`SOL-05 deterministic seed ready: users=${USERS.length}, client=901, supplier=E2E-FOURN-001, finance_year=${FINANCE_YEAR}\n`);
   } catch (error) {

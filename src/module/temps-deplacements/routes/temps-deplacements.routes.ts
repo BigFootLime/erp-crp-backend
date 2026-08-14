@@ -5,6 +5,7 @@ import * as dev from "../controllers/temps-deplacements-devices.controller";
 import * as exp from "../controllers/temps-deplacements-exports.controller";
 import * as km from "../controllers/temps-deplacements-km.controller";
 import * as c from "../controllers/temps-deplacements.controller";
+import * as ops from "../controllers/temps-deplacements-operations.controller";
 
 // Monté après le socle authenticateToken (v1.routes.ts) → JWT requis d'office.
 // Anti-IDOR : les routes salarié dérivent l'employé de req.user ; /employees/:id/* est gardé
@@ -36,6 +37,14 @@ router.get("/team/anomalies", cor.getTeamAnomalies); // anomalies équipe du jou
 router.patch("/days/:id/validate", cor.validateDay); // valide une journée
 router.patch("/weeks/:id/validate", cor.validateWeek); // valide une semaine
 
+// SOL-24 — absences explicites et file d'actions responsable.
+router.post("/absences", ops.postAbsence);
+router.get("/absences/me", ops.getMyAbsences);
+router.get("/team/absences", ops.getTeamAbsences);
+router.patch("/absences/:id/approve", ops.approveAbsence);
+router.patch("/absences/:id/reject", ops.rejectAbsence);
+router.get("/team/operations-queue", ops.getOperationsQueue);
+
 // T5 — administration RH (règles / contrats / horaires). Réservé aux rôles privilégiés (service).
 router.get("/admin/employees", adm.getEmployees);
 router.get("/admin/rule-sets", adm.getRuleSets);
@@ -65,6 +74,11 @@ router.get("/kilometers/team", km.getTeamKm);
 router.patch("/kilometers/:id/validate", km.validateKm);
 router.patch("/kilometers/:id/reject", km.rejectKm);
 router.post("/admin/vehicles", km.postVehicle);
+router.get("/admin/period-closures", ops.getClosures);
+router.post("/admin/period-closures", ops.postClosure);
+router.patch("/admin/period-closures/:id/reopen", ops.reopenClosure);
+router.get("/admin/kilometer-rates", ops.getKilometerRates);
+router.post("/admin/kilometer-rates", ops.postKilometerRate);
 
 // T8 — bornes & badges (provisioning). Réservé aux rôles privilégiés (service). Token borne renvoyé 1× à la création.
 router.get("/admin/devices", dev.getDevices);

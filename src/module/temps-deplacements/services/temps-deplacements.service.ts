@@ -4,6 +4,8 @@ import * as repo from "../repository/temps-deplacements.repository";
 import type { AuditContext } from "../repository/temps-deplacements.repository";
 import { repoGetEffectiveRuleSet, repoUpsertTimesheetWeek } from "../repository/temps-deplacements-rules.repository";
 import { effectiveDailyWorked, weeklyAggregate } from "./temps-deplacements-rules";
+import { assertPeriodOpen } from "../domain/temps-deplacements-policy";
+import { repoSumApprovedAbsenceMinutes } from "../repository/temps-deplacements-operations.repository";
 import type {
   CreateTimeEventInput,
   CreateTimeEventResult,
@@ -59,6 +61,8 @@ export async function resolveEmployeeFromBadge(badgeUid: string): Promise<HrEmpl
 
 // -------------------------------------------------------------- Création d'événement (append-only)
 export async function createTimeEvent(input: CreateTimeEventInput, audit: AuditContext): Promise<CreateTimeEventResult> {
+  const eventDate = parisDay(input.event_time ?? Date.now());
+  await assertPeriodOpen(input.employee_id, eventDate);
   const result = await repo.withTransaction(async (client) => {
     const evtTimeMs = input.event_time ? new Date(input.event_time).getTime() : Date.now();
 
@@ -100,8 +104,14 @@ export async function createTimeEvent(input: CreateTimeEventInput, audit: AuditC
   // Recalcul du jour (best-effort ; ne doit jamais faire échouer l'enregistrement de l'événement).
   try {
     await computeDailyTimesheet(input.employee_id, parisDay(result.event.event_time));
-  } catch {
-    /* noop */
+  } catch (error) {
+    console.error(JSON.stringify({
+      type: "hr_timesheet_recompute_failed",
+      employeeId: input.employee_id,
+      date: parisDay(result.event.event_time),
+      eventId: result.event.id,
+      error: error instanceof Error ? error.message : String(error),
+    }));
   }
   return result;
 }
@@ -178,7 +188,9 @@ export async function computeDailyTimesheet(employeeId: string, date: string): P
   // Pause minimale imposée + arrondi selon la règle (sinon temps brut).
   const workedMinutes = ruleSet ? effectiveDailyWorked(workedRaw, totalBreak, ruleSet) : workedRaw;
   const overtime = expected > 0 ? Math.max(0, workedMinutes - expected) : 0;
-  const missing = expected > 0 ? Math.max(0, expected - workedMinutes) : 0;
+  const approvedAbsence = await repoSumApprovedAbsenceMinutes(employeeId, date, date);
+  const absenceMinutes = Math.min(expected, approvedAbsence);
+  const missing = expected > 0 ? Math.max(0, expected - workedMinutes - absenceMinutes) : 0;
   const isPastDay = date < todayParis();
 
   const descriptors = detectTimeAnomalies(events, { openBreak, workedMinutes, totalBreak, isPastDay });
@@ -207,6 +219,7 @@ export async function computeDailyTimesheet(employeeId: string, date: string): P
     worked_minutes: workedMinutes,
     expected_minutes: expected,
     overtime_minutes: overtime,
+    absence_minutes: absenceMinutes,
     missing_minutes: missing,
     status,
     anomalies,
@@ -225,6 +238,8 @@ export async function computeWeeklyTimesheet(employeeId: string, weekStart: stri
   // Règles effectives de la semaine (contrat au lundi) → cible hebdo + découpe HS 25/50 configurable.
   const ruleSet = await repoGetEffectiveRuleSet(employeeId, weekStart);
   const agg = weeklyAggregate(worked, ruleSet);
+  const absenceMinutes = days.reduce((sum, day) => sum + day.absence_minutes, 0);
+  const unclassifiedMissingMinutes = days.reduce((sum, day) => sum + day.missing_minutes, 0);
 
   // Persistance de l'agrégat hebdo (nécessaire à la validation T4 ; DRAFT uniquement).
   try {
@@ -237,10 +252,16 @@ export async function computeWeeklyTimesheet(employeeId: string, weekStart: stri
         worked_minutes: worked,
         overtime_25_minutes: agg.overtime_25_minutes,
         overtime_50_minutes: agg.overtime_50_minutes,
-        absence_minutes: agg.absence_minutes,
+        absence_minutes: absenceMinutes,
       })
     );
-  } catch {
+  } catch (error) {
+    console.error(JSON.stringify({
+      type: "hr_timesheet_week_persist_failed",
+      employeeId,
+      weekStart,
+      error: error instanceof Error ? error.message : String(error),
+    }));
     /* best-effort : ne bloque jamais la lecture du relevé */
   }
 
@@ -253,7 +274,8 @@ export async function computeWeeklyTimesheet(employeeId: string, weekStart: stri
     overtime_minutes: agg.overtime_25_minutes + agg.overtime_50_minutes,
     overtime_25_minutes: agg.overtime_25_minutes,
     overtime_50_minutes: agg.overtime_50_minutes,
-    absence_minutes: agg.absence_minutes,
+    absence_minutes: absenceMinutes,
+    unclassified_missing_minutes: unclassifiedMissingMinutes,
     rule_set_name: agg.rule_set_name,
     days,
   };

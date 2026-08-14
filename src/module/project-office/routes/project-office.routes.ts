@@ -6,6 +6,7 @@ import * as projects from "../controllers/project-office-projects.controller";
 import * as work from "../controllers/project-office-work.controller";
 import * as registers from "../controllers/project-office-registers.controller";
 import * as report from "../controllers/project-office-report.controller";
+import * as operations from "../controllers/project-office-operations.controller";
 
 // Monté après le socle authenticateToken (v1.routes.ts) → JWT requis d'office.
 // Feature gate PROJECT_OFFICE (fail-closed) : /access est la SEULE route hors gate — elle répond
@@ -24,6 +25,10 @@ router.get("/projects/:id", projects.getProject);
 router.patch("/projects/:id", projects.patchProject);
 router.post("/projects/:id/members", projects.postMember);
 router.delete("/projects/:id/members/:userId", projects.deleteMember);
+router.get("/projects/:id/operations", operations.getOperations);
+router.post("/projects/:id/budget-versions", operations.postBudget);
+router.post("/projects/:id/affaire-links", operations.postAffaireLink);
+router.delete("/projects/:id/affaire-links/:linkId", operations.deleteAffaireLink);
 
 // Work packages (lots / tâches)
 router.get("/work-packages", work.getWorkPackages);
