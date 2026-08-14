@@ -271,7 +271,10 @@ try {
   ];
   for (const [file, content] of outputs) {
     if (checkOnly) {
-      if (!fs.existsSync(file) || fs.readFileSync(file, "utf8") !== content) {
+      const committed = fs.existsSync(file)
+        ? fs.readFileSync(file, "utf8").replace(/\r\n?/g, "\n")
+        : null;
+      if (committed !== content) {
         fail(`${path.relative(root, file)} is stale; run pnpm openapi:generate`);
       }
     } else {
