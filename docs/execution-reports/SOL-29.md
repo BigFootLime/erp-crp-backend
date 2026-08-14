@@ -12,6 +12,8 @@ L'ERP ne possédait pas de frontière client dédiée. Réutiliser les comptes i
 
 Pendant l'E2E réel de téléchargement, Node 24 a révélé un second défaut : la lecture d'intégrité via `for await` fermait implicitement le descripteur partagé avant la diffusion HTTP (`EBADF`). Le téléchargement est maintenant vérifié par lectures positionnelles bornées sur le même `FileHandle`, puis diffusé avec ce descripteur encore ouvert.
 
+La première tentative opérateur de migration réelle a également été arrêtée avant écriture : le patch n'était pas inscrit dans le registre immuable accepté par `db:patches --only`. Le correctif enregistre son SHA-256 canonique `d5c203c1c44f61b2b296d8fd08a5a35eb8b65060200119cbf7fe873f215d0f5c` et l'ajoute au test exhaustif du registre.
+
 ## Choix d'architecture et frontière de données
 
 - Les comptes portail sont séparés des utilisateurs ERP. Ils ont leur propre secret JWT, audience `cerp-client-portal`, expiration de 15 minutes, statut et `session_epoch` relus en base à chaque requête.
