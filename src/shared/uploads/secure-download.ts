@@ -182,7 +182,6 @@ export async function sendSecureStoredFile(
   }
 ): Promise<SecureStoredFileSendOutcome> {
   let opened: SecureOpenedFile | null = null;
-  let verifier: ReturnType<typeof createReadStream> | null = null;
   let stream: ReturnType<typeof createReadStream> | null = null;
   let responseClosed = res.destroyed;
   let settleStreaming: ((outcome: SecureStoredFileSendOutcome) => void) | null = null;
@@ -198,7 +197,6 @@ export async function sendSecureStoredFile(
 
   const onResponseClose = () => {
     responseClosed = true;
-    verifier?.destroy();
     stream?.destroy();
     settleStreaming?.("aborted");
     void closeHandleOnce();
@@ -215,33 +213,25 @@ export async function sendSecureStoredFile(
     if (options.expectedSha256) {
       const hash = createHash("sha256");
       if (opened.size > 0) {
-        verifier = createReadStream(opened.realPath, {
-          fd: opened.handle.fd,
-          autoClose: false,
-          start: 0,
-          end: opened.size - 1,
-        });
+        const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, opened.size));
+        let offset = 0;
         let integrityHookCalled = false;
-        try {
-          for await (const chunk of verifier) {
-            if (responseClosed || res.destroyed) return "aborted";
-            hash.update(chunk as Buffer);
-            if (!integrityHookCalled && secureDownloadHook) {
-              integrityHookCalled = true;
-              await secureDownloadHook("during-integrity", {
-                candidatePath: path.resolve(options.filePath),
-                realPath: opened.realPath,
-                response: res,
-              });
-              if (responseClosed || res.destroyed) return "aborted";
-            }
-          }
-        } catch (error) {
+        while (offset < opened.size) {
           if (responseClosed || res.destroyed) return "aborted";
-          throw error;
-        } finally {
-          verifier.destroy();
-          verifier = null;
+          const requested = Math.min(buffer.length, opened.size - offset);
+          const { bytesRead } = await opened.handle.read(buffer, 0, requested, offset);
+          if (bytesRead === 0) break;
+          hash.update(buffer.subarray(0, bytesRead));
+          offset += bytesRead;
+          if (!integrityHookCalled && secureDownloadHook) {
+            integrityHookCalled = true;
+            await secureDownloadHook("during-integrity", {
+              candidatePath: path.resolve(options.filePath),
+              realPath: opened.realPath,
+              response: res,
+            });
+            if (responseClosed || res.destroyed) return "aborted";
+          }
         }
       }
       if (responseClosed || res.destroyed) return "aborted";
@@ -320,7 +310,6 @@ export async function sendSecureStoredFile(
     });
   } finally {
     res.off("close", onResponseClose);
-    verifier?.destroy();
     stream?.destroy();
     await closeHandleOnce();
   }

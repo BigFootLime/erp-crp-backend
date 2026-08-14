@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "d82d666b7244413a8c33839fd7bd8817f881d4c56ffcdb3c6529b76ca4dd21fb";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "13ed1f48241a77e539c2f6161df31213617115e8493e1401edd68683a12357b9";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -389,6 +389,125 @@ export const GENERATED_ROUTE_INVENTORY = [
       "authenticateToken",
       "requireSuperadmin",
       "getAdminAnalytics"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSuperadmin"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/admin/client-portal/accounts",
+    "source": "src/module/client-portal/routes/client-portal-admin.routes.ts:9",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "controller.listAdminAccounts"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSuperadmin"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/admin/client-portal/accounts",
+    "source": "src/module/client-portal/routes/client-portal-admin.routes.ts:10",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "controller.createAdminAccount"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSuperadmin"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/admin/client-portal/accounts/{accountId}/invitations",
+    "source": "src/module/client-portal/routes/client-portal-admin.routes.ts:11",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "controller.createAdminInvitation"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSuperadmin"
+    ]
+  },
+  {
+    "method": "patch",
+    "path": "/admin/client-portal/accounts/{accountId}/status",
+    "source": "src/module/client-portal/routes/client-portal-admin.routes.ts:12",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "controller.patchAdminAccountStatus"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSuperadmin"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/admin/client-portal/publications",
+    "source": "src/module/client-portal/routes/client-portal-admin.routes.ts:13",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "controller.listAdminPublications"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSuperadmin"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/admin/client-portal/publications",
+    "source": "src/module/client-portal/routes/client-portal-admin.routes.ts:14",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "controller.createAdminPublication"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSuperadmin"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/admin/client-portal/publications/{publicationId}/revoke",
+    "source": "src/module/client-portal/routes/client-portal-admin.routes.ts:15",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "controller.revokeAdminPublication"
     ],
     "authenticated": true,
     "rbac": [
@@ -9360,6 +9479,134 @@ export const GENERATED_ROUTE_INVENTORY = [
       "requireProductionOrAdmin",
       "requirePlanningCapability(manage_schedule)"
     ]
+  },
+  {
+    "method": "post",
+    "path": "/portal/auth/activate",
+    "source": "src/module/client-portal/routes/client-portal.routes.ts:9",
+    "middleware": [
+      "anonymous",
+      "controller.activate"
+    ],
+    "authenticated": false,
+    "rbac": []
+  },
+  {
+    "method": "post",
+    "path": "/portal/auth/forgot-password",
+    "source": "src/module/client-portal/routes/client-portal.routes.ts:10",
+    "middleware": [
+      "anonymous",
+      "controller.forgotPassword"
+    ],
+    "authenticated": false,
+    "rbac": []
+  },
+  {
+    "method": "post",
+    "path": "/portal/auth/login",
+    "source": "src/module/client-portal/routes/client-portal.routes.ts:8",
+    "middleware": [
+      "anonymous",
+      "controller.login"
+    ],
+    "authenticated": false,
+    "rbac": []
+  },
+  {
+    "method": "post",
+    "path": "/portal/auth/reset-password",
+    "source": "src/module/client-portal/routes/client-portal.routes.ts:11",
+    "middleware": [
+      "anonymous",
+      "controller.resetPassword"
+    ],
+    "authenticated": false,
+    "rbac": []
+  },
+  {
+    "method": "get",
+    "path": "/portal/deliveries",
+    "source": "src/module/client-portal/routes/client-portal.routes.ts:17",
+    "middleware": [
+      "anonymous",
+      "authenticateClientPortal",
+      "controller.listDeliveries"
+    ],
+    "authenticated": false,
+    "rbac": []
+  },
+  {
+    "method": "get",
+    "path": "/portal/documents",
+    "source": "src/module/client-portal/routes/client-portal.routes.ts:19",
+    "middleware": [
+      "anonymous",
+      "authenticateClientPortal",
+      "controller.listDocuments"
+    ],
+    "authenticated": false,
+    "rbac": []
+  },
+  {
+    "method": "post",
+    "path": "/portal/documents/{publicationId}/acknowledgements",
+    "source": "src/module/client-portal/routes/client-portal.routes.ts:21",
+    "middleware": [
+      "anonymous",
+      "authenticateClientPortal",
+      "controller.acknowledgeDocument"
+    ],
+    "authenticated": false,
+    "rbac": []
+  },
+  {
+    "method": "get",
+    "path": "/portal/documents/{publicationId}/download",
+    "source": "src/module/client-portal/routes/client-portal.routes.ts:20",
+    "middleware": [
+      "anonymous",
+      "authenticateClientPortal",
+      "controller.downloadDocument"
+    ],
+    "authenticated": false,
+    "rbac": []
+  },
+  {
+    "method": "get",
+    "path": "/portal/invoices",
+    "source": "src/module/client-portal/routes/client-portal.routes.ts:18",
+    "middleware": [
+      "anonymous",
+      "authenticateClientPortal",
+      "controller.listInvoices"
+    ],
+    "authenticated": false,
+    "rbac": []
+  },
+  {
+    "method": "get",
+    "path": "/portal/me",
+    "source": "src/module/client-portal/routes/client-portal.routes.ts:15",
+    "middleware": [
+      "anonymous",
+      "authenticateClientPortal",
+      "controller.me"
+    ],
+    "authenticated": false,
+    "rbac": []
+  },
+  {
+    "method": "get",
+    "path": "/portal/orders",
+    "source": "src/module/client-portal/routes/client-portal.routes.ts:16",
+    "middleware": [
+      "anonymous",
+      "authenticateClientPortal",
+      "controller.listOrders"
+    ],
+    "authenticated": false,
+    "rbac": []
   },
   {
     "method": "put",

@@ -59,6 +59,9 @@ describe("SOL-28 generated OpenAPI contract", () => {
       if (route.authenticated) {
         expect(security, `${route.method} ${route.path}`).toEqual([{ bearerAuth: [] }]);
         expect(operation["x-cerp-rbac"]).toBeTruthy();
+      } else if (route.middleware.includes("authenticateClientPortal")) {
+        expect(security, `${route.method} ${route.path}`).toEqual([{ clientPortalBearerAuth: [] }]);
+        expect(operation["x-cerp-rbac"]).toEqual(["clientPortalTenantBoundary"]);
       } else {
         expect(operation["x-cerp-public-reason"], `${route.method} ${route.path}`).toBeTypeOf("string");
       }
