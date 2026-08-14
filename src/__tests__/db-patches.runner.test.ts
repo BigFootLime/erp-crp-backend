@@ -77,6 +77,10 @@ const recentSolPatchChecksums = new Map([
     "53e6d11928dcd329b80fd493932aa29d2f0f65874b20a2cd1daa4e9a8847eb66",
   ],
   [
+    "20260814_planning_execution_intelligence_0021.sql",
+    "ca667814cae65e695ec45dccf407752432aa9e6f7e61b4d9a38ae6fcfd339107",
+  ],
+  [
     "20260814_sol22_quality_intelligence.sql",
     "adf2b97867ef23f9c40ecd5df7c271cd40cc4d4d67c04cc60e7444f2cf367264",
   ],
