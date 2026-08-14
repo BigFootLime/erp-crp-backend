@@ -10,11 +10,17 @@ const gitAttributes = fs.readFileSync(repoPath(".gitattributes"), "utf8");
 
 describe("Dockerfile storage permissions", () => {
   it("copies every build-time security guard before npm run build", () => {
+    const openApiScriptsIndex = dockerfile.indexOf("COPY scripts/openapi ./scripts/openapi");
     const securityScriptsIndex = dockerfile.indexOf("COPY scripts/security ./scripts/security");
+    const buildScriptsIndex = dockerfile.indexOf("COPY scripts/build ./scripts/build");
     const buildIndex = dockerfile.indexOf("RUN npm run build");
 
+    expect(openApiScriptsIndex).toBeGreaterThanOrEqual(0);
     expect(securityScriptsIndex).toBeGreaterThanOrEqual(0);
+    expect(buildScriptsIndex).toBeGreaterThanOrEqual(0);
+    expect(buildIndex).toBeGreaterThan(openApiScriptsIndex);
     expect(buildIndex).toBeGreaterThan(securityScriptsIndex);
+    expect(buildIndex).toBeGreaterThan(buildScriptsIndex);
   });
 
   it("creates image defaults and revalidates runtime mounts before dropping privileges", () => {
