@@ -19,7 +19,21 @@ const PUBLIC_ROUTE_POLICIES: Readonly<Record<string, string>> = {
   "get /environment": "Signal public minimal de routage de base, sans secret ni donnée métier.",
   "get /openapi.json": "Contrat public de la version API déployée.",
   "get /realtime/readiness": "Signal public booléen de disponibilité temps réel, sans détail d’infrastructure.",
+  "post /portal/auth/activate": "Activation par jeton portail à usage unique avec limitation de débit persistée.",
+  "post /portal/auth/forgot-password": "Demande de récupération portail non révélatrice avec limitation de débit persistée.",
+  "post /portal/auth/login": "Échange d’identifiants portail contre une session courte avec limitation de débit persistée.",
+  "post /portal/auth/reset-password": "Réinitialisation portail par jeton à usage unique avec limitation de débit persistée.",
 };
+
+const CLIENT_PORTAL_AUTH_OPERATIONS = new Set([
+  "get /portal/deliveries",
+  "get /portal/documents",
+  "post /portal/documents/{publicationId}/acknowledgements",
+  "get /portal/documents/{publicationId}/download",
+  "get /portal/invoices",
+  "get /portal/me",
+  "get /portal/orders",
+]);
 
 const IDEMPOTENT_OPERATIONS = new Set([
   "post /admin/webhooks/subscriptions",
@@ -57,7 +71,7 @@ function pathParameters(route: GeneratedRouteContract): OpenApiObject[] {
   }));
 }
 
-function genericResponses(route: GeneratedRouteContract): OpenApiObject {
+function genericResponses(route: GeneratedRouteContract, authenticated = route.authenticated): OpenApiObject {
   const responses: OpenApiObject = {
     "200": {
       description: "Réponse conforme au contrat de l’opération.",
@@ -67,7 +81,7 @@ function genericResponses(route: GeneratedRouteContract): OpenApiObject {
     "429": { $ref: "#/components/responses/RateLimited" },
     "500": { $ref: "#/components/responses/InternalError" },
   };
-  if (route.authenticated) {
+  if (authenticated) {
     responses["401"] = { $ref: "#/components/responses/Unauthenticated" };
     responses["403"] = { $ref: "#/components/responses/Forbidden" };
   }
@@ -83,6 +97,7 @@ function generatedOperation(route: GeneratedRouteContract): OpenApiOperation {
   const key = operationKey(route);
   const publicReason = PUBLIC_ROUTE_POLICIES[key];
   const providerSigned = key === "post /electronic-invoicing/webhooks/{providerCode}";
+  const clientPortalAuthenticated = CLIENT_PORTAL_AUTH_OPERATIONS.has(key);
   const idempotent = IDEMPOTENT_OPERATIONS.has(key);
   const parameters = pathParameters(route);
   if (idempotent) parameters.push({ $ref: "#/components/parameters/IdempotencyKey" });
@@ -91,15 +106,29 @@ function generatedOperation(route: GeneratedRouteContract): OpenApiOperation {
     summary: `${route.method.toUpperCase()} ${route.path}`,
     operationId: operationId(route),
     parameters,
-    responses: genericResponses(route),
+    responses: genericResponses(route, route.authenticated || clientPortalAuthenticated),
     security: route.authenticated
       ? [{ bearerAuth: [] }]
+      : clientPortalAuthenticated
+        ? [{ clientPortalBearerAuth: [] }]
       : providerSigned
         ? [{ providerSignature: [] }]
         : [],
     "x-cerp-source": route.source,
-    "x-cerp-authentication": route.authenticated ? "JWT Bearer + compte actif" : providerSigned ? "signature prestataire" : "public contrôlé",
-    "x-cerp-rbac": route.rbac.length > 0 ? [...route.rbac] : route.authenticated ? ["moduleAccessGate"] : [],
+    "x-cerp-authentication": route.authenticated
+      ? "JWT Bearer + compte actif"
+      : clientPortalAuthenticated
+        ? "JWT Bearer portail + compte client actif + session_epoch"
+        : providerSigned
+          ? "signature prestataire"
+          : "public contrôlé",
+    "x-cerp-rbac": route.rbac.length > 0
+      ? [...route.rbac]
+      : route.authenticated
+        ? ["moduleAccessGate"]
+        : clientPortalAuthenticated
+          ? ["clientPortalTenantBoundary"]
+          : [],
     "x-cerp-rate-limit-policy": route.middleware.filter((name) => /RateLimit/i.test(name)),
     "x-cerp-idempotency": idempotent ? "required" : "not-declared",
     ...(publicReason ? { "x-cerp-public-reason": publicReason } : {}),
@@ -208,6 +237,12 @@ function componentSchemas(legacy: OpenApiObject): OpenApiObject {
     ...legacyComponents,
     securitySchemes: {
       bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "JWT" },
+      clientPortalBearerAuth: {
+        type: "http",
+        scheme: "bearer",
+        bearerFormat: "JWT",
+        description: "Jeton de session court du portail client, audience cerp-client-portal.",
+      },
       providerSignature: {
         type: "apiKey",
         in: "header",
@@ -372,7 +407,9 @@ function componentSchemas(legacy: OpenApiObject): OpenApiObject {
 
 export function assertOpenApiRouteSecurity(): void {
   const undocumentedPublic = GENERATED_ROUTE_INVENTORY
-    .filter((route) => !route.authenticated && !PUBLIC_ROUTE_POLICIES[operationKey(route)])
+    .filter((route) => !route.authenticated
+      && !CLIENT_PORTAL_AUTH_OPERATIONS.has(operationKey(route))
+      && !PUBLIC_ROUTE_POLICIES[operationKey(route)])
     .map((route) => operationKey(route));
   if (undocumentedPublic.length > 0) {
     throw new Error(`OPENAPI_PUBLIC_ROUTE_POLICY_MISSING:${undocumentedPublic.join(",")}`);

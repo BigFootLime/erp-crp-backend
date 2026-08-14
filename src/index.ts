@@ -107,5 +107,9 @@ void start().catch((error) => {
       error_fingerprint: errorFingerprint(error),
     });
   });
+  if (process.env.CERP_E2E_ISOLATED === "1" && process.env.CERP_E2E_DIAGNOSTICS === "1") {
+    const diagnostic = error instanceof Error ? error.stack ?? error.message : String(error);
+    process.stderr.write(`[isolated-startup-diagnostic] ${diagnostic}\n`);
+  }
   process.exitCode = 1;
 });

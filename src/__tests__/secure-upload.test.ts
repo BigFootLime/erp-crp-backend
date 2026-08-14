@@ -745,6 +745,18 @@ describe("téléchargement sécurisé et compatibilité historique", () => {
     expect(response.text).toBe("contenu-original");
   });
 
+  it("vérifie l'empreinte puis diffuse le même descripteur sans le fermer", async () => {
+    const candidate = path.join(root, "document-verifie.txt");
+    const content = Buffer.from("contenu portail vérifié", "utf8");
+    const expectedSha256 = (await import("node:crypto")).createHash("sha256").update(content).digest("hex");
+    await fs.writeFile(candidate, content);
+
+    const response = await request(downloadApp(candidate, expectedSha256)).get("/download");
+
+    expect(response.status).toBe(200);
+    expect(Buffer.from(response.text, "utf8")).toEqual(content);
+  });
+
   it("interrompt l'intégrité si le client ferme et ne ferme le handle qu'une fois", async () => {
     const candidate = path.join(root, "large-document.bin");
     const content = Buffer.alloc(2 * 1024 * 1024, 0x5a);

@@ -49,6 +49,8 @@ import electronicInvoiceWebhookRoutes from "../module/facturation/electronic-inv
 import accountingExportRoutes from "../module/accounting-export/accounting-export.routes";
 import openApiRoutes from "../swagger/openapi.routes";
 import webhookAdminRoutes from "../module/integrations/webhooks/webhook.routes";
+import clientPortalRoutes from "../module/client-portal/routes/client-portal.routes";
+import clientPortalAdminRoutes from "../module/client-portal/routes/client-portal-admin.routes";
 
 import traceabilityRoutes from "../module/traceability/routes/traceability.routes"
 import traceability360Routes from "../module/traceability/routes/traceability-360.routes"
@@ -73,6 +75,7 @@ router.use((_req, _res, next) => runWithAccountModuleAccessScope(next))
 
 // --- Routes publiques (avant authentification) ---
 router.use("/auth", authRoutes)
+router.use("/portal", clientPortalRoutes)
 router.use("/electronic-invoicing/webhooks", electronicInvoiceWebhookRoutes)
 router.use(openApiRoutes)
 
@@ -115,6 +118,7 @@ router.use("/audit-logs", auditLogsRoutes)
 // est gardée par le statut superadmin et ne doit pas hériter de son authorizeRole.
 router.use("/admin/access", accessControlRoutes);
 router.use("/admin/webhooks", webhookAdminRoutes);
+router.use("/admin/client-portal", clientPortalAdminRoutes);
 router.use("/admin", adminRoutes);
 router.use("/affaires", affaireRoutes);
 router.use("/devis", devisRoutes);
