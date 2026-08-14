@@ -16,7 +16,9 @@ import type {
   ImportRowStatus,
   ImportStoredRow,
   ImportTargetResult,
+  ImportOperationsMetrics,
 } from "../types/import-assistant.types";
+import type { ImportOperationsMetricsQueryDTO } from "../validators/import-assistant.validators";
 import { normalizeImportName } from "../domain/import-normalization";
 
 type DbQueryer = Pick<PoolClient, "query">;
@@ -642,4 +644,124 @@ export async function repoInsertBatchAudit(
     browser: null,
     tx: queryer,
   });
+}
+
+export async function repoGetImportOperationsMetrics(
+  filters: ImportOperationsMetricsQueryDTO
+): Promise<ImportOperationsMetrics> {
+  const where: string[] = [];
+  const values: unknown[] = [];
+  const push = (value: unknown) => {
+    values.push(value);
+    return `$${values.length}`;
+  };
+  if (filters.from) where.push(`b.created_at >= ${push(filters.from)}::timestamptz`);
+  if (filters.to) where.push(`b.created_at <= ${push(filters.to)}::timestamptz`);
+  if (filters.entity_type) where.push(`b.entity_type = ${push(filters.entity_type)}`);
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
+  const funnelRes = await db.query<{
+    batch_count: number | string;
+    freshness_at: string | null;
+    in_progress_batches: number | string;
+    completed_batches: number | string;
+    average_seconds: number | string | null;
+    p95_seconds: number | string | null;
+    uploaded: number | string;
+    validated: number | string;
+    accepted: number | string;
+    rejected: number | string;
+    duplicates: number | string;
+    imported: number | string;
+  }>(
+    `WITH scoped_batches AS (
+       SELECT b.id, b.status, b.created_at, b.updated_at, b.completed_at
+       FROM public.data_import_batches b
+       ${whereSql}
+     ), scoped_rows AS (
+       SELECT r.status
+       FROM public.data_import_rows r
+       JOIN scoped_batches b ON b.id = r.batch_id
+     )
+     SELECT
+       (SELECT count(*) FROM scoped_batches)::int AS batch_count,
+       (SELECT max(updated_at)::text FROM scoped_batches) AS freshness_at,
+       (SELECT count(*) FROM scoped_batches WHERE status IN ('UPLOADED','SIMULATED','READY','IMPORTING'))::int AS in_progress_batches,
+       (SELECT count(*) FROM scoped_batches WHERE completed_at IS NOT NULL)::int AS completed_batches,
+       (SELECT round(avg(extract(epoch FROM (completed_at - created_at)))::numeric, 3)
+          FROM scoped_batches WHERE completed_at IS NOT NULL) AS average_seconds,
+       (SELECT round(
+          percentile_cont(0.95) WITHIN GROUP (ORDER BY extract(epoch FROM (completed_at - created_at)))::numeric,
+          3
+        ) FROM scoped_batches WHERE completed_at IS NOT NULL) AS p95_seconds,
+       count(*)::int AS uploaded,
+       count(*) FILTER (WHERE status <> 'PENDING')::int AS validated,
+       count(*) FILTER (WHERE status IN ('VALID','PROCESSING','IMPORTED','LINKED','ALREADY_IMPORTED'))::int AS accepted,
+       count(*) FILTER (WHERE status IN ('BLOCKED','DUPLICATE','FAILED'))::int AS rejected,
+       count(*) FILTER (WHERE status = 'DUPLICATE')::int AS duplicates,
+       count(*) FILTER (WHERE status IN ('IMPORTED','LINKED','ALREADY_IMPORTED'))::int AS imported
+     FROM scoped_rows`,
+    values
+  );
+
+  const paretoRes = await db.query<{
+    code: string;
+    count: number | string;
+    affected_batches: number | string;
+    last_seen_at: string;
+  }>(
+    `WITH scoped_batches AS (
+       SELECT b.id, b.created_at
+       FROM public.data_import_batches b
+       ${whereSql}
+     )
+     SELECT
+       COALESCE(NULLIF(issue.value->>'code', ''), 'UNKNOWN') AS code,
+       count(*)::int AS count,
+       count(DISTINCT r.batch_id)::int AS affected_batches,
+       max(r.updated_at)::text AS last_seen_at
+     FROM public.data_import_rows r
+     JOIN scoped_batches b ON b.id = r.batch_id
+     CROSS JOIN LATERAL jsonb_array_elements(r.issues) AS issue(value)
+     GROUP BY COALESCE(NULLIF(issue.value->>'code', ''), 'UNKNOWN')
+     ORDER BY count(*) DESC, code ASC
+     LIMIT ${push(filters.error_limit)}`,
+    values
+  );
+
+  const row = funnelRes.rows[0];
+  const number = (value: number | string | undefined) => Number(value ?? 0);
+  const nullableNumber = (value: number | string | null | undefined) =>
+    value == null ? null : Number(value);
+  const batchCount = number(row?.batch_count);
+  const stages: ImportOperationsMetrics["funnel"] = [
+    { stage: "UPLOADED", label: "Lignes reçues", count: number(row?.uploaded), unit: "rows", definition: "Lignes présentes dans les lots de staging de la période." },
+    { stage: "VALIDATED", label: "Lignes validées", count: number(row?.validated), unit: "rows", definition: "Lignes sorties de l’état PENDING après application du mapping et des validations." },
+    { stage: "ACCEPTED", label: "Lignes acceptées", count: number(row?.accepted), unit: "rows", definition: "Lignes valides, en traitement, importées, rapprochées ou déjà importées." },
+    { stage: "REJECTED", label: "Lignes à corriger", count: number(row?.rejected), unit: "rows", definition: "Lignes bloquées, dupliquées ou en échec ; aucune n’est convertie silencieusement en succès." },
+    { stage: "DUPLICATE", label: "Doublons", count: number(row?.duplicates), unit: "rows", definition: "Sous-ensemble des lignes à corriger détecté comme doublon." },
+    { stage: "IMPORTED", label: "Lignes intégrées", count: number(row?.imported), unit: "rows", definition: "Lignes créées, rapprochées ou reconnues déjà importées." },
+  ];
+  return {
+    definition_version: 1,
+    period: { from: filters.from ?? null, to: filters.to ?? null, timezone: "UTC" },
+    source: ["data_import_batches", "data_import_rows"],
+    freshness_at: row?.freshness_at ?? null,
+    reliability: batchCount === 0 ? "UNAVAILABLE" : number(row?.in_progress_batches) > 0 ? "PARTIAL" : "VERIFIED",
+    batch_count: batchCount,
+    duration: {
+      completed_batches: number(row?.completed_batches),
+      average_seconds: nullableNumber(row?.average_seconds),
+      p95_seconds: nullableNumber(row?.p95_seconds),
+      unit: "seconds",
+      definition: "Temps écoulé entre la création du lot et sa fin, calculé uniquement pour les lots terminés.",
+    },
+    funnel: stages,
+    error_pareto: paretoRes.rows.map((entry) => ({
+      code: entry.code,
+      count: number(entry.count),
+      affected_batches: number(entry.affected_batches),
+      last_seen_at: entry.last_seen_at,
+    })),
+  };
 }

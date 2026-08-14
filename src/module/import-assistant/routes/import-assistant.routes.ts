@@ -24,6 +24,7 @@ const upload = createSecureUpload("import-tabular", { storage: "memory" });
 router.use(requireImportAdmin, requireImportTestDatabase);
 
 router.get("/capabilities", controller.getCapabilities);
+router.get("/metrics", controller.getOperationsMetrics);
 router.get("/batches", controller.getBatches);
 router.post("/batches", upload.single("file"), controller.postBatch);
 router.get("/batches/:id/report.csv", controller.getBatchReport);

@@ -67,3 +67,41 @@ export const listAccessEventsQuerySchema = z.object({
   module_key: moduleKeyParam.optional(),
 });
 export type ListAccessEventsQueryDTO = z.infer<typeof listAccessEventsQuerySchema>;
+
+const reviewIdParam = z.string().uuid("Identifiant de revue invalide");
+
+export const createAccessReviewSchema = z.object({
+  body: z
+    .object({
+      inactivity_days: z.number().int().min(30).max(730).default(90),
+      login_failure_window_days: z.number().int().min(1).max(90).default(30),
+      failed_login_threshold: z.number().int().min(1).max(100).default(5),
+      due_in_days: z.number().int().min(1).max(90).default(14),
+    })
+    .strict(),
+});
+
+export const listAccessReviewsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).optional().default(20),
+});
+
+export const accessReviewIdSchema = z.object({ reviewId: reviewIdParam });
+
+export const decideAccessReviewItemSchema = z.object({
+  params: z.object({ reviewId: reviewIdParam, userId: userIdParam }),
+  body: z
+    .object({
+      decision: z.enum(["CONFIRMED", "CHANGE_REQUIRED", "EXCEPTION_ACCEPTED"]),
+      rationale: z.string().trim().max(1000).nullable().optional().default(null),
+    })
+    .strict()
+    .superRefine((value, ctx) => {
+      if (value.decision !== "CONFIRMED" && !value.rationale) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["rationale"],
+          message: "Une justification est requise pour une correction ou une exception.",
+        });
+      }
+    }),
+});

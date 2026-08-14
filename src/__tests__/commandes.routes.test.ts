@@ -1245,7 +1245,7 @@ describe("/api/v1/commandes", () => {
       if (q.includes("SELECT DISTINCT u.id::int AS id")) return { rows: [{ id: 9 }] };
       if (q.includes("FROM public.app_notifications") && q.includes("dedupe_key")) return { rows: [] };
       if (q.includes("INSERT INTO public.app_notifications")) {
-        notificationKeys.push(String(values?.[8]));
+        notificationKeys.push(String(values?.[13]));
         return {
           rows: [{
             id: String(notificationKeys.length),

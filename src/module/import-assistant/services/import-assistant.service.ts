@@ -592,7 +592,8 @@ export async function confirmImportBatch(params: {
 
 function csvCell(value: unknown): string {
   const raw = value == null ? "" : typeof value === "string" ? value : JSON.stringify(value);
-  return `"${raw.replace(/"/g, '""')}"`;
+  const spreadsheetSafe = /^[\t\r\n ]*[=+\-@]/.test(raw) ? `'${raw}` : raw;
+  return `"${spreadsheetSafe.replace(/"/g, '""')}"`;
 }
 
 export async function buildImportReportCsv(id: string): Promise<{ filename: string; csv: string }> {
@@ -615,4 +616,10 @@ export async function buildImportReportCsv(id: string): Promise<{ filename: stri
     filename: `rapport-import-${batch.entity_type.toLowerCase()}-${batch.id}.csv`,
     csv: `\uFEFF${lines.join("\r\n")}`,
   };
+}
+
+export async function getImportOperationsMetrics(
+  filters: import("../validators/import-assistant.validators").ImportOperationsMetricsQueryDTO
+) {
+  return repo.repoGetImportOperationsMetrics(filters);
 }

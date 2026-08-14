@@ -39,3 +39,19 @@ export const listImportRowsQuerySchema = z.object({
 export const confirmImportBatchSchema = z.object({
   expected_preview_hash: z.string().regex(/^[a-f0-9]{64}$/),
 }).strict();
+
+export const importOperationsMetricsQuerySchema = z
+  .object({
+    from: z.string().datetime({ offset: true }).optional(),
+    to: z.string().datetime({ offset: true }).optional(),
+    entity_type: importEntityTypeSchema.optional(),
+    error_limit: z.coerce.number().int().min(1).max(50).optional().default(10),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.from && value.to && new Date(value.from).getTime() > new Date(value.to).getTime()) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["to"], message: "La date de fin doit suivre la date de début." });
+    }
+  });
+
+export type ImportOperationsMetricsQueryDTO = z.infer<typeof importOperationsMetricsQuerySchema>;
