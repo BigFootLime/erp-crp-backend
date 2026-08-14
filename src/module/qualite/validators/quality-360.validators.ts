@@ -4,6 +4,8 @@
 
 import { z } from "zod";
 
+import { TRACEABILITY_NODE_TYPES } from "../../traceability/domain/traceability-model";
+
 import {
   QUALITY_CHARACTERISTIC_TYPES,
   QUALITY_CRITICALITIES,
@@ -574,3 +576,58 @@ export const qualityCenterQuerySchema = z
   })
   .strict();
 export type QualityCenterQueryDTO = z.infer<typeof qualityCenterQuerySchema>;
+
+export const qualityIntelligenceQuerySchema = z
+  .object({
+    from: z.string().date(),
+    to: z.string().date(),
+    horizon_days: z.coerce.number().int().min(1).max(365).default(30),
+  })
+  .strict()
+  .refine((value) => value.from <= value.to, { path: ["to"], message: "La fin doit suivre le début" });
+export type QualityIntelligenceQueryDTO = z.infer<typeof qualityIntelligenceQuerySchema>;
+
+export const qualityInvestigationQuerySchema = z
+  .object({
+    type: z.enum(TRACEABILITY_NODE_TYPES),
+    id: shortText(160),
+    as_of: z.string().datetime({ offset: true }).optional(),
+    period_from: z.string().datetime({ offset: true }).optional(),
+    period_to: z.string().datetime({ offset: true }).optional(),
+    max_depth: z.coerce.number().int().min(1).max(8).default(8),
+  })
+  .strict();
+export type QualityInvestigationQueryDTO = z.infer<typeof qualityInvestigationQuerySchema>;
+
+export const createQualityCostSchema = z
+  .object({
+    body: z
+      .object({
+        non_conformity_id: uuid,
+        category: z.enum(["SCRAP", "REWORK", "SORTING", "CONTAINMENT", "RETURN", "OTHER"]),
+        amount: z.number().finite().positive().max(1_000_000_000),
+        currency: z.string().trim().regex(/^[A-Z]{3}$/),
+        occurred_on: z.string().date(),
+        source_type: z.enum(["STOCK_MOVEMENT", "TIME_ENTRY", "SUPPLIER_DOCUMENT", "MANUAL_EVIDENCE"]),
+        source_id: shortText(160),
+        evidence_document_id: uuid.optional().nullable(),
+        note: z.string().trim().min(5).max(2000),
+      })
+      .strict(),
+  })
+  .strict();
+export type CreateQualityCostBodyDTO = z.infer<typeof createQualityCostSchema>["body"];
+
+export const assignQualityCauseSchema = z
+  .object({
+    params: idParamSchema.shape.params,
+    body: z
+      .object({
+        cause_code: z.string().trim().regex(/^[A-Z][A-Z0-9_]{2,39}$/),
+        expected_updated_at: isoDateTime,
+        reason: z.string().trim().min(5).max(2000),
+      })
+      .strict(),
+  })
+  .strict();
+export type AssignQualityCauseBodyDTO = z.infer<typeof assignQualityCauseSchema>["body"];

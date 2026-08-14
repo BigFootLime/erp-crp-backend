@@ -31,6 +31,7 @@ export const QUALITY_CAPABILITIES = [
   "closure_verify",
   "documents_read",
   "audit_read",
+  "analytics_read",
   "settings_manage",
 ] as const;
 
@@ -67,6 +68,7 @@ const CAPABILITY_NEEDLES: Record<QualityCapability, readonly string[]> = {
   closure_verify: ["admin", "administrateur", "directeur", "qualit", "quality", "qse"],
   documents_read: ["admin", "administrateur", "directeur", "qualit", "quality", "qse", "production", "atelier", "method"],
   audit_read: ["admin", "administrateur", "directeur", "qualit", "quality", "qse"],
+  analytics_read: ["admin", "administrateur", "directeur", "direction", "qualit", "quality", "qse"],
   settings_manage: ["admin", "administrateur", "directeur"],
 };
 
@@ -74,7 +76,6 @@ export function roleHasQualityCapability(
   role: string | null | undefined,
   capability: QualityCapability
 ): boolean {
-  if (hasGrantedAccountModuleAccess()) return true;
   const normalized = (role ?? "").trim().toLowerCase();
   if (!normalized) return false;
   const needles = CAPABILITY_NEEDLES[capability];
@@ -580,4 +581,3 @@ export function assertOptimisticVersion(params: {
     );
   }
 }
-import { hasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";

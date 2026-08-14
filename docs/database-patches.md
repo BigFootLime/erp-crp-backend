@@ -677,3 +677,13 @@ treize clés obligatoires, résolution hors période rendant l'identité **sans*
 # 20260809 — Account invitation and administrative reset idempotency (SOL-02)
 
 `20260809_account_invitation_activation.sql` adds one-use administrative invitations and idempotency metadata for administrative password-reset creation. Run the matching support preflight, take a restorable backup, apply, then run verify. The rollback is intentionally refused once account-lifecycle evidence exists; disable application routes and preserve evidence instead.
+
+## 20260814 — Intelligence qualité, coûts, causes et SPC (SOL-22)
+
+`20260814_sol22_quality_intelligence.sql` ajoute le catalogue de causes, le ledger
+append-only des coûts qualité et les politiques SPC versionnées. Il renforce aussi
+la vérification des CAPA exigeant une preuve. Exécuter le preflight, produire et
+restaurer un dump vérifié, appliquer avec le runner de patches puis exécuter le
+verify. Le rollback support est limité à `cerp_test` et refuse toute suppression
+dès qu'une cause, un coût ou une politique SOL-22 est utilisé. La procédure complète
+est dans `docs/runbooks/quality-intelligence-sol22-migration.md`.
