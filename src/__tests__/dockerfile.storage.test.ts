@@ -7,6 +7,16 @@ const dockerfile = fs.readFileSync(repoPath("Dockerfile"), "utf8");
 const entrypoint = fs.readFileSync(repoPath("docker/entrypoint.sh"), "utf8");
 const storagePreflight = fs.readFileSync(repoPath("docker/storage-preflight.mjs"), "utf8");
 const gitAttributes = fs.readFileSync(repoPath(".gitattributes"), "utf8");
+const packageJson = JSON.parse(fs.readFileSync(repoPath("package.json"), "utf8")) as {
+  dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
+};
+const packageLock = JSON.parse(fs.readFileSync(repoPath("package-lock.json"), "utf8")) as {
+  packages: Record<
+    string,
+    { dependencies?: Record<string, string>; devDependencies?: Record<string, string> }
+  >;
+};
 
 describe("Dockerfile storage permissions", () => {
   it("copies every build-time security guard before npm run build", () => {
@@ -21,6 +31,14 @@ describe("Dockerfile storage permissions", () => {
     expect(buildIndex).toBeGreaterThan(openApiScriptsIndex);
     expect(buildIndex).toBeGreaterThan(securityScriptsIndex);
     expect(buildIndex).toBeGreaterThan(buildScriptsIndex);
+  });
+
+  it("keeps the npm lock used by Docker aligned with every direct dependency", () => {
+    const lockedRoot = packageLock.packages[""];
+
+    expect(lockedRoot).toBeDefined();
+    expect(lockedRoot.dependencies).toEqual(packageJson.dependencies);
+    expect(lockedRoot.devDependencies).toEqual(packageJson.devDependencies);
   });
 
   it("creates image defaults and revalidates runtime mounts before dropping privileges", () => {
