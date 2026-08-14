@@ -159,3 +159,32 @@ export type ImportTargetResult = {
   id: string;
   code: string | null;
 };
+
+export type ImportOperationsMetrics = {
+  definition_version: 1;
+  period: { from: string | null; to: string | null; timezone: "UTC" };
+  source: readonly ["data_import_batches", "data_import_rows"];
+  freshness_at: string | null;
+  reliability: "VERIFIED" | "PARTIAL" | "UNAVAILABLE";
+  batch_count: number;
+  duration: {
+    completed_batches: number;
+    average_seconds: number | null;
+    p95_seconds: number | null;
+    unit: "seconds";
+    definition: string;
+  };
+  funnel: Array<{
+    stage: "UPLOADED" | "VALIDATED" | "ACCEPTED" | "REJECTED" | "DUPLICATE" | "IMPORTED";
+    label: string;
+    count: number;
+    unit: "rows";
+    definition: string;
+  }>;
+  error_pareto: Array<{
+    code: string;
+    count: number;
+    affected_batches: number;
+    last_seen_at: string;
+  }>;
+};

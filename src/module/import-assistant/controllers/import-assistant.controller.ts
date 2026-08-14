@@ -11,6 +11,7 @@ import {
   importBatchIdSchema,
   listImportBatchesQuerySchema,
   listImportRowsQuerySchema,
+  importOperationsMetricsQuerySchema,
   previewImportBatchSchema,
 } from "../validators/import-assistant.validators";
 import type { ImportAuditContext } from "../types/import-assistant.types";
@@ -46,6 +47,15 @@ function uploadedFile(req: Request): Express.Multer.File {
 
 export const getCapabilities: RequestHandler = (_req, res) => {
   res.json({ items: service.listImportCapabilities() });
+};
+
+export const getOperationsMetrics: RequestHandler = async (req, res, next) => {
+  try {
+    const query = importOperationsMetricsQuerySchema.parse(req.query);
+    res.json(await service.getImportOperationsMetrics(query));
+  } catch (error) {
+    next(error);
+  }
 };
 
 export const postBatch: RequestHandler = async (req, res, next) => {

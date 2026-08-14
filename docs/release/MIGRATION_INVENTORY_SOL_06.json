@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-08-13T10:48:37.594Z",
+  "generated_at": "2026-08-14T11:07:49.191Z",
   "source": "filesystem scan of db/patches and db/patches/support",
-  "patch_count": 150,
-  "support_file_count": 242,
-  "recent_patch_count": 92,
+  "patch_count": 156,
+  "support_file_count": 260,
+  "recent_patch_count": 98,
   "recent_support_gaps": [
     {
       "filename": "20260706_affaire_allow_projet.sql",
@@ -209,9 +209,9 @@
   "risk_totals": {
     "destructive_ddl": 2,
     "destructive_dml": 8,
-    "data_rewrite": 87,
-    "table_lock": 119,
-    "blocking_index": 112,
+    "data_rewrite": 92,
+    "table_lock": 126,
+    "blocking_index": 117,
     "enum_change": 1
   },
   "patches": [
@@ -2758,9 +2758,9 @@
     },
     {
       "order": 149,
-      "filename": "20260813_sol20_tooling_technical_ged.sql",
-      "sha256": "a62a19f35193361ed71d4669810bb8a766590399e119bf71df949b03fcc472ea",
-      "bytes": 10713,
+      "filename": "20260813_quality_delivery_workflow_0437.sql",
+      "sha256": "8fd4649da661a83426b837848b6ca2025122d8a3649e8d937151e03a20f13664",
+      "bytes": 14637,
       "transaction_wrapped": true,
       "replay_markers": true,
       "support": {
@@ -2770,14 +2770,121 @@
       },
       "risks": [
         "data-rewrite",
+        "table-lock",
         "blocking-index"
       ]
     },
     {
       "order": 150,
+      "filename": "20260813_sol20_tooling_technical_ged.sql",
+      "sha256": "63dfb9ea27e060b6955cd738d58f51c3a3830cf5745ec53913426a20c3f49c26",
+      "bytes": 11596,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite",
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 151,
       "filename": "20260813_stock_intelligence_sol19.sql",
       "sha256": "91601e1c609bdfd03f10a51c6dc241a0b75da4bc96bff403c556b1f1a90f9ec7",
       "bytes": 4492,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite",
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 152,
+      "filename": "20260814_admin_operations_sol25.sql",
+      "sha256": "741a16b710835f4bc05dcac52c7ba5ceb74504c962bfe4307805d2071142d3f3",
+      "bytes": 8264,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite",
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 153,
+      "filename": "20260814_adv_reliability_sol23.sql",
+      "sha256": "f14a8d356312133841168e681f4266142ff95f7e4a07dc6c2a18dd50b9a4f52e",
+      "bytes": 13216,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite",
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 154,
+      "filename": "20260814_planning_execution_intelligence_0021.sql",
+      "sha256": "ca667814cae65e695ec45dccf407752432aa9e6f7e61b4d9a38ae6fcfd339107",
+      "bytes": 5133,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite",
+        "table-lock"
+      ]
+    },
+    {
+      "order": 155,
+      "filename": "20260814_project_operations_sol24.sql",
+      "sha256": "e978abeb2b6758744d3824540b2552ef6b6ca90f0c634bc49dd7af403d4e8cd9",
+      "bytes": 7897,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 156,
+      "filename": "20260814_sol22_quality_intelligence.sql",
+      "sha256": "adf2b97867ef23f9c40ecd5df7c271cd40cc4d4d67c04cc60e7444f2cf367264",
+      "bytes": 10194,
       "transaction_wrapped": true,
       "replay_markers": true,
       "support": {

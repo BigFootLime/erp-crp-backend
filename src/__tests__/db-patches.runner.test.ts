@@ -88,6 +88,10 @@ const recentSolPatchChecksums = new Map([
     "20260814_project_operations_sol24.sql",
     "e978abeb2b6758744d3824540b2552ef6b6ca90f0c634bc49dd7af403d4e8cd9",
   ],
+  [
+    "20260814_admin_operations_sol25.sql",
+    "741a16b710835f4bc05dcac52c7ba5ceb74504c962bfe4307805d2071142d3f3",
+  ],
 ]);
 const wave9PatchChecksums = new Map([
   [

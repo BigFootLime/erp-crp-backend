@@ -13,6 +13,11 @@ router.use(authenticateToken, requireSuperadmin);
 
 router.get("/overview", controller.getOverview);
 router.get("/events", controller.getAccessEvents);
+router.get("/reviews", controller.getAccessReviews);
+router.post("/reviews", controller.postAccessReview);
+router.get("/reviews/:reviewId", controller.getAccessReview);
+router.put("/reviews/:reviewId/users/:userId/decision", controller.putAccessReviewDecision);
+router.post("/reviews/:reviewId/close", controller.postCloseAccessReview);
 router.put("/modules/:moduleKey/default", controller.putModuleDefault);
 router.put("/users/:userId/modules/:moduleKey", controller.putUserModuleAccess);
 router.put("/users/:userId/modules", controller.putUserModulesBulk);
