@@ -100,6 +100,10 @@ const recentSolPatchChecksums = new Map([
     "20260814_electronic_invoicing_sol26.sql",
     "03da2f92e7c99e1ffe437fb5443517585a9c20765322d85ab0cb83e378f7968e",
   ],
+  [
+    "20260814_api_contract_webhooks_sol28.sql",
+    "42d9f33de100499836e7c1d58ef49e91daffa4af3861c59536bc2d0ab0f87f1f",
+  ],
 ]);
 const wave9PatchChecksums = new Map([
   [
