@@ -57,6 +57,51 @@ a été restauré dans une base neuve ; les empreintes source et restaurée sont
 identiques (`73d3223f43345a6dff0877afb4ae30e5ccf531227789d08548fe61f58dea85f5`).
 Le rejeu a appliqué zéro patch.
 
+## Promotion, migration réelle et déploiement
+
+Le commit fonctionnel backend `68b77a4bb90962e0b3d2872f37eb33598687e4f0`
+a été fusionné dans `dev` par la PR `#469`, puis dans `main` par la PR `#470`.
+Les SHA issus de ces promotions sont respectivement
+`be864e50b36d4f06d441b4aa3cadd90651c58c1e` et
+`2892253bcc7a882487943664b58280edd484f9bd`.
+
+Avant toute écriture réelle, deux dumps PostgreSQL custom ont été produits sur
+HYPERBOX2, inventoriés par `pg_restore -l` et protégés en `0600 root:root` :
+
+| Base | Dump | Taille | SHA-256 |
+|---|---|---:|---|
+| `cerp_test` | `/var/backups/cerp/cerp_test_pre_sol25_20260814-134046.dump` | 72 949 827 octets | `207851f88ff8cf77a400a3fc481716d3feeb20f13c1a4b369c991092a8aaea61` |
+| `cerp_prod` | `/var/backups/cerp/cerp_prod_pre_sol25_20260814-134046.dump` | 49 458 084 octets | `c991d3fedc2c9eab4caa2d14f308968a6410900225f56538ddfb059e40d60507` |
+
+Le preflight a détecté que `cerp_prod` n'avait pas encore le staging
+`20260726_import_assistant_167.sql`. Ce prérequis additif a été sélectionné seul,
+avec le SHA-256 vérifié
+`2527f82ac3e816b3b1289d8a5ba11d4d77ed4532ff369c76ebcd13ef8f57689a` :
+dry-run `1`, application `1`, contrôle post-migration entièrement vrai et
+registre final `applied=1 pending=0 checksum-mismatch=0` pour cette sélection.
+
+Le patch SOL-25 a ensuite été appliqué par sélection immuable, d'abord sur
+`cerp_test` en `0,08 s`, puis sur `cerp_prod` en `0,09 s`. Les deux registres le
+marquent `applied`, sans checksum divergent. La vérification post-migration
+confirme l'intégrité des décisions, au plus un cycle ouvert et les couples
+entité/identifiant des notifications.
+
+HYPERBOX2 exécute l'artefact immuable
+`/srv/cerp/releases/20260814-2892253b` sur les services test et production. Les
+deux endpoints `live` et `ready` renvoient le SHA exact ; PostgreSQL, GED,
+ClamAV et temps réel sont `up`, et les routes revue d'accès et métriques import
+refusent l'anonyme en HTTP `401`.
+
+Sur Coolify, le premier déploiement `x3y783wfvcrjo0msmh1ikdla` a été rollbacké :
+le frontend et le backend construisaient simultanément, la charge hôte a dépassé
+150 et les sondes ont expiré avant que ClamAV et le contrôle temps réel soient
+prêts. Aucun timeout n'a été augmenté. Le retry backend isolé
+`k2lv5faw2maqzxl0h6kstz0j` a terminé avec succès en utilisant la même image et
+le même SHA. L'ancien conteneur a été retiré ; deux paires de contrôles publics
+`live`/`ready` ont renvoyé exclusivement `2892253bcc7a882487943664b58280edd484f9bd`,
+avec DB, GED, antivirus et temps réel `up`. Les routes sensibles refusent
+l'anonyme en HTTP `401`.
+
 ## Tests exécutés
 
 | Contrôle | Résultat |
@@ -97,6 +142,8 @@ place sur la production.
 
 ## Reste réel
 
-Les preuves de migration des bases réelles, de déploiement, de SHA et de santé
-seront ajoutées après la fenêtre opérateur SOL-25. Les anciens patchs en attente
-restent hors de cette fenêtre et doivent conserver leurs propres preflights.
+Les anciens patchs encore en attente sont indépendants de SOL-25 et conservent
+leurs propres preflights et fenêtres opérateur. Le rollback physique du schéma
+SOL-25 n'a volontairement pas été exécuté sur les bases réelles : la preuve de
+restauration et de rollback a été réalisée dans l'environnement PostgreSQL
+jetable, tandis que l'exploitation réelle conserve le schéma additif compatible.
