@@ -119,6 +119,9 @@ export type FinanceCapability =
   | "einvoice_submit"
   | "einvoice_reconcile"
   | "einvoice_admin"
+  | "accounting_export_read"
+  | "accounting_export_execute"
+  | "accounting_export_admin"
   | "settings_manage";
 
 const ROLES = {
@@ -161,6 +164,9 @@ const CAPABILITY_ROLES: Record<FinanceCapability, ReadonlySet<string>> = {
   einvoice_submit: new Set([ROLES.accounting, ROLES.accountant, ROLES.director]),
   einvoice_reconcile: new Set([ROLES.accounting, ROLES.accountant, ROLES.director]),
   einvoice_admin: new Set([ROLES.director, ROLES.administrator]),
+  accounting_export_read: new Set([ROLES.accounting, ROLES.accountant, ROLES.director, ROLES.administrator]),
+  accounting_export_execute: new Set([ROLES.accounting, ROLES.accountant, ROLES.director]),
+  accounting_export_admin: new Set([ROLES.director, ROLES.administrator]),
   settings_manage: new Set([ROLES.director, ROLES.administrator]),
 };
 
