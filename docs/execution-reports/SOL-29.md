@@ -4,7 +4,7 @@
 - Propriétaire : Keenan Martin
 - Issue : `BigFootLime/crp-systems-web#704`
 - Branche : `feature/704-client-portal`
-- Statut fonctionnel : implémenté et validé avant promotion ; les preuves de migration et de déploiement réels seront ajoutées après promotion.
+- Statut : terminé, migré et déployé sur HYPERBOX2 et Coolify ; preuves de clôture ci-dessous.
 
 ## Diagnostic et cause racine
 
@@ -78,9 +78,40 @@ Les traces, captures et vidéos sont configurées uniquement en cas d'échec. Le
 
 Avant toute preuve portail, sauvegarder la base, arrêter les nouvelles invitations, exécuter le rollback fourni et redéployer la release précédente. Dès qu'un compte, audit, accusé ou publication existe, le rollback refuse la suppression ; le rollback opérationnel consiste alors à révoquer les comptes, retirer les publications, redéployer la release précédente et conserver les tables pour audit. Une restauration complète n'est autorisée qu'après décision d'incident et contrôle de la sauvegarde chiffrée.
 
+## Promotion, bases et déploiements réels
+
+### Git
+
+- implémentation backend : `f16d090f52a86d229a85e97f2c788848c044fceb`, PR #506 vers `dev`, puis #507 vers `main` ;
+- correction du gate immuable : `06094bb8101caacf27e2099c251f2a86565c579a`, PR #508 vers `dev`, puis #509 vers `main` ;
+- candidat backend utilisé pour la migration et le déploiement : `304c86766057b5bb22be29df6519d9c0cf72acc2` ;
+- les arbres `origin/dev` et `origin/main` ont été comparés par leur tree SHA et sont identiques ; les worktrees locaux officiels ont été avancés en fast-forward.
+
+### Bases HYPERBOX2
+
+Preflight réel : PostgreSQL 17.10, 154 138 291 octets et 192 clients sur `cerp_test`, 108 467 891 octets et 191 clients sur `cerp_prod`. Le volume de sauvegarde disposait de 386 643 341 312 octets libres pour un seuil calculé de 787 818 546 octets.
+
+| Base | Sauvegarde chiffrée | Taille | SHA-256 | Catalogue |
+|---|---|---:|---|---:|
+| `cerp_test` | `/var/backups/cerp/cerp_test_pre_sol29_20260814-225258.dump.enc` | 73 050 480 octets | `8461469a56e454c1302ba09f95ce8a58c782685277bdeab9575e4b2c42f0d2fc` | 4 554 entrées |
+| `cerp_prod` | `/var/backups/cerp/cerp_prod_pre_sol29_20260814-225258.dump.enc` | 49 577 456 octets | `27dbead9676ac996d536c151b25b07e0d7a16263ea27ea6f1ab88fa9285456ce` | 4 532 entrées |
+
+Les clés sont séparées dans `/root/.cerp-migration-keys/sol29-20260814-225258-{test,prod}.key`, mode 600. Chaque archive a été déchiffrée en `tmpfs`, comparée à son dump source et relue par `pg_restore --list`, puis les copies en clair ont été supprimées.
+
+Le runner a sélectionné exactement `20260814_client_portal_sol29.sql`, d'abord sur test puis sur production. Application : 1 patch par base ; rejeu : 0 ; SHA ledger `d5c203c1c44f61b2b296d8fd08a5a35eb8b65060200119cbf7fe873f215d0f5c`. Les vérifications confirment les relations, privilèges, triggers append-only, rejet multi-client et zéro compte/publication/accusé/audit initial.
+
+La sauvegarde production a été restaurée dans `cerp_restore_verify_sol29_20260814_2258` : 106 583 731 octets, empreinte métier `6e872b29249f5e58f33b02b7756d4abc` identique à la source. La migration, sa vérification puis le rollback ont réussi sur cette restauration ; la base temporaire et le dump clair ont ensuite été supprimés.
+
+### Services
+
+- HYPERBOX2 : release immuable `/srv/cerp/releases/20260814-304c8676`, test et production `ready`, version complète correcte, DB/GED/antivirus/realtime `up`, routes portail et administration anonymes 401, CORS portail 204.
+- Secrets test et production indépendants : `/etc/cerp/client-portal-{test,prod}.env`, root-only 600, 96 caractères mesurés sans affichage.
+- Coolify : variables `CLIENT_PORTAL_JWT_SECRET` runtime-only et `CLIENT_PORTAL_PUBLIC_URL` chiffrées au repos. Rolling update `girhdqlie4pas5kttbfvow88` terminé le 14/08/2026 à 21:09:54 UTC.
+- Backend public : image `rcccokw0wgcw0ck44g0wk0ck:304c86766057b5bb22be29df6519d9c0cf72acc2`, readiness 200, quatre dépendances `up`, portail/admin anonymes 401 et CORS 204.
+- Frontend public : image `o00cgcso04ww0ggsgkg4wgg8:fcb96d0d234767cebb52fd424bcb9a6cef4204b5`, `/portal` 200.
+
+La vérification Chrome du build réellement servi montre le formulaire « Accéder à mon espace », les champs email/mot de passe, la récupération, le retour collaborateurs et l'avertissement de traçabilité. URL finale `/portal/login`, titre `CERP`, zéro erreur console.
+
 ## Restant réellement à faire
 
-- promouvoir les commits jusqu'à `dev` puis `main` dans les deux dépôts ;
-- sauvegarder et appliquer le patch à `cerp_test`, puis `cerp_prod`, avec preflight, vérification et rejeu ;
-- provisionner les secrets portail séparés, déployer Coolify/HYPERBOX2 et vérifier les SHA de santé ;
-- exécuter la vérification navigateur post-déploiement et reporter ces preuves ici.
+Aucun développement, changement de données ou déploiement SOL-29 n'est en attente. Après le commit documentaire auto-référentiel, l'invariant final est de refaire converger `origin/main`, `health.version` et l'image Coolify sur le nouveau SHA, sans changement de comportement ni de schéma.
