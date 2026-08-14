@@ -10,6 +10,7 @@ COPY tsconfig.json ./
 COPY src ./src
 # `npm run build` executes the production-data boundary before and after tsc.
 # Keep that guard inside the container build used by Coolify and HyperBox2.
+COPY scripts/openapi ./scripts/openapi
 COPY scripts/security ./scripts/security
 COPY scripts/build ./scripts/build
 RUN npm run build
