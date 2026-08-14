@@ -148,5 +148,9 @@ describe("DGFiP electronic invoice contract", () => {
       ...event,
       contentStorageReference: "https://storage.invalid/doc.xml?token=secret",
     })).toThrowError(/stockage invalide/i);
+    expect(() => normalizeElectronicInvoiceProviderEvent({
+      ...event,
+      attachments: [null] as never,
+    })).toThrowError(/pièce jointe invalides/i);
   });
 });

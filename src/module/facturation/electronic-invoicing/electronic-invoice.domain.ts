@@ -231,12 +231,22 @@ export function normalizeElectronicInvoiceProviderEvent(
   if (!Array.isArray(event.attachments) || event.attachments.length > 50) {
     throw new HttpError(422, "EINVOICE_PROVIDER_EVENT_INVALID", "Métadonnées de pièces jointes invalides.");
   }
-  const attachments = event.attachments.map((attachment, index) => ({
-    filename: boundedProviderIdentifier(attachment.filename, `attachments[${index}].filename`),
-    contentType: boundedProviderIdentifier(attachment.contentType, `attachments[${index}].contentType`),
-    contentSha256: requiredSha256(attachment.contentSha256, `attachments[${index}].contentSha256`),
-    storageReference: requiredStorageReference(attachment.storageReference, `attachments[${index}].storageReference`),
-  }));
+  const attachments = (event.attachments as ReadonlyArray<unknown>).map((rawAttachment, index) => {
+    if (!rawAttachment || typeof rawAttachment !== "object" || Array.isArray(rawAttachment)) {
+      throw new HttpError(
+        422,
+        "EINVOICE_PROVIDER_EVENT_INVALID",
+        `Métadonnées de pièce jointe invalides à l'index ${index}.`
+      );
+    }
+    const attachment = rawAttachment as Record<string, unknown>;
+    return {
+      filename: boundedProviderIdentifier(attachment.filename, `attachments[${index}].filename`),
+      contentType: boundedProviderIdentifier(attachment.contentType, `attachments[${index}].contentType`),
+      contentSha256: requiredSha256(attachment.contentSha256, `attachments[${index}].contentSha256`),
+      storageReference: requiredStorageReference(attachment.storageReference, `attachments[${index}].storageReference`),
+    };
+  });
   const rejection = event.rejectionMessage === null
     ? null
     : sanitizedProviderError({ code: event.rejectionCode, message: event.rejectionMessage }).message;
