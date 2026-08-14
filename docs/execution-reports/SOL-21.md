@@ -104,8 +104,9 @@ vrai backend PostgreSQL.
   partielles, conformément à la règle de non-fabrication ;
 - le seuil d'encours âgé et les seuils de charge sont contractuels `SOL-21.v1` ;
   tout changement doit versionner la définition ;
-- la migration production reste à appliquer dans une fenêtre autorisée selon le
-  runbook, après sauvegarde vérifiée. Elle n'a pas été appliquée pendant ce travail.
+- la migration SOL-21 est maintenant appliquée sur `cerp_test` et `cerp_prod` ;
+  les autres patchs encore en attente restent hors périmètre et n'ont pas été
+  appliqués implicitement par cette fenêtre ciblée.
 
 ## Rollback
 
@@ -114,3 +115,46 @@ les objets additifs. Avant toute préférence réelle, exporter la table puis ut
 le rollback support dans une session explicitement autorisée. Après usage, geler
 les écritures et restaurer le dump pré-migration dans une nouvelle base ; ne jamais
 supprimer silencieusement préférences, pointages ou preuves d'exécution.
+
+## Clôture opérationnelle du 14/08/2026
+
+La vérification post-promotion a identifié la cause exacte du reliquat : le
+runbook demandait une sélection immuable `--only`, mais
+`20260814_planning_execution_intelligence_0021.sql` n'était pas inscrit dans
+`IMMUTABLE_ONLY_PATCHES`. Le runner refusait donc correctement toute exécution
+ciblée. Le patch est désormais lié à son SHA-256 LF canonique
+`ca667814cae65e695ec45dccf407752432aa9e6f7e61b4d9a38ae6fcfd339107`, avec
+test de non-régression dans `db-patches.runner.test.ts`.
+
+Preflight réel PostgreSQL 17.10 :
+
+- `cerp_test` : 153 646 771 octets, 2 événements planning, 1 pointage, 1
+  calendrier actif ;
+- `cerp_prod` : 107 984 563 octets, 0 événement planning, 0 pointage, 0
+  calendrier actif ; l'absence de calendrier reste un état métier explicite,
+  jamais une capacité nulle fabriquée ;
+- 386 927 382 528 octets libres sur le volume de sauvegarde.
+
+Sauvegardes pré-migration AES-256-CBC/PBKDF2, clé séparée et non journalisée :
+
+- test : `/var/backups/cerp/cerp_test_pre_sol21_20260814-185559.dump.enc`,
+  73 017 344 octets, SHA-256
+  `5251339111f328d86b41d5e4b6fbaff030e35797b71646fad2db20d71af34efe` ;
+- production : `/var/backups/cerp/cerp_prod_pre_sol21_20260814-185559.dump.enc`,
+  49 544 128 octets, SHA-256
+  `2d438bc2f268b42a1823617c16e8fe1f4786b930e95a586727fb0ecdc11e0978` ;
+- déchiffrement vérifié par égalité des empreintes des dumps source et
+  déchiffrés, puis catalogues `pg_restore` lisibles.
+
+Application ciblée : test puis production ont chacun appliqué exactement un
+patch ; preflight, verify, privilège `cerp_app`, ledger et second rejeu à zéro
+ont réussi. Une restauration réelle du dump production déchiffré a été faite
+dans `cerp_restore_verify_sol21_20260814` : 105 821 875 octets, 18 utilisateurs,
+0 événement planning et 0 pointage, sans table ni ledger SOL-21. La base
+temporaire a ensuite été supprimée et son absence vérifiée.
+
+Contrôles applicatifs après migration : readiness HYPERBOX2 test et production
+HTTP 200, PostgreSQL/GED/antivirus/realtime `up`, et route planning anonyme
+refusée HTTP 401. Le correctif du runner passe 24/24 tests ciblés, le typecheck et
+le build backend avec frontière de données production validée. La suite Vitest
+backend complète a également terminé avec le code 0 en 42,9 s.
