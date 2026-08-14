@@ -21,6 +21,13 @@ file de livraison transmettait des paramètres inutilisés avant les paramètres
 référencés. PostgreSQL ne pouvait pas typer `$1`. La numérotation a été corrigée
 à la source ; aucun timeout, mock ou fallback n'a été ajouté.
 
+Le preflight opérateur réel a ensuite démontré un second défaut avant écriture :
+le patch était couvert par la répétition SOL-06 mais absent du registre immuable
+`--only` du runner d'exploitation. Son SHA-256 LF canonique
+`f14a8d356312133841168e681f4266142ff95f7e4a07dc6c2a18dd50b9a4f52e`
+est désormais enregistré et testé. Le runner avait bien refusé les deux bases
+avant toute mutation.
+
 ## Choix d'architecture
 
 - le ledger Finance existant reste l'autorité pour factures partielles, avoirs,
