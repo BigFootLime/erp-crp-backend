@@ -4,6 +4,8 @@ import { authenticateToken } from "../../auth/middlewares/auth.middleware";
 import { requireQualityCapability } from "../middlewares/quality-authorization.middleware";
 import {
   consumeDerogation,
+  assignQualityCause,
+  createQualityCost,
   createDeliveryPolicy,
   createDerogation,
   createExecution,
@@ -23,6 +25,8 @@ import {
   previewExecution,
   previewVerdict,
   qualityCenter,
+  qualityIntelligence,
+  qualityInvestigation,
   recordMeasurements,
   reviseDeliveryPolicy,
   revisePlan,
@@ -60,6 +64,9 @@ const requireDerogationTransitionCapability: RequestHandler = (req, res, next) =
 // Centre Qualité et éligibilité (lecture).
 router.get("/center", requireQualityCapability("read"), qualityCenter);
 router.get("/eligibility", requireQualityCapability("read"), evaluateEligibility);
+router.get("/intelligence", requireQualityCapability("analytics_read"), qualityIntelligence);
+router.get("/intelligence/investigation", requireQualityCapability("analytics_read"), qualityInvestigation);
+router.post("/intelligence/costs", requireQualityCapability("capa_manage"), createQualityCost);
 
 // Politique globale de liberation des BL : aucune valeur par defaut n'est creee.
 router.get("/delivery-release-policies", requireQualityCapability("read"), listDeliveryPolicies);
@@ -113,5 +120,6 @@ router.post(
 router.get("/non-conformities/:id/analysis", requireQualityCapability("read"), getNcAnalysis);
 router.put("/non-conformities/:id/analysis", requireQualityCapability("nc_manage"), upsertNcAnalysis);
 router.post("/non-conformities/:id/transitions", requireQualityCapability("nc_manage"), transitionNc);
+router.put("/non-conformities/:id/cause", requireQualityCapability("nc_manage"), assignQualityCause);
 
 export default router;

@@ -10,10 +10,13 @@ import { ZodError, type ZodTypeAny, type z } from "zod";
 import { asyncHandler } from "../../../utils/asyncHandler";
 import { HttpError } from "../../../utils/httpError";
 import { getClientIp, parseDevice } from "../../../utils/requestMeta";
+import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 
 import type { QualityActor } from "../repository/quality-360.repository";
 import {
   consumeDerogationSchema,
+  assignQualityCauseSchema,
+  createQualityCostSchema,
   createDeliveryPolicySchema,
   createDerogationSchema,
   createExecutionSchema,
@@ -31,6 +34,8 @@ import {
   planApplicabilityQuerySchema,
   planTransitionSchema,
   qualityCenterQuerySchema,
+  qualityIntelligenceQuerySchema,
+  qualityInvestigationQuerySchema,
   recordMeasurementsSchema,
   reviseDeliveryPolicySchema,
   revisePlanSchema,
@@ -40,6 +45,8 @@ import {
 } from "../validators/quality-360.validators";
 import {
   svcConsumeDerogation,
+  svcAssignQualityCause,
+  svcCreateQualityCost,
   svcCreateDeliveryPolicy,
   svcCreateDerogation,
   svcCreateExecution,
@@ -59,6 +66,8 @@ import {
   svcPreviewExecution,
   svcPreviewVerdict,
   svcQualityCenter,
+  svcQualityIntelligence,
+  svcQualityInvestigation,
   svcRecordMeasurements,
   svcReviseDeliveryPolicy,
   svcRevisePlan,
@@ -388,4 +397,55 @@ export const evaluateEligibility: RequestHandler = asyncHandler(async (req, res)
 export const qualityCenter: RequestHandler = asyncHandler(async (req, res) => {
   const query = parseOrThrow(qualityCenterQuerySchema, req.query);
   res.json(await svcQualityCenter({ horizonDays: query.horizon_days }));
+});
+
+export const qualityIntelligence: RequestHandler = asyncHandler(async (req, res) => {
+  const query = parseOrThrow(qualityIntelligenceQuerySchema, req.query);
+  res.json(await svcQualityIntelligence(query));
+});
+
+export const qualityInvestigation: RequestHandler = asyncHandler(async (req, res) => {
+  const query = parseOrThrow(qualityInvestigationQuerySchema, req.query);
+  const actor = buildActor(req);
+  const out = await svcQualityInvestigation({ query, role: actor.role });
+  await repoInsertAuditLog({
+    user_id: actor.user_id,
+    body: {
+      event_type: "ACTION",
+      action: "qualite.investigation.read",
+      page_key: actor.page_key,
+      entity_type: query.type,
+      entity_id: query.id,
+      path: actor.path,
+      client_session_id: actor.client_session_id,
+      details: {
+        coverage: out.coverage.state,
+        nodes: out.graph.summary.node_count,
+        edges: out.graph.summary.edge_count,
+        missing_link_count: out.coverage.missing_link_count,
+      },
+    },
+    ip: actor.ip,
+    user_agent: actor.user_agent,
+    device_type: actor.device_type,
+    os: actor.os,
+    browser: actor.browser,
+  });
+  res.json(out);
+});
+
+export const createQualityCost: RequestHandler = asyncHandler(async (req, res) => {
+  const { body } = parseOrThrow(createQualityCostSchema, { body: req.body });
+  res.status(201).json(
+    await svcCreateQualityCost({
+      body,
+      actor: buildActor(req),
+      idempotencyKey: idempotencyKey(req),
+    })
+  );
+});
+
+export const assignQualityCause: RequestHandler = asyncHandler(async (req, res) => {
+  const parsed = parseOrThrow(assignQualityCauseSchema, { params: req.params, body: req.body });
+  res.json(await svcAssignQualityCause({ id: parsed.params.id, body: parsed.body, actor: buildActor(req) }));
 });
