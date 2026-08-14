@@ -19,7 +19,19 @@ export const notificationIdParamSchema = z.object({
 
 export const listNotificationsQuerySchema = z.object({
   unread_only: z.preprocess(parseBoolean, z.boolean().optional()).default(false),
+  include_muted: z.preprocess(parseBoolean, z.boolean().optional()).default(false),
+  include_expired: z.preprocess(parseBoolean, z.boolean().optional()).default(false),
   limit: z.coerce.number().int().min(1).max(100).optional().default(20),
 });
 
 export type ListNotificationsQueryDTO = z.infer<typeof listNotificationsQuerySchema>;
+
+export const muteNotificationSchema = z.object({
+  params: notificationIdParamSchema.shape.params,
+  body: z.object({ muted_until: z.string().datetime({ offset: true }) }).strict(),
+});
+
+export const escalateNotificationSchema = z.object({
+  params: notificationIdParamSchema.shape.params,
+  body: z.object({ level: z.number().int().min(1).max(5) }).strict(),
+});

@@ -5,9 +5,14 @@ import { asyncHandler } from "../../../utils/asyncHandler";
 import { HttpError } from "../../../utils/httpError";
 import { getClientIp, parseDevice } from "../../../utils/requestMeta";
 import * as service from "../services/access-control.service";
+import * as reviewService from "../services/access-review.service";
 import type { AccessAuditContext } from "../types/access-control.types";
 import {
   listAccessEventsQuerySchema,
+  accessReviewIdSchema,
+  createAccessReviewSchema,
+  decideAccessReviewItemSchema,
+  listAccessReviewsQuerySchema,
   setModuleDefaultSchema,
   setUserModuleAccessSchema,
   setUserModulesBulkSchema,
@@ -96,4 +101,46 @@ export const postUnlockAll: RequestHandler = asyncHandler(async (req, res) => {
 export const getAccessEvents: RequestHandler = asyncHandler(async (req, res) => {
   const query = listAccessEventsQuerySchema.parse(req.query);
   res.json(await service.listAccessEvents(query));
+});
+
+function rawIdempotencyKey(req: Request): string | undefined {
+  const raw = req.headers["idempotency-key"];
+  return typeof raw === "string" ? raw : undefined;
+}
+
+export const getAccessReviews: RequestHandler = asyncHandler(async (req, res) => {
+  const query = listAccessReviewsQuerySchema.parse(req.query);
+  res.json(await reviewService.listAccessReviews(query.limit));
+});
+
+export const postAccessReview: RequestHandler = asyncHandler(async (req, res) => {
+  const dto = createAccessReviewSchema.parse({ body: req.body });
+  const result = await reviewService.createAccessReview({
+    ...dto.body,
+    raw_idempotency_key: rawIdempotencyKey(req),
+    audit: buildAuditContext(req),
+  });
+  res.status(result.replayed ? 200 : 201).json(result);
+});
+
+export const getAccessReview: RequestHandler = asyncHandler(async (req, res) => {
+  const { reviewId } = accessReviewIdSchema.parse(req.params);
+  res.json(await reviewService.getAccessReview(reviewId));
+});
+
+export const putAccessReviewDecision: RequestHandler = asyncHandler(async (req, res) => {
+  const dto = decideAccessReviewItemSchema.parse({ params: req.params, body: req.body });
+  res.json(await reviewService.decideAccessReviewItem({
+    review_id: dto.params.reviewId,
+    user_id: Number(dto.params.userId),
+    decision: dto.body.decision,
+    rationale: dto.body.rationale,
+    raw_idempotency_key: rawIdempotencyKey(req),
+    audit: buildAuditContext(req),
+  }));
+});
+
+export const postCloseAccessReview: RequestHandler = asyncHandler(async (req, res) => {
+  const { reviewId } = accessReviewIdSchema.parse(req.params);
+  res.json(await reviewService.closeAccessReview({ review_id: reviewId, audit: buildAuditContext(req) }));
 });

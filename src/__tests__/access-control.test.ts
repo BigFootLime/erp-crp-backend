@@ -531,6 +531,24 @@ describe("Surface HTTP /admin/access", () => {
     expect(res.body).toEqual({ error: "Accès interdit" });
   });
 
+  it("refuse aussi la création d'une revue d'accès à un Directeur non superadmin", async () => {
+    repo.repoIsSuperadmin.mockResolvedValue(false);
+    const res = await request(app)
+      .post("/api/v1/admin/access/reviews")
+      .set("x-test-role", "Directeur")
+      .set("x-test-user-id", String(OPERATEUR_ID))
+      .set("Idempotency-Key", "review-rbac-negative")
+      .send({
+        inactivity_days: 90,
+        login_failure_window_days: 30,
+        failed_login_threshold: 5,
+        due_in_days: 14,
+      });
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: "Accès interdit" });
+  });
+
   it("403 fail-closed quand la résolution du statut superadmin échoue", async () => {
     repo.repoIsSuperadmin.mockRejectedValue(new Error("connexion perdue"));
     const res = await request(app)

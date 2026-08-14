@@ -171,7 +171,30 @@ export function enqueueAppNotificationCreated(
   payload: AppNotificationCreatedPayload,
   options: TransactionalRealtimeOptions
 ): Promise<string> {
-  return enqueueDispatch(tx, REALTIME_EVENTS.APP_NOTIFICATION_CREATED, payload, [{ scope: "user", userId }], options);
+  // Keep the version-1 realtime envelope deliberately narrower than the
+  // persisted notification model. Notification records can gain fields
+  // without making historical outbox events unreadable or violating the
+  // exact-key contract enforced by the control plane.
+  const realtimePayload: AppNotificationCreatedPayload = {
+    id: payload.id,
+    user_id: payload.user_id,
+    kind: payload.kind,
+    title: payload.title,
+    message: payload.message,
+    severity: payload.severity,
+    action_url: payload.action_url,
+    action_label: payload.action_label,
+    payload: payload.payload,
+    created_at: payload.created_at,
+    read_at: payload.read_at,
+  };
+  return enqueueDispatch(
+    tx,
+    REALTIME_EVENTS.APP_NOTIFICATION_CREATED,
+    realtimePayload,
+    [{ scope: "user", userId }],
+    options
+  );
 }
 
 export function enqueueChatMessageCreated(
