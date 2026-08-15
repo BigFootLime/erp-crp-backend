@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "3168df1774ce027e7360375ded632ab9c1701e47ad833b1f1211785aab868f22";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "41438efe227fe1d0c476cf21800d48e815f854348d796c10247790e2250dcd10";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -183,60 +183,6 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/admin/access/events",
-    "source": "src/module/access-control/routes/access-control.routes.ts:15",
-    "middleware": [
-      "anonymous",
-      "authenticateToken",
-      "moduleAccessGate",
-      "authenticateToken",
-      "requireSuperadmin",
-      "controller.getAccessEvents"
-    ],
-    "authenticated": true,
-    "rbac": [
-      "moduleAccessGate",
-      "requireSuperadmin"
-    ]
-  },
-  {
-    "method": "put",
-    "path": "/admin/access/modules/{moduleKey}/default",
-    "source": "src/module/access-control/routes/access-control.routes.ts:21",
-    "middleware": [
-      "anonymous",
-      "authenticateToken",
-      "moduleAccessGate",
-      "authenticateToken",
-      "requireSuperadmin",
-      "controller.putModuleDefault"
-    ],
-    "authenticated": true,
-    "rbac": [
-      "moduleAccessGate",
-      "requireSuperadmin"
-    ]
-  },
-  {
-    "method": "get",
-    "path": "/admin/access/overview",
-    "source": "src/module/access-control/routes/access-control.routes.ts:14",
-    "middleware": [
-      "anonymous",
-      "authenticateToken",
-      "moduleAccessGate",
-      "authenticateToken",
-      "requireSuperadmin",
-      "controller.getOverview"
-    ],
-    "authenticated": true,
-    "rbac": [
-      "moduleAccessGate",
-      "requireSuperadmin"
-    ]
-  },
-  {
-    "method": "get",
-    "path": "/admin/access/reviews",
     "source": "src/module/access-control/routes/access-control.routes.ts:16",
     "middleware": [
       "anonymous",
@@ -244,16 +190,58 @@ export const GENERATED_ROUTE_INVENTORY = [
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
-      "controller.getAccessReviews"
+      "requireRecentMfaForMutations",
+      "controller.getAccessEvents"
     ],
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
-      "requireSuperadmin"
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
     ]
   },
   {
-    "method": "post",
+    "method": "put",
+    "path": "/admin/access/modules/{moduleKey}/default",
+    "source": "src/module/access-control/routes/access-control.routes.ts:22",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
+      "controller.putModuleDefault"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/admin/access/overview",
+    "source": "src/module/access-control/routes/access-control.routes.ts:15",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
+      "controller.getOverview"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
+    ]
+  },
+  {
+    "method": "get",
     "path": "/admin/access/reviews",
     "source": "src/module/access-control/routes/access-control.routes.ts:17",
     "middleware": [
@@ -262,17 +250,19 @@ export const GENERATED_ROUTE_INVENTORY = [
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
-      "controller.postAccessReview"
+      "requireRecentMfaForMutations",
+      "controller.getAccessReviews"
     ],
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
-      "requireSuperadmin"
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
     ]
   },
   {
-    "method": "get",
-    "path": "/admin/access/reviews/{reviewId}",
+    "method": "post",
+    "path": "/admin/access/reviews",
     "source": "src/module/access-control/routes/access-control.routes.ts:18",
     "middleware": [
       "anonymous",
@@ -280,35 +270,19 @@ export const GENERATED_ROUTE_INVENTORY = [
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
-      "controller.getAccessReview"
+      "requireRecentMfaForMutations",
+      "controller.postAccessReview"
     ],
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
-      "requireSuperadmin"
-    ]
-  },
-  {
-    "method": "post",
-    "path": "/admin/access/reviews/{reviewId}/close",
-    "source": "src/module/access-control/routes/access-control.routes.ts:20",
-    "middleware": [
-      "anonymous",
-      "authenticateToken",
-      "moduleAccessGate",
-      "authenticateToken",
       "requireSuperadmin",
-      "controller.postCloseAccessReview"
-    ],
-    "authenticated": true,
-    "rbac": [
-      "moduleAccessGate",
-      "requireSuperadmin"
+      "requireRecentMfaForMutations"
     ]
   },
   {
-    "method": "put",
-    "path": "/admin/access/reviews/{reviewId}/users/{userId}/decision",
+    "method": "get",
+    "path": "/admin/access/reviews/{reviewId}",
     "source": "src/module/access-control/routes/access-control.routes.ts:19",
     "middleware": [
       "anonymous",
@@ -316,17 +290,79 @@ export const GENERATED_ROUTE_INVENTORY = [
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
+      "requireRecentMfaForMutations",
+      "controller.getAccessReview"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/admin/access/reviews/{reviewId}/close",
+    "source": "src/module/access-control/routes/access-control.routes.ts:21",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
+      "controller.postCloseAccessReview"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
+    ]
+  },
+  {
+    "method": "put",
+    "path": "/admin/access/reviews/{reviewId}/users/{userId}/decision",
+    "source": "src/module/access-control/routes/access-control.routes.ts:20",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
       "controller.putAccessReviewDecision"
     ],
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
-      "requireSuperadmin"
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
     ]
   },
   {
     "method": "post",
     "path": "/admin/access/unlock-all",
+    "source": "src/module/access-control/routes/access-control.routes.ts:25",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
+      "controller.postUnlockAll"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
+    ]
+  },
+  {
+    "method": "put",
+    "path": "/admin/access/users/{userId}/modules",
     "source": "src/module/access-control/routes/access-control.routes.ts:24",
     "middleware": [
       "anonymous",
@@ -334,17 +370,19 @@ export const GENERATED_ROUTE_INVENTORY = [
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
-      "controller.postUnlockAll"
+      "requireRecentMfaForMutations",
+      "controller.putUserModulesBulk"
     ],
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
-      "requireSuperadmin"
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
     ]
   },
   {
     "method": "put",
-    "path": "/admin/access/users/{userId}/modules",
+    "path": "/admin/access/users/{userId}/modules/{moduleKey}",
     "source": "src/module/access-control/routes/access-control.routes.ts:23",
     "middleware": [
       "anonymous",
@@ -352,190 +390,172 @@ export const GENERATED_ROUTE_INVENTORY = [
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
-      "controller.putUserModulesBulk"
-    ],
-    "authenticated": true,
-    "rbac": [
-      "moduleAccessGate",
-      "requireSuperadmin"
-    ]
-  },
-  {
-    "method": "put",
-    "path": "/admin/access/users/{userId}/modules/{moduleKey}",
-    "source": "src/module/access-control/routes/access-control.routes.ts:22",
-    "middleware": [
-      "anonymous",
-      "authenticateToken",
-      "moduleAccessGate",
-      "authenticateToken",
-      "requireSuperadmin",
+      "requireRecentMfaForMutations",
       "controller.putUserModuleAccess"
     ],
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
-      "requireSuperadmin"
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
     ]
   },
   {
     "method": "get",
     "path": "/admin/analytics",
-    "source": "src/module/admin/routes/admin.routes.ts:35",
+    "source": "src/module/admin/routes/admin.routes.ts:37",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
+      "requireRecentMfaForMutations",
       "getAdminAnalytics"
     ],
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
-      "requireSuperadmin"
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
     ]
   },
   {
     "method": "get",
     "path": "/admin/client-portal/accounts",
-    "source": "src/module/client-portal/routes/client-portal-admin.routes.ts:9",
-    "middleware": [
-      "anonymous",
-      "authenticateToken",
-      "moduleAccessGate",
-      "requireSuperadmin",
-      "controller.listAdminAccounts"
-    ],
-    "authenticated": true,
-    "rbac": [
-      "moduleAccessGate",
-      "requireSuperadmin"
-    ]
-  },
-  {
-    "method": "post",
-    "path": "/admin/client-portal/accounts",
-    "source": "src/module/client-portal/routes/client-portal-admin.routes.ts:10",
-    "middleware": [
-      "anonymous",
-      "authenticateToken",
-      "moduleAccessGate",
-      "requireSuperadmin",
-      "controller.createAdminAccount"
-    ],
-    "authenticated": true,
-    "rbac": [
-      "moduleAccessGate",
-      "requireSuperadmin"
-    ]
-  },
-  {
-    "method": "post",
-    "path": "/admin/client-portal/accounts/{accountId}/invitations",
     "source": "src/module/client-portal/routes/client-portal-admin.routes.ts:11",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
       "requireSuperadmin",
-      "controller.createAdminInvitation"
+      "requireRecentMfaForMutations",
+      "controller.listAdminAccounts"
     ],
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
-      "requireSuperadmin"
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
     ]
   },
   {
-    "method": "patch",
-    "path": "/admin/client-portal/accounts/{accountId}/status",
+    "method": "post",
+    "path": "/admin/client-portal/accounts",
     "source": "src/module/client-portal/routes/client-portal-admin.routes.ts:12",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
       "requireSuperadmin",
-      "controller.patchAdminAccountStatus"
+      "requireRecentMfaForMutations",
+      "controller.createAdminAccount"
     ],
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
-      "requireSuperadmin"
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
     ]
   },
   {
-    "method": "get",
-    "path": "/admin/client-portal/publications",
+    "method": "post",
+    "path": "/admin/client-portal/accounts/{accountId}/invitations",
     "source": "src/module/client-portal/routes/client-portal-admin.routes.ts:13",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
       "requireSuperadmin",
-      "controller.listAdminPublications"
+      "requireRecentMfaForMutations",
+      "controller.createAdminInvitation"
     ],
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
-      "requireSuperadmin"
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
     ]
   },
   {
-    "method": "post",
-    "path": "/admin/client-portal/publications",
+    "method": "patch",
+    "path": "/admin/client-portal/accounts/{accountId}/status",
     "source": "src/module/client-portal/routes/client-portal-admin.routes.ts:14",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
       "requireSuperadmin",
-      "controller.createAdminPublication"
+      "requireRecentMfaForMutations",
+      "controller.patchAdminAccountStatus"
     ],
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
-      "requireSuperadmin"
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
     ]
   },
   {
-    "method": "post",
-    "path": "/admin/client-portal/publications/{publicationId}/revoke",
+    "method": "get",
+    "path": "/admin/client-portal/publications",
     "source": "src/module/client-portal/routes/client-portal-admin.routes.ts:15",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
       "requireSuperadmin",
+      "requireRecentMfaForMutations",
+      "controller.listAdminPublications"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/admin/client-portal/publications",
+    "source": "src/module/client-portal/routes/client-portal-admin.routes.ts:16",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
+      "controller.createAdminPublication"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/admin/client-portal/publications/{publicationId}/revoke",
+    "source": "src/module/client-portal/routes/client-portal-admin.routes.ts:17",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
       "controller.revokeAdminPublication"
     ],
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
-      "requireSuperadmin"
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
     ]
   },
   {
     "method": "get",
     "path": "/admin/login-logs",
-    "source": "src/module/admin/routes/admin.routes.ts:34",
-    "middleware": [
-      "anonymous",
-      "authenticateToken",
-      "moduleAccessGate",
-      "authenticateToken",
-      "requireSuperadmin",
-      "listLoginLogsAdmin"
-    ],
-    "authenticated": true,
-    "rbac": [
-      "moduleAccessGate",
-      "requireSuperadmin"
-    ]
-  },
-  {
-    "method": "get",
-    "path": "/admin/operations",
     "source": "src/module/admin/routes/admin.routes.ts:36",
     "middleware": [
       "anonymous",
@@ -543,53 +563,39 @@ export const GENERATED_ROUTE_INVENTORY = [
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
+      "requireRecentMfaForMutations",
+      "listLoginLogsAdmin"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/admin/operations",
+    "source": "src/module/admin/routes/admin.routes.ts:38",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
       "getOperationsConsole"
     ],
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
-      "requireSuperadmin"
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
     ]
   },
   {
     "method": "get",
     "path": "/admin/roles",
-    "source": "src/module/admin/routes/admin.routes.ts:28",
-    "middleware": [
-      "anonymous",
-      "authenticateToken",
-      "moduleAccessGate",
-      "authenticateToken",
-      "requireSuperadmin",
-      "listRolesAdmin"
-    ],
-    "authenticated": true,
-    "rbac": [
-      "moduleAccessGate",
-      "requireSuperadmin"
-    ]
-  },
-  {
-    "method": "get",
-    "path": "/admin/users",
-    "source": "src/module/admin/routes/admin.routes.ts:27",
-    "middleware": [
-      "anonymous",
-      "authenticateToken",
-      "moduleAccessGate",
-      "authenticateToken",
-      "requireSuperadmin",
-      "listUsersAdmin"
-    ],
-    "authenticated": true,
-    "rbac": [
-      "moduleAccessGate",
-      "requireSuperadmin"
-    ]
-  },
-  {
-    "method": "post",
-    "path": "/admin/users",
     "source": "src/module/admin/routes/admin.routes.ts:30",
     "middleware": [
       "anonymous",
@@ -597,17 +603,19 @@ export const GENERATED_ROUTE_INVENTORY = [
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
-      "createUserAdmin"
+      "requireRecentMfaForMutations",
+      "listRolesAdmin"
     ],
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
-      "requireSuperadmin"
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
     ]
   },
   {
     "method": "get",
-    "path": "/admin/users/{id}",
+    "path": "/admin/users",
     "source": "src/module/admin/routes/admin.routes.ts:29",
     "middleware": [
       "anonymous",
@@ -615,16 +623,38 @@ export const GENERATED_ROUTE_INVENTORY = [
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
-      "getUserAdmin"
+      "requireRecentMfaForMutations",
+      "listUsersAdmin"
     ],
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
-      "requireSuperadmin"
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
     ]
   },
   {
-    "method": "patch",
+    "method": "post",
+    "path": "/admin/users",
+    "source": "src/module/admin/routes/admin.routes.ts:32",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
+      "createUserAdmin"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
+    ]
+  },
+  {
+    "method": "get",
     "path": "/admin/users/{id}",
     "source": "src/module/admin/routes/admin.routes.ts:31",
     "middleware": [
@@ -633,143 +663,159 @@ export const GENERATED_ROUTE_INVENTORY = [
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
+      "requireRecentMfaForMutations",
+      "getUserAdmin"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
+    ]
+  },
+  {
+    "method": "patch",
+    "path": "/admin/users/{id}",
+    "source": "src/module/admin/routes/admin.routes.ts:33",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
       "patchUserAdmin"
     ],
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
-      "requireSuperadmin"
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
     ]
   },
   {
     "method": "post",
     "path": "/admin/users/{id}/invitations",
-    "source": "src/module/admin/routes/admin.routes.ts:32",
+    "source": "src/module/admin/routes/admin.routes.ts:34",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
+      "requireRecentMfaForMutations",
       "createAccountInvitationAdmin"
     ],
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
-      "requireSuperadmin"
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
     ]
   },
   {
     "method": "patch",
     "path": "/admin/users/{id}/password",
-    "source": "src/module/admin/routes/admin.routes.ts:39",
+    "source": "src/module/admin/routes/admin.routes.ts:41",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
+      "requireRecentMfaForMutations",
       "resetUserPasswordAdmin"
     ],
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
-      "requireSuperadmin"
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
     ]
   },
   {
     "method": "post",
     "path": "/admin/users/{id}/password-reset-token",
-    "source": "src/module/admin/routes/admin.routes.ts:38",
+    "source": "src/module/admin/routes/admin.routes.ts:40",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
+      "requireRecentMfaForMutations",
       "createPasswordResetTokenAdmin"
     ],
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
-      "requireSuperadmin"
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
     ]
   },
   {
     "method": "get",
     "path": "/admin/webhooks/deliveries",
-    "source": "src/module/integrations/webhooks/webhook.routes.ts:31",
+    "source": "src/module/integrations/webhooks/webhook.routes.ts:33",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
+      "requireRecentMfaForMutations",
       "getWebhookDeliveries"
     ],
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
-      "requireSuperadmin"
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
     ]
   },
   {
     "method": "post",
     "path": "/admin/webhooks/deliveries/{id}/replay",
-    "source": "src/module/integrations/webhooks/webhook.routes.ts:32",
+    "source": "src/module/integrations/webhooks/webhook.routes.ts:34",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
+      "requireRecentMfaForMutations",
       "postWebhookReplay"
     ],
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
-      "requireSuperadmin"
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
     ]
   },
   {
     "method": "get",
     "path": "/admin/webhooks/events",
-    "source": "src/module/integrations/webhooks/webhook.routes.ts:24",
+    "source": "src/module/integrations/webhooks/webhook.routes.ts:26",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
+      "requireRecentMfaForMutations",
       "getWebhookEvents"
     ],
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
-      "requireSuperadmin"
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
     ]
   },
   {
     "method": "get",
     "path": "/admin/webhooks/readiness",
-    "source": "src/module/integrations/webhooks/webhook.routes.ts:23",
-    "middleware": [
-      "anonymous",
-      "authenticateToken",
-      "moduleAccessGate",
-      "authenticateToken",
-      "requireSuperadmin",
-      "getWebhookReadiness"
-    ],
-    "authenticated": true,
-    "rbac": [
-      "moduleAccessGate",
-      "requireSuperadmin"
-    ]
-  },
-  {
-    "method": "get",
-    "path": "/admin/webhooks/subscriptions",
     "source": "src/module/integrations/webhooks/webhook.routes.ts:25",
     "middleware": [
       "anonymous",
@@ -777,16 +823,18 @@ export const GENERATED_ROUTE_INVENTORY = [
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
-      "getWebhookSubscriptions"
+      "requireRecentMfaForMutations",
+      "getWebhookReadiness"
     ],
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
-      "requireSuperadmin"
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
     ]
   },
   {
-    "method": "post",
+    "method": "get",
     "path": "/admin/webhooks/subscriptions",
     "source": "src/module/integrations/webhooks/webhook.routes.ts:27",
     "middleware": [
@@ -795,34 +843,38 @@ export const GENERATED_ROUTE_INVENTORY = [
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
-      "postWebhookSubscription"
+      "requireRecentMfaForMutations",
+      "getWebhookSubscriptions"
     ],
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
-      "requireSuperadmin"
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
     ]
   },
   {
-    "method": "get",
-    "path": "/admin/webhooks/subscriptions/{id}",
-    "source": "src/module/integrations/webhooks/webhook.routes.ts:26",
+    "method": "post",
+    "path": "/admin/webhooks/subscriptions",
+    "source": "src/module/integrations/webhooks/webhook.routes.ts:29",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
-      "getWebhookSubscriptionById"
+      "requireRecentMfaForMutations",
+      "postWebhookSubscription"
     ],
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
-      "requireSuperadmin"
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
     ]
   },
   {
-    "method": "patch",
+    "method": "get",
     "path": "/admin/webhooks/subscriptions/{id}",
     "source": "src/module/integrations/webhooks/webhook.routes.ts:28",
     "middleware": [
@@ -831,35 +883,19 @@ export const GENERATED_ROUTE_INVENTORY = [
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
-      "patchWebhookSubscriptionController"
+      "requireRecentMfaForMutations",
+      "getWebhookSubscriptionById"
     ],
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
-      "requireSuperadmin"
-    ]
-  },
-  {
-    "method": "post",
-    "path": "/admin/webhooks/subscriptions/{id}/rotate-secret",
-    "source": "src/module/integrations/webhooks/webhook.routes.ts:29",
-    "middleware": [
-      "anonymous",
-      "authenticateToken",
-      "moduleAccessGate",
-      "authenticateToken",
       "requireSuperadmin",
-      "postWebhookSecretRotation"
-    ],
-    "authenticated": true,
-    "rbac": [
-      "moduleAccessGate",
-      "requireSuperadmin"
+      "requireRecentMfaForMutations"
     ]
   },
   {
-    "method": "post",
-    "path": "/admin/webhooks/subscriptions/{id}/test",
+    "method": "patch",
+    "path": "/admin/webhooks/subscriptions/{id}",
     "source": "src/module/integrations/webhooks/webhook.routes.ts:30",
     "middleware": [
       "anonymous",
@@ -867,12 +903,54 @@ export const GENERATED_ROUTE_INVENTORY = [
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
+      "requireRecentMfaForMutations",
+      "patchWebhookSubscriptionController"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/admin/webhooks/subscriptions/{id}/rotate-secret",
+    "source": "src/module/integrations/webhooks/webhook.routes.ts:31",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
+      "postWebhookSecretRotation"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/admin/webhooks/subscriptions/{id}/test",
+    "source": "src/module/integrations/webhooks/webhook.routes.ts:32",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
       "postWebhookTest"
     ],
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
-      "requireSuperadmin"
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
     ]
   },
   {
@@ -1381,7 +1459,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/auth/access-profile",
-    "source": "src/module/auth/routes/auth.routes.ts:28",
+    "source": "src/module/auth/routes/auth.routes.ts:38",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -1393,7 +1471,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/activate",
-    "source": "src/module/auth/routes/auth.routes.ts:19",
+    "source": "src/module/auth/routes/auth.routes.ts:29",
     "middleware": [
       "anonymous",
       "resetPasswordRateLimit",
@@ -1405,7 +1483,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/forgot-password",
-    "source": "src/module/auth/routes/auth.routes.ts:17",
+    "source": "src/module/auth/routes/auth.routes.ts:27",
     "middleware": [
       "anonymous",
       "forgotPasswordRateLimit",
@@ -1417,7 +1495,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/login",
-    "source": "src/module/auth/routes/auth.routes.ts:16",
+    "source": "src/module/auth/routes/auth.routes.ts:25",
     "middleware": [
       "anonymous",
       "loginRateLimit",
@@ -1429,7 +1507,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/auth/me",
-    "source": "src/module/auth/routes/auth.routes.ts:20",
+    "source": "src/module/auth/routes/auth.routes.ts:30",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -1440,8 +1518,84 @@ export const GENERATED_ROUTE_INVENTORY = [
   },
   {
     "method": "post",
+    "path": "/auth/mfa/recovery-codes",
+    "source": "src/module/auth/routes/auth.routes.ts:42",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "mfaRateLimit",
+      "recoveryCodes"
+    ],
+    "authenticated": true,
+    "rbac": []
+  },
+  {
+    "method": "post",
+    "path": "/auth/mfa/replacement",
+    "source": "src/module/auth/routes/auth.routes.ts:41",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "mfaRateLimit",
+      "startReplacement"
+    ],
+    "authenticated": true,
+    "rbac": []
+  },
+  {
+    "method": "post",
+    "path": "/auth/mfa/revoke",
+    "source": "src/module/auth/routes/auth.routes.ts:43",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "mfaRateLimit",
+      "revoke"
+    ],
+    "authenticated": true,
+    "rbac": []
+  },
+  {
+    "method": "get",
+    "path": "/auth/mfa/status",
+    "source": "src/module/auth/routes/auth.routes.ts:39",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "status"
+    ],
+    "authenticated": true,
+    "rbac": []
+  },
+  {
+    "method": "post",
+    "path": "/auth/mfa/step-up",
+    "source": "src/module/auth/routes/auth.routes.ts:40",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "mfaRateLimit",
+      "stepUp"
+    ],
+    "authenticated": true,
+    "rbac": []
+  },
+  {
+    "method": "post",
+    "path": "/auth/mfa/verify",
+    "source": "src/module/auth/routes/auth.routes.ts:26",
+    "middleware": [
+      "anonymous",
+      "mfaRateLimit",
+      "verifyChallenge"
+    ],
+    "authenticated": false,
+    "rbac": []
+  },
+  {
+    "method": "post",
     "path": "/auth/reset-password",
-    "source": "src/module/auth/routes/auth.routes.ts:18",
+    "source": "src/module/auth/routes/auth.routes.ts:28",
     "middleware": [
       "anonymous",
       "resetPasswordRateLimit",

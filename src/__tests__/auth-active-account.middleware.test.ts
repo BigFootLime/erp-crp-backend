@@ -19,6 +19,21 @@ function token(sessionEpoch = 3) {
   return jwt.sign({ id: 9, username: "USER", email: "user@example.test", role: "Employee", session_epoch: sessionEpoch }, secret);
 }
 
+function mfaToken(sessionEpoch = 3) {
+  return jwt.sign({
+    id: 9,
+    username: "ADMIN",
+    email: "admin@example.test",
+    role: "Admin",
+    session_epoch: sessionEpoch,
+    mfa: true,
+    amr: ["pwd", "totp"],
+    mfa_verified_at: Math.floor(Date.now() / 1000),
+    mfa_factor_id: "8c2a19e7-65f3-4cc6-810f-262581aedfc5",
+    mfa_factor_version: 2,
+  }, secret);
+}
+
 describe("live authenticated account lifecycle", () => {
   beforeAll(() => { process.env.JWT_SECRET = secret; });
   afterAll(() => {
@@ -38,5 +53,26 @@ describe("live authenticated account lifecycle", () => {
   it("allows only an active account with the current epoch", async () => {
     mocks.findState.mockResolvedValueOnce({ status: "Active", session_epoch: 3 });
     await request(app).get("/protected").set("Authorization", `Bearer ${token()}`).expect(200, { ok: true });
+  });
+
+  it("rejects privileged legacy or stale-factor sessions and accepts the live factor", async () => {
+    const state = {
+      status: "Active",
+      session_epoch: 3,
+      is_superadmin: true,
+      mfa_required: true,
+      mfa_factor_id: "8c2a19e7-65f3-4cc6-810f-262581aedfc5",
+      mfa_factor_version: 2,
+    };
+    mocks.findState.mockResolvedValueOnce(state);
+    const legacy = await request(app).get("/protected").set("Authorization", `Bearer ${token()}`);
+    expect(legacy.status).toBe(401);
+    expect(legacy.body.code).toBe("MFA_REQUIRED");
+
+    mocks.findState.mockResolvedValueOnce({ ...state, mfa_factor_version: 3 });
+    expect((await request(app).get("/protected").set("Authorization", `Bearer ${mfaToken()}`)).status).toBe(401);
+
+    mocks.findState.mockResolvedValueOnce(state);
+    await request(app).get("/protected").set("Authorization", `Bearer ${mfaToken()}`).expect(200, { ok: true });
   });
 });
