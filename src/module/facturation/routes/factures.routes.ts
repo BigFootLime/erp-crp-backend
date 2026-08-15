@@ -23,13 +23,32 @@ import {
   getFinanceConfigurationReadiness,
 } from "../controllers/finance-configuration.controller";
 import {
+  activateSuperPdp,
+  deactivateSuperPdp,
   getElectronicInvoice,
   getElectronicInvoiceReadiness,
+  getSuperPdpConfiguration,
   queueElectronicInvoice,
   reconcileElectronicInvoice,
 } from "../electronic-invoicing/electronic-invoice.controller";
 
 const router = Router();
+
+router.get(
+  "/electronic-invoicing/provider-configuration",
+  requireFinanceCapability("einvoice_admin"),
+  getSuperPdpConfiguration
+);
+router.post(
+  "/electronic-invoicing/provider-configuration/activate",
+  requireFinanceCapability("einvoice_admin"),
+  activateSuperPdp
+);
+router.post(
+  "/electronic-invoicing/provider-configuration/deactivate",
+  requireFinanceCapability("einvoice_admin"),
+  deactivateSuperPdp
+);
 
 router.get(
   "/electronic-invoicing/readiness",
