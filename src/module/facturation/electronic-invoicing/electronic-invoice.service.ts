@@ -1,4 +1,5 @@
 import { logger } from "../../../shared/observability/logger";
+import { markJobFinished, markJobStarted } from "../../../shared/observability/metrics";
 import { HttpError } from "../../../utils/httpError";
 import { canonicalJson } from "../domain/finance-policy";
 import type { FinanceActorContext } from "../repository/workflow.repository.shared";
@@ -248,11 +249,14 @@ export function startElectronicInvoiceMaintenance(): () => void {
   const cycle = async () => {
     if (running) return;
     running = true;
+    markJobStarted("electronic_invoicing");
     try {
       for (let processed = 0; processed < 25; processed += 1) {
         if (!(await svcProcessNextElectronicInvoice())) break;
       }
+      markJobFinished("electronic_invoicing", true);
     } catch (error) {
+      markJobFinished("electronic_invoicing", false);
       logger.error("electronic_invoice_worker_failed", {
         failure_code: stringField(error, "code") ?? "EINVOICE_WORKER_ERROR",
       });
