@@ -4,7 +4,10 @@ import { HttpError } from "../../../utils/httpError";
 import type { FinanceActorContext } from "../repository/workflow.repository.shared";
 import {
   svcElectronicInvoiceReadiness,
+  svcActivateSuperPdp,
+  svcDeactivateSuperPdp,
   svcGetElectronicInvoice,
+  svcGetSuperPdpConfiguration,
   svcHandleElectronicInvoiceWebhook,
   svcQueueElectronicInvoice,
   svcReconcileElectronicInvoice,
@@ -12,6 +15,8 @@ import {
 import {
   electronicInvoiceIdParamsSchema,
   electronicInvoiceProviderParamsSchema,
+  activateSuperPdpBodySchema,
+  deactivateSuperPdpBodySchema,
   queueElectronicInvoiceBodySchema,
 } from "./electronic-invoice.validators";
 
@@ -36,6 +41,38 @@ export const getElectronicInvoiceReadiness: RequestHandler = async (_req, res, n
   try {
     const result = await svcElectronicInvoiceReadiness();
     res.status(result.ready ? 200 : 503).json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getSuperPdpConfiguration: RequestHandler = async (_req, res, next) => {
+  try {
+    res.json(await svcGetSuperPdpConfiguration());
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const activateSuperPdp: RequestHandler = async (req, res, next) => {
+  try {
+    const input = activateSuperPdpBodySchema.parse(req.body);
+    const result = await svcActivateSuperPdp({
+      formats: input.formats,
+      qualificationReference: input.qualification_reference,
+      actor: actorFromRequest(req),
+      idempotencyKey: idempotencyKey(req),
+    });
+    res.status(result.idempotent_replay ? 200 : 201).json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const deactivateSuperPdp: RequestHandler = async (req, res, next) => {
+  try {
+    const input = deactivateSuperPdpBodySchema.parse(req.body);
+    res.json(await svcDeactivateSuperPdp({ reason: input.reason, actor: actorFromRequest(req) }));
   } catch (error) {
     next(error);
   }

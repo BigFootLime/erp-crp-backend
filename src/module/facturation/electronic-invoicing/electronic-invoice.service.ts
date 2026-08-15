@@ -14,17 +14,27 @@ import {
 } from "./electronic-invoice.domain";
 import {
   repoApplyElectronicInvoiceProviderEvent,
+  repoActivateSuperPdpConnection,
   repoClaimElectronicInvoice,
+  repoDeactivateSuperPdpConnection,
   repoGetElectronicInvoiceConnection,
+  repoGetElectronicInvoiceProviderConfiguration,
+  repoListElectronicInvoiceReconciliationCandidates,
   repoGetElectronicInvoiceState,
   repoQueueElectronicInvoice,
   repoRecordElectronicInvoiceFailure,
   repoRecordElectronicInvoiceSuccess,
 } from "./electronic-invoice.repository";
+import { createConfiguredSuperPdpAdapter } from "./providers/super-pdp/super-pdp.adapter";
+import { loadSuperPdpConfiguration } from "./providers/super-pdp/super-pdp.client";
 
 export const electronicInvoiceProviderRegistry = new ElectronicInvoiceProviderRegistry();
+const configuredSuperPdpAdapter = createConfiguredSuperPdpAdapter();
+if (configuredSuperPdpAdapter) electronicInvoiceProviderRegistry.register(configuredSuperPdpAdapter);
 
-function runtimeEnvironment(): "sandbox" | "production" {
+export function runtimeElectronicInvoiceEnvironment(): "sandbox" | "production" {
+  const configured = process.env.EINVOICE_ENVIRONMENT?.trim().toLowerCase();
+  if (configured === "sandbox" || configured === "production") return configured;
   return process.env.NODE_ENV === "production" ? "production" : "sandbox";
 }
 
@@ -41,7 +51,7 @@ function stringField(value: unknown, name: string): string | null {
 }
 
 export async function svcElectronicInvoiceReadiness() {
-  const environment = runtimeEnvironment();
+  const environment = runtimeElectronicInvoiceEnvironment();
   const connection = await repoGetElectronicInvoiceConnection(environment);
   const registeredAdapters = electronicInvoiceProviderRegistry.list();
   if (!connection) {
@@ -56,15 +66,24 @@ export async function svcElectronicInvoiceReadiness() {
   }
   try {
     const adapter = electronicInvoiceProviderRegistry.resolve(connection.adapterKey);
-    const ready = adapter.environment === connection.environment;
+    const diagnostic = await adapter.diagnose();
+    const ready = adapter.environment === connection.environment
+      && diagnostic.configured
+      && diagnostic.reachable
+      && diagnostic.authenticated
+      && diagnostic.failureCode === null;
+    const reason = adapter.environment !== connection.environment
+      ? "ADAPTER_ENVIRONMENT_MISMATCH"
+      : diagnostic.failureCode;
     return {
       ready,
       environment,
-      reason: ready ? null : "ADAPTER_ENVIRONMENT_MISMATCH",
+      reason: ready ? null : reason,
       message: ready
         ? "Le connecteur est qualifié. Les statuts affichés proviendront exclusivement du prestataire."
-        : "L'adaptateur chargé ne correspond pas à l'environnement qualifié en base.",
+        : diagnostic.message,
       provider: connection,
+      diagnostic,
       registered_adapters: registeredAdapters,
     } as const;
   } catch {
@@ -77,6 +96,76 @@ export async function svcElectronicInvoiceReadiness() {
       registered_adapters: registeredAdapters,
     } as const;
   }
+}
+
+export async function svcGetSuperPdpConfiguration() {
+  const environment = runtimeElectronicInvoiceEnvironment();
+  const metadata = await repoGetElectronicInvoiceProviderConfiguration(environment);
+  const runtime = loadSuperPdpConfiguration();
+  const adapterEnabled = process.env.EINVOICE_PROVIDER?.trim().toLowerCase() === "super-pdp";
+  let diagnostic = null;
+  if (adapterEnabled) {
+    diagnostic = await electronicInvoiceProviderRegistry.resolve("super-pdp").diagnose();
+  }
+  return {
+    provider: "super-pdp" as const,
+    environment,
+    auth_mode: runtime.oauthMode,
+    adapter_enabled: adapterEnabled,
+    client_id_configured: runtime.clientId !== null,
+    client_secret_configured: runtime.oauthMode === "client_credentials" && runtime.clientSecret !== null,
+    tenant_isolation_ready: false,
+    shared_multicompany_activation_allowed: false,
+    connection: metadata,
+    diagnostic,
+  };
+}
+
+export async function svcActivateSuperPdp(params: {
+  formats: ElectronicInvoiceFormat[];
+  qualificationReference: string;
+  actor: FinanceActorContext;
+  idempotencyKey: string | undefined;
+}) {
+  const environment = runtimeElectronicInvoiceEnvironment();
+  const runtime = loadSuperPdpConfiguration();
+  if (process.env.EINVOICE_PROVIDER?.trim().toLowerCase() !== "super-pdp") {
+    throw new HttpError(503, "SUPER_PDP_ADAPTER_DISABLED", "Définissez EINVOICE_PROVIDER=super-pdp puis redémarrez le service.");
+  }
+  if (runtime.oauthMode === "authorization_code") {
+    throw new HttpError(
+      503,
+      "SUPER_PDP_TENANT_ISOLATION_REQUIRED",
+      "Le mode partagé multi-entreprise reste bloqué jusqu'à l'isolation réelle des données, consentements et jetons par société."
+    );
+  }
+  if (environment === "production" && process.env.SUPER_PDP_PRODUCTION_ACTIVATION_ENABLED !== "true") {
+    throw new HttpError(
+      403,
+      "SUPER_PDP_PRODUCTION_ACTIVATION_LOCKED",
+      "La production exige SUPER_PDP_PRODUCTION_ACTIVATION_ENABLED=true après qualification opérateur."
+    );
+  }
+  const diagnostic = await electronicInvoiceProviderRegistry.resolve("super-pdp").diagnose();
+  if (!diagnostic.configured || !diagnostic.reachable || !diagnostic.authenticated || diagnostic.failureCode !== null) {
+    throw new HttpError(503, diagnostic.failureCode ?? "SUPER_PDP_DIAGNOSTIC_FAILED", diagnostic.message);
+  }
+  return repoActivateSuperPdpConnection({
+    environment,
+    formats: params.formats,
+    qualificationReference: params.qualificationReference,
+    authMode: runtime.oauthMode,
+    actor: params.actor,
+    idempotencyKeyRaw: params.idempotencyKey,
+  });
+}
+
+export async function svcDeactivateSuperPdp(params: { reason: string; actor: FinanceActorContext }) {
+  return repoDeactivateSuperPdpConnection({
+    environment: runtimeElectronicInvoiceEnvironment(),
+    reason: params.reason,
+    actor: params.actor,
+  });
 }
 
 export async function svcGetElectronicInvoice(invoiceId: number) {
@@ -92,7 +181,7 @@ export async function svcQueueElectronicInvoice(params: {
   actor: FinanceActorContext;
   idempotencyKey: string | undefined;
 }) {
-  const environment = runtimeEnvironment();
+  const environment = runtimeElectronicInvoiceEnvironment();
   const connection = await repoGetElectronicInvoiceConnection(environment);
   if (!connection) {
     throw new HttpError(
@@ -110,7 +199,7 @@ export async function svcQueueElectronicInvoice(params: {
 }
 
 export async function svcProcessNextElectronicInvoice(): Promise<boolean> {
-  const environment = runtimeEnvironment();
+  const environment = runtimeElectronicInvoiceEnvironment();
   const claim = await repoClaimElectronicInvoice(environment);
   if (!claim) return false;
   const startedAt = new Date();
@@ -138,7 +227,7 @@ export async function svcProcessNextElectronicInvoice(): Promise<boolean> {
       correlationId: claim.state.correlation_id,
       attachments: prepared.attachments,
     });
-    receipt.statusCode = parseDGFiPInvoiceStatusCode(receipt.statusCode);
+    if (receipt.statusCode !== null) receipt.statusCode = parseDGFiPInvoiceStatusCode(receipt.statusCode);
     await repoRecordElectronicInvoiceSuccess({
       documentId: claim.state.id,
       processingToken: claim.processingToken,
@@ -196,13 +285,20 @@ export async function svcReconcileElectronicInvoice(params: {
   if (!state.provider_document_id) {
     throw new HttpError(409, "EINVOICE_NOT_SUBMITTED", "La transmission est encore en file et ne peut pas être rapprochée.");
   }
-  const connection = await repoGetElectronicInvoiceConnection(runtimeEnvironment());
+  const connection = await repoGetElectronicInvoiceConnection(runtimeElectronicInvoiceEnvironment());
   if (!connection || connection.providerCode !== state.provider_code) {
     throw new HttpError(503, "EINVOICE_PROVIDER_NOT_CONFIGURED", "La Plateforme Agréée du document n'est pas active.");
   }
   const adapter = electronicInvoiceProviderRegistry.resolve(connection.adapterKey);
   const event = normalizeElectronicInvoiceProviderEvent(
-    await adapter.retrieve(state.provider_document_id, params.correlationId)
+    await adapter.retrieve(state.provider_document_id, params.correlationId, {
+      direction: state.direction,
+      documentType: state.document_type,
+      format: state.format,
+      invoiceId: state.invoice_id,
+      creditNoteId: state.credit_note_id,
+      documentSha256: state.content_sha256,
+    })
   );
   await repoApplyElectronicInvoiceProviderEvent({
     providerCode: state.provider_code,
@@ -223,7 +319,7 @@ export async function svcHandleElectronicInvoiceWebhook(params: {
   correlationId: string;
   requestId: string;
 }) {
-  const connection = await repoGetElectronicInvoiceConnection(runtimeEnvironment());
+  const connection = await repoGetElectronicInvoiceConnection(runtimeElectronicInvoiceEnvironment());
   if (!connection || connection.providerCode !== params.providerCode) {
     throw new HttpError(404, "EINVOICE_PROVIDER_UNKNOWN", "Prestataire de facturation électronique inconnu.");
   }
@@ -241,10 +337,57 @@ export async function svcHandleElectronicInvoiceWebhook(params: {
   });
 }
 
+export async function svcReconcileOutstandingElectronicInvoices(): Promise<number> {
+  const candidates = await repoListElectronicInvoiceReconciliationCandidates(runtimeElectronicInvoiceEnvironment(), 25);
+  let applied = 0;
+  for (const { state, adapterKey } of candidates) {
+    if (!state.provider_document_id) continue;
+    const adapter = electronicInvoiceProviderRegistry.resolve(adapterKey);
+    try {
+      const event = normalizeElectronicInvoiceProviderEvent(await adapter.retrieve(
+        state.provider_document_id,
+        state.correlation_id,
+        {
+          direction: state.direction,
+          documentType: state.document_type,
+          format: state.format,
+          invoiceId: state.invoice_id,
+          creditNoteId: state.credit_note_id,
+          documentSha256: state.content_sha256,
+        }
+      ));
+      await repoApplyElectronicInvoiceProviderEvent({
+        providerCode: state.provider_code,
+        event,
+        payloadSha256: sha256Hex(canonicalJson(event)),
+        signatureVerified: null,
+        correlationId: state.correlation_id,
+        requestId: `poll:${state.correlation_id}`,
+      });
+      applied += 1;
+    } catch (error) {
+      if (stringField(error, "code") !== "SUPER_PDP_STATUS_PENDING") {
+        logger.warn("electronic_invoice_reconciliation_failed", {
+          electronic_invoice_document_id: state.id,
+          provider_code: state.provider_code,
+          failure_code: stringField(error, "code") ?? "EINVOICE_RECONCILIATION_ERROR",
+          correlation_id: state.correlation_id,
+        });
+      }
+    }
+  }
+  return applied;
+}
+
 export function startElectronicInvoiceMaintenance(): () => void {
   if (electronicInvoiceProviderRegistry.list().length === 0) return () => undefined;
   const configured = Number.parseInt(process.env.EINVOICE_JOB_INTERVAL_MS ?? "30000", 10);
   const intervalMs = Number.isSafeInteger(configured) && configured >= 5_000 ? configured : 30_000;
+  const configuredReconcile = Number.parseInt(process.env.EINVOICE_RECONCILE_INTERVAL_MS ?? "300000", 10);
+  const reconcileIntervalMs = Number.isSafeInteger(configuredReconcile) && configuredReconcile >= 60_000
+    ? configuredReconcile
+    : 300_000;
+  let nextReconciliationAt = 0;
   let running = false;
   const cycle = async () => {
     if (running) return;
@@ -253,6 +396,10 @@ export function startElectronicInvoiceMaintenance(): () => void {
     try {
       for (let processed = 0; processed < 25; processed += 1) {
         if (!(await svcProcessNextElectronicInvoice())) break;
+      }
+      if (Date.now() >= nextReconciliationAt) {
+        await svcReconcileOutstandingElectronicInvoices();
+        nextReconciliationAt = Date.now() + reconcileIntervalMs;
       }
       markJobFinished("electronic_invoicing", true);
     } catch (error) {

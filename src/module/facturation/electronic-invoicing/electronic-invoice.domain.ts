@@ -222,11 +222,11 @@ export function normalizeElectronicInvoiceProviderEvent(
   if (!Number.isFinite(occurredAt.getTime())) {
     throw new HttpError(422, "EINVOICE_PROVIDER_EVENT_INVALID", "Horodatage prestataire invalide.");
   }
-  if (event.rejectionCode !== null && !DGFiP_REJECTION_CODES.includes(event.rejectionCode as DGFiPRejectionCode)) {
-    throw new HttpError(422, "EINVOICE_PROVIDER_EVENT_INVALID", "Code de rejet DGFiP non reconnu.");
+  if (event.rejectionCode !== null && !/^[A-Za-z0-9_.:-]{1,80}$/.test(event.rejectionCode)) {
+    throw new HttpError(422, "EINVOICE_PROVIDER_EVENT_INVALID", "Code de rejet prestataire invalide.");
   }
-  if ((event.statusCode === 210 || event.statusCode === 213) !== (event.rejectionCode !== null)) {
-    throw new HttpError(422, "EINVOICE_PROVIDER_EVENT_INVALID", "Le statut de rejet et son code DGFiP sont incohérents.");
+  if (event.statusCode !== 210 && event.statusCode !== 213 && event.rejectionCode !== null) {
+    throw new HttpError(422, "EINVOICE_PROVIDER_EVENT_INVALID", "Un code de rejet ne peut accompagner qu'un statut de rejet.");
   }
   if (!Array.isArray(event.attachments) || event.attachments.length > 50) {
     throw new HttpError(422, "EINVOICE_PROVIDER_EVENT_INVALID", "Métadonnées de pièces jointes invalides.");
@@ -317,9 +317,30 @@ export type ElectronicInvoiceSubmissionReceipt = {
   providerDocumentId: string;
   providerRequestId: string | null;
   acceptedAt: string;
-  statusCode: DGFiPInvoiceStatusCode;
+  statusCode: DGFiPInvoiceStatusCode | null;
   filingProofReference: string | null;
   filingProofSha256: string | null;
+};
+
+export type ElectronicInvoiceProviderDiagnostic = {
+  configured: boolean;
+  reachable: boolean;
+  authenticated: boolean;
+  companyVerificationStatus: string | null;
+  checkedAt: string;
+  latencyMs: number;
+  failureCode: string | null;
+  message: string;
+  contractVersion: string;
+};
+
+export type ElectronicInvoiceRetrieveContext = {
+  direction: ElectronicInvoiceDirection;
+  documentType: ElectronicInvoiceDocumentType;
+  format: ElectronicInvoiceFormat;
+  invoiceId: number | null;
+  creditNoteId: number | null;
+  documentSha256: string | null;
 };
 
 export interface ElectronicInvoiceProviderAdapter {
@@ -330,8 +351,13 @@ export interface ElectronicInvoiceProviderAdapter {
     source: ElectronicInvoiceSourceDocument,
     requestedFormat: ElectronicInvoiceFormat
   ): Promise<PreparedElectronicInvoiceDocument>;
+  diagnose(): Promise<ElectronicInvoiceProviderDiagnostic>;
   submit(submission: ElectronicInvoiceSubmission): Promise<ElectronicInvoiceSubmissionReceipt>;
-  retrieve(providerDocumentId: string, correlationId: string): Promise<ElectronicInvoiceProviderEvent>;
+  retrieve(
+    providerDocumentId: string,
+    correlationId: string,
+    context: ElectronicInvoiceRetrieveContext
+  ): Promise<ElectronicInvoiceProviderEvent>;
   verifyAndParseWebhook(params: {
     body: Buffer;
     headers: Readonly<Record<string, string | undefined>>;

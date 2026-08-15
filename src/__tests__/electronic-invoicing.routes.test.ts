@@ -8,6 +8,9 @@ const mocks = vi.hoisted(() => ({
   queue: vi.fn(),
   reconcile: vi.fn(),
   webhook: vi.fn(),
+  getConfiguration: vi.fn(),
+  activate: vi.fn(),
+  deactivate: vi.fn(),
 }));
 
 vi.mock("../module/facturation/electronic-invoicing/electronic-invoice.service", () => ({
@@ -16,6 +19,9 @@ vi.mock("../module/facturation/electronic-invoicing/electronic-invoice.service",
   svcQueueElectronicInvoice: (...args: unknown[]) => mocks.queue(...args),
   svcReconcileElectronicInvoice: (...args: unknown[]) => mocks.reconcile(...args),
   svcHandleElectronicInvoiceWebhook: (...args: unknown[]) => mocks.webhook(...args),
+  svcGetSuperPdpConfiguration: (...args: unknown[]) => mocks.getConfiguration(...args),
+  svcActivateSuperPdp: (...args: unknown[]) => mocks.activate(...args),
+  svcDeactivateSuperPdp: (...args: unknown[]) => mocks.deactivate(...args),
 }));
 
 vi.mock("../module/auth/middlewares/auth-rate-limit.middleware", () => ({
@@ -89,6 +95,35 @@ describe("SOL-26 electronic invoicing HTTP boundary", () => {
     expect(response.status).toBe(403);
     expect(response.body).toMatchObject({ code: "FINANCE_CAPABILITY_REQUIRED" });
     expect(mocks.queue).not.toHaveBeenCalled();
+  });
+
+  it("reserves SUPER PDP activation to an electronic-invoicing administrator", async () => {
+    mocks.activate.mockResolvedValue({ providerCode: "super-pdp-sandbox", idempotent_replay: false });
+    const forbidden = await request(financeApp({ role: "Comptable" }))
+      .post("/factures/electronic-invoicing/provider-configuration/activate")
+      .set("Idempotency-Key", "super-pdp-activate-001")
+      .send({ formats: ["UBL", "CII"], qualification_reference: "sandbox-qualified-2026" });
+    expect(forbidden.status).toBe(403);
+    expect(mocks.activate).not.toHaveBeenCalled();
+
+    const allowed = await request(financeApp({ role: "Administrateur Systeme et Reseau" }))
+      .post("/factures/electronic-invoicing/provider-configuration/activate")
+      .set("Idempotency-Key", "super-pdp-activate-001")
+      .send({ formats: ["UBL", "CII"], qualification_reference: "sandbox-qualified-2026" });
+    expect(allowed.status, JSON.stringify(allowed.body)).toBe(201);
+    expect(mocks.activate).toHaveBeenCalledWith(expect.objectContaining({
+      formats: ["UBL", "CII"],
+      qualificationReference: "sandbox-qualified-2026",
+      idempotencyKey: "super-pdp-activate-001",
+      actor: expect.objectContaining({ userId: 7 }),
+    }));
+  });
+
+  it("does not expose provider configuration to an anonymous caller", async () => {
+    const response = await request(financeApp({ authenticated: false }))
+      .get("/factures/electronic-invoicing/provider-configuration");
+    expect(response.status).toBe(401);
+    expect(mocks.getConfiguration).not.toHaveBeenCalled();
   });
 
   it("keeps the signed webhook route independent from JWT and preserves raw bytes", async () => {
