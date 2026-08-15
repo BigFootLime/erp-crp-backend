@@ -73,6 +73,8 @@ const IMMUTABLE_ONLY_PATCHES = Object.freeze({
     "a40f4948dfbcee7de8eb00d9077f499a2b92bdda863b6728f29d8e62751a899f",
   "20260815_historical_test_guard_convergence_sol43.sql":
     "f3ccb16d3f85e03f1b00f710a9d28eda70dc6818b26353d081ac17fa41dce119",
+  "20260815_z_client_contact_idempotency_grants_sol43.sql":
+    "98490c2b57a98cf129ee4ce71bc878d4d5034a39ce46f95dc0e9b192ce67b302",
 });
 const REALTIME_V1_FILENAME = "20260804_realtime_shared_control_plane.sql";
 const REALTIME_V1_SHA256 = "a532c87aa9962b6171b65db421ee82069ed177bf6f5becb52295df4dacbc76f6";
