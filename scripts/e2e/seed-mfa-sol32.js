@@ -24,11 +24,18 @@ async function main() {
     );
 
     const passwordHash = await bcrypt.hash(password, 10);
-    await client.query(
+    const adminResult = await client.query(
       `INSERT INTO public.users(username,password,name,surname,email,role,status,is_superadmin)
        VALUES ('SOL32ADMIN',$1,'SOL32','Admin','sol32-admin@invalid.example','Administrateur Systeme et Reseau','Active',true)
-       ON CONFLICT (username) DO UPDATE SET password=EXCLUDED.password,status='Active',is_superadmin=true`,
+       ON CONFLICT (username) DO UPDATE SET password=EXCLUDED.password,status='Active',is_superadmin=true
+       RETURNING id`,
       [passwordHash],
+    );
+    await client.query(
+      `INSERT INTO public.user_role_assignments(user_id,role_key,assigned_by)
+       VALUES ($1,'Administrateur Systeme et Reseau',$2)
+       ON CONFLICT (user_id,role_key) DO NOTHING`,
+      [adminResult.rows[0].id, keenan.id],
     );
     await client.query("COMMIT");
     process.stdout.write(JSON.stringify({ seeded: true, activeFactorUser: "KEENAN", enrollmentUser: "SOL32ADMIN" }) + "\n");
