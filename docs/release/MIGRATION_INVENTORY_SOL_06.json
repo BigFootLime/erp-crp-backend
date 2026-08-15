@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-08-15T11:03:39.109Z",
+  "generated_at": "2026-08-15T11:10:40.280Z",
   "source": "filesystem scan of db/patches and db/patches/support",
-  "patch_count": 164,
-  "support_file_count": 284,
-  "recent_patch_count": 106,
+  "patch_count": 165,
+  "support_file_count": 287,
+  "recent_patch_count": 107,
   "recent_support_gaps": [
     {
       "filename": "20260706_affaire_allow_projet.sql",
@@ -3035,6 +3035,20 @@
         "table-lock",
         "blocking-index"
       ]
+    },
+    {
+      "order": 165,
+      "filename": "20260815_z_client_contact_idempotency_grants_sol43.sql",
+      "sha256": "98490c2b57a98cf129ee4ce71bc878d4d5034a39ce46f95dc0e9b192ce67b302",
+      "bytes": 847,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": []
     }
   ]
 }
