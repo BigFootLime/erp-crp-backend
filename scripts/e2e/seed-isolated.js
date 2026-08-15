@@ -88,10 +88,17 @@ async function main() {
   try {
     await client.query("BEGIN");
     // The access-review browser proof must always start from the same state.
-    // This seed is hard-gated to loopback cerp_test above, so no operational
-    // review can be removed by this deterministic fixture reset.
-    await client.query("DELETE FROM public.app_access_review_items");
-    await client.query("DELETE FROM public.app_access_reviews");
+    // The migration rehearsal also runs this seed against historical schemas,
+    // before SOL-25 created these tables, so the reset is capability-based.
+    const accessReviewTables = await client.query(
+      `SELECT
+         to_regclass('public.app_access_review_items') IS NOT NULL AS items,
+         to_regclass('public.app_access_reviews') IS NOT NULL AS reviews`
+    );
+    if (accessReviewTables.rows[0]?.items && accessReviewTables.rows[0]?.reviews) {
+      await client.query("DELETE FROM public.app_access_review_items");
+      await client.query("DELETE FROM public.app_access_reviews");
+    }
     for (const [username, name, surname, email, role, superadmin, assignedRole] of USERS) {
       const result = await client.query(
         `INSERT INTO public.users (username,password,name,surname,email,role,status,is_superadmin)
