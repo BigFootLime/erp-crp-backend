@@ -17,8 +17,11 @@ Sur HYPERBOX2, PostgreSQL s'est arrêté faute de droit de traversée pour `post
 
 ## État base et migrations
 
-- `cerp_test` : 165/165 migrations locales, 0 en attente, 0 checksum divergent.
-- `cerp_prod` : 165/165 migrations locales, 0 en attente, 0 checksum divergent.
+- `cerp_prod` : 165/165 migrations canoniques, 0 en attente, 0 checksum divergent.
+- `cerp_test` : 165/165 migrations canoniques plus
+  `20260731_ged_fiches_360.sql`, patch historique externe connu ; checksum et
+  artefacts `ged_entity_types`, `ged_entity_class_bindings`, fonction et trigger
+  de garde vérifiés par le gate.
 - Sauvegarde prod préflight : `/var/backups/cerp/cerp_prod_20260815-124145.dump`, 52 011 726 octets, SHA-256 `01a98f14c98b516628cfdf02d29e63e85be1c5a94cf73cf58cd564bc594ed34a`.
 - Sauvegarde test préflight : `/var/backups/cerp/cerp_test_pre_sol43_20260815-124300.dump`, 73 159 079 octets, SHA-256 `e38a48f3e7c3b181cb3de8ba3508b01a06fd7d27248584315b575917e137eaa3`.
 - La restauration de répétition et le rollback isolé du gate ont réussi.
@@ -71,6 +74,13 @@ Trois valeurs métier réelles manquent encore dans `cerp_prod` et ne peuvent pa
 3. un emplacement actif rattaché à un magasin.
 
 La valorisation CUMP est enregistrée comme décision déclarée de Keenan Martin du 2026-08-11. Les utilisateurs sont guidés vers `/administration/preparation-production` et `/administration/reference-data`. Le premier pilote payant reste **NO-GO** tant que le preflight métier n'est pas vert après leur saisie.
+
+Le patch GED historique supplémentaire n'est pas appliqué à `cerp_prod` : le
+code applicatif correspondant n'est pas dans la branche canonique `main` mais
+dans une branche de sécurité dormante. Une application SQL seule créerait une
+surface non prise en charge. Le gate le classe donc explicitement comme externe
+connu sur `cerp_test`, refuse tout checksum différent et exige ses quatre preuves
+de schéma.
 
 ## Risques acceptés
 
