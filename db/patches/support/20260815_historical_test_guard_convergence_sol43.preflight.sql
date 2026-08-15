@@ -50,6 +50,7 @@ BEGIN
       JOIN (VALUES
         ('20260727_contacts_email_scope_187.sql', '4d43141bc2e6b803f4b37d1dff146c9950e64c75f0b317194ebf03dacbddbf1a'),
         ('20260727_contacts_shared_email_identity_190.sql', 'b3b030cefbbf16ceca44481d74380de71803d72320c19b4da9cc62eee37aaf89'),
+        ('20260727_import_clients_enrichment_306.sql', '3b0987397ad79f1fe8580c19a7cd2153c3ed5fb3617d357b2dfa452684b93181'),
         ('20260727_import_supplier_orders_312.sql', '5988f518ebfe8160372ec833fb14fba636a54638f367a637703162032d7193a0'),
         ('20260727_stock_import_precision_198.sql', '0a348b7d6b723ba2d38b4927a5eed9a3999e3dfa82f56940f1f3a4d5b2da5a6a')
       ) AS expected(filename, sha256)

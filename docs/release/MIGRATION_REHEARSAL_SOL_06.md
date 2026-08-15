@@ -1,10 +1,10 @@
 # Répétition de migration isolée — SOL-06
 
 - Statut : **passed**
-- Exécutée : 2026-08-15T11:00:14.666Z
+- Exécutée : 2026-08-15T11:04:33.978Z
 - PostgreSQL : postgres@sha256:16bc17c64a573ef34162af9298258d1aec548232985b33ed7b1eac33ba35c229
 - Base source : cerp_test, 36355095 octets
-- Sauvegarde : 1968403 octets, SHA-256 `f188eb6ccce1b4bf73d68338140f7f8f6035d50c35bb7600f73c0e9b1c82f405`
+- Sauvegarde : 1968430 octets, SHA-256 `1270b357fc646deadc7246bb9276d52415ca60d9d125efe9e14dbff229af0e12`
 - Patches avant/après : 140 / 164
 - Intégrité avant/après : passed / passed
 - Rejeu du runner : 0 patch (conforme)
@@ -17,17 +17,17 @@
 
 | Étape | Durée (ms) |
 |---|---:|
-| source_migration | 18897 |
-| source_seed | 222 |
-| backup | 764 |
-| preflight | 183 |
-| integrity_before | 636 |
-| migration | 892 |
-| verify | 299 |
-| replay | 166 |
-| integrity_after | 1600 |
-| negative_gate | 40 |
-| rollback | 479 |
-| restore | 4076 |
+| source_migration | 18720 |
+| source_seed | 197 |
+| backup | 785 |
+| preflight | 192 |
+| integrity_before | 623 |
+| migration | 906 |
+| verify | 280 |
+| replay | 169 |
+| integrity_after | 1570 |
+| negative_gate | 41 |
+| rollback | 465 |
+| restore | 4118 |
 
 La pile PostgreSQL était liée à `127.0.0.1`, stockée en tmpfs et détruite en fin d'exécution. Aucune URL ni donnée de production n'a été utilisée.
