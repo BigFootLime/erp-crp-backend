@@ -112,6 +112,10 @@ const recentSolPatchChecksums = new Map([
     "20260814_identification_labels_sol30.sql",
     "e9a2a116945105fbcce2a4ecc7246b3c9708a9d64920ed5f7a8ef94dc3740a7d",
   ],
+  [
+    "20260815_privileged_mfa_sol32.sql",
+    "1050fe92489eed4e25a75b7810b37545c702bfbb8baa860c46396b9a748545f4",
+  ],
 ]);
 const wave9PatchChecksums = new Map([
   [
