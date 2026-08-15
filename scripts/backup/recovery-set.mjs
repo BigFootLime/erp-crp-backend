@@ -7,6 +7,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 const require = createRequire(import.meta.url);
 const pgModule = process.env.CERP_BACKUP_PG_MODULE
   ? require(path.resolve(process.env.CERP_BACKUP_PG_MODULE))
@@ -176,10 +177,59 @@ async function documentReferenceMetadata(client) {
             ),ARRAY[]::text[]) AS primary_key
        FROM information_schema.columns c
       WHERE c.table_schema='public' AND c.column_name = ANY($1::text[])
+        AND NOT (c.table_name='project_report_exports' AND c.column_name='file_path')
       ORDER BY c.table_name,c.column_name`,
     [STORAGE_COLUMNS, SIZE_COLUMNS]
   );
   return result.rows;
+}
+
+export function verifyInlineDocumentRows(rows) {
+  const failures = [];
+  let verifiedCount = 0;
+  let totalBytes = 0;
+  for (const row of rows) {
+    const fingerprint = sha256Buffer(Buffer.from(`project_report_exports|${row.row_ref}`)).slice(0, 16);
+    const payload = typeof row.file_base64 === "string" ? row.file_base64.replace(/\s/g, "") : "";
+    const expected = typeof row.checksum === "string" ? row.checksum.trim().toLowerCase() : "";
+    if (!payload || payload.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(payload)) {
+      failures.push({ reference: fingerprint, reason: "invalid_or_missing_base64" });
+      continue;
+    }
+    if (!/^[a-f0-9]{64}$/.test(expected)) {
+      failures.push({ reference: fingerprint, reason: "invalid_or_missing_checksum" });
+      continue;
+    }
+    const content = Buffer.from(payload, "base64");
+    if (sha256Buffer(content) !== expected) {
+      failures.push({ reference: fingerprint, reason: "checksum_mismatch" });
+      continue;
+    }
+    verifiedCount += 1;
+    totalBytes += content.length;
+  }
+  return {
+    reference_count: rows.length,
+    verified_count: verifiedCount,
+    total_bytes: totalBytes,
+    failure_count: failures.length,
+    failures: failures.slice(0, 100),
+  };
+}
+
+async function inlineDocumentIntegrity(client, tables) {
+  if (!tables.includes("project_report_exports")) {
+    return { reference_count: 0, verified_count: 0, total_bytes: 0, failure_count: 0, failures: [] };
+  }
+  const result = await client.query(
+    `SELECT id::text AS row_ref,file_base64,checksum
+       FROM public.project_report_exports
+      WHERE file_path IS NOT NULL AND btrim(file_path) <> ''
+      ORDER BY id`
+  );
+  const integrity = verifyInlineDocumentRows(result.rows);
+  if (integrity.failure_count) fail(`${integrity.failure_count} inline document payloads failed integrity checks`);
+  return integrity;
 }
 
 function rowReferenceExpression(primaryKey) {
@@ -240,16 +290,15 @@ async function exportRecoverySet(options) {
     );
     const identity = identityResult.rows[0];
     const tables = await existingPublicTables(client);
-    const [references, counts, migrations, readiness, invalidFks] = await Promise.all([
-      documentReferences(client),
-      criticalCounts(client, tables),
-      migrationDigest(client, tables),
-      readinessSummary(client),
-      client.query(
-        `SELECT count(*)::int AS count FROM pg_constraint
-          WHERE connamespace='public'::regnamespace AND contype='f' AND NOT convalidated`
-      ),
-    ]);
+    const references = await documentReferences(client);
+    const counts = await criticalCounts(client, tables);
+    const migrations = await migrationDigest(client, tables);
+    const readiness = await readinessSummary(client);
+    const inlineDocuments = await inlineDocumentIntegrity(client, tables);
+    const invalidFks = await client.query(
+      `SELECT count(*)::int AS count FROM pg_constraint
+        WHERE connamespace='public'::regnamespace AND contype='f' AND NOT convalidated`
+    );
 
     await run(pgDump, [
       "--format=custom",
@@ -286,6 +335,7 @@ async function exportRecoverySet(options) {
       invalid_public_foreign_keys: invalidFks.rows[0].count,
       business_prerequisites: readiness,
       document_reference_count: references.length,
+      inline_document_integrity: inlineDocuments,
       dump: { file: "cerp.dump", bytes: dumpStat.size, sha256: await sha256File(dumpFile) },
       catalog: { file: "cerp.dump.catalog", sha256: await sha256File(catalogFile) },
       document_references: { file: "document-references.jsonl", sha256: await sha256File(referencesFile) },
@@ -424,6 +474,7 @@ async function verifyRestoredDatabase(client, metadata) {
     const counts = await criticalCounts(client, tables);
     const migrations = await migrationDigest(client, tables);
     const readiness = await readinessSummary(client);
+    const inlineDocuments = await inlineDocumentIntegrity(client, tables);
     const invalidFks = await client.query(
       `SELECT count(*)::int AS count FROM pg_constraint
         WHERE connamespace='public'::regnamespace AND contype='f' AND NOT convalidated`
@@ -440,7 +491,13 @@ async function verifyRestoredDatabase(client, metadata) {
     if (metadata.business_prerequisites?.available && readiness.blocking !== metadata.business_prerequisites.blocking) {
       failures.push("business_prerequisites");
     }
-    return { tables: tables.length, critical_table_counts: counts, migrations, readiness, invalid_public_foreign_keys: invalidFks.rows[0].count, failures };
+    if (metadata.inline_document_integrity
+        && (inlineDocuments.reference_count !== metadata.inline_document_integrity.reference_count
+          || inlineDocuments.verified_count !== metadata.inline_document_integrity.verified_count
+          || inlineDocuments.total_bytes !== metadata.inline_document_integrity.total_bytes)) {
+      failures.push("inline_document_integrity");
+    }
+    return { tables: tables.length, critical_table_counts: counts, migrations, readiness, inline_document_integrity: inlineDocuments, invalid_public_foreign_keys: invalidFks.rows[0].count, failures };
   } finally {
     await client.query("COMMIT");
   }
@@ -506,7 +563,11 @@ async function main() {
   fail("command must be export, verify-files or restore-database");
 }
 
-main().catch((error) => {
-  process.stderr.write(`${error instanceof Error ? error.stack : String(error)}\n`);
-  process.exitCode = 1;
-});
+const invokedDirectly = process.argv[1]
+  && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
+if (invokedDirectly) {
+  main().catch((error) => {
+    process.stderr.write(`${error instanceof Error ? error.stack : String(error)}\n`);
+    process.exitCode = 1;
+  });
+}
