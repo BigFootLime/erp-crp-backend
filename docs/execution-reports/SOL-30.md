@@ -1,8 +1,8 @@
 # SOL-30 — Identification industrielle QR codes et codes-barres
 
-Date d'exécution : 2026-08-14
+Date d'exécution : 2026-08-14, clôture opérateur : 2026-08-15
 
-Branche de travail : `feature/512-qr-barcode-flows`
+Branche de travail : `feature/512-qr-barcode-flows` ; preuve de release : `docs/sol30-release-evidence`
 
 Dépôt : backend CERP+
 
@@ -40,7 +40,15 @@ Le patch crée les tables d'étiquettes, impressions, scans, reçus d'idempotenc
 
 Répétition isolée réalisée : 161 patchs appliqués, 0 patch en attente, 0 checksum divergent ; rollback puis restauration et rejeu réussis. Les preuves générées sont conservées dans `docs/release/MIGRATION_REHEARSAL_SOL_06.{json,md}`.
 
-Au moment de ce premier commit, l'application contrôlée sur `cerp_test` puis `cerp_prod` reste à exécuter après promotion du SHA sur `main`; elle sera ajoutée à ce rapport avec les identifiants de sauvegarde et les vérifications exactes.
+Le patch SOL-30 a ensuite été appliqué sur `cerp_test`, puis sur `cerp_prod`, après preflight et sauvegarde chiffrée hors site :
+
+- PostgreSQL contrôlé : `17.10` ; checksum du patch : `e9a2a116945105fbcce2a4ecc7246b3c9708a9d64920ed5f7a8ef94dc3740a7d`.
+- `cerp_test` : sauvegarde `/var/backups/cerp/cerp_test_pre_sol30_20260815-004544.dump.enc`, 73 086 592 octets, SHA-256 `e4e0619fb3d1d0afff5f160fc88fff934b92b3272d069af720ea0263cb92557f`, catalogue `pg_restore` de 4 619 entrées.
+- `cerp_prod` : sauvegarde `/var/backups/cerp/cerp_prod_pre_sol30_20260815-004544.dump.enc`, 49 613 600 octets, SHA-256 `0a55e2aebfa654de325cb80162a81b2510d64a609a24daf1ce7567a498728992`, catalogue de 4 597 entrées.
+- Les clés sont séparées des sauvegardes, sous `/root/.cerp-migration-keys/`, avec accès root uniquement.
+- Chaque base a appliqué exactement 1 patch SOL-30 ; vérification réussie, rejeu à 0 patch, 0 divergence de checksum et 0 donnée fonctionnelle créée automatiquement.
+- La sauvegarde `cerp_prod` a été déchiffrée uniquement en `tmpfs`, restaurée dans PostgreSQL 17.10 isolé, contrôlée (441 tables publiques), migrée, vérifiée puis rollbackée avec succès. Le conteneur et le dump clair ont été supprimés.
+- Le premier passage de l'opérateur a révélé un défaut du hook de nettoyage après une restauration déjà réussie ; le hook a été corrigé, l'environnement temporaire nettoyé puis la procédure complète rejouée avec code de sortie 0. Aucun effet sur les bases cibles.
 
 ## Tests et résultats
 
@@ -55,6 +63,17 @@ Au moment de ce premier commit, l'application contrôlée sur `cerp_test` puis `
 
 Le scénario `industrial-identification-sol30.spec.ts` prouve : ouverture de la page protégée, résolution d'une étiquette réelle, passage hors ligne, persistance de l'intention, retour en ligne, synchronisation et état résolu. L'action métier reste volontairement à confirmer dans le module cible.
 
+La route déployée `/traceabilite/identification` a aussi été ouverte dans Chrome le 2026-08-15 avec la session administrateur réelle : écran complet chargé, caméra explicitement indisponible sur ce navigateur, repli douchette/saisie présent, file locale vide et aucune erreur console. Le bandeau de cet hôte indique `cerp_test (test)` ; aucune écriture n'a donc été utilisée comme preuve de production.
+
+## Promotion et déploiement
+
+- Backend fonctionnel : `1a6eaaa4`, PR #513 vers `dev`, puis PR #514 vers `main`.
+- SHA backend `main` déployé lors du contrôle : `3dd529a6607b5d91b6751cde1bfc99664f1b9733`.
+- Coolify : déploiement `v137zbl4qkbbrhxas8k4xztj`, réussi en 7 min 48 s ; `/health/ready` retourne `ready=true`, la version complète, DB, GED, antivirus et realtime opérationnels.
+- HYPERBOX2 : release immuable `/srv/cerp/releases/20260815-3dd529a6`, build réussi (1 050 opérations OpenAPI, 720 fichiers runtime), services test et production prêts sur les ports 8082 et 8080 avec la version complète.
+- Contrôle négatif : l'endpoint public de capacités d'identification retourne `401` sans authentification sur Coolify, HYPERBOX2 test et HYPERBOX2 production.
+- Rollback HYPERBOX2 : retirer uniquement les drop-ins SOL-30 `zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-sol30-3dd529a6.conf`, exécuter `systemctl daemon-reload`, puis redémarrer `cerp-api-test` et `cerp-api-prod`. Les anciens drop-ins et releases restent présents.
+
 ## Risques, compatibilité et rollback
 
 - Les anciens modules ne sont pas réécrits : ils peuvent migrer progressivement vers le contrat SOL-30.
@@ -65,4 +84,4 @@ Le scénario `industrial-identification-sol30.spec.ts` prouve : ouverture de la 
 
 ## Reste réellement à faire
 
-Promouvoir ce commit sur `dev` puis `main`, sauvegarder et migrer `cerp_test` puis `cerp_prod`, déployer Coolify et HYPERBOX2, et reporter ici les SHA, sauvegardes et preuves de santé. Aucun défaut fonctionnel ou test en échec n'est masqué à ce checkpoint.
+Aucun reliquat fonctionnel SOL-30 connu. La promotion, les deux migrations, la restauration isolée, Coolify et HYPERBOX2 sont démontrés. Ce commit documentaire est promu séparément ; son SHA peut déclencher un redéploiement sans changement runtime, dont la convergence est vérifiée avant clôture.
