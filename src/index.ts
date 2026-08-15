@@ -4,6 +4,7 @@ import { createServer } from "http";
 
 import pool from "./config/database";
 import { assertE2EIsolation } from "./config/e2e-isolation";
+import { assertMfaStartupConfiguration } from "./module/auth/domain/mfa";
 import { startAuthRateLimitMaintenance } from "./module/auth/services/auth-rate-limit.service";
 import { startExpiredLockMaintenance } from "./module/locks/services/locks.service";
 import { startReminderMaintenance } from "./module/facturation/services/reminder-job.service";
@@ -21,6 +22,7 @@ installStructuredConsole();
 
 async function start(): Promise<void> {
   assertE2EIsolation();
+  assertMfaStartupConfiguration();
   // Run before importing routes: several upload middlewares allocate their
   // private quarantine during module initialization.
   const uploadRoots = preflightSecureUploadStorageRoots();

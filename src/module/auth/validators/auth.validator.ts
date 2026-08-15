@@ -50,3 +50,21 @@ export const activateAccountSchema = z
   .strict();
 
 export type ActivateAccountDTO = z.infer<typeof activateAccountSchema>;
+
+const mfaCode = z
+  .string({ required_error: "Code MFA requis" })
+  .trim()
+  .min(6, "Code MFA invalide")
+  .max(32, "Code MFA invalide");
+
+export const verifyMfaChallengeSchema = z.object({
+  challenge_token: z.string().trim().min(32).max(256),
+  code: mfaCode,
+}).strict();
+
+export const stepUpMfaSchema = z.object({ code: mfaCode }).strict();
+
+export const manageMfaSchema = z.object({
+  current_password: z.string().min(1, "Mot de passe requis").max(512),
+  code: mfaCode,
+}).strict();

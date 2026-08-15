@@ -20,6 +20,11 @@ interface JwtPayload {
   primary_role?: string;
   roles?: string[];
   session_epoch?: number;
+  mfa?: boolean;
+  amr?: string[];
+  mfa_verified_at?: number;
+  mfa_factor_id?: string;
+  mfa_factor_version?: number;
 }
 
 declare global {
@@ -99,10 +104,32 @@ export const requireActiveAccount: RequestHandler = (req, res, next) => {
         res.status(401).json({ error: "Token invalide ou expiré" });
         return;
       }
+      if (state.mfa_required && (
+        user.mfa !== true
+        || !user.amr?.some((method) => method === "totp" || method === "recovery_code")
+        || user.mfa_factor_id !== state.mfa_factor_id
+        || user.mfa_factor_version !== state.mfa_factor_version
+      )) {
+        console.warn(JSON.stringify({
+          type: "auth_forbidden",
+          reason: "mfa_assurance_missing_or_stale",
+          requestId: req.requestId ?? null,
+          method: req.method,
+          path: stripQueryFromUrl(req.originalUrl),
+          userId: user.id,
+        }));
+        res.status(401).json({
+          success: false,
+          code: "MFA_REQUIRED",
+          message: "Une nouvelle connexion avec authentification renforcée est requise.",
+        });
+        return;
+      }
       next();
     })
     .catch(next);
 };
+
 
 /**
  * Compatibility wrapper kept for existing routes.

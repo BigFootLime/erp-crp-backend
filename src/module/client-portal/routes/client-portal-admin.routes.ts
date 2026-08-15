@@ -1,11 +1,13 @@
 import { Router } from "express";
 
 import { requireSuperadmin } from "../../access-control/middlewares/require-superadmin";
+import { requireRecentMfaForMutations } from "../../auth/middlewares/mfa-assurance.middleware";
 import * as controller from "../controllers/client-portal.controller";
 
 const router = Router();
 
 router.use(requireSuperadmin);
+router.use(requireRecentMfaForMutations);
 router.get("/accounts", controller.listAdminAccounts);
 router.post("/accounts", controller.createAdminAccount);
 router.post("/accounts/:accountId/invitations", controller.createAdminInvitation);

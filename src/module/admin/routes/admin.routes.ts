@@ -1,6 +1,7 @@
 // src/module/admin/routes/admin.routes.ts
 import { Router } from "express";
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
+import { requireRecentMfaForMutations } from "../../auth/middlewares/mfa-assurance.middleware";
 import { requireSuperadmin } from "../../access-control/middlewares/require-superadmin";
 import {
   createPasswordResetTokenAdmin,
@@ -23,6 +24,7 @@ router.use(authenticateToken);
 // module model. The live database marker is authoritative; role labels and a
 // granted Administration module can never authorize account provisioning.
 router.use(requireSuperadmin);
+router.use(requireRecentMfaForMutations);
 
 router.get("/users", listUsersAdmin);
 router.get("/roles", listRolesAdmin);

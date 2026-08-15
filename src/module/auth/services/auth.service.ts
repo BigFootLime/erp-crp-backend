@@ -1,5 +1,4 @@
 import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
 import crypto from "node:crypto";
 import { findUserByUsername } from '../repository/auth.repository';
 import { findUserByUsernameOrEmail, updateUserPassword } from "../repository/auth.repository";
@@ -23,7 +22,6 @@ import {
 
 import { sendPasswordResetEmail } from "./password-reset-email.service";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
-import { authorizationRole, normalizeAssignedRoles } from "../domain/roles";
 import { revokeUserRealtimeSessions } from "../../../sockets/sockeServer";
 import {
   canonicalizeAuthUsername,
@@ -34,6 +32,8 @@ import {
   verifyAccountInvitationToken,
 } from "../domain/account-invitation";
 import { repoActivateAccountInvitation } from "../repository/account-invitation.repository";
+import { issueSessionToken } from "../domain/session-token";
+import { beginMfaAfterPassword } from "./mfa.service";
 
 export const loginUser = async (
   username: string,
@@ -87,23 +87,12 @@ export const loginUser = async (
     throw new ApiError(401, "AUTH_INVALID", invalidMsg);
   }
 
-  const assignedRoles = normalizeAssignedRoles(user.role, user.roles);
-  const effectiveRole = authorizationRole(user.role, assignedRoles);
-  const sessionEpoch = Number.parseInt(String(user.realtime_session_epoch ?? "0"), 10);
-  const token = jwt.sign(
-    {
-      id: user.id,
-      username: user.username,
-      email: user.email,
-      role: effectiveRole,
-      primary_role: user.role,
-      roles: assignedRoles,
-      session_epoch: Number.isSafeInteger(sessionEpoch) && sessionEpoch >= 0 ? sessionEpoch : 0,
-      jti: crypto.randomUUID(),
-    },
-    process.env.JWT_SECRET as string,
-    { expiresIn: "1d" }
-  );
+  const mfa = await beginMfaAfterPassword(user, {
+    ...meta,
+    path: "/api/v1/auth/login",
+  });
+
+  if (mfa) return mfa;
 
   await insertLoginLog({
     user_id: user.id,
@@ -113,17 +102,7 @@ export const loginUser = async (
     ...meta,
   });
 
-  return {
-    token,
-    user: {
-      id: user.id,
-      username: user.username,
-      email: user.email,
-      role: effectiveRole,
-      primary_role: user.role,
-      roles: assignedRoles,
-    },
-  };
+  return issueSessionToken(user);
 };
 
 export async function activateAccountWithInvitation(

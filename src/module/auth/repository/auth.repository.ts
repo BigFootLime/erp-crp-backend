@@ -99,6 +99,10 @@ export type AuthUserLookupRow = {
 export type AuthenticatedAccountState = {
   status: string | null;
   session_epoch: number;
+  is_superadmin: boolean;
+  mfa_required: boolean;
+  mfa_factor_id: string | null;
+  mfa_factor_version: number | null;
 };
 
 /**
@@ -112,13 +116,20 @@ export const findAuthenticatedAccountState = async (
   const { rows } = await pool.query<{
     status: string | null;
     session_epoch: string;
+    is_superadmin: boolean;
+    mfa_factor_id: string | null;
+    mfa_factor_version: number | null;
   }>(
     `
       SELECT
         users.status,
+        users.is_superadmin,
+        factor.id::text AS mfa_factor_id,
+        factor.version AS mfa_factor_version,
         COALESCE(epochs.session_epoch, 0)::text AS session_epoch
       FROM public.users
       LEFT JOIN public.realtime_session_epochs epochs ON epochs.user_id = users.id
+      LEFT JOIN public.user_mfa_factors factor ON factor.user_id = users.id AND factor.state = 'ACTIVE'
       WHERE users.id = $1
       LIMIT 1
     `,
@@ -130,6 +141,10 @@ export const findAuthenticatedAccountState = async (
   return {
     status: row.status,
     session_epoch: Number.isSafeInteger(sessionEpoch) && sessionEpoch >= 0 ? sessionEpoch : 0,
+    is_superadmin: row.is_superadmin === true,
+    mfa_required: row.is_superadmin === true || Boolean(row.mfa_factor_id),
+    mfa_factor_id: row.mfa_factor_id ?? null,
+    mfa_factor_version: row.mfa_factor_version ?? null,
   };
 };
 

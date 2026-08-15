@@ -14,6 +14,7 @@ const PUBLIC_ROUTE_POLICIES: Readonly<Record<string, string>> = {
   "post /auth/activate": "Activation par jeton administratif à usage unique avec limitation de débit.",
   "post /auth/forgot-password": "Demande de récupération non révélatrice avec limitation de débit.",
   "post /auth/login": "Échange d’identifiants contre une session avec limitation de débit distribuée.",
+  "post /auth/mfa/verify": "Vérification d’un challenge MFA signé, court, à usage unique et limité en débit avant émission de session.",
   "post /auth/reset-password": "Réinitialisation par jeton à usage unique avec limitation de débit.",
   "post /electronic-invoicing/webhooks/{providerCode}": "Webhook prestataire authentifié par signature sur le corps brut et limité en débit.",
   "get /environment": "Signal public minimal de routage de base, sans secret ni donnée métier.",

@@ -2,6 +2,7 @@
 import { Router } from "express";
 
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
+import { requireRecentMfaForMutations } from "../../auth/middlewares/mfa-assurance.middleware";
 import * as controller from "../controllers/access-control.controller";
 import { requireSuperadmin } from "../middlewares/require-superadmin";
 
@@ -9,7 +10,7 @@ const router = Router();
 
 // Aucun `authorizeRole` ici : le statut superadmin n'est pas un rôle métier et ne
 // doit pas pouvoir être obtenu par une attribution de rôle depuis /admin/users.
-router.use(authenticateToken, requireSuperadmin);
+router.use(authenticateToken, requireSuperadmin, requireRecentMfaForMutations);
 
 router.get("/overview", controller.getOverview);
 router.get("/events", controller.getAccessEvents);
