@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   hashPortalOpaqueValue,
@@ -13,10 +13,13 @@ const previousSecret = process.env.CLIENT_PORTAL_JWT_SECRET;
 
 describe("client portal security boundary", () => {
   beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-14T12:30:00.000Z"));
     process.env.CLIENT_PORTAL_JWT_SECRET = "sol29-test-secret-with-at-least-32-characters";
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     if (previousSecret === undefined) delete process.env.CLIENT_PORTAL_JWT_SECRET;
     else process.env.CLIENT_PORTAL_JWT_SECRET = previousSecret;
   });
