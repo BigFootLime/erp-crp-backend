@@ -698,6 +698,10 @@ then run the verify script and an idempotent replay. Rollback is allowed only
 before any subscription, delivery, command receipt or audit evidence exists;
 after use, disable the worker and preserve evidence.
 
+# 2026-08-14 — Identification industrielle versionnée (SOL-30)
+
+`20260814_identification_labels_sol30.sql` ajoute le registre d’étiquettes, les événements d’impression et de scan, les reçus idempotents et l’audit append-only. Le contenu imprimé est limité à `CERP:1:<public UUID>` et seul son SHA-256 est enregistré lors d’un scan. Exécuter le preflight après une sauvegarde chiffrée vérifiée, appliquer uniquement le patch immuable, exécuter le verify puis un rejeu. Le rollback SQL refuse de supprimer des preuves ; après première utilisation, désactiver les routes et conserver les tables.
+
 # 2026-08-14 — Portail client isolé (SOL-29)
 
 `20260814_client_portal_sol29.sql` ajoute les identités portail séparées des utilisateurs ERP, les jetons à usage unique, reçus idempotents, publications GED explicites, accusés et audits append-only, limites d’authentification persistées et trois projections commerciales en liste blanche. Le trigger `trg_client_portal_ack_tenant_guard_sol29` refuse aussi un accusé entre deux clients différents. Exécuter le preflight après une sauvegarde vérifiée, appliquer seulement le patch immuable, lancer le verify puis un replay. Le rollback est autorisé uniquement avant toute preuve portail ; après usage, désactiver les routes et conserver les données d’audit.

@@ -51,6 +51,7 @@ import openApiRoutes from "../swagger/openapi.routes";
 import webhookAdminRoutes from "../module/integrations/webhooks/webhook.routes";
 import clientPortalRoutes from "../module/client-portal/routes/client-portal.routes";
 import clientPortalAdminRoutes from "../module/client-portal/routes/client-portal-admin.routes";
+import identificationRoutes from "../module/identification/identification.routes";
 
 import traceabilityRoutes from "../module/traceability/routes/traceability.routes"
 import traceability360Routes from "../module/traceability/routes/traceability-360.routes"
@@ -172,6 +173,7 @@ router.use("/chat", chatRoutes);
 router.use("/users", usersRoutes);
 // Traçabilité 360 (#142) : la surface étendue est montée AVANT le routeur
 // historique pour que `/traceability/v2/...` ne soit jamais capté par lui.
+router.use("/traceability/identification", identificationRoutes);
 router.use("/traceability/v2", traceability360Routes)
 router.use("/traceability", traceabilityRoutes)
 router.use("/asbuilt", asbuiltRoutes)

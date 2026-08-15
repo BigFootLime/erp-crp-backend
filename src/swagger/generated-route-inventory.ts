@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "13ed1f48241a77e539c2f6161df31213617115e8493e1401edd68683a12357b9";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "b238169ee45fa47245481d4844d29489b9a779b9b0cb4060b7cf2667bd54f78a";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -17888,6 +17888,126 @@ export const GENERATED_ROUTE_INVENTORY = [
     "rbac": [
       "moduleAccessGate",
       "requireTraceabilityCapability(read)"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/traceability/identification/capabilities",
+    "source": "src/module/identification/identification.routes.ts:16",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "getIdentificationCapabilities"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/traceability/identification/labels",
+    "source": "src/module/identification/identification.routes.ts:17",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "getIdentificationLabels"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/traceability/identification/labels",
+    "source": "src/module/identification/identification.routes.ts:18",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "createIdentificationLabel"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/traceability/identification/labels/{labelId}/invalidate",
+    "source": "src/module/identification/identification.routes.ts:20",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "invalidateIdentificationLabel"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/traceability/identification/labels/{labelId}/print",
+    "source": "src/module/identification/identification.routes.ts:19",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "printIdentificationLabel"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/traceability/identification/labels/{labelId}/replace",
+    "source": "src/module/identification/identification.routes.ts:21",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "replaceIdentificationLabel"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/traceability/identification/offline/sync",
+    "source": "src/module/identification/identification.routes.ts:23",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "syncOfflineIdentificationCodes"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/traceability/identification/resolve",
+    "source": "src/module/identification/identification.routes.ts:22",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "resolveIdentificationCode"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
     ]
   },
   {
