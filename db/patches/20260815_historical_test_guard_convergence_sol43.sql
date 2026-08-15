@@ -57,6 +57,7 @@ BEGIN
     JOIN (VALUES
       ('20260727_contacts_email_scope_187.sql', '4d43141bc2e6b803f4b37d1dff146c9950e64c75f0b317194ebf03dacbddbf1a'),
       ('20260727_contacts_shared_email_identity_190.sql', 'b3b030cefbbf16ceca44481d74380de71803d72320c19b4da9cc62eee37aaf89'),
+      ('20260727_import_clients_enrichment_306.sql', '3b0987397ad79f1fe8580c19a7cd2153c3ed5fb3617d357b2dfa452684b93181'),
       ('20260727_import_supplier_orders_312.sql', '5988f518ebfe8160372ec833fb14fba636a54638f367a637703162032d7193a0'),
       ('20260727_stock_import_precision_198.sql', '0a348b7d6b723ba2d38b4927a5eed9a3999e3dfa82f56940f1f3a4d5b2da5a6a')
     ) AS expected(filename, sha256)
@@ -106,6 +107,15 @@ ALTER TABLE public.data_import_batches
       'EMPLOYE'
     )
   );
+
+CREATE TABLE IF NOT EXISTS public.client_contact_create_idempotency (
+  idempotency_key text PRIMARY KEY,
+  contact_id uuid NOT NULL REFERENCES public.contacts(contact_id) ON DELETE RESTRICT,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS client_contact_create_idempotency_contact_idx
+  ON public.client_contact_create_idempotency (contact_id);
 
 ALTER TABLE public.stock_movement_lines
   ALTER COLUMN qty TYPE numeric(18,6)
@@ -190,6 +200,7 @@ INSERT INTO public.cerp_migration_supersessions (
 VALUES
   ('20260727_contacts_email_scope_187.sql', '4d43141bc2e6b803f4b37d1dff146c9950e64c75f0b317194ebf03dacbddbf1a', '20260815_historical_test_guard_convergence_sol43.sql', current_database(), current_user, 'Legacy patch was restricted to cerp_test; final contact identity rule applied by SOL-43'),
   ('20260727_contacts_shared_email_identity_190.sql', 'b3b030cefbbf16ceca44481d74380de71803d72320c19b4da9cc62eee37aaf89', '20260815_historical_test_guard_convergence_sol43.sql', current_database(), current_user, 'Legacy patch was restricted to cerp_test; final contact identity rule applied by SOL-43'),
+  ('20260727_import_clients_enrichment_306.sql', '3b0987397ad79f1fe8580c19a7cd2153c3ed5fb3617d357b2dfa452684b93181', '20260815_historical_test_guard_convergence_sol43.sql', current_database(), current_user, 'Legacy patch was restricted to cerp_test; client enrichment and idempotency state applied by SOL-43'),
   ('20260727_import_supplier_orders_312.sql', '5988f518ebfe8160372ec833fb14fba636a54638f367a637703162032d7193a0', '20260815_historical_test_guard_convergence_sol43.sql', current_database(), current_user, 'Legacy patch was restricted to cerp_test; supplier-order import constraint applied by SOL-43'),
   ('20260727_stock_import_precision_198.sql', '0a348b7d6b723ba2d38b4927a5eed9a3999e3dfa82f56940f1f3a4d5b2da5a6a', '20260815_historical_test_guard_convergence_sol43.sql', current_database(), current_user, 'Legacy patch was restricted to cerp_test; stock precision and bounded repair applied by SOL-43')
 ON CONFLICT (legacy_filename) DO UPDATE
@@ -204,6 +215,7 @@ INSERT INTO public.cerp_schema_migrations (filename, sha256)
 VALUES
   ('20260727_contacts_email_scope_187.sql', '4d43141bc2e6b803f4b37d1dff146c9950e64c75f0b317194ebf03dacbddbf1a'),
   ('20260727_contacts_shared_email_identity_190.sql', 'b3b030cefbbf16ceca44481d74380de71803d72320c19b4da9cc62eee37aaf89'),
+  ('20260727_import_clients_enrichment_306.sql', '3b0987397ad79f1fe8580c19a7cd2153c3ed5fb3617d357b2dfa452684b93181'),
   ('20260727_import_supplier_orders_312.sql', '5988f518ebfe8160372ec833fb14fba636a54638f367a637703162032d7193a0'),
   ('20260727_stock_import_precision_198.sql', '0a348b7d6b723ba2d38b4927a5eed9a3999e3dfa82f56940f1f3a4d5b2da5a6a')
 ON CONFLICT (filename) DO NOTHING;
