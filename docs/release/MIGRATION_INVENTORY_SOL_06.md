@@ -1,10 +1,10 @@
 # Inventaire des migrations — SOL-06
 
-- Généré : 2026-08-15T11:03:39.109Z
+- Généré : 2026-08-15T11:10:40.280Z
 - Source : filesystem scan of db/patches and db/patches/support
-- Patches exécutables : 164
-- Scripts auxiliaires : 284
-- Patches depuis 2026-07-01 : 106
+- Patches exécutables : 165
+- Scripts auxiliaires : 287
+- Patches depuis 2026-07-01 : 107
 
 ## Risques statiques à examiner
 
