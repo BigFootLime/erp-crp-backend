@@ -273,7 +273,7 @@ export const MODULE_CATALOG: readonly ModuleCatalogEntry[] = [
     description: "Comptes, rôles, réglages ERP et tour de contrôle des accès.",
     category: "Système",
     api_prefixes: ["/admin", "/audit-logs"],
-    nav_page_keys: ["administration", "erp-settings", "acces"],
+    nav_page_keys: ["administration", "erp-settings", "reference-data", "acces"],
     is_protected: true,
     sort_order: 200,
   },
