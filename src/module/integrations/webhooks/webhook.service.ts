@@ -4,6 +4,7 @@ import https from "node:https";
 import net from "node:net";
 
 import { logger } from "../../../shared/observability/logger";
+import { markJobFinished, markJobStarted } from "../../../shared/observability/metrics";
 import { HttpError } from "../../../utils/httpError";
 import {
   WEBHOOK_EVENT_REGISTRY,
@@ -404,11 +405,14 @@ export function startWebhookDeliveryMaintenance(): () => void {
   const cycle = async () => {
     if (running) return;
     running = true;
+    markJobStarted("webhook_delivery");
     try {
       for (let processed = 0; processed < 25; processed += 1) {
         if (!(await processNextWebhookDelivery())) break;
       }
+      markJobFinished("webhook_delivery", true);
     } catch (error) {
+      markJobFinished("webhook_delivery", false);
       logger.error("webhook_delivery_worker_failed", { failure_code: safeDeliveryError(error) });
     } finally {
       running = false;

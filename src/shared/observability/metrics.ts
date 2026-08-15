@@ -5,7 +5,13 @@ import { runtimeMetadata } from "./runtime";
 const HTTP_BUCKETS_SECONDS = [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10] as const;
 
 type DependencyName = "database" | "ged_storage" | "antivirus" | "realtime";
-type DependencyState = Readonly<{ up: boolean; checkedAtMs: number; latencyMs: number }>;
+type DependencyState = Readonly<{
+  up: boolean;
+  checkedAtMs: number;
+  latencyMs: number;
+  lastSucceededAtMs: number;
+  lastFailedAtMs: number;
+}>;
 type JobState = Readonly<{
   lastStartedAtMs: number;
   lastSucceededAtMs: number;
@@ -69,7 +75,14 @@ export function setDependencyState(
   latencyMs: number,
   checkedAtMs = Date.now()
 ): void {
-  dependencies.set(name, { up, latencyMs, checkedAtMs });
+  const previous = dependencies.get(name);
+  dependencies.set(name, {
+    up,
+    latencyMs,
+    checkedAtMs,
+    lastSucceededAtMs: up ? checkedAtMs : previous?.lastSucceededAtMs ?? 0,
+    lastFailedAtMs: up ? previous?.lastFailedAtMs ?? 0 : checkedAtMs,
+  });
 }
 
 export function setGedCapacity(capacity: {
@@ -126,6 +139,20 @@ export function setGedQuarantineMetrics(input: {
   oldestAgeSeconds: number;
 } | null): void {
   gedQuarantine = input;
+}
+
+export function getOperationalMetricsSnapshot(): Readonly<{
+  dependencies: Readonly<Record<string, DependencyState>>;
+  jobs: Readonly<Record<string, JobState>>;
+  ged_capacity: typeof gedCapacity;
+  ged_quarantine: typeof gedQuarantine;
+}> {
+  return {
+    dependencies: Object.fromEntries(dependencies.entries()),
+    jobs: Object.fromEntries(jobs.entries()),
+    ged_capacity: gedCapacity ? { ...gedCapacity } : null,
+    ged_quarantine: gedQuarantine ? { ...gedQuarantine } : null,
+  };
 }
 
 export function renderPrometheusMetrics(pool?: Pool): string {
