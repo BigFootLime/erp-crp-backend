@@ -73,11 +73,37 @@ dans l’image.
 - sans configuration Prometheus, l’API métier reste disponible mais les
   sauvegardes sont correctement marquées `unavailable`.
 
+## Publication et déploiements vérifiés
+
+- commit fonctionnel : `6d5cb2a` ;
+- PR feature → `dev` : `#518`, fusion `902b725ea29c5208f96d325a5f650e5e6b2aa37e` ;
+- PR `dev` → `main` : `#519`, fusion `8ecd5397f56b6ed2fd57194f27b66a6ea9c62627` ;
+- Coolify : conteneur production `healthy` sur l'image
+  `8ecd5397f56b6ed2fd57194f27b66a6ea9c62627`, `/health/live` et
+  `/health/ready` exposent ce SHA, les quatre dépendances obligatoires sont
+  `up`, et l'accès anonyme à `/api/v1/admin/operations` répond 401 ;
+- HYPERBOX2 : archive contrôlée SHA-256
+  `788505c7adf4aabba85309f9d3c2c5959fee86b9e304c345a2ff0dc1ff28cb1a`,
+  build serveur réussi (1 051 opérations OpenAPI, 724 fichiers émis), puis
+  promotion TEST → PROD dans la release immuable `20260815-8ecd5397` ;
+- HYPERBOX2 TEST et PROD : services actifs, répertoire et `ExecStart` sur cette
+  release, version de santé complète `8ecd5397f56b6ed2fd57194f27b66a6ea9c62627`,
+  DB/GED/ClamAV/temps réel `up`, endpoint anonyme 401.
+
+Les worktrees locaux officiels `dev` et `main` ont été avancés en fast-forward
+sur ces fusions et vérifiés propres. Le commit documentaire qui ajoute la
+présente preuve ne modifie ni code runtime, ni schéma, ni donnée.
+
 ## Rollback
 
 Redéployer le SHA backend précédent. Aucune restauration SQL n’est requise.
 Après rollback, valider `/health/live`, `/health/ready`, le login et un flux de
 lecture. La pile Prometheus/Alertmanager reste indépendante.
+
+Sur HYPERBOX2, retirer uniquement le drop-in
+`zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-sol31-8ecd5397.conf` des services
+`cerp-api-test` et `cerp-api`, exécuter `systemctl daemon-reload`, redémarrer
+TEST puis PROD et vérifier le retour explicite à `f509158f`.
 
 ## Reste réel
 
