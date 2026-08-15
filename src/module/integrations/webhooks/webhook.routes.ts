@@ -2,6 +2,7 @@ import { Router } from "express";
 
 import { requireSuperadmin } from "../../access-control/middlewares/require-superadmin";
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
+import { requireRecentMfaForMutations } from "../../auth/middlewares/mfa-assurance.middleware";
 import {
   getWebhookDeliveries,
   getWebhookEvents,
@@ -19,6 +20,7 @@ const router = Router();
 
 router.use(authenticateToken);
 router.use(requireSuperadmin);
+router.use(requireRecentMfaForMutations);
 
 router.get("/readiness", getWebhookReadiness);
 router.get("/events", getWebhookEvents);

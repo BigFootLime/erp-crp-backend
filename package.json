@@ -23,6 +23,7 @@
     "db:migrations:preflight": "node scripts/migrations/release-gate.js preflight",
     "db:migrations:integrity": "node scripts/migrations/release-gate.js integrity",
     "db:migrations:rehearse": "node scripts/migrations/release-gate.js rehearse",
+    "auth:mfa:recover": "node scripts/auth/recover-privileged-mfa.mjs",
     "e2e:migrate:isolated": "node scripts/e2e/migrate-isolated.js",
     "e2e:seed:isolated": "node scripts/e2e/seed-isolated.js",
     "e2e:accounting-export:isolated": "node scripts/e2e/accounting-export-sol27-run.js",

@@ -3,6 +3,7 @@ export type AuthRateLimitEndpoint =
   | "register"
   | "forgotPassword"
   | "resetPassword"
+  | "mfa"
   | "einvoiceWebhook";
 
 export type AuthRateLimitDimension = "ip" | "username" | "email" | "token";
@@ -122,6 +123,13 @@ export function loadAuthRateLimitConfig(env: NodeJS.ProcessEnv = process.env): A
     MINUTE_MS,
     24 * HOUR_MS
   );
+  const mfaWindowMs = readBoundedInteger(
+    env,
+    "AUTH_RATE_LIMIT_MFA_WINDOW_MS",
+    15 * MINUTE_MS,
+    MINUTE_MS,
+    24 * HOUR_MS
+  );
 
   return {
     enabled,
@@ -195,6 +203,16 @@ export function loadAuthRateLimitConfig(env: NodeJS.ProcessEnv = process.env): A
         token: {
           limit: readBoundedInteger(env, "AUTH_RATE_LIMIT_RESET_TOKEN_LIMIT", 10, 1, 10_000),
           windowMs: resetWindowMs,
+        },
+      }),
+      mfa: endpointConfig("closed-error", {
+        ip: {
+          limit: readBoundedInteger(env, "AUTH_RATE_LIMIT_MFA_IP_LIMIT", 30, 1, 10_000),
+          windowMs: mfaWindowMs,
+        },
+        token: {
+          limit: readBoundedInteger(env, "AUTH_RATE_LIMIT_MFA_TOKEN_LIMIT", 10, 1, 10_000),
+          windowMs: mfaWindowMs,
         },
       }),
       einvoiceWebhook: endpointConfig("closed-error", {
