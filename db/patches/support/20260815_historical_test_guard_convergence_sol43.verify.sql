@@ -38,6 +38,11 @@ BEGIN
     RAISE EXCEPTION 'SOL-43 convergence verification failed: supplier-order import is not allowed';
   END IF;
 
+  IF to_regclass('public.client_contact_create_idempotency') IS NULL
+     OR to_regclass('public.client_contact_create_idempotency_contact_idx') IS NULL THEN
+    RAISE EXCEPTION 'SOL-43 convergence verification failed: contact idempotency state is missing';
+  END IF;
+
   SELECT count(*)::integer
     INTO proven_count
     FROM public.cerp_schema_migrations AS applied
@@ -47,12 +52,13 @@ BEGIN
    WHERE applied.filename IN (
      '20260727_contacts_email_scope_187.sql',
      '20260727_contacts_shared_email_identity_190.sql',
+     '20260727_import_clients_enrichment_306.sql',
      '20260727_import_supplier_orders_312.sql',
      '20260727_stock_import_precision_198.sql'
    );
 
-  IF proven_count <> 4 THEN
-    RAISE EXCEPTION 'SOL-43 convergence verification failed: expected 4 provenance records, found %', proven_count;
+  IF proven_count <> 5 THEN
+    RAISE EXCEPTION 'SOL-43 convergence verification failed: expected 5 provenance records, found %', proven_count;
   END IF;
 END
 $$;

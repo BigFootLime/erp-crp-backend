@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-15T10:58:45.419Z",
+  "generated_at": "2026-08-15T11:03:39.109Z",
   "source": "filesystem scan of db/patches and db/patches/support",
   "patch_count": 164,
   "support_file_count": 284,
@@ -2986,8 +2986,8 @@
     {
       "order": 162,
       "filename": "20260815_historical_test_guard_convergence_sol43.sql",
-      "sha256": "4ab8dc57c44b3baaa77314e7ef7725df28ac5afacdc66f189d1935bd4bffd828",
-      "bytes": 8087,
+      "sha256": "f3ccb16d3f85e03f1b00f710a9d28eda70dc6818b26353d081ac17fa41dce119",
+      "bytes": 9016,
       "transaction_wrapped": true,
       "replay_markers": true,
       "support": {
