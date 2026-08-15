@@ -87,6 +87,11 @@ async function main() {
   await client.connect();
   try {
     await client.query("BEGIN");
+    // The access-review browser proof must always start from the same state.
+    // This seed is hard-gated to loopback cerp_test above, so no operational
+    // review can be removed by this deterministic fixture reset.
+    await client.query("DELETE FROM public.app_access_review_items");
+    await client.query("DELETE FROM public.app_access_reviews");
     for (const [username, name, surname, email, role, superadmin, assignedRole] of USERS) {
       const result = await client.query(
         `INSERT INTO public.users (username,password,name,surname,email,role,status,is_superadmin)
