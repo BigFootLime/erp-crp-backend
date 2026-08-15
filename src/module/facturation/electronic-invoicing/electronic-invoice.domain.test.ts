@@ -99,6 +99,17 @@ describe("DGFiP electronic invoice contract", () => {
         content: Buffer.from("<Invoice/>") ,
         attachments: [],
       }),
+      diagnose: async () => ({
+        configured: true,
+        reachable: true,
+        authenticated: true,
+        companyVerificationStatus: "verified",
+        checkedAt: "2026-08-14T10:00:00.000Z",
+        latencyMs: 1,
+        failureCode: null,
+        message: "ok",
+        contractVersion: "test",
+      }),
       submit: async () => ({
         providerDocumentId: "provider-1",
         providerRequestId: "request-1",

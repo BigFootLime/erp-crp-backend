@@ -32,6 +32,13 @@ export type ElectronicInvoiceConnection = {
   qualifiedAt: string;
 };
 
+export type ElectronicInvoiceProviderConfiguration = ElectronicInvoiceConnection & {
+  enabled: boolean;
+  qualificationReference: string | null;
+  qualifiedBy: number | null;
+  updatedAt: string;
+};
+
 export type ElectronicInvoiceDocumentState = {
   id: string;
   invoice_id: number | null;
@@ -72,6 +79,7 @@ function sourceMissingFields(source: ElectronicInvoiceSourceDocument): string[] 
   if (!stringValue(source.issuerSnapshot, "address_line_1")) missing.push("issuer.address_line_1");
   if (!stringValue(source.issuerSnapshot, "postal_code")) missing.push("issuer.postal_code");
   if (!stringValue(source.issuerSnapshot, "city")) missing.push("issuer.city");
+  if (!stringValue(source.issuerSnapshot, "country")) missing.push("issuer.country");
   const buyerSiret = stringValue(source.customerSnapshot, "siret") ?? "";
   if (!/^\d{14}$/.test(buyerSiret)) missing.push("customer.siret");
   if (!stringValue(source.customerSnapshot, "company_name")) missing.push("customer.company_name");
@@ -79,8 +87,18 @@ function sourceMissingFields(source: ElectronicInvoiceSourceDocument): string[] 
   if (!isRecord(billingAddress) || !stringValue(billingAddress, "street")) missing.push("customer.billing_address.street");
   if (!isRecord(billingAddress) || !stringValue(billingAddress, "postal_code")) missing.push("customer.billing_address.postal_code");
   if (!isRecord(billingAddress) || !stringValue(billingAddress, "city")) missing.push("customer.billing_address.city");
+  if (!isRecord(billingAddress) || !stringValue(billingAddress, "country")) missing.push("customer.billing_address.country");
   if (!/^[A-Z]{3}$/.test(source.currency)) missing.push("currency");
   if (source.lines.length === 0) missing.push("lines");
+  source.lines.forEach((line, index) => {
+    const required = ["description", "quantity", "unit", "unit_price_ex_tax", "vat_rate", "total_ex_tax", "total_incl_tax"];
+    for (const key of required) {
+      const value = line[key];
+      if ((typeof value !== "string" && typeof value !== "number") || String(value).trim().length === 0) {
+        missing.push(`lines[${index}].${key}`);
+      }
+    }
+  });
   return missing;
 }
 
@@ -140,6 +158,187 @@ export async function repoGetElectronicInvoiceConnection(
     supportedFormats: row.supported_formats,
     qualifiedAt: new Date(row.qualified_at).toISOString(),
   };
+}
+
+export async function repoGetElectronicInvoiceProviderConfiguration(
+  environment: "sandbox" | "production",
+  queryer: DbQueryer = pool
+): Promise<ElectronicInvoiceProviderConfiguration | null> {
+  const result = await queryer.query<{
+    provider_code: string;
+    adapter_key: string;
+    environment: "sandbox" | "production";
+    enabled: boolean;
+    supported_formats: ElectronicInvoiceFormat[];
+    credential_reference: Record<string, unknown>;
+    qualified_at: string | null;
+    qualified_by: number | null;
+    updated_at: string;
+  }>(
+    `SELECT provider_code, adapter_key, environment, enabled, supported_formats,
+            credential_reference, qualified_at, qualified_by, updated_at
+       FROM public.einvoice_provider_connections
+      WHERE provider_code = $1
+      LIMIT 1`,
+    [`super-pdp-${environment}`]
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  const reference = row.credential_reference?.qualification_reference;
+  return {
+    providerCode: row.provider_code,
+    adapterKey: row.adapter_key,
+    environment: row.environment,
+    enabled: row.enabled,
+    supportedFormats: row.supported_formats,
+    qualificationReference: typeof reference === "string" ? reference : null,
+    qualifiedAt: row.qualified_at ? new Date(row.qualified_at).toISOString() : "",
+    qualifiedBy: row.qualified_by,
+    updatedAt: new Date(row.updated_at).toISOString(),
+  };
+}
+
+export async function repoActivateSuperPdpConnection(params: {
+  environment: "sandbox" | "production";
+  formats: ElectronicInvoiceFormat[];
+  qualificationReference: string;
+  authMode: "client_credentials" | "authorization_code";
+  actor: FinanceActorContext;
+  idempotencyKeyRaw: string | undefined;
+}): Promise<ElectronicInvoiceProviderConfiguration & { idempotent_replay: boolean }> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const idempotencyKey = normalizeIdempotencyKey(params.idempotencyKeyRaw);
+    const requestHash = financeRequestHash("EINVOICE_PROVIDER_ACTIVATE", {
+      environment: params.environment,
+      formats: [...params.formats].sort(),
+      qualification_reference: params.qualificationReference,
+      auth_mode: params.authMode,
+    });
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+      `einvoice-provider:${params.environment}`,
+    ]);
+    const previous = await client.query<{ request_hash: string; result_payload: ElectronicInvoiceProviderConfiguration }>(
+      `SELECT request_hash, result_payload
+         FROM public.einvoice_command_receipts
+        WHERE actor_user_id = $1 AND idempotency_key = $2`,
+      [params.actor.userId, idempotencyKey]
+    );
+    const replay = previous.rows[0];
+    if (replay) {
+      if (replay.request_hash !== requestHash) {
+        throw new HttpError(409, "IDEMPOTENCY_KEY_REUSED", "Cette Idempotency-Key a déjà été utilisée avec un autre contenu.");
+      }
+      await client.query("COMMIT");
+      return { ...replay.result_payload, idempotent_replay: true };
+    }
+    const providerCode = `super-pdp-${params.environment}`;
+    const active = await client.query<{ provider_code: string }>(
+      `SELECT provider_code FROM public.einvoice_provider_connections
+        WHERE environment = $1 AND enabled = true AND provider_code <> $2
+        FOR UPDATE`,
+      [params.environment, providerCode]
+    );
+    if (active.rows[0]) {
+      throw new HttpError(
+        409,
+        "EINVOICE_PROVIDER_ALREADY_ACTIVE",
+        `Le prestataire ${active.rows[0].provider_code} est déjà actif dans cet environnement.`
+      );
+    }
+    await client.query(
+      `INSERT INTO public.einvoice_provider_connections (
+         provider_code, adapter_key, environment, enabled, supported_formats,
+         credential_reference, qualified_at, qualified_by
+       ) VALUES ($1,'super-pdp',$2,true,$3,$4::jsonb,now(),$5)
+       ON CONFLICT (provider_code) DO UPDATE SET
+         adapter_key = EXCLUDED.adapter_key,
+         environment = EXCLUDED.environment,
+         enabled = true,
+         supported_formats = EXCLUDED.supported_formats,
+         credential_reference = EXCLUDED.credential_reference,
+         qualified_at = now(),
+         qualified_by = EXCLUDED.qualified_by,
+         updated_at = now()`,
+      [
+        providerCode,
+        params.environment,
+        params.formats,
+        JSON.stringify({
+          auth_mode: params.authMode,
+          client_id_env: "SUPER_PDP_CLIENT_ID",
+          client_secret_env: params.authMode === "client_credentials" ? "SUPER_PDP_CLIENT_SECRET" : null,
+          tenant_token_vault: params.authMode === "authorization_code" ? "required" : null,
+          qualification_reference: params.qualificationReference,
+        }),
+        params.actor.userId,
+      ]
+    );
+    const configuration = await repoGetElectronicInvoiceProviderConfiguration(params.environment, client);
+    if (!configuration) throw new Error("SUPER PDP activation did not persist");
+    await client.query(
+      `INSERT INTO public.einvoice_command_receipts (
+         actor_user_id, idempotency_key, request_hash, command_type,
+         document_id, result_payload, correlation_id
+       ) VALUES ($1,$2,$3,'EINVOICE_PROVIDER_ACTIVATE',NULL,$4::jsonb,$5::uuid)`,
+      [params.actor.userId, idempotencyKey, requestHash, JSON.stringify(configuration), crypto.randomUUID()]
+    );
+    await insertGlobalFinanceAudit({
+      client,
+      actor: params.actor,
+      action: "EINVOICE_PROVIDER_ACTIVATED",
+      entityType: "EINVOICE_PROVIDER",
+      entityId: providerCode,
+      details: {
+        environment: params.environment,
+        formats: params.formats,
+        auth_mode: params.authMode,
+        qualification_reference: params.qualificationReference,
+      },
+    });
+    await client.query("COMMIT");
+    return { ...configuration, idempotent_replay: false };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function repoDeactivateSuperPdpConnection(params: {
+  environment: "sandbox" | "production";
+  reason: string;
+  actor: FinanceActorContext;
+}): Promise<ElectronicInvoiceProviderConfiguration | null> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const providerCode = `super-pdp-${params.environment}`;
+    await client.query(
+      `UPDATE public.einvoice_provider_connections
+          SET enabled = false, updated_at = now()
+        WHERE provider_code = $1`,
+      [providerCode]
+    );
+    await insertGlobalFinanceAudit({
+      client,
+      actor: params.actor,
+      action: "EINVOICE_PROVIDER_DEACTIVATED",
+      entityType: "EINVOICE_PROVIDER",
+      entityId: providerCode,
+      details: { environment: params.environment, reason: params.reason },
+    });
+    const configuration = await repoGetElectronicInvoiceProviderConfiguration(params.environment, client);
+    await client.query("COMMIT");
+    return configuration;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function repoLoadElectronicInvoiceSource(
@@ -237,6 +436,26 @@ export async function repoGetElectronicInvoiceState(invoiceId: number): Promise<
     [invoiceId]
   );
   return result.rows[0] ? mapState(result.rows[0]) : null;
+}
+
+export async function repoListElectronicInvoiceReconciliationCandidates(
+  environment: "sandbox" | "production",
+  limit = 25
+): Promise<Array<{ state: ElectronicInvoiceDocumentState; adapterKey: string }>> {
+  const boundedLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
+  const result = await pool.query<Record<string, unknown> & { adapter_key: string }>(
+    `SELECT d.*, c.adapter_key
+       FROM public.einvoice_documents d
+       JOIN public.einvoice_provider_connections c ON c.provider_code = d.provider_code
+      WHERE c.enabled = true
+        AND c.environment = $1
+        AND d.provider_document_id IS NOT NULL
+        AND (d.external_status_code IS NULL OR d.external_status_code NOT IN (210,212,213))
+      ORDER BY d.updated_at, d.created_at
+      LIMIT $2`,
+    [environment, boundedLimit]
+  );
+  return result.rows.map((row) => ({ state: mapState(row), adapterKey: row.adapter_key }));
 }
 
 export async function repoQueueElectronicInvoice(params: {
@@ -629,8 +848,8 @@ export async function repoApplyElectronicInvoiceProviderEvent(params: {
             external_status_at = $3,
             filing_proof_reference = COALESCE($4, filing_proof_reference),
             filing_proof_sha256 = COALESCE($5, filing_proof_sha256),
-            last_error_code = CASE WHEN $2 IN (210,213) THEN $6 ELSE NULL END,
-            last_error_message = CASE WHEN $2 IN (210,213) THEN $7 ELSE NULL END,
+            last_error_code = CASE WHEN $2 IN (210,213) THEN COALESCE($6, 'EINVOICE_REJECTION_REASON_UNAVAILABLE') ELSE NULL END,
+            last_error_message = CASE WHEN $2 IN (210,213) THEN COALESCE($7, 'Le prestataire n''a pas fourni de motif structuré.') ELSE NULL END,
             updated_at = now()
         WHERE id = $1::uuid
           AND (external_status_at IS NULL OR external_status_at <= $3)

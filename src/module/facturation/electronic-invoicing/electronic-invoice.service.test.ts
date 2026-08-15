@@ -38,6 +38,7 @@ const adapter = {
   environment: "sandbox",
   supportedFormats: ["UBL"],
   prepare,
+  diagnose: vi.fn(),
   submit,
   retrieve: vi.fn(),
   verifyAndParseWebhook: vi.fn(),
