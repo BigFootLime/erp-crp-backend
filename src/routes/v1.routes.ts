@@ -68,6 +68,7 @@ import methodesRoutes from "../module/methodes/routes/methodes.routes"
 import importAssistantRoutes from "../module/import-assistant/routes/import-assistant.routes"
 import accessControlRoutes from "../module/access-control/routes/access-control.routes"
 import dashboardGovernanceRoutes from "../module/dashboard-governance/routes/dashboard-governance.routes"
+import referenceDataRoutes from "../module/reference-data/routes/reference-data.routes"
 import { moduleAccessGate } from "../module/access-control/middlewares/module-access-gate"
 import { runWithAccountModuleAccessScope } from "../module/access-control/context/account-module-access.context"
 const router = Router()
@@ -120,6 +121,7 @@ router.use("/audit-logs", auditLogsRoutes)
 router.use("/admin/access", accessControlRoutes);
 router.use("/admin/webhooks", webhookAdminRoutes);
 router.use("/admin/client-portal", clientPortalAdminRoutes);
+router.use("/admin/reference-data", referenceDataRoutes);
 router.use("/admin", adminRoutes);
 router.use("/affaires", affaireRoutes);
 router.use("/devis", devisRoutes);

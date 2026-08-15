@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "41438efe227fe1d0c476cf21800d48e815f854348d796c10247790e2250dcd10";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "73749a801f336f98871f29d8a153c540bd6fc33936448dfdb30409583f4c81e0";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -591,6 +591,221 @@ export const GENERATED_ROUTE_INVENTORY = [
       "moduleAccessGate",
       "requireSuperadmin",
       "requireRecentMfaForMutations"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/admin/reference-data/capabilities",
+    "source": "src/module/reference-data/routes/reference-data.routes.ts:31",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "readCapabilities"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/admin/reference-data/catalog",
+    "source": "src/module/reference-data/routes/reference-data.routes.ts:32",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireReferenceDataCapability(view)",
+      "readCatalog"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireReferenceDataCapability(view)"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/admin/reference-data/changes",
+    "source": "src/module/reference-data/routes/reference-data.routes.ts:39",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireReferenceDataCapability(view)",
+      "validate(listReferenceChangesQuerySchema,query)",
+      "listChangeSets"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireReferenceDataCapability(view)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/admin/reference-data/changes",
+    "source": "src/module/reference-data/routes/reference-data.routes.ts:37",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireReferenceDataCapability(propose)",
+      "validate(createReferenceChangeSetSchema,body)",
+      "createChangeSet"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireReferenceDataCapability(propose)"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/admin/reference-data/changes/{changeSetId}",
+    "source": "src/module/reference-data/routes/reference-data.routes.ts:40",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireReferenceDataCapability(view)",
+      "validate(changeSetIdParamSchema,params)",
+      "getChangeSet"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireReferenceDataCapability(view)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/admin/reference-data/changes/{changeSetId}/apply",
+    "source": "src/module/reference-data/routes/reference-data.routes.ts:42",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireReferenceDataCapability(apply)",
+      "validate(changeSetIdParamSchema,params)",
+      "validate(referenceApplySchema,body)",
+      "applyChangeSet"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireReferenceDataCapability(apply)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/admin/reference-data/changes/{changeSetId}/decision",
+    "source": "src/module/reference-data/routes/reference-data.routes.ts:41",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireReferenceDataCapability(approve)",
+      "validate(changeSetIdParamSchema,params)",
+      "validate(referenceDecisionSchema,body)",
+      "decideChangeSet"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireReferenceDataCapability(approve)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/admin/reference-data/changes/preview",
+    "source": "src/module/reference-data/routes/reference-data.routes.ts:35",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireReferenceDataCapability(propose)",
+      "validate(referencePreviewSchema,body)",
+      "previewChanges"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireReferenceDataCapability(propose)"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/admin/reference-data/datasets/{datasetCode}",
+    "source": "src/module/reference-data/routes/reference-data.routes.ts:34",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireReferenceDataCapability(view)",
+      "validate(datasetCodeParamSchema,params)",
+      "validate(listReferenceRecordsQuerySchema,query)",
+      "listRecords"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireReferenceDataCapability(view)"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/admin/reference-data/export",
+    "source": "src/module/reference-data/routes/reference-data.routes.ts:33",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireReferenceDataCapability(export)",
+      "validate(referenceExportQuerySchema,query)",
+      "exportReferenceData"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireReferenceDataCapability(export)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/admin/reference-data/imports",
+    "source": "src/module/reference-data/routes/reference-data.routes.ts:38",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireReferenceDataCapability(import)",
+      "validate(createReferenceChangeSetSchema,body)",
+      "createChangeSet"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireReferenceDataCapability(import)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/admin/reference-data/imports/preview",
+    "source": "src/module/reference-data/routes/reference-data.routes.ts:36",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireReferenceDataCapability(import)",
+      "validate(referencePreviewSchema,body)",
+      "previewChanges"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireReferenceDataCapability(import)"
     ]
   },
   {
