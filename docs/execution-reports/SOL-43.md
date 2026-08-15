@@ -2,8 +2,8 @@
 
 - Date de décision : 2026-08-15 (Europe/Paris)
 - Propriétaire : Keenan Martin
-- Candidat runtime contrôlé : frontend `3f619fd7bcff5e3cfd9b0ab075c49ad5b2bf9bf9`, backend `b88b41db5a690fa78aa444da82408e73929a3131`
-- Release ID : `20260815T122830Z-production-3f619fd7-b88b41db`
+- Candidat runtime contrôlé : frontend `15b4fee33764fe0e8da70c8e267e0cb5c0077608`, backend `74fdc333e55f14d43bcb48fac9ebc992881496ce`
+- Release ID : `20260815T131043Z-production-15b4fee3-74fdc333`
 - Verdict technique : **GO pour déploiement contrôlé**
 - Verdict premier pilote payant : **NO-GO jusqu'à saisie et validation des trois prérequis métier P0**
 
@@ -43,19 +43,24 @@ Sur HYPERBOX2, PostgreSQL s'est arrêté faute de droit de traversée pour `post
 
 ## Résultats du contrôle de release
 
-Commande autoritaire : `pnpm release:gate --target production` depuis le dépôt frontend propre, associé à ce backend propre.
+Commande autoritaire : `pnpm release:gate --target production --backend <backend-main>` depuis le dépôt frontend propre, associé explicitement à ce backend propre.
 
-- Durée : 938,6 s, verdict `PASSED`.
+- Durée : 911,3 s, verdict `PASSED`.
 - Backend : 343 fichiers réussis et 3 ignorés ; 4 775 tests réussis et 8 ignorés ; typecheck et build réussis.
 - Frontend : 298 fichiers et 2 508 tests réussis ; typecheck, lint et build réussis.
 - E2E : 139 scénarios Playwright réussis, minimum contractuel 54.
 - Migrations : inventaire, application isolée, rollback et restauration réussis.
 - Audit dépendances : aucune vulnérabilité backend ; aucune vulnérabilité élevée frontend de production.
-- Manifeste d'intégrité : SHA-256 `d07e251f65238c5d4e7ab90ea39a4043c0982041daad45005cef254c2b7ea96d`.
+- Manifeste d'intégrité : SHA-256 `91dccc71b4776ed19ad00f52690fb5e40b67038cd378eab7d7a74ab76a79360e`.
 
-Artefact : `test-results/release-gate/20260815T122830Z-production-3f619fd7-b88b41db/` dans le worktree frontend de promotion.
+Artefact : `test-results/release-gate/20260815T131043Z-production-15b4fee3-74fdc333/` dans le worktree frontend de promotion.
 
 La première sauvegarde hors site a duré 71 s et produit un snapshot de 50 159 299 octets, dépôt 47 762 979 octets, âge final 65 s. Sa restauration dans `cerp_restore_offsite_sol43` a duré 46 s et vérifié 464 tables publiques, 165 migrations, 18 utilisateurs, 6 exports inline et 35 596 106 octets, sans erreur ni FK invalide. La DB, le rôle et le chemin temporaires ont été supprimés par le trap.
+
+Après correction du groupement de rétention, le snapshot réel
+`6d822890a66c35e562ef83e794fda6ecbd38a6c6721fe1605322143ab1363e66`
+a terminé en 68 s. Le résumé Restic, `last-backup.json` et le heartbeat portent
+le même ID ; le contrôle du dépôt et le prune ont réussi.
 
 ## Sécurité et architecture de sauvegarde
 
