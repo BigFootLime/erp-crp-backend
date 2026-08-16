@@ -10,6 +10,7 @@ import {
   canonicalizeAuthEmail,
   canonicalizeAuthUsername,
 } from '../domain/auth-identity';
+import { accountRequiresMfa, normalizeMfaPolicy } from '../domain/mfa-policy';
 
 type AuthEpochMutation<T> = {
   value: T;
@@ -119,6 +120,7 @@ export const findAuthenticatedAccountState = async (
     is_superadmin: boolean;
     mfa_factor_id: string | null;
     mfa_factor_version: number | null;
+    mfa_policy: string | null;
   }>(
     `
       SELECT
@@ -126,6 +128,7 @@ export const findAuthenticatedAccountState = async (
         users.is_superadmin,
         factor.id::text AS mfa_factor_id,
         factor.version AS mfa_factor_version,
+        (SELECT value_text FROM public.erp_settings WHERE key='security.mfa_policy' LIMIT 1) AS mfa_policy,
         COALESCE(epochs.session_epoch, 0)::text AS session_epoch
       FROM public.users
       LEFT JOIN public.realtime_session_epochs epochs ON epochs.user_id = users.id
@@ -138,11 +141,16 @@ export const findAuthenticatedAccountState = async (
   const row = rows[0];
   if (!row) return null;
   const sessionEpoch = Number.parseInt(row.session_epoch, 10);
+  const policy = normalizeMfaPolicy(row.mfa_policy);
   return {
     status: row.status,
     session_epoch: Number.isSafeInteger(sessionEpoch) && sessionEpoch >= 0 ? sessionEpoch : 0,
     is_superadmin: row.is_superadmin === true,
-    mfa_required: row.is_superadmin === true || Boolean(row.mfa_factor_id),
+    mfa_required: accountRequiresMfa({
+      policy,
+      isSuperadmin: row.is_superadmin === true,
+      hasActiveFactor: Boolean(row.mfa_factor_id),
+    }),
     mfa_factor_id: row.mfa_factor_id ?? null,
     mfa_factor_version: row.mfa_factor_version ?? null,
   };

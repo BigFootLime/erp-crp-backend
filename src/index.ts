@@ -6,6 +6,7 @@ import pool from "./config/database";
 import { assertE2EIsolation } from "./config/e2e-isolation";
 import { assertMfaStartupConfiguration } from "./module/auth/domain/mfa";
 import { startAuthRateLimitMaintenance } from "./module/auth/services/auth-rate-limit.service";
+import { startMfaArtifactMaintenance } from "./module/auth/services/mfa.service";
 import { startExpiredLockMaintenance } from "./module/locks/services/locks.service";
 import { startReminderMaintenance } from "./module/facturation/services/reminder-job.service";
 import { startElectronicInvoiceMaintenance } from "./module/facturation/electronic-invoicing/electronic-invoice.service";
@@ -45,6 +46,7 @@ async function start(): Promise<void> {
   const port = Number.parseInt(process.env.PORT || "5000", 10);
   const httpServer = createServer(app);
   const stopAuthRateLimitMaintenance = startAuthRateLimitMaintenance();
+  const stopMfaArtifactMaintenance = startMfaArtifactMaintenance();
   const stopReminderMaintenance = startReminderMaintenance();
   const stopElectronicInvoiceMaintenance = startElectronicInvoiceMaintenance();
   const stopWebhookDeliveryMaintenance = startWebhookDeliveryMaintenance();
@@ -71,6 +73,7 @@ async function start(): Promise<void> {
     stopRealtime: shutdownRealtimeSocketServer,
     stopMaintenance: [
       stopAuthRateLimitMaintenance,
+      stopMfaArtifactMaintenance,
       stopExpiredLockMaintenance,
       stopReminderMaintenance,
       stopElectronicInvoiceMaintenance,
