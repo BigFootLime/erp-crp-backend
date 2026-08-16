@@ -17,9 +17,11 @@ SUPER PDP publie une API REST avec OAuth 2, conversion EN 16931 vers UBL/CII/Fac
 2. Une installation CERP+ dédiée utilise `client_credentials`. Les valeurs restent exclusivement dans le coffre Coolify/HYPERBOX2. SQL ne conserve que les noms des variables.
 3. La connexion SQL est nommée `super-pdp-sandbox` ou `super-pdp-production` et référence l'adaptateur `super-pdp`. Cela évite de confondre les deux environnements.
 4. `external_id` reçoit l'UUID immuable du document CERP+. Avant un nouveau dépôt, l'adaptateur recherche cet identifiant afin de reprendre un appel dont le résultat était incertain sans créer de doublon.
-5. Seuls les événements `fr:200` à `fr:213` alimentent le cycle officiel. `api:*`, `ppf:*` et `fr:501` restent des états techniques ou des erreurs ; ils ne fabriquent jamais un statut métier.
-6. Les webhooks sont fermés tant que leur mécanisme d'authenticité signé n'est pas publié et qualifié. Un polling authentifié rapproche les documents en attente toutes les cinq minutes.
-7. L'activation production exige en plus `SUPER_PDP_PRODUCTION_ACTIVATION_ENABLED=true` après qualification opérateur.
+5. CERP+ ne force pas le paramètre optionnel `processing_rule`. SUPER PDP le calcule et le valide à partir de la facture et de l'annuaire ; imposer `B2B` a été prouvé faux pour un cas `B2BInt`. Les pre-checks synchrones du prestataire restent activés.
+6. Le cadre de facturation BT-23 et l'adresse électronique de routage sont des faits métier distincts des identifiants légaux. Tant qu'ils ne sont pas capturés, versionnés et figés dans l'instantané de facture, le système doit bloquer la transmission au lieu de deviner une valeur ; suivi `#599`.
+7. Seuls les événements `fr:200` à `fr:213` alimentent le cycle officiel. `api:*`, `ppf:*` et `fr:501` restent des états techniques ou des erreurs ; ils ne fabriquent jamais un statut métier.
+8. Les webhooks sont fermés tant que leur mécanisme d'authenticité signé n'est pas publié et qualifié. Un polling authentifié rapproche les documents en attente toutes les cinq minutes.
+9. L'activation production exige en plus `SUPER_PDP_PRODUCTION_ACTIVATION_ENABLED=true` après qualification opérateur.
 
 ## Frontière multi-entreprise
 
