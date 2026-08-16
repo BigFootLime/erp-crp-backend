@@ -1,9 +1,9 @@
 # DOCS-SYNTAX-MFA — cycle de vie MFA backend
 
-- Date : 2026-08-16 (Europe/Paris)
+- Date : 2026-08-17 (Europe/Paris)
 - Issue : `BigFootLime/erp-crp-backend#602`
-- Branche : `feature/602-docs-syntax-mfa`
-- Base : `origin/main` au SHA `72bfbede`
+- Branche source : `feature/602-docs-syntax-mfa` (`92f0915`)
+- Promotion : PR `#603` vers `dev` (`661a0afc`), puis PR `#604` vers `main` (`1bb97013`)
 
 ## Diagnostic et cause racine
 
@@ -35,13 +35,19 @@ La migration ajoute `user_mfa_factors.device_label` avec contrainte 1–80 carac
 - empreinte source/restaurée identique : `c4c25532a08e296463292b9e2a198e53841b66a13ea41caaa6e24d0755834e3b` ;
 - rapport : `docs/release/docs-mfa-rehearsal/MIGRATION_REHEARSAL_SOL_06.md`.
 
+## Migration et déploiement vérifiés
+
+- `cerp_test` : sauvegarde `/var/backups/cerp/cerp_test_docs_mfa_20260817-0112.dump`, 75 649 385 octets, SHA-256 `6808d8e468cb10d3445e6a9668a0552c78d628160266fc333b45cd74e73088ed` ; preflight, application transactionnelle et verify réussis.
+- `cerp_prod` : sauvegarde `/var/backups/cerp/cerp_prod_20260817-011425.dump`, 52 138 561 octets, SHA-256 `2afe4c1bd63ae819282f8a95472f1a9588979ee50950f5b4237b3493443869a3` ; preflight, application transactionnelle et verify réussis.
+- Les deux bases déclarent `security.mfa_policy=required_for_admins`, un facteur actif et aucun enrôlement provisoire expiré.
+- HYPERBOX2 : releases immuables test et production, services `cerp-api-test` et `cerp-api` prêts ; DB, GED, antivirus et temps réel déclarés opérationnels.
+- Coolify/VPS : conteneur production sain et endpoints `/health/live` et `/health/ready` HTTP 200, avec la version `1bb970133685fc94659f89aa73bc3f5e09e4dcf6`.
+
 ## Production, risques et rollback
 
-Aucune base réelle et aucun secret runtime n’ont été modifiés pendant cette tâche. Le patch n’est pas autorisé en production par ce commit local. Pour déployer : sauvegarde vérifiée, preflight, test, verify, puis production pendant une fenêtre autorisée. Le rollback est conditionnel et refuse la perte d’une policy/libellé utile ; sinon restaurer la sauvegarde dans une base neuve et redéployer le SHA précédent.
+La fenêtre de production a été explicitement autorisée par Keenan Martin. Le patch additif est appliqué et enregistré sur `cerp_test` et `cerp_prod`. Le rollback SQL est conditionnel et refuse la perte d'une policy ou d'un libellé utile ; dans ce cas, restaurer la sauvegarde vérifiée dans une base neuve, valider son intégrité puis redéployer le SHA précédent. Les anciens checkouts HYPERBOX2, y compris leurs modifications locales, n'ont pas été écrasés : le déploiement utilise des répertoires de release immuables et des overrides systemd.
 
 ## Reste réel
 
-- revue puis promotion explicite via PR ;
-- application contrôlée du patch sur `cerp_test`, validation opérateur, puis fenêtre `cerp_prod` ;
-- vérifier deux administrateurs enrôlés et les codes hors ligne ;
+- vérifier deux administrateurs enrôlés et la conservation de leurs codes hors ligne ;
 - ne pas activer `required_for_all` avant communication et procédure de support utilisateur.
