@@ -1,7 +1,7 @@
 # Runbook — MFA des comptes privilégiés SOL-32
 
 - Propriétaire : Keenan Martin
-- Version : 1, 2026-08-15
+- Version : 2, 2026-08-16
 - Gravité : P0 si aucun administrateur ne peut s’authentifier ; P1 pour un seul compte
 
 ## Préparation et déploiement
@@ -58,8 +58,36 @@ Dans Administration → Sécurité MFA :
 4. sauvegarder les nouveaux codes, qui ne sont montrés qu’une fois ;
 5. vérifier que l’ancienne session ou l’ancien facteur est refusé.
 
-La révocation du dernier facteur privilégié est bloquée. Ne pas contourner le
-RBAC ou modifier directement `user_mfa_factors`.
+La révocation est bloquée pour tout compte auquel la politique impose un facteur.
+Assouplir d’abord la politique par le parcours protégé si la décision est
+autorisée. Ne pas contourner le RBAC ou modifier directement
+`user_mfa_factors`.
+
+## Politique par base et enrôlement volontaire
+
+Après le patch `20260816_mfa_policy_and_device_labels.sql`, un superadministrateur
+peut choisir dans Administration → Sécurité MFA : désactivée pour les nouveaux
+enrôlements, optionnelle, obligatoire pour les administrateurs ou obligatoire
+pour tous. La valeur par défaut `required_for_admins` conserve la protection
+SOL-32. La mutation exige mot de passe et facteur courant et produit un audit.
+
+Ne jamais modifier directement `security.mfa_policy` en SQL pour contourner un
+compte bloqué. La politique est isolée par base : vérifier le badge CERP avant la
+mutation. Un facteur déjà actif continue d’être exigé après assouplissement ; il
+doit être révoqué par le parcours protégé. Les libellés d’appareil doivent rester
+génériques et ne contenir ni numéro personnel ni secret.
+
+Déploiement contrôlé du complément :
+
+```bash
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/patches/support/20260816_mfa_policy_and_device_labels.preflight.sql
+corepack pnpm db:patches:up
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/patches/support/20260816_mfa_policy_and_device_labels.verify.sql
+```
+
+Le rollback `20260816_mfa_policy_and_device_labels.rollback.sql` refuse la perte
+d’une politique non standard ou de libellés utiles. Sauvegarder et exécuter le
+preflight avant toute tentative.
 
 ## Récupération hors bande d’un administrateur verrouillé
 

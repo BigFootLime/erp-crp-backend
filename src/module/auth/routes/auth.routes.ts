@@ -12,13 +12,17 @@ import {
   resetPasswordRateLimit,
 } from '../middlewares/auth-rate-limit.middleware';
 import {
+  policy,
   recoveryCodes,
   revoke,
+  startEnrollment,
   startReplacement,
   status,
   stepUp,
+  updatePolicy,
   verifyChallenge,
 } from '../controllers/mfa.controller';
+import { requireSuperadmin } from '../../access-control/middlewares/require-superadmin';
 
 const router: Router = Router();
 
@@ -38,9 +42,12 @@ router.get(
 router.get('/access-profile', authenticateToken, getAccessProfile);
 router.get('/mfa/status', authenticateToken, status);
 router.post('/mfa/step-up', authenticateToken, mfaRateLimit, stepUp);
+router.post('/mfa/enrollment', authenticateToken, mfaRateLimit, startEnrollment);
 router.post('/mfa/replacement', authenticateToken, mfaRateLimit, startReplacement);
 router.post('/mfa/recovery-codes', authenticateToken, mfaRateLimit, recoveryCodes);
 router.post('/mfa/revoke', authenticateToken, mfaRateLimit, revoke);
+router.get('/mfa/policy', authenticateToken, requireSuperadmin, policy);
+router.put('/mfa/policy', authenticateToken, requireSuperadmin, mfaRateLimit, updatePolicy);
 
 
 export default router;

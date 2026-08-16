@@ -6,6 +6,7 @@ import pool from "../../../config/database";
 import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
 import { bumpRealtimeSessionEpoch } from "../../../shared/realtime/realtime-control-plane";
 import { ApiError } from "../../../utils/apiError";
+import { logger, safeErrorCode } from "../../../shared/observability/logger";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import {
   buildOtpAuthUri,
@@ -18,6 +19,14 @@ import {
   opaqueChallengeToken,
   verifyTotp,
 } from "../domain/mfa";
+import {
+  accountRequiresMfa,
+  DEFAULT_MFA_POLICY,
+  normalizeMfaPolicy,
+  policyAllowsFactorRevocation,
+  policyRequiresMfa,
+  type MfaPolicy,
+} from "../domain/mfa-policy";
 import { issueSessionToken, type MfaAssurance, type SessionIdentity } from "../domain/session-token";
 import { insertLoginLog } from "../repository/authLog.repository";
 
@@ -25,6 +34,8 @@ const CHALLENGE_TTL_MS = 5 * 60_000;
 const ENROLLMENT_TTL_MS = 15 * 60_000;
 const LOCK_MS = 15 * 60_000;
 const MAX_ATTEMPTS = 5;
+export const MFA_POLICY_SETTING_KEY = "security.mfa_policy";
+const DEFAULT_DEVICE_LABEL = "Application d'authentification";
 
 export type MfaAuditMeta = {
   ip: string | null;
@@ -50,6 +61,7 @@ type FactorRow = {
   locked_until: Date | null;
   pending_expires_at: Date | null;
   enrolled_at: Date | null;
+  device_label: string;
 };
 
 type ChallengeRow = {
@@ -86,6 +98,19 @@ type UserMfaRow = SessionIdentity & {
   status: string;
   is_superadmin: boolean;
 };
+
+function mfaIssuer(): string {
+  const configured = process.env.MFA_TOTP_ISSUER?.trim();
+  return configured && configured.length <= 64 ? configured : "CERP+";
+}
+
+async function loadMfaPolicy(tx: Pick<PoolClient, "query"> = pool): Promise<MfaPolicy> {
+  const { rows } = await tx.query<{ value_text: string | null }>(
+    `SELECT value_text FROM public.erp_settings WHERE key=$1 LIMIT 1`,
+    [MFA_POLICY_SETTING_KEY],
+  );
+  return normalizeMfaPolicy(rows[0]?.value_text ?? DEFAULT_MFA_POLICY);
+}
 
 function asSecret(factor: Pick<FactorRow, "encrypted_secret" | "encryption_iv" | "encryption_tag" | "key_id">): string {
   return decryptMfaSecret({
@@ -127,6 +152,33 @@ async function qrDataUrl(uri: string): Promise<string> {
     includetext: false,
   });
   return `data:image/png;base64,${Buffer.from(png).toString("base64")}`;
+}
+
+async function enrollmentResponse(params: {
+  status: "mfa_enrollment_required" | "mfa_replacement_pending";
+  challenge: string;
+  username: string;
+  secret: string;
+  deviceLabel: string;
+}) {
+  const issuer = mfaIssuer();
+  const uri = buildOtpAuthUri({ username: params.username, issuer, secret: params.secret });
+  return {
+    status: params.status,
+    challenge_token: params.challenge,
+    challenge_expires_in_seconds: ENROLLMENT_TTL_MS / 1000,
+    totp: {
+      issuer,
+      account: params.username,
+      device_label: params.deviceLabel,
+      secret: params.secret,
+      otpauth_uri: uri,
+      qr_data_url: await qrDataUrl(uri),
+      digits: 6,
+      period_seconds: 30,
+      algorithm: "SHA1" as const,
+    },
+  };
 }
 
 async function loadFactor(tx: PoolClient, userId: number, state: "ACTIVE" | "PENDING", forUpdate = false) {
@@ -174,9 +226,21 @@ async function insertChallenge(
   return opaque.token;
 }
 
-async function createPendingFactor(tx: PoolClient, user: UserMfaRow): Promise<{ factor: FactorRow; secret: string }> {
+async function createPendingFactor(
+  tx: PoolClient,
+  user: UserMfaRow,
+  requestedDeviceLabel?: string,
+): Promise<{ factor: FactorRow; secret: string }> {
+  const deviceLabel = requestedDeviceLabel?.trim() || DEFAULT_DEVICE_LABEL;
   const existing = await loadFactor(tx, user.id, "PENDING", true);
   if (existing && existing.pending_expires_at && existing.pending_expires_at.getTime() > Date.now()) {
+    if (existing.device_label !== deviceLabel) {
+      await tx.query(
+        `UPDATE public.user_mfa_factors SET device_label=$2, updated_at=now() WHERE id=$1`,
+        [existing.id, deviceLabel],
+      );
+      existing.device_label = deviceLabel;
+    }
     return { factor: existing, secret: asSecret(existing) };
   }
   if (existing) {
@@ -191,8 +255,8 @@ async function createPendingFactor(tx: PoolClient, user: UserMfaRow): Promise<{ 
   const encrypted = encryptMfaSecret(secret);
   const { rows } = await tx.query<FactorRow>(
     `INSERT INTO public.user_mfa_factors
-       (user_id, encrypted_secret, encryption_iv, encryption_tag, key_id, version, pending_expires_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7)
+       (user_id, encrypted_secret, encryption_iv, encryption_tag, key_id, version, pending_expires_at, device_label)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
      RETURNING *`,
     [
       user.id,
@@ -202,6 +266,7 @@ async function createPendingFactor(tx: PoolClient, user: UserMfaRow): Promise<{ 
       encrypted.keyId,
       (active?.version ?? 0) + 1,
       new Date(Date.now() + ENROLLMENT_TTL_MS),
+      deviceLabel,
     ],
   );
   return { factor: rows[0]!, secret };
@@ -213,6 +278,7 @@ export async function beginMfaAfterPassword(user: PasswordLoginUser, meta: MfaAu
   const client = await pool.connect();
   const result = await withRealtimeOutboxTransaction(client, async (tx) => {
     const active = await loadFactor(tx, user.id, "ACTIVE", true);
+    const policy = await loadMfaPolicy(tx);
     const sessionEpoch = Number.parseInt(String(user.realtime_session_epoch ?? "0"), 10) || 0;
     if (active) {
       const challenge = await insertChallenge(tx, {
@@ -223,7 +289,7 @@ export async function beginMfaAfterPassword(user: PasswordLoginUser, meta: MfaAu
       });
       return { kind: "verify" as const, challenge };
     }
-    if (!user.is_superadmin) return { kind: "none" as const };
+    if (!policyRequiresMfa(policy, user.is_superadmin)) return { kind: "none" as const };
     const { factor, secret } = await createPendingFactor(tx, user);
     const challenge = await insertChallenge(tx, {
       userId: user.id,
@@ -235,8 +301,9 @@ export async function beginMfaAfterPassword(user: PasswordLoginUser, meta: MfaAu
       factor_id: factor.id,
       factor_version: factor.version,
       method: "TOTP",
+      policy,
     });
-    return { kind: "enroll" as const, challenge, secret };
+    return { kind: "enroll" as const, challenge, secret, deviceLabel: factor.device_label };
   });
 
   if (result.kind === "none") return null;
@@ -248,22 +315,13 @@ export async function beginMfaAfterPassword(user: PasswordLoginUser, meta: MfaAu
       methods: ["totp", "recovery_code"] as const,
     };
   }
-  const uri = buildOtpAuthUri({ username: user.username, secret: result.secret });
-  return {
-    status: "mfa_enrollment_required" as const,
-    challenge_token: result.challenge,
-    challenge_expires_in_seconds: ENROLLMENT_TTL_MS / 1000,
-    totp: {
-      issuer: "CERP+",
-      account: user.username,
-      secret: result.secret,
-      otpauth_uri: uri,
-      qr_data_url: await qrDataUrl(uri),
-      digits: 6,
-      period_seconds: 30,
-      algorithm: "SHA1" as const,
-    },
-  };
+  return enrollmentResponse({
+    status: "mfa_enrollment_required",
+    challenge: result.challenge,
+    username: user.username,
+    secret: result.secret,
+    deviceLabel: result.deviceLabel,
+  });
 }
 
 async function loadChallengeForUpdate(tx: PoolClient, tokenHash: string): Promise<ChallengeRow | null> {
@@ -497,32 +555,94 @@ async function verifyActiveCode(tx: PoolClient, user: UserMfaRow, code: string, 
 export async function getMfaStatus(userId: number) {
   const { rows } = await pool.query<{
     is_superadmin: boolean;
+    policy: string | null;
     factor_id: string | null;
     factor_version: number | null;
+    device_label: string | null;
     enrolled_at: Date | null;
     locked_until: Date | null;
     recovery_codes_remaining: string;
   }>(
     `SELECT u.is_superadmin,
-            f.id AS factor_id, f.version AS factor_version, f.enrolled_at, f.locked_until,
+            (SELECT value_text FROM public.erp_settings WHERE key=$2 LIMIT 1) AS policy,
+            f.id AS factor_id, f.version AS factor_version, f.device_label, f.enrolled_at, f.locked_until,
             COALESCE((SELECT count(*) FROM public.user_mfa_recovery_codes rc
                        WHERE rc.factor_id=f.id AND rc.used_at IS NULL),0)::text AS recovery_codes_remaining
        FROM public.users u
        LEFT JOIN public.user_mfa_factors f ON f.user_id=u.id AND f.state='ACTIVE'
       WHERE u.id=$1`,
-    [userId],
+    [userId, MFA_POLICY_SETTING_KEY],
   );
   const row = rows[0];
   if (!row) throw new ApiError(404, "USER_NOT_FOUND", "Utilisateur inconnu.");
+  const policy = normalizeMfaPolicy(row.policy);
+  const enrolled = Boolean(row.factor_id);
+  const policyRequired = policyRequiresMfa(policy, row.is_superadmin);
   return {
-    required: row.is_superadmin,
-    enrolled: Boolean(row.factor_id),
+    policy,
+    required: accountRequiresMfa({ policy, isSuperadmin: row.is_superadmin, hasActiveFactor: enrolled }),
+    policy_required: policyRequired,
+    enrolled,
     method: row.factor_id ? "TOTP" : null,
     factor_version: row.factor_version,
+    device_label: row.device_label,
     enrolled_at: row.enrolled_at?.toISOString() ?? null,
     locked_until: row.locked_until?.toISOString() ?? null,
     recovery_codes_remaining: Number.parseInt(row.recovery_codes_remaining, 10),
+    can_enroll: !enrolled && policy !== "disabled",
+    can_revoke: enrolled && policyAllowsFactorRevocation(policy, row.is_superadmin),
   };
+}
+
+export async function beginOwnMfaEnrollment(
+  userId: number,
+  password: string,
+  deviceLabel: string | undefined,
+  meta: MfaAuditMeta,
+) {
+  const client = await pool.connect();
+  const outcome = await withRealtimeOutboxTransaction(client, async (tx) => {
+    const user = await loadUser(tx, userId, true);
+    if (!user || user.status !== "Active" || !(await bcrypt.compare(password, user.password))) {
+      return { ok: false as const, status: 401, code: "AUTH_INVALID", message: "Identifiants invalides" };
+    }
+    const policy = await loadMfaPolicy(tx);
+    if (policy === "disabled") {
+      return { ok: false as const, status: 409, code: "MFA_DISABLED", message: "L'enrôlement MFA est désactivé par la politique de l'organisation." };
+    }
+    if (await loadFactor(tx, userId, "ACTIVE", true)) {
+      return { ok: false as const, status: 409, code: "MFA_ALREADY_ENROLLED", message: "Un facteur MFA est déjà actif." };
+    }
+    const pending = await createPendingFactor(tx, user, deviceLabel);
+    const challenge = await insertChallenge(tx, {
+      userId,
+      factorId: pending.factor.id,
+      purpose: "ENROLL",
+      sessionEpoch: Number.parseInt(String(user.realtime_session_epoch ?? "0"), 10) || 0,
+    });
+    await audit(tx, userId, "AUTH_MFA_ENROLLMENT_STARTED", meta, {
+      factor_id: pending.factor.id,
+      factor_version: pending.factor.version,
+      method: "TOTP",
+      policy,
+      device_label: pending.factor.device_label,
+    });
+    return {
+      ok: true as const,
+      challenge,
+      username: user.username,
+      secret: pending.secret,
+      deviceLabel: pending.factor.device_label,
+    };
+  });
+  if (!outcome.ok) throw new ApiError(outcome.status, outcome.code, outcome.message);
+  return enrollmentResponse({
+    status: "mfa_enrollment_required",
+    challenge: outcome.challenge,
+    username: outcome.username,
+    secret: outcome.secret,
+    deviceLabel: outcome.deviceLabel,
+  });
 }
 
 async function authenticatedMutation<T>(
@@ -569,9 +689,15 @@ export async function stepUpMfa(userId: number, code: string, meta: MfaAuditMeta
   });
 }
 
-export async function beginMfaReplacement(userId: number, password: string, code: string, meta: MfaAuditMeta) {
+export async function beginMfaReplacement(
+  userId: number,
+  password: string,
+  code: string,
+  deviceLabel: string | undefined,
+  meta: MfaAuditMeta,
+) {
   const value = await authenticatedMutation(userId, password, code, meta, async (tx, user, _factor, method) => {
-    const pending = await createPendingFactor(tx, user);
+    const pending = await createPendingFactor(tx, user, deviceLabel);
     const challenge = await insertChallenge(tx, {
       userId,
       factorId: pending.factor.id,
@@ -582,25 +708,17 @@ export async function beginMfaReplacement(userId: number, password: string, code
       factor_id: pending.factor.id,
       factor_version: pending.factor.version,
       authorization_method: method,
+      device_label: pending.factor.device_label,
     });
-    return { challenge, secret: pending.secret, username: user.username };
+    return { challenge, secret: pending.secret, username: user.username, deviceLabel: pending.factor.device_label };
   });
-  const uri = buildOtpAuthUri({ username: value.username, secret: value.secret });
-  return {
-    status: "mfa_replacement_pending" as const,
-    challenge_token: value.challenge,
-    challenge_expires_in_seconds: ENROLLMENT_TTL_MS / 1000,
-    totp: {
-      issuer: "CERP+",
-      account: value.username,
-      secret: value.secret,
-      otpauth_uri: uri,
-      qr_data_url: await qrDataUrl(uri),
-      digits: 6,
-      period_seconds: 30,
-      algorithm: "SHA1" as const,
-    },
-  };
+  return enrollmentResponse({
+    status: "mfa_replacement_pending",
+    challenge: value.challenge,
+    username: value.username,
+    secret: value.secret,
+    deviceLabel: value.deviceLabel,
+  });
 }
 
 export async function regenerateRecoveryCodes(userId: number, password: string, code: string, meta: MfaAuditMeta) {
@@ -618,20 +736,13 @@ export async function regenerateRecoveryCodes(userId: number, password: string, 
 
 export async function revokeOwnMfa(userId: number, password: string, code: string, meta: MfaAuditMeta) {
   return authenticatedMutation(userId, password, code, meta, async (tx, user, factor, method) => {
-    if (user.is_superadmin) {
-      const { rows } = await tx.query<{ count: string }>(
-        `SELECT count(DISTINCT u.id)::text AS count
-           FROM public.users u
-           JOIN public.user_mfa_factors f ON f.user_id=u.id AND f.state='ACTIVE'
-          WHERE u.is_superadmin IS TRUE AND u.status='Active'`,
+    const policy = await loadMfaPolicy(tx);
+    if (!policyAllowsFactorRevocation(policy, user.is_superadmin)) {
+      throw new ApiError(
+        409,
+        "MFA_REQUIRED_BY_POLICY",
+        "Révocation refusée : la politique MFA exige un facteur actif pour ce compte.",
       );
-      if (Number.parseInt(rows[0]?.count ?? "0", 10) <= 1) {
-        throw new ApiError(
-          409,
-          "MFA_LAST_PRIVILEGED_FACTOR",
-          "Révocation refusée pour le dernier administrateur protégé. Utilisez le runbook hors bande.",
-        );
-      }
     }
     await tx.query(
       `UPDATE public.user_mfa_factors SET state='REVOKED', revoked_at=now(), updated_at=now() WHERE id=$1`,
@@ -642,7 +753,122 @@ export async function revokeOwnMfa(userId: number, password: string, code: strin
       factor_id: factor.id,
       factor_version: factor.version,
       authorization_method: method,
+      policy,
     });
     return { revoked: true };
   });
+}
+
+export async function getMfaPolicyConfiguration() {
+  const policy = await loadMfaPolicy();
+  const { rows } = await pool.query<{ updated_at: Date | null; updated_by: number | null }>(
+    `SELECT updated_at, updated_by FROM public.erp_settings WHERE key=$1 LIMIT 1`,
+    [MFA_POLICY_SETTING_KEY],
+  );
+  return {
+    policy,
+    source: `public.erp_settings[${MFA_POLICY_SETTING_KEY}]`,
+    updated_at: rows[0]?.updated_at?.toISOString() ?? null,
+    updated_by: rows[0]?.updated_by ?? null,
+  };
+}
+
+export async function updateMfaPolicyConfiguration(params: {
+  userId: number;
+  password: string;
+  code: string;
+  policy: MfaPolicy;
+  meta: MfaAuditMeta;
+}) {
+  return authenticatedMutation(
+    params.userId,
+    params.password,
+    params.code,
+    params.meta,
+    async (tx, user, factor, method) => {
+      const previous = await loadMfaPolicy(tx);
+      if (previous !== params.policy) {
+        await tx.query(
+          `INSERT INTO public.erp_settings
+             (key, value_text, value_json, definition, unit, source, freshness_at, reliability,
+              created_by, updated_by, created_at, updated_at)
+           VALUES ($1,$2,NULL,$3,'POLICY',$4,now(),'VERIFIED',$5,$5,now(),now())
+           ON CONFLICT (key) DO UPDATE
+             SET value_text=EXCLUDED.value_text,
+                 value_json=NULL,
+                 definition=EXCLUDED.definition,
+                 unit=EXCLUDED.unit,
+                 source=EXCLUDED.source,
+                 freshness_at=EXCLUDED.freshness_at,
+                 reliability=EXCLUDED.reliability,
+                 updated_by=EXCLUDED.updated_by,
+                 updated_at=now()`,
+          [
+            MFA_POLICY_SETTING_KEY,
+            params.policy,
+            "Politique d'authentification multifacteur applicable à cette base CERP.",
+            "Décision administrative authentifiée dans CERP+.",
+            user.id,
+          ],
+        );
+        await audit(tx, user.id, "AUTH_MFA_POLICY_UPDATED", params.meta, {
+          previous_policy: previous,
+          new_policy: params.policy,
+          factor_id: factor.id,
+          factor_version: factor.version,
+          authorization_method: method,
+        });
+      }
+      return {
+        policy: params.policy,
+        previous_policy: previous,
+        changed: previous !== params.policy,
+        source: `public.erp_settings[${MFA_POLICY_SETTING_KEY}]`,
+      };
+    },
+  );
+}
+
+export async function cleanupExpiredMfaArtifacts(): Promise<{
+  challengesDeleted: number;
+  pendingFactorsDeleted: number;
+}> {
+  const client = await pool.connect();
+  return withRealtimeOutboxTransaction(client, async (tx) => {
+    const challenges = await tx.query(
+      `DELETE FROM public.auth_mfa_challenges
+        WHERE expires_at <= now()
+           OR (used_at IS NOT NULL AND used_at <= now() - interval '24 hours')`,
+    );
+    const factors = await tx.query(
+      `DELETE FROM public.user_mfa_factors f
+        WHERE f.state='PENDING'
+          AND f.pending_expires_at <= now()
+          AND NOT EXISTS (SELECT 1 FROM public.auth_mfa_challenges c WHERE c.factor_id=f.id)`,
+    );
+    return {
+      challengesDeleted: challenges.rowCount ?? 0,
+      pendingFactorsDeleted: factors.rowCount ?? 0,
+    };
+  });
+}
+
+export function startMfaArtifactMaintenance(intervalMs = 15 * 60_000): () => void {
+  const run = async () => {
+    try {
+      const result = await cleanupExpiredMfaArtifacts();
+      if (result.challengesDeleted || result.pendingFactorsDeleted) {
+        logger.info("mfa_expired_artifacts_cleaned", {
+          challenge_count: result.challengesDeleted,
+          pending_factor_count: result.pendingFactorsDeleted,
+        });
+      }
+    } catch (error) {
+      logger.error("mfa_expired_artifact_cleanup_failed", { failure_code: safeErrorCode(error) });
+    }
+  };
+  void run();
+  const timer = setInterval(() => void run(), intervalMs);
+  timer.unref();
+  return () => clearInterval(timer);
 }
