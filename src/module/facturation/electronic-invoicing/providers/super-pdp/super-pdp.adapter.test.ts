@@ -72,6 +72,7 @@ describe("SUPER PDP adapter", () => {
       invoiced_quantity_code: "C62",
       net_amount: "100",
     });
+    expect(line).not.toHaveProperty("line_vat_amount");
     expect(line).not.toHaveProperty("line_with_vat_net_amount");
     expect(() => buildSuperPdpEn16931Invoice({
       ...source,
