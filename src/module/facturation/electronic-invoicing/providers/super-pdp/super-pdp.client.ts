@@ -513,7 +513,7 @@ export class SuperPdpClient {
   }): Promise<{ invoice: ProviderInvoice; requestId: string | null; replayed: boolean }> {
     const existing = await this.findInvoiceByExternalId(params.localDocumentId);
     if (existing) return { invoice: existing, requestId: null, replayed: true };
-    const query = new URLSearchParams({ external_id: params.localDocumentId, processing_rule: "B2B" });
+    const query = new URLSearchParams({ external_id: params.localDocumentId });
     const response = await this.request(`/v1.beta/invoices?${query.toString()}`, {
       method: "POST",
       headers: {
