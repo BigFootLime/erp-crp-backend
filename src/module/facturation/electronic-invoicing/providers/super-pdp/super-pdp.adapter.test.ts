@@ -167,6 +167,14 @@ describe("SUPER PDP adapter", () => {
       attachments: [],
     });
     expect(receipt).toMatchObject({ providerDocumentId: "77", statusCode: null });
+    const submissionCall = fetcher.mock.calls.find(([input, init]) =>
+      new URL(String(input)).pathname === "/v1.beta/invoices" && init?.method === "POST"
+    );
+    expect(submissionCall).toBeDefined();
+    const submissionUrl = new URL(String(submissionCall?.[0]));
+    expect(submissionUrl.searchParams.get("external_id")).toBe("52bb2f7e-51ba-4b8d-a630-c6b4a43da9ad");
+    expect(submissionUrl.searchParams.has("processing_rule")).toBe(false);
+    expect(submissionUrl.searchParams.has("disable_pre_check")).toBe(false);
     const event = await adapter.retrieve("77", "correlation-1", {
       direction: "OUTBOUND",
       documentType: "INVOICE",
