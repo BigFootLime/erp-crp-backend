@@ -9,6 +9,8 @@ import {
   adminCreatePasswordResetSchema,
   adminUpdateUserSchema,
   adminUserIdParamSchema,
+  adminErpSettingKeySchema,
+  adminUpsertErpSettingSchema,
   resetPasswordByAdminSchema,
 } from "../validators/admin.validators";
 
@@ -122,4 +124,20 @@ export const resetUserPasswordAdmin: RequestHandler = asyncHandler(async (req, r
     newPassword: dto.body.newPassword,
   });
   res.status(204).end();
+});
+
+export const getErpSettingAdmin: RequestHandler = asyncHandler(async (req, res) => {
+  const dto = adminErpSettingKeySchema.parse({ params: req.params });
+  res.json(await adminService.getErpSetting(dto.params.key));
+});
+
+export const upsertErpSettingAdmin: RequestHandler = asyncHandler(async (req, res) => {
+  const dto = adminUpsertErpSettingSchema.parse({ params: req.params, body: req.body });
+  if (!req.user) throw new HttpError(401, "AUTH_REQUIRED", "Authentification requise");
+  res.json(await adminService.upsertDefaultShippingLocation({
+    key: dto.params.key,
+    magasinId: dto.body.value_json.magasin_id,
+    emplacementId: dto.body.value_json.emplacement_id,
+    actorUserId: req.user.id,
+  }));
 });

@@ -1320,3 +1320,152 @@ export async function repoGetAdminAnalytics(filters: {
     },
   };
 }
+
+export type AdminErpSetting = {
+  key: "stock.default_shipping_location";
+  value_json: { magasin_id: string; emplacement_id: string } | null;
+  value_text: null;
+  updated_at: string | null;
+};
+
+export async function repoGetErpSetting(
+  key: AdminErpSetting["key"],
+): Promise<AdminErpSetting> {
+  const result = await pool.query<{
+    key: string;
+    value_json: { magasin_id?: unknown; emplacement_id?: unknown } | null;
+    value_text: string | null;
+    updated_at: string;
+  }>(
+    `SELECT key, value_json, value_text, updated_at::text AS updated_at
+       FROM public.erp_settings
+      WHERE key = $1`,
+    [key],
+  );
+  const row = result.rows[0];
+  if (!row) return { key, value_json: null, value_text: null, updated_at: null };
+
+  const magasinId = row.value_json?.magasin_id;
+  const emplacementId = row.value_json?.emplacement_id;
+  return {
+    key,
+    value_json:
+      magasinId == null || emplacementId == null
+        ? null
+        : { magasin_id: String(magasinId), emplacement_id: String(emplacementId) },
+    value_text: null,
+    updated_at: row.updated_at,
+  };
+}
+
+export async function repoUpsertDefaultShippingLocation(input: {
+  key: AdminErpSetting["key"];
+  magasinId: string;
+  emplacementId: string;
+  actorUserId: number;
+}): Promise<AdminErpSetting> {
+  const client = await pool.connect();
+  try {
+    return await withRealtimeOutboxTransaction(client, async (tx) => {
+      const location = await tx.query(
+        `SELECT e.id
+           FROM public.emplacements e
+           JOIN public.magasins m ON m.id = e.magasin_id
+          WHERE m.id = $1::bigint
+            AND e.id = $2::bigint
+            AND e.magasin_id = m.id
+            AND m.is_active = true
+            AND e.is_active = true
+            AND e.is_scrap = false`,
+        [input.magasinId, input.emplacementId],
+      );
+      if (!location.rows[0]) {
+        throw new HttpError(
+          422,
+          "INVALID_DEFAULT_SHIPPING_LOCATION",
+          "Le magasin et l'emplacement d'expédition doivent être actifs, cohérents et hors rebut.",
+        );
+      }
+
+      const current = await tx.query<{
+        key: string;
+        value_json: { magasin_id?: unknown; emplacement_id?: unknown } | null;
+        updated_at: string;
+      }>(
+        `SELECT key, value_json, updated_at::text AS updated_at
+           FROM public.erp_settings
+          WHERE key = $1
+          FOR UPDATE`,
+        [input.key],
+      );
+      const nextValue = {
+        magasin_id: input.magasinId,
+        emplacement_id: input.emplacementId,
+      };
+      const currentValue = current.rows[0]?.value_json;
+      const normalizedCurrent = currentValue?.magasin_id == null || currentValue.emplacement_id == null
+        ? null
+        : {
+            magasin_id: String(currentValue.magasin_id),
+            emplacement_id: String(currentValue.emplacement_id),
+          };
+
+      if (normalizedCurrent && isDeepStrictEqual(normalizedCurrent, nextValue)) {
+        return {
+          key: input.key,
+          value_json: normalizedCurrent,
+          value_text: null,
+          updated_at: current.rows[0]?.updated_at ?? null,
+        };
+      }
+
+      const updated = await tx.query<{
+        key: AdminErpSetting["key"];
+        value_json: { magasin_id: string; emplacement_id: string };
+        updated_at: string;
+      }>(
+        `INSERT INTO public.erp_settings
+           (key, value_text, value_json, created_by, updated_by, created_at, updated_at)
+         VALUES ($1, NULL, $2::jsonb, $3, $3, now(), now())
+         ON CONFLICT (key) DO UPDATE
+           SET value_text = NULL,
+               value_json = EXCLUDED.value_json,
+               updated_by = EXCLUDED.updated_by,
+               updated_at = now()
+         RETURNING key, value_json, updated_at::text AS updated_at`,
+        [input.key, JSON.stringify(nextValue), input.actorUserId],
+      );
+
+      await repoInsertAuditLog({
+        user_id: input.actorUserId,
+        body: {
+          event_type: "ACTION",
+          action: "ADMIN_ERP_SETTING_UPDATED",
+          page_key: "erp-settings",
+          entity_type: "erp_setting",
+          entity_id: input.key,
+          path: `/api/v1/admin/erp-settings/${input.key}`,
+          details: {
+            previous_location: normalizedCurrent,
+            new_location: nextValue,
+          },
+        },
+        ip: null,
+        user_agent: null,
+        device_type: null,
+        os: null,
+        browser: null,
+        tx,
+      });
+
+      return {
+        key: input.key,
+        value_json: updated.rows[0]?.value_json ?? nextValue,
+        value_text: null,
+        updated_at: updated.rows[0]?.updated_at ?? null,
+      };
+    });
+  } finally {
+    client.release();
+  }
+}

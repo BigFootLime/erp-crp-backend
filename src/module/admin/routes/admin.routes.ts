@@ -14,6 +14,8 @@ import {
   resetUserPasswordAdmin,
   getAdminAnalytics,
   patchUserAdmin,
+  getErpSettingAdmin,
+  upsertErpSettingAdmin,
 } from "../controllers/admin.controller";
 import { getOperationsConsole } from "../controllers/operations-console.controller";
 
@@ -36,6 +38,8 @@ router.post("/users/:id/invitations", createAccountInvitationAdmin);
 router.get("/login-logs", listLoginLogsAdmin);
 router.get("/analytics", getAdminAnalytics);
 router.get("/operations", getOperationsConsole);
+router.get("/erp-settings/:key", getErpSettingAdmin);
+router.put("/erp-settings/:key", upsertErpSettingAdmin);
 
 router.post("/users/:id/password-reset-token", createPasswordResetTokenAdmin);
 router.patch("/users/:id/password", resetUserPasswordAdmin);

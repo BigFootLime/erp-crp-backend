@@ -237,3 +237,16 @@ export async function getAnalytics(filters: {
 }) {
   return adminRepo.repoGetAdminAnalytics(filters);
 }
+
+export function getErpSetting(key: adminRepo.AdminErpSetting["key"]) {
+  return adminRepo.repoGetErpSetting(key);
+}
+
+export function upsertDefaultShippingLocation(input: {
+  key: adminRepo.AdminErpSetting["key"];
+  magasinId: string;
+  emplacementId: string;
+  actorUserId: number;
+}) {
+  return adminRepo.repoUpsertDefaultShippingLocation(input);
+}

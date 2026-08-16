@@ -158,3 +158,29 @@ export const resetPasswordByAdminSchema = z.object({
   }),
 });
 export type ResetPasswordByAdminDTO = z.infer<typeof resetPasswordByAdminSchema>;
+
+const stockLocationId = z
+  .union([
+    z.string().trim().regex(/^\d+$/, "Identifiant de stock invalide"),
+    z.number().int().positive("Identifiant de stock invalide"),
+  ])
+  .transform((value) => String(value));
+
+export const adminErpSettingKeySchema = z.object({
+  params: z.object({ key: z.literal("stock.default_shipping_location") }).strict(),
+});
+
+export const adminUpsertErpSettingSchema = adminErpSettingKeySchema.extend({
+  body: z
+    .object({
+      value_json: z
+        .object({
+          magasin_id: stockLocationId,
+          emplacement_id: stockLocationId,
+        })
+        .strict(),
+      value_text: z.null().optional().default(null),
+    })
+    .strict(),
+});
+export type AdminUpsertErpSettingDTO = z.infer<typeof adminUpsertErpSettingSchema>;
