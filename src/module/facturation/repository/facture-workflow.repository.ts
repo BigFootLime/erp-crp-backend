@@ -174,7 +174,12 @@ const DELIVERY_SOURCE_SELECT = `
     COALESCE(cl.taux_tva, 0)::numeric(9,4)::text AS tax_rate_percent,
     CASE
       WHEN cl.id IS NULL THEN NULL
-      ELSE concat('COMMANDE_LINE:', cl.id::text, ':', COALESCE(cl.updated_at::text, 'unknown'))
+      ELSE concat(
+        'COMMANDE_LINE:', cl.id::text,
+        ':PRICE:', COALESCE(cl.prix_unitaire_ht::text, 'NULL'),
+        ':DISCOUNT:', COALESCE(cl.remise_ligne::text, 'NULL'),
+        ':VAT:', COALESCE(cl.taux_tva::text, 'NULL')
+      )
     END AS pricing_version
   FROM public.bon_livraison_ligne bll
   JOIN public.bon_livraison bl ON bl.id = bll.bon_livraison_id
