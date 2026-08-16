@@ -40,4 +40,11 @@ describe("facture draft SQL contract", () => {
       expect(repository).toContain("legal_number = $2::text");
     }
   });
+
+  it("versions delivery-line pricing from canonical price values without an optional timestamp column", () => {
+    expect(source).not.toContain("cl.updated_at");
+    expect(source).toContain("COALESCE(cl.prix_unitaire_ht::text, 'NULL')");
+    expect(source).toContain("COALESCE(cl.remise_ligne::text, 'NULL')");
+    expect(source).toContain("COALESCE(cl.taux_tva::text, 'NULL')");
+  });
 });
