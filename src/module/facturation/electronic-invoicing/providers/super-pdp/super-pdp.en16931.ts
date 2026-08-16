@@ -232,7 +232,6 @@ function lineRecord(line: Readonly<JsonRecord>, index: number): {
       invoiced_item_vat_rate: formatDecimal(parsedVatRate),
     },
     line_vat_amount: formatDecimal(tax),
-    line_with_vat_net_amount: formatDecimal(gross),
   };
   return { invoiceLine, vatRate: formatDecimal(parsedVatRate), net, tax };
 }

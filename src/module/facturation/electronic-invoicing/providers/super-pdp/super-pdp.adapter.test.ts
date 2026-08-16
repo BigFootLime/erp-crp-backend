@@ -67,10 +67,12 @@ describe("SUPER PDP adapter", () => {
       buyer: { name: "Client industriel" },
       totals: { total_without_vat: "100.00", amount_due_for_payment: "120.00" },
     });
-    expect((result.lines as Array<Record<string, unknown>>)[0]).toMatchObject({
+    const line = (result.lines as Array<Record<string, unknown>>)[0];
+    expect(line).toMatchObject({
       invoiced_quantity_code: "C62",
       net_amount: "100",
     });
+    expect(line).not.toHaveProperty("line_with_vat_net_amount");
     expect(() => buildSuperPdpEn16931Invoice({
       ...source,
       lines: [{ ...source.lines[0], vat_rate: "0" }],
