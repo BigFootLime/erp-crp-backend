@@ -5,6 +5,7 @@ import {
   canonicalizeAuthUsername,
   preserveOpaqueAuthToken,
 } from "../domain/auth-identity";
+import { MFA_POLICIES } from "../domain/mfa-policy";
 
 export const loginSchema = z.object({
   username: trimString(3, "Nom d'utilisateur requis (min 3 caractères)")
@@ -65,6 +66,18 @@ export const verifyMfaChallengeSchema = z.object({
 export const stepUpMfaSchema = z.object({ code: mfaCode }).strict();
 
 export const manageMfaSchema = z.object({
+  current_password: z.string().min(1, "Mot de passe requis").max(512),
+  code: mfaCode,
+  device_label: z.string().trim().min(1).max(80).optional(),
+}).strict();
+
+export const enrollMfaSchema = z.object({
+  current_password: z.string().min(1, "Mot de passe requis").max(512),
+  device_label: z.string().trim().min(1).max(80).optional(),
+}).strict();
+
+export const updateMfaPolicySchema = z.object({
+  policy: z.enum(MFA_POLICIES),
   current_password: z.string().min(1, "Mot de passe requis").max(512),
   code: mfaCode,
 }).strict();
