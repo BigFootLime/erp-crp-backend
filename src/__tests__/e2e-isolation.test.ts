@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertE2EIsolation } from "../config/e2e-isolation";
+import { assertE2EIsolation, e2eListenHost } from "../config/e2e-isolation";
 
 function isolatedEnv(): NodeJS.ProcessEnv {
   const root = "C:/tmp/cerp-sol05";
@@ -35,7 +35,7 @@ describe("SOL-05 E2E isolation guard", () => {
   ])("rejects a non-loopback %s", (name, value) => {
     const env = isolatedEnv();
     env[name] = value;
-    expect(() => assertE2EIsolation(env)).toThrow(/loopback/);
+    expect(() => assertE2EIsolation(env)).toThrow(/forbidden/);
   });
 
   it("rejects a production database name even on localhost", () => {
@@ -63,6 +63,30 @@ describe("SOL-05 E2E isolation guard", () => {
     expect(() => assertE2EIsolation(withSink)).not.toThrow();
 
     withSink.RESEND_API_BASE_URL = "https://api.resend.com";
-    expect(() => assertE2EIsolation(withSink)).toThrow(/loopback/);
+    expect(() => assertE2EIsolation(withSink)).toThrow(/forbidden/);
+  });
+
+  it("accepts only the named Docker services inside the managed disposable stack", () => {
+    const container = isolatedEnv();
+    container.CERP_E2E_MANAGED_STACK = "1";
+    container.CERP_E2E_CONTAINER = "1";
+    container.DATABASE_URL = "postgresql://cerp_app:test@postgres:5432/cerp_test";
+    container.CERP_E2E_EMAIL_SINK = "1";
+    container.RESEND_API_KEY = "disposable";
+    container.RESEND_FROM = "CERP SOL-05 <no-reply@example.local>";
+    container.RESEND_API_BASE_URL = "http://host.docker.internal:55001";
+
+    expect(() => assertE2EIsolation(container)).not.toThrow();
+    expect(e2eListenHost(container)).toBe("0.0.0.0");
+
+    container.DATABASE_URL = "postgresql://cerp_app:test@db.production.example/cerp_test";
+    expect(() => assertE2EIsolation(container)).toThrow(/forbidden/);
+  });
+
+  it("does not permit container binding outside a managed stack", () => {
+    const env = isolatedEnv();
+    env.CERP_E2E_CONTAINER = "1";
+    expect(() => assertE2EIsolation(env)).toThrow(/MANAGED_STACK/);
+    expect(e2eListenHost(isolatedEnv())).toBe("127.0.0.1");
   });
 });
