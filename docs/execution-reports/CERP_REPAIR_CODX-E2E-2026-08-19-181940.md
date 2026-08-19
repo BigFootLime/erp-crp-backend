@@ -6,15 +6,18 @@
 - Branche dédiée : `fix/607-e2e-audit-repair`
 - Base de travail : `origin/dev` à `cbcd10c004dd2f9535249d7da641da00f4b1b0ef`
 - Périmètre DB : PostgreSQL jetable isolé uniquement ; **aucune écriture dans `cerp_test` partagé ou `cerp_prod`**.
-- Exécution de gate candidat : contrôles **PASS** le 2026-08-19, release `20260819T224909Z-candidate-f00cd579-1f35a533`; toutefois son artefact est incomplet (bundles `dist` frontend/backend absents).
-- SHA validés : frontend `f00cd579aec82275b6327aebac9937ccc1dca17d`, backend `1f35a5334d28eeea5cd18fb1609c83111023b49b`.
-- Statut de release : **NO-GO jusqu'au rerun du gate avec artefact complet**. Ce document n'est pas une autorisation de promotion `dev → main`, de déploiement, ni d'écriture dans une base partagée.
+- Exécution de gate candidat : contrôles **PASS** le 2026-08-19, release `20260819T233025Z-candidate-f819555f-de45966a`.
+- SHA validés : frontend `f819555fe3a0e8137bda0657eba4ee3784e66e3f`, backend `de45966aabae1931d471bbf4793009d50a44a1ca`.
+- Artefact autoportant audité indépendamment : manifeste SHA-256 `ecd1bf6e11f314e0e3190d0335ffbfed71b048b68482094682a98c4fbca86006`, 1 392 fichiers vérifiés ; absence, taille, hash et chemin non sûr : **0**. Il contient `frontend-dist` (417 fichiers) et `backend-dist` (832 fichiers).
+- Statut de release : **GO candidat uniquement**. Ce document n'est pas une autorisation de promotion `dev → main`, de déploiement, ni d'écriture dans une base partagée.
 
-## Verdict d'exécution (preuve finale bloquée)
+## Verdict d'exécution
 
 Les anomalies reproductibles de la campagne ont reçu une correction ciblée et une preuve globale réelle : clôture OF/réception, création de devis sous le rôle runtime, compatibilité machine/famille, durée de gamme, GED/ClamAV, sélecteurs de formulaires et idempotence. Les corrections sont commitées, sans secret et sans modification de données métier partagées.
 
-L'exécution du gate a rapporté 2 595 tests frontend, 4 848 tests backend (8 ignorés), 154 scénarios Playwright passés (4 ignorés, 0 inattendu), migration/rejeu/restauration isolés. Elle ne constitue cependant pas une preuve de release complète : l'artefact final ne contient pas les bundles `dist` frontend/backend attendus. Le verdict est donc **NO-GO jusqu'au rerun du gate avec artefact complet**, jamais une promotion automatique vers `main` ou la production.
+L'exécution finale du gate a rapporté 2 598 tests frontend dans 326 fichiers, 4 848 tests backend (8 ignorés), 154 scénarios Playwright passés (4 ignorés, 0 échec ou flaky), migration/rejeu/restauration isolés. L'artefact final est autoportant : l'audit indépendant a vérifié les 1 392 fichiers du manifeste, y compris les bundles `frontend-dist` et `backend-dist`, sans fichier absent, erreur de taille/hash ni chemin non sûr. Le verdict est donc **GO candidat uniquement**, jamais une promotion automatique vers `main` ou la production.
+
+Aucun P0/P1 produit ne reste ouvert dans le registre réparé. Les éléments 005, 006 et 014 encore à compléter sont des données métier P2 encadrées par des gates actionnables ; aucune valeur de production n'a été inventée.
 
 ## Registre avant / après
 
@@ -111,12 +114,12 @@ Les scripts de support sont sous `db/patches/support/` (`*.preflight.sql`, `*.ve
 | Planning | Groupe planning/méthodes | PASS — 11/11. |
 | Clavier planning | 10 répétitions ciblées | PASS — 30/30. |
 | TypeScript/build backend | `npm run typecheck`, `npm run build` | PASS sur les vagues ; build génère OpenAPI, frontières et image. |
-| Gate unifié SOL-12 | `corepack pnpm release:gate -- --target candidate ...` | Les 20 contrôles ont rapporté PASS, mais l'artefact manque les bundles `dist` frontend/backend : **preuve de release incomplète, rerun obligatoire**. |
-| Frontend unitaire/intégration | Gate candidat | PASS — 326 fichiers, **2 595** tests. |
+| Gate unifié SOL-12 | `corepack pnpm release:gate -- --target candidate ...` | PASS — 22 étapes obligatoires, sur les SHA exacts de la candidate ; artefact exporté dans le même run. |
+| Frontend unitaire/intégration | Gate candidat | PASS — 326 fichiers, **2 598** tests. |
 | Backend unitaire/intégration | Gate candidat | PASS — 354 fichiers, **4 848** tests ; 3 fichiers / **8** tests explicitement ignorés. |
 | Migration isolée | Rehearsal PostgreSQL jetable | PASS — inventaire **169** patches ; 140 déjà appliqués, **29 pending appliqués**, replay `true`, restauration `passed`. |
-| Runtime E2E | `runtime-log-gate.json` | PASS — **4 384** événements structurés, **0** événement bloquant. |
-| Playwright isolé | Chromium, `--workers=1 --retries=0` | PASS — **154** scénarios passés, **4** ignorés, **0** inattendu (158 collectés). |
+| Runtime E2E | `runtime-log-gate.json` | PASS — **4 355** événements structurés, **0** événement bloquant. |
+| Playwright isolé | Chromium, `--workers=1 --retries=0` | PASS — **154** scénarios passés, **4** ignorés, **0** échec ou flaky (158 collectés). |
 | Least privilege runtime | `SET LOCAL ROLE cerp_app` | Devis : privilèges exacts ; achats : `SELECT/INSERT` autorisés, `UPDATE` refusé ; verrou consultatif + lecture sans `FOR SHARE` réussis. |
 | Devis E2E isolé | Minimal, complet, retry/idempotence | PASS — 2/2. |
 | Production E2E isolé | Déclaration, blocage clôture, réception, retry, clôture | PASS. |
@@ -136,8 +139,9 @@ Les données de preuve sont préfixées par le runner isolé et vivent dans ses 
 - Le mode scanner est `enforce` hors tests ; une configuration invalide ou un scanner absent ne permet pas de publication de GED.
 - Les changements de privilèges sont additifs, minimaux et validables. Ils exigent une sauvegarde avant application sur une base partagée.
 - Les données métier réelles ne sont pas inventées : familles machine, calendriers de production, centres de coûts/taux horaires, structures et référentiels Qualité/Outillage doivent être renseignés par les rôles responsables via les gates fournis.
+- Le dépôt backend ne configure toujours pas de commande lint. Le gate le déclare explicitement comme exception ; le typecheck et le build restent bloquants. Il s'agit d'une dette technique P2, pas d'un contrôle lint présenté comme réussi.
 - Le bundle frontend est sous tous les seuils du gate : initial `675 945/700 000` octets raw, `209 463/225 000` gzip ; plus gros JS `1 525 416/1 600 000` raw, `529 631/550 000` gzip ; `387/450` chunks. La correction native Rollup conserve 168 entrées dynamiques.
-- L'artefact d'exécution est `C:\Users\KeenanMARTIN\Documents\Github\cerp-repair-825-artifacts\20260819T224909Z-candidate-f00cd579-1f35a533` ; ses logs, résultats E2E et traces sont conservés, mais les bundles `dist` frontend/backend attendus sont absents. Il ne doit donc pas être utilisé comme manifeste de release final.
+- L'artefact d'exécution est `C:\Users\KeenanMARTIN\Documents\Github\cerp-repair-825-artifacts\20260819T233025Z-candidate-f819555f-de45966a`. Son manifeste SHA-256 est `ecd1bf6e11f314e0e3190d0335ffbfed71b048b68482094682a98c4fbca86006` ; l'audit indépendant a trouvé 0 fichier absent, 0 écart de taille, 0 hash invalide et 0 chemin non sûr sur 1 392 entrées. Les 417 fichiers `frontend-dist` et 832 fichiers `backend-dist` sont présents dans cet artefact.
 
 ## Procédure de rollback
 
@@ -149,12 +153,11 @@ Les données de preuve sont préfixées par le runner isolé et vivent dans ses 
 
 ## Éléments restant réellement à faire
 
-1. Relancer le gate depuis les SHA exacts avec copie et vérification des bundles `dist` frontend/backend dans l'artefact ; ne lever le blocage qu'après vérification d'intégrité complète.
-2. Après ce rerun seulement : revue humaine, puis promotion contrôlée de la candidate vers `dev`; toute promotion vers `main` reste une release distincte avec son gate sur SHA exact.
-3. Avant `cerp_test` partagé : obtenir l'autorisation de migration, réaliser sauvegarde/preflight/verify/rollback documenté. `cerp_prod` reste hors périmètre de cette campagne.
-4. Les responsables métier doivent renseigner les référentiels signalés par les gates (notamment familles machines, calendriers et coûts) ; aucune valeur ne doit être fabriquée pour obtenir un faux vert.
-5. Les 4 scénarios E2E ignorés sont intentionnels (mesure de performance/documentation opt-in, panne scanner couverte séparément et ancien mock Outillage remplacé par parcours réel) ; ils ne sont pas présentés comme des passages.
+1. Revue humaine, puis promotion contrôlée de la candidate vers `dev`; toute promotion vers `main` reste une release distincte avec son gate sur SHA exact.
+2. Avant `cerp_test` partagé : obtenir l'autorisation de migration, réaliser sauvegarde/preflight/verify/rollback documenté. `cerp_prod` reste hors périmètre de cette campagne.
+3. Les responsables métier doivent renseigner les référentiels signalés par les gates (notamment familles machines, calendriers et coûts) ; aucune valeur ne doit être fabriquée pour obtenir un faux vert.
+4. Les 4 scénarios E2E ignorés sont intentionnels (mesure de performance/documentation opt-in, panne scanner couverte séparément et ancien mock Outillage remplacé par parcours réel) ; ils ne sont pas présentés comme des passages.
 
 ## GO / NO-GO
 
-**NO-GO candidat, production et main à ce stade** : même si l'exécution a passé les contrôles, l'artefact est incomplet. Un rerun complet avec bundles `dist` frontend/backend dans l'artefact est obligatoire avant revue/promotion. Aucune promotion `main`, aucun push, aucun déploiement et aucune écriture dans `cerp_test` partagé ou `cerp_prod` ne sont présentés comme effectués. La procédure de rollback ci-dessus et une approbation humaine restent obligatoires pour toute étape irréversible.
+**GO candidat uniquement** : les contrôles obligatoires, les 158 scénarios E2E collectés et l'audit indépendant de l'artefact autoportant ont passé sur les SHA cités. Cela n'autorise pas une promotion automatique : aucun merge `dev`/`main`, aucun push, aucun déploiement et aucune écriture dans `cerp_test` partagé ou `cerp_prod` ne sont présentés comme effectués. La procédure de rollback ci-dessus, une revue humaine et le gate sur SHA exact restent obligatoires pour toute promotion irréversible.
