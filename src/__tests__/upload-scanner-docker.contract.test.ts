@@ -79,7 +79,8 @@ describe("autonomous ClamAV Docker contract", () => {
     expect(clamdConfig).toMatch(/AlertExceedsMax\s+yes/);
     expect(clamdConfig).toMatch(/MaxRecursion\s+16/);
     expect(clamdConfig).toMatch(/MaxFiles\s+10000/);
-    expect(freshclamConfig).toMatch(/Checks\s+12/);
+    expect(freshclamConfig).not.toMatch(/^Checks\s+/m);
+    expect(entrypoint).toContain("--checks=12");
     expect(freshclamConfig).toMatch(/NotifyClamd\s+\/etc\/clamav\/clamd\.conf/);
     expect(scannerSmoke).toContain("nestedArchive(20)");
     expect(scannerSmoke).toContain('exceeded.status !== "infected"');

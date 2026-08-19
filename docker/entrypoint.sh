@@ -88,7 +88,9 @@ if [ "${CERP_SCANNER_SMOKE:-0}" = "1" ]; then
   exit $?
 fi
 
-freshclam --config-file="$FRESHCLAM_CONFIG" --daemon --foreground --stdout &
+# ClamAV 1.4 accepts the cadence only as a CLI option; 12 checks/day keeps the
+# explicit policy without an invalid freshclam.conf directive.
+freshclam --config-file="$FRESHCLAM_CONFIG" --checks=12 --daemon --foreground --stdout &
 freshclam_pid=$!
 
 if [ "$#" -eq 0 ]; then
