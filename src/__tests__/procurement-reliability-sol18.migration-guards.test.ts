@@ -18,6 +18,12 @@ describe("SOL-18 procurement migration guards", () => {
     expect(patch).toContain("reason_code = 'SUPPLIER_ACKNOWLEDGEMENT' OR previous_date IS DISTINCT FROM promised_date");
   });
 
+  it("keeps the command receipt ledger least-privilege", () => {
+    expect(patch).toContain("REVOKE ALL ON TABLE public.procurement_command_receipts FROM PUBLIC, cerp_app");
+    expect(patch).toContain("GRANT SELECT, INSERT ON TABLE public.procurement_command_receipts TO cerp_app");
+    expect(patch).not.toMatch(/GRANT\s+[^;]*(?:UPDATE|DELETE)[^;]*ON TABLE public\.procurement_command_receipts/i);
+  });
+
   it("does not fabricate historical promises, invoices, returns or credits", () => {
     expect(patch).not.toMatch(/INSERT\s+INTO\s+public\.procurement_promised_date_events\s+SELECT/i);
     expect(patch).not.toMatch(/supplier_invoice|facture_fournisseur|supplier_return/i);

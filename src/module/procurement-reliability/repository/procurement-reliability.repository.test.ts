@@ -66,6 +66,9 @@ describe("SOL-18 procurement write transactions", () => {
       idempotencyKey: "sol18-promise-0001",
     })).resolves.toMatchObject({ promised_date: "2026-08-25", idempotent_replay: false });
     const query = client.query as ReturnType<typeof vi.fn>;
+    const receiptRead = query.mock.calls.find(([sql]) => String(sql).includes("FROM public.procurement_command_receipts"));
+    expect(query.mock.calls.some(([sql]) => String(sql).includes("pg_advisory_xact_lock"))).toBe(true);
+    expect(String(receiptRead?.[0] ?? "")).not.toContain("FOR SHARE");
     expect(query.mock.calls.filter(([sql]) => String(sql).includes("UPDATE public.commande_fournisseur SET date_promesse"))).toHaveLength(1);
     expect(query.mock.calls.filter(([sql]) => String(sql).includes("INSERT INTO public.procurement_promised_date_events"))).toHaveLength(1);
     expect(query.mock.calls.filter(([sql]) => String(sql).includes("INSERT INTO public.procurement_command_receipts"))).toHaveLength(1);
