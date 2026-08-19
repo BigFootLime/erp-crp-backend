@@ -87,12 +87,16 @@ export async function svcAutoPlanPlanning(params: {
       | "MISSING_RESOURCE"
       | "RESOURCE_BLOCKED"
       | "LOCKED_AFTER_AR"
+      | "RESOURCE_NOT_QUALIFIED"
       | "NO_OPERATIONS"
       | "DURATION_UNAVAILABLE"
       | "NO_SLOT"
       | "FAILED";
     existing_event_id?: string | null;
     message?: string;
+    error_code?: string;
+    remediation_path?: string;
+    action?: string;
   }>;
   summary: {
     requested_ofs: number;
@@ -139,12 +143,16 @@ export async function svcAutoPlanPlanning(params: {
       | "MISSING_RESOURCE"
       | "RESOURCE_BLOCKED"
       | "LOCKED_AFTER_AR"
+      | "RESOURCE_NOT_QUALIFIED"
       | "NO_OPERATIONS"
       | "DURATION_UNAVAILABLE"
       | "NO_SLOT"
       | "FAILED";
     existing_event_id?: string | null;
     message?: string;
+    error_code?: string;
+    remediation_path?: string;
+    action?: string;
   }> = [];
 
   for (const ofId of params.body.of_ids) {
@@ -229,6 +237,28 @@ export async function svcAutoPlanPlanning(params: {
           break;
         } catch (err) {
           const httpErr = err as { code?: unknown; details?: unknown; message?: unknown };
+          const errorDetails = httpErr && typeof httpErr.details === "object" && httpErr.details !== null
+            ? httpErr.details as Record<string, unknown>
+            : null;
+          const errorCode = typeof httpErr?.code === "string" ? httpErr.code : undefined;
+
+          if (errorCode && [
+            "PLANNING_OPERATION_FAMILY_REQUIRED",
+            "PLANNING_MACHINE_QUALIFICATION_REQUIRED",
+            "PLANNING_MACHINE_FAMILY_INCOMPATIBLE",
+          ].includes(errorCode)) {
+            skipped_operations.push({
+              of_id: op.of_id,
+              of_operation_id: op.of_operation_id,
+              reason: "RESOURCE_NOT_QUALIFIED",
+              message: typeof httpErr.message === "string" ? httpErr.message : undefined,
+              error_code: errorCode,
+              remediation_path: typeof errorDetails?.remediation_path === "string" ? errorDetails.remediation_path : undefined,
+              action: typeof errorDetails?.action === "string" ? errorDetails.action : undefined,
+            });
+            skipped = true;
+            break;
+          }
 
           if (httpErr && httpErr.code === "MISSING_RESOURCE") {
             if (fallbackResource && !usedFallback) {

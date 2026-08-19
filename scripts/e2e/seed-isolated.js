@@ -570,15 +570,16 @@ async function main() {
     await client.query(
       `INSERT INTO public.pieces_techniques_operations (
          id,piece_technique_id,gamme_id,phase,ordre,designation,type_operation,poste_id,machine_id,
-         coef,tp,tf_unit,qte,taux_horaire,temps_fabrication,temps_total,cout_mo
+         machine_family_code,coef,tp,tf_unit,qte,taux_horaire,temps_fabrication,temps_total,cout_mo
        ) VALUES (
          '26000000-0000-4000-8000-000000000001','21000000-0000-4000-8000-000000000001',
          '92000000-0000-4000-8000-000000000003',10,10,'Usinage preuve SOL-05','FRAISAGE',
          '24000000-0000-4000-8000-000000000001','27000000-0000-4000-8000-000000000001',
-         1,0.1,0.25,1,50,0.25,0.35,17.5
+         'F',1,0.1,0.25,1,50,0.25,0.35,17.5
        ) ON CONFLICT (id) DO UPDATE SET
          piece_technique_id=EXCLUDED.piece_technique_id,gamme_id=EXCLUDED.gamme_id,phase=EXCLUDED.phase,
          ordre=EXCLUDED.ordre,designation=EXCLUDED.designation,poste_id=EXCLUDED.poste_id,machine_id=EXCLUDED.machine_id,
+         machine_family_code=EXCLUDED.machine_family_code,
          temps_fabrication=EXCLUDED.temps_fabrication,temps_total=EXCLUDED.temps_total,
          cout_mo=EXCLUDED.cout_mo`
     );
