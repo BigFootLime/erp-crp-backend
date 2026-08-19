@@ -13,6 +13,7 @@ import {
 } from "../../../shared/realtime/realtime-outbox.service";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
+import { PLANNED_OPERATION_DURATION_MINUTES_SQL } from "../../production/domain/planned-operation-duration";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 import { repoApplyCommandeWorkflowMilestone } from "../../commande-client/repository/commande-client.repository";
@@ -538,6 +539,7 @@ async function selectOfOperationDefaults(q: DbQueryer, opId: string): Promise<{
   designation: string;
   machine_id: string | null;
   poste_id: string | null;
+  machine_family_code: string | null;
 } | null> {
   type Row = {
     of_id: string;
@@ -545,6 +547,7 @@ async function selectOfOperationDefaults(q: DbQueryer, opId: string): Promise<{
     designation: string;
     machine_id: string | null;
     poste_id: string | null;
+    machine_family_code: string | null;
   };
 
   const res = await q.query<Row>(
@@ -554,7 +557,8 @@ async function selectOfOperationDefaults(q: DbQueryer, opId: string): Promise<{
         op.phase::int AS phase,
         op.designation,
         op.machine_id::text AS machine_id,
-        op.poste_id::text AS poste_id
+        op.poste_id::text AS poste_id,
+        NULLIF(btrim(op.machine_family_code), '') AS machine_family_code
       FROM public.of_operations op
       WHERE op.id = $1::uuid
       LIMIT 1
@@ -571,6 +575,7 @@ async function selectOfOperationDefaults(q: DbQueryer, opId: string): Promise<{
     designation: row.designation,
     machine_id: row.machine_id,
     poste_id: row.poste_id,
+    machine_family_code: row.machine_family_code,
   };
 }
 
@@ -602,6 +607,191 @@ function resolveResource(params: {
   if (op.machine_id) return { machine_id: op.machine_id, poste_id: null };
 
   throw new HttpError(400, "MISSING_RESOURCE", "Operation has no machine/poste assigned; choose a resource");
+}
+
+/**
+ * A planning resource may be a poste backed by a machine.  An OF operation is
+ * only assignable when its frozen machine-family requirement matches that
+ * machine's explicit, human-qualified family.  We intentionally do not infer
+ * a family from machine type, label, or historical qualifications.
+ */
+export async function assertOperationResourceCompatible(params: {
+  tx: DbQueryer;
+  of_operation_id: string | null;
+  resource: { machine_id: string | null; poste_id: string | null };
+}): Promise<void> {
+  if (!params.of_operation_id) return;
+
+  const res = await params.tx.query<{
+    operation_id: string;
+    piece_technique_id: string;
+    required_machine_family_code: string | null;
+    machine_id: string | null;
+    machine_code: string | null;
+    machine_family_code: string | null;
+  }>(
+    `
+      SELECT
+        op.id::text AS operation_id,
+        o.piece_technique_id::text AS piece_technique_id,
+        NULLIF(btrim(op.machine_family_code), '') AS required_machine_family_code,
+        m.id::text AS machine_id,
+        m.code AS machine_code,
+        NULLIF(btrim(m.machine_family_code), '') AS machine_family_code
+      FROM public.of_operations op
+      JOIN public.ordres_fabrication o ON o.id = op.of_id
+      LEFT JOIN public.postes p ON p.id = $3::uuid
+      LEFT JOIN public.machines m ON m.id = COALESCE($2::uuid, p.machine_id)
+      WHERE op.id = $1::uuid
+      LIMIT 1
+    `,
+    [params.of_operation_id, params.resource.machine_id, params.resource.poste_id]
+  );
+  const row = res.rows[0] ?? null;
+  if (!row) throw new HttpError(404, "OF_OPERATION_NOT_FOUND", "OF operation not found");
+  if (!row.required_machine_family_code) {
+    throw new HttpError(
+      422,
+      "PLANNING_OPERATION_FAMILY_REQUIRED",
+      "L’opération n’a pas de famille machine qualifiée. Complétez la gamme avant de la planifier.",
+      {
+        operation_id: row.operation_id,
+        piece_technique_id: row.piece_technique_id,
+        remediation_path: `/pieces-techniques/${encodeURIComponent(row.piece_technique_id)}/edit`,
+        action: "Renseignez la famille requise dans la gamme validée, puis relancez la planification.",
+      }
+    );
+  }
+  if (!row.machine_id) {
+    throw new HttpError(422, "PLANNING_MACHINE_QUALIFICATION_REQUIRED", "Cette opération exige une machine qualifiée ; affectez une machine ou un poste rattaché à une machine.", {
+      operation_id: row.operation_id,
+      required_machine_family_code: row.required_machine_family_code,
+      remediation_path: "/methodes/parc-machines",
+      action: "Renseignez une ressource machine qualifiée pour la famille requise.",
+    });
+  }
+  if (!row.machine_family_code) {
+    throw new HttpError(422, "PLANNING_MACHINE_QUALIFICATION_REQUIRED", "La machine sélectionnée n'a pas de famille qualifiée. Qualifiez-la avant de planifier cette opération.", {
+      operation_id: row.operation_id,
+      machine_id: row.machine_id,
+      machine_code: row.machine_code,
+      required_machine_family_code: row.required_machine_family_code,
+      remediation_path: "/methodes/parc-machines",
+      action: "Renseignez la qualification/famille de la machine dans le référentiel Méthodes.",
+    });
+  }
+  if (row.machine_family_code.toLocaleUpperCase("fr-FR") !== row.required_machine_family_code.toLocaleUpperCase("fr-FR")) {
+    throw new HttpError(422, "PLANNING_MACHINE_FAMILY_INCOMPATIBLE", "La famille de la machine est incompatible avec l'opération à planifier.", {
+      operation_id: row.operation_id,
+      machine_id: row.machine_id,
+      machine_code: row.machine_code,
+      required_machine_family_code: row.required_machine_family_code,
+      machine_family_code: row.machine_family_code,
+      remediation_path: "/methodes/parc-machines",
+      action: "Choisissez une machine qualifiée pour la famille requise ou corrigez la gamme validée.",
+    });
+  }
+}
+
+export async function assertCommandePlanningResourcesCompatible(params: {
+  tx: DbQueryer;
+  commande_id: number;
+}): Promise<void> {
+  const events = await params.tx.query<{
+    of_operation_id: string;
+    machine_id: string | null;
+    poste_id: string | null;
+  }>(
+    `
+      SELECT
+        e.of_operation_id::text AS of_operation_id,
+        e.machine_id::text AS machine_id,
+        e.poste_id::text AS poste_id
+      FROM public.planning_events e
+      JOIN public.of_operations op ON op.id = e.of_operation_id
+      JOIN public.ordres_fabrication o ON o.id = COALESCE(e.of_id, op.of_id)
+      WHERE o.commande_id = $1::bigint
+        AND e.archived_at IS NULL
+        AND e.status <> 'CANCELLED'::planning_event_status
+      ORDER BY e.start_ts ASC, e.id ASC
+    `,
+    [params.commande_id]
+  );
+
+  for (const event of events.rows) {
+    await assertOperationResourceCompatible({
+      tx: params.tx,
+      of_operation_id: event.of_operation_id,
+      resource: { machine_id: event.machine_id, poste_id: event.poste_id },
+    });
+  }
+}
+
+async function syncPlanningCoordinates(params: {
+  tx: DbQueryer;
+  of_operation_id: string | null;
+  of_id: number | null;
+}): Promise<void> {
+  if (params.of_operation_id) {
+    await params.tx.query(
+      `
+        WITH source AS (
+          SELECT
+            (ARRAY_AGG(e.machine_id ORDER BY e.updated_at DESC, e.id DESC))[1] AS machine_id,
+            (ARRAY_AGG(e.poste_id ORDER BY e.updated_at DESC, e.id DESC))[1] AS poste_id
+          FROM public.planning_events e
+          WHERE e.of_operation_id = $1::uuid
+            AND e.archived_at IS NULL
+            AND e.status <> 'CANCELLED'::planning_event_status
+        )
+        UPDATE public.of_operations op
+        SET machine_id = source.machine_id,
+            poste_id = source.poste_id,
+            updated_at = now()
+        FROM source
+        WHERE op.id = $1::uuid
+          AND (op.machine_id, op.poste_id) IS DISTINCT FROM (source.machine_id, source.poste_id)
+      `,
+      [params.of_operation_id]
+    );
+  }
+
+  if (typeof params.of_id === "number") {
+    await params.tx.query(
+      `
+        WITH schedule AS (
+          SELECT
+            (MIN(e.start_ts) AT TIME ZONE (
+              SELECT pc.timezone
+              FROM public.programmation_calendars pc
+              WHERE pc.active
+              ORDER BY pc.updated_at DESC, pc.id
+              LIMIT 1
+            ))::date AS start_date,
+            (MAX(e.end_ts) AT TIME ZONE (
+              SELECT pc.timezone
+              FROM public.programmation_calendars pc
+              WHERE pc.active
+              ORDER BY pc.updated_at DESC, pc.id
+              LIMIT 1
+            ))::date AS end_date
+          FROM public.planning_events e
+          LEFT JOIN public.of_operations op ON op.id = e.of_operation_id
+          WHERE e.archived_at IS NULL
+            AND e.status <> 'CANCELLED'::planning_event_status
+            AND COALESCE(e.of_id, op.of_id) = $1::bigint
+        )
+        UPDATE public.ordres_fabrication o
+        SET date_lancement_prevue = schedule.start_date,
+            date_fin_prevue = schedule.end_date,
+            updated_at = now()
+        FROM schedule
+        WHERE o.id = $1::bigint
+          AND (o.date_lancement_prevue, o.date_fin_prevue) IS DISTINCT FROM (schedule.start_date, schedule.end_date)
+      `,
+      [params.of_id]
+    );
+  }
 }
 
 function mapOfOperationStatusToPlanningStatus(status: string | null | undefined): PlanningEventListItem["status"] {
@@ -1034,6 +1224,21 @@ export async function repoValidatePlanningForAr(params: {
         continue;
       }
 
+      try {
+        await assertCommandePlanningResourcesCompatible({ tx: client, commande_id: commandeId });
+      } catch (err) {
+        if (err instanceof HttpError && err.status === 422) {
+          skipped.push({
+            commande_id: commandeId,
+            numero: row.numero,
+            reason: "RESOURCE_QUALIFICATION_REQUIRED",
+            message: err.message,
+          });
+          continue;
+        }
+        throw err;
+      }
+
       await client.query("SAVEPOINT planning_validate_commande");
       let transition;
       await repoAssertPlanningCheckpointAccess({
@@ -1427,7 +1632,7 @@ export async function repoListOfOperationsForAutoplan(params: {
     of_operation_id: string;
     phase: number;
     designation: string;
-    temps_total_planned: number;
+    planned_duration_minutes: number | null;
     status: string;
     machine_id: string | null;
     poste_id: string | null;
@@ -1442,7 +1647,7 @@ export async function repoListOfOperationsForAutoplan(params: {
     of_operation_id: string;
     phase: number;
     designation: string;
-    temps_total_planned: number | string | null;
+    planned_duration_minutes: number | string | null;
     status: string;
     machine_id: string | null;
     poste_id: string | null;
@@ -1457,7 +1662,10 @@ export async function repoListOfOperationsForAutoplan(params: {
         op.id::text AS of_operation_id,
         op.phase::int AS phase,
         op.designation,
-        op.temps_total_planned::float AS temps_total_planned,
+        -- Unit times remain frozen on the OF in decimal hours.  The scheduling
+        -- charge is recomputed from those snapshots and the launched quantity,
+        -- then converted once to minutes (30 min + 12 min x 2 = 54 min).
+        ${PLANNED_OPERATION_DURATION_MINUTES_SQL} AS planned_duration_minutes,
         op.status::text AS status,
         op.machine_id::text AS machine_id,
         op.poste_id::text AS poste_id
@@ -1472,7 +1680,7 @@ export async function repoListOfOperationsForAutoplan(params: {
 
   const prioritySet = new Set(["LOW", "NORMAL", "HIGH", "CRITICAL"]);
   return res.rows.map((r) => {
-    const raw = r.temps_total_planned;
+    const raw = r.planned_duration_minutes;
     const n = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : NaN;
     const ofPriority = typeof r.of_priority === "string" && prioritySet.has(r.of_priority) ? (r.of_priority as PlanningEventListItem["priority"]) : null;
 
@@ -1483,7 +1691,7 @@ export async function repoListOfOperationsForAutoplan(params: {
       of_operation_id: r.of_operation_id,
       phase: r.phase,
       designation: r.designation,
-      temps_total_planned: Number.isFinite(n) ? n : 0,
+      planned_duration_minutes: Number.isFinite(n) ? n : null,
       status: r.status,
       machine_id: r.machine_id,
       poste_id: r.poste_id,
@@ -1630,6 +1838,11 @@ export async function repoCreatePlanningEvent(params: {
     const resource = resolveResource({ machine_id: b.machine_id ?? null, poste_id: b.poste_id ?? null, op });
 
     await assertResourceSchedulable(client, resource);
+    await assertOperationResourceCompatible({
+      tx: client,
+      of_operation_id: b.of_operation_id ?? null,
+      resource,
+    });
 
     if (b.allow_overlap && !roleCanForcePlanningOverlap(params.audit.role)) {
       throw new HttpError(403, "PLANNING_FORCE_OVERLAP_FORBIDDEN", "Only admin or responsable atelier can force overlaps");
@@ -1711,6 +1924,7 @@ export async function repoCreatePlanningEvent(params: {
     let synchronizedOfId = finalOfId;
     let notifications: AppNotification[] = [];
     if (b.of_operation_id) {
+      await syncPlanningCoordinates({ tx: client, of_operation_id: b.of_operation_id, of_id: finalOfId });
       const sync = await syncLinkedOfOperationFromPlanning({
         tx: client,
         of_operation_id: b.of_operation_id,
@@ -1898,6 +2112,11 @@ export async function repoPatchPlanningEvent(params: {
       p.of_operation_id !== undefined;
     if (touchesSchedule) {
       await assertResourceSchedulable(client, resource);
+      await assertOperationResourceCompatible({
+        tx: client,
+        of_operation_id: nextOfOperationId,
+        resource,
+      });
     }
 
     const nextAllowOverlap = p.allow_overlap !== undefined ? p.allow_overlap : before.allow_overlap;
@@ -2020,6 +2239,11 @@ export async function repoPatchPlanningEvent(params: {
     let synchronizedOfId = nextOfId;
     let notifications: AppNotification[] = [];
     if (before.of_operation_id && before.of_operation_id !== nextOfOperationId) {
+      await syncPlanningCoordinates({
+        tx: client,
+        of_operation_id: before.of_operation_id,
+        of_id: toNullableInt(before.of_id, "planning_events.of_id"),
+      });
       const previousSync = await syncLinkedOfOperationFromPlanning({
         tx: client,
         of_operation_id: before.of_operation_id,
@@ -2030,6 +2254,7 @@ export async function repoPatchPlanningEvent(params: {
     }
 
     if (nextOfOperationId) {
+      await syncPlanningCoordinates({ tx: client, of_operation_id: nextOfOperationId, of_id: nextOfId });
       const sync = await syncLinkedOfOperationFromPlanning({
         tx: client,
         of_operation_id: nextOfOperationId,
@@ -2156,6 +2381,11 @@ export async function repoArchivePlanningEvent(params: { id: string; audit: Audi
     let synchronizedOfId = toNullableInt(before.of_id, "planning_events.of_id");
     let notifications: AppNotification[] = [];
     if (before.of_operation_id) {
+      await syncPlanningCoordinates({
+        tx: client,
+        of_operation_id: before.of_operation_id,
+        of_id: lockOfId,
+      });
       const sync = await syncLinkedOfOperationFromPlanning({
         tx: client,
         of_operation_id: before.of_operation_id,
@@ -2260,6 +2490,11 @@ export async function repoRestorePlanningEvent(params: {
 
     const resource = { machine_id: before.machine_id, poste_id: before.poste_id };
     await assertResourceSchedulable(client, resource);
+    await assertOperationResourceCompatible({
+      tx: client,
+      of_operation_id: before.of_operation_id,
+      resource,
+    });
 
     const conflicts = await selectPlanningEventConflicts(client, {
       start_ts: before.start_ts,
@@ -2296,6 +2531,11 @@ export async function repoRestorePlanningEvent(params: {
 
     let notifications: AppNotification[] = [];
     if (before.of_operation_id) {
+      await syncPlanningCoordinates({
+        tx: client,
+        of_operation_id: before.of_operation_id,
+        of_id: synchronizedOfId,
+      });
       const sync = await syncLinkedOfOperationFromPlanning({
         tx: client,
         of_operation_id: before.of_operation_id,

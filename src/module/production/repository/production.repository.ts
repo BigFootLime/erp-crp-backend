@@ -54,6 +54,7 @@ import {
 } from "../domain/of-status";
 import { capabilityForOfTransition, roleHasOfCapability } from "../domain/of-rbac";
 import { copyPieceOperationsToOf, loadApplicableTechnicalSnapshot } from "../domain/of-generation";
+import { PLANNED_OPERATION_DURATION_MINUTES_SQL } from "../domain/planned-operation-duration";
 import { enqueueProductionOfChanged, productionRealtimeActionFromAudit } from "./production-realtime.repository";
 
 export type AuditContext = {
@@ -2636,6 +2637,7 @@ async function selectOfOperation(q: DbQueryer, params: {
     qte: number;
     coef: number;
     temps_total_planned: number;
+    planned_duration_minutes: number;
     temps_total_real: number;
     status: OfOperation["status"];
     started_at: string | null;
@@ -2676,6 +2678,7 @@ async function selectOfOperation(q: DbQueryer, params: {
         op.qte::float8 AS qte,
         op.coef::float8 AS coef,
         op.temps_total_planned::float8 AS temps_total_planned,
+        ${PLANNED_OPERATION_DURATION_MINUTES_SQL} AS planned_duration_minutes,
         op.temps_total_real::float8 AS temps_total_real,
         op.status::text AS status,
         op.started_at::text AS started_at,
@@ -2693,6 +2696,7 @@ async function selectOfOperation(q: DbQueryer, params: {
         open_log.comment AS open_log_comment,
         open_log.created_at::text AS open_log_created_at
       FROM of_operations op
+      JOIN ordres_fabrication o ON o.id = op.of_id
       LEFT JOIN postes p ON p.id = op.poste_id
       LEFT JOIN machines m ON m.id = op.machine_id
       LEFT JOIN LATERAL (
@@ -2739,6 +2743,7 @@ async function selectOfOperation(q: DbQueryer, params: {
     qte: Number(row.qte),
     coef: Number(row.coef),
     temps_total_planned: Number(row.temps_total_planned),
+    planned_duration_minutes: Number(row.planned_duration_minutes),
     temps_total_real: Number(row.temps_total_real),
     status: row.status,
     started_at: row.started_at,
@@ -2768,6 +2773,7 @@ async function selectOfOperations(q: DbQueryer, params: { of_id: number; user_id
     qte: number;
     coef: number;
     temps_total_planned: number;
+    planned_duration_minutes: number;
     temps_total_real: number;
     status: OfOperation["status"];
     started_at: string | null;
@@ -2808,6 +2814,7 @@ async function selectOfOperations(q: DbQueryer, params: { of_id: number; user_id
         op.qte::float8 AS qte,
         op.coef::float8 AS coef,
         op.temps_total_planned::float8 AS temps_total_planned,
+        ${PLANNED_OPERATION_DURATION_MINUTES_SQL} AS planned_duration_minutes,
         op.temps_total_real::float8 AS temps_total_real,
         op.status::text AS status,
         op.started_at::text AS started_at,
@@ -2825,6 +2832,7 @@ async function selectOfOperations(q: DbQueryer, params: { of_id: number; user_id
         open_log.comment AS open_log_comment,
         open_log.created_at::text AS open_log_created_at
       FROM of_operations op
+      JOIN ordres_fabrication o ON o.id = op.of_id
       LEFT JOIN postes p ON p.id = op.poste_id
       LEFT JOIN machines m ON m.id = op.machine_id
       LEFT JOIN LATERAL (
@@ -2868,6 +2876,7 @@ async function selectOfOperations(q: DbQueryer, params: { of_id: number; user_id
     qte: Number(row.qte),
     coef: Number(row.coef),
     temps_total_planned: Number(row.temps_total_planned),
+    planned_duration_minutes: Number(row.planned_duration_minutes),
     temps_total_real: Number(row.temps_total_real),
     status: row.status,
     started_at: row.started_at,

@@ -88,6 +88,7 @@ export async function svcAutoPlanPlanning(params: {
       | "RESOURCE_BLOCKED"
       | "LOCKED_AFTER_AR"
       | "NO_OPERATIONS"
+      | "DURATION_UNAVAILABLE"
       | "NO_SLOT"
       | "FAILED";
     existing_event_id?: string | null;
@@ -139,6 +140,7 @@ export async function svcAutoPlanPlanning(params: {
       | "RESOURCE_BLOCKED"
       | "LOCKED_AFTER_AR"
       | "NO_OPERATIONS"
+      | "DURATION_UNAVAILABLE"
       | "NO_SLOT"
       | "FAILED";
     existing_event_id?: string | null;
@@ -174,7 +176,17 @@ export async function svcAutoPlanPlanning(params: {
         }
       }
 
-      const durationMinutes = Math.max(15, clampPositiveInt(Math.round(op.temps_total_planned), 15));
+      const plannedDurationMinutes = op.planned_duration_minutes;
+      if (typeof plannedDurationMinutes !== "number" || !Number.isFinite(plannedDurationMinutes) || plannedDurationMinutes <= 0) {
+        skipped_operations.push({
+          of_id: op.of_id,
+          of_operation_id: op.of_operation_id,
+          reason: "DURATION_UNAVAILABLE",
+          message: "La durée planifiée est absente ou nulle. Renseignez les temps de gamme avant l’auto-planification.",
+        });
+        continue;
+      }
+      const durationMinutes = Math.max(15, Math.round(plannedDurationMinutes));
       const durationMs = durationMinutes * 60_000;
       let startMs = ceilToStepMinutes(cursorMs, stepMinutes);
       let usedFallback = false;

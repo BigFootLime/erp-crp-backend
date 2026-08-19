@@ -147,6 +147,7 @@ export type OfOperation = {
   qte: number;
   coef: number;
   temps_total_planned: number;
+  planned_duration_minutes: number;
   temps_total_real: number;
   status: OfOperationStatusDTO;
   started_at: string | null;
