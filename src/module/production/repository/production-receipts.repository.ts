@@ -653,12 +653,12 @@ export async function repoGetOfReceiptContext(params: { of_id: number }): Promis
     `
       SELECT
         m.id::text AS id,
-        COALESCE(m.code, m.code_magasin) AS code,
-        COALESCE(m.name, m.libelle) AS name,
+        m.code,
+        m.name,
         m.is_active
       FROM public.magasins m
       WHERE m.is_active = true
-      ORDER BY COALESCE(m.name, m.libelle) ASC, COALESCE(m.code, m.code_magasin) ASC
+      ORDER BY m.name ASC, m.code ASC
     `
   );
 
@@ -1299,8 +1299,8 @@ export async function repoGetOfTraceability(params: { of_id: number }): Promise<
         ml.lot_id::text AS lot_id,
         l.lot_code,
         ml.dst_magasin_id::text AS magasin_id,
-        COALESCE(mag.code, mag.code_magasin) AS magasin_code,
-        COALESCE(mag.name, mag.libelle) AS magasin_name,
+        mag.code AS magasin_code,
+        mag.name AS magasin_name,
         ml.dst_emplacement_id::bigint AS emplacement_id,
         e.code AS emplacement_code,
         e.location_id::text AS location_id

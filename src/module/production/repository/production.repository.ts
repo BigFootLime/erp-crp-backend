@@ -3409,6 +3409,7 @@ export async function repoUpdateOrdreFabrication(params: {
       id: string;
       commande_id: string | null;
       statut: string;
+      quantite_bonne: number;
       updated_at: string | null;
     }>(
       `
@@ -3416,6 +3417,7 @@ export async function repoUpdateOrdreFabrication(params: {
           id::text AS id,
           commande_id::text AS commande_id,
           statut::text AS statut,
+          quantite_bonne::float8 AS quantite_bonne,
           to_char(
             updated_at AT TIME ZONE 'UTC',
             'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
@@ -3464,6 +3466,76 @@ export async function repoUpdateOrdreFabrication(params: {
         throw new HttpError(403, "OF_TRANSITION_FORBIDDEN", "Votre rôle ne permet pas cette transition d'OF.", {
           capability,
         });
+      }
+    }
+
+    // A completed OF may only be archived once every declared good part is
+    // backed by the immutable receipt ledger and its posted stock movement.
+    // The receipt remains a separate, explicit command because its location
+    // and quality decision cannot be inferred safely at closure time.
+    if (statutChanges && currentStatut === "TERMINE" && requestedStatut === "CLOTURE") {
+      const receiptStateRes = await client.query<{
+        received_qty_ok: number;
+        invalid_receipt_count: number;
+      }>(
+        `
+          SELECT
+            COALESCE(
+              SUM(r.qty_ok) FILTER (
+                WHERE m.status = 'POSTED'
+                  AND m.movement_type = 'IN'::public.movement_type
+                  AND m.source_document_type = 'OF'
+                  AND m.source_document_id = $1::text
+                  AND m.qty = r.qty_ok
+                  AND EXISTS (
+                    SELECT 1
+                    FROM public.of_output_lots ool
+                    WHERE ool.of_id = r.of_id
+                      AND ool.lot_id = r.lot_id
+                  )
+              ),
+              0
+            )::float8 AS received_qty_ok,
+            COUNT(*) FILTER (
+              WHERE r.id IS NOT NULL
+                AND NOT COALESCE(
+                  m.status = 'POSTED'
+                    AND m.movement_type = 'IN'::public.movement_type
+                    AND m.source_document_type = 'OF'
+                    AND m.source_document_id = $1::text
+                    AND m.qty = r.qty_ok
+                    AND EXISTS (
+                      SELECT 1
+                      FROM public.of_output_lots ool
+                      WHERE ool.of_id = r.of_id
+                        AND ool.lot_id = r.lot_id
+                    ),
+                  false
+                )
+            )::int AS invalid_receipt_count
+          FROM public.of_receipts r
+          LEFT JOIN public.stock_movements m ON m.id = r.stock_movement_id
+          WHERE r.of_id = $1::bigint
+        `,
+        [params.id]
+      );
+      const receivedQtyOk = Number(receiptStateRes.rows[0]?.received_qty_ok ?? 0);
+      const invalidReceiptCount = Number(receiptStateRes.rows[0]?.invalid_receipt_count ?? 0);
+      const declaredQtyOk = Number(ofRow.quantite_bonne);
+      const remainingQtyOk = Math.max(0, declaredQtyOk - receivedQtyOk);
+
+      if (invalidReceiptCount > 0 || remainingQtyOk > 1e-9) {
+        throw new HttpError(
+          409,
+          "OF_RECEIPT_INCOMPLETE",
+          "Reception stock incomplete : enregistrez les pieces bonnes avant de cloturer l'OF.",
+          {
+            declared_qty_ok: declaredQtyOk,
+            received_qty_ok: receivedQtyOk,
+            remaining_qty_ok: remainingQtyOk,
+            invalid_receipt_count: invalidReceiptCount,
+          }
+        );
       }
     }
 

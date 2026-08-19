@@ -135,13 +135,33 @@ beforeEach(() => {
 });
 
 describe("#170 OF state machine + optimistic lock (PATCH /production/ofs/:id)", () => {
-  function installOfForUpdate(params: { statut: string; updated_at?: string }) {
+  function installOfForUpdate(params: {
+    statut: string;
+    updated_at?: string;
+    quantite_bonne?: number;
+    received_qty_ok?: number;
+    invalid_receipt_count?: number;
+  }) {
     mocks.clientQuery.mockImplementation(async (sql: unknown) => {
       const q = String(sql);
       if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
       if (q.includes("FROM ordres_fabrication") && q.includes("FOR UPDATE")) {
         return {
-          rows: [{ id: "5", commande_id: null, statut: params.statut, updated_at: params.updated_at ?? OF_UPDATED_AT }],
+          rows: [{
+            id: "5",
+            commande_id: null,
+            statut: params.statut,
+            quantite_bonne: params.quantite_bonne ?? 0,
+            updated_at: params.updated_at ?? OF_UPDATED_AT,
+          }],
+        };
+      }
+      if (q.includes("FROM public.of_receipts r")) {
+        return {
+          rows: [{
+            received_qty_ok: params.received_qty_ok ?? 0,
+            invalid_receipt_count: params.invalid_receipt_count ?? 0,
+          }],
         };
       }
       if (q.includes("UPDATE ordres_fabrication SET")) return { rows: [{ id: "5" }] };
@@ -166,6 +186,53 @@ describe("#170 OF state machine + optimistic lock (PATCH /production/ofs/:id)", 
       .patch("/api/v1/production/ofs/5")
       .send({ statut: "PLANIFIE", expected_updated_at: OF_UPDATED_AT });
     expect(res.status).toBe(200);
+  });
+
+  it("refuses TERMINE -> CLOTURE until every good part has a posted stock receipt", async () => {
+    installOfForUpdate({ statut: "TERMINE", quantite_bonne: 2, received_qty_ok: 0 });
+    const res = await request(app)
+      .patch("/api/v1/production/ofs/5")
+      .send({ statut: "CLOTURE", expected_updated_at: OF_UPDATED_AT });
+
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({
+      code: "OF_RECEIPT_INCOMPLETE",
+      details: {
+        declared_qty_ok: 2,
+        received_qty_ok: 0,
+        remaining_qty_ok: 2,
+        invalid_receipt_count: 0,
+      },
+    });
+    expect(mocks.clientQuery.mock.calls.some(([sql]) => String(sql).includes("UPDATE ordres_fabrication SET"))).toBe(false);
+  });
+
+  it("accepts TERMINE -> CLOTURE after the posted receipt ledger covers the good quantity", async () => {
+    installOfForUpdate({ statut: "TERMINE", quantite_bonne: 2, received_qty_ok: 2 });
+    const res = await request(app)
+      .patch("/api/v1/production/ofs/5")
+      .send({ statut: "CLOTURE", expected_updated_at: OF_UPDATED_AT });
+
+    expect(res.status).toBe(200);
+    expect(mocks.clientQuery.mock.calls.some(([sql]) => String(sql).includes("UPDATE ordres_fabrication SET"))).toBe(true);
+  });
+
+  it("refuses closure when a receipt is not backed by a valid posted movement", async () => {
+    installOfForUpdate({
+      statut: "TERMINE",
+      quantite_bonne: 2,
+      received_qty_ok: 2,
+      invalid_receipt_count: 1,
+    });
+    const res = await request(app)
+      .patch("/api/v1/production/ofs/5")
+      .send({ statut: "CLOTURE", expected_updated_at: OF_UPDATED_AT });
+
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({
+      code: "OF_RECEIPT_INCOMPLETE",
+      details: { invalid_receipt_count: 1 },
+    });
   });
 
   it("rejects a stale optimistic token with 409 CONCURRENT_MODIFICATION", async () => {
@@ -754,6 +821,48 @@ describe("#170 bounded production receipt", () => {
     quality_status: "LIBERE",
     expected_of_updated_at: OF_UPDATED_AT,
   } as const;
+
+  it("loads the receipt context with the canonical magasin columns", async () => {
+    mocks.poolQuery.mockImplementation(async (sql: unknown) => {
+      const q = String(sql);
+      if (q.includes("FROM public.ordres_fabrication o")) {
+        return {
+          rows: [{
+            id: "5",
+            numero: "OF-2026-000005",
+            piece_technique_id: PIECE_ROOT,
+            article_id: "11111111-1111-1111-1111-111111111111",
+            piece_code: "PT-ROOT",
+            piece_designation: "Piece mere",
+            quantite_lancee: 2,
+            quantite_bonne: 2,
+            statut: "TERMINE",
+            updated_at: OF_UPDATED_AT,
+            affaire_id: null,
+            commande_id: null,
+            commande_ligne_id: null,
+          }],
+        };
+      }
+      if (q.includes("SELECT unite FROM public.articles")) return { rows: [{ unite: "u" }] };
+      if (q.includes("FROM public.erp_settings")) return { rows: [] };
+      if (q.includes("FROM public.magasins m") && q.includes("WHERE m.is_active = true")) {
+        expect(q).toContain("m.code");
+        expect(q).toContain("m.name");
+        expect(q).not.toContain("code_magasin");
+        expect(q).not.toContain("m.libelle");
+        return { rows: [{ id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", code: "PF", name: "Produits finis", is_active: true }] };
+      }
+      return { rows: [] };
+    });
+
+    const res = await request(app).get("/api/v1/production/ofs/5/receipt-context");
+
+    expect(res.status).toBe(200);
+    expect(res.body.locations.magasins).toEqual([
+      { id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", code: "PF", name: "Produits finis", is_active: true },
+    ]);
+  });
 
   function installReceiptMocks(params: { statut: string; quantite_bonne: number; already: number }) {
     mocks.clientQuery.mockImplementation(async (sql: unknown) => {
