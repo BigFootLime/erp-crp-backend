@@ -547,21 +547,43 @@ async function main() {
     }
     await client.query(
       `INSERT INTO public.machines (
-         id,code,name,type,status,is_available,workshop_zone,created_by,updated_by
+         id,code,name,type,status,is_available,workshop_zone,machine_family_code,created_by,updated_by
        ) VALUES (
          '27000000-0000-4000-8000-000000000001','E2E-MACH-001','Machine atelier preuve SOL-21',
-         'MILLING','ACTIVE',true,'USINAGE',
+         'MILLING','ACTIVE',true,'USINAGE','F',
          (SELECT id FROM public.users WHERE username='KEENAN'),
          (SELECT id FROM public.users WHERE username='KEENAN')
        ) ON CONFLICT (id) DO UPDATE SET
          code=EXCLUDED.code,name=EXCLUDED.name,status='ACTIVE',is_available=true,
-         workshop_zone='USINAGE',archived_at=NULL,updated_by=EXCLUDED.updated_by`
+         workshop_zone='USINAGE',machine_family_code='F',archived_at=NULL,updated_by=EXCLUDED.updated_by`
+    );
+    await client.query(
+      `INSERT INTO public.machines (
+         id,code,name,type,status,is_available,workshop_zone,machine_family_code,created_by,updated_by
+       ) VALUES (
+         '27000000-0000-4000-8000-000000000002','E2E-MACH-NON-QUALIFIEE','Machine sans qualification — preuve négative',
+         'MILLING','ACTIVE',true,'USINAGE',NULL,
+         (SELECT id FROM public.users WHERE username='KEENAN'),
+         (SELECT id FROM public.users WHERE username='KEENAN')
+       ) ON CONFLICT (id) DO UPDATE SET
+         code=EXCLUDED.code,name=EXCLUDED.name,status='ACTIVE',is_available=true,
+         workshop_zone='USINAGE',machine_family_code=NULL,archived_at=NULL,updated_by=EXCLUDED.updated_by`
     );
     await client.query(
       `INSERT INTO public.postes (id,code,label,machine_id,currency,is_active)
        VALUES (
          '24000000-0000-4000-8000-000000000001','E2E-POSTE-001','Poste planning preuve SOL-05',
          '27000000-0000-4000-8000-000000000001','EUR',true
+       )
+       ON CONFLICT (id) DO UPDATE SET
+         code=EXCLUDED.code,label=EXCLUDED.label,machine_id=EXCLUDED.machine_id,
+         is_active=true,archived_at=NULL`
+    );
+    await client.query(
+      `INSERT INTO public.postes (id,code,label,machine_id,currency,is_active)
+       VALUES (
+         '24000000-0000-4000-8000-000000000002','E2E-POSTE-NON-QUALIFIE','Poste machine sans qualification',
+         '27000000-0000-4000-8000-000000000002','EUR',true
        )
        ON CONFLICT (id) DO UPDATE SET
          code=EXCLUDED.code,label=EXCLUDED.label,machine_id=EXCLUDED.machine_id,
