@@ -124,6 +124,12 @@ const PUBLIC_OPERATIONAL_5XX_MESSAGES = new Map<string, string>([
   ["OF_DOCUMENT_COMMIT_NOT_APPLIED",
     "L’émission du document OF n’a pas été appliquée. Vous pouvez réessayer.",
   ],
+  ["DEVIS_SCHEMA_NOT_READY",
+    "La création de devis est temporairement indisponible : le schéma commercial doit être mis à niveau. Contactez l’administrateur avant de réessayer.",
+  ],
+  ["DEVIS_IDEMPOTENCY_NOT_READY",
+    "La création de devis est temporairement indisponible : le registre d’idempotence doit être mis à niveau. Contactez l’administrateur avant de réessayer.",
+  ],
 ]);
 
 export function errorHandler(err: unknown, req: Request, res: Response, _next: NextFunction) {

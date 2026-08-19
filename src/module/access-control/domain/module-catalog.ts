@@ -30,7 +30,9 @@ export const MODULE_CATALOG: readonly ModuleCatalogEntry[] = [
     label: "Devis",
     description: "Chiffrage et cycle de vie des devis clients.",
     category: "Commerce",
-    api_prefixes: ["/devis"],
+    // Les référentiels de création de devis restent sur leurs URL historiques
+    // afin que les clients existants puissent les consommer sans contournement.
+    api_prefixes: ["/devis", "/conditions-paiement", "/compte-vente"],
     nav_page_keys: ["devis"],
     is_protected: false,
     sort_order: 20,
