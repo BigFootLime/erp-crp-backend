@@ -23,6 +23,13 @@ function isolatedEnv(): NodeJS.ProcessEnv {
   };
 }
 
+function managedContainerDatabaseUrl(host: string): string {
+  const url = new URL(`postgresql://${host}:5432/cerp_test`);
+  url.username = "cerp_app";
+  url.password = "disposable";
+  return url.toString();
+}
+
 describe("SOL-05 E2E isolation guard", () => {
   it("accepts a fully loopback disposable runtime", () => {
     expect(() => assertE2EIsolation(isolatedEnv())).not.toThrow();
@@ -70,7 +77,7 @@ describe("SOL-05 E2E isolation guard", () => {
     const container = isolatedEnv();
     container.CERP_E2E_MANAGED_STACK = "1";
     container.CERP_E2E_CONTAINER = "1";
-    container.DATABASE_URL = "postgresql://cerp_app:test@postgres:5432/cerp_test";
+    container.DATABASE_URL = managedContainerDatabaseUrl("postgres");
     container.CERP_E2E_EMAIL_SINK = "1";
     container.RESEND_API_KEY = "disposable";
     container.RESEND_FROM = "CERP SOL-05 <no-reply@example.local>";
@@ -79,7 +86,7 @@ describe("SOL-05 E2E isolation guard", () => {
     expect(() => assertE2EIsolation(container)).not.toThrow();
     expect(e2eListenHost(container)).toBe("0.0.0.0");
 
-    container.DATABASE_URL = "postgresql://cerp_app:test@db.production.example/cerp_test";
+    container.DATABASE_URL = managedContainerDatabaseUrl("db.production.example");
     expect(() => assertE2EIsolation(container)).toThrow(/forbidden/);
   });
 
