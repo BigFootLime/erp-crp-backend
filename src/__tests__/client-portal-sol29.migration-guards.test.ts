@@ -13,6 +13,7 @@ describe("SOL-29 migration guards", () => {
   const authAttemptGrant = read("db/patches/20260819_client_portal_auth_attempt_update_grant_004.sql");
   const authAttemptGrantPreflight = read("db/patches/support/20260819_client_portal_auth_attempt_update_grant_004.preflight.sql");
   const authAttemptGrantVerify = read("db/patches/support/20260819_client_portal_auth_attempt_update_grant_004.verify.sql");
+  const authAttemptGrantRollback = read("db/patches/support/20260819_client_portal_auth_attempt_update_grant_004.rollback.sql");
 
   it("keeps portal identities separate and tenant projections filtered", () => {
     expect(patch).toContain("client_portal_accounts");
@@ -49,5 +50,7 @@ describe("SOL-29 migration guards", () => {
     expect(authAttemptGrant).not.toMatch(/GRANT\s+ALL\s+/i);
     expect(authAttemptGrantPreflight).toContain("client_portal_auth_attempts");
     expect(authAttemptGrantVerify).toContain("cannot mark portal authentication attempts successful");
+    expect(authAttemptGrantRollback).toContain("verified pre-migration backup");
+    expect(authAttemptGrantRollback).not.toMatch(/REVOKE\s+UPDATE/i);
   });
 });
