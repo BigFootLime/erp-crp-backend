@@ -333,7 +333,10 @@ export async function probeUploadScannerHealth(
   startup = getUploadScannerStartupConfiguration()
 ): Promise<UploadScannerStartupConfiguration> {
   if (!startup.ready || startup.provider !== "clamdscan" || !startup.command) return startup;
-  if (process.env.NODE_ENV === "test") return startup;
+  // Unit tests do not require a host ClamAV daemon, but the managed E2E image
+  // is a real runtime even though NODE_ENV=test. It must exercise the live
+  // daemon probe so readiness cannot report a dead scanner as healthy.
+  if (process.env.NODE_ENV === "test" && process.env.CERP_E2E_CONTAINER !== "1") return startup;
 
   return await new Promise((resolve) => {
     const child = spawn(startup.command as string, ["--ping=1:1"], {

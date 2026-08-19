@@ -99,22 +99,25 @@ fi
 su-exec node "$@" &
 app_pid=$!
 
-# Any critical process exit makes the container restart as a unit; uploads are
-# never silently accepted without the supervised scanner/update processes.
-wait_for_critical_exit() {
-  while :; do
-    for pid in "$app_pid" "$clamd_pid" "$freshclam_pid"; do
-      if ! process_is_running "$pid"; then
-        if wait "$pid"; then status=0; else status=$?; fi
-        # A clean exit is still unexpected for a supervised long-running
-        # process; force a restart-policy-visible failure.
-        if [ "$status" -eq 0 ]; then status=1; fi
-        return "$status"
-      fi
-    done
-    sleep 0.1
-  done
-}
+# The API is the container lifecycle process. A scanner/update failure must not
+# make the whole ERP disappear: readiness becomes degraded and every new GED
+# upload fails closed into quarantine until the orchestrator/operator restores
+# ClamAV. Log and reap those children once, while keeping the API available.
+clamd_exit_reported=0
+freshclam_exit_reported=0
+while process_is_running "$app_pid"; do
+  if [ "$clamd_exit_reported" -eq 0 ] && ! process_is_running "$clamd_pid"; then
+    if wait "$clamd_pid"; then scanner_status=0; else scanner_status=$?; fi
+    echo "[upload_scan] clamd unavailable status=$scanner_status; API remains fail-closed" >&2
+    clamd_exit_reported=1
+  fi
+  if [ "$freshclam_exit_reported" -eq 0 ] && ! process_is_running "$freshclam_pid"; then
+    if wait "$freshclam_pid"; then updater_status=0; else updater_status=$?; fi
+    echo "[upload_scan] freshclam unavailable status=$updater_status; signature freshness is degraded" >&2
+    freshclam_exit_reported=1
+  fi
+  sleep 0.1
+done
 
-if wait_for_critical_exit; then status=0; else status=$?; fi
+if wait "$app_pid"; then status=0; else status=$?; fi
 exit "$status"
