@@ -3,10 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EventEmitter } from "events";
 import fs from "node:fs";
 import path from "node:path";
-import {
-  ensureTmpStoragePath,
-  getDocumentStoragePath,
-} from "../utils/cerpStorage";
+import { getDocumentStoragePath } from "../utils/cerpStorage";
 
 const mocks = vi.hoisted(() => ({
   poolQuery: vi.fn(),
@@ -716,10 +713,6 @@ describe("/api/v1/devis", () => {
   });
 
   it("POST /api/v1/devis supports multipart data + optional documents[]", async () => {
-    const tmpDir = fs.mkdtempSync(path.join(ensureTmpStoragePath("fixtures"), "devis-"));
-    const tmpFile = path.join(tmpDir, "doc.txt");
-    fs.writeFileSync(tmpFile, "hello");
-
     const payload = {
       client_id: "001",
       user_id: 1,
@@ -730,7 +723,14 @@ describe("/api/v1/devis", () => {
       .post("/api/v1/devis")
       .set("Idempotency-Key", "devis-create-route-0001")
       .field("data", JSON.stringify(payload))
-      .attach("documents[]", tmpFile);
+      // A Buffer keeps the multipart contract under test without leaving a
+      // client-side ReadStream close pending after Supertest resolves. Under
+      // the full Windows/Node 24 suite that unnecessary fixture descriptor
+      // could race worker teardown and surface as an unhandled EBADF.
+      .attach("documents[]", Buffer.from("hello"), {
+        filename: "doc.txt",
+        contentType: "text/plain",
+      });
 
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({ id: 7, idempotent_replay: false });
@@ -755,7 +755,6 @@ describe("/api/v1/devis", () => {
     const insertLigneCall = mocks.clientQuery.mock.calls.find((c) => String(c[0]).includes("INSERT INTO devis_ligne"));
     expect(String(insertLigneCall?.[0])).toContain("position");
 
-    fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
   it("POST /api/v1/devis requires an idempotency key before any write", async () => {
