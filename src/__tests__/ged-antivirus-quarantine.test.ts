@@ -232,13 +232,21 @@ describe("GED antivirus quarantine", () => {
       }),
     });
 
-    await expect(uploadDocument(
+    const uploadPromise = uploadDocument(
       { id: 7, role: "Administrateur" },
       { class_key: CLASS_ROW.class_key, title: "Rapport test" },
       file
-    )).rejects.toMatchObject({ status: 503, code: "GED_SCAN_FAILED" });
+    );
+    await expect(uploadPromise).rejects.toMatchObject({
+      status: 503,
+      code: "GED_SCAN_FAILED",
+      details: expect.objectContaining({ state: "quarantined" }),
+    });
 
     const sessionId = repository.repoCreateUploadSession.mock.calls[0][1].id;
+    await expect(uploadPromise).rejects.toMatchObject({
+      details: { quarantine_id: sessionId, state: "quarantined" },
+    });
     expect(repository.repoRecordUploadScan).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({

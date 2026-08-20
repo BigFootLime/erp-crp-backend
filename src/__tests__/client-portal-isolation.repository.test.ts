@@ -10,6 +10,7 @@ vi.mock("../config/database", () => ({
 }));
 
 import {
+  repoCreatePortalAccount,
   repoGetPortalDocumentDownload,
   repoListPortalInvoices,
   repoListPortalOrders,
@@ -22,7 +23,43 @@ const identity = {
 };
 
 describe("client portal repository tenant isolation", () => {
-  beforeEach(() => mocked.query.mockReset());
+  beforeEach(() => {
+    mocked.query.mockReset();
+    mocked.connect.mockReset();
+  });
+
+  it("keeps a missing client as a 404 under the insert-only receipt grant", async () => {
+    const transaction = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [] }) // BEGIN
+        .mockResolvedValueOnce({ rows: [] }) // advisory lock
+        .mockResolvedValueOnce({ rows: [] }) // receipt lookup
+        .mockResolvedValueOnce({ rows: [] }) // client lookup
+        .mockResolvedValueOnce({ rows: [] }), // ROLLBACK
+      release: vi.fn(),
+    };
+    mocked.connect.mockResolvedValueOnce(transaction);
+
+    await expect(repoCreatePortalAccount({
+      actorId: 1,
+      idempotencyKey: "d5ec6d7e-f2f9-42aa-b766-bf98147f42b3",
+      requestHash: "a".repeat(64),
+      clientId: "997",
+      email: "portal@example.test",
+      emailNormalized: "portal@example.test",
+      displayName: "Portail test",
+      passwordHash: "x".repeat(60),
+      meta: { requestId: "request-1", ipHash: null, userAgentFamily: null },
+    })).rejects.toMatchObject({
+      status: 404,
+      code: "CLIENT_PORTAL_CLIENT_NOT_FOUND",
+    });
+
+    const queries = transaction.query.mock.calls.map(([sql]) => String(sql));
+    expect(queries[1]).toContain("pg_advisory_xact_lock");
+    expect(queries[2]).not.toContain("FOR SHARE");
+    expect(queries[2]).toContain("client_portal_command_receipts");
+  });
 
   it.each([
     ["orders", repoListPortalOrders],

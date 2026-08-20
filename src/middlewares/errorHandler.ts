@@ -124,7 +124,26 @@ const PUBLIC_OPERATIONAL_5XX_MESSAGES = new Map<string, string>([
   ["OF_DOCUMENT_COMMIT_NOT_APPLIED",
     "L’émission du document OF n’a pas été appliquée. Vous pouvez réessayer.",
   ],
+  ["DEVIS_SCHEMA_NOT_READY",
+    "La création de devis est temporairement indisponible : le schéma commercial doit être mis à niveau. Contactez l’administrateur avant de réessayer.",
+  ],
+  ["DEVIS_IDEMPOTENCY_NOT_READY",
+    "La création de devis est temporairement indisponible : le registre d’idempotence doit être mis à niveau. Contactez l’administrateur avant de réessayer.",
+  ],
 ]);
+
+const PUBLIC_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function publicOperational5xxDetails(error: unknown, code: string): Record<string, string> | undefined {
+  if (!(error instanceof HttpError) || code !== "GED_SCAN_FAILED") return undefined;
+  if (!error.details || typeof error.details !== "object") return undefined;
+  const details = error.details as Record<string, unknown>;
+  return typeof details.quarantine_id === "string"
+    && PUBLIC_UUID.test(details.quarantine_id)
+    && details.state === "quarantined"
+    ? { quarantine_id: details.quarantine_id, state: "quarantined" }
+    : undefined;
+}
 
 export function errorHandler(err: unknown, req: Request, res: Response, _next: NextFunction) {
   const mappedReferenceDataError = mapReferenceDataError(err);
@@ -146,6 +165,9 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
   // Path sans query string : les recherches métier mettent des PII en query
   // (?q=email, ?siret=...) ; ni la réponse ni les logs ne doivent les rejouer.
   const safePath = stripQueryFromUrl(req.originalUrl);
+  const publicDetails = handledError instanceof HttpError && status < 500
+    ? handledError.details
+    : publicOperational5xxDetails(handledError, code);
 
   // details : uniquement pour les erreurs 4xx construites volontairement (HttpError/ApiError
   // avec details explicites, ex. 409 doublon SIRET -> { client_id, company_name }). Jamais pour
@@ -155,8 +177,8 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
     message,
     code,
     path: safePath,
-    ...(handledError instanceof HttpError && status < 500 && typeof handledError.details !== "undefined"
-      ? { details: handledError.details }
+    ...(typeof publicDetails !== "undefined"
+      ? { details: publicDetails }
       : {}),
   };
 

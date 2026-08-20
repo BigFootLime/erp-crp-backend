@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import { createServer } from "http";
 
 import pool from "./config/database";
-import { assertE2EIsolation } from "./config/e2e-isolation";
+import { assertE2EIsolation, e2eListenHost } from "./config/e2e-isolation";
 import { assertMfaStartupConfiguration } from "./module/auth/domain/mfa";
 import { startAuthRateLimitMaintenance } from "./module/auth/services/auth-rate-limit.service";
 import { startMfaArtifactMaintenance } from "./module/auth/services/mfa.service";
@@ -54,7 +54,7 @@ async function start(): Promise<void> {
   initSocketServer(httpServer);
   const stopExpiredLockMaintenance = startExpiredLockMaintenance();
 
-  const listenHost = process.env.CERP_E2E_ISOLATED === "1" ? "127.0.0.1" : "0.0.0.0";
+  const listenHost = e2eListenHost();
   httpServer.listen(port, listenHost, () => {
     logger.info("upload_scanner_initialized", {
       mode: uploadScanner.mode,

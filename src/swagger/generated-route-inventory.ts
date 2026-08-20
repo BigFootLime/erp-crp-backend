@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "0a9bf864dfa4af98d8173ae7baed0be83600634922eaa3996b9955c579022ed3";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "d8680eee125fbc1b1f1230e14b3294af0f44c59e8ab02a285e3512d89386f536";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -3504,6 +3504,40 @@ export const GENERATED_ROUTE_INVENTORY = [
     "authenticated": true,
     "rbac": [
       "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/compte-vente",
+    "source": "src/module/commercial-references/routes/commercial-references.routes.ts:20",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireDevisRead",
+      "listComptesVente"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireDevisRead"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/conditions-paiement",
+    "source": "src/module/commercial-references/routes/commercial-references.routes.ts:19",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireDevisRead",
+      "listConditionsPaiement"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireDevisRead"
     ]
   },
   {

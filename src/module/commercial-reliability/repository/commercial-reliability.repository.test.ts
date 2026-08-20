@@ -79,6 +79,9 @@ describe("SOL-17 order cancellation transaction", () => {
 
     await expect(cancel()).resolves.toEqual({ commande_id: 9, status: "ANNULE", idempotent_replay: false });
 
+    expect(query.mock.calls.filter(([sql]) => String(sql).includes("pg_advisory_xact_lock"))).toHaveLength(1);
+    const receiptRead = query.mock.calls.find(([sql]) => String(sql).includes("FROM public.commercial_command_receipts"));
+    expect(String(receiptRead?.[0])).not.toContain("FOR SHARE");
     expect(query.mock.calls.filter(([sql]) => String(sql).includes("INSERT INTO public.commercial_order_cancellations"))).toHaveLength(1);
     expect(query.mock.calls.filter(([sql]) => String(sql).includes("INSERT INTO public.commande_historique"))).toHaveLength(1);
     expect(query.mock.calls.filter(([sql]) => String(sql).includes("INSERT INTO public.commande_client_event_log"))).toHaveLength(1);

@@ -3,10 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EventEmitter } from "events";
 import fs from "node:fs";
 import path from "node:path";
-import {
-  ensureTmpStoragePath,
-  getDocumentStoragePath,
-} from "../utils/cerpStorage";
+import { getDocumentStoragePath } from "../utils/cerpStorage";
 
 const mocks = vi.hoisted(() => ({
   poolQuery: vi.fn(),
@@ -716,10 +713,6 @@ describe("/api/v1/devis", () => {
   });
 
   it("POST /api/v1/devis supports multipart data + optional documents[]", async () => {
-    const tmpDir = fs.mkdtempSync(path.join(ensureTmpStoragePath("fixtures"), "devis-"));
-    const tmpFile = path.join(tmpDir, "doc.txt");
-    fs.writeFileSync(tmpFile, "hello");
-
     const payload = {
       client_id: "001",
       user_id: 1,
@@ -728,8 +721,16 @@ describe("/api/v1/devis", () => {
 
     const res = await request(app)
       .post("/api/v1/devis")
+      .set("Idempotency-Key", "devis-create-route-0001")
       .field("data", JSON.stringify(payload))
-      .attach("documents[]", tmpFile);
+      // A Buffer keeps the multipart contract under test without leaving a
+      // client-side ReadStream close pending after Supertest resolves. Under
+      // the full Windows/Node 24 suite that unnecessary fixture descriptor
+      // could race worker teardown and surface as an unhandled EBADF.
+      .attach("documents[]", Buffer.from("hello"), {
+        filename: "doc.txt",
+        contentType: "text/plain",
+      });
 
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({ id: 7, idempotent_replay: false });
@@ -754,7 +755,61 @@ describe("/api/v1/devis", () => {
     const insertLigneCall = mocks.clientQuery.mock.calls.find((c) => String(c[0]).includes("INSERT INTO devis_ligne"));
     expect(String(insertLigneCall?.[0])).toContain("position");
 
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("POST /api/v1/devis requires an idempotency key before any write", async () => {
+    const res = await request(app)
+      .post("/api/v1/devis")
+      .field("data", JSON.stringify({
+        client_id: "001",
+        user_id: 1,
+        lignes: [{ description: "Line", quantite: 1, prix_unitaire_ht: 100 }],
+      }));
+
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({ code: "IDEMPOTENCY_KEY_REQUIRED" });
+    expect(mocks.clientQuery.mock.calls.some(([sql]) => /INSERT INTO devis\s*\(/.test(String(sql)))).toBe(false);
+  });
+
+  it("POST /api/v1/devis fails closed when its idempotency ledger is absent", async () => {
+    state.idempotenceTable = false;
+    const res = await request(app)
+      .post("/api/v1/devis")
+      .set("Idempotency-Key", "devis-ledger-absent-0001")
+      .field("data", JSON.stringify({
+        client_id: "001",
+        user_id: 1,
+        lignes: [{ description: "Line", quantite: 1, prix_unitaire_ht: 100 }],
+      }));
+
+    expect(res.status).toBe(503);
+    expect(res.body).toMatchObject({ code: "DEVIS_IDEMPOTENCY_NOT_READY" });
+    expect(mocks.clientQuery.mock.calls.some(([sql]) => /INSERT INTO devis\s*\(/.test(String(sql)))).toBe(false);
+  });
+
+  it("POST /api/v1/devis maps a missing commercial schema to an actionable 503", async () => {
+    mocks.clientQuery.mockImplementation(async (sql: unknown, params?: unknown[]) => {
+      if (/devis_id_seq/.test(String(sql))) {
+        throw Object.assign(new Error('relation "article_devis" does not exist'), {
+          code: "42P01",
+          table: "article_devis",
+        });
+      }
+      return dispatch(sql, params);
+    });
+
+    const res = await request(app)
+      .post("/api/v1/devis")
+      .set("Idempotency-Key", "devis-schema-absent-0001")
+      .field("data", JSON.stringify({
+        client_id: "001",
+        user_id: 1,
+        lignes: [{ description: "Line", quantite: 1, prix_unitaire_ht: 100 }],
+      }));
+
+    expect(res.status).toBe(503);
+    expect(res.body).toMatchObject({ code: "DEVIS_SCHEMA_NOT_READY" });
+    expect(res.body.message).not.toContain("article_devis");
   });
 
   it("POST /api/v1/devis refuse un dossier préparatoire orphelin sans écriture", async () => {

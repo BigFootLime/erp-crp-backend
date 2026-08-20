@@ -54,6 +54,7 @@ import {
 } from "../domain/of-status";
 import { capabilityForOfTransition, roleHasOfCapability } from "../domain/of-rbac";
 import { copyPieceOperationsToOf, loadApplicableTechnicalSnapshot } from "../domain/of-generation";
+import { PLANNED_OPERATION_DURATION_MINUTES_SQL } from "../domain/planned-operation-duration";
 import { enqueueProductionOfChanged, productionRealtimeActionFromAudit } from "./production-realtime.repository";
 
 export type AuditContext = {
@@ -2636,6 +2637,7 @@ async function selectOfOperation(q: DbQueryer, params: {
     qte: number;
     coef: number;
     temps_total_planned: number;
+    planned_duration_minutes: number;
     temps_total_real: number;
     status: OfOperation["status"];
     started_at: string | null;
@@ -2676,6 +2678,7 @@ async function selectOfOperation(q: DbQueryer, params: {
         op.qte::float8 AS qte,
         op.coef::float8 AS coef,
         op.temps_total_planned::float8 AS temps_total_planned,
+        ${PLANNED_OPERATION_DURATION_MINUTES_SQL} AS planned_duration_minutes,
         op.temps_total_real::float8 AS temps_total_real,
         op.status::text AS status,
         op.started_at::text AS started_at,
@@ -2693,6 +2696,7 @@ async function selectOfOperation(q: DbQueryer, params: {
         open_log.comment AS open_log_comment,
         open_log.created_at::text AS open_log_created_at
       FROM of_operations op
+      JOIN ordres_fabrication o ON o.id = op.of_id
       LEFT JOIN postes p ON p.id = op.poste_id
       LEFT JOIN machines m ON m.id = op.machine_id
       LEFT JOIN LATERAL (
@@ -2739,6 +2743,7 @@ async function selectOfOperation(q: DbQueryer, params: {
     qte: Number(row.qte),
     coef: Number(row.coef),
     temps_total_planned: Number(row.temps_total_planned),
+    planned_duration_minutes: Number(row.planned_duration_minutes),
     temps_total_real: Number(row.temps_total_real),
     status: row.status,
     started_at: row.started_at,
@@ -2768,6 +2773,7 @@ async function selectOfOperations(q: DbQueryer, params: { of_id: number; user_id
     qte: number;
     coef: number;
     temps_total_planned: number;
+    planned_duration_minutes: number;
     temps_total_real: number;
     status: OfOperation["status"];
     started_at: string | null;
@@ -2808,6 +2814,7 @@ async function selectOfOperations(q: DbQueryer, params: { of_id: number; user_id
         op.qte::float8 AS qte,
         op.coef::float8 AS coef,
         op.temps_total_planned::float8 AS temps_total_planned,
+        ${PLANNED_OPERATION_DURATION_MINUTES_SQL} AS planned_duration_minutes,
         op.temps_total_real::float8 AS temps_total_real,
         op.status::text AS status,
         op.started_at::text AS started_at,
@@ -2825,6 +2832,7 @@ async function selectOfOperations(q: DbQueryer, params: { of_id: number; user_id
         open_log.comment AS open_log_comment,
         open_log.created_at::text AS open_log_created_at
       FROM of_operations op
+      JOIN ordres_fabrication o ON o.id = op.of_id
       LEFT JOIN postes p ON p.id = op.poste_id
       LEFT JOIN machines m ON m.id = op.machine_id
       LEFT JOIN LATERAL (
@@ -2868,6 +2876,7 @@ async function selectOfOperations(q: DbQueryer, params: { of_id: number; user_id
     qte: Number(row.qte),
     coef: Number(row.coef),
     temps_total_planned: Number(row.temps_total_planned),
+    planned_duration_minutes: Number(row.planned_duration_minutes),
     temps_total_real: Number(row.temps_total_real),
     status: row.status,
     started_at: row.started_at,
@@ -3409,6 +3418,7 @@ export async function repoUpdateOrdreFabrication(params: {
       id: string;
       commande_id: string | null;
       statut: string;
+      quantite_bonne: number;
       updated_at: string | null;
     }>(
       `
@@ -3416,6 +3426,7 @@ export async function repoUpdateOrdreFabrication(params: {
           id::text AS id,
           commande_id::text AS commande_id,
           statut::text AS statut,
+          quantite_bonne::float8 AS quantite_bonne,
           to_char(
             updated_at AT TIME ZONE 'UTC',
             'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
@@ -3464,6 +3475,76 @@ export async function repoUpdateOrdreFabrication(params: {
         throw new HttpError(403, "OF_TRANSITION_FORBIDDEN", "Votre rôle ne permet pas cette transition d'OF.", {
           capability,
         });
+      }
+    }
+
+    // A completed OF may only be archived once every declared good part is
+    // backed by the immutable receipt ledger and its posted stock movement.
+    // The receipt remains a separate, explicit command because its location
+    // and quality decision cannot be inferred safely at closure time.
+    if (statutChanges && currentStatut === "TERMINE" && requestedStatut === "CLOTURE") {
+      const receiptStateRes = await client.query<{
+        received_qty_ok: number;
+        invalid_receipt_count: number;
+      }>(
+        `
+          SELECT
+            COALESCE(
+              SUM(r.qty_ok) FILTER (
+                WHERE m.status = 'POSTED'
+                  AND m.movement_type = 'IN'::public.movement_type
+                  AND m.source_document_type = 'OF'
+                  AND m.source_document_id = $1::text
+                  AND m.qty = r.qty_ok
+                  AND EXISTS (
+                    SELECT 1
+                    FROM public.of_output_lots ool
+                    WHERE ool.of_id = r.of_id
+                      AND ool.lot_id = r.lot_id
+                  )
+              ),
+              0
+            )::float8 AS received_qty_ok,
+            COUNT(*) FILTER (
+              WHERE r.id IS NOT NULL
+                AND NOT COALESCE(
+                  m.status = 'POSTED'
+                    AND m.movement_type = 'IN'::public.movement_type
+                    AND m.source_document_type = 'OF'
+                    AND m.source_document_id = $1::text
+                    AND m.qty = r.qty_ok
+                    AND EXISTS (
+                      SELECT 1
+                      FROM public.of_output_lots ool
+                      WHERE ool.of_id = r.of_id
+                        AND ool.lot_id = r.lot_id
+                    ),
+                  false
+                )
+            )::int AS invalid_receipt_count
+          FROM public.of_receipts r
+          LEFT JOIN public.stock_movements m ON m.id = r.stock_movement_id
+          WHERE r.of_id = $1::bigint
+        `,
+        [params.id]
+      );
+      const receivedQtyOk = Number(receiptStateRes.rows[0]?.received_qty_ok ?? 0);
+      const invalidReceiptCount = Number(receiptStateRes.rows[0]?.invalid_receipt_count ?? 0);
+      const declaredQtyOk = Number(ofRow.quantite_bonne);
+      const remainingQtyOk = Math.max(0, declaredQtyOk - receivedQtyOk);
+
+      if (invalidReceiptCount > 0 || remainingQtyOk > 1e-9) {
+        throw new HttpError(
+          409,
+          "OF_RECEIPT_INCOMPLETE",
+          "Reception stock incomplete : enregistrez les pieces bonnes avant de cloturer l'OF.",
+          {
+            declared_qty_ok: declaredQtyOk,
+            received_qty_ok: receivedQtyOk,
+            remaining_qty_ok: remainingQtyOk,
+            invalid_receipt_count: invalidReceiptCount,
+          }
+        );
       }
     }
 

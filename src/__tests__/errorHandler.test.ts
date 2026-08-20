@@ -150,6 +150,39 @@ describe("CA-SEC-04 — errorHandler ne fuite pas d'internes sur 5xx", () => {
     expect(JSON.stringify(payload)).not.toContain("10.0.0.5");
   });
 
+  it("expose uniquement l'identifiant de quarantaine sûr pour GED_SCAN_FAILED", () => {
+    const { req, res, status, json } = mockReqRes("/api/v1/ged/documents?title=secret-client");
+    const quarantineId = "123e4567-e89b-42d3-a456-426614174000";
+
+    errorHandler(new HttpError(503, "GED_SCAN_FAILED", "socket /run/clamav privé", {
+      quarantine_id: quarantineId,
+      state: "quarantined",
+      absolute_path: "/app/data/private/tenant-42/document.txt",
+      scanner_output: "secret",
+    }), req, res, () => {});
+
+    expect(status).toHaveBeenCalledWith(503);
+    expect(json.mock.calls[0][0]).toEqual({
+      success: false,
+      message: "Le verdict antivirus n'a pas pu être obtenu. Le fichier reste isolé en quarantaine ; contactez l'administrateur.",
+      code: "GED_SCAN_FAILED",
+      path: "/api/v1/ged/documents",
+      details: { quarantine_id: quarantineId, state: "quarantined" },
+    });
+    expect(JSON.stringify(json.mock.calls[0][0])).not.toContain("tenant-42");
+    expect(JSON.stringify(json.mock.calls[0][0])).not.toContain("scanner_output");
+  });
+
+  it("masque les détails GED_SCAN_FAILED qui ne respectent pas le contrat fermé", () => {
+    const { req, res, json } = mockReqRes();
+    errorHandler(new HttpError(503, "GED_SCAN_FAILED", "private", {
+      quarantine_id: "../../secret",
+      state: "released",
+    }), req, res, () => {});
+
+    expect(json.mock.calls[0][0]).not.toHaveProperty("details");
+  });
+
   it.each([
     ["UPLOAD_SCAN_UNAVAILABLE", "Le contrôle antivirus est temporairement indisponible. Réessayez plus tard."],
     ["UPLOAD_STAGING_PERMISSION_FAILED", "La zone sécurisée de dépôt est temporairement indisponible. Réessayez plus tard ou contactez l’administrateur."],

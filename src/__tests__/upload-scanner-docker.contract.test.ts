@@ -60,11 +60,14 @@ describe("autonomous ClamAV Docker contract", () => {
     expect(entrypoint).toContain('su-exec node "$@"');
     expect(entrypoint).toContain('process_stat=$(cat "/proc/$pid/stat"');
     expect(entrypoint).toContain('process_state=${process_stat%% *}');
-    expect(entrypoint).toContain('wait_for_critical_exit');
+    expect(entrypoint).toContain('while process_is_running "$app_pid"');
+    expect(entrypoint).toContain("API remains fail-closed");
+    expect(entrypoint).toContain("signature freshness is degraded");
+    expect(entrypoint).not.toContain('for pid in "$app_pid" "$clamd_pid" "$freshclam_pid"');
     expect(entrypoint).not.toContain("wait -n");
     expect(entrypoint).toContain('kill -TERM "$pid"');
     expect(entrypoint).toContain('kill -KILL "$pid"');
-    expect(entrypoint).toContain('if [ "$status" -eq 0 ]; then status=1; fi');
+    expect(entrypoint).toContain('if wait "$app_pid"; then status=0; else status=$?; fi');
   });
 
   it("uses a private local socket and bounded resources covering the GED ceiling", () => {
@@ -79,7 +82,8 @@ describe("autonomous ClamAV Docker contract", () => {
     expect(clamdConfig).toMatch(/AlertExceedsMax\s+yes/);
     expect(clamdConfig).toMatch(/MaxRecursion\s+16/);
     expect(clamdConfig).toMatch(/MaxFiles\s+10000/);
-    expect(freshclamConfig).toMatch(/Checks\s+12/);
+    expect(freshclamConfig).not.toMatch(/^Checks\s+/m);
+    expect(entrypoint).toContain("--checks=12");
     expect(freshclamConfig).toMatch(/NotifyClamd\s+\/etc\/clamav\/clamd\.conf/);
     expect(scannerSmoke).toContain("nestedArchive(20)");
     expect(scannerSmoke).toContain('exceeded.status !== "infected"');
@@ -92,6 +96,7 @@ describe("autonomous ClamAV Docker contract", () => {
     expect(scannerSource).toContain('addEventListener("abort"');
     expect(scannerSource).toContain('child.kill("SIGTERM")');
     expect(scannerSource).toContain('child.kill("SIGKILL")');
+    expect(scannerSource).toContain('process.env.CERP_E2E_CONTAINER !== "1"');
     expect(scannerSource).not.toContain('upload-scanner"), `${randomUUID()}.scan`');
   });
 

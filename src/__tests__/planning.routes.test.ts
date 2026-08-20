@@ -296,7 +296,8 @@ describe("/api/v1/planning", () => {
             of_operation_id: "44444444-4444-4444-4444-444444444444",
             phase: 10,
             designation: "Usinage",
-            temps_total_planned: 120,
+            // 30 min preparation + (12 min unit x 2 launched) = 54 min.
+            planned_duration_minutes: 54,
             status: "TODO",
             machine_id: null,
             poste_id: "22222222-2222-2222-2222-222222222222",
@@ -320,7 +321,7 @@ describe("/api/v1/planning", () => {
             title: "P10 - Usinage",
             description: null,
             start_ts: "2026-02-14T08:00:00.000Z",
-            end_ts: "2026-02-14T10:00:00.000Z",
+            end_ts: "2026-02-14T08:54:00.000Z",
             allow_overlap: false,
             created_at: "2026-02-14T07:00:00.000Z",
             updated_at: "2026-02-14T07:00:00.000Z",
@@ -348,8 +349,10 @@ describe("/api/v1/planning", () => {
       });
 
     // repoCreatePlanningEvent internals: BEGIN, select defaults, conflict check, insert, audit, COMMIT
-    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+    let eventInsertValues: unknown[] | undefined;
+    mocks.clientQuery.mockImplementation(async (sql: unknown, values?: unknown[]) => {
       const q = String(sql);
+      if (q.includes("INSERT INTO public.planning_events")) eventInsertValues = values;
       if (q.includes("FROM public.postes p") && q.includes("p.id = $1::uuid")) {
         return {
           rows: [
@@ -358,13 +361,24 @@ describe("/api/v1/planning", () => {
               code: "P01",
               label: "Poste 1",
               is_active: true,
-              machine_id: null,
-              machine_code: null,
-              machine_status: null,
-              machine_is_available: null,
-              machine_scheduling_enabled: null,
+              machine_id: "11111111-1111-1111-1111-111111111111",
+              machine_code: "M01",
+              status: "ACTIVE",
+              is_available: true,
+              scheduling_enabled: true,
             },
           ],
+        };
+      }
+      if (q.includes("required_machine_family_code")) {
+        return {
+          rows: [{
+            operation_id: "44444444-4444-4444-4444-444444444444",
+            required_machine_family_code: "FRAISAGE",
+            machine_id: "11111111-1111-1111-1111-111111111111",
+            machine_code: "M01",
+            machine_family_code: "FRAISAGE",
+          }],
         };
       }
       if (q.includes("FROM public.of_time_logs")) {
@@ -448,6 +462,7 @@ describe("/api/v1/planning", () => {
       ],
       skipped_operations: [],
     });
+    expect(eventInsertValues?.[12]).toBe("2026-02-14T08:54:00.000Z");
   });
 
   it("POST /api/v1/planning/autoplan reports an OF with no plannable operations", async () => {
@@ -475,6 +490,47 @@ describe("/api/v1/planning", () => {
       ],
       summary: { requested_ofs: 1, created: 0, skipped: 1, partial: false },
     });
+  });
+
+  it("POST /api/v1/planning/autoplan refuses to fabricate a missing operation duration", async () => {
+    mocks.poolQuery
+      .mockResolvedValueOnce({
+        rows: [{
+          of_id: "7",
+          of_numero: "OF-7",
+          of_priority: "NORMAL",
+          of_operation_id: "44444444-4444-4444-4444-444444444444",
+          phase: 10,
+          designation: "Usinage",
+          planned_duration_minutes: null,
+          status: "TODO",
+          machine_id: "11111111-1111-1111-1111-111111111111",
+          poste_id: null,
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app)
+      .post("/api/v1/planning/autoplan")
+      .set("Authorization", "Bearer fake")
+      .send({
+        of_ids: [7],
+        start_ts: "2026-02-14T08:00:00.000Z",
+        step_minutes: 15,
+        skip_planned: true,
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({
+      created_events: [],
+      skipped_operations: [{
+        of_id: 7,
+        of_operation_id: "44444444-4444-4444-4444-444444444444",
+        reason: "DURATION_UNAVAILABLE",
+      }],
+      summary: { requested_ofs: 1, created: 0, skipped: 1, partial: false },
+    });
+    expect(mocks.clientQuery).not.toHaveBeenCalled();
   });
 
   it("POST /api/v1/planning/events promotes commande to PLANIFIEE and creates notifications", async () => {
@@ -536,11 +592,28 @@ describe("/api/v1/planning", () => {
               code: "P01",
               label: "Poste 1",
               is_active: true,
-              machine_id: null,
-              machine_code: null,
-              machine_status: null,
-              machine_is_available: null,
-              machine_scheduling_enabled: null,
+              machine_id: "11111111-1111-1111-1111-111111111111",
+              machine_code: "M01",
+              machine_status: "ACTIVE",
+              machine_is_available: true,
+              machine_scheduling_enabled: true,
+            },
+          ],
+        };
+      }
+      if (
+        q.includes("required_machine_family_code") &&
+        q.includes("FROM public.of_operations op") &&
+        q.includes("WHERE op.id = $1::uuid")
+      ) {
+        return {
+          rows: [
+            {
+              operation_id: "44444444-4444-4444-4444-444444444444",
+              required_machine_family_code: "TOURNAGE",
+              machine_id: "11111111-1111-1111-1111-111111111111",
+              machine_code: "M01",
+              machine_family_code: "TOURNAGE",
             },
           ],
         };

@@ -115,11 +115,17 @@ async function readReceipt(
   idempotencyKey: string,
   requestHash: string
 ): Promise<JsonObject | null> {
+  // Receipts are append-only: the application role intentionally has no UPDATE
+  // grant on this table. A transaction-scoped advisory lock serializes retries
+  // without turning this read into a row lock (which would require UPDATE).
+  await tx.query(
+    `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+    [`client-portal-command:${actorId}:${action}:${idempotencyKey}`]
+  );
   const result = await tx.query<{ request_sha256: string; result: JsonObject }>(
     `SELECT request_sha256, result
        FROM public.client_portal_command_receipts
-      WHERE erp_actor_id=$1 AND action=$2 AND idempotency_key=$3::uuid
-      FOR SHARE`,
+      WHERE erp_actor_id=$1 AND action=$2 AND idempotency_key=$3::uuid`,
     [actorId, action, idempotencyKey]
   );
   const row = result.rows[0];
