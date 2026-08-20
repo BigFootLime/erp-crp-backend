@@ -247,9 +247,18 @@ async function readCommandReceipt<T>(
   idempotencyKey: string,
   requestHash: string,
 ): Promise<T | null> {
+  // The receipt ledger is append-only and the runtime role therefore only has
+  // SELECT + INSERT. PostgreSQL row locks require UPDATE privilege even when
+  // no mutation is performed, which made every first command fail under the
+  // production ACL. Serialise the action/key with a transaction-scoped
+  // advisory lock, then read the immutable receipt without weakening grants.
+  await tx.query(
+    "SELECT pg_advisory_xact_lock(hashtextextended($1, 20260812))",
+    [`procurement-reliability:${action}:${idempotencyKey}`],
+  );
   const result = await tx.query<{ request_hash: string; response_snapshot: T }>(
     `SELECT request_hash,response_snapshot FROM public.procurement_command_receipts
-     WHERE action=$1 AND idempotency_key=$2 FOR SHARE`,
+     WHERE action=$1 AND idempotency_key=$2`,
     [action, idempotencyKey],
   );
   const row = result.rows[0];

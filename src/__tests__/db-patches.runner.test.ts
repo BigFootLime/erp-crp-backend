@@ -120,6 +120,10 @@ const recentSolPatchChecksums = new Map([
     "20260815_reference_data_center_sol33.sql",
     "a40f4948dfbcee7de8eb00d9077f499a2b92bdda863b6728f29d8e62751a899f",
   ],
+  [
+    "20260819_client_portal_auth_attempt_update_grant_004.sql",
+    "133e0b49689d94f2b507a9bb32de19ace74b492c75ed999a3a8128fbaf1630fe",
+  ],
 ]);
 const wave9PatchChecksums = new Map([
   [

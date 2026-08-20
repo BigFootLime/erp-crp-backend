@@ -315,6 +315,7 @@ describe("#167 — automate de statuts appliqué au write-path", () => {
   it("un devis ne naît pas ACCEPTE (422 DEVIS_INITIAL_STATUT_INVALID)", async () => {
     const res = await request(app)
       .post("/api/v1/devis")
+      .set("Idempotency-Key", "devis-initial-status-invalid-0001")
       .field(
         "data",
         JSON.stringify({

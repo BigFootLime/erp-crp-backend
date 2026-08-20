@@ -88,7 +88,8 @@ supprime aucune preuve. Une restauration revient à `PLANNED`, réévalue la dis
 répondre `409 PLANNING_CONFLICT`, `PLANNING_RESOURCE_BLOCKED` ou `PLANNING_LOCKED_AFTER_AR`.
 
 L'autoplan conserve son contrat de résultat partiel explicite. Les motifs sont
-`ALREADY_PLANNED`, `MISSING_RESOURCE`, `RESOURCE_BLOCKED`, `LOCKED_AFTER_AR`, `NO_OPERATIONS`, `NO_SLOT` ou
+`ALREADY_PLANNED`, `MISSING_RESOURCE`, `RESOURCE_BLOCKED`, `LOCKED_AFTER_AR`, `NO_OPERATIONS`,
+`DURATION_UNAVAILABLE`, `NO_SLOT` ou
 `FAILED`; `summary.partial` indique qu'au moins une création et un rejet ont coexisté. Le lot n'est
 pas encore atomique et aucune clé d'idempotence Planning n'est persistée : les mutations ne doivent
 pas être retentées automatiquement. Une évolution nécessiterait une migration additive avec

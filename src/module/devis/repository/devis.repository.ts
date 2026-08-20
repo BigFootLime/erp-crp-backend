@@ -307,7 +307,7 @@ async function recordConvertedDevisIdempotence(
   await readDevisIdempotentReplay(tx, key, "CONVERT", payloadHash);
 }
 
-/** La table d'idempotence arrive par patch 20260722 : absence tolérée (comportement historique). */
+/** La table d'idempotence arrive par patch 20260722. */
 async function hasDevisIdempotenceTable(client: DbQueryer): Promise<boolean> {
   const res = await client.query<{ exists: boolean }>(
     `SELECT EXISTS (
@@ -367,6 +367,49 @@ function getPgErrorInfo(err: unknown) {
   const code = typeof err.code === "string" ? err.code : null;
   const constraint = typeof err.constraint === "string" ? err.constraint : null;
   return { code, constraint };
+}
+
+/**
+ * Création = écriture critique : une clé et son registre transactionnel sont
+ * obligatoires. Sans ce garde-fou, un retry réseau peut créer un second devis.
+ */
+async function requireCreateDevisIdempotence(
+  client: DbQueryer,
+  key: string | undefined,
+  payloadHash: string | null
+): Promise<{ key: string; payloadHash: string }> {
+  if (!key || !payloadHash) {
+    throw new HttpError(
+      400,
+      "IDEMPOTENCY_KEY_REQUIRED",
+      "L’en-tête Idempotency-Key (au moins 8 caractères) est obligatoire pour créer un devis."
+    );
+  }
+  if (!(await hasDevisIdempotenceTable(client))) {
+    throw new HttpError(
+      503,
+      "DEVIS_IDEMPOTENCY_NOT_READY",
+      "Le registre d’idempotence des devis n’est pas disponible."
+    );
+  }
+  return { key, payloadHash };
+}
+
+/**
+ * Une migration commerciale partielle ne doit jamais se présenter comme une
+ * erreur applicative indéterminée. On limite volontairement ce mapping aux
+ * relations et colonnes nécessaires à l'écriture d'un devis : les autres
+ * erreurs PostgreSQL conservent leur traitement normal et leurs diagnostics
+ * restent uniquement dans les logs structurés.
+ */
+function isDevisWriteSchemaError(err: unknown): boolean {
+  if (!isRecord(err) || typeof err.code !== "string") return false;
+  if (!new Set(["42P01", "42703", "42501"]).has(err.code)) return false;
+  const source = [err.table, err.column, err.constraint, err.message]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ")
+    .toLowerCase();
+  return /\b(devis|devis_ligne|article_devis|dossier_technique_piece_devis|devis_idempotence)\b/.test(source);
 }
 
 function normalizeStatus(value: unknown) {
@@ -1711,13 +1754,11 @@ export async function repoCreateDevis(
       files: documents,
       context: "devis.create",
       work: async () => {
-
-    if (ctx.idempotency_key && idempotencyPayloadHash && (await hasDevisIdempotenceTable(client))) {
-      const replay = await readDevisIdempotentReplay(client, ctx.idempotency_key, "CREATE", idempotencyPayloadHash);
-      if (replay) {
-        expectedMutation = { mode: "replay", devisId: Number(replay.id) };
-        return replay as { id: number; idempotent_replay: true };
-      }
+    const idempotency = await requireCreateDevisIdempotence(client, ctx.idempotency_key, idempotencyPayloadHash);
+    const replay = await readDevisIdempotentReplay(client, idempotency.key, "CREATE", idempotency.payloadHash);
+    if (replay) {
+      expectedMutation = { mode: "replay", devisId: Number(replay.id) };
+      return replay as { id: number; idempotent_replay: true };
     }
 
     // #167 : l'automate démarre en BROUILLON ; ENVOYE reste accepté (saisie a posteriori
@@ -1826,9 +1867,7 @@ export async function repoCreateDevis(
       parentDevisId: null,
       versionNumber: 1,
     };
-    if (ctx.idempotency_key && idempotencyPayloadHash && (await hasDevisIdempotenceTable(client))) {
-      await recordDevisIdempotence(client, ctx.idempotency_key, "CREATE", resultat.id, idempotencyPayloadHash, resultat);
-    }
+    await recordDevisIdempotence(client, idempotency.key, "CREATE", resultat.id, idempotency.payloadHash, resultat);
 
     return { ...resultat, idempotent_replay: false };
       },
@@ -1843,6 +1882,13 @@ export async function repoCreateDevis(
     if (ctx.idempotency_key && idempotencyPayloadHash && code === "23505" && constraint === "devis_idempotence_pkey") {
       const replay = await readDevisIdempotentReplay(pool, ctx.idempotency_key, "CREATE", idempotencyPayloadHash);
       if (replay) return replay as { id: number; idempotent_replay: true };
+    }
+    if (isDevisWriteSchemaError(err)) {
+      throw new HttpError(
+        503,
+        "DEVIS_SCHEMA_NOT_READY",
+        "La création de devis requiert une migration commerciale complète."
+      );
     }
     throw err;
   }

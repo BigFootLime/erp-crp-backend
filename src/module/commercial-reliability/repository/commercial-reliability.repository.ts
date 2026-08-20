@@ -89,11 +89,20 @@ async function readReceipt<T>(
   idempotencyKey: string,
   requestHash: string,
 ): Promise<T | null> {
+  // The receipt ledger is intentionally append-only: the runtime role owns
+  // SELECT + INSERT, but never UPDATE. PostgreSQL row locks (FOR SHARE/UPDATE)
+  // require UPDATE privilege even when no row is changed, so they break the
+  // least-privilege contract. A transaction-scoped advisory lock serialises
+  // the same action/key without weakening the ledger ACL. Once the first
+  // transaction commits, the waiter reads and replays its immutable receipt.
+  await tx.query(
+    "SELECT pg_advisory_xact_lock(hashtextextended($1, 20260812))",
+    [`commercial-reliability:${action}:${idempotencyKey}`],
+  );
   const result = await tx.query<{ request_hash: string; response_snapshot: T }>(
     `SELECT request_hash, response_snapshot
      FROM public.commercial_command_receipts
-     WHERE action=$1 AND idempotency_key=$2
-     FOR SHARE`,
+     WHERE action=$1 AND idempotency_key=$2`,
     [action, idempotencyKey],
   );
   const row = result.rows[0];

@@ -728,6 +728,7 @@ describe("/api/v1/devis", () => {
 
     const res = await request(app)
       .post("/api/v1/devis")
+      .set("Idempotency-Key", "devis-create-route-0001")
       .field("data", JSON.stringify(payload))
       .attach("documents[]", tmpFile);
 
@@ -755,6 +756,61 @@ describe("/api/v1/devis", () => {
     expect(String(insertLigneCall?.[0])).toContain("position");
 
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("POST /api/v1/devis requires an idempotency key before any write", async () => {
+    const res = await request(app)
+      .post("/api/v1/devis")
+      .field("data", JSON.stringify({
+        client_id: "001",
+        user_id: 1,
+        lignes: [{ description: "Line", quantite: 1, prix_unitaire_ht: 100 }],
+      }));
+
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({ code: "IDEMPOTENCY_KEY_REQUIRED" });
+    expect(mocks.clientQuery.mock.calls.some(([sql]) => /INSERT INTO devis\s*\(/.test(String(sql)))).toBe(false);
+  });
+
+  it("POST /api/v1/devis fails closed when its idempotency ledger is absent", async () => {
+    state.idempotenceTable = false;
+    const res = await request(app)
+      .post("/api/v1/devis")
+      .set("Idempotency-Key", "devis-ledger-absent-0001")
+      .field("data", JSON.stringify({
+        client_id: "001",
+        user_id: 1,
+        lignes: [{ description: "Line", quantite: 1, prix_unitaire_ht: 100 }],
+      }));
+
+    expect(res.status).toBe(503);
+    expect(res.body).toMatchObject({ code: "DEVIS_IDEMPOTENCY_NOT_READY" });
+    expect(mocks.clientQuery.mock.calls.some(([sql]) => /INSERT INTO devis\s*\(/.test(String(sql)))).toBe(false);
+  });
+
+  it("POST /api/v1/devis maps a missing commercial schema to an actionable 503", async () => {
+    mocks.clientQuery.mockImplementation(async (sql: unknown, params?: unknown[]) => {
+      if (/devis_id_seq/.test(String(sql))) {
+        throw Object.assign(new Error('relation "article_devis" does not exist'), {
+          code: "42P01",
+          table: "article_devis",
+        });
+      }
+      return dispatch(sql, params);
+    });
+
+    const res = await request(app)
+      .post("/api/v1/devis")
+      .set("Idempotency-Key", "devis-schema-absent-0001")
+      .field("data", JSON.stringify({
+        client_id: "001",
+        user_id: 1,
+        lignes: [{ description: "Line", quantite: 1, prix_unitaire_ht: 100 }],
+      }));
+
+    expect(res.status).toBe(503);
+    expect(res.body).toMatchObject({ code: "DEVIS_SCHEMA_NOT_READY" });
+    expect(res.body.message).not.toContain("article_devis");
   });
 
   it("POST /api/v1/devis refuse un dossier préparatoire orphelin sans écriture", async () => {

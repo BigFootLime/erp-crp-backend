@@ -343,7 +343,8 @@ async function prepareDeferredScan(
   throw new HttpError(
     503,
     "GED_SCAN_FAILED",
-    "Le verdict antivirus n'a pas pu être obtenu. Le fichier reste isolé en quarantaine."
+    "Le verdict antivirus n'a pas pu être obtenu. Le fichier reste isolé en quarantaine.",
+    { quarantine_id: pending.id, state: "quarantined" }
   );
 }
 

@@ -547,15 +547,27 @@ async function main() {
     }
     await client.query(
       `INSERT INTO public.machines (
-         id,code,name,type,status,is_available,workshop_zone,created_by,updated_by
+         id,code,name,type,status,is_available,workshop_zone,machine_family_code,created_by,updated_by
        ) VALUES (
          '27000000-0000-4000-8000-000000000001','E2E-MACH-001','Machine atelier preuve SOL-21',
-         'MILLING','ACTIVE',true,'USINAGE',
+         'MILLING','ACTIVE',true,'USINAGE','F',
          (SELECT id FROM public.users WHERE username='KEENAN'),
          (SELECT id FROM public.users WHERE username='KEENAN')
        ) ON CONFLICT (id) DO UPDATE SET
          code=EXCLUDED.code,name=EXCLUDED.name,status='ACTIVE',is_available=true,
-         workshop_zone='USINAGE',archived_at=NULL,updated_by=EXCLUDED.updated_by`
+         workshop_zone='USINAGE',machine_family_code='F',archived_at=NULL,updated_by=EXCLUDED.updated_by`
+    );
+    await client.query(
+      `INSERT INTO public.machines (
+         id,code,name,type,status,is_available,workshop_zone,machine_family_code,created_by,updated_by
+       ) VALUES (
+         '27000000-0000-4000-8000-000000000002','E2E-MACH-NON-QUALIFIEE','Machine sans qualification — preuve négative',
+         'MILLING','ACTIVE',true,'USINAGE',NULL,
+         (SELECT id FROM public.users WHERE username='KEENAN'),
+         (SELECT id FROM public.users WHERE username='KEENAN')
+       ) ON CONFLICT (id) DO UPDATE SET
+         code=EXCLUDED.code,name=EXCLUDED.name,status='ACTIVE',is_available=true,
+         workshop_zone='USINAGE',machine_family_code=NULL,archived_at=NULL,updated_by=EXCLUDED.updated_by`
     );
     await client.query(
       `INSERT INTO public.postes (id,code,label,machine_id,currency,is_active)
@@ -568,17 +580,28 @@ async function main() {
          is_active=true,archived_at=NULL`
     );
     await client.query(
+      `INSERT INTO public.postes (id,code,label,machine_id,currency,is_active)
+       VALUES (
+         '24000000-0000-4000-8000-000000000002','E2E-POSTE-NON-QUALIFIE','Poste machine sans qualification',
+         '27000000-0000-4000-8000-000000000002','EUR',true
+       )
+       ON CONFLICT (id) DO UPDATE SET
+         code=EXCLUDED.code,label=EXCLUDED.label,machine_id=EXCLUDED.machine_id,
+         is_active=true,archived_at=NULL`
+    );
+    await client.query(
       `INSERT INTO public.pieces_techniques_operations (
          id,piece_technique_id,gamme_id,phase,ordre,designation,type_operation,poste_id,machine_id,
-         coef,tp,tf_unit,qte,taux_horaire,temps_fabrication,temps_total,cout_mo
+         machine_family_code,coef,tp,tf_unit,qte,taux_horaire,temps_fabrication,temps_total,cout_mo
        ) VALUES (
          '26000000-0000-4000-8000-000000000001','21000000-0000-4000-8000-000000000001',
          '92000000-0000-4000-8000-000000000003',10,10,'Usinage preuve SOL-05','FRAISAGE',
          '24000000-0000-4000-8000-000000000001','27000000-0000-4000-8000-000000000001',
-         1,0.1,0.25,1,50,0.25,0.35,17.5
+         'F',1,0.1,0.25,1,50,0.25,0.35,17.5
        ) ON CONFLICT (id) DO UPDATE SET
          piece_technique_id=EXCLUDED.piece_technique_id,gamme_id=EXCLUDED.gamme_id,phase=EXCLUDED.phase,
          ordre=EXCLUDED.ordre,designation=EXCLUDED.designation,poste_id=EXCLUDED.poste_id,machine_id=EXCLUDED.machine_id,
+         machine_family_code=EXCLUDED.machine_family_code,
          temps_fabrication=EXCLUDED.temps_fabrication,temps_total=EXCLUDED.temps_total,
          cout_mo=EXCLUDED.cout_mo`
     );

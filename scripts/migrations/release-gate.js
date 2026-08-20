@@ -23,6 +23,7 @@ const ELECTRONIC_INVOICING_PATCH = "20260814_electronic_invoicing_sol26.sql";
 const ACCOUNTING_EXPORT_PATCH = "20260814_accounting_export_sol27.sql";
 const API_WEBHOOKS_PATCH = "20260814_api_contract_webhooks_sol28.sql";
 const MFA_POLICY_PATCH = "20260816_mfa_policy_and_device_labels.sql";
+const DEVIS_AUDIT_GRANTS_PATCH = "20260819_devis_preparation_idempotency_grants_002_003.sql";
 const SOL06_SUPPORT = path.join(SUPPORT_DIR, "20260810_system_reference_data_readiness");
 const POSTGRES_IMAGE = "postgres@sha256:16bc17c64a573ef34162af9298258d1aec548232985b33ed7b1eac33ba35c229";
 const DEFAULT_REPORT_DIR = path.join(ROOT, "docs", "release");
@@ -262,6 +263,23 @@ async function verifyKnownExternalAppliedPatches(client, ledger) {
   }
 }
 
+/**
+ * CERP-AUDIT-002/003 is a runtime-permissions correction. Before it is applied,
+ * preflight proves its targets exist; after it is on the ledger, promotion also
+ * proves the exact repository privileges have not drifted away.
+ */
+async function runDevisAuditGrantReleasePreflight(client, ledger) {
+  const preflightSql = patchSupportSql(DEVIS_AUDIT_GRANTS_PATCH, "preflight");
+  const verifySql = patchSupportSql(DEVIS_AUDIT_GRANTS_PATCH, "verify");
+  if (!preflightSql || !verifySql) {
+    fail(`CERP-AUDIT-002/003 support scripts are missing for ${DEVIS_AUDIT_GRANTS_PATCH}`);
+  }
+  await runSqlFile(client, preflightSql);
+  if (!ledger.pending.includes(DEVIS_AUDIT_GRANTS_PATCH)) {
+    await runSqlFile(client, verifySql);
+  }
+}
+
 async function preflight(options = {}) {
   const rawUrl = options.databaseUrl ?? process.env.DATABASE_URL;
   assertDatabaseTarget(rawUrl, process.env.CERP_MIGRATION_READONLY_APPROVED === "1");
@@ -284,6 +302,7 @@ async function preflight(options = {}) {
     }
     await verifyKnownExternalAppliedPatches(client, ledger);
     await runSqlFile(client, supportSql("preflight"));
+    await runDevisAuditGrantReleasePreflight(client, ledger);
     return {
       status: "passed",
       checked_at: new Date().toISOString(),
@@ -886,6 +905,7 @@ module.exports = {
   ADV_RELIABILITY_PATCH,
   PROJECT_OPERATIONS_PATCH,
   ACCOUNTING_EXPORT_PATCH,
+  DEVIS_AUDIT_GRANTS_PATCH,
   expectedRehearsalPatches,
   inventory,
   inventoryMarkdown,

@@ -118,7 +118,12 @@ export type PlanningValidationCommande = {
 export type PlanningValidationSkippedCommande = {
   commande_id: number;
   numero: string;
-  reason: "NO_PLANNED_OF" | "AR_ALREADY_SENT" | "ALREADY_READY" | "WORKFLOW_NOT_ADVANCED";
+  reason:
+    | "NO_PLANNED_OF"
+    | "AR_ALREADY_SENT"
+    | "ALREADY_READY"
+    | "RESOURCE_QUALIFICATION_REQUIRED"
+    | "WORKFLOW_NOT_ADVANCED";
   message: string;
 };
 
