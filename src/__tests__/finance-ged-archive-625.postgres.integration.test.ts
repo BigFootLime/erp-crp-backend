@@ -3,6 +3,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
+import { repoFindLatestAuthoritativePdfForEntity, repoGetAuthoritativePdf, repoListAuthoritativePdfs } from "../shared/authoritative-documents/authoritative-document.repository";
+
 const integrationUrl = process.env.FINANCE_GED_ARCHIVE_TEST_DATABASE_URL;
 const suite = integrationUrl ? describe : describe.skip;
 const root = process.cwd();
@@ -41,8 +43,18 @@ suite("#625 finance GED archive PostgreSQL integrity", () => {
       CREATE TABLE public.ged_documents (id uuid PRIMARY KEY DEFAULT gen_random_uuid());
       CREATE TABLE public.ged_document_versions (id uuid PRIMARY KEY DEFAULT gen_random_uuid());
       CREATE TABLE public.ged_document_links (id uuid PRIMARY KEY DEFAULT gen_random_uuid());
+      CREATE TABLE public.ged_access_events (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(), document_id uuid NOT NULL,
+        version_id uuid NULL, event_type text NOT NULL,
+        actor_user_id integer NULL, created_at timestamptz NOT NULL DEFAULT now(),
+        CONSTRAINT ged_access_events_event_type_check CHECK (event_type IN ('READ'))
+      );
     `);
-    for (const file of ["20260823_authoritative_pdf_archive_612.sql", "20260823_finance_ged_archive_625.sql"]) {
+    for (const file of [
+      "20260823_authoritative_pdf_archive_612.sql",
+      "20260823_finance_ged_archive_625.sql",
+      "20260823_ged_authoritative_pdf_access_events_634.sql",
+    ]) {
       await bootstrap.query(await fs.readFile(path.join(root, "db/patches", file), "utf8"));
     }
     await bootstrap.end();
@@ -51,6 +63,7 @@ suite("#625 finance GED archive PostgreSQL integrity", () => {
 
   beforeEach(async () => {
     await pool.query("TRUNCATE public.authoritative_pdf_archive_outbox, public.authoritative_pdf_archives CASCADE");
+    await pool.query("TRUNCATE public.ged_access_events, public.ged_document_versions, public.ged_documents CASCADE");
   });
 
   afterAll(async () => { await pool?.end(); });
@@ -78,5 +91,48 @@ suite("#625 finance GED archive PostgreSQL integrity", () => {
       const row = await pool.query("SELECT encode(exact_pdf_bytes, 'hex') AS bytes, exact_pdf_sha256, exact_pdf_size_bytes::int AS size FROM public.authoritative_pdf_archives WHERE idempotency_key = $1", ["finance:concurrent"]);
       expect(row.rows[0]).toMatchObject({ bytes: pdf.toString("hex"), exact_pdf_sha256: pdfSha, size: pdf.byteLength });
     } finally { one.release(); two.release(); }
+  });
+
+  it("reads an archived PDF with its exact bytes and durable state through every joined repository lookup", async () => {
+    const document = await pool.query<{ id: string }>("INSERT INTO public.ged_documents DEFAULT VALUES RETURNING id::text");
+    const version = await pool.query<{ id: string }>("INSERT INTO public.ged_document_versions DEFAULT VALUES RETURNING id::text");
+    const created = await pool.query<{ id: string }>(`
+      INSERT INTO public.authoritative_pdf_archives
+        (entity_type, entity_id, document_kind, document_version, render_version, idempotency_key,
+         title, original_name, source_snapshot, source_revision, snapshot_sha256,
+         pdf_sha256, pdf_size_bytes, exact_pdf_bytes, exact_pdf_sha256, exact_pdf_size_bytes,
+         ged_document_id, ged_version_id, archived_at, created_by)
+      VALUES ('devis', '42', 'CUSTOMER_QUOTE', 1, 'devis-issued-v1', 'devis:42:issued:v1',
+              'Devis DV-42', 'DEVIS-42-v1.pdf', '{"id":42}'::jsonb, 'DV-42:1', repeat('b', 64),
+              $1, $2, $3, $1, $2, $4::uuid, $5::uuid, now(), 1)
+      RETURNING id::text
+    `, [pdfSha, pdf.byteLength, pdf, document.rows[0]!.id, version.rows[0]!.id]);
+    const archiveId = created.rows[0]!.id;
+    await pool.query(
+      `INSERT INTO public.authoritative_pdf_archive_outbox (archive_id, event_key, status, archived_at)
+       VALUES ($1::uuid, 'authoritative-pdf:devis:42:issued:v1', 'ARCHIVED', now())`,
+      [archiveId]
+    );
+
+    const listed = await repoListAuthoritativePdfs(pool, "devis", "42", "CUSTOMER_QUOTE");
+    const fetched = await repoGetAuthoritativePdf(pool, "devis", "42", archiveId, "CUSTOMER_QUOTE");
+    const latest = await repoFindLatestAuthoritativePdfForEntity(pool, "devis", "42", "CUSTOMER_QUOTE");
+
+    for (const record of [listed[0], fetched, latest]) {
+      expect(record).toMatchObject({
+        id: archiveId, state: "ARCHIVED", entityType: "devis", entityId: "42",
+        documentKind: "CUSTOMER_QUOTE", pdfSha256: pdfSha, pdfSizeBytes: pdf.byteLength,
+        exactPdfSha256: pdfSha, exactPdfSizeBytes: pdf.byteLength,
+        gedDocumentId: document.rows[0]!.id, gedVersionId: version.rows[0]!.id,
+      });
+      expect(record?.exactPdfBytes).toEqual(pdf);
+    }
+    await expect(repoGetAuthoritativePdf(pool, "devis", "42", archiveId, "OTHER_DOCUMENT")).resolves.toBeNull();
+
+    await expect(pool.query(
+      `INSERT INTO public.ged_access_events (document_id, version_id, event_type, actor_user_id)
+       VALUES ($1::uuid, $2::uuid, 'AUTHORITATIVE_PDF_PREVIEWED', 1)`,
+      [document.rows[0]!.id, version.rows[0]!.id]
+    )).resolves.toMatchObject({ rowCount: 1 });
   });
 });

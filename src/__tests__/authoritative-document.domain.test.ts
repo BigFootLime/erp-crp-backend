@@ -140,6 +140,7 @@ describe("authoritative PDF archive foundation (#612)", () => {
     await repoListAuthoritativePdfs(spyTx, "commande-client", "123", "CUSTOMER_ORDER_ACKNOWLEDGEMENT");
     await repoGetAuthoritativePdf(spyTx, "commande-client", "123", "11111111-1111-4111-8111-111111111111", "CUSTOMER_ORDER_ACKNOWLEDGEMENT");
     await repoFindLatestAuthoritativePdfForEntity(spyTx, "commande-client", "123", "CUSTOMER_ORDER_ACKNOWLEDGEMENT");
+    await repoClaimAuthoritativePdfWork(spyTx, "worker-1", 8);
     expect(calls[0]?.[0]).toContain("a.document_kind = $3");
     expect(calls[0]?.[1]).toEqual(["commande-client", "123", "CUSTOMER_ORDER_ACKNOWLEDGEMENT"]);
     expect(calls[1]?.[0]).toContain("a.document_kind = $4");
@@ -147,6 +148,13 @@ describe("authoritative PDF archive foundation (#612)", () => {
     expect(calls[2]?.[0]).toContain("a.document_kind = $3");
     expect(calls[2]?.[0]).not.toContain("$3::text IS NULL");
     expect(calls[2]?.[1]).toEqual(["commande-client", "123", "CUSTOMER_ORDER_ACKNOWLEDGEMENT"]);
+    for (const [sql] of calls) {
+      if (sql.includes("JOIN public.authoritative_pdf_archive_outbox")) {
+        expect(sql).toContain("a.id::text");
+        expect(sql).toContain("a.created_by");
+        expect(sql).not.toContain("SELECT id::text");
+      }
+    }
   });
 
   it("carries the exact fresh claim token from the outbox claim into the worker item", async () => {
