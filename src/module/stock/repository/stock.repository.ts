@@ -29,6 +29,10 @@ import { classifyUploadReconciliation, withUploadTransaction } from "../../../sh
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
+import {
+  assertOperationalLotQualityEligibility,
+  recordDirectLotQualityConsumption,
+} from "../../qualite/repository/quality-operational-gate.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 import { recordMaterialConsumptionOnPost } from "../../traceability/services/material-consumption.automation";
 import {
@@ -7237,6 +7241,41 @@ export async function repoCreateMovement(
   }
 }
 
+export async function assertDirectOutMovementQualityEligibility(params: {
+  client: Pick<PoolClient, "query">;
+  lines: Array<Pick<CreateMovementLineDTO, "lot_id" | "qty" | "unite">>;
+}): Promise<Array<Awaited<ReturnType<typeof assertOperationalLotQualityEligibility>>>> {
+  const quantitiesByLot = new Map<string, { qty: number; unit: string | null }>();
+  for (const line of params.lines) {
+    if (!line.lot_id) continue;
+    const qty = Math.abs(Number(line.qty));
+    if (!Number.isFinite(qty) || qty <= 0) {
+      throw new HttpError(422, "QUALITY_MOVEMENT_QTY_INVALID", "Quantité de sortie invalide pour le contrôle Qualité.");
+    }
+    const unit = line.unite?.trim().toUpperCase() || null;
+    const existing = quantitiesByLot.get(line.lot_id);
+    if (existing && (existing.unit ?? null) !== unit) {
+      throw new HttpError(
+        409,
+        "QUALITY_MOVEMENT_UNIT_AMBIGUOUS",
+        "Un même lot ne peut pas être sorti avec plusieurs unités dans un mouvement."
+      );
+    }
+    quantitiesByLot.set(line.lot_id, { qty: (existing?.qty ?? 0) + qty, unit });
+  }
+  const decisions: Array<Awaited<ReturnType<typeof assertOperationalLotQualityEligibility>>> = [];
+  for (const [lotId, input] of quantitiesByLot) {
+    decisions.push(await assertOperationalLotQualityEligibility({
+      client: params.client,
+      lotId,
+      qty: input.qty,
+      unit: input.unit,
+      purpose: "RESERVE",
+    }));
+  }
+  return decisions;
+}
+
 export async function repoPostMovement(
   id: string,
   body: PostMovementBodyDTO,
@@ -7324,6 +7363,16 @@ export async function repoPostMovement(
       [id]
     );
     await ensureLotTrackingRespected(client, m.article_id, draftLines.rows);
+
+    // A direct material issue does not have to be created through a stock
+    // reservation.  It is nevertheless an irreversible physical use of a
+    // released lot, so it must pass the same Quality 360 boundary inside the
+    // very transaction that posts the OUT movement.  Transfers merely change
+    // location and quality dispositions (SCRAP/ADJUSTMENT) remain dedicated
+    // workflows, so neither is treated as a released-material consumption.
+    const directOutQualityDecisions = m.movement_type === "OUT"
+      ? await assertDirectOutMovementQualityEligibility({ client, lines: draftLines.rows })
+      : [];
 
     if (m.movement_type === "TRANSFER") {
       const movementLines = draftLines.rows;
@@ -7656,6 +7705,17 @@ export async function repoPostMovement(
       correlationId: command.correlation_id,
     });
 
+    // Direct OUT has no stock-reservation row to remain as a future
+    // commitment. Persist its release-capacity consumption before commit,
+    // under the quality-control row lock acquired by the gate. Without this,
+    // sequential unreserved movements could each pass the same release.
+    if (m.movement_type === "OUT") {
+      for (const decision of directOutQualityDecisions) {
+        const qty = decision.target.qty_requested;
+        await recordDirectLotQualityConsumption({ client, decision, qty });
+      }
+    }
+
     await insertAuditLog(client, audit, {
       action: "stock.movements.post",
       entity_type: "stock_movements",
@@ -7664,6 +7724,7 @@ export async function repoPostMovement(
         movement_no: m.movement_no,
         movement_type: m.movement_type,
         negative_stock_override: body.negative_stock_override ?? null,
+        quality_gates: directOutQualityDecisions,
         traceability_consumptions_recorded: consumption.recorded,
         traceability_consumptions_compensated: consumption.compensated,
       },

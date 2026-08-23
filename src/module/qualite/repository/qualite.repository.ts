@@ -2426,6 +2426,29 @@ export async function repoCreateNonConformity(params: { body: CreateNonConformit
   const { body, audit } = params;
   const client = await pool.connect();
   const id = await withRealtimeOutboxTransaction(client, async (tx) => {
+    // Match invoice issuance scope ordering: delivery key before lot key. This
+    // makes a newly inserted NC visible-or-blocked, never invisible in the
+    // middle of an invoice quality decision.
+    if (body.bon_livraison_id) {
+      await tx.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [`quality-delivery:${body.bon_livraison_id}`]);
+    }
+    if (body.lot_id) {
+      await tx.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [`quality-lot:${body.lot_id}`]);
+    }
+    // Share the canonical lot-first lock order with reservation, shipment and
+    // direct-OUT gates. If an NC starts first, operational writes wait and see
+    // the committed quarantine; if the write starts first, the NC follows it
+    // in a well-defined order instead of becoming an invisible in-flight row.
+    const lockedLot = body.lot_id
+      ? await tx.query<{ lot_status: string | null }>(
+          `SELECT lot_status FROM public.lots WHERE id = $1::uuid FOR UPDATE`,
+          [body.lot_id]
+        )
+      : null;
+    if (body.lot_id && !lockedLot?.rows[0]) {
+      throw new HttpError(400, "INVALID_LOT", "Unknown lot_id");
+    }
+
     const ins = await tx.query<{ id: string; reference: string }>(
       `
         INSERT INTO non_conformity (
@@ -2497,14 +2520,7 @@ export async function repoCreateNonConformity(params: { body: CreateNonConformit
 
     const reference = ins.rows[0]?.reference ?? body.reference ?? null;
     if (body.lot_id) {
-      const lot = await tx.query<{ lot_status: string | null }>(
-        `SELECT lot_status FROM public.lots WHERE id = $1::uuid FOR UPDATE`,
-        [body.lot_id]
-      );
-      const row = lot.rows[0] ?? null;
-      if (!row) {
-        throw new HttpError(400, "INVALID_LOT", "Unknown lot_id");
-      }
+      const row = lockedLot!.rows[0]!;
       const current = row.lot_status ?? "LIBERE";
       if (current === "LIBERE") {
         const note = reference ? `NC ${reference} : mise en quarantaine` : "Mise en quarantaine (NC)";

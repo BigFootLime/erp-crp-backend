@@ -2,6 +2,7 @@ import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
+import { lockDeliveryQualityReleaseScope, repoGetDeliveryQualityRelease } from "../../livraisons/repository/quality-release.repository";
 import {
   listIssuedInvoiceCommandeIds,
   syncCommandeAfterInvoiceIssue,
@@ -54,6 +55,64 @@ type BillingPolicyRow = {
   require_distinct_issuer: boolean;
   active: boolean;
 };
+
+type InvoiceQualityReleaseAudit = {
+  delivery_id: string;
+  state: "READY" | "DEROGATED" | "BLOCKED" | "UNKNOWN";
+  preview_sha256: string;
+  evidence_ids: string[];
+  derogation_ids: string[];
+};
+
+/**
+ * Legal issuance is deliberately re-evaluated inside its transaction.  An
+ * invoice cannot consume a legal sequence based solely on a preview that may
+ * predate a later quarantine, NC, expired concession, or policy change.
+ */
+async function assertInvoiceDeliveryQuality(
+  client: PoolClient,
+  factureId: number
+): Promise<InvoiceQualityReleaseAudit[]> {
+  const deliveries = await client.query<{ delivery_id: string }>(
+    `
+      SELECT DISTINCT source.source_id::text AS delivery_id
+      FROM public.facture_source_allocations source
+      WHERE source.facture_id = $1
+        AND source.source_type = 'DELIVERY_LINE'
+      ORDER BY source.source_id
+    `,
+    [factureId]
+  );
+  const audits: InvoiceQualityReleaseAudit[] = [];
+  for (const row of deliveries.rows) {
+    // Must happen before evaluating and before allocating the legal number.
+    // It serializes the decision with delivery allocation/shipment changes and
+    // Quality writers that can insert a lot/delivery blocker.
+    await lockDeliveryQualityReleaseScope(client, row.delivery_id);
+    const release = await repoGetDeliveryQualityRelease(row.delivery_id, client);
+    const audit: InvoiceQualityReleaseAudit = {
+      delivery_id: row.delivery_id,
+      state: release.state,
+      preview_sha256: release.preview_sha256,
+      evidence_ids: release.required_evidence.map((document) => document.id),
+      derogation_ids: release.derogation_ids,
+    };
+    audits.push(audit);
+    if (release.state !== "READY" && release.state !== "DEROGATED") {
+      throw new HttpError(
+        409,
+        "QUALITY_INVOICE_NOT_ELIGIBLE",
+        "La facture ne peut pas être émise : une livraison source n'est pas libérée par la Qualité.",
+        {
+          delivery_id: row.delivery_id,
+          quality_release: audit,
+          blocks: release.reasons,
+        }
+      );
+    }
+  }
+  return audits;
+}
 
 type DeliverySourceRow = {
   source_id: string;
@@ -1169,6 +1228,7 @@ export async function repoIssueFacture(params: {
       );
     }
     assertFactureTransition(facture.statut, "ISSUED");
+    const qualityReleases = await assertInvoiceDeliveryQuality(client, params.factureId);
     const issueDate = new Date().toISOString().slice(0, 10);
     // Fail before consuming a legal sequence value: an immutable fiscal document must never
     // be issued without the complete legal version applicable on its issue date.
@@ -1337,6 +1397,7 @@ export async function repoIssueFacture(params: {
         legal_number: legal.legalNumber,
         document_checksum_sha256: artifact.checksumSha256,
         correlation_id: correlationId,
+        quality_releases: qualityReleases,
       },
     });
     const commandeIds = await listIssuedInvoiceCommandeIds(client, facture.id);

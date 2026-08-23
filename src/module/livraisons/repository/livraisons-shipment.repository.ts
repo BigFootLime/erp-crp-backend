@@ -6,6 +6,7 @@ import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime
 import { enqueueEntityChanged } from "../../../shared/realtime/realtime-outbox.service"
 import { HttpError } from "../../../utils/httpError"
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
+import { assertOperationalLotQualityEligibility } from "../../qualite/repository/quality-operational-gate.repository"
 import { syncCommandeAfterShipment } from "../../commande-client/repository/commande-fulfillment.repository"
 import { hashStockCommand, normalizeIdempotencyKey } from "../../stock/domain/stock-command"
 import {
@@ -658,6 +659,20 @@ export async function prepareLivraisonInTransaction(
     stock_level_id: group.stock_level_id,
     stock_batch_id: group.stock_batch_id,
   }))
+  // Keep a single global lock order across all reservation writers: Quality
+  // entitlement first, then stock state. This prevents a delivery preparation
+  // racing a generic reservation from deadlocking on opposite lock order.
+  for (const group of groups) {
+    if (group.lot_id) {
+      await assertOperationalLotQualityEligibility({
+        client,
+        lotId: group.lot_id,
+        qty: group.quantity,
+        unit: group.unite,
+        purpose: "RESERVE",
+      })
+    }
+  }
   const states = await lockStockStates(client, targets)
   for (const group of groups) {
     const state = states.get(stockTargetKey(group))
@@ -1000,6 +1015,21 @@ export async function repoShipLivraison(
     }
 
     const groups = buildGroups(snapshot.allocations)
+    // The signed delivery-release aggregate is the shipping policy gate. Every
+    // allocation is already backed by an ACTIVE reservation, so the per-lot
+    // gate validates current Quality state without spending that entitlement a
+    // second time.
+    for (const group of groups) {
+      if (group.lot_id) {
+        await assertOperationalLotQualityEligibility({
+          client,
+          lotId: group.lot_id,
+          qty: 0,
+          unit: group.unite,
+          purpose: "RESERVE",
+        })
+      }
+    }
     const states = await lockStockStates(
       client,
       groups.map((group) => ({
