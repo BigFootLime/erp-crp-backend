@@ -13,6 +13,7 @@ import { startElectronicInvoiceMaintenance } from "./module/facturation/electron
 import { startWebhookDeliveryMaintenance } from "./module/integrations/webhooks/webhook.service";
 import { startAuthoritativePdfArchiveMaintenance } from "./shared/authoritative-documents/authoritative-document.worker";
 import { createApplicationShutdown } from "./shared/runtime/application-shutdown";
+import { preflightCriticalStorageAtStartup } from "./shared/runtime/critical-storage-preflight";
 import { preflightSecureUploadStorageRoots } from "./shared/uploads/secure-upload";
 import { getUploadScannerStartupConfiguration } from "./shared/uploads/upload-scanner";
 import { initSocketServer, shutdownRealtimeSocketServer } from "./sockets/sockeServer";
@@ -25,6 +26,11 @@ installStructuredConsole();
 async function start(): Promise<void> {
   assertE2EIsolation();
   assertMfaStartupConfiguration();
+  // Run the GED identity/RW proof before the generic upload-root preflight:
+  // otherwise a missing mount could be replaced by a newly created directory
+  // on the system disk before the sentinel has been checked.
+  const criticalStorage = await preflightCriticalStorageAtStartup();
+  logger.info("critical_storage_preflight_succeeded", criticalStorage);
   // Run before importing routes: several upload middlewares allocate their
   // private quarantine during module initialization.
   const uploadRoots = preflightSecureUploadStorageRoots();

@@ -73,6 +73,7 @@ import referenceDataRoutes from "../module/reference-data/routes/reference-data.
 import commercialReferencesRoutes from "../module/commercial-references/routes/commercial-references.routes"
 import { moduleAccessGate } from "../module/access-control/middlewares/module-access-gate"
 import { runWithAccountModuleAccessScope } from "../module/access-control/context/account-module-access.context"
+import documentServiceCapabilitiesRoutes from "../shared/document-services/document-service-capabilities.routes"
 const router = Router()
 
 router.use((_req, _res, next) => runWithAccountModuleAccessScope(next))
@@ -92,6 +93,11 @@ router.use(authenticateToken)
 // module métier pour qu'aucune surface future n'y échappe par oubli. Une fois le
 // module autorisé, les anciens gardes de rôle deviennent de simples compatibilités.
 router.use(moduleAccessGate)
+
+// Shared, authenticated and permission-safe dependency truth. It intentionally
+// sits outside the GED module gate so every business module that can produce an
+// archived PDF receives the same status without gaining access to GED content.
+router.use("/service-status", documentServiceCapabilitiesRoutes)
 
 // Shared authenticated endpoint; it resolves and enforces the owner module
 // from the opaque asset identity before a byte is read.

@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "f7ef2c7fd490b1828a5cd8a0c34e09ebbaa631784f0ff2ce7b3620014756af96";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "c165392634f171493289ff7503d126fab4defc6dde10cff72c8130e0bd75fd52";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -16746,6 +16746,21 @@ export const GENERATED_ROUTE_INVENTORY = [
     "rbac": [
       "moduleAccessGate",
       "requireFinanceCapability(reporting_financial)"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/service-status/documents",
+    "source": "src/shared/document-services/document-service-capabilities.routes.ts:19",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "getDocumentServiceCapabilities"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
     ]
   },
   {
