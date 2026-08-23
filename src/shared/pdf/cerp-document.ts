@@ -151,6 +151,54 @@ export function toPdfSafeText(value: string): string {
   return out
 }
 
+/**
+ * PDFKit's automatic page breaking cannot keep a shaded note background and
+ * the reserved legal footer in sync. Wrap deterministic display lines first so
+ * `notes()` can paint page-bounded chunks itself.
+ */
+function wrapTextLines(doc: PDFKit.PDFDocument, value: string, width: number): string[] {
+  const out: string[] = []
+  const splitLongWord = (word: string): string[] => {
+    const chunks: string[] = []
+    let chunk = ""
+    for (const character of word) {
+      const candidate = `${chunk}${character}`
+      if (chunk && doc.widthOfString(candidate) > width) {
+        chunks.push(chunk)
+        chunk = character
+      } else chunk = candidate
+    }
+    if (chunk) chunks.push(chunk)
+    return chunks
+  }
+
+  for (const paragraph of value.split(/\r?\n/)) {
+    const words = paragraph.trim().split(/\s+/).filter(Boolean)
+    if (!words.length) {
+      out.push("")
+      continue
+    }
+    let line = ""
+    for (const word of words) {
+      const candidate = line ? `${line} ${word}` : word
+      if (doc.widthOfString(candidate) <= width) {
+        line = candidate
+        continue
+      }
+      if (line) out.push(line)
+      if (doc.widthOfString(word) <= width) {
+        line = word
+        continue
+      }
+      const chunks = splitLongWord(word)
+      out.push(...chunks.slice(0, -1))
+      line = chunks[chunks.length - 1] ?? ""
+    }
+    if (line) out.push(line)
+  }
+  return out.length ? out : [""]
+}
+
 /** Monogramme de repli : 1 a 2 lettres, jamais vide. */
 export function monogramFromName(name: string | null | undefined): string {
   const cleaned = typeof name === "string" ? name.trim() : ""
@@ -479,14 +527,18 @@ export class CerpDocumentContext {
         this.doc.font(column.key === metaColumn ? "Helvetica-Bold" : "Helvetica").fontSize(BODY_SIZE)
         return this.doc.heightOfString(toPdfSafeText(row.cells[column.key] ?? ""), { width: widthOf(column) })
       })
-      let rowHeight = Math.max(12, ...heights)
+      let rowHeight = Math.ceil(Math.max(12, ...heights))
       if (row.meta) {
         const metaWidth = widthOf(columns.find((column) => column.key === metaColumn) ?? columns[0])
         this.doc.font("Helvetica").fontSize(7.6)
-        rowHeight += 1 + this.doc.heightOfString(toPdfSafeText(row.meta), { width: metaWidth })
+        rowHeight += 1 + Math.ceil(this.doc.heightOfString(toPdfSafeText(row.meta), { width: metaWidth }))
       }
 
-      if (this.cursor + rowHeight + 12 > this.bottomLimit) {
+      // PDFKit decides automatic text page-breaks with floating-point line metrics.
+      // Keep an explicit guard beyond the measured row so it can never add a page
+      // halfway through a metadata-bearing row and bypass our repeated table header.
+      const pageBreakGuard = 8
+      if (this.cursor + rowHeight + 12 + pageBreakGuard > this.bottomLimit) {
         this.doc.addPage()
         this.cursor = MARGIN_TOP
         drawHead()
@@ -542,16 +594,36 @@ export class CerpDocumentContext {
   notes(text: string): void {
     const inner = CONTENT_WIDTH - 26
     this.doc.font("Helvetica").fontSize(9.2)
-    const height = this.doc.heightOfString(toPdfSafeText(text), { width: inner }) + 22
+    const safe = toPdfSafeText(text)
+    const lineHeight = this.doc.currentLineHeight(true)
+    const lines = wrapTextLines(this.doc, safe, inner)
+    const padding = 11
+    let offset = 0
 
-    this.ensureSpace(Math.min(height, 120))
-    this.doc.save()
-    this.doc.rect(MARGIN_X, this.cursor, CONTENT_WIDTH, height).fill(CERP_DOC_COLORS.wash)
-    this.doc.restore()
+    // A single shaded note block used to reserve at most 120pt while painting
+    // its full height. Long operational notes could therefore run into a
+    // footer. Render measured lines in page-sized blocks instead.
+    while (offset < lines.length) {
+      const minimum = padding * 2 + lineHeight
+      this.ensureSpace(minimum)
+      const capacity = Math.max(1, Math.floor((this.bottomLimit - this.cursor - padding * 2) / lineHeight))
+      const chunk = lines.slice(offset, offset + capacity)
+      const height = padding * 2 + chunk.length * lineHeight
 
-    this.doc.fillColor(CERP_DOC_COLORS.ink)
-    this.doc.text(toPdfSafeText(text), MARGIN_X + 13, this.cursor + 11, { width: inner })
-    this.cursor += height
+      this.doc.save()
+      this.doc.rect(MARGIN_X, this.cursor, CONTENT_WIDTH, height).fill(CERP_DOC_COLORS.wash)
+      this.doc.restore()
+      this.doc.font("Helvetica").fontSize(9.2).fillColor(CERP_DOC_COLORS.ink)
+      chunk.forEach((line, index) => {
+        this.doc.text(line, MARGIN_X + 13, this.cursor + padding + index * lineHeight, { width: inner, lineBreak: false })
+      })
+      this.cursor += height
+      offset += chunk.length
+      if (offset < lines.length) {
+        this.doc.addPage()
+        this.cursor = MARGIN_TOP
+      }
+    }
   }
 
   /** Paire libelle / valeur, alignee sur la grille des champs. */

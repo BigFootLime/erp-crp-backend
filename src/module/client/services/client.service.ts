@@ -1,5 +1,7 @@
 // src/module/client/services/client.service.ts
 import pool from "../../../config/database";
+import { normalizeStoredImagePath } from "../../../utils/imageStorage";
+import { findAssetIdsByStorageKeys } from "../../operational-media/repository/operational-media.repository";
 
 export type ClientRow = {
   client_id: string
@@ -24,7 +26,10 @@ export type ClientRow = {
   incoterm: string | null
   langue: string | null
 
-   logo_path: string | null
+   /** Legacy storage field is never serialized as a path. */
+   logo_path: null
+   logo_url: null
+   logo_asset: { asset_id: string; status: "AVAILABLE" } | null
 
   delivery_address_id: string | null
   bill_address_id: string | null
@@ -244,8 +249,12 @@ export async function listClients(q = "", limit = 25): Promise<ClientRow[]> {
   LIMIT $2
 `;
 
-  const { rows } = await pool.query<ClientRow>(sql, [q, limit, codeQuery]);
-  return rows;
+  const { rows } = await pool.query<Omit<ClientRow, "logo_path" | "logo_url" | "logo_asset"> & { logo_path: string | null }>(sql, [q, limit, codeQuery]);
+  const ids = await findAssetIdsByStorageKeys(rows.map((row) => row.logo_path));
+  return rows.map((row) => {
+    const assetId = ids.get(normalizeStoredImagePath(row.logo_path) ?? "") ?? null;
+    return { ...row, logo_path: null, logo_url: null, logo_asset: assetId ? { asset_id: assetId, status: "AVAILABLE" as const } : null };
+  });
 }
 // createClient (MAX+1 sur client_id) et updateClientPrimaryContact (sans
 // vérification d'appartenance) ont été supprimés (#162) : la création passe par

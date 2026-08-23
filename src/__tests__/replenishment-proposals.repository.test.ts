@@ -4,12 +4,13 @@ const mocks = vi.hoisted(() => ({
   poolConnect: vi.fn(),
   clientQuery: vi.fn(),
   clientRelease: vi.fn(),
+  poolQuery: vi.fn(),
   generateCode: vi.fn(),
   insertAudit: vi.fn(),
 }))
 
 vi.mock("../config/database", () => ({
-  default: { connect: mocks.poolConnect, query: vi.fn() },
+  default: { connect: mocks.poolConnect, query: mocks.poolQuery },
 }))
 
 vi.mock("../shared/codes/code-generator.service", () => ({
@@ -21,6 +22,7 @@ vi.mock("../module/audit-logs/repository/audit-logs.repository", () => ({
 }))
 
 import { repoValidateReplenishmentProposal } from "../module/commande-fournisseur/repository/replenishment-proposal.repository"
+import { authoritativePdfQueueDbMock } from "./helpers/authoritative-pdf-queue-db-mock"
 
 const PROPOSAL_ID = "11111111-1111-4111-8111-111111111111"
 const ARTICLE_ID = "22222222-2222-4222-8222-222222222222"
@@ -48,6 +50,25 @@ let activeCoverageConflict = false
 
 function dispatch(sqlRaw: unknown, values?: unknown[]) {
   const sql = String(sqlRaw)
+  const authoritativePdf = authoritativePdfQueueDbMock(sql, values)
+  if (authoritativePdf) return authoritativePdf
+  if (sql.includes("FROM public.commande_fournisseur cf") && sql.includes("JOIN public.fournisseurs f")) {
+    return {
+      rows: [{
+        code: "BCF-2026-0002", statut: "BROUILLON", issued_at: "2026-08-23T12:00:00.000Z", devise: "EUR",
+        need_date: null, incoterm: null, payment_terms: null, transport_mode: null, public_comment: null,
+        delivery_address: null, supplier_code: "FOU-001", supplier_name: "Fournisseur test",
+        supplier_street: null, supplier_house_no: null, supplier_postal_code: null, supplier_city: null, supplier_country: null,
+        total_ht: "20", total_remise: "0", total_tva: "4", freight_ht: "0", total_ttc: "24",
+      }], rowCount: 1,
+    }
+  }
+  if (sql.includes("SELECT position::int") && sql.includes("FROM public.commande_fournisseur_ligne") && sql.includes("statut_ligne = 'ACTIVE'")) {
+    return { rows: [{ position: 1, reference: null, designation: "Article agrégé", unit: "u", quantity: "10", unit_price_ht: "2", discount_pct: "0", vat_pct: "20", net_ht: "20", need_date: null }], rowCount: 1 }
+  }
+  if (sql.includes("SELECT updated_at::text AS source_revision") && sql.includes("public.commande_fournisseur")) {
+    return { rows: [{ source_revision: "2026-08-23T12:00:00.000Z" }], rowCount: 1 }
+  }
   if (sql.includes("FROM public.replenishment_proposal_idempotence")) return { rows: [], rowCount: 0 }
   if (sql.includes("FROM public.replenishment_proposals p") && sql.includes("FOR UPDATE OF p")) {
     return {
@@ -144,6 +165,7 @@ beforeEach(() => {
   mocks.generateCode.mockResolvedValue("BCF-2026-0002")
   mocks.insertAudit.mockResolvedValue(undefined)
   mocks.clientQuery.mockImplementation(dispatch)
+  mocks.poolQuery.mockResolvedValue({ rows: [{ party: { company_name: "CERP Test" } }], rowCount: 1 })
 })
 
 describe("repoValidateReplenishmentProposal — remplacement après annulation", () => {
@@ -180,5 +202,13 @@ describe("repoValidateReplenishmentProposal — remplacement après annulation",
     )
     expect(mocks.clientQuery).toHaveBeenCalledWith("COMMIT")
     expect(mocks.clientQuery).not.toHaveBeenCalledWith("ROLLBACK")
+    expect(mocks.clientQuery).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO public.authoritative_pdf_archives"),
+      expect.any(Array),
+    )
+    expect(mocks.clientQuery).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO public.authoritative_pdf_archive_outbox"),
+      expect.any(Array),
+    )
   })
 })

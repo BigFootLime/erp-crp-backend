@@ -52,6 +52,8 @@ import webhookAdminRoutes from "../module/integrations/webhooks/webhook.routes";
 import clientPortalRoutes from "../module/client-portal/routes/client-portal.routes";
 import clientPortalAdminRoutes from "../module/client-portal/routes/client-portal-admin.routes";
 import identificationRoutes from "../module/identification/identification.routes";
+import operationalMediaRoutes from "../module/operational-media/routes/operational-media.routes";
+import subcontractRoutes from "../module/subcontract/subcontract.routes";
 
 import traceabilityRoutes from "../module/traceability/routes/traceability.routes"
 import traceability360Routes from "../module/traceability/routes/traceability-360.routes"
@@ -72,6 +74,7 @@ import referenceDataRoutes from "../module/reference-data/routes/reference-data.
 import commercialReferencesRoutes from "../module/commercial-references/routes/commercial-references.routes"
 import { moduleAccessGate } from "../module/access-control/middlewares/module-access-gate"
 import { runWithAccountModuleAccessScope } from "../module/access-control/context/account-module-access.context"
+import documentServiceCapabilitiesRoutes from "../shared/document-services/document-service-capabilities.routes"
 const router = Router()
 
 router.use((_req, _res, next) => runWithAccountModuleAccessScope(next))
@@ -91,6 +94,15 @@ router.use(authenticateToken)
 // module métier pour qu'aucune surface future n'y échappe par oubli. Une fois le
 // module autorisé, les anciens gardes de rôle deviennent de simples compatibilités.
 router.use(moduleAccessGate)
+
+// Shared, authenticated and permission-safe dependency truth. It intentionally
+// sits outside the GED module gate so every business module that can produce an
+// archived PDF receives the same status without gaining access to GED content.
+router.use("/service-status", documentServiceCapabilitiesRoutes)
+
+// Shared authenticated endpoint; it resolves and enforces the owner module
+// from the opaque asset identity before a byte is read.
+router.use("/operational-media", operationalMediaRoutes)
 
 // Gouvernance transverse de l'accueil : rollback ARIANE/V2 et métriques
 // d'adoption agrégées. Ce n'est pas un module métier restrictible.
@@ -163,6 +175,7 @@ router.use("/stock", stockRoutes);
 router.use("/dossiers", operationDossiersRoutes);
 router.use("/fournisseurs", fournisseursRoutes);
 router.use("/commandes-fournisseurs", commandeFournisseurRoutes); // Module « Commandes fournisseurs » (#172) — BCF
+router.use("/subcontract-work-packages", subcontractRoutes); // #626
 router.use("/procurement-reliability", procurementReliabilityRoutes); // SOL-18 — scorecards et rapprochement achats
 router.use("/replenishment-proposals", replenishmentProposalRoutes); // FEAT-CERP-0003 — suggestions sans achat automatique
 router.use("/receptions", receptionsRoutes);

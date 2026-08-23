@@ -74,8 +74,8 @@ describe("commande AR atomic send claim", () => {
   it("revalide sous verrou et refuse un brouillon rendu avant un envoi concurrent", async () => {
     mocks.clientQuery.mockImplementation(async (sql: unknown) => {
       const query = String(sql);
-      if (query.includes("SELECT id::int AS id FROM public.commande_client") && query.includes("FOR UPDATE")) {
-        return { rows: [{ id: 123 }] };
+      if (query.includes("FROM public.commande_client WHERE id = $1 FOR UPDATE")) {
+        return { rows: [{ id: 123, updated_at: "2026-08-04T08:00:00.000Z" }] };
       }
       if (query.includes("st.nouveau_statut AS raw_statut")) {
         return {

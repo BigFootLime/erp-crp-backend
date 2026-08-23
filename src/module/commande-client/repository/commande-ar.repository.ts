@@ -11,6 +11,8 @@ import {
 import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
 import { getDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
+import { authoritativePdfFilename } from "../../../shared/authoritative-documents/authoritative-document.filename";
+import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
 import {
   repoApplyCommandeWorkflowMilestone,
   repoEnsureCommandeWorkflowCheckpoints,
@@ -26,6 +28,43 @@ import type {
 
 type DbQueryer = Pick<PoolClient, "query">;
 
+export async function repoListCommandeArIds(commandeId: number): Promise<string[]> {
+  const result = await pool.query<{ id: string }>(
+    `SELECT id::text AS id FROM public.commande_ar_log WHERE commande_id = $1::bigint ORDER BY generated_at DESC`, [commandeId]
+  );
+  return result.rows.map((row) => row.id);
+}
+
+/** Resolves an opaque archive id only when it belongs to this customer order. */
+export async function repoResolveCommandeArOfficialArchive(commandeId: number, archiveId: string): Promise<string | null> {
+  const result = await pool.query<{ ar_id: string }>(
+    `SELECT ar.id::text AS ar_id
+       FROM public.authoritative_pdf_archives a
+       JOIN public.commande_ar_log ar ON ar.id::text = a.source_snapshot->>'acknowledgement_id'
+      WHERE a.id = $1::uuid AND a.entity_type = 'commande-client' AND a.entity_id = $2::text
+        AND a.document_kind = 'CUSTOMER_ORDER_ACKNOWLEDGEMENT' AND ar.commande_id = $2::bigint`,
+    [archiveId, commandeId]
+  );
+  return result.rows[0]?.ar_id ?? null;
+}
+
+/** Finds the immutable order-scoped issuance corresponding to a legacy AR draft. */
+export async function repoFindCommandeArOfficialArchiveId(commandeId: number, arId: string): Promise<string | null> {
+  const result = await pool.query<{ id: string }>(
+    `SELECT a.id::text AS id
+       FROM public.authoritative_pdf_archives a
+       JOIN public.authoritative_pdf_archive_outbox o ON o.archive_id = a.id
+      WHERE a.entity_type = 'commande-client' AND a.entity_id = $1::text
+        AND a.document_kind = 'CUSTOMER_ORDER_ACKNOWLEDGEMENT'
+        AND a.source_snapshot->>'acknowledgement_id' = $2::text
+        AND o.status = 'ARCHIVED'
+      ORDER BY a.document_version DESC
+      LIMIT 1`,
+    [commandeId, arId]
+  );
+  return result.rows[0]?.id ?? null;
+}
+
 function toInt(value: unknown, label = "id"): number {
   if (typeof value === "number" && Number.isInteger(value)) return value;
   if (typeof value === "string" && /^\d+$/.test(value)) return Number.parseInt(value, 10);
@@ -37,6 +76,7 @@ type CommandeArHeader = {
   numero: string;
   statut: string | null;
   date_commande: string;
+  updated_at: string;
   commentaire: string | null;
   total_ht: number;
   total_ttc: number;
@@ -252,6 +292,7 @@ export async function repoLoadCommandeArGenerationData(tx: DbQueryer, commandeId
           ELSE COALESCE(st.nouveau_statut, 'BROUILLON')
         END AS statut,
         cc.date_commande::text AS date_commande,
+        cc.updated_at::text AS updated_at,
         cc.commentaire,
         cc.total_ht::float8 AS total_ht,
         cc.total_ttc::float8 AS total_ttc,
@@ -387,6 +428,12 @@ export async function repoCreateCommandeArDraft(params: {
   subject: string;
   body_text: string;
   recipient_suggestions: CommandeArRecipientSuggestion[];
+  /** Required by the production generator; optional only for legacy repository callers/tests. */
+  official_source_snapshot?: Record<string, unknown>;
+  official_request_idempotency_key?: string;
+  /** Expected `commande_client.updated_at` supplied by the authoritative collection POST. */
+  official_expected_source_revision?: string | null;
+  official_reissue_reason?: string | null;
 }): Promise<CommandeArStoredDraft> {
   const client = await pool.connect();
   const documentId = crypto.randomUUID();
@@ -395,8 +442,9 @@ export async function repoCreateCommandeArDraft(params: {
 
   try {
     return await withRealtimeOutboxTransaction(client, async (tx) => {
-    const exists = await tx.query<{ id: number }>(
-      `SELECT id::int AS id FROM public.commande_client WHERE id = $1 FOR UPDATE`,
+    const exists = await tx.query<{ id: number; updated_at: string }>(
+      `SELECT id::int AS id, updated_at::text AS updated_at
+         FROM public.commande_client WHERE id = $1 FOR UPDATE`,
       [params.commande_id]
     );
     if (!exists.rows[0]?.id) {
@@ -412,6 +460,45 @@ export async function repoCreateCommandeArDraft(params: {
       user_id: params.user_id,
       user_role: params.user_role,
     });
+
+    if (params.official_request_idempotency_key) {
+      const replay = await tx.query<{ ar_id: string | null }>(
+        `SELECT source_snapshot->>'acknowledgement_id' AS ar_id
+           FROM public.authoritative_pdf_archives
+          WHERE idempotency_key = $1 AND entity_type = 'commande-client' AND entity_id = $2::text
+            AND document_kind = 'CUSTOMER_ORDER_ACKNOWLEDGEMENT'`,
+        [params.official_request_idempotency_key, params.commande_id]
+      );
+      if (replay.rows[0]?.ar_id) {
+        const existing = await repoGetCommandeArDraft({ commande_id: params.commande_id, ar_id: replay.rows[0].ar_id, tx });
+        if (existing) return existing;
+        throw new HttpError(409, "ACKNOWLEDGEMENT_IDEMPOTENCY_CONFLICT", "La clé d'idempotence ne peut pas être rapprochée.");
+      }
+    }
+
+    // The renderer ran before this transaction so it would otherwise be able
+    // to freeze an order that changed just before the write lock was acquired.
+    // Check after the idempotency replay branch: a legitimate network retry
+    // must return the original immutable acknowledgement.
+    if (
+      params.official_expected_source_revision &&
+      exists.rows[0]?.updated_at !== params.official_expected_source_revision
+    ) {
+      throw new HttpError(409, "OFFICIAL_DOCUMENT_SOURCE_REVISION_CONFLICT", "La source du document a changé. Rechargez avant de générer.");
+    }
+
+    if (params.official_request_idempotency_key) {
+      const prior = await tx.query<{ count: string }>(
+        `SELECT count(*)::text AS count
+           FROM public.authoritative_pdf_archives
+          WHERE entity_type = 'commande-client' AND entity_id = $1::text
+            AND document_kind = 'CUSTOMER_ORDER_ACKNOWLEDGEMENT'`,
+        [params.commande_id]
+      );
+      if (Number(prior.rows[0]?.count ?? 0) > 0 && !params.official_reissue_reason?.trim()) {
+        throw new HttpError(422, "OFFICIAL_DOCUMENT_REISSUE_REASON_REQUIRED", "Un motif de réémission est requis.");
+      }
+    }
 
     await fs.mkdir(path.dirname(filePath), { recursive: true });
     await fs.writeFile(filePath, params.pdf_buffer);
@@ -465,6 +552,48 @@ export async function repoCreateCommandeArDraft(params: {
     const row = ins.rows[0];
     if (!row) throw new Error("Failed to create AR draft");
 
+    // The AR is an externally shared document. Queue an immutable source
+    // snapshot with this same business transaction; the worker files its
+    // official rendition in GED before any send path may attach it.
+    let archivedSourceRevision: string | null = null;
+    let documentVersion: number | null = null;
+    if (params.official_source_snapshot) {
+      // Updating the parent first makes the stored revision exactly the token
+      // returned by the order API after this acknowledgement is created.
+      const revisionResult = await tx.query<{ source_revision: string | null }>(
+        `UPDATE public.commande_client
+            SET updated_at = now()
+          WHERE id = $1
+        RETURNING updated_at::text AS source_revision`,
+        [params.commande_id]
+      );
+      archivedSourceRevision = revisionResult.rows[0]?.source_revision?.trim() ?? null;
+      if (!archivedSourceRevision) throw new HttpError(409, "OFFICIAL_DOCUMENT_SOURCE_REVISION_UNAVAILABLE", "La révision source du document est indisponible.");
+      const versionResult = await tx.query<{ count: string }>(
+        `SELECT count(*)::text AS count
+           FROM public.authoritative_pdf_archives
+          WHERE entity_type = 'commande-client' AND entity_id = $1::text
+            AND document_kind = 'CUSTOMER_ORDER_ACKNOWLEDGEMENT'`,
+        [params.commande_id]
+      );
+      documentVersion = Number(versionResult.rows[0]?.count ?? 0) + 1;
+      await queueCreationPdfArchive(tx, {
+        entityType: "commande-client",
+        entityId: String(params.commande_id),
+        documentKind: "CUSTOMER_ORDER_ACKNOWLEDGEMENT",
+        documentVersion,
+        renderVersion: "customer-ar-pdf-v1",
+        idempotencyKey: params.official_request_idempotency_key ?? `commande-client:${params.commande_id}:acknowledgement:${documentVersion}:${arId}`,
+        title: `Accusé de réception ${params.document_name.replace(/\.pdf$/i, "")}`,
+        originalName: authoritativePdfFilename(["AR", String(params.commande_id), `v${documentVersion}`]),
+        sourceRevision: archivedSourceRevision,
+        sourceSnapshot: { ...params.official_source_snapshot, acknowledgement_id: arId },
+        actorUserId: params.user_id,
+      });
+    } else {
+      await tx.query(`UPDATE public.commande_client SET updated_at = now() WHERE id = $1`, [params.commande_id]);
+    }
+
     await insertCommandeEvent(tx, {
       commande_id: params.commande_id,
       event_type: "AR_GENERATED",
@@ -473,11 +602,13 @@ export async function repoCreateCommandeArDraft(params: {
         document_id: documentId,
         document_name: params.document_name,
         subject: params.subject,
+        source_revision: archivedSourceRevision,
+        document_version: documentVersion,
+        reissue_reason: params.official_reissue_reason?.trim() ?? null,
       },
       user_id: params.user_id,
     });
 
-    await tx.query(`UPDATE public.commande_client SET updated_at = now() WHERE id = $1`, [params.commande_id]);
     await enqueueEntityChanged(
       tx,
       {

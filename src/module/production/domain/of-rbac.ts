@@ -10,6 +10,7 @@ export type OfCapability =
   | "generate"
   | "edit_prelaunch"
   | "launch"
+  | "release"
   | "operate"
   | "receipt"
   | "quality_decision"
@@ -30,6 +31,9 @@ const NEEDLES: Record<OfCapability, readonly string[]> = {
   generate: ["admin", "administrateur", "directeur", "production", "method"],
   edit_prelaunch: ["admin", "administrateur", "directeur", "production", "method"],
   launch: ["admin", "administrateur", "directeur", "production"],
+  // Release is a manufacturing commitment, deliberately narrower than normal
+  // workshop execution. Overrides remain director/admin only in the service.
+  release: ["admin", "administrateur", "directeur", "production", "method", "planif"],
   operate: ["admin", "administrateur", "directeur", "production", "atelier"],
   receipt: ["admin", "administrateur", "directeur", "production", "atelier", "logisti", "qualit"],
   quality_decision: ["admin", "administrateur", "directeur", "production", "qualit"],

@@ -30,6 +30,7 @@ const repository = vi.hoisted(() => ({
   updateGeometrie: vi.fn(),
   setGeometrieImagePath: vi.fn(),
 }))
+const operationalMedia = vi.hoisted(() => ({ promote: vi.fn() }))
 
 vi.mock("../config/database", () => ({
   default: {
@@ -40,6 +41,9 @@ vi.mock("../config/database", () => ({
 
 vi.mock("../module/outils/repository/outil.repository", () => ({
   outilRepository: repository,
+}))
+vi.mock("../module/operational-media/services/operational-media-promotion.service", () => ({
+  promoteOperationalImage: operationalMedia.promote,
 }))
 
 vi.mock("../sockets/sockeServer", () => ({
@@ -255,7 +259,11 @@ beforeEach(async () => {
 
   database.connect.mockImplementation(async () => client())
   database.query.mockResolvedValue({ rows: [] })
-  database.clientQuery.mockResolvedValue({ rows: [] })
+  database.clientQuery.mockImplementation(async (sql: string) =>
+    sql.includes("UPDATE public.operational_media_assets")
+      ? { rows: [{ id: "4a99e772-4496-4c0d-a5a2-2b82c1f8c5c1" }] }
+      : { rows: [] }
+  )
   repository.create.mockResolvedValue(42)
   repository.update.mockResolvedValue(undefined)
   repository.setOutilUploadPaths.mockResolvedValue(undefined)
@@ -268,6 +276,7 @@ beforeEach(async () => {
   repository.createGeometrie.mockResolvedValue({ value: 13, label: "TORIQUE", id_famille: 2, imagePath: null })
   repository.updateGeometrie.mockResolvedValue({ value: 13, label: "TORIQUE", id_famille: 2, imagePath: null })
   repository.setGeometrieImagePath.mockResolvedValue(undefined)
+  operationalMedia.promote.mockResolvedValue({ activated: true, asset_id: "4a99e772-4496-4c0d-a5a2-2b82c1f8c5c1", mime_type: "image/png" })
 })
 
 afterEach(async () => {
@@ -323,6 +332,52 @@ describe("transactions propriétaires Outillage", () => {
       expect(await allFiles(path.join(temporaryRoot, "images"))).toHaveLength(expectedCount)
     }
   )
+
+  it("rolls back and never acknowledges an outillage write when media activation cannot occur", async () => {
+    operationalMedia.promote.mockResolvedValueOnce({ activated: false, reason: "scanner_unavailable" })
+
+    await expect(invokeMutation("famille", "create")).rejects.toMatchObject({
+      status: 503,
+      code: "OPERATIONAL_MEDIA_NOT_READY",
+    })
+    const statements = database.clientQuery.mock.calls.map(([sql]) => sql)
+    expect(statements[0]).toBe("BEGIN")
+    expect(statements).toContain("ROLLBACK")
+    expect(await allFiles(path.join(temporaryRoot, "images"))).toEqual([])
+  })
+
+  it("commits a clean PDF plan transactionally but rolls back when a PDF is supplied as the primary image", async () => {
+    const pdf = Buffer.from("%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF")
+    const plan = await stagedFile("plan")
+    plan.originalname = "plan.pdf"
+    plan.mimetype = "application/pdf"
+    plan.size = pdf.length
+    await fs.writeFile(plan.path, pdf)
+
+    await expect(outilService.createOutil(toolPayload(), { plan })).resolves.toEqual({ id_outil: 42 })
+    expect(database.clientQuery.mock.calls.map(([sql]) => sql)).toEqual(["BEGIN", "COMMIT"])
+    expect(operationalMedia.promote).toHaveBeenCalledWith(expect.objectContaining({ file: plan }))
+
+    vi.clearAllMocks()
+    database.connect.mockImplementation(async () => client())
+    database.clientQuery.mockImplementation(async (sql: string) => sql.includes("UPDATE public.operational_media_assets")
+      ? { rows: [{ id: "4a99e772-4496-4c0d-a5a2-2b82c1f8c5c1" }] }
+      : { rows: [] })
+    repository.create.mockResolvedValue(42)
+    repository.setOutilUploadPaths.mockResolvedValue(undefined)
+    operationalMedia.promote.mockResolvedValue({ activated: true, asset_id: "4a99e772-4496-4c0d-a5a2-2b82c1f8c5c1", mime_type: "application/pdf" })
+    const image = await stagedFile("image")
+    image.originalname = "image.pdf"
+    image.mimetype = "application/pdf"
+    image.size = pdf.length
+    await fs.writeFile(image.path, pdf)
+
+    await expect(outilService.createOutil(toolPayload(), { image })).rejects.toMatchObject({
+      status: 422,
+      code: "OPERATIONAL_MEDIA_IMAGE_TYPE_INVALID",
+    })
+    expect(database.clientQuery.mock.calls.map(([sql]) => sql)).toContain("ROLLBACK")
+  })
 
   it.each(MUTATION_CASES)(
     "%s %s garde le fichier en staging quand la validation SQL échoue et confirme le rollback",

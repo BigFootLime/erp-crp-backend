@@ -34,6 +34,11 @@ vi.mock("../utils/checkNetworkDrive", () => ({
   checkNetworkDrive: vi.fn(() => Promise.resolve()),
 }));
 
+vi.mock("../shared/authoritative-documents/authoritative-document.service", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../shared/authoritative-documents/authoritative-document.service")>()),
+  queueCreationPdfArchive: vi.fn(),
+}));
+
 vi.mock("../module/auth/middlewares/auth.middleware", () => ({
   authenticateToken: (req: { user?: { id: number; role: string } }, _res: unknown, next: () => void) => {
     req.user = { id: 1, role: mocks.currentRole.value };
@@ -58,12 +63,14 @@ vi.mock("../module/access-control/middlewares/module-access-gate", () => ({
 }));
 
 import app from "../config/app";
+import { queueCreationPdfArchive } from "../shared/authoritative-documents/authoritative-document.service";
 
 beforeEach(() => {
   mocks.poolQuery.mockReset();
   mocks.poolConnect.mockReset();
   mocks.clientQuery.mockReset();
   mocks.clientRelease.mockReset();
+  vi.mocked(queueCreationPdfArchive).mockReset();
   mocks.currentRole.value = "Administrateur Systeme et Reseau";
 
   mocks.poolConnect.mockResolvedValue({
@@ -159,7 +166,7 @@ describe("/api/v1/stock", () => {
       }
     if (q.includes("public.fn_next_issued_code_value")) return { rows: [{ v: "1" }] };
       if (q.includes("INSERT INTO public.articles")) {
-        return { rows: [{ id: "11111111-1111-1111-1111-111111111111" }] };
+        return { rows: [{ id: "11111111-1111-1111-1111-111111111111", updated_at: "2026-03-13T00:00:00.000Z" }] };
       }
       if (q.includes("INSERT INTO public.article_category_link")) {
         return { rows: [] };
@@ -173,6 +180,7 @@ describe("/api/v1/stock", () => {
       if (q.includes("INSERT INTO public.articles_fabrique")) {
         return { rows: [] };
       }
+      if (q.includes("SELECT updated_at::text AS updated_at FROM public.articles")) return { rows: [{ updated_at: "2026-03-13T00:00:00.000Z" }] };
       return { rows: [] };
     });
 
@@ -243,6 +251,20 @@ describe("/api/v1/stock", () => {
         String(call[0]).includes("FROM public.affaire") && String(call[0]).includes("type_affaire = 'projet'")
       )
     ).toBe(false);
+    expect(queueCreationPdfArchive).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        entityType: "stock-article",
+        entityId: "11111111-1111-1111-1111-111111111111",
+        documentKind: "STOCK_ARTICLE_CREATION_SNAPSHOT",
+        documentVersion: 1,
+        idempotencyKey: "stock-article:11111111-1111-1111-1111-111111111111:creation:v1",
+        sourceRevision: "2026-03-13T00:00:00.000Z",
+      })
+    );
+    const snapshot = vi.mocked(queueCreationPdfArchive).mock.calls[0]?.[1]?.sourceSnapshot as { type?: string; sections?: unknown[] };
+    expect(snapshot).toMatchObject({ type: "INTERNAL_CREATION_SNAPSHOT" });
+    expect(snapshot.sections).toHaveLength(1);
   });
 
   it("PATCH /api/v1/stock/articles/:id refuses to relink an existing fabricated article", async () => {
@@ -504,7 +526,7 @@ describe("/api/v1/stock", () => {
       if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
     if (q.includes("public.fn_next_issued_code_value")) return { rows: [{ v: "1" }] };
       if (q.includes("INSERT INTO public.articles (") || q.includes("INSERT INTO public.articles\n")) {
-        return { rows: [{ id: "11111111-1111-1111-1111-111111111111" }] };
+        return { rows: [{ id: "11111111-1111-1111-1111-111111111111", updated_at: "2026-03-13T00:00:00.000Z" }] };
       }
       if (q.includes("INSERT INTO public.article_category_link")) {
         return { rows: [] };
@@ -520,6 +542,7 @@ describe("/api/v1/stock", () => {
       if (q.includes("FROM public.stock_nuances")) return { rows: [{ code: "ALU" }] };
       if (q.includes("FROM public.stock_etats")) return { rows: [{ code: "ETAT" }] };
       if (q.includes("FROM public.stock_sous_etats")) return { rows: [] };
+      if (q.includes("SELECT updated_at::text AS updated_at FROM public.articles")) return { rows: [{ updated_at: "2026-03-13T00:00:00.000Z" }] };
       return { rows: [] };
     });
 

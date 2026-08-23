@@ -5,14 +5,18 @@ import {
   archiveClient,
   checkClientDuplicates,
   deleteClient,
+  downloadClientCreationSnapshot,
   getClientById,
+  getClientCreationSnapshot,
   listClientAddresses,
   listClientContacts,
   listClients,
   patchClient,
   patchClientPrimaryContact,
+  previewClientCreationSnapshot,
   postClient,
   postClientContact,
+  printClientCreationSnapshot,
 } from "../controllers/client.controller";
 import { listClientsAnalytics } from "../controllers/clients.analytics.controller"
 import { CLIENT_WRITE_ROLES } from "../client.permissions";
@@ -35,6 +39,11 @@ router.post("/duplicate-check", checkClientDuplicates);
 router.get("/:clientId/contacts", listClientContacts);
 router.post("/:clientId/contacts", requireClientWriteRole, postClientContact);
 router.get("/:clientId/addresses", listClientAddresses);
+// Immutable internal creation snapshot; no issue/reissue surface is exposed here.
+router.get("/:id/creation-snapshot", getClientCreationSnapshot);
+router.get("/:id/creation-snapshot/:documentId/preview", previewClientCreationSnapshot);
+router.get("/:id/creation-snapshot/:documentId/download", downloadClientCreationSnapshot);
+router.post("/:id/creation-snapshot/:documentId/print-intents", printClientCreationSnapshot);
 router.get("/:id", getClientById);
 
 // 🆕 upload du logo client

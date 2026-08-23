@@ -74,6 +74,7 @@ vi.mock("../module/access-control/middlewares/module-access-gate", () => ({
 }));
 
 import app from "../config/app";
+import { authoritativePdfQueueDbMock } from "./helpers/authoritative-pdf-queue-db-mock";
 
 const PIECE_ID = "11111111-1111-4111-8111-111111111111";
 const VERSION_ID = "22222222-2222-4222-8222-222222222222";
@@ -479,6 +480,8 @@ describe("#227 — idempotence de création : le double clic ne crée pas deux p
       const query = vi.fn(async (sql: unknown, params?: unknown[]) => {
         const statement = String(sql);
         queries.push(statement);
+        const authoritativePdf = authoritativePdfQueueDbMock(sql, params);
+        if (authoritativePdf) return authoritativePdf;
         if (statement === "BEGIN") {
           return { rows: [], rowCount: 0 };
         }

@@ -10,6 +10,7 @@ import type {
   OfReceiptBodyDTO,
   PreviewOfGenerationBodyDTO,
   ReorderOfOperationsBodyDTO,
+  ReleaseOfBodyDTO,
   StartOfTimeLogBodyDTO,
   UpdateMachineBodyDTO,
   UpdateMachineOnboardingBodyDTO,
@@ -81,6 +82,10 @@ export const svcCreateOrdreFabrication = (params: { body: CreateOfBodyDTO; audit
 
 export const svcUpdateOrdreFabrication = (params: { id: number; patch: UpdateOfBodyDTO; audit: repo.AuditContext }) =>
   repo.repoUpdateOrdreFabrication(params);
+
+export const svcGetOfReadiness = (params: { id: number }) => repo.repoGetOfReadiness(params);
+export const svcReleaseOrdreFabrication = (params: { id: number; body: ReleaseOfBodyDTO; audit: repo.AuditContext }) =>
+  repo.repoReleaseOrdreFabrication(params);
 
 export const svcUpdateOrdreFabricationOperation = (params: {
   of_id: number;

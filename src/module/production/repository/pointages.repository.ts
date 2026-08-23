@@ -1,8 +1,9 @@
 import type { PoolClient } from "pg";
-import path from "node:path";
 
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
+import { normalizeStoredImagePath } from "../../../utils/imageStorage";
+import { findAssetIdsByStorageKeys } from "../../operational-media/repository/operational-media.repository";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 
@@ -30,12 +31,10 @@ import type {
 
 type DbQueryer = Pick<PoolClient, "query">;
 
-const BASE_IMAGE_URL = process.env.BACKEND_URL || "http://erp-backend.croix-rousse-precision.fr:8080";
-
-function imageUrl(imagePath: string | null): string | null {
-  if (!imagePath) return null;
-  return `${BASE_IMAGE_URL}/images/${path.basename(imagePath)}`;
+function imageAsset(assetId: string | null | undefined) {
+  return assetId ? { asset_id: assetId, status: "AVAILABLE" as const } : null;
 }
+
 
 function userLabel(params: { username: string; name: string | null; surname: string | null }): string {
   const full = [params.name, params.surname]
@@ -194,7 +193,7 @@ function mapUserLite(row: { id: number; username: string; name: string | null; s
   };
 }
 
-function mapPointageCore(row: PointageCoreRow): Omit<ProductionPointageDetail, "events"> {
+async function mapPointageCore(row: PointageCoreRow): Promise<Omit<ProductionPointageDetail, "events">> {
   const ofId = toInt(row.of_id, "production_pointages.of_id");
   const affaireId = toNullableInt(row.affaire_id, "production_pointages.affaire_id");
   const ofAffaireId = toNullableInt(row.of_affaire_id, "ordres_fabrication.affaire_id");
@@ -215,12 +214,14 @@ function mapPointageCore(row: PointageCoreRow): Omit<ProductionPointageDetail, "
       }
     : null;
 
+  const imageAssetIds = await findAssetIdsByStorageKeys([row.machine_image_path]);
   const machine = row.machine_id
     ? {
         id: row.machine_id,
         code: row.machine_code ?? "",
         name: row.machine_name ?? "",
-        image_url: imageUrl(row.machine_image_path),
+        image_url: null,
+        image_asset: imageAsset(imageAssetIds.get(normalizeStoredImagePath(row.machine_image_path) ?? "")),
       }
     : null;
 
@@ -374,7 +375,7 @@ async function selectPointageCore(q: DbQueryer, id: string): Promise<Omit<Produc
     [id]
   );
   const row = res.rows[0];
-  return row ? mapPointageCore(row) : null;
+  return row ? await mapPointageCore(row) : null;
 }
 
 async function selectPointageEvents(q: DbQueryer, id: string): Promise<ProductionPointageEvent[]> {
@@ -700,6 +701,7 @@ export async function repoListPointages(filters: ListPointagesQueryDTO): Promise
     [...values, pageSize, offset]
   );
 
+  const imageAssetIds = await findAssetIdsByStorageKeys(dataRes.rows.map((row) => row.machine_image_path));
   const items: ProductionPointageListItem[] = dataRes.rows.map((r) => {
     const ofId = toInt(r.of_id, "production_pointages.of_id");
     const ofAffaireId = toNullableInt(r.of_affaire_id, "ordres_fabrication.affaire_id");
@@ -716,7 +718,8 @@ export async function repoListPointages(filters: ListPointagesQueryDTO): Promise
           id: r.machine_id,
           code: r.machine_code ?? "",
           name: r.machine_name ?? "",
-          image_url: imageUrl(r.machine_image_path),
+          image_url: null,
+          image_asset: imageAsset(imageAssetIds.get(normalizeStoredImagePath(r.machine_image_path) ?? "")),
         }
       : null;
     const poste = r.poste_id ? { id: r.poste_id, code: r.poste_code ?? "", label: r.poste_label ?? "" } : null;

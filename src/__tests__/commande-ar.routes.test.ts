@@ -10,6 +10,12 @@ const mocks = vi.hoisted(() => ({
   clientRelease: vi.fn(),
   generateAr: vi.fn(),
   sendAr: vi.fn(),
+  createOfficial: vi.fn(),
+  listOfficial: vi.fn(),
+  getOfficial: vi.fn(),
+  readOfficial: vi.fn(),
+  printOfficial: vi.fn(),
+  sendOfficial: vi.fn(),
 }));
 
 vi.mock("pg", () => {
@@ -63,6 +69,12 @@ vi.mock("../module/auth/middlewares/auth.middleware", () => ({
 vi.mock("../module/commande-client/services/commande-ar.service", () => ({
   svcGenerateCommandeAr: mocks.generateAr,
   svcSendCommandeAr: mocks.sendAr,
+  svcCreateCommandeArOfficial: mocks.createOfficial,
+  svcListCommandeArOfficialDocuments: mocks.listOfficial,
+  svcGetCommandeArOfficialDocument: mocks.getOfficial,
+  svcReadCommandeArOfficialDocument: mocks.readOfficial,
+  svcRecordCommandeArOfficialPrint: mocks.printOfficial,
+  svcSendCommandeArOfficial: mocks.sendOfficial,
 }));
 
 // Le gate d'accès module (#326) est monté globalement dans v1.routes.ts. Ce fichier
@@ -81,10 +93,137 @@ beforeEach(() => {
   mocks.clientRelease.mockReset();
   mocks.generateAr.mockReset();
   mocks.sendAr.mockReset();
+  mocks.createOfficial.mockReset();
+  mocks.listOfficial.mockReset();
+  mocks.getOfficial.mockReset();
+  mocks.readOfficial.mockReset();
+  mocks.printOfficial.mockReset();
+  mocks.sendOfficial.mockReset();
 
   mocks.poolConnect.mockResolvedValue({
     query: mocks.clientQuery,
     release: mocks.clientRelease,
+  });
+});
+
+const OFFICIAL_ID = "33333333-3333-4333-8333-333333333333";
+const OFFICIAL_DOCUMENT = {
+  id: OFFICIAL_ID,
+  kind: "CUSTOMER_ORDER_ACKNOWLEDGEMENT",
+  version: 2,
+  state: "ISSUED",
+  safe_filename: "AR-123-v2.pdf",
+  byte_sha256: "a".repeat(64),
+  byte_length: 1234,
+  mime_type: "application/pdf",
+  issued_at: "2026-08-23T10:01:00.000Z",
+  source_revision: "2026-08-23 10:00:00+00",
+  preview_url: `/commandes/123/acknowledgements/${OFFICIAL_ID}/preview`,
+  download_url: `/commandes/123/acknowledgements/${OFFICIAL_ID}/download`,
+};
+const OFFICIAL_ENVELOPE = {
+  state: "READY",
+  latest_document: OFFICIAL_DOCUMENT,
+  retryable: false,
+  failure_code: null,
+};
+
+describe("/api/v1/commandes/:id/acknowledgements", () => {
+  it("uses the exact safe generation envelope for the collection POST and GET", async () => {
+    mocks.listOfficial.mockResolvedValue(OFFICIAL_ENVELOPE);
+    mocks.createOfficial.mockResolvedValue({ ...OFFICIAL_ENVELOPE, state: "PENDING" });
+
+    const listed = await request(app)
+      .get("/api/v1/commandes/123/acknowledgements")
+      .set("Authorization", "Bearer fake");
+    expect(listed.status).toBe(200);
+    expect(listed.body).toEqual(OFFICIAL_ENVELOPE);
+    expect(mocks.listOfficial).toHaveBeenCalledWith(123);
+
+    const created = await request(app)
+      .post("/api/v1/commandes/123/acknowledgements")
+      .set("Authorization", "Bearer fake")
+      .set("Idempotency-Key", "acknowledgement-attempt-001")
+      .send({ source_revision: "2026-08-23 10:00:00+00", reissue_reason: "Client requested revised delivery date" });
+    expect(created.status).toBe(201);
+    expect(created.body).toEqual({ ...OFFICIAL_ENVELOPE, state: "PENDING" });
+    expect(mocks.createOfficial).toHaveBeenCalledWith({
+      commande_id: 123,
+      user_id: 7,
+      user_role: "Secretaire",
+      source_revision: "2026-08-23 10:00:00+00",
+      reissue_reason: "Client requested revised delivery date",
+      idempotency_key: "acknowledgement-attempt-001",
+    });
+    expect(Object.keys(created.body.latest_document)).toEqual([
+      "id", "kind", "version", "state", "safe_filename", "byte_sha256", "byte_length", "mime_type",
+      "issued_at", "source_revision", "preview_url", "download_url",
+    ]);
+  });
+
+  it("requires a per-attempt idempotency key before invoking the generator", async () => {
+    const response = await request(app)
+      .post("/api/v1/commandes/123/acknowledgements")
+      .set("Authorization", "Bearer fake")
+      .send({ source_revision: "2026-08-23 10:00:00+00" });
+    expect(response.status).toBe(400);
+    expect(mocks.createOfficial).not.toHaveBeenCalled();
+  });
+
+  it("keeps detail, exact-byte delivery, print intent, and send scoped to the parent order", async () => {
+    mocks.getOfficial.mockResolvedValue(OFFICIAL_DOCUMENT);
+    mocks.readOfficial.mockResolvedValue({ bytes: Buffer.from("%PDF-1.7 official"), filename: OFFICIAL_DOCUMENT.safe_filename, sha256: OFFICIAL_DOCUMENT.byte_sha256 });
+    mocks.printOfficial.mockResolvedValue(undefined);
+    mocks.sendOfficial.mockResolvedValue({ commande_id: 123, status: "AR_ENVOYE" });
+
+    const detail = await request(app)
+      .get(`/api/v1/commandes/123/acknowledgements/${OFFICIAL_ID}`)
+      .set("Authorization", "Bearer fake");
+    expect(detail.status).toBe(200);
+    expect(detail.body).toEqual(OFFICIAL_DOCUMENT);
+
+    const preview = await request(app)
+      .get(`/api/v1/commandes/123/acknowledgements/${OFFICIAL_ID}/preview`)
+      .set("Authorization", "Bearer fake");
+    expect(preview.status).toBe(200);
+    expect(preview.headers["content-type"]).toContain("application/pdf");
+
+    const download = await request(app)
+      .get(`/api/v1/commandes/123/acknowledgements/${OFFICIAL_ID}/download`)
+      .set("Authorization", "Bearer fake");
+    expect(download.status).toBe(200);
+    expect(download.headers["content-disposition"]).toContain("attachment");
+
+    const printed = await request(app)
+      .post(`/api/v1/commandes/123/acknowledgements/${OFFICIAL_ID}/print-intents`)
+      .set("Authorization", "Bearer fake");
+    expect(printed.status).toBe(204);
+
+    const sent = await request(app)
+      .post(`/api/v1/commandes/123/acknowledgements/${OFFICIAL_ID}/send`)
+      .set("Authorization", "Bearer fake")
+      .send({ recipient_emails: ["client@example.test"], recipient_contact_ids: [] });
+    expect(sent.status).toBe(200);
+    expect(mocks.getOfficial).toHaveBeenCalledWith(123, OFFICIAL_ID);
+    expect(mocks.readOfficial).toHaveBeenNthCalledWith(1, 123, OFFICIAL_ID, 7, "AUTHORITATIVE_PDF_PREVIEWED");
+    expect(mocks.readOfficial).toHaveBeenNthCalledWith(2, 123, OFFICIAL_ID, 7, "AUTHORITATIVE_PDF_DOWNLOADED");
+    expect(mocks.printOfficial).toHaveBeenCalledWith(123, OFFICIAL_ID, 7);
+    expect(mocks.sendOfficial).toHaveBeenCalledWith({
+      commande_id: 123,
+      archive_id: OFFICIAL_ID,
+      user_id: 7,
+      user_role: "Secretaire",
+      body: { recipient_emails: ["client@example.test"], recipient_contact_ids: [] },
+    });
+  });
+
+  it("default-denies acknowledgement export for a role without the explicit capability", async () => {
+    const response = await request(app)
+      .get("/api/v1/commandes/123/acknowledgements")
+      .set("Authorization", "Bearer fake")
+      .set("x-test-role", "Employee");
+    expect(response.status).toBe(403);
+    expect(mocks.listOfficial).not.toHaveBeenCalled();
   });
 });
 

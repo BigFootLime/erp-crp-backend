@@ -6,6 +6,8 @@ import {
   enqueueChatMessageCreated,
 } from "../../../shared/realtime/realtime-outbox.service";
 import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
+import { findAssetIdsByStorageKeys } from "../../operational-media/repository/operational-media.repository";
+import { normalizeStoredImagePath } from "../../../utils/imageStorage";
 
 import type { ChatConversation, ChatDirectConversation, ChatGroupConversation, ChatMessage, ChatUser } from "../types/chat.types";
 
@@ -47,7 +49,8 @@ type ChatUserRow = {
   profile_picture?: string | null;
 };
 
-function mapUser(row: ChatUserRow): ChatUser {
+function mapUser(row: ChatUserRow, assets: Map<string, string>): ChatUser {
+  const assetId = assets.get(normalizeStoredImagePath(row.profile_picture) ?? "") ?? null;
   return {
     id: row.id,
     username: row.username,
@@ -56,7 +59,8 @@ function mapUser(row: ChatUserRow): ChatUser {
     email: row.email,
     role: row.role,
     status: row.status,
-    profile_picture: row.profile_picture ?? null,
+    profile_picture: null,
+    profile_picture_asset: assetId ? { asset_id: assetId, status: "AVAILABLE" } : null,
   };
 }
 
@@ -79,7 +83,8 @@ export async function repoGetChatUserById(userId: number): Promise<ChatUser | nu
     [userId]
   );
   const row = res.rows[0] ?? null;
-  return row ? mapUser(row) : null;
+  const assets = await findAssetIdsByStorageKeys([row?.profile_picture]);
+  return row ? mapUser(row, assets) : null;
 }
 
 export async function repoListChatUsersByIds(userIds: number[]): Promise<ChatUser[]> {
@@ -114,7 +119,8 @@ export async function repoListChatUsersByIds(userIds: number[]): Promise<ChatUse
     [ids]
   );
 
-  return res.rows.map(mapUser);
+  const assets = await findAssetIdsByStorageKeys(res.rows.map((row) => row.profile_picture));
+  return res.rows.map((row) => mapUser(row, assets));
 }
 
 export async function repoListChatUsers(params: { me_user_id: number; q?: string; limit?: number }): Promise<ChatUser[]> {
@@ -148,7 +154,8 @@ export async function repoListChatUsers(params: { me_user_id: number; q?: string
     [params.me_user_id, q, limit]
   );
 
-  return res.rows.map(mapUser);
+  const assets = await findAssetIdsByStorageKeys(res.rows.map((row) => row.profile_picture));
+  return res.rows.map((row) => mapUser(row, assets));
 }
 
 type ConversationRow = {
@@ -178,7 +185,7 @@ type ConversationRow = {
   unread_count: number;
 };
 
-function mapConversation(row: ConversationRow): ChatConversation {
+function mapConversation(row: ConversationRow, assets: Map<string, string>): ChatConversation {
   const lastMessage: ChatMessage | null = row.last_message_id
     ? {
         id: row.last_message_id,
@@ -230,7 +237,11 @@ function mapConversation(row: ConversationRow): ChatConversation {
       email: row.other_email,
       role: row.other_role,
       status: row.other_status,
-      profile_picture: row.other_profile_picture ?? null,
+      profile_picture: null,
+      profile_picture_asset: (() => {
+        const assetId = assets.get(normalizeStoredImagePath(row.other_profile_picture) ?? "") ?? null;
+        return assetId ? { asset_id: assetId, status: "AVAILABLE" as const } : null;
+      })(),
     },
   };
   return conv;
@@ -328,7 +339,8 @@ async function repoListConversationsForUser(q: DbQueryer, params: { user_id: num
     [params.user_id, convFilter]
   );
 
-  return res.rows.map(mapConversation);
+  const assets = await findAssetIdsByStorageKeys(res.rows.map((row) => row.other_profile_picture));
+  return res.rows.map((row) => mapConversation(row, assets));
 }
 
 export async function repoListChatConversations(params: { user_id: number }): Promise<ChatConversation[]> {
@@ -390,7 +402,8 @@ export async function repoListChatConversationParticipants(params: {
   );
 
   if (!res.rows.length) return null;
-  return res.rows.map(mapUser);
+  const assets = await findAssetIdsByStorageKeys(res.rows.map((row) => row.profile_picture));
+  return res.rows.map((row) => mapUser(row, assets));
 }
 
 export async function repoListChatConversationParticipantUserIds(params: {
@@ -874,7 +887,8 @@ export async function repoSendChatMessage(params: {
     const senderRow = senderRes.rows[0];
     if (!senderRow) throw new Error("Sender not found");
 
-    const sender = mapUser(senderRow);
+    const assets = await findAssetIdsByStorageKeys([senderRow.profile_picture]);
+    const sender = mapUser(senderRow, assets);
     const message = mapMessage(msgRow, {
       id: sender.id,
       username: sender.username,

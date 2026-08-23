@@ -9,6 +9,9 @@ import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-lo
 import { generateClientCode } from "../../../shared/codes/code-generator.service";
 import type { CreateClientContactInput, ClientContactRow } from "../services/client.service";
 import type { DuplicateCheckDTO } from "../validators/client.validators";
+import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
+import { authoritativePdfFilename } from "../../../shared/authoritative-documents/authoritative-document.filename";
+import { buildInternalCreationSnapshot } from "../../../shared/authoritative-documents/internal-creation-snapshot";
 
 export type AuditContext = {
   user_id: number;
@@ -441,6 +444,31 @@ export async function repoCreateClient(
         contacts_count: Array.isArray(dto.contacts) ? dto.contacts.length : 0,
         payment_modes_count: Array.isArray(dto.payment_mode_ids) ? dto.payment_mode_ids.length : 0,
       },
+    });
+
+    // The creation receipt is built from the aggregate just written in this
+    // transaction. Bank credentials intentionally never enter this snapshot.
+    const revision = await db.query<{ updated_at: string }>(
+      `SELECT updated_at::text AS updated_at FROM clients WHERE client_id = $1 FOR UPDATE`, [clientId]
+    );
+    const sourceRevision = revision.rows[0]?.updated_at;
+    if (!sourceRevision) throw new Error("CLIENT_CREATION_SNAPSHOT_REVISION_MISSING");
+    await queueCreationPdfArchive(db, {
+      entityType: "client", entityId: clientId, documentKind: "CLIENT_CREATION_SNAPSHOT", documentVersion: 1,
+      renderVersion: "internal-creation-snapshot-v1", idempotencyKey: `client:${clientId}:creation-snapshot:v1`,
+      title: `Création fiche client ${clientCode}`, originalName: authoritativePdfFilename(["Client", clientCode, "creation"]), sourceRevision,
+      sourceSnapshot: buildInternalCreationSnapshot({
+        entityLabel: "Fiche client", reference: clientCode,
+        summary: [{ label: "Client", value: dto.company_name }, { label: "Code", value: clientCode }, { label: "Statut", value: dto.status }, { label: "Créé par", value: String(audit.user_id) }],
+        sections: [
+          { title: "Coordonnées", rows: [{ label: "Email", value: dto.email }, { label: "Téléphone", value: dto.phone }, { label: "SIRET", value: dto.siret }, { label: "TVA", value: dto.vat_number }, { label: "Site web", value: dto.website_url }] },
+          { title: "Adresses", table: { columns: [{ key: "type", label: "Type" }, { key: "adresse", label: "Adresse" }], rows: [
+            { type: "Facturation", adresse: [dto.bill_address.house_number, dto.bill_address.street, dto.bill_address.postal_code, dto.bill_address.city, dto.bill_address.country].filter(Boolean).join(", ") },
+            { type: "Livraison", adresse: [dto.delivery_address.house_number, dto.delivery_address.street, dto.delivery_address.postal_code, dto.delivery_address.city, dto.delivery_address.country].filter(Boolean).join(", ") },
+          ] } },
+          { title: "Contacts créés", table: { columns: [{ key: "nom", label: "Nom" }, { key: "email", label: "Email" }, { key: "role", label: "Rôle" }], rows: [dto.primary_contact, ...(dto.contacts ?? [])].filter(Boolean).map((contact) => ({ nom: [contact!.first_name, contact!.last_name].filter(Boolean).join(" "), email: contact!.email ?? null, role: contact!.role ?? null })) } },
+        ],
+      }), actorUserId: audit.user_id,
     });
 
     await db.query('COMMIT');

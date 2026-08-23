@@ -8,6 +8,8 @@ import db from "../../../config/database";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { generatePieceTechniqueBusinessCode } from "../../../shared/codes/code-generator.service";
+import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
+import { buildTechnicalPieceCreationSnapshotInput } from "../../../shared/authoritative-documents/technical-piece-creation-snapshot";
 import { transferSecureUploadToDestination } from "../../../shared/uploads/secure-upload";
 import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
@@ -1900,6 +1902,26 @@ export async function repoCreatePieceTechnique(
       );
     }
 
+    // This is deliberately an internal creation record, not the controlled
+    // technical dossier. Child BOM/operation/purchase mutations are not
+    // creation events and therefore never enqueue this document kind.
+    await queueCreationPdfArchive(client, buildTechnicalPieceCreationSnapshotInput({
+      id: pieceId,
+      code: generatedCode,
+      designation: core.designation,
+      clientId: core.client_id,
+      clientName: core.client_name,
+      status: core.statut,
+      sourceRevision: core.updated_at,
+      actorUserId: audit.user_id,
+      articleId: core.article_id,
+      familyId: core.famille_id,
+      pieceVersion: core.version_number,
+      planReference: body.plan_reference ?? null,
+      externalIndex: indiceExterne,
+      internalVersion: body.plan_reference ? 1 : null,
+    }));
+
     await client.query("COMMIT");
     return { piece, replayed: false };
   } catch (err) {
@@ -2720,6 +2742,24 @@ export async function repoDuplicatePieceTechnique(id: string, userId: number | n
       `,
       [newId, userId, null, statut, `Duplicated from piece technique ${id}`]
     );
+
+    // The duplicate is a distinct root aggregate. Queue only after all copied
+    // BOM/operation/purchase rows and its creation history exist, so a queue
+    // failure rolls the entire duplicate back with the same transaction.
+    await queueCreationPdfArchive(client, buildTechnicalPieceCreationSnapshotInput({
+      id: newId,
+      code: newRow.code_piece,
+      designation: newRow.designation,
+      clientId: newRow.client_id,
+      clientName: newRow.client_name,
+      status: statut,
+      sourceRevision: newRow.updated_at,
+      actorUserId: userId,
+      articleId: null,
+      familyId: null,
+      pieceVersion: 1,
+      copiedFromCode: o.code_piece,
+    }));
 
     await client.query("COMMIT");
     return repoGetPieceTechnique(newId, includesSetForCreate());

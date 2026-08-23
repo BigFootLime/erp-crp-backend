@@ -3,7 +3,8 @@ import db from "../../../config/database";
 import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
 import { enqueueEntityChanged } from "../../../shared/realtime/realtime-outbox.service";
 import { HttpError } from "../../../utils/httpError";
-import { buildPublicImageUrl, normalizeStoredImagePath } from "../../../utils/imageStorage";
+import { normalizeStoredImagePath } from "../../../utils/imageStorage";
+import { findAssetIdsByStorageKeys, findDocumentAssetIdsByStorageKeys } from "../../operational-media/repository/operational-media.repository";
 import type {
   OutilDetail,
   OutilListItem,
@@ -65,7 +66,22 @@ function asInteger(value: unknown, fallback = 0) {
   return parsed === null ? fallback : Math.trunc(parsed);
 }
 
-function mapOutilListItem(row: Record<string, unknown>): OutilListItem {
+function mediaId(ids: Map<string, string>, value: unknown) {
+  const key = normalizeStoredImagePath(asNullableString(value));
+  const assetId = key && !/^https?:\/\//i.test(key) ? ids.get(key) ?? null : null;
+  return assetId ? { asset_id: assetId, status: "AVAILABLE" as const } : null;
+}
+
+async function resolveMediaId(value: unknown) {
+  const ids = await findAssetIdsByStorageKeys([asNullableString(value)]);
+  return mediaId(ids, value);
+}
+
+function mediaKeys(rows: readonly Record<string, unknown>[]) {
+  return rows.flatMap((row) => [row.image, row.image_path, row.famille_image_path, row.fabricant_logo, row.plan, row.esquisse].map(asNullableString));
+}
+
+function mapOutilListItem(row: Record<string, unknown>, ids: Map<string, string>, documentIds: Map<string, string> = ids): OutilListItem {
   return {
     id_outil: asInteger(row.id_outil),
     id_fabricant: asNullableNumber(row.id_fabricant),
@@ -77,12 +93,11 @@ function mapOutilListItem(row: Record<string, unknown>): OutilListItem {
     nom_fabricant: asNullableString(row.nom_fabricant),
     nom_famille: asNullableString(row.nom_famille),
     nom_geometrie: asNullableString(row.nom_geometrie),
-    image: buildPublicImageUrl(asNullableString(row.image)),
-    image_path: buildPublicImageUrl(asNullableString(row.image_path)),
-    famille_image_path: buildPublicImageUrl(asNullableString(row.famille_image_path)),
-    fabricant_logo: buildPublicImageUrl(asNullableString(row.fabricant_logo)),
-    plan: buildPublicImageUrl(asNullableString(row.plan)),
-    esquisse: buildPublicImageUrl(asNullableString(row.esquisse)),
+    image: mediaId(ids, row.image), image_path: mediaId(ids, row.image_path),
+    famille_image_path: mediaId(ids, row.famille_image_path), fabricant_logo: mediaId(ids, row.fabricant_logo),
+    // PDFs are valid drawings, never primary images. A separate document map
+    // makes that distinction enforceable even where a legacy file key is reused.
+    plan: mediaId(documentIds, row.plan), esquisse: mediaId(documentIds, row.esquisse),
     profondeur_utile: asNullableString(row.profondeur_utile),
     matiere_usiner: asNullableString(row.matiere_usiner),
     utilisation: asNullableString(row.utilisation),
@@ -104,6 +119,14 @@ function mapOutilListItem(row: Record<string, unknown>): OutilListItem {
     quantite_stock: asInteger(row.quantite_stock),
     quantite_minimale: asInteger(row.quantite_minimale),
   };
+}
+
+async function resolveOutilMediaMaps(rows: readonly Record<string, unknown>[]) {
+  const [images, documents] = await Promise.all([
+    findAssetIdsByStorageKeys(mediaKeys(rows)),
+    findDocumentAssetIdsByStorageKeys(rows.flatMap((row) => [asNullableString(row.plan), asNullableString(row.esquisse)])),
+  ]);
+  return { images, documents };
 }
 
 function mapStockMovement(row: Record<string, unknown>): OutilStockMovement {
@@ -412,8 +435,9 @@ export const outilRepository = {
       ),
     ]);
 
+    const media = await resolveOutilMediaMaps([baseRow]);
     return {
-      ...mapOutilListItem(baseRow),
+      ...mapOutilListItem(baseRow, media.images, media.documents),
       fournisseurs: fournisseurs.rows.map((row) => ({ id: asInteger(row.id), label: asNullableString(row.label) ?? "" })),
       revetements: revetements.rows.map((row) => ({ id: asInteger(row.id), label: asNullableString(row.label) ?? "" })),
       valeurs_aretes: valeursAretes.rows.map(
@@ -537,7 +561,8 @@ export const outilRepository = {
       [...params, limit, offset]
     );
 
-    return result.rows.map((row) => mapOutilListItem(row));
+    const media = await resolveOutilMediaMaps(result.rows);
+    return result.rows.map((row) => mapOutilListItem(row, media.images, media.documents));
   },
 
   // 🚨 Outils sous le stock minimum
@@ -559,6 +584,7 @@ export const outilRepository = {
       ORDER BY COALESCE(s.quantite, 0) ASC, o.id_outil DESC
     `);
 
+    const ids = await findAssetIdsByStorageKeys(result.rows.map((row) => asNullableString(row.image_path)));
     return result.rows.map((row) => ({
       ...row,
       quantite_stock: asInteger(row.quantite_stock),
@@ -1175,10 +1201,11 @@ export const outilRepository = {
     const result = await db.query(
       `SELECT id_famille, nom_famille, image_path FROM gestion_outils_famille ORDER BY ordre NULLS LAST, nom_famille`
     );
+    const ids = await findAssetIdsByStorageKeys(result.rows.map((row) => asNullableString(row.image_path)));
     return result.rows.map((row) => ({
       value: asInteger(row.id_famille),
       label: asNullableString(row.nom_famille) ?? "",
-      imagePath: buildPublicImageUrl(asNullableString(row.image_path)),
+      imagePath: mediaId(ids, row.image_path),
     }));
   },
 
@@ -1196,7 +1223,7 @@ export const outilRepository = {
     return {
       value: asInteger(row.id_famille),
       label: asNullableString(row.nom_famille) ?? "",
-      imagePath: buildPublicImageUrl(asNullableString(row.image_path)),
+      imagePath: await resolveMediaId(row.image_path),
     };
   },
 
@@ -1224,7 +1251,7 @@ export const outilRepository = {
     return {
       value: asInteger(row.id_famille),
       label: asNullableString(row.nom_famille) ?? "",
-      imagePath: buildPublicImageUrl(asNullableString(row.image_path)),
+      imagePath: await resolveMediaId(row.image_path),
     };
   },
 
@@ -1300,7 +1327,7 @@ export const outilRepository = {
     return {
       value: asInteger(row.id_fabricant),
       label: asNullableString(row.name) ?? "",
-      logo: buildPublicImageUrl(asNullableString(row.logo)),
+      logo: await resolveMediaId(row.logo),
     };
   },
 
@@ -1441,10 +1468,11 @@ export const outilRepository = {
 
     const result = await db.query(query, values);
 
+    const ids = await findAssetIdsByStorageKeys(result.rows.map((row) => asNullableString(row.image_path)));
     return result.rows.map((row) => ({
       value: asInteger(row.id_geometrie),
       label: asNullableString(row.nom_geometrie) ?? "",
-      imagePath: buildPublicImageUrl(asNullableString(row.image_path)),
+      imagePath: mediaId(ids, row.image_path),
     }));
   },
 
@@ -1468,7 +1496,7 @@ export const outilRepository = {
       value: asInteger(row.id_geometrie),
       label: asNullableString(row.nom_geometrie) ?? "",
       id_famille: asInteger(row.id_famille),
-      imagePath: buildPublicImageUrl(asNullableString(row.image_path)),
+      imagePath: await resolveMediaId(row.image_path),
     };
   },
 
@@ -1499,7 +1527,7 @@ export const outilRepository = {
       value: asInteger(row.id_geometrie),
       label: asNullableString(row.nom_geometrie) ?? "",
       id_famille: asInteger(row.id_famille),
-      imagePath: buildPublicImageUrl(asNullableString(row.image_path)),
+      imagePath: await resolveMediaId(row.image_path),
     };
   },
 
@@ -1599,7 +1627,8 @@ export const outilRepository = {
       ORDER BY o.id_outil DESC
     `);
 
-    return result.rows.map((row) => mapOutilListItem(row));
+    const media = await resolveOutilMediaMaps(result.rows);
+    return result.rows.map((row) => mapOutilListItem(row, media.images, media.documents));
   },
 
   async getPricingAnalytics(id_outil: number): Promise<OutilPricingResponse> {

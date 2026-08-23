@@ -12,6 +12,7 @@ import type { AuditContext } from "./production.repository";
 import { enqueueProductionOfChanged, productionRealtimeActionFromAudit } from "./production-realtime.repository";
 import type { OfReceiptBodyDTO } from "../validators/production.validators";
 import { ofStatutAllowsReceipt, type OfStatut } from "../domain/of-status";
+import { assertOperationalLotQualityEligibility } from "../../qualite/repository/quality-operational-gate.repository";
 
 export type OfReceiptContext = {
   of: {
@@ -194,6 +195,8 @@ export async function reserveProducedQtyForCommandeLine(
     lot_id: string;
     qty_ok: number;
     actor_user_id: number;
+    /** Caller already holds the canonical Quality lock for this lot. */
+    quality_gate_already_held?: boolean;
   }
 ): Promise<{ reservation_id: string; qty_reserved: number } | null> {
   if (!Number.isFinite(args.qty_ok) || args.qty_ok <= 0) return null;
@@ -243,6 +246,18 @@ export async function reserveProducedQtyForCommandeLine(
   const remainingToReserve = Math.max(0, orderedQty - alreadyReserved - alreadyPlannedForDelivery);
   const qtyToReserve = Math.min(args.qty_ok, remainingToReserve);
   if (qtyToReserve <= 0) return null;
+
+  // Automatic order-line reservation is still a stock reservation. Re-check
+  // its exact produced lot under the receipt transaction; a previously
+  // released existing lot may have been quarantined or exhausted meanwhile.
+  if (!args.quality_gate_already_held) {
+    await assertOperationalLotQualityEligibility({
+      client,
+      lotId: args.lot_id,
+      qty: qtyToReserve,
+      purpose: "RESERVE",
+    });
+  }
 
   const stockLevelRes = await client.query<{ qty_total: number; qty_reserved: number }>(
     `
@@ -854,6 +869,7 @@ export async function repoCreateOfReceipt(params: {
 
     let lotId: string;
     let lotCode: string;
+    let qualityDecision: Awaited<ReturnType<typeof assertOperationalLotQualityEligibility>> | null = null;
     if (params.body.lot_mode === "EXISTING") {
       const rawLotId = params.body.lot_id ?? null;
       if (!rawLotId) throw new HttpError(422, "LOT_REQUIRED", "Veuillez selectionner un lot");
@@ -878,9 +894,28 @@ export async function repoCreateOfReceipt(params: {
         );
       }
 
+      if (params.body.quality_status === "LIBERE") {
+        qualityDecision = await assertOperationalLotQualityEligibility({
+          client,
+          lotId: row.id,
+          qty: params.body.qty_ok,
+          purpose: "RESERVE",
+        });
+      }
+
       lotId = row.id;
       lotCode = row.lot_code;
     } else {
+      // A newly produced lot has no independent control/release evidence yet.
+      // It must enter the ledger in quarantine and be released afterwards by
+      // the Quality 360 workflow; accepting LIBERE here would be a bypass.
+      if (params.body.quality_status === "LIBERE") {
+        throw new HttpError(
+          409,
+          "QUALITY_RECEIPT_RELEASE_REQUIRES_CONTROL",
+          "Une nouvelle réception OF doit être mise en quarantaine jusqu'à la décision de libération Qualité."
+        );
+      }
       if (params.body.lot_number?.trim()) {
         throw new HttpError(400, "LOT_CODE_SERVER_MANAGED", "Le numéro de lot interne est attribué automatiquement.");
       }
@@ -1122,6 +1157,7 @@ export async function repoCreateOfReceipt(params: {
             lot_id: lotId,
             qty_ok: params.body.qty_ok,
             actor_user_id: params.audit.user_id,
+            quality_gate_already_held: qualityDecision !== null,
           })
         : null;
 
@@ -1228,6 +1264,7 @@ export async function repoCreateOfReceipt(params: {
         auto_reserved_qty: autoReservation?.qty_reserved ?? 0,
         non_conformity_id: nonConformityId,
         idempotency_key: params.idempotency_key,
+        quality_gate: qualityDecision,
       },
     });
 

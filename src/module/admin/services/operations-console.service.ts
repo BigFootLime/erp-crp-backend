@@ -92,6 +92,7 @@ const ALERT_RUNBOOKS: Readonly<Record<string, string>> = Object.freeze({
 const DEPENDENCY_METADATA = Object.freeze({
   database: { label: "Base PostgreSQL", category: "data" as const, runbook: RUNBOOKS.database },
   ged_storage: { label: "Stockage GED", category: "documents" as const, runbook: RUNBOOKS.documents },
+  operational_media_storage: { label: "Stockage des médias opérationnels", category: "documents" as const, runbook: RUNBOOKS.documents },
   antivirus: { label: "Antivirus documentaire", category: "documents" as const, runbook: RUNBOOKS.antivirus },
   realtime: { label: "Temps réel", category: "runtime" as const, runbook: RUNBOOKS.api },
 });

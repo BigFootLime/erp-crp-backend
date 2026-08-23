@@ -24,6 +24,7 @@ import {
 } from "../domain/of-generation";
 import { roleHasOfCapability } from "../domain/of-rbac";
 import { enqueueProductionOfChanged, productionRealtimeActionFromAudit } from "./production-realtime.repository";
+import { queueRootOfCreationPdf } from "../domain/of-creation-pdf";
 
 async function insertAuditLog(tx: Queryable, audit: AuditContext, entry: {
   action: string;
@@ -562,6 +563,12 @@ export async function repoGenerateOfs(params: {
         "La définition technique a changé depuis l'aperçu. Régénérez l'aperçu avant de confirmer.",
         { expected_source_hash: params.body.expected_source_hash, actual_source_hash: generated.source_hash }
       );
+    }
+
+    // A recursive batch contains children too; the helper has a DB-level root
+    // guard and this filter documents the one-snapshot-per-root invariant.
+    for (const root of generated.ofs.filter((of) => of.parent_of_id === null)) {
+      await queueRootOfCreationPdf(client, { ofId: root.id, actorUserId: params.audit.user_id });
     }
 
     await insertAuditLog(client, params.audit, {

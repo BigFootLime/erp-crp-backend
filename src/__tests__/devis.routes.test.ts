@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   clientQuery: vi.fn(),
   clientRelease: vi.fn(),
 }));
+const officialArchive = vi.hoisted(() => ({ queue: vi.fn() }));
 
 vi.mock("pg", () => {
   const emitter = new EventEmitter();
@@ -34,6 +35,14 @@ vi.mock("pg", () => {
 
 vi.mock("../utils/checkNetworkDrive", () => ({
   checkNetworkDrive: vi.fn(() => Promise.resolve()),
+}));
+
+vi.mock("../shared/authoritative-documents/authoritative-document.service", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../shared/authoritative-documents/authoritative-document.service")>();
+  return { ...actual, queueCreationPdfArchive: officialArchive.queue };
+});
+vi.mock("../shared/documents/issuer-identity.repository", () => ({
+  readIssuerParty: vi.fn().mockResolvedValue({ company_name: "CERP Test" }),
 }));
 
 // #167 — la conversion directe DÉLÈGUE au moteur commande (repoCreateCommande) ; on le
@@ -151,6 +160,18 @@ function dispatch(sqlRaw: unknown, params?: unknown[]): { rows: unknown[]; rowCo
   if (/fn_next(_issued)?_code_value/.test(sql)) return { rows: [{ v: "1" }] };
 
   if (/MAX\(version_number\)/i.test(sql)) return { rows: [{ next_version: state.nextVersion }] };
+  if (/SELECT updated_at::text AS source_revision FROM public\.devis/.test(sql)) {
+    return { rows: [{ source_revision: "2026-07-22 08:00:00+00" }] };
+  }
+
+  if (/d\.date_creation::text AS issued_at/.test(sql) && /FROM public\.devis d/.test(sql)) {
+    return { rows: [{
+      numero: "DEV-2026-0001", statut: "BROUILLON", issued_at: "2026-07-22T08:00:00.000Z",
+      valid_until: null, version_number: 1, total_ht: "100", total_ttc: "120",
+      global_discount_pct: "0", public_comment: null, biller_id: null, customer_name: "ACME",
+    }] };
+  }
+  if (/FROM public\.devis_ligne WHERE devis_id = \$1/.test(sql)) return { rows: [] };
 
   // Ligne courante verrouillée : suppression (AS converted) / mise à jour (FOR UPDATE OF d).
   if (/AS converted/.test(sql)) return { rows: state.deleteCurrent ? [state.deleteCurrent] : [] };
@@ -207,6 +228,8 @@ beforeEach(() => {
   mocks.poolConnect.mockReset();
   mocks.clientQuery.mockReset();
   mocks.clientRelease.mockReset();
+  officialArchive.queue.mockReset();
+  officialArchive.queue.mockResolvedValue(undefined);
 
   mocks.poolConnect.mockResolvedValue({
     query: withRealtimeOutboxDbMock(mocks.clientQuery),
@@ -734,6 +757,12 @@ describe("/api/v1/devis", () => {
 
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({ id: 7, idempotent_replay: false });
+    expect(officialArchive.queue).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      entityType: "devis",
+      entityId: "7",
+      documentKind: "CUSTOMER_QUOTE",
+      renderVersion: "devis-pdf-v1",
+    }));
     expect(mocks.poolConnect).toHaveBeenCalledTimes(1);
 
     const insertDocClientCall = mocks.clientQuery.mock.calls.find((c) =>

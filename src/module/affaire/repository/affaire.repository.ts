@@ -3,6 +3,9 @@ import type { PoolClient } from "pg";
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
 import { generateAffaireCode } from "../../../shared/codes/code-generator.service";
+import { authoritativePdfFilename } from "../../../shared/authoritative-documents/authoritative-document.filename";
+import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
+import { buildInternalCreationSnapshot } from "../../../shared/authoritative-documents/internal-creation-snapshot";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import {
   classifyTransition,
@@ -1222,10 +1225,10 @@ export async function repoCreateAffaire(input: CreateAffaireBodyDTO, audit?: Aud
         NULL,
         $8
       )
-      RETURNING id::text AS id, updated_at::text AS updated_at
+      RETURNING id::text AS id, updated_at::text AS updated_at, date_ouverture::text AS date_ouverture
     `;
 
-    const ins = await client.query<{ id: string; updated_at: string }>(insertSql, [
+    const ins = await client.query<{ id: string; updated_at: string; date_ouverture: string }>(insertSql, [
       id,
       reference,
       input.client_id ?? null,
@@ -1254,6 +1257,56 @@ export async function repoCreateAffaire(input: CreateAffaireBodyDTO, audit?: Aud
         },
       });
     }
+
+    if (!updatedAt) throw new Error("AFFAIR_CREATION_SOURCE_REVISION_MISSING");
+    const commercial = await client.query<{
+      client_name: string | null;
+      commande_numero: string | null;
+      commande_total_ht: number | null;
+      commande_total_ttc: number | null;
+    }>(
+      `SELECT c.company_name AS client_name, cc.numero AS commande_numero,
+              cc.total_ht::float8 AS commande_total_ht, cc.total_ttc::float8 AS commande_total_ttc
+         FROM public.affaire a
+         LEFT JOIN public.clients c ON c.client_id = a.client_id
+         LEFT JOIN public.commande_client cc ON cc.id = a.commande_id
+        WHERE a.id = $1`,
+      [affaireId]
+    );
+    const commercialRow = commercial.rows[0];
+    await queueCreationPdfArchive(client, {
+      entityType: "affaire",
+      entityId: String(affaireId),
+      documentKind: "AFFAIR_CREATION_SNAPSHOT",
+      documentVersion: 1,
+      renderVersion: "internal-creation-snapshot-v1",
+      idempotencyKey: `affaire:${affaireId}:creation:v1`,
+      title: `Instantané de création — affaire ${reference}`,
+      originalName: authoritativePdfFilename(["affaire", reference, "creation"]),
+      sourceRevision: updatedAt,
+      sourceSnapshot: buildInternalCreationSnapshot({
+        entityLabel: "Affaire",
+        reference,
+        summary: [
+          { label: "Référence", value: reference },
+          { label: "Client", value: commercialRow?.client_name ?? input.client_id ?? null },
+          { label: "Commande client", value: commercialRow?.commande_numero ?? input.commande_id ?? null },
+          { label: "Statut initial", value: "OUVERTE" },
+        ],
+        sections: [{
+          title: "Cadre commercial initial",
+          rows: [
+            { label: "Type", value: typeAffaire },
+            { label: "Date d'ouverture", value: ins.rows[0]?.date_ouverture ?? input.date_ouverture ?? null },
+            { label: "Date de clôture", value: null },
+            { label: "Devis lié", value: input.devis_id ?? null },
+            { label: "Montant HT commande", value: commercialRow?.commande_total_ht ?? null },
+            { label: "Montant TTC commande", value: commercialRow?.commande_total_ttc ?? null },
+          ],
+        }],
+      }),
+      actorUserId: audit?.user_id ?? null,
+    });
 
     await client.query("COMMIT");
     return { id: affaireId, reference, updated_at: updatedAt };

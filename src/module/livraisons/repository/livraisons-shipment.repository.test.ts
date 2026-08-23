@@ -8,6 +8,13 @@ vi.mock("../../../shared/realtime/realtime.service", async (importOriginal) => (
   ...await importOriginal<typeof import("../../../shared/realtime/realtime.service")>(),
   enqueueEntityChanged: vi.fn().mockResolvedValue("event-livraison"),
 }));
+vi.mock("../../../shared/authoritative-documents/authoritative-document.service", () => ({
+  queueCreationPdfArchive: vi.fn().mockResolvedValue({ id: "archive-624" }),
+}));
+vi.mock("../services/delivery-authoritative-document", () => ({
+  buildDeliveryCreationSnapshotInput: vi.fn().mockResolvedValue({}),
+  buildShippedDeliveryArtifactInput: vi.fn().mockResolvedValue({}),
+}));
 
 import {
   prepareLivraisonInTransaction,

@@ -2,6 +2,9 @@ import type { RequestHandler } from "express";
 import fs from "node:fs/promises";
 import { getDocumentStoragePath } from "../../../utils/cerpStorage";
 import { sendSecureStoredFile } from "../../../shared/uploads/secure-download";
+import pool from "../../../config/database";
+import { HttpError } from "../../../utils/httpError";
+import { readLatestFinanceLegalArchive } from "../services/finance-legal-archive.service";
 import {
   avoirIdParamsSchema,
   createAvoirBodySchema,
@@ -109,6 +112,16 @@ export const getAvoirPdf: RequestHandler = async (req, res, next) => {
   try {
     const { id } = avoirIdParamsSchema.parse(req.params);
     const download = coerceBool((req.query as { download?: unknown } | undefined)?.download);
+
+    const issued = await pool.query<{ statut: string }>(`SELECT statut FROM public.avoir WHERE id = $1`, [id]);
+    if (issued.rows[0]?.statut === "ISSUED") {
+      const actorId = req.user?.id;
+      if (typeof actorId !== "number") throw new HttpError(401, "UNAUTHORIZED", "Authentification requise.");
+      const official = await readLatestFinanceLegalArchive("AVOIR", id, actorId, download ? "AUTHORITATIVE_PDF_DOWNLOADED" : "AUTHORITATIVE_PDF_PREVIEWED");
+      res.setHeader("Content-Type", "application/pdf"); res.setHeader("Content-Length", String(official.bytes.byteLength));
+      res.setHeader("Content-Disposition", `${download ? "attachment" : "inline"}; filename=\"${official.filename.replace(/[\\\"\r\n]/g, "_")}\"`);
+      res.send(official.bytes); return;
+    }
 
     let documentId = await svcGetLatestAvoirPdfDocumentId(id);
     if (!documentId) {

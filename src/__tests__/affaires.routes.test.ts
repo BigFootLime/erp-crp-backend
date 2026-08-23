@@ -33,6 +33,11 @@ vi.mock("../utils/checkNetworkDrive", () => ({
   checkNetworkDrive: vi.fn(() => Promise.resolve()),
 }));
 
+vi.mock("../shared/authoritative-documents/authoritative-document.service", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../shared/authoritative-documents/authoritative-document.service")>()),
+  queueCreationPdfArchive: vi.fn(),
+}));
+
 // Auth mock : rôle injecté via l'en-tête `x-test-role` (défaut administrateur) pour tester le RBAC.
 vi.mock("../module/auth/middlewares/auth.middleware", () => ({
   authenticateToken: (
@@ -60,6 +65,7 @@ vi.mock("../module/access-control/middlewares/module-access-gate", () => ({
 }));
 
 import app from "../config/app";
+import { queueCreationPdfArchive } from "../shared/authoritative-documents/authoritative-document.service";
 import { withRealtimeOutboxDbMock } from "./helpers/realtime-outbox-db-mock";
 
 beforeEach(() => {
@@ -67,6 +73,7 @@ beforeEach(() => {
   mocks.poolConnect.mockReset();
   mocks.clientQuery.mockReset();
   mocks.clientRelease.mockReset();
+  vi.mocked(queueCreationPdfArchive).mockReset();
 
   mocks.poolConnect.mockResolvedValue({
     query: withRealtimeOutboxDbMock(mocks.clientQuery),
@@ -370,6 +377,18 @@ describe("/api/v1/affaires", () => {
     expect(params[0]).toBe(7);
     expect(String(params[1])).toMatch(/^AFF-\d{4}-0001$/);
     expect(params[1]).not.toBe("HACK-1"); // le code client est ignoré
+    expect(queueCreationPdfArchive).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        entityType: "affaire",
+        entityId: "7",
+        documentKind: "AFFAIR_CREATION_SNAPSHOT",
+        documentVersion: 1,
+        idempotencyKey: "affaire:7:creation:v1",
+        sourceRevision: "2026-02-02T10:00:00.000Z",
+      })
+    );
+    expect(vi.mocked(queueCreationPdfArchive).mock.calls[0]?.[1]?.sourceSnapshot).toMatchObject({ type: "INTERNAL_CREATION_SNAPSHOT" });
   });
 
   it("POST /api/v1/affaires rejects a livraison without client_id (400 VALIDATION_ERROR)", async () => {

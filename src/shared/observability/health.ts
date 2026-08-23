@@ -7,11 +7,12 @@ import {
   type UploadScannerStartupConfiguration,
 } from "../uploads/upload-scanner";
 import { getRealtimeReadiness } from "../../sockets/sockeServer";
+import { checkOperationalMediaStorage } from "../../module/operational-media/services/operational-media-health.service";
 import { setDependencyState, setGedCapacity, setGedQuarantineMetrics } from "./metrics";
 import { runtimeMetadata } from "./runtime";
 
 export type HealthStatus = "up" | "down" | "degraded";
-export type HealthDependency = "database" | "ged_storage" | "antivirus" | "realtime";
+export type HealthDependency = "database" | "ged_storage" | "operational_media_storage" | "antivirus" | "realtime";
 
 export type HealthCheck = Readonly<{
   status: HealthStatus;
@@ -37,14 +38,16 @@ export type ReadinessReport = Readonly<{
 type HealthProbeDependencies = Readonly<{
   queryDatabase: () => Promise<void>;
   checkGed: typeof checkVaultHealth;
+  checkOperationalMedia: typeof checkOperationalMediaStorage;
   scanner: () => Promise<UploadScannerStartupConfiguration>;
   realtime: typeof getRealtimeReadiness;
 }>;
 
-const ALL_DEPENDENCIES: HealthDependency[] = ["database", "ged_storage", "antivirus", "realtime"];
+const ALL_DEPENDENCIES: HealthDependency[] = ["database", "ged_storage", "operational_media_storage", "antivirus", "realtime"];
 const AFFECTED_SCOPES: Record<HealthDependency, string> = {
   database: "all_transactional_flows",
   ged_storage: "document_upload_and_download",
+  operational_media_storage: "operational_image_preview_and_upload",
   antivirus: "file_uploads",
   realtime: "collaborative_live_updates",
 };
@@ -60,7 +63,14 @@ function requiredDependencies(environment = process.env): Set<HealthDependency> 
     ?.split(",")
     .map((value) => value.trim())
     .filter((value): value is HealthDependency => ALL_DEPENDENCIES.includes(value as HealthDependency));
-  if (configured && configured.length > 0) return new Set(configured);
+  if (configured && configured.length > 0) {
+    const required = new Set(configured);
+    // Operational media is private application storage, not an optional UI
+    // enhancement. A stale deployment value must not turn a production media
+    // outage into a green readiness report.
+    if (environment.NODE_ENV === "production") required.add("operational_media_storage");
+    return required;
+  }
   return new Set(environment.NODE_ENV === "production" ? ALL_DEPENDENCIES : ["database"]);
 }
 
@@ -101,7 +111,15 @@ function buildCheck(
     checked_at: new Date().toISOString(),
     reason_code: reasonCode,
     affected_scope: AFFECTED_SCOPES[name],
-    source: name === "database" ? "postgres_probe" : name === "ged_storage" ? "filesystem_probe" : name === "antivirus" ? "clamav_live_probe" : "realtime_control_plane",
+    source: name === "database"
+      ? "postgres_probe"
+      : name === "ged_storage"
+        ? "filesystem_probe"
+        : name === "operational_media_storage"
+          ? "operational_media_filesystem_probe"
+          : name === "antivirus"
+            ? "clamav_live_probe"
+            : "realtime_control_plane",
     freshness_seconds: 0,
     reliability,
   };
@@ -118,14 +136,16 @@ export async function collectReadiness(
       await pool.query("SELECT 1");
     },
     checkGed: checkVaultHealth,
+    checkOperationalMedia: checkOperationalMediaStorage,
     scanner: () => probeUploadScannerHealth(scannerStartupState ?? getUploadScannerStartupConfiguration()),
     realtime: getRealtimeReadiness,
     ...overrides,
   };
 
-  const [databaseProbe, gedProbe, scannerProbe, quarantineProbe] = await Promise.all([
+  const [databaseProbe, gedProbe, mediaProbe, scannerProbe, quarantineProbe] = await Promise.all([
     timedProbe(dependencies.queryDatabase),
     timedProbe(dependencies.checkGed),
+    timedProbe(dependencies.checkOperationalMedia),
     timedProbe(dependencies.scanner, 2_500),
     timedProbe(async () => {
       const result = await pool.query(
@@ -183,6 +203,15 @@ export async function collectReadiness(
       required.has("ged_storage"),
       gedProbe.latencyMs,
       gedHealthy ? null : (gedProbe.error ? "GED_PROBE_FAILED" : "GED_NOT_READY")
+    ),
+    operational_media_storage: buildCheck(
+      "operational_media_storage",
+      mediaProbe.value?.ready ? "up" : (required.has("operational_media_storage") ? "down" : "degraded"),
+      required.has("operational_media_storage"),
+      mediaProbe.latencyMs,
+      mediaProbe.value?.ready
+        ? null
+        : mediaProbe.value?.reason ?? (mediaProbe.error ? "OPERATIONAL_MEDIA_PROBE_FAILED" : "OPERATIONAL_MEDIA_NOT_READY")
     ),
     antivirus: buildCheck(
       "antivirus",

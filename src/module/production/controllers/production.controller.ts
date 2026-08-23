@@ -2,6 +2,7 @@ import type { Request } from "express";
 import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import { asyncHandler } from "../../../utils/asyncHandler";
 import { HttpError } from "../../../utils/httpError";
+import { createCreationSnapshotHandlers } from "../../../shared/authoritative-documents/creation-snapshot-http";
 import type { AuditContext } from "../repository/production.repository";
 import {
   createMachineOnboardingSchema,
@@ -19,6 +20,7 @@ import {
   posteIdParamSchema,
   previewOfGenerationSchema,
   reorderOfOperationsSchema,
+  releaseOfSchema,
   startOfTimeLogSchema,
   stopOfTimeLogSchema,
   updateMachineSchema,
@@ -48,6 +50,8 @@ import {
   svcCreateOfReceipt,
   svcPreviewOfGeneration,
   svcReorderOfOperations,
+  svcGetOfReadiness,
+  svcReleaseOrdreFabrication,
   svcStartOfOperationTimeLog,
   svcStopOfOperationTimeLog,
   svcUpdateOrdreFabrication,
@@ -127,6 +131,26 @@ export function buildAuditContext(req: Request): AuditContext {
     client_session_id: clientSessionId,
   };
 }
+
+const ofCreationSnapshotHandlers = createCreationSnapshotHandlers({
+  entityType: "ordre-fabrication",
+  documentKind: "OF_CREATION_SNAPSHOT",
+  parseEntityId: (req) => String(ofIdParamSchema.parse({ params: req.params }).params.id),
+  // Match GET /production/ofs/:id, including its existing user-aware root lookup.
+  canReadEntity: async (id, req) =>
+    Boolean(
+      await svcGetOrdreFabrication({
+        id: Number(id),
+        user_id: typeof req.user?.id === "number" ? req.user.id : undefined,
+      })
+    ),
+  baseUrl: (id) => `/production/ofs/${encodeURIComponent(id)}/creation-snapshot`,
+});
+
+export const getOfCreationSnapshot = ofCreationSnapshotHandlers.metadata;
+export const previewOfCreationSnapshot = ofCreationSnapshotHandlers.preview;
+export const downloadOfCreationSnapshot = ofCreationSnapshotHandlers.download;
+export const printOfCreationSnapshot = ofCreationSnapshotHandlers.printIntent;
 
 function hasMachineCostMutation(value: object): boolean {
   return ["hourly_rate", "hourly_rate_source", "hourly_rate_effective_at"].some((key) =>
@@ -354,6 +378,21 @@ export const updateOrdreFabrication = asyncHandler(async (req, res) => {
     res.status(404).json({ error: "Not found" });
     return;
   }
+  res.status(200).json(out);
+});
+
+export const getOfReadiness = asyncHandler(async (req, res) => {
+  const { id } = ofIdParamSchema.parse({ params: req.params }).params;
+  const out = await svcGetOfReadiness({ id });
+  if (!out) { res.status(404).json({ error: "Not found" }); return; }
+  res.status(200).json(out);
+});
+
+export const releaseOrdreFabrication = asyncHandler(async (req, res) => {
+  const audit = buildAuditContext(req);
+  const { id } = ofIdParamSchema.parse({ params: req.params }).params;
+  const body = releaseOfSchema.parse({ body: parseBody(req) }).body;
+  const out = await svcReleaseOrdreFabrication({ id, body, audit });
   res.status(200).json(out);
 });
 

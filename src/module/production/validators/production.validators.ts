@@ -384,6 +384,30 @@ export const updateOfSchema = z.object({
 
 export type UpdateOfBodyDTO = z.infer<typeof updateOfSchema>["body"];
 
+export const ofReleaseOverrideBlockerSchema = z.enum([
+  "MATERIAL_RESERVATION_MISSING",
+  "CAPACITY_OR_CALENDAR_MISSING",
+  "PROGRAM_OR_INSTRUCTION_MISSING",
+  "QUALITY_PLAN_MISSING",
+  "INSTRUMENT_READINESS_MISSING",
+  "SUBCONTRACT_READINESS_MISSING",
+  "TECHNICAL_REFERENCE_MISSING",
+]);
+
+export const releaseOfSchema = z.object({
+  body: z.object({
+    expected_updated_at: z.string().datetime({ offset: true }).optional(),
+    override: z.boolean().optional().default(false),
+    override_reason: z.string().trim().min(10).max(2000).optional(),
+    override_blocker_codes: z.array(ofReleaseOverrideBlockerSchema).min(1).max(7).optional(),
+  }).strict().superRefine((body, ctx) => {
+    if (body.override && !body.override_reason) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["override_reason"], message: "An override requires a documented reason." });
+    if (body.override && !body.override_blocker_codes?.length) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["override_blocker_codes"], message: "An override must name each accepted blocker." });
+    if (!body.override && (body.override_reason || body.override_blocker_codes?.length)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["override"], message: "Override details are forbidden unless override is true." });
+  }),
+});
+export type ReleaseOfBodyDTO = z.infer<typeof releaseOfSchema>["body"];
+
 // #170 — réordonnancement des opérations avant lancement (DnD ou clavier).
 export const reorderOfOperationsSchema = z.object({
   body: z

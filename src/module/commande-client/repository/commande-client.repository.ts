@@ -10,11 +10,17 @@ import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { generateAffaireCode, generateCommandeCode, generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
 import { transferSecureUploadToDestination } from "../../../shared/uploads/secure-upload";
 import { withUploadTransaction } from "../../../shared/uploads/upload-transaction";
+import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
+import { buildInternalCreationSnapshot } from "../../../shared/authoritative-documents/internal-creation-snapshot";
+import { buildStockArticleCreationSnapshotInput } from "../../../shared/authoritative-documents/stock-article-creation-snapshot";
+import { buildTechnicalPieceCreationSnapshotInput } from "../../../shared/authoritative-documents/technical-piece-creation-snapshot";
+import { authoritativePdfFilename } from "../../../shared/authoritative-documents/authoritative-document.filename";
 import {
   enqueueAppNotificationCreated,
   enqueueEntityChanged,
 } from "../../../shared/realtime/realtime-outbox.service";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
+import { assertOperationalLotQualityEligibility } from "../../qualite/repository/quality-operational-gate.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 import { repoCreateAppNotifications, repoListUsersForCommandePlanningNotification } from "../../notifications/repository/notifications.repository";
 import { repoCreateLivraisonFromCommande } from "../../livraisons/repository/livraisons.repository";
@@ -52,6 +58,7 @@ import {
   createRecursiveOrdresFabrication,
   type GeneratedOfRef,
 } from "../../production/domain/of-generation";
+import { queueRootOfCreationPdf } from "../../production/domain/of-creation-pdf";
 import { canActOnCommandeWorkflowCheckpoint, canLaunchInternalOrder } from "../domain/commande-client-rbac";
 import {
   assertCommandeFullyInvoiced,
@@ -510,6 +517,14 @@ async function ensureOfficialPieceFromPreparatory(
   const dossier = source.dossier_technique_piece_devis;
   if (!dossier) return null;
 
+  // A promotion row that does not yet exist cannot be protected by FOR UPDATE.
+  // Serialize a same-dossier replay before allocating a root id, so retries and
+  // concurrent requests cannot create two roots (and two GED snapshots).
+  await db.query(
+    "SELECT pg_advisory_xact_lock(hashtext('preparatory-piece-promotion'), hashtext($1))",
+    [dossier.id]
+  );
+
   const existingPromotion = await db.query<{ promoted_piece_technique_id: string }>(
     `
       SELECT promoted_piece_technique_id::text AS promoted_piece_technique_id
@@ -542,8 +557,8 @@ async function ensureOfficialPieceFromPreparatory(
     const maybeDesignation2 = typeof payload.designation_2 === "string" ? payload.designation_2 : null;
     const maybePrixUnitaire = typeof payload.prix_unitaire === "number" ? payload.prix_unitaire : 0;
 
-    officialPieceId = crypto.randomUUID();
-    await db.query(
+    const requestedPieceId = crypto.randomUUID();
+    const inserted = await db.query<{ id: string; updated_at: string }>(
       `
         INSERT INTO public.pieces_techniques (
           id,
@@ -590,9 +605,10 @@ async function ensureOfficialPieceFromPreparatory(
           $9,
           false
         )
+        RETURNING id::text AS id, updated_at::text AS updated_at
       `,
       [
-        officialPieceId,
+        requestedPieceId,
         maybeClientId,
         maybeNamePiece,
         dossier.code_piece,
@@ -603,6 +619,31 @@ async function ensureOfficialPieceFromPreparatory(
         maybeClientName,
       ]
     );
+    const created = inserted.rows[0];
+    if (!created?.id || !created.updated_at) {
+      throw new Error("PREPARATORY_TECHNICAL_PIECE_CREATE_FAILED");
+    }
+    officialPieceId = created.id;
+
+    // A preparatory dossier is persisted server-side, but it is not the
+    // controlled technical dossier. Freeze only its selected root metadata;
+    // raw dossier payload, paths and uploaded bytes are intentionally absent.
+    await queueCreationPdfArchive(db, buildTechnicalPieceCreationSnapshotInput({
+      id: officialPieceId,
+      code: dossier.code_piece,
+      designation: dossier.designation,
+      clientId: maybeClientId,
+      clientName: maybeClientName,
+      status: "ACTIVE",
+      sourceRevision: created.updated_at,
+      actorUserId: null,
+      articleId: null,
+      familyId: null,
+      pieceVersion: 1,
+      planReference: typeof payload.plan_reference === "string" ? payload.plan_reference : null,
+      externalIndex: typeof payload.indice_externe === "string" ? payload.indice_externe : null,
+      internalVersion: 1,
+    }));
   }
 
   await db.query(
@@ -633,6 +674,12 @@ async function ensureOfficialArticleFromPreparatory(
   commandeId: number,
   officialPieceId: string | null
 ): Promise<CommandeLineArticleResolution> {
+  // Same reasoning as the technical-root promotion lock above: this source
+  // article has a unique promotion target, including its creation PDF.
+  await db.query(
+    "SELECT pg_advisory_xact_lock(hashtext('preparatory-article-promotion'), hashtext($1))",
+    [source.source_article_devis_id]
+  );
   const existingPromotion = await db.query<{ promoted_article_id: string }>(
     `
       SELECT promoted_article_id::text AS promoted_article_id
@@ -657,13 +704,14 @@ async function ensureOfficialArticleFromPreparatory(
     officialArticleId = null;
   }
 
+  let createdArticle: { id: string; updated_at: string } | null = null;
   if (!officialArticleId) {
-    officialArticleId = crypto.randomUUID();
+    const requestedArticleId = crypto.randomUUID();
     const categories = Array.from(new Set([source.article_devis.primary_category, ...(source.article_devis.article_categories ?? [])]))
       .filter((c) => c && c.trim().length > 0)
       .map((c) => c.trim());
 
-    await db.query(
+    const inserted = await db.query<{ id: string; updated_at: string }>(
       `
         INSERT INTO public.articles (
           id,
@@ -689,9 +737,10 @@ async function ensureOfficialArticleFromPreparatory(
         ) VALUES (
           $1::uuid,$2,$3,'PIECE_TECHNIQUE','fabrique',$4,true,$5::uuid,'u',$1::uuid,NULL,1,$6::int,'VALIDE',$7::bigint,false,true,NULL,NULL,NULL
         )
+        RETURNING id::text AS id, updated_at::text AS updated_at
       `,
       [
-        officialArticleId,
+        requestedArticleId,
         source.article_devis.code,
         source.article_devis.designation,
         source.article_devis.family_code,
@@ -700,6 +749,11 @@ async function ensureOfficialArticleFromPreparatory(
         source.article_devis.projet_id ?? null,
       ]
     );
+    createdArticle = inserted.rows[0] ?? null;
+    if (!createdArticle?.id || !createdArticle.updated_at) {
+      throw new Error("PREPARATORY_STOCK_ARTICLE_CREATE_FAILED");
+    }
+    officialArticleId = createdArticle.id;
 
     if (categories.length > 0) {
       await db.query(`DELETE FROM public.article_category_link WHERE article_id = $1::uuid`, [officialArticleId]);
@@ -735,7 +789,32 @@ async function ensureOfficialArticleFromPreparatory(
     [source.source_article_devis_id, officialArticleId, commandeId]
   );
 
-  await db.query(`UPDATE public.articles SET status = 'VALIDE', updated_at = now() WHERE id = $1::uuid`, [officialArticleId]);
+  const statusUpdate = await db.query<{ updated_at: string }>(
+    `UPDATE public.articles
+        SET status = 'VALIDE', updated_at = now()
+      WHERE id = $1::uuid
+      RETURNING updated_at::text AS updated_at`,
+    [officialArticleId]
+  );
+  if (!statusUpdate.rows[0]?.updated_at) throw new Error("PREPARATORY_STOCK_ARTICLE_REVISION_MISSING");
+
+  if (createdArticle) {
+    await queueCreationPdfArchive(db, buildStockArticleCreationSnapshotInput({
+      id: officialArticleId,
+      code: source.article_devis.code,
+      designation: source.article_devis.designation,
+      articleType: "PIECE_TECHNIQUE",
+      articleCategory: "fabrique",
+      familyCode: source.article_devis.family_code,
+      unit: "u",
+      status: "VALIDE",
+      stockManaged: true,
+      lotTracking: false,
+      isActive: true,
+      sourceRevision: statusUpdate.rows[0].updated_at,
+      actorUserId: null,
+    }));
+  }
 
   const meta = await getOfficialArticleMetaById(db, officialArticleId);
   if (!meta) {
@@ -3298,6 +3377,15 @@ export async function repoCreateCommande(input: CreateCommandeInput, documents: 
       });
     }
 
+    // This is deliberately last in the business transaction: the snapshot contains
+    // the persisted header and dependants, and a queue failure aborts the order
+    // together with any uploaded files.  It is an internal creation record, not an
+    // acknowledgement de réception (which has its own document kind and workflow).
+    await queueCommandeCreationPdf(client, {
+      commandeId,
+      actorUserId: null,
+    });
+
     return { id: toInt(commandeId, "commande.id") };
       },
       reconcile: async () => commandeIdForReconciliation
@@ -3315,6 +3403,141 @@ export async function repoCreateCommande(input: CreateCommandeInput, documents: 
     throw e;
   }
   return result;
+}
+
+type CommandeCreationPdfHeader = {
+  id: string;
+  numero: string;
+  client_id: string | null;
+  client_name: string | null;
+  billing_address_id: string | null;
+  billing_address_name: string | null;
+  billing_street: string | null;
+  billing_house_number: string | null;
+  billing_postal_code: string | null;
+  billing_city: string | null;
+  billing_country: string | null;
+  date_commande: string | null;
+  order_type: string;
+  total_ht: number;
+  total_ttc: number;
+  remise_globale: number;
+  commentaire: string | null;
+  updated_at: string;
+};
+
+/** Builds a server-read, path-free creation snapshot after all order children exist. */
+async function queueCommandeCreationPdf(
+  tx: Pick<PoolClient, "query">,
+  params: { commandeId: string; actorUserId: number | null }
+): Promise<void> {
+  const headerRes = await tx.query<CommandeCreationPdfHeader>(
+    `
+      SELECT cc.id::text AS id,
+             cc.numero,
+             cc.client_id,
+             c.company_name AS client_name,
+             cc.adresse_facturation_id::text AS billing_address_id,
+             af.name AS billing_address_name,
+             af.street AS billing_street,
+             af.house_number AS billing_house_number,
+             af.postal_code AS billing_postal_code,
+             af.city AS billing_city,
+             af.country AS billing_country,
+             cc.date_commande::text AS date_commande,
+             cc.order_type,
+             cc.total_ht::float8 AS total_ht,
+             cc.total_ttc::float8 AS total_ttc,
+             cc.remise_globale::float8 AS remise_globale,
+             cc.commentaire,
+             to_char(cc.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at
+      FROM public.commande_client cc
+      LEFT JOIN public.clients c ON c.client_id = cc.client_id
+      LEFT JOIN public.adresse_facturation af ON af.bill_address_id = cc.adresse_facturation_id
+      WHERE cc.id = $1::bigint
+      FOR UPDATE OF cc
+    `,
+    [params.commandeId]
+  );
+  const header = headerRes.rows[0];
+  if (!header?.id || !header.updated_at) throw new Error("COMMANDE_CREATION_PDF_SOURCE_NOT_FOUND");
+
+  const [linesRes, dueDatesRes, documentsRes] = await Promise.all([
+    tx.query<Record<string, unknown>>(
+      `SELECT id::text AS id, ordre::int AS ordre, designation, code_piece,
+              quantite::float8 AS quantite, unite, delai_client::text AS delai_client,
+              prix_unitaire_ht::float8 AS prix_unitaire_ht, remise_ligne::float8 AS remise_ligne,
+              taux_tva::float8 AS taux_tva, total_ht::float8 AS total_ht, total_ttc::float8 AS total_ttc
+       FROM public.commande_ligne WHERE commande_id = $1::bigint ORDER BY ordre ASC, id ASC`,
+      [header.id]
+    ),
+    tx.query<Record<string, unknown>>(
+      `SELECT id::text AS id, libelle, date_echeance::text AS date_echeance,
+              pourcentage::float8 AS pourcentage, montant::float8 AS montant
+       FROM public.commande_echeance WHERE commande_id = $1::bigint ORDER BY date_echeance ASC NULLS LAST, id ASC`,
+      [header.id]
+    ),
+    // Deliberately do not read documents_clients.file_path/content: creation PDFs
+    // may expose only filing metadata, never a filesystem location or raw upload.
+    tx.query<Record<string, unknown>>(
+      `SELECT cd.id::text AS link_id, cd.type, dc.id::text AS document_id,
+              dc.document_name, dc.type AS document_type
+       FROM public.commande_documents cd
+       JOIN public.documents_clients dc ON dc.id = cd.document_id
+       WHERE cd.commande_id = $1::bigint ORDER BY cd.id ASC`,
+      [header.id]
+    ),
+  ]);
+
+  const toText = (value: unknown): string | null => value === null || value === undefined ? null : String(value);
+  const snapshot = buildInternalCreationSnapshot({
+    entityLabel: "Commande client — instantané de création",
+    reference: header.numero,
+    summary: [
+      { label: "Commande", value: header.numero }, { label: "Statut initial", value: "ATTENTE_TECHNIQUE" },
+      { label: "Type", value: header.order_type }, { label: "Date", value: header.date_commande },
+      { label: "Client", value: header.client_name ?? header.client_id }, { label: "Total HT", value: header.total_ht },
+      { label: "Total TTC", value: header.total_ttc }, { label: "Remise globale", value: header.remise_globale },
+    ],
+    sections: [
+      {
+        title: "Client et adresse de facturation",
+        rows: [
+          { label: "Référence client", value: header.client_id }, { label: "Nom", value: header.client_name },
+          { label: "Référence adresse", value: header.billing_address_id },
+          { label: "Adresse", value: [header.billing_house_number, header.billing_street].filter(Boolean).join(" ") || null },
+          { label: "Ville", value: [header.billing_postal_code, header.billing_city, header.billing_country].filter(Boolean).join(" ") || null },
+        ],
+      },
+      {
+        title: "Lignes de commande",
+        table: { columns: [{ key: "position", label: "Pos." }, { key: "designation", label: "Désignation" }, { key: "quantity", label: "Qté" }, { key: "total", label: "Total HT" }], rows: linesRes.rows.map((line) => ({ position: toText(line.ordre), designation: toText(line.designation), quantity: toText(line.quantite), total: toText(line.total_ht) })) },
+      },
+      {
+        title: "Échéances",
+        table: { columns: [{ key: "label", label: "Libellé" }, { key: "date", label: "Date" }, { key: "percent", label: "%" }, { key: "amount", label: "Montant" }], rows: dueDatesRes.rows.map((item) => ({ label: toText(item.libelle), date: toText(item.date_echeance), percent: toText(item.pourcentage), amount: toText(item.montant) })) },
+      },
+      {
+        title: "Documents joints",
+        table: { columns: [{ key: "name", label: "Nom" }, { key: "type", label: "Type" }], rows: documentsRes.rows.map((item) => ({ name: toText(item.document_name), type: toText(item.document_type ?? item.type) })) },
+      },
+      { title: "Commentaire", notes: header.commentaire },
+    ],
+  });
+
+  await queueCreationPdfArchive(tx, {
+    entityType: "commande-client",
+    entityId: header.id,
+    documentKind: "CUSTOMER_ORDER_CREATION_SNAPSHOT",
+    documentVersion: 1,
+    renderVersion: "customer-order-creation-snapshot-v1",
+    idempotencyKey: `commande-client:${header.id}:creation:v1`,
+    title: `Création commande ${header.numero}`,
+    originalName: `commande-${header.id}-creation-v1.pdf`,
+    sourceRevision: header.updated_at,
+    sourceSnapshot: snapshot,
+    actorUserId: params.actorUserId,
+  });
 }
 
 export async function repoUpdateCommande(id: string, input: CreateCommandeInput, documents: UploadedDocument[]) {
@@ -4048,6 +4271,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
           role: "LIVRAISON",
           commentaire: `Split delivery (${existingLivraisons.length + i + 1}/${requestedLivraisonCount})`,
         });
+        await queueAffaireCreationPdf(client, { affaireId: livraisonId, actorUserId: audit.user_id });
         created.push(livraisonId);
       }
 
@@ -4219,6 +4443,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         role: "LIVRAISON",
         commentaire: "Generated from commande",
       });
+      await queueAffaireCreationPdf(client, { affaireId: createdId, actorUserId: audit.user_id });
       livraisonAffaireIds.push(createdId);
     }
 
@@ -4234,6 +4459,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         role: "LIVRAISON",
         commentaire: `Split delivery (${i + 1}/${requestedLivraisonCount})`,
       });
+      await queueAffaireCreationPdf(client, { affaireId: extraId, actorUserId: audit.user_id });
       livraisonAffaireIds.push(extraId);
     }
 
@@ -4333,6 +4559,11 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
     }
 
     const ofIds = generatedOfs.map((of) => of.id);
+    // The recursive generator returns the complete tree.  Creation PDFs are
+    // filed only for its business roots, inside this launch transaction.
+    for (const root of generatedOfs.filter((of) => of.parent_of_id === null)) {
+      await queueRootOfCreationPdf(client, { ofId: root.id, actorUserId: audit.user_id });
+    }
     let workflowStatus: string | null = null;
     if (orderType === "INTERNE") {
       await advanceInternalOrderWorkflowAfterGeneration({
@@ -4464,6 +4695,77 @@ async function createAffaire(db: PoolClient, input: AffaireCreationInput): Promi
     [id, reference, input.client_id, input.commande_id, input.devis_id ?? null, typeAffaire]
   );
   return id;
+}
+
+/**
+ * Must be invoked by the outer lifecycle transaction after the new affair has
+ * been linked to its commande.  It only accepts the freshly allocated ID, so a
+ * replay path that returns an existing mapping cannot enqueue a second archive.
+ */
+async function queueAffaireCreationPdf(
+  db: Pick<PoolClient, "query">,
+  params: { affaireId: number; actorUserId: number | null }
+): Promise<void> {
+  const source = await db.query<{
+    id: string;
+    reference: string;
+    statut: string;
+    type_affaire: string;
+    date_ouverture: string | null;
+    updated_at: string | null;
+    client_id: string | null;
+    client_name: string | null;
+    commande_id: string | null;
+    commande_numero: string | null;
+    devis_id: string | null;
+  }>(
+    `
+      SELECT a.id::text AS id, a.reference, a.statut, a.type_affaire,
+             a.date_ouverture::text AS date_ouverture,
+             to_char(a.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at,
+             a.client_id, c.company_name AS client_name,
+             a.commande_id::text AS commande_id, cc.numero AS commande_numero,
+             a.devis_id::text AS devis_id
+        FROM public.affaire a
+        LEFT JOIN public.clients c ON c.client_id = a.client_id
+       LEFT JOIN public.commande_client cc ON cc.id = a.commande_id
+       WHERE a.id = $1::bigint
+       FOR UPDATE OF a
+    `,
+    [params.affaireId]
+  );
+  const affaire = source.rows[0];
+  if (!affaire?.id || !affaire.reference || !affaire.updated_at) {
+    throw new Error("AFFAIR_CREATION_PDF_SOURCE_NOT_FOUND");
+  }
+
+  await queueCreationPdfArchive(db, {
+    entityType: "affaire",
+    entityId: affaire.id,
+    documentKind: "AFFAIR_CREATION_SNAPSHOT",
+    documentVersion: 1,
+    renderVersion: "internal-creation-snapshot-v1",
+    idempotencyKey: `affaire:${affaire.id}:creation:v1`,
+    title: `Instantané de création — affaire ${affaire.reference}`,
+    originalName: authoritativePdfFilename(["affaire", affaire.reference, "creation"]),
+    sourceRevision: affaire.updated_at,
+    sourceSnapshot: buildInternalCreationSnapshot({
+      entityLabel: "Affaire",
+      reference: affaire.reference,
+      summary: [
+        { label: "Référence", value: affaire.reference }, { label: "Statut initial", value: affaire.statut },
+        { label: "Client", value: affaire.client_name ?? affaire.client_id }, { label: "Commande client", value: affaire.commande_numero ?? affaire.commande_id },
+      ],
+      sections: [{
+        title: "Cadre commercial initial",
+        rows: [
+          { label: "Type", value: affaire.type_affaire }, { label: "Date d'ouverture", value: affaire.date_ouverture },
+          { label: "Référence client", value: affaire.client_id }, { label: "Devis lié", value: affaire.devis_id },
+        ],
+      }],
+    }),
+    actorUserId: params.actorUserId,
+  });
 }
 
 type MappingInsertInput = {
@@ -5016,6 +5318,17 @@ export async function reserveCommandeStockForLaterDelivery(
   const reservationIds: string[] = [];
 
   for (const allocation of allocations) {
+    // Take the Quality lock before stock state locks.  All reservation writers
+    // share that order (Quality entitlement -> stock counters) to avoid a
+    // cross-workflow deadlock under simultaneous allocation.
+    if (allocation.lot_id) {
+      await assertOperationalLotQualityEligibility({
+        client: db,
+        lotId: allocation.lot_id,
+        qty: allocation.quantity,
+        purpose: "RESERVE",
+      });
+    }
     const stockLevel = await db.query<{
       qty_total: number;
       qty_reserved: number;
@@ -5451,6 +5764,7 @@ export async function repoGenerateAffairesFromCommande(id: string, body: Generat
       role: "LIVRAISON",
       commentaire: "Generated from commande",
     });
+    await queueAffaireCreationPdf(client, { affaireId: livraisonAffaireId, actorUserId: null });
 
     const allocationMode = requiresConfirmation ? body.strategy : needsProduction ? "AUTO_OF" : "AUTO_STOCK";
     await upsertCommandeAllocations(client, {
@@ -5520,6 +5834,7 @@ export async function repoConfirmGenerateAffaires(id: string, body: ConfirmGener
         role: "LIVRAISON",
         commentaire: "Generated from commande",
       });
+      await queueAffaireCreationPdf(client, { affaireId: livraisonAffaireId, actorUserId: null });
     }
 
     const computed = await computeCommandeAllocationPlan(client, commandeId);
@@ -5747,6 +6062,11 @@ export async function repoDuplicateCommande(id: string) {
       `,
       [newIdInt, null, null, initialWorkflowStatus, `Duplicated from commande ${originalCommandeId}`]
     );
+
+    // The duplicated aggregate is fully materialised only after its lines and
+    // workflow checkpoints exist.  A durable outbox failure is allowed to
+    // abort this explicit transaction rather than leave an unfiled clone.
+    await queueCommandeCreationPdf(client, { commandeId: String(newIdInt), actorUserId: null });
 
     await client.query("COMMIT");
     return { id: newIdInt };

@@ -5,6 +5,7 @@ import { repoFindIdempotentPieceCreate } from "../repository/create-drafts.repos
 import { generatePieceTechniqueBusinessCode } from "../../../shared/codes/code-generator.service"
 import { getDocumentStoragePath, resolveCerpStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
+import { createCreationSnapshotHandlers } from "../../../shared/authoritative-documents/creation-snapshot-http"
 import { sendSecureStoredFile } from "../../../shared/uploads/secure-download"
 import {
   achatIdParamSchema,
@@ -113,6 +114,21 @@ function buildAuditContext(req: Request): AuditContext {
     client_session_id: clientSessionId,
   }
 }
+
+const pieceTechniqueCreationSnapshotHandlers = createCreationSnapshotHandlers({
+  entityType: "piece-technique",
+  documentKind: "TECHNICAL_PIECE_CREATION_SNAPSHOT",
+  parseEntityId: (req) => idParamSchema.parse({ params: req.params }).params.id,
+  // This is intentionally only the root card check: versions, BOM, operations
+  // and other child changes never issue another creation snapshot.
+  canReadEntity: async (id) => Boolean(await getPieceTechniqueSVC(id, new Set())),
+  baseUrl: (id) => `/pieces-techniques/${encodeURIComponent(id)}/creation-snapshot`,
+})
+
+export const getPieceTechniqueCreationSnapshot = pieceTechniqueCreationSnapshotHandlers.metadata
+export const previewPieceTechniqueCreationSnapshot = pieceTechniqueCreationSnapshotHandlers.preview
+export const downloadPieceTechniqueCreationSnapshot = pieceTechniqueCreationSnapshotHandlers.download
+export const printPieceTechniqueCreationSnapshot = pieceTechniqueCreationSnapshotHandlers.printIntent
 
 const IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9._:-]{8,128}$/
 

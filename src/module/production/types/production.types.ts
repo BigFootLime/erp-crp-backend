@@ -15,6 +15,7 @@ import type {
 } from "./machine-intelligence.types";
 
 export type Paginated<T> = { items: T[]; total: number };
+export type OperationalImageAsset = { asset_id: string; status: "AVAILABLE" };
 
 export type MachineListItem = {
   id: string;
@@ -33,7 +34,9 @@ export type MachineListItem = {
   hourly_rate_is_override: boolean;
   currency: string;
   is_available: boolean;
-  image_url: string | null;
+  /** Legacy field retained for transition; never contains a URL or asset id. */
+  image_url: null;
+  image_asset: OperationalImageAsset | null;
   dashboard_color: string | null;
   model_3d_path: string | null;
   documentation_url: string | null;
@@ -56,7 +59,7 @@ export type MachineDetail = MachineListItem & {
   created_by: number | null;
   updated_by: number | null;
   archived_by: number | null;
-  image_path: string | null;
+  image_path: null;
   machine_model?: MachineModelSummary | null;
   specs?: MachineSpec | null;
   capabilities?: MachineCapability[];

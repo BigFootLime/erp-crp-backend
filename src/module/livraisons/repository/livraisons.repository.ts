@@ -11,9 +11,15 @@ import { transferSecureUploadToDestination } from "../../../shared/uploads/secur
 import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction"
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
+import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service"
+import { buildDeliveryCreationSnapshotInput } from "../services/delivery-authoritative-document"
 import { normalizeCommandeWorkflowStatus } from "../../commande-client/workflow/commande-client-workflow.definition"
 
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
+import {
+  assertOperationalLotQualityEligibility,
+  recordDirectLotQualityConsumption,
+} from "../../qualite/repository/quality-operational-gate.repository"
 import { isLivraisonTransitionAllowed } from "../domain/livraisons-policy"
 import {
   assertStockConsumptionAllowed,
@@ -42,6 +48,57 @@ import type {
   UploadedDocument,
   UserLite,
 } from "../types/livraisons.types"
+
+type LegacyShipmentReservationAllocation = {
+  allocation_id: string
+  quantite: number
+  reservation_id: string | null
+  reservation_status: string | null
+  reservation_qty: string | number | null
+}
+
+/**
+ * A legacy allocation can point at an ACTIVE stock reservation or be a direct
+ * issue. Never turn a partial reservation into a full consumption: that would
+ * either erase another delivery's commitment or double-spend Quality capacity.
+ */
+export function buildLegacyShipmentReservationPlan(items: readonly LegacyShipmentReservationAllocation[]): {
+  committed_qty: number
+  direct_qty: number
+  reservation_ids: string[]
+} {
+  const reservations = new Map<string, { allocated: number; reserved: number }>()
+  let directQty = 0
+  for (const item of items) {
+    if (item.reservation_id && item.reservation_status === "ACTIVE") {
+      const reserved = Number(item.reservation_qty)
+      if (!Number.isFinite(reserved) || reserved <= 0) {
+        throw new HttpError(409, "RESERVATION_ALLOCATION_MISMATCH", "La réservation du BL est invalide.")
+      }
+      const existing = reservations.get(item.reservation_id)
+      if (existing && Math.abs(existing.reserved - reserved) > 1e-9) {
+        throw new HttpError(409, "RESERVATION_ALLOCATION_MISMATCH", "La réservation du BL est incohérente.")
+      }
+      reservations.set(item.reservation_id, { allocated: (existing?.allocated ?? 0) + item.quantite, reserved })
+    } else {
+      directQty += item.quantite
+    }
+  }
+  for (const reservation of reservations.values()) {
+    if (Math.abs(reservation.allocated - reservation.reserved) > 1e-9) {
+      throw new HttpError(
+        409,
+        "RESERVATION_ALLOCATION_MISMATCH",
+        "La quantité allouée ne correspond pas exactement à la réservation active du BL."
+      )
+    }
+  }
+  return {
+    committed_qty: [...reservations.values()].reduce((sum, reservation) => sum + reservation.allocated, 0),
+    direct_qty: directQty,
+    reservation_ids: [...reservations.keys()].sort(),
+  }
+}
 import type {
   CreateLivraisonAllocationBodyDTO,
   CreateLivraisonBodyDTO,
@@ -1186,6 +1243,9 @@ export async function repoCreateLivraison(input: CreateLivraisonBodyDTO, userId:
       },
     })
 
+    // The snapshot queue is part of the same delivery CREATE transaction.
+    // A queue failure rolls back the delivery rather than leaving an unfiled root.
+    await queueCreationPdfArchive(db, await buildDeliveryCreationSnapshotInput(db, { deliveryId: id, actorUserId: userId }))
     return { id }
   })
 }
@@ -1585,6 +1645,13 @@ export async function repoCreateLivraisonLineAllocation(
       throw new HttpError(409, "LOT_REQUIRED", "Un lot est obligatoire pour cet article.")
     }
 
+    // A DRAFT allocation does not create a reservation or a stock movement:
+    // it can therefore identify a quarantined lot solely to establish the
+    // immutable per-allocation scope required by the LOT_RELEASE control.
+    // BLOQUE and EN_ATTENTE lots remain ineligible even for this narrow
+    // quality-scoping path. Preparation and shipment still re-check the lot
+    // status and Quality entitlement before any stock can be claimed.
+    let quarantinedQualityScopeAllocation = false
     if (input.lot_id) {
       const lot = await db.query<{ article_id: string; lot_status: string | null }>(
         `SELECT article_id::text AS article_id, lot_status FROM public.lots WHERE id = $1::uuid`,
@@ -1600,9 +1667,10 @@ export async function repoCreateLivraisonLineAllocation(
       }
 
       const lotStatus = row?.lot_status ?? "LIBERE"
-      if (lotStatus === "BLOQUE" || lotStatus === "EN_ATTENTE" || lotStatus === "QUARANTAINE") {
+      if (lotStatus === "BLOQUE" || lotStatus === "EN_ATTENTE") {
         throw new HttpError(409, "LOT_NOT_CONSUMABLE", `Ce lot n'est pas consommable (statut: ${lotStatus})`)
       }
+      quarantinedQualityScopeAllocation = lotStatus === "QUARANTAINE"
     }
 
     const source = await getStockEmplacementMapping(
@@ -1661,7 +1729,15 @@ export async function repoCreateLivraisonLineAllocation(
       stockTargetKey({ stock_level_id: stockLevelId, stock_batch_id: stockBatchId })
     )
     if (!state) throw new Error("Locked allocation stock state missing")
-    assertStockConsumptionAllowed(state, { movement_type: "RESERVE", qty: input.quantite })
+    // Keep the ordinary quantity/availability check for every allocation. For
+    // the narrow QUARANTAINE scope path only, project the state as released
+    // *for this non-reserving validation* so the status guard does not make
+    // the required LOT_RELEASE scope impossible to create. Preparation and
+    // shipment use the persisted QUARANTAINE status and remain fail-closed.
+    assertStockConsumptionAllowed(
+      quarantinedQualityScopeAllocation ? { ...state, lot_status: "LIBERE" } : state,
+      { movement_type: "RESERVE", qty: input.quantite }
+    )
 
     const ins = await db.query<{ id: string }>(
       `
@@ -1839,6 +1915,9 @@ async function repoUpdateLivraisonStatusLegacy(
          lot_article_id: string | null
          lot_status: string | null
          stock_movement_line_id: string | null
+         reservation_id: string | null
+         reservation_status: string | null
+         reservation_qty: string | number | null
          quantite: string | number
          unite: string | null
        }
@@ -1853,11 +1932,15 @@ async function repoUpdateLivraisonStatusLegacy(
              lt.article_id::text AS lot_article_id,
              lt.lot_status,
              a.stock_movement_line_id::text AS stock_movement_line_id,
+             a.reservation_id::text AS reservation_id,
+             reservation.status::text AS reservation_status,
+             reservation.qty_reserved AS reservation_qty,
              a.quantite,
              a.unite
            FROM public.bon_livraison_ligne_allocations a
            JOIN public.bon_livraison_ligne l ON l.id = a.bon_livraison_ligne_id
            LEFT JOIN public.lots lt ON lt.id = a.lot_id
+           LEFT JOIN public.stock_reservations reservation ON reservation.id = a.reservation_id
            WHERE l.bon_livraison_id = $1::uuid
            ORDER BY a.created_at ASC, a.id ASC
          `,
@@ -1893,6 +1976,9 @@ async function repoUpdateLivraisonStatusLegacy(
          lot_id: string | null
          quantite: number
          unite: string | null
+         reservation_id: string | null
+         reservation_status: string | null
+         reservation_qty: string | number | null
        }
 
        type IssueGroup = {
@@ -1932,6 +2018,9 @@ async function repoUpdateLivraisonStatusLegacy(
            lot_id: a.lot_id ?? null,
            quantite: qty,
            unite,
+           reservation_id: a.reservation_id,
+           reservation_status: a.reservation_status,
+           reservation_qty: a.reservation_qty,
          })
          groups.set(key, g)
        }
@@ -1941,6 +2030,34 @@ async function repoUpdateLivraisonStatusLegacy(
          if (!Number.isFinite(totalQty) || totalQty <= 0) {
            throw new HttpError(400, "INVALID_QTY", "Invalid allocated qty")
          }
+
+         // Legacy status-transition shipping posts its own OUT movement rather
+         // than delegating to the newer shipment repository. It therefore
+         // needs the same transaction-bound Quality gate before any stock
+         // level/batch lock or movement number is consumed.
+         const reservationPlan = buildLegacyShipmentReservationPlan(g.items)
+         // Reservation-backed quantities are already represented in the
+         // Quality commitment ledger. Validate current eligibility with zero
+         // incremental demand; only allocations without an ACTIVE reservation
+         // are a direct release-capacity debit.
+         if (g.lot_id && reservationPlan.committed_qty > 0) {
+           await assertOperationalLotQualityEligibility({
+             client: db,
+             lotId: g.lot_id,
+             qty: 0,
+             unit: g.unite,
+             purpose: "RESERVE",
+           })
+         }
+         const qualityDecision = g.lot_id && reservationPlan.direct_qty > 0
+           ? await assertOperationalLotQualityEligibility({
+             client: db,
+             lotId: g.lot_id,
+             qty: reservationPlan.direct_qty,
+             unit: g.unite,
+             purpose: "RESERVE",
+           })
+           : null
 
          const unitId = await resolveUnitIdForArticle(db, g.article_id, g.unite)
          const stockLevelId = await ensureStockLevel(db, {
@@ -2069,6 +2186,54 @@ async function repoUpdateLivraisonStatusLegacy(
            `,
            [movementId, userId]
          )
+
+         // This legacy path posts the physical OUT itself rather than calling
+         // stock.repoPostMovement. It therefore owns the same durable direct
+         // consumption write; otherwise every sequential legacy shipment
+         // could reuse the same quality-release quantity.
+         if (qualityDecision) {
+           await recordDirectLotQualityConsumption({
+             client: db,
+             decision: qualityDecision,
+             qty: reservationPlan.direct_qty,
+           })
+         }
+
+         if (reservationPlan.committed_qty > 0) {
+           const reserved = await db.query<{ id: string }>(
+             `
+               UPDATE public.stock_levels
+               SET qty_reserved = qty_reserved - $2,
+                   updated_at = now(),
+                   updated_by = $3
+               WHERE id = $1::uuid
+                 AND qty_reserved + 1e-9 >= $2
+               RETURNING id::text AS id
+             `,
+             [stockLevelId, reservationPlan.committed_qty, userId]
+           )
+           if (!reserved.rows[0]) throw new HttpError(409, "RESERVATION_STOCK_COUNTER_MISMATCH", "Le stock réservé du BL a été modifié concurremment.")
+           if (stockBatchId) {
+             const batch = await db.query<{ id: string }>(
+               `UPDATE public.stock_batches SET qty_reserved = qty_reserved - $2 WHERE id = $1::uuid AND qty_reserved + 1e-9 >= $2 RETURNING id::text AS id`,
+               [stockBatchId, reservationPlan.committed_qty]
+             )
+             if (!batch.rows[0]) throw new HttpError(409, "RESERVATION_STOCK_COUNTER_MISMATCH", "Le lot réservé du BL a été modifié concurremment.")
+           }
+           const consumed = await db.query<{ id: string }>(
+             `
+               UPDATE public.stock_reservations
+               SET status = 'CONSUMED', consumed_at = now(), consumed_by = $2,
+                   consumed_stock_movement_id = $3::uuid, updated_at = now(), updated_by = $2
+               WHERE id = ANY($1::uuid[]) AND status = 'ACTIVE'
+               RETURNING id::text AS id
+             `,
+             [reservationPlan.reservation_ids, userId, movementId]
+           )
+           if (consumed.rows.length !== reservationPlan.reservation_ids.length) {
+             throw new HttpError(409, "RESERVATION_CONCURRENTLY_CHANGED", "Une réservation du BL a été modifiée concurremment.")
+           }
+         }
 
          await insertStockMovementEvent(db, {
            movement_id: movementId,
@@ -2357,6 +2522,11 @@ export async function attachActiveCommandeReservationsToLivraison(
     let reservationId = reservation.reservation_id
 
     if (quantity + 1e-9 < Number(reservation.reservation_quantity)) {
+      // Splitting only reassigns an existing ACTIVE commitment; it neither
+      // creates nor consumes released quantity. Do not take the Quality lot
+      // lock while this function already holds the reservation row lock: the
+      // physical shipment rechecks Quality before posting, in the canonical
+      // lot -> reservation lock order.
       await db.query(
         `
           UPDATE public.stock_reservations
@@ -2712,6 +2882,8 @@ export async function repoCreateLivraisonFromCommande(
         prepared: transferredReservations.fullyAllocated,
       },
     })
+
+    await queueCreationPdfArchive(db, await buildDeliveryCreationSnapshotInput(db, { deliveryId: id, actorUserId: userId }))
 
     return { id }
   }

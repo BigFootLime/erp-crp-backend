@@ -14,6 +14,8 @@ import {
   duplicateSchema,
   generateDocumentSchema,
   ligneIdParamSchema,
+  officialDocumentIdParamSchema,
+  officialDocumentRequestSchema,
   listCommandesQuerySchema,
   propositionsConfirmSchema,
   propositionsPreviewSchema,
@@ -42,6 +44,11 @@ import {
   transitionCommandeFournisseurSVC,
   updateCommandeFournisseurSVC,
   updateLigneSVC,
+  getSupplierPoOfficialDocumentSVC,
+  listSupplierPoOfficialDocumentsSVC,
+  queueSupplierPoOfficialDocumentSVC,
+  readSupplierPoOfficialDocumentSVC,
+  recordSupplierPoOfficialPrintSVC,
 } from "../services/commande-fournisseur.service";
 
 function buildAuditContext(req: Request): AuditContext {
@@ -235,6 +242,64 @@ export const getDocument: RequestHandler = async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+};
+
+export const listOfficialDocuments: RequestHandler = async (req, res, next) => {
+  try {
+    const { params } = commandeIdParamSchema.parse({ params: req.params });
+    res.json(await listSupplierPoOfficialDocumentsSVC(params.id));
+  } catch (err) { next(err); }
+};
+
+export const queueOfficialDocument: RequestHandler = async (req, res, next) => {
+  try {
+    const { params } = commandeIdParamSchema.parse({ params: req.params });
+    const { body } = officialDocumentRequestSchema.parse({ body: req.body ?? {} });
+    const key = idempotencyKeyFrom(req);
+    if (!key) throw new HttpError(400, "IDEMPOTENCY_KEY_REQUIRED", "Une clé d'idempotence est requise.");
+    const audit = buildAuditContext(req);
+    const result = await queueSupplierPoOfficialDocumentSVC(params.id, key, audit, body);
+    res.status(201).json(result);
+  } catch (err) { next(err); }
+};
+
+export const getOfficialDocument: RequestHandler = async (req, res, next) => {
+  try {
+    const { params } = officialDocumentIdParamSchema.parse({ params: req.params });
+    const result = await getSupplierPoOfficialDocumentSVC(params.id, params.documentId);
+    if (!result) throw new HttpError(404, "OFFICIAL_DOCUMENT_NOT_FOUND", "Document officiel introuvable.");
+    res.json(result);
+  } catch (err) { next(err); }
+};
+
+function sendOfficialPdf(disposition: "inline" | "attachment"): RequestHandler {
+  return async (req, res, next) => {
+    try {
+      const { params } = officialDocumentIdParamSchema.parse({ params: req.params });
+      const actorId = buildAuditContext(req).user_id;
+      const file = await readSupplierPoOfficialDocumentSVC(
+        params.id, params.documentId, actorId,
+        disposition === "inline" ? "AUTHORITATIVE_PDF_PREVIEWED" : "AUTHORITATIVE_PDF_DOWNLOADED"
+      );
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Length", String(file.bytes.byteLength));
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader("Cache-Control", "private, no-store");
+      res.setHeader("Content-Disposition", `${disposition}; filename="${file.filename}"`);
+      res.send(file.bytes);
+    } catch (err) { next(err); }
+  };
+}
+
+export const previewOfficialDocument = sendOfficialPdf("inline");
+export const downloadOfficialDocument = sendOfficialPdf("attachment");
+
+export const printOfficialDocument: RequestHandler = async (req, res, next) => {
+  try {
+    const { params } = officialDocumentIdParamSchema.parse({ params: req.params });
+    await recordSupplierPoOfficialPrintSVC(params.id, params.documentId, buildAuditContext(req).user_id);
+    res.status(204).send();
+  } catch (err) { next(err); }
 };
 
 export const simulateTotaux: RequestHandler = async (req, res, next) => {

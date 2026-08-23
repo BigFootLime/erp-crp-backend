@@ -10,6 +10,8 @@ import {
   devisByArticleQuerySchema,
   devisDocumentIdParamsSchema,
   devisIdParamsSchema,
+  devisOfficialDocumentBodySchema,
+  devisOfficialDocumentParamsSchema,
   getDevisQuerySchema,
   listDevisQuerySchema,
   type CreateDevisBodyDTO,
@@ -30,6 +32,11 @@ import {
   svcListDevisVersions,
   svcReviseDevis,
   svcUpdateDevis,
+  svcGetDevisOfficialDocument,
+  svcListDevisOfficialDocuments,
+  svcQueueDevisOfficialDocument,
+  svcReadDevisOfficialDocument,
+  svcRecordDevisOfficialPrint,
 } from "../services/devis.service";
 
 /** Contexte d'audit transactionnel (#167) — même construction que #172, sans PII superflue. */
@@ -132,7 +139,9 @@ export const createDevis: RequestHandler = async (req, res, next) => {
     const dto = getParsedDevisBody(req);
     if (!dto) throw new HttpError(400, "MISSING_DATA", "Missing data field");
 
-    const userId = typeof dto.user_id === "number" ? dto.user_id : typeof req.user?.id === "number" ? req.user.id : null;
+    // The authenticated actor owns audit and official-document provenance; a
+    // multipart field must never be able to impersonate another user.
+    const userId = typeof req.user?.id === "number" ? req.user.id : null;
     if (!userId) throw new HttpError(422, "USER_ID_REQUIRED", "user_id is required");
 
     const documents = getUploadedDocuments(req);
@@ -299,4 +308,54 @@ export const getDevisDocumentFile: RequestHandler = async (req, res, next) => {
     }
     next(err);
   }
+};
+
+export const listDevisOfficialDocuments: RequestHandler = async (req, res, next) => {
+  try { res.json(await svcListDevisOfficialDocuments(devisIdParamsSchema.parse(req.params).id)); }
+  catch (error) { next(error); }
+};
+
+export const queueDevisOfficialDocument: RequestHandler = async (req, res, next) => {
+  try {
+    const { id } = devisIdParamsSchema.parse(req.params);
+    const body = devisOfficialDocumentBodySchema.parse(req.body ?? {});
+    const key = idempotencyKeyFrom(req);
+    if (!key) throw new HttpError(400, "IDEMPOTENCY_KEY_REQUIRED", "Une clé d'idempotence est requise.");
+    const dto = await svcQueueDevisOfficialDocument(id, key, buildAuditContext(req), body);
+    res.status(201).json(dto);
+  } catch (error) { next(error); }
+};
+
+export const getDevisOfficialDocument: RequestHandler = async (req, res, next) => {
+  try {
+    const { id, documentId } = devisOfficialDocumentParamsSchema.parse(req.params);
+    const dto = await svcGetDevisOfficialDocument(id, documentId);
+    if (!dto) throw new HttpError(404, "OFFICIAL_DOCUMENT_NOT_FOUND", "Document officiel introuvable.");
+    res.json(dto);
+  } catch (error) { next(error); }
+};
+
+function sendDevisOfficialPdf(disposition: "inline" | "attachment"): RequestHandler {
+  return async (req, res, next) => {
+    try {
+      const { id, documentId } = devisOfficialDocumentParamsSchema.parse(req.params);
+      const userId = buildAuditContext(req).user_id;
+      const file = await svcReadDevisOfficialDocument(id, documentId, userId, disposition === "inline" ? "AUTHORITATIVE_PDF_PREVIEWED" : "AUTHORITATIVE_PDF_DOWNLOADED");
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Length", String(file.bytes.byteLength));
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader("Cache-Control", "private, no-store");
+      res.setHeader("Content-Disposition", `${disposition}; filename="${file.filename}"`);
+      res.send(file.bytes);
+    } catch (error) { next(error); }
+  };
+}
+export const previewDevisOfficialDocument = sendDevisOfficialPdf("inline");
+export const downloadDevisOfficialDocument = sendDevisOfficialPdf("attachment");
+export const printDevisOfficialDocument: RequestHandler = async (req, res, next) => {
+  try {
+    const { id, documentId } = devisOfficialDocumentParamsSchema.parse(req.params);
+    await svcRecordDevisOfficialPrint(id, documentId, buildAuditContext(req).user_id);
+    res.status(204).send();
+  } catch (error) { next(error); }
 };

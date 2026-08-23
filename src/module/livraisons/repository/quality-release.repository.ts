@@ -12,6 +12,27 @@ import {
 
 type Queryable = Pick<PoolClient, "query">
 
+/**
+ * Serializes a legal invoice's delivery-quality decision with shipment and
+ * Quality mutations. The delivery row lock closes allocation changes; the
+ * deterministic advisory keys close predicate races for a new NC/derogation
+ * that refers to an already-selected delivery lot.
+ */
+export async function lockDeliveryQualityReleaseScope(db: Queryable, bonLivraisonId: string): Promise<void> {
+  await db.query(`SELECT id FROM public.bon_livraison WHERE id = $1::uuid FOR UPDATE`, [bonLivraisonId]);
+  await db.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [`quality-delivery:${bonLivraisonId}`]);
+  const lots = await db.query<{ lot_id: string }>(`
+    SELECT DISTINCT a.lot_id::text AS lot_id
+    FROM public.bon_livraison_ligne_allocations a
+    JOIN public.bon_livraison_ligne line ON line.id = a.bon_livraison_ligne_id
+    WHERE line.bon_livraison_id = $1::uuid AND a.lot_id IS NOT NULL
+    ORDER BY a.lot_id::text
+  `, [bonLivraisonId]);
+  for (const row of lots.rows) {
+    await db.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [`quality-lot:${row.lot_id}`]);
+  }
+}
+
 type TargetRow = {
   target_key: string
   allocation_id: string

@@ -50,6 +50,7 @@ import { withRealtimeOutboxDbMock } from "./helpers/realtime-outbox-db-mock";
 
 beforeEach(() => {
   mocks.poolQuery.mockReset();
+  mocks.poolQuery.mockResolvedValue({ rows: [] });
   mocks.poolConnect.mockReset();
   mocks.clientQuery.mockReset();
   mocks.clientRelease.mockReset();
@@ -83,14 +84,66 @@ describe("/api/v1/chat", () => {
           email: "bob@example.com",
           role: "Atelier",
           status: "Active",
+          profile_picture: "C:\\legacy\\uploads\\images\\avatars\\bob.png",
         },
       ],
+    });
+    mocks.poolQuery.mockResolvedValueOnce({
+      rows: [{ storage_key: "avatars/bob.png", id: "a0d03d99-4e43-4aa2-b4e1-f9dc6b411111" }],
     });
 
     const res = await request(app).get("/api/v1/chat/users").set("Authorization", "Bearer fake");
     expect(res.status).toBe(200);
     expect(res.body.items).toHaveLength(1);
-    expect(res.body.items[0]).toMatchObject({ id: 2, username: "B2" });
+    expect(res.body.items[0]).toMatchObject({
+      id: 2,
+      username: "B2",
+      profile_picture: null,
+      profile_picture_asset: { asset_id: "a0d03d99-4e43-4aa2-b4e1-f9dc6b411111", status: "AVAILABLE" },
+    });
+    expect(JSON.stringify(res.body)).not.toContain("uploads/images");
+  });
+
+  it("GET /api/v1/chat/conversations projects the other user's avatar without a legacy path", async () => {
+    const conversationId = "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1";
+    mocks.poolQuery
+      .mockResolvedValueOnce({
+        rows: [{
+          conversation_id: conversationId,
+          type: "direct",
+          group_name: null,
+          created_by: null,
+          participant_count: 2,
+          created_at: "2026-08-23T08:00:00.000Z",
+          updated_at: "2026-08-23T08:00:00.000Z",
+          last_message_at: null,
+          last_read_at: null,
+          other_user_id: 2,
+          other_username: "B2",
+          other_name: "Bob",
+          other_surname: "Martin",
+          other_email: "bob@example.test",
+          other_role: "Atelier",
+          other_status: "Active",
+          other_profile_picture: "avatars/bob.png",
+          last_message_id: null,
+          last_message_sender_user_id: null,
+          last_message_type: null,
+          last_message_content: null,
+          last_message_created_at: null,
+          unread_count: 0,
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [{ storage_key: "avatars/bob.png", id: "b0d03d99-4e43-4aa2-b4e1-f9dc6b411111" }] });
+
+    const res = await request(app).get("/api/v1/chat/conversations").set("Authorization", "Bearer fake");
+
+    expect(res.status).toBe(200);
+    expect(res.body.items[0].other_user).toMatchObject({
+      profile_picture: null,
+      profile_picture_asset: { asset_id: "b0d03d99-4e43-4aa2-b4e1-f9dc6b411111", status: "AVAILABLE" },
+    });
+    expect(JSON.stringify(res.body)).not.toContain("avatars/bob.png");
   });
 
   it("GET /api/v1/chat/conversations/:id/messages returns 404 when not participant", async () => {
@@ -242,6 +295,7 @@ describe("/api/v1/chat", () => {
         },
       ],
     });
+    mocks.poolQuery.mockResolvedValueOnce({ rows: [] });
 
     const res = await request(app)
       .get(`/api/v1/chat/conversations/${convId}/participants`)
@@ -250,6 +304,8 @@ describe("/api/v1/chat", () => {
     expect(res.status).toBe(200);
     expect(res.body.items).toHaveLength(2);
     expect(res.body.items[0]).toMatchObject({ id: 1, username: "U1" });
+    expect(res.body.items[1]).toMatchObject({ profile_picture: null, profile_picture_asset: null });
+    expect(JSON.stringify(res.body)).not.toContain("bob.png");
   });
 
   it("GET /api/v1/chat/conversations/:id/participants returns 404 when not participant", async () => {

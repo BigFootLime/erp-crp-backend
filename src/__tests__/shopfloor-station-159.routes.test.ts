@@ -427,7 +427,8 @@ describe("#159 - client identity in the operator dossier", () => {
       code: "CLI-0042",
       company_name: "ACME Aero",
     });
-    expect(res.body.identity.client.logo_url).toMatch(/\/images\/clients\/acme-aero\.svg$/);
+    expect(res.body.identity.client.logo_url).toBeNull();
+    expect(res.body.identity.client.logo_asset).toBeNull();
     expect(res.body.identity.client).not.toHaveProperty("logo_path");
   });
 });

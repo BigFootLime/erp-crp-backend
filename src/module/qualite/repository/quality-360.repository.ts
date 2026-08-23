@@ -1216,6 +1216,8 @@ type ExecutionRow = {
   created_at: string;
   updated_at: string;
   controlled_by: number;
+  lot_id: string | null;
+  article_id: string | null;
   bon_livraison_id: string | null;
   delivery_allocation_id: string | null;
   correlation_id: string;
@@ -1228,6 +1230,7 @@ const EXECUTION_COLUMNS = `
   qc.unite, qc.qty_population, qc.qty_controlled, qc.qty_conforming, qc.qty_released, qc.qty_held,
   qc.qty_scrapped, qc.qty_reworked, qc.qty_sorted, qc.qty_returned, qc.qty_consumed,
   qc.control_date, qc.validation_date, qc.created_at, qc.updated_at, qc.controlled_by,
+  qc.lot_id, qc.article_id,
   qc.bon_livraison_id, qc.delivery_allocation_id, qc.correlation_id,
   p.code AS plan_code
 `;
@@ -1996,6 +1999,119 @@ export async function repoPreviewVerdict(id: string): Promise<VerdictPreview | n
   };
 }
 
+async function releaseQuarantinedLotForFullDeliveryDecision(params: {
+  client: DbQueryer;
+  execution: ExecutionRow;
+  decision: DecideExecutionBodyDTO;
+  releasedQty: number;
+  actor: QualityActor;
+  releaseDecisionId: string;
+}): Promise<boolean> {
+  const { execution, decision } = params;
+  const population = toNumber(execution.qty_population);
+  if (
+    execution.trigger_type !== "LOT_RELEASE" ||
+    execution.source_type !== "LOT" ||
+    !execution.lot_id ||
+    !execution.bon_livraison_id ||
+    !execution.delivery_allocation_id ||
+    decision.decision !== "FULL" ||
+    decision.object_type !== "LOT" ||
+    decision.object_id !== execution.source_id ||
+    decision.object_id !== execution.lot_id ||
+    params.releasedQty + 1e-9 < population
+  ) return false;
+
+  // Match the delivery quality gate's lock order so an NC/derogation created
+  // for an already selected lot cannot race this authoritative release.
+  await params.client.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
+    `quality-delivery:${execution.bon_livraison_id}`,
+  ]);
+  await params.client.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
+    `quality-lot:${execution.lot_id}`,
+  ]);
+
+  const locked = await params.client.query<{ lot_status: string | null }>(
+    `
+      SELECT lot.lot_status::text AS lot_status
+      FROM public.lots lot
+      JOIN public.bon_livraison_ligne_allocations allocation
+        ON allocation.lot_id = lot.id
+      WHERE lot.id = $1::uuid
+        AND allocation.id = $2::uuid
+        AND ($3::uuid IS NULL OR allocation.article_id = $3::uuid)
+      FOR UPDATE OF lot
+    `,
+    [execution.lot_id, execution.delivery_allocation_id, execution.article_id]
+  );
+  const row = locked.rows[0] ?? null;
+  if (!row) {
+    throw new HttpError(409, "QUALITY_DELIVERY_ALLOCATION_SCOPE_MISMATCH", "Le lot contrôlé n'est plus lié à l'allocation de livraison figée.");
+  }
+  if (row.lot_status === "LIBERE") return false;
+  if (row.lot_status !== "QUARANTAINE") {
+    throw new HttpError(
+      409,
+      "QUALITY_LOT_RELEASE_STATE_INVALID",
+      "La libération de livraison ne peut faire sortir que le lot exact de quarantaine."
+    );
+  }
+
+  await params.client.query(
+    `
+      UPDATE public.lots
+      SET lot_status = 'LIBERE',
+          lot_status_note = $2,
+          updated_at = now(),
+          updated_by = $3
+      WHERE id = $1::uuid
+    `,
+    [execution.lot_id, `Libération Qualité BL: décision ${params.releaseDecisionId}`, params.actor.user_id]
+  );
+  await params.client.query(
+    `
+      INSERT INTO public.stock_lot_event_log (
+        lot_id, event_type, old_values, new_values, actor_user_id, correlation_id
+      ) VALUES ($1::uuid, 'QUALITY_DELIVERY_RELEASED', $2::jsonb, $3::jsonb, $4, $5::uuid)
+    `,
+    [
+      execution.lot_id,
+      JSON.stringify({ lot_status: row.lot_status }),
+      JSON.stringify({
+        lot_status: "LIBERE",
+        quality_control_id: execution.id,
+        release_decision_id: params.releaseDecisionId,
+        delivery_allocation_id: execution.delivery_allocation_id,
+      }),
+      params.actor.user_id,
+      execution.correlation_id,
+    ]
+  );
+  await insertQualityEvent(params.client, {
+    entity_type: "CONTROL",
+    entity_id: execution.id,
+    event_type: "DELIVERY_LOT_RELEASED",
+    actor: params.actor,
+    old_values: { lot_status: row.lot_status },
+    new_values: { lot_status: "LIBERE", delivery_allocation_id: execution.delivery_allocation_id },
+    correlation_id: execution.correlation_id,
+    rule_code: "QUALITY_DELIVERY_FULL_RELEASE",
+  });
+  await insertAuditLog(params.client, params.actor, {
+    action: "qualite.executions.delivery_lot.release",
+    entity_type: "lots",
+    entity_id: execution.lot_id,
+    details: {
+      quality_control_id: execution.id,
+      release_decision_id: params.releaseDecisionId,
+      delivery_allocation_id: execution.delivery_allocation_id,
+      before: "QUARANTAINE",
+      after: "LIBERE",
+    },
+  });
+  return true;
+}
+
 export async function repoDecideExecution(params: {
   id: string;
   body: DecideExecutionBodyDTO;
@@ -2165,6 +2281,15 @@ export async function repoDecideExecution(params: {
     );
     const decisionId = decisionRes.rows[0]!.id;
 
+    const deliveryLotReleased = await releaseQuarantinedLotForFullDeliveryDecision({
+      client,
+      execution: before,
+      decision: params.body,
+      releasedQty: outcome.qty_released,
+      actor: params.actor,
+      releaseDecisionId: decisionId,
+    });
+
     if (derogation) {
       await consumeDerogationInternal(client, {
         derogationId: derogation.id,
@@ -2191,6 +2316,7 @@ export async function repoDecideExecution(params: {
         qty_released: outcome.qty_released,
         qty_held: outcome.qty_held,
         derogation_id: derogation?.id ?? null,
+        delivery_lot_released: deliveryLotReleased,
       },
       correlation_id: before.correlation_id,
       idempotency_key: idem.idempotencyKey,

@@ -40,6 +40,7 @@ vi.mock("../module/access-control/middlewares/module-access-gate", () => ({
 }));
 
 import app from "../config/app";
+import { authoritativePdfQueueDbMock } from "./helpers/authoritative-pdf-queue-db-mock";
 
 const ARTICLE_ID = "11111111-1111-4111-8111-111111111111";
 const PIECE_ID = "22222222-2222-4222-8222-222222222222";
@@ -244,6 +245,8 @@ describe("BUG-CERP-0015 - validation serveur POST/PATCH commandes", () => {
     let promotedArticleId: string | null = null;
     mocks.clientQuery.mockImplementation(async (sql: unknown, params?: unknown[]) => {
       const query = String(sql);
+      const authoritativePdf = authoritativePdfQueueDbMock(sql, params);
+      if (authoritativePdf) return authoritativePdf;
       if (query.includes("FROM commande_client") && query.includes("FOR UPDATE")) {
         return {
           rows: [{
@@ -266,7 +269,10 @@ describe("BUG-CERP-0015 - validation serveur POST/PATCH commandes", () => {
       if (query.includes("FROM public.article_devis_promotion")) return { rows: [] };
       if (query.includes("INSERT INTO public.articles (")) {
         promotedArticleId = String(params?.[0] ?? "");
-        return { rows: [] };
+        return { rows: [{ id: promotedArticleId, updated_at: "2026-08-23T12:00:00.000Z" }] };
+      }
+      if (query.includes("UPDATE public.articles") && query.includes("RETURNING updated_at")) {
+        return { rows: [{ updated_at: "2026-08-23T12:00:00.000Z" }] };
       }
       if (
         query.includes("FROM public.articles a") &&
@@ -348,8 +354,13 @@ describe("BUG-CERP-0015 - validation serveur POST/PATCH commandes", () => {
       commande_client_eligible: true,
       commande_client_ineligibility_code: null,
     };
-    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+    mocks.clientQuery.mockImplementation(async (sql: unknown, params?: unknown[]) => {
       const query = String(sql);
+      if (query.includes("FROM public.commande_client cc") && query.includes("FOR UPDATE")) {
+        return { rows: [{ id: "315", numero: "CC-315", client_id: "001", client_name: "ACME", billing_address_id: null, billing_address_name: null, billing_street: null, billing_house_number: null, billing_postal_code: null, billing_city: null, billing_country: null, date_commande: "2026-08-04", order_type: "FERME", total_ht: 19.5, total_ttc: 23.4, remise_globale: 0, commentaire: null, updated_at: "2026-08-23T12:00:00.000Z" }] };
+      }
+      const authoritativePdf = authoritativePdfQueueDbMock(sql, params);
+      if (authoritativePdf) return authoritativePdf;
       if (query.includes("nextval('public.commande_client_id_seq')")) return { rows: [{ id: "315" }] };
       if (query.includes("public.fn_next_issued_code_value")) return { rows: [{ v: "1" }] };
       if (query.includes("INSERT INTO commande_client")) return { rows: [{ id: "315" }] };

@@ -14,8 +14,10 @@ import {
   deleteFournisseurAdresse,
   deleteFournisseurCatalogueItem,
   deleteFournisseurContact,
+  downloadFournisseurCreationSnapshot,
   downloadFournisseurDocument,
   findDoublons,
+  getFournisseurCreationSnapshot,
   getFournisseur,
   listFournisseurAdresses,
   listFournisseurCatalogue,
@@ -27,6 +29,8 @@ import {
   listFournisseurs,
   removeFournisseurDocument,
   replaceFournisseurDomaines,
+  previewFournisseurCreationSnapshot,
+  printFournisseurCreationSnapshot,
   updateFournisseurAdresse,
   updateFournisseurCatalogueItem,
   updateFournisseurContact,
@@ -49,6 +53,11 @@ router.use(authenticateToken)
 router.get("/", listFournisseurs)
 router.get("/doublons", authorizeRole(...WRITE), findDoublons)
 router.get("/domaines", listFournisseurDomaines)
+// Immutable internal creation snapshot; reads retain the supplier-card policy.
+router.get("/:id/creation-snapshot", getFournisseurCreationSnapshot)
+router.get("/:id/creation-snapshot/:documentId/preview", previewFournisseurCreationSnapshot)
+router.get("/:id/creation-snapshot/:documentId/download", downloadFournisseurCreationSnapshot)
+router.post("/:id/creation-snapshot/:documentId/print-intents", printFournisseurCreationSnapshot)
 router.get("/:id", getFournisseur)
 router.get("/:id/events", listFournisseurEvents)
 

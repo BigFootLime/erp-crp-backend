@@ -28,6 +28,7 @@ import {
 import { repoFindDocumentFilePath, repoGetDocumentName, repoIsLivraisonDocumentLinked } from "../repository/livraisons.repository"
 import { getDocumentStoragePath } from "../../../utils/cerpStorage"
 import { sendSecureStoredFile, setSecureDownloadHeaders } from "../../../shared/uploads/secure-download"
+import { createCreationSnapshotHandlers } from "../../../shared/authoritative-documents/creation-snapshot-http"
 
 function coerceBool(value: unknown): boolean {
   if (typeof value === "boolean") return value
@@ -62,6 +63,30 @@ function routeParam(req: Request, name: string): string {
   if (typeof value === "string" && value.length > 0) return value
   throw new HttpError(400, "INVALID_ROUTE_PARAM", `${name} must be a string`)
 }
+
+const livraisonCreationSnapshotHandlers = createCreationSnapshotHandlers({
+  entityType: "bon-livraison",
+  documentKind: "DELIVERY_NOTE_CREATION_SNAPSHOT",
+  parseEntityId: (req) => livraisonIdParamsSchema.parse(req.params).id,
+  canReadEntity: async (id) => Boolean(await service.svcGetLivraison(id)),
+  baseUrl: (id) => `/livraisons/${encodeURIComponent(id)}/creation-snapshot`,
+})
+const livraisonShippedDocumentHandlers = createCreationSnapshotHandlers({
+  entityType: "bon-livraison",
+  documentKind: "DELIVERY_NOTE_SHIPPED",
+  parseEntityId: (req) => livraisonIdParamsSchema.parse(req.params).id,
+  canReadEntity: async (id) => Boolean(await service.svcGetLivraison(id)),
+  baseUrl: (id) => `/livraisons/${encodeURIComponent(id)}/official-documents/shipped`,
+})
+
+export const getLivraisonCreationSnapshot = livraisonCreationSnapshotHandlers.metadata
+export const previewLivraisonCreationSnapshot = livraisonCreationSnapshotHandlers.preview
+export const downloadLivraisonCreationSnapshot = livraisonCreationSnapshotHandlers.download
+export const printLivraisonCreationSnapshot = livraisonCreationSnapshotHandlers.printIntent
+export const getShippedLivraisonOfficialDocument = livraisonShippedDocumentHandlers.metadata
+export const previewShippedLivraisonOfficialDocument = livraisonShippedDocumentHandlers.preview
+export const downloadShippedLivraisonOfficialDocument = livraisonShippedDocumentHandlers.download
+export const printShippedLivraisonOfficialDocument = livraisonShippedDocumentHandlers.printIntent
 
 export const listLivraisons: RequestHandler = async (req, res, next) => {
   try {

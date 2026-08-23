@@ -11,6 +11,8 @@ import {
   generateTransactionalBusinessCode,
   generatePieceTechniqueBusinessCode,
 } from "../../../shared/codes/code-generator.service";
+import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
+import { buildStockArticleCreationSnapshotInput } from "../../../shared/authoritative-documents/stock-article-creation-snapshot";
 import {
   assertMaterialPreviewFresh,
   buildMaterialArticleCode,
@@ -27,6 +29,10 @@ import { classifyUploadReconciliation, withUploadTransaction } from "../../../sh
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
+import {
+  assertOperationalLotQualityEligibility,
+  recordDirectLotQualityConsumption,
+} from "../../qualite/repository/quality-operational-gate.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 import { recordMaterialConsumptionOnPost } from "../../traceability/services/material-consumption.automation";
 import {
@@ -48,6 +54,7 @@ import type {
   ArticleCategory,
   ArticleBusinessCategory,
   ArticleTechnicalVersion,
+  ArticleWorkflowStatus,
   ArticleWhereUsedItem,
   Paginated,
   StockAnalytics,
@@ -3237,7 +3244,44 @@ export type CreatedArticleSummary = {
   family_code: string;
   stock_managed: boolean;
   lot_tracking: boolean;
+  designation: string;
+  unite: string | null;
+  status: ArticleWorkflowStatus;
+  is_active: boolean;
 };
+
+/**
+ * Enqueues a stock article's immutable creation snapshot inside its owning
+ * transaction. Incidental historical-import rows remain excluded because only
+ * explicit user-facing creation commands call this helper.
+ */
+export async function queueStockArticleCreationSnapshotTx(
+  client: PoolClient,
+  created: CreatedArticleSummary,
+  actorUserId: number
+): Promise<void> {
+  const sourceRevision = await client.query<{ updated_at: string }>(
+    `SELECT updated_at::text AS updated_at FROM public.articles WHERE id = $1::uuid FOR SHARE`,
+    [created.id]
+  );
+  const updatedAt = sourceRevision.rows[0]?.updated_at;
+  if (!updatedAt) throw new Error("STOCK_ARTICLE_CREATION_SOURCE_REVISION_MISSING");
+  await queueCreationPdfArchive(client, buildStockArticleCreationSnapshotInput({
+    id: created.id,
+    code: created.code,
+    designation: created.designation,
+    articleType: created.article_type,
+    articleCategory: created.article_category,
+    familyCode: created.family_code,
+    unit: created.unite,
+    status: created.status,
+    stockManaged: created.stock_managed,
+    lotTracking: created.lot_tracking,
+    isActive: created.is_active,
+    sourceRevision: updatedAt,
+    actorUserId,
+  }));
+}
 
 /**
  * Création d'article DANS une transaction déjà ouverte par l'appelant.
@@ -3321,7 +3365,7 @@ export async function repoCreateArticleTx(
 
   const articleId = crypto.randomUUID();
 
-  const res = await client.query<{ id: string }>(
+  const res = await client.query<{ id: string; updated_at: string }>(
     `
       INSERT INTO public.articles (
         id,
@@ -3331,7 +3375,7 @@ export async function repoCreateArticleTx(
         created_by, updated_by
       )
       VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9::uuid,$10,$11::uuid,$12::uuid,$13,$14,$15,$16,$17,$18,$19,$20,$21,$21)
-      RETURNING id::text AS id
+      RETURNING id::text AS id, updated_at::text AS updated_at
     `,
     [
       articleId,
@@ -3358,7 +3402,8 @@ export async function repoCreateArticleTx(
     ]
   );
 
-  const id = res.rows[0]?.id;
+  const createdRow = res.rows[0];
+  const id = createdRow?.id;
   if (!id) throw new Error("Failed to create article");
   await syncArticleCategories(client, id, normalized.article_categories, audit.user_id);
 
@@ -3407,6 +3452,10 @@ export async function repoCreateArticleTx(
     family_code: normalized.family_code,
     stock_managed: normalized.stock_managed,
     lot_tracking: normalized.lot_tracking,
+    designation,
+    unite: canonicalUnit,
+    status: normalized.status,
+    is_active: body.is_active,
   };
 }
 
@@ -3451,6 +3500,8 @@ export async function repoCreateArticle(
         [idempotencyKey, requestHash, id]
       );
     }
+
+    await queueStockArticleCreationSnapshotTx(client, created, audit.user_id);
 
     await client.query("COMMIT");
 
@@ -5530,6 +5581,11 @@ async function ensureHistoricalPositionTx(client: PoolClient, kind: "PF" | "MP",
   return { magasinId, emplacementId, ...map };
 }
 
+/**
+ * OLD recovery/import scaffolding is intentionally excluded from creation-PDF
+ * automation: an import may materialize many historical technical roots, and
+ * emitting a GED snapshot for each would create incidental mass archive output.
+ */
 async function ensureHistoricalPieceTechniqueTx(client: PoolClient, input: { clientNumber: string; reference: string; indice: string | null; designation: string }, audit: AuditContext) {
   const customer = await client.query<{ client_id: string; client_code: string; company_name: string | null }>(
     `SELECT client_id::text AS client_id, client_code, company_name FROM public.clients WHERE client_code = $1 OR client_id = $1 LIMIT 1 FOR UPDATE`, [input.clientNumber]
@@ -7185,6 +7241,41 @@ export async function repoCreateMovement(
   }
 }
 
+export async function assertDirectOutMovementQualityEligibility(params: {
+  client: Pick<PoolClient, "query">;
+  lines: Array<Pick<CreateMovementLineDTO, "lot_id" | "qty" | "unite">>;
+}): Promise<Array<Awaited<ReturnType<typeof assertOperationalLotQualityEligibility>>>> {
+  const quantitiesByLot = new Map<string, { qty: number; unit: string | null }>();
+  for (const line of params.lines) {
+    if (!line.lot_id) continue;
+    const qty = Math.abs(Number(line.qty));
+    if (!Number.isFinite(qty) || qty <= 0) {
+      throw new HttpError(422, "QUALITY_MOVEMENT_QTY_INVALID", "Quantité de sortie invalide pour le contrôle Qualité.");
+    }
+    const unit = line.unite?.trim().toUpperCase() || null;
+    const existing = quantitiesByLot.get(line.lot_id);
+    if (existing && (existing.unit ?? null) !== unit) {
+      throw new HttpError(
+        409,
+        "QUALITY_MOVEMENT_UNIT_AMBIGUOUS",
+        "Un même lot ne peut pas être sorti avec plusieurs unités dans un mouvement."
+      );
+    }
+    quantitiesByLot.set(line.lot_id, { qty: (existing?.qty ?? 0) + qty, unit });
+  }
+  const decisions: Array<Awaited<ReturnType<typeof assertOperationalLotQualityEligibility>>> = [];
+  for (const [lotId, input] of quantitiesByLot) {
+    decisions.push(await assertOperationalLotQualityEligibility({
+      client: params.client,
+      lotId,
+      qty: input.qty,
+      unit: input.unit,
+      purpose: "RESERVE",
+    }));
+  }
+  return decisions;
+}
+
 export async function repoPostMovement(
   id: string,
   body: PostMovementBodyDTO,
@@ -7272,6 +7363,16 @@ export async function repoPostMovement(
       [id]
     );
     await ensureLotTrackingRespected(client, m.article_id, draftLines.rows);
+
+    // A direct material issue does not have to be created through a stock
+    // reservation.  It is nevertheless an irreversible physical use of a
+    // released lot, so it must pass the same Quality 360 boundary inside the
+    // very transaction that posts the OUT movement.  Transfers merely change
+    // location and quality dispositions (SCRAP/ADJUSTMENT) remain dedicated
+    // workflows, so neither is treated as a released-material consumption.
+    const directOutQualityDecisions = m.movement_type === "OUT"
+      ? await assertDirectOutMovementQualityEligibility({ client, lines: draftLines.rows })
+      : [];
 
     if (m.movement_type === "TRANSFER") {
       const movementLines = draftLines.rows;
@@ -7604,6 +7705,17 @@ export async function repoPostMovement(
       correlationId: command.correlation_id,
     });
 
+    // Direct OUT has no stock-reservation row to remain as a future
+    // commitment. Persist its release-capacity consumption before commit,
+    // under the quality-control row lock acquired by the gate. Without this,
+    // sequential unreserved movements could each pass the same release.
+    if (m.movement_type === "OUT") {
+      for (const decision of directOutQualityDecisions) {
+        const qty = decision.target.qty_requested;
+        await recordDirectLotQualityConsumption({ client, decision, qty });
+      }
+    }
+
     await insertAuditLog(client, audit, {
       action: "stock.movements.post",
       entity_type: "stock_movements",
@@ -7612,6 +7724,7 @@ export async function repoPostMovement(
         movement_no: m.movement_no,
         movement_type: m.movement_type,
         negative_stock_override: body.negative_stock_override ?? null,
+        quality_gates: directOutQualityDecisions,
         traceability_consumptions_recorded: consumption.recorded,
         traceability_consumptions_compensated: consumption.compensated,
       },
