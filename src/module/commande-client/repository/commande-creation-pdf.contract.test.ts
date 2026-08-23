@@ -18,6 +18,15 @@ describe("commande creation PDF transaction contract", () => {
     expect(source).not.toContain("dc.document_path");
   });
 
+  it("locks only the customer-order row when the snapshot header uses optional joins", () => {
+    const snapshotStart = source.indexOf("async function queueCommandeCreationPdf");
+    const snapshot = source.slice(snapshotStart, source.indexOf("const header = headerRes.rows[0]", snapshotStart));
+    expect(snapshot).toContain("LEFT JOIN public.clients c");
+    expect(snapshot).toContain("LEFT JOIN public.adresse_facturation af");
+    expect(snapshot).toContain("FOR UPDATE OF cc");
+    expect(snapshot.match(/FOR UPDATE/g)).toHaveLength(1);
+  });
+
   it("queues manual and generated OF roots inside their transactions, excluding children", () => {
     const manualQueue = productionSource.indexOf("await queueRootOfCreationPdf(client");
     const manualReturn = productionSource.indexOf("return ofId;", manualQueue);
