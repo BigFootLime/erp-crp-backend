@@ -1561,6 +1561,37 @@ describe("/api/v1/commandes", () => {
         return { rows: [{ id: "1", designation: "Line", code_piece: "P1", quantite: 1, unite: "u", delai_client: null }] };
       }
       if (q.includes("INSERT INTO bon_livraison_ligne (")) return { rows: [] };
+      if (q.includes("FROM public.bon_livraison bl") && q.includes("JOIN public.clients c")) {
+        return { rows: [{
+          numero: "BL-00000001",
+          statut: "DRAFT",
+          client_name: "Client test",
+          commande_numero: "CC-123",
+          affaire_reference: "AFF-7",
+          address_label: null,
+          date_creation: "2026-08-23",
+          date_expedition: null,
+          transporteur: null,
+          tracking_number: null,
+          commentaire_client: null,
+          updated_at: "2026-08-23T00:00:00.000Z",
+        }] };
+      }
+      if (q.includes("FROM public.bon_livraison_ligne line") && q.includes("array_agg")) {
+        return { rows: [{
+          ordre: 1,
+          designation: "Line",
+          code_piece: "P1",
+          quantite: 1,
+          unite: "u",
+          delai_client: null,
+          lot_codes: [],
+        }] };
+      }
+      if (q.includes("to_regprocedure('public.fn_finance_issuer_snapshot")) {
+        return { rows: [{ function_name: null }] };
+      }
+      if (q.includes("FROM public.factureur f")) return { rows: [{ party: {} }] };
       if (q.includes("SELECT id::text AS id, commande_ligne_id::bigint::int AS commande_ligne_id")) {
         return { rows: [{ id: "55555555-5555-4555-8555-555555555555", commande_ligne_id: 1 }] };
       }

@@ -15,6 +15,7 @@ const aggregates: readonly RouteExpectation[] = [
   { root: "/pieces-techniques/{id}/creation-snapshot" },
   { root: "/affaires/{id}/creation-snapshot", rbac: "requireAffaireCapability(read)" },
   { root: "/stock/articles/{id}/creation-snapshot", rbac: "requireStockCapability(read)" },
+  { root: "/livraisons/{id}/creation-snapshot", rbac: "requireLivraisonCapability(read)" },
 ];
 
 describe("Wave 2 creation-snapshot route contract", () => {
