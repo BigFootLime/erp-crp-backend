@@ -16,6 +16,7 @@ import {
   requestFactureValidation,
   validateFactureWorkflow,
 } from "../controllers/facture-workflow.controller";
+import { factureLegalArchive } from "../controllers/finance-legal-archive.controller";
 import { requireFinanceCapability } from "../middlewares/finance-authorization.middleware";
 import {
   activateFinanceConfiguration,
@@ -89,6 +90,12 @@ router.post(
   validateFactureWorkflow
 );
 router.post("/workflow/:id/issue", requireFinanceCapability("issue"), issueFactureWorkflow);
+// Issued legal bytes are served only from #625's authoritative GED archive.
+router.get("/:id/official-documents", requireFinanceCapability("documents_read"), factureLegalArchive.list);
+router.get("/:id/official-documents/:documentId", requireFinanceCapability("documents_read"), factureLegalArchive.get);
+router.get("/:id/official-documents/:documentId/preview", requireFinanceCapability("documents_read"), factureLegalArchive.preview);
+router.get("/:id/official-documents/:documentId/download", requireFinanceCapability("documents_read"), factureLegalArchive.download);
+router.post("/:id/official-documents/:documentId/print-intents", requireFinanceCapability("documents_read"), factureLegalArchive.print);
 
 // Must precede `/:id`: configuration is a Finance settings resource, not a legacy invoice id.
 router.get(

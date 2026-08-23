@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-08-23T12:35:34.241Z",
+  "generated_at": "2026-08-23T15:16:56.629Z",
   "source": "filesystem scan of db/patches and db/patches/support",
-  "patch_count": 171,
-  "support_file_count": 305,
-  "recent_patch_count": 113,
+  "patch_count": 172,
+  "support_file_count": 308,
+  "recent_patch_count": 114,
   "recent_support_gaps": [
     {
       "filename": "20260706_affaire_allow_projet.sql",
@@ -210,7 +210,7 @@
     "destructive_ddl": 2,
     "destructive_dml": 9,
     "data_rewrite": 104,
-    "table_lock": 130,
+    "table_lock": 131,
     "blocking_index": 127,
     "enum_change": 1
   },
@@ -3114,8 +3114,8 @@
     {
       "order": 170,
       "filename": "20260823_authoritative_pdf_archive_612.sql",
-      "sha256": "776abd77520868b535de280d14ff61c71177b8cf131192f8b76ff836fec254d1",
-      "bytes": 10756,
+      "sha256": "3517bc1fefee179c00209237018446964153b4314233cdebbaa57bb5cdf7c70b",
+      "bytes": 10942,
       "transaction_wrapped": true,
       "replay_markers": true,
       "support": {
@@ -3130,6 +3130,22 @@
     },
     {
       "order": 171,
+      "filename": "20260823_finance_ged_archive_625.sql",
+      "sha256": "486ded479fa78d3020f53f3cb9920abc492e1ccd13f9f0e60ebdef0ee0fa9d39",
+      "bytes": 4318,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "table-lock"
+      ]
+    },
+    {
+      "order": 172,
       "filename": "20260823_operational_media_access_611.sql",
       "sha256": "cad0368b00c3bff67a9390a0e1e9669bca37d0fa8bd4f89b4854aef5a1505415",
       "bytes": 11961,

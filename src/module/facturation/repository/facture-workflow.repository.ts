@@ -1,6 +1,7 @@
 import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
+import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
 import { HttpError } from "../../../utils/httpError";
 import { lockDeliveryQualityReleaseScope, repoGetDeliveryQualityRelease } from "../../livraisons/repository/quality-release.repository";
 import {
@@ -158,6 +159,8 @@ export type FinanceDocumentArtifact = {
   fileName: string;
   checksumSha256: string;
   fileSizeBytes: number;
+  /** Exact issued bytes, retained until the #625 durable GED intent is committed. */
+  pdfBytes: Buffer;
   cleanup: () => Promise<void>;
 };
 
@@ -1267,6 +1270,24 @@ export async function repoIssueFacture(params: {
       customer_text: facture.customer_text,
     };
     artifact = await params.writeDocument(snapshot);
+    // #625: the legal issuer has just produced the only authoritative bytes.
+    // Queue them in the same transaction as legal numbering and the issuance
+    // state; the GED worker subsequently files these bytes, never re-renders
+    // a snapshot against later data/template state.
+    const legalArchive = await queueCreationPdfArchive(client, {
+      entityType: "facture",
+      entityId: facture.uuid,
+      documentKind: "FINANCE_INVOICE_LEGAL_PDF",
+      documentVersion: 1,
+      renderVersion: "finance-legal-issued-v1",
+      idempotencyKey: `finance:facture:${facture.uuid}:legal:${legal.legalNumber}:v1`,
+      title: `Facture légale ${legal.legalNumber}`,
+      originalName: artifact.fileName,
+      sourceRevision: `${legal.legalNumber}:${artifact.checksumSha256}`,
+      sourceSnapshot: snapshot,
+      exactPdfBytes: artifact.pdfBytes,
+      actorUserId: params.actor.userId,
+    });
     const correlationId = newCorrelationId();
     await client.query(
       `
@@ -1366,6 +1387,7 @@ export async function repoIssueFacture(params: {
         status: "ISSUED",
         legal_number: legal.legalNumber,
         document_checksum_sha256: artifact.checksumSha256,
+        authoritative_archive_id: legalArchive.id,
       },
       actor: params.actor,
       correlationId,
@@ -1396,6 +1418,7 @@ export async function repoIssueFacture(params: {
       details: {
         legal_number: legal.legalNumber,
         document_checksum_sha256: artifact.checksumSha256,
+        authoritative_archive_id: legalArchive.id,
         correlation_id: correlationId,
         quality_releases: qualityReleases,
       },

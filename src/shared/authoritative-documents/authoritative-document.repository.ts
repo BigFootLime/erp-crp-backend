@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg";
+import crypto from "node:crypto";
 
 import { HttpError } from "../../utils/httpError";
 import type { ArchiveQueueItem, AuthoritativePdfArchiveRecord, AuthoritativePdfCreationInput } from "./authoritative-document.types";
@@ -7,6 +8,7 @@ type ArchiveRow = {
   id: string; entity_type: string; entity_id: string; document_kind: string; document_version: number | string; render_version: string;
   idempotency_key: string; title: string; original_name: string; source_snapshot: Record<string, unknown>;
   source_revision: string; snapshot_sha256: string; pdf_sha256: string | null; pdf_size_bytes: string | null;
+  exact_pdf_bytes: Buffer | null; exact_pdf_sha256: string | null; exact_pdf_size_bytes: string | null;
   ged_document_id: string | null; ged_version_id: string | null; archived_at: string | null; created_at: string; created_by: number | null;
 };
 
@@ -16,6 +18,9 @@ function mapArchive(row: ArchiveRow): AuthoritativePdfArchiveRecord {
     documentKind: row.document_kind, documentVersion: Number(row.document_version), renderVersion: row.render_version,
     idempotencyKey: row.idempotency_key, title: row.title, originalName: row.original_name,
     sourceRevision: row.source_revision, sourceSnapshot: row.source_snapshot, snapshotSha256: row.snapshot_sha256,
+    exactPdfBytes: row.exact_pdf_bytes ?? undefined,
+    exactPdfSha256: row.exact_pdf_sha256,
+    exactPdfSizeBytes: row.exact_pdf_size_bytes == null ? null : Number(row.exact_pdf_size_bytes),
     pdfSha256: row.pdf_sha256, pdfSizeBytes: row.pdf_size_bytes == null ? null : Number(row.pdf_size_bytes),
     gedDocumentId: row.ged_document_id, gedVersionId: row.ged_version_id,
     archivedAt: row.archived_at, createdAt: row.created_at, actorUserId: row.created_by,
@@ -24,7 +29,8 @@ function mapArchive(row: ArchiveRow): AuthoritativePdfArchiveRecord {
 
 const ARCHIVE_COLUMNS = `id::text, entity_type, entity_id, document_kind, document_version, render_version,
   idempotency_key, title, original_name, source_snapshot, source_revision, snapshot_sha256, pdf_sha256,
-  pdf_size_bytes::text, ged_document_id::text, ged_version_id::text, archived_at::text, created_at::text, created_by`;
+  pdf_size_bytes::text, exact_pdf_bytes, exact_pdf_sha256, exact_pdf_size_bytes::text,
+  ged_document_id::text, ged_version_id::text, archived_at::text, created_at::text, created_by`;
 
 /** Insert is intentionally idempotent; a repeated create transaction returns the same job. */
 export async function repoQueueAuthoritativePdf(
@@ -36,12 +42,16 @@ export async function repoQueueAuthoritativePdf(
   try {
     inserted = await tx.query<ArchiveRow>(
       `INSERT INTO public.authoritative_pdf_archives
-         (entity_type, entity_id, document_kind, document_version, render_version, idempotency_key, title, original_name, source_snapshot, source_revision, snapshot_sha256, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12)
+         (entity_type, entity_id, document_kind, document_version, render_version, idempotency_key, title, original_name, source_snapshot, source_revision, snapshot_sha256, exact_pdf_bytes, exact_pdf_sha256, exact_pdf_size_bytes, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14,$15)
        ON CONFLICT (idempotency_key) DO NOTHING
        RETURNING ${ARCHIVE_COLUMNS}`,
       [input.entityType, input.entityId, input.documentKind, input.documentVersion, input.renderVersion, input.idempotencyKey,
-        input.title, input.originalName, JSON.stringify(input.sourceSnapshot), input.sourceRevision, snapshotSha256, input.actorUserId]
+        input.title, input.originalName, JSON.stringify(input.sourceSnapshot), input.sourceRevision, snapshotSha256,
+        input.exactPdfBytes ?? null,
+        input.exactPdfBytes ? crypto.createHash("sha256").update(input.exactPdfBytes).digest("hex") : null,
+        input.exactPdfBytes?.byteLength ?? null,
+        input.actorUserId]
     );
   } catch (error) {
     // Aggregate adapters serialise normal issuance, but a residual database
@@ -61,7 +71,8 @@ export async function repoQueueAuthoritativePdf(
     mapped.snapshotSha256 !== snapshotSha256 || mapped.entityType !== input.entityType ||
     mapped.entityId !== input.entityId || mapped.documentKind !== input.documentKind ||
     mapped.documentVersion !== input.documentVersion || mapped.renderVersion !== input.renderVersion ||
-    mapped.title !== input.title || mapped.originalName !== input.originalName || mapped.sourceRevision !== input.sourceRevision
+    mapped.title !== input.title || mapped.originalName !== input.originalName || mapped.sourceRevision !== input.sourceRevision ||
+    (input.exactPdfBytes != null && (mapped.exactPdfSha256 !== crypto.createHash("sha256").update(input.exactPdfBytes).digest("hex") || mapped.exactPdfSizeBytes !== input.exactPdfBytes.byteLength))
   ) {
     throw new HttpError(409, "OFFICIAL_DOCUMENT_IDEMPOTENCY_CONFLICT", "Cette clé d'idempotence est déjà utilisée avec une autre demande de document.");
   }

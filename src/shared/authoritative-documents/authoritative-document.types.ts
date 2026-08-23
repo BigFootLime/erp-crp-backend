@@ -13,6 +13,14 @@ export type AuthoritativePdfCreationInput = Readonly<{
   /** Server-derived aggregate revision that a browser can round-trip on reissue. */
   sourceRevision: string;
   sourceSnapshot: Record<string, unknown>;
+  /**
+   * Some legal issuers render their final document while holding the legal
+   * numbering transaction.  Persist those exact bytes in the durable intent:
+   * the archive worker must file them, never render a later view of the data.
+   * This is deliberately optional so the existing snapshot-rendered producers
+   * keep their current contract.
+   */
+  exactPdfBytes?: Buffer;
   actorUserId: number | null;
 }>;
 
@@ -21,6 +29,8 @@ export type AuthoritativePdfArchiveRecord = AuthoritativePdfCreationInput & {
   /** Durable queue chronology; never inferred from PDF issuance time. */
   createdAt: string;
   snapshotSha256: string;
+  exactPdfSha256: string | null;
+  exactPdfSizeBytes: number | null;
   pdfSha256: string | null;
   pdfSizeBytes: number | null;
   gedDocumentId: string | null;
