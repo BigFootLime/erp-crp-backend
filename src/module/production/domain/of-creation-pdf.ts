@@ -61,7 +61,7 @@ export async function queueRootOfCreationPdf(
        WHERE o.id = $1::bigint
          AND o.parent_of_id IS NULL
          AND (o.root_of_id IS NULL OR o.root_of_id = o.id)
-       FOR UPDATE
+       FOR UPDATE OF o
     `,
     [params.ofId]
   );
