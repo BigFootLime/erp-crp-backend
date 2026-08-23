@@ -28,6 +28,13 @@ function transactionClient(params: { activeCommandeReservation: number; plannedB
     if (text.includes("FROM public.stock_batches") && text.includes("FOR UPDATE")) {
       return { rows: [{ qty_total: 20, qty_reserved: 0 }] };
     }
+    if (text.includes("FROM public.lots")) return { rows: [{ lot_code: "LOT-616", lot_status: "LIBERE", article_unit: "U" }] };
+    if (text.includes("FROM public.quality_control qc")) {
+      return { rows: [{ id: "99999999-9999-4999-8999-999999999999", qty_released: "20", qty_held: "0", qty_consumed: "0", unite: "U", pending: false }] };
+    }
+    if (text.includes("FROM public.stock_reservations") && text.includes("FOR SHARE")) return { rows: [] };
+    if (text.includes("FROM public.non_conformity nc")) return { rows: [{ total: 0 }] };
+    if (text.includes("FROM public.quality_release_decision")) return { rows: [] };
     if (text.includes("SELECT id::text AS id") && text.includes("stock_batch_id")) return { rows: [] };
     if (text.includes("INSERT INTO public.stock_reservations")) return { rows: [{ id: "66666666-6666-6666-6666-666666666666" }] };
     return { rows: [] };

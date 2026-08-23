@@ -1,5 +1,7 @@
 import db from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
+import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
+import { assertOperationalLotQualityEligibility } from "../../qualite/repository/quality-operational-gate.repository";
 import type {
   StockReservationDetail,
   StockReservationEvent,
@@ -263,6 +265,7 @@ export async function repoCreateStockReservation(
     }
 
     let stockBatchId: string | null = null;
+    let qualityDecision: Awaited<ReturnType<typeof assertOperationalLotQualityEligibility>> | null = null;
     if (body.lot_id) {
       const batch = await client.query<{ id: string }>(
         `
@@ -281,6 +284,12 @@ export async function repoCreateStockReservation(
       if (!stockBatchId) {
         throw new HttpError(409, "STOCK_BATCH_MISSING", "The lot has no stock batch at this emplacement");
       }
+      qualityDecision = await assertOperationalLotQualityEligibility({
+        client,
+        lotId: body.lot_id,
+        qty: body.qty,
+        purpose: "RESERVE",
+      });
     }
 
     const states = await lockStockStates(client, [
@@ -363,6 +372,28 @@ export async function repoCreateStockReservation(
     const reservationId = inserted.rows[0]?.id;
     if (!reservationId) throw new Error("Failed to create stock reservation");
 
+    if (qualityDecision) {
+      await repoInsertAuditLog({
+        user_id: audit.user_id,
+        body: {
+          event_type: "ACTION",
+          action: "stock.reservation.quality_gate_passed",
+          page_key: audit.page_key,
+          entity_type: "stock_reservation",
+          entity_id: reservationId,
+          path: audit.path,
+          client_session_id: audit.client_session_id,
+          details: qualityDecision,
+        },
+        ip: audit.ip,
+        user_agent: audit.user_agent,
+        device_type: audit.device_type,
+        os: audit.os,
+        browser: audit.browser,
+        tx: client,
+      });
+    }
+
     await completeStockCommand(client, {
       audit,
       command,
@@ -420,9 +451,37 @@ async function transitionReservation(
       return repoGetStockReservation(command.existing.resource_id);
     }
 
+    // Read the identity first without taking the reservation row lock.  The
+    // Quality gate locks lot/control then observes reservations; taking this
+    // row lock first would deadlock a concurrent writer that already holds the
+    // lot lock and is reading ACTIVE commitments.  We lock and re-validate the
+    // reservation immediately after the gate.
+    const reservationIdentity = await client.query<{
+      lot_id: string | null;
+    }>(
+      `SELECT lot_id::text AS lot_id FROM public.stock_reservations WHERE id = $1::uuid`,
+      [id]
+    );
+    const identity = reservationIdentity.rows[0] ?? null;
+    if (!identity) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+    const qualityDecision = args.command_type === "RESERVATION_CONSUME" && identity.lot_id
+      ? await assertOperationalLotQualityEligibility({
+          client,
+          lotId: identity.lot_id,
+          // The ACTIVE reservation already spends this release entitlement.
+          // Consumption validates current state without charging it twice.
+          qty: 0,
+          purpose: "RESERVE",
+        })
+      : null;
+
     const reservation = await client.query<{
       article_id: string;
       location_id: string;
+      lot_id: string | null;
       stock_batch_id: string | null;
       qty_reserved: number;
       status: string;
@@ -432,6 +491,7 @@ async function transitionReservation(
         SELECT
           article_id::text AS article_id,
           location_id::text AS location_id,
+          lot_id::text AS lot_id,
           stock_batch_id::text AS stock_batch_id,
           qty_reserved::float8 AS qty_reserved,
           status,
@@ -572,6 +632,27 @@ async function transitionReservation(
         consumed_stock_movement_id: consumedMovementId,
       },
     });
+    if (qualityDecision) {
+      await repoInsertAuditLog({
+        user_id: audit.user_id,
+        body: {
+          event_type: "ACTION",
+          action: "stock.reservation.quality_gate_passed",
+          page_key: audit.page_key,
+          entity_type: "stock_reservation",
+          entity_id: id,
+          path: audit.path,
+          client_session_id: audit.client_session_id,
+          details: qualityDecision,
+        },
+        ip: audit.ip,
+        user_agent: audit.user_agent,
+        device_type: audit.device_type,
+        os: audit.os,
+        browser: audit.browser,
+        tx: client,
+      });
+    }
     await client.query("COMMIT");
     return repoGetStockReservation(id);
   } catch (error) {

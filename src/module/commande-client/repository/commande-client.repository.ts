@@ -20,6 +20,7 @@ import {
   enqueueEntityChanged,
 } from "../../../shared/realtime/realtime-outbox.service";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
+import { assertOperationalLotQualityEligibility } from "../../qualite/repository/quality-operational-gate.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 import { repoCreateAppNotifications, repoListUsersForCommandePlanningNotification } from "../../notifications/repository/notifications.repository";
 import { repoCreateLivraisonFromCommande } from "../../livraisons/repository/livraisons.repository";
@@ -5317,6 +5318,17 @@ export async function reserveCommandeStockForLaterDelivery(
   const reservationIds: string[] = [];
 
   for (const allocation of allocations) {
+    // Take the Quality lock before stock state locks.  All reservation writers
+    // share that order (Quality entitlement -> stock counters) to avoid a
+    // cross-workflow deadlock under simultaneous allocation.
+    if (allocation.lot_id) {
+      await assertOperationalLotQualityEligibility({
+        client: db,
+        lotId: allocation.lot_id,
+        qty: allocation.quantity,
+        purpose: "RESERVE",
+      });
+    }
     const stockLevel = await db.query<{
       qty_total: number;
       qty_reserved: number;

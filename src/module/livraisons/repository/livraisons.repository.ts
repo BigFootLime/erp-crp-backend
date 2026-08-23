@@ -14,6 +14,10 @@ import { HttpError } from "../../../utils/httpError"
 import { normalizeCommandeWorkflowStatus } from "../../commande-client/workflow/commande-client-workflow.definition"
 
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
+import {
+  assertOperationalLotQualityEligibility,
+  recordDirectLotQualityConsumption,
+} from "../../qualite/repository/quality-operational-gate.repository"
 import { isLivraisonTransitionAllowed } from "../domain/livraisons-policy"
 import {
   assertStockConsumptionAllowed,
@@ -1942,6 +1946,20 @@ async function repoUpdateLivraisonStatusLegacy(
            throw new HttpError(400, "INVALID_QTY", "Invalid allocated qty")
          }
 
+         // Legacy status-transition shipping posts its own OUT movement rather
+         // than delegating to the newer shipment repository. It therefore
+         // needs the same transaction-bound Quality gate before any stock
+         // level/batch lock or movement number is consumed.
+         const qualityDecision = g.lot_id
+           ? await assertOperationalLotQualityEligibility({
+             client: db,
+             lotId: g.lot_id,
+             qty: totalQty,
+             unit: g.unite,
+             purpose: "RESERVE",
+           })
+           : null
+
          const unitId = await resolveUnitIdForArticle(db, g.article_id, g.unite)
          const stockLevelId = await ensureStockLevel(db, {
            article_id: g.article_id,
@@ -2069,6 +2087,18 @@ async function repoUpdateLivraisonStatusLegacy(
            `,
            [movementId, userId]
          )
+
+         // This legacy path posts the physical OUT itself rather than calling
+         // stock.repoPostMovement. It therefore owns the same durable direct
+         // consumption write; otherwise every sequential legacy shipment
+         // could reuse the same quality-release quantity.
+         if (qualityDecision) {
+           await recordDirectLotQualityConsumption({
+             client: db,
+             decision: qualityDecision,
+             qty: totalQty,
+           })
+         }
 
          await insertStockMovementEvent(db, {
            movement_id: movementId,
@@ -2357,6 +2387,11 @@ export async function attachActiveCommandeReservationsToLivraison(
     let reservationId = reservation.reservation_id
 
     if (quantity + 1e-9 < Number(reservation.reservation_quantity)) {
+      // Splitting only reassigns an existing ACTIVE commitment; it neither
+      // creates nor consumes released quantity. Do not take the Quality lot
+      // lock while this function already holds the reservation row lock: the
+      // physical shipment rechecks Quality before posting, in the canonical
+      // lot -> reservation lock order.
       await db.query(
         `
           UPDATE public.stock_reservations
