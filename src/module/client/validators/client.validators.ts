@@ -209,6 +209,11 @@ export const createClientContactBodySchema = z.object({
 });
 export type CreateClientContactBodyDTO = z.infer<typeof createClientContactBodySchema>;
 
+export const clientProfileDocumentRequestSchema = z.object({
+  source_revision: z.string().trim().min(1).max(160, "Révision source invalide"),
+  reissue_reason: z.string().trim().min(3).max(500).optional().nullable(),
+}).strict();
+
 export const createClientSchema = z.object({
   // client_code volontairement absent : le code visible est généré côté serveur
   // dans la transaction de création (ADR-0013) et reste immuable. Toute valeur

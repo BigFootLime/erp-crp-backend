@@ -94,6 +94,21 @@ beforeEach(() => {
     if (s.includes("SELECT updated_at::text AS updated_at FROM clients")) {
       return Promise.resolve({ rows: [{ updated_at: "2026-08-23T12:00:00.000Z" }] });
     }
+    if (s.includes("c.updated_at::text AS source_revision")) {
+      return Promise.resolve({ rows: [{
+        client_id: "007", client_code: "CLI-007", company_name: "Usinage Fictif SAS",
+        email: null, phone: null, website_url: null, siret: null, vat_number: null, naf_code: null,
+        status: "prospect", blocked: false, reason: null, creation_date: "2026-07-20",
+        observations: null, source_revision: "2026-08-23T12:00:00.000Z", primary_contact_id: null,
+        biller_name: null, devise: null, encours_max: null, incoterm: null, langue: null,
+        compte_tiers: null, groupe_financier: null,
+        bill_name: "Facturation", bill_house_number: null, bill_street: "1 rue des Essais",
+        bill_address_complement: null, bill_postal_code: "69001", bill_city: "Lyon", bill_country: "France",
+        delivery_name: "Livraison", delivery_house_number: null, delivery_street: "1 rue des Essais",
+        delivery_address_complement: null, delivery_postal_code: "69001", delivery_city: "Lyon", delivery_country: "France",
+      }] });
+    }
+    if (s.includes("FROM contacts") || s.includes("FROM client_payment_modes cpm")) return Promise.resolve({ rows: [] });
     if (s.includes("fn_next_issued_code_value")) return Promise.resolve({ rows: [{ v: "7" }] });
     if (s.includes("INSERT INTO adresse_facturation")) return Promise.resolve({ rows: [{ bill_address_id: "b1" }] });
     if (s.includes("INSERT INTO adresse_livraison")) return Promise.resolve({ rows: [{ delivery_address_id: "d1" }] });

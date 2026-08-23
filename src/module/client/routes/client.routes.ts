@@ -17,6 +17,11 @@ import {
   postClient,
   postClientContact,
   printClientCreationSnapshot,
+  listClientOfficialDocuments,
+  postClientOfficialDocument,
+  previewClientOfficialDocument,
+  downloadClientOfficialDocument,
+  printClientOfficialDocument,
 } from "../controllers/client.controller";
 import { listClientsAnalytics } from "../controllers/clients.analytics.controller"
 import { CLIENT_WRITE_ROLES } from "../client.permissions";
@@ -44,6 +49,12 @@ router.get("/:id/creation-snapshot", getClientCreationSnapshot);
 router.get("/:id/creation-snapshot/:documentId/preview", previewClientCreationSnapshot);
 router.get("/:id/creation-snapshot/:documentId/download", downloadClientCreationSnapshot);
 router.post("/:id/creation-snapshot/:documentId/print-intents", printClientCreationSnapshot);
+// Consolidated current client fiche: separately versioned and archived in GED.
+router.get("/:id/official-documents", listClientOfficialDocuments);
+router.post("/:id/official-documents", requireClientWriteRole, postClientOfficialDocument);
+router.get("/:id/official-documents/:documentId/preview", previewClientOfficialDocument);
+router.get("/:id/official-documents/:documentId/download", downloadClientOfficialDocument);
+router.post("/:id/official-documents/:documentId/print-intents", printClientOfficialDocument);
 router.get("/:id", getClientById);
 
 // 🆕 upload du logo client

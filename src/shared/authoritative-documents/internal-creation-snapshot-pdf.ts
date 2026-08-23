@@ -82,11 +82,7 @@ export async function renderInternalCreationSnapshotPdf({ archive }: { archive: 
     for (const section of source.sections) {
       ctx.section(section.title);
       if (section.rows?.length) {
-        const top = ctx.y;
-        let bottom = top;
-        const columns = Math.min(3, Math.max(1, section.rows.length));
-        section.rows.forEach((row, index) => { bottom = Math.max(bottom, ctx.field(row.label, row.value, 38 + (index % columns) * (520 / columns), 500 / columns)); });
-        ctx.y = bottom + 8;
+        ctx.fieldsGrid(section.rows, Math.min(3, section.rows.length));
       }
       if (section.table) {
         const columns = section.table.columns.map((column) => ({ key: column.key, label: column.label, flex: 1 }));

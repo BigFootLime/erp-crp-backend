@@ -640,6 +640,38 @@ export class CerpDocumentContext {
     return this.doc.y
   }
 
+  /**
+   * Grille de champs multi-lignes. Chaque tranche de `columns` champs occupe sa
+   * propre ligne mesuree : les champs 4+ ne sont donc jamais redessines par-dessus
+   * la premiere ligne, meme lorsqu'une valeur se replie sur plusieurs lignes.
+   */
+  fieldsGrid(rows: ReadonlyArray<{ label: string; value: string | null }>, columns = 3): void {
+    if (!rows.length) return
+    const count = Math.min(3, Math.max(1, Math.trunc(columns)))
+    const gap = 20
+    const width = (CONTENT_WIDTH - gap * (count - 1)) / count
+
+    for (let offset = 0; offset < rows.length; offset += count) {
+      const chunk = rows.slice(offset, offset + count)
+      const heights = chunk.map((row) => {
+        const filled = Boolean(row.value && row.value.trim())
+        this.doc.font(filled ? "Helvetica-Bold" : "Helvetica").fontSize(BODY_SIZE)
+        return 11 + this.doc.heightOfString(toPdfSafeText(filled ? (row.value as string) : "Non renseigné"), { width })
+      })
+      const measuredHeight = Math.max(24, ...heights) + 8
+      this.ensureSpace(measuredHeight)
+
+      const top = this.cursor
+      let bottom = top
+      chunk.forEach((row, index) => {
+        bottom = Math.max(bottom, this.field(row.label, row.value, MARGIN_X + index * (width + gap), width))
+      })
+      this.cursor = Math.max(top + measuredHeight, bottom + 8)
+    }
+
+    this.doc.fillColor(CERP_DOC_COLORS.ink)
+  }
+
   /** Cadre de reception : nom, signature, date. Reste solidaire, jamais coupe. */
   signatureBox(title: string, fields: string[]): void {
     const height = 26 + fields.length * 26
