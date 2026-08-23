@@ -10,6 +10,7 @@ describe("delivery lot release decision contract", () => {
   it("releases only a full, exact LOT_RELEASE decision and preserves the delivery/lot lock order", () => {
     expect(source).toContain('execution.trigger_type !== "LOT_RELEASE"')
     expect(source).toContain('decision.decision !== "FULL"')
+    expect(source).toContain("params.releasedQty + 1e-9 < population")
     expect(source).toContain('decision.object_id !== execution.source_id')
     expect(source).toContain('decision.object_id !== execution.lot_id')
     expect(source.indexOf('`quality-delivery:${execution.bon_livraison_id}`')).toBeLessThan(
@@ -19,10 +20,18 @@ describe("delivery lot release decision contract", () => {
 
   it("changes only QUARANTAINE to LIBERE with immutable lot, quality and audit evidence", () => {
     expect(source).toContain('if (row.lot_status !== "QUARANTAINE")')
-    expect(source).toContain("UPDATE public.lots\n      SET lot_status = 'LIBERE'")
+    expect(source).toMatch(/UPDATE\s+public\.lots\s+SET\s+lot_status\s*=\s*'LIBERE'/)
     expect(source).toContain("QUALITY_DELIVERY_RELEASED")
     expect(source).toContain("DELIVERY_LOT_RELEASED")
     expect(source).toContain("qualite.executions.delivery_lot.release")
+  })
+
+  it("does not admit PARTIAL or a short quantity as a physical lot release", () => {
+    const guardStart = source.indexOf("async function releaseQuarantinedLotForFullDeliveryDecision")
+    const guardEnd = source.indexOf("const locked =", guardStart)
+    const guard = source.slice(guardStart, guardEnd)
+    expect(guard).toContain('decision.decision !== "FULL"')
+    expect(guard).toContain("params.releasedQty + 1e-9 < population")
   })
 
   it("runs the physical transition inside the same decision transaction before the durable receipt", () => {
