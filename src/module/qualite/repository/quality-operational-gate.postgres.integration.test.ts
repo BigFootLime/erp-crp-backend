@@ -5,6 +5,7 @@ import {
   assertOperationalLotQualityEligibility,
   recordDirectLotQualityConsumption,
 } from "./quality-operational-gate.repository";
+import { lockDeliveryQualityReleaseScope } from "../../livraisons/repository/quality-release.repository";
 
 // This is intentionally opt-in: it talks to a real PostgreSQL instance and
 // refuses every database except the fresh, explicitly named #616 rehearsal DB.
@@ -15,6 +16,8 @@ const describePostgres = DATABASE_URL?.endsWith(`/${TEST_DATABASE}`) ? describe 
 const ARTICLE_ID = "00000000-0000-4000-8000-000000000616";
 const LOT_ID = "00000000-0000-4000-8000-000000000617";
 const CONTROL_ID = "00000000-0000-4000-8000-000000000618";
+const DELIVERY_ID = "00000000-0000-4000-8000-000000000619";
+const DELIVERY_LINE_ID = "00000000-0000-4000-8000-000000000620";
 
 async function client(): Promise<Client> {
   if (!DATABASE_URL) throw new Error("CERP_QUALITY_GATE_PG_URL is required for this integration test");
@@ -27,7 +30,8 @@ async function resetFixture(): Promise<void> {
   const db = await client();
   try {
     await db.query(`
-      TRUNCATE public.stock_reservations, public.quality_release_decision,
+      TRUNCATE public.bon_livraison_ligne_allocations, public.bon_livraison_ligne,
+        public.bon_livraison, public.stock_reservations, public.quality_release_decision,
         public.quality_derogation, public.non_conformity_dispositions,
         public.non_conformity, public.quality_control, public.lots,
         public.articles RESTART IDENTITY CASCADE
@@ -119,6 +123,9 @@ describePostgres("Quality 360 operational gate — real PostgreSQL concurrency (
         CREATE TABLE IF NOT EXISTS public.non_conformity_dispositions (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), non_conformity_id uuid NOT NULL);
         CREATE TABLE IF NOT EXISTS public.quality_derogation (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), status text NOT NULL, valid_to timestamptz);
         CREATE TABLE IF NOT EXISTS public.quality_release_decision (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), quality_control_id uuid NOT NULL, derogation_id uuid NOT NULL, decided_at timestamptz NOT NULL DEFAULT now());
+        CREATE TABLE IF NOT EXISTS public.bon_livraison (id uuid PRIMARY KEY);
+        CREATE TABLE IF NOT EXISTS public.bon_livraison_ligne (id uuid PRIMARY KEY, bon_livraison_id uuid NOT NULL);
+        CREATE TABLE IF NOT EXISTS public.bon_livraison_ligne_allocations (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), bon_livraison_ligne_id uuid NOT NULL, lot_id uuid);
       `);
     } finally {
       await db.end();
@@ -129,7 +136,7 @@ describePostgres("Quality 360 operational gate — real PostgreSQL concurrency (
     // Leave the named database in place but erase only this test's tables.
     const db = await client();
     try {
-      await db.query(`DROP TABLE IF EXISTS public.stock_reservations, public.quality_release_decision, public.quality_derogation, public.non_conformity_dispositions, public.non_conformity, public.quality_control, public.lots, public.articles CASCADE`);
+      await db.query(`DROP TABLE IF EXISTS public.bon_livraison_ligne_allocations, public.bon_livraison_ligne, public.bon_livraison, public.stock_reservations, public.quality_release_decision, public.quality_derogation, public.non_conformity_dispositions, public.non_conformity, public.quality_control, public.lots, public.articles CASCADE`);
     } finally {
       await db.end();
     }
@@ -180,5 +187,30 @@ describePostgres("Quality 360 operational gate — real PostgreSQL concurrency (
     const results = await Promise.allSettled([shipment, direct]);
     expect(results.map((result) => result.status)).toEqual(["fulfilled", "rejected"]);
     expect(results[1]).toMatchObject({ reason: { code: "QUALITY_NOT_ELIGIBLE" } });
+  }, 5_000);
+
+  it("uses the same delivery then lot advisory order as an NC writer, so invoice-quality evaluation cannot race a new blocker", async () => {
+    await resetFixture();
+    const setup = await client();
+    try {
+      await setup.query(`INSERT INTO public.bon_livraison (id) VALUES ($1::uuid)`, [DELIVERY_ID]);
+      await setup.query(`INSERT INTO public.bon_livraison_ligne (id, bon_livraison_id) VALUES ($1::uuid, $2::uuid)`, [DELIVERY_LINE_ID, DELIVERY_ID]);
+      await setup.query(`INSERT INTO public.bon_livraison_ligne_allocations (bon_livraison_ligne_id, lot_id) VALUES ($1::uuid, $2::uuid)`, [DELIVERY_LINE_ID, LOT_ID]);
+    } finally { await setup.end(); }
+    const invoice = await client();
+    const writer = await client();
+    try {
+      await invoice.query("BEGIN");
+      await lockDeliveryQualityReleaseScope(invoice, DELIVERY_ID);
+      const writerWork = (async () => {
+        await writer.query("BEGIN");
+        await writer.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [`quality-delivery:${DELIVERY_ID}`]);
+        await writer.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [`quality-lot:${LOT_ID}`]);
+        await writer.query("COMMIT");
+      })();
+      await invoice.query("SELECT pg_sleep(0.15)");
+      await invoice.query("COMMIT");
+      await expect(writerWork).resolves.toBeUndefined();
+    } finally { await invoice.end(); await writer.end(); }
   }, 5_000);
 });

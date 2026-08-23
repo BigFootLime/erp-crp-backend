@@ -2,7 +2,7 @@ import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
-import { repoGetDeliveryQualityRelease } from "../../livraisons/repository/quality-release.repository";
+import { lockDeliveryQualityReleaseScope, repoGetDeliveryQualityRelease } from "../../livraisons/repository/quality-release.repository";
 import {
   listIssuedInvoiceCommandeIds,
   syncCommandeAfterInvoiceIssue,
@@ -85,6 +85,10 @@ async function assertInvoiceDeliveryQuality(
   );
   const audits: InvoiceQualityReleaseAudit[] = [];
   for (const row of deliveries.rows) {
+    // Must happen before evaluating and before allocating the legal number.
+    // It serializes the decision with delivery allocation/shipment changes and
+    // Quality writers that can insert a lot/delivery blocker.
+    await lockDeliveryQualityReleaseScope(client, row.delivery_id);
     const release = await repoGetDeliveryQualityRelease(row.delivery_id, client);
     const audit: InvoiceQualityReleaseAudit = {
       delivery_id: row.delivery_id,
