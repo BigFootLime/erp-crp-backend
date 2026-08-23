@@ -20,6 +20,7 @@ import {
   posteIdParamSchema,
   previewOfGenerationSchema,
   reorderOfOperationsSchema,
+  releaseOfSchema,
   startOfTimeLogSchema,
   stopOfTimeLogSchema,
   updateMachineSchema,
@@ -49,6 +50,8 @@ import {
   svcCreateOfReceipt,
   svcPreviewOfGeneration,
   svcReorderOfOperations,
+  svcGetOfReadiness,
+  svcReleaseOrdreFabrication,
   svcStartOfOperationTimeLog,
   svcStopOfOperationTimeLog,
   svcUpdateOrdreFabrication,
@@ -375,6 +378,21 @@ export const updateOrdreFabrication = asyncHandler(async (req, res) => {
     res.status(404).json({ error: "Not found" });
     return;
   }
+  res.status(200).json(out);
+});
+
+export const getOfReadiness = asyncHandler(async (req, res) => {
+  const { id } = ofIdParamSchema.parse({ params: req.params }).params;
+  const out = await svcGetOfReadiness({ id });
+  if (!out) { res.status(404).json({ error: "Not found" }); return; }
+  res.status(200).json(out);
+});
+
+export const releaseOrdreFabrication = asyncHandler(async (req, res) => {
+  const audit = buildAuditContext(req);
+  const { id } = ofIdParamSchema.parse({ params: req.params }).params;
+  const body = releaseOfSchema.parse({ body: parseBody(req) }).body;
+  const out = await svcReleaseOrdreFabrication({ id, body, audit });
   res.status(200).json(out);
 });
 

@@ -837,7 +837,7 @@ export async function repoOperatorBoard(params: {
       FROM public.of_operations op
       JOIN public.ordres_fabrication o ON o.id = op.of_id
       LEFT JOIN public.machines m ON m.id = op.machine_id
-      WHERE o.statut IN ('PLANIFIE', 'EN_COURS', 'EN_PAUSE')
+      WHERE o.statut IN ('EN_COURS', 'EN_PAUSE')
         AND op.status <> 'DONE'
         AND $1::int IS NOT NULL
         ${filter}
@@ -943,7 +943,7 @@ async function lockExecutionContext(
 
 /** L'OF doit être dans un état exécutable — on ne pointe pas sur un OF clos. */
 function assertOfExecutable(statut: string) {
-  const executable = ["BROUILLON", "PLANIFIE", "EN_COURS", "EN_PAUSE"];
+  const executable = ["EN_COURS", "EN_PAUSE"];
   if (!executable.includes(statut)) {
     throw new HttpError(
       422,
@@ -1149,20 +1149,8 @@ export async function repoStartExecution(params: {
       note: params.body.retroactive_reason ?? params.body.for_other_reason ?? null,
     });
 
-    // L'OF passe EN_COURS au premier pointage : c'est le seul effet de bord
-    // toléré, il est explicite et audité.
-    if (["BROUILLON", "PLANIFIE", "EN_PAUSE"].includes(of.statut)) {
-      await client.query(
-        `
-          UPDATE public.ordres_fabrication
-          SET statut = 'EN_COURS'::of_status,
-              date_lancement_reelle = COALESCE(date_lancement_reelle, CURRENT_DATE),
-              updated_at = now(), updated_by = $2
-          WHERE id = $1::bigint
-        `,
-        [params.body.of_id, params.audit.user_id]
-      );
-    }
+    // The only transition into execution is POST /ofs/:id/release. Pointage
+    // never promotes a draft/planned OF implicitly.
 
     if (operation && operation.status !== "RUNNING") {
       await client.query(

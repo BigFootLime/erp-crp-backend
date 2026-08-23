@@ -72,9 +72,9 @@ describe("#170 OF status machine", () => {
     expect(Object.keys(OF_STATUT_TRANSITIONS).sort()).toEqual([...OF_STATUTS].sort());
   });
 
-  it("accepts the nominal life-cycle", () => {
+  it("accepts the nominal life-cycle while reserving PLANIFIE -> EN_COURS for explicit release", () => {
     expect(canTransitionOfStatut("BROUILLON", "PLANIFIE")).toBe(true);
-    expect(canTransitionOfStatut("PLANIFIE", "EN_COURS")).toBe(true);
+    expect(canTransitionOfStatut("PLANIFIE", "EN_COURS")).toBe(false);
     expect(canTransitionOfStatut("EN_COURS", "EN_PAUSE")).toBe(true);
     expect(canTransitionOfStatut("EN_PAUSE", "EN_COURS")).toBe(true);
     expect(canTransitionOfStatut("EN_COURS", "TERMINE")).toBe(true);

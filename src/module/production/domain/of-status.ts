@@ -28,8 +28,10 @@ export const OF_STATUT_LABELS: Record<OfStatut, string> = {
 // prématurée est une réalité (correction contrôlée, auditée), pas une
 // réécriture d'historique. CLOTURE et ANNULE sont terminaux.
 export const OF_STATUT_TRANSITIONS: Record<OfStatut, readonly OfStatut[]> = {
-  BROUILLON: ["PLANIFIE", "EN_COURS", "ANNULE"],
-  PLANIFIE: ["BROUILLON", "EN_COURS", "ANNULE"],
+  // Entering execution is a separate, lock-held release command. A generic
+  // PATCH must never bypass the readiness decision.
+  BROUILLON: ["PLANIFIE", "ANNULE"],
+  PLANIFIE: ["BROUILLON", "ANNULE"],
   EN_COURS: ["EN_PAUSE", "TERMINE", "ANNULE"],
   EN_PAUSE: ["EN_COURS", "ANNULE"],
   TERMINE: ["EN_COURS", "CLOTURE"],
@@ -51,14 +53,9 @@ export function isOfPrelaunch(statut: OfStatut): boolean {
 }
 
 // Statuts d'OF sur lesquels un pointage/une exécution d'opération est admissible.
-// Démarrer une opération sur un OF BROUILLON/PLANIFIE le fait basculer EN_COURS
-// (transition automatique serveur, auditée).
-export const OF_STATUTS_ALLOWING_EXECUTION: readonly OfStatut[] = [
-  "BROUILLON",
-  "PLANIFIE",
-  "EN_COURS",
-  "EN_PAUSE",
-];
+// BROUILLON/PLANIFIE require the separate lock-held release decision and may
+// never be promoted by an execution action.
+export const OF_STATUTS_ALLOWING_EXECUTION: readonly OfStatut[] = ["EN_COURS", "EN_PAUSE"];
 
 export function ofStatutAllowsExecution(statut: OfStatut): boolean {
   return OF_STATUTS_ALLOWING_EXECUTION.includes(statut);
