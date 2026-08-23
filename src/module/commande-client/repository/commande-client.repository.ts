@@ -3455,7 +3455,7 @@ async function queueCommandeCreationPdf(
       LEFT JOIN public.clients c ON c.client_id = cc.client_id
       LEFT JOIN public.adresse_facturation af ON af.bill_address_id = cc.adresse_facturation_id
       WHERE cc.id = $1::bigint
-      FOR UPDATE
+      FOR UPDATE OF cc
     `,
     [params.commandeId]
   );

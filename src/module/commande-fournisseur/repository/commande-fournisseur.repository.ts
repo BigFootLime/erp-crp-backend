@@ -92,7 +92,8 @@ async function buildSupplierPoCreationSnapshot(tx: DbQueryer, commandeId: string
   const lines = await tx.query<Record<string, unknown>>(
     `SELECT position::int, reference_fournisseur AS reference, designation, unite AS unit,
             quantite::text AS quantity, prix_unitaire_ht::text AS unit_price_ht,
-            remise_pct::text AS discount_pct, tva_pct::text AS vat_pct, net_ht::text,
+            remise_pct::text AS discount_pct, tva_pct::text AS vat_pct,
+            round(round(quantite * prix_unitaire_ht, 2) - round(quantite * prix_unitaire_ht * remise_pct / 100, 2) + frais_ht, 2)::text AS net_ht,
             date_besoin::text AS need_date
        FROM public.commande_fournisseur_ligne
       WHERE commande_id = $1::uuid AND statut_ligne = 'ACTIVE'

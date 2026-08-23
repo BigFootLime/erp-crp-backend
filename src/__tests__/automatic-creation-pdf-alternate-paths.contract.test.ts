@@ -30,6 +30,13 @@ describe("automatic creation PDFs: alternate transaction paths", () => {
     }
   });
 
+  it("derives the supplier line net amount from deployed columns", () => {
+    const snapshotStart = supplier.indexOf("async function buildSupplierPoCreationSnapshot");
+    const snapshot = supplier.slice(snapshotStart, supplier.indexOf("const issuer = await readIssuerParty", snapshotStart));
+    expect(snapshot).toContain("round(round(quantite * prix_unitaire_ht, 2) - round(quantite * prix_unitaire_ht * remise_pct / 100, 2) + frais_ht, 2)::text AS net_ht");
+    expect(snapshot).not.toContain("net_ht::text,");
+  });
+
   it("queues the replenishment conversion snapshot after its transition and before commit", () => {
     const slice = body(replenishment, "export async function repoValidateReplenishmentProposal");
     const queue = slice.indexOf("queueSupplierPurchaseOrderCreationPdfTx");
