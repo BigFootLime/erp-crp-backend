@@ -1,3 +1,5 @@
+export type OperationalMediaAsset = { asset_id: string; status: "AVAILABLE" }
+
 export type OutilListItem = {
   id_outil: number
   id_fabricant: number | null
@@ -9,12 +11,12 @@ export type OutilListItem = {
   nom_fabricant: string | null
   nom_famille: string | null
   nom_geometrie: string | null
-  image: string | null
-  image_path: string | null
-  famille_image_path?: string | null
-  fabricant_logo?: string | null
-  plan: string | null
-  esquisse: string | null
+  image: OperationalMediaAsset | null
+  image_path: OperationalMediaAsset | null
+  famille_image_path?: OperationalMediaAsset | null
+  fabricant_logo?: OperationalMediaAsset | null
+  plan: OperationalMediaAsset | null
+  esquisse: OperationalMediaAsset | null
   profondeur_utile?: string | null
   matiere_usiner?: string | null
   utilisation?: string | null

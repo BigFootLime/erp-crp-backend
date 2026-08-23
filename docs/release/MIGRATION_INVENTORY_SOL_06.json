@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-08-15T11:10:40.280Z",
+  "generated_at": "2026-08-23T09:59:43.470Z",
   "source": "filesystem scan of db/patches and db/patches/support",
-  "patch_count": 165,
-  "support_file_count": 287,
-  "recent_patch_count": 107,
+  "patch_count": 170,
+  "support_file_count": 302,
+  "recent_patch_count": 112,
   "recent_support_gaps": [
     {
       "filename": "20260706_affaire_allow_projet.sql",
@@ -208,10 +208,10 @@
   ],
   "risk_totals": {
     "destructive_ddl": 2,
-    "destructive_dml": 8,
-    "data_rewrite": 100,
-    "table_lock": 128,
-    "blocking_index": 125,
+    "destructive_dml": 9,
+    "data_rewrite": 103,
+    "table_lock": 130,
+    "blocking_index": 126,
     "enum_change": 1
   },
   "patches": [
@@ -3049,6 +3049,86 @@
         "rollback": true
       },
       "risks": []
+    },
+    {
+      "order": 166,
+      "filename": "20260816_mfa_policy_and_device_labels.sql",
+      "sha256": "7d5d25874671cdf4d520684f656b2986209ad9c25a6c5d6b254eef81c41cbf04",
+      "bytes": 2529,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite",
+        "table-lock"
+      ]
+    },
+    {
+      "order": 167,
+      "filename": "20260819_client_portal_auth_attempt_update_grant_004.sql",
+      "sha256": "133e0b49689d94f2b507a9bb32de19ace74b492c75ed999a3a8128fbaf1630fe",
+      "bytes": 990,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite"
+      ]
+    },
+    {
+      "order": 168,
+      "filename": "20260819_devis_preparation_idempotency_grants_002_003.sql",
+      "sha256": "6958f41fc10b65af6447eac2205eb0b57a7d345f6f62e7f09da64ac17f70d6f2",
+      "bytes": 1371,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": []
+    },
+    {
+      "order": 169,
+      "filename": "20260819_mfa_expired_artifact_cleanup_delete_grant.sql",
+      "sha256": "4e7dc39721970b14cd515d12658f79bf9e95d46d684d1e06204f78f60c2dbb0b",
+      "bytes": 1122,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": []
+    },
+    {
+      "order": 170,
+      "filename": "20260823_operational_media_access_611.sql",
+      "sha256": "cad0368b00c3bff67a9390a0e1e9669bca37d0fa8bd4f89b4854aef5a1505415",
+      "bytes": 11961,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "destructive-dml",
+        "data-rewrite",
+        "table-lock",
+        "blocking-index"
+      ]
     }
   ]
 }

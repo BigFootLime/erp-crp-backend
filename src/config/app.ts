@@ -6,12 +6,10 @@ import helmet from "helmet";
 import v1Router from "../routes/v1.routes";
 import { errorHandler } from "../middlewares/errorHandler";
 import { checkNetworkDrive } from "../utils/checkNetworkDrive";
-import mime from "mime-types";
 import { swaggerSpec } from "../swagger/swagger";
 import { validationErrorMiddleware } from "../module/auth/middlewares/validationError.middleware";
 import { requestIdMiddleware } from "../middlewares/requestId";
 import { requestLogger } from "../middlewares/requestLogger";
-import { getImagesRootPath } from "../utils/imageStorage";
 import { stripQueryFromUrl } from "../utils/logPath";
 import pool from "./database";
 import { resolveTrustProxySetting } from "./trust-proxy";
@@ -202,38 +200,16 @@ app.use(createObservabilityRouter(pool));
 // Routes API v1
 app.use("/api/v1/", v1Router);
 
-/* ------------------ 5) Static images ------------------ */
+/* ------------------ 5) Private operational media ------------------ */
 
-const imagePath = getImagesRootPath();
-
-app.use(
-  "/images",
-  (req, res, next) => {
-    const originHeader = req.headers.origin;
-    const origin = typeof originHeader === "string" ? originHeader : undefined;
-
-    if (origin && isAllowedOrigin(origin)) {
-      res.setHeader("Access-Control-Allow-Origin", origin);
-      res.setHeader("Vary", "Origin");
-    }
-
-    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
-    next();
-  },
-  express.static(imagePath, {
-    setHeaders: (res, filePath) => {
-      const mimeType = mime.lookup(filePath);
-      if (mimeType) {
-        res.setHeader("Content-Type", mimeType);
-      }
-    },
-  })
-);
+// No /images express.static mount: CORS is not authorization. Media files are
+// delivered only by the authenticated, audited
+// /api/v1/operational-media/:assetId/content route.
 
 app.use(validationErrorMiddleware);
 
 
-logger.info("image_storage_configured", { storage_path: imagePath });
+logger.info("image_storage_configured", { delivery: "authenticated_operational_media" });
 
 // Vérifie que le dossier réseau est bien monté
 checkNetworkDrive().catch(() => {

@@ -4,7 +4,7 @@ import { runtimeMetadata } from "./runtime";
 
 const HTTP_BUCKETS_SECONDS = [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10] as const;
 
-type DependencyName = "database" | "ged_storage" | "antivirus" | "realtime";
+type DependencyName = "database" | "ged_storage" | "operational_media_storage" | "antivirus" | "realtime";
 type DependencyState = Readonly<{
   up: boolean;
   checkedAtMs: number;

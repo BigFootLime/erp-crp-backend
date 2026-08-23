@@ -86,7 +86,10 @@ export const createFournisseurSchema = z.object({
       telephone: optionalText(50),
       site_web: urlOptional,
       nom_commercial: optionalText(250),
-      logo: optionalText(1000),
+      // No supplier-logo upload producer exists. Public JSON may only clear a
+      // legacy logo; accepting a storage key would create a cross-module read
+      // binding to a guessed private operational-media object.
+      logo: z.null().optional(),
       notes: optionalText(10000),
       domaines: z.array(domaineLienInputSchema).max(20).optional(),
       adresses: z.array(adresseInputSchema).max(20).optional(),
@@ -112,7 +115,7 @@ export const updateFournisseurSchema = z.object({
       telephone: optionalText(50),
       site_web: urlOptional,
       nom_commercial: optionalText(250),
-      logo: optionalText(1000),
+      logo: z.null().optional(),
       notes: optionalText(10000),
       expected_updated_at: z.string().datetime({ offset: true }).optional(),
     })

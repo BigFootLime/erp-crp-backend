@@ -12,7 +12,14 @@
 //   * envoyer quoi que ce soit vers une commande numérique.
 
 import { HttpError } from "../../../utils/httpError";
-import { buildPublicImageUrl } from "../../../utils/imageStorage";
+import { normalizeStoredImagePath } from "../../../utils/imageStorage";
+import { findAssetIdsByStorageKeys } from "../../operational-media/repository/operational-media.repository";
+
+async function resolveClientLogoAsset(storageKey: string | null | undefined) {
+  const ids = await findAssetIdsByStorageKeys([storageKey]);
+  const assetId = ids.get(normalizeStoredImagePath(storageKey) ?? "") ?? null;
+  return assetId ? { asset_id: assetId, status: "AVAILABLE" as const } : null;
+}
 import { evaluateInstrumentUsage, type InstrumentState } from "../../qualite/domain/quality-release";
 
 import {
@@ -933,7 +940,8 @@ export async function svcDossier(params: {
               id: String(r.client.id),
               code: r.client.code ?? null,
               company_name: r.client.company_name,
-              logo_url: buildPublicImageUrl(r.client.logo_path),
+              logo_url: null,
+              logo_asset: await resolveClientLogoAsset(r.client.logo_path),
             }
           : null,
         affaire: r.affaire ? { id: Number(r.affaire.id), reference: r.affaire.reference } : null,

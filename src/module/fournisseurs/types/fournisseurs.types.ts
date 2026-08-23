@@ -48,7 +48,8 @@ export type Fournisseur = {
   city: string | null
   country: string | null
   nom_commercial: string | null
-  logo: string | null
+  logo: null
+  logo_asset: { asset_id: string; status: "AVAILABLE" } | null
   notes: string | null
   archived_at: string | null
   created_at: string
@@ -80,6 +81,7 @@ export type FournisseurListItem = Pick<
   | "city"
   | "country"
   | "logo"
+  | "logo_asset"
   | "updated_at"
   | "domaines"
   | "relations"

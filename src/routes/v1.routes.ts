@@ -52,6 +52,7 @@ import webhookAdminRoutes from "../module/integrations/webhooks/webhook.routes";
 import clientPortalRoutes from "../module/client-portal/routes/client-portal.routes";
 import clientPortalAdminRoutes from "../module/client-portal/routes/client-portal-admin.routes";
 import identificationRoutes from "../module/identification/identification.routes";
+import operationalMediaRoutes from "../module/operational-media/routes/operational-media.routes";
 
 import traceabilityRoutes from "../module/traceability/routes/traceability.routes"
 import traceability360Routes from "../module/traceability/routes/traceability-360.routes"
@@ -91,6 +92,10 @@ router.use(authenticateToken)
 // module métier pour qu'aucune surface future n'y échappe par oubli. Une fois le
 // module autorisé, les anciens gardes de rôle deviennent de simples compatibilités.
 router.use(moduleAccessGate)
+
+// Shared authenticated endpoint; it resolves and enforces the owner module
+// from the opaque asset identity before a byte is read.
+router.use("/operational-media", operationalMediaRoutes)
 
 // Gouvernance transverse de l'accueil : rollback ARIANE/V2 et métriques
 // d'adoption agrégées. Ce n'est pas un module métier restrictible.

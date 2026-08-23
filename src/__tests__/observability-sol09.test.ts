@@ -180,6 +180,12 @@ describe("SOL-09 — readiness représentative", () => {
           inode_total: 100,
           inode_free: 50,
         }),
+        checkOperationalMedia: async () => ({
+          ready: true,
+          readable: true,
+          writable: true,
+          reason: null,
+        }),
         scanner: async () => ({ mode: "enforce", provider: "clamdscan", command: "clamdscan", timeoutMs: 1_000, ready: true }),
         realtime: () => ({ ready: true }) as ReturnType<typeof import("../sockets/sockeServer").getRealtimeReadiness>,
       },
@@ -197,5 +203,22 @@ describe("SOL-09 — readiness représentative", () => {
       reliability: "MEASURED",
     });
     expect(JSON.stringify(report)).not.toContain("private DSN");
+  });
+
+  it("keeps operational media mandatory in production even when a stale override omits it", async () => {
+    const report = await collectReadiness(
+      {} as Pool,
+      {
+        queryDatabase: async () => undefined,
+        checkGed: async () => ({ configured: true, root_present: true, sentinel_required: true, sentinel_present: true, writable: true, healthy: true, detail: null, capacity_bytes: 1, available_bytes: 1, used_ratio: 0, inode_total: 1, inode_free: 1 }),
+        checkOperationalMedia: async () => ({ ready: false, readable: true, writable: false, reason: "not_writable" }),
+        scanner: async () => ({ mode: "enforce", provider: "clamdscan", command: "clamdscan", timeoutMs: 1_000, ready: true }),
+        realtime: () => ({ ready: true }) as ReturnType<typeof import("../sockets/sockeServer").getRealtimeReadiness>,
+      },
+      { NODE_ENV: "production", CERP_READINESS_REQUIRED_DEPENDENCIES: "database,ged_storage,antivirus,realtime" },
+    );
+
+    expect(report.status).toBe("not_ready");
+    expect(report.checks.operational_media_storage).toMatchObject({ required: true, status: "down", reason_code: "not_writable" });
   });
 });

@@ -1,13 +1,12 @@
 import type { PoolClient } from "pg";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
-import path from "node:path";
 
 import pool from "../../../config/database";
 import { generateMachineCode, generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
 import { promoteSecureUpload } from "../../../shared/uploads/secure-upload";
 import { withUploadTransaction, type UploadCommitReconciliation } from "../../../shared/uploads/upload-transaction";
-import { ensureImagesSubdir } from "../../../utils/imageStorage";
+import { ensureImagesSubdir, normalizeStoredImagePath } from "../../../utils/imageStorage";
 import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
@@ -56,6 +55,8 @@ import { capabilityForOfTransition, roleHasOfCapability } from "../domain/of-rba
 import { copyPieceOperationsToOf, loadApplicableTechnicalSnapshot } from "../domain/of-generation";
 import { PLANNED_OPERATION_DURATION_MINUTES_SQL } from "../domain/planned-operation-duration";
 import { enqueueProductionOfChanged, productionRealtimeActionFromAudit } from "./production-realtime.repository";
+import { findAssetIdsByStorageKeys } from "../../operational-media/repository/operational-media.repository";
+import { promoteOperationalImage } from "../../operational-media/services/operational-media-promotion.service";
 
 export type AuditContext = {
   user_id: number;
@@ -74,12 +75,20 @@ export type AuditContext = {
 
 type DbQueryer = Pick<PoolClient, "query">;
 
-const BASE_IMAGE_URL = process.env.BACKEND_URL || "http://erp-backend.croix-rousse-precision.fr:8080";
-
-function imageUrl(imagePath: string | null): string | null {
-  if (!imagePath) return null;
-  return `${BASE_IMAGE_URL}/images/${path.basename(imagePath)}`;
+async function requireMachineImagePromotion(
+  tx: Pick<PoolClient, "query">,
+  imagePath: string | null | undefined,
+  imageFile: Express.Multer.File | null | undefined,
+): Promise<void> {
+  if (!imagePath || !imageFile) return;
+  const result = await promoteOperationalImage({ tx, storedPath: imagePath, file: imageFile });
+  if (!result.activated) throw new HttpError(503, "OPERATIONAL_MEDIA_NOT_READY", "Le média sécurisé n'a pas pu être activé.");
 }
+
+function imageAsset(assetId: string | null | undefined) {
+  return assetId ? { asset_id: assetId, status: "AVAILABLE" as const } : null;
+}
+
 
 type MachineMutationExpectation = {
   mode: "create" | "update" | "replay";
@@ -553,6 +562,7 @@ export async function repoListMachines(filters: ListMachinesQueryDTO): Promise<P
     [...values, pageSize, offset]
   );
 
+  const imageAssetIds = await findAssetIdsByStorageKeys(dataRes.rows.map((row) => row.image_path));
   const items: MachineListItem[] = dataRes.rows.map((r) => ({
     id: r.id,
     code: r.code,
@@ -570,7 +580,7 @@ export async function repoListMachines(filters: ListMachinesQueryDTO): Promise<P
     hourly_rate_is_override: r.hourly_rate_is_override,
     currency: r.currency,
     is_available: r.is_available,
-    image_url: imageUrl(r.image_path),
+    image_url: null, image_asset: imageAsset(imageAssetIds.get(normalizeStoredImagePath(r.image_path) ?? "")),
     dashboard_color: r.dashboard_color,
     model_3d_path: r.model_3d_path,
     documentation_url: r.documentation_url,
@@ -672,6 +682,7 @@ export async function repoGetMachine(id: string): Promise<MachineDetail | null> 
   );
   const row = res.rows[0];
   if (!row) return null;
+  const imageAssetIds = await findAssetIdsByStorageKeys([row.image_path]);
 
   return {
     id: row.id,
@@ -690,8 +701,7 @@ export async function repoGetMachine(id: string): Promise<MachineDetail | null> 
     hourly_rate_is_override: row.hourly_rate_is_override,
     currency: row.currency,
     is_available: row.is_available,
-    image_url: imageUrl(row.image_path),
-    image_path: row.image_path,
+    image_url: null, image_asset: imageAsset(imageAssetIds.get(normalizeStoredImagePath(row.image_path) ?? "")), image_path: null,
     dashboard_color: row.dashboard_color,
     model_3d_path: row.model_3d_path,
     documentation_url: row.documentation_url,
@@ -892,6 +902,7 @@ export async function repoCreateMachine(params: {
 
     const row = ins.rows[0];
     if (!row) throw new Error("Failed to create machine");
+    await requireMachineImagePromotion(client, row.image_path, params.image_file);
     expected = {
       mode: "create",
       machineId: row.id,
@@ -935,8 +946,7 @@ export async function repoCreateMachine(params: {
       hourly_rate_is_override: row.hourly_rate_is_override,
       currency: row.currency,
       is_available: row.is_available,
-      image_url: imageUrl(row.image_path),
-      image_path: row.image_path,
+      image_url: null, image_asset: imageAsset((await findAssetIdsByStorageKeys([row.image_path])).get(normalizeStoredImagePath(row.image_path) ?? "")), image_path: null,
       dashboard_color: row.dashboard_color,
       model_3d_path: row.model_3d_path,
       documentation_url: row.documentation_url,
@@ -1246,6 +1256,7 @@ export async function repoCreateMachineOnboarding(params: {
 
     const row = ins.rows[0];
     if (!row) throw new Error("Failed to create machine from onboarding");
+    await requireMachineImagePromotion(client, row.image_path, params.image_file);
     expected = {
       mode: "create",
       machineId: row.id,
@@ -1293,8 +1304,7 @@ export async function repoCreateMachineOnboarding(params: {
       hourly_rate_is_override: row.hourly_rate_is_override,
       currency: row.currency,
       is_available: row.is_available,
-      image_url: imageUrl(row.image_path),
-      image_path: row.image_path,
+      image_url: null, image_asset: imageAsset((await findAssetIdsByStorageKeys([row.image_path])).get(normalizeStoredImagePath(row.image_path) ?? "")), image_path: null,
       dashboard_color: row.dashboard_color,
       model_3d_path: row.model_3d_path,
       documentation_url: row.documentation_url,
@@ -1644,6 +1654,7 @@ export async function repoUpdateMachineOnboarding(params: {
 
     const row = upd.rows[0] ?? null;
     if (!row) throw new HttpError(409, "CONCURRENT_MODIFICATION", "Machine has been modified by another user.");
+    await requireMachineImagePromotion(client, row.image_path, params.image_file);
     expected = {
       mode: "update",
       machineId: row.id,
@@ -1879,6 +1890,7 @@ export async function repoUpdateMachine(params: {
     if (!row) {
       return null;
     }
+    await requireMachineImagePromotion(client, row.image_path, params.image_file);
     expected = {
       mode: "update",
       machineId: row.id,
@@ -1915,8 +1927,7 @@ export async function repoUpdateMachine(params: {
       hourly_rate_is_override: row.hourly_rate_is_override,
       currency: row.currency,
       is_available: row.is_available,
-      image_url: imageUrl(row.image_path),
-      image_path: row.image_path,
+      image_url: null, image_asset: imageAsset((await findAssetIdsByStorageKeys([row.image_path])).get(normalizeStoredImagePath(row.image_path) ?? "")), image_path: null,
       dashboard_color: row.dashboard_color,
       model_3d_path: row.model_3d_path,
       documentation_url: row.documentation_url,

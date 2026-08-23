@@ -50,6 +50,7 @@ describe("machine image upload ownership contract", () => {
       const repositoryBody = exportedFunctionBody(repository, endpoint.repository);
       expect(repositoryBody).toContain("withUploadTransaction({");
       expect(repositoryBody).toContain("promoteSecureUpload(");
+      expect(repositoryBody).toContain("requireMachineImagePromotion(client, row.image_path, params.image_file)");
       expect(repositoryBody).toContain("reconcileMachineMutation(expected)");
     });
   }
@@ -57,5 +58,16 @@ describe("machine image upload ownership contract", () => {
   it("uses staging middleware rather than direct final-directory image storage", () => {
     expect(routes).toContain('const machineImageUpload = createSecureUpload("image", { maxFiles: 1 });');
     expect(routes).not.toContain('import { upload } from "../../../middlewares/upload"');
+  });
+
+  it("requires activation after the owner write, so an unready image rolls back rather than succeeding", () => {
+    for (const repositoryName of ["repoCreateMachine", "repoCreateMachineOnboarding", "repoUpdateMachineOnboarding", "repoUpdateMachine"] as const) {
+      const body = exportedFunctionBody(repository, repositoryName);
+      const ownerWrite = body.indexOf("RETURNING");
+      const promotion = body.indexOf("requireMachineImagePromotion(client, row.image_path, params.image_file)");
+      expect(ownerWrite).toBeGreaterThanOrEqual(0);
+      expect(promotion).toBeGreaterThan(ownerWrite);
+      expect(body.indexOf("withUploadTransaction({")).toBeLessThan(promotion);
+    }
   });
 });

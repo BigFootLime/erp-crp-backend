@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "d8680eee125fbc1b1f1230e14b3294af0f44c59e8ab02a285e3512d89386f536";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "b3b69bab92eec4e2f23670abaa0a2202e8337d3268429e92e945a267e9ba7107";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -7739,6 +7739,36 @@ export const GENERATED_ROUTE_INVENTORY = [
     ],
     "authenticated": false,
     "rbac": []
+  },
+  {
+    "method": "get",
+    "path": "/operational-media/{assetId}/content",
+    "source": "src/module/operational-media/routes/operational-media.routes.ts:5",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "downloadOperationalImage"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/operational-media/capabilities",
+    "source": "src/module/operational-media/routes/operational-media.routes.ts:4",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "getMediaCapabilities"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
   },
   {
     "method": "get",

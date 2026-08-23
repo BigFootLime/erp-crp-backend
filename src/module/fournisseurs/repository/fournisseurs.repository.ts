@@ -11,6 +11,8 @@ import { generateFournisseurCode } from "../../../shared/codes/code-generator.se
 import { transferSecureUploadToDestination } from "../../../shared/uploads/secure-upload"
 import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction"
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
+import { findAssetIdsByStorageKeys } from "../../operational-media/repository/operational-media.repository"
+import { normalizeStoredImagePath } from "../../../utils/imageStorage"
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators"
 import type {
   AttachDocumentsBodyDTO,
@@ -301,7 +303,11 @@ type FournisseurRow = {
   homologations_count: number | null
 }
 
-function mapFournisseurRow(r: FournisseurRow): Fournisseur {
+function logoAsset(assetId: string | undefined): Fournisseur["logo_asset"] {
+  return assetId ? { asset_id: assetId, status: "AVAILABLE" } : null
+}
+
+function mapFournisseurRow(r: FournisseurRow, logoAssetId?: string): Fournisseur {
   const status = r.status ?? (r.actif ? "actif" : "inactif")
   return {
     id: r.id,
@@ -321,7 +327,8 @@ function mapFournisseurRow(r: FournisseurRow): Fournisseur {
     city: r.city ?? null,
     country: r.country ?? null,
     nom_commercial: r.nom_commercial ?? null,
-    logo: r.logo ?? null,
+    logo: null,
+    logo_asset: logoAsset(logoAssetId),
     notes: r.notes,
     archived_at: r.archived_at ?? null,
     created_at: r.created_at,
@@ -341,12 +348,12 @@ function mapFournisseurRow(r: FournisseurRow): Fournisseur {
   }
 }
 
-function mapFournisseurListItem(r: FournisseurRow): FournisseurListItem {
-  const s = mapFournisseurRow(r)
+function mapFournisseurListItem(r: FournisseurRow, logoAssetId?: string): FournisseurListItem {
+  const s = mapFournisseurRow(r, logoAssetId)
   return {
     id: s.id, code: s.code, nom: s.nom, actif: s.actif, status: s.status,
     type_principal: s.type_principal, email: s.email, telephone: s.telephone,
-    city: s.city, country: s.country, logo: s.logo, updated_at: s.updated_at,
+    city: s.city, country: s.country, logo: s.logo, logo_asset: s.logo_asset, updated_at: s.updated_at,
     domaines: s.domaines, relations: s.relations, homologation: s.homologation,
     contacts_count: s.contacts_count, catalogue_count: s.catalogue_count,
     documents_count: s.documents_count, events_count: s.events_count,
@@ -434,7 +441,14 @@ export async function repoListFournisseurs(filters: ListFournisseursQueryDTO): P
      LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
     [...values, pageSize, offset]
   )
-  return { items: dataRes.rows.map(mapFournisseurListItem), total }
+  const ids = await findAssetIdsByStorageKeys(dataRes.rows.map((row) => row.logo))
+  return {
+    items: dataRes.rows.map((row) => mapFournisseurListItem(
+      row,
+      ids.get(normalizeStoredImagePath(row.logo) ?? ""),
+    )),
+    total,
+  }
 }
 
 const ADRESSES_JSON_DETAIL = `
@@ -455,7 +469,9 @@ export async function repoGetFournisseur(id: string): Promise<Fournisseur | null
     [id]
   )
   const row = res.rows[0] ?? null
-  return row ? mapFournisseurRow(row) : null
+  if (!row) return null
+  const ids = await findAssetIdsByStorageKeys([row.logo])
+  return mapFournisseurRow(row, ids.get(normalizeStoredImagePath(row.logo) ?? ""))
 }
 
 export async function repoListFournisseurDomaines(): Promise<FournisseurDomaine[]> {
@@ -682,7 +698,7 @@ export async function repoUpdateFournisseur(
   if (patch.telephone !== undefined) sets.push(`telephone = ${push(patch.telephone)}`)
   if (patch.site_web !== undefined) sets.push(`site_web = ${push(patch.site_web)}`)
   if (patch.nom_commercial !== undefined) sets.push(`nom_commercial = ${push(patch.nom_commercial)}`)
-  if (patch.logo !== undefined) sets.push(`logo = ${push(patch.logo)}`)
+  if (patch.logo !== undefined) sets.push(`logo = ${push(null)}`)
   if (patch.notes !== undefined) sets.push(`notes = ${push(patch.notes)}`)
   sets.push("updated_at = now()")
   sets.push(`updated_by = ${push(audit.user_id)}`)

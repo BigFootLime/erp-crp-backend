@@ -31,6 +31,7 @@ function readiness(status: ReadinessReport["status"] = "ready"): ReadinessReport
     checks: {
       database: check("postgres_probe"),
       ged_storage: check("filesystem_probe"),
+      operational_media_storage: check("operational_media_filesystem_probe"),
       antivirus: check("clamav_live_probe"),
       realtime: check("realtime_control_plane"),
     },
