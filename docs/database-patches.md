@@ -26,6 +26,23 @@ du même nom dans `db/patches/support/`, puis suivre
 suppression après création d'une preuve métier ; la restauration du dump devient
 alors la seule stratégie de retrait de schéma.
 
+## PDF autoritatifs — contrat de liens GED
+
+`20260823_authoritative_pdf_ged_entity_contract.sql` enregistre les cinq parents
+PDF absents du registre GED fermé de `cerp_test`. Il est immuable et reste
+encadré par son preflight, son verify et son rollback fail-closed.
+
+La production conserve volontairement le profil GED historique SOL-20, sans ce
+registre externe. Les patches ordonnés
+`20260823_authoritative_pdf_ged_compatibility_bridge.sql` puis
+`20260823_authoritative_pdf_ged_legacy_profile_cleanup.sql` permettent d'exécuter
+le contrat avec le runner normal sans changer durablement ce profil : le pont
+refuse tout lien GED existant, installe un registre strict temporaire, puis le
+cleanup vérifie les 17 types exacts avant de retirer uniquement les artefacts du
+pont. Appliquer les trois patches dans une même fenêtre de maintenance, service
+arrêté, après backup et preflight ; ne jamais baseliner le contrat sur le profil
+legacy.
+
 ## Commands
 
 Show patch status:

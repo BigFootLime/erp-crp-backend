@@ -11,6 +11,20 @@ import type { ArchiveQueueItem, AuthoritativePdfArchiveRecord, AuthoritativePdfC
 const PDF_CLASS = "CERP_AUTHORITATIVE_PDF";
 const SYSTEM_SNAPSHOT_CLASS = "CERP_SYSTEM_SNAPSHOT";
 const PDF_DOMAIN = "CERP";
+const GED_ENTITY_TYPE_BY_ARCHIVE_ENTITY: Readonly<Record<string, string>> = Object.freeze({
+  client: "CLIENT",
+  fournisseur: "FOURNISSEUR",
+  "commande-client": "COMMANDE_CLIENT",
+  "ordre-fabrication": "OF",
+  "piece-technique": "PIECE_TECHNIQUE",
+  affaire: "AFFAIRE",
+  "stock-article": "ARTICLE",
+  "bon-livraison": "BON_LIVRAISON",
+  devis: "DEVIS",
+  "commande-fournisseur": "COMMANDE_FOURNISSEUR",
+  facture: "FACTURE",
+  avoir: "AVOIR",
+});
 export const INTERNAL_CREATION_SNAPSHOT_KINDS = new Set([
   "CLIENT_CREATION_SNAPSHOT", "SUPPLIER_CREATION_SNAPSHOT", "CUSTOMER_ORDER_CREATION_SNAPSHOT",
   "OF_CREATION_SNAPSHOT", "TECHNICAL_PIECE_CREATION_SNAPSHOT", "AFFAIR_CREATION_SNAPSHOT", "STOCK_ARTICLE_CREATION_SNAPSHOT",
@@ -22,6 +36,17 @@ export function authoritativePdfGedPolicy(documentKind: string): { classKey: str
   return INTERNAL_CREATION_SNAPSHOT_KINDS.has(documentKind)
     ? { classKey: SYSTEM_SNAPSHOT_CLASS, linkRole: "CREATION_SNAPSHOT", eventType: "CREATION_SNAPSHOT_ARCHIVED" }
     : { classKey: PDF_CLASS, linkRole: "AUTHORITATIVE_PDF", eventType: "AUTHORITATIVE_PDF_ARCHIVED" };
+}
+
+/**
+ * Archive producers use stable, lower-case application identifiers; GED links
+ * use the closed vocabulary enforced by `fn_ged_link_guard`. Keep the bridge
+ * explicit so a spelling change cannot create a second business tree.
+ */
+export function authoritativePdfGedEntityType(entityType: string): string {
+  const gedEntityType = GED_ENTITY_TYPE_BY_ARCHIVE_ENTITY[entityType];
+  if (!gedEntityType) throw new Error("AUTHORITATIVE_PDF_GED_ENTITY_TYPE_UNSUPPORTED");
+  return gedEntityType;
 }
 /** Must stay aligned with the generated-PDF GED class in migration #612. */
 const MAX_AUTHORITATIVE_PDF_BYTES = 52_428_800;
@@ -44,6 +69,7 @@ export function sha256Text(value: string): string {
 
 function assertCreationInput(input: AuthoritativePdfCreationInput): void {
   if (!/^[a-z][a-z0-9_-]{1,63}$/.test(input.entityType)) throw new Error("AUTHORITATIVE_PDF_ENTITY_TYPE_INVALID");
+  authoritativePdfGedEntityType(input.entityType);
   if (
     !input.entityId.trim() || input.entityId.length > 160 ||
     !/^[A-Z][A-Z0-9_]{1,63}$/.test(input.documentKind)
@@ -245,6 +271,7 @@ export async function archiveClaimedAuthoritativePdf(
   });
   const existingDocumentId = await repoFindLatestGedDocumentForAuthoritativePdf(tx, item.archive.entityType, item.archive.entityId, item.archive.documentKind);
   const gedPolicy = authoritativePdfGedPolicy(item.archive.documentKind);
+  const gedEntityType = authoritativePdfGedEntityType(item.archive.entityType);
   const changeReason = `Édition ${item.archive.documentVersion}; rendu ${item.archive.renderVersion}; instantané ${item.archive.snapshotSha256}`;
   let documentId: string;
   let versionId: string;
@@ -260,8 +287,8 @@ export async function archiveClaimedAuthoritativePdf(
   await repoObsoletePreviousApplicable(tx, documentId, versionId);
   await repoSetVersionStatus(tx, versionId, "APPLICABLE", item.archive.actorUserId);
   await repoSetCurrentVersion(tx, documentId, versionId);
-  await repoAddLink(tx, { document_id: documentId, entity_type: item.archive.entityType, entity_id: item.archive.entityId, link_role: gedPolicy.linkRole, created_by: item.archive.actorUserId });
-  await repoLogAccess(tx, { document_id: documentId, version_id: versionId, event_type: gedPolicy.eventType, actor_id: item.archive.actorUserId, details: { entity_type: item.archive.entityType, entity_id: item.archive.entityId, document_kind: item.archive.documentKind, document_version: item.archive.documentVersion, source_revision: item.archive.sourceRevision, snapshot_sha256: item.archive.snapshotSha256, pdf_sha256: sha256, render_version: item.archive.renderVersion } });
+  await repoAddLink(tx, { document_id: documentId, entity_type: gedEntityType, entity_id: item.archive.entityId, link_role: gedPolicy.linkRole, created_by: item.archive.actorUserId });
+  await repoLogAccess(tx, { document_id: documentId, version_id: versionId, event_type: gedPolicy.eventType, actor_id: item.archive.actorUserId, details: { entity_type: gedEntityType, archive_entity_type: item.archive.entityType, entity_id: item.archive.entityId, document_kind: item.archive.documentKind, document_version: item.archive.documentVersion, source_revision: item.archive.sourceRevision, snapshot_sha256: item.archive.snapshotSha256, pdf_sha256: sha256, render_version: item.archive.renderVersion } });
   await repoMarkAuthoritativePdfArchived(tx, { archiveId: item.archive.id, outboxId: item.outboxId, claimToken: item.claimToken, pdfSha256: sha256, pdfSizeBytes: exact.length, gedDocumentId: documentId, gedVersionId: versionId, actorUserId: item.archive.actorUserId });
 }
 
