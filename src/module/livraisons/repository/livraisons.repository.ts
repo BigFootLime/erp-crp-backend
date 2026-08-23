@@ -11,6 +11,8 @@ import { transferSecureUploadToDestination } from "../../../shared/uploads/secur
 import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction"
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
+import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service"
+import { buildDeliveryCreationSnapshotInput } from "../services/delivery-authoritative-document"
 import { normalizeCommandeWorkflowStatus } from "../../commande-client/workflow/commande-client-workflow.definition"
 
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
@@ -1241,6 +1243,9 @@ export async function repoCreateLivraison(input: CreateLivraisonBodyDTO, userId:
       },
     })
 
+    // The snapshot queue is part of the same delivery CREATE transaction.
+    // A queue failure rolls back the delivery rather than leaving an unfiled root.
+    await queueCreationPdfArchive(db, await buildDeliveryCreationSnapshotInput(db, { deliveryId: id, actorUserId: userId }))
     return { id }
   })
 }
@@ -2861,6 +2866,8 @@ export async function repoCreateLivraisonFromCommande(
         prepared: transferredReservations.fullyAllocated,
       },
     })
+
+    await queueCreationPdfArchive(db, await buildDeliveryCreationSnapshotInput(db, { deliveryId: id, actorUserId: userId }))
 
     return { id }
   }

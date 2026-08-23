@@ -31,6 +31,8 @@ import {
   updateLivraison,
   updateLivraisonLine,
   updateLivraisonStatus,
+  getLivraisonCreationSnapshot, previewLivraisonCreationSnapshot, downloadLivraisonCreationSnapshot, printLivraisonCreationSnapshot,
+  getShippedLivraisonOfficialDocument, previewShippedLivraisonOfficialDocument, downloadShippedLivraisonOfficialDocument, printShippedLivraisonOfficialDocument,
   uploadLivraisonDocuments,
   
 } from "../controllers/livraisons.controller"
@@ -94,6 +96,14 @@ router.post(
 )
 
 router.get("/:id", requireLivraisonCapability("read"), getLivraison)
+router.get("/:id/creation-snapshot", requireLivraisonCapability("read"), getLivraisonCreationSnapshot)
+router.get("/:id/creation-snapshot/:documentId/preview", requireLivraisonCapability("read"), previewLivraisonCreationSnapshot)
+router.get("/:id/creation-snapshot/:documentId/download", requireLivraisonCapability("read"), downloadLivraisonCreationSnapshot)
+router.post("/:id/creation-snapshot/:documentId/print-intents", requireLivraisonCapability("read"), printLivraisonCreationSnapshot)
+router.get("/:id/official-documents/shipped", requireLivraisonCapability("export"), getShippedLivraisonOfficialDocument)
+router.get("/:id/official-documents/shipped/:documentId/preview", requireLivraisonCapability("export"), previewShippedLivraisonOfficialDocument)
+router.get("/:id/official-documents/shipped/:documentId/download", requireLivraisonCapability("export"), downloadShippedLivraisonOfficialDocument)
+router.post("/:id/official-documents/shipped/:documentId/print-intents", requireLivraisonCapability("export"), printShippedLivraisonOfficialDocument)
 router.put("/:id", requireLivraisonCapability("prepare"), updateLivraison)
 
 router.post("/:id/lines", requireLivraisonCapability("prepare"), addLivraisonLine)
