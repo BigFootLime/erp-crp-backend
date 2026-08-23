@@ -26,7 +26,7 @@ GED document-link aliases are accepted only through this closed map:
 | `AFFAIRE` | `AFFAIRE` | `affaires` | integer |
 | `ORDRE_FABRICATION`, `ORDRE-FABRICATION`, `OF` | `ORDRE_FABRICATION` | `production` | integer |
 | `PIECE_TECHNIQUE`, `PIECE-TECHNIQUE`, `PIECE_TECHNIQUE_VERSION` | same | `pieces-techniques` | UUID |
-| `STOCK_ARTICLE`, `STOCK-ARTICLE` | `STOCK_ARTICLE` | `stock` | integer |
+| `STOCK_ARTICLE`, `STOCK-ARTICLE` | `STOCK_ARTICLE` | `stock` | UUID |
 | `OUTIL` | `OUTIL` | `outillage` | integer |
 
 Operational media uses a separate closed owner map: machine → production,

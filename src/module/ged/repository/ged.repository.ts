@@ -1210,7 +1210,7 @@ export async function repoInternalParentLinkExists(entityType: string, entityId:
     ORDRE_FABRICATION: { sql: "SELECT 1 FROM public.ordres_fabrication WHERE id = $1::bigint LIMIT 1", values: [entityId] },
     PIECE_TECHNIQUE: { sql: "SELECT 1 FROM public.pieces_techniques WHERE id = $1::uuid LIMIT 1", values: [entityId] },
     PIECE_TECHNIQUE_VERSION: { sql: "SELECT 1 FROM public.piece_technique_versions WHERE id = $1::uuid LIMIT 1", values: [entityId] },
-    STOCK_ARTICLE: { sql: "SELECT 1 FROM public.articles WHERE id = $1::bigint LIMIT 1", values: [entityId] },
+    STOCK_ARTICLE: { sql: "SELECT 1 FROM public.articles WHERE id = $1::uuid LIMIT 1", values: [entityId] },
     OUTIL: { sql: "SELECT 1 FROM public.gestion_outils_outil WHERE id_outil = $1::integer LIMIT 1", values: [entityId] },
   };
   const statement = statements[key];
