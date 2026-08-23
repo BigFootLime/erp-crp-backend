@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "1cc22d5c40d3842ed420662fc9dc9715279707339a4090415dd07ad46e80b617";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "daf1b22978c3747e3e037d6e7c96cf89215793491462f67b8d4518c9dcb0b9e1";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -2697,7 +2697,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/clients",
-    "source": "src/module/client/routes/client.routes.ts:35",
+    "source": "src/module/client/routes/client.routes.ts:40",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2713,7 +2713,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/clients",
-    "source": "src/module/client/routes/client.routes.ts:34",
+    "source": "src/module/client/routes/client.routes.ts:39",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2731,7 +2731,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/clients/{clientId}/addresses",
-    "source": "src/module/client/routes/client.routes.ts:41",
+    "source": "src/module/client/routes/client.routes.ts:46",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2747,7 +2747,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/clients/{clientId}/contacts",
-    "source": "src/module/client/routes/client.routes.ts:39",
+    "source": "src/module/client/routes/client.routes.ts:44",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2763,7 +2763,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/clients/{clientId}/contacts",
-    "source": "src/module/client/routes/client.routes.ts:40",
+    "source": "src/module/client/routes/client.routes.ts:45",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2781,7 +2781,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "delete",
     "path": "/clients/{id}",
-    "source": "src/module/client/routes/client.routes.ts:61",
+    "source": "src/module/client/routes/client.routes.ts:72",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2799,7 +2799,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/clients/{id}",
-    "source": "src/module/client/routes/client.routes.ts:47",
+    "source": "src/module/client/routes/client.routes.ts:58",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2815,7 +2815,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/clients/{id}",
-    "source": "src/module/client/routes/client.routes.ts:57",
+    "source": "src/module/client/routes/client.routes.ts:68",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2833,7 +2833,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/clients/{id}/archive",
-    "source": "src/module/client/routes/client.routes.ts:63",
+    "source": "src/module/client/routes/client.routes.ts:74",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2851,7 +2851,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/clients/{id}/contact",
-    "source": "src/module/client/routes/client.routes.ts:66",
+    "source": "src/module/client/routes/client.routes.ts:77",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2869,7 +2869,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/clients/{id}/creation-snapshot",
-    "source": "src/module/client/routes/client.routes.ts:43",
+    "source": "src/module/client/routes/client.routes.ts:48",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2885,7 +2885,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/clients/{id}/creation-snapshot/{documentId}/download",
-    "source": "src/module/client/routes/client.routes.ts:45",
+    "source": "src/module/client/routes/client.routes.ts:50",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2901,7 +2901,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/clients/{id}/creation-snapshot/{documentId}/preview",
-    "source": "src/module/client/routes/client.routes.ts:44",
+    "source": "src/module/client/routes/client.routes.ts:49",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2917,7 +2917,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/clients/{id}/creation-snapshot/{documentId}/print-intents",
-    "source": "src/module/client/routes/client.routes.ts:46",
+    "source": "src/module/client/routes/client.routes.ts:51",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2932,8 +2932,90 @@ export const GENERATED_ROUTE_INVENTORY = [
   },
   {
     "method": "get",
+    "path": "/clients/{id}/official-documents",
+    "source": "src/module/client/routes/client.routes.ts:53",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "listClientOfficialDocuments"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/clients/{id}/official-documents",
+    "source": "src/module/client/routes/client.routes.ts:54",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireClientWriteRole",
+      "postClientOfficialDocument"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireClientWriteRole"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/clients/{id}/official-documents/{documentId}/download",
+    "source": "src/module/client/routes/client.routes.ts:56",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "downloadClientOfficialDocument"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/clients/{id}/official-documents/{documentId}/preview",
+    "source": "src/module/client/routes/client.routes.ts:55",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "previewClientOfficialDocument"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/clients/{id}/official-documents/{documentId}/print-intents",
+    "source": "src/module/client/routes/client.routes.ts:57",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "printClientOfficialDocument"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "get",
     "path": "/clients/analytics",
-    "source": "src/module/client/routes/client.routes.ts:36",
+    "source": "src/module/client/routes/client.routes.ts:41",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2949,7 +3031,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/clients/duplicate-check",
-    "source": "src/module/client/routes/client.routes.ts:38",
+    "source": "src/module/client/routes/client.routes.ts:43",
     "middleware": [
       "anonymous",
       "authenticateToken",

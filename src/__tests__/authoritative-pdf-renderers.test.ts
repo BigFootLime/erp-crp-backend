@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { renderSupplierPurchaseOrderOfficialPdf } from "../module/commande-fournisseur/services/commande-fournisseur-official-pdf";
 import { renderDevisOfficialPdf } from "../module/devis/services/devis-official-pdf";
 import { renderCommandeArOfficialPdf } from "../module/commande-client/services/commande-ar.service";
+import { renderClientProfilePdf } from "../module/client/services/client-profile-pdf";
 import { renderCerpDocument } from "../shared/pdf/cerp-document";
 import { parseInternalCreationSnapshot, renderInternalCreationSnapshotPdf } from "../shared/authoritative-documents/internal-creation-snapshot-pdf";
 import { buildInternalCreationSnapshot } from "../shared/authoritative-documents/internal-creation-snapshot";
@@ -63,6 +64,33 @@ describe("Wave-1 official PDF renderers", () => {
     expect(text).toContain("INTERNE/BROUILLON");
     expect(text).toContain("NONOPPOSABLE");
     expect(text).toContain("VALEUR49");
+  });
+
+  it("renders the consolidated client profile as a distinct GED document without the internal watermark", async () => {
+    const bytes = await renderClientProfilePdf({ archive: {
+      ...archive(buildInternalCreationSnapshot({
+        entityLabel: "Atelier ACME", reference: "CLI-724", issuer,
+        summary: [
+          { label: "Statut", value: "client" }, { label: "Bloqué", value: "Non" },
+          { label: "Client depuis", value: "2026-08-23" }, { label: "Factureur", value: "CRP" },
+        ],
+        sections: [
+          { title: "Coordonnées", rows: [
+            { label: "Email", value: "contact@atelier-acme.test" }, { label: "Téléphone", value: "+33 4 00 00 00 00" },
+            { label: "Site web", value: "https://atelier-acme.test" }, { label: "SIRET", value: "12345678901234" },
+            { label: "TVA intracommunautaire", value: "FR00123456789" }, { label: "Code NAF", value: "2562B" },
+          ] },
+          { title: "Observations", notes: "Fiche consolidée et versionnée." },
+        ],
+      })),
+      entityType: "client", entityId: "724", documentKind: "CLIENT_PROFILE", documentVersion: 2,
+    } });
+    const text = compactPdfText(pageTexts(bytes).join(" "));
+    expect(bytes.subarray(0, 5).toString("ascii")).toBe("%PDF-");
+    expect(text).toContain("FICHECLIENT");
+    expect(text).toContain("ATELIERACME");
+    expect(text).toContain("CONTACT@ATELIER-ACME.TEST");
+    expect(text).not.toContain("INTERNE/BROUILLON");
   });
 
   it("sanitizes creation-table columns and persists only declared bounded cells", () => {

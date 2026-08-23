@@ -85,7 +85,7 @@ describe("PATCH /api/v1/clients/:id — vrai partiel", () => {
     expect(res.status).toBe(400);
   });
 
-  it("PATCH adresse de facturation seule: UPDATE adresse_facturation, PAS UPDATE clients", async () => {
+  it("PATCH adresse de facturation seule: met à jour l'adresse et invalide la révision consolidée", async () => {
     const res = await request(app)
       .patch("/api/v1/clients/001")
       .send({
@@ -93,6 +93,7 @@ describe("PATCH /api/v1/clients/:id — vrai partiel", () => {
       });
     expect(res.status).toBe(204);
     expect(sqls().some((s) => s.includes("UPDATE adresse_facturation"))).toBe(true);
-    expect(sqls().some((s) => s.includes("UPDATE clients SET"))).toBe(false);
+    expect(sqls().some((s) => s.includes("UPDATE clients SET updated_at"))).toBe(true);
+    expect(sqls().some((s) => s.includes("UPDATE clients SET company_name"))).toBe(false);
   });
 });

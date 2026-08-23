@@ -12,6 +12,7 @@ import type { DuplicateCheckDTO } from "../validators/client.validators";
 import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
 import { authoritativePdfFilename } from "../../../shared/authoritative-documents/authoritative-document.filename";
 import { buildInternalCreationSnapshot } from "../../../shared/authoritative-documents/internal-creation-snapshot";
+import { repoFindAuthoritativePdfByIdempotency } from "../../../shared/authoritative-documents/authoritative-document.repository";
 
 export type AuditContext = {
   user_id: number;
@@ -358,6 +359,186 @@ async function findIdempotentReplay(
   return { client_id: row.client_id, client_code: row.client_code ?? "" };
 }
 
+function text(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const normalized = String(value).trim();
+  return normalized || null;
+}
+
+function addressLine(row: Record<string, unknown>, prefix: "bill" | "delivery"): string | null {
+  const street = [text(row[`${prefix}_house_number`]), text(row[`${prefix}_street`])].filter(Boolean).join(" ");
+  const city = [text(row[`${prefix}_postal_code`]), text(row[`${prefix}_city`])].filter(Boolean).join(" ");
+  return [text(row[`${prefix}_name`]), street, text(row[`${prefix}_address_complement`]), city, text(row[`${prefix}_country`])]
+    .filter(Boolean)
+    .join(", ") || null;
+}
+
+/** Server-read, bank-secret-free snapshot for the consolidated GED client fiche. */
+export async function buildClientProfileSnapshot(tx: DbQueryer, clientId: string) {
+  const detail = await tx.query(
+    `SELECT c.client_id::text AS client_id, c.client_code, c.company_name,
+            c.email, c.phone, c.website_url, c.siret, c.vat_number, c.naf_code,
+            c.status, c.blocked, c.reason, c.creation_date::text AS creation_date,
+            c.observations, c.updated_at::text AS source_revision,
+            NULLIF(btrim(to_jsonb(c)->>'devise'), '') AS devise,
+            NULLIF(btrim(to_jsonb(c)->>'encours_max'), '') AS encours_max,
+            NULLIF(btrim(to_jsonb(c)->>'incoterm'), '') AS incoterm,
+            NULLIF(btrim(to_jsonb(c)->>'langue'), '') AS langue,
+            NULLIF(btrim(to_jsonb(c)->>'compte_tiers'), '') AS compte_tiers,
+            NULLIF(btrim(to_jsonb(c)->>'groupe_financier'), '') AS groupe_financier,
+            c.contact_id::text AS primary_contact_id,
+            f.biller_name,
+            af.name AS bill_name, af.house_number AS bill_house_number, af.street AS bill_street,
+            af.address_complement AS bill_address_complement, af.postal_code AS bill_postal_code,
+            af.city AS bill_city, af.country AS bill_country,
+            al.name AS delivery_name, al.house_number AS delivery_house_number, al.street AS delivery_street,
+            al.address_complement AS delivery_address_complement, al.postal_code AS delivery_postal_code,
+            al.city AS delivery_city, al.country AS delivery_country
+       FROM clients c
+       LEFT JOIN factureur f ON f.biller_id = c.biller_id
+       LEFT JOIN adresse_facturation af ON af.bill_address_id = c.bill_address_id
+       LEFT JOIN adresse_livraison al ON al.delivery_address_id = c.delivery_address_id
+      WHERE c.client_id = $1
+      FOR UPDATE OF c`,
+    [clientId]
+  );
+  const row = detail.rows[0] as Record<string, unknown> | undefined;
+  if (!row) throw new HttpError(404, "CLIENT_NOT_FOUND", "Client not found");
+
+  const contacts = await tx.query(
+    `SELECT first_name, last_name, email, phone_direct, role,
+            CASE WHEN contact_id::text = $2 THEN 'Oui' ELSE 'Non' END AS principal
+       FROM contacts
+      WHERE client_id = $1
+      ORDER BY (contact_id::text = $2) DESC, last_name, first_name`,
+    [clientId, text(row.primary_contact_id) ?? ""]
+  );
+  const paymentModes = await tx.query(
+    `SELECT mr.payment_code AS code, mr.type
+       FROM client_payment_modes cpm
+       JOIN mode_reglement mr ON mr.payment_id = cpm.payment_id
+      WHERE cpm.client_id = $1
+      ORDER BY mr.payment_code`,
+    [clientId]
+  );
+
+  const code = text(row.client_code);
+  const companyName = text(row.company_name);
+  const sourceRevision = text(row.source_revision);
+  if (!code || !companyName || !sourceRevision) throw new Error("CLIENT_PROFILE_SOURCE_INVALID");
+
+  const paymentLabel = paymentModes.rows
+    .map((mode: Record<string, unknown>) => [text(mode.code), text(mode.type)].filter(Boolean).join(" — "))
+    .filter(Boolean)
+    .join(", ") || null;
+  const credit = text(row.encours_max);
+  const creditLabel = credit ? [credit, text(row.devise) ?? "EUR"].join(" ") : null;
+
+  return {
+    code,
+    companyName,
+    sourceRevision,
+    snapshot: buildInternalCreationSnapshot({
+      entityLabel: companyName,
+      reference: code,
+      summary: [
+        { label: "Statut", value: row.status },
+        { label: "Bloqué", value: row.blocked ? "Oui" : "Non" },
+        { label: "Client depuis", value: row.creation_date },
+        { label: "Factureur", value: row.biller_name },
+      ],
+      sections: [
+        { title: "Coordonnées", rows: [
+          { label: "Email", value: row.email }, { label: "Téléphone", value: row.phone },
+          { label: "Site web", value: row.website_url }, { label: "SIRET", value: row.siret },
+          { label: "TVA intracommunautaire", value: row.vat_number }, { label: "Code NAF", value: row.naf_code },
+        ] },
+        { title: "Adresses", table: {
+          columns: [{ key: "type", label: "Type" }, { key: "adresse", label: "Adresse" }],
+          rows: [
+            { type: "Facturation", adresse: addressLine(row, "bill") },
+            { type: "Livraison", adresse: addressLine(row, "delivery") },
+          ],
+        } },
+        { title: "Contacts", table: {
+          columns: [
+            { key: "nom", label: "Nom" }, { key: "email", label: "Email" },
+            { key: "telephone", label: "Téléphone" }, { key: "fonction", label: "Fonction" },
+            { key: "principal", label: "Principal" },
+          ],
+          rows: contacts.rows.map((contact: Record<string, unknown>) => ({
+            nom: [text(contact.first_name), text(contact.last_name)].filter(Boolean).join(" "),
+            email: contact.email, telephone: contact.phone_direct, fonction: contact.role, principal: contact.principal,
+          })),
+        } },
+        { title: "Facturation et gestion", rows: [
+          { label: "Modes de règlement", value: paymentLabel }, { label: "Encours maximum", value: creditLabel },
+          { label: "Incoterm", value: row.incoterm }, { label: "Langue", value: row.langue },
+          { label: "Compte tiers", value: row.compte_tiers }, { label: "Groupe financier", value: row.groupe_financier },
+          ...(row.blocked ? [{ label: "Motif de blocage", value: row.reason }] : []),
+        ] },
+        { title: "Observations", notes: row.observations },
+      ],
+    }),
+  };
+}
+
+/** Explicit current-fiche issue/reissue; the immutable creation receipt remains separate. */
+export async function repoQueueClientProfileOfficialDocument(
+  clientId: string,
+  idempotencyKey: string,
+  audit: AuditContext,
+  input: { source_revision: string; reissue_reason?: string | null }
+) {
+  const db = await pool.connect();
+  try {
+    await db.query("BEGIN");
+    const profile = await buildClientProfileSnapshot(db, clientId);
+    const replay = await repoFindAuthoritativePdfByIdempotency(db, idempotencyKey);
+    if (replay) {
+      if (replay.entityType !== "client" || replay.entityId !== clientId || replay.documentKind !== "CLIENT_PROFILE") {
+        throw new HttpError(409, "OFFICIAL_DOCUMENT_IDEMPOTENCY_CONFLICT", "La clé d'idempotence est déjà utilisée.");
+      }
+      await insertAuditLog(db, audit, {
+        action: "CLIENT_PROFILE_PDF_IDEMPOTENT_REPLAY", entity_type: "client", entity_id: clientId,
+        details: { archive_id: replay.id, render_version: replay.renderVersion },
+      });
+      await db.query("COMMIT");
+      return replay;
+    }
+    const countResult = await db.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM authoritative_pdf_archives
+        WHERE entity_type = 'client' AND entity_id = $1 AND document_kind = 'CLIENT_PROFILE'`,
+      [clientId]
+    );
+    const existingCount = Number(countResult.rows[0]?.n ?? 0);
+    if (existingCount > 0 && !input.reissue_reason?.trim()) {
+      throw new HttpError(422, "OFFICIAL_DOCUMENT_REISSUE_REASON_REQUIRED", "Un motif de réémission est requis.");
+    }
+    if (profile.sourceRevision !== input.source_revision.trim()) {
+      throw new HttpError(409, "OFFICIAL_DOCUMENT_SOURCE_REVISION_CONFLICT", "La fiche client a changé. Rechargez avant de créer le PDF.");
+    }
+    const version = existingCount + 1;
+    const archive = await queueCreationPdfArchive(db, {
+      entityType: "client", entityId: clientId, documentKind: "CLIENT_PROFILE", documentVersion: version,
+      renderVersion: "client-profile-pdf-v1", idempotencyKey,
+      title: `Fiche client ${profile.code}`, originalName: authoritativePdfFilename(["Fiche-client", profile.code, `v${version}`]),
+      sourceRevision: profile.sourceRevision, sourceSnapshot: profile.snapshot, actorUserId: audit.user_id,
+    });
+    await insertAuditLog(db, audit, {
+      action: "CLIENT_PROFILE_PDF_QUEUE", entity_type: "client", entity_id: clientId,
+      details: { archive_id: archive.id, document_version: version, source_revision: profile.sourceRevision, reissue_reason: input.reissue_reason?.trim() ?? null },
+    });
+    await db.query("COMMIT");
+    return archive;
+  } catch (error) {
+    await db.query("ROLLBACK");
+    throw error;
+  } finally {
+    db.release();
+  }
+}
+
 export async function repoCreateClient(
   dto: CreateClientDTO,
   audit: AuditContext,
@@ -469,6 +650,16 @@ export async function repoCreateClient(
           { title: "Contacts créés", table: { columns: [{ key: "nom", label: "Nom" }, { key: "email", label: "Email" }, { key: "role", label: "Rôle" }], rows: [dto.primary_contact, ...(dto.contacts ?? [])].filter(Boolean).map((contact) => ({ nom: [contact!.first_name, contact!.last_name].filter(Boolean).join(" "), email: contact!.email ?? null, role: contact!.role ?? null })) } },
         ],
       }), actorUserId: audit.user_id,
+    });
+
+    // The real consolidated client fiche is a separate, official GED document.
+    // Version 1 is automatic at creation; later editions are explicit reissues.
+    const profile = await buildClientProfileSnapshot(db, clientId);
+    await queueCreationPdfArchive(db, {
+      entityType: "client", entityId: clientId, documentKind: "CLIENT_PROFILE", documentVersion: 1,
+      renderVersion: "client-profile-pdf-v1", idempotencyKey: `client:${clientId}:profile:v1`,
+      title: `Fiche client ${clientCode}`, originalName: authoritativePdfFilename(["Fiche-client", clientCode, "v1"]),
+      sourceRevision: profile.sourceRevision, sourceSnapshot: profile.snapshot, actorUserId: audit.user_id,
     });
 
     await db.query('COMMIT');
@@ -638,6 +829,10 @@ export async function repoPatchClient(
       }
     }
 
+    // Child-table changes (addresses, contacts, payment modes) are part of the
+    // consolidated fiche and must invalidate its optimistic source revision too.
+    await db.query(`UPDATE clients SET updated_at = clock_timestamp(), updated_by = $2 WHERE client_id = $1`, [id, audit.user_id]);
+
     await insertAuditLog(db, audit, {
       action: "CLIENT_PATCH",
       entity_type: "client",
@@ -802,7 +997,7 @@ export async function repoSetPrimaryContact(
       );
     }
 
-    await db.query(`UPDATE clients SET contact_id = $1 WHERE client_id = $2`, [contactId, clientId]);
+    await db.query(`UPDATE clients SET contact_id = $1, updated_at = clock_timestamp(), updated_by = $3 WHERE client_id = $2`, [contactId, clientId, audit.user_id]);
 
     await insertAuditLog(db, audit, {
       action: "CLIENT_PRIMARY_CONTACT_SET",
@@ -881,6 +1076,8 @@ export async function repoCreateClientContact(
     if (input.set_primary) {
       await db.query(`UPDATE clients SET contact_id = $1 WHERE client_id = $2`, [row.contact_id, clientId]);
     }
+
+    await db.query(`UPDATE clients SET updated_at = clock_timestamp(), updated_by = $2 WHERE client_id = $1`, [clientId, audit.user_id]);
 
     if (idempotencyKey) {
       await db.query(
