@@ -333,7 +333,7 @@ describe("#170 operation transitions + time logs", () => {
     expect(res.body).toMatchObject({ code: "OF_OPERATION_ALREADY_DONE" });
   });
 
-  it("auto-advances a BROUILLON OF to EN_COURS when a time log starts", async () => {
+  it("refuses a BROUILLON OF instead of implicitly entering execution", async () => {
     const updates: string[] = [];
     mocks.clientQuery.mockImplementation(async (sql: unknown) => {
       const q = String(sql);
@@ -401,8 +401,9 @@ describe("#170 operation transitions + time logs", () => {
       .post(`/api/v1/production/ofs/5/operations/${OP_1}/time-logs/start`)
       .set("x-test-role", "Responsable Production")
       .send({ type: "PRODUCTION" });
-    expect(res.status).toBe(201);
-    expect(updates.some((q) => q.includes("'EN_COURS'::of_status"))).toBe(true);
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ code: "OF_EXECUTION_NOT_ALLOWED" });
+    expect(updates.some((q) => q.includes("'EN_COURS'::of_status"))).toBe(false);
   });
 });
 
@@ -954,6 +955,70 @@ describe("#170 bounded production receipt", () => {
     const denied = await request(app).get("/api/v1/production/ofs/5/traceability").set("x-test-role", "Employe");
     expect(denied.status).toBe(403);
     const allowed = await request(app).get("/api/v1/production/ofs/5/traceability").set("x-test-role", "Qualite");
+    expect(allowed.status).toBe(200);
+  });
+});
+
+describe("#617 mounted explicit OF release route", () => {
+  function installReleaseMocks(params: { blockers?: string[]; statut?: string }) {
+    const blockers = params.blockers ?? [];
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const q = String(sql);
+      if (["BEGIN", "COMMIT", "ROLLBACK"].includes(q)) return { rows: [] };
+      if (q.includes("FROM public.ordres_fabrication WHERE") && q.includes("FOR UPDATE")) {
+        return { rows: [{ statut: params.statut ?? "PLANIFIE", updated_at: OF_UPDATED_AT }] };
+      }
+      if (q.includes("FROM public.ordres_fabrication o") && q.includes("WHERE o.id")) {
+        return { rows: [{ id: "5", technical_snapshot_sha256: "a".repeat(64), technical_snapshot_present: true, operation_count: 1, planned_event_count: 1, instruction_covered_count: 1, quality_plan_count: blockers.length ? 0 : 1, quality_plan_evidence: [], open_nc_count: 0, material_requirement_count: 0, material_requirement_covered_count: 0, material_requirement_evidence: [], reservation_count: 0, released_at: null, override: null }] };
+      }
+      if (q.includes("INSERT INTO public.of_release_decisions")) return { rows: [{ decided_at: "2026-08-23T00:00:00.000Z" }] };
+      if (q.includes("UPDATE public.ordres_fabrication")) return { rows: [] };
+      if (q.includes("INSERT INTO erp_audit_logs")) return { rows: [{ id: "audit-1", created_at: "2026-08-23T00:00:00.000Z" }] };
+      return { rows: [] };
+    });
+    // Readiness evaluation is kept source-backed in the repository. Override
+    // tests use its two schema-unavailable dimensions, never a fake green row.
+    if (blockers.length) {
+      mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+        const q = String(sql);
+        if (["BEGIN", "COMMIT", "ROLLBACK"].includes(q)) return { rows: [] };
+        if (q.includes("FROM public.ordres_fabrication WHERE") && q.includes("FOR UPDATE")) return { rows: [{ statut: "PLANIFIE", updated_at: OF_UPDATED_AT }] };
+        if (q.includes("FROM public.ordres_fabrication o") && q.includes("WHERE o.id")) return { rows: [{ id: "5", technical_snapshot_sha256: "a".repeat(64), technical_snapshot_present: true, operation_count: 1, planned_event_count: 1, instruction_covered_count: 1, quality_plan_count: 0, quality_plan_evidence: [], open_nc_count: 0, material_requirement_count: 0, material_requirement_covered_count: 0, material_requirement_evidence: [], reservation_count: 0, released_at: null, override: null }] };
+        if (q.includes("INSERT INTO public.of_release_decisions") || q.includes("UPDATE public.ordres_fabrication") || q.includes("INSERT INTO erp_audit_logs")) return { rows: [{ id: "audit-1", created_at: "2026-08-23T00:00:00.000Z" }] };
+        return { rows: [] };
+      });
+    }
+  }
+
+  it("denies the mounted release route to a role without release capability", async () => {
+    const response = await request(app).post("/api/v1/production/ofs/5/release").set("x-test-role", "Comptabilite").send({});
+    expect(response.status).toBe(403);
+    expect(response.body).toMatchObject({ code: "OF_FORBIDDEN" });
+  });
+
+  it("releases a ready planned OF once and writes an authoritative audit", async () => {
+    installReleaseMocks({});
+    const response = await request(app).post("/api/v1/production/ofs/5/release").set("x-test-role", "Responsable Production").send({ expected_updated_at: OF_UPDATED_AT });
+    expect(response.status).toBe(200);
+    expect(mocks.clientQuery.mock.calls.some(([sql]) => String(sql).includes("INSERT INTO public.of_release_decisions"))).toBe(true);
+    expect(mocks.clientQuery.mock.calls.some(([sql]) => String(sql).includes("INSERT INTO erp_audit_logs"))).toBe(true);
+  });
+
+  it("rejects a normal release when current readiness has blockers", async () => {
+    installReleaseMocks({ blockers: ["QUALITY_PLAN_MISSING"] });
+    const response = await request(app).post("/api/v1/production/ofs/5/release").set("x-test-role", "Responsable Production").send({});
+    expect(response.status).toBe(409);
+    expect(response.body).toMatchObject({ code: "OF_NOT_READY_FOR_RELEASE" });
+  });
+
+  it("denies override by a non-director and accepts an exact director override", async () => {
+    installReleaseMocks({ blockers: ["QUALITY_PLAN_MISSING"] });
+    const body = { override: true, override_reason: "Controlled customer-approved release", override_blocker_codes: ["QUALITY_PLAN_MISSING"] };
+    const denied = await request(app).post("/api/v1/production/ofs/5/release").set("x-test-role", "Responsable Production").send(body);
+    expect(denied.status).toBe(403);
+    expect(denied.body).toMatchObject({ code: "OF_RELEASE_OVERRIDE_FORBIDDEN" });
+    installReleaseMocks({ blockers: ["QUALITY_PLAN_MISSING"] });
+    const allowed = await request(app).post("/api/v1/production/ofs/5/release").set("x-test-role", "Directeur").send(body);
     expect(allowed.status).toBe(200);
   });
 });

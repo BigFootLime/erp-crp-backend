@@ -664,6 +664,25 @@ describe("#274 anti-IDOR", () => {
       .set("x-test-user-id", "7");
     expect(res.status).toBe(403);
   });
+
+  it("ne propose au poste opérateur que des OF libérés ou en pause", async () => {
+    let candidateSql = "";
+    mocks.poolQuery.mockImplementation((sql: string) => {
+      if (sql.includes("FROM public.of_operations op") && sql.includes("JOIN public.ordres_fabrication")) {
+        candidateSql = sql;
+      }
+      return { rows: [] };
+    });
+
+    const res = await request(app)
+      .get(`${BASE}/operator-board?operator_user_id=7`)
+      .set("x-test-role", OPERATOR)
+      .set("x-test-user-id", "7");
+
+    expect(res.status).toBe(200);
+    expect(candidateSql).toContain("o.statut IN ('EN_COURS', 'EN_PAUSE')");
+    expect(candidateSql).not.toContain("'PLANIFIE'");
+  });
 });
 
 /* -------------------------------------------------------------------------- */

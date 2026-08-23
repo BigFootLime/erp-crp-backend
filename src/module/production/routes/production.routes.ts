@@ -37,6 +37,8 @@ import {
   startOfOperationTimeLog,
   stopOfOperationTimeLog,
   updateOrdreFabrication,
+  getOfReadiness,
+  releaseOrdreFabrication,
   updateOrdreFabricationOperation,
   updateMachine,
   updateMachineOnboarding,
@@ -223,6 +225,8 @@ router.get("/ofs/:id/creation-snapshot/:documentId/preview", previewOfCreationSn
 router.get("/ofs/:id/creation-snapshot/:documentId/download", downloadOfCreationSnapshot);
 router.post("/ofs/:id/creation-snapshot/:documentId/print-intents", printOfCreationSnapshot);
 router.get("/ofs/:id", getOrdreFabrication);
+router.get("/ofs/:id/readiness", requireOfCapability("read"), getOfReadiness);
+router.post("/ofs/:id/release", requireOfCapability("release"), releaseOrdreFabrication);
 router.post("/ofs", requireOfCapability("create"), createOrdreFabrication);
 router.patch("/ofs/:id", requireAnyOfCapability(["edit_prelaunch", "launch", "operate", "cancel", "archive"]), updateOrdreFabrication);
 router.patch("/ofs/:id/operations/reorder", requireOfCapability("edit_prelaunch"), reorderOfOperations);

@@ -41,6 +41,7 @@ import type {
   UpdateOfOperationBodyDTO,
   UpdatePosteBodyDTO,
   ReorderOfOperationsBodyDTO,
+  ReleaseOfBodyDTO,
 } from "../validators/production.validators";
 import {
   OF_STATUT_TRANSITIONS,
@@ -73,6 +74,217 @@ export type AuditContext = {
   page_key: string | null;
   client_session_id: string | null;
 };
+
+export type OfReadinessBlockerCode =
+  | "MATERIAL_RESERVATION_MISSING"
+  | "CAPACITY_OR_CALENDAR_MISSING"
+  | "PROGRAM_OR_INSTRUCTION_MISSING"
+  | "QUALITY_PLAN_MISSING"
+  | "INSTRUMENT_READINESS_MISSING"
+  | "SUBCONTRACT_READINESS_MISSING"
+  | "TECHNICAL_REFERENCE_MISSING";
+
+const OF_RELEASE_BLOCKERS: readonly OfReadinessBlockerCode[] = [
+  "MATERIAL_RESERVATION_MISSING", "CAPACITY_OR_CALENDAR_MISSING", "PROGRAM_OR_INSTRUCTION_MISSING",
+  "QUALITY_PLAN_MISSING", "INSTRUMENT_READINESS_MISSING", "SUBCONTRACT_READINESS_MISSING", "TECHNICAL_REFERENCE_MISSING",
+];
+
+type OfReadiness = { of_id: number; ready: boolean; blockers: OfReadinessBlockerCode[]; evidence: Record<string, unknown>; released_at: string | null; override: boolean | null };
+
+/**
+ * Builds only evidence the current schema can prove. Missing source models are
+ * blockers, not green defaults: an override records that conscious exception.
+ * Called after the OF row has been locked by the release transaction.
+ */
+async function evaluateOfReadiness(tx: DbQueryer, ofId: number): Promise<OfReadiness | null> {
+  const result = await tx.query<{
+    id: string; technical_snapshot_sha256: string | null; evaluated_at: string; operation_count: number; planned_event_count: number; reservation_count: number;
+    technical_snapshot_present: boolean; instruction_covered_count: number; quality_plan_count: number; open_nc_count: number;
+    material_requirement_count: number; material_requirement_covered_count: number;
+    material_requirement_evidence: Array<{ article_id: string; required_qty: number; reserved_qty: number; covered: boolean }>;
+    quality_plan_evidence: Array<{ control_id: string; plan_id: string | null; plan_version: number | null; snapshot_sha256: string }>;
+    released_at: string | null; override: boolean | null;
+  }>(`
+    SELECT o.id::text AS id, o.technical_snapshot_sha256,
+      jsonb_typeof(o.technical_snapshot) = 'object' AS technical_snapshot_present,
+      statement_timestamp()::text AS evaluated_at,
+      (SELECT count(*)::int FROM public.of_operations op WHERE op.of_id = o.id) AS operation_count,
+      -- A cancelled or archived planning event is historical noise, not
+      -- reservable execution capacity. Keep this aligned with the planning
+      -- module's active-event predicates.
+      (SELECT count(*)::int FROM public.planning_events pe
+        WHERE pe.of_id = o.id
+          AND pe.end_ts > pe.start_ts
+          AND pe.archived_at IS NULL
+          AND pe.status <> 'CANCELLED') AS planned_event_count,
+      (SELECT count(DISTINCT op.id)::int FROM public.of_operations op
+        WHERE op.of_id = o.id AND EXISTS (
+          SELECT 1 FROM public.operation_dossiers d
+          JOIN public.operation_dossier_versions dv ON dv.dossier_id = d.id
+          JOIN public.operation_dossier_version_documents dd ON dd.dossier_version_id = dv.id
+          WHERE d.operation_type = 'OF_OPERATION' AND d.operation_id = op.id::text AND dd.document_id IS NOT NULL)) AS instruction_covered_count,
+      (SELECT count(*)::int FROM public.quality_control qc
+        WHERE qc.of_id = o.id
+          AND qc.plan_snapshot IS NOT NULL
+          AND qc.plan_snapshot_sha256 ~ '^[a-f0-9]{64}$') AS quality_plan_count,
+      COALESCE((SELECT jsonb_agg(jsonb_build_object(
+          'control_id', qc.id::text,
+          'plan_id', qc.plan_id::text,
+          'plan_version', qc.plan_version,
+          'snapshot_sha256', qc.plan_snapshot_sha256
+        ) ORDER BY qc.id)
+        FROM public.quality_control qc
+        WHERE qc.of_id = o.id
+          AND qc.plan_snapshot IS NOT NULL
+          AND qc.plan_snapshot_sha256 ~ '^[a-f0-9]{64}$'), '[]'::jsonb) AS quality_plan_evidence,
+      (SELECT count(*)::int FROM public.non_conformity nc WHERE nc.of_id = o.id AND nc.status::text NOT IN ('CLOSED','CANCELLED')) AS open_nc_count,
+      material.material_requirement_count,
+      material.material_requirement_covered_count,
+      material.material_requirement_evidence,
+      (SELECT count(*)::int FROM public.stock_reservations sr
+        WHERE sr.of_id = o.id AND sr.status = 'ACTIVE'
+          AND (sr.expires_at IS NULL OR sr.expires_at > statement_timestamp())) AS reservation_count,
+      (SELECT r.decided_at::text FROM public.of_release_decisions r WHERE r.of_id = o.id AND r.decision = 'RELEASED') AS released_at,
+      (SELECT r.override FROM public.of_release_decisions r WHERE r.of_id = o.id AND r.decision = 'RELEASED') AS override
+    FROM public.ordres_fabrication o
+    CROSS JOIN LATERAL (
+      SELECT
+        count(*)::int AS material_requirement_count,
+        count(*) FILTER (WHERE requirement.reserved_qty + 0.000000001 >= requirement.required_qty)::int AS material_requirement_covered_count,
+        COALESCE(jsonb_agg(jsonb_build_object(
+          'article_id', requirement.article_id::text,
+          'required_qty', requirement.required_qty,
+          'reserved_qty', requirement.reserved_qty,
+          'covered', requirement.reserved_qty + 0.000000001 >= requirement.required_qty
+        ) ORDER BY requirement.article_id), '[]'::jsonb) AS material_requirement_evidence
+      FROM (
+        SELECT source.article_id,
+          sum(source.qty_per_piece * o.quantite_lancee)::numeric AS required_qty,
+          COALESCE((
+            SELECT sum(sr.qty_reserved)
+            FROM public.stock_reservations sr
+            WHERE sr.of_id = o.id
+              AND sr.article_id = source.article_id
+              AND sr.status = 'ACTIVE'
+              AND (sr.expires_at IS NULL OR sr.expires_at > statement_timestamp())
+          ), 0)::numeric AS reserved_qty
+        FROM (
+          SELECT nomenclature.child_article_id::uuid AS article_id, nomenclature.quantite AS qty_per_piece
+          FROM jsonb_to_recordset(
+            CASE WHEN jsonb_typeof(o.technical_snapshot->'nomenclature') = 'array'
+              THEN o.technical_snapshot->'nomenclature' ELSE '[]'::jsonb END
+          ) AS nomenclature(child_article_id text, quantite numeric)
+          WHERE nomenclature.child_article_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+            AND nomenclature.quantite > 0
+          UNION ALL
+          SELECT achat.article_id::uuid AS article_id, achat.quantite AS qty_per_piece
+          FROM jsonb_to_recordset(
+            CASE WHEN jsonb_typeof(o.technical_snapshot->'achats') = 'array'
+              THEN o.technical_snapshot->'achats' ELSE '[]'::jsonb END
+          ) AS achat(article_id text, quantite numeric)
+          WHERE achat.article_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+            AND achat.quantite > 0
+        ) source
+        GROUP BY source.article_id
+      ) requirement
+    ) material
+    WHERE o.id = $1::bigint`, [ofId]);
+  const row = result.rows[0];
+  if (!row) return null;
+  const blockers: OfReadinessBlockerCode[] = [];
+  if (!row.technical_snapshot_sha256 || !row.technical_snapshot_present || row.operation_count < 1) blockers.push("TECHNICAL_REFERENCE_MISSING");
+  // Requirements come from the OF's immutable technical snapshot. Coverage is
+  // proven per article and quantity; an unrelated or undersized reservation can
+  // never release the material gate.
+  if (row.material_requirement_covered_count < row.material_requirement_count) blockers.push("MATERIAL_RESERVATION_MISSING");
+  if (row.planned_event_count < 1) blockers.push("CAPACITY_OR_CALENDAR_MISSING");
+  if (row.instruction_covered_count < row.operation_count) blockers.push("PROGRAM_OR_INSTRUCTION_MISSING");
+  if (row.quality_plan_count < 1 || row.open_nc_count > 0) blockers.push("QUALITY_PLAN_MISSING");
+  return { of_id: Number(row.id), ready: blockers.length === 0, blockers, evidence: {
+    evidence_version: 2,
+    evaluated_at: row.evaluated_at,
+    technical_snapshot_sha256: row.technical_snapshot_sha256,
+    technical_snapshot_present: row.technical_snapshot_present,
+    operation_count: row.operation_count,
+    planned_event_count: row.planned_event_count, instruction_covered_count: row.instruction_covered_count,
+    quality_plan_count: row.quality_plan_count,
+    quality_plan_evidence: Array.isArray(row.quality_plan_evidence) ? row.quality_plan_evidence : [],
+    open_nc_count: row.open_nc_count,
+    material_requirement_count: row.material_requirement_count,
+    material_requirement_covered_count: row.material_requirement_covered_count,
+    material_requirement_evidence: Array.isArray(row.material_requirement_evidence) ? row.material_requirement_evidence : [],
+    reservation_count: row.reservation_count,
+    // These dimensions are evaluated only when the OF's quality/procurement
+    // sources declare them applicable; this schema does not infer an obligation
+    // merely from their absence.
+    instrument_readiness: "NOT_APPLICABLE_OR_NOT_DECLARED",
+    subcontract_readiness: "NOT_APPLICABLE_OR_NOT_DECLARED",
+  }, released_at: row.released_at, override: row.override };
+}
+
+export async function repoGetOfReadiness(params: { id: number }): Promise<OfReadiness | null> {
+  return evaluateOfReadiness(pool, params.id);
+}
+
+export async function repoReleaseOrdreFabrication(params: { id: number; body: ReleaseOfBodyDTO; audit: AuditContext }): Promise<OfReadiness> {
+  const client = await pool.connect();
+  let committedDecisionAt: string | null = null;
+  try {
+    await client.query("BEGIN");
+    const locked = await client.query<{ statut: string; updated_at: string | null }>(
+      `SELECT statut::text AS statut, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at FROM public.ordres_fabrication WHERE id = $1::bigint FOR UPDATE`, [params.id]);
+    const of = locked.rows[0];
+    if (!of) throw new HttpError(404, "OF_NOT_FOUND", "Ordre de fabrication introuvable.");
+    if (!["BROUILLON", "PLANIFIE"].includes(of.statut)) throw new HttpError(409, "OF_RELEASE_INVALID_STATE", "Seul un OF non démarré peut être libéré.", { statut: of.statut });
+    if (params.body.expected_updated_at && of.updated_at !== params.body.expected_updated_at) throw new HttpError(409, "CONCURRENT_MODIFICATION", "L'OF a été modifié par une autre session. Rechargez la fiche avant de libérer.");
+    // Freeze every reservation row used as release evidence until the decision
+    // and OF transition commit. Concurrent release/consumption must wait.
+    await client.query(
+      `SELECT id FROM public.stock_reservations
+       WHERE of_id = $1::bigint AND status = 'ACTIVE'
+         AND (expires_at IS NULL OR expires_at > statement_timestamp())
+       ORDER BY id
+       FOR SHARE`,
+      [params.id]
+    );
+    const readiness = await evaluateOfReadiness(client, params.id);
+    if (!readiness) throw new HttpError(404, "OF_NOT_FOUND", "Ordre de fabrication introuvable.");
+    const requested = new Set(params.body.override_blocker_codes ?? []);
+    const actual = new Set(readiness.blockers);
+    if (!params.body.override && !readiness.ready) throw new HttpError(409, "OF_NOT_READY_FOR_RELEASE", "L'OF ne peut pas être libéré : des prérequis vérifiables manquent.", { blockers: readiness.blockers, evidence: readiness.evidence });
+    if (params.body.override) {
+      if (!roleHasOfCapability(params.audit.user_role, "archive")) throw new HttpError(403, "OF_RELEASE_OVERRIDE_FORBIDDEN", "Une dérogation de libération exige Direction ou Administration.");
+      if (requested.size !== actual.size || [...requested].some((code) => !actual.has(code as OfReadinessBlockerCode))) throw new HttpError(422, "OF_RELEASE_OVERRIDE_BLOCKERS_MISMATCH", "La dérogation doit sélectionner exactement les bloqueurs actuellement constatés.", { blockers: readiness.blockers });
+    }
+    const decision = await client.query<{ decided_at: string }>(`INSERT INTO public.of_release_decisions (of_id, decision, override, blocker_codes, override_reason, evidence, decided_by)
+      VALUES ($1::bigint, 'RELEASED', $2::boolean, $3::text[], $4::text, $5::jsonb, $6::int)
+      RETURNING decided_at::text AS decided_at`,
+      [params.id, params.body.override, readiness.blockers, params.body.override_reason ?? null, JSON.stringify(readiness.evidence), params.audit.user_id]);
+    committedDecisionAt = decision.rows[0]?.decided_at ?? null;
+    await client.query(
+      `UPDATE public.ordres_fabrication
+         SET statut = 'EN_COURS'::public.of_status,
+             date_lancement_reelle = COALESCE(date_lancement_reelle, CURRENT_DATE),
+             updated_at = now(), updated_by = $2::int
+       WHERE id = $1::bigint`,
+      [params.id, params.audit.user_id]
+    );
+    // Freeze source references as a recorded evidence snapshot. The OF's own
+    // technical hash is already immutable after launch; this captures the exact
+    // release decision without mutating the original technical entities.
+    await insertAuditLog(client, params.audit, { action: "production.of.release", entity_type: "ordres_fabrication", entity_id: String(params.id), details: { override: params.body.override, blockers: readiness.blockers, evidence: readiness.evidence } });
+    await client.query("COMMIT");
+    // `ready` remains the objective evidence verdict. A controlled override is
+    // released, but must never masquerade as a technically ready OF.
+    return { ...readiness, released_at: committedDecisionAt, override: params.body.override };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    if (isPgUniqueViolation(error) && pgConstraint(error) === "of_release_decisions_one_per_of_uk") {
+      throw new HttpError(409, "OF_RELEASE_ALREADY_RECORDED", "Une décision de libération existe déjà pour cet OF. Rechargez la fiche.");
+    }
+    throw error;
+  } finally { client.release(); }
+}
 
 type DbQueryer = Pick<PoolClient, "query">;
 
@@ -3788,9 +4000,9 @@ export async function repoStartOfOperationTimeLog(params: {
   const client = await pool.connect();
   try {
     const updated = await withRealtimeOutboxTransaction(client, async (client) => {
-    // #170 : le pointage verrouille aussi l'OF — la règle d'admissibilité se
-    // joue sur son statut, et le démarrage fait basculer un OF encore
-    // BROUILLON/PLANIFIE en EN_COURS (transition serveur auditée).
+    // The OF is locked before a time log is opened. Since #617 only the
+    // explicit release command may enter execution; this path never promotes
+    // BROUILLON/PLANIFIE.
     const ofRes = await client.query<{ id: string; statut: string }>(
       `
         SELECT id::text AS id, statut::text AS statut
@@ -3877,13 +4089,14 @@ export async function repoStartOfOperationTimeLog(params: {
       [params.of_id, params.op_id]
     );
 
-    const autoStarted = ofStatut === "BROUILLON" || ofStatut === "PLANIFIE" || ofStatut === "EN_PAUSE";
+    // Re-opening a paused OF is an allowed execution transition. A draft or
+    // planned OF was rejected above and is never silently launched here.
+    const autoResumed = ofStatut === "EN_PAUSE";
     await client.query(
       `
         UPDATE ordres_fabrication
         SET
-          statut = CASE WHEN statut IN ('BROUILLON','PLANIFIE','EN_PAUSE') THEN 'EN_COURS'::of_status ELSE statut END,
-          date_lancement_reelle = CASE WHEN statut IN ('BROUILLON','PLANIFIE') THEN COALESCE(date_lancement_reelle, CURRENT_DATE) ELSE date_lancement_reelle END,
+          statut = CASE WHEN statut = 'EN_PAUSE' THEN 'EN_COURS'::of_status ELSE statut END,
           updated_at = now(),
           updated_by = $2
         WHERE id = $1::bigint
@@ -3901,7 +4114,7 @@ export async function repoStartOfOperationTimeLog(params: {
         machine_id: machineId,
         type: params.body.type,
         of_statut_before: ofStatut,
-        of_auto_started: autoStarted,
+        of_auto_resumed: autoResumed,
       },
     });
 
