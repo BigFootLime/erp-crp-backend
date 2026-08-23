@@ -1169,6 +1169,60 @@ export async function repoInternalGetVersionContentRef(versionId: string): Promi
   }
 }
 
+/**
+ * Internal-only parent binding lookup used at the byte-delivery boundary.
+ * A GED document is deliberately not downloadable merely because a user has
+ * the global GED capability: its single business parent must be known and
+ * live. Unknown historical link vocabularies are resolved by the service as
+ * an opaque denial so this query must never be exposed through a controller.
+ */
+export async function repoInternalListDocumentParentLinks(documentId: string): Promise<Array<{
+  entity_type: string;
+  entity_id: string;
+}>> {
+  try {
+    const result = await pool.query<{ entity_type: string; entity_id: string }>(
+      `SELECT entity_type, entity_id
+         FROM public.ged_document_links
+        WHERE document_id = $1::uuid
+        ORDER BY created_at ASC, id ASC`,
+      [documentId]
+    );
+    return result.rows.map((row) => ({ entity_type: String(row.entity_type), entity_id: String(row.entity_id) }));
+  } catch (err) {
+    return rethrowGed(err);
+  }
+}
+
+/** Closed, non-dynamic parent existence registry for byte authorization. */
+export async function repoInternalParentLinkExists(entityType: string, entityId: string): Promise<boolean> {
+  const key = entityType.trim().toUpperCase();
+  const statements: Record<string, { sql: string; values: unknown[] }> = {
+    CLIENT: { sql: "SELECT 1 FROM public.clients WHERE client_id = $1 LIMIT 1", values: [entityId] },
+    FOURNISSEUR: { sql: "SELECT 1 FROM public.fournisseurs WHERE id = $1::uuid LIMIT 1", values: [entityId] },
+    DEVIS: { sql: "SELECT 1 FROM public.devis WHERE id = $1::bigint LIMIT 1", values: [entityId] },
+    FACTURE: { sql: "SELECT 1 FROM public.facture WHERE id = $1 LIMIT 1", values: [entityId] },
+    AVOIR: { sql: "SELECT 1 FROM public.avoir WHERE id = $1 LIMIT 1", values: [entityId] },
+    BON_LIVRAISON: { sql: "SELECT 1 FROM public.bon_livraison WHERE id = $1::uuid LIMIT 1", values: [entityId] },
+    COMMANDE_CLIENT: { sql: "SELECT 1 FROM public.commande_client WHERE id = $1::bigint LIMIT 1", values: [entityId] },
+    COMMANDE_FOURNISSEUR: { sql: "SELECT 1 FROM public.commande_fournisseur WHERE id = $1::uuid LIMIT 1", values: [entityId] },
+    AFFAIRE: { sql: "SELECT 1 FROM public.affaire WHERE id = $1::bigint LIMIT 1", values: [entityId] },
+    ORDRE_FABRICATION: { sql: "SELECT 1 FROM public.ordres_fabrication WHERE id = $1::bigint LIMIT 1", values: [entityId] },
+    PIECE_TECHNIQUE: { sql: "SELECT 1 FROM public.pieces_techniques WHERE id = $1::uuid LIMIT 1", values: [entityId] },
+    PIECE_TECHNIQUE_VERSION: { sql: "SELECT 1 FROM public.piece_technique_versions WHERE id = $1::uuid LIMIT 1", values: [entityId] },
+    STOCK_ARTICLE: { sql: "SELECT 1 FROM public.articles WHERE id = $1::bigint LIMIT 1", values: [entityId] },
+    OUTIL: { sql: "SELECT 1 FROM public.gestion_outils_outil WHERE id_outil = $1::integer LIMIT 1", values: [entityId] },
+  };
+  const statement = statements[key];
+  if (!statement) return false;
+  try {
+    const result = await pool.query(statement.sql, statement.values);
+    return result.rowCount !== 0;
+  } catch (err) {
+    return rethrowGed(err);
+  }
+}
+
 /** Fresh-connection reconciliation used only after a COMMIT acknowledgement loss. */
 export async function repoIsVersionBlobCommitted(
   versionId: string,

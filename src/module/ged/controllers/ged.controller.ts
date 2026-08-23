@@ -218,6 +218,11 @@ export async function downloadVersion(req: Request, res: Response, next: NextFun
     const actor = actorFrom(req);
     const result = await service.downloadVersion(actor, versionId);
 
+    // This write is an authorization receipt, not a claimed successful
+    // transfer. It is intentionally before any response byte: if durable audit
+    // storage is unavailable, the private document stays unavailable.
+    await service.recordVersionDownloadAuthorized(actor, result);
+
     // `attachment` + `nosniff` : un document n'est jamais interprété par le
     // navigateur, quel que soit son type déclaré.
     res.setHeader("X-CERP-Document-SHA256", result.sha256);

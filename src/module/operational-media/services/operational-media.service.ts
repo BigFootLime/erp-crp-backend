@@ -16,8 +16,8 @@ const ALLOWED_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "im
 type OwnerPolicy = Readonly<{ moduleKey: "production" | "clients" | "outillage" | "fournisseurs" }> | Readonly<{ authenticatedActiveUser: true }>;
 
 // This is intentionally a small, closed registry rather than a generic table
-// name derived from a binding. It protects the new asset authority from both
-// unknown owner types and the legacy storage-key fallback.
+// name derived from a binding. It protects the asset authority from unknown
+// owner types and the legacy storage-key fallback.
 const OWNER_POLICIES: Readonly<Record<OperationalMediaOwnerType, OwnerPolicy>> = {
   machine: { moduleKey: "production" },
   client: { moduleKey: "clients" },
@@ -54,24 +54,20 @@ export async function authorizeOperationalMediaRead(params: { assetId: string; u
   const assets = await findOperationalMediaAssets(params.assetId);
   // Non-disclosure: a caller must not be able to distinguish a missing asset
   // from one that belongs to another object/module.
-  if (!assets.length) throw new HttpError(404, "MEDIA_NOT_FOUND", "Média introuvable.");
-  let profile: Awaited<ReturnType<typeof resolveAccessProfile>> | undefined;
-  let asset: OperationalMediaAsset | undefined;
-  for (const candidate of assets) {
-    const policy = ownerPolicy(candidate);
-    if (!policy) continue;
-    if (!("authenticatedActiveUser" in policy)) {
-      profile ??= await resolveAccessProfile(params.userId);
-      if (!profileAllowsModule(profile, policy)) continue;
-    }
-    // Each binding is checked independently. This avoids picking the first
-    // module-visible binding when a physical blob was (legitimately or
-    // accidentally) reused by a different owner.
-    if (!await operationalMediaOwnerExists(candidate.owner_type as OperationalMediaOwnerType, candidate.owner_id)) continue;
-    asset = candidate;
-    break;
+  // A physical asset must have one, and only one, reviewed business parent.
+  // Selecting a visible row from a reused/ambiguous binding set would turn the
+  // shared route into an ownership-confusion primitive.
+  if (assets.length !== 1) throw new HttpError(404, "MEDIA_NOT_FOUND", "Média introuvable.");
+  const asset = assets[0];
+  const policy = ownerPolicy(asset);
+  if (!policy) {
+    throw new HttpError(404, "MEDIA_NOT_FOUND", "Média introuvable.");
   }
-  if (!asset) {
+  if (!("authenticatedActiveUser" in policy)) {
+    const profile = await resolveAccessProfile(params.userId);
+    if (!profileAllowsModule(profile, policy)) throw new HttpError(404, "MEDIA_NOT_FOUND", "Média introuvable.");
+  }
+  if (!await operationalMediaOwnerExists(asset.owner_type as OperationalMediaOwnerType, asset.owner_id)) {
     throw new HttpError(404, "MEDIA_NOT_FOUND", "Média introuvable.");
   }
   if (asset.status === "REVOKED") throw new HttpError(410, "MEDIA_REVOKED", "Ce média n'est plus disponible.");

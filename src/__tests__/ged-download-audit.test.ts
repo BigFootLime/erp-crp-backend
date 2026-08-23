@@ -2,12 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   downloadVersion: vi.fn(),
+  recordVersionDownloadAuthorized: vi.fn(),
   recordVersionDownload: vi.fn(),
   sendSecureStoredFile: vi.fn(),
 }));
 
 vi.mock("../module/ged/services/ged.service", () => ({
   downloadVersion: mocks.downloadVersion,
+  recordVersionDownloadAuthorized: mocks.recordVersionDownloadAuthorized,
   recordVersionDownload: mocks.recordVersionDownload,
 }));
 
@@ -34,6 +36,7 @@ describe("GED download audit completion", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.downloadVersion.mockResolvedValue(download);
+    mocks.recordVersionDownloadAuthorized.mockResolvedValue(undefined);
     mocks.recordVersionDownload.mockResolvedValue(undefined);
   });
 
@@ -52,6 +55,7 @@ describe("GED download audit completion", () => {
     );
 
     expect(next).not.toHaveBeenCalled();
+    expect(mocks.recordVersionDownloadAuthorized).toHaveBeenCalledWith({ id: 7, role: "administrateur" }, download);
     expect(mocks.recordVersionDownload).not.toHaveBeenCalled();
   });
 
@@ -70,11 +74,27 @@ describe("GED download audit completion", () => {
     );
 
     expect(next).not.toHaveBeenCalled();
+    expect(mocks.recordVersionDownloadAuthorized).toHaveBeenCalledWith({ id: 7, role: "administrateur" }, download);
     expect(mocks.recordVersionDownload).toHaveBeenCalledTimes(1);
     expect(mocks.recordVersionDownload).toHaveBeenCalledWith(
       { id: 7, role: "administrateur" },
       download,
       "DOWNLOAD"
     );
+  });
+
+  it("fails closed before delivery when the durable authorization receipt cannot persist", async () => {
+    mocks.recordVersionDownloadAuthorized.mockRejectedValueOnce(new Error("audit unavailable"));
+    const next = vi.fn();
+    const response = { setHeader: vi.fn() };
+
+    await downloadVersion(
+      { params: { versionId: VERSION_ID }, user: { id: 7, role: "administrateur" } } as never,
+      response as never,
+      next
+    );
+
+    expect(mocks.sendSecureStoredFile).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledTimes(1);
   });
 });
