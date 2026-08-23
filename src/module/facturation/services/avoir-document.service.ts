@@ -69,6 +69,7 @@ export async function writeImmutableAvoirDocument(
     fileName,
     checksumSha256: crypto.createHash("sha256").update(pdf).digest("hex"),
     fileSizeBytes: pdf.byteLength,
+    pdfBytes: Buffer.from(pdf),
     cleanup: async () => {
       await fs.unlink(filePath).catch((error: NodeJS.ErrnoException) => {
         if (error.code !== "ENOENT") throw error;

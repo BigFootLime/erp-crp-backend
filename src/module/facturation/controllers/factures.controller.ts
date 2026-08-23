@@ -1,7 +1,10 @@
 import type { RequestHandler } from "express";
 import fs from "node:fs/promises";
+import db from "../../../config/database";
+import { HttpError } from "../../../utils/httpError";
 import { getDocumentStoragePath } from "../../../utils/cerpStorage";
 import { sendSecureStoredFile } from "../../../shared/uploads/secure-download";
+import { readLatestFinanceLegalArchive } from "../services/finance-legal-archive.service";
 import {
   createFactureBodySchema,
   factureIdParamsSchema,
@@ -115,6 +118,18 @@ export const getFacturePdf: RequestHandler = async (req, res, next) => {
   try {
     const { id } = factureIdParamsSchema.parse(req.params);
     const download = coerceBool((req.query as { download?: unknown } | undefined)?.download);
+
+    // Legal issuance is archive-backed. A missing/degraded GED archive is a
+    // visible retryable condition, never permission to regenerate changed data.
+    const issued = await db.query<{ statut: string }>(`SELECT statut FROM public.facture WHERE id = $1`, [id]);
+    if (issued.rows[0]?.statut === "ISSUED") {
+      const actorId = req.user?.id;
+      if (typeof actorId !== "number") throw new HttpError(401, "UNAUTHORIZED", "Authentification requise.");
+      const official = await readLatestFinanceLegalArchive("FACTURE", id, actorId, download ? "AUTHORITATIVE_PDF_DOWNLOADED" : "AUTHORITATIVE_PDF_PREVIEWED");
+      res.setHeader("Content-Type", "application/pdf"); res.setHeader("Content-Length", String(official.bytes.byteLength));
+      res.setHeader("Content-Disposition", `${download ? "attachment" : "inline"}; filename=\"${official.filename.replace(/[\\\"\r\n]/g, "_")}\"`);
+      res.send(official.bytes); return;
+    }
 
     let documentId = await svcGetLatestFacturePdfDocumentId(id);
     if (!documentId) {

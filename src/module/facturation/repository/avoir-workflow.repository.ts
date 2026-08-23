@@ -3,6 +3,7 @@ import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
+import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
 import {
   assertAvoirTransition,
   assertSeparationOfDuties,
@@ -89,6 +90,8 @@ export type AvoirDocumentArtifact = {
   fileName: string;
   checksumSha256: string;
   fileSizeBytes: number;
+  /** Exact issued bytes, retained until the #625 durable GED intent is committed. */
+  pdfBytes: Buffer;
   cleanup: () => Promise<void>;
 };
 
@@ -828,6 +831,21 @@ export async function repoIssueAvoir(params: {
       totals: preview.totals,
     };
     artifact = await params.writeDocument(snapshot);
+    // #625: preserve the byte-exact issued credit note for GED retry/reconcile.
+    const legalArchive = await queueCreationPdfArchive(client, {
+      entityType: "avoir",
+      entityId: avoir.uuid,
+      documentKind: "FINANCE_CREDIT_NOTE_LEGAL_PDF",
+      documentVersion: 1,
+      renderVersion: "finance-legal-issued-v1",
+      idempotencyKey: `finance:avoir:${avoir.uuid}:legal:${legal.legalNumber}:v1`,
+      title: `Avoir légal ${legal.legalNumber}`,
+      originalName: artifact.fileName,
+      sourceRevision: `${legal.legalNumber}:${artifact.checksumSha256}`,
+      sourceSnapshot: snapshot,
+      exactPdfBytes: artifact.pdfBytes,
+      actorUserId: params.actor.userId,
+    });
     const correlationId = newCorrelationId();
     await client.query(
       `
@@ -922,7 +940,7 @@ export async function repoIssueAvoir(params: {
       aggregateId: avoir.uuid,
       eventType: "AVOIR_ISSUED",
       oldValues: { status: avoir.statut },
-      newValues: { status: "ISSUED", legal_number: legal.legalNumber },
+      newValues: { status: "ISSUED", legal_number: legal.legalNumber, document_checksum_sha256: artifact.checksumSha256, authoritative_archive_id: legalArchive.id },
       actor: params.actor,
       correlationId,
       idempotencyKey: receipt.idempotencyKey,
@@ -951,7 +969,7 @@ export async function repoIssueAvoir(params: {
       action: "facturation.avoir_issued",
       entityType: "avoir",
       entityId: avoir.uuid,
-      details: { facture_id: preview.facture_id, legal_number: legal.legalNumber, correlation_id: correlationId },
+      details: { facture_id: preview.facture_id, legal_number: legal.legalNumber, document_checksum_sha256: artifact.checksumSha256, authoritative_archive_id: legalArchive.id, correlation_id: correlationId },
     });
     await saveFinanceReceipt({
       client,

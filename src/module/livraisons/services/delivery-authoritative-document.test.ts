@@ -9,7 +9,7 @@ describe("#624 shipped delivery authoritative renderer", () => {
       id: "11111111-1111-4111-8111-111111111111", entityType: "bon-livraison", entityId: "22222222-2222-4222-8222-222222222222",
       documentKind: "DELIVERY_NOTE_SHIPPED", documentVersion: 1, renderVersion: "delivery-note-shipped-v1", idempotencyKey: "delivery:test:shipped:v1",
       title: "BL expédié", originalName: "bon-livraison-BL-0001-expedie.pdf", sourceRevision: "1:test", snapshotSha256: "a".repeat(64),
-      pdfSha256: null, pdfSizeBytes: null, gedDocumentId: null, gedVersionId: null, archivedAt: null, createdAt: "2026-08-23T00:00:00.000Z", actorUserId: 1,
+      exactPdfSha256: null, exactPdfSizeBytes: null, pdfSha256: null, pdfSizeBytes: null, gedDocumentId: null, gedVersionId: null, archivedAt: null, createdAt: "2026-08-23T00:00:00.000Z", actorUserId: 1,
       sourceSnapshot: { type: "DELIVERY_NOTE_SHIPPED_SNAPSHOT", numero: "BL-0001", statut: "SHIPPED", client_name: "Client Démo", commande_numero: "CMD-1", affaire_reference: null, address_label: "12 rue Exemple\n75000 Paris", date_creation: "2026-08-23", date_expedition: "2026-08-23", transporteur: "CERP", tracking_number: "TRK-1", commentaire_client: "Livraison contrôlée", updated_at: "2026-08-23T00:00:00.000Z", issuer: { company_name: "CERP Historique", siret: "12345678900012" }, lines: [{ ordre: 1, designation: "Pièce A", code_piece: "A-01", quantite: 2, unite: "u", delai_client: null, lot_codes: ["LOT-01"] }] },
     } });
     expect(bytes.subarray(0, 5).toString("ascii")).toBe("%PDF-");

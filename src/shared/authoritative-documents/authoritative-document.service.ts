@@ -56,6 +56,11 @@ function assertCreationInput(input: AuthoritativePdfCreationInput): void {
     !input.sourceRevision.trim() || input.sourceRevision.length > 160
   ) throw new Error("AUTHORITATIVE_PDF_INPUT_INVALID");
   assertAuthoritativePdfFilename(input.originalName);
+  if (input.exactPdfBytes) {
+    if (!Buffer.isBuffer(input.exactPdfBytes) || input.exactPdfBytes.length === 0 || input.exactPdfBytes.length > MAX_AUTHORITATIVE_PDF_BYTES || input.exactPdfBytes.subarray(0, 5).toString("ascii") !== "%PDF-") {
+      throw new Error("AUTHORITATIVE_PDF_EXACT_BYTES_INVALID");
+    }
+  }
 }
 
 /**
@@ -267,6 +272,14 @@ export async function processAuthoritativePdfItem(
   registry: AuthoritativePdfProducerRegistry,
   observeOwnership?: (ownership: { sha256: string; ownership: VaultBlobOwnership }) => void
 ): Promise<void> {
+  if (item.archive.exactPdfBytes) {
+    const exact = Buffer.from(item.archive.exactPdfBytes);
+    if (!item.archive.exactPdfSha256 || computeSha256(exact) !== item.archive.exactPdfSha256 || exact.byteLength !== item.archive.exactPdfSizeBytes) {
+      throw new Error("AUTHORITATIVE_PDF_EXACT_BYTES_INTEGRITY");
+    }
+    await archiveClaimedAuthoritativePdf(tx, item, exact, observeOwnership);
+    return;
+  }
   const producer = registry.get(item.archive.entityType, item.archive.documentKind);
   // No dynamic entity/document value is retained in a failure record or log.
   if (!producer) throw new Error("AUTHORITATIVE_PDF_PRODUCER_NOT_REGISTERED");

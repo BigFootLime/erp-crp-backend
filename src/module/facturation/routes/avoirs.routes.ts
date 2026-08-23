@@ -8,6 +8,7 @@ import {
   listAvoirs,
   updateAvoir,
 } from "../controllers/avoirs.controller";
+import { avoirLegalArchive } from "../controllers/finance-legal-archive.controller";
 import { requireFinanceCapability } from "../middlewares/finance-authorization.middleware";
 import {
   createAvoirDraftWorkflow,
@@ -38,6 +39,11 @@ router.post(
   validateAvoirWorkflow
 );
 router.post("/workflow/:id/issue", requireFinanceCapability("credit_issue"), issueAvoirWorkflow);
+router.get("/:id/official-documents", requireFinanceCapability("documents_read"), avoirLegalArchive.list);
+router.get("/:id/official-documents/:documentId", requireFinanceCapability("documents_read"), avoirLegalArchive.get);
+router.get("/:id/official-documents/:documentId/preview", requireFinanceCapability("documents_read"), avoirLegalArchive.preview);
+router.get("/:id/official-documents/:documentId/download", requireFinanceCapability("documents_read"), avoirLegalArchive.download);
+router.post("/:id/official-documents/:documentId/print-intents", requireFinanceCapability("documents_read"), avoirLegalArchive.print);
 
 router.get("/", requireFinanceCapability("read"), listAvoirs);
 router.get("/:id", requireFinanceCapability("read"), getAvoir);
