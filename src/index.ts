@@ -11,6 +11,7 @@ import { startExpiredLockMaintenance } from "./module/locks/services/locks.servi
 import { startReminderMaintenance } from "./module/facturation/services/reminder-job.service";
 import { startElectronicInvoiceMaintenance } from "./module/facturation/electronic-invoicing/electronic-invoice.service";
 import { startWebhookDeliveryMaintenance } from "./module/integrations/webhooks/webhook.service";
+import { startAuthoritativePdfArchiveMaintenance } from "./shared/authoritative-documents/authoritative-document.worker";
 import { createApplicationShutdown } from "./shared/runtime/application-shutdown";
 import { preflightSecureUploadStorageRoots } from "./shared/uploads/secure-upload";
 import { getUploadScannerStartupConfiguration } from "./shared/uploads/upload-scanner";
@@ -50,6 +51,7 @@ async function start(): Promise<void> {
   const stopReminderMaintenance = startReminderMaintenance();
   const stopElectronicInvoiceMaintenance = startElectronicInvoiceMaintenance();
   const stopWebhookDeliveryMaintenance = startWebhookDeliveryMaintenance();
+  const stopAuthoritativePdfArchiveMaintenance = startAuthoritativePdfArchiveMaintenance();
 
   initSocketServer(httpServer);
   const stopExpiredLockMaintenance = startExpiredLockMaintenance();
@@ -78,6 +80,7 @@ async function start(): Promise<void> {
       stopReminderMaintenance,
       stopElectronicInvoiceMaintenance,
       stopWebhookDeliveryMaintenance,
+      stopAuthoritativePdfArchiveMaintenance,
     ],
     closeDatabase: () => pool.end(),
     log: (type, fields) => logger.error(type, fields),

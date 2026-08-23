@@ -10,6 +10,7 @@ import type {
   UpdateCommandeBodyDTO,
   UpdateLigneBodyDTO,
 } from "../validators/commande-fournisseur.validators";
+import db from "../../../config/database";
 import { computeCommandeTotaux } from "../domain/commande-fournisseur-totaux";
 import {
   repoAccuseReception,
@@ -24,6 +25,7 @@ import {
   repoGetKpis,
   repoListCommandesFournisseurs,
   repoPreviewPropositions,
+  repoQueueSupplierPoOfficialDocument,
   repoReorderLignes,
   repoResyncReceptions,
   repoTransitionCommandeFournisseur,
@@ -32,6 +34,7 @@ import {
   type AuditContext,
   type ListCommandesParams,
 } from "../repository/commande-fournisseur.repository";
+import { getOfficialDocumentGenerationEnvelope, getOfficialPdfDto, readOfficialPdfBytes, recordOfficialPdfPrintIntent } from "../../../shared/authoritative-documents/authoritative-document.service";
 
 export const listCommandesFournisseursSVC = (params: ListCommandesParams, includePrices: boolean) =>
   repoListCommandesFournisseurs(params, { includePrices });
@@ -93,3 +96,22 @@ export const resyncReceptionsSVC = (id: string, audit: AuditContext, allowOverRe
 
 export const duplicateAsDraftSVC = (id: string, note: string | undefined, audit: AuditContext) =>
   repoDuplicateAsDraft(id, note, audit);
+
+const supplierPoOfficialBase = (id: string) => `/commandes-fournisseurs/${encodeURIComponent(id)}/official-documents`;
+
+export const queueSupplierPoOfficialDocumentSVC = async (id: string, idempotencyKey: string, audit: AuditContext, input: { source_revision: string; reissue_reason?: string | null }) => {
+  await repoQueueSupplierPoOfficialDocument(id, idempotencyKey, audit, input);
+  return getOfficialDocumentGenerationEnvelope({ tx: db, entityType: "commande-fournisseur", entityId: id, documentKind: "SUPPLIER_PURCHASE_ORDER", baseUrl: supplierPoOfficialBase(id) });
+};
+
+export const listSupplierPoOfficialDocumentsSVC = (id: string) =>
+  getOfficialDocumentGenerationEnvelope({ tx: db, entityType: "commande-fournisseur", entityId: id, documentKind: "SUPPLIER_PURCHASE_ORDER", baseUrl: supplierPoOfficialBase(id) });
+
+export const getSupplierPoOfficialDocumentSVC = (id: string, archiveId: string) =>
+  getOfficialPdfDto({ tx: db, entityType: "commande-fournisseur", entityId: id, documentKind: "SUPPLIER_PURCHASE_ORDER", archiveId, baseUrl: supplierPoOfficialBase(id) });
+
+export const readSupplierPoOfficialDocumentSVC = (id: string, archiveId: string, actorUserId: number, eventType: "AUTHORITATIVE_PDF_PREVIEWED" | "AUTHORITATIVE_PDF_DOWNLOADED") =>
+  readOfficialPdfBytes({ entityType: "commande-fournisseur", entityId: id, documentKind: "SUPPLIER_PURCHASE_ORDER", archiveId, actorUserId, eventType });
+
+export const recordSupplierPoOfficialPrintSVC = (id: string, archiveId: string, actorUserId: number) =>
+  recordOfficialPdfPrintIntent({ entityType: "commande-fournisseur", entityId: id, documentKind: "SUPPLIER_PURCHASE_ORDER", archiveId, actorUserId });

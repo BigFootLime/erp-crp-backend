@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-08-23T09:59:43.470Z",
+  "generated_at": "2026-08-23T12:35:34.241Z",
   "source": "filesystem scan of db/patches and db/patches/support",
-  "patch_count": 170,
-  "support_file_count": 302,
-  "recent_patch_count": 112,
+  "patch_count": 171,
+  "support_file_count": 305,
+  "recent_patch_count": 113,
   "recent_support_gaps": [
     {
       "filename": "20260706_affaire_allow_projet.sql",
@@ -209,9 +209,9 @@
   "risk_totals": {
     "destructive_ddl": 2,
     "destructive_dml": 9,
-    "data_rewrite": 103,
+    "data_rewrite": 104,
     "table_lock": 130,
-    "blocking_index": 126,
+    "blocking_index": 127,
     "enum_change": 1
   },
   "patches": [
@@ -3113,6 +3113,23 @@
     },
     {
       "order": 170,
+      "filename": "20260823_authoritative_pdf_archive_612.sql",
+      "sha256": "776abd77520868b535de280d14ff61c71177b8cf131192f8b76ff836fec254d1",
+      "bytes": 10756,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 171,
       "filename": "20260823_operational_media_access_611.sql",
       "sha256": "cad0368b00c3bff67a9390a0e1e9669bca37d0fa8bd4f89b4854aef5a1505415",
       "bytes": 11961,

@@ -27,6 +27,7 @@ import {
   deactivateStockMagasin,
   activateStockMagasin,
   createStockMovement,
+  downloadStockArticleCreationSnapshot,
   compensateStockMovement,
   previewStockMovementCompensation,
   previewStockMovement,
@@ -35,6 +36,7 @@ import {
   getStockAnalytics,
   getStockInventorySession,
   getStockArticle,
+  getStockArticleCreationSnapshot,
   listStockArticleCategories,
   listStockUnits,
   listStockArticleFamilies,
@@ -60,6 +62,8 @@ import {
   listStockMovementDocuments,
   listStockMovements,
   postStockMovement,
+  previewStockArticleCreationSnapshot,
+  printStockArticleCreationSnapshot,
   removeStockArticleDocument,
   removeStockMovementDocument,
   upsertStockInventorySessionLine,
@@ -154,6 +158,11 @@ router.get("/articles/export.csv", requireStockCapability("read"), exportStockAr
 // comme un identifiant d'article.
 router.get("/articles/similaires", requireStockCapability("read"), listSimilarStockArticles);
 router.post("/articles", requireArticleWrite, createStockArticle);
+// Automatic root-creation snapshot only; movements/lots remain excluded by design.
+router.get("/articles/:id/creation-snapshot", requireStockCapability("read"), getStockArticleCreationSnapshot);
+router.get("/articles/:id/creation-snapshot/:documentId/preview", requireStockCapability("read"), previewStockArticleCreationSnapshot);
+router.get("/articles/:id/creation-snapshot/:documentId/download", requireStockCapability("read"), downloadStockArticleCreationSnapshot);
+router.post("/articles/:id/creation-snapshot/:documentId/print-intents", requireStockCapability("read"), printStockArticleCreationSnapshot);
 router.get("/articles/:id", requireStockCapability("read"), getStockArticle);
 router.patch("/articles/:id", requireArticleWrite, updateStockArticle);
 router.post("/articles/:id/validate", requireArticleApprove, validateStockArticle);

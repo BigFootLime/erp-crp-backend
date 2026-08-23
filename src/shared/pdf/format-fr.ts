@@ -6,7 +6,9 @@
  * s'impriment aussi sur le bon de livraison et l'accuse de reception, qui ne peuvent pas
  * dependre du module facturation.
  *
- * **Aucun chiffre n'est modifie** : seuls les separateurs changent.
+ * Monetary values are canonicalised to two decimal places at the rendering
+ * boundary. Database numerics arrive as strings, but legacy float paths can
+ * otherwise leak tails such as `6172.799999999999` into a legal document.
  */
 
 /** Date ISO en date francaise : `22/07/2026`. */
@@ -32,18 +34,25 @@ export function percent(value: string): string {
  * telles quelles, avec le code ISO — sur une facture francaise, et alors que les documents
  * rendus dans le navigateur affichent deja `10 465,20 €` pour la meme entreprise.
  *
- * Une chaine qui n'est pas un nombre est rendue telle quelle plutot que d'etre perdue.
+ * Une chaine qui n'est pas un nombre est rejetee : un montant ambigu ne doit
+ * jamais atteindre un PDF archive.
  */
-export function money(amount: string, currency: string): string {
+export function money(amount: string | number, currency: string): string {
   const raw = String(amount ?? "").trim()
   const symbol = currency === "EUR" ? "€" : currency
 
   const match = raw.match(/^(-?)(\d+)(?:[.,](\d+))?$/)
-  if (!match) return `${raw} ${symbol}`.trim()
+  if (!match) throw new Error("PDF_MONEY_INVALID")
 
-  const [, sign, whole, decimals] = match
-  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, " ")
-  return `${sign}${grouped}${decimals ? `,${decimals}` : ""} ${symbol}`
+  const [, sign, whole, decimalPart = ""] = match
+  // Work in cents with BigInt so a 15+ digit ERP amount and a JS float tail
+  // are rounded deterministically without introducing another IEEE-754 error.
+  let cents = BigInt(whole) * 100n + BigInt(decimalPart.slice(0, 2).padEnd(2, "0"))
+  if (decimalPart.length > 2 && decimalPart[2] >= "5") cents += 1n
+  const integer = (cents / 100n).toString()
+  const decimals = (cents % 100n).toString().padStart(2, "0")
+  const grouped = integer.replace(/\B(?=(\d{3})+(?!\d))/g, " ")
+  return `${sign}${grouped},${decimals} ${symbol}`
 }
 
 /**

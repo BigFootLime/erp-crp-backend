@@ -20,6 +20,10 @@ import {
 } from "../domain/commande-fournisseur-rbac";
 import { computeCommandeTotaux, computeLigneTotaux, roundMoney } from "../domain/commande-fournisseur-totaux";
 import { repoRecordInitialPromiseEvent } from "../../procurement-reliability/repository/procurement-reliability.repository";
+import { readIssuerParty } from "../../../shared/documents/issuer-identity.repository";
+import { authoritativePdfFilename } from "../../../shared/authoritative-documents/authoritative-document.filename";
+import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
+import { repoFindAuthoritativePdfByIdempotency } from "../../../shared/authoritative-documents/authoritative-document.repository";
 import type {
   AccuseBodyDTO,
   AddLigneBodyDTO,
@@ -59,6 +63,109 @@ export type AuditContext = {
 };
 
 type DbQueryer = Pick<PoolClient, "query">;
+
+type SupplierPoCreationSnapshot = Record<string, unknown>;
+
+/**
+ * Builds the PO's official source snapshot from persisted rows, in the same
+ * create transaction. Internal notes, actor context and procurement links are
+ * deliberately absent: an official supplier PDF is an external document.
+ */
+async function buildSupplierPoCreationSnapshot(tx: DbQueryer, commandeId: string): Promise<SupplierPoCreationSnapshot> {
+  const header = await tx.query<Record<string, unknown>>(
+    `SELECT cf.code, cf.statut, cf.created_at::text AS issued_at, cf.devise,
+            cf.date_besoin::text AS need_date, cf.incoterm, cf.conditions_paiement AS payment_terms,
+            cf.mode_transport AS transport_mode, cf.commentaire_public AS public_comment,
+            cf.adresse_livraison_texte AS delivery_address,
+            f.code AS supplier_code, COALESCE(f.nom, f.raison_sociale) AS supplier_name,
+            f.adresse_ligne AS supplier_street, f.house_no AS supplier_house_no,
+            f.postcode AS supplier_postal_code, f.city AS supplier_city, f.country AS supplier_country,
+            cf.total_ht::text, cf.total_remise::text, cf.total_tva::text,
+            cf.frais_port_ht::text AS freight_ht, cf.total_ttc::text
+       FROM public.commande_fournisseur cf
+       JOIN public.fournisseurs f ON f.id = cf.fournisseur_id
+      WHERE cf.id = $1::uuid`,
+    [commandeId]
+  );
+  const h = header.rows[0];
+  if (!h) throw new HttpError(404, "COMMANDE_FOURNISSEUR_NOT_FOUND", "Commande fournisseur introuvable.");
+  const lines = await tx.query<Record<string, unknown>>(
+    `SELECT position::int, reference_fournisseur AS reference, designation, unite AS unit,
+            quantite::text AS quantity, prix_unitaire_ht::text AS unit_price_ht,
+            remise_pct::text AS discount_pct, tva_pct::text AS vat_pct, net_ht::text,
+            date_besoin::text AS need_date
+       FROM public.commande_fournisseur_ligne
+      WHERE commande_id = $1::uuid AND statut_ligne = 'ACTIVE'
+      ORDER BY position ASC`,
+    [commandeId]
+  );
+  const issuer = await readIssuerParty({ at: String(h.issued_at ?? "").slice(0, 10) });
+  return {
+    type: "SUPPLIER_PURCHASE_ORDER", code: String(h.code), status: String(h.statut), issued_at: String(h.issued_at),
+    supplier: {
+      code: h.supplier_code == null ? null : String(h.supplier_code),
+      name: h.supplier_name == null ? null : String(h.supplier_name),
+      address: {
+        street: h.supplier_street == null ? null : String(h.supplier_street),
+        house_number: h.supplier_house_no == null ? null : String(h.supplier_house_no),
+        postal_code: h.supplier_postal_code == null ? null : String(h.supplier_postal_code),
+        city: h.supplier_city == null ? null : String(h.supplier_city),
+        country: h.supplier_country == null ? null : String(h.supplier_country),
+      },
+    },
+    currency: String(h.devise), need_date: h.need_date == null ? null : String(h.need_date),
+    incoterm: h.incoterm == null ? null : String(h.incoterm), payment_terms: h.payment_terms == null ? null : String(h.payment_terms),
+    transport_mode: h.transport_mode == null ? null : String(h.transport_mode), public_comment: h.public_comment == null ? null : String(h.public_comment),
+    delivery_address: h.delivery_address == null ? null : String(h.delivery_address),
+    lines: lines.rows.map((line) => ({
+      position: Number(line.position), reference: line.reference == null ? null : String(line.reference), designation: String(line.designation),
+      unit: line.unit == null ? null : String(line.unit), quantity: String(line.quantity), unit_price_ht: line.unit_price_ht == null ? null : String(line.unit_price_ht),
+      discount_pct: line.discount_pct == null ? null : String(line.discount_pct), vat_pct: line.vat_pct == null ? null : String(line.vat_pct),
+      net_ht: line.net_ht == null ? null : String(line.net_ht), need_date: line.need_date == null ? null : String(line.need_date),
+    })),
+    totals: { total_ht: String(h.total_ht), total_discount: String(h.total_remise), total_vat: String(h.total_tva), freight_ht: String(h.freight_ht), total_ttc: String(h.total_ttc) },
+    issuer,
+  };
+}
+
+/** Same textual timestamp exposed by the PO detail API; never client-derived. */
+async function readSupplierPoSourceRevision(tx: DbQueryer, commandeId: string): Promise<string> {
+  const result = await tx.query<{ source_revision: string | null }>(
+    `SELECT updated_at::text AS source_revision
+       FROM public.commande_fournisseur
+      WHERE id = $1::uuid`,
+    [commandeId]
+  );
+  const revision = result.rows[0]?.source_revision?.trim();
+  if (!revision) throw new HttpError(409, "OFFICIAL_DOCUMENT_SOURCE_REVISION_UNAVAILABLE", "La révision source du document est indisponible.");
+  return revision;
+}
+
+/**
+ * Enqueues the immutable creation PDF for any supplier-order creation path.
+ * Callers must invoke this after all header/line/totals work and before the
+ * transaction commits, so the business row and its future GED filing are
+ * accepted atomically.
+ */
+export async function queueSupplierPurchaseOrderCreationPdfTx(
+  tx: PoolClient,
+  input: Readonly<{ commandeId: string; code: string; actorUserId: number }>
+): Promise<void> {
+  const sourceSnapshot = await buildSupplierPoCreationSnapshot(tx, input.commandeId);
+  await queueCreationPdfArchive(tx, {
+    entityType: "commande-fournisseur",
+    entityId: input.commandeId,
+    documentKind: "SUPPLIER_PURCHASE_ORDER",
+    documentVersion: 1,
+    renderVersion: "supplier-po-pdf-v1",
+    idempotencyKey: `commande-fournisseur:${input.commandeId}:creation:v1`,
+    title: `Bon de commande fournisseur ${input.code}`,
+    originalName: authoritativePdfFilename(["BCF", input.code, "v1"]),
+    sourceRevision: await readSupplierPoSourceRevision(tx, input.commandeId),
+    sourceSnapshot,
+    actorUserId: input.actorUserId,
+  });
+}
 
 /* ------------------------------- shared helpers ------------------------------ */
 
@@ -823,6 +930,14 @@ export async function repoCreateCommandeFournisseur(
 
     await recomputeTotauxTx(client, id);
     await insertTransitionRow(client, id, null, "BROUILLON", null, audit.user_id);
+    // Automatic, server-built creation snapshot. This is queued in the same
+    // transaction as the PO so a committed order can never silently miss its
+    // future GED filing work. The browser never supplies the PDF payload.
+    await queueSupplierPurchaseOrderCreationPdfTx(client, {
+      commandeId: id,
+      code,
+      actorUserId: audit.user_id,
+    });
     await insertAuditLog(client, audit, {
       action: "commandes_fournisseurs.create",
       entity_type: "commande_fournisseur",
@@ -1511,6 +1626,76 @@ export async function repoGenerateDocumentVersion(
   }
 }
 
+/** Explicit reissue queue. Existing legacy `commande_fournisseur_document` files stay untouched. */
+export async function repoQueueSupplierPoOfficialDocument(
+  id: string,
+  idempotencyKey: string,
+  audit: AuditContext,
+  input: { source_revision: string; reissue_reason?: string | null }
+) {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const header = await client.query<{ code: string; source_revision: string | null }>(
+      `SELECT code, updated_at::text AS source_revision
+         FROM public.commande_fournisseur WHERE id = $1::uuid FOR UPDATE`, [id]
+    );
+    const code = header.rows[0]?.code;
+    if (!code) throw new HttpError(404, "COMMANDE_FOURNISSEUR_NOT_FOUND", "Commande fournisseur introuvable.");
+    // Resolve an existing accepted attempt before comparing the current mutable
+    // order. A network retry must replay its original immutable request even if
+    // somebody edited the order between the two HTTP calls.
+    const replay = await repoFindAuthoritativePdfByIdempotency(client, idempotencyKey);
+    if (replay) {
+      if (
+        replay.entityType !== "commande-fournisseur" || replay.entityId !== id ||
+        replay.documentKind !== "SUPPLIER_PURCHASE_ORDER"
+      ) {
+        throw new HttpError(409, "OFFICIAL_DOCUMENT_IDEMPOTENCY_CONFLICT", "La clé d'idempotence est déjà utilisée.");
+      }
+      await insertAuditLog(client, audit, {
+        action: "commandes_fournisseurs.official_document.idempotent_replay",
+        entity_type: "commande_fournisseur",
+        entity_id: id,
+        details: { archive_id: replay.id, render_version: replay.renderVersion },
+      });
+      await client.query("COMMIT");
+      return replay;
+    }
+    const currentArchive = await client.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM public.authoritative_pdf_archives
+        WHERE entity_type = 'commande-fournisseur' AND entity_id = $1 AND document_kind = 'SUPPLIER_PURCHASE_ORDER'`,
+      [id]
+    );
+    const existingCount = Number(currentArchive.rows[0]?.n ?? 0);
+    if (existingCount > 0 && !input.reissue_reason?.trim()) {
+      throw new HttpError(422, "OFFICIAL_DOCUMENT_REISSUE_REASON_REQUIRED", "Un motif de réémission est requis.");
+    }
+    const sourceSnapshot = await buildSupplierPoCreationSnapshot(client, id);
+    const currentSourceRevision = header.rows[0]?.source_revision?.trim();
+    if (!currentSourceRevision) throw new HttpError(409, "OFFICIAL_DOCUMENT_SOURCE_REVISION_UNAVAILABLE", "La révision source du document est indisponible.");
+    if (currentSourceRevision !== input.source_revision) {
+      throw new HttpError(409, "OFFICIAL_DOCUMENT_SOURCE_REVISION_CONFLICT", "La source du document a changé. Rechargez avant de réémettre.");
+    }
+    const archive = await queueCreationPdfArchive(client, {
+      entityType: "commande-fournisseur", entityId: id, documentKind: "SUPPLIER_PURCHASE_ORDER",
+      documentVersion: existingCount + 1, renderVersion: "supplier-po-pdf-v1", idempotencyKey, title: `Bon de commande fournisseur ${code}`,
+      originalName: authoritativePdfFilename(["BCF", code, `v${existingCount + 1}`]),
+      sourceRevision: currentSourceRevision,
+      sourceSnapshot, actorUserId: audit.user_id,
+    });
+    await insertAuditLog(client, audit, {
+      action: "commandes_fournisseurs.official_document.queue", entity_type: "commande_fournisseur", entity_id: id,
+      details: { archive_id: archive.id, document_version: archive.documentVersion, render_version: archive.renderVersion, source_revision: archive.sourceRevision, reissue_reason: input.reissue_reason?.trim() ?? null },
+    });
+    await client.query("COMMIT");
+    return archive;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally { client.release(); }
+}
+
 // Variante transactionnelle interne du détail (utilisée par la génération documentaire).
 async function repoGetCommandeFournisseurTx(tx: DbQueryer, id: string): Promise<CommandeFournisseur> {
   const res = await tx.query(
@@ -1991,6 +2176,11 @@ export async function repoConfirmPropositions(
 
       await recomputeTotauxTx(client, commandeId);
       await insertTransitionRow(client, commandeId, null, "BROUILLON", "Généré depuis propositions d'achat", audit.user_id);
+      await queueSupplierPurchaseOrderCreationPdfTx(client, {
+        commandeId,
+        code,
+        actorUserId: audit.user_id,
+      });
       await insertAuditLog(client, audit, {
         action: "commandes_fournisseurs.propositions.confirm",
         entity_type: "commande_fournisseur",
@@ -2070,6 +2260,11 @@ export async function repoDuplicateAsDraft(
 
     await recomputeTotauxTx(client, newId);
     await insertTransitionRow(client, newId, null, "BROUILLON", `Duplication de ${source.code}`, audit.user_id);
+    await queueSupplierPurchaseOrderCreationPdfTx(client, {
+      commandeId: newId,
+      code,
+      actorUserId: audit.user_id,
+    });
     await insertAuditLog(client, audit, {
       action: "commandes_fournisseurs.duplicate",
       entity_type: "commande_fournisseur",

@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   clientQuery: vi.fn(),
   clientRelease: vi.fn(),
 }));
+const officialArchive = vi.hoisted(() => ({ queue: vi.fn() }));
 
 vi.mock("pg", () => {
   const emitter = new EventEmitter();
@@ -22,6 +23,16 @@ vi.mock("pg", () => {
 
 vi.mock("../utils/checkNetworkDrive", () => ({
   checkNetworkDrive: vi.fn(() => Promise.resolve()),
+}));
+
+// Route tests keep the archive worker/storage boundary isolated. The persisted
+// source snapshot is still built by the real repository below.
+vi.mock("../shared/authoritative-documents/authoritative-document.service", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../shared/authoritative-documents/authoritative-document.service")>();
+  return { ...actual, queueCreationPdfArchive: officialArchive.queue };
+});
+vi.mock("../shared/documents/issuer-identity.repository", () => ({
+  readIssuerParty: vi.fn().mockResolvedValue({ company_name: "CERP Test" }),
 }));
 
 vi.mock("../module/access-control/middlewares/module-access-gate", () => ({
@@ -69,6 +80,19 @@ const state = {
 function dispatch(sqlRaw: unknown): { rows: unknown[]; rowCount?: number } {
   const sql = String(sqlRaw);
   if (/fn_next_issued_code_value/.test(sql)) return { rows: [{ v: "7" }] };
+  if (/SELECT updated_at::text AS source_revision\s+FROM public\.commande_fournisseur/.test(sql)) {
+    return { rows: [{ source_revision: state.header.updated_at_token }] };
+  }
+  if (/FROM public\.commande_fournisseur cf\s+JOIN public\.fournisseurs f/.test(sql)) {
+    return { rows: [{
+      code: state.header.code, statut: state.header.statut, issued_at: "2026-07-21T10:00:00.000Z",
+      devise: state.header.devise, need_date: null, incoterm: null, payment_terms: null,
+      transport_mode: null, public_comment: null, delivery_address: null,
+      supplier_code: state.fournisseur.code, supplier_name: state.fournisseur.nom,
+      total_ht: "120", total_remise: "0", total_tva: "24", freight_ht: "0", total_ttc: "144",
+    }] };
+  }
+  if (/FROM public\.commande_fournisseur_ligne\s+WHERE commande_id/.test(sql)) return { rows: [] };
   if (/FROM public\.commande_fournisseur_idempotence WHERE cle/.test(sql)) {
     return { rows: state.idemRow ? [state.idemRow] : [] };
   }
@@ -101,6 +125,8 @@ beforeEach(() => {
   mocks.poolConnect.mockReset();
   mocks.clientQuery.mockReset();
   mocks.clientRelease.mockReset();
+  officialArchive.queue.mockReset();
+  officialArchive.queue.mockResolvedValue(undefined);
   mocks.poolConnect.mockResolvedValue({
     query: withRealtimeOutboxDbMock(mocks.clientQuery),
     release: mocks.clientRelease,
@@ -169,6 +195,12 @@ describe("/api/v1/commandes-fournisseurs — création", () => {
     expect(res.status).toBe(201);
     expect(res.body.code).toMatch(/^BCF-\d{4}-0007$/);
     expect(res.body.idempotent_replay).toBe(false);
+    expect(officialArchive.queue).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      entityType: "commande-fournisseur",
+      entityId: UUID,
+      documentKind: "SUPPLIER_PURCHASE_ORDER",
+      renderVersion: "supplier-po-pdf-v1",
+    }));
 
     const forbidden = await request(app)
       .post("/api/v1/commandes-fournisseurs")

@@ -49,9 +49,11 @@ import {
   deleteBomLine,
   deleteOperation,
   duplicatePieceTechnique,
+  downloadPieceTechniqueCreationSnapshot,
   downloadPieceTechniqueDocument,
   getPieceTechniqueFabricationTree,
   getPieceTechnique,
+  getPieceTechniqueCreationSnapshot,
   linkPieceTechniqueAffaire,
   listAffairePieceTechniques,
   listPieceTechniqueAffaires,
@@ -64,6 +66,8 @@ import {
   reorderBom,
   reorderOperations,
   removePieceTechniqueDocument,
+  previewPieceTechniqueCreationSnapshot,
+  printPieceTechniqueCreationSnapshot,
   updateAchat,
   updateBomLine,
   updateOperation,
@@ -185,6 +189,12 @@ router.get("/:id/arborescence", validate(idParamSchema), getPieceTechniqueFabric
 router.get("/:id/document-dossier", validate(idParamSchema), getPieceDocumentDossier)
 router.get("/:id/document-dossier/pdf", validate(idParamSchema), downloadPieceDocumentDossierPdf)
 router.post("/:id/piece-critique", validate(idParamSchema), validate(setPieceCritiqueSchema), setPieceCritique)
+// Root-only immutable creation snapshot. No child version/BOM/operation route
+// may create or reissue this archive artifact.
+router.get("/:id/creation-snapshot", validate(idParamSchema), getPieceTechniqueCreationSnapshot)
+router.get("/:id/creation-snapshot/:documentId/preview", validate(idParamSchema), previewPieceTechniqueCreationSnapshot)
+router.get("/:id/creation-snapshot/:documentId/download", validate(idParamSchema), downloadPieceTechniqueCreationSnapshot)
+router.post("/:id/creation-snapshot/:documentId/print-intents", validate(idParamSchema), printPieceTechniqueCreationSnapshot)
 router.get("/:id", validate(idParamSchema), getPieceTechnique)
 router.patch("/:id", validate(idParamSchema), validate(updatePieceTechniqueSchema), updatePieceTechnique)
 router.delete("/:id", requireDeleteRole, validate(idParamSchema), deletePieceTechnique)

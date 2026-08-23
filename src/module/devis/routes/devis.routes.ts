@@ -18,7 +18,13 @@ import {
   getCommandeDraftFromDevis,
   getDevis,
   getDevisDocumentFile,
+  getDevisOfficialDocument,
   listDevis,
+  listDevisOfficialDocuments,
+  queueDevisOfficialDocument,
+  previewDevisOfficialDocument,
+  downloadDevisOfficialDocument,
+  printDevisOfficialDocument,
   listDevisVersions,
   reviseDevis,
   updateDevis,
@@ -105,6 +111,12 @@ router.get("/:id", requireCapability("read"), getDevis);
 router.get("/:id/versions", requireCapability("read"), listDevisVersions);
 router.get("/:id/commande-draft", requireCapability("convert"), getCommandeDraftFromDevis);
 router.get("/:id/documents/:docId/file", requireCapability("export"), getDevisDocumentFile);
+router.get("/:id/official-documents", requireCapability("export"), listDevisOfficialDocuments);
+router.post("/:id/official-documents", requireCapability("export"), queueDevisOfficialDocument);
+router.get("/:id/official-documents/:documentId", requireCapability("export"), getDevisOfficialDocument);
+router.get("/:id/official-documents/:documentId/preview", requireCapability("export"), previewDevisOfficialDocument);
+router.get("/:id/official-documents/:documentId/download", requireCapability("export"), downloadDevisOfficialDocument);
+router.post("/:id/official-documents/:documentId/print-intents", requireCapability("export"), printDevisOfficialDocument);
 router.post("/", requireCapability("create"), upload.array("documents[]"), parseMultipartData(createDevisBodySchema), createDevis);
 router.post("/:id/convert-to-commande", requireCapability("convert"), convertDevisToCommande);
 router.post("/:id/revise", requireCapability("revise"), upload.array("documents[]"), parseMultipartData(updateDevisBodySchema), reviseDevis);

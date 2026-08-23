@@ -6,11 +6,15 @@ import { roleHasAffaireCapability, type AffaireCapability } from "../domain/affa
 import {
   archiveAffaire,
   createAffaire,
+  downloadAffaireCreationSnapshot,
   getAffaire,
+  getAffaireCreationSnapshot,
   getAffaireOperations,
   listAffaires,
   listAffairesCommandCenter,
   previewAffaire,
+  previewAffaireCreationSnapshot,
+  printAffaireCreationSnapshot,
   transitionAffaire,
   updateAffaire,
 } from "../controllers/affaire.controller";
@@ -55,6 +59,12 @@ router.use(authenticateToken);
 router.get("/command-center", requireAffaireCapability("read"), listAffairesCommandCenter);
 router.get("/", requireAffaireCapability("read"), listAffaires);
 router.get("/:id/operations", requireAffaireCapability("read"), getAffaireOperations);
+// Immutable internal creation snapshot. It is discoverable only through the
+// normal affair read capability and cannot be issued from HTTP.
+router.get("/:id/creation-snapshot", requireAffaireCapability("read"), getAffaireCreationSnapshot);
+router.get("/:id/creation-snapshot/:documentId/preview", requireAffaireCapability("read"), previewAffaireCreationSnapshot);
+router.get("/:id/creation-snapshot/:documentId/download", requireAffaireCapability("read"), downloadAffaireCreationSnapshot);
+router.post("/:id/creation-snapshot/:documentId/print-intents", requireAffaireCapability("read"), printAffaireCreationSnapshot);
 router.get("/:id", requireAffaireCapability("read"), getAffaire);
 
 // Écritures

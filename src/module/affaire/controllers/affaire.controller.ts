@@ -1,6 +1,7 @@
 import type { Request, RequestHandler } from "express";
 import { HttpError } from "../../../utils/httpError";
 import { getClientIp, parseDevice } from "../../../utils/requestMeta";
+import { createCreationSnapshotHandlers } from "../../../shared/authoritative-documents/creation-snapshot-http";
 import {
   affaireIdParamsSchema,
   archiveAffaireBodySchema,
@@ -54,6 +55,21 @@ function buildAuditContext(req: Request): AuditContext {
     client_session_id: clientSessionId,
   };
 }
+
+const affaireCreationSnapshotHandlers = createCreationSnapshotHandlers({
+  entityType: "affaire",
+  documentKind: "AFFAIR_CREATION_SNAPSHOT",
+  parseEntityId: (req) => String(affaireIdParamsSchema.parse(req.params).id),
+  // The route preserves requireAffaireCapability("read"); this root lookup then
+  // keeps missing/out-of-scope affairs from exposing archive state or bytes.
+  canReadEntity: async (id) => Boolean(await svcGetAffaire(Number(id), "")),
+  baseUrl: (id) => `/affaires/${encodeURIComponent(id)}/creation-snapshot`,
+});
+
+export const getAffaireCreationSnapshot = affaireCreationSnapshotHandlers.metadata;
+export const previewAffaireCreationSnapshot = affaireCreationSnapshotHandlers.preview;
+export const downloadAffaireCreationSnapshot = affaireCreationSnapshotHandlers.download;
+export const printAffaireCreationSnapshot = affaireCreationSnapshotHandlers.printIntent;
 
 export const listAffaires: RequestHandler = async (req, res, next) => {
   try {

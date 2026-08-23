@@ -4,6 +4,7 @@ import { z } from "zod";
 import { HttpError } from "../../../utils/httpError";
 import { getDocumentStoragePath } from "../../../utils/cerpStorage";
 import { sendSecureStoredFile } from "../../../shared/uploads/secure-download";
+import { createCreationSnapshotHandlers } from "../../../shared/authoritative-documents/creation-snapshot-http";
 import {
   createCommandeSVC,
   createCadreReleaseSVC,
@@ -99,6 +100,21 @@ function routeParam(req: Request, name: string): string {
   if (typeof value === "string" && value.length > 0) return value;
   throw new HttpError(400, "INVALID_ROUTE_PARAM", `${name} must be a string`);
 }
+
+const commandeCreationSnapshotHandlers = createCreationSnapshotHandlers({
+  entityType: "commande-client",
+  documentKind: "CUSTOMER_ORDER_CREATION_SNAPSHOT",
+  parseEntityId: (req) => routeParam(req, "id"),
+  // Route-level acknowledgement export RBAC is retained; this root lookup keeps a
+  // missing/out-of-scope order from becoming an archive metadata oracle.
+  canReadEntity: async (id) => Boolean(await getCommandeSVC(id, new Set())),
+  baseUrl: (id) => `/commandes/${encodeURIComponent(id)}/creation-snapshot`,
+});
+
+export const getCommandeCreationSnapshot = commandeCreationSnapshotHandlers.metadata;
+export const previewCommandeCreationSnapshot = commandeCreationSnapshotHandlers.preview;
+export const downloadCommandeCreationSnapshot = commandeCreationSnapshotHandlers.download;
+export const printCommandeCreationSnapshot = commandeCreationSnapshotHandlers.printIntent;
 
 function buildAudit(req: Request) {
   return {

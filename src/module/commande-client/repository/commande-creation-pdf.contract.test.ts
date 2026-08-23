@@ -1,0 +1,53 @@
+import fs from "node:fs";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+
+const source = fs.readFileSync(path.join(__dirname, "commande-client.repository.ts"), "utf8");
+const productionSource = fs.readFileSync(path.join(__dirname, "../../production/repository/production.repository.ts"), "utf8");
+const generationSource = fs.readFileSync(path.join(__dirname, "../../production/repository/production-generation.repository.ts"), "utf8");
+
+describe("commande creation PDF transaction contract", () => {
+  it("queues the sanitized internal snapshot before the create transaction returns", () => {
+    const queue = source.indexOf("await queueCommandeCreationPdf(client");
+    const result = source.indexOf("return { id: toInt(commandeId");
+    expect(queue).toBeGreaterThan(0);
+    expect(queue).toBeLessThan(result);
+    expect(source).toContain('documentKind: "CUSTOMER_ORDER_CREATION_SNAPSHOT"');
+    expect(source).toContain('idempotencyKey: `commande-client:${header.id}:creation:v1`');
+    expect(source).toContain("buildInternalCreationSnapshot");
+    expect(source).not.toContain("dc.document_path");
+  });
+
+  it("queues manual and generated OF roots inside their transactions, excluding children", () => {
+    const manualQueue = productionSource.indexOf("await queueRootOfCreationPdf(client");
+    const manualReturn = productionSource.indexOf("return ofId;", manualQueue);
+    expect(manualQueue).toBeGreaterThan(0);
+    expect(manualQueue).toBeLessThan(manualReturn);
+    expect(generationSource).toContain("generated.ofs.filter((of) => of.parent_of_id === null)");
+    expect(source).toContain("generatedOfs.filter((of) => of.parent_of_id === null)");
+    expect(generationSource).toContain("await queueRootOfCreationPdf(client");
+    expect(source).toContain("await queueRootOfCreationPdf(client");
+  });
+
+  it("archives clones only after their cloned aggregate is complete and before commit", () => {
+    const duplicateStart = source.indexOf("export async function repoDuplicateCommande");
+    const duplicate = source.slice(duplicateStart);
+    const checkpoints = duplicate.indexOf("await repoEnsureCommandeWorkflowCheckpoints");
+    const queue = duplicate.indexOf("await queueCommandeCreationPdf(client");
+    const commit = duplicate.indexOf('await client.query("COMMIT")');
+    expect(checkpoints).toBeGreaterThan(0);
+    expect(queue).toBeGreaterThan(checkpoints);
+    expect(queue).toBeLessThan(commit);
+  });
+
+  it("covers every lifecycle-created affaire while preserving replay no-op paths", () => {
+    const created = (source.match(/await createAffaire\(client/g) ?? []).length;
+    const queued = (source.match(/await queueAffaireCreationPdf\(client/g) ?? []).length;
+    expect(created).toBe(5);
+    expect(queued).toBe(created);
+    expect(source).toContain('documentKind: "AFFAIR_CREATION_SNAPSHOT"');
+    expect(source).toContain('idempotencyKey: `affaire:${affaire.id}:creation:v1`');
+    // Existing mappings return before any create helper call, so a replay has no queue side effect.
+    expect(source).toContain("if (existingLivraisons.length >= requestedLivraisonCount)");
+  });
+});
