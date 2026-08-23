@@ -27,8 +27,8 @@ const PARENT_POLICIES: Readonly<Record<string, ParentPolicy>> = {
   PIECE_TECHNIQUE: { moduleKey: "pieces-techniques", canonicalType: "PIECE_TECHNIQUE", identity: "uuid" },
   "PIECE-TECHNIQUE": { moduleKey: "pieces-techniques", canonicalType: "PIECE_TECHNIQUE", identity: "uuid" },
   PIECE_TECHNIQUE_VERSION: { moduleKey: "pieces-techniques", canonicalType: "PIECE_TECHNIQUE_VERSION", identity: "uuid" },
-  STOCK_ARTICLE: { moduleKey: "stock", canonicalType: "STOCK_ARTICLE", identity: "integer" },
-  "STOCK-ARTICLE": { moduleKey: "stock", canonicalType: "STOCK_ARTICLE", identity: "integer" },
+  STOCK_ARTICLE: { moduleKey: "stock", canonicalType: "STOCK_ARTICLE", identity: "uuid" },
+  "STOCK-ARTICLE": { moduleKey: "stock", canonicalType: "STOCK_ARTICLE", identity: "uuid" },
   OUTIL: { moduleKey: "outillage", canonicalType: "OUTIL", identity: "integer" },
 };
 

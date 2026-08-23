@@ -27,8 +27,6 @@ describe("GED parent-record download authorization", () => {
 
   it.each([
     ["AFFAIRE", "affaires", "AFFAIRE"],
-    ["STOCK_ARTICLE", "stock", "STOCK_ARTICLE"],
-    ["STOCK-ARTICLE", "stock", "STOCK_ARTICLE"],
   ])("accepts the live integer identity used by %s", async (entityType, moduleKey, canonicalType) => {
     mocks.links.mockResolvedValue([{ entity_type: entityType, entity_id: "42" }]);
     mocks.exists.mockResolvedValue(true);
@@ -40,6 +38,20 @@ describe("GED parent-record download authorization", () => {
       entityId: "42",
     });
     expect(mocks.exists).toHaveBeenCalledWith(canonicalType, "42");
+  });
+
+  it.each(["STOCK_ARTICLE", "STOCK-ARTICLE"])("accepts the live UUID identity used by %s", async (entityType) => {
+    const articleId = "22222222-2222-4222-8222-222222222222";
+    mocks.links.mockResolvedValue([{ entity_type: entityType, entity_id: articleId }]);
+    mocks.exists.mockResolvedValue(true);
+    mocks.profile.mockResolvedValue({ is_superadmin: false, modules: [{ module_key: "stock", allowed: true }] });
+
+    await expect(assertGedVersionParentReadable(7, documentId)).resolves.toEqual({
+      moduleKey: "stock",
+      entityType: "STOCK_ARTICLE",
+      entityId: articleId,
+    });
+    expect(mocks.exists).toHaveBeenCalledWith("STOCK_ARTICLE", articleId);
   });
 
   it.each([
@@ -72,7 +84,7 @@ describe("GED parent-record download authorization", () => {
   it.each([
     ["integer", "COMMANDE_CLIENT", "not-a-number"],
     ["integer", "AFFAIRE", "not-a-number"],
-    ["integer", "STOCK_ARTICLE", "not-a-number"],
+    ["uuid", "STOCK_ARTICLE", "not-a-uuid"],
     ["uuid", "FOURNISSEUR", "not-a-uuid"],
   ])("turns a malformed persisted %s parent id into the same opaque denial", async (_kind, entity_type, entity_id) => {
     mocks.links.mockResolvedValue([{ entity_type, entity_id }]);
