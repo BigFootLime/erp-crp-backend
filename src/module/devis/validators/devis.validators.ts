@@ -72,6 +72,17 @@ export const devisDocumentIdParamsSchema = z.object({
   docId: z.string().uuid("docId must be a UUID"),
 });
 
+export const devisOfficialDocumentParamsSchema = z.object({
+  id: z.coerce.number().int().positive(),
+  documentId: z.string().uuid("documentId must be a UUID"),
+});
+
+export const devisOfficialDocumentBodySchema = z.object({
+  // Exact server-issued aggregate `updated_at` token; never a browser hash.
+  source_revision: z.string().trim().min(1).max(160, "source_revision is required"),
+  reissue_reason: z.string().trim().min(3).max(500).optional().nullable(),
+}).strict();
+
 export const devisArticleParamsSchema = z.object({
   articleId: z.string().uuid("articleId must be a UUID"),
 });

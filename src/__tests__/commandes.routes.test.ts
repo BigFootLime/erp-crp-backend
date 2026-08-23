@@ -73,6 +73,7 @@ vi.mock("../module/access-control/middlewares/module-access-gate", () => ({
 
 import app from "../config/app";
 import { withRealtimeOutboxDbMock } from "./helpers/realtime-outbox-db-mock";
+import { authoritativePdfQueueDbMock } from "./helpers/authoritative-pdf-queue-db-mock";
 
 beforeEach(() => {
   mocks.poolQuery.mockReset();
@@ -323,6 +324,20 @@ describe("/api/v1/commandes", () => {
       .mockResolvedValueOnce({ rows: [] }) // INSERT commande_documents
       .mockResolvedValueOnce({ rows: [] }); // COMMIT
 
+    // The create path now queues a durable creation snapshot before COMMIT.
+    // Keep this fixture query-aware rather than relying on an obsolete call order.
+    mocks.clientQuery.mockImplementation(async (sql: unknown, params?: unknown[]) => {
+      const query = String(sql);
+      if (query.includes("nextval('public.commande_client_id_seq')")) return { rows: [{ id: "123" }] };
+      if (query.includes("public.fn_next_issued_code_value")) return { rows: [{ v: "1" }] };
+      if (query.includes("INSERT INTO commande_client (")) return { rows: [{ id: "123" }] };
+      if (query.includes("FROM public.articles a")) return { rows: [{ article_id: ARTICLE_ID, article_code: "ART-001", article_designation: "Article test", article_category: "fabrique", family_code: "PT", article_unite: "u", piece_technique_id: PIECE_ID, piece_code: "PT-001", piece_designation: "Pièce test", stock_managed: true, is_active: true }] };
+      if (query.includes("FROM public.commande_client cc") && query.includes("FOR UPDATE")) return { rows: [{ id: "123", numero: "CC-123", client_id: "001", client_name: "ACME", billing_address_id: null, billing_address_name: null, billing_street: null, billing_house_number: null, billing_postal_code: null, billing_city: null, billing_country: null, date_commande: "2026-02-01", order_type: "FERME", total_ht: 100, total_ttc: 120, remise_globale: 0, commentaire: null, updated_at: "2026-08-23T12:00:00.000Z" }] };
+      const authoritativePdf = authoritativePdfQueueDbMock(sql, params);
+      if (authoritativePdf) return authoritativePdf;
+      return { rows: [] };
+    });
+
     const payload = {
       numero: "CC-123",
       client_id: "001",
@@ -399,6 +414,11 @@ describe("/api/v1/commandes", () => {
 
     mocks.clientQuery.mockImplementation(async (sql: unknown, params?: unknown[]) => {
       const q = String(sql);
+      if (q.includes("FROM public.commande_client cc") && q.includes("FOR UPDATE")) {
+        return { rows: [{ id: String(seq), numero: `CC-${seq}`, client_id: "001", client_name: "ACME", billing_address_id: null, billing_address_name: null, billing_street: null, billing_house_number: null, billing_postal_code: null, billing_city: null, billing_country: null, date_commande: "2026-03-26", order_type: "FERME", total_ht: 100, total_ttc: 120, remise_globale: 0, commentaire: null, updated_at: "2026-08-23T12:00:00.000Z" }] };
+      }
+      const authoritativePdf = authoritativePdfQueueDbMock(sql, params);
+      if (authoritativePdf) return authoritativePdf;
       if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
 
       if (q.includes("nextval('public.commande_client_id_seq')")) {
@@ -442,7 +462,7 @@ describe("/api/v1/commandes", () => {
       }
       if (q.includes("INSERT INTO public.pieces_techniques")) {
         piecePromoted = true;
-        return { rows: [] };
+        return { rows: [{ id: "99999999-9999-9999-9999-999999999999", updated_at: "2026-08-23T12:00:00.000Z" }] };
       }
       if (q.includes("INSERT INTO public.dossier_technique_piece_devis_promotion")) {
         piecePromoted = true;
@@ -454,7 +474,7 @@ describe("/api/v1/commandes", () => {
       }
       if (q.includes("INSERT INTO public.articles (") && q.includes("status")) {
         articlePromoted = true;
-        return { rows: [] };
+        return { rows: [{ id: "88888888-8888-8888-8888-888888888888", updated_at: "2026-08-23T12:00:00.000Z" }] };
       }
       if (q.includes("INSERT INTO public.article_devis_promotion")) {
         articlePromoted = true;
@@ -483,6 +503,7 @@ describe("/api/v1/commandes", () => {
       if (q.includes("INSERT INTO commande_ligne")) return { rows: [{ id: "1" }] };
       if (q.includes("UPDATE public.article_devis_promotion")) return { rows: [] };
       if (q.includes("UPDATE public.dossier_technique_piece_devis_promotion")) return { rows: [] };
+      if (q.includes("UPDATE public.articles\n        SET status = 'VALIDE'")) return { rows: [{ updated_at: "2026-08-23T12:00:01.000Z" }] };
       if (q.includes("UPDATE public.articles a") || q.includes("UPDATE public.articles SET status = 'VALIDE'")) return { rows: [] };
       if (q.includes("INSERT INTO commande_historique")) return { rows: [] };
       if (q.includes("DELETE FROM public.article_category_link")) return { rows: [] };
@@ -664,8 +685,10 @@ describe("/api/v1/commandes", () => {
       },
     ];
 
-    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+    mocks.clientQuery.mockImplementation(async (sql: unknown, params?: unknown[]) => {
       const q = String(sql);
+      const authoritativePdf = authoritativePdfQueueDbMock(sql, params);
+      if (authoritativePdf) return authoritativePdf;
       if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
       if (q.includes("FROM commande_client cc")) {
         return {
@@ -1354,6 +1377,10 @@ describe("/api/v1/commandes", () => {
       .mockResolvedValueOnce({ rows: [] }) // insert historique
       .mockResolvedValueOnce({ rows: [] }); // COMMIT
 
+    mocks.clientQuery.mockImplementation(async (sql: unknown, params?: unknown[]) =>
+      authoritativePdfQueueDbMock(sql, params) ?? { rows: [] }
+    );
+
     const res = await request(app).post("/api/v1/commandes/123/duplicate");
 
     expect(res.status).toBe(201);
@@ -1377,6 +1404,8 @@ describe("/api/v1/commandes", () => {
     mocks.clientQuery.mockImplementation(async (sql: unknown, params?: unknown[]) => {
       const q = String(sql);
       const p0 = Array.isArray(params) ? params[0] : undefined;
+      const authoritativePdf = authoritativePdfQueueDbMock(sql, params);
+      if (authoritativePdf) return authoritativePdf;
 
       if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
 
@@ -1651,6 +1680,8 @@ describe("/api/v1/commandes", () => {
     mocks.clientQuery.mockImplementation(async (sql: unknown, params?: unknown[]) => {
       const q = String(sql);
       const p0 = Array.isArray(params) ? params[0] : undefined;
+      const authoritativePdf = authoritativePdfQueueDbMock(sql, params);
+      if (authoritativePdf) return authoritativePdf;
 
       if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
 
@@ -1849,6 +1880,9 @@ describe("/api/v1/commandes", () => {
       const q = String(sql);
       const p0 = Array.isArray(params) ? params[0] : undefined;
 
+      const authoritativePdf = authoritativePdfQueueDbMock(sql, params);
+      if (authoritativePdf) return authoritativePdf;
+
       if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
 
       // The recursive OF scenario starts after a successful stock-control checkpoint.
@@ -2025,8 +2059,10 @@ describe("/api/v1/commandes", () => {
   });
 
   it("POST /api/v1/commandes/:id/generate-affaires protects internal-order launch and single-affair invariant", async () => {
-    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+    mocks.clientQuery.mockImplementation(async (sql: unknown, params?: unknown[]) => {
       const q = String(sql);
+      const authoritativePdf = authoritativePdfQueueDbMock(sql, params);
+      if (authoritativePdf) return authoritativePdf;
       if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
       if (q.includes("FROM commande_client") && q.includes("FOR UPDATE") && q.includes("order_type")) {
         return {
@@ -2162,8 +2198,10 @@ describe("/api/v1/commandes", () => {
     const BOM_LINE_ID = "44444444-4444-4444-4444-444444444444";
     let ofSeq = 8;
 
-    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+    mocks.clientQuery.mockImplementation(async (sql: unknown, params?: unknown[]) => {
       const q = String(sql);
+      const authoritativePdf = authoritativePdfQueueDbMock(sql, params);
+      if (authoritativePdf) return authoritativePdf;
       if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
       if (q.includes("FROM commande_client") && q.includes("FOR UPDATE") && q.includes("order_type")) {
         return {

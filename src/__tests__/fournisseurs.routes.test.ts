@@ -50,6 +50,7 @@ vi.mock("../module/access-control/middlewares/module-access-gate", () => ({
 }));
 
 import app from "../config/app"
+import { authoritativePdfQueueDbMock } from "./helpers/authoritative-pdf-queue-db-mock"
 
 beforeEach(() => {
   mocks.poolQuery.mockReset()
@@ -70,6 +71,18 @@ function makeToken() {
   return jwt.sign({ id: 1, username: "test", email: "test@example.com", role: "admin" }, process.env.JWT_SECRET, {
     expiresIn: "1h",
   })
+}
+
+function createdFournisseurRow(id: string) {
+  return {
+    id, code: "FOU-001", nom: "Fournisseur pilote", actif: true, status: "actif", type_principal: null,
+    tva: null, siret: null, email: null, telephone: null, site_web: null, adresse_ligne: null,
+    house_no: null, postcode: null, city: null, country: null, nom_commercial: null, logo: null, notes: null,
+    archived_at: null, created_at: "2026-07-27T00:00:00.000Z", updated_at: "2026-07-27T00:00:00.000Z",
+    created_by: 1, updated_by: 1, domaines: [], relations: null, homologation: null, adresses: [],
+    contacts_count: 0, catalogue_count: 0, documents_count: 0, events_count: 0, adresses_count: 0,
+    homologations_count: 0,
+  }
 }
 
 describe("/api/v1/fournisseurs", () => {
@@ -125,8 +138,13 @@ describe("/api/v1/fournisseurs", () => {
     const token = makeToken()
     const fournisseurId = "22222222-2222-4222-8222-222222222222"
 
-    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+    mocks.clientQuery.mockImplementation(async (sql: unknown, params?: unknown[]) => {
       const query = String(sql)
+      const authoritativePdf = authoritativePdfQueueDbMock(sql, params)
+      if (authoritativePdf) return authoritativePdf
+      if (query.includes("SELECT updated_at::text AS updated_at FROM public.fournisseurs")) {
+        return { rows: [{ updated_at: "2026-08-23T12:00:00.000Z" }] }
+      }
       if (query.includes("fn_next_issued_code_value")) {
         return { rows: [{ v: "1" }] }
       }
@@ -135,44 +153,7 @@ describe("/api/v1/fournisseurs", () => {
       }
       return { rows: [] }
     })
-    mocks.poolQuery.mockResolvedValueOnce({
-      rows: [{
-        id: fournisseurId,
-        code: "FOU-001",
-        nom: "Fournisseur pilote",
-        actif: true,
-        status: "actif",
-        type_principal: null,
-        tva: null,
-        siret: null,
-        email: null,
-        telephone: null,
-        site_web: null,
-        adresse_ligne: null,
-        house_no: null,
-        postcode: null,
-        city: null,
-        country: null,
-        nom_commercial: null,
-        logo: null,
-        notes: null,
-        archived_at: null,
-        created_at: "2026-07-27T00:00:00.000Z",
-        updated_at: "2026-07-27T00:00:00.000Z",
-        created_by: 1,
-        updated_by: 1,
-        domaines: [],
-        relations: null,
-        homologation: null,
-        adresses: [],
-        contacts_count: 0,
-        catalogue_count: 0,
-        documents_count: 0,
-        events_count: 0,
-        adresses_count: 0,
-        homologations_count: 0,
-      }],
-    })
+    mocks.poolQuery.mockResolvedValueOnce({ rows: [createdFournisseurRow(fournisseurId)] })
 
     const res = await request(app)
       .post("/api/v1/fournisseurs")
@@ -186,5 +167,43 @@ describe("/api/v1/fournisseurs", () => {
     expect(insertCall).toBeDefined()
     expect(String(insertCall?.[0])).toContain("$1::text,$1::varchar(30)")
     expect(String(insertCall?.[0])).toContain("$2::text,$2::varchar(255)")
+  })
+
+  it("archives the same normalized primary domain that it persists", async () => {
+    const token = makeToken()
+    const fournisseurId = "33333333-3333-4333-8333-333333333333"
+    mocks.clientQuery.mockImplementation(async (sql: unknown, params?: unknown[]) => {
+      const query = String(sql)
+      const authoritativePdf = authoritativePdfQueueDbMock(sql, params)
+      if (authoritativePdf) return authoritativePdf
+      if (query.includes("SELECT updated_at::text AS updated_at FROM public.fournisseurs")) {
+        return { rows: [{ updated_at: "2026-08-23T12:00:00.000Z" }] }
+      }
+      if (query.includes("fn_next_issued_code_value")) return { rows: [{ v: "1" }] }
+      if (query.includes("INSERT INTO public.fournisseurs")) return { rows: [{ id: fournisseurId }] }
+      return { rows: [] }
+    })
+    mocks.poolQuery.mockResolvedValueOnce({ rows: [createdFournisseurRow(fournisseurId)] })
+
+    const res = await request(app)
+      .post("/api/v1/fournisseurs")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        nom: "Fournisseur pilote",
+        domaines: [
+          { domaine_code: "usinage", is_primary: false },
+          { domaine_code: "traitement", is_primary: false },
+        ],
+      })
+
+    expect(res.status).toBe(201)
+    const domainCalls = mocks.clientQuery.mock.calls.filter(([sql]) => String(sql).includes("INSERT INTO public.fournisseur_domaine_lien"))
+    expect(domainCalls.map((call) => call[1]?.[2])).toEqual([true, false])
+    const archiveCall = mocks.clientQuery.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO public.authoritative_pdf_archives"))
+    const snapshot = JSON.parse(String(archiveCall?.[1]?.[8])) as { sections: Array<{ title: string; table?: { rows: Array<Record<string, string>> } }> }
+    expect(snapshot.sections.find((section) => section.title === "Domaines")?.table?.rows).toEqual([
+      { domaine: "usinage", principal: "Oui" },
+      { domaine: "traitement", principal: "Non" },
+    ])
   })
 })

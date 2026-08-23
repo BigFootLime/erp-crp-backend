@@ -22,6 +22,11 @@ vi.mock("../utils/checkNetworkDrive", () => ({
   checkNetworkDrive: vi.fn(() => Promise.resolve()),
 }));
 
+vi.mock("../shared/authoritative-documents/authoritative-document.service", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../shared/authoritative-documents/authoritative-document.service")>()),
+  queueCreationPdfArchive: vi.fn(),
+}));
+
 vi.mock("../module/auth/middlewares/auth.middleware", () => ({
   authenticateToken: (
     req: { user?: { id: number; role: string } },
@@ -179,7 +184,10 @@ describe("#475 article/stock unit contract", () => {
           is_active: Boolean(values[18]),
           status: String(values[14]),
         };
-        return { rows: [{ id: state.article.id }], rowCount: 1 };
+        return { rows: [{ id: state.article.id, updated_at: "2026-08-04T10:00:00.000Z" }], rowCount: 1 };
+      }
+      if (text.includes("SELECT updated_at::text AS updated_at FROM public.articles")) {
+        return state.article ? { rows: [{ updated_at: "2026-08-04T10:00:00.000Z" }], rowCount: 1 } : { rows: [], rowCount: 0 };
       }
       if (text.includes("SELECT stock_managed, lot_tracking FROM public.articles")) {
         return state.article

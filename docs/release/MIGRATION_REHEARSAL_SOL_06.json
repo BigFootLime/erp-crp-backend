@@ -1,6 +1,6 @@
 {
   "status": "passed",
-  "started_at": "2026-08-23T10:02:10.720Z",
+  "started_at": "2026-08-23T13:58:32.612Z",
   "postgres_image": "postgres@sha256:16bc17c64a573ef34162af9298258d1aec548232985b33ed7b1eac33ba35c229",
   "isolated_target": {
     "host": "127.0.0.1",
@@ -9,23 +9,23 @@
     "storage": "tmpfs"
   },
   "durations": {
-    "source_migration": 19427,
-    "source_seed": 200,
-    "backup": 736,
-    "preflight": 157,
-    "integrity_before": 596,
-    "migration": 953,
-    "verify": 329,
-    "replay": 142,
-    "integrity_after": 1650,
-    "negative_gate": 46,
-    "rollback": 485,
-    "restore": 4076
+    "source_migration": 19137,
+    "source_seed": 211,
+    "backup": 767,
+    "preflight": 161,
+    "integrity_before": 576,
+    "migration": 1001,
+    "verify": 337,
+    "replay": 126,
+    "integrity_after": 1551,
+    "negative_gate": 40,
+    "rollback": 470,
+    "restore": 4079
   },
   "source": {
     "status": "passed",
-    "checked_at": "2026-08-23T10:02:33.655Z",
-    "duration_ms": 108,
+    "checked_at": "2026-08-23T13:58:55.488Z",
+    "duration_ms": 112,
     "identity": {
       "database": "cerp_test",
       "database_user": "cerp_e2e",
@@ -33,10 +33,10 @@
       "database_bytes": "36363287"
     },
     "backup": {
-      "file": "C:\\Users\\KEENAN~1\\AppData\\Local\\Temp\\cerp-sol06-8bRdiE\\cerp-test-before-sol06.dump",
-      "bytes": 1968536,
-      "sha256": "7bd25c74d6ccad6c35d710670d59a38a42243f339312c9fa50c6529a1206b5af",
-      "free_bytes": 373328035840
+      "file": "C:\\Users\\KEENAN~1\\AppData\\Local\\Temp\\cerp-sol06-oGODNy\\cerp-test-before-sol06.dump",
+      "bytes": 1968552,
+      "sha256": "91762b69aa2bde844338da441dab92b6ff8c3f18c77198f511d9c30fd5c5fc5d",
+      "free_bytes": 371293040640
     },
     "ledger": {
       "applied": 140,
@@ -70,6 +70,7 @@
         "20260819_client_portal_auth_attempt_update_grant_004.sql",
         "20260819_devis_preparation_idempotency_grants_002_003.sql",
         "20260819_mfa_expired_artifact_cleanup_delete_grant.sql",
+        "20260823_authoritative_pdf_archive_612.sql",
         "20260823_operational_media_access_611.sql"
       ],
       "checksum_mismatches": [],
@@ -482,13 +483,14 @@
         "20260819_client_portal_auth_attempt_update_grant_004.sql",
         "20260819_devis_preparation_idempotency_grants_002_003.sql",
         "20260819_mfa_expired_artifact_cleanup_delete_grant.sql",
+        "20260823_authoritative_pdf_archive_612.sql",
         "20260823_operational_media_access_611.sql"
       ],
       "checksum_mismatches": [],
       "known_external_applied": [],
       "unknown_applied": []
     },
-    "fingerprint": "d5b753c1cb7873471cd22a411d06836cd840f96a36d714d74136f0b99d5671be"
+    "fingerprint": "2ab61304f8c151509f23cf9a7a9f006178a71ac6759b8dd48082c1ce75dbf680"
   },
   "replay": {
     "applied_zero": true,
@@ -496,8 +498,8 @@
   },
   "after": {
     "status": "passed",
-    "checked_at": "2026-08-23T10:02:37.332Z",
-    "duration_ms": 1636,
+    "checked_at": "2026-08-23T13:58:59.084Z",
+    "duration_ms": 1536,
     "table_counts": {
       "accounting_export_batch_sources": "0",
       "accounting_export_batches": "0",
@@ -561,6 +563,8 @@
       "auth_login_logs": "0",
       "auth_mfa_challenges": "0",
       "auth_rate_limit_buckets": "0",
+      "authoritative_pdf_archive_outbox": "0",
+      "authoritative_pdf_archives": "0",
       "avoir": "0",
       "avoir_ligne": "0",
       "avoir_source_allocations": "0",
@@ -577,7 +581,7 @@
       "cerp_migration_supersessions": "5",
       "cerp_patch_20260804_stock_units": "3",
       "cerp_patch_20260811_base_unit_repair": "1",
-      "cerp_schema_migrations": "170",
+      "cerp_schema_migrations": "171",
       "chat_conversation_participants": "0",
       "chat_conversations": "0",
       "chat_messages": "0",
@@ -672,7 +676,7 @@
       "ged_approvals": "0",
       "ged_blobs": "0",
       "ged_checkouts": "0",
-      "ged_document_classes": "21",
+      "ged_document_classes": "23",
       "ged_document_links": "0",
       "ged_document_relations": "0",
       "ged_document_versions": "0",
@@ -941,7 +945,7 @@
       "users": "8",
       "warehouses": "4"
     },
-    "table_count": 441,
+    "table_count": 443,
     "unvalidated_constraints": [
       {
         "table_name": "avoir",
@@ -1018,7 +1022,7 @@
         "groups": 0
       }
     ],
-    "foreign_key_count": 1226,
+    "foreign_key_count": 1230,
     "orphans": [],
     "readiness": [
       {
@@ -1030,7 +1034,7 @@
         "period_start": "2026-08-22T22:00:00.000Z",
         "period_end": null,
         "source": "public.programmation_calendars",
-        "freshness_at": "2026-08-23T10:02:35.696Z",
+        "freshness_at": "2026-08-23T13:58:57.549Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "active_calendars": 1
@@ -1047,7 +1051,7 @@
         "period_start": "2026-08-22T22:00:00.000Z",
         "period_end": null,
         "source": "public.app_roles + public.user_role_assignments",
-        "freshness_at": "2026-08-23T10:02:35.696Z",
+        "freshness_at": "2026-08-23T13:58:57.549Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "active_roles": 33,
@@ -1065,7 +1069,7 @@
         "period_start": "2026-08-22T22:00:00.000Z",
         "period_end": null,
         "source": "pg_catalog.pg_enum + pg_catalog.pg_constraint",
-        "freshness_at": "2026-08-23T10:02:35.696Z",
+        "freshness_at": "2026-08-23T13:58:57.549Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "of_statuses": [
@@ -1091,7 +1095,7 @@
         "period_start": "2026-08-22T22:00:00.000Z",
         "period_end": null,
         "source": "public.programmation_calendars",
-        "freshness_at": "2026-08-23T10:02:35.696Z",
+        "freshness_at": "2026-08-23T13:58:57.549Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "active_calendars": 1
@@ -1108,7 +1112,7 @@
         "period_start": "2026-08-22T22:00:00.000Z",
         "period_end": null,
         "source": "public.app_roles + public.user_role_assignments",
-        "freshness_at": "2026-08-23T10:02:35.696Z",
+        "freshness_at": "2026-08-23T13:58:57.549Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "active_roles": 33,
@@ -1126,7 +1130,7 @@
         "period_start": "2026-08-22T22:00:00.000Z",
         "period_end": null,
         "source": "public.units",
-        "freshness_at": "2026-08-23T10:02:35.696Z",
+        "freshness_at": "2026-08-23T13:58:57.549Z",
         "reliability": "VERIFIED",
         "actual_value": [
           "kg",
@@ -1146,7 +1150,7 @@
         "period_start": "2026-08-22T22:00:00.000Z",
         "period_end": null,
         "source": "public.centres_frais + public.production_cost_center_rates",
-        "freshness_at": "2026-08-23T10:02:35.696Z",
+        "freshness_at": "2026-08-23T13:58:57.549Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "active_cost_centers": 1,
@@ -1164,7 +1168,7 @@
         "period_start": "2026-08-22T22:00:00.000Z",
         "period_end": null,
         "source": "pg_catalog.pg_enum + pg_catalog.pg_constraint",
-        "freshness_at": "2026-08-23T10:02:35.696Z",
+        "freshness_at": "2026-08-23T13:58:57.549Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "of_statuses": [
@@ -1190,7 +1194,7 @@
         "period_start": "2026-08-22T22:00:00.000Z",
         "period_end": null,
         "source": "public.app_roles + public.user_role_assignments",
-        "freshness_at": "2026-08-23T10:02:35.696Z",
+        "freshness_at": "2026-08-23T13:58:57.549Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "active_roles": 33,
@@ -1208,7 +1212,7 @@
         "period_start": "2026-08-22T22:00:00.000Z",
         "period_end": null,
         "source": "public.warehouses + locations + magasins + emplacements",
-        "freshness_at": "2026-08-23T10:02:35.696Z",
+        "freshness_at": "2026-08-23T13:58:57.549Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "configured_locations": 1,
@@ -1227,7 +1231,7 @@
         "period_start": "2026-08-22T22:00:00.000Z",
         "period_end": null,
         "source": "public.units",
-        "freshness_at": "2026-08-23T10:02:35.696Z",
+        "freshness_at": "2026-08-23T13:58:57.549Z",
         "reliability": "VERIFIED",
         "actual_value": [
           "kg",
@@ -1265,7 +1269,7 @@
         "period_start": "2026-08-22T22:00:00.000Z",
         "period_end": null,
         "source": "pg_catalog.pg_enum + pg_catalog.pg_constraint",
-        "freshness_at": "2026-08-23T10:02:35.696Z",
+        "freshness_at": "2026-08-23T13:58:57.549Z",
         "reliability": "VERIFIED",
         "actual_value": {
           "of_statuses": [
@@ -1284,13 +1288,13 @@
       }
     ],
     "ledger": {
-      "applied": 170,
+      "applied": 171,
       "pending": [],
       "checksum_mismatches": [],
       "known_external_applied": [],
       "unknown_applied": []
     },
-    "fingerprint": "b3d931b3b854209fc0ca58cc7b31cf5711c78e0424a319e6eb10fc3e62166f43"
+    "fingerprint": "f24ac611f0bb05457a546060715e1306acee24b6faa44000d17684291a63330e"
   },
   "negative_gate": {
     "status": "passed",
@@ -1334,7 +1338,7 @@
   },
   "restore": {
     "status": "passed",
-    "fingerprint": "d5b753c1cb7873471cd22a411d06836cd840f96a36d714d74136f0b99d5671be",
+    "fingerprint": "2ab61304f8c151509f23cf9a7a9f006178a71ac6759b8dd48082c1ce75dbf680",
     "table_counts_equal": true,
     "ledger": {
       "applied": 140,
@@ -1368,6 +1372,7 @@
         "20260819_client_portal_auth_attempt_update_grant_004.sql",
         "20260819_devis_preparation_idempotency_grants_002_003.sql",
         "20260819_mfa_expired_artifact_cleanup_delete_grant.sql",
+        "20260823_authoritative_pdf_archive_612.sql",
         "20260823_operational_media_access_611.sql"
       ],
       "checksum_mismatches": [],
@@ -1375,5 +1380,5 @@
       "unknown_applied": []
     }
   },
-  "completed_at": "2026-08-23T10:02:42.142Z"
+  "completed_at": "2026-08-23T13:59:03.843Z"
 }

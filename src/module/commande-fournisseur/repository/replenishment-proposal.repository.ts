@@ -7,7 +7,10 @@ import { HttpError } from "../../../utils/httpError"
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
 import { computeCommandeTotaux } from "../domain/commande-fournisseur-totaux"
 import { allocateCoverage, calculateReplenishment, normalizeUnit } from "../domain/replenishment-calculation"
-import type { AuditContext } from "./commande-fournisseur.repository"
+import {
+  queueSupplierPurchaseOrderCreationPdfTx,
+  type AuditContext,
+} from "./commande-fournisseur.repository"
 import type {
   ReplenishmentProposal,
   ReplenishmentRefreshResult,
@@ -657,6 +660,11 @@ export async function repoValidateReplenishmentProposal(
        VALUES($1::uuid,'VALIDATED',$2,'CONVERTIE',$3::jsonb,$4::jsonb,$5)`,
       [id, proposal.status, JSON.stringify(calculation), JSON.stringify({ commande_fournisseur_id: orderId, code, catalogue_id: candidate.catalogue_id }), context.user_id]
     )
+    await queueSupplierPurchaseOrderCreationPdfTx(client, {
+      commandeId: orderId,
+      code,
+      actorUserId: context.user_id,
+    })
     const result = { converted: true, proposal_id: id, commande_fournisseur_id: orderId, code, status: "BROUILLON", recalculated: calculation }
     await client.query(
       `INSERT INTO public.replenishment_proposal_idempotence(actor_id,idempotency_key,request_hash,proposal_id,result)

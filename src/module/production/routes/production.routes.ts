@@ -17,8 +17,10 @@ import {
   createOfReceipt,
   createOrdreFabrication,
   createPoste,
+  downloadOfCreationSnapshot,
   generateOfs,
   getOfReceiptContext,
+  getOfCreationSnapshot,
   getOfTechnicalSnapshot,
   getOfTraceability,
   getOrdreFabrication,
@@ -29,6 +31,8 @@ import {
   listMachines,
   listPostes,
   previewOfGeneration,
+  previewOfCreationSnapshot,
+  printOfCreationSnapshot,
   reorderOfOperations,
   startOfOperationTimeLog,
   stopOfOperationTimeLog,
@@ -212,6 +216,12 @@ router.post("/ofs/generate/preview", requireOfCapability("generate"), previewOfG
 router.post("/ofs/generate", requireOfCapability("generate"), generateOfs);
 router.get("/ofs/:id/tree", getOrdreFabricationTree);
 router.get("/ofs/:id/technical-snapshot", getOfTechnicalSnapshot);
+// Internal creation snapshot, filed automatically on root creation. Same read
+// middleware as the OF card; no route can issue or reissue it.
+router.get("/ofs/:id/creation-snapshot", getOfCreationSnapshot);
+router.get("/ofs/:id/creation-snapshot/:documentId/preview", previewOfCreationSnapshot);
+router.get("/ofs/:id/creation-snapshot/:documentId/download", downloadOfCreationSnapshot);
+router.post("/ofs/:id/creation-snapshot/:documentId/print-intents", printOfCreationSnapshot);
 router.get("/ofs/:id", getOrdreFabrication);
 router.post("/ofs", requireOfCapability("create"), createOrdreFabrication);
 router.patch("/ofs/:id", requireAnyOfCapability(["edit_prelaunch", "launch", "operate", "cancel", "archive"]), updateOrdreFabrication);

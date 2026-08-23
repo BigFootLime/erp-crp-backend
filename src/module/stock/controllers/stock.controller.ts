@@ -2,6 +2,7 @@ import type { Request, RequestHandler, Response } from "express";
 import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 
 import { previewArticleCode } from "../../../shared/codes/code-generator.service";
+import { createCreationSnapshotHandlers } from "../../../shared/authoritative-documents/creation-snapshot-http";
 import { getDocumentStoragePath, resolveCerpStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { sendSecureStoredFile } from "../../../shared/uploads/secure-download";
@@ -162,6 +163,21 @@ import {
 import { canViewArticleCosts } from "../stock-article.permissions";
 import { removeTemporaryArticleDocuments, validateArticleDocuments } from "../services/article-document-validation";
 import { UploadDestinationCleanupError } from "../../../shared/uploads/secure-upload";
+
+const stockArticleCreationSnapshotHandlers = createCreationSnapshotHandlers({
+  entityType: "stock-article",
+  documentKind: "STOCK_ARTICLE_CREATION_SNAPSHOT",
+  parseEntityId: (req) => idParamSchema.parse({ params: req.params }).params.id,
+  // Only the article root establishes archive visibility. Lots, movements and
+  // inventory sessions intentionally never receive creation-snapshot PDFs.
+  canReadEntity: async (id) => Boolean(await getStockArticleSVC(id, false)),
+  baseUrl: (id) => `/stock/articles/${encodeURIComponent(id)}/creation-snapshot`,
+});
+
+export const getStockArticleCreationSnapshot = stockArticleCreationSnapshotHandlers.metadata;
+export const previewStockArticleCreationSnapshot = stockArticleCreationSnapshotHandlers.preview;
+export const downloadStockArticleCreationSnapshot = stockArticleCreationSnapshotHandlers.download;
+export const printStockArticleCreationSnapshot = stockArticleCreationSnapshotHandlers.printIntent;
 
 export const listStockInventorySessions: RequestHandler = async (req, res, next) => {
   try {

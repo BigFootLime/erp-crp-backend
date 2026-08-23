@@ -6,6 +6,7 @@ import pool from "../../../config/database";
 import { generateMachineCode, generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
 import { promoteSecureUpload } from "../../../shared/uploads/secure-upload";
 import { withUploadTransaction, type UploadCommitReconciliation } from "../../../shared/uploads/upload-transaction";
+import { queueRootOfCreationPdf } from "../domain/of-creation-pdf";
 import { ensureImagesSubdir, normalizeStoredImagePath } from "../../../utils/imageStorage";
 import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
 import { HttpError } from "../../../utils/httpError";
@@ -3404,6 +3405,11 @@ export async function repoCreateOrdreFabrication(params: {
         operations_count: operationsCount,
       },
     });
+
+    // Keep the creation snapshot in the same transaction as the OF and its
+    // operation/technical snapshots: GED queueing must never outlive a rolled
+    // back OF creation.
+    await queueRootOfCreationPdf(client, { ofId, actorUserId: params.audit.user_id });
 
       return ofId;
     });

@@ -36,6 +36,10 @@ import type {
 import type { CreateCommandeInput } from "../../commande-client/types/commande-client.types";
 import { repoCreateCommande } from "../../commande-client/repository/commande-client.repository";
 import { assertQuoteDiscountApprovedForSubmission } from "../../commercial-reliability/repository/commercial-reliability.repository";
+import { readIssuerParty } from "../../../shared/documents/issuer-identity.repository";
+import { authoritativePdfFilename } from "../../../shared/authoritative-documents/authoritative-document.filename";
+import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
+import { repoFindAuthoritativePdfByIdempotency } from "../../../shared/authoritative-documents/authoritative-document.repository";
 
 type DevisCommandeHeaderRow = {
   id: string;
@@ -56,6 +60,83 @@ type DevisCommandeHeaderRow = {
   updated_at: string | null;
   created_at: string | null;
 };
+
+/** Server-authoritative, external-safe quote snapshot. No contact PII or internal fields. */
+async function buildDevisOfficialSnapshot(client: Pick<PoolClient, "query">, devisId: number): Promise<Record<string, unknown>> {
+  const header = await client.query<Record<string, unknown>>(
+    `SELECT d.numero, d.statut, d.date_creation::text AS issued_at, d.date_validite::text AS valid_until,
+            d.version_number::int AS version_number, d.total_ht::text, d.total_ttc::text,
+            d.remise_globale::text AS global_discount_pct, d.commentaires AS public_comment,
+            d.biller_id::text AS biller_id, c.company_name AS customer_name,
+            COALESCE(c.client_code, c.client_id)::text AS customer_code,
+            af.name AS customer_address_name, af.street AS customer_street, af.house_number AS customer_house_number,
+            af.postal_code AS customer_postal_code, af.city AS customer_city, af.country AS customer_country
+       FROM public.devis d
+       LEFT JOIN public.clients c ON c.client_id = d.client_id
+       LEFT JOIN public.adresse_facturation af ON af.bill_address_id = d.adresse_facturation_id
+      WHERE d.id = $1`, [devisId]
+  );
+  const h = header.rows[0];
+  if (!h) throw new HttpError(404, "DEVIS_NOT_FOUND", "Devis introuvable.");
+  const lines = await client.query<Record<string, unknown>>(
+    `SELECT COALESCE(position, id)::int AS position, NULL::text AS reference, description AS designation,
+            quantite::text AS quantity, unite AS unit, prix_unitaire_ht::text AS unit_price_ht,
+            remise_ligne::text AS discount_pct, taux_tva::text AS vat_pct,
+            total_ht::text, total_ttc::text
+       FROM public.devis_ligne WHERE devis_id = $1 ORDER BY COALESCE(position, id), id`, [devisId]
+  );
+  const issuer = await readIssuerParty({ billerId: h.biller_id == null ? null : String(h.biller_id), at: String(h.issued_at).slice(0, 10) });
+  return {
+    type: "CUSTOMER_QUOTE", number: String(h.numero), status: String(h.statut), issued_at: String(h.issued_at),
+    valid_until: h.valid_until == null ? null : String(h.valid_until), version: String(h.version_number),
+    customer: {
+      code: h.customer_code == null ? null : String(h.customer_code),
+      name: h.customer_name == null ? null : String(h.customer_name),
+      address: {
+        name: h.customer_address_name == null ? null : String(h.customer_address_name),
+        street: h.customer_street == null ? null : String(h.customer_street),
+        house_number: h.customer_house_number == null ? null : String(h.customer_house_number),
+        postal_code: h.customer_postal_code == null ? null : String(h.customer_postal_code),
+        city: h.customer_city == null ? null : String(h.customer_city),
+        country: h.customer_country == null ? null : String(h.customer_country),
+      },
+    }, currency: "EUR",
+    public_comment: h.public_comment == null ? null : String(h.public_comment),
+    lines: lines.rows.map((line) => ({ position: Number(line.position), reference: line.reference == null ? null : String(line.reference), designation: String(line.designation), quantity: String(line.quantity), unit: line.unit == null ? null : String(line.unit), unit_price_ht: String(line.unit_price_ht), discount_pct: line.discount_pct == null ? null : String(line.discount_pct), vat_pct: line.vat_pct == null ? null : String(line.vat_pct), total_ht: String(line.total_ht), total_ttc: String(line.total_ttc) })),
+    totals: { total_ht: String(h.total_ht), total_ttc: String(h.total_ttc), global_discount_pct: h.global_discount_pct == null ? null : String(h.global_discount_pct) }, issuer,
+  };
+}
+
+/** The public quote detail's exact `updated_at` serialization is the reissue token. */
+async function readDevisSourceRevision(client: Pick<PoolClient, "query">, devisId: number): Promise<string> {
+  const result = await client.query<{ source_revision: string | null }>(
+    `SELECT updated_at::text AS source_revision FROM public.devis WHERE id = $1`,
+    [devisId]
+  );
+  const revision = result.rows[0]?.source_revision?.trim();
+  if (!revision) throw new HttpError(409, "OFFICIAL_DOCUMENT_SOURCE_REVISION_UNAVAILABLE", "La révision source du document est indisponible.");
+  return revision;
+}
+
+/** Queue the first immutable official PDF for every newly materialised quote. */
+async function queueDevisCreationPdfTx(
+  client: PoolClient,
+  input: Readonly<{ devisId: number; numero: string; actorUserId: number | null }>
+): Promise<void> {
+  await queueCreationPdfArchive(client, {
+    entityType: "devis",
+    entityId: String(input.devisId),
+    documentKind: "CUSTOMER_QUOTE",
+    documentVersion: 1,
+    renderVersion: "devis-pdf-v1",
+    idempotencyKey: `devis:${input.devisId}:creation:v1`,
+    title: `Devis ${input.numero}`,
+    originalName: authoritativePdfFilename(["DEVIS", input.numero, "v1"]),
+    sourceRevision: await readDevisSourceRevision(client, input.devisId),
+    sourceSnapshot: await buildDevisOfficialSnapshot(client, input.devisId),
+    actorUserId: input.actorUserId,
+  });
+}
 
 type DevisCommandeLineRow = {
   id: string;
@@ -1858,6 +1939,15 @@ export async function repoCreateDevis(
       },
     });
 
+    // Same-transaction creation snapshot: this quote has a durable GED filing
+    // obligation as soon as the commercial aggregate exists. Values are read
+    // back from persisted server columns, not from the multipart payload.
+    await queueDevisCreationPdfTx(client, {
+      devisId,
+      numero,
+      actorUserId: ctx.audit?.user_id ?? userId,
+    });
+
     const inserted = ins.rows[0]?.id;
     const resultat = { id: inserted ? toInt(inserted, "devis.id") : devisId };
     expectedMutation = {
@@ -1892,6 +1982,59 @@ export async function repoCreateDevis(
     }
     throw err;
   }
+}
+
+/** Explicit, idempotent quote reissue. Creation archive remains immutable. */
+export async function repoQueueDevisOfficialDocument(id: number, idempotencyKey: string, audit: AuditContext, input: { source_revision: string; reissue_reason?: string | null }) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const header = await client.query<{ numero: string; source_revision: string | null }>(
+      `SELECT numero, updated_at::text AS source_revision FROM public.devis WHERE id = $1 FOR UPDATE`, [id]
+    );
+    const numero = header.rows[0]?.numero;
+    if (!numero) throw new HttpError(404, "DEVIS_NOT_FOUND", "Devis introuvable.");
+    // A retry must replay the previously accepted immutable request, not fail
+    // because the quote changed after the first response was lost.
+    const replay = await repoFindAuthoritativePdfByIdempotency(client, idempotencyKey);
+    if (replay) {
+      if (replay.entityType !== "devis" || replay.entityId !== String(id) || replay.documentKind !== "CUSTOMER_QUOTE") {
+        throw new HttpError(409, "OFFICIAL_DOCUMENT_IDEMPOTENCY_CONFLICT", "La clé d'idempotence est déjà utilisée.");
+      }
+      await insertDevisAuditLog(client, audit, {
+        action: "devis.official_document.idempotent_replay",
+        entity_id: String(id),
+        details: { archive_id: replay.id, render_version: replay.renderVersion },
+      });
+      await client.query("COMMIT");
+      return replay;
+    }
+    const currentArchive = await client.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM public.authoritative_pdf_archives WHERE entity_type = 'devis' AND entity_id = $1 AND document_kind = 'CUSTOMER_QUOTE'`, [String(id)]
+    );
+    const existingCount = Number(currentArchive.rows[0]?.n ?? 0);
+    if (existingCount > 0 && !input.reissue_reason?.trim()) {
+      throw new HttpError(422, "OFFICIAL_DOCUMENT_REISSUE_REASON_REQUIRED", "Un motif de réémission est requis.");
+    }
+    const sourceSnapshot = await buildDevisOfficialSnapshot(client, id);
+    const currentSourceRevision = header.rows[0]?.source_revision?.trim();
+    if (!currentSourceRevision) throw new HttpError(409, "OFFICIAL_DOCUMENT_SOURCE_REVISION_UNAVAILABLE", "La révision source du document est indisponible.");
+    if (currentSourceRevision !== input.source_revision) {
+      throw new HttpError(409, "OFFICIAL_DOCUMENT_SOURCE_REVISION_CONFLICT", "La source du document a changé. Rechargez avant de réémettre.");
+    }
+    const archive = await queueCreationPdfArchive(client, {
+      entityType: "devis", entityId: String(id), documentKind: "CUSTOMER_QUOTE", documentVersion: existingCount + 1, renderVersion: "devis-pdf-v1",
+      idempotencyKey, title: `Devis ${numero}`, originalName: authoritativePdfFilename(["DEVIS", numero, `v${existingCount + 1}`]),
+      sourceRevision: currentSourceRevision,
+      sourceSnapshot, actorUserId: audit.user_id,
+    });
+    await insertDevisAuditLog(client, audit, { action: "devis.official_document.queue", entity_id: String(id), details: { archive_id: archive.id, document_version: archive.documentVersion, render_version: archive.renderVersion, source_revision: archive.sourceRevision, reissue_reason: input.reissue_reason?.trim() ?? null } });
+    await client.query("COMMIT");
+    return archive;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally { client.release(); }
 }
 
 /** Champs de contenu commercial : figés dès qu'un devis est engagé (révision obligatoire). */
@@ -2477,6 +2620,15 @@ export async function repoReviseDevis(
     if (ctx.idempotency_key && idempotencyPayloadHash && (await hasDevisIdempotenceTable(client))) {
       await recordDevisIdempotence(client, ctx.idempotency_key, "REVISE", resultat.id, idempotencyPayloadHash, resultat);
     }
+
+    // A revision is a new quote aggregate with its own immutable creation PDF.
+    // Queue only after its lines, preparatory entities, documents, audit and
+    // idempotency receipt have been materialised in this transaction.
+    await queueDevisCreationPdfTx(client, {
+      devisId: resultat.id,
+      numero,
+      actorUserId: ctx.audit?.user_id ?? userId,
+    });
 
     return { ...resultat, idempotent_replay: false };
       },

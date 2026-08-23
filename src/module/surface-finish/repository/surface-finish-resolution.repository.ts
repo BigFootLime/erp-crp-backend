@@ -12,7 +12,10 @@ import type { PoolClient } from "pg";
 import db from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
 import type { AuditContext } from "../../pieces-techniques/repository/pieces-techniques.repository";
-import { repoCreateArticleTx } from "../../stock/repository/stock.repository";
+import {
+  queueStockArticleCreationSnapshotTx,
+  repoCreateArticleTx,
+} from "../../stock/repository/stock.repository";
 import type { CreateArticleBodyDTO } from "../../stock/validators/stock.validators";
 import {
   assertArticleDecisionConsistent,
@@ -835,6 +838,7 @@ export async function repoConfirmStockFinishArticle(
           audit.user_id,
         ]
       );
+      await queueStockArticleCreationSnapshotTx(client, created, audit.user_id);
     }
 
     await insertFinishAudit(client, audit, "finitions.stock-article.confirm", "articles_traitement", articleId, {
@@ -1292,6 +1296,7 @@ export async function repoConfirmOperationFinish(
           audit.user_id,
         ]
       );
+      await queueStockArticleCreationSnapshotTx(client, created, audit.user_id);
     }
 
     /* 8) Exigence de finition — créée ou mise à jour, jamais dupliquée. */

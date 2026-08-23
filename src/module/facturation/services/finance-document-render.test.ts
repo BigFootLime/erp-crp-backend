@@ -226,11 +226,19 @@ describe("format des montants", () => {
     expect(money("182.40", "EUR")).toBe("182,40 €");
     expect(money("0.00", "EUR")).toBe("0,00 €");
     expect(money("1234567.89", "EUR")).toBe("1 234 567,89 €");
+    // A legacy numeric path can expose the IEEE-754 tail.  It must be rounded
+    // at the document boundary rather than printed verbatim in a legal PDF.
+    expect(money(6172.799999999999, "EUR")).toBe("6 172,80 €");
+    expect(money("2340.975", "EUR")).toBe("2 340,98 €");
+    expect(money("9.999", "EUR")).toBe("10,00 €");
+    expect(money("123456789012345678901234567890.125", "EUR"))
+      .toBe("123 456 789 012 345 678 901 234 567 890,13 €");
   });
 
   it("conserve le signe d'un montant negatif", () => {
     // Un montant negatif devenu positif ferait mentir la piece.
     expect(money("-313.96", "EUR")).toBe("-313,96 €");
+    expect(money("-9.999", "EUR")).toBe("-10,00 €");
   });
 
   it("rend un pourcentage a la francaise", () => {
@@ -242,8 +250,11 @@ describe("format des montants", () => {
     expect(money("100.00", "USD")).toBe("100,00 USD");
   });
 
-  it("ne perd pas une valeur qui n'est pas un nombre", () => {
-    expect(money("n/a", "EUR")).toBe("n/a €");
+  it("rejette une valeur monetaire invalide avant de produire un document", () => {
+    expect(() => money("n/a", "EUR")).toThrow("PDF_MONEY_INVALID");
+    expect(() => money("1e3", "EUR")).toThrow("PDF_MONEY_INVALID");
+    expect(() => money(Number.NaN, "EUR")).toThrow("PDF_MONEY_INVALID");
+    expect(() => money(Number.POSITIVE_INFINITY, "EUR")).toThrow("PDF_MONEY_INVALID");
   });
 });
 

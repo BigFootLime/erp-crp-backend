@@ -14,12 +14,18 @@ import {
   deleteLigne,
   duplicateCommandeFournisseur,
   generateDocument,
+  getOfficialDocument,
   getCommandeFournisseur,
   getCommandeFournisseurKpis,
   getDocument,
   listCommandesFournisseurs,
+  listOfficialDocuments,
   previewPropositions,
   reorderLignes,
+  queueOfficialDocument,
+  previewOfficialDocument,
+  downloadOfficialDocument,
+  printOfficialDocument,
   resyncReceptions,
   simulateTotaux,
   transitionCommandeFournisseur,
@@ -82,6 +88,16 @@ router.post("/:id/accuse", requireCapability("acknowledge"), accuseReception);
 
 router.post("/:id/documents", requireCapability("send"), generateDocument);
 router.get("/:id/documents/:documentId", requireCapability("read"), getDocument);
+
+// Official generated PDFs live independently from legacy attachments. Export
+// capability is required for every metadata or byte surface because PO prices
+// are commercially sensitive; a foreign UUID resolves as the same 404.
+router.get("/:id/official-documents", requireCapability("export"), listOfficialDocuments);
+router.post("/:id/official-documents", requireCapability("export"), queueOfficialDocument);
+router.get("/:id/official-documents/:documentId", requireCapability("export"), getOfficialDocument);
+router.get("/:id/official-documents/:documentId/preview", requireCapability("export"), previewOfficialDocument);
+router.get("/:id/official-documents/:documentId/download", requireCapability("export"), downloadOfficialDocument);
+router.post("/:id/official-documents/:documentId/print-intents", requireCapability("export"), printOfficialDocument);
 
 router.post("/:id/receptions/resync", requireCapability("read"), resyncReceptions);
 router.post("/:id/duplicate", requireCapability("create"), duplicateCommandeFournisseur);

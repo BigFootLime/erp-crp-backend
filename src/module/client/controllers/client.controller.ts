@@ -3,6 +3,7 @@ import { Request, RequestHandler } from "express";
 import { HttpError } from "../../../utils/httpError";
 import { getClientIp, parseDevice } from "../../../utils/requestMeta";
 import { stripQueryFromUrl } from "../../../utils/logPath";
+import { createCreationSnapshotHandlers } from "../../../shared/authoritative-documents/creation-snapshot-http";
 
 import * as clientService from "../services/client.service"; // ✅ namespace import
 import { svcGetClientById, svcListClientAddresses } from "../services/clients.read.service";
@@ -87,6 +88,21 @@ function routeParam(req: Request, name: string): string {
   if (typeof value === "string" && value.length > 0) return value;
   throw new HttpError(400, "INVALID_ROUTE_PARAM", `${name} must be a string`);
 }
+
+const clientCreationSnapshotHandlers = createCreationSnapshotHandlers({
+  entityType: "client",
+  documentKind: "CLIENT_CREATION_SNAPSHOT",
+  parseEntityId: (req) => routeParam(req, "id"),
+  // Keep the existing client read policy (including its active record semantics)
+  // ahead of the archive lookup; finance fields are never used by this endpoint.
+  canReadEntity: async (id) => Boolean(await svcGetClientById(id, { includeSensitiveFinance: false })),
+  baseUrl: (id) => `/clients/${encodeURIComponent(id)}/creation-snapshot`,
+});
+
+export const getClientCreationSnapshot = clientCreationSnapshotHandlers.metadata;
+export const previewClientCreationSnapshot = clientCreationSnapshotHandlers.preview;
+export const downloadClientCreationSnapshot = clientCreationSnapshotHandlers.download;
+export const printClientCreationSnapshot = clientCreationSnapshotHandlers.printIntent;
 
 /**
  * Le code visible est généré côté serveur et immuable (ADR-0013). Toute valeur

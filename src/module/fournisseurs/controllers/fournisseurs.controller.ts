@@ -2,6 +2,7 @@ import type { Request, RequestHandler, Response } from "express"
 
 import { getDocumentStoragePath, resolveCerpStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
+import { createCreationSnapshotHandlers } from "../../../shared/authoritative-documents/creation-snapshot-http"
 import { sendSecureStoredFile } from "../../../shared/uploads/secure-download"
 import type { AuditContext } from "../repository/fournisseurs.repository"
 import {
@@ -87,6 +88,20 @@ function buildAuditContext(req: Request): AuditContext {
     client_session_id: clientSessionId,
   }
 }
+
+const fournisseurCreationSnapshotHandlers = createCreationSnapshotHandlers({
+  entityType: "fournisseur",
+  documentKind: "SUPPLIER_CREATION_SNAPSHOT",
+  parseEntityId: (req) => fournisseurIdParamSchema.parse({ params: req.params }).params.id,
+  // Same authenticated read path as the supplier card, before looking up an archive.
+  canReadEntity: async (id) => Boolean(await getFournisseurSVC(id)),
+  baseUrl: (id) => `/fournisseurs/${encodeURIComponent(id)}/creation-snapshot`,
+})
+
+export const getFournisseurCreationSnapshot = fournisseurCreationSnapshotHandlers.metadata
+export const previewFournisseurCreationSnapshot = fournisseurCreationSnapshotHandlers.preview
+export const downloadFournisseurCreationSnapshot = fournisseurCreationSnapshotHandlers.download
+export const printFournisseurCreationSnapshot = fournisseurCreationSnapshotHandlers.printIntent
 
 function isMulterFile(value: unknown): value is Express.Multer.File {
   if (typeof value !== "object" || value === null) return false

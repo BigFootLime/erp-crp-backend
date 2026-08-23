@@ -46,6 +46,18 @@ export const documentIdParamSchema = z.object({
   params: z.object({ id: uuid, documentId: uuid }).strict(),
 });
 
+export const officialDocumentIdParamSchema = z.object({
+  params: z.object({ id: uuid, documentId: uuid }).strict(),
+});
+
+export const officialDocumentRequestSchema = z.object({
+  body: z.object({
+    // Exact server-issued aggregate `updated_at` token; not a client snapshot hash.
+    source_revision: z.string().trim().min(1).max(160, "Révision source invalide"),
+    reissue_reason: z.string().trim().min(3).max(500).optional().nullable(),
+  }).strict(),
+});
+
 export const listCommandesQuerySchema = z.object({
   query: z
     .object({

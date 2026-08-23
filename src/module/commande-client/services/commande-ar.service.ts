@@ -1,8 +1,4 @@
-import fs from "node:fs/promises";
-import path from "node:path";
-
 import { HttpError } from "../../../utils/httpError";
-import { getDocumentStoragePath } from "../../../utils/cerpStorage";
 import { sendTransactionalEmail, type ResendSendResult } from "../../../shared/email/resend.service";
 import { readIssuerParty } from "../../../shared/documents/issuer-identity.repository";
 import {
@@ -10,6 +6,7 @@ import {
   renderCerpDocument,
   type CerpLineRow,
 } from "../../../shared/pdf/cerp-document";
+import { money } from "../../../shared/pdf/format-fr";
 import { issuerIdentityLine, issuerLegalMentions, type LegalParty } from "../../../shared/pdf/legal-mentions";
 import type {
   CommandeArDraft,
@@ -23,11 +20,17 @@ import {
   repoAuthorizeCommandeArGeneration,
   repoClaimCommandeArSend,
   repoCreateCommandeArDraft,
+  repoFindCommandeArOfficialArchiveId,
   repoFinalizeCommandeArSend,
   repoLoadCommandeArGenerationData,
   repoMarkCommandeArFailed,
+  repoResolveCommandeArOfficialArchive,
 } from "../repository/commande-ar.repository";
 import pool from "../../../config/database";
+import type { AuthoritativePdfArchiveRecord } from "../../../shared/authoritative-documents/authoritative-document.types";
+import { getOfficialDocumentGenerationEnvelope, getOfficialPdfDto, readOfficialPdfBytes, recordOfficialPdfPrintIntent } from "../../../shared/authoritative-documents/authoritative-document.service";
+
+const ACKNOWLEDGEMENT_DOCUMENT_KIND = "CUSTOMER_ORDER_ACKNOWLEDGEMENT";
 
 type CommandeArAddress = {
   name?: string | null;
@@ -38,8 +41,27 @@ type CommandeArAddress = {
   country?: string | null;
 };
 
-function formatCurrencyEUR(value: number): string {
-  return new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" }).format(value);
+export type CommandeArOfficialSnapshot = {
+  type: "CUSTOMER_ORDER_ACKNOWLEDGEMENT";
+  /** Assigned inside the locked creation transaction before archival. */
+  acknowledgement_id?: string;
+  acknowledgement_number: string;
+  order_number: string;
+  generated_at: string;
+  status: string | null;
+  customer_name: string | null;
+  date_commande: string;
+  total_ht: string;
+  total_ttc: string;
+  public_comment: string | null;
+  bill_address: CommandeArAddress;
+  delivery_address: CommandeArAddress;
+  lines: Array<{ designation: string; code_piece: string | null; quantite: string; unite: string | null; prix_unitaire_ht: string; taux_tva: string | null; total_ttc: string }>;
+  issuer: LegalParty;
+};
+
+function formatCurrencyEUR(value: number | string): string {
+  return money(value, "EUR");
 }
 
 function formatDateFR(value: string | null | undefined): string {
@@ -110,12 +132,16 @@ function isResendSendError(result: Extract<ResendSendResult, { ok: false }>): re
 
 export async function buildCommandeArPdfBuffer(params: {
   draftNumber: string;
+  /** Customer order reference; distinct from the acknowledgement number when configured. */
+  orderNumber?: string;
   companyName: string | null;
   dateCommande: string;
   generatedAt: Date;
+  /** Persisted authoritative archive edition (not PDF renderer/template version). */
+  documentVersion?: number;
   statut: string | null;
-  totalHt: number;
-  totalTtc: number;
+  totalHt: number | string;
+  totalTtc: number | string;
   commentaire: string | null;
   clientEmail: string | null;
   clientPhone: string | null;
@@ -124,11 +150,11 @@ export async function buildCommandeArPdfBuffer(params: {
   lines: Array<{
     designation: string;
     code_piece: string | null;
-    quantite: number;
+    quantite: number | string;
     unite: string | null;
-    prix_unitaire_ht: number;
-    taux_tva: number | null;
-    total_ttc: number;
+    prix_unitaire_ht: number | string;
+    taux_tva: number | string | null;
+    total_ttc: number | string;
   }>;
   /**
    * Instantane de l'emetteur : identite legale et mentions obligatoires.
@@ -140,6 +166,8 @@ export async function buildCommandeArPdfBuffer(params: {
   issuer: LegalParty;
 }): Promise<Buffer> {
   const clientName = params.companyName?.trim() || "Client";
+  const orderNumber = params.orderNumber?.trim() || params.draftNumber;
+  const draft = params.statut?.trim().toUpperCase() === "BROUILLON";
   const rows: CerpLineRow[] = params.lines.map((line) => ({
     cells: {
       designation: line.designation,
@@ -158,19 +186,22 @@ export async function buildCommandeArPdfBuffer(params: {
       documentType: "Accusé de réception",
       name: clientName,
       code: params.draftNumber,
-      subtitle: `Commande ${params.draftNumber}`,
+      subtitle: `Version ${params.documentVersion ?? 1} · Commande ${orderNumber}`,
       status: params.statut ?? "PLANIFIEE",
+      flag: draft ? "INTERNE / BROUILLON" : null,
+      watermark: draft ? "INTERNE / BROUILLON" : null,
       monogramName: clientName,
       generatedAt: formatDateFR(params.generatedAt.toISOString()),
       title: `Accusé de réception ${params.draftNumber}`,
-      subject: "Accusé de réception de commande CERP",
+      subject: draft ? "Instantané interne CERP — brouillon" : "Accusé de réception de commande CERP",
+      footerNote: draft ? "Instantané interne GED — non opposable" : null,
       legalIdentity: issuerIdentityLine(params.issuer),
       legalMentions: issuerLegalMentions(params.issuer),
       creationDate: params.generatedAt,
     },
     (ctx) => {
       ctx.legalStrip([
-        { label: "Commande", value: params.draftNumber },
+        { label: "Commande", value: orderNumber },
         { label: "Date commande", value: formatDateFR(params.dateCommande) },
         { label: "Statut", value: params.statut ?? "PLANIFIEE" },
         { label: "Total TTC", value: formatCurrencyEUR(params.totalTtc) },
@@ -227,10 +258,34 @@ export async function buildCommandeArPdfBuffer(params: {
   );
 }
 
+/** Renderer registered in the authoritative worker. It consumes the frozen source only. */
+export async function renderCommandeArOfficialPdf({ archive }: { archive: AuthoritativePdfArchiveRecord }): Promise<Buffer> {
+  const source = archive.sourceSnapshot as Partial<CommandeArOfficialSnapshot>;
+  if (source.type !== "CUSTOMER_ORDER_ACKNOWLEDGEMENT" || !source.acknowledgement_number || !Array.isArray(source.lines) || !source.issuer) {
+    throw new Error("COMMANDE_AR_OFFICIAL_SNAPSHOT_INVALID");
+  }
+  const archivedAt = new Date(archive.createdAt);
+  if (Number.isNaN(archivedAt.getTime())) throw new Error("COMMANDE_AR_ARCHIVE_CREATED_AT_INVALID");
+  return buildCommandeArPdfBuffer({
+    issuer: source.issuer, draftNumber: source.acknowledgement_number, orderNumber: source.order_number,
+    companyName: source.customer_name ?? null,
+    // `generated_at` remains inside the frozen business snapshot; the document
+    // artifact's header/footer/PDF metadata are the immutable archive time.
+    dateCommande: source.date_commande ?? "", generatedAt: archivedAt, statut: source.status ?? null,
+    documentVersion: archive.documentVersion,
+    totalHt: source.total_ht ?? "0", totalTtc: source.total_ttc ?? "0", commentaire: source.public_comment ?? null,
+    clientEmail: null, clientPhone: null, billAddress: source.bill_address ?? {}, deliveryAddress: source.delivery_address ?? {},
+    lines: source.lines.map((line) => ({ designation: line.designation, code_piece: line.code_piece ?? null, quantite: line.quantite, unite: line.unite ?? null, prix_unitaire_ht: line.prix_unitaire_ht, taux_tva: line.taux_tva, total_ttc: line.total_ttc })),
+  });
+}
+
 export async function svcGenerateCommandeAr(params: {
   commande_id: number;
   user_id: number;
   user_role: string | null | undefined;
+  source_revision?: string | null;
+  reissue_reason?: string | null;
+  idempotency_key?: string | null;
 }): Promise<CommandeArDraft> {
   const client = await pool.connect();
   try {
@@ -244,7 +299,6 @@ export async function svcGenerateCommandeAr(params: {
     if (!data) {
       throw new HttpError(404, "COMMANDE_NOT_FOUND", "Commande introuvable");
     }
-
     const recipientSuggestions = buildCommandeArRecipientSuggestions(data);
     const subject = subjectForCommande(data.header.numero);
     const bodyText = bodyTextForCommande({
@@ -257,9 +311,18 @@ export async function svcGenerateCommandeAr(params: {
     // force when that artifact is created, not the possibly much older order date.
     const issuer = await readIssuerParty({ at: generatedAt.toISOString().slice(0, 10) });
 
+    const officialSnapshot: CommandeArOfficialSnapshot = {
+      type: "CUSTOMER_ORDER_ACKNOWLEDGEMENT", acknowledgement_number: data.header.numero, order_number: data.header.numero,
+      generated_at: generatedAt.toISOString(), status: data.header.statut, customer_name: data.header.client_company_name,
+      date_commande: data.header.date_commande, total_ht: String(data.header.total_ht), total_ttc: String(data.header.total_ttc),
+      public_comment: data.header.commentaire, bill_address: { name: data.header.bill_name, street: data.header.bill_street, house_number: data.header.bill_house_number, postal_code: data.header.bill_postal_code, city: data.header.bill_city, country: data.header.bill_country },
+      delivery_address: { name: data.header.deliv_name, street: data.header.deliv_street, house_number: data.header.deliv_house_number, postal_code: data.header.deliv_postal_code, city: data.header.deliv_city, country: data.header.deliv_country },
+      lines: data.lines.map((line) => ({ designation: line.designation, code_piece: line.code_piece, quantite: String(line.quantite), unite: line.unite, prix_unitaire_ht: String(line.prix_unitaire_ht), taux_tva: line.taux_tva == null ? null : String(line.taux_tva), total_ttc: String(line.total_ttc) })), issuer,
+    };
     const pdfBuffer = await buildCommandeArPdfBuffer({
       issuer,
       draftNumber: data.header.numero,
+      orderNumber: data.header.numero,
       companyName: data.header.client_company_name,
       dateCommande: data.header.date_commande,
       generatedAt,
@@ -299,6 +362,10 @@ export async function svcGenerateCommandeAr(params: {
       subject,
       body_text: bodyText,
       recipient_suggestions: recipientSuggestions,
+      official_source_snapshot: officialSnapshot,
+      official_request_idempotency_key: params.idempotency_key ?? undefined,
+      official_expected_source_revision: params.source_revision ?? undefined,
+      official_reissue_reason: params.reissue_reason ?? undefined,
     });
 
     return {
@@ -347,8 +414,15 @@ export async function svcSendCommandeAr(params: {
   const draft = claim.draft;
   let claimOpen = true;
   try {
-    const filePath = path.resolve(getDocumentStoragePath(), `${draft.document_id}.pdf`);
-    const pdfBuffer = await fs.readFile(filePath);
+    // The supplier/customer-facing email must attach the exact archived GED
+    // bytes, never a mutable legacy working-file copy.
+    const archiveId = await repoFindCommandeArOfficialArchiveId(params.commande_id, draft.ar_id);
+    if (!archiveId) throw new HttpError(409, "OFFICIAL_DOCUMENT_NOT_READY", "Le document officiel est en cours de génération.");
+    const archived = await readOfficialPdfBytes({
+      entityType: "commande-client", entityId: String(params.commande_id), archiveId,
+      documentKind: ACKNOWLEDGEMENT_DOCUMENT_KIND,
+      actorUserId: params.user_id, eventType: "AUTHORITATIVE_PDF_SENT",
+    });
 
     const baseText = draft.body_text?.trim() || `Veuillez trouver ci-joint l'accuse de reception de la commande.`;
     const customMessage = params.body.message?.trim() || null;
@@ -362,8 +436,8 @@ export async function svcSendCommandeAr(params: {
       idempotencyKey: `commande-ar:${params.body.ar_id}`,
       attachments: [
         {
-          filename: draft.document_name,
-          content: pdfBuffer,
+          filename: archived.filename,
+          content: archived.bytes,
           contentType: "application/pdf",
         },
       ],
@@ -405,4 +479,48 @@ export async function svcSendCommandeAr(params: {
     if (claimOpen) await repoAbortCommandeArSendClaim(claim);
     throw err;
   }
+}
+
+export async function svcCreateCommandeArOfficial(params: {
+  commande_id: number; user_id: number; user_role: string | null | undefined; source_revision: string; reissue_reason?: string | null; idempotency_key: string;
+}) {
+  // The repository performs source freshness and reissue checks while holding
+  // the command row lock, after handling a same-key replay.
+  const draft = await svcGenerateCommandeAr(params);
+  return getOfficialDocumentGenerationEnvelope({
+    tx: pool, entityType: "commande-client", entityId: String(draft.commande_id), documentKind: ACKNOWLEDGEMENT_DOCUMENT_KIND, baseUrl: acknowledgementBase(params.commande_id),
+  });
+}
+
+const acknowledgementBase = (commandeId: number) => `/commandes/${commandeId}/acknowledgements`;
+
+export async function svcListCommandeArOfficialDocuments(commandeId: number) {
+  return getOfficialDocumentGenerationEnvelope({
+    tx: pool, entityType: "commande-client", entityId: String(commandeId), documentKind: ACKNOWLEDGEMENT_DOCUMENT_KIND, baseUrl: acknowledgementBase(commandeId),
+  });
+}
+
+async function resolveAcknowledgementArchive(commandeId: number, archiveId: string): Promise<string> {
+  const arId = await repoResolveCommandeArOfficialArchive(commandeId, archiveId);
+  if (!arId) throw new HttpError(404, "OFFICIAL_DOCUMENT_NOT_FOUND", "Document officiel introuvable.");
+  return arId;
+}
+
+export async function svcGetCommandeArOfficialDocument(commandeId: number, archiveId: string) {
+  return getOfficialPdfDto({ tx: pool, entityType: "commande-client", entityId: String(commandeId), documentKind: ACKNOWLEDGEMENT_DOCUMENT_KIND, archiveId, baseUrl: acknowledgementBase(commandeId) });
+}
+
+export async function svcReadCommandeArOfficialDocument(commandeId: number, archiveId: string, actorUserId: number, eventType: "AUTHORITATIVE_PDF_PREVIEWED" | "AUTHORITATIVE_PDF_DOWNLOADED") {
+  return readOfficialPdfBytes({ entityType: "commande-client", entityId: String(commandeId), documentKind: ACKNOWLEDGEMENT_DOCUMENT_KIND, archiveId, actorUserId, eventType });
+}
+
+export async function svcRecordCommandeArOfficialPrint(commandeId: number, archiveId: string, actorUserId: number) {
+  return recordOfficialPdfPrintIntent({ entityType: "commande-client", entityId: String(commandeId), documentKind: ACKNOWLEDGEMENT_DOCUMENT_KIND, archiveId, actorUserId });
+}
+
+export async function svcSendCommandeArOfficial(params: {
+  commande_id: number; archive_id: string; user_id: number; user_role: string | null | undefined; body: Omit<SendCommandeArBodyDTO, "ar_id">;
+}): Promise<CommandeArSendResult> {
+  const arId = await resolveAcknowledgementArchive(params.commande_id, params.archive_id);
+  return svcSendCommandeAr({ ...params, body: { ...params.body, ar_id: arId } });
 }

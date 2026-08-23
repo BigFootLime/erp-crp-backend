@@ -58,6 +58,7 @@ vi.mock("../module/auth/middlewares/auth.middleware", async (importOriginal) => 
 
 import app from "../config/app";
 import { withRealtimeOutboxDbMock } from "./helpers/realtime-outbox-db-mock";
+import { authoritativePdfQueueDbMock } from "./helpers/authoritative-pdf-queue-db-mock";
 import { stripQueryFromUrl } from "../utils/logPath";
 import { maskIban } from "../module/client/client.permissions";
 import { setLogSinkForTests } from "../shared/observability/logger";
@@ -86,8 +87,13 @@ beforeEach(() => {
     query: withRealtimeOutboxDbMock(mocks.clientQuery),
     release: mocks.clientRelease,
   });
-  mocks.clientQuery.mockImplementation((sql: unknown) => {
+  mocks.clientQuery.mockImplementation((sql: unknown, params?: unknown[]) => {
     const s = String(sql);
+    const authoritativePdf = authoritativePdfQueueDbMock(sql, params);
+    if (authoritativePdf) return Promise.resolve(authoritativePdf);
+    if (s.includes("SELECT updated_at::text AS updated_at FROM clients")) {
+      return Promise.resolve({ rows: [{ updated_at: "2026-08-23T12:00:00.000Z" }] });
+    }
     if (s.includes("fn_next_issued_code_value")) return Promise.resolve({ rows: [{ v: "7" }] });
     if (s.includes("INSERT INTO adresse_facturation")) return Promise.resolve({ rows: [{ bill_address_id: "b1" }] });
     if (s.includes("INSERT INTO adresse_livraison")) return Promise.resolve({ rows: [{ delivery_address_id: "d1" }] });

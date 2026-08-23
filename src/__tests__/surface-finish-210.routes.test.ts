@@ -58,6 +58,7 @@ vi.mock("../module/auth/middlewares/auth.middleware", () => ({
 }));
 
 import app from "../config/app";
+import { authoritativePdfQueueDbMock } from "./helpers/authoritative-pdf-queue-db-mock";
 import { withRealtimeOutboxDbMock } from "./helpers/realtime-outbox-db-mock";
 
 const FIN_BASE = "/api/v1/finitions";
@@ -184,10 +185,12 @@ type Scenario = {
 };
 
 function installQueryRouter(scenario: Scenario = {}) {
-  const handler = async (sql: string): Promise<{ rows: Row[]; rowCount: number }> => {
+  const handler = async (sql: string, params?: unknown[]): Promise<{ rows: Row[]; rowCount: number }> => {
     sqlLog.push(sql);
     const empty = { rows: [] as Row[], rowCount: 0 };
     const one = (row: Row) => ({ rows: [row], rowCount: 1 });
+    const authoritativePdf = authoritativePdfQueueDbMock(sql, params);
+    if (authoritativePdf) return authoritativePdf;
 
     if (/surface_finish_command_receipts/.test(sql) && /^\s*SELECT/i.test(sql)) {
       return scenario.receipt ? one(scenario.receipt as Row) : empty;
@@ -221,6 +224,9 @@ function installQueryRouter(scenario: Scenario = {}) {
     }
     if (/fn_next_issued_code_value/.test(sql)) return one({ v: "123" });
     if (/FROM public\.units/.test(sql)) return one({ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", code: "u" });
+    if (/SELECT updated_at::text AS updated_at FROM public\.articles WHERE id = \$1::uuid FOR SHARE/.test(sql)) {
+      return one({ updated_at: "2026-07-28T08:05:00.000Z" });
+    }
     if (/INSERT INTO public\.articles\b/.test(sql)) return one({ id: ARTICLE_ID });
     if (/INSERT INTO erp_audit_logs/.test(sql)) {
       return one({ id: "audit-1", created_at: "2026-07-28T08:05:00.000Z" });
@@ -235,8 +241,8 @@ function installQueryRouter(scenario: Scenario = {}) {
     return empty;
   };
 
-  mocks.poolQuery.mockImplementation((sql: string) => handler(sql));
-  mocks.clientQuery.mockImplementation((sql: string) => handler(sql));
+  mocks.poolQuery.mockImplementation((sql: string, params?: unknown[]) => handler(sql, params));
+  mocks.clientQuery.mockImplementation((sql: string, params?: unknown[]) => handler(sql, params));
   mocks.poolConnect.mockResolvedValue({
     query: withRealtimeOutboxDbMock(mocks.clientQuery),
     release: mocks.clientRelease,
@@ -414,6 +420,8 @@ describe("#164 création d'un article de traitement depuis Stock", () => {
     expect(sqlLog.some((sql) => /INSERT INTO public\.pieces_techniques_achats/.test(sql))).toBe(false);
     expect(sqlLog.some((sql) => /gamme_operation_finitions/.test(sql))).toBe(false);
     expect(sqlLog.some((sql) => /stock_movement/i.test(sql))).toBe(false);
+    expect(sqlLog.some((sql) => /INSERT INTO public\.authoritative_pdf_archives/.test(sql))).toBe(true);
+    expect(sqlLog.some((sql) => /INSERT INTO public\.authoritative_pdf_archive_outbox/.test(sql))).toBe(true);
   });
 
   it("refuse la confirmation Stock à un rôle qui n'a que le droit de prévisualiser", async () => {
@@ -663,6 +671,8 @@ describe("#210 confirmation", () => {
     expect(sqlLog.filter((sql) => /^\s*BEGIN\s*$/i.test(sql))).toHaveLength(1);
     expect(sqlLog.filter((sql) => /^\s*COMMIT\s*$/i.test(sql))).toHaveLength(1);
     expect(sqlLog.some((sql) => /^\s*ROLLBACK\s*$/i.test(sql))).toBe(false);
+    expect(sqlLog.some((sql) => /INSERT INTO public\.authoritative_pdf_archives/.test(sql))).toBe(true);
+    expect(sqlLog.some((sql) => /INSERT INTO public\.authoritative_pdf_archive_outbox/.test(sql))).toBe(true);
   });
 
   it("lie la ligne d'achat à l'opération par clé étrangère, jamais par la seule phase", async () => {

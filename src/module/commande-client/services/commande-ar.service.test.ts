@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   claimSend: vi.fn(),
   finalizeSend: vi.fn(),
   markFailed: vi.fn(),
+  readArchived: vi.fn(),
+  findArchive: vi.fn(),
 }));
 
 vi.mock("node:fs/promises", () => ({
@@ -29,6 +31,13 @@ vi.mock("../../../shared/email/resend.service", () => ({
 vi.mock("../../../shared/documents/issuer-identity.repository", () => ({
   readIssuerParty: vi.fn(),
 }));
+vi.mock("../../../shared/authoritative-documents/authoritative-document.service", () => ({
+  getOfficialDocumentGenerationEnvelope: vi.fn(),
+  getOfficialPdfDto: vi.fn(),
+  readOfficialPdfBytes: mocks.readArchived,
+  recordOfficialPdfPrintIntent: vi.fn(),
+  officialDocumentGenerationEnvelope: vi.fn(),
+}));
 vi.mock("../repository/commande-ar.repository", () => ({
   buildCommandeArRecipientSuggestions: vi.fn(),
   repoAbortCommandeArSendClaim: mocks.abortClaim,
@@ -36,6 +45,7 @@ vi.mock("../repository/commande-ar.repository", () => ({
   repoClaimCommandeArSend: mocks.claimSend,
   repoCreateCommandeArDraft: vi.fn(),
   repoFinalizeCommandeArSend: mocks.finalizeSend,
+  repoFindCommandeArOfficialArchiveId: mocks.findArchive,
   repoGetCommandeArDraft: vi.fn(),
   repoLoadCommandeArGenerationData: vi.fn(),
   repoMarkCommandeArFailed: mocks.markFailed,
@@ -161,7 +171,8 @@ describe("envoi AR claimé avant effet externe", () => {
     mocks.claimSend
       .mockResolvedValueOnce(claim)
       .mockResolvedValueOnce({ kind: "replay", draft: persistedReplay });
-    mocks.readFile.mockResolvedValueOnce(Buffer.from("pdf"));
+    mocks.findArchive.mockResolvedValueOnce("33333333-3333-4333-8333-333333333333");
+    mocks.readArchived.mockResolvedValueOnce({ bytes: Buffer.from("pdf"), filename: "AR-123-officiel.pdf", sha256: "a".repeat(64) });
     mocks.sendEmail.mockResolvedValueOnce({ ok: true, id: "provider-first" });
     mocks.finalizeSend.mockResolvedValueOnce({
       result: {
@@ -182,6 +193,14 @@ describe("envoi AR claimé avant effet externe", () => {
     ]);
 
     expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
+    expect(mocks.readArchived).toHaveBeenCalledWith(expect.objectContaining({
+      entityType: "commande-client",
+      entityId: "123",
+      documentKind: "CUSTOMER_ORDER_ACKNOWLEDGEMENT",
+      archiveId: "33333333-3333-4333-8333-333333333333",
+      eventType: "AUTHORITATIVE_PDF_SENT",
+    }));
+    expect(mocks.readFile).not.toHaveBeenCalled();
     expect(first.email_provider_id).toBe("provider-first");
     expect(replay).toMatchObject({
       recipient_emails: ["persisted@example.test"],

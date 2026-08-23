@@ -2,6 +2,8 @@ import type { RequestHandler } from "express"
 import { Router } from "express"
 
 import { authenticateToken } from "../../auth/middlewares/auth.middleware"
+import { effectiveRoleHasAny } from "../../auth/domain/roles"
+import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context"
 import { HttpError } from "../../../utils/httpError"
 import { createSecureUpload } from "../../../shared/uploads/secure-upload"
 import {
@@ -12,10 +14,12 @@ import {
   cancelCadreRelease,
   deleteCommande,
   duplicateCommande,
+  downloadCommandeCreationSnapshot,
   generateAffairesFromOrder,
   previewAffairesFromCommande,
   getCadreRelease,
   getCommande,
+  getCommandeCreationSnapshot,
   getCommandeDocumentFile,
   getCommandeWorkflow,
   listCadreReleases,
@@ -27,8 +31,10 @@ import {
   updateCadreReleaseStatus,
   updateCommande,
   updateCommandeWorkflowCheckpoint,
+  previewCommandeCreationSnapshot,
+  printCommandeCreationSnapshot,
 } from "../controllers/commande-client.controller"
-import { generateCommandeAr, sendCommandeAr } from "../controllers/commande-ar.controller"
+import { createAcknowledgement, downloadAcknowledgement, generateCommandeAr, getAcknowledgement, listAcknowledgements, previewAcknowledgement, printAcknowledgement, sendAcknowledgement, sendCommandeAr } from "../controllers/commande-ar.controller"
 import {
   generateCommandeArSchema,
   sendCommandeArSchema,
@@ -77,6 +83,17 @@ const parseCommandeBody: RequestHandler = (req, res, next) => {
 
 const router = Router()
 
+const requireAcknowledgementExport: RequestHandler = (req, _res, next) => {
+  if (
+    requestHasGrantedAccountModuleAccess(req) ||
+    effectiveRoleHasAny(req.user?.role, [
+      "Administrateur Systeme et Reseau", "Directeur", "Secretaire", "Commercial", "Comptabilite",
+      "Method", "Responsable Programmation", "Production", "Responsable Production", "Planification",
+    ])
+  ) { next(); return }
+  next(new HttpError(403, "FORBIDDEN", "Votre rôle ne permet pas d'exporter les accusés de réception."))
+}
+
 const rejectLegacyCommandeLaunch: RequestHandler = (_req, _res, next) => {
   next(
     new HttpError(
@@ -105,6 +122,13 @@ router.get("/", listCommandes)
 
 // GET /api/v1/commandes/:id
 router.get("/:id", validate(idParamSchema), getCommande)
+
+// Automatic creation snapshots are immutable GED artifacts. They deliberately
+// expose no issue/reissue endpoint and retain the acknowledgement export gate.
+router.get("/:id/creation-snapshot", authenticateToken, requireAcknowledgementExport, validate(idParamSchema), getCommandeCreationSnapshot)
+router.get("/:id/creation-snapshot/:documentId/preview", authenticateToken, requireAcknowledgementExport, validate(idParamSchema), previewCommandeCreationSnapshot)
+router.get("/:id/creation-snapshot/:documentId/download", authenticateToken, requireAcknowledgementExport, validate(idParamSchema), downloadCommandeCreationSnapshot)
+router.post("/:id/creation-snapshot/:documentId/print-intents", authenticateToken, requireAcknowledgementExport, validate(idParamSchema), printCommandeCreationSnapshot)
 
 // GET /api/v1/commandes/:id/workflow
 router.get("/:id/workflow", authenticateToken, validate(idParamSchema), getCommandeWorkflow)
@@ -175,6 +199,16 @@ router.post(
   validate(generateCommandeArSchema),
   generateCommandeAr
 )
+
+// Authoritative acknowledgement collection. Legacy `/ar/*` remains compatible;
+// these endpoints expose GED-backed immutable documents only.
+router.get("/:id/acknowledgements", authenticateToken, requireAcknowledgementExport, listAcknowledgements)
+router.post("/:id/acknowledgements", authenticateToken, requireAcknowledgementExport, createAcknowledgement)
+router.get("/:id/acknowledgements/:documentId", authenticateToken, requireAcknowledgementExport, getAcknowledgement)
+router.get("/:id/acknowledgements/:documentId/preview", authenticateToken, requireAcknowledgementExport, previewAcknowledgement)
+router.get("/:id/acknowledgements/:documentId/download", authenticateToken, requireAcknowledgementExport, downloadAcknowledgement)
+router.post("/:id/acknowledgements/:documentId/print-intents", authenticateToken, requireAcknowledgementExport, printAcknowledgement)
+router.post("/:id/acknowledgements/:documentId/send", authenticateToken, requireAcknowledgementExport, sendAcknowledgement)
 
 // POST /api/v1/commandes/:id/ar/send
 router.post(
