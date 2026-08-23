@@ -1645,6 +1645,13 @@ export async function repoCreateLivraisonLineAllocation(
       throw new HttpError(409, "LOT_REQUIRED", "Un lot est obligatoire pour cet article.")
     }
 
+    // A DRAFT allocation does not create a reservation or a stock movement:
+    // it can therefore identify a quarantined lot solely to establish the
+    // immutable per-allocation scope required by the LOT_RELEASE control.
+    // BLOQUE and EN_ATTENTE lots remain ineligible even for this narrow
+    // quality-scoping path. Preparation and shipment still re-check the lot
+    // status and Quality entitlement before any stock can be claimed.
+    let quarantinedQualityScopeAllocation = false
     if (input.lot_id) {
       const lot = await db.query<{ article_id: string; lot_status: string | null }>(
         `SELECT article_id::text AS article_id, lot_status FROM public.lots WHERE id = $1::uuid`,
@@ -1660,9 +1667,10 @@ export async function repoCreateLivraisonLineAllocation(
       }
 
       const lotStatus = row?.lot_status ?? "LIBERE"
-      if (lotStatus === "BLOQUE" || lotStatus === "EN_ATTENTE" || lotStatus === "QUARANTAINE") {
+      if (lotStatus === "BLOQUE" || lotStatus === "EN_ATTENTE") {
         throw new HttpError(409, "LOT_NOT_CONSUMABLE", `Ce lot n'est pas consommable (statut: ${lotStatus})`)
       }
+      quarantinedQualityScopeAllocation = lotStatus === "QUARANTAINE"
     }
 
     const source = await getStockEmplacementMapping(
@@ -1721,7 +1729,15 @@ export async function repoCreateLivraisonLineAllocation(
       stockTargetKey({ stock_level_id: stockLevelId, stock_batch_id: stockBatchId })
     )
     if (!state) throw new Error("Locked allocation stock state missing")
-    assertStockConsumptionAllowed(state, { movement_type: "RESERVE", qty: input.quantite })
+    // Keep the ordinary quantity/availability check for every allocation. For
+    // the narrow QUARANTAINE scope path only, project the state as released
+    // *for this non-reserving validation* so the status guard does not make
+    // the required LOT_RELEASE scope impossible to create. Preparation and
+    // shipment use the persisted QUARANTAINE status and remain fail-closed.
+    assertStockConsumptionAllowed(
+      quarantinedQualityScopeAllocation ? { ...state, lot_status: "LIBERE" } : state,
+      { movement_type: "RESERVE", qty: input.quantite }
+    )
 
     const ins = await db.query<{ id: string }>(
       `
