@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 const source = fs.readFileSync(path.join(__dirname, "commande-client.repository.ts"), "utf8");
 const productionSource = fs.readFileSync(path.join(__dirname, "../../production/repository/production.repository.ts"), "utf8");
 const generationSource = fs.readFileSync(path.join(__dirname, "../../production/repository/production-generation.repository.ts"), "utf8");
+const ofCreationPdfSource = fs.readFileSync(path.join(__dirname, "../../production/domain/of-creation-pdf.ts"), "utf8");
 
 describe("commande creation PDF transaction contract", () => {
   it("queues the sanitized internal snapshot before the create transaction returns", () => {
@@ -58,5 +59,18 @@ describe("commande creation PDF transaction contract", () => {
     expect(source).toContain('idempotencyKey: `affaire:${affaire.id}:creation:v1`');
     // Existing mappings return before any create helper call, so a replay has no queue side effect.
     expect(source).toContain("if (existingLivraisons.length >= requestedLivraisonCount)");
+  });
+
+  it("locks only the generated business rows when creation snapshots use optional client joins", () => {
+    const affaireStart = source.indexOf("async function queueAffaireCreationPdf");
+    const affaire = source.slice(affaireStart, source.indexOf("const affaire = source.rows[0]", affaireStart));
+    expect(affaire).toContain("LEFT JOIN public.clients c");
+    expect(affaire).toContain("LEFT JOIN public.commande_client cc");
+    expect(affaire).toContain("FOR UPDATE OF a");
+    expect(affaire.match(/FOR UPDATE/g)).toHaveLength(1);
+
+    expect(ofCreationPdfSource).toContain("LEFT JOIN public.clients c");
+    expect(ofCreationPdfSource).toContain("FOR UPDATE OF o");
+    expect(ofCreationPdfSource.match(/FOR UPDATE/g)).toHaveLength(1);
   });
 });

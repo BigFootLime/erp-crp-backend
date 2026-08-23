@@ -46,6 +46,7 @@ describe("root OF creation PDF queue", () => {
     expect(input).toMatchObject({ entityType: "ordre-fabrication", entityId: "42", documentKind: "OF_CREATION_SNAPSHOT", documentVersion: 1, idempotencyKey: "ordre-fabrication:42:creation:v1", sourceRevision: root.updated_at, actorUserId: 7 });
     expect(input.sourceSnapshot).toMatchObject({ type: "INTERNAL_CREATION_SNAPSHOT", reference: "OF-00042" });
     expect(JSON.stringify(input.sourceSnapshot)).not.toContain("technical_snapshot\"");
+    expect(String(tx.query.mock.calls[0]?.[0])).toContain("FOR UPDATE OF o");
   });
 
   it("excludes a child OF before it can enqueue", async () => {

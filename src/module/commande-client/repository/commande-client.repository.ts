@@ -4728,9 +4728,9 @@ async function queueAffaireCreationPdf(
              a.devis_id::text AS devis_id
         FROM public.affaire a
         LEFT JOIN public.clients c ON c.client_id = a.client_id
-        LEFT JOIN public.commande_client cc ON cc.id = a.commande_id
+       LEFT JOIN public.commande_client cc ON cc.id = a.commande_id
        WHERE a.id = $1::bigint
-       FOR UPDATE
+       FOR UPDATE OF a
     `,
     [params.affaireId]
   );
