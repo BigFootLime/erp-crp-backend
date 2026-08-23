@@ -4,6 +4,8 @@ import { HttpError } from "../../../utils/httpError";
 import { getClientIp, parseDevice } from "../../../utils/requestMeta";
 import { stripQueryFromUrl } from "../../../utils/logPath";
 import { createCreationSnapshotHandlers } from "../../../shared/authoritative-documents/creation-snapshot-http";
+import { setSecureDownloadHeaders } from "../../../shared/uploads/secure-download";
+import { assertAuthoritativePdfFilename } from "../../../shared/authoritative-documents/authoritative-document.filename";
 
 import * as clientService from "../services/client.service"; // ✅ namespace import
 import { svcGetClientById, svcListClientAddresses } from "../services/clients.read.service";
@@ -13,6 +15,7 @@ import {
   clientPatchSchema,
   duplicateCheckSchema,
   setPrimaryContactSchema,
+  clientProfileDocumentRequestSchema,
 } from "../validators/client.validators";
 import {
   type AuditContext,
@@ -25,6 +28,12 @@ import {
   repoSetPrimaryContact,
 } from "../repository/client.repository";
 import { canViewClientFinance } from "../client.permissions";
+import {
+  listClientProfileDocuments,
+  queueClientProfileDocument,
+  readClientProfileDocument,
+  recordClientProfilePrintIntent,
+} from "../services/client-profile-document.service";
 
 // Upload logo désactivé (CA-APP-05) : la route et ce handler restent commentés
 // tant qu'un upload sécurisé (auth + RBAC + sniffing MIME + taille max + nom
@@ -191,6 +200,71 @@ export const listClientAddresses: RequestHandler = async (req, res, next) => {
 };
 
 const uuidHeaderRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+async function assertClientReadable(id: string): Promise<void> {
+  if (!(await svcGetClientById(id, { includeSensitiveFinance: false }))) {
+    throw new HttpError(404, "CLIENT_NOT_FOUND", "Client not found");
+  }
+}
+
+function profileDocumentId(req: Request): string {
+  const id = routeParam(req, "documentId");
+  if (!uuidHeaderRe.test(id)) throw new HttpError(400, "INVALID_ROUTE_PARAM", "documentId must be a UUID");
+  return id;
+}
+
+export const listClientOfficialDocuments: RequestHandler = async (req, res, next) => {
+  try {
+    const id = routeParam(req, "id");
+    await assertClientReadable(id);
+    res.setHeader("Cache-Control", "private, no-store, max-age=0");
+    res.json(await listClientProfileDocuments(id));
+  } catch (error) { next(error); }
+};
+
+export const postClientOfficialDocument: RequestHandler = async (req, res, next) => {
+  try {
+    const id = routeParam(req, "id");
+    await assertClientReadable(id);
+    const idempotencyKey = typeof req.headers["idempotency-key"] === "string" ? req.headers["idempotency-key"].trim() : "";
+    if (!uuidHeaderRe.test(idempotencyKey)) {
+      throw new HttpError(400, "IDEMPOTENCY_KEY_REQUIRED", "Une clé d'idempotence UUID est requise.");
+    }
+    const input = clientProfileDocumentRequestSchema.parse(req.body ?? {});
+    res.status(201).json(await queueClientProfileDocument(id, idempotencyKey, buildAuditContext(req), input));
+  } catch (error) { next(error); }
+};
+
+function sendClientOfficialPdf(download: boolean): RequestHandler {
+  return async (req, res, next) => {
+    try {
+      const id = routeParam(req, "id");
+      await assertClientReadable(id);
+      const file = await readClientProfileDocument(
+        id,
+        profileDocumentId(req),
+        buildAuditContext(req).user_id,
+        download ? "AUTHORITATIVE_PDF_DOWNLOADED" : "AUTHORITATIVE_PDF_PREVIEWED"
+      );
+      assertAuthoritativePdfFilename(file.filename);
+      setSecureDownloadHeaders(res, { filename: file.filename, mimeType: "application/pdf", download });
+      res.setHeader("Content-Length", String(file.bytes.byteLength));
+      res.send(file.bytes);
+    } catch (error) { next(error); }
+  };
+}
+
+export const previewClientOfficialDocument = sendClientOfficialPdf(false);
+export const downloadClientOfficialDocument = sendClientOfficialPdf(true);
+
+export const printClientOfficialDocument: RequestHandler = async (req, res, next) => {
+  try {
+    const id = routeParam(req, "id");
+    await assertClientReadable(id);
+    await recordClientProfilePrintIntent(id, profileDocumentId(req), buildAuditContext(req).user_id);
+    res.status(204).send();
+  } catch (error) { next(error); }
+};
 
 export const postClient: RequestHandler = async (req, res, next) => {
   try {
