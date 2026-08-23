@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "899f968a2950bc15d761f78477b9d1ebf48f060e54c138270434827ca6295ebe";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "1cc22d5c40d3842ed420662fc9dc9715279707339a4090415dd07ad46e80b617";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -18661,6 +18661,118 @@ export const GENERATED_ROUTE_INVENTORY = [
     "rbac": [
       "moduleAccessGate",
       "requireStockCapability(read)"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/subcontract-work-packages",
+    "source": "src/module/subcontract/subcontract.routes.ts:34",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "access(false)",
+      "anonymous"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/subcontract-work-packages",
+    "source": "src/module/subcontract/subcontract.routes.ts:47",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "access(true)",
+      "anonymous"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/subcontract-work-packages/{id}",
+    "source": "src/module/subcontract/subcontract.routes.ts:41",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "access(false)",
+      "anonymous"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/subcontract-work-packages/{id}/cancel",
+    "source": "src/module/subcontract/subcontract.routes.ts:77",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "access(true)",
+      "anonymous"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/subcontract-work-packages/{id}/close",
+    "source": "src/module/subcontract/subcontract.routes.ts:76",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "access(true)",
+      "anonymous"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/subcontract-work-packages/{id}/issues",
+    "source": "src/module/subcontract/subcontract.routes.ts:73",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "access(true)",
+      "anonymous"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/subcontract-work-packages/{id}/returns",
+    "source": "src/module/subcontract/subcontract.routes.ts:74",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "access(true)",
+      "anonymous"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
     ]
   },
   {

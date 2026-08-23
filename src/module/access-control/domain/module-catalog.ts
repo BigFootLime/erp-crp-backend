@@ -102,7 +102,10 @@ export const MODULE_CATALOG: readonly ModuleCatalogEntry[] = [
     label: "Commandes fournisseurs",
     description: "Bons de commande fournisseurs et suivi des accusés.",
     category: "Achats",
-    api_prefixes: ["/commandes-fournisseurs", "/replenishment-proposals"],
+    // The work-package ledger is part of procurement custody, not a shared
+    // endpoint.  Keeping this prefix here makes the account module gate deny it
+    // when the purchasing module is disabled.
+    api_prefixes: ["/commandes-fournisseurs", "/replenishment-proposals", "/subcontract-work-packages"],
     nav_page_keys: ["commandes-fournisseurs"],
     is_protected: false,
     sort_order: 90,

@@ -3712,6 +3712,11 @@ export async function repoUpdateOrdreFabrication(params: {
     // The receipt remains a separate, explicit command because its location
     // and quality decision cannot be inferred safely at closure time.
     if (statutChanges && currentStatut === "TERMINE" && requestedStatut === "CLOTURE") {
+      const subcontractOpen = await client.query<{ id: string }>(
+        `SELECT p.id FROM public.subcontract_work_packages p JOIN public.of_operations o ON o.id=p.of_operation_id
+         WHERE o.of_id=$1::bigint AND p.status IN ('OPEN','SENT') FOR KEY SHARE`, [params.id]
+      );
+      if (subcontractOpen.rows[0]) throw new HttpError(409, "OF_SUBCONTRACT_PACKAGE_OPEN", "Clôture OF refusée : un dossier de sous-traitance reste ouvert.", { package_id: subcontractOpen.rows[0].id });
       const receiptStateRes = await client.query<{
         received_qty_ok: number;
         invalid_receipt_count: number;
