@@ -32,6 +32,16 @@ const ARCHIVE_COLUMNS = `id::text, entity_type, entity_id, document_kind, docume
   pdf_size_bytes::text, exact_pdf_bytes, exact_pdf_sha256, exact_pdf_size_bytes::text,
   ged_document_id::text, ged_version_id::text, archived_at::text, created_at::text, created_by`;
 
+/**
+ * Read queries join the archive to its durable outbox row. Keep the direct
+ * projection above for INSERT RETURNING and single-table lookups, while
+ * qualifying every archive field whenever another relation is in scope.
+ */
+const archiveColumnsFor = (tableAlias: string): string => ARCHIVE_COLUMNS
+  .split(/,\s*/u)
+  .map((column) => `${tableAlias}.${column}`)
+  .join(", ");
+
 /** Insert is intentionally idempotent; a repeated create transaction returns the same job. */
 export async function repoQueueAuthoritativePdf(
   tx: Pick<PoolClient, "query">,
@@ -127,7 +137,7 @@ export async function repoClaimAuthoritativePdfWork(
          FROM candidate WHERE o.id = candidate.id
        RETURNING o.id::text AS outbox_id, o.archive_id, o.claim_token::text AS claim_token
      )
-     SELECT c.outbox_id, c.claim_token, ${ARCHIVE_COLUMNS}
+     SELECT c.outbox_id, c.claim_token, ${archiveColumnsFor("a")}
        FROM claimed c JOIN public.authoritative_pdf_archives a ON a.id = c.archive_id`,
     [limit, workerId]
   );
@@ -195,7 +205,7 @@ export async function repoListAuthoritativePdfs(
   documentKind: string
 ): Promise<AuthoritativePdfListedRecord[]> {
   const result = await tx.query<ArchiveRow & { state: AuthoritativePdfListedRecord["state"] }>(
-    `SELECT ${ARCHIVE_COLUMNS}, o.status::text AS state
+    `SELECT ${archiveColumnsFor("a")}, o.status::text AS state
       FROM public.authoritative_pdf_archives a
        JOIN public.authoritative_pdf_archive_outbox o ON o.archive_id = a.id
       WHERE a.entity_type = $1 AND a.entity_id = $2 AND a.document_kind = $3
@@ -213,7 +223,7 @@ export async function repoGetAuthoritativePdf(
   documentKind: string
 ): Promise<AuthoritativePdfListedRecord | null> {
   const result = await tx.query<ArchiveRow & { state: AuthoritativePdfListedRecord["state"] }>(
-    `SELECT ${ARCHIVE_COLUMNS}, o.status::text AS state
+    `SELECT ${archiveColumnsFor("a")}, o.status::text AS state
        FROM public.authoritative_pdf_archives a
        JOIN public.authoritative_pdf_archive_outbox o ON o.archive_id = a.id
       WHERE a.id = $1::uuid AND a.entity_type = $2 AND a.entity_id = $3 AND a.document_kind = $4`,
@@ -248,7 +258,7 @@ export async function repoFindLatestAuthoritativePdfForEntity(
   documentKind: string
 ): Promise<AuthoritativePdfListedRecord | null> {
   const result = await tx.query<ArchiveRow & { state: AuthoritativePdfListedRecord["state"] }>(
-    `SELECT ${ARCHIVE_COLUMNS}, o.status::text AS state
+    `SELECT ${archiveColumnsFor("a")}, o.status::text AS state
       FROM public.authoritative_pdf_archives a
        JOIN public.authoritative_pdf_archive_outbox o ON o.archive_id = a.id
       WHERE a.entity_type = $1 AND a.entity_id = $2 AND a.document_kind = $3
