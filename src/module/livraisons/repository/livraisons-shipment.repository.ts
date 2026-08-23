@@ -38,6 +38,8 @@ import {
 } from "../domain/livraisons-policy"
 import type { DeliveryQualityRelease } from "../domain/quality-release-gate"
 import { repoGetDeliveryQualityRelease } from "./quality-release.repository"
+import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service"
+import { buildShippedDeliveryArtifactInput } from "../services/delivery-authoritative-document"
 
 type Queryable = Pick<PoolClient, "query">
 
@@ -1252,6 +1254,14 @@ export async function repoShipLivraison(
     if (!rowVersion) {
       throw new HttpError(409, "CONCURRENT_MODIFICATION", "Le statut du BL a changé pendant l’expédition.")
     }
+
+    // SHIPPED is the legal/operational boundary. Queue exactly one official
+    // artifact from the locked, persisted rows before the shipment commits.
+    await queueCreationPdfArchive(client, await buildShippedDeliveryArtifactInput(client, {
+      deliveryId: bonLivraisonId,
+      actorUserId: userId,
+      sourceRevision: `${rowVersion}:${correlationId}`,
+    }))
 
     await insertLivraisonEvent(client, {
       bon_livraison_id: bonLivraisonId,

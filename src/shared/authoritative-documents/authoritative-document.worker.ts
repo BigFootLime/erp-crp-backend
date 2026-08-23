@@ -3,6 +3,7 @@ import { renderSupplierPurchaseOrderOfficialPdf } from "../../module/commande-fo
 import { renderDevisOfficialPdf } from "../../module/devis/services/devis-official-pdf";
 import { renderCommandeArOfficialPdf } from "../../module/commande-client/services/commande-ar.service";
 import { renderInternalCreationSnapshotPdf } from "./internal-creation-snapshot-pdf";
+import { renderShippedDeliveryOfficialPdf } from "../../module/livraisons/services/delivery-authoritative-document";
 import { repoClaimAuthoritativePdfWork } from "./authoritative-document.repository";
 import { AuthoritativePdfProducerRegistry, runClaimedAuthoritativePdfArchive } from "./authoritative-document.service";
 
@@ -24,6 +25,8 @@ export function createAuthoritativePdfProducerRegistry(): AuthoritativePdfProduc
   registry.register("piece-technique", "TECHNICAL_PIECE_CREATION_SNAPSHOT", renderInternalCreationSnapshotPdf);
   registry.register("affaire", "AFFAIR_CREATION_SNAPSHOT", renderInternalCreationSnapshotPdf);
   registry.register("stock-article", "STOCK_ARTICLE_CREATION_SNAPSHOT", renderInternalCreationSnapshotPdf);
+  registry.register("bon-livraison", "DELIVERY_NOTE_CREATION_SNAPSHOT", renderInternalCreationSnapshotPdf);
+  registry.register("bon-livraison", "DELIVERY_NOTE_SHIPPED", renderShippedDeliveryOfficialPdf);
   return registry;
 }
 

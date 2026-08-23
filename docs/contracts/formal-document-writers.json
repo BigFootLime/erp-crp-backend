@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "formal_document": "delivery_note",
+  "canonical_archive": {
+    "entity_type": "bon-livraison",
+    "creation_kind": "DELIVERY_NOTE_CREATION_SNAPSHOT",
+    "shipped_kind": "DELIVERY_NOTE_SHIPPED"
+  },
+  "writers": [
+    { "id": "delivery.direct-create", "kind": "mounted_post", "source": "src/module/livraisons/routes/livraisons.routes.ts", "entry": "router.post(\"/\"", "transactional_queue": "buildDeliveryCreationSnapshotInput" },
+    { "id": "delivery.from-order", "kind": "mounted_post", "source": "src/module/livraisons/routes/livraisons.routes.ts", "entry": "\"/from-commande/:commandeId\"", "transactional_queue": "buildDeliveryCreationSnapshotInput" },
+    { "id": "delivery.repository-create", "kind": "direct_writer", "source": "src/module/livraisons/repository/livraisons.repository.ts", "entry": "INSERT INTO bon_livraison (", "transactional_queue": "buildDeliveryCreationSnapshotInput" },
+    { "id": "delivery.stock-preparation", "kind": "direct_writer", "source": "src/module/commande-client/repository/commande-client.repository.ts", "entry": "repoCreateLivraisonFromCommande(", "transactional_queue": "delegates:repoCreateLivraisonFromCommande" }
+  ]
+}
