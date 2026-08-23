@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { authoritativePdfFilename, assertAuthoritativePdfFilename } from "../shared/authoritative-documents/authoritative-document.filename";
 import { repoAssertAuthoritativePdfClaim, repoClaimAuthoritativePdfWork, repoFindLatestAuthoritativePdfForEntity, repoGetAuthoritativePdf, repoListAuthoritativePdfs, repoMarkAuthoritativePdfArchived, repoMarkAuthoritativePdfFailure } from "../shared/authoritative-documents/authoritative-document.repository";
-import { archiveClaimedAuthoritativePdf, AuthoritativePdfProducerRegistry, authoritativePdfGedPolicy, canonicalJson, officialDocumentGenerationEnvelope, queueCreationPdfArchive, sha256Text } from "../shared/authoritative-documents/authoritative-document.service";
+import { archiveClaimedAuthoritativePdf, AuthoritativePdfProducerRegistry, authoritativePdfGedEntityType, authoritativePdfGedPolicy, canonicalJson, officialDocumentGenerationEnvelope, queueCreationPdfArchive, sha256Text } from "../shared/authoritative-documents/authoritative-document.service";
 import type { ArchiveQueueItem } from "../shared/authoritative-documents/authoritative-document.types";
 
 function archiveItem(overrides: Partial<ArchiveQueueItem["archive"]> = {}): ArchiveQueueItem {
@@ -39,6 +39,32 @@ describe("authoritative PDF archive foundation (#612)", () => {
     expect(authoritativePdfGedPolicy("CLIENT_CREATION_SNAPSHOT")).toEqual({ classKey: "CERP_SYSTEM_SNAPSHOT", linkRole: "CREATION_SNAPSHOT", eventType: "CREATION_SNAPSHOT_ARCHIVED" });
     expect(authoritativePdfGedPolicy("CUSTOMER_QUOTE")).toEqual({ classKey: "CERP_AUTHORITATIVE_PDF", linkRole: "AUTHORITATIVE_PDF", eventType: "AUTHORITATIVE_PDF_ARCHIVED" });
     expect(authoritativePdfGedPolicy("INVENTED_CREATION_SNAPSHOT").classKey).toBe("CERP_AUTHORITATIVE_PDF");
+  });
+  it.each([
+    ["client", "CLIENT"],
+    ["fournisseur", "FOURNISSEUR"],
+    ["commande-client", "COMMANDE_CLIENT"],
+    ["ordre-fabrication", "OF"],
+    ["piece-technique", "PIECE_TECHNIQUE"],
+    ["affaire", "AFFAIRE"],
+    ["stock-article", "ARTICLE"],
+    ["bon-livraison", "BON_LIVRAISON"],
+    ["devis", "DEVIS"],
+    ["commande-fournisseur", "COMMANDE_FOURNISSEUR"],
+    ["facture", "FACTURE"],
+    ["avoir", "AVOIR"],
+  ])("maps archive entity %s to the canonical GED type %s", (archiveType, gedType) => {
+    expect(authoritativePdfGedEntityType(archiveType)).toBe(gedType);
+  });
+
+  it("fails closed before queueing an entity family absent from the GED contract", async () => {
+    let queried = false;
+    await expect(queueCreationPdfArchive({ query: async () => { queried = true; return { rows: [] }; } }, {
+      entityType: "invented-entity", entityId: "42", documentKind: "INVENTED_DOCUMENT", documentVersion: 1,
+      renderVersion: "invented-v1", idempotencyKey: "invented:42:v1", title: "Invented",
+      originalName: "Invented-42-v1.pdf", sourceRevision: "revision-1", sourceSnapshot: {}, actorUserId: 1,
+    })).rejects.toThrow("AUTHORITATIVE_PDF_GED_ENTITY_TYPE_UNSUPPORTED");
+    expect(queried).toBe(false);
   });
   it("canonicalizes a creation snapshot independently of source key order", () => {
     const left = { entity: { id: "42", lines: [{ quantity: 2, ref: "P-01" }] }, created: "2026-08-23T10:00:00Z" };

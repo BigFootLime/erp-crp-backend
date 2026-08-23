@@ -40,7 +40,7 @@ describe("GED parent-record download authorization", () => {
     expect(mocks.exists).toHaveBeenCalledWith(canonicalType, "42");
   });
 
-  it.each(["STOCK_ARTICLE", "STOCK-ARTICLE"])("accepts the live UUID identity used by %s", async (entityType) => {
+  it.each(["ARTICLE", "STOCK_ARTICLE", "STOCK-ARTICLE"])("accepts the live UUID identity used by %s", async (entityType) => {
     const articleId = "22222222-2222-4222-8222-222222222222";
     mocks.links.mockResolvedValue([{ entity_type: entityType, entity_id: articleId }]);
     mocks.exists.mockResolvedValue(true);
