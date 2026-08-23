@@ -86,6 +86,8 @@ export type GedDocumentSummary = {
   domain: string;
   title: string;
   description: string | null;
+  current_version_id: string | null;
+  current_original_name: string | null;
   current_version_number: number | null;
   current_version_status: GedVersionStatus | null;
   versions_count: number;
@@ -124,6 +126,7 @@ export type GedListFilters = {
   status?: GedVersionStatus | null;
   entity_type?: string | null;
   entity_id?: string | null;
+  link_role?: string | null;
   include_archived?: boolean;
   page: number;
   page_size: number;

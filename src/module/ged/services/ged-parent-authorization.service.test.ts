@@ -7,7 +7,7 @@ vi.mock("../repository/ged.repository", () => ({
 }));
 vi.mock("../../access-control/services/access-control.service", () => ({ resolveAccessProfile: mocks.profile }));
 
-import { assertGedVersionParentReadable } from "./ged-parent-authorization.service";
+import { assertGedParentLinkWritable, assertGedVersionParentReadable } from "./ged-parent-authorization.service";
 
 const documentId = "11111111-1111-4111-8111-111111111111";
 
@@ -38,6 +38,59 @@ describe("GED parent-record download authorization", () => {
       entityId: "42",
     });
     expect(mocks.exists).toHaveBeenCalledWith(canonicalType, "42");
+  });
+
+  it("accepts a live gamme UUID for later byte delivery", async () => {
+    const gammeId = "22222222-2222-4222-8222-222222222222";
+    mocks.links.mockResolvedValue([{ entity_type: "GAMME", entity_id: gammeId }]);
+    mocks.exists.mockResolvedValue(true);
+    mocks.profile.mockResolvedValue({
+      is_superadmin: false,
+      modules: [{ module_key: "pieces-techniques", allowed: true }],
+    });
+
+    await expect(assertGedVersionParentReadable(7, documentId)).resolves.toEqual({
+      moduleKey: "pieces-techniques",
+      entityType: "GAMME",
+      entityId: gammeId,
+    });
+  });
+
+  it("authorizes and canonicalizes a writable entity attachment before upload", async () => {
+    const gammeId = "22222222-2222-4222-8222-222222222222";
+    mocks.exists.mockResolvedValue(true);
+    mocks.profile.mockResolvedValue({
+      is_superadmin: false,
+      modules: [{ module_key: "pieces-techniques", allowed: true }],
+    });
+
+    await expect(assertGedParentLinkWritable(7, {
+      entity_type: "gamme",
+      entity_id: gammeId,
+    })).resolves.toEqual({
+      moduleKey: "pieces-techniques",
+      entityType: "GAMME",
+      entityId: gammeId,
+    });
+    expect(mocks.exists).toHaveBeenCalledWith("GAMME", gammeId);
+  });
+
+  it("rejects ghost and cross-module upload links without disclosing the parent", async () => {
+    mocks.exists.mockResolvedValueOnce(false);
+    await expect(assertGedParentLinkWritable(7, {
+      entity_type: "CLIENT",
+      entity_id: "CLI-404",
+    })).rejects.toMatchObject({ status: 404, code: "GED_VERSION_NOT_FOUND" });
+
+    mocks.exists.mockResolvedValueOnce(true);
+    mocks.profile.mockResolvedValueOnce({
+      is_superadmin: false,
+      modules: [{ module_key: "production", allowed: true }],
+    });
+    await expect(assertGedParentLinkWritable(7, {
+      entity_type: "CLIENT",
+      entity_id: "CLI-1",
+    })).rejects.toMatchObject({ status: 404, code: "GED_VERSION_NOT_FOUND" });
   });
 
   it.each(["ARTICLE", "STOCK_ARTICLE", "STOCK-ARTICLE"])("accepts the live UUID identity used by %s", async (entityType) => {

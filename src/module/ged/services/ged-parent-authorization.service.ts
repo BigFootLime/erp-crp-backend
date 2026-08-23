@@ -27,6 +27,7 @@ const PARENT_POLICIES: Readonly<Record<string, ParentPolicy>> = {
   PIECE_TECHNIQUE: { moduleKey: "pieces-techniques", canonicalType: "PIECE_TECHNIQUE", identity: "uuid" },
   "PIECE-TECHNIQUE": { moduleKey: "pieces-techniques", canonicalType: "PIECE_TECHNIQUE", identity: "uuid" },
   PIECE_TECHNIQUE_VERSION: { moduleKey: "pieces-techniques", canonicalType: "PIECE_TECHNIQUE_VERSION", identity: "uuid" },
+  GAMME: { moduleKey: "pieces-techniques", canonicalType: "GAMME", identity: "uuid" },
   ARTICLE: { moduleKey: "stock", canonicalType: "STOCK_ARTICLE", identity: "uuid" },
   STOCK_ARTICLE: { moduleKey: "stock", canonicalType: "STOCK_ARTICLE", identity: "uuid" },
   "STOCK-ARTICLE": { moduleKey: "stock", canonicalType: "STOCK_ARTICLE", identity: "uuid" },
@@ -65,6 +66,27 @@ export async function assertGedVersionParentReadable(actorUserId: number, docume
   const links = await repoInternalListDocumentParentLinks(documentId);
   if (links.length !== 1) opaqueNotFound();
   const link = links[0];
+  const policy = policyFor(link.entity_type);
+  const entityId = policy ? canonicalParentId(link.entity_id, policy.identity) : null;
+  if (!policy || !entityId) opaqueNotFound();
+  if (!await repoInternalParentLinkExists(policy.canonicalType, entityId)) opaqueNotFound();
+
+  const profile = await resolveAccessProfile(actorUserId);
+  if (!profile || !(profile.is_superadmin || profile.modules.some((entry) => entry.module_key === policy.moduleKey && entry.allowed))) {
+    opaqueNotFound();
+  }
+  return { moduleKey: policy.moduleKey, entityType: policy.canonicalType, entityId };
+}
+
+/**
+ * Validates a new business attachment before any file is promoted to the GED
+ * vault. This closes ghost links and cross-module uploads at the same boundary
+ * used for later byte delivery.
+ */
+export async function assertGedParentLinkWritable(
+  actorUserId: number,
+  link: { entity_type: string; entity_id: string }
+): Promise<{ moduleKey: string; entityType: string; entityId: string }> {
   const policy = policyFor(link.entity_type);
   const entityId = policy ? canonicalParentId(link.entity_id, policy.identity) : null;
   if (!policy || !entityId) opaqueNotFound();

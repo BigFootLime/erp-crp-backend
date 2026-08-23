@@ -15,6 +15,23 @@ export const uploadDocumentBodySchema = z.object({
   entity_type: z.string().trim().max(64).optional().nullable(),
   entity_id: z.string().trim().max(128).optional().nullable(),
   link_role: z.string().trim().max(64).optional().nullable(),
+}).superRefine((value, context) => {
+  const hasType = Boolean(value.entity_type);
+  const hasId = Boolean(value.entity_id);
+  if (hasType !== hasId) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: hasType ? ["entity_id"] : ["entity_type"],
+      message: "Le type et l’identifiant de l’entité doivent être fournis ensemble.",
+    });
+  }
+  if (value.link_role && (!hasType || !hasId)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["link_role"],
+      message: "Le rôle du lien exige une entité cible.",
+    });
+  }
 });
 
 export type UploadDocumentBody = z.infer<typeof uploadDocumentBodySchema>;
@@ -35,6 +52,7 @@ export const listQuerySchema = z.object({
   status: z.enum(GED_VERSION_STATUSES).optional().nullable(),
   entity_type: z.string().trim().max(64).optional().nullable(),
   entity_id: z.string().trim().max(128).optional().nullable(),
+  link_role: z.string().trim().max(64).optional().nullable(),
   include_archived: z
     .union([z.boolean(), z.string()])
     .optional()

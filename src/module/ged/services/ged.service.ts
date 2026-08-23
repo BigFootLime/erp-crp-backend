@@ -67,7 +67,7 @@ import {
   GedCommitUncertainError,
   type GedUploadSessionInternal,
 } from "../repository/ged.repository";
-import { assertGedVersionParentReadable } from "./ged-parent-authorization.service";
+import { assertGedParentLinkWritable, assertGedVersionParentReadable } from "./ged-parent-authorization.service";
 import type {
   GedAccessEvent,
   GedDocumentClass,
@@ -758,6 +758,10 @@ export async function uploadDocument(
 ): Promise<GedDocumentDetail> {
   assertGedCapability(actor.role, "upload");
 
+  const canonicalLink = input.link
+    ? await assertGedParentLinkWritable(actor.id, input.link)
+    : null;
+
   const documentClass = await repoGetClass(input.class_key);
   if (!documentClass) {
     throw new HttpError(400, "GED_CLASS_UNKNOWN", `Classe documentaire inconnue : ${input.class_key}.`);
@@ -849,8 +853,8 @@ export async function uploadDocument(
       if (input.link) {
         await repoAddLink(tx, {
           document_id: created.document_id,
-          entity_type: input.link.entity_type,
-          entity_id: input.link.entity_id,
+          entity_type: canonicalLink!.entityType,
+          entity_id: canonicalLink!.entityId,
           link_role: input.link.link_role ?? null,
           created_by: actor.id,
         });

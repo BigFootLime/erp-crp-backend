@@ -958,6 +958,8 @@ export async function repoListAccessEvents(documentId: string, limit = 100): Pro
 const SUMMARY_SELECT = `
   d.id::text AS id, d.code, d.class_key, c.label AS class_label, c.domain,
   d.title, d.description,
+  cv.id::text             AS current_version_id,
+  cv.original_name        AS current_original_name,
   cv.version_number::int AS current_version_number,
   cv.status::text        AS current_version_status,
   (SELECT COUNT(*) FROM public.ged_document_versions vv WHERE vv.document_id = d.id)::int AS versions_count,
@@ -974,6 +976,8 @@ function mapSummary(r: Record<string, unknown>): GedDocumentSummary {
     domain: String(r.domain),
     title: String(r.title),
     description: (r.description as string | null) ?? null,
+    current_version_id: (r.current_version_id as string | null) ?? null,
+    current_original_name: (r.current_original_name as string | null) ?? null,
     current_version_number: r.current_version_number == null ? null : Number(r.current_version_number),
     current_version_status: (r.current_version_status as GedVersionStatus | null) ?? null,
     versions_count: Number(r.versions_count ?? 0),
@@ -995,13 +999,30 @@ export async function repoListDocuments(filters: GedListFilters): Promise<GedLis
   if (filters.status) where.push(`cv.status = ${push(filters.status)}`);
   if (filters.q) {
     const like = `%${filters.q.trim().toLowerCase()}%`;
-    where.push(`(lower(d.title) LIKE ${push(like)} OR lower(d.code) LIKE ${push(like)})`);
+    const query = push(like);
+    where.push(`(
+      lower(d.title) LIKE ${query}
+      OR lower(d.code) LIKE ${query}
+      OR lower(COALESCE(d.description, '')) LIKE ${query}
+      OR EXISTS (
+        SELECT 1 FROM public.ged_document_versions qv
+         WHERE qv.document_id = d.id AND lower(qv.original_name) LIKE ${query}
+      )
+      OR EXISTS (
+        SELECT 1 FROM public.ged_document_links ql
+         WHERE ql.document_id = d.id
+           AND (lower(ql.entity_id) LIKE ${query} OR lower(COALESCE(ql.link_role, '')) LIKE ${query})
+      )
+    )`);
   }
-  if (filters.entity_type && filters.entity_id) {
+  const linkWhere: string[] = [];
+  if (filters.entity_type) linkWhere.push(`l.entity_type = ${push(filters.entity_type)}`);
+  if (filters.entity_id) linkWhere.push(`l.entity_id = ${push(filters.entity_id)}`);
+  if (filters.link_role) linkWhere.push(`l.link_role = ${push(filters.link_role)}`);
+  if (linkWhere.length) {
     where.push(
       `EXISTS (SELECT 1 FROM public.ged_document_links l
-                WHERE l.document_id = d.id AND l.entity_type = ${push(filters.entity_type)}
-                  AND l.entity_id = ${push(filters.entity_id)})`
+                WHERE l.document_id = d.id AND ${linkWhere.join(" AND ")})`
     );
   }
 
@@ -1210,6 +1231,7 @@ export async function repoInternalParentLinkExists(entityType: string, entityId:
     ORDRE_FABRICATION: { sql: "SELECT 1 FROM public.ordres_fabrication WHERE id = $1::bigint LIMIT 1", values: [entityId] },
     PIECE_TECHNIQUE: { sql: "SELECT 1 FROM public.pieces_techniques WHERE id = $1::uuid LIMIT 1", values: [entityId] },
     PIECE_TECHNIQUE_VERSION: { sql: "SELECT 1 FROM public.piece_technique_versions WHERE id = $1::uuid LIMIT 1", values: [entityId] },
+    GAMME: { sql: "SELECT 1 FROM public.gammes WHERE id = $1::uuid LIMIT 1", values: [entityId] },
     STOCK_ARTICLE: { sql: "SELECT 1 FROM public.articles WHERE id = $1::uuid LIMIT 1", values: [entityId] },
     OUTIL: { sql: "SELECT 1 FROM public.gestion_outils_outil WHERE id_outil = $1::integer LIMIT 1", values: [entityId] },
   };

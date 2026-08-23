@@ -115,6 +115,7 @@ export async function listDocuments(req: Request, res: Response, next: NextFunct
       status: q.status ?? null,
       entity_type: q.entity_type ?? null,
       entity_id: q.entity_id ?? null,
+      link_role: q.link_role ?? null,
       include_archived: Boolean(q.include_archived),
       page: q.page,
       page_size: q.page_size,
