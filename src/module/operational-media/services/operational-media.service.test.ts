@@ -108,15 +108,13 @@ describe("operational media authorization", () => {
     await expect(authorizeOperationalMediaRead({ assetId, userId: 7 })).rejects.toMatchObject({ status: 404 });
   });
 
-  it("checks every reused binding independently and audits/returns the passing binding", async () => {
+  it("rejects reused bindings as ambiguous instead of selecting a visible parent", async () => {
     const client = activeMachine({ owner_type: "client", owner_id: "client-1", module_key: "clients" });
     const tool = activeMachine({ owner_type: "outil", owner_id: "24", module_key: "outillage" });
     mocks.find.mockResolvedValue([client, tool]);
-    mocks.profile.mockResolvedValue(allow("outillage"));
-    mocks.ownerExists.mockResolvedValue(true);
-    await expect(authorizeOperationalMediaRead({ assetId, userId: 7 })).resolves.toMatchObject({ asset: { owner_type: "outil", owner_id: "24" } });
-    expect(mocks.ownerExists).toHaveBeenCalledTimes(1);
-    expect(mocks.ownerExists).toHaveBeenCalledWith("outil", "24");
+    await expect(authorizeOperationalMediaRead({ assetId, userId: 7 })).rejects.toMatchObject({ status: 404, code: "MEDIA_NOT_FOUND" });
+    expect(mocks.profile).not.toHaveBeenCalled();
+    expect(mocks.ownerExists).not.toHaveBeenCalled();
   });
 
   it("permits a superadmin only after the parent binding itself exists", async () => {

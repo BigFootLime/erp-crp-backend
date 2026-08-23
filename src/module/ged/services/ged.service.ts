@@ -67,6 +67,7 @@ import {
   GedCommitUncertainError,
   type GedUploadSessionInternal,
 } from "../repository/ged.repository";
+import { assertGedVersionParentReadable } from "./ged-parent-authorization.service";
 import type {
   GedAccessEvent,
   GedDocumentClass,
@@ -1137,6 +1138,11 @@ export async function downloadVersion(actor: GedActor, versionId: string): Promi
     assertGedCapability(actor.role, "upload");
   }
 
+  // Global GED capability is not a parent-record grant. Require one known,
+  // live parent and that module's current entitlement before storage is even
+  // resolved, so a guessed version UUID cannot become an IDOR primitive.
+  await assertGedVersionParentReadable(actor.id, ref.document_id);
+
   const blob = await resolveBlobForDownload(ref.storage_key);
 
   return {
@@ -1149,6 +1155,17 @@ export async function downloadVersion(actor: GedActor, versionId: string): Promi
     document_id: ref.document_id,
     version_id: ref.version_id,
   };
+}
+
+/** Durable receipt that must succeed before the controller sends any bytes. */
+export async function recordVersionDownloadAuthorized(actor: GedActor, result: DownloadResult): Promise<void> {
+  await repoLogAccess(pool, {
+    document_id: result.document_id,
+    version_id: result.version_id,
+    event_type: "READ",
+    actor_id: actor.id,
+    details: { delivery: "authorized", size_bytes: result.size_bytes },
+  });
 }
 
 export async function recordVersionDownload(
@@ -1164,5 +1181,5 @@ export async function recordVersionDownload(
     details: outcome === "DOWNLOAD"
       ? { size_bytes: result.size_bytes }
       : { expected_sha256: result.sha256 },
-  }).catch(() => undefined);
+  });
 }
