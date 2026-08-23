@@ -82,32 +82,68 @@ export function isVaultConfigured(): boolean {
  * `CERP_GED_REQUIRE_SENTINEL=false` n'est acceptable qu'en développement.
  */
 function sentinelRequired(): boolean {
+  // A production process may never weaken the mount-identity check through a
+  // stale deployment variable. Without the marker, a missing volume can look
+  // like an empty writable directory on the system disk.
+  if (process.env.NODE_ENV === "production") return true;
   const raw = cleanEnv(process.env.CERP_GED_REQUIRE_SENTINEL);
-  if (raw === null) return process.env.NODE_ENV === "production";
+  if (raw === null) return false;
   return raw.toLowerCase() !== "false" && raw !== "0";
 }
 
 function sentinelPath(root: string): string {
   const configured = cleanEnv(process.env.CERP_GED_SENTINEL);
-  return configured ? path.resolve(configured) : path.join(root, "..", SENTINEL_DEFAULT_NAME);
+  return configured ? path.resolve(configured) : path.join(root, SENTINEL_DEFAULT_NAME);
+}
+
+function assertSentinelPathInsideRoot(root: string, marker: string): void {
+  if (!isPathInsideDirectory(root, marker)) {
+    throw new HttpError(
+      503,
+      "GED_VAULT_UNAVAILABLE",
+      "La sentinelle du coffre doit appartenir au volume documentaire configuré."
+    );
+  }
 }
 
 async function assertSentinel(root: string): Promise<void> {
   if (!sentinelRequired()) return;
+  let handle: FileHandle | null = null;
   try {
-    await fs.access(sentinelPath(root));
+    const marker = sentinelPath(root);
+    assertSentinelPathInsideRoot(root, marker);
+    const markerStat = await fs.lstat(marker);
+    if (!markerStat.isFile()) throw new Error("GED sentinel is not a regular file");
+    // Opening the marker proves that the process can read the mounted volume,
+    // not merely that a directory entry with the right name exists.
+    handle = await fs.open(marker, "r");
+    await handle.read(Buffer.alloc(1), 0, 1, 0);
   } catch {
     throw new HttpError(
       503,
       "GED_VAULT_UNAVAILABLE",
-      "Le volume documentaire attendu n'est pas monté (sentinelle absente)."
+      "Le volume documentaire attendu n'est pas monté ou sa sentinelle n'est pas lisible."
     );
+  } finally {
+    await handle?.close().catch(() => undefined);
   }
 }
 
 /** Prépare et vérifie la racine du coffre. Lève 503 plutôt que de se rabattre. */
 export async function ensureVaultReady(): Promise<string> {
   const root = getVaultRoot();
+  try {
+    const rootStat = await fs.stat(root);
+    if (!rootStat.isDirectory()) throw new Error("GED vault root is not a directory");
+  } catch {
+    // Never let directory creation turn an absent mount point into a local
+    // fallback. The configured root itself is an operator-owned prerequisite.
+    throw new HttpError(
+      503,
+      "GED_VAULT_UNAVAILABLE",
+      "La racine configurée du coffre est absente ou inaccessible."
+    );
+  }
   await assertSentinel(root);
   try {
     ensurePrivateUploadDirectory(path.join(root, VAULT_SUBDIR), root);
@@ -122,6 +158,55 @@ export async function ensureVaultReady(): Promise<string> {
     );
   }
   return root;
+}
+
+/**
+ * Real bounded read/write probe used at production startup and by readiness.
+ * Directory creation alone is not proof that an NFS/SMB mount is writable: a
+ * read-only or disconnected volume can retain the expected directory tree.
+ */
+async function probeVaultReadWrite(root: string): Promise<void> {
+  const stagingRoot = path.join(root, STAGING_SUBDIR);
+  const probePath = path.join(stagingRoot, `.cerp-rw-probe-${crypto.randomUUID()}`);
+  const expected = crypto.randomBytes(32);
+  let handle: FileHandle | null = null;
+  let primaryError: unknown = null;
+  try {
+    handle = await fs.open(probePath, "wx+", 0o600);
+    await handle.writeFile(expected);
+    await handle.sync();
+    const actual = await fs.readFile(probePath);
+    if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) {
+      throw Object.assign(new Error("GED vault read/write probe mismatch"), { code: "EIO" });
+    }
+  } catch (error) {
+    primaryError = error;
+  } finally {
+    await handle?.close().catch((error) => { primaryError ??= error; });
+  }
+
+  let cleanupError: unknown = null;
+  try {
+    await fs.unlink(probePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") cleanupError = error;
+  }
+
+  if (primaryError || cleanupError) {
+    throw new HttpError(
+      503,
+      "GED_VAULT_UNAVAILABLE",
+      cleanupError
+        ? "Le coffre documentaire ne permet pas de nettoyer son contrôle de lecture/écriture."
+        : "Le coffre documentaire ne répond pas au contrôle de lecture/écriture."
+    );
+  }
+}
+
+/** Mandatory production startup gate. It returns no physical path. */
+export async function preflightVaultStorage(): Promise<void> {
+  const root = await ensureVaultReady();
+  await probeVaultReadWrite(root);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -686,8 +771,17 @@ export async function checkVaultHealth(): Promise<VaultHealth> {
   }
 
   try {
-    await fs.access(sentinelPath(root));
-    sentinelPresent = true;
+    const markerPath = sentinelPath(root);
+    assertSentinelPathInsideRoot(root, markerPath);
+    const marker = await fs.lstat(markerPath);
+    if (!marker.isFile()) throw new Error("GED sentinel is not a regular file");
+    const handle = await fs.open(markerPath, "r");
+    try {
+      await handle.read(Buffer.alloc(1), 0, 1, 0);
+      sentinelPresent = true;
+    } finally {
+      await handle.close();
+    }
   } catch {
     if (sentinelRequired() && detail === null) {
       detail = "Sentinelle de volume absente : le montage attendu n'est pas en place.";
@@ -696,7 +790,11 @@ export async function checkVaultHealth(): Promise<VaultHealth> {
 
   if (rootPresent) {
     try {
+      await assertSentinel(root);
       ensurePrivateUploadDirectory(path.join(root, VAULT_SUBDIR), root);
+      ensurePrivateUploadDirectory(path.join(root, STAGING_SUBDIR), root);
+      ensurePrivateUploadDirectory(path.join(root, QUARANTINE_SUBDIR), root);
+      await probeVaultReadWrite(root);
       writable = true;
     } catch {
       if (detail === null) detail = "Le coffre n'est pas accessible en écriture.";
