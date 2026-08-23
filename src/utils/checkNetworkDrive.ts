@@ -1,36 +1,10 @@
-import fs from "fs";
-import path from "path";
-import { getImagesRootPath } from "./imageStorage";
+import { checkOperationalMediaStorage } from "../module/operational-media/services/operational-media-health.service";
 
 /**
- * Vérifie l’accessibilité du dossier d’upload (local ou réseau)
- * et d’un fichier test (par défaut : FRAISE-A-FILETER.svg)
+ * Backwards-compatible startup probe. The old sentinel SVG made readiness
+ * depend on arbitrary content; this checks the private media root itself.
  */
-export const checkNetworkDrive = async () => {
-    const basePath = getImagesRootPath();
-
-    const testFile = "FRAISE-A-FILETER.svg";
-    const fullTestPath = path.join(basePath, testFile);
-
-    console.log(`🔍 Vérification du dossier d’upload : ${basePath}`);
-
-    return new Promise<void>((resolve, reject) => {
-        fs.access(basePath, fs.constants.F_OK, (err) => {
-            if (err) {
-                console.error(`❌ Le dossier "${basePath}" est **inaccessible**.`);
-                return reject();
-            }
-
-            console.log("✅ Le dossier est accessible");
-
-            fs.access(fullTestPath, fs.constants.F_OK, (errFile) => {
-                if (errFile) {
-                    console.warn(`⚠️ Le fichier test "${testFile}" est introuvable dans le dossier.`);
-                } else {
-                    console.log(`✅ Le fichier test "${testFile}" est lisible`);
-                }
-                resolve();
-            });
-        });
-    });
-};
+export async function checkNetworkDrive(): Promise<void> {
+  const storage = await checkOperationalMediaStorage();
+  if (!storage.ready) throw new Error(`OPERATIONAL_MEDIA_STORAGE_${storage.reason ?? "UNAVAILABLE"}`);
+}

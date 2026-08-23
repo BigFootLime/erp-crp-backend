@@ -6,7 +6,9 @@ import type { PoolClient } from "pg"
 import db from "../../../config/database"
 import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction"
 import { enqueueEntityChanged } from "../../../shared/realtime/realtime-outbox.service"
-import { buildPublicImageUrl, deleteStoredImageFile, normalizeStoredImagePath } from "../../../utils/imageStorage"
+import { deleteStoredImageFile, normalizeStoredImagePath } from "../../../utils/imageStorage"
+import { findAssetIdsByStorageKeys } from "../../operational-media/repository/operational-media.repository"
+import { promoteOperationalImage } from "../../operational-media/services/operational-media-promotion.service"
 import { HttpError } from "../../../utils/httpError"
 import {
   type UploadCommitReconciliation,
@@ -155,13 +157,13 @@ type SingleUploadTransactionOptions<T> = Readonly<{
   mutate: (client: PoolClient) => Promise<T>
   persist: (client: PoolClient, result: T, storedPath: string) => Promise<void>
   readFresh: (result: T) => Promise<Record<string, unknown> | undefined>
-  decorate?: (result: T, storedPath: string) => T
+  decorate?: (result: T, storedPath: string) => Promise<T>
 }>
 
 async function withSingleOutillageUpload<T>(options: SingleUploadTransactionOptions<T>): Promise<T> {
   const client = await db.connect()
   let expected: ExpectedOutillageUpload[] = []
-  return withUploadTransaction({
+  const completed = await withUploadTransaction({
     client,
     files: options.file ? [options.file] : [],
     context: options.context,
@@ -169,14 +171,14 @@ async function withSingleOutillageUpload<T>(options: SingleUploadTransactionOpti
       let result = await options.mutate(client) as T
       if (!options.file) return result
 
-      const promoted = await options.promote(options.file)
-      await options.persist(client, result, promoted.storedPath)
-      expected = [{
+       const promoted = await options.promote(options.file)
+       await options.persist(client, result, promoted.storedPath)
+       await requireOperationalImagePromotion(client, [promoted])
+       expected = [{
         column: options.column,
         storedPath: promoted.storedPath,
         absolutePath: promoted.absolutePath,
       }]
-      if (options.decorate) result = options.decorate(result, promoted.storedPath)
       return result
     },
     reconcile: async (result) => classifyOutillageUploadCommit(
@@ -185,6 +187,32 @@ async function withSingleOutillageUpload<T>(options: SingleUploadTransactionOpti
       options.operation
     ),
   })
+  if (!options.file || !options.decorate || expected.length === 0) return completed
+  return options.decorate(completed, expected[0].storedPath)
+}
+
+async function resolveMediaId(storedPath: string) {
+  const ids = await findAssetIdsByStorageKeys([storedPath])
+  const assetId = ids.get(normalizeStoredImagePath(storedPath) ?? "") ?? null
+  return assetId ? { asset_id: assetId, status: "AVAILABLE" as const } : null
+}
+
+async function requireOperationalImagePromotion(client: PoolClient, promoted: readonly PromotedOutillageFile[]) {
+  for (const entry of promoted) {
+    const result = await promoteOperationalImage({ tx: client, storedPath: entry.storedPath, file: entry.file })
+    if (!result.activated) {
+      // The enclosing upload transaction rolls back the parent/path binding;
+      // never acknowledge a business write whose private image cannot read.
+      throw new HttpError(503, "OPERATIONAL_MEDIA_NOT_READY", "Le média sécurisé n'a pas pu être activé.")
+    }
+    // `tool-media` deliberately preserves PDFs for plans and sketches, but
+    // the primary tool image feeds image-only UI surfaces. Reject a PDF in
+    // that field after byte verification and before COMMIT so the binding and
+    // activation both roll back together.
+    if (entry.field === "image" && result.mime_type === "application/pdf") {
+      throw new HttpError(422, "OPERATIONAL_MEDIA_IMAGE_TYPE_INVALID", "L'image de l'outil doit être un PNG, JPEG, WebP ou GIF.")
+    }
+  }
 }
 
 export const outilService = {
@@ -273,6 +301,7 @@ export const outilService = {
           plan: promoted.plan?.storedPath,
           image: promoted.image?.storedPath,
         })
+        await requireOperationalImagePromotion(client, Object.values(promoted).filter((entry): entry is PromotedOutillageFile => Boolean(entry)))
         await enqueueEntityChanged(client, {
           entityType: "OUTIL",
           entityId: String(id_outil),
@@ -325,6 +354,7 @@ export const outilService = {
           plan: promoted.plan?.storedPath,
           image: promoted.image?.storedPath,
         })
+        await requireOperationalImagePromotion(client, Object.values(promoted).filter((entry): entry is PromotedOutillageFile => Boolean(entry)))
         await enqueueEntityChanged(client, {
           entityType: "OUTIL",
           entityId: String(id_outil),
@@ -621,7 +651,7 @@ export const outilSupportService = {
         `SELECT image_path FROM gestion_outils_famille WHERE id_famille = $1`,
         [result.value]
       )).rows[0],
-      decorate: (result, storedPath) => ({ ...result, imagePath: buildPublicImageUrl(storedPath) }),
+      decorate: async (result, storedPath) => ({ ...result, imagePath: await resolveMediaId(storedPath) }),
     })
   },
   async updateFamille(id_famille: number, nom_famille: string, file?: Express.Multer.File) {
@@ -638,7 +668,7 @@ export const outilSupportService = {
         `SELECT image_path FROM gestion_outils_famille WHERE id_famille = $1`,
         [id_famille]
       )).rows[0],
-      decorate: (result, storedPath) => ({ ...result, imagePath: buildPublicImageUrl(storedPath) }),
+      decorate: async (result, storedPath) => ({ ...result, imagePath: await resolveMediaId(storedPath) }),
     })
   },
   getFabricants: () => outilRepository.getFabricants(),
@@ -690,7 +720,7 @@ export const outilSupportService = {
         `SELECT logo FROM gestion_outils_fabricant WHERE id_fabricant = $1`,
         [id_fabricant]
       )).rows[0],
-      decorate: (result, storedPath) => ({ ...result, logo: buildPublicImageUrl(storedPath) }),
+      decorate: async (result, storedPath) => ({ ...result, logo: await resolveMediaId(storedPath) }),
     })
   },
   createFournisseur: (data: {
@@ -730,7 +760,7 @@ export const outilSupportService = {
         `SELECT image_path FROM gestion_outils_geometrie WHERE id_geometrie = $1`,
         [result.value]
       )).rows[0],
-      decorate: (result, storedPath) => ({ ...result, imagePath: buildPublicImageUrl(storedPath) }),
+      decorate: async (result, storedPath) => ({ ...result, imagePath: await resolveMediaId(storedPath) }),
     })
   },
   async updateGeometrie(
@@ -752,7 +782,7 @@ export const outilSupportService = {
         `SELECT image_path FROM gestion_outils_geometrie WHERE id_geometrie = $1`,
         [id_geometrie]
       )).rows[0],
-      decorate: (result, storedPath) => ({ ...result, imagePath: buildPublicImageUrl(storedPath) }),
+      decorate: async (result, storedPath) => ({ ...result, imagePath: await resolveMediaId(storedPath) }),
     })
   },
   getRevetements: (id_fabricant?: number) => outilRepository.getRevetements(id_fabricant),

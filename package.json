@@ -23,6 +23,7 @@
     "db:migrations:preflight": "node scripts/migrations/release-gate.js preflight",
     "db:migrations:integrity": "node scripts/migrations/release-gate.js integrity",
     "db:migrations:rehearse": "node scripts/migrations/release-gate.js rehearse",
+    "operational-media:reconcile": "node dist/module/operational-media/scripts/reconcile-legacy.js",
     "auth:mfa:recover": "node scripts/auth/recover-privileged-mfa.mjs",
     "einvoice:super-pdp:smoke": "node scripts/electronic-invoicing/super-pdp-smoke.mjs",
     "e2e:migrate:isolated": "node scripts/e2e/migrate-isolated.js",

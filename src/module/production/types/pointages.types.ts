@@ -14,7 +14,8 @@ export type PointageMachineLite = {
   id: string;
   code: string;
   name: string;
-  image_url: string | null;
+  image_url: null;
+  image_asset: { asset_id: string; status: "AVAILABLE" } | null;
 };
 
 export type PointagePosteLite = {

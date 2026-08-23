@@ -178,6 +178,15 @@ export async function sendSecureStoredFile(
     mimeType?: string | null;
     download?: boolean;
     expectedSha256?: string;
+    /**
+     * Read verified bytes into memory and send that immutable snapshot. This is
+     * deliberately opt-in: regular document downloads retain their streaming
+     * behaviour, while small high-sensitivity assets can close the in-place
+     * write window between hashing an fd and piping it to the response.
+     */
+    snapshotVerifiedBytes?: boolean;
+    /** Maximum accepted snapshot size, required when snapshotting is enabled. */
+    maxSnapshotBytes?: number;
     integrityError?: Readonly<{ status: number; code: string; message: string }>;
   }
 ): Promise<SecureStoredFileSendOutcome> {
@@ -186,6 +195,7 @@ export async function sendSecureStoredFile(
   let responseClosed = res.destroyed;
   let settleStreaming: ((outcome: SecureStoredFileSendOutcome) => void) | null = null;
   let closeHandlePromise: Promise<void> | null = null;
+  let verifiedSnapshot: Buffer | null = null;
 
   const closeHandleOnce = (): Promise<void> => {
     if (!opened) return Promise.resolve();
@@ -206,22 +216,48 @@ export async function sendSecureStoredFile(
   // the potentially long integrity pass.
   res.once("close", onResponseClose);
   try {
+    const integrityFailure = () => options.integrityError ?? {
+      status: 503,
+      code: "DOCUMENT_INTEGRITY_ERROR",
+      message: "L’intégrité du document ne peut pas être confirmée.",
+    };
+    // A snapshot without a full expected digest would silently fall back to a
+    // mutable stream. Reject it before opening or allocating anything.
+    if (options.snapshotVerifiedBytes && (
+      typeof options.expectedSha256 !== "string" || !/^[a-f0-9]{64}$/i.test(options.expectedSha256)
+    )) {
+      const failure = integrityFailure();
+      throw new HttpError(failure.status, failure.code, failure.message);
+    }
     if (responseClosed || res.destroyed) return "aborted";
     opened = await openSecureDownloadPath(options.filePath, options.allowedRoots);
     if (responseClosed || res.destroyed) return "aborted";
 
     if (options.expectedSha256) {
+      if (options.snapshotVerifiedBytes && (
+        !Number.isSafeInteger(options.maxSnapshotBytes)
+        || (options.maxSnapshotBytes ?? 0) < 0
+        || opened.size > (options.maxSnapshotBytes ?? 0)
+      )) {
+        const failure = integrityFailure();
+        throw new HttpError(failure.status, failure.code, failure.message);
+      }
       const hash = createHash("sha256");
       if (opened.size > 0) {
         const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, opened.size));
+        const snapshot = options.snapshotVerifiedBytes ? Buffer.allocUnsafe(opened.size) : null;
         let offset = 0;
         let integrityHookCalled = false;
         while (offset < opened.size) {
           if (responseClosed || res.destroyed) return "aborted";
           const requested = Math.min(buffer.length, opened.size - offset);
           const { bytesRead } = await opened.handle.read(buffer, 0, requested, offset);
-          if (bytesRead === 0) break;
+          if (bytesRead === 0) {
+            const failure = integrityFailure();
+            throw new HttpError(failure.status, failure.code, failure.message);
+          }
           hash.update(buffer.subarray(0, bytesRead));
+          if (snapshot) buffer.copy(snapshot, offset, 0, bytesRead);
           offset += bytesRead;
           if (!integrityHookCalled && secureDownloadHook) {
             integrityHookCalled = true;
@@ -233,16 +269,14 @@ export async function sendSecureStoredFile(
             if (responseClosed || res.destroyed) return "aborted";
           }
         }
+        verifiedSnapshot = snapshot;
       }
       if (responseClosed || res.destroyed) return "aborted";
       if (hash.digest("hex") !== options.expectedSha256.toLowerCase()) {
-        const failure = options.integrityError ?? {
-          status: 503,
-          code: "DOCUMENT_INTEGRITY_ERROR",
-          message: "L’intégrité du document ne peut pas être confirmée.",
-        };
+        const failure = integrityFailure();
         throw new HttpError(failure.status, failure.code, failure.message);
       }
+      if (options.snapshotVerifiedBytes && opened.size === 0) verifiedSnapshot = Buffer.alloc(0);
     }
 
     await secureDownloadHook?.("before-stream", {
@@ -253,9 +287,9 @@ export async function sendSecureStoredFile(
     if (responseClosed || res.destroyed) return "aborted";
 
     setSecureDownloadHeaders(res, options);
-    res.setHeader("Content-Length", String(opened.size));
+    res.setHeader("Content-Length", String(verifiedSnapshot?.length ?? opened.size));
     if (responseClosed || res.destroyed) return "aborted";
-    if (opened.size === 0) {
+    if (verifiedSnapshot || opened.size === 0) {
       return await new Promise<SecureStoredFileSendOutcome>((resolve) => {
         let settled = false;
         const settle = (outcome: SecureStoredFileSendOutcome) => {
@@ -269,7 +303,7 @@ export async function sendSecureStoredFile(
         const close = () => settle(res.writableFinished ? "completed" : "aborted");
         res.once("finish", finish);
         res.once("close", close);
-        res.end();
+        res.end(verifiedSnapshot ?? undefined);
       });
     }
 

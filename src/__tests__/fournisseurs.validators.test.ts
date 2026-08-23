@@ -36,6 +36,12 @@ describe("fournisseurs validators (#163)", () => {
     expect(updateFournisseurSchema.safeParse({ body: { code: "FOU-1" } }).success).toBe(false)
   })
 
+  it("never accepts a client-supplied supplier media storage key", () => {
+    expect(createFournisseurSchema.safeParse({ body: { nom: "ACME", logo: "machines/a.png" } }).success).toBe(false)
+    expect(updateFournisseurSchema.safeParse({ body: { logo: "clients/private.png" } }).success).toBe(false)
+    expect(updateFournisseurSchema.safeParse({ body: { logo: null } }).success).toBe(true)
+  })
+
   it("catalogue enforces the incoterm enum and requires designation + type", () => {
     expect(createCatalogueSchema.safeParse({ body: { type: "MATIERE", designation: "Acier", incoterm: "EXW" } }).success).toBe(true)
     expect(createCatalogueSchema.safeParse({ body: { type: "MATIERE", designation: "Acier", incoterm: "ZZZ" } }).success).toBe(false)

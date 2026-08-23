@@ -19,6 +19,8 @@ import {
   canonicalizeAuthEmail,
   canonicalizeAuthUsername,
 } from "../../auth/domain/auth-identity";
+import { findAssetIdsByStorageKeys } from "../../operational-media/repository/operational-media.repository";
+import { normalizeStoredImagePath } from "../../../utils/imageStorage";
 
 export type AdminUserListRow = {
   id: number;
@@ -54,7 +56,8 @@ export type AdminUserDetailRow = {
   employment_date: string | null;
   employment_end_date: string | null;
   national_id: string | null;
-  profile_picture: string | null;
+  profile_picture: null;
+  profile_picture_asset: { asset_id: string; status: "AVAILABLE" } | null;
   last_login: string | null;
   status: string | null;
   created_at: string | null;
@@ -395,9 +398,13 @@ export async function repoListUsers(): Promise<AdminUserListRow[]> {
   return rows.map((row) => ({ ...row, is_superadmin: superadminIds.has(row.id) }));
 }
 
+type AdminUserDetailDbRow = Omit<AdminUserDetailRow, "profile_picture" | "profile_picture_asset"> & {
+  profile_picture: string | null;
+};
+
 export async function repoGetUserById(userId: number): Promise<AdminUserDetailRow | null> {
   const superadminIds = await readSuperadminIds();
-  const { rows } = await pool.query<AdminUserDetailRow>(
+  const { rows } = await pool.query<AdminUserDetailDbRow>(
     `
       SELECT
         u.id::int AS id,
@@ -444,7 +451,15 @@ export async function repoGetUserById(userId: number): Promise<AdminUserDetailRo
     [userId]
   );
   const row = rows[0];
-  return row ? { ...row, is_superadmin: superadminIds.has(row.id) } : null;
+  if (!row) return null;
+  const assets = await findAssetIdsByStorageKeys([row.profile_picture]);
+  const assetId = assets.get(normalizeStoredImagePath(row.profile_picture) ?? "") ?? null;
+  return {
+    ...row,
+    profile_picture: null,
+    profile_picture_asset: assetId ? { asset_id: assetId, status: "AVAILABLE" } : null,
+    is_superadmin: superadminIds.has(row.id),
+  };
 }
 
 export async function repoProvisionUser(input: {

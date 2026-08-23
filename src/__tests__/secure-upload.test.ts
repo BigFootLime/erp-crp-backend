@@ -659,7 +659,12 @@ describe("téléchargement sécurisé et compatibilité historique", () => {
     ]);
   });
 
-  function downloadApp(filePath: string, expectedSha256?: string, onSettled?: () => void) {
+  function downloadApp(
+    filePath: string,
+    expectedSha256?: string,
+    onSettled?: () => void,
+    snapshotVerifiedBytes = false,
+  ) {
     const app = express();
     app.get("/download", async (_req, res, next) => {
       try {
@@ -670,6 +675,7 @@ describe("téléchargement sécurisé et compatibilité historique", () => {
           mimeType: "text/plain",
           download: true,
           expectedSha256,
+          ...(snapshotVerifiedBytes ? { snapshotVerifiedBytes: true, maxSnapshotBytes: 25 * 1024 * 1024 } : {}),
         });
       } catch (error) {
         next(error);
@@ -755,6 +761,107 @@ describe("téléchargement sécurisé et compatibilité historique", () => {
 
     expect(response.status).toBe(200);
     expect(Buffer.from(response.text, "utf8")).toEqual(content);
+  });
+
+  it("diffuse le snapshot vérifié même si le même inode est réécrit avant l'envoi", async () => {
+    const candidate = path.join(root, "operational-media.png");
+    const verified = Buffer.from("verified-operational-bytes");
+    const replacement = Buffer.alloc(verified.length, 0x78);
+    const expectedSha256 = (await import("node:crypto")).createHash("sha256").update(verified).digest("hex");
+    await fs.writeFile(candidate, verified);
+
+    setSecureDownloadHookForTests(async (phase) => {
+      if (phase === "before-stream") await fs.writeFile(candidate, replacement);
+    });
+
+    const response = await request(downloadApp(candidate, expectedSha256, undefined, true)).get("/download");
+
+    expect(response.status).toBe(200);
+    expect(response.text).toBe(verified.toString("utf8"));
+    expect(response.headers["content-length"]).toBe(String(verified.length));
+    expect(await fs.readFile(candidate)).toEqual(replacement);
+  });
+
+  it("refuse un snapshot opérationnel qui dépasse sa borne de mémoire", async () => {
+    const candidate = path.join(root, "oversized-operational-media.bin");
+    const content = Buffer.alloc(9, 0x61);
+    const expectedSha256 = (await import("node:crypto")).createHash("sha256").update(content).digest("hex");
+    await fs.writeFile(candidate, content);
+    const allocation = vi.spyOn(Buffer, "allocUnsafe");
+
+    const app = express();
+    app.get("/download", async (_req, res, next) => {
+      try {
+        await sendSecureStoredFile(res, {
+          filePath: candidate,
+          allowedRoots: [root],
+          filename: "media.bin",
+          expectedSha256,
+          snapshotVerifiedBytes: true,
+          maxSnapshotBytes: 8,
+          integrityError: { status: 503, code: "MEDIA_INTEGRITY_ERROR", message: "Média indisponible." },
+        });
+      } catch (error) { next(error); }
+    });
+    app.use(errorHandler());
+
+    const response = await request(app).get("/download");
+    expect(response.status).toBe(503);
+    expect(response.body.code).toBe("MEDIA_INTEGRITY_ERROR");
+    // The cap is evaluated before either the transfer buffer or snapshot can
+    // allocate memory from an attacker-controlled file size.
+    expect(allocation).not.toHaveBeenCalled();
+  });
+
+  it("refuses snapshot mode without a complete expected SHA-256", async () => {
+    const candidate = path.join(root, "snapshot-without-digest.bin");
+    await fs.writeFile(candidate, "not-to-be-streamed");
+    const response = await request(downloadApp(candidate, undefined, undefined, true)).get("/download");
+
+    expect(response.status).toBe(503);
+    expect(response.body.code).toBe("DOCUMENT_INTEGRITY_ERROR");
+  });
+
+  it("reports a buffered snapshot as aborted when the response closes before finish", async () => {
+    const candidate = path.join(root, "snapshot-aborted.bin");
+    const content = Buffer.from("snapshot-that-must-not-be-audited");
+    const expectedSha256 = (await import("node:crypto")).createHash("sha256").update(content).digest("hex");
+    await fs.writeFile(candidate, content);
+
+    let outcome: string | undefined;
+    let settleHandler!: () => void;
+    const handlerSettled = new Promise<void>((resolve) => { settleHandler = resolve; });
+    const app = express();
+    app.get("/download", async (_req, res, next) => {
+      try {
+        outcome = await sendSecureStoredFile(res, {
+          filePath: candidate,
+          allowedRoots: [root],
+          filename: "media.bin",
+          expectedSha256,
+          snapshotVerifiedBytes: true,
+          maxSnapshotBytes: 25 * 1024 * 1024,
+        });
+      } catch (error) { next(error); }
+      finally { settleHandler(); }
+    });
+    app.use(errorHandler());
+    setSecureDownloadHookForTests(async (phase, context) => {
+      if (phase !== "before-stream") return;
+      context.response?.destroy();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+
+    await Promise.race([
+      request(app).get("/download").catch(() => undefined),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("snapshot abort timeout")), 1_000)),
+    ]);
+    await Promise.race([
+      handlerSettled,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("snapshot abort handler timeout")), 1_000)),
+    ]);
+
+    expect(outcome).toBe("aborted");
   });
 
   it("interrompt l'intégrité si le client ferme et ne ferme le handle qu'une fois", async () => {

@@ -19,17 +19,21 @@ export type PromotedOutillageFile = Readonly<{
   file: Express.Multer.File
   absolutePath: string
   storedPath: string
+  /** Set only for the three tool fields; support uploads are image-only. */
+  field?: keyof OutillageToolUploadFiles
 }>
 
 async function promoteOutillageFile(
   file: Express.Multer.File,
-  subdirectory: "outils" | "fabricants" | "familles" | "geometries"
+  subdirectory: "outils" | "fabricants" | "familles" | "geometries",
+  field?: keyof OutillageToolUploadFiles,
 ): Promise<PromotedOutillageFile> {
   const absolutePath = await promoteSecureUpload(file, ensureImagesSubdir(OUTILLAGE_ROOT, subdirectory))
   return {
     file,
     absolutePath,
     storedPath: toStoredImagePath(OUTILLAGE_ROOT, subdirectory, file.filename),
+    field,
   }
 }
 
@@ -37,7 +41,7 @@ export async function promoteOutillageToolFiles(files: OutillageToolUploadFiles)
   const promoted: Partial<Record<keyof OutillageToolUploadFiles, PromotedOutillageFile>> = {}
   for (const field of ["esquisse", "plan", "image"] as const) {
     const file = files[field]
-    if (file) promoted[field] = await promoteOutillageFile(file, "outils")
+    if (file) promoted[field] = await promoteOutillageFile(file, "outils", field)
   }
   return promoted
 }
