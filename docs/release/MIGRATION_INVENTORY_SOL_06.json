@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-08-23T15:16:56.629Z",
+  "generated_at": "2026-08-23T15:32:41.521Z",
   "source": "filesystem scan of db/patches and db/patches/support",
-  "patch_count": 172,
-  "support_file_count": 308,
-  "recent_patch_count": 114,
+  "patch_count": 174,
+  "support_file_count": 314,
+  "recent_patch_count": 116,
   "recent_support_gaps": [
     {
       "filename": "20260706_affaire_allow_projet.sql",
@@ -208,10 +208,10 @@
   ],
   "risk_totals": {
     "destructive_ddl": 2,
-    "destructive_dml": 9,
-    "data_rewrite": 104,
-    "table_lock": 131,
-    "blocking_index": 127,
+    "destructive_dml": 10,
+    "data_rewrite": 106,
+    "table_lock": 132,
+    "blocking_index": 129,
     "enum_change": 1
   },
   "patches": [
@@ -3146,6 +3146,25 @@
     },
     {
       "order": 172,
+      "filename": "20260823_of_readiness_release_617.sql",
+      "sha256": "4188766f7466b912c583b2437d53015fc2fd85bc4c49af31bac00559732cbdfa",
+      "bytes": 4693,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "destructive-dml",
+        "data-rewrite",
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 173,
       "filename": "20260823_operational_media_access_611.sql",
       "sha256": "cad0368b00c3bff67a9390a0e1e9669bca37d0fa8bd4f89b4854aef5a1505415",
       "bytes": 11961,
@@ -3160,6 +3179,23 @@
         "destructive-dml",
         "data-rewrite",
         "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 174,
+      "filename": "20260823_subcontract_work_packages_626.sql",
+      "sha256": "0e91cdb25aaa69da4db64984f08d10d8ada34b52f98d4c7dece3bd31b6ee11b2",
+      "bytes": 6852,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite",
         "blocking-index"
       ]
     }

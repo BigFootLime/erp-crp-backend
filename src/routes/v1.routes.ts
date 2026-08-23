@@ -53,6 +53,7 @@ import clientPortalRoutes from "../module/client-portal/routes/client-portal.rou
 import clientPortalAdminRoutes from "../module/client-portal/routes/client-portal-admin.routes";
 import identificationRoutes from "../module/identification/identification.routes";
 import operationalMediaRoutes from "../module/operational-media/routes/operational-media.routes";
+import subcontractRoutes from "../module/subcontract/subcontract.routes";
 
 import traceabilityRoutes from "../module/traceability/routes/traceability.routes"
 import traceability360Routes from "../module/traceability/routes/traceability-360.routes"
@@ -174,6 +175,7 @@ router.use("/stock", stockRoutes);
 router.use("/dossiers", operationDossiersRoutes);
 router.use("/fournisseurs", fournisseursRoutes);
 router.use("/commandes-fournisseurs", commandeFournisseurRoutes); // Module « Commandes fournisseurs » (#172) — BCF
+router.use("/subcontract-work-packages", subcontractRoutes); // #626
 router.use("/procurement-reliability", procurementReliabilityRoutes); // SOL-18 — scorecards et rapprochement achats
 router.use("/replenishment-proposals", replenishmentProposalRoutes); // FEAT-CERP-0003 — suggestions sans achat automatique
 router.use("/receptions", receptionsRoutes);
