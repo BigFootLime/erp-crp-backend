@@ -108,6 +108,29 @@ type DeferredScan = Readonly<{
   releaseFile: UploadedFile & { path: string };
 }>;
 
+async function queueIdentityPdfAfterImageUpload(input: {
+  classKey: string;
+  entityType: string | null | undefined;
+  entityId: string | null | undefined;
+  versionId: string;
+  actorId: number;
+}): Promise<void> {
+  if (input.classKey !== "IMAGE_ENTITE" || input.entityType !== "CLIENT" || !input.entityId) return;
+  try {
+    const { repoQueueClientProfileAfterLogoUpload } = await import("../../client/repository/client.repository");
+    await repoQueueClientProfileAfterLogoUpload(input.entityId, input.versionId, input.actorId);
+  } catch (error) {
+    // The GED commit is already durable: never turn a successful logo upload into a
+    // misleading client error. The explicit profile reissue remains available in UI.
+    logger.error("[GED_ENTITY_IMAGE_PDF_QUEUE_FAILED]", {
+      entity_type: input.entityType,
+      entity_id: input.entityId,
+      version_id: input.versionId,
+      error: error instanceof Error ? error.name : "unknown",
+    });
+  }
+}
+
 async function coordinateGedBlobCleanup(
   sha256: string,
   files: readonly { path: string }[],
@@ -708,6 +731,13 @@ export async function releaseQuarantine(actor: GedActor, sessionId: string): Pro
       error: error instanceof Error ? error.name : "unknown",
     });
   }
+  await queueIdentityPdfAfterImageUpload({
+    classKey: session.class_key,
+    entityType: metadata.kind === "new_document" ? metadata.link?.entity_type : null,
+    entityId: metadata.kind === "new_document" ? metadata.link?.entity_id : null,
+    versionId: transactionResult.versionId,
+    actorId: actor.id,
+  });
   return readDetailOrFail(transactionResult.documentId);
 }
 
@@ -894,6 +924,13 @@ export async function uploadDocument(
   }
 
   if (deferredScan) await cleanupPublishedQuarantine(deferredScan);
+  await queueIdentityPdfAfterImageUpload({
+    classKey: documentClass.class_key,
+    entityType: canonicalLink?.entityType,
+    entityId: canonicalLink?.entityId,
+    versionId: transactionResult.versionId,
+    actorId: actor.id,
+  });
   // Relecture APRÈS le commit : `repoGetDocumentDetail` ouvre sa propre
   // connexion et ne verrait rien d'une transaction encore ouverte.
   return readDetailOrFail(transactionResult.documentId);

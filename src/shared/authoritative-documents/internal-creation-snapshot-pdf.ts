@@ -1,5 +1,7 @@
 import { renderCerpDocument, type CerpLineRow } from "../pdf/cerp-document";
 import { issuerIdentityLine, issuerLegalMentions } from "../pdf/legal-mentions";
+import { readGedEntityImageVersion } from "../pdf/ged-entity-image";
+import { authoritativePdfGedEntityType } from "./authoritative-document.service";
 import type { AuthoritativePdfArchiveRecord } from "./authoritative-document.types";
 import type { InternalCreationSnapshot } from "./internal-creation-snapshot";
 
@@ -23,6 +25,13 @@ export function parseInternalCreationSnapshot(archive: AuthoritativePdfArchiveRe
   const summary = source.summary;
   const sections = source.sections;
   if (source.type !== "INTERNAL_CREATION_SNAPSHOT" || !clean(source.entity_label, 120) || !clean(source.reference, 160) || !isPlainRecord(source.issuer)) invalidSnapshot();
+  if (source.entity_image !== undefined) {
+    if (
+      !isPlainRecord(source.entity_image)
+      || typeof source.entity_image.ged_version_id !== "string"
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(source.entity_image.ged_version_id)
+    ) invalidSnapshot();
+  }
   if (!Array.isArray(summary) || !Array.isArray(sections)) {
     throw new Error("INTERNAL_CREATION_SNAPSHOT_INVALID");
   }
@@ -68,10 +77,17 @@ export async function renderInternalCreationSnapshotPdf({ archive }: { archive: 
   const source = parseInternalCreationSnapshot(archive);
   const createdAt = new Date(archive.createdAt);
   if (Number.isNaN(createdAt.getTime())) throw new Error("INTERNAL_CREATION_SNAPSHOT_CREATED_AT_INVALID");
+  const entityImage = source.entity_image
+    ? await readGedEntityImageVersion({
+        versionId: source.entity_image.ged_version_id,
+        entityType: authoritativePdfGedEntityType(archive.entityType),
+        entityId: archive.entityId,
+      })
+    : null;
   return renderCerpDocument({
     documentType: "Instantané interne", name: source.reference, code: source.reference,
     subtitle: `Création archivée le ${createdAt.toLocaleDateString("fr-FR")}`,
-    status: "BROUILLON", monogramName: source.entity_label, generatedAt: createdAt.toLocaleDateString("fr-FR"),
+    status: "BROUILLON", monogramName: source.entity_label, entityImage, generatedAt: createdAt.toLocaleDateString("fr-FR"),
     flag: "INTERNE / BROUILLON", watermark: "INTERNE / BROUILLON",
     footerNote: `Instantané interne GED — non opposable — SHA-256 ${archive.snapshotSha256.slice(0, 16)}…`,
     legalIdentity: issuerIdentityLine(source.issuer) ?? "Croix Rousse Precision",

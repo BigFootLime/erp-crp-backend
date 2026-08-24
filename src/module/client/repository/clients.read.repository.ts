@@ -70,7 +70,8 @@ export async function repoGetClientById(clientId: string, options: ClientReadOpt
       c.company_name, c.email, c.phone, c.website_url,
       c.siret, c.vat_number, c.naf_code,
       c.status, c.blocked, c.reason, c.creation_date,
-      c.observations, c.provided_documents_id, c.updated_at::text AS source_revision,
+      c.observations, c.provided_documents_id,
+      concat(c.updated_at::text, ':', COALESCE(logo.version_id, 'no-image')) AS source_revision,
       NULLIF(btrim(to_jsonb(c)->>'devise'), '') AS devise,
       NULLIF(btrim(to_jsonb(c)->>'encours_max'), '')::numeric AS encours_max,
       NULLIF(btrim(to_jsonb(c)->>'incoterm'), '') AS incoterm,
@@ -103,6 +104,22 @@ export async function repoGetClientById(clientId: string, options: ClientReadOpt
     LEFT JOIN adresse_livraison  al ON al.delivery_address_id = c.delivery_address_id
     LEFT JOIN informations_bancaires ib ON ib.bank_info_id = c.bank_info_id
     LEFT JOIN contacts ct ON ct.contact_id = c.contact_id
+    LEFT JOIN LATERAL (
+      SELECT v.id::text AS version_id
+        FROM public.ged_document_links l
+        JOIN public.ged_documents d ON d.id = l.document_id
+        JOIN public.ged_document_versions v ON v.id = d.current_version_id
+        JOIN public.ged_blobs b ON b.id = v.blob_id
+        JOIN public.ged_upload_sessions s ON s.id = v.upload_session_id
+       WHERE l.entity_type = 'CLIENT'
+         AND l.entity_id = c.client_id::text
+         AND d.class_key = 'IMAGE_ENTITE'
+         AND d.archived_at IS NULL
+         AND s.scan_status = 'clean'
+         AND b.mime_type IN ('image/png', 'image/jpeg')
+       ORDER BY d.updated_at DESC, d.id DESC
+       LIMIT 1
+    ) logo ON true
     WHERE c.client_id = $1
     `,
     [clientId]

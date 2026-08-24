@@ -1,5 +1,6 @@
 import { renderCerpDocument, type CerpLineRow } from "../../../shared/pdf/cerp-document";
 import { issuerIdentityLine, issuerLegalMentions } from "../../../shared/pdf/legal-mentions";
+import { readGedEntityImageVersion } from "../../../shared/pdf/ged-entity-image";
 import type { AuthoritativePdfArchiveRecord } from "../../../shared/authoritative-documents/authoritative-document.types";
 import { parseInternalCreationSnapshot } from "../../../shared/authoritative-documents/internal-creation-snapshot-pdf";
 
@@ -19,6 +20,13 @@ export async function renderClientProfilePdf({ archive }: { archive: Authoritati
 
   const status = summaryValue(source.summary, "Statut") ?? "Client";
   const blocked = summaryValue(source.summary, "Bloqué")?.toLocaleLowerCase("fr-FR") === "oui";
+  const entityImage = source.entity_image
+    ? await readGedEntityImageVersion({
+        versionId: source.entity_image.ged_version_id,
+        entityType: "CLIENT",
+        entityId: archive.entityId,
+      })
+    : null;
 
   return renderCerpDocument({
     documentType: "Fiche client",
@@ -27,6 +35,7 @@ export async function renderClientProfilePdf({ archive }: { archive: Authoritati
     subtitle: `Version GED v${archive.documentVersion} — données figées le ${createdAt.toLocaleDateString("fr-FR")}`,
     status,
     monogramName: source.entity_label,
+    entityImage,
     generatedAt: createdAt.toLocaleDateString("fr-FR"),
     flag: blocked ? "CLIENT BLOQUÉ" : undefined,
     footerNote: `Fiche client GED — v${archive.documentVersion} — SHA-256 ${archive.snapshotSha256.slice(0, 16)}…`,

@@ -5,6 +5,7 @@ export type InternalCreationSnapshot = Readonly<{
   entity_label: string;
   reference: string;
   issuer: LegalParty;
+  entity_image?: Readonly<{ ged_version_id: string }>;
   summary: ReadonlyArray<{ label: string; value: string | null }>;
   sections: ReadonlyArray<{
     title: string;
@@ -32,6 +33,7 @@ const isPlainRecord = (value: unknown): value is Record<string, unknown> => {
  */
 export function buildInternalCreationSnapshot(input: {
   entityLabel: string; reference: string; issuer?: LegalParty;
+  entityImageVersionId?: string | null;
   summary?: ReadonlyArray<{ label: string; value: unknown }>;
   sections?: ReadonlyArray<{
     title: string; rows?: ReadonlyArray<{ label: string; value: unknown }>;
@@ -42,6 +44,10 @@ export function buildInternalCreationSnapshot(input: {
   const entity_label = text(input.entityLabel, 120);
   const reference = text(input.reference, 160);
   if (!entity_label || !reference) throw new Error("INTERNAL_CREATION_SNAPSHOT_INPUT_INVALID");
+  const entityImageVersionId = text(input.entityImageVersionId, 36);
+  if (entityImageVersionId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(entityImageVersionId)) {
+    throw new Error("INTERNAL_CREATION_SNAPSHOT_IMAGE_INVALID");
+  }
   const summary = (input.summary ?? []).slice(0, 12).flatMap((item) => {
     const label = text(item.label, 80); return label ? [{ label, value: text(item.value, 500) }] : [];
   });
@@ -70,5 +76,13 @@ export function buildInternalCreationSnapshot(input: {
     const notes = text(section.notes, 20_000);
     return rows?.length || table || notes ? [{ title, ...(rows?.length ? { rows } : {}), ...(table ? { table } : {}), ...(notes ? { notes } : {}) }] : [];
   });
-  return { type: "INTERNAL_CREATION_SNAPSHOT", entity_label, reference, issuer: input.issuer ?? { legal_name: "Croix Rousse Precision" }, summary, sections };
+  return {
+    type: "INTERNAL_CREATION_SNAPSHOT",
+    entity_label,
+    reference,
+    issuer: input.issuer ?? { legal_name: "Croix Rousse Precision" },
+    ...(entityImageVersionId ? { entity_image: { ged_version_id: entityImageVersionId } } : {}),
+    summary,
+    sections,
+  };
 }

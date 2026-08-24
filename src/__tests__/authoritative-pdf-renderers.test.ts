@@ -6,6 +6,7 @@ import { renderDevisOfficialPdf } from "../module/devis/services/devis-official-
 import { renderCommandeArOfficialPdf } from "../module/commande-client/services/commande-ar.service";
 import { renderClientProfilePdf } from "../module/client/services/client-profile-pdf";
 import { renderCerpDocument } from "../shared/pdf/cerp-document";
+import { CERP_LOGO_PNG } from "../shared/pdf/cerp-logo";
 import { parseInternalCreationSnapshot, renderInternalCreationSnapshotPdf } from "../shared/authoritative-documents/internal-creation-snapshot-pdf";
 import { buildInternalCreationSnapshot } from "../shared/authoritative-documents/internal-creation-snapshot";
 
@@ -53,6 +54,33 @@ function compactPdfText(value: string): string {
 }
 
 describe("Wave-1 official PDF renderers", () => {
+  it("embeds a supplied entity image in the shared PDF identity slot", async () => {
+    const bytes = await renderCerpDocument({
+      documentType: "Fiche client", name: "Atelier Logo", code: "CLI-LOGO", status: "Client",
+      monogramName: "Atelier Logo", entityImage: CERP_LOGO_PNG, generatedAt: "24/08/2026",
+      title: "Fiche client logo", subject: "Test du logo GED", creationDate: new Date("2026-08-24T10:00:00Z"),
+    }, (ctx) => ctx.legalStrip([{ label: "Client", value: "Atelier Logo" }]));
+
+    const imageObjects = bytes.toString("latin1").match(/\/Subtype \/Image\b/g) ?? [];
+    expect(bytes.subarray(0, 5).toString("ascii")).toBe("%PDF-");
+    expect(imageObjects.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("freezes the exact GED image revision in the generic module snapshot", () => {
+    const versionId = "22222222-2222-4222-8222-222222222222";
+    const source = buildInternalCreationSnapshot({
+      entityLabel: "Atelier Logo",
+      reference: "CLI-LOGO",
+      entityImageVersionId: versionId,
+      sections: [{ title: "Identité", rows: [{ label: "Nom", value: "Atelier Logo" }] }],
+    });
+
+    expect(source.entity_image).toEqual({ ged_version_id: versionId });
+    expect(parseInternalCreationSnapshot(archive(source))).toMatchObject({
+      entity_image: { ged_version_id: versionId },
+    });
+  });
+
   it("renders a long internal creation snapshot as visibly non-opposable", async () => {
     const bytes = await renderInternalCreationSnapshotPdf({ archive: archive(buildInternalCreationSnapshot({
       entityLabel: "Fiche client", reference: "CLI-0042", issuer,

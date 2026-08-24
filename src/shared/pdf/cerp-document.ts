@@ -1,6 +1,7 @@
 import PDFDocument from "pdfkit"
 
 import { CERP_LOGO_PNG, CERP_LOGO_RATIO } from "./cerp-logo"
+import { trimEntityImageForRender } from "./trim-entity-image"
 
 /**
  * Socle des documents PDF sortants CERP, cote serveur.
@@ -236,6 +237,8 @@ export type CerpDocumentHeader = {
   flag?: string | null
   /** Nom servant au monogramme, si different du titre. */
   monogramName?: string | null
+  /** Image GED PNG/JPEG exacte de l'entite. Le monogramme reste le repli sûr. */
+  entityImage?: Buffer | null
   generatedAt: string
   generatedBy?: string | null
   /**
@@ -775,13 +778,29 @@ function drawIdentity(doc: PDFKit.PDFDocument, header: CerpDocumentHeader, top: 
   doc.rect(slotX, top, slotWidth, slotHeight).stroke()
   doc.restore()
 
-  const monogram = monogramFromName(header.monogramName ?? header.name)
-  doc.font("Helvetica-Bold").fontSize(20).fillColor(CERP_DOC_COLORS.steel)
-  const monogramWidth = doc.widthOfString(monogram, { characterSpacing: 1.8 })
-  doc.text(monogram, slotX + (slotWidth - monogramWidth) / 2, top + slotHeight / 2 - 9, {
-    lineBreak: false,
-    characterSpacing: 1.8,
-  })
+  let imageRendered = false
+  if (header.entityImage?.byteLength) {
+    try {
+      doc.image(trimEntityImageForRender(header.entityImage), slotX + 6, top + 6, {
+        fit: [slotWidth - 12, slotHeight - 12],
+        align: "center",
+        valign: "center",
+      })
+      imageRendered = true
+    } catch {
+      // Un format raster non pris en charge ne doit jamais casser le PDF métier.
+    }
+  }
+
+  if (!imageRendered) {
+    const monogram = monogramFromName(header.monogramName ?? header.name)
+    doc.font("Helvetica-Bold").fontSize(20).fillColor(CERP_DOC_COLORS.steel)
+    const monogramWidth = doc.widthOfString(monogram, { characterSpacing: 1.8 })
+    doc.text(monogram, slotX + (slotWidth - monogramWidth) / 2, top + slotHeight / 2 - 9, {
+      lineBreak: false,
+      characterSpacing: 1.8,
+    })
+  }
 
   doc.fillColor(CERP_DOC_COLORS.ink)
   return Math.max(y, top + slotHeight)

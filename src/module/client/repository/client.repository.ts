@@ -380,6 +380,7 @@ export async function buildClientProfileSnapshot(tx: DbQueryer, clientId: string
             c.email, c.phone, c.website_url, c.siret, c.vat_number, c.naf_code,
             c.status, c.blocked, c.reason, c.creation_date::text AS creation_date,
             c.observations, c.updated_at::text AS source_revision,
+            logo.version_id AS entity_image_version_id,
             NULLIF(btrim(to_jsonb(c)->>'devise'), '') AS devise,
             NULLIF(btrim(to_jsonb(c)->>'encours_max'), '') AS encours_max,
             NULLIF(btrim(to_jsonb(c)->>'incoterm'), '') AS incoterm,
@@ -398,6 +399,22 @@ export async function buildClientProfileSnapshot(tx: DbQueryer, clientId: string
        LEFT JOIN factureur f ON f.biller_id = c.biller_id
        LEFT JOIN adresse_facturation af ON af.bill_address_id = c.bill_address_id
        LEFT JOIN adresse_livraison al ON al.delivery_address_id = c.delivery_address_id
+       LEFT JOIN LATERAL (
+         SELECT v.id::text AS version_id
+           FROM public.ged_document_links l
+           JOIN public.ged_documents d ON d.id = l.document_id
+           JOIN public.ged_document_versions v ON v.id = d.current_version_id
+           JOIN public.ged_blobs b ON b.id = v.blob_id
+           JOIN public.ged_upload_sessions s ON s.id = v.upload_session_id
+          WHERE l.entity_type = 'CLIENT'
+            AND l.entity_id = c.client_id::text
+            AND d.class_key = 'IMAGE_ENTITE'
+            AND d.archived_at IS NULL
+            AND s.scan_status = 'clean'
+            AND b.mime_type IN ('image/png', 'image/jpeg')
+          ORDER BY d.updated_at DESC, d.id DESC
+          LIMIT 1
+       ) logo ON true
       WHERE c.client_id = $1
       FOR UPDATE OF c`,
     [clientId]
@@ -424,8 +441,10 @@ export async function buildClientProfileSnapshot(tx: DbQueryer, clientId: string
 
   const code = text(row.client_code);
   const companyName = text(row.company_name);
-  const sourceRevision = text(row.source_revision);
-  if (!code || !companyName || !sourceRevision) throw new Error("CLIENT_PROFILE_SOURCE_INVALID");
+  const clientSourceRevision = text(row.source_revision);
+  const entityImageVersionId = text(row.entity_image_version_id);
+  if (!code || !companyName || !clientSourceRevision) throw new Error("CLIENT_PROFILE_SOURCE_INVALID");
+  const sourceRevision = `${clientSourceRevision}:${entityImageVersionId ?? "no-image"}`;
 
   const paymentLabel = paymentModes.rows
     .map((mode: Record<string, unknown>) => [text(mode.code), text(mode.type)].filter(Boolean).join(" — "))
@@ -441,6 +460,7 @@ export async function buildClientProfileSnapshot(tx: DbQueryer, clientId: string
     snapshot: buildInternalCreationSnapshot({
       entityLabel: companyName,
       reference: code,
+      entityImageVersionId,
       summary: [
         { label: "Statut", value: row.status },
         { label: "Bloqué", value: row.blocked ? "Oui" : "Non" },
@@ -521,7 +541,7 @@ export async function repoQueueClientProfileOfficialDocument(
     const version = existingCount + 1;
     const archive = await queueCreationPdfArchive(db, {
       entityType: "client", entityId: clientId, documentKind: "CLIENT_PROFILE", documentVersion: version,
-      renderVersion: "client-profile-pdf-v1", idempotencyKey,
+      renderVersion: "client-profile-pdf-v2", idempotencyKey,
       title: `Fiche client ${profile.code}`, originalName: authoritativePdfFilename(["Fiche-client", profile.code, `v${version}`]),
       sourceRevision: profile.sourceRevision, sourceSnapshot: profile.snapshot, actorUserId: audit.user_id,
     });
@@ -537,6 +557,38 @@ export async function repoQueueClientProfileOfficialDocument(
   } finally {
     db.release();
   }
+}
+
+/**
+ * A newly published GED logo is a material revision of the current client fiche.
+ * Queue a new immutable PDF edition; the previous bytes remain available as history.
+ */
+export async function repoQueueClientProfileAfterLogoUpload(
+  clientId: string,
+  imageVersionId: string,
+  actorUserId: number
+): Promise<void> {
+  const profile = await buildClientProfileSnapshot(pool, clientId);
+  if (!profile.sourceRevision.endsWith(`:${imageVersionId}`)) return;
+  await repoQueueClientProfileOfficialDocument(
+    clientId,
+    imageVersionId,
+    {
+      user_id: actorUserId,
+      ip: null,
+      user_agent: null,
+      device_type: null,
+      os: null,
+      browser: null,
+      path: "ged:auto-client-profile-logo",
+      page_key: "client-profile",
+      client_session_id: null,
+    },
+    {
+      source_revision: profile.sourceRevision,
+      reissue_reason: "Mise à jour automatique du logo client depuis la GED",
+    }
+  );
 }
 
 export async function repoCreateClient(
@@ -657,7 +709,7 @@ export async function repoCreateClient(
     const profile = await buildClientProfileSnapshot(db, clientId);
     await queueCreationPdfArchive(db, {
       entityType: "client", entityId: clientId, documentKind: "CLIENT_PROFILE", documentVersion: 1,
-      renderVersion: "client-profile-pdf-v1", idempotencyKey: `client:${clientId}:profile:v1`,
+      renderVersion: "client-profile-pdf-v2", idempotencyKey: `client:${clientId}:profile:v1`,
       title: `Fiche client ${clientCode}`, originalName: authoritativePdfFilename(["Fiche-client", clientCode, "v1"]),
       sourceRevision: profile.sourceRevision, sourceSnapshot: profile.snapshot, actorUserId: audit.user_id,
     });
