@@ -50,6 +50,8 @@ type HeaderRow = {
   row_version: number
   commande_id: string | null
   affaire_id: string | null
+  order_type: string | null
+  ar_sent_at: string | null
 }
 
 type LineRow = {
@@ -72,6 +74,7 @@ type AllocationRow = {
   lot_article_id: string | null
   lot_status: string | null
   magasin_id: string | null
+  stock_scope: "OLD" | "NEW" | null
   emplacement_id: number | null
   location_id: string | null
   stock_level_id: string | null
@@ -102,6 +105,7 @@ type AllocationGroup = {
   stock_batch_id: string | null
   lot_id: string | null
   magasin_id: string
+  stock_scope: "OLD" | "NEW" | null
   emplacement_id: number
   unite: string | null
   quantity: number
@@ -119,15 +123,18 @@ async function loadShipmentSnapshot(
   const header = await client.query<HeaderRow>(
     `
       SELECT
-        id::text AS id,
-        numero,
-        statut,
-        row_version::int AS row_version,
-        commande_id::text AS commande_id,
-        affaire_id::text AS affaire_id
-      FROM public.bon_livraison
-      WHERE id = $1::uuid
-      ${forUpdate ? "FOR UPDATE" : ""}
+        delivery.id::text AS id,
+        delivery.numero,
+        delivery.statut,
+        delivery.row_version::int AS row_version,
+        delivery.commande_id::text AS commande_id,
+        delivery.affaire_id::text AS affaire_id,
+        command.order_type,
+        command.ar_sent_at::text AS ar_sent_at
+      FROM public.bon_livraison delivery
+      LEFT JOIN public.commande_client command ON command.id = delivery.commande_id
+      WHERE delivery.id = $1::uuid
+      ${forUpdate ? "FOR UPDATE OF delivery" : ""}
     `,
     [bonLivraisonId]
   )
@@ -166,6 +173,7 @@ async function loadShipmentSnapshot(
         lot.article_id::text AS lot_article_id,
         lot.lot_status,
         allocation.magasin_id::text AS magasin_id,
+        warehouse.stock_scope::text AS stock_scope,
         allocation.emplacement_id::int AS emplacement_id,
         allocation.location_id::text AS location_id,
         allocation.stock_level_id::text AS stock_level_id,
@@ -185,6 +193,7 @@ async function loadShipmentSnapshot(
         ON line.id = allocation.bon_livraison_ligne_id
       LEFT JOIN public.lots lot ON lot.id = allocation.lot_id
       LEFT JOIN public.stock_levels level ON level.id = allocation.stock_level_id
+      LEFT JOIN public.warehouses warehouse ON warehouse.magasin_id = allocation.magasin_id
       LEFT JOIN public.stock_reservations reservation ON reservation.id = allocation.reservation_id
       LEFT JOIN LATERAL (
         SELECT event.event_type
@@ -239,7 +248,7 @@ function buildGroups(rows: AllocationRow[]): AllocationGroup[] {
     ) {
       continue
     }
-    const key = `${row.article_id}:${row.stock_level_id}:${row.stock_batch_id ?? "-"}`
+    const key = `${row.article_id}:${row.stock_level_id}:${row.stock_batch_id ?? "-"}:${row.stock_scope ?? "UNKNOWN"}`
     const current = groups.get(key) ?? {
       key,
       article_id: row.article_id,
@@ -247,6 +256,7 @@ function buildGroups(rows: AllocationRow[]): AllocationGroup[] {
       stock_batch_id: row.stock_batch_id,
       lot_id: row.lot_id,
       magasin_id: row.magasin_id,
+      stock_scope: row.stock_scope,
       emplacement_id: row.emplacement_id,
       unite: row.unite,
       quantity: 0,
@@ -267,7 +277,8 @@ function buildPreview(
   snapshot: ShipmentSnapshot,
   qualityRelease: DeliveryQualityRelease | null = null,
   enforceQuality = false,
-  enforcePicking = false
+  enforcePicking = false,
+  enforceAcknowledgement = false
 ): BonLivraisonShipmentPreview {
   const blockers: ShipmentPreviewBlocker[] = []
   const byLine = new Map<string, AllocationRow[]>()
@@ -281,6 +292,17 @@ function buildPreview(
     blockers.push({
       code: "SHIPMENT_NOT_READY",
       message: "Le bon de livraison doit être au statut READY avant expédition.",
+    })
+  }
+  if (
+    enforceAcknowledgement &&
+    snapshot.header.commande_id !== null &&
+    String(snapshot.header.order_type ?? "").toUpperCase() !== "INTERNE" &&
+    !snapshot.header.ar_sent_at
+  ) {
+    blockers.push({
+      code: "CUSTOMER_ACKNOWLEDGEMENT_REQUIRED",
+      message: "L’AR client doit être envoyé avant la livraison et la sortie physique du stock.",
     })
   }
   if (!snapshot.lines.length) {
@@ -609,7 +631,7 @@ export async function repoGetLivraisonShipmentPreview(
   const snapshot = await loadShipmentSnapshot(pool, bonLivraisonId)
   if (!snapshot) return null
   const qualityRelease = await repoGetDeliveryQualityRelease(bonLivraisonId)
-  return buildPreview(snapshot, qualityRelease, true, true)
+  return buildPreview(snapshot, qualityRelease, true, true, true)
 }
 
 export async function prepareLivraisonInTransaction(
@@ -665,7 +687,10 @@ export async function prepareLivraisonInTransaction(
   // entitlement first, then stock state. This prevents a delivery preparation
   // racing a generic reservation from deadlocking on opposite lock order.
   for (const group of groups) {
-    if (group.lot_id) {
+    // Les allocations OLD sont des reprises historiques : elles restent
+    // réservées et auditées, sans exiger un contrôle Qualité CERP inexistant.
+    // Toute allocation NEW (ou de portée inconnue) reste fail-closed.
+    if (group.stock_scope !== "OLD" && group.lot_id) {
       await assertOperationalLotQualityEligibility({
         client,
         lotId: group.lot_id,
@@ -813,6 +838,7 @@ export async function prepareLivraisonInTransaction(
       statut: "READY",
       reservations_count: snapshot.allocations.length,
       reservations_reused: snapshot.allocations.length - allocationsToReserve.length,
+      old_quality_bypass_allocations: allocationsToReserve.filter((allocation) => allocation.stock_scope === "OLD").length,
       correlation_id: correlationId,
     },
   })
@@ -988,7 +1014,7 @@ export async function repoShipLivraison(
     const snapshot = await loadShipmentSnapshot(client, bonLivraisonId, true)
     if (!snapshot) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
     const qualityRelease = await repoGetDeliveryQualityRelease(bonLivraisonId, client)
-    const preview = buildPreview(snapshot, qualityRelease, true, true)
+    const preview = buildPreview(snapshot, qualityRelease, true, true, true)
     if (
       !shipmentConfirmationMatches({
         expectedVersion: body.expected_version,

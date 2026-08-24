@@ -263,12 +263,12 @@
     },
     {
       "from": "ATTENTE_OF",
-      "to": "PRET_LIVRAISON",
+      "to": "AR_PRET",
       "cause": "customer_order_launch"
     },
     {
       "from": "ATTENTE_PLANNING",
-      "to": "PRET_LIVRAISON",
+      "to": "AR_PRET",
       "cause": "customer_order_launch"
     },
     {
@@ -309,6 +309,11 @@
     {
       "from": "AR_PRET",
       "to": "AR_ENVOYE",
+      "cause": "ar_send"
+    },
+    {
+      "from": "AR_ENVOYE",
+      "to": "PRET_LIVRAISON",
       "cause": "ar_send"
     },
     {

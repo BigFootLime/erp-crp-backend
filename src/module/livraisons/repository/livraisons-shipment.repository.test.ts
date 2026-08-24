@@ -150,7 +150,7 @@ describe("prepareLivraisonInTransaction", () => {
   it("reuses an active production reservation without reserving stock twice", async () => {
     const query = vi.fn(withRealtimeOutboxDbMock(async (rawSql: unknown) => {
       const sql = String(rawSql);
-      if (sql.includes("FROM public.bon_livraison\n")) {
+      if (sql.includes("FROM public.bon_livraison delivery")) {
         return {
           rows: [{
             id: "44444444-4444-4444-8444-444444444444",

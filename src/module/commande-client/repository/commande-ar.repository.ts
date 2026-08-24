@@ -16,6 +16,7 @@ import { queueCreationPdfArchive } from "../../../shared/authoritative-documents
 import {
   repoApplyCommandeWorkflowMilestone,
   repoEnsureCommandeWorkflowCheckpoints,
+  repoEnsureCommandeWorkflowStatus,
 } from "./commande-client.repository";
 import { canActOnCommandeWorkflowCheckpoint } from "../domain/commande-client-rbac";
 import { normalizeCommandeWorkflowStatus } from "../workflow/commande-client-workflow.definition";
@@ -908,6 +909,18 @@ export async function repoFinalizeCommandeArSend(params: {
       throw new HttpError(409, "COMMAND_AR_SEND_CLAIM_LOST", "La réservation d'envoi de l'AR n'est plus valide.");
     }
 
+    const stockOnlyFlowRes = await tx.query<{ stock_only_flow: boolean }>(
+      `
+        SELECT COALESCE((metadata->>'stock_only_flow')::boolean, false) AS stock_only_flow
+        FROM public.commande_client_workflow_checkpoint
+        WHERE commande_id = $1::bigint
+          AND checkpoint_code = 'ar_sent'
+        LIMIT 1
+      `,
+      [params.commande_id]
+    );
+    const stockOnlyFlow = stockOnlyFlowRes.rows[0]?.stock_only_flow === true;
+
     const statusOut = await repoApplyCommandeWorkflowMilestone({
       tx,
       commande_id: params.commande_id,
@@ -916,8 +929,21 @@ export async function repoFinalizeCommandeArSend(params: {
       commentaire: params.commentaire,
       user_id: params.sent_by,
       completed_checkpoint_codes: ["ar_sent"],
-      active_checkpoint_code: "production_launch",
+      active_checkpoint_code: stockOnlyFlow ? "delivery" : "production_launch",
     });
+
+    if (stockOnlyFlow) {
+      // Le BL est préparé et réservé dès la revue, mais il ne devient
+      // exploitable qu'après la preuve d'envoi de l'AR.
+      await repoEnsureCommandeWorkflowStatus({
+        tx,
+        commande_id: params.commande_id,
+        nouveau_statut: "PRET_LIVRAISON",
+        cause: "ar_send",
+        commentaire: "AR envoyé : livraison et sortie de stock désormais autorisées",
+        user_id: params.sent_by,
+      });
+    }
 
     await insertCommandeEvent(tx, {
       commande_id: params.commande_id,
@@ -927,6 +953,8 @@ export async function repoFinalizeCommandeArSend(params: {
         document_id: draft.document_id,
         recipient_emails: params.recipient_emails,
         email_provider_id: params.email_provider_id,
+        stock_only_flow: stockOnlyFlow,
+        workflow_status: stockOnlyFlow ? "PRET_LIVRAISON" : "AR_ENVOYE",
       },
       user_id: params.sent_by,
     });

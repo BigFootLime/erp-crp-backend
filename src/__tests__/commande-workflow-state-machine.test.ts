@@ -60,16 +60,17 @@ describe("commande workflow canonical state machine", () => {
 
   it("preserves the audited business shortcuts and rejects the adjacent unauthorized jumps", () => {
     expect(canCommandeWorkflowTransition("ATTENTE_OF", "ATTENTE_PLANNING", "customer_order_launch")).toBe(true)
-    expect(canCommandeWorkflowTransition("ATTENTE_OF", "PRET_LIVRAISON", "customer_order_launch")).toBe(true)
+    expect(canCommandeWorkflowTransition("ATTENTE_OF", "AR_PRET", "customer_order_launch")).toBe(true)
     expect(canCommandeWorkflowTransition("ATTENTE_TECHNIQUE", "ATTENTE_PLANNING", "internal_order_launch")).toBe(true)
     expect(canCommandeWorkflowTransition("ATTENTE_PLANNING", "AR_PRET", "checkpoint")).toBe(false)
     expect(canCommandeWorkflowTransition("AR_PRET", "AR_ENVOYE", "ar_send")).toBe(true)
+    expect(canCommandeWorkflowTransition("AR_ENVOYE", "PRET_LIVRAISON", "ar_send")).toBe(true)
     expect(canCommandeWorkflowTransition("PRODUCTION_TERMINEE", "PRET_LIVRAISON", "checkpoint")).toBe(true)
     expect(canCommandeWorkflowTransition("ATTENTE_PLANNING", "PLANNING_VALIDE", "internal_planning_validation")).toBe(true)
     expect(canCommandeWorkflowTransition("PLANNING_VALIDE", "EN_PRODUCTION", "internal_production_launch")).toBe(true)
     expect(canCommandeWorkflowTransition("LIVRE", "ARCHIVE", "internal_archive")).toBe(true)
 
-    expect(canCommandeWorkflowTransition("ATTENTE_OF", "AR_PRET", "customer_order_launch")).toBe(false)
+    expect(canCommandeWorkflowTransition("ATTENTE_OF", "PRET_LIVRAISON", "customer_order_launch")).toBe(false)
     expect(canCommandeWorkflowTransition("ATTENTE_PLANNING", "PRET_LIVRAISON", "planning_sync")).toBe(false)
     expect(canCommandeWorkflowTransition("LIVRE", "PRET_LIVRAISON", "checkpoint")).toBe(false)
     expect(canCommandeWorkflowTransition("FACTURE", "LIVRE", "checkpoint")).toBe(false)

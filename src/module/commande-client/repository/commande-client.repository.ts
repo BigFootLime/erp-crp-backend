@@ -1283,7 +1283,10 @@ export async function repoEnsureCommandeWorkflowStatus(params: {
     [params.commande_id, params.user_id, ancienStatut, nextStatus, params.commentaire]
   );
 
-  const marksPlanningValidated = nextStatus === "PLANNING_VALIDE" || nextStatus === "AR_PRET" || nextStatus === "AR_ENVOYE";
+  // AR_PRET peut maintenant être atteint sans planning pour une commande
+  // entièrement couverte par le stock. Ne jamais inventer une validation
+  // planning dans ce cas ; les flux avec OF l'ont déjà persistée au jalon dédié.
+  const marksPlanningValidated = nextStatus === "PLANNING_VALIDE";
   const marksArSent = nextStatus === "AR_ENVOYE";
   await params.tx.query(
     `
@@ -1569,15 +1572,17 @@ async function advanceCustomerOrderWorkflowAfterLaunch(params: {
     `
       UPDATE public.commande_client_workflow_checkpoint
       SET status = CASE
-            WHEN checkpoint_code = 'delivery' THEN 'active'
+            WHEN checkpoint_code IN ('of_generation', 'ar_preparation') THEN 'done'
+            WHEN checkpoint_code = 'ar_sent' THEN 'active'
+            WHEN checkpoint_code = 'delivery' THEN 'pending'
             ELSE 'skipped'
           END,
           completed_at = CASE
-            WHEN checkpoint_code = 'delivery' THEN NULL
+            WHEN checkpoint_code IN ('ar_sent', 'delivery') THEN NULL
             ELSE COALESCE(completed_at, now())
           END,
           completed_by = CASE
-            WHEN checkpoint_code = 'delivery' THEN NULL
+            WHEN checkpoint_code IN ('ar_sent', 'delivery') THEN NULL
             ELSE COALESCE(completed_by, $2::int)
           END,
           metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
@@ -1592,7 +1597,8 @@ async function advanceCustomerOrderWorkflowAfterLaunch(params: {
       params.commande_id,
       params.user_id,
       JSON.stringify({
-        skip_reason: "commande_fully_reserved_from_stock",
+        skip_reason: "commande_fully_reserved_from_stock_awaiting_ar",
+        stock_only_flow: true,
         bon_livraison_id: params.bon_livraison_id,
       }),
     ]
@@ -1600,9 +1606,9 @@ async function advanceCustomerOrderWorkflowAfterLaunch(params: {
   return repoEnsureCommandeWorkflowStatus({
     tx: params.tx,
     commande_id: params.commande_id,
-    nouveau_statut: "PRET_LIVRAISON",
+    nouveau_statut: "AR_PRET",
     cause: "customer_order_launch",
-    commentaire: "Commande entièrement réservée, BL préparé sans OF",
+    commentaire: "Commande entièrement réservée sans OF, AR prêt à envoyer avant livraison",
     user_id: params.user_id,
   });
 }
@@ -5323,7 +5329,10 @@ export async function reserveCommandeStockForLaterDelivery(
     // Take the Quality lock before stock state locks.  All reservation writers
     // share that order (Quality entitlement -> stock counters) to avoid a
     // cross-workflow deadlock under simultaneous allocation.
-    if (allocation.lot_id) {
+    // La Base OLD est un périmètre historique explicitement repris sans
+    // dossier Qualité CERP. Son stock reste tracé et réservé, mais le gate
+    // opérationnel Qualité ne s'applique qu'à la Base NEW.
+    if (allocation.stock_scope !== "OLD" && allocation.lot_id) {
       await assertOperationalLotQualityEligibility({
         client: db,
         lotId: allocation.lot_id,

@@ -126,10 +126,13 @@ export const COMMANDE_WORKFLOW_TRANSITIONS: readonly CommandeWorkflowTransitionR
   ...CHECKPOINT_TRANSITIONS,
   ...CANCELLATION_TRANSITIONS,
   { from: "ATTENTE_OF", to: "ATTENTE_PLANNING", cause: "customer_order_launch" },
-  { from: "ATTENTE_OF", to: "PRET_LIVRAISON", cause: "customer_order_launch" },
+  // Une commande entièrement couverte par le stock ne saute plus l'AR : le
+  // lancement réserve/prépare techniquement le BL, puis remet la main au
+  // secrétariat pour l'accusé de réception client.
+  { from: "ATTENTE_OF", to: "AR_PRET", cause: "customer_order_launch" },
   // A legacy invalid planning state can be recovered by reopening the launch
   // checkpoint while its append-only status history remains ATTENTE_PLANNING.
-  { from: "ATTENTE_PLANNING", to: "PRET_LIVRAISON", cause: "customer_order_launch" },
+  { from: "ATTENTE_PLANNING", to: "AR_PRET", cause: "customer_order_launch" },
   { from: "ATTENTE_TECHNIQUE", to: "ATTENTE_PLANNING", cause: "internal_order_launch" },
   // Commands saved by the former guided flow may already have completed one
   // or both customer-only preparation checkpoints. Keep their launch
@@ -141,6 +144,9 @@ export const COMMANDE_WORKFLOW_TRANSITIONS: readonly CommandeWorkflowTransitionR
   { from: "LIVRE", to: "ARCHIVE", cause: "internal_archive" },
   { from: "ATTENTE_PLANNING", to: "PLANNING_VALIDE", cause: "planning_sync" },
   { from: "AR_PRET", to: "AR_ENVOYE", cause: "ar_send" },
+  // Le flux 100 % stock n'a ni OF ni contrôle de fin de fabrication. Une fois
+  // l'AR effectivement envoyé, la livraison préparée devient exploitable.
+  { from: "AR_ENVOYE", to: "PRET_LIVRAISON", cause: "ar_send" },
   { from: "PRET_LIVRAISON", to: "LIVRE", cause: "shipment_sync" },
   { from: "LIVRE", to: "FACTURE", cause: "invoice_sync" },
 ];

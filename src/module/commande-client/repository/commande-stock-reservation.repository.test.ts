@@ -84,7 +84,49 @@ describe("reserveCommandeStockForLaterDelivery", () => {
     const reservationInsert = query.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO public.stock_reservations"));
     expect(levelUpdate?.[1]).toEqual([ids.level, 4, 9]);
     expect(reservationInsert?.[1]).toEqual(expect.arrayContaining([ids.article, ids.location, 4, "1", 7, ids.lot]));
+    expect(query.mock.calls.some(([sql]) => String(sql).includes("FROM public.quality_control qc"))).toBe(false);
     expect(query.mock.calls.some(([sql]) => String(sql).includes("INSERT INTO bon_livraison"))).toBe(false);
+  });
+
+  it("keeps the Quality gate mandatory for Base NEW allocations", async () => {
+    const query = vi.fn(async (sql: unknown) => {
+      const text = String(sql);
+      if (text.includes("FROM public.v_stock_availability_225 availability")) {
+        return {
+          rows: [{
+            article_id: ids.article,
+            stock_scope: "NEW",
+            stock_level_id: ids.level,
+            stock_batch_id: null,
+            location_id: ids.location,
+            lot_id: ids.lot,
+            magasin_id: ids.magasin,
+            emplacement_id: 1,
+            qty_available: 4,
+          }],
+        };
+      }
+      if (text.includes("FROM public.lots")) {
+        return { rows: [{ lot_code: "LOT-NEW", lot_status: "LIBERE", article_unit: "U" }] };
+      }
+      if (text.includes("FROM public.quality_control qc")) return { rows: [] };
+      if (text.includes("FROM public.stock_reservations") && text.includes("FOR SHARE")) return { rows: [] };
+      if (text.includes("FROM public.non_conformity nc")) return { rows: [{ total: 0 }] };
+      if (text.includes("FROM public.quality_release_decision")) return { rows: [] };
+      return { rows: [] };
+    });
+
+    await expect(
+      reserveCommandeStockForLaterDelivery({ query } as never, {
+        commande_id: 123,
+        livraison_affaire_id: 7,
+        user_id: 9,
+        analysis_lines: [{ ...line, old_used_qty: 0, new_available_qty: 4, new_used_qty: 4 }],
+        quantities_by_line: new Map([[1, 4]]),
+      })
+    ).rejects.toMatchObject({ code: "QUALITY_NOT_ELIGIBLE", status: 409 });
+
+    expect(query.mock.calls.some(([sql]) => String(sql).includes("UPDATE public.stock_levels"))).toBe(false);
   });
 });
 

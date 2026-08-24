@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   release: vi.fn(),
   ensureCheckpoints: vi.fn(),
   applyMilestone: vi.fn(),
+  ensureStatus: vi.fn(),
 }));
 
 vi.mock("../../../config/database", () => ({
@@ -16,6 +17,7 @@ vi.mock("../../../config/database", () => ({
 vi.mock("./commande-client.repository", () => ({
   repoEnsureCommandeWorkflowCheckpoints: mocks.ensureCheckpoints,
   repoApplyCommandeWorkflowMilestone: mocks.applyMilestone,
+  repoEnsureCommandeWorkflowStatus: mocks.ensureStatus,
 }));
 
 import {
@@ -307,12 +309,15 @@ describe("commande AR realtime transaction outbox", () => {
     read_at: null,
   };
 
-  function makeFinalizeClient(options: { failOutbox?: boolean; failCommit?: boolean } = {}) {
+  function makeFinalizeClient(options: { failOutbox?: boolean; failCommit?: boolean; stockOnly?: boolean } = {}) {
     const release = vi.fn();
     const query = vi.fn(withRealtimeOutboxDbMock(async (sql: unknown) => {
       const statement = String(sql);
       if (statement.includes("UPDATE public.commande_ar_log")) {
         return { rows: [{ sent_at: "2026-08-04T08:05:00.000Z" }] };
+      }
+      if (statement.includes("metadata->>'stock_only_flow'")) {
+        return { rows: [{ stock_only_flow: options.stockOnly === true }] };
       }
       if (statement === "COMMIT" && options.failCommit) throw new Error("COMMIT_ACK_LOST");
       return { rows: [] };
@@ -365,6 +370,23 @@ describe("commande AR realtime transaction outbox", () => {
       .lastIndexOf(true);
     expect(commitIndex).toBeGreaterThan(lastOutboxIndex);
     expect(firstClient.release).toHaveBeenCalledOnce();
+  });
+
+  it("unlocks delivery only after the AR send for a fully stocked command", async () => {
+    const client = makeFinalizeClient({ stockOnly: true });
+    mocks.applyMilestone.mockResolvedValue({ notifications: [] });
+    mocks.ensureStatus.mockResolvedValue({ nouveau_statut: "PRET_LIVRAISON" });
+
+    await finalizeWith(client);
+
+    expect(mocks.applyMilestone).toHaveBeenCalledWith(expect.objectContaining({
+      nouveau_statut: "AR_ENVOYE",
+      active_checkpoint_code: "delivery",
+    }));
+    expect(mocks.ensureStatus).toHaveBeenCalledWith(expect.objectContaining({
+      nouveau_statut: "PRET_LIVRAISON",
+      cause: "ar_send",
+    }));
   });
 
   it("rolls back the AR mutation when enqueue fails", async () => {
