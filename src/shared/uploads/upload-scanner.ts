@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import { createReadStream } from "node:fs";
 
 export type UploadScanStatus = "clean" | "infected" | "unavailable";
 export type UploadScanMode = "off" | "monitor" | "enforce";
@@ -32,8 +33,9 @@ class UnavailableScanner implements UploadScanner {
 
 /**
  * Optional ClamAV adapter. It is used only when explicitly configured. The
- * process is spawned without a shell and receives an application-generated
- * path, never a user-provided command fragment.
+ * process is spawned without a shell. File paths are opened by the application
+ * and streamed to clamd: passing a file descriptor across a systemd private
+ * mount namespace makes clamd reject an otherwise regular file.
  */
 class ClamDscanScanner implements UploadScanner {
   readonly name = "clamdscan";
@@ -52,14 +54,13 @@ class ClamDscanScanner implements UploadScanner {
     }
 
     return await new Promise<UploadScanResult>((resolve) => {
-        const args = input.path
-          ? ["--fdpass", "--no-summary", "--", input.path]
-          : ["--stream", "--no-summary", "-"];
+        const args = ["--stream", "--no-summary", "-"];
         const child = spawn(this.executable, args, {
           shell: false,
           windowsHide: true,
-          stdio: input.buffer ? ["pipe", "ignore", "ignore"] : "ignore",
+          stdio: ["pipe", "ignore", "ignore"],
         });
+        let pathStream: ReturnType<typeof createReadStream> | null = null;
         let settled = false;
         let pendingTerminationResult: UploadScanResult | null = null;
         let escalationTimer: NodeJS.Timeout | null = null;
@@ -75,6 +76,8 @@ class ClamDscanScanner implements UploadScanner {
           if (settled) return;
           settled = true;
           clearTimers();
+          pathStream?.destroy();
+          child.stdin?.destroy();
           input.signal?.removeEventListener("abort", onAbort);
           resolve(result);
         };
@@ -82,6 +85,8 @@ class ClamDscanScanner implements UploadScanner {
         const terminate = (result: UploadScanResult) => {
           if (settled || pendingTerminationResult) return;
           pendingTerminationResult = result;
+          pathStream?.destroy();
+          child.stdin?.destroy();
           child.kill("SIGTERM");
           // Node maps supported signals to TerminateProcess on Windows. Retry
           // with SIGKILL after a short grace period everywhere for a bounded,
@@ -107,12 +112,22 @@ class ClamDscanScanner implements UploadScanner {
         });
         input.signal?.addEventListener("abort", onAbort, { once: true });
         if (input.signal?.aborted) onAbort();
-        if (input.buffer && child.stdin) {
+        if (!input.signal?.aborted && child.stdin) {
           // EPIPE is expected when clamd rejects/exits while the bounded memory
-          // payload is still being written. The child exit code remains the
-          // authoritative scan result.
+          // payload or file stream is still being written. The child exit code
+          // remains the authoritative scan result.
           child.stdin.on("error", () => undefined);
-          child.stdin.end(input.buffer);
+          if (input.buffer) {
+            child.stdin.end(input.buffer);
+          } else if (input.path) {
+            pathStream = createReadStream(input.path);
+            pathStream.once("error", () => terminate({
+              status: "unavailable",
+              provider: this.name,
+              reason: "contenu_illisible",
+            }));
+            pathStream.pipe(child.stdin);
+          }
         }
         scanTimer = setTimeout(() => terminate({
           status: "unavailable",

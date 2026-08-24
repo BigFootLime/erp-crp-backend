@@ -108,9 +108,12 @@ datée : le build froid ne dépend donc pas du CDN de signatures. `freshclam`
 actualise le volume `/var/lib/clamav` à chaque démarrage, puis reste en tâche
 supervisée (12 vérifications par jour). L'application ne démarre qu'après le
 ping du daemon ayant chargé ses signatures. Le healthcheck vérifie à la fois ce
-ping et l'HTTP applicatif. Le scan utilise `clamdscan --fdpass` : le daemon ne
-dépend donc pas des permissions privées (`0600`) des fichiers de staging, et
-aucun nom ou argument utilisateur n'est interprété par un shell.
+ping et l'HTTP applicatif. Le scan ouvre le fichier privé (`0600`) avec
+l'identité de l'application puis transmet ses octets à `clamdscan --stream` par
+un pipe borné, sans Buffer global ni fichier temporaire. Ce mode reste compatible
+avec un espace de montage privé systemd : contrairement à `--fdpass`, aucun
+descripteur provenant de cet espace n'est transmis au daemon extérieur. Aucun
+nom ou argument utilisateur n'est interprété par un shell.
 Le premier démarrage d'un volume vide exige un accès sortant vers le CDN ClamAV
 et échoue fermé si la mise à jour est impossible. Aux démarrages suivants, une
 panne réseau peut utiliser la base persistée seulement si `clamd` l'accepte
@@ -212,10 +215,9 @@ Noble security validé est `1.5.3+dfsg-0ubuntu0.24.04.1`. Il ne doit pas être
 rejouer les contrôles ci-dessous après une évolution majeure. La
 [fiche du paquet Ubuntu](https://packages.ubuntu.com/noble-updates/clamav-daemon)
 et la [page de manuel Noble de `clamdscan`](https://manpages.ubuntu.com/manpages/noble/man1/clamdscan.1.html)
-confirment les options utilisées par l'application : `--fdpass`, `--stream`,
-`--ping`, `--no-summary` et `--config-file`, ainsi que les codes de sortie 0
-(propre), 1 (infecté) et 2 (erreur). Le séparateur `--` garde le chemin hors de
-l'analyse des options. Ces opérations appartiennent au déploiement opérateur ;
+confirment les options utilisées par l'application : `--stream`, `--ping`,
+`--no-summary` et `--config-file`, ainsi que les codes de sortie 0 (propre), 1
+(infecté) et 2 (erreur). Ces opérations appartiennent au déploiement opérateur ;
 elles ne sont pas exécutées automatiquement par l'application.
 
 1. Relever la version candidate, puis installer `clamav`, `clamav-daemon`,
@@ -246,9 +248,10 @@ elles ne sont pas exécutées automatiquement par l'application.
    systemd ; ne jamais remplacer le groupe primaire du service. Vérifier avec
    `id cerp` et, après
    redémarrage du service, dans `/proc/<pid>/status`. Ne pas rendre le socket
-   world-writable. Le processus `cerp` ouvre son staging `0600` et
-   `clamdscan --fdpass` transmet ce descripteur au daemon `clamav` ; le daemon
-   n'a donc besoin ni de devenir `cerp`, ni de lire le chemin privé directement.
+   world-writable. Le processus `cerp` ouvre son staging `0600` et le transmet
+   à `clamdscan --stream` ; le daemon n'a donc besoin ni de devenir `cerp`, ni
+   de lire le chemin privé directement. Ce flux évite aussi de transmettre à
+   `clamd` un descripteur provenant de l'espace de montage privé systemd.
    L'override de l'unité doit aussi déclarer
    `After=clamav-daemon.service` et `Wants=clamav-daemon.service`; cela ordonne
    le démarrage mais ne remplace pas le ping de disponibilité.
@@ -294,7 +297,8 @@ Le smoke systemd se fait d'abord sur `cerp_test`, dans une fenêtre contrôlée 
 
 - sous `cerp`, créer une fixture texte inoffensive, propriété `cerp:cerp_write` et
   mode `0600`, puis lancer
-  `/usr/bin/clamdscan --fdpass --no-summary -- <chemin>` ; attendre le code 0 ;
+  `sudo -u cerp sh -c '/usr/bin/clamdscan --stream --no-summary - < "$1"' sh <chemin>` ;
+  attendre le code 0 ;
 - répéter avec une fixture EICAR dédiée, elle aussi en `0600`, attendre le code
   1 et `FOUND`, puis la supprimer strictement ; un code 2 invalide le smoke ;
 - par l'API reliée à `cerp_test`, vérifier qu'un fichier propre autorisé est

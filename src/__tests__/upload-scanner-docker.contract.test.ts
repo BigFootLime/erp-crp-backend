@@ -91,8 +91,9 @@ describe("autonomous ClamAV Docker contract", () => {
 
   it("keeps scan execution non-shell, cancellable, and free of temporary buffer files", () => {
     expect(scannerSource).toContain('shell: false');
-    expect(scannerSource).toContain('["--fdpass", "--no-summary", "--", input.path]');
     expect(scannerSource).toContain('["--stream", "--no-summary", "-"]');
+    expect(scannerSource).toContain('createReadStream(input.path)');
+    expect(scannerSource).not.toContain('"--fdpass"');
     expect(scannerSource).toContain('addEventListener("abort"');
     expect(scannerSource).toContain('child.kill("SIGTERM")');
     expect(scannerSource).toContain('child.kill("SIGKILL")');
@@ -145,6 +146,7 @@ describe("autonomous ClamAV Docker contract", () => {
     expect(documentation).toContain("Il n'existe aucun succès silencieux");
     expect(documentation).toContain("LocalSocketMode 660");
     expect(documentation).toContain("CERP_UPLOAD_SCANNER_COMMAND=/usr/bin/clamdscan");
+    expect(documentation).toContain("espace de montage privé systemd");
     expect(documentation).toContain("cerp_test");
     expect(documentation).toContain("cerp_prod");
     expect(documentation).toContain("503 UPLOAD_SCAN_UNAVAILABLE");
