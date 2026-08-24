@@ -28,6 +28,16 @@ describe("commande creation PDF transaction contract", () => {
     expect(snapshot.match(/FOR UPDATE/g)).toHaveLength(1);
   });
 
+  it("derives PDF line positions from the stable line id instead of a non-existent ordre column", () => {
+    const snapshotStart = source.indexOf("async function queueCommandeCreationPdf");
+    const snapshotEnd = source.indexOf("const toText", snapshotStart);
+    const snapshot = source.slice(snapshotStart, snapshotEnd);
+    expect(snapshot).toContain("(ROW_NUMBER() OVER (ORDER BY cl.id ASC))::int AS ordre");
+    expect(snapshot).toContain("FROM public.commande_ligne cl WHERE cl.commande_id = $1::bigint ORDER BY cl.id ASC");
+    expect(snapshot).not.toContain("ordre::int AS ordre");
+    expect(snapshot).not.toContain("ORDER BY ordre ASC");
+  });
+
   it("queues manual and generated OF roots inside their transactions, excluding children", () => {
     const manualQueue = productionSource.indexOf("await queueRootOfCreationPdf(client");
     const manualReturn = productionSource.indexOf("return ofId;", manualQueue);

@@ -3464,11 +3464,13 @@ async function queueCommandeCreationPdf(
 
   const [linesRes, dueDatesRes, documentsRes] = await Promise.all([
     tx.query<Record<string, unknown>>(
-      `SELECT id::text AS id, ordre::int AS ordre, designation, code_piece,
+      `SELECT cl.id::text AS id,
+              (ROW_NUMBER() OVER (ORDER BY cl.id ASC))::int AS ordre,
+              designation, code_piece,
               quantite::float8 AS quantite, unite, delai_client::text AS delai_client,
               prix_unitaire_ht::float8 AS prix_unitaire_ht, remise_ligne::float8 AS remise_ligne,
               taux_tva::float8 AS taux_tva, total_ht::float8 AS total_ht, total_ttc::float8 AS total_ttc
-       FROM public.commande_ligne WHERE commande_id = $1::bigint ORDER BY ordre ASC, id ASC`,
+       FROM public.commande_ligne cl WHERE cl.commande_id = $1::bigint ORDER BY cl.id ASC`,
       [header.id]
     ),
     tx.query<Record<string, unknown>>(
