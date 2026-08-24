@@ -173,7 +173,7 @@ async function loadShipmentSnapshot(
         lot.article_id::text AS lot_article_id,
         lot.lot_status,
         allocation.magasin_id::text AS magasin_id,
-        warehouse.stock_scope::text AS stock_scope,
+        magasin.stock_scope::text AS stock_scope,
         allocation.emplacement_id::int AS emplacement_id,
         allocation.location_id::text AS location_id,
         allocation.stock_level_id::text AS stock_level_id,
@@ -193,7 +193,7 @@ async function loadShipmentSnapshot(
         ON line.id = allocation.bon_livraison_ligne_id
       LEFT JOIN public.lots lot ON lot.id = allocation.lot_id
       LEFT JOIN public.stock_levels level ON level.id = allocation.stock_level_id
-      LEFT JOIN public.warehouses warehouse ON warehouse.magasin_id = allocation.magasin_id
+      LEFT JOIN public.magasins magasin ON magasin.id = allocation.magasin_id
       LEFT JOIN public.stock_reservations reservation ON reservation.id = allocation.reservation_id
       LEFT JOIN LATERAL (
         SELECT event.event_type

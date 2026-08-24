@@ -219,6 +219,15 @@ describe("prepareLivraisonInTransaction", () => {
       )
     ).resolves.toBeUndefined();
 
+    const allocationQuery = query.mock.calls.find(([sql]) =>
+      String(sql).includes("FROM public.bon_livraison_ligne_allocations allocation")
+    );
+    expect(String(allocationQuery?.[0])).toContain(
+      "LEFT JOIN public.magasins magasin ON magasin.id = allocation.magasin_id"
+    );
+    expect(String(allocationQuery?.[0])).toContain("magasin.stock_scope::text AS stock_scope");
+    expect(String(allocationQuery?.[0])).not.toContain("warehouse.magasin_id");
+
     expect(
       query.mock.calls.some(([sql]) => String(sql).includes("INSERT INTO public.stock_reservations"))
     ).toBe(false);
