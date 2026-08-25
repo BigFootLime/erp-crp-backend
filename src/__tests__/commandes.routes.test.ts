@@ -1658,7 +1658,7 @@ describe("/api/v1/commandes", () => {
       bon_livraison_id: "44444444-4444-4444-8444-444444444444",
       reservations_created: [expect.any(String)],
       of_ids: [],
-      workflow_status: "PRET_LIVRAISON",
+      workflow_status: "AR_PRET",
     });
 
     const insertAffaireCall = mocks.clientQuery.mock.calls.find((c) => String(c[0]).includes("INSERT INTO affaire"));

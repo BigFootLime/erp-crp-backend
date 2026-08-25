@@ -277,6 +277,7 @@ describe("/api/v1/commandes/:id/ar", () => {
       document_id: "22222222-2222-2222-2222-222222222222",
       document_name: "AR_CC-123.pdf",
       subject: "Accuse de reception CC-123",
+      default_message: "Bonjour Client,\n\nVeuillez trouver ci-joint votre accusé de réception.",
       generated_at: "2026-03-12T09:00:00.000Z",
       generated_by: 7,
       status: "GENERATED",
@@ -291,7 +292,11 @@ describe("/api/v1/commandes/:id/ar", () => {
       .send({});
 
     expect(res.status).toBe(201);
-    expect(res.body).toMatchObject({ commande_id: 123, status: "GENERATED" });
+    expect(res.body).toMatchObject({
+      commande_id: 123,
+      status: "GENERATED",
+      default_message: expect.stringContaining("Veuillez trouver ci-joint"),
+    });
     expect(mocks.generateAr).toHaveBeenCalledWith({ commande_id: 123, user_id: 7, user_role: "Secretaire" });
   });
 
@@ -313,6 +318,7 @@ describe("/api/v1/commandes/:id/ar", () => {
         ar_id: "11111111-1111-1111-1111-111111111111",
         recipient_emails: ["client@example.com"],
         recipient_contact_ids: [],
+        email_body: "Bonjour Client,\n\nVeuillez trouver ci-joint votre accusé de réception.",
       });
 
     expect(res.status).toBe(200);
@@ -325,6 +331,7 @@ describe("/api/v1/commandes/:id/ar", () => {
         ar_id: "11111111-1111-1111-1111-111111111111",
         recipient_emails: ["client@example.com"],
         recipient_contact_ids: [],
+        email_body: "Bonjour Client,\n\nVeuillez trouver ci-joint votre accusé de réception.",
       },
     });
   });

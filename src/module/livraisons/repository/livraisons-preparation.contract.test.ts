@@ -26,6 +26,6 @@ describe("delivery physical preparation contract", () => {
     expect(shipmentSource).toContain("PREPARATION_CONFIRMATION_REQUIRED")
     expect(shipmentSource).toMatch(/enforcePicking\s*&&\s*!allocation\.pick_confirmed/)
     expect(shipmentSource).toContain("pick_confirmed:")
-    expect(shipmentSource).toContain("buildPreview(snapshot, qualityRelease, true, true)")
+    expect(shipmentSource).toContain("buildPreview(snapshot, qualityRelease, true, true, true)")
   })
 })

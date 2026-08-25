@@ -123,6 +123,7 @@ const SEND_BODY = {
   ar_id: "11111111-1111-4111-8111-111111111111",
   recipient_emails: ["new-request@example.test"],
   recipient_contact_ids: [],
+  email_body: "Bonjour Client,\n\nVeuillez trouver ci-joint votre accusé de réception relu.",
 };
 
 const GENERATED_DRAFT = {
@@ -171,7 +172,9 @@ describe("envoi AR claimé avant effet externe", () => {
     mocks.claimSend
       .mockResolvedValueOnce(claim)
       .mockResolvedValueOnce({ kind: "replay", draft: persistedReplay });
-    mocks.findArchive.mockResolvedValueOnce("33333333-3333-4333-8333-333333333333");
+    mocks.findArchive
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce("33333333-3333-4333-8333-333333333333");
     mocks.readArchived.mockResolvedValueOnce({ bytes: Buffer.from("pdf"), filename: "AR-123-officiel.pdf", sha256: "a".repeat(64) });
     mocks.sendEmail.mockResolvedValueOnce({ ok: true, id: "provider-first" });
     mocks.finalizeSend.mockResolvedValueOnce({
@@ -193,6 +196,11 @@ describe("envoi AR claimé avant effet externe", () => {
     ]);
 
     expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
+    expect(mocks.findArchive).toHaveBeenCalledTimes(2);
+    expect(mocks.sendEmail).toHaveBeenCalledWith(expect.objectContaining({
+      text: SEND_BODY.email_body,
+      html: expect.stringContaining("votre accusé de réception relu"),
+    }));
     expect(mocks.readArchived).toHaveBeenCalledWith(expect.objectContaining({
       entityType: "commande-client",
       entityId: "123",

@@ -14,6 +14,7 @@ export const sendCommandeArSchema = z.object({
     ar_id: z.string().uuid(),
     recipient_emails: z.array(z.string().email()).min(1),
     recipient_contact_ids: z.array(z.string().uuid()).optional().default([]),
+    email_body: z.string().trim().min(1).max(20000).optional().nullable(),
     message: z.string().trim().max(20000).optional().nullable(),
   }),
 });
@@ -38,6 +39,7 @@ export const sendAcknowledgementSchema = z.object({
   body: z.object({
     recipient_emails: z.array(z.string().email()).min(1),
     recipient_contact_ids: z.array(z.string().uuid()).optional().default([]),
+    email_body: z.string().trim().min(1).max(20000).optional().nullable(),
     message: z.string().trim().max(20000).optional().nullable(),
   }),
 });

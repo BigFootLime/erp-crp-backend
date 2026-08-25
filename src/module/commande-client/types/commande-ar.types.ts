@@ -13,6 +13,7 @@ export type CommandeArDraft = {
   document_id: string;
   document_name: string;
   subject: string;
+  default_message: string;
   generated_at: string;
   generated_by: number | null;
   status: "GENERATED" | "SENT" | "FAILED";

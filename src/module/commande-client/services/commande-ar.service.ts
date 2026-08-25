@@ -94,7 +94,7 @@ function addressLines(address: CommandeArAddress): string[] {
 }
 
 function subjectForCommande(numero: string): string {
-  return `Accuse de reception ${numero}`;
+  return `Accusé de réception ${numero}`;
 }
 
 function bodyTextForCommande(params: { numero: string; companyName: string | null }): string {
@@ -102,11 +102,11 @@ function bodyTextForCommande(params: { numero: string; companyName: string | nul
   return [
     `Bonjour ${company},`,
     "",
-    `Nous vous confirmons la bonne reception de votre commande ${params.numero}.`,
-    "Vous trouverez en piece jointe l'accuse de reception genere par l'ERP.",
+    `Nous vous confirmons la bonne réception de votre commande ${params.numero}.`,
+    "Vous trouverez en pièce jointe l’accusé de réception préparé par notre ERP.",
     "",
     "Cordialement,",
-    "Croix Rousse Precision",
+    "Croix-Rousse Précision",
   ].join("\n");
 }
 
@@ -128,6 +128,22 @@ function buildEmailHtml(text: string, customMessage?: string | null): string {
 
 function isResendSendError(result: Extract<ResendSendResult, { ok: false }>): result is { ok: false; error: string } {
   return "error" in result;
+}
+
+async function waitForCommandeArOfficialArchiveId(
+  commandeId: number,
+  arId: string,
+  attempts = 20,
+  delayMs = 250
+): Promise<string | null> {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const archiveId = await repoFindCommandeArOfficialArchiveId(commandeId, arId);
+    if (archiveId) return archiveId;
+    if (attempt < attempts - 1) {
+      await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  return null;
 }
 
 export async function buildCommandeArPdfBuffer(params: {
@@ -374,6 +390,7 @@ export async function svcGenerateCommandeAr(params: {
       document_id: draft.document_id,
       document_name: draft.document_name,
       subject: draft.subject,
+      default_message: draft.body_text?.trim() || bodyText,
       generated_at: draft.generated_at,
       generated_by: draft.generated_by,
       status: draft.status,
@@ -416,7 +433,11 @@ export async function svcSendCommandeAr(params: {
   try {
     // The supplier/customer-facing email must attach the exact archived GED
     // bytes, never a mutable legacy working-file copy.
-    const archiveId = await repoFindCommandeArOfficialArchiveId(params.commande_id, draft.ar_id);
+    // The authoritative worker archives the immutable GED rendition just
+    // after draft creation. A user can legitimately confirm the prepared
+    // dialog before that short background step finishes, so wait briefly for
+    // the exact archive instead of returning a misleading immediate failure.
+    const archiveId = await waitForCommandeArOfficialArchiveId(params.commande_id, draft.ar_id);
     if (!archiveId) throw new HttpError(409, "OFFICIAL_DOCUMENT_NOT_READY", "Le document officiel est en cours de génération.");
     const archived = await readOfficialPdfBytes({
       entityType: "commande-client", entityId: String(params.commande_id), archiveId,
@@ -425,14 +446,19 @@ export async function svcSendCommandeAr(params: {
     });
 
     const baseText = draft.body_text?.trim() || `Veuillez trouver ci-joint l'accuse de reception de la commande.`;
-    const customMessage = params.body.message?.trim() || null;
-    const fullText = customMessage ? `${baseText}\n\n${customMessage}` : baseText;
+    const emailBodyOverride = params.body.email_body?.trim() || null;
+    // `email_body` is the complete operator-reviewed message displayed by the
+    // AR preparation dialog. `message` remains a backwards-compatible extra
+    // note for older callers that never received the editable default body.
+    const emailBody = emailBodyOverride ?? baseText;
+    const legacyExtraMessage = emailBodyOverride ? null : params.body.message?.trim() || null;
+    const fullText = legacyExtraMessage ? `${emailBody}\n\n${legacyExtraMessage}` : emailBody;
 
     const emailResult = await sendTransactionalEmail({
       to: params.body.recipient_emails,
       subject: draft.subject,
       text: fullText,
-      html: buildEmailHtml(baseText, customMessage),
+      html: buildEmailHtml(emailBody, legacyExtraMessage),
       idempotencyKey: `commande-ar:${params.body.ar_id}`,
       attachments: [
         {

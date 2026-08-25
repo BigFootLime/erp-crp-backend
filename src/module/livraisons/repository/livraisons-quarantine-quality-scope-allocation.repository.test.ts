@@ -117,8 +117,17 @@ describe("DRAFT quarantine quality-scope allocation", () => {
   it("keeps preparation fail-closed until the scoped lot is released", async () => {
     const query = vi.fn(async (rawSql: unknown) => {
       const sql = String(rawSql)
-      if (sql.includes("FROM public.bon_livraison\n") && sql.includes("FOR UPDATE")) {
-        return { rows: [{ id: ids.delivery, numero: "BL-QUALITY", statut: "DRAFT", row_version: 1, commande_id: "12", affaire_id: "7" }] }
+      if (sql.includes("FROM public.bon_livraison delivery") && sql.includes("FOR UPDATE OF delivery")) {
+        return { rows: [{
+          id: ids.delivery,
+          numero: "BL-QUALITY",
+          statut: "DRAFT",
+          row_version: 1,
+          commande_id: "12",
+          affaire_id: "7",
+          order_type: "INTERNE",
+          ar_sent_at: null,
+        }] }
       }
       if (sql.includes("remainder.quantite_commandee::float8")) {
         return { rows: [{ id: ids.line, ordre: 1, quantite: 2, commande_ligne_id: 91, quantite_commandee: 2, quantite_expediee: 0, quantite_restante: 2 }] }
