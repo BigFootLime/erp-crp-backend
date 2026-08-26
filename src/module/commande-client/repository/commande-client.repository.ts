@@ -4501,6 +4501,9 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
     }
 
     const stockAnalysis = analysis;
+    const deliveryAffairPlan = resolveDeliveryAffairPlan(stockAnalysis.lines, requestedLivraisonCount);
+    const effectiveLivraisonCount =
+      orderType === "INTERNE" ? 0 : deliveryAffairPlan.affaire_count;
 
     const hasPartial = stockAnalysis.lines.some((l) => l.status === "PARTIAL");
     const needsConfirmation = orderType !== "INTERNE" && hasPartial;
@@ -4605,13 +4608,15 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         commande_id: commandeId,
         affaire_id: createdId,
         role: "LIVRAISON",
-        commentaire: "Generated from commande",
+        commentaire: deliveryAffairPlan.automatic_stock_production_split
+          ? "Livraison partielle — quantité réservée en stock"
+          : "Generated from commande",
       });
       await queueAffaireCreationPdf(client, { affaireId: createdId, actorUserId: audit.user_id });
       livraisonAffaireIds.push(createdId);
     }
 
-    for (let i = livraisonAffaireIds.length; orderType !== "INTERNE" && i < requestedLivraisonCount; i += 1) {
+    for (let i = livraisonAffaireIds.length; orderType !== "INTERNE" && i < effectiveLivraisonCount; i += 1) {
       const extraId = await createAffaire(client, {
         commande_id: commandeId,
         devis_id: commande.devis_id ? toNullableInt(commande.devis_id, "commande.devis_id") : null,
@@ -4621,15 +4626,24 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         commande_id: commandeId,
         affaire_id: extraId,
         role: "LIVRAISON",
-        commentaire: `Split delivery (${i + 1}/${requestedLivraisonCount})`,
+        commentaire:
+          deliveryAffairPlan.automatic_stock_production_split && i === 1
+            ? "Livraison partielle — reliquat à fabriquer"
+            : `Split delivery (${i + 1}/${effectiveLivraisonCount})`,
       });
       await queueAffaireCreationPdf(client, { affaireId: extraId, actorUserId: audit.user_id });
       livraisonAffaireIds.push(extraId);
     }
 
     const livraisonAffaireId = livraisonAffaireIds[0] ?? null;
+    const productionLivraisonAffaireId = deliveryAffairPlan.automatic_stock_production_split
+      ? livraisonAffaireIds[1] ?? null
+      : livraisonAffaireId;
     if (orderType !== "INTERNE" && !livraisonAffaireId) {
       throw new HttpError(500, "LIVRAISON_AFFAIRE_REQUIRED", "Aucune affaire de livraison n'a pu être préparée.");
+    }
+    if (orderType !== "INTERNE" && needsProduction && !productionLivraisonAffaireId) {
+      throw new HttpError(500, "PRODUCTION_LIVRAISON_AFFAIRE_REQUIRED", "Aucune affaire de livraison n'a pu porter le reliquat à fabriquer.");
     }
 
     const planLines: CommandeAllocationPlanLine[] = analysis.lines.map((l) => ({
@@ -4651,14 +4665,57 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
           : "AUTO_STOCK";
 
     if (orderType !== "INTERNE" && livraisonAffaireId !== null) {
-      await upsertCommandeAllocations(client, {
-        commande_id: commandeId,
-        livraison_affaire_id: livraisonAffaireId,
-        allocation_mode: allocationMode,
-        reserve_stock: false,
-        reserved_qty_by_line: stockCoveredByLine,
-        lines: planLines,
-      });
+      if (deliveryAffairPlan.automatic_stock_production_split && productionLivraisonAffaireId !== null) {
+        const stockLines = planLines
+          .map((line) => {
+            const quantity = Number(stockCoveredByLine.get(line.commande_ligne_id) ?? 0);
+            return {
+              ...line,
+              qty_ordered: quantity,
+              qty_from_stock: quantity,
+              qty_to_produce: 0,
+            };
+          })
+          .filter((line) => line.qty_ordered > 1e-9);
+        const productionLines = planLines
+          .map((line) => {
+            const quantityToProduce = Number(productionByLine.get(line.commande_ligne_id) ?? 0);
+            const quantityFromStock = Number(stockCoveredByLine.get(line.commande_ligne_id) ?? 0);
+            return {
+              ...line,
+              qty_ordered: Math.max(0, line.qty_ordered - quantityFromStock),
+              qty_from_stock: 0,
+              qty_to_produce: quantityToProduce,
+            };
+          })
+          .filter((line) => line.qty_ordered > 1e-9 || line.qty_to_produce > 1e-9);
+
+        await upsertCommandeAllocations(client, {
+          commande_id: commandeId,
+          livraison_affaire_id: livraisonAffaireId,
+          allocation_mode: "PARTIAL_STOCK",
+          reserve_stock: false,
+          reserved_qty_by_line: stockCoveredByLine,
+          lines: stockLines,
+        });
+        await upsertCommandeAllocations(client, {
+          commande_id: commandeId,
+          livraison_affaire_id: productionLivraisonAffaireId,
+          allocation_mode: "PARTIAL_PRODUCTION",
+          reserve_stock: false,
+          reserved_qty_by_line: null,
+          lines: productionLines,
+        });
+      } else {
+        await upsertCommandeAllocations(client, {
+          commande_id: commandeId,
+          livraison_affaire_id: livraisonAffaireId,
+          allocation_mode: allocationMode,
+          reserve_stock: false,
+          reserved_qty_by_line: stockCoveredByLine,
+          lines: planLines,
+        });
+      }
     }
 
     const holdsStockForGroupedDelivery =
@@ -4712,7 +4769,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
           commande_id: commandeId,
           commande_numero: commande.numero,
           commande_ligne_id: l.commande_ligne_id,
-          livraison_affaire_id: livraisonAffaireId,
+          livraison_affaire_id: productionLivraisonAffaireId,
           client_id: orderType === "INTERNE" ? ref?.piece_client_id ?? clientId : clientId,
           root_article_id: l.article_id,
           root_piece_technique_id: pieceTechniqueId,
@@ -4770,6 +4827,9 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         order_type: orderType,
         decision,
         livraison_affaire_ids: livraisonAffaireIds,
+        stock_livraison_affaire_id: livraisonAffaireId,
+        production_livraison_affaire_id: productionLivraisonAffaireId,
+        automatic_stock_production_split: deliveryAffairPlan.automatic_stock_production_split,
         bon_livraison_id: bonLivraisonId,
         reservations_created: reservationsCreated.length,
         of_created: ofIds.length,
@@ -4788,6 +4848,8 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         decision,
         livraison_affaire_id: livraisonAffaireId,
         livraison_affaire_ids: livraisonAffaireIds,
+        production_livraison_affaire_id: productionLivraisonAffaireId,
+        automatic_stock_production_split: deliveryAffairPlan.automatic_stock_production_split,
         bon_livraison_id: bonLivraisonId,
         reservations_created: reservationsCreated,
         of_ids: ofIds,
@@ -4814,6 +4876,8 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
     return {
       affaire_ids: livraisonAffaireIds,
       livraison_affaire_id: livraisonAffaireId,
+      production_livraison_affaire_id: productionLivraisonAffaireId,
+      automatic_stock_production_split: deliveryAffairPlan.automatic_stock_production_split,
       requires_confirmation: false,
       livraison_affaire_ids: livraisonAffaireIds,
       bon_livraison_id: bonLivraisonId,
@@ -5205,6 +5269,31 @@ type CommandeStockAnalysis = {
   lines: CommandeStockAnalysisLine[];
 };
 
+export type DeliveryAffairPlan = {
+  automatic_stock_production_split: boolean;
+  affaire_count: number;
+};
+
+/**
+ * A customer order that can ship a real stock quantity while another quantity
+ * still has to be manufactured has two distinct delivery commitments.  The
+ * first affair owns the reserved stock and the second owns the manufacturing
+ * remainder; manual cadence counts must not merge those two responsibilities.
+ */
+export function resolveDeliveryAffairPlan(
+  lines: readonly Pick<CommandeStockAnalysisLine, "available_used_qty" | "shortage_qty">[],
+  requestedCount: number
+): DeliveryAffairPlan {
+  const boundedRequestedCount = Math.max(1, Math.min(10, Math.trunc(requestedCount) || 1));
+  const hasStock = lines.some((line) => Number(line.available_used_qty) > 1e-9);
+  const hasProduction = lines.some((line) => Number(line.shortage_qty) > 1e-9);
+  const automaticSplit = hasStock && hasProduction;
+  return {
+    automatic_stock_production_split: automaticSplit,
+    affaire_count: automaticSplit ? 2 : boundedRequestedCount,
+  };
+}
+
 function buildZeroStockAnalysisLines(refs: CommandeLineRef[]): CommandeStockAnalysisLine[] {
   return refs.map((ref) => {
     const requestedQty = Math.max(0, Number(ref.qty_ordered));
@@ -5531,7 +5620,7 @@ export async function reserveCommandeStockForLaterDelivery(
           commande_ligne_affaire_allocation_id, livraison_affaire_id,
           stock_level_id, source_scope, reason, created_by, updated_by
         ) VALUES (
-          $1::uuid,$2::uuid,$3,'COMMANDE_LIGNE',$4,$4::bigint,$5::bigint,
+          $1::uuid,$2::uuid,$3,'COMMANDE_LIGNE',$4::bigint::text,$4::bigint,$5::bigint,
           'ACTIVE',$6::uuid,$7::uuid,$8::bigint,$5::bigint,$9::uuid,$10,$11,$12,$12
         )
         ON CONFLICT (commande_ligne_affaire_allocation_id, stock_batch_id)
@@ -5551,7 +5640,7 @@ export async function reserveCommandeStockForLaterDelivery(
         allocation.article_id,
         allocation.location_id,
         allocation.quantity,
-        String(allocation.commande_ligne_id),
+        allocation.commande_ligne_id,
         params.livraison_affaire_id,
         allocation.lot_id,
         allocation.stock_batch_id,

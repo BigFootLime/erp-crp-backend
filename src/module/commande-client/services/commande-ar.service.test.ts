@@ -256,7 +256,8 @@ describe("envoi AR claimé avant effet externe", () => {
 describe("accusé de réception — mentions légales", () => {
   it("uses the CERP document footer and repeats legal mentions on every page", async () => {
     const bytes = await buildCommandeArPdfBuffer({
-      draftNumber: "CC-2026-0042",
+      reference: "AR-00000042-v1",
+      orderNumber: "ESSAI 1 GA",
       companyName: "ABB FRANCE",
       dateCommande: "2026-07-20",
       generatedAt: new Date("2026-07-29T10:00:00.000Z"),
@@ -296,6 +297,7 @@ describe("accusé de réception — mentions légales", () => {
 
     const pages = drawnPages(bytes);
     expect(pages.length).toBeGreaterThan(1);
+    expect(pages.join("\n")).toContain("ESSAI 1 GA");
     for (const page of pages) {
       expect(page).toContain("SIRET 380 569 012 00020");
       expect(page).toContain("Pénalités de retard : 12,5 % l'an");
