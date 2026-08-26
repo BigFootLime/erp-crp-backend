@@ -11,7 +11,6 @@ import { sendCommandeArSchema } from "../module/commande-client/validators/comma
 describe("commande AR email content", () => {
   it("uses the required French subject and keeps the custom message before the signature in text and HTML", () => {
     const email = buildCommandeArEmailContent({
-      numero: "CMD-2026-42",
       customer_reference: "PO-CLIENT-9",
       reference: "AR-00000001-v2",
       contact: {
@@ -24,9 +23,11 @@ describe("commande AR email content", () => {
       custom_message: "Merci de vérifier <ce délai> & de nous répondre.",
     });
 
-    expect(email.subject).toBe("Accusé de réception de votre commande CMD-2026-42 — AR-00000001-v2");
+    expect(email.subject).toBe("Accusé de réception de votre commande PO-CLIENT-9 — AR-00000001-v2");
     expect(email.text).toContain("Bonjour Mme Élodie Dœ,");
-    expect(email.text).toContain("commande PO-CLIENT-9, enregistrée dans CERP sous le numéro CMD-2026-42.");
+    expect(email.text).toContain("commande PO-CLIENT-9.");
+    expect(email.text).not.toContain("CMD-2026-42");
+    expect(email.text).not.toContain("enregistrée dans CERP");
     expect(email.text.indexOf("Merci de vérifier")).toBeLessThan(email.text.indexOf("Cordialement,"));
     expect(email.html).toContain("Merci de vérifier &lt;ce délai&gt; &amp; de nous répondre.");
     expect(email.html.indexOf("Merci de vérifier")).toBeLessThan(email.html.indexOf("Cordialement,"));
@@ -34,13 +35,13 @@ describe("commande AR email content", () => {
 
   it("uses Madame, Monsieur when the send does not select exactly one contact", () => {
     const email = buildCommandeArEmailContent({
-      numero: "CMD-1",
       customer_reference: null,
       reference: "AR-00000001-v1",
       contact: null,
     });
     expect(email.text).toContain("Bonjour Madame, Monsieur,");
-    expect(email.text).toContain("commande CMD-1, enregistrée dans CERP sous le numéro CMD-1.");
+    expect(email.text).toContain("prise en compte de votre commande.");
+    expect(email.text).not.toContain("CMD-");
   });
 
   it("escapes arbitrary HTML while preserving French accents", () => {
@@ -55,7 +56,7 @@ describe("commande AR PDF", () => {
     const pdf = await buildCommandeArPdfBuffer({
       reference: "AR-00000001-v2",
       issuer: { company_name: "CROIX ROUSSE PRÉCISION", legal_form: "SARL", siret: "38056901200020" },
-      draftNumber: "CMD-2026-42",
+      orderNumber: "PO-CLIENT-9",
       companyName: "Client Démonstration",
       dateCommande: "2026-08-26",
       statut: "AR_PRET",

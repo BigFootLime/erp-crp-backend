@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   reserveCommandeStockForLaterDelivery,
+  resolveDeliveryAffairPlan,
   reuseRecoveredCommandeStockReservations,
   type CommandeStockAnalysisLine,
 } from "./commande-client.repository";
@@ -34,6 +35,28 @@ const line: CommandeStockAnalysisLine = {
   proposed_production_qty: 6,
   status: "PARTIAL",
 };
+
+describe("resolveDeliveryAffairPlan", () => {
+  it("creates one stock affair and one production affair for a partial delivery", () => {
+    expect(resolveDeliveryAffairPlan([line], 1)).toEqual({
+      automatic_stock_production_split: true,
+      affaire_count: 2,
+    });
+    expect(resolveDeliveryAffairPlan([line], 4)).toEqual({
+      automatic_stock_production_split: true,
+      affaire_count: 2,
+    });
+  });
+
+  it("keeps the requested cadence count when the order is fully covered or fully missing", () => {
+    expect(
+      resolveDeliveryAffairPlan([{ ...line, available_used_qty: 10, shortage_qty: 0 }], 3)
+    ).toMatchObject({ automatic_stock_production_split: false, affaire_count: 3 });
+    expect(
+      resolveDeliveryAffairPlan([{ ...line, available_used_qty: 0, shortage_qty: 10 }], 2)
+    ).toMatchObject({ automatic_stock_production_split: false, affaire_count: 2 });
+  });
+});
 
 describe("reserveCommandeStockForLaterDelivery", () => {
   it("reserves exactly the four OLD/NEW units for SHIP_ALL_TOGETHER without creating a BL", async () => {
@@ -86,7 +109,9 @@ describe("reserveCommandeStockForLaterDelivery", () => {
     const levelUpdate = query.mock.calls.find(([sql]) => String(sql).includes("UPDATE public.stock_levels"));
     const reservationInsert = query.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO public.stock_reservations"));
     expect(levelUpdate?.[1]).toEqual([ids.level, 4, 9]);
-    expect(reservationInsert?.[1]).toEqual(expect.arrayContaining([ids.article, ids.location, 4, "1", 7, ids.lot]));
+    expect(reservationInsert?.[1]).toEqual(expect.arrayContaining([ids.article, ids.location, 4, 1, 7, ids.lot]));
+    expect(String(reservationInsert?.[0])).toContain("$4::bigint::text,$4::bigint");
+    expect(String(reservationInsert?.[0])).not.toContain("'COMMANDE_LIGNE',$4,$4::bigint");
     expect(query.mock.calls.some(([sql]) => String(sql).includes("FROM public.quality_control qc"))).toBe(false);
     expect(query.mock.calls.some(([sql]) => String(sql).includes("INSERT INTO bon_livraison"))).toBe(false);
   });
