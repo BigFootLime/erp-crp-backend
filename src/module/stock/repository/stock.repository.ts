@@ -5886,6 +5886,9 @@ export async function repoListBalances(filters: ListBalancesQueryDTO): Promise<P
       e.name AS emplacement_name,
       b.lot_id::text AS lot_id,
       b.lot_code,
+      COALESCE(traceability.of_references, ARRAY[]::text[]) AS of_references,
+      COALESCE(traceability.mp_references, ARRAY[]::text[]) AS mp_references,
+      COALESCE(traceability.tr_references, ARRAY[]::text[]) AS tr_references,
       b.lot_status,
       b.warehouse_id::text AS warehouse_id,
       w.code::text AS warehouse_code,
@@ -5911,6 +5914,49 @@ export async function repoListBalances(filters: ListBalancesQueryDTO): Promise<P
     JOIN public.units u ON u.id = b.unit_id
     LEFT JOIN public.emplacements e ON e.location_id = b.location_id
     LEFT JOIN public.magasins m ON m.id = e.magasin_id
+    LEFT JOIN public.lots lot ON lot.id = b.lot_id
+    LEFT JOIN LATERAL (
+      SELECT
+        ARRAY(
+          SELECT DISTINCT reference_value
+          FROM (
+            SELECT reference.reference_value
+            FROM public.stock_lot_trace_references reference
+            WHERE reference.lot_id = b.lot_id AND reference.reference_type = 'OF'
+            UNION ALL
+            SELECT fabrication.numero
+            FROM public.of_output_lots output
+            JOIN public.ordres_fabrication fabrication ON fabrication.id = output.of_id
+            WHERE output.lot_id = b.lot_id
+          ) values_of(reference_value)
+          WHERE reference_value IS NOT NULL AND btrim(reference_value) <> ''
+          ORDER BY reference_value
+        ) AS of_references,
+        ARRAY(
+          SELECT DISTINCT reference_value
+          FROM (
+            SELECT reference.reference_value
+            FROM public.stock_lot_trace_references reference
+            WHERE reference.lot_id = b.lot_id AND reference.reference_type = 'MP_LOT'
+            UNION ALL
+            SELECT lot.mp_reference
+          ) values_mp(reference_value)
+          WHERE reference_value IS NOT NULL AND btrim(reference_value) <> ''
+          ORDER BY reference_value
+        ) AS mp_references,
+        ARRAY(
+          SELECT DISTINCT reference_value
+          FROM (
+            SELECT reference.reference_value
+            FROM public.stock_lot_trace_references reference
+            WHERE reference.lot_id = b.lot_id AND reference.reference_type = 'TRAITEMENT_LOT'
+            UNION ALL
+            SELECT lot.tr_reference
+          ) values_tr(reference_value)
+          WHERE reference_value IS NOT NULL AND btrim(reference_value) <> ''
+          ORDER BY reference_value
+        ) AS tr_references
+    ) traceability ON b.lot_id IS NOT NULL
     ${whereSql}
     ORDER BY a.code ASC, COALESCE(m.code, m.code_magasin, w.code) ASC, COALESCE(e.code, l.code) ASC
     LIMIT $${values.length + 1}

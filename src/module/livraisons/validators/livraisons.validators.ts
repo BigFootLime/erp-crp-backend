@@ -251,6 +251,7 @@ export const correctPreparationStockBodySchema = z
     reservation_id: z.string().uuid(),
     actual_qty: z.coerce.number().min(0).optional(),
     reason: z.string().trim().min(3).max(2000),
+    lot_code: z.string().trim().min(1).max(160).optional(),
     of_number: z.string().trim().min(1).max(80).optional(),
     mp_reference: z.string().trim().min(1).max(300).optional().nullable(),
     tr_reference: z.string().trim().min(1).max(300).optional().nullable(),
@@ -259,13 +260,14 @@ export const correctPreparationStockBodySchema = z
   .superRefine((value, ctx) => {
     if (
       value.actual_qty === undefined &&
+      value.lot_code === undefined &&
       value.of_number === undefined &&
       value.mp_reference === undefined &&
       value.tr_reference === undefined
     ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "actual_qty or an OF/MP/TR correction is required",
+        message: "actual_qty or a lot/OF/MP/TR correction is required",
       })
     }
   })

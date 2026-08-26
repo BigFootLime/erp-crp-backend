@@ -14,6 +14,8 @@ import { HttpError } from "../../../utils/httpError"
 import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service"
 import { buildDeliveryCreationSnapshotInput } from "../services/delivery-authoritative-document"
 import { normalizeCommandeWorkflowStatus } from "../../commande-client/workflow/commande-client-workflow.definition"
+import { createRecursiveOrdresFabrication } from "../../production/domain/of-generation"
+import { queueRootOfCreationPdf } from "../../production/domain/of-creation-pdf"
 
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
 import {
@@ -3717,7 +3719,386 @@ export type PreparationCorrectionResult = {
   previous_snapshot: Record<string, unknown>
   corrected_snapshot: Record<string, unknown>
   affected_bon_livraison_ids: string[]
+  reservation_reallocations: Array<{
+    from_reservation_id: string
+    commande_ligne_affaire_allocation_id: number
+    released_qty: number
+    reassigned_qty: number
+    shortage_qty: number
+    replacement_reservation_ids: string[]
+  }>
+  prepared_ofs: Array<{ id: number; numero: string; qty: number }>
   idempotent_replay: boolean
+}
+
+type CorrectedBatchReservation = {
+  reservation_id: string
+  commande_ligne_affaire_allocation_id: number
+  livraison_affaire_id: number
+  commande_ligne_id: number
+  article_id: string
+  location_id: string
+  source_type: string
+  source_id: string
+  qty_reserved: number
+  qty_consumed: number
+  qty_prepared: number
+}
+
+type ReservationReallocation = PreparationCorrectionResult["reservation_reallocations"][number]
+
+async function reallocateCorrectedBatchReservations(params: {
+  db: PoolClient
+  stock_batch_id: string
+  stock_level_id: string
+  actual_qty: number
+  user_id: number
+  reason: string
+}): Promise<ReservationReallocation[]> {
+  const rows = await params.db.query<CorrectedBatchReservation>(
+    `
+      SELECT
+        r.id::text AS reservation_id,
+        r.commande_ligne_affaire_allocation_id::bigint::int AS commande_ligne_affaire_allocation_id,
+        r.livraison_affaire_id::bigint::int AS livraison_affaire_id,
+        COALESCE(r.commande_ligne_id, r.source_id::bigint)::bigint::int AS commande_ligne_id,
+        r.article_id::text AS article_id,
+        r.location_id::text AS location_id,
+        r.source_type,
+        r.source_id,
+        r.qty_reserved::float8 AS qty_reserved,
+        r.qty_consumed::float8 AS qty_consumed,
+        r.qty_prepared::float8 AS qty_prepared
+      FROM public.stock_reservations r
+      WHERE r.stock_batch_id = $1::uuid
+        AND r.status = 'ACTIVE'
+        AND r.commande_ligne_affaire_allocation_id IS NOT NULL
+        AND r.livraison_affaire_id IS NOT NULL
+      ORDER BY r.created_at ASC, r.id ASC
+      FOR UPDATE OF r
+    `,
+    [params.stock_batch_id]
+  )
+  if (rows.rows.length === 0) return []
+
+  const preparedQty = rows.rows.reduce((sum, row) => sum + Number(row.qty_prepared), 0)
+  if (params.actual_qty + 1e-9 < preparedQty) {
+    throw new HttpError(
+      409,
+      "PHYSICAL_QTY_BELOW_PREPARED",
+      "La quantité physique est inférieure à la quantité déjà préparée dans un BL. Annulez d'abord la préparation concernée."
+    )
+  }
+
+  let flexibleCapacity = Math.max(0, params.actual_qty - preparedQty)
+  const reallocations: ReservationReallocation[] = []
+  for (const row of rows.rows) {
+    const flexibleQty = Math.max(
+      0,
+      Number(row.qty_reserved) - Number(row.qty_consumed) - Number(row.qty_prepared)
+    )
+    const keptFlexibleQty = Math.min(flexibleQty, flexibleCapacity)
+    flexibleCapacity -= keptFlexibleQty
+    const releasedQty = Math.max(0, flexibleQty - keptFlexibleQty)
+    if (releasedQty <= 1e-9) continue
+
+    await params.db.query(
+      `
+        UPDATE public.stock_reservations
+        SET qty_reserved = qty_reserved - $2,
+            version = version + 1,
+            row_version = row_version + 1,
+            reason = $3,
+            updated_at = now(),
+            updated_by = $4
+        WHERE id = $1::uuid
+      `,
+      [row.reservation_id, releasedQty, params.reason, params.user_id]
+    )
+    reallocations.push({
+      from_reservation_id: row.reservation_id,
+      commande_ligne_affaire_allocation_id: Number(row.commande_ligne_affaire_allocation_id),
+      released_qty: releasedQty,
+      reassigned_qty: 0,
+      shortage_qty: releasedQty,
+      replacement_reservation_ids: [],
+    })
+  }
+
+  const totalReleased = reallocations.reduce((sum, row) => sum + row.released_qty, 0)
+  if (totalReleased <= 1e-9) return reallocations
+  const batchRelease = await params.db.query(
+    `UPDATE public.stock_batches SET qty_reserved = qty_reserved - $2 WHERE id = $1::uuid AND qty_reserved + 1e-9 >= $2`,
+    [params.stock_batch_id, totalReleased]
+  )
+  const levelRelease = await params.db.query(
+    `
+      UPDATE public.stock_levels
+      SET qty_reserved = qty_reserved - $2, updated_at = now(), updated_by = $3
+      WHERE id = $1::uuid AND qty_reserved + 1e-9 >= $2
+    `,
+    [params.stock_level_id, totalReleased, params.user_id]
+  )
+  if ((batchRelease.rowCount ?? 0) !== 1 || (levelRelease.rowCount ?? 0) !== 1) {
+    throw new HttpError(409, "RESERVATION_REBALANCE_CONFLICT", "Le stock réservé a changé pendant le recomptage.")
+  }
+
+  for (const reallocation of reallocations) {
+    const source = rows.rows.find((row) => row.reservation_id === reallocation.from_reservation_id)
+    if (!source) continue
+    let remaining = reallocation.released_qty
+    const candidates = await params.db.query<{
+      stock_level_id: string
+      stock_batch_id: string
+      lot_id: string
+      location_id: string
+      source_scope: string | null
+      qty_available: number
+    }>(
+      `
+        SELECT
+          sl.id::text AS stock_level_id,
+          sb.id::text AS stock_batch_id,
+          l.id::text AS lot_id,
+          sl.location_id::text AS location_id,
+          COALESCE(l.source_scope, l.stock_scope, w.stock_scope, 'NEW') AS source_scope,
+          LEAST(
+            GREATEST(0, sb.qty_total - sb.qty_reserved),
+            GREATEST(0, sl.qty_total - sl.qty_reserved - sl.qty_depreciated)
+          )::float8 AS qty_available
+        FROM public.stock_levels sl
+        JOIN public.stock_batches sb ON sb.stock_level_id = sl.id
+        JOIN public.lots l ON l.id = sb.lot_id AND l.article_id = sl.article_id
+        JOIN public.locations loc ON loc.id = sl.location_id
+        JOIN public.warehouses w ON w.id = loc.warehouse_id
+        WHERE sl.article_id = $1::uuid
+          AND sb.id <> $2::uuid
+          AND COALESCE(l.lot_status, 'LIBERE') = 'LIBERE'
+          AND sb.qty_total > sb.qty_reserved
+          AND sl.qty_total > sl.qty_reserved + sl.qty_depreciated
+        ORDER BY
+          CASE COALESCE(l.source_scope, l.stock_scope, w.stock_scope, 'NEW') WHEN 'OLD' THEN 0 ELSE 1 END,
+          COALESCE(l.received_at, l.manufactured_at, l.created_at::date),
+          l.created_at,
+          l.id,
+          sb.id
+        FOR UPDATE OF sl, sb, l
+      `,
+      [source.article_id, params.stock_batch_id]
+    )
+
+    for (const candidate of candidates.rows) {
+      if (remaining <= 1e-9) break
+      const qty = Math.min(remaining, Number(candidate.qty_available))
+      if (qty <= 1e-9) continue
+      const scope = candidate.source_scope === "OLD" ? "OLD" : "NEW"
+      if (scope !== "OLD") {
+        await assertOperationalLotQualityEligibility({
+          client: params.db,
+          lotId: candidate.lot_id,
+          qty,
+          purpose: "RESERVE",
+        })
+      }
+      const batchUpdate = await params.db.query(
+        `UPDATE public.stock_batches SET qty_reserved = qty_reserved + $2 WHERE id = $1::uuid AND qty_total - qty_reserved + 1e-9 >= $2`,
+        [candidate.stock_batch_id, qty]
+      )
+      const levelUpdate = await params.db.query(
+        `
+          UPDATE public.stock_levels
+          SET qty_reserved = qty_reserved + $2, updated_at = now(), updated_by = $3
+          WHERE id = $1::uuid AND qty_total - qty_reserved - qty_depreciated + 1e-9 >= $2
+        `,
+        [candidate.stock_level_id, qty, params.user_id]
+      )
+      if ((batchUpdate.rowCount ?? 0) !== 1 || (levelUpdate.rowCount ?? 0) !== 1) {
+        throw new HttpError(409, "RESERVATION_REALLOCATION_CONFLICT", "Un lot de remplacement a changé pendant la réaffectation.")
+      }
+      const replacement = await params.db.query<{ id: string }>(
+        `
+          INSERT INTO public.stock_reservations (
+            article_id, location_id, qty_reserved, source_type, source_id,
+            commande_ligne_id, status, lot_id, stock_batch_id,
+            commande_ligne_affaire_allocation_id, livraison_affaire_id,
+            stock_level_id, source_scope, reason, created_by, updated_by
+          ) VALUES (
+            $1::uuid,$2::uuid,$3,$4,$5,$6::bigint,'ACTIVE',$7::uuid,$8::uuid,
+            $9::bigint,$10::bigint,$11::uuid,$12,$13,$14,$14
+          )
+          ON CONFLICT (commande_ligne_affaire_allocation_id, stock_batch_id)
+            WHERE status = 'ACTIVE' AND commande_ligne_affaire_allocation_id IS NOT NULL AND stock_batch_id IS NOT NULL
+          DO UPDATE SET
+            qty_reserved = public.stock_reservations.qty_reserved + EXCLUDED.qty_reserved,
+            lot_id = EXCLUDED.lot_id,
+            stock_level_id = EXCLUDED.stock_level_id,
+            location_id = EXCLUDED.location_id,
+            source_scope = EXCLUDED.source_scope,
+            reason = EXCLUDED.reason,
+            version = public.stock_reservations.version + 1,
+            row_version = public.stock_reservations.row_version + 1,
+            updated_at = now(),
+            updated_by = EXCLUDED.updated_by
+          RETURNING id::text AS id
+        `,
+        [
+          source.article_id,
+          candidate.location_id,
+          qty,
+          source.source_type,
+          source.source_id,
+          source.commande_ligne_id,
+          candidate.lot_id,
+          candidate.stock_batch_id,
+          source.commande_ligne_affaire_allocation_id,
+          source.livraison_affaire_id,
+          candidate.stock_level_id,
+          scope,
+          `Réaffectation après erreur de stock : ${params.reason}`,
+          params.user_id,
+        ]
+      )
+      const replacementId = replacement.rows[0]?.id
+      if (!replacementId) throw new Error("Failed to persist replacement reservation")
+      reallocation.replacement_reservation_ids.push(replacementId)
+      reallocation.reassigned_qty += qty
+      remaining -= qty
+    }
+    reallocation.shortage_qty = Math.max(0, remaining)
+  }
+
+  const allocationIds = Array.from(new Set(reallocations.map((row) => row.commande_ligne_affaire_allocation_id)))
+  for (const allocationId of allocationIds) {
+    await params.db.query(
+      `
+        UPDATE public.commande_ligne_affaire_allocation allocation
+        SET qty_reserved = totals.qty_reserved,
+            qty_from_stock = LEAST(allocation.qty_ordered, allocation.qty_delivered + totals.qty_reserved),
+            qty_to_produce = GREATEST(0, allocation.qty_ordered - allocation.qty_delivered - totals.qty_reserved),
+            qty_remaining = GREATEST(0, allocation.qty_ordered - allocation.qty_delivered),
+            allocation_version = allocation.allocation_version + 1,
+            updated_at = now()
+        FROM (
+          SELECT COALESCE(SUM(r.qty_reserved - r.qty_consumed), 0)::numeric AS qty_reserved
+          FROM public.stock_reservations r
+          WHERE r.commande_ligne_affaire_allocation_id = $1::bigint
+            AND r.status = 'ACTIVE'
+        ) totals
+        WHERE allocation.id = $1::bigint
+      `,
+      [allocationId]
+    )
+  }
+  return reallocations
+}
+
+async function prepareOfsForReservationShortages(params: {
+  db: PoolClient
+  reallocations: ReservationReallocation[]
+  user_id: number
+  correction_id: string
+}): Promise<PreparationCorrectionResult["prepared_ofs"]> {
+  const prepared: PreparationCorrectionResult["prepared_ofs"] = []
+  const allocationIds = Array.from(new Set(params.reallocations.map((row) => row.commande_ligne_affaire_allocation_id)))
+  for (const allocationId of allocationIds) {
+    const contextRes = await params.db.query<{
+      commande_id: number
+      commande_numero: string
+      commande_ligne_id: number
+      livraison_affaire_id: number
+      client_id: string
+      article_id: string | null
+      piece_technique_id: string | null
+      shortage_qty: number
+      existing_of_affaire_id: number | null
+      open_of_qty: number
+    }>(
+      `
+        SELECT
+          allocation.commande_id::bigint::int AS commande_id,
+          commande.numero AS commande_numero,
+          allocation.commande_ligne_id::bigint::int AS commande_ligne_id,
+          allocation.livraison_affaire_id::bigint::int AS livraison_affaire_id,
+          commande.client_id,
+          COALESCE(allocation.article_ref_id::text, article.id::text) AS article_id,
+          COALESCE(line.piece_technique_id::text, article.piece_technique_id::text) AS piece_technique_id,
+          GREATEST(0, allocation.qty_to_produce)::float8 AS shortage_qty,
+          existing.affaire_id::bigint::int AS existing_of_affaire_id,
+          COALESCE(existing.open_qty, 0)::float8 AS open_of_qty
+        FROM public.commande_ligne_affaire_allocation allocation
+        JOIN public.commande_client commande ON commande.id = allocation.commande_id
+        JOIN public.commande_ligne line ON line.id = allocation.commande_ligne_id
+        LEFT JOIN public.articles article ON article.id = allocation.article_ref_id
+        LEFT JOIN LATERAL (
+          SELECT
+            MIN(ofa.affaire_id) AS affaire_id,
+            SUM(GREATEST(0, ofa.quantite_lancee - COALESCE(ofa.quantite_bonne, 0))) AS open_qty
+          FROM public.ordres_fabrication ofa
+          WHERE ofa.commande_id = allocation.commande_id
+            AND ofa.commande_ligne_id = allocation.commande_ligne_id
+            AND ofa.parent_of_id IS NULL
+            AND ofa.statut::text NOT IN ('CLOTURE', 'ANNULE')
+        ) existing ON true
+        WHERE allocation.id = $1::bigint
+        FOR UPDATE OF allocation
+      `,
+      [allocationId]
+    )
+    const context = contextRes.rows[0]
+    if (!context) continue
+    const qtyToPrepare = Math.max(0, Number(context.shortage_qty) - Number(context.open_of_qty))
+    if (qtyToPrepare <= 1e-9) continue
+    if (!context.article_id || !context.piece_technique_id) {
+      throw new HttpError(
+        409,
+        "SHORTAGE_OF_TECHNICAL_DATA_REQUIRED",
+        `La ligne ${context.commande_ligne_id} manque de données techniques pour préparer l'OF de remplacement.`
+      )
+    }
+    const generated = await createRecursiveOrdresFabrication(params.db, {
+      source_type: "COMMANDE_CLIENT",
+      commande_id: Number(context.commande_id),
+      commande_numero: context.commande_numero,
+      commande_ligne_id: Number(context.commande_ligne_id),
+      livraison_affaire_id: context.existing_of_affaire_id ?? Number(context.livraison_affaire_id),
+      client_id: context.client_id,
+      root_article_id: context.article_id,
+      root_piece_technique_id: context.piece_technique_id,
+      qty_to_produce: qtyToPrepare,
+      user_id: params.user_id,
+      idempotency_key: `stock-correction:${params.correction_id}:${allocationId}`,
+      request_hash: crypto
+        .createHash("sha256")
+        .update(`${params.correction_id}:${allocationId}:${qtyToPrepare}`)
+        .digest("hex"),
+    })
+    for (const root of generated.ofs.filter((of) => of.parent_of_id === null)) {
+      await queueRootOfCreationPdf(params.db, { ofId: root.id, actorUserId: params.user_id })
+      const number = await params.db.query<{ numero: string }>(
+        `SELECT numero FROM public.ordres_fabrication WHERE id = $1::bigint`,
+        [root.id]
+      )
+      prepared.push({ id: root.id, numero: number.rows[0]?.numero ?? `OF-${root.id}`, qty: qtyToPrepare })
+    }
+    await params.db.query(
+      `
+        INSERT INTO public.commande_client_event_log (commande_id, event_type, new_values, user_id)
+        VALUES ($1::bigint,'STOCK_CORRECTION_OF_PREPARED',$2::jsonb,$3)
+      `,
+      [
+        context.commande_id,
+        JSON.stringify({
+          correction_id: params.correction_id,
+          allocation_id: allocationId,
+          qty: qtyToPrepare,
+          of_ids: generated.ofs.map((of) => of.id),
+          warnings: generated.warnings,
+        }),
+        params.user_id,
+      ]
+    )
+  }
+  return prepared
 }
 
 /**
@@ -3735,6 +4116,7 @@ export async function repoCorrectPreparationStock(params: {
     reservation_id: params.body.reservation_id,
     actual_qty: params.body.actual_qty ?? null,
     reason: params.body.reason,
+    lot_code: params.body.lot_code ?? null,
     of_number: params.body.of_number ?? null,
     mp_reference: params.body.mp_reference === undefined ? undefined : params.body.mp_reference,
     tr_reference: params.body.tr_reference === undefined ? undefined : params.body.tr_reference,
@@ -3785,6 +4167,12 @@ export async function repoCorrectPreparationStock(params: {
         corrected_snapshot: isRecord(replay.corrected_snapshot) ? replay.corrected_snapshot : {},
         affected_bon_livraison_ids: Array.isArray(replay.affected_bon_livraison_ids)
           ? replay.affected_bon_livraison_ids.filter((value): value is string => typeof value === "string")
+          : [],
+        reservation_reallocations: Array.isArray(replay.reservation_reallocations)
+          ? replay.reservation_reallocations as PreparationCorrectionResult["reservation_reallocations"]
+          : [],
+        prepared_ofs: Array.isArray(replay.prepared_ofs)
+          ? replay.prepared_ofs as PreparationCorrectionResult["prepared_ofs"]
           : [],
         idempotent_replay: true,
       }
@@ -3896,6 +4284,25 @@ export async function repoCorrectPreparationStock(params: {
            tr_reference: reservation.tr_reference,
          }
 
+    const correctedLotCode = params.body.lot_code ?? reservation.lot_code
+    if (correctedLotCode !== reservation.lot_code) {
+      const lotUpdate = await db.query(
+        `
+          UPDATE public.lots
+          SET lot_code = $2, updated_at = now(), updated_by = $3
+          WHERE id = $1::uuid
+        `,
+        [reservation.lot_id, correctedLotCode, params.user_id]
+      )
+      if ((lotUpdate.rowCount ?? 0) !== 1) {
+        throw new HttpError(409, "LOT_CODE_CORRECTION_CONFLICT", "Le numéro de lot n'a pas pu être corrigé.")
+      }
+      await db.query(
+        `UPDATE public.stock_batches SET batch_code = $2 WHERE lot_id = $1::uuid`,
+        [reservation.lot_id, correctedLotCode]
+      )
+    }
+
     let correctedOfId = reservation.of_id
     let correctedOfNumber = reservation.of_numero
     if (params.body.of_number !== undefined && params.body.of_number !== reservation.of_numero) {
@@ -3956,24 +4363,34 @@ export async function repoCorrectPreparationStock(params: {
     const qtyBefore = Number(reservation.batch_qty_total)
     const actualQty = params.body.actual_qty === undefined ? qtyBefore : Number(params.body.actual_qty)
     const qtyDelta = actualQty - qtyBefore
-    if (actualQty + 1e-9 < Number(reservation.batch_qty_reserved)) {
-      throw new HttpError(
-        409,
-        "ACTUAL_QTY_BELOW_RESERVED",
-        "The physical count is below active reservations; release or correct those reservations before reducing this lot"
-      )
-    }
-    if (Number(reservation.level_qty_total) + qtyDelta + 1e-9 < Number(reservation.level_qty_reserved)) {
-      throw new HttpError(409, "ACTUAL_QTY_BELOW_RESERVED", "The physical count would make the stock level unavailable")
-    }
+    const reservationReallocations = params.body.actual_qty === undefined
+      ? []
+      : await reallocateCorrectedBatchReservations({
+          db,
+          stock_batch_id: reservation.stock_batch_id,
+          stock_level_id: reservation.stock_level_id,
+          actual_qty: actualQty,
+          user_id: params.user_id,
+          reason: params.body.reason,
+        })
 
-    const previousVerifiedQty = typeof previousSnapshot.verified_qty === "number" ? previousSnapshot.verified_qty : 0
-    const previousVerifiedAt = typeof previousSnapshot.verified_at === "string" ? previousSnapshot.verified_at : null
+    const correctionInvalidatesVerification =
+      params.body.actual_qty !== undefined ||
+      params.body.lot_code !== undefined ||
+      params.body.of_number !== undefined ||
+      params.body.mp_reference !== undefined ||
+      params.body.tr_reference !== undefined
+    const previousVerifiedQty = correctionInvalidatesVerification
+      ? 0
+      : typeof previousSnapshot.verified_qty === "number" ? previousSnapshot.verified_qty : 0
+    const previousVerifiedAt = correctionInvalidatesVerification
+      ? null
+      : typeof previousSnapshot.verified_at === "string" ? previousSnapshot.verified_at : null
     const correctedSnapshot: Record<string, unknown> = {
       ...previousSnapshot,
       reservation_id: reservation.reservation_id,
       lot_id: reservation.lot_id,
-      lot_code: reservation.lot_code,
+      lot_code: correctedLotCode,
       article_id: reservation.article_id,
       of_id: correctedOfId,
       of_number: correctedOfNumber,
@@ -4072,6 +4489,13 @@ export async function repoCorrectPreparationStock(params: {
       })
     }
 
+    const preparedOfs = await prepareOfsForReservationShortages({
+      db,
+      reallocations: reservationReallocations,
+      user_id: params.user_id,
+      correction_id: correctionId,
+    })
+
     // A correction is a revision, not a replacement.  When a physical scan
     // already exists, preserve its verified quantity in a new immutable row.
     if (previousVerifiedQty > 0) {
@@ -4081,7 +4505,7 @@ export async function repoCorrectPreparationStock(params: {
             reservation_id, verified_qty, scanned_lot_code, snapshot, verified_by
           ) VALUES ($1::uuid,$2,$3,$4::jsonb,$5)
         `,
-        [reservation.reservation_id, previousVerifiedQty, reservation.lot_code, JSON.stringify(correctedSnapshot), params.user_id]
+        [reservation.reservation_id, previousVerifiedQty, correctedLotCode, JSON.stringify(correctedSnapshot), params.user_id]
       )
     }
 
@@ -4143,6 +4567,8 @@ export async function repoCorrectPreparationStock(params: {
       previous_snapshot: previousSnapshot,
       corrected_snapshot: correctedSnapshot,
       affected_bon_livraison_ids: affectedBonLivraisonIds,
+      reservation_reallocations: reservationReallocations,
+      prepared_ofs: preparedOfs,
       idempotent_replay: false,
     }
     await db.query(
@@ -4175,6 +4601,8 @@ export async function repoCorrectPreparationStock(params: {
           stock_movement_id: movementId,
           previous_snapshot: previousSnapshot,
           corrected_snapshot: correctedSnapshot,
+          reservation_reallocations: reservationReallocations,
+          prepared_ofs: preparedOfs,
         },
       },
       ip: null,
