@@ -288,7 +288,7 @@ export const ofReceiptBodySchema = z
     qty_scrap: z.coerce.number().min(0).optional().default(0),
     qty_rework: z.coerce.number().min(0).optional().default(0),
     unite: z.string().trim().min(1).max(30).optional().nullable(),
-    location_id: uuid,
+    location_id: uuid.optional().nullable(),
     lot_mode: z.enum(["NEW", "EXISTING"]),
     lot_id: uuid.optional().nullable(),
     lot_number: z.string().trim().min(1).max(80).optional().nullable(),

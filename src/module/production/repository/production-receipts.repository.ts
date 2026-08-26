@@ -28,6 +28,8 @@ export type OfReceiptContext = {
     affaire_id: number | null;
     commande_id: number | null;
     commande_ligne_id: number | null;
+    order_type: string | null;
+    client_code: string | null;
   };
   article_id: string;
   unite: string | null;
@@ -481,6 +483,76 @@ async function resolveEmplacementByLocationId(
   };
 }
 
+async function ensureInternalOrderReceiptDestination(
+  client: Pick<PoolClient, "query">,
+  params: { client_code: string; actor_user_id: number }
+): Promise<{ magasin_id: string; emplacement_id: number; location_id: string; warehouse_id: string }> {
+  const clientCode = params.client_code.trim();
+  if (!clientCode) {
+    throw new HttpError(422, "INTERNAL_ORDER_CLIENT_CODE_REQUIRED", "La pièce technique doit porter un numéro client pour définir son emplacement NEW-PF.");
+  }
+
+  await client.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [`internal-stock-destination:${clientCode}`]);
+  const magasinRes = await client.query<{ id: string; warehouse_id: string; code: string }>(
+    `
+      SELECT id::text AS id, warehouse_id::text AS warehouse_id, COALESCE(code, code_magasin)::text AS code
+      FROM public.magasins
+      WHERE COALESCE(code, code_magasin) = 'NEW-PF'
+        AND is_active = true
+      LIMIT 1
+      FOR UPDATE
+    `
+  );
+  const magasin = magasinRes.rows[0] ?? null;
+  if (!magasin?.warehouse_id) {
+    throw new HttpError(503, "NEW_PF_MAGASIN_REQUIRED", "Le magasin actif NEW-PF doit être configuré et lié à un entrepôt.");
+  }
+
+  const locationCode = `NEW-PF-${clientCode}`;
+  const locationRes = await client.query<{ id: string }>(
+    `
+      INSERT INTO public.locations (warehouse_id, code, description)
+      VALUES ($1::uuid,$2::citext,$3)
+      ON CONFLICT (warehouse_id, code)
+      DO UPDATE SET description = COALESCE(public.locations.description, EXCLUDED.description)
+      RETURNING id::text AS id
+    `,
+    [magasin.warehouse_id, locationCode, `Stock produit fini client ${clientCode}`]
+  );
+  const locationId = locationRes.rows[0]?.id;
+  if (!locationId) throw new Error("Failed to ensure internal order stock location");
+
+  const emplacementRes = await client.query<{ id: number; location_id: string | null }>(
+    `
+      INSERT INTO public.emplacements (
+        magasin_id, code, name, is_scrap, is_active, location_id,
+        location_type, allow_inbound, allow_outbound, restrictions, created_by, updated_by
+      )
+      VALUES ($1::uuid,$2,$3,false,true,$4::uuid,'STORAGE',true,true,'{}'::jsonb,$5,$5)
+      ON CONFLICT (magasin_id, code)
+      DO UPDATE SET
+        location_id = COALESCE(public.emplacements.location_id, EXCLUDED.location_id),
+        is_active = true,
+        allow_inbound = true,
+        updated_at = now(),
+        updated_by = EXCLUDED.updated_by
+      RETURNING id::int AS id, location_id::text AS location_id
+    `,
+    [magasin.id, clientCode, `Client ${clientCode}`, locationId, params.actor_user_id]
+  );
+  const emplacement = emplacementRes.rows[0] ?? null;
+  if (!emplacement || emplacement.location_id !== locationId) {
+    throw new HttpError(409, "INTERNAL_ORDER_DESTINATION_CONFLICT", `L'emplacement NEW-PF ${clientCode} est lié à un autre lieu de stock.`);
+  }
+
+  return {
+    magasin_id: magasin.id,
+    emplacement_id: Number(emplacement.id),
+    location_id: locationId,
+    warehouse_id: magasin.warehouse_id,
+  };
+}
+
 async function ensureStockLevel(
   client: Pick<PoolClient, "query">,
   args: {
@@ -603,6 +675,8 @@ export async function repoGetOfReceiptContext(params: { of_id: number }): Promis
     affaire_id: number | null;
     commande_id: number | null;
     commande_ligne_id: number | null;
+    order_type: string | null;
+    client_code: string | null;
   };
 
   const ofRes = await pool.query<OfRow>(
@@ -620,9 +694,12 @@ export async function repoGetOfReceiptContext(params: { of_id: number }): Promis
         o.updated_at::text AS updated_at,
         o.affaire_id::bigint::int AS affaire_id,
         o.commande_id::bigint::int AS commande_id,
-        o.commande_ligne_id::bigint::int AS commande_ligne_id
+        o.commande_ligne_id::bigint::int AS commande_ligne_id,
+        commande.order_type::text AS order_type,
+        pt.code_client::text AS client_code
       FROM public.ordres_fabrication o
       JOIN public.pieces_techniques pt ON pt.id = o.piece_technique_id
+      LEFT JOIN public.commande_client commande ON commande.id = o.commande_id
       WHERE o.id = $1::bigint
       LIMIT 1
     `,
@@ -697,7 +774,25 @@ export async function repoGetOfReceiptContext(params: { of_id: number }): Promis
   const defaultSetting = await pool.query<{ value_text: string | null }>(
     `SELECT value_text FROM public.erp_settings WHERE key = 'stock.default_receipt_location' LIMIT 1`
   );
-  const defaultLocationId = defaultSetting.rows[0]?.value_text ?? null;
+  const configuredDefaultLocationId = defaultSetting.rows[0]?.value_text ?? null;
+  const internalLocationId = ofRow.order_type === "INTERNE" && ofRow.client_code
+    ? (
+        await pool.query<{ location_id: string }>(
+          `
+            SELECT emplacement.location_id::text AS location_id
+            FROM public.emplacements emplacement
+            JOIN public.magasins magasin ON magasin.id = emplacement.magasin_id
+            WHERE COALESCE(magasin.code, magasin.code_magasin) = 'NEW-PF'
+              AND emplacement.code = $1
+              AND emplacement.is_active = true
+              AND emplacement.location_id IS NOT NULL
+            LIMIT 1
+          `,
+          [ofRow.client_code]
+        )
+      ).rows[0]?.location_id ?? null
+    : null;
+  const defaultLocationId = internalLocationId ?? configuredDefaultLocationId;
 
   const magasinsRes = await pool.query<{ id: string; code: string; name: string; is_active: boolean }>(
     `
@@ -743,6 +838,8 @@ export async function repoGetOfReceiptContext(params: { of_id: number }): Promis
       affaire_id: ofRow.affaire_id === null ? null : Number(ofRow.affaire_id),
       commande_id: ofRow.commande_id === null ? null : Number(ofRow.commande_id),
       commande_ligne_id: ofRow.commande_ligne_id === null ? null : Number(ofRow.commande_ligne_id),
+      order_type: ofRow.order_type,
+      client_code: ofRow.client_code,
     },
     article_id: article.id,
     unite: article.unite,
@@ -818,24 +915,32 @@ export async function repoCreateOfReceipt(params: {
       piece_technique_id: string;
       article_id: string | null;
       affaire_id: number | null;
+      commande_id: number | null;
       commande_ligne_id: number | null;
+      order_type: string | null;
+      client_code: string | null;
       quantite_bonne: number;
       statut: string;
       updated_at: string;
     }>(
       `
         SELECT
-          numero,
-          piece_technique_id::text AS piece_technique_id,
-          article_id::text AS article_id,
-          affaire_id::bigint::int AS affaire_id,
-          commande_ligne_id::bigint::int AS commande_ligne_id,
-          quantite_bonne::float8 AS quantite_bonne,
-          statut::text AS statut,
-          updated_at::text AS updated_at
-        FROM public.ordres_fabrication
-        WHERE id = $1::bigint
-        FOR UPDATE
+          fabrication.numero,
+          fabrication.piece_technique_id::text AS piece_technique_id,
+          fabrication.article_id::text AS article_id,
+          fabrication.affaire_id::bigint::int AS affaire_id,
+          fabrication.commande_id::bigint::int AS commande_id,
+          fabrication.commande_ligne_id::bigint::int AS commande_ligne_id,
+          commande.order_type::text AS order_type,
+          piece.code_client::text AS client_code,
+          fabrication.quantite_bonne::float8 AS quantite_bonne,
+          fabrication.statut::text AS statut,
+          fabrication.updated_at::text AS updated_at
+        FROM public.ordres_fabrication fabrication
+        JOIN public.pieces_techniques piece ON piece.id = fabrication.piece_technique_id
+        LEFT JOIN public.commande_client commande ON commande.id = fabrication.commande_id
+        WHERE fabrication.id = $1::bigint
+        FOR UPDATE OF fabrication
       `,
       [params.of_id]
     );
@@ -893,7 +998,17 @@ export async function repoCreateOfReceipt(params: {
     }
 
     const unit = await resolveUnitIdForArticle(client, article.id, params.body.unite ?? null);
-    const map = await resolveEmplacementByLocationId(client, params.body.location_id);
+    const isInternalOrder = ofRow.order_type === "INTERNE";
+    const map = isInternalOrder
+      ? await ensureInternalOrderReceiptDestination(client, {
+          client_code: ofRow.client_code ?? "",
+          actor_user_id: params.audit.user_id,
+        })
+      : params.body.location_id
+        ? await resolveEmplacementByLocationId(client, params.body.location_id)
+        : (() => {
+            throw new HttpError(422, "RECEIPT_LOCATION_REQUIRED", "Sélectionnez l'emplacement de mise en stock.");
+          })();
     const stockLevelId = await ensureStockLevel(client, {
       article_id: article.id,
       unit_id: unit.unit_id,
@@ -1182,7 +1297,7 @@ export async function repoCreateOfReceipt(params: {
     }
 
     const autoReservation =
-      params.body.quality_status === "LIBERE" && typeof ofRow.commande_ligne_id === "number"
+      !isInternalOrder && params.body.quality_status === "LIBERE" && typeof ofRow.commande_ligne_id === "number"
         ? await reserveProducedQtyForCommandeLine(client, {
             commande_ligne_id: ofRow.commande_ligne_id,
             article_id: article.id,

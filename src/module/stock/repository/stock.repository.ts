@@ -3299,7 +3299,10 @@ export async function repoListAvailableArticleLots(
   const count = await db.query<{ total: number }>(`SELECT COUNT(*)::int AS total ${base}`, [articleId]);
   const data = await db.query<StockAvailableLotItem>(`
     SELECT l.id::text AS lot_id,
-           COALESCE(l.source_scope, l.stock_scope, 'NEW')::text AS source_scope,
+           CASE
+             WHEN l.origin_stock_scope = 'OLD' THEN 'OLD'
+             ELSE COALESCE(l.source_scope, l.stock_scope, 'NEW')
+           END::text AS source_scope,
            l.lot_code,
            v.qty_total::float8 AS qty_total,
            v.qty_reserved::float8 AS qty_reserved,
@@ -3310,7 +3313,11 @@ export async function repoListAvailableArticleLots(
            COALESCE(l.received_at, l.manufactured_at, l.created_at::date)::text AS fifo_received_at,
            l.created_at::text AS created_at
     ${base}
-    ORDER BY CASE COALESCE(l.source_scope, l.stock_scope, 'NEW') WHEN 'OLD' THEN 0 ELSE 1 END,
+    ORDER BY CASE
+               WHEN l.origin_stock_scope = 'OLD' THEN 0
+               WHEN COALESCE(l.source_scope, l.stock_scope, 'NEW') = 'OLD' THEN 0
+               ELSE 1
+             END,
              COALESCE(l.received_at, l.manufactured_at, l.created_at::date) ASC,
              l.created_at ASC, l.id ASC
     LIMIT $2 OFFSET $3
@@ -5565,7 +5572,11 @@ export async function repoListConsolidatedInventory(
   const where: string[] = [];
   const push = (value: unknown) => { values.push(value); return `$${values.length}`; };
 
-  if (filters.scope) where.push(`COALESCE(m.stock_scope, w.stock_scope, 'NEW') = ${push(filters.scope)}`);
+  const effectiveScopeSql = `CASE
+    WHEN l.origin_stock_scope = 'OLD' THEN 'OLD'
+    ELSE COALESCE(l.source_scope, l.stock_scope, m.stock_scope, w.stock_scope, 'NEW')
+  END`;
+  if (filters.scope) where.push(`${effectiveScopeSql} = ${push(filters.scope)}`);
   if (filters.magasin_id) where.push(`e.magasin_id = ${push(filters.magasin_id)}::uuid`);
   if (filters.rayon) where.push(`e.code ILIKE ${push(normalizeLikeQuery(filters.rayon))}`);
   if (filters.lot) where.push(`COALESCE(l.lot_code, '') ILIKE ${push(normalizeLikeQuery(filters.lot))}`);
@@ -5576,7 +5587,7 @@ export async function repoListConsolidatedInventory(
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
   const sort = {
     article_code: "a.code",
-    scope: "COALESCE(m.stock_scope, w.stock_scope, 'NEW')",
+    scope: effectiveScopeSql,
     magasin_code: "COALESCE(m.code, m.code_magasin, w.code)",
     rayon_code: "COALESCE(e.code, loc.code)",
     lot_code: "l.lot_code",
@@ -5591,6 +5602,14 @@ export async function repoListConsolidatedInventory(
     LEFT JOIN public.emplacements e ON e.location_id = b.location_id
     LEFT JOIN public.magasins m ON m.id = e.magasin_id
     LEFT JOIN public.lots l ON l.id = b.lot_id
+    LEFT JOIN LATERAL (
+      SELECT COALESCE(SUM(movement_line.qty), 0)::float8 AS qty_initial
+      FROM public.stock_movement_lines movement_line
+      JOIN public.stock_movements movement ON movement.id = movement_line.movement_id
+      WHERE movement_line.lot_id = b.lot_id
+        AND movement.status = 'POSTED'
+        AND movement.source_document_type = 'CERP_HISTORICAL_OPENING'
+    ) opening ON TRUE
     LEFT JOIN public.articles_matiere article_material ON article_material.article_id = a.id
     LEFT JOIN public.stock_nuances material_nuance ON material_nuance.id = article_material.nuance_id
     LEFT JOIN public.stock_etats material_etat ON material_etat.id = article_material.etat_id
@@ -5617,11 +5636,12 @@ export async function repoListConsolidatedInventory(
        article_material.hauteur_mm::float8 AS material_hauteur_mm,
        article_material.epaisseur_mm::float8 AS material_epaisseur_mm,
        article_material.diametre_mm::float8 AS material_diametre_mm,
-       COALESCE(m.stock_scope, w.stock_scope, 'NEW')::text AS scope,
+       ${effectiveScopeSql}::text AS scope,
        COALESCE(m.id, '00000000-0000-0000-0000-000000000000')::text AS magasin_id,
        COALESCE(m.code, m.code_magasin, w.code)::text AS magasin_code,
        COALESCE(e.code, loc.code)::text AS rayon_code,
        b.lot_id::text AS lot_id, l.lot_code, l.stock_trace_code::text AS stock_trace_code, l.qr_payload,
+       CASE WHEN ${effectiveScopeSql} = 'OLD' THEN opening.qty_initial ELSE NULL END::float8 AS qty_initial,
        b.qty_total::float8 AS qty_total, b.qty_reserved::float8 AS qty_reserved,
        b.qty_available::float8 AS qty_available, b.updated_at::text AS updated_at
      ${fromSql} ${whereSql}
@@ -5784,7 +5804,7 @@ export async function repoCreateHistoricalImport(body: HistoricalImportBodyDTO, 
     const lotCode = await generateTransactionalBusinessCode(client, { prefix: "LOT" });
     const traceSequence = await client.query<{ value: string }>(`SELECT nextval('public.stock_trace_code_446_seq')::text AS value`);
     const trace = (traceSequence.rows[0]?.value ?? "0").padStart(6, "0");
-    const lot = await client.query<{ id: string }>(`INSERT INTO public.lots (article_id, lot_code, supplier_lot_code, notes, stock_trace_code, qr_payload, origin_stock_scope, created_by, updated_by) VALUES ($1::uuid,$2,$3,$4,$5,$6,'OLD',$7,$7) RETURNING id::text AS id`, [articleId, lotCode, body.kind === "MP" ? body.lot_number : null, body.notes ?? null, trace, `CERP-STOCK:${trace}`, audit.user_id]);
+    const lot = await client.query<{ id: string }>(`INSERT INTO public.lots (article_id, lot_code, supplier_lot_code, notes, stock_trace_code, qr_payload, origin_stock_scope, source_scope, stock_scope, created_by, updated_by) VALUES ($1::uuid,$2,$3,$4,$5,$6,'OLD','OLD','OLD',$7,$7) RETURNING id::text AS id`, [articleId, lotCode, body.kind === "MP" ? body.lot_number : null, body.notes ?? null, trace, `CERP-STOCK:${trace}`, audit.user_id]);
     const lotId = lot.rows[0]?.id;
     if (!lotId) throw new Error("Unable to create historical lot");
     const refs: Array<["OF" | "MP_LOT" | "TRAITEMENT_LOT", string[]]> = body.kind === "PF"

@@ -1470,7 +1470,6 @@ async function advanceInternalOrderWorkflowAfterGeneration(params: {
   tx: Queryable;
   commande_id: number;
   user_id: number;
-  livraison_affaire_id: number;
   of_ids: number[];
 }) {
   const transition = await repoEnsureCommandeWorkflowStatus({
@@ -1521,7 +1520,6 @@ async function advanceInternalOrderWorkflowAfterGeneration(params: {
       params.user_id,
       JSON.stringify({
         internal_order_flow: true,
-        livraison_affaire_id: params.livraison_affaire_id,
         of_ids: params.of_ids,
       }),
     ]
@@ -1530,62 +1528,86 @@ async function advanceInternalOrderWorkflowAfterGeneration(params: {
   return transition;
 }
 
+async function repairLegacyNoOperationPlanningBypass(params: {
+  tx: Queryable;
+  commande_id: number;
+  user_id: number;
+  ar_sent_at: string | null;
+  of_ids: number[];
+}): Promise<boolean> {
+  if (params.ar_sent_at || params.of_ids.length === 0) return false;
+
+  const header = await loadCommandeWorkflowHeaderWithStatus(params.tx, params.commande_id);
+  if (!header || header.statut !== "AR_PRET") return false;
+
+  const planning = await params.tx.query<{ status: string; metadata: Record<string, unknown> | null }>(
+    `
+      SELECT status, metadata
+      FROM public.commande_client_workflow_checkpoint
+      WHERE commande_id = $1
+        AND checkpoint_code = 'planning_validation'
+      LIMIT 1
+      FOR UPDATE
+    `,
+    [params.commande_id]
+  );
+  const row = planning.rows[0] ?? null;
+  if (
+    !row ||
+    row.status !== "skipped" ||
+    row.metadata?.skip_reason !== "no_plannable_operations" ||
+    row.metadata?.no_operation_flow !== true
+  ) {
+    return false;
+  }
+
+  await params.tx.query(
+    `
+      UPDATE public.commande_client_workflow_checkpoint
+      SET
+        status = CASE
+          WHEN checkpoint_code = 'of_generation' THEN 'done'
+          WHEN checkpoint_code = 'planning_validation' THEN 'active'
+          ELSE 'pending'
+        END,
+        completed_at = CASE WHEN checkpoint_code = 'of_generation' THEN completed_at ELSE NULL END,
+        completed_by = CASE WHEN checkpoint_code = 'of_generation' THEN completed_by ELSE NULL END,
+        metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+        updated_at = now()
+      WHERE commande_id = $1
+        AND checkpoint_code IN ('of_generation', 'planning_validation', 'ar_preparation', 'ar_sent')
+    `,
+    [
+      params.commande_id,
+      JSON.stringify({
+        repair_reason: "planning_required_for_of_without_operations",
+        repaired_of_ids: params.of_ids,
+      }),
+    ]
+  );
+  await repoEnsureCommandeWorkflowStatus({
+    tx: params.tx,
+    commande_id: params.commande_id,
+    nouveau_statut: "ATTENTE_PLANNING",
+    cause: "planning_repair",
+    commentaire: "Correction automatique : tout OF, même sans opération, doit être validé au planning",
+    user_id: params.user_id,
+  });
+  return true;
+}
+
 async function advanceCustomerOrderWorkflowAfterLaunch(params: {
   tx: Queryable;
   commande_id: number;
   user_id: number;
   needs_production: boolean;
-  has_plannable_operations: boolean;
   bon_livraison_id: string | null;
   of_ids: number[];
 }) {
   const launchMode = resolveCustomerOrderLaunchMode({
     needsProduction: params.needs_production,
-    generatedOperationsCount: params.has_plannable_operations ? 1 : 0,
+    generatedOperationsCount: 0,
   });
-
-  if (launchMode === "PRODUCTION_WITHOUT_PLANNING") {
-    await params.tx.query(
-      `
-        UPDATE public.commande_client_workflow_checkpoint
-        SET status = CASE
-              WHEN checkpoint_code IN ('of_generation', 'ar_preparation') THEN 'done'
-              WHEN checkpoint_code = 'planning_validation' THEN 'skipped'
-              WHEN checkpoint_code = 'ar_sent' THEN 'active'
-              ELSE status
-            END,
-            completed_at = CASE
-              WHEN checkpoint_code = 'ar_sent' THEN NULL
-              ELSE COALESCE(completed_at, now())
-            END,
-            completed_by = CASE
-              WHEN checkpoint_code = 'ar_sent' THEN NULL
-              ELSE COALESCE(completed_by, $2::int)
-            END,
-            metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
-            updated_at = now()
-        WHERE commande_id = $1
-          AND checkpoint_code IN ('of_generation', 'planning_validation', 'ar_preparation', 'ar_sent')
-      `,
-      [
-        params.commande_id,
-        params.user_id,
-        JSON.stringify({
-          skip_reason: "no_plannable_operations",
-          no_operation_flow: true,
-          of_ids: params.of_ids,
-        }),
-      ]
-    );
-    return repoEnsureCommandeWorkflowStatus({
-      tx: params.tx,
-      commande_id: params.commande_id,
-      nouveau_statut: "AR_PRET",
-      cause: "customer_order_launch",
-      commentaire: "OF sans opération généré ; planning non applicable et AR prêt à préparer",
-      user_id: params.user_id,
-    });
-  }
 
   if (launchMode === "PRODUCTION_WITH_PLANNING") {
     await params.tx.query(
@@ -4328,13 +4350,6 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
           "Production manager or administrator role required to launch an internal order"
         );
       }
-      if (requestedLivraisonCount !== 1) {
-        throw new HttpError(
-          400,
-          "INTERNAL_ORDER_SINGLE_AFFAIRE_REQUIRED",
-          "Internal orders generate exactly one delivery affair"
-        );
-      }
       if (body.decision !== null || (body.lines?.length ?? 0) > 0) {
         throw new HttpError(
           400,
@@ -4346,19 +4361,53 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
 
     const internalClientId = orderType === "INTERNE" ? await getInternalClientIdSetting(client) : null;
     const clientId = commande.client_id ?? internalClientId;
-    if (!clientId) {
+    if (orderType !== "INTERNE" && !clientId) {
       throw new HttpError(
         400,
-        orderType === "INTERNE" ? "INTERNAL_CLIENT_REQUIRED" : "COMMANDE_CLIENT_REQUIRED",
-        orderType === "INTERNE"
-          ? "Internal orders require client_id (or erp_settings 'commandes.internal_client_id')"
-          : "Cannot generate affaire from a commande without client_id"
+        "COMMANDE_CLIENT_REQUIRED",
+        "Cannot generate affaire from a commande without client_id"
       );
     }
 
     // Idempotency + split delivery support: allow multiple LIVRAISON mappings per commande.
     const existingMappings = await listCommandeToAffaireMappings(client, commandeId);
     const existingLivraisons = existingMappings.filter((r) => r.role === "LIVRAISON");
+
+    if (orderType === "INTERNE") {
+      const existingOfs = await listGeneratedOfRefs(client, commandeId);
+      if (existingOfs.length > 0) {
+        const planningRepaired = await repairLegacyNoOperationPlanningBypass({
+          tx: client,
+          commande_id: commandeId,
+          user_id: audit.user_id,
+          ar_sent_at: commande.ar_sent_at,
+          of_ids: existingOfs.map((of) => of.id),
+        });
+        const workflowHeader = planningRepaired
+          ? null
+          : await loadCommandeWorkflowHeaderWithStatus(client, commandeId);
+        return {
+          affaire_ids: [],
+          livraison_affaire_id: null,
+          requires_confirmation: false,
+          livraison_affaire_ids: [],
+          generation_mode: "INTERNAL_ORDER",
+          idempotent_replay: true,
+          workflow_status: planningRepaired ? "ATTENTE_PLANNING" : workflowHeader?.statut ?? null,
+          of_ids: existingOfs.map((of) => of.id),
+          root_of_ids: existingOfs.filter((of) => of.parent_of_id === null).map((of) => of.id),
+          child_of_ids: existingOfs.filter((of) => of.parent_of_id !== null).map((of) => of.id),
+          ofs: existingOfs,
+          warnings: [
+            ...(planningRepaired ? ["LEGACY_NO_OPERATION_PLANNING_BYPASS_REPAIRED"] : []),
+            ...(existingLivraisons.length > 0 ? ["LEGACY_INTERNAL_DELIVERY_AFFAIRE_IGNORED"] : []),
+            ...existingOfs
+              .filter((of) => of.operations_count === 0)
+              .map((of) => `GAMME_WITHOUT_OPERATION:OF-${of.id}`),
+          ],
+        };
+      }
+    }
 
     if (recoveredInvalidPlanningState && existingMappings.length > 0 && existingLivraisons.length === 0) {
       throw new HttpError(
@@ -4368,37 +4417,31 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       );
     }
 
-    if (existingMappings.length > 0 && !recoveredInvalidPlanningState) {
-      if (orderType === "INTERNE" && existingLivraisons.length === 0) {
-        throw new HttpError(
-          409,
-          "INTERNAL_ORDER_AFFAIRE_MAPPING_INVALID",
-          "The existing affair mapping is not identified as a delivery affair"
-        );
-      }
-
+    if (orderType !== "INTERNE" && existingMappings.length > 0 && !recoveredInvalidPlanningState) {
       if (existingLivraisons.length >= requestedLivraisonCount) {
         const livraison = existingLivraisons[0]?.affaire_id ?? null;
         const existingOfs = await listGeneratedOfRefs(client, commandeId);
-        const workflowHeader =
-          orderType === "INTERNE" ? await loadCommandeWorkflowHeaderWithStatus(client, commandeId) : null;
+        const planningRepaired = await repairLegacyNoOperationPlanningBypass({
+          tx: client,
+          commande_id: commandeId,
+          user_id: audit.user_id,
+          ar_sent_at: commande.ar_sent_at,
+          of_ids: existingOfs.map((of) => of.id),
+        });
         return {
           affaire_ids: existingLivraisons.map((r) => r.affaire_id),
           livraison_affaire_id: livraison,
           requires_confirmation: false,
           livraison_affaire_ids: existingLivraisons.map((l) => l.affaire_id),
-          generation_mode: orderType === "INTERNE" ? "INTERNAL_ORDER" : "CUSTOMER_ORDER",
+          generation_mode: "CUSTOMER_ORDER",
           idempotent_replay: true,
-          workflow_status: workflowHeader?.statut ?? null,
+          workflow_status: planningRepaired ? "ATTENTE_PLANNING" : null,
           of_ids: existingOfs.map((of) => of.id),
           root_of_ids: existingOfs.filter((of) => of.parent_of_id === null).map((of) => of.id),
           child_of_ids: existingOfs.filter((of) => of.parent_of_id !== null).map((of) => of.id),
           ofs: existingOfs,
-          warnings:
-            [
-              ...(orderType === "INTERNE" && existingLivraisons.length > 1
-                ? ["LEGACY_MULTIPLE_DELIVERY_AFFAIRS"]
-                : []),
+          warnings: [
+              ...(planningRepaired ? ["LEGACY_NO_OPERATION_PLANNING_BYPASS_REPAIRED"] : []),
               ...existingOfs
                 .filter((of) => of.operations_count === 0)
                 .map((of) => `GAMME_WITHOUT_OPERATION:OF-${of.id}`),
@@ -4413,7 +4456,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         const livraisonId = await createAffaire(client, {
           commande_id: commandeId,
           devis_id: commande.devis_id ? toNullableInt(commande.devis_id, "commande.devis_id") : null,
-          client_id: clientId,
+          client_id: clientId as string,
         });
         await insertCommandeToAffaireMapping(client, {
           commande_id: commandeId,
@@ -4454,25 +4497,6 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
           `Cannot launch internal order: missing piece_technique_id for line ${missingPiece.commande_ligne_id}`
         );
       }
-    }
-
-    let stockLocationId: string | null = null;
-    if (orderType === "INTERNE") {
-      const magasinId = commande.dest_stock_magasin_id;
-      const emplacementIdRaw = commande.dest_stock_emplacement_id;
-      const emplacementId = typeof emplacementIdRaw === "string" && /^\d+$/.test(emplacementIdRaw) ? Number(emplacementIdRaw) : null;
-      if (!magasinId || typeof emplacementId !== "number" || !Number.isFinite(emplacementId)) {
-        throw new HttpError(
-          400,
-          "DEST_STOCK_LOCATION_REQUIRED",
-          "dest_stock_magasin_id and dest_stock_emplacement_id are required for internal orders"
-        );
-      }
-      stockLocationId = await resolveLocationIdForEmplacement(client, {
-        magasin_id: magasinId,
-        emplacement_id: emplacementId,
-        label: "dest_stock_location",
-      });
     }
 
     let analysis: CommandeStockAnalysis;
@@ -4577,15 +4601,15 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       immediateDeliveryByLine.set(line.commande_ligne_id, qtyToDeliverNow);
     }
 
-    const livraisonAffaireIds: number[] = recoveredInvalidPlanningState
+    const livraisonAffaireIds: number[] = orderType !== "INTERNE" && recoveredInvalidPlanningState
       ? existingLivraisons.map((mapping) => mapping.affaire_id)
       : [];
 
-    if (livraisonAffaireIds.length === 0) {
+    if (orderType !== "INTERNE" && livraisonAffaireIds.length === 0) {
       const createdId = await createAffaire(client, {
         commande_id: commandeId,
         devis_id: commande.devis_id ? toNullableInt(commande.devis_id, "commande.devis_id") : null,
-        client_id: clientId,
+        client_id: clientId as string,
       });
       await insertCommandeToAffaireMapping(client, {
         commande_id: commandeId,
@@ -4597,11 +4621,11 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       livraisonAffaireIds.push(createdId);
     }
 
-    for (let i = livraisonAffaireIds.length; i < requestedLivraisonCount; i += 1) {
+    for (let i = livraisonAffaireIds.length; orderType !== "INTERNE" && i < requestedLivraisonCount; i += 1) {
       const extraId = await createAffaire(client, {
         commande_id: commandeId,
         devis_id: commande.devis_id ? toNullableInt(commande.devis_id, "commande.devis_id") : null,
-        client_id: clientId,
+        client_id: clientId as string,
       });
       await insertCommandeToAffaireMapping(client, {
         commande_id: commandeId,
@@ -4613,8 +4637,8 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       livraisonAffaireIds.push(extraId);
     }
 
-    const livraisonAffaireId = livraisonAffaireIds[0];
-    if (!livraisonAffaireId) {
+    const livraisonAffaireId = livraisonAffaireIds[0] ?? null;
+    if (orderType !== "INTERNE" && !livraisonAffaireId) {
       throw new HttpError(500, "LIVRAISON_AFFAIRE_REQUIRED", "Aucune affaire de livraison n'a pu être préparée.");
     }
 
@@ -4636,19 +4660,21 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
           ? "AUTO_OF"
           : "AUTO_STOCK";
 
-    await upsertCommandeAllocations(client, {
-      commande_id: commandeId,
-      livraison_affaire_id: livraisonAffaireId,
-      allocation_mode: allocationMode,
-      reserve_stock: false,
-      reserved_qty_by_line: orderType !== "INTERNE" ? stockCoveredByLine : null,
-      lines: planLines,
-    });
+    if (orderType !== "INTERNE" && livraisonAffaireId !== null) {
+      await upsertCommandeAllocations(client, {
+        commande_id: commandeId,
+        livraison_affaire_id: livraisonAffaireId,
+        allocation_mode: allocationMode,
+        reserve_stock: false,
+        reserved_qty_by_line: stockCoveredByLine,
+        lines: planLines,
+      });
+    }
 
     const holdsStockForGroupedDelivery =
       orderType !== "INTERNE" && needsProduction && decision === "SHIP_ALL_TOGETHER";
     const preparedDelivery =
-      orderType !== "INTERNE" && !holdsStockForGroupedDelivery
+      orderType !== "INTERNE" && livraisonAffaireId !== null && !holdsStockForGroupedDelivery
         ? await createPreparedLivraisonForStock(client, {
             commande_id: commandeId,
             user_id: audit.user_id,
@@ -4666,7 +4692,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
             : null) ??
           await reserveCommandeStockForLaterDelivery(client, {
             commande_id: commandeId,
-            livraison_affaire_id: livraisonAffaireId,
+            livraison_affaire_id: livraisonAffaireId as number,
             user_id: audit.user_id,
             analysis_lines: stockAnalysis.lines,
             quantities_by_line: stockCoveredByLine,
@@ -4699,7 +4725,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
           commande_numero: commande.numero,
           commande_ligne_id: l.commande_ligne_id,
           livraison_affaire_id: livraisonAffaireId,
-          client_id: clientId,
+          client_id: orderType === "INTERNE" ? ref?.piece_client_id ?? clientId : clientId,
           root_article_id: l.article_id,
           root_piece_technique_id: pieceTechniqueId,
           qty_to_produce: qtyToProduce,
@@ -4722,7 +4748,6 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         tx: client,
         commande_id: commandeId,
         user_id: audit.user_id,
-        livraison_affaire_id: livraisonAffaireId,
         of_ids: ofIds,
       });
       workflowStatus = "ATTENTE_PLANNING";
@@ -4731,8 +4756,8 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         commande_id: commandeId,
         event_type: "INTERNAL_ORDER_LAUNCHED",
         new_values: {
-          livraison_affaire_id: livraisonAffaireId,
-          stock_location_id: stockLocationId,
+          delivery_affair_created: false,
+          stock_reserved: false,
           root_of_ids: generatedOfs.filter((of) => of.parent_of_id === null).map((of) => of.id),
           child_of_ids: generatedOfs.filter((of) => of.parent_of_id !== null).map((of) => of.id),
           workflow_status: workflowStatus,
@@ -4745,7 +4770,6 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         commande_id: commandeId,
         user_id: audit.user_id,
         needs_production: needsProduction,
-        has_plannable_operations: generatedOfs.some((of) => of.operations_count > 0),
         bon_livraison_id: bonLivraisonId,
         of_ids: ofIds,
       });
@@ -4754,11 +4778,10 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
 
     await insertCommandeEvent(client, {
       commande_id: commandeId,
-      event_type: "AFFAIRES_GENERATED",
+      event_type: orderType === "INTERNE" ? "INTERNAL_ORDER_OFS_GENERATED" : "AFFAIRES_GENERATED",
       new_values: {
         order_type: orderType,
         decision,
-        stock_location_id: stockLocationId,
         livraison_affaire_ids: livraisonAffaireIds,
         bon_livraison_id: bonLivraisonId,
         reservations_created: reservationsCreated.length,
@@ -4787,13 +4810,12 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
 
     if (reservationsCreated.length > 0) {
       await insertAuditLog(client, audit, {
-        action: "stock.reservations.create",
+      action: "stock.reservations.create",
         entity_type: "commande_client",
         entity_id: String(commandeId),
         details: {
           commande_id: commandeId,
           decision,
-          stock_location_id: stockLocationId,
           bon_livraison_id: bonLivraisonId,
           reservation_ids: reservationsCreated,
         },
@@ -5001,6 +5023,8 @@ type CommandeLineRef = {
   piece_technique_id: string | null;
   piece_code: string | null;
   piece_designation: string | null;
+  piece_client_id: string | null;
+  piece_client_code: string | null;
 };
 
 async function selectCommandeLineRefs(db: PoolClient, commandeId: number): Promise<CommandeLineRef[]> {
@@ -5014,6 +5038,8 @@ async function selectCommandeLineRefs(db: PoolClient, commandeId: number): Promi
     piece_technique_id: string | null;
     piece_code: string | null;
     piece_designation: string | null;
+    piece_client_id: string | null;
+    piece_client_code: string | null;
   }>(
     `
       SELECT
@@ -5025,7 +5051,9 @@ async function selectCommandeLineRefs(db: PoolClient, commandeId: number): Promi
         COALESCE(a.designation, legacy.article_designation, cl.designation) AS article_designation,
         COALESCE(cl.piece_technique_id::text, a.piece_technique_id::text, legacy.piece_technique_id) AS piece_technique_id,
         COALESCE(pt.code_piece, legacy.piece_code) AS piece_code,
-        COALESCE(pt.designation, legacy.piece_designation) AS piece_designation
+        COALESCE(pt.designation, legacy.piece_designation) AS piece_designation,
+        COALESCE(pt.client_id::text, legacy.piece_client_id) AS piece_client_id,
+        COALESCE(pt.code_client, legacy.piece_client_code) AS piece_client_code
       FROM commande_ligne cl
       LEFT JOIN public.articles a ON a.id = cl.article_id
       LEFT JOIN public.pieces_techniques pt ON pt.id = COALESCE(cl.piece_technique_id, a.piece_technique_id)
@@ -5036,7 +5064,9 @@ async function selectCommandeLineRefs(db: PoolClient, commandeId: number): Promi
           a.designation AS article_designation,
           a.piece_technique_id::text AS piece_technique_id,
           apt.code_piece AS piece_code,
-          apt.designation AS piece_designation
+          apt.designation AS piece_designation,
+          apt.client_id::text AS piece_client_id,
+          apt.code_client AS piece_client_code
         FROM public.articles a
         LEFT JOIN public.pieces_techniques apt
           ON apt.id = a.piece_technique_id
@@ -5072,6 +5102,10 @@ async function selectCommandeLineRefs(db: PoolClient, commandeId: number): Promi
       typeof r.piece_designation === "string" && r.piece_designation.trim().length > 0
         ? r.piece_designation.trim()
         : null,
+    piece_client_id:
+      typeof r.piece_client_id === "string" && r.piece_client_id.trim().length > 0 ? r.piece_client_id.trim() : null,
+    piece_client_code:
+      typeof r.piece_client_code === "string" && r.piece_client_code.trim().length > 0 ? r.piece_client_code.trim() : null,
   }));
 }
 
@@ -5128,7 +5162,10 @@ async function loadScopedAvailableQtyByArticle(
     `
       SELECT
         availability.article_id::text AS article_id,
-        COALESCE(lot.source_scope, warehouse.stock_scope, 'NEW') AS stock_scope,
+        CASE
+          WHEN lot.origin_stock_scope = 'OLD' THEN 'OLD'
+          ELSE COALESCE(lot.source_scope, lot.stock_scope, warehouse.stock_scope, 'NEW')
+        END AS stock_scope,
         COALESCE(SUM(availability.qty_available), 0)::float8 AS qty_available
       FROM public.v_stock_availability_225 availability
       JOIN public.warehouses warehouse ON warehouse.id = availability.warehouse_id
@@ -5138,7 +5175,10 @@ async function loadScopedAvailableQtyByArticle(
         AND warehouse.stock_scope IN ('OLD', 'NEW')
       GROUP BY
         availability.article_id,
-        COALESCE(lot.source_scope, warehouse.stock_scope, 'NEW')
+        CASE
+          WHEN lot.origin_stock_scope = 'OLD' THEN 'OLD'
+          ELSE COALESCE(lot.source_scope, lot.stock_scope, warehouse.stock_scope, 'NEW')
+        END
     `,
     [articleIds]
   );
@@ -5275,7 +5315,10 @@ async function loadScopedDeliveryStockCandidates(
     `
       SELECT
         availability.article_id::text AS article_id,
-        COALESCE(lot.source_scope, warehouse.stock_scope, 'NEW') AS stock_scope,
+        CASE
+          WHEN lot.origin_stock_scope = 'OLD' THEN 'OLD'
+          ELSE COALESCE(lot.source_scope, lot.stock_scope, warehouse.stock_scope, 'NEW')
+        END AS stock_scope,
         availability.stock_level_id::text AS stock_level_id,
         availability.stock_batch_id::text AS stock_batch_id,
         availability.location_id::text AS location_id,
@@ -5291,10 +5334,17 @@ async function loadScopedDeliveryStockCandidates(
       WHERE availability.article_id = ANY($1::uuid[])
         AND availability.managed_in_stock = true
         AND availability.qty_available > 0
-        AND COALESCE(lot.source_scope, warehouse.stock_scope, 'NEW') IN ('OLD', 'NEW')
+        AND CASE
+              WHEN lot.origin_stock_scope = 'OLD' THEN 'OLD'
+              ELSE COALESCE(lot.source_scope, lot.stock_scope, warehouse.stock_scope, 'NEW')
+            END IN ('OLD', 'NEW')
         AND COALESCE(lot.lot_status, 'LIBERE') = 'LIBERE'
       ORDER BY
-        CASE COALESCE(lot.source_scope, warehouse.stock_scope, 'NEW') WHEN 'OLD' THEN 0 ELSE 1 END,
+        CASE
+          WHEN lot.origin_stock_scope = 'OLD' THEN 0
+          WHEN COALESCE(lot.source_scope, lot.stock_scope, warehouse.stock_scope, 'NEW') = 'OLD' THEN 0
+          ELSE 1
+        END,
         availability.article_id,
         COALESCE(lot.received_at, lot.manufactured_at, lot.created_at::date),
         lot.created_at,

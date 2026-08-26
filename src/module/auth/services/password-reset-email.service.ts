@@ -1,3 +1,5 @@
+import { resolveOutboundEmailRecipients, testSafeEmailSubject } from "../../../shared/email/test-email-routing";
+
 type ResendConfig = {
   apiKey: string;
   from: string;
@@ -167,14 +169,15 @@ export async function sendPasswordResetEmail(params: {
     resetUrl: params.resetUrl,
     expiresMinutes: params.expiresMinutes,
   });
+  const delivery = resolveOutboundEmailRecipients([params.to]);
 
   return await postResendEmail({
     cfg,
     idempotencyKey: params.request_id ?? null,
     payload: {
       from: cfg.from,
-      to: [params.to],
-      subject: email.subject,
+      to: delivery.recipients,
+      subject: testSafeEmailSubject(email.subject, delivery.rerouted),
       text: email.text,
       html: email.html,
     },

@@ -14,6 +14,17 @@ const base = {
 };
 
 describe("#223 production receipt contract", () => {
+  it("allows the API to omit the location for an internal-order auto destination", () => {
+    const parsed = ofReceiptBodySchema.parse({
+      qty_ok: 4,
+      lot_mode: "NEW",
+      quality_status: "QUARANTAINE",
+      quality_reason: "Reception commande interne",
+      expected_of_updated_at: base.expected_of_updated_at,
+    });
+    expect(parsed.location_id).toBeUndefined();
+  });
+
   it("normalizes optional scrap and rework quantities", () => {
     const parsed = ofReceiptBodySchema.parse({
       qty_ok: 4,

@@ -1,3 +1,5 @@
+import { resolveOutboundEmailRecipients, testSafeEmailSubject } from "./test-email-routing";
+
 type ResendConfig = {
   apiKey: string;
   from: string;
@@ -103,14 +105,15 @@ export async function sendTransactionalEmail(params: {
 }): Promise<ResendSendResult> {
   const cfg = readResendConfig();
   if (!cfg) return { ok: false, skipped: true };
+  const delivery = resolveOutboundEmailRecipients(params.to);
 
   return postResendEmail({
     cfg,
     idempotencyKey: params.idempotencyKey ?? null,
     payload: {
       from: cfg.from,
-      to: params.to,
-      subject: params.subject,
+      to: delivery.recipients,
+      subject: testSafeEmailSubject(params.subject, delivery.rerouted),
       text: params.text,
       html: params.html,
       attachments: (params.attachments ?? []).map((attachment) => ({

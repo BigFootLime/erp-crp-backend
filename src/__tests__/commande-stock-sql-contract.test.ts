@@ -25,9 +25,8 @@ describe("commande stock SQL contract", () => {
       "computeCommandeStockAnalysis"
     );
 
-    expect(source).toMatch(
-      /SELECT[\s\S]*COALESCE\(lot\.source_scope, warehouse\.stock_scope, 'NEW'\) AS stock_scope[\s\S]*GROUP BY[\s\S]*availability\.article_id,[\s\S]*COALESCE\(lot\.source_scope, warehouse\.stock_scope, 'NEW'\)/
-    );
+    expect(source.match(/WHEN lot\.origin_stock_scope = 'OLD' THEN 'OLD'/g)).toHaveLength(2);
+    expect(source).toContain("ELSE COALESCE(lot.source_scope, lot.stock_scope, warehouse.stock_scope, 'NEW')");
   });
 
   it("joins lots before using their scope and FIFO dates for delivery candidates", () => {
@@ -38,11 +37,8 @@ describe("commande stock SQL contract", () => {
     );
 
     expect(source).toMatch(/JOIN public\.lots lot ON lot\.id = availability\.lot_id/);
-    expect(source).toMatch(
-      /COALESCE\(lot\.source_scope, warehouse\.stock_scope, 'NEW'\) AS stock_scope/
-    );
-    expect(source).toMatch(
-      /CASE COALESCE\(lot\.source_scope, warehouse\.stock_scope, 'NEW'\) WHEN 'OLD' THEN 0 ELSE 1 END/
-    );
+    expect(source).toContain("WHEN lot.origin_stock_scope = 'OLD' THEN 'OLD'");
+    expect(source).toContain("ELSE COALESCE(lot.source_scope, lot.stock_scope, warehouse.stock_scope, 'NEW')");
+    expect(source).toContain("WHEN lot.origin_stock_scope = 'OLD' THEN 0");
   });
 });

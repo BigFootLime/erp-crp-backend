@@ -10,7 +10,7 @@ export type HistoricalStockImport = { article_id: string; lot_id: string; moveme
 export type ConsolidatedInventoryRow = {
   article_id: string; article_code: string; article_designation: string; old_material_definition: string | null; scope: "OLD" | "NEW";
   magasin_id: string; magasin_code: string; rayon_code: string; lot_id: string | null; lot_code: string | null;
-  stock_trace_code: string | null; qr_payload: string | null; qty_total: number; qty_reserved: number; qty_available: number;
+  stock_trace_code: string | null; qr_payload: string | null; qty_initial: number | null; qty_total: number; qty_reserved: number; qty_available: number;
   updated_at: string;
 };
 
