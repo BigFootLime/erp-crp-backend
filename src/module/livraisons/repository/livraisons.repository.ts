@@ -464,6 +464,18 @@ function buildListWhere(filters: ListLivraisonsQueryDTO): ListWhere {
       bl.numero ILIKE ${p}
       OR c.company_name ILIKE ${p}
       OR (cc.numero IS NOT NULL AND cc.numero ILIKE ${p})
+      OR EXISTS (
+        SELECT 1
+        FROM public.bon_livraison_ligne scope_line
+        JOIN public.bon_livraison_ligne_allocations scope_bla
+          ON scope_bla.bon_livraison_ligne_id = scope_line.id
+        JOIN public.commande_ligne_affaire_allocation scope_allocation
+          ON scope_allocation.id = scope_bla.commande_ligne_affaire_allocation_id
+        JOIN public.commande_client scope_commande
+          ON scope_commande.id = scope_allocation.commande_id
+        WHERE scope_line.bon_livraison_id = bl.id
+          AND scope_commande.numero ILIKE ${p}
+      )
     )`)
   }
 
@@ -474,7 +486,19 @@ function buildListWhere(filters: ListLivraisonsQueryDTO): ListWhere {
 
   if (filters.commande_id) {
     const p = push(filters.commande_id)
-    where.push(`bl.commande_id = ${p}::bigint`)
+    where.push(`(
+      bl.commande_id = ${p}::bigint
+      OR EXISTS (
+        SELECT 1
+        FROM public.bon_livraison_ligne scope_line
+        JOIN public.bon_livraison_ligne_allocations scope_bla
+          ON scope_bla.bon_livraison_ligne_id = scope_line.id
+        JOIN public.commande_ligne_affaire_allocation scope_allocation
+          ON scope_allocation.id = scope_bla.commande_ligne_affaire_allocation_id
+        WHERE scope_line.bon_livraison_id = bl.id
+          AND scope_allocation.commande_id = ${p}::bigint
+      )
+    )`)
   }
 
   if (filters.statut) {
@@ -551,8 +575,10 @@ export async function repoListLivraisons(
     client_company_name: string
     commande_id: string | null
     commande_numero: string | null
+    commande_numeros: string[]
     affaire_id: string | null
     affaire_reference: string | null
+    affaire_references: string[]
     date_creation: string
     date_expedition: string | null
     date_livraison: string | null
@@ -570,8 +596,42 @@ export async function repoListLivraisons(
       c.company_name AS client_company_name,
       bl.commande_id::text AS commande_id,
       cc.numero AS commande_numero,
+      ARRAY(
+        SELECT reference
+        FROM (
+          SELECT DISTINCT scope_commande.numero AS reference
+          FROM public.bon_livraison_ligne scope_line
+          JOIN public.bon_livraison_ligne_allocations scope_bla
+            ON scope_bla.bon_livraison_ligne_id = scope_line.id
+          JOIN public.commande_ligne_affaire_allocation scope_allocation
+            ON scope_allocation.id = scope_bla.commande_ligne_affaire_allocation_id
+          JOIN public.commande_client scope_commande
+            ON scope_commande.id = scope_allocation.commande_id
+          WHERE scope_line.bon_livraison_id = bl.id
+          UNION
+          SELECT cc.numero WHERE cc.numero IS NOT NULL
+        ) commande_scope
+        ORDER BY reference
+      ) AS commande_numeros,
       bl.affaire_id::text AS affaire_id,
       a.reference AS affaire_reference,
+      ARRAY(
+        SELECT reference
+        FROM (
+          SELECT DISTINCT scope_affaire.reference
+          FROM public.bon_livraison_ligne scope_line
+          JOIN public.bon_livraison_ligne_allocations scope_bla
+            ON scope_bla.bon_livraison_ligne_id = scope_line.id
+          JOIN public.commande_ligne_affaire_allocation scope_allocation
+            ON scope_allocation.id = scope_bla.commande_ligne_affaire_allocation_id
+          JOIN public.affaire scope_affaire
+            ON scope_affaire.id = scope_allocation.livraison_affaire_id
+          WHERE scope_line.bon_livraison_id = bl.id
+          UNION
+          SELECT a.reference WHERE a.reference IS NOT NULL
+        ) affaire_scope
+        ORDER BY reference
+      ) AS affaire_references,
       bl.date_creation::text AS date_creation,
       bl.date_expedition::text AS date_expedition,
       bl.date_livraison::text AS date_livraison,
@@ -595,7 +655,9 @@ export async function repoListLivraisons(
     statut: r.statut,
     client: { client_id: r.client_id, company_name: r.client_company_name },
     commande: r.commande_id && r.commande_numero ? { id: toInt(r.commande_id, "bon_livraison.commande_id"), numero: r.commande_numero } : null,
+    commande_numeros: r.commande_numeros,
     affaire: r.affaire_id && r.affaire_reference ? { id: toInt(r.affaire_id, "bon_livraison.affaire_id"), reference: r.affaire_reference } : null,
+    affaire_references: r.affaire_references,
     date_creation: r.date_creation,
     date_expedition: r.date_expedition,
     date_livraison: r.date_livraison,
@@ -615,8 +677,10 @@ type HeaderRow = {
   client_company_name: string
   commande_id: string | null
   commande_numero: string | null
+  commande_numeros: string[]
   affaire_id: string | null
   affaire_reference: string | null
+  affaire_references: string[]
   adresse_livraison_id: string | null
   al_name: string | null
   al_street: string | null
@@ -657,8 +721,42 @@ async function getHeader(client: PoolClient, id: string, opts?: { forUpdate?: bo
       c.company_name AS client_company_name,
       bl.commande_id::text AS commande_id,
       cc.numero AS commande_numero,
+      ARRAY(
+        SELECT reference
+        FROM (
+          SELECT DISTINCT scope_commande.numero AS reference
+          FROM public.bon_livraison_ligne scope_line
+          JOIN public.bon_livraison_ligne_allocations scope_bla
+            ON scope_bla.bon_livraison_ligne_id = scope_line.id
+          JOIN public.commande_ligne_affaire_allocation scope_allocation
+            ON scope_allocation.id = scope_bla.commande_ligne_affaire_allocation_id
+          JOIN public.commande_client scope_commande
+            ON scope_commande.id = scope_allocation.commande_id
+          WHERE scope_line.bon_livraison_id = bl.id
+          UNION
+          SELECT cc.numero WHERE cc.numero IS NOT NULL
+        ) commande_scope
+        ORDER BY reference
+      ) AS commande_numeros,
       bl.affaire_id::text AS affaire_id,
       a.reference AS affaire_reference,
+      ARRAY(
+        SELECT reference
+        FROM (
+          SELECT DISTINCT scope_affaire.reference
+          FROM public.bon_livraison_ligne scope_line
+          JOIN public.bon_livraison_ligne_allocations scope_bla
+            ON scope_bla.bon_livraison_ligne_id = scope_line.id
+          JOIN public.commande_ligne_affaire_allocation scope_allocation
+            ON scope_allocation.id = scope_bla.commande_ligne_affaire_allocation_id
+          JOIN public.affaire scope_affaire
+            ON scope_affaire.id = scope_allocation.livraison_affaire_id
+          WHERE scope_line.bon_livraison_id = bl.id
+          UNION
+          SELECT a.reference WHERE a.reference IS NOT NULL
+        ) affaire_scope
+        ORDER BY reference
+      ) AS affaire_references,
       bl.adresse_livraison_id::text AS adresse_livraison_id,
       al.name AS al_name,
       al.street AS al_street,
@@ -749,7 +847,9 @@ export async function repoGetLivraisonDetail(id: string): Promise<BonLivraisonDe
       statut: headerRow.statut,
       client: { client_id: headerRow.client_id, company_name: headerRow.client_company_name },
       commande: headerRow.commande_id && headerRow.commande_numero ? { id: toInt(headerRow.commande_id, "bon_livraison.commande_id"), numero: headerRow.commande_numero } : null,
+      commande_numeros: headerRow.commande_numeros,
       affaire: headerRow.affaire_id && headerRow.affaire_reference ? { id: toInt(headerRow.affaire_id, "bon_livraison.affaire_id"), reference: headerRow.affaire_reference } : null,
+      affaire_references: headerRow.affaire_references,
       adresse_livraison,
       date_creation: headerRow.date_creation,
       date_expedition: headerRow.date_expedition,
@@ -3251,7 +3351,9 @@ export type PreparationCartItem = {
   affaire_reference: string | null
   commande_ligne_id: number
   allocation_id: number | null
+  client_id: string
   client_name: string | null
+  delivery_address_id: string | null
   article_id: string
   article_code: string | null
   // Kept nullable rather than inventing a display fallback: the source of
@@ -3363,7 +3465,9 @@ export async function repoListPreparationCart(filters: PreparationCartQueryDTO):
     affaire_reference: string | null
     commande_ligne_id: number
     allocation_id: number | null
+    client_id: string
     client_name: string | null
+    delivery_address_id: string | null
     article_id: string
     article_code: string | null
     plan_reference: string | null
@@ -3395,7 +3499,9 @@ export async function repoListPreparationCart(filters: PreparationCartQueryDTO):
         af.reference AS affaire_reference,
         a.commande_ligne_id::bigint::int AS commande_ligne_id,
         a.id::bigint::int AS allocation_id,
+        cc.client_id::text AS client_id,
         c.company_name AS client_name,
+        COALESCE(cc.destinataire_id, c.delivery_address_id)::text AS delivery_address_id,
         r.article_id::text AS article_id,
         art.code AS article_code,
         applicable_version.plan_reference,
@@ -3481,7 +3587,9 @@ export async function repoListPreparationCart(filters: PreparationCartQueryDTO):
         affaire_reference: row.affaire_reference,
         commande_ligne_id: Number(row.commande_ligne_id),
         allocation_id: row.allocation_id === null ? null : Number(row.allocation_id),
+        client_id: row.client_id,
         client_name: row.client_name,
+        delivery_address_id: row.delivery_address_id,
         article_id: row.article_id,
         article_code: row.article_code,
         plan_reference: row.plan_reference,
@@ -4091,6 +4199,7 @@ type LockedReservationForDelivery = {
   qty_available: number
   commande_id: number
   client_id: string
+  delivery_address_id: string | null
   livraison_affaire_id: number
   allocation_id: number
   commande_ligne_id: number
@@ -4191,6 +4300,7 @@ export async function repoCreateLivraisonFromReservations(params: {
           (r.qty_reserved - r.qty_consumed - r.qty_prepared)::float8 AS qty_available,
           a.commande_id::bigint::int AS commande_id,
           cc.client_id::text AS client_id,
+          COALESCE(cc.destinataire_id, c.delivery_address_id)::text AS delivery_address_id,
           r.livraison_affaire_id::bigint::int AS livraison_affaire_id,
           a.id::bigint::int AS allocation_id,
           a.commande_ligne_id::bigint::int AS commande_ligne_id,
@@ -4210,6 +4320,7 @@ export async function repoCreateLivraisonFromReservations(params: {
         FROM public.stock_reservations r
         JOIN public.commande_ligne_affaire_allocation a ON a.id = r.commande_ligne_affaire_allocation_id
         JOIN public.commande_client cc ON cc.id = a.commande_id
+        LEFT JOIN public.clients c ON c.client_id = cc.client_id
         JOIN public.commande_ligne cl ON cl.id = a.commande_ligne_id
         LEFT JOIN public.emplacements e ON e.location_id = r.location_id
         LEFT JOIN LATERAL (
@@ -4241,12 +4352,11 @@ export async function repoCreateLivraisonFromReservations(params: {
     const first = locked.rows[0]
     if (!first) throw new HttpError(400, "EMPTY_CART", "No reservation selected")
     for (const row of locked.rows) {
-      if (
-        row.commande_id !== first.commande_id ||
-        row.client_id !== first.client_id ||
-        row.livraison_affaire_id !== first.livraison_affaire_id
-      ) {
-        throw new HttpError(409, "MIXED_DELIVERY_SCOPE", "A delivery cart must target one commande and one delivery affaire")
+      if (row.client_id !== first.client_id) {
+        throw new HttpError(409, "MIXED_DELIVERY_CLIENT", "A delivery cart must target one client")
+      }
+      if (row.delivery_address_id !== first.delivery_address_id) {
+        throw new HttpError(409, "MIXED_DELIVERY_DESTINATION", "A delivery cart must target one delivery address")
       }
       if (!row.lot_id || !row.stock_level_id || !row.stock_batch_id || !row.magasin_id || row.emplacement_id === null) {
         throw new HttpError(409, "RESERVATION_TRACEABILITY_INCOMPLETE", "Reservation cannot be prepared without lot, level, batch and location")
@@ -4312,15 +4422,27 @@ export async function repoCreateLivraisonFromReservations(params: {
     const n = Number(seq.rows[0]?.n)
     if (!Number.isFinite(n)) throw new Error("Failed to reserve bon_livraison number")
     const numero = `BL-${String(n).padStart(8, "0")}`
+    const commandeIds = new Set(locked.rows.map((row) => row.commande_id))
+    const affaireIds = new Set(locked.rows.map((row) => row.livraison_affaire_id))
+    const headerCommandeId = commandeIds.size === 1 ? first.commande_id : null
+    const headerAffaireId = affaireIds.size === 1 ? first.livraison_affaire_id : null
     const headerIns = await db.query<{ id: string }>(
       `
         INSERT INTO public.bon_livraison (
-          numero, client_id, commande_id, affaire_id, statut,
+          numero, client_id, commande_id, affaire_id, adresse_livraison_id, statut,
           date_creation, commentaire_interne, created_by, updated_by
-        ) VALUES ($1,$2,$3,$4,'DRAFT',CURRENT_DATE,$5,$6,$6)
+        ) VALUES ($1,$2,$3,$4,$5::uuid,'DRAFT',CURRENT_DATE,$6,$7,$7)
         RETURNING id::text AS id
       `,
-      [numero, first.client_id, first.commande_id, first.livraison_affaire_id, body.commentaire_interne ?? null, userId]
+      [
+        numero,
+        first.client_id,
+        headerCommandeId,
+        headerAffaireId,
+        first.delivery_address_id,
+        body.commentaire_interne ?? null,
+        userId,
+      ]
     )
     const bonLivraisonId = headerIns.rows[0]?.id
     if (!bonLivraisonId) throw new Error("Failed to create reservation-backed BL")

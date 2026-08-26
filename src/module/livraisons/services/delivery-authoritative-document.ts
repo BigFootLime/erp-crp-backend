@@ -10,6 +10,7 @@ type Queryable = Pick<PoolClient, "query">;
 
 type DeliverySnapshot = {
   numero: string; statut: string; client_name: string; commande_numero: string | null; affaire_reference: string | null;
+  commande_numeros: string[]; affaire_references: string[];
   address_label: string | null; date_creation: string; date_expedition: string | null; transporteur: string | null;
   tracking_number: string | null; commentaire_client: string | null; updated_at: string;
   /** Issuer terms are source data too: a later legal-profile edit must not alter an issued BL. */
@@ -60,6 +61,40 @@ export async function loadDeliveryAuthoritativeSnapshot(tx: Queryable, deliveryI
   const header = await tx.query<Omit<DeliverySnapshot, "lines" | "issuer">>(`
     SELECT bl.numero, bl.statut::text, c.company_name AS client_name, cc.numero AS commande_numero,
       a.reference AS affaire_reference,
+      ARRAY(
+        SELECT reference
+        FROM (
+          SELECT DISTINCT scope_commande.numero AS reference
+          FROM public.bon_livraison_ligne scope_line
+          JOIN public.bon_livraison_ligne_allocations scope_bla
+            ON scope_bla.bon_livraison_ligne_id = scope_line.id
+          JOIN public.commande_ligne_affaire_allocation scope_allocation
+            ON scope_allocation.id = scope_bla.commande_ligne_affaire_allocation_id
+          JOIN public.commande_client scope_commande
+            ON scope_commande.id = scope_allocation.commande_id
+          WHERE scope_line.bon_livraison_id = bl.id
+          UNION
+          SELECT cc.numero WHERE cc.numero IS NOT NULL
+        ) commande_scope
+        ORDER BY reference
+      ) AS commande_numeros,
+      ARRAY(
+        SELECT reference
+        FROM (
+          SELECT DISTINCT scope_affaire.reference
+          FROM public.bon_livraison_ligne scope_line
+          JOIN public.bon_livraison_ligne_allocations scope_bla
+            ON scope_bla.bon_livraison_ligne_id = scope_line.id
+          JOIN public.commande_ligne_affaire_allocation scope_allocation
+            ON scope_allocation.id = scope_bla.commande_ligne_affaire_allocation_id
+          JOIN public.affaire scope_affaire
+            ON scope_affaire.id = scope_allocation.livraison_affaire_id
+          WHERE scope_line.bon_livraison_id = bl.id
+          UNION
+          SELECT a.reference WHERE a.reference IS NOT NULL
+        ) affaire_scope
+        ORDER BY reference
+      ) AS affaire_references,
       concat_ws(E'\\n', al.name, concat_ws(' ', al.street, al.house_number), concat_ws(' ', al.postal_code, al.city), al.country) AS address_label,
       bl.date_creation::text, bl.date_expedition::text, bl.transporteur, bl.tracking_number, bl.commentaire_client, bl.updated_at::text
     FROM public.bon_livraison bl
@@ -89,6 +124,8 @@ export async function loadDeliveryAuthoritativeSnapshot(tx: Queryable, deliveryI
 
 export async function buildDeliveryCreationSnapshotInput(tx: Queryable, input: { deliveryId: string; actorUserId: number | null }): Promise<AuthoritativePdfCreationInput> {
   const snapshot = await loadDeliveryAuthoritativeSnapshot(tx, input.deliveryId);
+  const commandeNumeros = Array.isArray(snapshot.commande_numeros) ? snapshot.commande_numeros : [];
+  const affaireReferences = Array.isArray(snapshot.affaire_references) ? snapshot.affaire_references : [];
   return {
     entityType: "bon-livraison", entityId: input.deliveryId, documentKind: "DELIVERY_NOTE_CREATION_SNAPSHOT", documentVersion: 1,
     renderVersion: "internal-creation-snapshot-v1", idempotencyKey: `delivery:${input.deliveryId}:creation:v1`,
@@ -98,7 +135,8 @@ export async function buildDeliveryCreationSnapshotInput(tx: Queryable, input: {
       entityLabel: "Bon de livraison", reference: snapshot.numero,
       summary: [{ label: "Numéro", value: snapshot.numero }, { label: "Client", value: snapshot.client_name }, { label: "Statut initial", value: snapshot.statut }],
       sections: [{ title: "Création", rows: [
-        { label: "Commande", value: snapshot.commande_numero }, { label: "Affaire", value: snapshot.affaire_reference },
+        { label: commandeNumeros.length > 1 ? "Commandes" : "Commande", value: commandeNumeros.join(" · ") || snapshot.commande_numero },
+        { label: affaireReferences.length > 1 ? "Affaires" : "Affaire", value: affaireReferences.join(" · ") || snapshot.affaire_reference },
         { label: "Date", value: snapshot.date_creation }, { label: "Nombre de lignes", value: snapshot.lines.length },
       ] }],
     }), actorUserId: input.actorUserId,
@@ -129,7 +167,9 @@ export async function renderShippedDeliveryOfficialPdf({ archive }: { archive: A
     header: {
       id: archive.entityId, numero: source.numero, statut: "SHIPPED", client: { client_id: "", company_name: source.client_name },
       commande: source.commande_numero ? { id: 0, numero: source.commande_numero } : null,
+      commande_numeros: Array.isArray(source.commande_numeros) ? source.commande_numeros : source.commande_numero ? [source.commande_numero] : [],
       affaire: source.affaire_reference ? { id: 0, reference: source.affaire_reference } : null,
+      affaire_references: Array.isArray(source.affaire_references) ? source.affaire_references : source.affaire_reference ? [source.affaire_reference] : [],
       adresse_livraison: source.address_label ? { id: "", label: source.address_label, name: null, street: null, house_number: null, postal_code: null, city: null, country: null } : null,
       date_creation: source.date_creation ?? "", date_expedition: source.date_expedition ?? null, date_livraison: null,
       transporteur: source.transporteur ?? null, tracking_number: source.tracking_number ?? null,

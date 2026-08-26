@@ -32,6 +32,10 @@ const ids = {
   lot: "10000000-0000-4000-8000-000000000009",
   stockBatch: "10000000-0000-4000-8000-000000000010",
   reservation: "10000000-0000-4000-8000-000000000011",
+  deliveryAddress: "10000000-0000-4000-8000-000000000012",
+  otherClient: "10000000-0000-4000-8000-000000000013",
+  otherDeliveryAddress: "10000000-0000-4000-8000-000000000014",
+  secondReservation: "10000000-0000-4000-8000-000000000015",
 } as const;
 
 let harnessPool: Pool | null = null;
@@ -248,9 +252,16 @@ async function installMinimalSchema(db: Pool) {
     AFTER INSERT OR UPDATE OF status ON public.stock_movements
     FOR EACH ROW EXECUTE FUNCTION public.fn_apply_stock_movement();
 
+    CREATE TABLE public.clients (
+      client_id UUID PRIMARY KEY,
+      company_name TEXT NOT NULL,
+      delivery_address_id UUID NULL
+    );
     CREATE TABLE public.commande_client (
       id BIGINT PRIMARY KEY,
-      client_id UUID NOT NULL
+      numero TEXT NOT NULL,
+      client_id UUID NOT NULL,
+      destinataire_id UUID NULL
     );
     CREATE TABLE public.commande_ligne (
       id BIGINT PRIMARY KEY,
@@ -379,6 +390,7 @@ async function installMinimalSchema(db: Pool) {
       client_id UUID NOT NULL,
       commande_id BIGINT NULL,
       affaire_id BIGINT NULL,
+      adresse_livraison_id UUID NULL,
       statut TEXT NOT NULL,
       date_creation DATE NOT NULL DEFAULT CURRENT_DATE,
       date_expedition DATE NULL,
@@ -495,12 +507,32 @@ async function installMinimalSchema(db: Pool) {
       details JSONB NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+    CREATE TABLE public.realtime_stream_enqueue_state (
+      stream_id TEXT PRIMARY KEY,
+      next_ordinal BIGINT NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE TABLE public.erp_outbox_events (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      event_key TEXT NOT NULL UNIQUE,
+      aggregate_type TEXT NOT NULL,
+      aggregate_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      payload JSONB NOT NULL,
+      correlation_id UUID NOT NULL,
+      status TEXT NOT NULL,
+      available_at TIMESTAMPTZ NOT NULL,
+      realtime_stream_id TEXT NULL,
+      realtime_stream_ordinal BIGINT NULL
+    );
   `);
 }
 
 async function clearScenario(db: Pool) {
   await db.query(`
     TRUNCATE TABLE
+      public.erp_outbox_events,
+      public.realtime_stream_enqueue_state,
       public.erp_audit_logs,
       public.delivery_outbox,
       public.bon_livraison_ship_receipts,
@@ -519,6 +551,7 @@ async function clearScenario(db: Pool) {
       public.commande_ligne_affaire_allocation,
       public.commande_ligne,
       public.commande_client,
+      public.clients,
       public.stock_movement_event_log,
       public.stock_movement_lines,
       public.stock_movements,
@@ -586,7 +619,16 @@ async function seedDeliveryScenario(db: Pool) {
      VALUES ($1::uuid, $2::uuid, 'PIECE_TECHNIQUE', true, 'u')`,
     [ids.article, ids.pieceTechnique]
   );
-  await db.query(`INSERT INTO public.commande_client (id, client_id) VALUES (42, $1::uuid)`, [ids.client]);
+  await db.query(
+    `INSERT INTO public.clients (client_id, company_name, delivery_address_id)
+     VALUES ($1::uuid, 'Client intégration', $2::uuid), ($3::uuid, 'Autre client', $4::uuid)`,
+    [ids.client, ids.deliveryAddress, ids.otherClient, ids.otherDeliveryAddress]
+  );
+  await db.query(
+    `INSERT INTO public.commande_client (id, numero, client_id, destinataire_id)
+     VALUES (42, 'CMD-INT-0042', $1::uuid, $2::uuid)`,
+    [ids.client, ids.deliveryAddress]
+  );
   await db.query(
     `INSERT INTO public.commande_ligne (id, designation, code_piece, unite, delai_client)
      VALUES (43, 'Pièce intégration', 'PT-INT', 'u', '2026-09-01')`
@@ -630,6 +672,47 @@ async function seedDeliveryScenario(db: Pool) {
        reservation_id, verified_qty, scanned_lot_code, snapshot, verified_by
      ) VALUES ($1::uuid, 5, 'LOT-INT-001', $2::jsonb, 7)`,
     [ids.reservation, JSON.stringify({ verified_qty: 5, lot_code: "LOT-INT-001", source_scope: "NEW" })]
+  );
+}
+
+async function seedAdditionalDeliveryReservation(
+  db: Pool,
+  params: { clientId?: string; deliveryAddressId?: string | null } = {}
+) {
+  const clientId = params.clientId ?? ids.client;
+  const deliveryAddressId = params.deliveryAddressId === undefined ? ids.deliveryAddress : params.deliveryAddressId;
+  await db.query(
+    `INSERT INTO public.commande_client (id, numero, client_id, destinataire_id)
+     VALUES (44, 'CMD-INT-0044', $1::uuid, $2::uuid)`,
+    [clientId, deliveryAddressId]
+  );
+  await db.query(
+    `INSERT INTO public.commande_ligne (id, designation, code_piece, unite, delai_client)
+     VALUES (45, 'Seconde pièce intégration', 'PT-INT-2', 'u', '2026-09-02')`
+  );
+  await db.query(
+    `INSERT INTO public.commande_ligne_affaire_allocation (
+       id, commande_id, commande_ligne_id, livraison_affaire_id, article_ref_id,
+       qty_ordered, qty_reserved, qty_delivered, qty_remaining, delivery_status
+     ) VALUES (901, 44, 45, 701, $1::uuid, 4, 4, 0, 4, 'A_PREPARER')`,
+    [ids.article]
+  );
+  await db.query(
+    `INSERT INTO public.stock_reservations (
+       id, article_id, location_id, qty_reserved, source_type, source_id, status,
+       commande_ligne_affaire_allocation_id, livraison_affaire_id, lot_id,
+       stock_level_id, stock_batch_id, source_scope, created_by, updated_by
+     ) VALUES (
+       $1::uuid, $2::uuid, $3::uuid, 4, 'COMMANDE_LIGNE', '45', 'ACTIVE',
+       901, 701, $4::uuid, $5::uuid, $6::uuid, 'NEW', 7, 7
+     )`,
+    [ids.secondReservation, ids.article, ids.location, ids.lot, ids.stockLevel, ids.stockBatch]
+  );
+  await db.query(
+    `INSERT INTO public.stock_reservation_verifications (
+       reservation_id, verified_qty, scanned_lot_code, snapshot, verified_by
+     ) VALUES ($1::uuid, 4, 'LOT-INT-001', $2::jsonb, 7)`,
+    [ids.secondReservation, JSON.stringify({ verified_qty: 4, lot_code: "LOT-INT-001", source_scope: "NEW" })]
   );
 }
 
@@ -906,6 +989,89 @@ describePg("stock/delivery repositories — isolated PostgreSQL invariants", () 
       status: 409,
       code: "OF_SCAN_MISMATCH",
     });
+  });
+
+  it("creates one BL from several lines and commands of the same client and destination", async () => {
+    if (!harnessPool) throw new Error("Integration pool was not initialized");
+    await seedDeliveryScenario(harnessPool);
+    await seedAdditionalDeliveryReservation(harnessPool);
+
+    const result = await deliveryRepository.repoCreateLivraisonFromReservations({
+      body: {
+        items: [
+          { reservation_id: ids.reservation, qty: 3 },
+          { reservation_id: ids.secondReservation, qty: 2 },
+        ],
+      },
+      user_id: 7,
+      idempotency_key: "delivery-prepare-multi-command-001",
+    });
+
+    const header = await harnessPool.query<{
+      client_id: string;
+      commande_id: number | null;
+      affaire_id: number | null;
+      adresse_livraison_id: string | null;
+    }>(
+      `SELECT client_id::text, commande_id::bigint::int, affaire_id::bigint::int,
+              adresse_livraison_id::text
+       FROM public.bon_livraison
+       WHERE id = $1::uuid`,
+      [result.id]
+    );
+    const lines = await harnessPool.query<{ commande_ligne_id: number }>(
+      `SELECT commande_ligne_id::bigint::int
+       FROM public.bon_livraison_ligne
+       WHERE bon_livraison_id = $1::uuid
+       ORDER BY commande_ligne_id`,
+      [result.id]
+    );
+
+    expect(header.rows).toEqual([
+      {
+        client_id: ids.client,
+        commande_id: null,
+        affaire_id: null,
+        adresse_livraison_id: ids.deliveryAddress,
+      },
+    ]);
+    expect(lines.rows).toEqual([{ commande_ligne_id: 43 }, { commande_ligne_id: 45 }]);
+  });
+
+  it("rejects carts that mix clients or delivery destinations", async () => {
+    if (!harnessPool) throw new Error("Integration pool was not initialized");
+    await seedDeliveryScenario(harnessPool);
+    await seedAdditionalDeliveryReservation(harnessPool, { clientId: ids.otherClient, deliveryAddressId: ids.otherDeliveryAddress });
+
+    await expect(
+      deliveryRepository.repoCreateLivraisonFromReservations({
+        body: {
+          items: [
+            { reservation_id: ids.reservation, qty: 1 },
+            { reservation_id: ids.secondReservation, qty: 1 },
+          ],
+        },
+        user_id: 7,
+        idempotency_key: "delivery-prepare-mixed-client-001",
+      })
+    ).rejects.toMatchObject({ status: 409, code: "MIXED_DELIVERY_CLIENT" });
+
+    await clearScenario(harnessPool);
+    await seedDeliveryScenario(harnessPool);
+    await seedAdditionalDeliveryReservation(harnessPool, { deliveryAddressId: ids.otherDeliveryAddress });
+
+    await expect(
+      deliveryRepository.repoCreateLivraisonFromReservations({
+        body: {
+          items: [
+            { reservation_id: ids.reservation, qty: 1 },
+            { reservation_id: ids.secondReservation, qty: 1 },
+          ],
+        },
+        user_id: 7,
+        idempotency_key: "delivery-prepare-mixed-address-001",
+      })
+    ).rejects.toMatchObject({ status: 409, code: "MIXED_DELIVERY_DESTINATION" });
   });
 
   it("permits only one concurrent preparation and ships its reservation exactly once on idempotent retry", async () => {
