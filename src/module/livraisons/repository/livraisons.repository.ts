@@ -3802,19 +3802,42 @@ async function reallocateCorrectedBatchReservations(params: {
     const releasedQty = Math.max(0, flexibleQty - keptFlexibleQty)
     if (releasedQty <= 1e-9) continue
 
-    await params.db.query(
-      `
-        UPDATE public.stock_reservations
-        SET qty_reserved = qty_reserved - $2,
-            version = version + 1,
-            row_version = row_version + 1,
-            reason = $3,
-            updated_at = now(),
-            updated_by = $4
-        WHERE id = $1::uuid
-      `,
-      [row.reservation_id, releasedQty, params.reason, params.user_id]
-    )
+    const remainingReservedQty = Math.max(0, Number(row.qty_reserved) - releasedQty)
+    const reservationUpdate = remainingReservedQty <= 1e-9
+      ? await params.db.query(
+          `
+            UPDATE public.stock_reservations
+            SET status = 'RELEASED',
+                released_at = now(),
+                released_by = $2,
+                release_reason = $3,
+                version = version + 1,
+                row_version = row_version + 1,
+                reason = $3,
+                updated_at = now(),
+                updated_by = $2
+            WHERE id = $1::uuid
+              AND status = 'ACTIVE'
+          `,
+          [row.reservation_id, params.user_id, params.reason]
+        )
+      : await params.db.query(
+          `
+            UPDATE public.stock_reservations
+            SET qty_reserved = $2,
+                version = version + 1,
+                row_version = row_version + 1,
+                reason = $3,
+                updated_at = now(),
+                updated_by = $4
+            WHERE id = $1::uuid
+              AND status = 'ACTIVE'
+          `,
+          [row.reservation_id, remainingReservedQty, params.reason, params.user_id]
+        )
+    if ((reservationUpdate.rowCount ?? 0) !== 1) {
+      throw new HttpError(409, "RESERVATION_REBALANCE_CONFLICT", "La réservation a changé pendant le recomptage.")
+    }
     reallocations.push({
       from_reservation_id: row.reservation_id,
       commande_ligne_affaire_allocation_id: Number(row.commande_ligne_affaire_allocation_id),
