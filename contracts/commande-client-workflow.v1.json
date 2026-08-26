@@ -272,6 +272,11 @@
       "cause": "customer_order_launch"
     },
     {
+      "from": "AR_PRET",
+      "to": "ATTENTE_PLANNING",
+      "cause": "planning_repair"
+    },
+    {
       "from": "ATTENTE_TECHNIQUE",
       "to": "ATTENTE_PLANNING",
       "cause": "internal_order_launch"

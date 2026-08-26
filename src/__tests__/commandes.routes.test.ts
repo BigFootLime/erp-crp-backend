@@ -1782,7 +1782,7 @@ describe("/api/v1/commandes", () => {
       }
 
       // One OLD/NEW unit is already covered by a legacy grouped-delivery reservation.
-      if (q.includes("GROUP BY availability.article_id") && q.includes("warehouse.stock_scope")) {
+      if (q.includes("FROM public.v_stock_availability_225 availability") && q.includes("warehouse.stock_scope")) {
         return { rows: [{ article_id: ARTICLE_ID, stock_scope: "OLD", qty_available: 1 }] };
       }
 
@@ -2089,7 +2089,7 @@ describe("/api/v1/commandes", () => {
     expect(childParams[19]).toBe(6);
   });
 
-  it("POST /api/v1/commandes/:id/generate-affaires protects internal-order launch and single-affair invariant", async () => {
+  it("POST /api/v1/commandes/:id/generate-affaires protects internal-order launch and forbids stock decisions", async () => {
     mocks.clientQuery.mockImplementation(async (sql: unknown, params?: unknown[]) => {
       const q = String(sql);
       const authoritativePdf = authoritativePdfQueueDbMock(sql, params);
@@ -2122,13 +2122,13 @@ describe("/api/v1/commandes", () => {
     expect(forbidden.status).toBe(403);
     expect(forbidden.body).toMatchObject({ code: "INTERNAL_ORDER_LAUNCH_FORBIDDEN" });
 
-    const split = await request(app)
+    const stockDecision = await request(app)
       .post("/api/v1/commandes/123/generate-affaires")
       .set("x-test-role", "Directeur")
-      .send({ decision: null, livraison_count: 2, lines: [] });
+      .send({ decision: "SHIP_ALL_TOGETHER", livraison_count: 1, lines: [] });
 
-    expect(split.status).toBe(400);
-    expect(split.body).toMatchObject({ code: "INTERNAL_ORDER_SINGLE_AFFAIRE_REQUIRED" });
+    expect(stockDecision.status).toBe(400);
+    expect(stockDecision.body).toMatchObject({ code: "INTERNAL_ORDER_STOCK_DECISION_FORBIDDEN" });
     expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO affaire"))).toBe(false);
   });
 
@@ -2168,7 +2168,7 @@ describe("/api/v1/commandes", () => {
     expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO ordres_fabrication"))).toBe(false);
   });
 
-  it("POST /api/v1/commandes/:id/generate-affaires requires an internal stock destination", async () => {
+  it("POST /api/v1/commandes/:id/generate-affaires does not require an internal stock destination", async () => {
     const ARTICLE_ID = "11111111-1111-1111-1111-111111111111";
     const PIECE_ID = "22222222-2222-2222-2222-222222222222";
 
@@ -2215,12 +2215,12 @@ describe("/api/v1/commandes", () => {
       .set("x-test-role", "Responsable Production")
       .send({ decision: null, livraison_count: 1, lines: [] });
 
-    expect(res.status).toBe(400);
-    expect(res.body).toMatchObject({ code: "DEST_STOCK_LOCATION_REQUIRED" });
+    expect(res.status).toBe(422);
+    expect(res.body.code).not.toBe("DEST_STOCK_LOCATION_REQUIRED");
     expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO affaire"))).toBe(false);
   });
 
-  it("POST /api/v1/commandes/:id/generate-affaires launches one internal affair with complete OF topology", async () => {
+  it("POST /api/v1/commandes/:id/generate-affaires launches internal OF topology without a delivery affair", async () => {
     const MAGASIN_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
     const LOCATION_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
     const ARTICLE_ID = "11111111-1111-1111-1111-111111111111";
@@ -2243,8 +2243,8 @@ describe("/api/v1/commandes", () => {
               order_type: "INTERNE",
               devis_id: null,
               numero: "CI-123",
-              dest_stock_magasin_id: MAGASIN_ID,
-              dest_stock_emplacement_id: "1",
+              dest_stock_magasin_id: null,
+              dest_stock_emplacement_id: null,
               ar_sent_at: null,
             },
           ],
@@ -2345,9 +2345,9 @@ describe("/api/v1/commandes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({
-      affaire_ids: [7],
-      livraison_affaire_id: 7,
-      livraison_affaire_ids: [7],
+      affaire_ids: [],
+      livraison_affaire_id: null,
+      livraison_affaire_ids: [],
       generation_mode: "INTERNAL_ORDER",
       idempotent_replay: false,
       workflow_status: "ATTENTE_PLANNING",
@@ -2360,7 +2360,7 @@ describe("/api/v1/commandes", () => {
       expect.objectContaining({ id: 9, root_of_id: 9, parent_of_id: null, generation_level: 0 }),
       expect.objectContaining({ id: 10, root_of_id: 9, parent_of_id: 9, generation_level: 1 }),
     ]);
-    expect(mocks.clientQuery.mock.calls.filter((call) => String(call[0]).includes("INSERT INTO affaire"))).toHaveLength(1);
+    expect(mocks.clientQuery.mock.calls.filter((call) => String(call[0]).includes("INSERT INTO affaire"))).toHaveLength(0);
     expect(
       mocks.clientQuery.mock.calls.some(
         (call) => String(call[0]).includes("UPDATE public.commande_client_workflow_checkpoint") && String(call[0]).includes("internal_order_flow")
@@ -2419,13 +2419,20 @@ describe("/api/v1/commandes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({
-      affaire_ids: [7],
+      affaire_ids: [],
+      livraison_affaire_id: null,
+      livraison_affaire_ids: [],
       generation_mode: "INTERNAL_ORDER",
       idempotent_replay: true,
       workflow_status: "ATTENTE_PLANNING",
       of_ids: [9, 10],
       root_of_ids: [9],
       child_of_ids: [10],
+      warnings: [
+        "LEGACY_INTERNAL_DELIVERY_AFFAIRE_IGNORED",
+        "GAMME_WITHOUT_OPERATION:OF-9",
+        "GAMME_WITHOUT_OPERATION:OF-10",
+      ],
     });
     expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO affaire"))).toBe(false);
     expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO public.ordres_fabrication"))).toBe(false);

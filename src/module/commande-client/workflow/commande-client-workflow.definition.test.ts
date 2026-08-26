@@ -12,4 +12,9 @@ describe("customer stock-only acknowledgement workflow", () => {
   it("keeps the shortage route behind planning", () => {
     expect(canCommandeWorkflowTransition("ATTENTE_OF", "ATTENTE_PLANNING", "customer_order_launch")).toBe(true);
   });
+
+  it("allows the audited repair of the former no-operation planning bypass only", () => {
+    expect(canCommandeWorkflowTransition("AR_PRET", "ATTENTE_PLANNING", "planning_repair")).toBe(true);
+    expect(canCommandeWorkflowTransition("AR_ENVOYE", "ATTENTE_PLANNING", "planning_repair")).toBe(false);
+  });
 });

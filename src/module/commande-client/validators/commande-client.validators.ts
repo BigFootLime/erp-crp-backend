@@ -151,14 +151,6 @@ z.object({
     }
 
     if (val.order_type === "INTERNE") {
-      if (!(typeof val.dest_stock_magasin_id === "string" && val.dest_stock_magasin_id.trim().length > 0)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "dest_stock_magasin_id is required for internal orders",
-          path: ["dest_stock_magasin_id"],
-        });
-      }
-
       val.lignes.forEach((l, i) => {
         const articleId = (l.article_id ?? "").toString().trim();
         const codePiece = (l.code_piece ?? "").toString().trim();

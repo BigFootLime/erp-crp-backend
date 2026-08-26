@@ -1,3 +1,5 @@
+import { sendTransactionalEmail } from "../../../shared/email/resend.service";
+
 type EmailDelivery =
   | { status: "SENT"; provider_id: string | null }
   | { status: "NOT_CONFIGURED"; provider_id: null }
@@ -30,10 +32,6 @@ export async function sendPortalAccessEmail(input: {
   expiresMinutes: number;
   idempotencyKey: string;
 }): Promise<EmailDelivery> {
-  const apiKey = (process.env.RESEND_API_KEY ?? "").trim();
-  const from = (process.env.RESEND_FROM ?? "").trim();
-  if (!apiKey || !from) return { status: "NOT_CONFIGURED", provider_id: null };
-
   const url = buildPortalUrl(input.path);
   const action = input.kind === "INVITATION" ? "Activer mon accès client" : "Réinitialiser mon mot de passe";
   const subject = input.kind === "INVITATION"
@@ -54,27 +52,15 @@ export async function sendPortalAccessEmail(input: {
     `<p style="font-size:12px;color:#6b7280">Ignorez ce message si vous n'êtes pas à l'origine de la demande.</p>` +
     `</div>`;
 
-  try {
-    const response = await fetch(
-      `${(process.env.RESEND_API_BASE_URL ?? "https://api.resend.com").replace(/\/+$/, "")}/emails`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-          "Idempotency-Key": input.idempotencyKey.slice(0, 256),
-        },
-        body: JSON.stringify({ from, to: [input.to], subject, text, html }),
-      }
-    );
-    if (!response.ok) return { status: "FAILED", provider_id: null };
-    const payload = await response.json().catch(() => null) as { id?: unknown } | null;
-    return {
-      status: "SENT",
-      provider_id: typeof payload?.id === "string" ? payload.id : null,
-    };
-  } catch {
-    return { status: "FAILED", provider_id: null };
-  }
+  const delivery = await sendTransactionalEmail({
+    to: [input.to],
+    subject,
+    text,
+    html,
+    idempotencyKey: input.idempotencyKey,
+  });
+  if ("skipped" in delivery) return { status: "NOT_CONFIGURED", provider_id: null };
+  if (!delivery.ok) return { status: "FAILED", provider_id: null };
+  return { status: "SENT", provider_id: delivery.id ?? null };
 }
 

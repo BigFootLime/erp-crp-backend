@@ -1,24 +1,10 @@
-# Commande interne : validation et lancement
+# Commande interne : fabrication, planning et mise en stock
 
-Ce document décrit le contrat backend du flux cible de commande interne. Il complète la décision fonctionnelle portée par l'issue frontend `crp-systems-web#153` et l'issue backend `erp-crp-backend#85`.
+Ce document décrit le contrat backend validé le 2026-08-26 pour `order_type = INTERNE` (`crp-systems-web#883`).
 
-## Objectif
-
-Une commande dont `order_type = INTERNE` est le point d'entrée unique du besoin interne. Sa validation génère, dans une seule transaction :
-
-1. exactement une affaire de livraison ;
-2. les allocations de toutes les lignes ;
-3. un OF racine par ligne et les OF enfants issus de la nomenclature ;
-4. le passage du workflow à `ATTENTE_PLANNING` ;
-5. les événements et l'audit associés.
-
-Le flux ne génère ni AR client, ni facture, ni BL. Le BL reste un résultat ultérieur du processus logistique, après libération qualité.
-
-## Endpoint
+## Lancement
 
 `POST /api/v1/commandes/:id/generate-affaires`
-
-La route exige une session authentifiée. Pour une commande interne, le lancement est réservé à un rôle d'administration, de direction ou de responsabilité production/atelier.
 
 Requête canonique :
 
@@ -30,86 +16,54 @@ Requête canonique :
 }
 ```
 
-Les choix de stock d'expédition et les découpages en plusieurs affaires restent disponibles pour les commandes client historiques, mais sont interdits pour les commandes internes.
+Le nom historique de l’endpoint reste compatible, mais une commande interne ne crée plus d’affaire :
 
-## Préconditions internes
+- `affaire_ids`, `livraison_affaire_ids` : tableaux vides ;
+- `livraison_affaire_id` : `null` ;
+- aucune allocation de livraison ;
+- aucune réservation de stock ;
+- un OF racine par ligne et les OF enfants requis ;
+- workflow placé sur `ATTENTE_PLANNING`, même lorsque les OF n’ont aucune opération.
 
-- la commande contient au moins une ligne ;
-- chaque ligne référence une `piece_technique_id` applicable ;
-- une seule destination interne est définie par `dest_stock_magasin_id` et `dest_stock_emplacement_id` ;
-- la destination correspond à un emplacement de stock existant ;
-- l'utilisateur possède un rôle autorisé ;
-- aucune génération précédente incohérente n'est déjà liée à la commande.
+Le rejeu est idempotent et retourne les OF existants. Une affaire interne historique est conservée en lecture et signalée par `LEGACY_INTERNAL_DELIVERY_AFFAIRE_IGNORED`.
 
-L'absence de stock disponible ne réduit pas le besoin à fabriquer : la quantité complète demandée alimente les OF.
+## Préconditions
 
-## Réponse
+- au moins une ligne ;
+- quantité positive ;
+- pièce technique et version applicable sur chaque ligne ;
+- rôle autorisé à lancer une commande interne ;
+- `decision = null` et aucune surcharge de stock dans `lines`.
 
-Exemple simplifié :
+Le client commercial, le contact, la destination de livraison, une cadence, des documents qualité et une disponibilité stock ne sont pas des préconditions internes.
 
-```json
-{
-  "affaire_ids": [7],
-  "livraison_affaire_id": 7,
-  "livraison_affaire_ids": [7],
-  "generation_mode": "INTERNAL_ORDER",
-  "idempotent_replay": false,
-  "workflow_status": "ATTENTE_PLANNING",
-  "of_ids": [9, 10],
-  "root_of_ids": [9],
-  "child_of_ids": [10],
-  "ofs": [
-    {
-      "id": 9,
-      "root_of_id": 9,
-      "parent_of_id": null,
-      "generation_level": 0,
-      "commande_ligne_id": 1
-    },
-    {
-      "id": 10,
-      "root_of_id": 9,
-      "parent_of_id": 9,
-      "generation_level": 1,
-      "commande_ligne_id": 1
-    }
-  ],
-  "warnings": []
-}
-```
+## Réception d’un OF interne
 
-`ofs` expose la topologie utile au frontend sans obliger celui-ci à reconstruire la hiérarchie.
+`POST /api/v1/production/of/:id/receipts`
 
-## Idempotence
+Pour un OF issu d’une commande interne, `location_id` est facultatif et ignoré s’il est fourni. Dans la transaction, le backend :
 
-Une nouvelle demande après génération ne crée ni affaire ni OF supplémentaire. La réponse contient les identifiants et la topologie existants avec `idempotent_replay = true`.
+1. lit le numéro client de la pièce technique ;
+2. verrouille la destination logique ;
+3. retrouve le magasin actif `NEW-PF` lié à un entrepôt ;
+4. crée ou réutilise la location et l’emplacement dont le code est le numéro client ;
+5. met le stock reçu à cette destination ;
+6. ne crée aucune réservation de commande/livraison.
 
-Une ancienne commande interne possédant plusieurs affaires de livraison peut être relue, mais renvoie l'avertissement `LEGACY_MULTIPLE_DELIVERY_AFFAIRS`. Cette tolérance ne permet pas de créer un nouveau découpage.
-
-## Erreurs métier principales
+Erreurs principales :
 
 | Statut | Code | Signification |
 | --- | --- | --- |
-| 403 | `INTERNAL_ORDER_LAUNCH_FORBIDDEN` | rôle insuffisant pour lancer la commande interne |
-| 400 | `INTERNAL_ORDER_SINGLE_AFFAIRE_REQUIRED` | `livraison_count` différent de 1 |
-| 400 | `INTERNAL_ORDER_STOCK_DECISION_FORBIDDEN` | décision ou surcharge de stock fournie |
-| 400 | `INTERNAL_ORDER_LINE_REQUIRED` | aucune ligne à fabriquer |
-| 400 | `PIECE_TECHNIQUE_REQUIRED` | pièce technique absente sur une ligne |
-| 400 | `DEST_STOCK_LOCATION_REQUIRED` | destination interne absente ou invalide |
-| 409 | `INTERNAL_ORDER_AFFAIRE_MAPPING_INVALID` | liaison historique d'affaire incompatible |
+| 403 | `INTERNAL_ORDER_LAUNCH_FORBIDDEN` | rôle insuffisant |
+| 400 | `INTERNAL_ORDER_STOCK_DECISION_FORBIDDEN` | décision stock interdite |
+| 400 | `INTERNAL_ORDER_LINE_REQUIRED` | aucune pièce à fabriquer |
+| 400 | `PIECE_TECHNIQUE_REQUIRED` | pièce technique absente |
+| 422 | `INTERNAL_ORDER_CLIENT_CODE_REQUIRED` | numéro client absent de la pièce |
+| 503 | `NEW_PF_MAGASIN_REQUIRED` | magasin actif `NEW-PF` non configuré |
+| 422 | `RECEIPT_LOCATION_REQUIRED` | emplacement absent pour un OF non interne |
 
-## Traçabilité
+## Compatibilité et réparation
 
-Le succès écrit notamment :
-
-- l'événement `AFFAIRES_GENERATED` commun au flux existant ;
-- l'événement `INTERNAL_ORDER_LAUNCHED` avec affaire, destination, OF racines/enfants et statut ;
-- le changement de statut dans `commande_historique` ;
-- les métadonnées `internal_order_flow` dans les checkpoints ;
-- l'audit applicatif de génération.
-
-## Compatibilité
-
-Le comportement des commandes client (`FERME`, `OUVERTE`, etc.) est conservé : analyse de stock d'expédition, confirmation éventuelle et livraisons fractionnées continuent d'utiliser le contrat historique.
-
-Cette évolution ne nécessite ni nouveau patch SQL ni migration de production.
+- Les commandes `FERME` et `CADRE` conservent analyse OLD → NEW, réservation, AR et livraison.
+- Une commande historique marquée `AR_PRET` par l’ancien contournement `no_plannable_operations` est replacée de façon auditée sur `ATTENTE_PLANNING` lors du rejeu, si l’AR n’a pas été envoyé.
+- Aucune migration PostgreSQL n’est requise.
