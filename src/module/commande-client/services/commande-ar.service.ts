@@ -501,6 +501,8 @@ export async function svcSendCommandeAr(params: {
 
   const claim = claimResult;
   const draft = claim.draft;
+  let providerCallStarted = false;
+  let providerDefinitelyNotCalled = false;
   try {
     // The supplier/customer-facing email must attach the exact archived GED
     // bytes, never a mutable legacy working-file copy.
@@ -543,6 +545,7 @@ export async function svcSendCommandeAr(params: {
     const sentText = emailBodyOverride ?? generatedContent.text;
     const sentHtml = emailBodyOverride ? renderCommandeArEmailHtml(emailBodyOverride) : generatedContent.html;
 
+    providerCallStarted = true;
     const emailResult = await sendTransactionalEmail({
       to: recipientEmails,
       subject: generatedContent.subject,
@@ -562,6 +565,7 @@ export async function svcSendCommandeAr(params: {
       let statusCode = 502;
       let message = "Erreur d'envoi de l'email";
       if ("skipped" in emailResult && emailResult.skipped === true) {
+        providerDefinitelyNotCalled = true;
         statusCode = 503;
         message = "Email non configuré sur le serveur";
       } else if (isResendSendError(emailResult)) {
@@ -595,6 +599,12 @@ export async function svcSendCommandeAr(params: {
       error_message: errorMessage,
       user_id: params.user_id,
       provider_name: "resend",
+      // Before the provider call (official archive still pending, integrity
+      // guard, invalid snapshot) or when email is not configured, no external
+      // side effect is possible. Release the payload guard so the operator can
+      // correct recipients/message and retry. Ambiguous provider failures keep
+      // the guard and the deterministic idempotency key.
+      release_idempotency: !providerCallStarted || providerDefinitelyNotCalled,
     })).catch(() => undefined);
     throw err;
   }

@@ -150,8 +150,39 @@ describe("svcSendCommandeAr", () => {
       status: 503,
     });
 
-    expect(mocks.markFailed).toHaveBeenCalledWith(expect.objectContaining({ ar_id: AR_ID }));
+    expect(mocks.markFailed).toHaveBeenCalledWith(expect.objectContaining({
+      ar_id: AR_ID,
+      release_idempotency: true,
+    }));
     expect(mocks.finalize).not.toHaveBeenCalled();
+  });
+
+  it("keeps the retry guard after an ambiguous provider failure", async () => {
+    mocks.sendEmail.mockResolvedValue({ ok: false, error: "network response lost" });
+
+    await expect(svcSendCommandeAr({ commande_id: 42, user_id: 7, body: sendBody })).rejects.toMatchObject({
+      code: "COMMANDE_AR_SEND_FAILED",
+      status: 502,
+    });
+
+    expect(mocks.markFailed).toHaveBeenCalledWith(expect.objectContaining({
+      ar_id: AR_ID,
+      release_idempotency: false,
+    }));
+  });
+
+  it("releases the retry guard when preparation fails before the provider call", async () => {
+    mocks.readOfficialPdf.mockRejectedValue(new Error("official archive unavailable"));
+
+    await expect(svcSendCommandeAr({ commande_id: 42, user_id: 7, body: sendBody })).rejects.toThrow(
+      "official archive unavailable"
+    );
+
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+    expect(mocks.markFailed).toHaveBeenCalledWith(expect.objectContaining({
+      ar_id: AR_ID,
+      release_idempotency: true,
+    }));
   });
 
   it("returns an already-sent version without calling the provider a second time", async () => {
