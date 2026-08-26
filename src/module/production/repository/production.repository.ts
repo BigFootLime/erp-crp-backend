@@ -3589,14 +3589,9 @@ export async function repoCreateOrdreFabrication(params: {
       piece_technique_id: b.piece_technique_id,
       gamme_id: technical.gamme_id,
     });
-    // #170 : même refus que la génération récursive — pas d'OF sans gamme/opérations.
-    if (operationsCount === 0) {
-      throw new HttpError(
-        409,
-        "PIECE_TECHNIQUE_OPERATION_REQUIRED",
-        "Impossible de créer l'OF : la pièce technique n'a aucune opération de gamme applicable."
-      );
-    }
+    // An empty gamme is non-blocking: the OF and immutable technical evidence
+    // still exist, while callers can explicitly skip an inapplicable planning
+    // checkpoint instead of losing the whole creation transaction.
 
     await client.query(
       `INSERT INTO public.of_technical_snapshots (of_id, piece_technique_version_id, snapshot, snapshot_sha256, created_by)

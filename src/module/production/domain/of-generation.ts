@@ -609,6 +609,7 @@ export type GeneratedOfRef = {
   parent_of_id: number | null;
   generation_level: number;
   commande_ligne_id: number | null;
+  operations_count: number;
 };
 
 export type RecursiveOfGenerationResult = {
@@ -617,6 +618,7 @@ export type RecursiveOfGenerationResult = {
   ofs: GeneratedOfRef[];
   source_hash: string;
   purchase_requirements: PurchaseRequirement[];
+  warnings: string[];
 };
 
 export type OfGenerationSourceType = "COMMANDE_CLIENT" | "AFFAIRE" | "MANUAL";
@@ -715,6 +717,7 @@ export async function createRecursiveOrdresFabrication(tx: Queryable, params: {
 
   const generatedOfs: GeneratedOfRef[] = [];
   const purchaseRequirements: PurchaseRequirement[] = [];
+  const warnings: string[] = [];
 
   for (const node of tree) {
     const ofId = ofIdByKey.get(node.key);
@@ -806,11 +809,10 @@ export async function createRecursiveOrdresFabrication(tx: Queryable, params: {
       gamme_id: technical.gamme_id,
     });
     if (operationsCount === 0) {
-      throw new HttpError(
-        409,
-        "PIECE_TECHNIQUE_OPERATION_REQUIRED",
-        `Cannot create complete OF: piece technique ${node.code_piece} has no operation for line ${params.commande_ligne_id ?? "?"}`
-      );
+      // A legitimate article may not require workshop operations yet. Keep a
+      // traceable OF and its immutable technical snapshot, but let the order
+      // workflow bypass the planning checkpoint that has nothing to schedule.
+      warnings.push(`GAMME_WITHOUT_OPERATION:${node.code_piece}`);
     }
 
     await tx.query(
@@ -881,6 +883,7 @@ export async function createRecursiveOrdresFabrication(tx: Queryable, params: {
       parent_of_id: parentOfId,
       generation_level: node.level,
       commande_ligne_id: params.commande_ligne_id,
+      operations_count: operationsCount,
     });
   }
 
@@ -902,6 +905,7 @@ export async function createRecursiveOrdresFabrication(tx: Queryable, params: {
         max_level: generatedOfs.reduce((acc, of) => Math.max(acc, of.generation_level), 0),
         source_hash: sourceHash,
         purchase_requirements: purchaseRequirements,
+        warnings,
       }),
     ]
   );
@@ -912,5 +916,6 @@ export async function createRecursiveOrdresFabrication(tx: Queryable, params: {
     ofs: generatedOfs,
     source_hash: sourceHash,
     purchase_requirements: purchaseRequirements,
+    warnings,
   };
 }

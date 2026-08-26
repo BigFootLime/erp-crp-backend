@@ -266,12 +266,7 @@ export async function repoPreviewOfGeneration(params: {
       const qtyLancee = Number((source.quantity * node.quantite_cumulee).toFixed(3));
       const operationsCount = Array.isArray(snapshot.operations) ? snapshot.operations.length : 0;
       if (technical && operationsCount === 0) {
-        blockers.push({
-          code: "PIECE_TECHNIQUE_OPERATION_REQUIRED",
-          message: `La pièce ${node.code_piece} n'a aucune opération de gamme applicable.`,
-          piece_technique_id: node.piece_technique_id,
-          structure_path: node.key,
-        });
+        warnings.push(`GAMME_WITHOUT_OPERATION:${node.code_piece}`);
       }
       const documents = Array.isArray(snapshot.documents) ? snapshot.documents : [];
       if (technical && documents.length === 0) {
