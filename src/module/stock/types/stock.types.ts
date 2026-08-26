@@ -367,6 +367,9 @@ export type StockBalanceRow = {
   emplacement_name: string | null;
   lot_id: string | null;
   lot_code: string | null;
+  of_references: string[];
+  mp_references: string[];
+  tr_references: string[];
   warehouse_id: string;
   warehouse_code: string;
   warehouse_name: string;

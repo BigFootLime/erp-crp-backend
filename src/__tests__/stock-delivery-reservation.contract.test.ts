@@ -23,6 +23,10 @@ const deliveryRepository = fs.readFileSync(
   path.resolve(__dirname, "../module/livraisons/repository/livraisons.repository.ts"),
   "utf8"
 );
+const stockRepository = fs.readFileSync(
+  path.resolve(__dirname, "../module/stock/repository/stock.repository.ts"),
+  "utf8"
+);
 const livraisonRoutes = fs.readFileSync(
   path.resolve(__dirname, "../module/livraisons/routes/livraisons.routes.ts"),
   "utf8"
@@ -79,6 +83,13 @@ describe("Commande → stock → OF receipt → delivery contracts", () => {
       }).success
     ).toBe(true);
     expect(
+      correctPreparationStockBodySchema.safeParse({
+        reservation_id: uuid,
+        reason: "Étiquette de lot corrigée",
+        lot_code: "LOT-0002",
+      }).success
+    ).toBe(true);
+    expect(
       createLivraisonFromReservationsBodySchema.safeParse({ items: [{ reservation_id: uuid, qty: 1 }] }).success
     ).toBe(true);
     expect(shipLivraisonBodySchema.safeParse({ expected_shipping_version: 1, preview_hash: "a".repeat(64) }).success).toBe(true);
@@ -115,7 +126,12 @@ describe("Commande → stock → OF receipt → delivery contracts", () => {
     expect(deliveryRepository).toMatch(/qty_consumed \+ \$3 <= quantite/);
     expect(deliveryRepository).toMatch(/stock_reservation_corrections/);
     expect(deliveryRepository).toMatch(/'ADJUSTMENT'::public\.movement_type/);
-    expect(deliveryRepository).toMatch(/ACTUAL_QTY_BELOW_RESERVED/);
+    expect(deliveryRepository).not.toMatch(/ACTUAL_QTY_BELOW_RESERVED/);
+    expect(deliveryRepository).toMatch(/PHYSICAL_QTY_BELOW_PREPARED/);
+    expect(deliveryRepository).toMatch(/reallocateCorrectedBatchReservations/);
+    expect(deliveryRepository).toMatch(/prepareOfsForReservationShortages/);
+    expect(deliveryRepository).toMatch(/createRecursiveOrdresFabrication/);
+    expect(deliveryRepository).toMatch(/CASE COALESCE\(l\.source_scope, l\.stock_scope, w\.stock_scope, 'NEW'\) WHEN 'OLD' THEN 0 ELSE 1 END/);
     expect(deliveryRepository).toMatch(/MP_SCAN_MISMATCH/);
     expect(deliveryRepository).toMatch(/TR_SCAN_MISMATCH/);
     expect(deliveryRepository).toMatch(/body\.of_number !== undefined && body\.of_number !== reservation\.of_numero/);
@@ -123,6 +139,10 @@ describe("Commande → stock → OF receipt → delivery contracts", () => {
     expect(deliveryRepository).toMatch(/plan_reference/);
     expect(deliveryRepository).toMatch(/plan_index/);
     expect(deliveryRepository).toMatch(/verified_qty/);
+    expect(stockRepository).toMatch(/AS of_references/);
+    expect(stockRepository).toMatch(/AS mp_references/);
+    expect(stockRepository).toMatch(/AS tr_references/);
+    expect(stockRepository).toMatch(/public\.of_output_lots/);
     expect(livraisonRoutes).toMatch(/preparation-cart\/correct/);
     expect(livraisonRoutes).toMatch(/requireStockCorrectionPermission/);
     expect(livraisonRoutes).toMatch(/:id\/print-status/);
