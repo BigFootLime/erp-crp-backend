@@ -19,6 +19,7 @@ import {
   repoEnsureCommandeWorkflowStatus,
 } from "./commande-client.repository";
 import { canActOnCommandeWorkflowCheckpoint } from "../domain/commande-client-rbac";
+import { buildCommandeArContentSnapshot, isCommandeArSnapshotCurrent } from "../domain/commande-ar-fingerprint";
 import { normalizeCommandeWorkflowStatus } from "../workflow/commande-client-workflow.definition";
 import type { AppNotification } from "../../notifications/types/notifications.types";
 import type {
@@ -185,15 +186,21 @@ function recipientKey(source: "CLIENT" | "CONTACT", email: string, contactId: st
 
 export function buildCommandeArRecipientSuggestions(data: CommandeArGenerationData): CommandeArRecipientSuggestion[] {
   const out: CommandeArRecipientSuggestion[] = [];
-  const seen = new Set<string>();
+  const seenEmails = new Set<string>();
   const selectedContactId = data.header.selected_contact_id;
   const push = (suggestion: CommandeArRecipientSuggestion) => {
-    if (seen.has(suggestion.key)) return;
-    seen.add(suggestion.key);
+    const normalizedEmail = suggestion.email.toLowerCase();
+    if (seenEmails.has(normalizedEmail)) return;
+    seenEmails.add(normalizedEmail);
     out.push(suggestion);
   };
 
-  for (const contact of data.contacts) {
+  const orderedContacts = [...data.contacts].sort((left, right) => {
+    const leftSelected = left.contact_id === selectedContactId ? 1 : 0;
+    const rightSelected = right.contact_id === selectedContactId ? 1 : 0;
+    return rightSelected - leftSelected;
+  });
+  for (const contact of orderedContacts) {
     const email = cleanEmail(contact.email);
     if (!email) continue;
     const key = recipientKey("CONTACT", email, contact.contact_id);
@@ -664,16 +671,9 @@ export async function repoCreateCommandeArDraft(params: {
     let archivedSourceRevision: string | null = null;
     let documentVersion: number | null = null;
     if (params.official_source_snapshot) {
-      // Updating the parent first makes the stored revision exactly the token
-      // returned by the order API after this acknowledgement is created.
-      const revisionResult = await tx.query<{ source_revision: string | null }>(
-        `UPDATE public.commande_client
-            SET updated_at = now()
-          WHERE id = $1
-        RETURNING updated_at::text AS source_revision`,
-        [params.commande_id]
-      );
-      archivedSourceRevision = revisionResult.rows[0]?.source_revision?.trim() ?? null;
+      // AR generation freezes the current business source; it must not mutate
+      // the parent order and make its own fingerprint immediately obsolete.
+      archivedSourceRevision = exists.rows[0].updated_at?.trim() ?? null;
       if (!archivedSourceRevision) throw new HttpError(409, "OFFICIAL_DOCUMENT_SOURCE_REVISION_UNAVAILABLE", "La révision source du document est indisponible.");
       const versionResult = await tx.query<{ count: string }>(
         `SELECT count(*)::text AS count
@@ -1360,6 +1360,15 @@ export async function repoClaimCommandeArSend(params: {
           already_sent: true,
         },
       };
+    }
+    const currentData = await repoLoadCommandeArGenerationData(client, params.commande_id);
+    if (!currentData) throw new HttpError(404, "COMMANDE_NOT_FOUND", "Commande introuvable");
+    if (!isCommandeArSnapshotCurrent({
+      storedSnapshot: draft.content_snapshot,
+      storedFingerprint: draft.content_fingerprint,
+      currentSnapshot: buildCommandeArContentSnapshot(currentData),
+    })) {
+      throw new HttpError(409, "COMMANDE_AR_OBSOLETE", "La commande a changé depuis la génération de cet accusé de réception.");
     }
 
     await repoAuthorizeCommandeArGeneration({
