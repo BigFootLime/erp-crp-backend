@@ -73,6 +73,7 @@ export const COMMANDE_WORKFLOW_LEGACY_STATUS_ALIASES: Record<string, CommandeWor
 export const COMMANDE_WORKFLOW_TRANSITION_CAUSES = [
   "checkpoint",
   "customer_order_launch",
+  "planning_repair",
   "internal_order_launch",
   "internal_planning_validation",
   "internal_production_launch",
@@ -133,6 +134,10 @@ export const COMMANDE_WORKFLOW_TRANSITIONS: readonly CommandeWorkflowTransitionR
   // A legacy invalid planning state can be recovered by reopening the launch
   // checkpoint while its append-only status history remains ATTENTE_PLANNING.
   { from: "ATTENTE_PLANNING", to: "AR_PRET", cause: "customer_order_launch" },
+  // Before #883, an OF without operations incorrectly skipped planning and
+  // moved the command to AR_PRET. Replaying the launch repairs only that
+  // explicitly-marked legacy path and restores the mandatory planning gate.
+  { from: "AR_PRET", to: "ATTENTE_PLANNING", cause: "planning_repair" },
   { from: "ATTENTE_TECHNIQUE", to: "ATTENTE_PLANNING", cause: "internal_order_launch" },
   // Commands saved by the former guided flow may already have completed one
   // or both customer-only preparation checkpoints. Keep their launch

@@ -8,9 +8,9 @@ describe("parcours de lancement d'une commande client", () => {
       .toBe("PRODUCTION_WITH_PLANNING");
   });
 
-  it("saute le planning lorsqu'un OF ne contient aucune opération", () => {
+  it("conserve la validation planning lorsqu'un OF ne contient aucune opération", () => {
     expect(resolveCustomerOrderLaunchMode({ needsProduction: true, generatedOperationsCount: 0 }))
-      .toBe("PRODUCTION_WITHOUT_PLANNING");
+      .toBe("PRODUCTION_WITH_PLANNING");
   });
 
   it("conserve le parcours stock lorsqu'aucune production n'est nécessaire", () => {

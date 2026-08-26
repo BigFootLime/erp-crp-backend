@@ -41,10 +41,10 @@ describe("#880 — gamme vide non bloquante", () => {
     expect(emptyGamme).not.toContain("blockers.push");
   });
 
-  it("saute le planning inexistant et rend l'AR accessible", () => {
+  it("conserve le planning obligatoire même quand la gamme ne contient aucune opération", () => {
     const source = read("src/module/commande-client/repository/commande-client.repository.ts");
-    expect(source).toContain('skip_reason: "no_plannable_operations"');
-    expect(source).toContain('nouveau_statut: "AR_PRET"');
-    expect(source).toContain("has_plannable_operations: generatedOfs.some");
+    expect(source).toContain('nouveau_statut: "ATTENTE_PLANNING"');
+    expect(source).toContain('cause: "planning_repair"');
+    expect(source).not.toContain('skip_reason: "no_plannable_operations"');
   });
 });

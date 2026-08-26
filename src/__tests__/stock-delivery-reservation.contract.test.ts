@@ -102,7 +102,7 @@ describe("Commande → stock → OF receipt → delivery contracts", () => {
   });
 
   it("enforces OLD→NEW FIFO, released lots, row locks and idempotent preparation/shipment/correction ledgers", () => {
-    expect(commandRepository).toMatch(/CASE COALESCE\(lot\.source_scope, warehouse\.stock_scope, 'NEW'\) WHEN 'OLD' THEN 0 ELSE 1 END/);
+    expect(commandRepository).toMatch(/WHEN lot\.origin_stock_scope = 'OLD' THEN 0[\s\S]*COALESCE\(lot\.source_scope, lot\.stock_scope, warehouse\.stock_scope, 'NEW'\) = 'OLD' THEN 0/);
     expect(commandRepository).toMatch(/COALESCE\(lot\.lot_status, 'LIBERE'\) = 'LIBERE'/);
     expect(commandRepository).toMatch(/FROM public\.lots WHERE id = \$1::uuid FOR UPDATE/);
     expect(commandRepository).toMatch(/FROM public\.stock_levels[\s\S]*FOR UPDATE/);
