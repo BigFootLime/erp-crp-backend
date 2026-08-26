@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   release: vi.fn(),
   applyMilestone: vi.fn(),
   ensureStatus: vi.fn(),
+  snapshotCurrent: vi.fn(),
 }));
 
 vi.mock("../../../config/database", () => ({
@@ -18,7 +19,13 @@ vi.mock("./commande-client.repository", () => ({
   repoEnsureCommandeWorkflowStatus: mocks.ensureStatus,
 }));
 
+vi.mock("../domain/commande-ar-fingerprint", () => ({
+  buildCommandeArContentSnapshot: vi.fn(() => ({})),
+  isCommandeArSnapshotCurrent: mocks.snapshotCurrent,
+}));
+
 import {
+  buildCommandeArRecipientSuggestions,
   repoAuthorizeCommandeArGeneration,
   repoClaimCommandeArSend,
   repoFinalizeCommandeArSend,
@@ -69,6 +76,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.connect.mockResolvedValue({ query: mocks.clientQuery, release: mocks.release });
   mocks.applyMilestone.mockResolvedValue({ notifications: [] });
+  mocks.snapshotCurrent.mockReturnValue(true);
 });
 
 describe("commande AR durable send claim", () => {
@@ -80,6 +88,7 @@ describe("commande AR durable send claim", () => {
       if (q.includes("checkpoint_status")) {
         return { rows: [{ raw_statut: "AR_PRET", checkpoint_status: "active", responsible_role: "secretariat", assigned_user_id: null }] };
       }
+      if (q.includes("FROM public.commande_client cc")) return { rows: [{ commande_id: 123, client_id: null }] };
       if (q.includes("SET status = 'SENDING'")) return { rows: [{ send_attempt_count: 1 }] };
       return { rows: [] };
     });
@@ -99,6 +108,7 @@ describe("commande AR durable send claim", () => {
       if (q.includes("checkpoint_status")) {
         return { rows: [{ raw_statut: "AR_PRET", checkpoint_status: "active", responsible_role: "secretariat", assigned_user_id: null }] };
       }
+      if (q.includes("FROM public.commande_client cc")) return { rows: [{ commande_id: 123, client_id: null }] };
       return { rows: [] };
     });
 
@@ -107,6 +117,50 @@ describe("commande AR durable send claim", () => {
       code: "COMMANDE_AR_SEND_IN_PROGRESS",
     });
     expect(mocks.clientQuery.mock.calls.map(([sql]) => String(sql))).toContain("ROLLBACK");
+  });
+
+  it("rejects a draft whose customer-facing content changed", async () => {
+    mocks.snapshotCurrent.mockReturnValueOnce(false);
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const q = String(sql);
+      if (q.includes("SELECT client_id FROM public.commande_client")) return { rows: [{ client_id: null }] };
+      if (q.includes("FROM public.commande_ar_log ar")) return { rows: [draftRow] };
+      if (q.includes("FROM public.commande_client cc")) return { rows: [{ commande_id: 123, client_id: null }] };
+      return { rows: [] };
+    });
+
+    await expect(repoClaimCommandeArSend(claimParams)).rejects.toMatchObject({
+      status: 409,
+      code: "COMMANDE_AR_OBSOLETE",
+    });
+    expect(mocks.clientQuery.mock.calls.map(([sql]) => String(sql))).toContain("ROLLBACK");
+  });
+});
+
+describe("commande AR recipient suggestions", () => {
+  it("deduplicates recipients by email and keeps the selected contact first", () => {
+    const suggestions = buildCommandeArRecipientSuggestions({
+      header: {
+        selected_contact_id: "selected",
+        client_email: "ACHATS@CLIENT.TEST",
+        client_company_name: "Client Exemple",
+      },
+      contacts: [
+        { contact_id: "other", first_name: "Autre", last_name: "Contact", email: "other@client.test", role: null, civility: null },
+        { contact_id: "duplicate", first_name: "Doublon", last_name: "Client", email: "achats@client.test", role: null, civility: null },
+        { contact_id: "selected", first_name: "Contact", last_name: "Choisi", email: "achats@client.test", role: "Achats", civility: null },
+      ],
+      lines: [],
+      allocations: [],
+    } as never);
+
+    expect(suggestions).toHaveLength(2);
+    expect(suggestions[0]).toMatchObject({
+      email: "achats@client.test",
+      contact_id: "selected",
+      is_default: true,
+    });
+    expect(suggestions.filter((item) => item.is_default)).toHaveLength(1);
   });
 });
 

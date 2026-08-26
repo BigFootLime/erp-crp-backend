@@ -31,6 +31,11 @@ import {
 import pool from "../../../config/database";
 import type { AuthoritativePdfArchiveRecord } from "../../../shared/authoritative-documents/authoritative-document.types";
 import { getOfficialDocumentGenerationEnvelope, getOfficialPdfDto, readOfficialPdfBytes, recordOfficialPdfPrintIntent } from "../../../shared/authoritative-documents/authoritative-document.service";
+import {
+  buildCommandeArContentSnapshot,
+  isCommandeArSnapshotCurrent,
+  sha256Canonical,
+} from "../domain/commande-ar-fingerprint";
 
 const ACKNOWLEDGEMENT_DOCUMENT_KIND = "CUSTOMER_ORDER_ACKNOWLEDGEMENT";
 
@@ -82,16 +87,7 @@ function escapeHtml(text: string): string {
     .replace(/'/g, "&#039;");
 }
 
-function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  const record = value as Record<string, unknown>;
-  return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(",")}}`;
-}
-
-export function sha256Canonical(value: unknown): string {
-  return crypto.createHash("sha256").update(canonicalJson(value)).digest("hex");
-}
+export { sha256Canonical } from "../domain/commande-ar-fingerprint";
 
 export function renderCommandeArEmailHtml(text: string): string {
   const paragraphs = text
@@ -399,26 +395,7 @@ export async function svcGenerateCommandeAr(params: {
       delivery_address: { name: data.header.deliv_name, street: data.header.deliv_street, house_number: data.header.deliv_house_number, postal_code: data.header.deliv_postal_code, city: data.header.deliv_city, country: data.header.deliv_country },
       lines: data.lines.map((line) => ({ designation: line.designation, code_piece: line.code_piece, quantite: String(line.quantite), unite: line.unite, prix_unitaire_ht: String(line.prix_unitaire_ht), taux_tva: line.taux_tva == null ? null : String(line.taux_tva), total_ttc: String(line.total_ttc) })), issuer,
     };
-    const contentSnapshot = {
-      schema_version: 1,
-      header: {
-        numero: data.header.numero,
-        customer_reference: data.header.customer_reference,
-        statut: data.header.statut,
-        updated_at: data.header.updated_at,
-        date_commande: data.header.date_commande,
-        commentaire: data.header.commentaire,
-        total_ht: data.header.total_ht,
-        total_ttc: data.header.total_ttc,
-        client_company_name: data.header.client_company_name,
-        client_email: data.header.client_email,
-        client_phone: data.header.client_phone,
-        bill_address: officialSnapshot.bill_address,
-        delivery_address: officialSnapshot.delivery_address,
-      },
-      lines: data.lines,
-      allocations: data.allocations,
-    };
+    const contentSnapshot = buildCommandeArContentSnapshot(data);
     const contentFingerprint = sha256Canonical(contentSnapshot);
     const defaultContact = recipientSuggestions.filter((suggestion) => suggestion.is_default && suggestion.contact_id).length === 1
       ? data.contacts.find((contact) => contact.contact_id === recipientSuggestions.find((suggestion) => suggestion.is_default)?.contact_id) ?? null
@@ -637,41 +614,7 @@ export async function svcListCommandeArVersions(params: {
   const data = await repoLoadCommandeArGenerationData(pool, params.commande_id);
   if (!data) throw new HttpError(404, "COMMANDE_NOT_FOUND", "Commande introuvable");
 
-  const contentSnapshot = {
-    schema_version: 1,
-    header: {
-      numero: data.header.numero,
-      customer_reference: data.header.customer_reference,
-      statut: data.header.statut,
-      updated_at: data.header.updated_at,
-      date_commande: data.header.date_commande,
-      commentaire: data.header.commentaire,
-      total_ht: data.header.total_ht,
-      total_ttc: data.header.total_ttc,
-      client_company_name: data.header.client_company_name,
-      client_email: data.header.client_email,
-      client_phone: data.header.client_phone,
-      bill_address: {
-        name: data.header.bill_name,
-        street: data.header.bill_street,
-        house_number: data.header.bill_house_number,
-        postal_code: data.header.bill_postal_code,
-        city: data.header.bill_city,
-        country: data.header.bill_country,
-      },
-      delivery_address: {
-        name: data.header.deliv_name,
-        street: data.header.deliv_street,
-        house_number: data.header.deliv_house_number,
-        postal_code: data.header.deliv_postal_code,
-        city: data.header.deliv_city,
-        country: data.header.deliv_country,
-      },
-    },
-    lines: data.lines,
-    allocations: data.allocations,
-  };
-  const currentFingerprint = sha256Canonical(contentSnapshot);
+  const contentSnapshot = buildCommandeArContentSnapshot(data);
   const recipientSuggestions = buildCommandeArRecipientSuggestions(data);
   const versions = (await repoListCommandeArDrafts({ commande_id: params.commande_id })).map((draft) => ({
     ar_id: draft.ar_id,
@@ -688,7 +631,11 @@ export async function svcListCommandeArVersions(params: {
     status: draft.status,
     sent_at: draft.sent_at,
     preview_path: draft.preview_path,
-    is_obsolete: draft.content_fingerprint !== currentFingerprint,
+    is_obsolete: !isCommandeArSnapshotCurrent({
+      storedSnapshot: draft.content_snapshot,
+      storedFingerprint: draft.content_fingerprint,
+      currentSnapshot: contentSnapshot,
+    }),
     reused_draft: false,
     recipient_suggestions: recipientSuggestions,
   }));
