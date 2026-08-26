@@ -59,7 +59,7 @@ WHERE conname IN (
   'bon_livraison_prepare_receipts_actor_key_uniq',
   'stock_reservation_corrections_actor_key_uniq'
 )
-ORDER BY relation::text, conname;
+ORDER BY conrelid::regclass::text, conname;
 
 SELECT indexrelid::regclass AS index_name, indrelid::regclass AS on_relation
 FROM pg_index
@@ -73,7 +73,7 @@ WHERE indexrelid::regclass::text IN (
   'bon_livraison_ship_receipts_bl_idx',
   'bon_livraison_prepare_receipts_bl_idx'
 )
-ORDER BY index_name::text;
+ORDER BY indexrelid::regclass::text;
 
 -- These should return zero rows.  They reveal a legacy data anomaly that must
 -- be corrected through audited movements/release operations, never by deleting
