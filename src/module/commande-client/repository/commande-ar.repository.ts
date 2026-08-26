@@ -1469,6 +1469,7 @@ export async function repoMarkCommandeArFailed(params: {
   error_message: string;
   user_id: number;
   provider_name?: string | null;
+  release_idempotency?: boolean;
 }): Promise<void> {
   const client = await pool.connect();
   await withRealtimeOutboxTransaction(client, async (tx) => {
@@ -1476,18 +1477,32 @@ export async function repoMarkCommandeArFailed(params: {
       `
         UPDATE public.commande_ar_log
         SET status = 'FAILED', error_message = left($4, 2000),
-            provider_name = COALESCE($5, provider_name), send_lock_token = NULL
+            provider_name = COALESCE($5, provider_name), send_lock_token = NULL,
+            send_idempotency_key = CASE WHEN $6::boolean THEN NULL ELSE send_idempotency_key END,
+            send_payload_fingerprint = CASE WHEN $6::boolean THEN NULL ELSE send_payload_fingerprint END
         WHERE id = $1::uuid AND commande_id = $2::bigint
           AND status = 'SENDING' AND send_lock_token = $3::uuid
         RETURNING id::text AS id
       `,
-      [params.ar_id, params.commande_id, params.send_lock_token, params.error_message, params.provider_name ?? "resend"]
+      [
+        params.ar_id,
+        params.commande_id,
+        params.send_lock_token,
+        params.error_message,
+        params.provider_name ?? "resend",
+        params.release_idempotency === true,
+      ]
     );
     if (update.rows[0]) {
       await insertCommandeEvent(tx, {
         commande_id: params.commande_id,
         event_type: "AR_SEND_FAILED",
-        new_values: { ar_id: params.ar_id, provider: params.provider_name ?? "resend", error_message: params.error_message.slice(0, 2000) },
+        new_values: {
+          ar_id: params.ar_id,
+          provider: params.provider_name ?? "resend",
+          error_message: params.error_message.slice(0, 2000),
+          retry_payload_released: params.release_idempotency === true,
+        },
         user_id: params.user_id,
       });
     }
