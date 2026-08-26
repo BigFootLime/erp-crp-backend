@@ -2991,8 +2991,11 @@ export async function repoGetArticle(id: string, includeCosts = false): Promise<
         a.piece_technique_id::text AS piece_technique_id,
         pt.code_piece AS piece_code,
         pt.designation AS piece_designation,
+        pt.code_client AS piece_client_code,
         pt.code_client AS client_code,
-        av.plan_reference AS plan_reference,
+        latest_version.plan_reference AS piece_plan_reference,
+        latest_version.indice AS piece_indice,
+        latest_version.plan_reference AS plan_reference,
         a.unite,
          a.lot_tracking,
          a.is_sold,
@@ -3066,6 +3069,13 @@ export async function repoGetArticle(id: string, includeCosts = false): Promise<
          ORDER BY v.date_application DESC NULLS LAST, v.created_at DESC
          LIMIT 1
        ) av ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT v.indice, v.plan_reference
+         FROM public.piece_technique_versions v
+         WHERE v.piece_technique_id = a.piece_technique_id
+         ORDER BY v.is_current DESC, v.version_interne DESC, v.created_at DESC
+         LIMIT 1
+       ) latest_version ON TRUE
        LEFT JOIN (
          SELECT
            article_id::text AS article_id,

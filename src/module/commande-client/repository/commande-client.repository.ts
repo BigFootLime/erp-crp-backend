@@ -5072,7 +5072,9 @@ async function loadScopedAvailableQtyByArticle(
       WHERE availability.article_id = ANY($1::uuid[])
         AND availability.managed_in_stock = true
         AND warehouse.stock_scope IN ('OLD', 'NEW')
-      GROUP BY availability.article_id, warehouse.stock_scope
+      GROUP BY
+        availability.article_id,
+        COALESCE(lot.source_scope, warehouse.stock_scope, 'NEW')
     `,
     [articleIds]
   );
@@ -5209,7 +5211,7 @@ async function loadScopedDeliveryStockCandidates(
     `
       SELECT
         availability.article_id::text AS article_id,
-        warehouse.stock_scope,
+        COALESCE(lot.source_scope, warehouse.stock_scope, 'NEW') AS stock_scope,
         availability.stock_level_id::text AS stock_level_id,
         availability.stock_batch_id::text AS stock_batch_id,
         availability.location_id::text AS location_id,
@@ -5219,12 +5221,13 @@ async function loadScopedDeliveryStockCandidates(
         availability.qty_available::float8 AS qty_available
       FROM public.v_stock_availability_225 availability
       JOIN public.warehouses warehouse ON warehouse.id = availability.warehouse_id
+      JOIN public.lots lot ON lot.id = availability.lot_id
       JOIN public.emplacements emplacement ON emplacement.location_id = availability.location_id
       JOIN public.magasins magasin ON magasin.id = emplacement.magasin_id
       WHERE availability.article_id = ANY($1::uuid[])
         AND availability.managed_in_stock = true
         AND availability.qty_available > 0
-        AND warehouse.stock_scope IN ('OLD', 'NEW')
+        AND COALESCE(lot.source_scope, warehouse.stock_scope, 'NEW') IN ('OLD', 'NEW')
         AND COALESCE(lot.lot_status, 'LIBERE') = 'LIBERE'
       ORDER BY
         CASE COALESCE(lot.source_scope, warehouse.stock_scope, 'NEW') WHEN 'OLD' THEN 0 ELSE 1 END,
