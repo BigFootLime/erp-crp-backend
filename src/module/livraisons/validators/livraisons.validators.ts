@@ -223,9 +223,12 @@ export type LivraisonProofBodyDTO = z.infer<typeof livraisonProofBodySchema>
 /* -------------------------------------------------------------------------- */
 
 export const preparationCartQuerySchema = z.object({
+  q: z.string().trim().min(1).max(160).optional(),
+  client_id: z.string().trim().min(1).max(120).optional(),
   commande_id: z.coerce.number().int().positive().optional(),
   affaire_id: z.coerce.number().int().positive().optional(),
   bon_livraison_id: z.string().uuid().optional(),
+  source_scope: z.enum(["OLD", "NEW"]).optional(),
   page: z.coerce.number().int().positive().optional().default(1),
   pageSize: z.coerce.number().int().positive().max(200).optional().default(100),
 })
