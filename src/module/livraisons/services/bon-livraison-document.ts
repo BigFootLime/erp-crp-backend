@@ -90,10 +90,16 @@ export function addressLines(label: string | null | undefined): string[] | null 
   return lines.length ? lines : null
 }
 
+function references(values: Array<string | null | undefined>): string[] {
+  return Array.from(new Set(values.map((value) => clean(value)).filter((value): value is string => Boolean(value))))
+}
+
 export async function renderBonLivraisonDocument(input: BonLivraisonDocumentInput): Promise<Buffer> {
   const { header: bl, company, version } = input
   const issuer = input.issuer ?? {}
   const clientName = clean(bl.client.company_name) ?? "Client"
+  const commandes = references([...(bl.commande_numeros ?? []), bl.commande?.numero])
+  const affaires = references([...(bl.affaire_references ?? []), bl.affaire?.reference])
 
   // Le referentiel expose l'identifiant technique du client ; il n'a rien a faire sur un
   // document qui part chez lui. Seule la raison sociale est imprimee.
@@ -156,8 +162,8 @@ export async function renderBonLivraisonDocument(input: BonLivraisonDocumentInpu
       // La commande et l'affaire sont ce qui rattache le bon au contrat : elles etaient
       // absentes du bon de livraison alors que le certificat les portait deja.
       const rattachement = [
-        { label: "Commande", value: clean(bl.commande?.numero) },
-        { label: "Affaire", value: clean(bl.affaire?.reference) },
+        { label: commandes.length > 1 ? "Commandes" : "Commande", value: commandes.join(" · ") || null },
+        { label: affaires.length > 1 ? "Affaires" : "Affaire", value: affaires.join(" · ") || null },
       ].filter((cell) => cell.value)
       if (rattachement.length) ctx.legalStrip(rattachement)
 

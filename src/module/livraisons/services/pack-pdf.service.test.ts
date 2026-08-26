@@ -289,6 +289,31 @@ describe("bon de livraison PDF — rendu reel", () => {
     expect(text).toContain("ABB FRANCE")
   }, 60_000)
 
+  it("imprime toutes les commandes et affaires d'un BL groupé", async () => {
+    const p = preview()
+    const bytes = await svcRenderPackBonLivraisonPdf({
+      preview: {
+        ...p,
+        bon_livraison: {
+          ...p.bon_livraison,
+          commande: null,
+          commande_numeros: ["CMD-2026-0142", "CMD-2026-0149"],
+          affaire: null,
+          affaire_references: ["AFF-2026-0031", "AFF-2026-0038"],
+        },
+      },
+      version: 1,
+    })
+    const text = drawnText(bytes)
+
+    expect(text).toContain("COMMANDES")
+    expect(text).toContain("CMD-2026-0142")
+    expect(text).toContain("CMD-2026-0149")
+    expect(text).toContain("AFFAIRES")
+    expect(text).toContain("AFF-2026-0031")
+    expect(text).toContain("AFF-2026-0038")
+  }, 60_000)
+
   it("conserve les donnees metier de l'ancienne version : delai client et lots", async () => {
     const bytes = await svcRenderPackBonLivraisonPdf({ preview: preview(), version: 1 })
     const text = drawnText(bytes)
