@@ -177,6 +177,8 @@ export type PieceTechnique = {
   code_client: string | null
   client_name: string | null
   ensemble: boolean
+  quality_levels?: string[]
+  piece_critique?: boolean
 
   bom: BomLine[]
   operations: Operation[]
@@ -212,6 +214,9 @@ export type CreatePieceTechniqueInput = {
   client_name?: string | null
   ensemble: boolean
 
+  quality_levels?: string[]
+  piece_critique?: boolean
+
   bom: BomLine[]
   operations: Operation[]
   achats: Achat[]
@@ -219,7 +224,7 @@ export type CreatePieceTechniqueInput = {
 
 export type PieceTechniqueListItem = Pick<
   PieceTechnique,
-  "id" | "article_id" | "root_piece_technique_id" | "parent_piece_technique_id" | "version_number" | "code_piece" | "designation" | "designation_2" | "client_id" | "code_client" | "client_name" | "famille_id" | "statut" | "en_fabrication" | "prix_unitaire" | "created_at" | "updated_at" | "ensemble"
+  "id" | "article_id" | "root_piece_technique_id" | "parent_piece_technique_id" | "version_number" | "code_piece" | "designation" | "designation_2" | "client_id" | "code_client" | "client_name" | "famille_id" | "statut" | "en_fabrication" | "prix_unitaire" | "created_at" | "updated_at" | "ensemble" | "quality_levels" | "piece_critique"
 > & {
   bom_count: number
   operations_count: number
@@ -235,6 +240,9 @@ export type PieceTechniqueListItem = Pick<
   applicable_indice?: string | null
   /** Référence de plan de la version applicable — le champ le plus recherché au poste. */
   applicable_plan_reference?: string | null
+  plan_reference?: string | null
+  indice?: string | null
+  client_code?: string | null
   applicable_date_effet?: string | null
   applicable_version_interne?: number | null
   has_applicable_version?: boolean

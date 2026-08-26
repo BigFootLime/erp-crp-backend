@@ -83,9 +83,9 @@ function createReservationAllocationLifecycle() {
         rowCount: 1,
       }
     }
-    if (statement.includes("SELECT a.stock_movement_line_id")) {
+    if (statement.includes("a.stock_movement_line_id::text AS stock_movement_line_id")) {
       return {
-        rows: state.allocationExists ? [{ stock_movement_line_id: null }] : [],
+        rows: state.allocationExists ? [{ stock_movement_line_id: null, reservation_id: null }] : [],
         rowCount: state.allocationExists ? 1 : 0,
       }
     }

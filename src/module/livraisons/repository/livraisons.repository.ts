@@ -102,10 +102,15 @@ export function buildLegacyShipmentReservationPlan(items: readonly LegacyShipmen
 import type {
   CreateLivraisonAllocationBodyDTO,
   CreateLivraisonBodyDTO,
+  CreateLivraisonFromReservationsBodyDTO,
   CreateLivraisonLineBodyDTO,
+  CorrectPreparationStockBodyDTO,
   ListLivraisonsQueryDTO,
+  PreparationCartQueryDTO,
+  ShipLivraisonBodyDTO,
   UpdateLivraisonBodyDTO,
   UpdateLivraisonLineBodyDTO,
+  VerifyPreparationLotBodyDTO,
 } from "../validators/livraisons.validators"
 
 function toInt(value: unknown, label = "id"): number {
@@ -1533,6 +1538,76 @@ export async function repoUpdateLivraisonLine(
   })
 }
 
+/**
+ * Return quantities held by a reservation-backed DRAFT/READY BL to the
+ * delivery pool.  It never changes physical stock: `qty_prepared` is only the
+ * guard that prevents a second draft from promising the same reservation.
+ */
+async function releasePreparedReservationsForDelivery(
+  db: PoolClient,
+  params: { bon_livraison_id: string; user_id: number; line_id?: string; allocation_id?: string }
+): Promise<void> {
+  const values: unknown[] = [params.bon_livraison_id]
+  const clauses = ["bll.bon_livraison_id = $1::uuid", "bla.reservation_id IS NOT NULL"]
+  if (params.line_id) {
+    values.push(params.line_id)
+    clauses.push(`bll.id = $${values.length}::uuid`)
+  }
+  if (params.allocation_id) {
+    values.push(params.allocation_id)
+    clauses.push(`bla.id = $${values.length}::uuid`)
+  }
+  const held = await db.query<{ reservation_id: string; qty_held: number }>(
+    `
+      SELECT
+        bla.reservation_id::text AS reservation_id,
+        COALESCE(SUM(GREATEST(0, bla.quantite - bla.qty_consumed)), 0)::float8 AS qty_held
+      FROM public.bon_livraison_ligne_allocations bla
+      JOIN public.bon_livraison_ligne bll ON bll.id = bla.bon_livraison_ligne_id
+      WHERE ${clauses.join(" AND ")}
+      GROUP BY bla.reservation_id
+      ORDER BY bla.reservation_id ASC
+    `,
+    values
+  )
+  for (const row of held.rows) {
+    const qty = Number(row.qty_held)
+    if (!Number.isFinite(qty) || qty <= 1e-9) continue
+    const released = await db.query(
+      `
+        UPDATE public.stock_reservations
+        SET qty_prepared = qty_prepared - $2,
+            version = version + 1,
+            updated_at = now(),
+            updated_by = $3
+        WHERE id = $1::uuid
+          AND qty_prepared >= $2
+      `,
+      [row.reservation_id, qty, params.user_id]
+    )
+    if ((released.rowCount ?? 0) !== 1) {
+      throw new HttpError(409, "PREPARATION_RELEASE_FAILED", "The reservation preparation hold changed before it could be released")
+    }
+  }
+}
+
+/** Legacy manual BLs have no reservation-backed allocations and retain their
+ * pre-existing status workflow for backwards compatibility. */
+export async function repoLivraisonHasReservationAllocations(id: string): Promise<boolean> {
+  const res = await pool.query<{ ok: number }>(
+    `
+      SELECT 1::int AS ok
+      FROM public.bon_livraison_ligne_allocations bla
+      JOIN public.bon_livraison_ligne bll ON bll.id = bla.bon_livraison_ligne_id
+      WHERE bll.bon_livraison_id = $1::uuid
+        AND bla.reservation_id IS NOT NULL
+      LIMIT 1
+    `,
+    [id]
+  )
+  return Boolean(res.rows[0]?.ok)
+}
+
 export async function repoDeleteLivraisonLine(bonLivraisonId: string, lineId: string, userId: number): Promise<boolean> {
   const db = await pool.connect()
   return withRealtimeOutboxTransaction(db, async (db) => {
@@ -1544,6 +1619,7 @@ export async function repoDeleteLivraisonLine(bonLivraisonId: string, lineId: st
       throw new HttpError(409, "LOCKED", "Delete line is only allowed when statut=DRAFT")
     }
 
+    await releasePreparedReservationsForDelivery(db, { bon_livraison_id: bonLivraisonId, line_id: lineId, user_id: userId })
     const delRes = await db.query(`DELETE FROM bon_livraison_ligne WHERE bon_livraison_id = $1::uuid AND id = $2::uuid`, [bonLivraisonId, lineId])
     const ok = (delRes.rowCount ?? 0) > 0
 
@@ -1836,9 +1912,11 @@ export async function repoDeleteLivraisonLineAllocation(
       )
     }
 
-    const lockRes = await db.query<{ stock_movement_line_id: string | null }>(
+    const lockRes = await db.query<{ stock_movement_line_id: string | null; reservation_id: string | null }>(
       `
-        SELECT a.stock_movement_line_id::text AS stock_movement_line_id
+        SELECT
+          a.stock_movement_line_id::text AS stock_movement_line_id,
+          a.reservation_id::text AS reservation_id
         FROM public.bon_livraison_ligne_allocations a
         JOIN public.bon_livraison_ligne l ON l.id = a.bon_livraison_ligne_id
         WHERE a.id = $1::uuid
@@ -1854,6 +1932,15 @@ export async function repoDeleteLivraisonLineAllocation(
     }
     if (locked.stock_movement_line_id) {
       throw new HttpError(409, "ALLOCATION_LOCKED", "Allocation is linked to a stock movement line")
+    }
+
+    if (locked.reservation_id) {
+      await releasePreparedReservationsForDelivery(db, {
+        bon_livraison_id: bonLivraisonId,
+        line_id: lineId,
+        allocation_id: allocationId,
+        user_id: userId,
+      })
     }
 
     const delRes = await db.query(
@@ -1890,7 +1977,13 @@ async function repoUpdateLivraisonStatusLegacy(
     const oldStatut = current.statut
 
      const shouldShip = oldStatut === "READY" && statut === "SHIPPED"
+     const shouldReleasePreparation =
+       statut === "CANCELLED" && (oldStatut === "DRAFT" || oldStatut === "READY")
      const issuedMovementIds: string[] = []
+
+     if (shouldReleasePreparation) {
+       await releasePreparedReservationsForDelivery(db, { bon_livraison_id: bonLivraisonId, user_id: userId })
+     }
 
      if (shouldShip) {
        const shipping = await getDefaultShippingLocationSetting(db)
@@ -3144,4 +3237,1837 @@ export async function repoIsLivraisonDocumentLinked(bonLivraisonId: string, docu
     [bonLivraisonId, documentId]
   )
   return (res.rowCount ?? 0) > 0
+}
+
+/* -------------------------------------------------------------------------- */
+/* Reservation-driven delivery preparation                                    */
+/* -------------------------------------------------------------------------- */
+
+export type PreparationCartItem = {
+  reservation_id: string
+  commande_id: number
+  commande_numero: string
+  livraison_affaire_id: number | null
+  affaire_reference: string | null
+  commande_ligne_id: number
+  allocation_id: number | null
+  client_name: string | null
+  article_id: string
+  article_code: string | null
+  // Kept nullable rather than inventing a display fallback: the source of
+  // truth is the applicable PT version and the ordered article respectively.
+  plan_reference: string | null
+  plan_index: number | null
+  designation: string | null
+  requested_qty: number
+  reserved_qty: number
+  deliverable_qty: number
+  lot_id: string | null
+  lot_code: string | null
+  source_scope: "OLD" | "NEW"
+  magasin_id: string | null
+  magasin_code: string | null
+  emplacement_id: number | null
+  emplacement_code: string | null
+  of_id: number | null
+  of_numero: string | null
+  mp_reference: string | null
+  tr_reference: string | null
+  verified_qty: number
+  verified_at: string | null
+}
+
+/** Distinguishes BLs created by the reservation-cart command from historical
+ * BLs handled by the established physical-preparation workflow. */
+export async function repoIsReservationCartLivraison(id: string): Promise<boolean> {
+  const result = await pool.query<{ found: boolean }>(
+    `
+      SELECT EXISTS (
+        SELECT 1
+        FROM public.bon_livraison_prepare_receipts
+        WHERE bon_livraison_id = $1::uuid
+      ) AS found
+    `,
+    [id]
+  )
+  return result.rows[0]?.found === true
+}
+
+function normalizeScope(value: string | null | undefined): "OLD" | "NEW" {
+  return value === "OLD" ? "OLD" : "NEW"
+}
+
+function preparationPreviewHash(params: { shipping_version: number; allocations: unknown[] }): string {
+  return crypto.createHash("sha256").update(JSON.stringify(params)).digest("hex")
+}
+
+export async function repoListPreparationCart(filters: PreparationCartQueryDTO): Promise<{
+  items: PreparationCartItem[]
+  total: number
+}> {
+  const page = filters.page ?? 1
+  const pageSize = filters.pageSize ?? 100
+  const offset = (page - 1) * pageSize
+  const where: string[] = ["r.status = 'ACTIVE'", "r.qty_reserved > r.qty_consumed + r.qty_prepared"]
+  const values: unknown[] = []
+  const push = (value: unknown) => {
+    values.push(value)
+    return `$${values.length}`
+  }
+  if (filters.commande_id) where.push(`a.commande_id = ${push(filters.commande_id)}::bigint`)
+  if (filters.affaire_id) where.push(`r.livraison_affaire_id = ${push(filters.affaire_id)}::bigint`)
+  if (filters.bon_livraison_id) {
+    where.push(`EXISTS (
+      SELECT 1 FROM public.bon_livraison_ligne_allocations bla
+      JOIN public.bon_livraison_ligne bll ON bll.id = bla.bon_livraison_ligne_id
+      WHERE bla.reservation_id = r.id AND bll.bon_livraison_id = ${push(filters.bon_livraison_id)}::uuid
+    )`)
+  }
+  const whereSql = `WHERE ${where.join(" AND ")}`
+
+  const count = await pool.query<{ total: number }>(
+    `
+      SELECT COUNT(*)::int AS total
+      FROM public.stock_reservations r
+      LEFT JOIN public.commande_ligne_affaire_allocation a ON a.id = r.commande_ligne_affaire_allocation_id
+      ${whereSql}
+    `,
+    values
+  )
+  const rows = await pool.query<{
+    reservation_id: string
+    commande_id: number
+    commande_numero: string
+    livraison_affaire_id: number | null
+    affaire_reference: string | null
+    commande_ligne_id: number
+    allocation_id: number | null
+    client_name: string | null
+    article_id: string
+    article_code: string | null
+    plan_reference: string | null
+    plan_index: number | null
+    designation: string | null
+    requested_qty: number
+    reserved_qty: number
+    deliverable_qty: number
+    lot_id: string | null
+    lot_code: string | null
+    source_scope: string | null
+    magasin_id: string | null
+    magasin_code: string | null
+    emplacement_id: number | null
+    emplacement_code: string | null
+    of_id: number | null
+    of_numero: string | null
+    mp_reference: string | null
+    tr_reference: string | null
+    verified_at: string | null
+    verification_snapshot: unknown | null
+  }>(
+    `
+      SELECT
+        r.id::text AS reservation_id,
+        a.commande_id::bigint::int AS commande_id,
+        cc.numero AS commande_numero,
+        r.livraison_affaire_id::bigint::int AS livraison_affaire_id,
+        af.reference AS affaire_reference,
+        a.commande_ligne_id::bigint::int AS commande_ligne_id,
+        a.id::bigint::int AS allocation_id,
+        c.company_name AS client_name,
+        r.article_id::text AS article_id,
+        art.code AS article_code,
+        applicable_version.plan_reference,
+        art.plan_index::int AS plan_index,
+        COALESCE(cl.designation, art.designation) AS designation,
+        a.qty_ordered::float8 AS requested_qty,
+        r.qty_reserved::float8 AS reserved_qty,
+        (r.qty_reserved - r.qty_consumed - r.qty_prepared)::float8 AS deliverable_qty,
+        r.lot_id::text AS lot_id,
+        l.lot_code,
+        COALESCE(r.source_scope, l.source_scope, 'NEW') AS source_scope,
+        e.magasin_id::text AS magasin_id,
+        COALESCE(m.code, m.code_magasin) AS magasin_code,
+        e.id::bigint::int AS emplacement_id,
+        e.code AS emplacement_code,
+        r.of_id::bigint::int AS of_id,
+        ofa.numero AS of_numero,
+        l.mp_reference,
+        l.tr_reference,
+        v.created_at::text AS verified_at,
+        v.snapshot AS verification_snapshot
+      FROM public.stock_reservations r
+      JOIN public.commande_ligne_affaire_allocation a ON a.id = r.commande_ligne_affaire_allocation_id
+      JOIN public.commande_client cc ON cc.id = a.commande_id
+      JOIN public.commande_ligne cl ON cl.id = a.commande_ligne_id
+      LEFT JOIN public.clients c ON c.client_id = cc.client_id
+      LEFT JOIN public.affaire af ON af.id = r.livraison_affaire_id
+      JOIN public.articles art ON art.id = r.article_id
+      LEFT JOIN public.lots l ON l.id = r.lot_id
+      LEFT JOIN public.emplacements e ON e.location_id = r.location_id
+      LEFT JOIN public.magasins m ON m.id = e.magasin_id
+      LEFT JOIN public.ordres_fabrication ofa ON ofa.id = r.of_id
+      LEFT JOIN LATERAL (
+        SELECT pv.plan_reference
+        FROM public.piece_technique_versions pv
+        WHERE pv.piece_technique_id = COALESCE(cl.piece_technique_id, art.piece_technique_id)
+        ORDER BY
+          pv.is_current DESC,
+          (lower(pv.statut) = 'applicable') DESC,
+          pv.updated_at DESC,
+          pv.created_at DESC,
+          pv.id ASC
+        LIMIT 1
+      ) applicable_version ON true
+      LEFT JOIN LATERAL (
+        SELECT revision.created_at, revision.snapshot
+        FROM (
+          SELECT sv.created_at, sv.snapshot, sv.id::text AS stable_id
+          FROM public.stock_reservation_verifications sv
+          WHERE sv.reservation_id = r.id
+          UNION ALL
+          SELECT sc.created_at, sc.new_snapshot AS snapshot, sc.id::text AS stable_id
+          FROM public.stock_reservation_corrections sc
+          WHERE sc.reservation_id = r.id
+        ) revision
+        ORDER BY revision.created_at DESC, revision.stable_id DESC
+        LIMIT 1
+      ) v ON true
+      ${whereSql}
+      ORDER BY
+        cc.numero ASC,
+        CASE COALESCE(r.source_scope, l.source_scope, 'NEW') WHEN 'OLD' THEN 0 ELSE 1 END ASC,
+        COALESCE(l.received_at, l.manufactured_at, l.created_at::date) ASC,
+        l.created_at ASC NULLS LAST,
+        l.id ASC NULLS LAST,
+        r.id ASC
+      LIMIT $${values.length + 1} OFFSET $${values.length + 2}
+    `,
+    [...values, pageSize, offset]
+  )
+  return {
+    items: rows.rows.map((row) => {
+      const snapshot = isRecord(row.verification_snapshot) ? row.verification_snapshot : {}
+      const verifiedQty =
+        typeof snapshot.verified_qty === "number" && Number.isFinite(snapshot.verified_qty)
+          ? snapshot.verified_qty
+          : 0
+      return {
+        reservation_id: row.reservation_id,
+        commande_id: Number(row.commande_id),
+        commande_numero: row.commande_numero,
+        livraison_affaire_id: row.livraison_affaire_id === null ? null : Number(row.livraison_affaire_id),
+        affaire_reference: row.affaire_reference,
+        commande_ligne_id: Number(row.commande_ligne_id),
+        allocation_id: row.allocation_id === null ? null : Number(row.allocation_id),
+        client_name: row.client_name,
+        article_id: row.article_id,
+        article_code: row.article_code,
+        plan_reference: row.plan_reference,
+        plan_index: row.plan_index === null ? null : Number(row.plan_index),
+        designation: row.designation,
+        requested_qty: Number(row.requested_qty),
+        reserved_qty: Number(row.reserved_qty),
+        deliverable_qty: Number(row.deliverable_qty),
+        lot_id: row.lot_id,
+        lot_code: row.lot_code,
+        source_scope: normalizeScope(row.source_scope),
+        magasin_id: row.magasin_id,
+        magasin_code: row.magasin_code,
+        emplacement_id: row.emplacement_id === null ? null : Number(row.emplacement_id),
+        emplacement_code: row.emplacement_code,
+        of_id: row.of_id === null ? null : Number(row.of_id),
+        of_numero: row.of_numero,
+        // Before the first scan, expose the authoritative lot provenance.  A
+        // later verification/correction snapshot is still preferred because it
+        // is the immutable evidence used by the prepared BL.
+        mp_reference: typeof snapshot.mp_reference === "string" ? snapshot.mp_reference : row.mp_reference,
+        tr_reference: typeof snapshot.tr_reference === "string" ? snapshot.tr_reference : row.tr_reference,
+        verified_qty: verifiedQty,
+        verified_at: row.verified_at,
+      }
+    }),
+    total: Number(count.rows[0]?.total ?? 0),
+  }
+}
+
+export async function repoVerifyPreparationLot(
+  body: VerifyPreparationLotBodyDTO,
+  userId: number
+): Promise<{ reservation_id: string; verified_qty: number; snapshot: Record<string, unknown> }> {
+  const db = await pool.connect()
+  try {
+    await db.query("BEGIN")
+    const locked = await db.query<{
+      reservation_id: string
+      qty_available: number
+      lot_code: string | null
+      lot_id: string | null
+      of_numero: string | null
+      mp_reference: string | null
+      tr_reference: string | null
+      article_id: string
+      source_scope: string | null
+    }>(
+      `
+        SELECT
+          r.id::text AS reservation_id,
+          (r.qty_reserved - r.qty_consumed - r.qty_prepared)::float8 AS qty_available,
+          l.lot_code,
+          l.id::text AS lot_id,
+          ofa.numero AS of_numero,
+          l.mp_reference,
+          l.tr_reference,
+          r.article_id::text AS article_id,
+          r.source_scope
+        FROM public.stock_reservations r
+        JOIN public.lots l ON l.id = r.lot_id
+        LEFT JOIN public.ordres_fabrication ofa ON ofa.id = r.of_id
+        WHERE r.id = $1::uuid AND r.status = 'ACTIVE'
+        FOR UPDATE OF r, l
+      `,
+      [body.reservation_id]
+    )
+    const reservation = locked.rows[0] ?? null
+    if (!reservation) throw new HttpError(404, "RESERVATION_NOT_FOUND", "Active reservation not found")
+    if (!reservation.lot_code || reservation.lot_code !== body.scanned_lot_code) {
+      throw new HttpError(409, "LOT_SCAN_MISMATCH", "The scanned lot does not match the reserved lot")
+    }
+    if (body.of_number !== undefined && body.of_number !== reservation.of_numero) {
+      throw new HttpError(409, "OF_SCAN_MISMATCH", "The scanned OF does not match the reserved lot")
+    }
+    // MP/TR are not client-authored traceability values.  A scan may confirm
+    // the authoritative lot metadata, but cannot overwrite it; the controlled
+    // correction endpoint is the only place where that source can change.
+    if (body.mp_reference !== undefined && body.mp_reference !== reservation.mp_reference) {
+      throw new HttpError(409, "MP_SCAN_MISMATCH", "The scanned MP reference does not match the reserved lot")
+    }
+    if (body.tr_reference !== undefined && body.tr_reference !== reservation.tr_reference) {
+      throw new HttpError(409, "TR_SCAN_MISMATCH", "The scanned TR reference does not match the reserved lot")
+    }
+    if (body.qty > Number(reservation.qty_available) + 1e-9) {
+      throw new HttpError(409, "RESERVED_QTY_EXCEEDED", "Verified quantity exceeds the active reservation")
+    }
+    const snapshot: Record<string, unknown> = {
+      reservation_id: reservation.reservation_id,
+      lot_id: reservation.lot_id,
+      lot_code: reservation.lot_code,
+      article_id: reservation.article_id,
+      of_number: reservation.of_numero,
+      mp_reference: reservation.mp_reference,
+      tr_reference: reservation.tr_reference,
+      source_scope: normalizeScope(reservation.source_scope),
+      verified_qty: body.qty,
+      verified_at: new Date().toISOString(),
+    }
+    await db.query(
+      `
+        INSERT INTO public.stock_reservation_verifications (
+          reservation_id, verified_qty, scanned_lot_code, snapshot, verified_by
+        ) VALUES ($1::uuid,$2,$3,$4::jsonb,$5)
+      `,
+      [body.reservation_id, body.qty, body.scanned_lot_code, JSON.stringify(snapshot), userId]
+    )
+    await db.query("COMMIT")
+    return { reservation_id: body.reservation_id, verified_qty: body.qty, snapshot }
+  } catch (err) {
+    await db.query("ROLLBACK")
+    throw err
+  } finally {
+    db.release()
+  }
+}
+
+export type PreparationCorrectionResult = {
+  correction_id: string
+  reservation_id: string
+  stock_movement_id: string | null
+  qty_before: number
+  actual_qty: number
+  qty_delta: number
+  previous_snapshot: Record<string, unknown>
+  corrected_snapshot: Record<string, unknown>
+  affected_bon_livraison_ids: string[]
+  idempotent_replay: boolean
+}
+
+/**
+ * Correct a physical count or OF/MP/TR metadata without mutating stock
+ * counters directly.  Quantity differences become an append-only ADJUSTMENT
+ * movement; traceability revisions keep both values and are propagated only
+ * to unshipped BL drafts so a historical shipment can never be rewritten.
+ */
+export async function repoCorrectPreparationStock(params: {
+  body: CorrectPreparationStockBodyDTO
+  user_id: number
+  idempotency_key: string
+}): Promise<PreparationCorrectionResult> {
+  const canonicalPayload = {
+    reservation_id: params.body.reservation_id,
+    actual_qty: params.body.actual_qty ?? null,
+    reason: params.body.reason,
+    of_number: params.body.of_number ?? null,
+    mp_reference: params.body.mp_reference === undefined ? undefined : params.body.mp_reference,
+    tr_reference: params.body.tr_reference === undefined ? undefined : params.body.tr_reference,
+  }
+  const requestHash = crypto.createHash("sha256").update(JSON.stringify(canonicalPayload)).digest("hex")
+  const db = await pool.connect()
+  try {
+    await db.query("BEGIN")
+    const correctionInsert = await db.query<{ id: string }>(
+      `
+        INSERT INTO public.stock_reservation_corrections (
+          reservation_id, actor_user_id, idempotency_key, request_hash,
+          reason, old_snapshot, new_snapshot
+        ) VALUES ($1::uuid,$2,$3,$4,$5,'{}'::jsonb,'{}'::jsonb)
+        ON CONFLICT (actor_user_id, idempotency_key) DO NOTHING
+        RETURNING id::text AS id
+      `,
+      [params.body.reservation_id, params.user_id, params.idempotency_key, requestHash, params.body.reason]
+    )
+    const correctionId = correctionInsert.rows[0]?.id ?? null
+    if (!correctionId) {
+      const prior = await db.query<{ request_hash: string; result_payload: unknown }>(
+        `
+          SELECT request_hash, result_payload
+          FROM public.stock_reservation_corrections
+          WHERE actor_user_id = $1 AND idempotency_key = $2
+          FOR UPDATE
+        `,
+        [params.user_id, params.idempotency_key]
+      )
+      const row = prior.rows[0] ?? null
+      if (!row || row.request_hash !== requestHash) {
+        throw new HttpError(409, "IDEMPOTENCY_KEY_REUSED", "Idempotency-Key was already used with a different correction")
+      }
+      if (!isRecord(row.result_payload)) {
+        throw new HttpError(409, "CORRECTION_IN_PROGRESS", "The correction with this Idempotency-Key is still processing")
+      }
+      const replay = row.result_payload
+      await db.query("COMMIT")
+      return {
+        correction_id: typeof replay.correction_id === "string" ? replay.correction_id : "",
+        reservation_id: typeof replay.reservation_id === "string" ? replay.reservation_id : params.body.reservation_id,
+        stock_movement_id: typeof replay.stock_movement_id === "string" ? replay.stock_movement_id : null,
+        qty_before: Number(replay.qty_before ?? 0),
+        actual_qty: Number(replay.actual_qty ?? 0),
+        qty_delta: Number(replay.qty_delta ?? 0),
+        previous_snapshot: isRecord(replay.previous_snapshot) ? replay.previous_snapshot : {},
+        corrected_snapshot: isRecord(replay.corrected_snapshot) ? replay.corrected_snapshot : {},
+        affected_bon_livraison_ids: Array.isArray(replay.affected_bon_livraison_ids)
+          ? replay.affected_bon_livraison_ids.filter((value): value is string => typeof value === "string")
+          : [],
+        idempotent_replay: true,
+      }
+    }
+
+    const reservationRes = await db.query<{
+      reservation_id: string
+      article_id: string
+      location_id: string
+      lot_id: string
+      lot_code: string
+      lot_article_id: string
+      mp_reference: string | null
+      tr_reference: string | null
+      source_scope: string | null
+      of_id: number | null
+      of_numero: string | null
+      stock_level_id: string
+      stock_batch_id: string
+      batch_qty_total: number
+      batch_qty_reserved: number
+      level_qty_total: number
+      level_qty_reserved: number
+      magasin_id: string
+      emplacement_id: number
+      unite: string | null
+    }>(
+      `
+        SELECT
+          r.id::text AS reservation_id,
+          r.article_id::text AS article_id,
+          r.location_id::text AS location_id,
+          r.lot_id::text AS lot_id,
+          l.lot_code,
+          l.article_id::text AS lot_article_id,
+          l.mp_reference,
+          l.tr_reference,
+          r.source_scope,
+          o.id::bigint::int AS of_id,
+          o.numero AS of_numero,
+          sl.id::text AS stock_level_id,
+          sb.id::text AS stock_batch_id,
+          sb.qty_total::float8 AS batch_qty_total,
+          sb.qty_reserved::float8 AS batch_qty_reserved,
+          sl.qty_total::float8 AS level_qty_total,
+          sl.qty_reserved::float8 AS level_qty_reserved,
+          emplacement.magasin_id::text AS magasin_id,
+          emplacement.id::bigint::int AS emplacement_id,
+          art.unite
+        FROM public.stock_reservations r
+        JOIN public.stock_levels sl ON sl.id = r.stock_level_id
+        JOIN public.stock_batches sb ON sb.id = r.stock_batch_id AND sb.stock_level_id = sl.id
+        JOIN public.lots l ON l.id = r.lot_id
+        JOIN public.articles art ON art.id = r.article_id
+        JOIN LATERAL (
+          SELECT e.id, e.magasin_id
+          FROM public.emplacements e
+          WHERE e.location_id = r.location_id
+            AND e.is_active = true
+          ORDER BY e.id ASC
+          LIMIT 1
+        ) emplacement ON true
+        LEFT JOIN public.ordres_fabrication o ON o.id = r.of_id
+        WHERE r.id = $1::uuid
+          AND r.status = 'ACTIVE'
+        FOR UPDATE OF r, sl, sb, l
+      `,
+      [params.body.reservation_id]
+    )
+    const reservation = reservationRes.rows[0] ?? null
+    if (!reservation) {
+      throw new HttpError(404, "RESERVATION_NOT_CORRECTABLE", "An active, fully traceable reservation is required for correction")
+    }
+    if (reservation.lot_article_id !== reservation.article_id) {
+      throw new HttpError(409, "LOT_ARTICLE_MISMATCH", "The reservation lot is incompatible with its article")
+    }
+
+    const previousSnapshotRes = await db.query<{ snapshot: unknown }>(
+      `
+        SELECT revision.snapshot
+        FROM (
+          SELECT sv.snapshot, sv.created_at, sv.id::text AS stable_id
+          FROM public.stock_reservation_verifications sv
+          WHERE sv.reservation_id = $1::uuid
+          UNION ALL
+          SELECT sc.new_snapshot AS snapshot, sc.created_at, sc.id::text AS stable_id
+          FROM public.stock_reservation_corrections sc
+          WHERE sc.reservation_id = $1::uuid
+            AND sc.id <> $2::uuid
+        ) revision
+        ORDER BY revision.created_at DESC, revision.stable_id DESC
+        LIMIT 1
+      `,
+      [params.body.reservation_id, correctionId]
+    )
+    const previousSnapshot = isRecord(previousSnapshotRes.rows[0]?.snapshot)
+      ? previousSnapshotRes.rows[0]!.snapshot as Record<string, unknown>
+      : {
+          reservation_id: reservation.reservation_id,
+          lot_id: reservation.lot_id,
+          lot_code: reservation.lot_code,
+          article_id: reservation.article_id,
+          of_id: reservation.of_id,
+          of_number: reservation.of_numero,
+           source_scope: normalizeScope(reservation.source_scope),
+           verified_qty: 0,
+           verified_at: null,
+           mp_reference: reservation.mp_reference,
+           tr_reference: reservation.tr_reference,
+         }
+
+    let correctedOfId = reservation.of_id
+    let correctedOfNumber = reservation.of_numero
+    if (params.body.of_number !== undefined && params.body.of_number !== reservation.of_numero) {
+      const correctedOf = await db.query<{ id: number; numero: string; article_id: string | null }>(
+        `
+          SELECT
+            o.id::bigint::int AS id,
+            o.numero,
+            COALESCE(o.article_id::text, a.id::text) AS article_id
+          FROM public.ordres_fabrication o
+          LEFT JOIN public.articles a
+            ON a.piece_technique_id = o.piece_technique_id
+           AND a.article_type = 'PIECE_TECHNIQUE'
+           AND a.is_active = true
+          WHERE o.numero = $1
+          ORDER BY (o.article_id IS NOT NULL) DESC, a.updated_at DESC NULLS LAST, a.id ASC
+          LIMIT 1
+        `,
+        [params.body.of_number]
+      )
+      const candidate = correctedOf.rows[0] ?? null
+      if (!candidate || candidate.article_id !== reservation.article_id) {
+        throw new HttpError(409, "OF_ARTICLE_MISMATCH", "The corrected OF is missing or incompatible with the reserved lot article")
+      }
+      correctedOfId = Number(candidate.id)
+      correctedOfNumber = candidate.numero
+      await db.query(
+        `
+          UPDATE public.stock_reservations
+          SET of_id = $2::bigint, version = version + 1, updated_at = now(), updated_by = $3
+          WHERE id = $1::uuid
+        `,
+        [reservation.reservation_id, correctedOfId, params.user_id]
+      )
+    }
+
+    const correctedMpReference =
+      params.body.mp_reference === undefined ? reservation.mp_reference : params.body.mp_reference
+    const correctedTrReference =
+      params.body.tr_reference === undefined ? reservation.tr_reference : params.body.tr_reference
+    if (params.body.mp_reference !== undefined || params.body.tr_reference !== undefined) {
+      // This is the controlled, audited point at which a physical provenance
+      // correction becomes authoritative for future scans.  Historical BL
+      // snapshots remain untouched by the later propagation guard below.
+      await db.query(
+        `
+          UPDATE public.lots
+          SET mp_reference = $2,
+              tr_reference = $3,
+              updated_at = now(),
+              updated_by = $4
+          WHERE id = $1::uuid
+        `,
+        [reservation.lot_id, correctedMpReference, correctedTrReference, params.user_id]
+      )
+    }
+
+    const qtyBefore = Number(reservation.batch_qty_total)
+    const actualQty = params.body.actual_qty === undefined ? qtyBefore : Number(params.body.actual_qty)
+    const qtyDelta = actualQty - qtyBefore
+    if (actualQty + 1e-9 < Number(reservation.batch_qty_reserved)) {
+      throw new HttpError(
+        409,
+        "ACTUAL_QTY_BELOW_RESERVED",
+        "The physical count is below active reservations; release or correct those reservations before reducing this lot"
+      )
+    }
+    if (Number(reservation.level_qty_total) + qtyDelta + 1e-9 < Number(reservation.level_qty_reserved)) {
+      throw new HttpError(409, "ACTUAL_QTY_BELOW_RESERVED", "The physical count would make the stock level unavailable")
+    }
+
+    const previousVerifiedQty = typeof previousSnapshot.verified_qty === "number" ? previousSnapshot.verified_qty : 0
+    const previousVerifiedAt = typeof previousSnapshot.verified_at === "string" ? previousSnapshot.verified_at : null
+    const correctedSnapshot: Record<string, unknown> = {
+      ...previousSnapshot,
+      reservation_id: reservation.reservation_id,
+      lot_id: reservation.lot_id,
+      lot_code: reservation.lot_code,
+      article_id: reservation.article_id,
+      of_id: correctedOfId,
+      of_number: correctedOfNumber,
+      mp_reference: correctedMpReference,
+      tr_reference: correctedTrReference,
+      source_scope: normalizeScope(reservation.source_scope),
+      verified_qty: previousVerifiedQty,
+      verified_at: previousVerifiedAt,
+      correction: {
+        correction_id: correctionId,
+        reason: params.body.reason,
+        corrected_at: new Date().toISOString(),
+        qty_before: qtyBefore,
+        actual_qty: actualQty,
+        qty_delta: qtyDelta,
+      },
+    }
+
+    let movementId: string | null = null
+    if (Math.abs(qtyDelta) > 1e-9) {
+      const movementNo = await reserveStockMovementNo(db)
+      const direction = qtyDelta > 0 ? "IN" : "OUT"
+      const movement = await db.query<{ id: string }>(
+        `
+          INSERT INTO public.stock_movements (
+            movement_no, movement_type, status, article_id, stock_level_id,
+            stock_batch_id, qty, currency, effective_at, source_document_type,
+            source_document_id, reason_code, notes, idempotency_key,
+            user_id, created_by, updated_by
+          ) VALUES (
+            $1,'ADJUSTMENT'::public.movement_type,'DRAFT',$2::uuid,$3::uuid,$4::uuid,
+            $5,'EUR',now(),'DELIVERY_PREPARATION_CORRECTION',$6,'PHYSICAL_COUNT',$7,$8,$9,$9,$9
+          ) RETURNING id::text AS id
+        `,
+        [
+          movementNo,
+          reservation.article_id,
+          reservation.stock_level_id,
+          reservation.stock_batch_id,
+          qtyDelta,
+          correctionId,
+          params.body.reason,
+          `delivery-correction:${correctionId}`,
+          params.user_id,
+        ]
+      )
+      movementId = movement.rows[0]?.id ?? null
+      if (!movementId) throw new Error("Failed to create stock correction movement")
+      await db.query(
+        `
+          INSERT INTO public.stock_movement_lines (
+            movement_id,line_no,article_id,lot_id,qty,unite,
+            src_magasin_id,src_emplacement_id,dst_magasin_id,dst_emplacement_id,
+            direction,note,created_by,updated_by
+          ) VALUES (
+            $1::uuid,1,$2::uuid,$3::uuid,$4,$5,
+            $6::uuid,$7::bigint,$8::uuid,$9::bigint,$10,$11,$12,$12
+          )
+        `,
+        [
+          movementId,
+          reservation.article_id,
+          reservation.lot_id,
+          Math.abs(qtyDelta),
+          reservation.unite,
+          direction === "OUT" ? reservation.magasin_id : null,
+          direction === "OUT" ? reservation.emplacement_id : null,
+          direction === "IN" ? reservation.magasin_id : null,
+          direction === "IN" ? reservation.emplacement_id : null,
+          direction,
+          params.body.reason,
+          params.user_id,
+        ]
+      )
+      await insertStockMovementEvent(db, {
+        movement_id: movementId,
+        event_type: "CREATED",
+        old_values: null,
+        new_values: { status: "DRAFT", movement_type: "ADJUSTMENT", qty_delta: qtyDelta, correction_id: correctionId },
+        user_id: params.user_id,
+      })
+      await db.query(
+        `
+          UPDATE public.stock_movements
+          SET status = 'POSTED', posted_at = now(), posted_by = $2, updated_at = now(), updated_by = $2
+          WHERE id = $1::uuid
+        `,
+        [movementId, params.user_id]
+      )
+      await insertStockMovementEvent(db, {
+        movement_id: movementId,
+        event_type: "POSTED",
+        old_values: { status: "DRAFT" },
+        new_values: { status: "POSTED", qty_delta: qtyDelta },
+        user_id: params.user_id,
+      })
+    }
+
+    // A correction is a revision, not a replacement.  When a physical scan
+    // already exists, preserve its verified quantity in a new immutable row.
+    if (previousVerifiedQty > 0) {
+      await db.query(
+        `
+          INSERT INTO public.stock_reservation_verifications (
+            reservation_id, verified_qty, scanned_lot_code, snapshot, verified_by
+          ) VALUES ($1::uuid,$2,$3,$4::jsonb,$5)
+        `,
+        [reservation.reservation_id, previousVerifiedQty, reservation.lot_code, JSON.stringify(correctedSnapshot), params.user_id]
+      )
+    }
+
+    const affectedBlRes = await db.query<{ id: string }>(
+      `
+        UPDATE public.bon_livraison bl
+        SET shipping_version = shipping_version + 1,
+            shipping_preview_hash = NULL,
+            updated_at = now(),
+            updated_by = $2
+        WHERE bl.statut IN ('DRAFT', 'READY')
+          AND EXISTS (
+            SELECT 1
+            FROM public.bon_livraison_ligne bll
+            JOIN public.bon_livraison_ligne_allocations bla ON bla.bon_livraison_ligne_id = bll.id
+            WHERE bll.bon_livraison_id = bl.id
+              AND bla.reservation_id = $1::uuid
+          )
+        RETURNING bl.id::text AS id
+      `,
+      [reservation.reservation_id, params.user_id]
+    )
+    const affectedBonLivraisonIds = affectedBlRes.rows.map((row) => row.id)
+    if (affectedBonLivraisonIds.length > 0) {
+      await db.query(
+        `
+          UPDATE public.bon_livraison_ligne_allocations bla
+          SET verification_snapshot = $2::jsonb,
+              verified_at = CASE WHEN $3::numeric > 0 THEN now() ELSE bla.verified_at END,
+              verified_by = $4,
+              updated_at = now(),
+              updated_by = $4
+          FROM public.bon_livraison_ligne bll
+          JOIN public.bon_livraison bl ON bl.id = bll.bon_livraison_id
+          WHERE bla.bon_livraison_ligne_id = bll.id
+            AND bla.reservation_id = $1::uuid
+            AND bl.statut IN ('DRAFT', 'READY')
+        `,
+        [reservation.reservation_id, JSON.stringify(correctedSnapshot), previousVerifiedQty, params.user_id]
+      )
+      for (const bonLivraisonId of affectedBonLivraisonIds) {
+        await insertEvent(db, {
+          bon_livraison_id: bonLivraisonId,
+          event_type: "PREPARATION_CORRECTED",
+          user_id: params.user_id,
+          old_values: previousSnapshot,
+          new_values: correctedSnapshot,
+        })
+      }
+    }
+
+    const result: PreparationCorrectionResult = {
+      correction_id: correctionId,
+      reservation_id: reservation.reservation_id,
+      stock_movement_id: movementId,
+      qty_before: qtyBefore,
+      actual_qty: actualQty,
+      qty_delta: qtyDelta,
+      previous_snapshot: previousSnapshot,
+      corrected_snapshot: correctedSnapshot,
+      affected_bon_livraison_ids: affectedBonLivraisonIds,
+      idempotent_replay: false,
+    }
+    await db.query(
+      `
+        UPDATE public.stock_reservation_corrections
+        SET old_snapshot = $2::jsonb,
+            new_snapshot = $3::jsonb,
+            stock_movement_id = $4::uuid,
+            result_payload = $5::jsonb
+        WHERE id = $1::uuid
+      `,
+      [correctionId, JSON.stringify(previousSnapshot), JSON.stringify(correctedSnapshot), movementId, JSON.stringify(result)]
+    )
+    await repoInsertAuditLog({
+      user_id: params.user_id,
+      body: {
+        event_type: "ACTION",
+        action: "livraisons.preparation.correct",
+        page_key: "livraisons",
+        entity_type: "stock_reservations",
+        entity_id: reservation.reservation_id,
+        path: "/api/v1/livraisons/preparation-cart/correct",
+        client_session_id: null,
+        details: {
+          correction_id: correctionId,
+          reason: params.body.reason,
+          qty_before: qtyBefore,
+          actual_qty: actualQty,
+          qty_delta: qtyDelta,
+          stock_movement_id: movementId,
+          previous_snapshot: previousSnapshot,
+          corrected_snapshot: correctedSnapshot,
+        },
+      },
+      ip: null,
+      user_agent: null,
+      device_type: null,
+      os: null,
+      browser: null,
+      tx: db,
+    })
+    await db.query("COMMIT")
+    return result
+  } catch (err) {
+    await db.query("ROLLBACK")
+    throw err
+  } finally {
+    db.release()
+  }
+}
+
+type LockedReservationForDelivery = {
+  reservation_id: string
+  qty_available: number
+  commande_id: number
+  client_id: string
+  livraison_affaire_id: number
+  allocation_id: number
+  commande_ligne_id: number
+  article_id: string
+  lot_id: string
+  stock_level_id: string
+  stock_batch_id: string
+  location_id: string
+  designation: string
+  code_piece: string | null
+  unite: string | null
+  delai_client: string | null
+  magasin_id: string | null
+  emplacement_id: number | null
+  verified_at: string | null
+  verification_snapshot: unknown | null
+}
+
+export async function repoCreateLivraisonFromReservations(params: {
+  body: CreateLivraisonFromReservationsBodyDTO
+  user_id: number
+  idempotency_key: string
+}): Promise<{ id: string; numero: string; shipping_version: number; preview_hash: string; idempotent_replay: boolean }> {
+  const { body, user_id: userId, idempotency_key: idempotencyKey } = params
+  const duplicateIds = new Set<string>()
+  for (const item of body.items) {
+    if (duplicateIds.has(item.reservation_id)) {
+      throw new HttpError(400, "DUPLICATE_RESERVATION", "A reservation may be prepared only once per BL request")
+    }
+    duplicateIds.add(item.reservation_id)
+  }
+
+  const canonicalPayload = {
+    items: body.items
+      .map((item) => ({ reservation_id: item.reservation_id, qty: Number(item.qty) }))
+      .sort((left, right) => left.reservation_id.localeCompare(right.reservation_id)),
+    commentaire_interne: body.commentaire_interne ?? null,
+  }
+  const requestHash = crypto.createHash("sha256").update(JSON.stringify(canonicalPayload)).digest("hex")
+
+  const db = await pool.connect()
+  try {
+    await db.query("BEGIN")
+    // This ledger is deliberately acquired before the reservation row locks.
+    // It turns retry/double-click traffic into a read of the original DRAFT BL
+    // instead of a second preparation command.
+    const receiptInsert = await db.query<{ id: string }>(
+      `
+        INSERT INTO public.bon_livraison_prepare_receipts (
+          actor_user_id, idempotency_key, request_hash
+        ) VALUES ($1,$2,$3)
+        ON CONFLICT (actor_user_id, idempotency_key) DO NOTHING
+        RETURNING id::text AS id
+      `,
+      [userId, idempotencyKey, requestHash]
+    )
+    const receiptId = receiptInsert.rows[0]?.id ?? null
+    if (!receiptId) {
+      const prior = await db.query<{ request_hash: string; result_payload: unknown }>(
+        `
+          SELECT request_hash, result_payload
+          FROM public.bon_livraison_prepare_receipts
+          WHERE actor_user_id = $1 AND idempotency_key = $2
+          FOR UPDATE
+        `,
+        [userId, idempotencyKey]
+      )
+      const row = prior.rows[0] ?? null
+      if (!row || row.request_hash !== requestHash) {
+        throw new HttpError(409, "IDEMPOTENCY_KEY_REUSED", "Idempotency-Key was already used with a different preparation request")
+      }
+      if (!isRecord(row.result_payload)) {
+        throw new HttpError(409, "PREPARATION_IN_PROGRESS", "The delivery preparation with this Idempotency-Key is still processing")
+      }
+      const result = row.result_payload
+      if (
+        typeof result.id !== "string" ||
+        typeof result.numero !== "string" ||
+        typeof result.shipping_version !== "number" ||
+        typeof result.preview_hash !== "string"
+      ) {
+        throw new HttpError(409, "PREPARATION_IN_PROGRESS", "The delivery preparation result is not yet available")
+      }
+      await db.query("COMMIT")
+      return {
+        id: result.id,
+        numero: result.numero,
+        shipping_version: result.shipping_version,
+        preview_hash: result.preview_hash,
+        idempotent_replay: true,
+      }
+    }
+    const ids = [...duplicateIds].sort()
+    const locked = await db.query<LockedReservationForDelivery>(
+      `
+        SELECT
+          r.id::text AS reservation_id,
+          (r.qty_reserved - r.qty_consumed - r.qty_prepared)::float8 AS qty_available,
+          a.commande_id::bigint::int AS commande_id,
+          cc.client_id::text AS client_id,
+          r.livraison_affaire_id::bigint::int AS livraison_affaire_id,
+          a.id::bigint::int AS allocation_id,
+          a.commande_ligne_id::bigint::int AS commande_ligne_id,
+          r.article_id::text AS article_id,
+          r.lot_id::text AS lot_id,
+          r.stock_level_id::text AS stock_level_id,
+          r.stock_batch_id::text AS stock_batch_id,
+          r.location_id::text AS location_id,
+          cl.designation,
+          cl.code_piece,
+          cl.unite,
+          cl.delai_client,
+          e.magasin_id::text AS magasin_id,
+          e.id::bigint::int AS emplacement_id,
+          v.created_at::text AS verified_at,
+          v.snapshot AS verification_snapshot
+        FROM public.stock_reservations r
+        JOIN public.commande_ligne_affaire_allocation a ON a.id = r.commande_ligne_affaire_allocation_id
+        JOIN public.commande_client cc ON cc.id = a.commande_id
+        JOIN public.commande_ligne cl ON cl.id = a.commande_ligne_id
+        LEFT JOIN public.emplacements e ON e.location_id = r.location_id
+        LEFT JOIN LATERAL (
+          SELECT revision.created_at, revision.snapshot
+          FROM (
+            SELECT sv.created_at, sv.snapshot, sv.id::text AS stable_id
+            FROM public.stock_reservation_verifications sv
+            WHERE sv.reservation_id = r.id
+            UNION ALL
+            SELECT sc.created_at, sc.new_snapshot AS snapshot, sc.id::text AS stable_id
+            FROM public.stock_reservation_corrections sc
+            WHERE sc.reservation_id = r.id
+          ) revision
+          ORDER BY revision.created_at DESC, revision.stable_id DESC
+          LIMIT 1
+        ) v ON true
+        WHERE r.id = ANY($1::uuid[])
+          AND r.status = 'ACTIVE'
+          AND r.qty_reserved > r.qty_consumed + r.qty_prepared
+        ORDER BY r.id ASC
+        FOR UPDATE OF r, a
+      `,
+      [ids]
+    )
+    if (locked.rows.length !== ids.length) {
+      throw new HttpError(409, "RESERVATION_NOT_AVAILABLE", "One or more reservations are no longer active")
+    }
+    const requestedById = new Map(body.items.map((item) => [item.reservation_id, item.qty] as const))
+    const first = locked.rows[0]
+    if (!first) throw new HttpError(400, "EMPTY_CART", "No reservation selected")
+    for (const row of locked.rows) {
+      if (
+        row.commande_id !== first.commande_id ||
+        row.client_id !== first.client_id ||
+        row.livraison_affaire_id !== first.livraison_affaire_id
+      ) {
+        throw new HttpError(409, "MIXED_DELIVERY_SCOPE", "A delivery cart must target one commande and one delivery affaire")
+      }
+      if (!row.lot_id || !row.stock_level_id || !row.stock_batch_id || !row.magasin_id || row.emplacement_id === null) {
+        throw new HttpError(409, "RESERVATION_TRACEABILITY_INCOMPLETE", "Reservation cannot be prepared without lot, level, batch and location")
+      }
+      const requested = Number(requestedById.get(row.reservation_id) ?? 0)
+      if (requested <= 0 || requested > Number(row.qty_available) + 1e-9) {
+        throw new HttpError(409, "RESERVED_QTY_EXCEEDED", "Selected delivery quantity exceeds the active reservation")
+      }
+      const snapshot = isRecord(row.verification_snapshot) ? row.verification_snapshot : null
+      const verifiedQty = snapshot && typeof snapshot.verified_qty === "number" ? snapshot.verified_qty : 0
+      if (!row.verified_at || verifiedQty + 1e-9 < requested) {
+        throw new HttpError(409, "LOT_VERIFICATION_REQUIRED", "Each reserved lot must be verified before creating the BL")
+      }
+    }
+
+    // There may be at most one active DRAFT/READY BL per reservation.  The
+    // reservation rows are already locked above in a deterministic order, so
+    // a concurrent preparation reaches this check only after the first one has
+    // committed (and is rejected) or rolled back.  Partial deliveries remain
+    // possible after the first BL is shipped or cancelled/released.
+    const alreadyPrepared = await db.query<{ reservation_id: string }>(
+      `
+        SELECT bla.reservation_id::text AS reservation_id
+        FROM public.bon_livraison_ligne_allocations bla
+        JOIN public.bon_livraison_ligne bll ON bll.id = bla.bon_livraison_ligne_id
+        JOIN public.bon_livraison existing_bl ON existing_bl.id = bll.bon_livraison_id
+        WHERE bla.reservation_id = ANY($1::uuid[])
+          AND existing_bl.statut IN ('DRAFT', 'READY')
+      `,
+      [ids]
+    )
+    if (alreadyPrepared.rows.length > 0) {
+      throw new HttpError(
+        409,
+        "RESERVATION_ALREADY_PREPARED",
+        "A DRAFT or READY BL already holds one of the selected reservations"
+      )
+    }
+
+    // The counter is a second line of defence if a legacy writer bypasses the
+    // preparation command and attempts to over-hold a reservation directly.
+    for (const row of locked.rows) {
+      const requested = Number(requestedById.get(row.reservation_id) ?? 0)
+      const prepared = await db.query(
+        `
+          UPDATE public.stock_reservations
+          SET qty_prepared = qty_prepared + $2,
+              version = version + 1,
+              updated_at = now(),
+              updated_by = $3
+          WHERE id = $1::uuid
+            AND status = 'ACTIVE'
+            AND qty_reserved - qty_consumed - qty_prepared >= $2
+        `,
+        [row.reservation_id, requested, userId]
+      )
+      if ((prepared.rowCount ?? 0) !== 1) {
+        throw new HttpError(409, "RESERVATION_ALREADY_PREPARED", "The reserved quantity was already prepared by another BL")
+      }
+    }
+
+    const seq = await db.query<{ n: string }>(`SELECT nextval('public.bon_livraison_no_seq')::text AS n`)
+    const n = Number(seq.rows[0]?.n)
+    if (!Number.isFinite(n)) throw new Error("Failed to reserve bon_livraison number")
+    const numero = `BL-${String(n).padStart(8, "0")}`
+    const headerIns = await db.query<{ id: string }>(
+      `
+        INSERT INTO public.bon_livraison (
+          numero, client_id, commande_id, affaire_id, statut,
+          date_creation, commentaire_interne, created_by, updated_by
+        ) VALUES ($1,$2,$3,$4,'DRAFT',CURRENT_DATE,$5,$6,$6)
+        RETURNING id::text AS id
+      `,
+      [numero, first.client_id, first.commande_id, first.livraison_affaire_id, body.commentaire_interne ?? null, userId]
+    )
+    const bonLivraisonId = headerIns.rows[0]?.id
+    if (!bonLivraisonId) throw new Error("Failed to create reservation-backed BL")
+
+    const lineIdByCommandeLine = new Map<number, string>()
+    let lineOrder = 1
+    for (const row of locked.rows) {
+      let lineId = lineIdByCommandeLine.get(row.commande_ligne_id)
+      if (!lineId) {
+        const qty = locked.rows
+          .filter((candidate) => candidate.commande_ligne_id === row.commande_ligne_id)
+          .reduce((total, candidate) => total + Number(requestedById.get(candidate.reservation_id) ?? 0), 0)
+        const lineIns = await db.query<{ id: string }>(
+          `
+            INSERT INTO public.bon_livraison_ligne (
+              bon_livraison_id, ordre, designation, code_piece, quantite,
+              unite, commande_ligne_id, delai_client, created_by, updated_by
+            ) VALUES ($1::uuid,$2,$3,$4,$5,$6,$7::bigint,$8,$9,$9)
+            RETURNING id::text AS id
+          `,
+          [bonLivraisonId, lineOrder, row.designation, row.code_piece, qty, row.unite, row.commande_ligne_id, row.delai_client, userId]
+        )
+        lineId = lineIns.rows[0]?.id
+        if (!lineId) throw new Error("Failed to create BL line")
+        lineIdByCommandeLine.set(row.commande_ligne_id, lineId)
+        lineOrder += 1
+      }
+      const qty = Number(requestedById.get(row.reservation_id) ?? 0)
+      await db.query(
+        `
+          INSERT INTO public.bon_livraison_ligne_allocations (
+            bon_livraison_ligne_id, article_id, lot_id, quantite, unite,
+            reservation_id, magasin_id, emplacement_id, location_id,
+            stock_level_id, stock_batch_id, commande_ligne_affaire_allocation_id,
+            verified_at, verified_by, verification_snapshot, created_by, updated_by
+          ) VALUES (
+            $1::uuid,$2::uuid,$3::uuid,$4,$5,$6::uuid,$7::uuid,$8::bigint,$9::uuid,
+            $10::uuid,$11::uuid,$12,$13::timestamptz,$14,$15::jsonb,$14,$14
+          )
+        `,
+        [
+          lineId,
+          row.article_id,
+          row.lot_id,
+          qty,
+          row.unite,
+          row.reservation_id,
+          row.magasin_id,
+          row.emplacement_id,
+          row.location_id,
+          row.stock_level_id,
+          row.stock_batch_id,
+          row.allocation_id,
+          row.verified_at,
+          userId,
+          JSON.stringify(row.verification_snapshot ?? {}),
+        ]
+      )
+    }
+
+    const previewInput = locked.rows.map((row) => ({
+      reservation_id: row.reservation_id,
+      qty: Number(requestedById.get(row.reservation_id) ?? 0),
+      lot_id: row.lot_id,
+      stock_batch_id: row.stock_batch_id,
+      verification: row.verification_snapshot,
+    }))
+    const previewHash = preparationPreviewHash({ shipping_version: 1, allocations: previewInput })
+    await db.query(
+      `UPDATE public.bon_livraison SET shipping_preview_hash = $2, updated_at = now(), updated_by = $3 WHERE id = $1::uuid`,
+      [bonLivraisonId, previewHash, userId]
+    )
+    await insertEvent(db, {
+      bon_livraison_id: bonLivraisonId,
+      event_type: "CREATED_FROM_RESERVATIONS",
+      user_id: userId,
+      new_values: { reservation_ids: ids, preview_hash: previewHash },
+    })
+    const result = { id: bonLivraisonId, numero, shipping_version: 1, preview_hash: previewHash }
+    await db.query(
+      `
+        UPDATE public.bon_livraison_prepare_receipts
+        SET bon_livraison_id = $2::uuid, result_payload = $3::jsonb
+        WHERE id = $1::uuid
+      `,
+      [receiptId, bonLivraisonId, JSON.stringify(result)]
+    )
+    await db.query("COMMIT")
+    return { ...result, idempotent_replay: false }
+  } catch (err) {
+    await db.query("ROLLBACK")
+    throw err
+  } finally {
+    db.release()
+  }
+}
+
+type LivraisonPreparationPreview = {
+  bon_livraison_id: string
+  shipping_version: number
+  preview_hash: string
+  items: Array<{
+    allocation_id: string
+    reservation_id: string
+    qty: number
+    lot_id: string
+    lot_code: string
+    verified_at: string | null
+    source_scope: "OLD" | "NEW"
+  }>
+}
+
+export async function repoGetLivraisonPreparationPreview(bonLivraisonId: string): Promise<LivraisonPreparationPreview | null> {
+  const header = await pool.query<{ id: string; shipping_version: number }>(
+    `SELECT id::text AS id, shipping_version FROM public.bon_livraison WHERE id = $1::uuid`,
+    [bonLivraisonId]
+  )
+  const current = header.rows[0] ?? null
+  if (!current) return null
+  const rows = await pool.query<{
+    allocation_id: string
+    reservation_id: string | null
+    qty: number
+    lot_id: string | null
+    lot_code: string | null
+    stock_batch_id: string | null
+    verification_snapshot: unknown | null
+    verified_at: string | null
+    source_scope: string | null
+  }>(
+    `
+      SELECT
+        bla.id::text AS allocation_id,
+        bla.reservation_id::text AS reservation_id,
+        bla.quantite::float8 AS qty,
+        bla.lot_id::text AS lot_id,
+        l.lot_code,
+        bla.stock_batch_id::text AS stock_batch_id,
+        bla.verification_snapshot,
+        bla.verified_at::text AS verified_at,
+        COALESCE(r.source_scope, l.source_scope, 'NEW') AS source_scope
+      FROM public.bon_livraison_ligne_allocations bla
+      JOIN public.bon_livraison_ligne bll ON bll.id = bla.bon_livraison_ligne_id
+      LEFT JOIN public.stock_reservations r ON r.id = bla.reservation_id
+      LEFT JOIN public.lots l ON l.id = bla.lot_id
+      WHERE bll.bon_livraison_id = $1::uuid
+      ORDER BY bla.id ASC
+    `,
+    [bonLivraisonId]
+  )
+  const hashInput = rows.rows.map((row) => ({
+    reservation_id: row.reservation_id,
+    qty: Number(row.qty),
+    lot_id: row.lot_id,
+    stock_batch_id: row.stock_batch_id,
+    verification: row.verification_snapshot,
+  }))
+  const previewHash = preparationPreviewHash({ shipping_version: Number(current.shipping_version), allocations: hashInput })
+  return {
+    bon_livraison_id: current.id,
+    shipping_version: Number(current.shipping_version),
+    preview_hash: previewHash,
+    items: rows.rows.map((row) => ({
+      allocation_id: row.allocation_id,
+      reservation_id: row.reservation_id ?? "",
+      qty: Number(row.qty),
+      lot_id: row.lot_id ?? "",
+      lot_code: row.lot_code ?? "",
+      verified_at: row.verified_at,
+      source_scope: normalizeScope(row.source_scope),
+    })),
+  }
+}
+
+export type LivraisonShipResult = {
+  id: string
+  statut: "SHIPPED"
+  stock_movement_ids: string[]
+  printing_status: "PENDING"
+  print_retry_available: true
+  idempotent_replay: boolean
+}
+
+export async function repoShipLivraison(params: {
+  bon_livraison_id: string
+  body: ShipLivraisonBodyDTO
+  user_id: number
+  idempotency_key: string
+}): Promise<LivraisonShipResult> {
+  const requestHash = crypto
+    .createHash("sha256")
+    .update(
+      JSON.stringify({
+        bon_livraison_id: params.bon_livraison_id,
+        expected_shipping_version: params.body.expected_shipping_version,
+        preview_hash: params.body.preview_hash,
+      })
+    )
+    .digest("hex")
+  const db = await pool.connect()
+  try {
+    await db.query("BEGIN")
+    const receiptInsert = await db.query<{ id: string }>(
+      `
+        INSERT INTO public.bon_livraison_ship_receipts (
+          bon_livraison_id, actor_user_id, idempotency_key, request_hash,
+          expected_shipping_version, preview_hash
+        ) VALUES ($1::uuid,$2,$3,$4,$5,$6)
+        ON CONFLICT (actor_user_id, idempotency_key) DO NOTHING
+        RETURNING id::text AS id
+      `,
+      [
+        params.bon_livraison_id,
+        params.user_id,
+        params.idempotency_key,
+        requestHash,
+        params.body.expected_shipping_version,
+        params.body.preview_hash,
+      ]
+    )
+    const receiptId = receiptInsert.rows[0]?.id ?? null
+    if (!receiptId) {
+      const prior = await db.query<{ request_hash: string; result_payload: unknown }>(
+        `
+          SELECT request_hash, result_payload
+          FROM public.bon_livraison_ship_receipts
+          WHERE actor_user_id = $1 AND idempotency_key = $2
+          FOR UPDATE
+        `,
+        [params.user_id, params.idempotency_key]
+      )
+      const row = prior.rows[0] ?? null
+      if (!row || row.request_hash !== requestHash) {
+        throw new HttpError(409, "IDEMPOTENCY_KEY_REUSED", "Idempotency-Key was already used with a different shipping request")
+      }
+      if (!row.result_payload || !isRecord(row.result_payload)) {
+        throw new HttpError(409, "SHIPMENT_IN_PROGRESS", "The shipment with this Idempotency-Key is still processing")
+      }
+      await db.query("COMMIT")
+      return {
+        id: typeof row.result_payload.id === "string" ? row.result_payload.id : params.bon_livraison_id,
+        statut: "SHIPPED",
+        stock_movement_ids: Array.isArray(row.result_payload.stock_movement_ids)
+          ? row.result_payload.stock_movement_ids.filter((value): value is string => typeof value === "string")
+          : [],
+        printing_status: "PENDING",
+        print_retry_available: true,
+        idempotent_replay: true,
+      }
+    }
+
+    const header = await db.query<{
+      id: string
+      numero: string
+      statut: BonLivraisonStatut
+      shipping_version: number
+    }>(
+      `
+        SELECT id::text AS id, numero, statut, shipping_version
+        FROM public.bon_livraison
+        WHERE id = $1::uuid
+        FOR UPDATE
+      `,
+      [params.bon_livraison_id]
+    )
+    const bl = header.rows[0] ?? null
+    if (!bl) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
+    if (bl.statut !== "READY") throw new HttpError(409, "INVALID_STATUS", "Only a READY BL can be shipped")
+    if (Number(bl.shipping_version) !== params.body.expected_shipping_version) {
+      throw new HttpError(409, "CONCURRENT_MODIFICATION", "The BL version changed since the preview")
+    }
+    const pack = await db.query<{ ok: number }>(
+      `
+        SELECT 1::int AS ok
+        FROM public.bon_livraison_pack_versions
+        WHERE bon_livraison_id = $1::uuid AND status = 'GENERATED'
+        ORDER BY version DESC
+        LIMIT 1
+      `,
+      [params.bon_livraison_id]
+    )
+    if (!pack.rows[0]?.ok) throw new HttpError(409, "PACK_REQUIRED", "A generated delivery pack is required before shipment")
+
+    const allocationRows = await db.query<{
+      allocation_id: string
+      line_id: string
+      commande_ligne_id: number | null
+      reservation_id: string | null
+      order_allocation_id: number | null
+      article_id: string
+      lot_id: string | null
+      stock_level_id: string | null
+      stock_batch_id: string | null
+      magasin_id: string | null
+      emplacement_id: number | null
+      quantite: number
+      unite: string | null
+      verified_at: string | null
+      verification_snapshot: unknown | null
+      reservation_status: string | null
+      reservation_available: number | null
+      batch_qty_total: number | null
+      batch_qty_reserved: number | null
+      level_qty_total: number | null
+      level_qty_reserved: number | null
+      lot_status: string | null
+    }>(
+      `
+        SELECT
+          bla.id::text AS allocation_id,
+          bll.id::text AS line_id,
+          bll.commande_ligne_id::bigint::int AS commande_ligne_id,
+          bla.reservation_id::text AS reservation_id,
+          bla.commande_ligne_affaire_allocation_id::bigint::int AS order_allocation_id,
+          bla.article_id::text AS article_id,
+          bla.lot_id::text AS lot_id,
+          bla.stock_level_id::text AS stock_level_id,
+          bla.stock_batch_id::text AS stock_batch_id,
+          bla.magasin_id::text AS magasin_id,
+          bla.emplacement_id::bigint::int AS emplacement_id,
+          bla.quantite::float8 AS quantite,
+          bla.unite,
+          bla.verified_at::text AS verified_at,
+          bla.verification_snapshot,
+          r.status AS reservation_status,
+          (r.qty_reserved - r.qty_consumed)::float8 AS reservation_available,
+          sb.qty_total::float8 AS batch_qty_total,
+          sb.qty_reserved::float8 AS batch_qty_reserved,
+          sl.qty_total::float8 AS level_qty_total,
+          sl.qty_reserved::float8 AS level_qty_reserved,
+          l.lot_status
+        FROM public.bon_livraison_ligne_allocations bla
+        JOIN public.bon_livraison_ligne bll ON bll.id = bla.bon_livraison_ligne_id
+        JOIN public.stock_reservations r ON r.id = bla.reservation_id
+        JOIN public.stock_batches sb ON sb.id = bla.stock_batch_id
+        JOIN public.stock_levels sl ON sl.id = bla.stock_level_id
+        JOIN public.lots l ON l.id = bla.lot_id
+        WHERE bll.bon_livraison_id = $1::uuid
+        ORDER BY bla.id ASC
+        FOR UPDATE OF bla, r, sb, sl, l
+      `,
+      [params.bon_livraison_id]
+    )
+    if (!allocationRows.rows.length) throw new HttpError(409, "ALLOCATIONS_REQUIRED", "No reservation-backed allocation is ready for shipment")
+    const previewAllocations = allocationRows.rows.map((row) => ({
+      reservation_id: row.reservation_id,
+      qty: Number(row.quantite),
+      lot_id: row.lot_id,
+      stock_batch_id: row.stock_batch_id,
+      verification: row.verification_snapshot,
+    }))
+    const actualPreviewHash = preparationPreviewHash({ shipping_version: Number(bl.shipping_version), allocations: previewAllocations })
+    if (actualPreviewHash !== params.body.preview_hash) {
+      throw new HttpError(409, "PREVIEW_STALE", "The delivery preparation changed since the preview")
+    }
+
+    for (const allocation of allocationRows.rows) {
+      const qty = Number(allocation.quantite)
+      const verified = isRecord(allocation.verification_snapshot) ? allocation.verification_snapshot : null
+      const verifiedQty = verified && typeof verified.verified_qty === "number" ? verified.verified_qty : 0
+      if (
+        !allocation.reservation_id ||
+        !allocation.order_allocation_id ||
+        !allocation.lot_id ||
+        !allocation.stock_level_id ||
+        !allocation.stock_batch_id ||
+        !allocation.magasin_id ||
+        allocation.emplacement_id === null ||
+        allocation.reservation_status !== "ACTIVE" ||
+        !allocation.verified_at ||
+        verifiedQty + 1e-9 < qty
+      ) {
+        throw new HttpError(409, "PREPARATION_INVALID", "Shipment requires an active, verified, traceable reservation")
+      }
+      if (
+        Number(allocation.reservation_available ?? 0) + 1e-9 < qty ||
+        Number(allocation.batch_qty_total ?? 0) + 1e-9 < qty ||
+        Number(allocation.batch_qty_reserved ?? 0) + 1e-9 < qty ||
+        Number(allocation.level_qty_total ?? 0) + 1e-9 < qty ||
+        Number(allocation.level_qty_reserved ?? 0) + 1e-9 < qty
+      ) {
+        throw new HttpError(409, "INSUFFICIENT_STOCK", "Reserved lot stock changed before shipment")
+      }
+      if ((allocation.lot_status ?? "LIBERE") !== "LIBERE") {
+        throw new HttpError(409, "LOT_NOT_CONSUMABLE", "Only a released lot can be shipped")
+      }
+    }
+
+    const issuedMovementIds: string[] = []
+    const deliveredByOrderAllocation = new Map<number, number>()
+    for (const allocation of allocationRows.rows) {
+      const qty = Number(allocation.quantite)
+      const movementNo = await reserveStockMovementNo(db)
+      const movement = await db.query<{ id: string }>(
+        `
+          INSERT INTO public.stock_movements (
+            movement_no, movement_type, status, article_id, stock_level_id,
+            stock_batch_id, qty, currency, effective_at, source_document_type,
+            source_document_id, reason_code, notes, idempotency_key,
+            user_id, created_by, updated_by
+          ) VALUES (
+            $1,'OUT'::public.movement_type,'DRAFT',$2::uuid,$3::uuid,$4::uuid,
+            $5,'EUR',now(),'BON_LIVRAISON',$6,'BON_LIVRAISON_SHIPMENT',$7,$8,$9,$9,$9
+          ) RETURNING id::text AS id
+        `,
+        [
+          movementNo,
+          allocation.article_id,
+          allocation.stock_level_id,
+          allocation.stock_batch_id,
+          qty,
+          params.bon_livraison_id,
+          `Shipment for ${bl.numero}`,
+          `bl-ship:${receiptId}:${allocation.allocation_id}`,
+          params.user_id,
+        ]
+      )
+      const movementId = movement.rows[0]?.id
+      if (!movementId) throw new Error("Failed to create shipment movement")
+      const lineResult = await db.query<{ id: string }>(
+        `
+          INSERT INTO public.stock_movement_lines (
+            movement_id,line_no,article_id,lot_id,qty,unite,src_magasin_id,
+            src_emplacement_id,note,created_by,updated_by
+          ) VALUES ($1::uuid,1,$2::uuid,$3::uuid,$4,$5,$6::uuid,$7::bigint,$8,$9,$9)
+          RETURNING id::text AS id
+        `,
+        [
+          movementId,
+          allocation.article_id,
+          allocation.lot_id,
+          qty,
+          allocation.unite,
+          allocation.magasin_id,
+          allocation.emplacement_id,
+          `BL ${bl.numero} validated`,
+          params.user_id,
+        ]
+      )
+      const stockMovementLineId = lineResult.rows[0]?.id
+      if (!stockMovementLineId) throw new Error("Failed to create shipment movement line")
+      const allocationConsumed = await db.query(
+        `
+          UPDATE public.bon_livraison_ligne_allocations
+          SET stock_movement_line_id = $2::uuid, qty_consumed = qty_consumed + $3,
+              updated_at = now(), updated_by = $4
+          WHERE id = $1::uuid
+            AND qty_consumed + $3 <= quantite
+        `,
+        [allocation.allocation_id, stockMovementLineId, qty, params.user_id]
+      )
+      if ((allocationConsumed.rowCount ?? 0) !== 1) {
+        throw new HttpError(409, "ALLOCATION_CONSUME_FAILED", "Delivery allocation changed before it could be consumed")
+      }
+      await insertStockMovementEvent(db, {
+        movement_id: movementId,
+        event_type: "CREATED",
+        old_values: null,
+        new_values: { status: "DRAFT", movement_type: "OUT", reservation_id: allocation.reservation_id },
+        user_id: params.user_id,
+      })
+      await db.query(
+        `UPDATE public.stock_movements SET status = 'POSTED', posted_at = now(), posted_by = $2, updated_at = now(), updated_by = $2 WHERE id = $1::uuid`,
+        [movementId, params.user_id]
+      )
+      await insertStockMovementEvent(db, {
+        movement_id: movementId,
+        event_type: "POSTED",
+        old_values: { status: "DRAFT" },
+        new_values: { status: "POSTED" },
+        user_id: params.user_id,
+      })
+      const batchUpdated = await db.query(
+        `UPDATE public.stock_batches SET qty_reserved = qty_reserved - $2 WHERE id = $1::uuid AND qty_reserved >= $2`,
+        [allocation.stock_batch_id, qty]
+      )
+      if ((batchUpdated.rowCount ?? 0) !== 1) throw new HttpError(409, "RESERVATION_CONSUME_FAILED", "Batch reservation changed during shipment")
+      const levelUpdated = await db.query(
+        `UPDATE public.stock_levels SET qty_reserved = qty_reserved - $2, updated_at = now(), updated_by = $3 WHERE id = $1::uuid AND qty_reserved >= $2`,
+        [allocation.stock_level_id, qty, params.user_id]
+      )
+      if ((levelUpdated.rowCount ?? 0) !== 1) throw new HttpError(409, "RESERVATION_CONSUME_FAILED", "Stock level reservation changed during shipment")
+      const reservationUpdated = await db.query(
+        `
+          UPDATE public.stock_reservations
+          SET qty_consumed = qty_consumed + $2,
+              qty_prepared = qty_prepared - $2,
+              status = CASE WHEN qty_consumed + $2 >= qty_reserved THEN 'CONSUMED' ELSE 'ACTIVE' END,
+              consumed_at = CASE WHEN qty_consumed + $2 >= qty_reserved THEN now() ELSE consumed_at END,
+              version = version + 1, updated_at = now(), updated_by = $3
+          WHERE id = $1::uuid
+            AND status = 'ACTIVE'
+            AND qty_consumed + $2 <= qty_reserved
+            AND qty_prepared >= $2
+        `,
+        [allocation.reservation_id, qty, params.user_id]
+      )
+      if ((reservationUpdated.rowCount ?? 0) !== 1) {
+        throw new HttpError(409, "RESERVATION_CONSUME_FAILED", "Reservation changed before the shipment could consume it")
+      }
+      const priorDelivered = Number(deliveredByOrderAllocation.get(allocation.order_allocation_id!) ?? 0)
+      deliveredByOrderAllocation.set(allocation.order_allocation_id!, priorDelivered + qty)
+      issuedMovementIds.push(movementId)
+    }
+
+    for (const [orderAllocationId, qty] of deliveredByOrderAllocation) {
+      await db.query(
+        `
+          UPDATE public.commande_ligne_affaire_allocation
+          SET qty_delivered = qty_delivered + $2,
+              qty_reserved = GREATEST(0, qty_reserved - $2),
+              qty_remaining = GREATEST(0, qty_ordered - qty_delivered - $2),
+              delivery_status = CASE
+                WHEN qty_delivered + $2 >= qty_ordered THEN 'LIVREE'
+                WHEN qty_delivered + $2 > 0 THEN 'PARTIELLEMENT_LIVREE'
+                ELSE 'A_PREPARER'
+              END,
+              allocation_version = allocation_version + 1,
+              updated_at = now()
+          WHERE id = $1
+        `,
+        [orderAllocationId, qty]
+      )
+    }
+
+    const result = {
+      id: params.bon_livraison_id,
+      statut: "SHIPPED" as const,
+      stock_movement_ids: issuedMovementIds,
+      printing_status: "PENDING" as const,
+      print_retry_available: true as const,
+    }
+    await db.query(
+      `
+        UPDATE public.bon_livraison
+        SET statut = 'SHIPPED', date_expedition = CURRENT_DATE, shipped_at = now(),
+            shipping_version = shipping_version + 1, updated_at = now(), updated_by = $2
+        WHERE id = $1::uuid
+      `,
+      [params.bon_livraison_id, params.user_id]
+    )
+    await db.query(
+      `UPDATE public.bon_livraison_ship_receipts SET result_payload = $2::jsonb WHERE id = $1::uuid`,
+      [receiptId, JSON.stringify(result)]
+    )
+    await db.query(
+      `
+        INSERT INTO public.delivery_outbox (event_type, aggregate_id, payload)
+        VALUES ('DELIVERY.SHIPPED',$1::uuid,$2::jsonb)
+        ON CONFLICT (event_type, aggregate_id) DO NOTHING
+      `,
+      [
+        params.bon_livraison_id,
+        JSON.stringify({
+          bon_livraison_id: params.bon_livraison_id,
+          stock_movement_ids: issuedMovementIds,
+          billing_decision: "PENDING_DOWNSTREAM_REVIEW",
+          invoice_created: false,
+          printing_status: "PENDING",
+        }),
+      ]
+    )
+    // Printing is intentionally a separate outbox event.  If the external
+    // printer is unavailable, the committed OUT movement/BL remains final and
+    // the UI can safely requeue this effect without shipping a second time.
+    await db.query(
+      `
+        INSERT INTO public.delivery_outbox (event_type, aggregate_id, payload)
+        VALUES ('DELIVERY.PRINT_REQUESTED',$1::uuid,$2::jsonb)
+        ON CONFLICT (event_type, aggregate_id) DO NOTHING
+      `,
+      [
+        params.bon_livraison_id,
+        JSON.stringify({
+          bon_livraison_id: params.bon_livraison_id,
+          printing_status: "PENDING",
+          requested_at: new Date().toISOString(),
+          trigger: "SHIPMENT_VALIDATED",
+        }),
+      ]
+    )
+    await insertEvent(db, {
+      bon_livraison_id: params.bon_livraison_id,
+      event_type: "SHIPMENT_VALIDATED",
+      user_id: params.user_id,
+      new_values: { stock_movement_ids: issuedMovementIds, billing_decision: "PENDING_DOWNSTREAM_REVIEW" },
+    })
+    await repoInsertAuditLog({
+      user_id: params.user_id,
+      body: {
+        event_type: "ACTION",
+        action: "livraisons.ship",
+        page_key: "livraisons",
+        entity_type: "bon_livraison",
+        entity_id: params.bon_livraison_id,
+        path: `/api/v1/livraisons/${params.bon_livraison_id}/ship`,
+        client_session_id: null,
+        details: { stock_movement_ids: issuedMovementIds, idempotency_key: params.idempotency_key },
+      },
+      ip: null,
+      user_agent: null,
+      device_type: null,
+      os: null,
+      browser: null,
+      tx: db,
+    })
+    await db.query("COMMIT")
+    return { ...result, idempotent_replay: false }
+  } catch (err) {
+    await db.query("ROLLBACK")
+    throw err
+  } finally {
+    db.release()
+  }
+}
+
+export type LivraisonPrintStatus = {
+  bon_livraison_id: string
+  printing_status: "PENDING" | "PUBLISHED" | "NOT_REQUESTED"
+  print_retry_available: boolean
+  outbox_id: string | null
+  attempts: number
+  last_requested_at: string | null
+}
+
+/** Read-only status for the external print effect; shipment state is separate. */
+export async function repoGetLivraisonPrintStatus(bonLivraisonId: string): Promise<LivraisonPrintStatus | null> {
+  const bl = await pool.query<{ id: string }>(`SELECT id::text AS id FROM public.bon_livraison WHERE id = $1::uuid`, [bonLivraisonId])
+  if (!bl.rows[0]) return null
+  const outbox = await pool.query<{
+    id: string
+    published_at: string | null
+    attempts: number
+    requested_at: string
+  }>(
+    `
+      SELECT id::text AS id, published_at::text AS published_at, attempts, requested_at::text AS requested_at
+      FROM public.delivery_outbox
+      WHERE aggregate_id = $1::uuid
+        AND event_type = 'DELIVERY.PRINT_REQUESTED'
+      ORDER BY requested_at DESC, id DESC
+      LIMIT 1
+    `,
+    [bonLivraisonId]
+  )
+  const row = outbox.rows[0] ?? null
+  if (!row) {
+    return {
+      bon_livraison_id: bonLivraisonId,
+      printing_status: "NOT_REQUESTED",
+      print_retry_available: false,
+      outbox_id: null,
+      attempts: 0,
+      last_requested_at: null,
+    }
+  }
+  return {
+    bon_livraison_id: bonLivraisonId,
+    printing_status: row.published_at ? "PUBLISHED" : "PENDING",
+    print_retry_available: !row.published_at,
+    outbox_id: row.id,
+    attempts: Number(row.attempts ?? 0),
+    last_requested_at: row.requested_at,
+  }
+}
+
+/**
+ * Requeue only the print side effect.  No reservation, allocation, BL status
+ * or stock movement is touched, so retrying this endpoint can never issue
+ * stock twice.
+ */
+export async function repoRetryLivraisonPrint(params: {
+  bon_livraison_id: string
+  user_id: number
+}): Promise<LivraisonPrintStatus> {
+  const db = await pool.connect()
+  try {
+    await db.query("BEGIN")
+    const header = await db.query<{ statut: BonLivraisonStatut }>(
+      `SELECT statut FROM public.bon_livraison WHERE id = $1::uuid FOR UPDATE`,
+      [params.bon_livraison_id]
+    )
+    const bl = header.rows[0] ?? null
+    if (!bl) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
+    if (bl.statut !== "SHIPPED" && bl.statut !== "DELIVERED") {
+      throw new HttpError(409, "PRINT_NOT_AVAILABLE", "Printing can be retried only after BL validation")
+    }
+    const existing = await db.query<{ id: string; published_at: string | null }>(
+      `
+        SELECT id::text AS id, published_at::text AS published_at
+        FROM public.delivery_outbox
+        WHERE event_type = 'DELIVERY.PRINT_REQUESTED' AND aggregate_id = $1::uuid
+        FOR UPDATE
+      `,
+      [params.bon_livraison_id]
+    )
+    const current = existing.rows[0] ?? null
+    if (current?.published_at) {
+      throw new HttpError(409, "PRINT_ALREADY_PUBLISHED", "The print request was already published")
+    }
+    const payload = JSON.stringify({
+      bon_livraison_id: params.bon_livraison_id,
+      printing_status: "PENDING",
+      requested_at: new Date().toISOString(),
+      trigger: "MANUAL_RETRY",
+    })
+    let queued: { id: string; requested_at: string } | null = null
+    if (current) {
+      const updated = await db.query<{ id: string; requested_at: string }>(
+        `
+          UPDATE public.delivery_outbox
+          SET payload = $2::jsonb, published_at = NULL, attempts = 0, requested_at = now()
+          WHERE id = $1::uuid
+          RETURNING id::text AS id, requested_at::text AS requested_at
+        `,
+        [current.id, payload]
+      )
+      queued = updated.rows[0] ?? null
+    } else {
+      const inserted = await db.query<{ id: string; requested_at: string }>(
+        `
+          INSERT INTO public.delivery_outbox (event_type, aggregate_id, payload)
+          VALUES ('DELIVERY.PRINT_REQUESTED',$1::uuid,$2::jsonb)
+          RETURNING id::text AS id, requested_at::text AS requested_at
+        `,
+        [params.bon_livraison_id, payload]
+      )
+      queued = inserted.rows[0] ?? null
+    }
+    if (!queued) throw new Error("Failed to enqueue delivery print retry")
+    await insertEvent(db, {
+      bon_livraison_id: params.bon_livraison_id,
+      event_type: "PRINT_RETRY_REQUESTED",
+      user_id: params.user_id,
+      new_values: { printing_status: "PENDING", previous_outbox_id: current?.id ?? null },
+    })
+    await repoInsertAuditLog({
+      user_id: params.user_id,
+      body: {
+        event_type: "ACTION",
+        action: "livraisons.print.retry",
+        page_key: "livraisons",
+        entity_type: "bon_livraison",
+        entity_id: params.bon_livraison_id,
+        path: `/api/v1/livraisons/${params.bon_livraison_id}/print/retry`,
+        client_session_id: null,
+        details: { previous_outbox_id: current?.id ?? null },
+      },
+      ip: null,
+      user_agent: null,
+      device_type: null,
+      os: null,
+      browser: null,
+      tx: db,
+    })
+    await db.query("COMMIT")
+    return {
+      bon_livraison_id: params.bon_livraison_id,
+      printing_status: "PENDING",
+      print_retry_available: true,
+      outbox_id: queued.id,
+      attempts: 0,
+      last_requested_at: queued.requested_at,
+    }
+  } catch (err) {
+    await db.query("ROLLBACK")
+    throw err
+  } finally {
+    db.release()
+  }
 }

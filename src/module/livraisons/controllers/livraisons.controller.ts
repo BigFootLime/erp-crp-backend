@@ -4,6 +4,8 @@ import {
   createLivraisonBodySchema,
   createLivraisonAllocationBodySchema,
   createLivraisonLineBodySchema,
+  correctPreparationStockBodySchema,
+  createLivraisonFromReservationsBodySchema,
   fromCommandeParamsSchema,
   listLivraisonsQuerySchema,
   livraisonIdParamsSchema,
@@ -13,11 +15,13 @@ import {
   livraisonPdfQuerySchema,
   livraisonStatusBodySchema,
   livraisonProofBodySchema,
-  shipLivraisonBodySchema,
+  anyShipLivraisonBodySchema,
+  preparationCartQuerySchema,
   confirmLivraisonPreparationBodySchema,
   resetLivraisonPreparationBodySchema,
   updateLivraisonBodySchema,
   updateLivraisonLineBodySchema,
+  verifyPreparationLotBodySchema,
 } from "../validators/livraisons.validators"
 import * as service from "../services/livraisons.service"
 import * as pdfService from "../services/pdf.service"
@@ -133,6 +137,89 @@ export const createLivraisonFromCommande: RequestHandler = async (req, res, next
     const out = await service.svcCreateLivraisonFromCommande(commandeId, userId)
 
     res.status(201).json(out)
+  } catch (e) {
+    next(e)
+  }
+}
+
+export const listPreparationCart: RequestHandler = async (req, res, next) => {
+  try {
+    getUserId(req)
+    res.json(await service.svcListPreparationCart(preparationCartQuerySchema.parse(req.query)))
+  } catch (e) {
+    next(e)
+  }
+}
+
+export const verifyPreparationLot: RequestHandler = async (req, res, next) => {
+  try {
+    const out = await service.svcVerifyPreparationLot(
+      verifyPreparationLotBodySchema.parse(req.body),
+      getUserId(req)
+    )
+    res.status(201).json(out)
+  } catch (e) {
+    next(e)
+  }
+}
+
+export const correctPreparationStock: RequestHandler = async (req, res, next) => {
+  try {
+    const out = await service.svcCorrectPreparationStock({
+      body: correctPreparationStockBodySchema.parse(req.body),
+      user_id: getUserId(req),
+      idempotency_key: getRequiredIdempotencyKey(req),
+    })
+    res.status(out.idempotent_replay ? 200 : 201).json(out)
+  } catch (e) {
+    next(e)
+  }
+}
+
+export const createLivraisonFromReservations: RequestHandler = async (req, res, next) => {
+  try {
+    const out = await service.svcCreateLivraisonFromReservations({
+      body: createLivraisonFromReservationsBodySchema.parse(req.body),
+      user_id: getUserId(req),
+      idempotency_key: getRequiredIdempotencyKey(req),
+    })
+    res.status(out.idempotent_replay ? 200 : 201).json(out)
+  } catch (e) {
+    next(e)
+  }
+}
+
+export const getLivraisonPreparationPreview: RequestHandler = async (req, res, next) => {
+  try {
+    getUserId(req)
+    const { id } = livraisonIdParamsSchema.parse(req.params)
+    const out = await service.svcGetLivraisonPreparationPreview(id)
+    if (!out) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
+    res.json(out)
+  } catch (e) {
+    next(e)
+  }
+}
+
+export const getLivraisonPrintStatus: RequestHandler = async (req, res, next) => {
+  try {
+    getUserId(req)
+    const { id } = livraisonIdParamsSchema.parse(req.params)
+    const out = await service.svcGetLivraisonPrintStatus(id)
+    if (!out) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
+    res.json(out)
+  } catch (e) {
+    next(e)
+  }
+}
+
+export const retryLivraisonPrint: RequestHandler = async (req, res, next) => {
+  try {
+    const { id } = livraisonIdParamsSchema.parse(req.params)
+    res.status(202).json(await service.svcRetryLivraisonPrint({
+      bon_livraison_id: id,
+      user_id: getUserId(req),
+    }))
   } catch (e) {
     next(e)
   }
@@ -314,7 +401,7 @@ export const shipLivraison: RequestHandler = async (req, res, next) => {
   try {
     const userId = getUserId(req)
     const { id } = livraisonIdParamsSchema.parse(req.params)
-    const body = shipLivraisonBodySchema.parse(req.body)
+    const body = anyShipLivraisonBodySchema.parse(req.body)
     const out = await service.svcShipLivraison(
       id,
       body,

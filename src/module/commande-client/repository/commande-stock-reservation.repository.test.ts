@@ -54,6 +54,9 @@ describe("reserveCommandeStockForLaterDelivery", () => {
           }],
         };
       }
+      if (text.includes("FROM public.commande_ligne_affaire_allocation")) {
+        return { rows: [{ id: 101, commande_ligne_id: 1 }] };
+      }
       if (text.includes("FROM public.stock_levels") && text.includes("FOR UPDATE")) {
         return { rows: [{ qty_total: 4, qty_reserved: 0, qty_depreciated: 0 }] };
       }
@@ -105,6 +108,9 @@ describe("reserveCommandeStockForLaterDelivery", () => {
             qty_available: 4,
           }],
         };
+      }
+      if (text.includes("FROM public.commande_ligne_affaire_allocation")) {
+        return { rows: [{ id: 101, commande_ligne_id: 1 }] };
       }
       if (text.includes("FROM public.lots")) {
         return { rows: [{ lot_code: "LOT-NEW", lot_status: "LIBERE", article_unit: "U" }] };

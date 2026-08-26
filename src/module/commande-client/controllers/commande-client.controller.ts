@@ -16,6 +16,7 @@ import {
   generateAffairesFromCommandeSVC,
   generateAffairesFromOrderSVC,
   analyzeCommandeStockSVC,
+  getCommandeStockReceiptsSVC,
   getCommandeDocumentFileMetaSVC,
   getCommandeSVC,
   getCommandeWorkflowSVC,
@@ -314,6 +315,19 @@ export const analyzeCommandeStock: RequestHandler = async (req, res, next) => {
       res.status(404).json({ error: "Not found" });
       return;
     }
+    res.status(200).json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /api/v1/commandes/:id/stock-receipts
+// Read-only aggregation: it intentionally exposes only output lots already
+// persisted by OF receipts and active reservation quantities.
+export const getCommandeStockReceipts: RequestHandler = async (req, res, next) => {
+  try {
+    getUserId(req);
+    const out = await getCommandeStockReceiptsSVC(routeParam(req, "id"));
     res.status(200).json(out);
   } catch (err) {
     next(err);

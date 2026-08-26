@@ -162,7 +162,7 @@ export const createLivraisonAllocationBodySchema = z
 
 export type CreateLivraisonAllocationBodyDTO = z.infer<typeof createLivraisonAllocationBodySchema>
 
-export const shipLivraisonBodySchema = z
+export const legacyShipLivraisonBodySchema = z
   .object({
     expected_version: z.coerce.number().int().positive(),
     preview_hash: z.string().regex(/^[A-Fa-f0-9]{64}$/),
@@ -170,7 +170,7 @@ export const shipLivraisonBodySchema = z
   })
   .strict()
 
-export type ShipLivraisonBodyDTO = z.infer<typeof shipLivraisonBodySchema>
+export type LegacyShipLivraisonBodyDTO = z.infer<typeof legacyShipLivraisonBodySchema>
 
 export const confirmLivraisonPreparationBodySchema = z
   .object({
@@ -217,3 +217,85 @@ export const livraisonProofBodySchema = z
   .strict()
 
 export type LivraisonProofBodyDTO = z.infer<typeof livraisonProofBodySchema>
+
+/* -------------------------------------------------------------------------- */
+/* Reservation-driven delivery preparation                                    */
+/* -------------------------------------------------------------------------- */
+
+export const preparationCartQuerySchema = z.object({
+  commande_id: z.coerce.number().int().positive().optional(),
+  affaire_id: z.coerce.number().int().positive().optional(),
+  bon_livraison_id: z.string().uuid().optional(),
+  page: z.coerce.number().int().positive().optional().default(1),
+  pageSize: z.coerce.number().int().positive().max(200).optional().default(100),
+})
+export type PreparationCartQueryDTO = z.infer<typeof preparationCartQuerySchema>
+
+export const verifyPreparationLotBodySchema = z
+  .object({
+    reservation_id: z.string().uuid(),
+    qty: z.coerce.number().positive(),
+    scanned_lot_code: z.string().trim().min(1).max(160),
+    of_number: z.string().trim().min(1).max(80).optional().nullable(),
+    mp_reference: z.string().trim().min(1).max(300).optional().nullable(),
+    tr_reference: z.string().trim().min(1).max(300).optional().nullable(),
+  })
+  .strict()
+export type VerifyPreparationLotBodyDTO = z.infer<typeof verifyPreparationLotBodySchema>
+
+export const correctPreparationStockBodySchema = z
+  .object({
+    reservation_id: z.string().uuid(),
+    actual_qty: z.coerce.number().min(0).optional(),
+    reason: z.string().trim().min(3).max(2000),
+    of_number: z.string().trim().min(1).max(80).optional(),
+    mp_reference: z.string().trim().min(1).max(300).optional().nullable(),
+    tr_reference: z.string().trim().min(1).max(300).optional().nullable(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (
+      value.actual_qty === undefined &&
+      value.of_number === undefined &&
+      value.mp_reference === undefined &&
+      value.tr_reference === undefined
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "actual_qty or an OF/MP/TR correction is required",
+      })
+    }
+  })
+export type CorrectPreparationStockBodyDTO = z.infer<typeof correctPreparationStockBodySchema>
+
+export const createLivraisonFromReservationsBodySchema = z
+  .object({
+    items: z
+      .array(
+        z
+          .object({
+            reservation_id: z.string().uuid(),
+            qty: z.coerce.number().positive(),
+          })
+          .strict()
+      )
+      .min(1)
+      .max(500),
+    commentaire_interne: z.string().trim().min(1).max(5000).optional().nullable(),
+  })
+  .strict()
+export type CreateLivraisonFromReservationsBodyDTO = z.infer<typeof createLivraisonFromReservationsBodySchema>
+
+export const shipLivraisonBodySchema = z
+  .object({
+    expected_shipping_version: z.coerce.number().int().positive(),
+    preview_hash: z.string().regex(/^[A-Fa-f0-9]{64}$/),
+  })
+  .strict()
+export type ShipLivraisonBodyDTO = z.infer<typeof shipLivraisonBodySchema>
+
+export const anyShipLivraisonBodySchema = z.union([
+  shipLivraisonBodySchema,
+  legacyShipLivraisonBodySchema,
+])
+export type AnyShipLivraisonBodyDTO = z.infer<typeof anyShipLivraisonBodySchema>

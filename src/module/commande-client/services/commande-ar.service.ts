@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { HttpError } from "../../../utils/httpError";
 import { sendTransactionalEmail, type ResendSendResult } from "../../../shared/email/resend.service";
 import { readIssuerParty } from "../../../shared/documents/issuer-identity.repository";
@@ -12,17 +13,18 @@ import type {
   CommandeArDraft,
   CommandeArRecipientSuggestion,
   CommandeArSendResult,
+  CommandeArVersionsResult,
 } from "../types/commande-ar.types";
 import type { SendCommandeArBodyDTO } from "../validators/commande-ar.validators";
 import {
   buildCommandeArRecipientSuggestions,
-  repoAbortCommandeArSendClaim,
   repoAuthorizeCommandeArGeneration,
   repoClaimCommandeArSend,
   repoCreateCommandeArDraft,
   repoFindCommandeArOfficialArchiveId,
   repoFinalizeCommandeArSend,
   repoLoadCommandeArGenerationData,
+  repoListCommandeArDrafts,
   repoMarkCommandeArFailed,
   repoResolveCommandeArOfficialArchive,
 } from "../repository/commande-ar.repository";
@@ -78,6 +80,69 @@ function escapeHtml(text: string): string {
     .replace(/>/g, "&gt;")
     .replace(/\"/g, "&quot;")
     .replace(/'/g, "&#039;");
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(",")}}`;
+}
+
+export function sha256Canonical(value: unknown): string {
+  return crypto.createHash("sha256").update(canonicalJson(value)).digest("hex");
+}
+
+export function renderCommandeArEmailHtml(text: string): string {
+  const paragraphs = text
+    .split(/\n{2,}/)
+    .map((block) => `<p style="margin:0 0 12px 0;line-height:1.5;">${escapeHtml(block).replace(/\n/g, "<br />")}</p>`)
+    .join("");
+  return `
+    <div style="background:#f6f7fb;padding:24px 12px;font-family:Arial,Helvetica,sans-serif;color:#0f172a;">
+      <div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:14px;padding:24px;">
+        <div style="font-size:18px;font-weight:800;margin-bottom:14px;">Accusé de réception</div>
+        ${paragraphs}
+      </div>
+    </div>
+  `.trim();
+}
+
+type CommandeArEmailContact = {
+  contact_id: string;
+  civility: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  email: string | null;
+};
+
+export function buildCommandeArEmailContent(params: {
+  numero: string;
+  customer_reference: string | null;
+  reference: string;
+  contact: CommandeArEmailContact | null;
+  custom_message?: string | null;
+}): { subject: string; text: string; html: string } {
+  const contactName = params.contact
+    ? [params.contact.civility, params.contact.first_name, params.contact.last_name].filter((part) => part?.trim()).join(" ").trim()
+    : "";
+  const greeting = contactName || "Madame, Monsieur";
+  const customerReference = params.customer_reference?.trim() || params.numero;
+  const lines = [
+    `Bonjour ${greeting},`,
+    "",
+    `Nous vous confirmons la prise en compte de votre commande ${customerReference}, enregistrée dans CERP sous le numéro ${params.numero}.`,
+    "",
+    `Veuillez trouver en pièce jointe notre accusé de réception ${params.reference}.`,
+  ];
+  if (params.custom_message?.trim()) lines.push("", params.custom_message.trim());
+  lines.push("", "Cordialement,", "Croix Rousse Précision");
+  const text = lines.join("\n");
+  return {
+    subject: `Accusé de réception de votre commande ${params.numero} — ${params.reference}`,
+    text,
+    html: renderCommandeArEmailHtml(text),
+  };
 }
 
 function addressLines(address: CommandeArAddress): string[] {
@@ -147,12 +212,13 @@ async function waitForCommandeArOfficialArchiveId(
 }
 
 export async function buildCommandeArPdfBuffer(params: {
+  reference?: string;
   draftNumber: string;
   /** Customer order reference; distinct from the acknowledgement number when configured. */
   orderNumber?: string;
   companyName: string | null;
   dateCommande: string;
-  generatedAt: Date;
+  generatedAt?: Date;
   /** Persisted authoritative archive edition (not PDF renderer/template version). */
   documentVersion?: number;
   statut: string | null;
@@ -179,10 +245,13 @@ export async function buildCommandeArPdfBuffer(params: {
    * doit porter l'identite legale de son emetteur au meme titre que la facture et le bon de
    * livraison (art. R123-237 C. com.). Il ne portait aucune mention.
    */
-  issuer: LegalParty;
+  issuer?: LegalParty;
 }): Promise<Buffer> {
   const clientName = params.companyName?.trim() || "Client";
   const orderNumber = params.orderNumber?.trim() || params.draftNumber;
+  const reference = params.reference?.trim() || params.draftNumber;
+  const generatedAt = params.generatedAt ?? new Date();
+  const issuer = params.issuer ?? await readIssuerParty({ at: generatedAt.toISOString().slice(0, 10) });
   const draft = params.statut?.trim().toUpperCase() === "BROUILLON";
   const rows: CerpLineRow[] = params.lines.map((line) => ({
     cells: {
@@ -201,19 +270,19 @@ export async function buildCommandeArPdfBuffer(params: {
     {
       documentType: "Accusé de réception",
       name: clientName,
-      code: params.draftNumber,
+      code: reference,
       subtitle: `Version ${params.documentVersion ?? 1} · Commande ${orderNumber}`,
       status: params.statut ?? "PLANIFIEE",
       flag: draft ? "INTERNE / BROUILLON" : null,
       watermark: draft ? "INTERNE / BROUILLON" : null,
       monogramName: clientName,
-      generatedAt: formatDateFR(params.generatedAt.toISOString()),
-      title: `Accusé de réception ${params.draftNumber}`,
+      generatedAt: formatDateFR(generatedAt.toISOString()),
+      title: `Accusé de réception ${reference}`,
       subject: draft ? "Instantané interne CERP — brouillon" : "Accusé de réception de commande CERP",
       footerNote: draft ? "Instantané interne GED — non opposable" : null,
-      legalIdentity: issuerIdentityLine(params.issuer),
-      legalMentions: issuerLegalMentions(params.issuer),
-      creationDate: params.generatedAt,
+      legalIdentity: issuerIdentityLine(issuer),
+      legalMentions: issuerLegalMentions(issuer),
+      creationDate: generatedAt,
     },
     (ctx) => {
       ctx.legalStrip([
@@ -316,11 +385,6 @@ export async function svcGenerateCommandeAr(params: {
       throw new HttpError(404, "COMMANDE_NOT_FOUND", "Commande introuvable");
     }
     const recipientSuggestions = buildCommandeArRecipientSuggestions(data);
-    const subject = subjectForCommande(data.header.numero);
-    const bodyText = bodyTextForCommande({
-      numero: data.header.numero,
-      companyName: data.header.client_company_name,
-    });
 
     const generatedAt = new Date();
     // An acknowledgement is fixed by the generated PDF. It carries the legal version in
@@ -335,49 +399,73 @@ export async function svcGenerateCommandeAr(params: {
       delivery_address: { name: data.header.deliv_name, street: data.header.deliv_street, house_number: data.header.deliv_house_number, postal_code: data.header.deliv_postal_code, city: data.header.deliv_city, country: data.header.deliv_country },
       lines: data.lines.map((line) => ({ designation: line.designation, code_piece: line.code_piece, quantite: String(line.quantite), unite: line.unite, prix_unitaire_ht: String(line.prix_unitaire_ht), taux_tva: line.taux_tva == null ? null : String(line.taux_tva), total_ttc: String(line.total_ttc) })), issuer,
     };
-    const pdfBuffer = await buildCommandeArPdfBuffer({
-      issuer,
-      draftNumber: data.header.numero,
-      orderNumber: data.header.numero,
-      companyName: data.header.client_company_name,
-      dateCommande: data.header.date_commande,
-      generatedAt,
-      statut: data.header.statut,
-      totalHt: data.header.total_ht,
-      totalTtc: data.header.total_ttc,
-      commentaire: data.header.commentaire,
-      clientEmail: data.header.client_email,
-      clientPhone: data.header.client_phone,
-      billAddress: {
-        name: data.header.bill_name,
-        street: data.header.bill_street,
-        house_number: data.header.bill_house_number,
-        postal_code: data.header.bill_postal_code,
-        city: data.header.bill_city,
-        country: data.header.bill_country,
-      },
-      deliveryAddress: {
-        name: data.header.deliv_name,
-        street: data.header.deliv_street,
-        house_number: data.header.deliv_house_number,
-        postal_code: data.header.deliv_postal_code,
-        city: data.header.deliv_city,
-        country: data.header.deliv_country,
+    const contentSnapshot = {
+      schema_version: 1,
+      header: {
+        numero: data.header.numero,
+        customer_reference: data.header.customer_reference,
+        statut: data.header.statut,
+        updated_at: data.header.updated_at,
+        date_commande: data.header.date_commande,
+        commentaire: data.header.commentaire,
+        total_ht: data.header.total_ht,
+        total_ttc: data.header.total_ttc,
+        client_company_name: data.header.client_company_name,
+        client_email: data.header.client_email,
+        client_phone: data.header.client_phone,
+        bill_address: officialSnapshot.bill_address,
+        delivery_address: officialSnapshot.delivery_address,
       },
       lines: data.lines,
-    });
-
-    const timestamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-");
-    const documentName = `AR_${data.header.numero}_${timestamp}.pdf`;
+      allocations: data.allocations,
+    };
+    const contentFingerprint = sha256Canonical(contentSnapshot);
+    const defaultContact = recipientSuggestions.filter((suggestion) => suggestion.is_default && suggestion.contact_id).length === 1
+      ? data.contacts.find((contact) => contact.contact_id === recipientSuggestions.find((suggestion) => suggestion.is_default)?.contact_id) ?? null
+      : null;
     const draft = await repoCreateCommandeArDraft({
       commande_id: params.commande_id,
       user_id: params.user_id,
       user_role: params.user_role,
-      document_name: documentName,
-      pdf_buffer: pdfBuffer,
-      subject,
-      body_text: bodyText,
+      document_name: `AR-${data.header.numero}.pdf`,
+      pdf_buffer: Buffer.alloc(0),
+      pdf_factory: ({ reference, version_number }) => buildCommandeArPdfBuffer({
+        reference,
+        issuer,
+        draftNumber: data.header.numero,
+        orderNumber: data.header.customer_reference ?? data.header.numero,
+        companyName: data.header.client_company_name,
+        dateCommande: data.header.date_commande,
+        generatedAt,
+        documentVersion: version_number,
+        statut: data.header.statut,
+        totalHt: data.header.total_ht,
+        totalTtc: data.header.total_ttc,
+        commentaire: data.header.commentaire,
+        clientEmail: data.header.client_email,
+        clientPhone: data.header.client_phone,
+        billAddress: officialSnapshot.bill_address,
+        deliveryAddress: officialSnapshot.delivery_address,
+        lines: data.lines,
+      }),
+      subject: "",
+      body_text: "",
+      subject_factory: ({ reference }) => buildCommandeArEmailContent({
+        numero: data.header.numero,
+        customer_reference: data.header.customer_reference,
+        reference,
+        contact: defaultContact,
+      }).subject,
+      body_text_factory: ({ reference }) => buildCommandeArEmailContent({
+        numero: data.header.numero,
+        customer_reference: data.header.customer_reference,
+        reference,
+        contact: defaultContact,
+      }).text,
       recipient_suggestions: recipientSuggestions,
+      content_fingerprint: contentFingerprint,
+      content_snapshot: contentSnapshot,
+      force_new_version: Boolean(params.reissue_reason?.trim()),
       official_source_snapshot: officialSnapshot,
       official_request_idempotency_key: params.idempotency_key ?? undefined,
       official_expected_source_revision: params.source_revision ?? undefined,
@@ -389,13 +477,18 @@ export async function svcGenerateCommandeAr(params: {
       commande_id: params.commande_id,
       document_id: draft.document_id,
       document_name: draft.document_name,
+      reference: draft.reference,
+      series_number: draft.series_number,
+      version_number: draft.version_number,
       subject: draft.subject,
-      default_message: draft.body_text?.trim() || bodyText,
+      default_message: draft.body_text?.trim() || "",
       generated_at: draft.generated_at,
       generated_by: draft.generated_by,
       status: draft.status,
       sent_at: draft.sent_at,
       preview_path: draft.preview_path,
+      is_obsolete: false,
+      reused_draft: false,
       recipient_suggestions: recipientSuggestions,
     };
   } finally {
@@ -406,30 +499,31 @@ export async function svcGenerateCommandeAr(params: {
 export async function svcSendCommandeAr(params: {
   commande_id: number;
   user_id: number;
-  user_role: string | null | undefined;
+  user_role?: string | null;
   body: SendCommandeArBodyDTO;
 }): Promise<CommandeArSendResult> {
+  const recipientEmails = params.body.recipient_emails.map((email) => email.trim().toLowerCase());
+  const recipientContactIds = [...params.body.recipient_contact_ids];
+  const payloadFingerprint = sha256Canonical({
+    recipient_emails: [...recipientEmails].sort(),
+    recipient_contact_ids: [...recipientContactIds].sort(),
+    email_body: params.body.email_body?.trim() || null,
+    message: params.body.message?.trim() || null,
+  });
   const claimResult = await repoClaimCommandeArSend({
     commande_id: params.commande_id,
     ar_id: params.body.ar_id,
     user_id: params.user_id,
     user_role: params.user_role,
+    recipient_emails: recipientEmails,
+    recipient_contact_ids: recipientContactIds,
+    idempotency_key: params.body.idempotency_key ?? null,
+    payload_fingerprint: payloadFingerprint,
   });
-  if (claimResult.kind === "replay") {
-    return {
-      ar_id: claimResult.draft.ar_id,
-      commande_id: params.commande_id,
-      document_id: claimResult.draft.document_id,
-      status: "AR_ENVOYE",
-      sent_at: claimResult.draft.sent_at ?? new Date().toISOString(),
-      recipient_emails: claimResult.draft.recipient_emails,
-      email_provider_id: claimResult.draft.email_provider_id,
-    };
-  }
+  if (claimResult.kind === "already_sent") return claimResult.result;
 
   const claim = claimResult;
   const draft = claim.draft;
-  let claimOpen = true;
   try {
     // The supplier/customer-facing email must attach the exact archived GED
     // bytes, never a mutable legacy working-file copy.
@@ -444,22 +538,40 @@ export async function svcSendCommandeAr(params: {
       documentKind: ACKNOWLEDGEMENT_DOCUMENT_KIND,
       actorUserId: params.user_id, eventType: "AUTHORITATIVE_PDF_SENT",
     });
+    const archivedHash = crypto.createHash("sha256").update(archived.bytes).digest("hex");
+    if (!draft.pdf_sha256 || archivedHash !== draft.pdf_sha256) {
+      throw new HttpError(409, "COMMANDE_AR_PDF_INTEGRITY_ERROR", "Le PDF officiel archivé ne correspond pas à la version préparée.");
+    }
 
-    const baseText = draft.body_text?.trim() || `Veuillez trouver ci-joint l'accuse de reception de la commande.`;
+    const snapshot = draft.content_snapshot as { header?: { numero?: unknown; customer_reference?: unknown } } | null;
+    const numero = typeof snapshot?.header?.numero === "string" ? snapshot.header.numero.trim() : "";
+    if (!numero) {
+      throw new HttpError(409, "COMMANDE_AR_SNAPSHOT_INVALID", "Le contenu figé de cet accusé de réception est incomplet.");
+    }
+    const customerReference = typeof snapshot?.header?.customer_reference === "string"
+      ? snapshot.header.customer_reference
+      : null;
+    const selectedContact = claim.contacts.length === 1 ? claim.contacts[0] : null;
     const emailBodyOverride = params.body.email_body?.trim() || null;
-    // `email_body` is the complete operator-reviewed message displayed by the
-    // AR preparation dialog. `message` remains a backwards-compatible extra
-    // note for older callers that never received the editable default body.
-    const emailBody = emailBodyOverride ?? baseText;
-    const legacyExtraMessage = emailBodyOverride ? null : params.body.message?.trim() || null;
-    const fullText = legacyExtraMessage ? `${emailBody}\n\n${legacyExtraMessage}` : emailBody;
+    const generatedContent = buildCommandeArEmailContent({
+      numero,
+      customer_reference: customerReference,
+      reference: draft.reference,
+      contact: selectedContact,
+      custom_message: emailBodyOverride ? null : params.body.message,
+    });
+    // `email_body` is the complete operator-reviewed text exposed by the
+    // preparation dialog. Older callers use `message`, which is inserted in
+    // the canonical versioned content before the signature.
+    const sentText = emailBodyOverride ?? generatedContent.text;
+    const sentHtml = emailBodyOverride ? renderCommandeArEmailHtml(emailBodyOverride) : generatedContent.html;
 
     const emailResult = await sendTransactionalEmail({
-      to: params.body.recipient_emails,
-      subject: draft.subject,
-      text: fullText,
-      html: buildEmailHtml(emailBody, legacyExtraMessage),
-      idempotencyKey: `commande-ar:${params.body.ar_id}`,
+      to: recipientEmails,
+      subject: generatedContent.subject,
+      text: sentText,
+      html: sentHtml,
+      idempotencyKey: claim.idempotency_key,
       attachments: [
         {
           filename: archived.filename,
@@ -478,33 +590,110 @@ export async function svcSendCommandeAr(params: {
       } else if (isResendSendError(emailResult)) {
         message = emailResult.error;
       }
-      claimOpen = false;
-      await repoMarkCommandeArFailed({
-        commande_id: params.commande_id,
-        ar_id: params.body.ar_id,
-        error_message: message,
-        claim,
-      });
       throw new HttpError(statusCode, "COMMANDE_AR_SEND_FAILED", message);
     }
 
-    claimOpen = false;
     const finalized = await repoFinalizeCommandeArSend({
-      claim,
       commande_id: params.commande_id,
       ar_id: params.body.ar_id,
+      send_lock_token: claim.lock_token,
       sent_by: params.user_id,
-      recipient_emails: params.body.recipient_emails,
-      recipient_contact_ids: params.body.recipient_contact_ids,
+      recipient_emails: recipientEmails,
+      recipient_contact_ids: recipientContactIds,
       email_provider_id: emailResult.id ?? null,
-      commentaire: `AR envoyé à ${params.body.recipient_emails.join(", ")}`,
+      provider_name: "resend",
+      sent_email_subject: generatedContent.subject,
+      sent_email_text: sentText,
+      sent_email_html: sentHtml,
+      commentaire: `AR envoyé à ${recipientEmails.join(", ")}`,
     });
 
     return finalized.result;
   } catch (err) {
-    if (claimOpen) await repoAbortCommandeArSendClaim(claim);
+    const errorMessage = err instanceof Error ? err.message : "Échec de l'envoi de l'AR";
+    await Promise.resolve(repoMarkCommandeArFailed({
+      commande_id: params.commande_id,
+      ar_id: params.body.ar_id,
+      send_lock_token: claim.lock_token,
+      error_message: errorMessage,
+      user_id: params.user_id,
+      provider_name: "resend",
+    })).catch(() => undefined);
     throw err;
   }
+}
+
+export async function svcListCommandeArVersions(params: {
+  commande_id: number;
+  user_id: number;
+  user_role?: string | null;
+}): Promise<CommandeArVersionsResult> {
+  await repoAuthorizeCommandeArGeneration({
+    tx: pool,
+    commande_id: params.commande_id,
+    user_id: params.user_id,
+    user_role: params.user_role,
+  });
+  const data = await repoLoadCommandeArGenerationData(pool, params.commande_id);
+  if (!data) throw new HttpError(404, "COMMANDE_NOT_FOUND", "Commande introuvable");
+
+  const contentSnapshot = {
+    schema_version: 1,
+    header: {
+      numero: data.header.numero,
+      customer_reference: data.header.customer_reference,
+      statut: data.header.statut,
+      updated_at: data.header.updated_at,
+      date_commande: data.header.date_commande,
+      commentaire: data.header.commentaire,
+      total_ht: data.header.total_ht,
+      total_ttc: data.header.total_ttc,
+      client_company_name: data.header.client_company_name,
+      client_email: data.header.client_email,
+      client_phone: data.header.client_phone,
+      bill_address: {
+        name: data.header.bill_name,
+        street: data.header.bill_street,
+        house_number: data.header.bill_house_number,
+        postal_code: data.header.bill_postal_code,
+        city: data.header.bill_city,
+        country: data.header.bill_country,
+      },
+      delivery_address: {
+        name: data.header.deliv_name,
+        street: data.header.deliv_street,
+        house_number: data.header.deliv_house_number,
+        postal_code: data.header.deliv_postal_code,
+        city: data.header.deliv_city,
+        country: data.header.deliv_country,
+      },
+    },
+    lines: data.lines,
+    allocations: data.allocations,
+  };
+  const currentFingerprint = sha256Canonical(contentSnapshot);
+  const recipientSuggestions = buildCommandeArRecipientSuggestions(data);
+  const versions = (await repoListCommandeArDrafts({ commande_id: params.commande_id })).map((draft) => ({
+    ar_id: draft.ar_id,
+    commande_id: draft.commande_id,
+    document_id: draft.document_id,
+    document_name: draft.document_name,
+    reference: draft.reference,
+    series_number: draft.series_number,
+    version_number: draft.version_number,
+    subject: draft.subject,
+    default_message: draft.body_text?.trim() || "",
+    generated_at: draft.generated_at,
+    generated_by: draft.generated_by,
+    status: draft.status,
+    sent_at: draft.sent_at,
+    preview_path: draft.preview_path,
+    is_obsolete: draft.content_fingerprint !== currentFingerprint,
+    reused_draft: false,
+    recipient_suggestions: recipientSuggestions,
+  }));
+  const current = versions.find((version) => version.status === "GENERATED" && !version.is_obsolete) ?? versions[0] ?? null;
+  return { current, versions };
 }
 
 export async function svcCreateCommandeArOfficial(params: {

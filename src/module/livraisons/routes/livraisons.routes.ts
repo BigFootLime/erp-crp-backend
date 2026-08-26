@@ -13,18 +13,23 @@ import {
   addLivraisonLineAllocation,
   createLivraison,
   createLivraisonFromCommande,
+  createLivraisonFromReservations,
+  correctPreparationStock,
   createLivraisonProof,
   deleteLivraisonDocument,
   deleteLivraisonLine,
   deleteLivraisonLineAllocation,
   generateLivraisonPdf,
   getLivraison,
+  getLivraisonPrintStatus,
   getLivraisonPdfAvailability,
   getLivraisonShipmentPreview,
   getLivraisonPreparation,
   getLivraisonDocumentFile,
   getLivraisonPdf,
   listLivraisons,
+  listPreparationCart,
+  retryLivraisonPrint,
   shipLivraison,
   confirmLivraisonPreparation,
   resetLivraisonPreparation,
@@ -34,6 +39,7 @@ import {
   getLivraisonCreationSnapshot, previewLivraisonCreationSnapshot, downloadLivraisonCreationSnapshot, printLivraisonCreationSnapshot,
   getShippedLivraisonOfficialDocument, previewShippedLivraisonOfficialDocument, downloadShippedLivraisonOfficialDocument, printShippedLivraisonOfficialDocument,
   uploadLivraisonDocuments,
+  verifyPreparationLot,
   
 } from "../controllers/livraisons.controller"
 
@@ -87,6 +93,10 @@ const requireStatusCapability: RequestHandler = (req, _res, next) => {
   requireLivraisonCapability(capability)(req, _res, next)
 }
 
+// A physical-stock correction is intentionally narrower than ordinary BL
+// preparation and stays behind the existing allocation capability.
+const requireStockCorrectionPermission = requireLivraisonCapability("allocate")
+
 router.get("/", requireLivraisonCapability("read"), listLivraisons)
 router.post("/", requireLivraisonCapability("prepare"), createLivraison)
 router.post(
@@ -94,8 +104,30 @@ router.post(
   requireLivraisonCapability("prepare"),
   createLivraisonFromCommande
 )
+router.get(
+  "/preparation-cart",
+  requireLivraisonCapability("read"),
+  listPreparationCart
+)
+router.post(
+  "/preparation-cart/verify-lot",
+  requireLivraisonCapability("prepare"),
+  verifyPreparationLot
+)
+router.post(
+  "/preparation-cart/correct",
+  requireStockCorrectionPermission,
+  correctPreparationStock
+)
+router.post(
+  "/from-reservations",
+  requireLivraisonCapability("prepare"),
+  createLivraisonFromReservations
+)
 
 router.get("/:id", requireLivraisonCapability("read"), getLivraison)
+router.get("/:id/print-status", requireLivraisonCapability("read"), getLivraisonPrintStatus)
+router.post("/:id/print/retry", requireLivraisonCapability("documents_manage"), retryLivraisonPrint)
 router.get("/:id/creation-snapshot", requireLivraisonCapability("read"), getLivraisonCreationSnapshot)
 router.get("/:id/creation-snapshot/:documentId/preview", requireLivraisonCapability("read"), previewLivraisonCreationSnapshot)
 router.get("/:id/creation-snapshot/:documentId/download", requireLivraisonCapability("read"), downloadLivraisonCreationSnapshot)

@@ -36,6 +36,7 @@ import {
   getStockAnalytics,
   getStockInventorySession,
   getStockArticle,
+  listAvailableStockArticleLots,
   getStockArticleCreationSnapshot,
   listStockArticleCategories,
   listStockUnits,
@@ -164,6 +165,7 @@ router.get("/articles/:id/creation-snapshot/:documentId/preview", requireStockCa
 router.get("/articles/:id/creation-snapshot/:documentId/download", requireStockCapability("read"), downloadStockArticleCreationSnapshot);
 router.post("/articles/:id/creation-snapshot/:documentId/print-intents", requireStockCapability("read"), printStockArticleCreationSnapshot);
 router.get("/articles/:id", requireStockCapability("read"), getStockArticle);
+router.get("/articles/:id/available-lots", requireStockCapability("read"), listAvailableStockArticleLots);
 router.patch("/articles/:id", requireArticleWrite, updateStockArticle);
 router.post("/articles/:id/validate", requireArticleApprove, validateStockArticle);
 router.post("/articles/:id/archive", requireArticleArchive, archiveStockArticle);

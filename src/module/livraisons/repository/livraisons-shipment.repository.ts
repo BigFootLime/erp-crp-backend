@@ -26,7 +26,7 @@ import type {
 } from "../types/livraisons.types"
 import type {
   LivraisonProofBodyDTO,
-  ShipLivraisonBodyDTO,
+  LegacyShipLivraisonBodyDTO,
 } from "../validators/livraisons.validators"
 import {
   deliveryLotIsConsumable,
@@ -971,7 +971,7 @@ export async function releaseLivraisonReservationsInTransaction(
 
 export async function repoShipLivraison(
   bonLivraisonId: string,
-  body: ShipLivraisonBodyDTO,
+  body: LegacyShipLivraisonBodyDTO,
   userId: number,
   idempotencyKeyRaw: string
 ): Promise<BonLivraisonShipResult> {

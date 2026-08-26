@@ -4,6 +4,11 @@ export const generateCommandeArSchema = z.object({
   params: z.object({
     id: z.string().regex(/^\d+$/, "id must be an integer"),
   }),
+  body: z
+    .object({ force_new: z.boolean().optional().default(false) })
+    .strict()
+    .optional()
+    .default({ force_new: false }),
 });
 
 export const sendCommandeArSchema = z.object({
@@ -12,10 +17,16 @@ export const sendCommandeArSchema = z.object({
   }),
   body: z.object({
     ar_id: z.string().uuid(),
-    recipient_emails: z.array(z.string().email()).min(1),
-    recipient_contact_ids: z.array(z.string().uuid()).optional().default([]),
+    recipient_emails: z.array(z.string().email()).min(1).superRefine((values, ctx) => {
+      const normalized = values.map((value) => value.trim().toLowerCase());
+      if (new Set(normalized).size !== normalized.length) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Duplicate recipient email" });
+    }),
+    recipient_contact_ids: z.array(z.string().uuid()).optional().default([]).superRefine((values, ctx) => {
+      if (new Set(values).size !== values.length) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Duplicate recipient contact" });
+    }),
     email_body: z.string().trim().min(1).max(20000).optional().nullable(),
     message: z.string().trim().max(20000).optional().nullable(),
+    idempotency_key: z.string().trim().min(8).max(200).optional().nullable(),
   }),
 });
 

@@ -26,6 +26,7 @@ import {
   listAnalyticsQuerySchema,
   listInventorySessionsQuerySchema,
   listArticlesQuerySchema,
+  listAvailableArticleLotsQuerySchema,
   similarArticlesQuerySchema,
   listArticleFamiliesQuerySchema,
   listMatiereEtatsQuerySchema,
@@ -131,6 +132,7 @@ import {
   getStockMovementSVC,
   listStockArticleDocumentsSVC,
   listStockArticlesSVC,
+  listAvailableArticleLotsSVC,
   exportStockArticlesSVC,
   findSimilarStockArticlesSVC,
   listStockBalancesSVC,
@@ -206,7 +208,7 @@ export const createHistoricalImport: RequestHandler = async (req, res, next) => 
   try {
     const body: HistoricalImportBodyDTO = historicalImportSchema.parse({ body: req.body }).body;
     const out = await createHistoricalImportSVC(body, buildAuditContext(req), getRequiredIdempotencyKey(req));
-    res.status(201).json(out);
+    res.status(out.replayed ? 200 : 201).json(out);
   } catch (err) {
     next(err);
   }
@@ -606,6 +608,24 @@ export const getStockArticle: RequestHandler = async (req, res, next) => {
   try {
     const { id } = idParamSchema.parse({ params: req.params }).params;
     const out = await getStockArticleSVC(id, includeArticleCosts(req));
+    if (!out) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.json(out);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const listAvailableStockArticleLots: RequestHandler = async (req, res, next) => {
+  try {
+    const parsed = listAvailableArticleLotsQuerySchema.safeParse({ params: req.params, query: req.query });
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues?.[0]?.message ?? "Invalid query" });
+      return;
+    }
+    const out = await listAvailableArticleLotsSVC(parsed.data.params.id, parsed.data.query);
     if (!out) {
       res.status(404).json({ error: "Not found" });
       return;

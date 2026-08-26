@@ -32,6 +32,8 @@ export type StockArticleCategoryOption = {
   stock_managed_default: boolean;
   piece_technique_required: boolean;
   commande_client_selectable: boolean;
+  is_active: boolean;
+  sort_order: number;
 };
 
 export type StockArticleFamily = {
@@ -188,8 +190,27 @@ export type StockArticleListItem = {
   qty_available: number;
   qty_reserved: number;
   qty_total: number;
+  available_lots_count: number;
+  plan_reference: string | null;
+  client_code: string | null;
   locations_count: number;
   updated_at: string;
+  created_at: string;
+};
+
+export type StockAvailableLotItem = {
+  lot_id: string;
+  source_scope: "OLD" | "NEW";
+  lot_code: string;
+  qty_total: number;
+  qty_reserved: number;
+  qty_available: number;
+  magasin_code: string | null;
+  emplacement_code: string | null;
+  of_number: string | null;
+  mp_reference: string | null;
+  tr_reference: string | null;
+  fifo_received_at: string | null;
   created_at: string;
 };
 

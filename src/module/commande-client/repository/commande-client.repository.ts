@@ -2450,6 +2450,90 @@ export async function repoRunCommandeWorkflowAction(
   });
 }
 
+/** Read model for the command "Mise au stock et réservation" tab. */
+export async function repoGetCommandeStockReceipts(id: string) {
+  const commandeId = toInt(id, "commande_id");
+  const res = await pool.query<{
+    of_id: number;
+    of_number: string;
+    article_id: string | null;
+    article_reference: string | null;
+    qty_launched: number;
+    qty_good_produced: number;
+    qty_stocked: number;
+    output_lots: unknown;
+    qty_reserved_for_affaire: number;
+    qty_expected: number;
+    operation_status: string;
+    affaire_id: number | null;
+    affaire_reference: string | null;
+  }>(
+    `
+      SELECT
+        ofa.id::bigint::int AS of_id,
+        ofa.numero AS of_number,
+        ofa.article_id::text AS article_id,
+        COALESCE(pt.code_piece, art.code) AS article_reference,
+        ofa.quantite_lancee::float8 AS qty_launched,
+        ofa.quantite_bonne::float8 AS qty_good_produced,
+        COALESCE(outputs.qty_stocked, 0)::float8 AS qty_stocked,
+        COALESCE(outputs.output_lots, '[]'::jsonb) AS output_lots,
+        COALESCE(reserved.qty_reserved_for_affaire, 0)::float8 AS qty_reserved_for_affaire,
+        COALESCE(alloc.qty_ordered, ofa.quantite_lancee, 0)::float8 AS qty_expected,
+        ofa.statut::text AS operation_status,
+        ofa.affaire_id::bigint::int AS affaire_id,
+        af.reference AS affaire_reference
+      FROM public.ordres_fabrication ofa
+      LEFT JOIN public.articles art ON art.id = ofa.article_id
+      LEFT JOIN public.pieces_techniques pt ON pt.id = ofa.piece_technique_id
+      LEFT JOIN public.affaire af ON af.id = ofa.affaire_id
+      LEFT JOIN public.commande_ligne_affaire_allocation alloc
+        ON alloc.commande_ligne_id = ofa.commande_ligne_id
+       AND alloc.livraison_affaire_id = ofa.affaire_id
+      LEFT JOIN LATERAL (
+        SELECT
+          COALESCE(SUM(ool.qty_ok), 0) AS qty_stocked,
+          jsonb_agg(
+            jsonb_build_object(
+              'lot_id', l.id::text,
+              'lot_code', l.lot_code,
+              'qty', ool.qty_ok::float8
+            ) ORDER BY l.created_at ASC, l.id ASC
+          ) AS output_lots
+        FROM public.of_output_lots ool
+        JOIN public.lots l ON l.id = ool.lot_id
+        WHERE ool.of_id = ofa.id
+      ) outputs ON true
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(SUM(sr.qty_reserved - sr.qty_consumed), 0) AS qty_reserved_for_affaire
+        FROM public.stock_reservations sr
+        WHERE sr.commande_ligne_affaire_allocation_id = alloc.id
+          AND sr.status = 'ACTIVE'
+      ) reserved ON true
+      WHERE ofa.commande_id = $1::bigint
+      ORDER BY ofa.created_at ASC, ofa.id ASC
+    `,
+    [commandeId]
+  );
+  return {
+    items: res.rows.map((row) => ({
+      of_id: Number(row.of_id),
+      of_number: row.of_number,
+      article_id: row.article_id,
+      article_reference: row.article_reference,
+      qty_launched: Number(row.qty_launched),
+      qty_good_produced: Number(row.qty_good_produced),
+      qty_stocked: Number(row.qty_stocked),
+      output_lots: Array.isArray(row.output_lots) ? row.output_lots : [],
+      qty_reserved_for_affaire: Number(row.qty_reserved_for_affaire),
+      qty_expected: Number(row.qty_expected),
+      operation_status: row.operation_status,
+      affaire_id: row.affaire_id === null ? null : Number(row.affaire_id),
+      affaire_reference: row.affaire_reference,
+    })),
+  };
+}
+
 export async function repoListCommandes(filters: ListCommandesQueryDTO) {
   const page = filters.page ?? 1;
   const pageSize = filters.pageSize ?? 20;
@@ -4980,10 +5064,11 @@ async function loadScopedAvailableQtyByArticle(
     `
       SELECT
         availability.article_id::text AS article_id,
-        warehouse.stock_scope,
+        COALESCE(lot.source_scope, warehouse.stock_scope, 'NEW') AS stock_scope,
         COALESCE(SUM(availability.qty_available), 0)::float8 AS qty_available
       FROM public.v_stock_availability_225 availability
       JOIN public.warehouses warehouse ON warehouse.id = availability.warehouse_id
+      JOIN public.lots lot ON lot.id = availability.lot_id
       WHERE availability.article_id = ANY($1::uuid[])
         AND availability.managed_in_stock = true
         AND warehouse.stock_scope IN ('OLD', 'NEW')
@@ -5140,10 +5225,13 @@ async function loadScopedDeliveryStockCandidates(
         AND availability.managed_in_stock = true
         AND availability.qty_available > 0
         AND warehouse.stock_scope IN ('OLD', 'NEW')
+        AND COALESCE(lot.lot_status, 'LIBERE') = 'LIBERE'
       ORDER BY
-        CASE warehouse.stock_scope WHEN 'OLD' THEN 0 ELSE 1 END,
+        CASE COALESCE(lot.source_scope, warehouse.stock_scope, 'NEW') WHEN 'OLD' THEN 0 ELSE 1 END,
         availability.article_id,
-        availability.lot_id NULLS LAST,
+        COALESCE(lot.received_at, lot.manufactured_at, lot.created_at::date),
+        lot.created_at,
+        lot.id,
         availability.location_id,
         availability.stock_batch_id NULLS LAST
     `,
@@ -5324,8 +5412,33 @@ export async function reserveCommandeStockForLaterDelivery(
   const candidates = await loadScopedDeliveryStockCandidates(db, articleIds);
   const allocations = planDeliveryAllocations(params.analysis_lines, positiveQuantities, candidates);
   const reservationIds: string[] = [];
+  const allocationRows = await db.query<{ id: number; commande_ligne_id: number }>(
+    `
+      SELECT id::bigint::int AS id, commande_ligne_id::bigint::int AS commande_ligne_id
+      FROM public.commande_ligne_affaire_allocation
+      WHERE commande_id = $1::bigint AND livraison_affaire_id = $2::bigint
+      FOR UPDATE
+    `,
+    [params.commande_id, params.livraison_affaire_id]
+  );
+  const allocationIdByLine = new Map(allocationRows.rows.map((row) => [row.commande_ligne_id, row.id] as const));
 
   for (const allocation of allocations) {
+    const businessAllocationId = allocationIdByLine.get(allocation.commande_ligne_id);
+    if (!businessAllocationId) {
+      throw new HttpError(409, "COMMANDE_ALLOCATION_NOT_FOUND", `Allocation de livraison absente pour la ligne ${allocation.commande_ligne_id}.`);
+    }
+    if (!allocation.lot_id) {
+      throw new HttpError(409, "STOCK_LOT_REQUIRED", `Aucun lot traçable n'est disponible pour la ligne ${allocation.commande_ligne_id}.`);
+    }
+    const lotState = await db.query<{ lot_status: string | null; source_scope: string | null }>(
+      `SELECT lot_status, source_scope FROM public.lots WHERE id = $1::uuid FOR UPDATE`,
+      [allocation.lot_id]
+    );
+    const lockedLot = lotState.rows[0];
+    if (!lockedLot || (lockedLot.lot_status ?? "LIBERE") !== "LIBERE") {
+      throw new HttpError(409, "STOCK_LOT_NOT_RELEASED", `Le lot de la ligne ${allocation.commande_ligne_id} n'est plus libéré.`);
+    }
     // Take the Quality lock before stock state locks.  All reservation writers
     // share that order (Quality entitlement -> stock counters) to avoid a
     // cross-workflow deadlock under simultaneous allocation.
@@ -5413,16 +5526,21 @@ export async function reserveCommandeStockForLaterDelivery(
         INSERT INTO public.stock_reservations (
           article_id, location_id, qty_reserved, source_type, source_id,
           commande_ligne_id, affaire_id, status, lot_id, stock_batch_id,
-          reason, created_by, updated_by
+          commande_ligne_affaire_allocation_id, livraison_affaire_id,
+          stock_level_id, source_scope, reason, created_by, updated_by
         ) VALUES (
           $1::uuid,$2::uuid,$3,'COMMANDE_LIGNE',$4,$4::bigint,$5::bigint,
-          'ACTIVE',$6::uuid,$7::uuid,$8,$9,$9
+          'ACTIVE',$6::uuid,$7::uuid,$8::bigint,$5::bigint,$9::uuid,$10,$11,$12,$12
         )
-        ON CONFLICT (source_type, source_id, article_id, location_id, lot_id)
-          WHERE status = 'ACTIVE' AND lot_id IS NOT NULL
+        ON CONFLICT (commande_ligne_affaire_allocation_id, stock_batch_id)
+          WHERE status = 'ACTIVE' AND commande_ligne_affaire_allocation_id IS NOT NULL AND stock_batch_id IS NOT NULL
         DO UPDATE SET
           qty_reserved = public.stock_reservations.qty_reserved + EXCLUDED.qty_reserved,
           affaire_id = COALESCE(public.stock_reservations.affaire_id, EXCLUDED.affaire_id),
+          livraison_affaire_id = COALESCE(public.stock_reservations.livraison_affaire_id, EXCLUDED.livraison_affaire_id),
+          lot_id = EXCLUDED.lot_id,
+          stock_level_id = EXCLUDED.stock_level_id,
+          source_scope = EXCLUDED.source_scope,
           updated_at = now(),
           updated_by = EXCLUDED.updated_by
         RETURNING id::text AS id
@@ -5435,6 +5553,9 @@ export async function reserveCommandeStockForLaterDelivery(
         params.livraison_affaire_id,
         allocation.lot_id,
         allocation.stock_batch_id,
+        businessAllocationId,
+        allocation.stock_level_id,
+        lockedLot.source_scope === "OLD" ? "OLD" : allocation.stock_scope,
         "Réservée dès le lancement pour une livraison groupée",
         params.user_id,
       ]

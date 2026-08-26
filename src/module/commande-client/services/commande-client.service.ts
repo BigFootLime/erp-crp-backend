@@ -11,6 +11,7 @@ import {
   repoGenerateAffairesFromCommande,
   repoGenerateAffairesFromOrder,
   repoAnalyzeCommandeStock,
+  repoGetCommandeStockReceipts,
   repoGetCommande,
   repoGetCommandeDocumentFileMeta,
   repoGetCommandeWorkflow,
@@ -93,6 +94,9 @@ export const deleteCommandeSVC = (id: string, userId: number, userRole: string |
   repoDeleteCommande(id, { user_id: userId, user_role: userRole });
 
 export const analyzeCommandeStockSVC = (id: string, audit: CommandesAuditContext) => repoAnalyzeCommandeStock(id, audit);
+
+/** OF / stock / reservation read model used by the commande stock receipt tab. */
+export const getCommandeStockReceiptsSVC = (id: string) => repoGetCommandeStockReceipts(id);
 
 export const generateAffairesFromOrderSVC = (id: string, body: GenerateAffairesV3BodyDTO, audit: CommandesAuditContext) =>
   repoGenerateAffairesFromOrder(id, body, audit);

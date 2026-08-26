@@ -3,7 +3,7 @@ import type { Request, RequestHandler } from "express";
 import { HttpError } from "../../../utils/httpError";
 import { asyncHandler } from "../../../utils/asyncHandler";
 import { acknowledgementDocumentParamsSchema, createAcknowledgementSchema, generateCommandeArSchema, sendAcknowledgementSchema, sendCommandeArSchema } from "../validators/commande-ar.validators";
-import { svcCreateCommandeArOfficial, svcGenerateCommandeAr, svcGetCommandeArOfficialDocument, svcListCommandeArOfficialDocuments, svcReadCommandeArOfficialDocument, svcRecordCommandeArOfficialPrint, svcSendCommandeAr, svcSendCommandeArOfficial } from "../services/commande-ar.service";
+import { svcCreateCommandeArOfficial, svcGenerateCommandeAr, svcGetCommandeArOfficialDocument, svcListCommandeArOfficialDocuments, svcListCommandeArVersions, svcReadCommandeArOfficialDocument, svcRecordCommandeArOfficialPrint, svcSendCommandeAr, svcSendCommandeArOfficial } from "../services/commande-ar.service";
 
 function getUserId(req: Request): number {
   const userId = typeof req.user?.id === "number" ? req.user.id : null;
@@ -12,13 +12,23 @@ function getUserId(req: Request): number {
 }
 
 export const generateCommandeAr: RequestHandler = asyncHandler(async (req, res) => {
-  const { id } = generateCommandeArSchema.parse({ params: req.params }).params;
+  const parsed = generateCommandeArSchema.parse({ params: req.params, body: req.body });
   const out = await svcGenerateCommandeAr({
+    commande_id: Number(parsed.params.id),
+    user_id: getUserId(req),
+    user_role: req.user?.role,
+    ...(parsed.body.force_new ? { reissue_reason: "Nouvelle version demandée depuis l'interface" } : {}),
+  });
+  res.status(201).json(out);
+});
+
+export const listCommandeArVersions: RequestHandler = asyncHandler(async (req, res) => {
+  const { id } = generateCommandeArSchema.parse({ params: req.params, body: {} }).params;
+  res.status(200).json(await svcListCommandeArVersions({
     commande_id: Number(id),
     user_id: getUserId(req),
     user_role: req.user?.role,
-  });
-  res.status(201).json(out);
+  }));
 });
 
 export const sendCommandeAr: RequestHandler = asyncHandler(async (req, res) => {

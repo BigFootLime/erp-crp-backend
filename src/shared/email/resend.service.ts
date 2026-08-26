@@ -2,6 +2,7 @@ type ResendConfig = {
   apiKey: string;
   from: string;
   apiBaseUrl: string;
+  timeoutMs: number;
 };
 
 export type EmailAttachment = {
@@ -21,9 +22,11 @@ function readResendConfig(): ResendConfig | null {
   const apiBaseUrl = (process.env.RESEND_API_BASE_URL ?? "https://api.resend.com")
     .trim()
     .replace(/\/+$/, "");
+  const parsedTimeoutMs = Number.parseInt(process.env.RESEND_TIMEOUT_MS ?? "20000", 10);
+  const timeoutMs = Number.isFinite(parsedTimeoutMs) ? Math.min(Math.max(parsedTimeoutMs, 1_000), 120_000) : 20_000;
 
   if (!apiKey || !from) return null;
-  return { apiKey, from, apiBaseUrl };
+  return { apiKey, from, apiBaseUrl, timeoutMs };
 }
 
 function truncate(value: string, max = 1200): string {
@@ -55,6 +58,9 @@ async function postResendEmail(params: {
       method: "POST",
       headers,
       body: JSON.stringify(params.payload),
+      // A bounded provider call lets the AR service transition the claimed
+      // send to FAILED rather than indefinitely leaving it in SENDING.
+      signal: AbortSignal.timeout(params.cfg.timeoutMs),
     });
 
     const rawText = await (async () => {

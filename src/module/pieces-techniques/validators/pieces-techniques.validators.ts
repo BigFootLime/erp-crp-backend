@@ -2,6 +2,7 @@
 import type { RequestHandler } from "express"
 import { z } from "zod"
 import { uuidRouteParam } from "../../../utils/routeParams"
+import { QUALITY_LEVELS } from "../../client/validators/client.validators"
 
 const uuid = z.string().uuid()
 
@@ -13,6 +14,8 @@ export const pieceTechniqueStatutSchema = z.enum([
 ])
 
 export type PieceTechniqueStatutDTO = z.infer<typeof pieceTechniqueStatutSchema>
+
+export const pieceTechniqueQualityLevelsSchema = z.array(z.enum(QUALITY_LEVELS)).default([])
 
 export const idParamSchema = z.object({
   params: z.object({ id: uuidRouteParam("id") }),
@@ -89,6 +92,7 @@ export const listPiecesTechniquesQuerySchema = z.object({
   client_id: z.string().trim().min(1).max(3).optional(),
   famille_id: uuid.optional(),
   statut: pieceTechniqueStatutSchema.optional(),
+  piece_critique: presenceFilter,
   // --- Filtres serveur additifs (#146) : tous optionnels, aucun défaut. ---
   segment: z.enum(PIECE_TECHNIQUE_SEGMENTS).optional(),
   ensemble: presenceFilter,
@@ -102,7 +106,7 @@ export const listPiecesTechniquesQuerySchema = z.object({
   page: z.coerce.number().int().min(1).optional().default(1),
   pageSize: z.coerce.number().int().min(1).max(200).optional().default(20),
   sortBy: z
-    .enum(["updated_at", "created_at", "code_piece", "designation", "prix_unitaire", "statut"])
+    .enum(["updated_at", "created_at", "code_piece", "designation", "prix_unitaire", "statut", "plan_reference", "indice", "code_client", "piece_critique"])
     .optional()
     .default("updated_at"),
   sortDir: z.enum(["asc", "desc"]).optional().default("desc"),
@@ -206,6 +210,8 @@ export const createPieceTechniqueSchema = z.object({
     cycle: z.coerce.number().min(0).optional().nullable(),
     cycle_fabrication: z.coerce.number().min(0).optional().nullable(),
     ensemble: z.boolean().optional().default(false),
+    quality_levels: pieceTechniqueQualityLevelsSchema.optional(),
+    piece_critique: z.boolean().optional(),
     bom: z.array(bomLineInputSchema).optional().default([]),
     operations: z.array(operationInputSchema).optional().default([]),
     achats: z.array(achatInputSchema).optional().default([]),
@@ -254,6 +260,8 @@ export const updatePieceTechniqueSchema = z.object({
     cycle: z.coerce.number().min(0).optional().nullable(),
     cycle_fabrication: z.coerce.number().min(0).optional().nullable(),
     ensemble: z.boolean().optional(),
+    quality_levels: pieceTechniqueQualityLevelsSchema.optional(),
+    piece_critique: z.boolean().optional(),
     statut: pieceTechniqueStatutSchema.optional(),
     bom: z.array(bomLineInputSchema).optional(),
     operations: z.array(operationInputSchema).optional(),

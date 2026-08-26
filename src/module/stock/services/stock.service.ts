@@ -2,6 +2,7 @@ import type {
   StockAnalytics,
   StockArticleCategoryOption,
   StockArticleDetail,
+  StockAvailableLotItem,
   StockArticleFamily,
   StockArticleKpis,
   StockBalanceRow,
@@ -114,6 +115,7 @@ import {
   repoGetMovementDocumentForDownload,
   repoListArticleDocuments,
   repoListArticles,
+  repoListAvailableArticleLots,
   repoListBalances,
   repoListEmplacements,
   repoListLots,
@@ -248,6 +250,13 @@ export async function findSimilarStockArticlesSVC(query: SimilarArticlesQueryDTO
 
 export async function getStockArticleSVC(id: string, includeCosts = false): Promise<StockArticleDetail | null> {
   return repoGetArticle(id, includeCosts);
+}
+
+export async function listAvailableArticleLotsSVC(
+  id: string,
+  filters: { page: number; limit: number }
+): Promise<{ items: StockAvailableLotItem[]; total: number } | null> {
+  return repoListAvailableArticleLots(id, filters);
 }
 
 export async function getStockArticlesKpisSVC(): Promise<StockArticleKpis> {

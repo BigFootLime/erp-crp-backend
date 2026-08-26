@@ -11,7 +11,12 @@ import type {
   LivraisonProofBodyDTO,
   ConfirmLivraisonPreparationBodyDTO,
   ResetLivraisonPreparationBodyDTO,
+  AnyShipLivraisonBodyDTO,
+  CreateLivraisonFromReservationsBodyDTO,
+  CorrectPreparationStockBodyDTO,
+  PreparationCartQueryDTO,
   ShipLivraisonBodyDTO,
+  VerifyPreparationLotBodyDTO,
   UpdateLivraisonBodyDTO,
   UpdateLivraisonLineBodyDTO,
 } from "../validators/livraisons.validators"
@@ -22,15 +27,24 @@ import {
   repoCreateLivraison,
   repoCreateLivraisonLineAllocation,
   repoCreateLivraisonFromCommande,
+  repoCreateLivraisonFromReservations,
+  repoCorrectPreparationStock,
   repoDeleteLivraisonLineAllocation,
   repoDeleteLivraisonLine,
   repoGetLivraisonDetail,
+  repoGetLivraisonPreparationPreview,
+  repoGetLivraisonPrintStatus,
   repoGetLivraisonStatut,
+  repoIsReservationCartLivraison,
   repoListLivraisons,
+  repoListPreparationCart,
   repoRemoveLivraisonDocument,
+  repoRetryLivraisonPrint,
+  repoShipLivraison as repoShipReservationLivraison,
   repoUpdateLivraisonHeader,
   repoUpdateLivraisonLine,
   repoUpdateLivraisonStatus,
+  repoVerifyPreparationLot,
 } from "../repository/livraisons.repository"
 import {
   repoCreateLivraisonProof,
@@ -74,6 +88,30 @@ export async function svcCreateLivraison(dto: CreateLivraisonBodyDTO, userId: nu
 export async function svcCreateLivraisonFromCommande(commandeId: number, userId: number) {
   return repoCreateLivraisonFromCommande(commandeId, userId)
 }
+
+export const svcListPreparationCart = (filters: PreparationCartQueryDTO) => repoListPreparationCart(filters)
+
+export const svcVerifyPreparationLot = (body: VerifyPreparationLotBodyDTO, userId: number) =>
+  repoVerifyPreparationLot(body, userId)
+
+export const svcCorrectPreparationStock = (params: {
+  body: CorrectPreparationStockBodyDTO
+  user_id: number
+  idempotency_key: string
+}) => repoCorrectPreparationStock(params)
+
+export const svcCreateLivraisonFromReservations = (params: {
+  body: CreateLivraisonFromReservationsBodyDTO
+  user_id: number
+  idempotency_key: string
+}) => repoCreateLivraisonFromReservations(params)
+
+export const svcGetLivraisonPreparationPreview = (id: string) => repoGetLivraisonPreparationPreview(id)
+
+export const svcGetLivraisonPrintStatus = (id: string) => repoGetLivraisonPrintStatus(id)
+
+export const svcRetryLivraisonPrint = (params: { bon_livraison_id: string; user_id: number }) =>
+  repoRetryLivraisonPrint(params)
 
 export async function svcUpdateLivraisonHeader(id: string, patch: UpdateLivraisonBodyDTO, userId: number) {
   const statut = await repoGetLivraisonStatut(id)
@@ -143,6 +181,11 @@ export async function svcGetLivraisonShipmentPreview(id: string) {
 }
 
 export async function svcGetLivraisonPreparation(id: string) {
+  if (await repoIsReservationCartLivraison(id)) {
+    const preview = await repoGetLivraisonPreparationPreview(id)
+    if (!preview) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
+    return preview
+  }
   await assertDeliveryQualityAllowsPreparation(id)
   const preparation = await repoGetLivraisonPreparation(id)
   if (!preparation) {
@@ -187,10 +230,18 @@ export async function svcResetLivraisonPreparation(
 
 export function svcShipLivraison(
   id: string,
-  body: ShipLivraisonBodyDTO,
+  body: AnyShipLivraisonBodyDTO,
   userId: number,
   idempotencyKey: string
 ) {
+  if ("expected_shipping_version" in body) {
+    return repoShipReservationLivraison({
+      bon_livraison_id: id,
+      body: body as ShipLivraisonBodyDTO,
+      user_id: userId,
+      idempotency_key: idempotencyKey,
+    })
+  }
   return repoShipLivraison(id, body, userId, idempotencyKey)
 }
 

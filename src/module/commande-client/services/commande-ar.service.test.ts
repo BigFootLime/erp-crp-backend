@@ -1,4 +1,5 @@
 import { inflateSync } from "node:zlib";
+import { createHash } from "node:crypto";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -126,11 +127,16 @@ const SEND_BODY = {
   email_body: "Bonjour Client,\n\nVeuillez trouver ci-joint votre accusé de réception relu.",
 };
 
+const ARCHIVED_PDF = Buffer.from("pdf");
+
 const GENERATED_DRAFT = {
   ar_id: SEND_BODY.ar_id,
   commande_id: 123,
   document_id: "22222222-2222-4222-8222-222222222222",
   document_name: "AR-123.pdf",
+  reference: "AR-00000123-v1",
+  series_number: 123,
+  version_number: 1,
   subject: "AR commande 123",
   body_text: null,
   generated_at: "2026-08-04T08:00:00.000Z",
@@ -139,6 +145,16 @@ const GENERATED_DRAFT = {
   sent_at: null,
   recipient_emails: [],
   email_provider_id: null,
+  content_fingerprint: "a".repeat(64),
+  content_snapshot: {
+    schema_version: 1,
+    header: { numero: "CMD-123", customer_reference: "PO-123" },
+    lines: [],
+    allocations: [],
+  },
+  pdf_sha256: createHash("sha256").update(ARCHIVED_PDF).digest("hex"),
+  send_idempotency_key: "commande-ar:test",
+  send_payload_fingerprint: null,
   preview_path: "/commandes/123/documents/22222222-2222-4222-8222-222222222222/file",
 };
 
@@ -161,7 +177,13 @@ describe("envoi AR claimé avant effet externe", () => {
   });
 
   it("lets only the claimed concurrent request call the provider and returns the persisted SENT replay", async () => {
-    const claim = { kind: "claimed" as const, client: {} as never, draft: GENERATED_DRAFT };
+    const claim = {
+      kind: "claimed" as const,
+      draft: GENERATED_DRAFT,
+      lock_token: "33333333-3333-4333-8333-333333333333",
+      idempotency_key: "commande-ar:test",
+      contacts: [],
+    };
     const persistedReplay = {
       ...GENERATED_DRAFT,
       status: "SENT" as const,
@@ -171,17 +193,31 @@ describe("envoi AR claimé avant effet externe", () => {
     };
     mocks.claimSend
       .mockResolvedValueOnce(claim)
-      .mockResolvedValueOnce({ kind: "replay", draft: persistedReplay });
+      .mockResolvedValueOnce({
+        kind: "already_sent",
+        result: {
+          ar_id: persistedReplay.ar_id,
+          commande_id: persistedReplay.commande_id,
+          document_id: persistedReplay.document_id,
+          reference: persistedReplay.reference,
+          status: "AR_ENVOYE",
+          sent_at: persistedReplay.sent_at,
+          recipient_emails: persistedReplay.recipient_emails,
+          email_provider_id: persistedReplay.email_provider_id,
+          already_sent: true,
+        },
+      });
     mocks.findArchive
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce("33333333-3333-4333-8333-333333333333");
-    mocks.readArchived.mockResolvedValueOnce({ bytes: Buffer.from("pdf"), filename: "AR-123-officiel.pdf", sha256: "a".repeat(64) });
+    mocks.readArchived.mockResolvedValueOnce({ bytes: ARCHIVED_PDF, filename: "AR-123-officiel.pdf", sha256: createHash("sha256").update(ARCHIVED_PDF).digest("hex") });
     mocks.sendEmail.mockResolvedValueOnce({ ok: true, id: "provider-first" });
     mocks.finalizeSend.mockResolvedValueOnce({
       result: {
         ar_id: SEND_BODY.ar_id,
         commande_id: 123,
         document_id: GENERATED_DRAFT.document_id,
+        reference: GENERATED_DRAFT.reference,
         status: "AR_ENVOYE",
         sent_at: "2026-08-04T08:05:00.000Z",
         recipient_emails: SEND_BODY.recipient_emails,

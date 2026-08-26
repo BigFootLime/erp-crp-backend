@@ -63,6 +63,7 @@ import type {
   StockArticleFamily,
   StockArticleKpis,
   StockArticleListItem,
+  StockAvailableLotItem,
   StockMatiereEtat,
   StockMatiereNuance,
   StockMatiereSousEtat,
@@ -338,6 +339,8 @@ const ARTICLE_CATEGORY_OPTIONS: StockArticleCategoryOption[] = [
     stock_managed_default: true,
     piece_technique_required: true,
     commande_client_selectable: true,
+    is_active: true,
+    sort_order: 10,
   },
   {
     code: "matiere_premiere",
@@ -346,6 +349,8 @@ const ARTICLE_CATEGORY_OPTIONS: StockArticleCategoryOption[] = [
     stock_managed_default: true,
     piece_technique_required: false,
     commande_client_selectable: false,
+    is_active: true,
+    sort_order: 20,
   },
   {
     code: "traitement_surface",
@@ -354,6 +359,8 @@ const ARTICLE_CATEGORY_OPTIONS: StockArticleCategoryOption[] = [
     stock_managed_default: false,
     piece_technique_required: false,
     commande_client_selectable: false,
+    is_active: true,
+    sort_order: 30,
   },
   {
     code: "achat_revente",
@@ -362,6 +369,8 @@ const ARTICLE_CATEGORY_OPTIONS: StockArticleCategoryOption[] = [
     stock_managed_default: true,
     piece_technique_required: false,
     commande_client_selectable: false,
+    is_active: true,
+    sort_order: 40,
   },
   {
     code: "achat_transforme",
@@ -370,6 +379,8 @@ const ARTICLE_CATEGORY_OPTIONS: StockArticleCategoryOption[] = [
     stock_managed_default: true,
     piece_technique_required: false,
     commande_client_selectable: false,
+    is_active: false,
+    sort_order: 90,
   },
   {
     code: "sous_traitance",
@@ -378,12 +389,16 @@ const ARTICLE_CATEGORY_OPTIONS: StockArticleCategoryOption[] = [
     stock_managed_default: false,
     piece_technique_required: false,
     commande_client_selectable: false,
+    is_active: true,
+    sort_order: 50,
   },
 ];
 
 /** Codes métier vendables en commande client, dérivés du référentiel ci-dessus. */
 export function commandeClientSelectableCategoryCodes(): string[] {
-  return ARTICLE_CATEGORY_OPTIONS.filter((option) => option.commande_client_selectable).map((option) => option.code);
+  return ARTICLE_CATEGORY_OPTIONS
+    .filter((option) => option.is_active && option.commande_client_selectable)
+    .map((option) => option.code);
 }
 
 type UploadedDocument = Express.Multer.File;
@@ -868,7 +883,20 @@ function articleDetailTable(category: ArticleCategory): string {
 }
 
 export async function repoListArticleCategories(): Promise<StockArticleCategoryOption[]> {
-  return ARTICLE_CATEGORY_OPTIONS;
+  const exists = await db.query<{ ok: boolean }>(
+    `SELECT to_regclass('public.article_category_referential') IS NOT NULL AS ok`
+  );
+  if (!exists.rows[0]?.ok) {
+    return ARTICLE_CATEGORY_OPTIONS.filter((item) => item.is_active).sort((a, b) => a.sort_order - b.sort_order);
+  }
+  const result = await db.query<StockArticleCategoryOption>(`
+    SELECT code, label, code_segment, stock_managed_default, piece_technique_required,
+           commande_client_selectable, is_active, sort_order
+    FROM public.article_category_referential
+    WHERE is_active = true
+    ORDER BY sort_order ASC, code ASC
+  `);
+  return result.rows;
 }
 
 export async function repoListStockUnits(): Promise<Array<{ code: string; label: string }>> {
@@ -1771,6 +1799,16 @@ function articleSortColumn(sortBy: ListArticlesQueryDTO["sortBy"]): string {
       return "a.code";
     case "designation":
       return "a.designation";
+    case "plan_reference":
+      return "latest_version.plan_reference";
+    case "client_code":
+      return "pt.code_client";
+    case "qty_total":
+      return "COALESCE(bs.qty_total, 0)";
+    case "qty_available":
+      return "COALESCE(bs.qty_available, 0)";
+    case "available_lots_count":
+      return "COALESCE(lots_available.available_lots_count, 0)";
     case "updated_at":
     default:
       return "a.updated_at";
@@ -2818,6 +2856,8 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
       pt.code_client AS piece_client_code,
       latest_version.plan_reference AS piece_plan_reference,
       latest_version.indice AS piece_indice,
+      pt.code_client AS client_code,
+      latest_version.plan_reference AS plan_reference,
       a.unite,
       a.lot_tracking,
       a.is_sold,
@@ -2837,6 +2877,7 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
       COALESCE(bs.qty_available, 0)::float8 AS qty_available,
       COALESCE(bs.qty_reserved, 0)::float8 AS qty_reserved,
       COALESCE(bs.qty_total, 0)::float8 AS qty_total,
+      COALESCE(lots_available.available_lots_count, 0)::int AS available_lots_count,
       COALESCE(bs.locations_count, 0)::int AS locations_count,
       a.updated_at::text AS updated_at,
       a.created_at::text AS created_at
@@ -2876,6 +2917,12 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
       FROM public.v_stock_availability_225
       GROUP BY article_id
     ) bs ON bs.article_id = a.id::text
+    LEFT JOIN (
+      SELECT article_id::text AS article_id, COUNT(DISTINCT lot_id)::int AS available_lots_count
+      FROM public.v_stock_availability_225
+      WHERE lot_id IS NOT NULL AND qty_available > 0
+      GROUP BY article_id
+    ) lots_available ON lots_available.article_id = a.id::text
     LEFT JOIN LATERAL (
       SELECT array_agg(acl.category_code ORDER BY acl.is_primary DESC, acl.category_code ASC)::text[] AS categories
       FROM public.article_category_link acl
@@ -2944,6 +2991,8 @@ export async function repoGetArticle(id: string, includeCosts = false): Promise<
         a.piece_technique_id::text AS piece_technique_id,
         pt.code_piece AS piece_code,
         pt.designation AS piece_designation,
+        pt.code_client AS client_code,
+        av.plan_reference AS plan_reference,
         a.unite,
          a.lot_tracking,
          a.is_sold,
@@ -2998,6 +3047,7 @@ export async function repoGetArticle(id: string, includeCosts = false): Promise<
          COALESCE(bs.qty_available, 0)::float8 AS qty_available,
          COALESCE(bs.qty_reserved, 0)::float8 AS qty_reserved,
          COALESCE(bs.qty_total, 0)::float8 AS qty_total,
+         COALESCE(lots_available.available_lots_count, 0)::int AS available_lots_count,
          COALESCE(bs.locations_count, 0)::int AS locations_count,
          a.updated_at::text AS updated_at,
          a.created_at::text AS created_at
@@ -3026,6 +3076,12 @@ export async function repoGetArticle(id: string, includeCosts = false): Promise<
         FROM public.v_stock_availability_225
         GROUP BY article_id
       ) bs ON bs.article_id = a.id::text
+      LEFT JOIN (
+        SELECT article_id::text AS article_id, COUNT(DISTINCT lot_id)::int AS available_lots_count
+        FROM public.v_stock_availability_225
+        WHERE lot_id IS NOT NULL AND qty_available > 0
+        GROUP BY article_id
+      ) lots_available ON lots_available.article_id = a.id::text
       LEFT JOIN LATERAL (
         SELECT array_agg(acl.category_code ORDER BY acl.is_primary DESC, acl.category_code ASC)::text[] AS categories
         FROM public.article_category_link acl
@@ -3202,6 +3258,54 @@ export async function repoGetArticle(id: string, includeCosts = false): Promise<
     documents: documents ?? [],
     costs_redacted: !includeCosts,
   };
+}
+
+/** Paged, authoritative lot detail for the article list drawer. */
+export async function repoListAvailableArticleLots(
+  articleId: string,
+  filters: { page: number; limit: number }
+): Promise<Paginated<StockAvailableLotItem> | null> {
+  const exists = await db.query<{ ok: number }>(
+    `SELECT 1::int AS ok FROM public.articles WHERE id = $1::uuid`,
+    [articleId]
+  );
+  if (!exists.rows[0]?.ok) return null;
+  const offset = (filters.page - 1) * filters.limit;
+  const base = `
+    FROM public.v_stock_availability_225 v
+    JOIN public.lots l ON l.id = v.lot_id
+    LEFT JOIN public.emplacements e ON e.location_id = v.location_id
+    LEFT JOIN public.magasins m ON m.id = e.magasin_id
+    LEFT JOIN LATERAL (
+      SELECT ofx.numero::text AS of_number
+      FROM public.of_output_lots ool
+      JOIN public.ordres_fabrication ofx ON ofx.id = ool.of_id
+      WHERE ool.lot_id = l.id
+      ORDER BY ool.updated_at DESC, ool.id DESC
+      LIMIT 1
+    ) of_link ON TRUE
+    WHERE v.article_id = $1::uuid AND v.lot_id IS NOT NULL AND v.qty_available > 0
+  `;
+  const count = await db.query<{ total: number }>(`SELECT COUNT(*)::int AS total ${base}`, [articleId]);
+  const data = await db.query<StockAvailableLotItem>(`
+    SELECT l.id::text AS lot_id,
+           COALESCE(l.source_scope, l.stock_scope, 'NEW')::text AS source_scope,
+           l.lot_code,
+           v.qty_total::float8 AS qty_total,
+           v.qty_reserved::float8 AS qty_reserved,
+           v.qty_available::float8 AS qty_available,
+           COALESCE(m.code, m.code_magasin)::text AS magasin_code,
+           e.code AS emplacement_code,
+           of_link.of_number, l.mp_reference, l.tr_reference,
+           COALESCE(l.received_at, l.manufactured_at, l.created_at::date)::text AS fifo_received_at,
+           l.created_at::text AS created_at
+    ${base}
+    ORDER BY CASE COALESCE(l.source_scope, l.stock_scope, 'NEW') WHEN 'OLD' THEN 0 ELSE 1 END,
+             COALESCE(l.received_at, l.manufactured_at, l.created_at::date) ASC,
+             l.created_at ASC, l.id ASC
+    LIMIT $2 OFFSET $3
+  `, [articleId, filters.limit, offset]);
+  return { items: data.rows, total: count.rows[0]?.total ?? 0 };
 }
 
 export async function repoGetArticlesKpis(): Promise<StockArticleKpis> {

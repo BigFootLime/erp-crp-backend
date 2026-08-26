@@ -195,6 +195,7 @@ export async function reserveProducedQtyForCommandeLine(
     lot_id: string;
     qty_ok: number;
     actor_user_id: number;
+    of_id?: number | null;
     /** Caller already holds the canonical Quality lock for this lot. */
     quality_gate_already_held?: boolean;
   }
@@ -216,6 +217,21 @@ export async function reserveProducedQtyForCommandeLine(
   if (!line) return null;
   if (line.article_id && line.article_id !== args.article_id) {
     throw new HttpError(409, "ARTICLE_MISMATCH", "La ligne de commande n'est pas liee a l'article recu en stock");
+  }
+  const allocationRes = await client.query<{ id: number; livraison_affaire_id: number }>(
+    `
+      SELECT id::bigint::int AS id, livraison_affaire_id::bigint::int AS livraison_affaire_id
+      FROM public.commande_ligne_affaire_allocation
+      WHERE commande_ligne_id = $1::bigint
+      ORDER BY updated_at DESC, id DESC
+      LIMIT 1
+      FOR UPDATE
+    `,
+    [args.commande_ligne_id]
+  );
+  const businessAllocation = allocationRes.rows[0] ?? null;
+  if (!businessAllocation) {
+    throw new HttpError(409, "COMMANDE_ALLOCATION_NOT_FOUND", "La réception OF ne peut pas réserver un besoin sans allocation de livraison.");
   }
 
   const currentReservedRes = await client.query<{ qty_reserved: number }>(
@@ -325,12 +341,13 @@ export async function reserveProducedQtyForCommandeLine(
         AND source_id = $3
         AND lot_id = $4::uuid
         AND stock_batch_id = $5::uuid
+        AND commande_ligne_affaire_allocation_id = $6::bigint
         AND status = 'ACTIVE'
       ORDER BY created_at ASC
       LIMIT 1
       FOR UPDATE
     `,
-    [args.article_id, args.location_id, String(args.commande_ligne_id), args.lot_id, args.stock_batch_id]
+    [args.article_id, args.location_id, String(args.commande_ligne_id), args.lot_id, args.stock_batch_id, businessAllocation.id]
   );
 
   const existingId = existingReservation.rows[0]?.id ?? null;
@@ -340,11 +357,17 @@ export async function reserveProducedQtyForCommandeLine(
         UPDATE public.stock_reservations
         SET qty_reserved = qty_reserved + $2,
             commande_ligne_id = COALESCE(commande_ligne_id, $4::bigint),
+            commande_ligne_affaire_allocation_id = COALESCE(commande_ligne_affaire_allocation_id, $5::bigint),
+            livraison_affaire_id = COALESCE(livraison_affaire_id, $6::bigint),
+            stock_level_id = COALESCE(stock_level_id, $7::uuid),
+            source_scope = 'NEW',
+            of_id = COALESCE(of_id, $8::bigint),
             updated_at = now(),
             updated_by = $3
         WHERE id = $1::uuid
       `,
-      [existingId, qtyToReserve, args.actor_user_id, args.commande_ligne_id]
+      [existingId, qtyToReserve, args.actor_user_id, args.commande_ligne_id, businessAllocation.id,
+        businessAllocation.livraison_affaire_id, args.stock_level_id, args.of_id ?? null]
     );
     return { reservation_id: existingId, qty_reserved: qtyToReserve };
   }
@@ -361,9 +384,17 @@ export async function reserveProducedQtyForCommandeLine(
         status,
         lot_id,
         stock_batch_id,
+        commande_ligne_affaire_allocation_id,
+        livraison_affaire_id,
+        stock_level_id,
+        of_id,
+        source_scope,
         created_by,
         updated_by
-      ) VALUES ($1::uuid,$2::uuid,$3,'COMMANDE_LIGNE',$4::text,$4::bigint,'ACTIVE',$5::uuid,$6::uuid,$7,$7)
+      ) VALUES (
+        $1::uuid,$2::uuid,$3,'COMMANDE_LIGNE',$4::text,$4::bigint,'ACTIVE',$5::uuid,$6::uuid,
+        $7::bigint,$8::bigint,$9::uuid,$10::bigint,'NEW',$11,$11
+      )
       RETURNING id::text AS id
     `,
     [
@@ -373,6 +404,10 @@ export async function reserveProducedQtyForCommandeLine(
       String(args.commande_ligne_id),
       args.lot_id,
       args.stock_batch_id,
+      businessAllocation.id,
+      businessAllocation.livraison_affaire_id,
+      args.stock_level_id,
+      args.of_id ?? null,
       args.actor_user_id,
     ]
   );
@@ -1157,6 +1192,7 @@ export async function repoCreateOfReceipt(params: {
             lot_id: lotId,
             qty_ok: params.body.qty_ok,
             actor_user_id: params.audit.user_id,
+            of_id: params.of_id,
             quality_gate_already_held: qualityDecision !== null,
           })
         : null;

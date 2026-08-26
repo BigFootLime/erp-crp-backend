@@ -105,11 +105,20 @@ export const listArticlesQuerySchema = z.object({
   commande_client_selectable: z.preprocess(parseBoolean, z.boolean().optional()),
   page: z.coerce.number().int().min(1).optional().default(1),
   pageSize: z.coerce.number().int().min(1).max(200).optional().default(20),
-  sortBy: z.enum(["updated_at", "created_at", "code", "designation"]).optional().default("updated_at"),
+  sortBy: z.enum(["updated_at", "created_at", "code", "designation", "plan_reference", "client_code", "qty_total", "qty_available", "available_lots_count"]).optional().default("updated_at"),
   sortDir: sortDirSchema.optional().default("desc"),
 }).strict();
 
 export type ListArticlesQueryDTO = z.infer<typeof listArticlesQuerySchema>;
+
+export const listAvailableArticleLotsQuerySchema = z.object({
+  params: z.object({ id: uuid }),
+  query: z.object({
+    page: z.coerce.number().int().min(1).optional().default(1),
+    limit: z.coerce.number().int().min(1).max(200).optional().default(50),
+  }),
+});
+export type ListAvailableArticleLotsQueryDTO = z.infer<typeof listAvailableArticleLotsQuerySchema>["query"];
 
 /**
  * #226 — Détection d'articles similaires AVANT création.

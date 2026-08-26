@@ -19,6 +19,7 @@ import {
   previewAffairesFromCommande,
   getCadreRelease,
   getCommande,
+  getCommandeStockReceipts,
   getCommandeCreationSnapshot,
   getCommandeDocumentFile,
   getCommandeWorkflow,
@@ -34,7 +35,7 @@ import {
   previewCommandeCreationSnapshot,
   printCommandeCreationSnapshot,
 } from "../controllers/commande-client.controller"
-import { createAcknowledgement, downloadAcknowledgement, generateCommandeAr, getAcknowledgement, listAcknowledgements, previewAcknowledgement, printAcknowledgement, sendAcknowledgement, sendCommandeAr } from "../controllers/commande-ar.controller"
+import { createAcknowledgement, downloadAcknowledgement, generateCommandeAr, getAcknowledgement, listAcknowledgements, listCommandeArVersions, previewAcknowledgement, printAcknowledgement, sendAcknowledgement, sendCommandeAr } from "../controllers/commande-ar.controller"
 import {
   generateCommandeArSchema,
   sendCommandeArSchema,
@@ -133,6 +134,9 @@ router.post("/:id/creation-snapshot/:documentId/print-intents", authenticateToke
 // GET /api/v1/commandes/:id/workflow
 router.get("/:id/workflow", authenticateToken, validate(idParamSchema), getCommandeWorkflow)
 
+// GET /api/v1/commandes/:id/stock-receipts
+router.get("/:id/stock-receipts", authenticateToken, validate(idParamSchema), getCommandeStockReceipts)
+
 // PATCH /api/v1/commandes/:id/workflow/checkpoints/:checkpointCode
 router.patch(
   "/:id/workflow/checkpoints/:checkpointCode",
@@ -199,6 +203,8 @@ router.post(
   validate(generateCommandeArSchema),
   generateCommandeAr
 )
+
+router.get("/:id/ar", authenticateToken, validate(generateCommandeArSchema), listCommandeArVersions)
 
 // Authoritative acknowledgement collection. Legacy `/ar/*` remains compatible;
 // these endpoints expose GED-backed immutable documents only.

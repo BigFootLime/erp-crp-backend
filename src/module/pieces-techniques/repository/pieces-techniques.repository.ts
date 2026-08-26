@@ -133,6 +133,8 @@ function mapCoreRow(row: PieceTechniqueCoreRow): PieceTechnique {
     code_client: row.code_client,
     client_name: row.client_name,
     ensemble: row.ensemble,
+    quality_levels: Array.isArray(row.quality_levels) ? row.quality_levels : [],
+    piece_critique: row.piece_critique === true,
     bom: [],
     operations: [],
     achats: [],
@@ -163,6 +165,8 @@ type PieceTechniqueCoreRow = {
   code_client: string | null;
   client_name: string | null;
   ensemble: boolean;
+  quality_levels: string[];
+  piece_critique: boolean;
 };
 
 function includesSetForCreate(): Set<string> {
@@ -261,6 +265,9 @@ function buildListWhere(filters: ListPiecesTechniquesQueryDTO) {
   if (filters.client_id) where.push(`p.client_id = ${push(filters.client_id)}`);
   if (filters.famille_id) where.push(`p.famille_id = ${push(filters.famille_id)}::uuid`);
   if (filters.statut) where.push(`p.statut = ${push(filters.statut)}`);
+  if (filters.piece_critique !== undefined) {
+    where.push(`p.piece_critique = ${push(filters.piece_critique)}`);
+  }
 
   // --- Filtres de complétude (#146). `undefined` = pas de filtre. ---
   const presence = (value: boolean | undefined, sql: string) => {
@@ -325,6 +332,14 @@ function sortColumn(sortBy: ListPiecesTechniquesQueryDTO["sortBy"]) {
       return "p.prix_unitaire";
     case "statut":
       return "p.statut";
+    case "plan_reference":
+      return "current_version.plan_reference";
+    case "indice":
+      return "current_version.indice";
+    case "code_client":
+      return "COALESCE(NULLIF(btrim(c.client_code), ''), NULLIF(btrim(p.code_client), ''))";
+    case "piece_critique":
+      return "p.piece_critique";
     case "updated_at":
     default:
       return "p.updated_at";
@@ -372,6 +387,8 @@ export async function repoListPieceTechniques(filters: ListPiecesTechniquesQuery
       (p.en_fabrication::int = 1) AS en_fabrication,
       p.prix_unitaire::float8 AS prix_unitaire,
       p.ensemble,
+      COALESCE(p.quality_levels, ARRAY[]::text[]) AS quality_levels,
+      COALESCE(p.piece_critique, false) AS piece_critique,
       p.created_at::text AS created_at,
       p.updated_at::text AS updated_at,
       COALESCE(nb.bom_count, 0)::int AS bom_count,
@@ -382,6 +399,9 @@ export async function repoListPieceTechniques(filters: ListPiecesTechniquesQuery
       -- #146 — Complétude de niveau liste. Additif : aucun champ existant n'est touché.
       current_version.indice AS applicable_indice,
       current_version.plan_reference AS applicable_plan_reference,
+      current_version.indice AS indice,
+      current_version.plan_reference AS plan_reference,
+      COALESCE(NULLIF(btrim(c.client_code), ''), NULLIF(btrim(p.code_client), '')) AS client_code,
       current_version.date_effet::text AS applicable_date_effet,
       current_version.version_interne::int AS applicable_version_interne,
       ${HAS_APPLICABLE_VERSION_SQL} AS has_applicable_version,
@@ -564,7 +584,9 @@ export async function repoGetPieceTechnique(id: string, includes: Set<string>): 
       p.cycle_fabrication,
       p.code_client,
       p.client_name,
-      p.ensemble
+      p.ensemble,
+      COALESCE(p.quality_levels, ARRAY[]::text[]) AS quality_levels,
+      COALESCE(p.piece_critique, false) AS piece_critique
     FROM pieces_techniques p
     WHERE p.id = $1::uuid
       AND p.deleted_at IS NULL
@@ -1766,14 +1788,14 @@ export async function repoCreatePieceTechnique(
         client_id, created_by, updated_by,
         famille_id, name_piece, code_piece, designation, designation_2,
         prix_unitaire, statut, en_fabrication, cycle, cycle_fabrication,
-        code_client, client_name, ensemble
+        code_client, client_name, ensemble, quality_levels, piece_critique
       )
       VALUES (
         $1::uuid, $2::uuid, $3::uuid, $4::uuid, $5,
         $6, $7, $8, $9,
         $10, $11, $12, $13,
         $14, $15, $16, $17, $18,
-        $19, $20, $21
+        $19, $20, $21, $22::text[], $23
       )
       RETURNING
         id::text AS id,
@@ -1798,7 +1820,9 @@ export async function repoCreatePieceTechnique(
         cycle_fabrication,
         code_client,
         client_name,
-        ensemble
+        ensemble,
+        COALESCE(quality_levels, ARRAY[]::text[]) AS quality_levels,
+        COALESCE(piece_critique, false) AS piece_critique
     `;
     const mainParams = [
       pieceTechniqueId,
@@ -1822,6 +1846,8 @@ export async function repoCreatePieceTechnique(
       body.code_client ?? null,
       clientNameForInsert,
       body.ensemble,
+      body.quality_levels ?? [],
+      body.piece_critique ?? false,
     ];
 
     const mainRes = await client.query<PieceTechniqueCoreRow>(insertMainSQL, mainParams);
@@ -2230,6 +2256,8 @@ export async function repoUpdatePieceTechnique(
   if (patch.cycle !== undefined) sets.push(`cycle = ${push(patch.cycle)}`);
   if (patch.cycle_fabrication !== undefined) sets.push(`cycle_fabrication = ${push(patch.cycle_fabrication)}`);
   if (patch.ensemble !== undefined) sets.push(`ensemble = ${push(patch.ensemble)}`);
+  if (patch.quality_levels !== undefined) sets.push(`quality_levels = ${push(patch.quality_levels)}::text[]`);
+  if (patch.piece_critique !== undefined) sets.push(`piece_critique = ${push(patch.piece_critique)}`);
 
   sets.push(`updated_at = now()`);
   sets.push(`updated_by = ${push(audit.user_id)}`);
