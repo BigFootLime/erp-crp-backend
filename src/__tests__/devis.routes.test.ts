@@ -87,6 +87,7 @@ import { withRealtimeOutboxDbMock } from "./helpers/realtime-outbox-db-mock";
 const defaultState = () => ({
   // Colonnes optionnelles sondées par hasPublicColumn (code_piece legacy absent par défaut).
   columns: { code_piece: false, position: true, total_ht: true, total_ttc: true } as Record<string, boolean>,
+  generatedColumns: { total_ht: true, total_ttc: true } as Record<string, boolean>,
   idempotenceTable: true,
   idemRow: null as null | { action: string; payload_hash: string; resultat: Record<string, unknown> },
   listTotal: 1,
@@ -123,7 +124,12 @@ function dispatch(sqlRaw: unknown, params?: unknown[]): { rows: unknown[]; rowCo
 
   if (/information_schema\.columns/.test(sql)) {
     const column = String(params?.[1] ?? "");
-    return { rows: [{ exists: state.columns[column] === true }] };
+    const writableProbe = /is_generated\s*=\s*'NEVER'/.test(sql);
+    return {
+      rows: [{
+        exists: state.columns[column] === true && (!writableProbe || state.generatedColumns[column] !== true),
+      }],
+    };
   }
   if (/information_schema\.tables/.test(sql)) return { rows: [{ exists: state.idempotenceTable }] };
 
@@ -783,6 +789,9 @@ describe("/api/v1/devis", () => {
     // #167 : la position est écrite avec la ligne (ordre du payload).
     const insertLigneCall = mocks.clientQuery.mock.calls.find((c) => String(c[0]).includes("INSERT INTO devis_ligne"));
     expect(String(insertLigneCall?.[0])).toContain("position");
+    expect(String(insertLigneCall?.[0])).not.toContain("code_piece");
+    expect(String(insertLigneCall?.[0])).not.toContain("total_ht");
+    expect(String(insertLigneCall?.[0])).not.toContain("total_ttc");
 
   });
 
@@ -946,6 +955,38 @@ describe("/api/v1/devis", () => {
       )?.[0] ?? ""
     );
     expect(cloneSql).toContain("dl.position");
+    expect(cloneSql).not.toContain("code_piece");
+    expect(cloneSql).not.toContain("total_ht");
+    expect(cloneSql).not.toContain("total_ttc");
+  });
+
+  it("POST /api/v1/devis preserves writable legacy line total columns", async () => {
+    state.columns.code_piece = true;
+    state.generatedColumns = {};
+
+    const res = await request(app)
+      .post("/api/v1/devis")
+      .set("Idempotency-Key", "devis-create-legacy-columns-0001")
+      .field("data", JSON.stringify({
+        client_id: "001",
+        user_id: 1,
+        lignes: [{
+          code_piece: "LEG-001",
+          description: "Legacy line",
+          quantite: 2,
+          prix_unitaire_ht: 50,
+          taux_tva: 20,
+        }],
+      }));
+
+    expect(res.status).toBe(201);
+    const insertLigneCall = mocks.clientQuery.mock.calls.find((c) =>
+      String(c[0]).includes("INSERT INTO devis_ligne")
+    );
+    expect(String(insertLigneCall?.[0])).toContain("code_piece");
+    expect(String(insertLigneCall?.[0])).toContain("total_ht");
+    expect(String(insertLigneCall?.[0])).toContain("total_ttc");
+    expect(insertLigneCall?.[1]).toEqual(expect.arrayContaining(["LEG-001", 100, 120]));
   });
 
   it("POST /api/v1/devis/:id/revise versions preparatory entities with fresh ids", async () => {

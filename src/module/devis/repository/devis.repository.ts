@@ -1115,6 +1115,27 @@ async function hasPublicColumn(client: Pick<PoolClient, "query">, tableName: str
   return res.rows[0]?.exists === true;
 }
 
+async function hasWritablePublicColumn(
+  client: Pick<PoolClient, "query">,
+  tableName: string,
+  columnName: string
+) {
+  const res = await client.query<{ exists: boolean }>(
+    `
+      SELECT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = $1
+          AND column_name = $2
+          AND is_generated = 'NEVER'
+      ) AS exists
+    `,
+    [tableName, columnName]
+  );
+  return res.rows[0]?.exists === true;
+}
+
 async function insertDevisLines(
   client: PoolClient,
   devisId: number,
@@ -1124,12 +1145,13 @@ async function insertDevisLines(
   if (!lignes.length) return [] as InsertedDevisLine[];
 
   const hasCodePieceColumn = await hasPublicColumn(client, "devis_ligne", "code_piece");
-  // #167 : la position est persistée (ordre du payload = ordre métier) et les totaux de
-  // ligne sont recalculés serveur. Colonnes gardées (patch 20260722 / schéma legacy).
+  // #167 : la position est persistée (ordre du payload = ordre métier). Les anciens
+  // schémas reçoivent les totaux recalculés serveur ; les colonnes GENERATED restent
+  // la source PostgreSQL et ne doivent jamais apparaître dans l'INSERT.
   const hasPositionColumn = await hasPublicColumn(client, "devis_ligne", "position");
   const hasLineTotalsColumns =
-    (await hasPublicColumn(client, "devis_ligne", "total_ht")) &&
-    (await hasPublicColumn(client, "devis_ligne", "total_ttc"));
+    (await hasWritablePublicColumn(client, "devis_ligne", "total_ht")) &&
+    (await hasWritablePublicColumn(client, "devis_ligne", "total_ttc"));
   const inserted: InsertedDevisLine[] = [];
   let position = 0;
   for (const line of lignes as DevisLineWithPreparatoryInput[]) {
@@ -2525,17 +2547,20 @@ export async function repoReviseDevis(
     if (input.lignes) {
       await insertDevisLines(client, newDevisId, input.lignes, { revision: true });
     } else {
-      // Clone : la position et les totaux de ligne suivent la source (colonnes gardées —
-      // patch 20260722 / schéma legacy).
+      // Clone : les colonnes legacy suivent la source. Les colonnes absentes ou
+      // GENERATED sont omises pour laisser le schéma courant appliquer son contrat.
+      const hasCodePieceColumn = await hasPublicColumn(client, "devis_ligne", "code_piece");
       const hasPositionColumn = await hasPublicColumn(client, "devis_ligne", "position");
       const hasLineTotalsColumns =
-        (await hasPublicColumn(client, "devis_ligne", "total_ht")) &&
-        (await hasPublicColumn(client, "devis_ligne", "total_ttc"));
+        (await hasWritablePublicColumn(client, "devis_ligne", "total_ht")) &&
+        (await hasWritablePublicColumn(client, "devis_ligne", "total_ttc"));
       const extraColumns = [
+        ...(hasCodePieceColumn ? ["code_piece"] : []),
         ...(hasPositionColumn ? ["position"] : []),
         ...(hasLineTotalsColumns ? ["total_ht", "total_ttc"] : []),
       ];
       const extraSelects = [
+        ...(hasCodePieceColumn ? ["dl.code_piece"] : []),
         ...(hasPositionColumn ? ["dl.position"] : []),
         ...(hasLineTotalsColumns ? ["dl.total_ht", "dl.total_ttc"] : []),
       ];
@@ -2547,7 +2572,6 @@ export async function repoReviseDevis(
             description,
             article_id,
             piece_technique_id,
-            code_piece,
             quantite,
             unite,
             prix_unitaire_ht,
@@ -2559,7 +2583,6 @@ export async function repoReviseDevis(
             dl.description,
             dl.article_id,
             dl.piece_technique_id,
-            dl.code_piece,
             dl.quantite,
             dl.unite,
             dl.prix_unitaire_ht,
