@@ -129,6 +129,10 @@ describe("Commande → stock → OF receipt → delivery contracts", () => {
     expect(deliveryRepository).not.toMatch(/ACTUAL_QTY_BELOW_RESERVED/);
     expect(deliveryRepository).toMatch(/PHYSICAL_QTY_BELOW_PREPARED/);
     expect(deliveryRepository).toMatch(/reallocateCorrectedBatchReservations/);
+    expect(deliveryRepository).toMatch(/remainingReservedQty <= 1e-9/);
+    expect(deliveryRepository).toMatch(/SET status = 'RELEASED'/);
+    expect(deliveryRepository).toMatch(/released_at = now\(\)/);
+    expect(deliveryRepository).toMatch(/release_reason = \$3/);
     expect(deliveryRepository).toMatch(/prepareOfsForReservationShortages/);
     expect(deliveryRepository).toMatch(/createRecursiveOrdresFabrication/);
     expect(deliveryRepository).toMatch(/CASE COALESCE\(l\.source_scope, l\.stock_scope, w\.stock_scope, 'NEW'\) WHEN 'OLD' THEN 0 ELSE 1 END/);
