@@ -61,7 +61,9 @@ export type BonLivraisonListItem = {
   statut: BonLivraisonStatut
   client: ClientLite
   commande: CommandeLite
+  commande_numeros?: string[]
   affaire: AffaireLite
+  affaire_references?: string[]
   date_creation: string
   date_expedition: string | null
   date_livraison: string | null
@@ -76,7 +78,9 @@ export type BonLivraisonHeader = {
   statut: BonLivraisonStatut
   client: ClientLite
   commande: CommandeLite
+  commande_numeros?: string[]
   affaire: AffaireLite
+  affaire_references?: string[]
   adresse_livraison: AdresseLivraisonLite
   date_creation: string
   date_expedition: string | null
