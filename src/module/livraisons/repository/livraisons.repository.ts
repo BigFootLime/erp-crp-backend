@@ -3316,6 +3316,21 @@ export async function repoListPreparationCart(filters: PreparationCartQueryDTO):
   }
   if (filters.commande_id) where.push(`a.commande_id = ${push(filters.commande_id)}::bigint`)
   if (filters.affaire_id) where.push(`r.livraison_affaire_id = ${push(filters.affaire_id)}::bigint`)
+  if (filters.client_id) where.push(`cc.client_id::text = ${push(filters.client_id)}::text`)
+  if (filters.source_scope) {
+    where.push(`COALESCE(r.source_scope, l.source_scope, 'NEW') = ${push(filters.source_scope)}`)
+  }
+  if (filters.q) {
+    const term = push(`%${filters.q}%`)
+    where.push(`(
+      cc.numero ILIKE ${term}
+      OR COALESCE(c.company_name, '') ILIKE ${term}
+      OR COALESCE(af.reference, '') ILIKE ${term}
+      OR COALESCE(art.code, '') ILIKE ${term}
+      OR COALESCE(cl.designation, '') ILIKE ${term}
+      OR COALESCE(l.lot_code, '') ILIKE ${term}
+    )`)
+  }
   if (filters.bon_livraison_id) {
     where.push(`EXISTS (
       SELECT 1 FROM public.bon_livraison_ligne_allocations bla
@@ -3329,7 +3344,13 @@ export async function repoListPreparationCart(filters: PreparationCartQueryDTO):
     `
       SELECT COUNT(*)::int AS total
       FROM public.stock_reservations r
-      LEFT JOIN public.commande_ligne_affaire_allocation a ON a.id = r.commande_ligne_affaire_allocation_id
+      JOIN public.commande_ligne_affaire_allocation a ON a.id = r.commande_ligne_affaire_allocation_id
+      JOIN public.commande_client cc ON cc.id = a.commande_id
+      JOIN public.commande_ligne cl ON cl.id = a.commande_ligne_id
+      LEFT JOIN public.clients c ON c.client_id = cc.client_id
+      LEFT JOIN public.affaire af ON af.id = r.livraison_affaire_id
+      JOIN public.articles art ON art.id = r.article_id
+      LEFT JOIN public.lots l ON l.id = r.lot_id
       ${whereSql}
     `,
     values
