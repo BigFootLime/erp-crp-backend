@@ -698,6 +698,11 @@ export async function repoCreateCommandeArDraft(params: {
           acknowledgement_id: arId,
           acknowledgement_number: version.reference,
         },
+        // The reviewed working PDF is the legal issuance. Filing these exact
+        // bytes prevents the background worker from rendering a subtly
+        // different document (timestamps, customer reference, PDF metadata)
+        // and guarantees that preview, GED archive and email attachment match.
+        exactPdfBytes: pdfBuffer,
         actorUserId: params.user_id,
       });
     } else {

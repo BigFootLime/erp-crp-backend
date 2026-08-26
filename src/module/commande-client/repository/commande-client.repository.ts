@@ -60,6 +60,7 @@ import {
 } from "../../production/domain/of-generation";
 import { queueRootOfCreationPdf } from "../../production/domain/of-creation-pdf";
 import { canActOnCommandeWorkflowCheckpoint, canLaunchInternalOrder } from "../domain/commande-client-rbac";
+import { resolveCustomerOrderLaunchMode } from "../domain/commande-client-launch";
 import {
   assertCommandeFullyInvoiced,
   assertCommandeFullyShipped,
@@ -880,19 +881,21 @@ async function listGeneratedOfRefs(db: Queryable, commandeId: number): Promise<G
     parent_of_id: number | null;
     generation_level: number;
     commande_ligne_id: number;
+    operations_count: number;
   }>(
     `
       SELECT
-        id::bigint::int AS id,
-        COALESCE(root_of_id, id)::bigint::int AS root_of_id,
-        parent_of_id::bigint::int AS parent_of_id,
-        generation_level::int AS generation_level,
-        commande_ligne_id::bigint::int AS commande_ligne_id
-      FROM public.ordres_fabrication
-      WHERE commande_id = $1
-        AND generation_batch_id IS NOT NULL
-        AND statut::text <> 'ANNULE'
-      ORDER BY generation_level ASC, id ASC
+        o.id::bigint::int AS id,
+        COALESCE(o.root_of_id, o.id)::bigint::int AS root_of_id,
+        o.parent_of_id::bigint::int AS parent_of_id,
+        o.generation_level::int AS generation_level,
+        o.commande_ligne_id::bigint::int AS commande_ligne_id,
+        (SELECT count(*)::int FROM public.of_operations op WHERE op.of_id = o.id) AS operations_count
+      FROM public.ordres_fabrication o
+      WHERE o.commande_id = $1
+        AND o.generation_batch_id IS NOT NULL
+        AND o.statut::text <> 'ANNULE'
+      ORDER BY o.generation_level ASC, o.id ASC
     `,
     [commandeId]
   );
@@ -903,6 +906,7 @@ async function listGeneratedOfRefs(db: Queryable, commandeId: number): Promise<G
     parent_of_id: row.parent_of_id === null ? null : Number(row.parent_of_id),
     generation_level: Number(row.generation_level),
     commande_ligne_id: Number(row.commande_ligne_id),
+    operations_count: Number(row.operations_count ?? 0),
   }));
 }
 
@@ -1531,10 +1535,59 @@ async function advanceCustomerOrderWorkflowAfterLaunch(params: {
   commande_id: number;
   user_id: number;
   needs_production: boolean;
+  has_plannable_operations: boolean;
   bon_livraison_id: string | null;
   of_ids: number[];
 }) {
-  if (params.needs_production) {
+  const launchMode = resolveCustomerOrderLaunchMode({
+    needsProduction: params.needs_production,
+    generatedOperationsCount: params.has_plannable_operations ? 1 : 0,
+  });
+
+  if (launchMode === "PRODUCTION_WITHOUT_PLANNING") {
+    await params.tx.query(
+      `
+        UPDATE public.commande_client_workflow_checkpoint
+        SET status = CASE
+              WHEN checkpoint_code IN ('of_generation', 'ar_preparation') THEN 'done'
+              WHEN checkpoint_code = 'planning_validation' THEN 'skipped'
+              WHEN checkpoint_code = 'ar_sent' THEN 'active'
+              ELSE status
+            END,
+            completed_at = CASE
+              WHEN checkpoint_code = 'ar_sent' THEN NULL
+              ELSE COALESCE(completed_at, now())
+            END,
+            completed_by = CASE
+              WHEN checkpoint_code = 'ar_sent' THEN NULL
+              ELSE COALESCE(completed_by, $2::int)
+            END,
+            metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+            updated_at = now()
+        WHERE commande_id = $1
+          AND checkpoint_code IN ('of_generation', 'planning_validation', 'ar_preparation', 'ar_sent')
+      `,
+      [
+        params.commande_id,
+        params.user_id,
+        JSON.stringify({
+          skip_reason: "no_plannable_operations",
+          no_operation_flow: true,
+          of_ids: params.of_ids,
+        }),
+      ]
+    );
+    return repoEnsureCommandeWorkflowStatus({
+      tx: params.tx,
+      commande_id: params.commande_id,
+      nouveau_statut: "AR_PRET",
+      cause: "customer_order_launch",
+      commentaire: "OF sans opération généré ; planning non applicable et AR prêt à préparer",
+      user_id: params.user_id,
+    });
+  }
+
+  if (launchMode === "PRODUCTION_WITH_PLANNING") {
     await params.tx.query(
       `
         UPDATE public.commande_client_workflow_checkpoint
@@ -4342,9 +4395,14 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
           child_of_ids: existingOfs.filter((of) => of.parent_of_id !== null).map((of) => of.id),
           ofs: existingOfs,
           warnings:
-            orderType === "INTERNE" && existingLivraisons.length > 1
-              ? ["LEGACY_MULTIPLE_DELIVERY_AFFAIRS"]
-              : [],
+            [
+              ...(orderType === "INTERNE" && existingLivraisons.length > 1
+                ? ["LEGACY_MULTIPLE_DELIVERY_AFFAIRS"]
+                : []),
+              ...existingOfs
+                .filter((of) => of.operations_count === 0)
+                .map((of) => `GAMME_WITHOUT_OPERATION:OF-${of.id}`),
+            ],
         };
       }
 
@@ -4618,6 +4676,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
     const bonLivraisonId = preparedDelivery?.bon_livraison_id ?? null;
 
     const generatedOfs: GeneratedOfRef[] = [];
+    const generationWarnings: string[] = [];
     if (needsProduction) {
       const byLine = new Map<number, CommandeLineRef>(refs.map((r) => [r.commande_ligne_id, r] as const));
 
@@ -4647,6 +4706,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
           user_id: audit.user_id,
         });
         generatedOfs.push(...generated.ofs);
+        generationWarnings.push(...generated.warnings);
       }
     }
 
@@ -4685,6 +4745,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         commande_id: commandeId,
         user_id: audit.user_id,
         needs_production: needsProduction,
+        has_plannable_operations: generatedOfs.some((of) => of.operations_count > 0),
         bon_livraison_id: bonLivraisonId,
         of_ids: ofIds,
       });
@@ -4755,7 +4816,10 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       generation_mode: orderType === "INTERNE" ? "INTERNAL_ORDER" : "CUSTOMER_ORDER",
       idempotent_replay: false,
       workflow_status: workflowStatus,
-      warnings: recoveredInvalidPlanningState ? ["RECOVERED_PLANNING_WITHOUT_OF_OR_DELIVERY"] : [],
+      warnings: [...new Set([
+        ...(recoveredInvalidPlanningState ? ["RECOVERED_PLANNING_WITHOUT_OF_OR_DELIVERY"] : []),
+        ...generationWarnings,
+      ])],
     };
   });
 }
