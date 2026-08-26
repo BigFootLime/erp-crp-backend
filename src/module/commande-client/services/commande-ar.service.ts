@@ -113,7 +113,6 @@ type CommandeArEmailContact = {
 };
 
 export function buildCommandeArEmailContent(params: {
-  numero: string;
   customer_reference: string | null;
   reference: string;
   contact: CommandeArEmailContact | null;
@@ -123,11 +122,14 @@ export function buildCommandeArEmailContent(params: {
     ? [params.contact.civility, params.contact.first_name, params.contact.last_name].filter((part) => part?.trim()).join(" ").trim()
     : "";
   const greeting = contactName || "Madame, Monsieur";
-  const customerReference = params.customer_reference?.trim() || params.numero;
+  const customerReference = params.customer_reference?.trim() || null;
+  const orderAcknowledgement = customerReference
+    ? `Nous vous confirmons la prise en compte de votre commande ${customerReference}.`
+    : "Nous vous confirmons la prise en compte de votre commande.";
   const lines = [
     `Bonjour ${greeting},`,
     "",
-    `Nous vous confirmons la prise en compte de votre commande ${customerReference}, enregistrée dans CERP sous le numéro ${params.numero}.`,
+    orderAcknowledgement,
     "",
     `Veuillez trouver en pièce jointe notre accusé de réception ${params.reference}.`,
   ];
@@ -135,7 +137,9 @@ export function buildCommandeArEmailContent(params: {
   lines.push("", "Cordialement,", "Croix Rousse Précision");
   const text = lines.join("\n");
   return {
-    subject: `Accusé de réception de votre commande ${params.numero} — ${params.reference}`,
+    subject: customerReference
+      ? `Accusé de réception de votre commande ${customerReference} — ${params.reference}`
+      : `Accusé de réception de votre commande — ${params.reference}`,
     text,
     html: renderCommandeArEmailHtml(text),
   };
@@ -152,39 +156,6 @@ function addressLines(address: CommandeArAddress): string[] {
     .filter((value) => value.length > 0);
 
   return lines.length ? lines : ["-"];
-}
-
-function subjectForCommande(numero: string): string {
-  return `Accusé de réception ${numero}`;
-}
-
-function bodyTextForCommande(params: { numero: string; companyName: string | null }): string {
-  const company = params.companyName?.trim() || "Madame, Monsieur";
-  return [
-    `Bonjour ${company},`,
-    "",
-    `Nous vous confirmons la bonne réception de votre commande ${params.numero}.`,
-    "Vous trouverez en pièce jointe l’accusé de réception préparé par notre ERP.",
-    "",
-    "Cordialement,",
-    "Croix-Rousse Précision",
-  ].join("\n");
-}
-
-function buildEmailHtml(text: string, customMessage?: string | null): string {
-  const paragraphs = text.split(/\n{2,}/).map((block) => `<p style=\"margin:0 0 12px 0;line-height:1.5;\">${escapeHtml(block).replace(/\n/g, "<br />")}</p>`);
-  const extra = customMessage?.trim()
-    ? `<div style=\"margin-top:16px;padding:12px;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;\">${escapeHtml(customMessage.trim()).replace(/\n/g, "<br />")}</div>`
-    : "";
-  return `
-    <div style="background:#f6f7fb;padding:24px 12px;font-family:Arial,Helvetica,sans-serif;color:#0f172a;">
-      <div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:14px;padding:24px;">
-        <div style="font-size:18px;font-weight:800;margin-bottom:14px;">Accuse de reception</div>
-        ${paragraphs.join("")}
-        ${extra}
-      </div>
-    </div>
-  `.trim();
 }
 
 function isResendSendError(result: Extract<ResendSendResult, { ok: false }>): result is { ok: false; error: string } {
@@ -208,10 +179,10 @@ async function waitForCommandeArOfficialArchiveId(
 }
 
 export async function buildCommandeArPdfBuffer(params: {
-  reference?: string;
-  draftNumber: string;
-  /** Customer order reference; distinct from the acknowledgement number when configured. */
-  orderNumber?: string;
+  /** Versioned acknowledgement reference, for example AR-00000042-v1. */
+  reference: string;
+  /** Customer order reference; distinct from the acknowledgement number. */
+  orderNumber: string;
   companyName: string | null;
   dateCommande: string;
   generatedAt?: Date;
@@ -244,8 +215,10 @@ export async function buildCommandeArPdfBuffer(params: {
   issuer?: LegalParty;
 }): Promise<Buffer> {
   const clientName = params.companyName?.trim() || "Client";
-  const orderNumber = params.orderNumber?.trim() || params.draftNumber;
-  const reference = params.reference?.trim() || params.draftNumber;
+  const orderNumber = params.orderNumber.trim();
+  if (!orderNumber) throw new Error("COMMANDE_CUSTOMER_REFERENCE_REQUIRED");
+  const reference = params.reference.trim();
+  if (!reference) throw new Error("COMMANDE_AR_REFERENCE_REQUIRED");
   const generatedAt = params.generatedAt ?? new Date();
   const issuer = params.issuer ?? await readIssuerParty({ at: generatedAt.toISOString().slice(0, 10) });
   const draft = params.statut?.trim().toUpperCase() === "BROUILLON";
@@ -267,7 +240,7 @@ export async function buildCommandeArPdfBuffer(params: {
       documentType: "Accusé de réception",
       name: clientName,
       code: reference,
-      subtitle: `Version ${params.documentVersion ?? 1} · Commande ${orderNumber}`,
+      subtitle: `Version ${params.documentVersion ?? 1} · Référence commande client ${orderNumber}`,
       status: params.statut ?? "PLANIFIEE",
       flag: draft ? "INTERNE / BROUILLON" : null,
       watermark: draft ? "INTERNE / BROUILLON" : null,
@@ -282,7 +255,7 @@ export async function buildCommandeArPdfBuffer(params: {
     },
     (ctx) => {
       ctx.legalStrip([
-        { label: "Commande", value: orderNumber },
+        { label: "Référence commande client", value: orderNumber },
         { label: "Date commande", value: formatDateFR(params.dateCommande) },
         { label: "Statut", value: params.statut ?? "PLANIFIEE" },
         { label: "Total TTC", value: formatCurrencyEUR(params.totalTtc) },
@@ -342,13 +315,13 @@ export async function buildCommandeArPdfBuffer(params: {
 /** Renderer registered in the authoritative worker. It consumes the frozen source only. */
 export async function renderCommandeArOfficialPdf({ archive }: { archive: AuthoritativePdfArchiveRecord }): Promise<Buffer> {
   const source = archive.sourceSnapshot as Partial<CommandeArOfficialSnapshot>;
-  if (source.type !== "CUSTOMER_ORDER_ACKNOWLEDGEMENT" || !source.acknowledgement_number || !Array.isArray(source.lines) || !source.issuer) {
+  if (source.type !== "CUSTOMER_ORDER_ACKNOWLEDGEMENT" || !source.acknowledgement_number || !source.order_number || !Array.isArray(source.lines) || !source.issuer) {
     throw new Error("COMMANDE_AR_OFFICIAL_SNAPSHOT_INVALID");
   }
   const archivedAt = new Date(archive.createdAt);
   if (Number.isNaN(archivedAt.getTime())) throw new Error("COMMANDE_AR_ARCHIVE_CREATED_AT_INVALID");
   return buildCommandeArPdfBuffer({
-    issuer: source.issuer, draftNumber: source.acknowledgement_number, orderNumber: source.order_number,
+    issuer: source.issuer, reference: source.acknowledgement_number, orderNumber: source.order_number,
     companyName: source.customer_name ?? null,
     // `generated_at` remains inside the frozen business snapshot; the document
     // artifact's header/footer/PDF metadata are the immutable archive time.
@@ -380,6 +353,14 @@ export async function svcGenerateCommandeAr(params: {
     if (!data) {
       throw new HttpError(404, "COMMANDE_NOT_FOUND", "Commande introuvable");
     }
+    const customerReference = data.header.customer_reference?.trim() || null;
+    if (!customerReference) {
+      throw new HttpError(
+        409,
+        "COMMANDE_CUSTOMER_REFERENCE_REQUIRED",
+        "Renseignez la référence commande client avant de générer l’accusé de réception."
+      );
+    }
     const recipientSuggestions = buildCommandeArRecipientSuggestions(data);
 
     const generatedAt = new Date();
@@ -388,7 +369,7 @@ export async function svcGenerateCommandeAr(params: {
     const issuer = await readIssuerParty({ at: generatedAt.toISOString().slice(0, 10) });
 
     const officialSnapshot: CommandeArOfficialSnapshot = {
-      type: "CUSTOMER_ORDER_ACKNOWLEDGEMENT", acknowledgement_number: data.header.numero, order_number: data.header.numero,
+      type: "CUSTOMER_ORDER_ACKNOWLEDGEMENT", acknowledgement_number: data.header.numero, order_number: customerReference,
       generated_at: generatedAt.toISOString(), status: data.header.statut, customer_name: data.header.client_company_name,
       date_commande: data.header.date_commande, total_ht: String(data.header.total_ht), total_ttc: String(data.header.total_ttc),
       public_comment: data.header.commentaire, bill_address: { name: data.header.bill_name, street: data.header.bill_street, house_number: data.header.bill_house_number, postal_code: data.header.bill_postal_code, city: data.header.bill_city, country: data.header.bill_country },
@@ -404,13 +385,12 @@ export async function svcGenerateCommandeAr(params: {
       commande_id: params.commande_id,
       user_id: params.user_id,
       user_role: params.user_role,
-      document_name: `AR-${data.header.numero}.pdf`,
+      document_name: "AR.pdf",
       pdf_buffer: Buffer.alloc(0),
       pdf_factory: ({ reference, version_number }) => buildCommandeArPdfBuffer({
         reference,
         issuer,
-        draftNumber: data.header.numero,
-        orderNumber: data.header.customer_reference ?? data.header.numero,
+        orderNumber: customerReference,
         companyName: data.header.client_company_name,
         dateCommande: data.header.date_commande,
         generatedAt,
@@ -428,14 +408,12 @@ export async function svcGenerateCommandeAr(params: {
       subject: "",
       body_text: "",
       subject_factory: ({ reference }) => buildCommandeArEmailContent({
-        numero: data.header.numero,
-        customer_reference: data.header.customer_reference,
+        customer_reference: customerReference,
         reference,
         contact: defaultContact,
       }).subject,
       body_text_factory: ({ reference }) => buildCommandeArEmailContent({
-        numero: data.header.numero,
-        customer_reference: data.header.customer_reference,
+        customer_reference: customerReference,
         reference,
         contact: defaultContact,
       }).text,
@@ -522,18 +500,20 @@ export async function svcSendCommandeAr(params: {
       throw new HttpError(409, "COMMANDE_AR_PDF_INTEGRITY_ERROR", "Le PDF officiel archivé ne correspond pas à la version préparée.");
     }
 
-    const snapshot = draft.content_snapshot as { header?: { numero?: unknown; customer_reference?: unknown } } | null;
-    const numero = typeof snapshot?.header?.numero === "string" ? snapshot.header.numero.trim() : "";
-    if (!numero) {
-      throw new HttpError(409, "COMMANDE_AR_SNAPSHOT_INVALID", "Le contenu figé de cet accusé de réception est incomplet.");
-    }
+    const snapshot = draft.content_snapshot as { header?: { customer_reference?: unknown } } | null;
     const customerReference = typeof snapshot?.header?.customer_reference === "string"
-      ? snapshot.header.customer_reference
+      ? snapshot.header.customer_reference.trim()
       : null;
+    if (!customerReference) {
+      throw new HttpError(
+        409,
+        "COMMANDE_CUSTOMER_REFERENCE_REQUIRED",
+        "Renseignez la référence commande client puis générez une nouvelle version de l’accusé de réception."
+      );
+    }
     const selectedContact = claim.contacts.length === 1 ? claim.contacts[0] : null;
     const emailBodyOverride = params.body.email_body?.trim() || null;
     const generatedContent = buildCommandeArEmailContent({
-      numero,
       customer_reference: customerReference,
       reference: draft.reference,
       contact: selectedContact,
