@@ -2458,7 +2458,11 @@ export async function repoReviseDevis(
     // A revision receives a server-computed suffix because `devis.numero` is
     // unique.  The client cannot choose that suffix; `version_number` remains
     // the authoritative revision field.
-    const numero = `${source.numero}-V${nextVersion}`.slice(0, 30);
+    // Every revision keeps the immutable root number as its prefix. Building
+    // from the immediate parent would compound suffixes (…-V2-V3) and can
+    // eventually truncate the authoritative root number at 30 characters.
+    const rootNumero = source.numero.replace(/(?:-V\d+)+$/i, "");
+    const numero = `${rootNumero}-V${nextVersion}`.slice(0, 30);
     const dateCreation = (input.date_creation ?? new Date().toISOString().slice(0, 10)).slice(0, 10);
 
     // #167 : une révision repart dans l'entonnoir commercial (BROUILLON par défaut) ;

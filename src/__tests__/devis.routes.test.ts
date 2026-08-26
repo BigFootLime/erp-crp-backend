@@ -960,6 +960,43 @@ describe("/api/v1/devis", () => {
     expect(cloneSql).not.toContain("total_ttc");
   });
 
+  it("POST /api/v1/devis/:id/revise keeps the root quote number across successive revisions", async () => {
+    state.commandeHeader = {
+      id: "8",
+      root_devis_id: "7",
+      numero: "DV-7-V2",
+      client_id: "001",
+      contact_id: null,
+      adresse_facturation_id: null,
+      adresse_livraison_id: null,
+      mode_reglement_id: null,
+      compte_vente_id: null,
+      date_validite: null,
+      statut: "BROUILLON",
+      remise_globale: 0,
+      total_ht: 100,
+      total_ttc: 120,
+      commentaires: null,
+      conditions_paiement_id: null,
+      biller_id: null,
+      updated_at: "2026-03-24T10:00:00.000Z",
+    };
+    state.nextVersion = 3;
+    state.devisSeqId = "9";
+    state.insertDevisReturnId = "9";
+    state.revisionLines = [{ quantite: 1, prix_unitaire_ht: 100, remise_ligne: 0, taux_tva: 20 }];
+
+    const res = await request(app)
+      .post("/api/v1/devis/8/revise")
+      .field("data", JSON.stringify({ user_id: 1 }));
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({ id: 9, root_devis_id: 7, parent_devis_id: 8, version_number: 3 });
+
+    const headerInsert = mocks.clientQuery.mock.calls.find((c) => /INSERT INTO devis\s*\(/.test(String(c[0])));
+    expect(headerInsert?.[1]?.[4]).toBe("DV-7-V3");
+  });
+
   it("POST /api/v1/devis preserves writable legacy line total columns", async () => {
     state.columns.code_piece = true;
     state.generatedColumns = {};
