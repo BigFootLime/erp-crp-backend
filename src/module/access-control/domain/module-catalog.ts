@@ -53,7 +53,7 @@ export const MODULE_CATALOG: readonly ModuleCatalogEntry[] = [
     description: "Préparation, expédition et bons de livraison.",
     category: "Commerce",
     api_prefixes: ["/livraisons"],
-    nav_page_keys: ["livraisons"],
+    nav_page_keys: ["livraisons", "livraisons-preparation"],
     is_protected: false,
     sort_order: 40,
   },

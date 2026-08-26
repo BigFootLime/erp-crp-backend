@@ -23,8 +23,6 @@ import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repos
 import { assertOperationalLotQualityEligibility } from "../../qualite/repository/quality-operational-gate.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 import { repoCreateAppNotifications, repoListUsersForCommandePlanningNotification } from "../../notifications/repository/notifications.repository";
-import { repoCreateLivraisonFromCommande } from "../../livraisons/repository/livraisons.repository";
-import { prepareLivraisonInTransaction } from "../../livraisons/repository/livraisons-shipment.repository";
 import type { AppNotification } from "../../notifications/types/notifications.types";
 import type {
   CreateCommandeInput,
@@ -1601,7 +1599,6 @@ async function advanceCustomerOrderWorkflowAfterLaunch(params: {
   commande_id: number;
   user_id: number;
   needs_production: boolean;
-  bon_livraison_id: string | null;
   of_ids: number[];
 }) {
   const launchMode = resolveCustomerOrderLaunchMode({
@@ -1635,14 +1632,6 @@ async function advanceCustomerOrderWorkflowAfterLaunch(params: {
     });
   }
 
-  if (!params.bon_livraison_id) {
-    throw new HttpError(
-      409,
-      "PREPARED_DELIVERY_REQUIRED",
-      "La commande couverte par le stock doit posséder un bon de livraison préparé."
-    );
-  }
-
   await params.tx.query(
     `
       UPDATE public.commande_client_workflow_checkpoint
@@ -1674,7 +1663,8 @@ async function advanceCustomerOrderWorkflowAfterLaunch(params: {
       JSON.stringify({
         skip_reason: "commande_fully_reserved_from_stock_awaiting_ar",
         stock_only_flow: true,
-        bon_livraison_id: params.bon_livraison_id,
+        delivery_preparation: "ATELIER_BL",
+        bon_livraison_id: null,
       }),
     ]
   );
@@ -4673,21 +4663,19 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
 
     const holdsStockForGroupedDelivery =
       orderType !== "INTERNE" && needsProduction && decision === "SHIP_ALL_TOGETHER";
-    const preparedDelivery =
-      orderType !== "INTERNE" && livraisonAffaireId !== null && !holdsStockForGroupedDelivery
-        ? await createPreparedLivraisonForStock(client, {
-            commande_id: commandeId,
-            user_id: audit.user_id,
-            analysis_lines: stockAnalysis.lines,
-            quantities_by_line: immediateDeliveryByLine,
-          })
-        : null;
-    const reservationsCreated = holdsStockForGroupedDelivery
+    // A command launch reserves traceable stock but never creates a BL.  The
+    // operator deliberately groups and verifies the ready lines in Atelier BL;
+    // this prevents an order page or an automated launch from becoming a
+    // second, competing delivery-preparation workflow.
+    const quantitiesToReserve = holdsStockForGroupedDelivery
+      ? stockCoveredByLine
+      : immediateDeliveryByLine;
+    const reservationsCreated = orderType !== "INTERNE" && livraisonAffaireId !== null
       ? (
           (recoveredInvalidPlanningState
             ? await reuseRecoveredCommandeStockReservations(client, {
                 commande_id: commandeId,
-                quantities_by_line: stockCoveredByLine,
+                quantities_by_line: quantitiesToReserve,
               })
             : null) ??
           await reserveCommandeStockForLaterDelivery(client, {
@@ -4695,11 +4683,11 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
             livraison_affaire_id: livraisonAffaireId as number,
             user_id: audit.user_id,
             analysis_lines: stockAnalysis.lines,
-            quantities_by_line: stockCoveredByLine,
+            quantities_by_line: quantitiesToReserve,
           })
         )
-      : preparedDelivery?.reservation_ids ?? [];
-    const bonLivraisonId = preparedDelivery?.bon_livraison_id ?? null;
+      : [];
+    const bonLivraisonId = null;
 
     const generatedOfs: GeneratedOfRef[] = [];
     const generationWarnings: string[] = [];
@@ -4770,7 +4758,6 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         commande_id: commandeId,
         user_id: audit.user_id,
         needs_production: needsProduction,
-        bon_livraison_id: bonLivraisonId,
         of_ids: ofIds,
       });
       workflowStatus = transition.nouveau_statut;
@@ -5399,108 +5386,6 @@ function planDeliveryAllocations(
   }
 
   return planned;
-}
-
-async function createPreparedLivraisonForStock(
-  db: PoolClient,
-  params: {
-    commande_id: number;
-    user_id: number;
-    analysis_lines: CommandeStockAnalysisLine[];
-    quantities_by_line: ReadonlyMap<number, number>;
-  }
-): Promise<{ bon_livraison_id: string; reservation_ids: string[] } | null> {
-  const positiveQuantities = new Map(
-    [...params.quantities_by_line.entries()].filter(([, quantity]) => Number(quantity) > 1e-9)
-  );
-  if (positiveQuantities.size === 0) return null;
-
-  const articleIds = Array.from(
-    new Set(
-      params.analysis_lines
-        .filter((line) => positiveQuantities.has(line.commande_ligne_id))
-        .map((line) => line.article_id)
-        .filter((articleId): articleId is string => Boolean(articleId))
-    )
-  );
-  const candidates = await loadScopedDeliveryStockCandidates(db, articleIds);
-  const allocations = planDeliveryAllocations(params.analysis_lines, positiveQuantities, candidates);
-  const livraison = await repoCreateLivraisonFromCommande(
-    params.commande_id,
-    params.user_id,
-    db,
-    positiveQuantities
-  );
-
-  const lineRows = await db.query<{ id: string; commande_ligne_id: number }>(
-    `
-      SELECT id::text AS id, commande_ligne_id::bigint::int AS commande_ligne_id
-      FROM public.bon_livraison_ligne
-      WHERE bon_livraison_id = $1::uuid
-        AND commande_ligne_id IS NOT NULL
-    `,
-    [livraison.id]
-  );
-  const deliveryLineByCommandeLine = new Map(
-    lineRows.rows.map((line) => [line.commande_ligne_id, line.id] as const)
-  );
-
-  for (const allocation of allocations) {
-    const deliveryLineId = deliveryLineByCommandeLine.get(allocation.commande_ligne_id);
-    if (!deliveryLineId) throw new Error("Prepared delivery line mapping is missing");
-    await db.query(
-      `
-        INSERT INTO public.bon_livraison_ligne_allocations (
-          bon_livraison_ligne_id,
-          article_id,
-          lot_id,
-          magasin_id,
-          emplacement_id,
-          location_id,
-          stock_level_id,
-          stock_batch_id,
-          reservation_id,
-          stock_movement_line_id,
-          quantite,
-          unite,
-          created_by,
-          updated_by
-        ) VALUES (
-          $1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::bigint,$6::uuid,$7::uuid,$8::uuid,
-          NULL,NULL,$9,NULL,$10,$10
-        )
-      `,
-      [
-        deliveryLineId,
-        allocation.article_id,
-        allocation.lot_id,
-        allocation.magasin_id,
-        allocation.emplacement_id,
-        allocation.location_id,
-        allocation.stock_level_id,
-        allocation.stock_batch_id,
-        allocation.quantity,
-        params.user_id,
-      ]
-    );
-  }
-
-  await prepareLivraisonInTransaction(db, livraison.id, params.user_id);
-  const reservations = await db.query<{ id: string }>(
-    `
-      SELECT reservation.id::text AS id
-      FROM public.bon_livraison_ligne_allocations allocation
-      JOIN public.bon_livraison_ligne line ON line.id = allocation.bon_livraison_ligne_id
-      JOIN public.stock_reservations reservation ON reservation.id = allocation.reservation_id
-      WHERE line.bon_livraison_id = $1::uuid
-      ORDER BY reservation.id
-    `,
-    [livraison.id]
-  );
-  return {
-    bon_livraison_id: livraison.id,
-    reservation_ids: reservations.rows.map((reservation) => reservation.id),
-  };
 }
 
 export async function reserveCommandeStockForLaterDelivery(

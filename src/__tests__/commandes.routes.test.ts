@@ -1387,7 +1387,7 @@ describe("/api/v1/commandes", () => {
     expect(res.body).toMatchObject({ id: 456 });
   });
 
-  it("POST /api/v1/commandes/:id/generate-affaires prepares a reserved BL from OLD stock without OF", async () => {
+  it("POST /api/v1/commandes/:id/generate-affaires reserves OLD stock for Atelier BL without creating a BL or OF", async () => {
     process.env.JWT_SECRET = "test-secret";
     const token = jwt.sign(
       { id: 1, username: "test", email: "test@example.com", role: "admin" },
@@ -1399,6 +1399,7 @@ describe("/api/v1/commandes", () => {
     const LOCATION_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
     const ARTICLE_ID = "11111111-1111-1111-1111-111111111111";
     const PIECE_ID = "22222222-2222-2222-2222-222222222222";
+    const LOT_ID = "99999999-9999-4999-8999-999999999998";
 
     let fullStockReplay = false;
     mocks.clientQuery.mockImplementation(async (sql: unknown, params?: unknown[]) => {
@@ -1508,7 +1509,7 @@ describe("/api/v1/commandes", () => {
             stock_level_id: "33333333-3333-4333-8333-333333333333",
             stock_batch_id: null,
             location_id: LOCATION_ID,
-            lot_id: null,
+            lot_id: LOT_ID,
             magasin_id: MAGASIN_ID,
             emplacement_id: 1,
             qty_available: 1,
@@ -1551,6 +1552,12 @@ describe("/api/v1/commandes", () => {
       if (q.includes("INSERT INTO affaire")) return { rows: [] };
       if (q.includes("INSERT INTO commande_to_affaire")) return { rows: [] };
       if (q.includes("INSERT INTO public.commande_ligne_affaire_allocation")) return { rows: [] };
+      if (q.includes("FROM public.commande_ligne_affaire_allocation") && q.includes("FOR UPDATE")) {
+        return { rows: [{ id: 42, commande_ligne_id: 1 }] };
+      }
+      if (q.includes("SELECT lot_status, source_scope FROM public.lots")) {
+        return { rows: [{ lot_status: "LIBERE", source_scope: "OLD" }] };
+      }
       if (q.includes("SELECT delivery_address_id::text AS delivery_address_id FROM clients")) return { rows: [{ delivery_address_id: null }] };
       if (q.includes("nextval('public.bon_livraison_no_seq')")) return { rows: [{ n: "1" }] };
       if (q.includes("INSERT INTO bon_livraison (") && q.includes("RETURNING id::text AS id")) {
@@ -1655,7 +1662,7 @@ describe("/api/v1/commandes", () => {
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({
       affaire_ids: [7],
-      bon_livraison_id: "44444444-4444-4444-8444-444444444444",
+      bon_livraison_id: null,
       reservations_created: [expect.any(String)],
       of_ids: [],
       workflow_status: "AR_PRET",
@@ -1668,10 +1675,20 @@ describe("/api/v1/commandes", () => {
       String(c[0]).includes("INSERT INTO commande_to_affaire")
     );
     expect(linkCall).toBeTruthy();
-    const allocationCall = mocks.clientQuery.mock.calls.find((call) =>
-      String(call[0]).includes("INSERT INTO public.bon_livraison_ligne_allocations")
+    const reservationCall = mocks.clientQuery.mock.calls.find((call) =>
+      String(call[0]).includes("INSERT INTO public.stock_reservations")
     );
-    expect(allocationCall?.[1]).toEqual(expect.arrayContaining(["33333333-3333-4333-8333-333333333333"]));
+    expect(reservationCall?.[1]).toEqual(
+      expect.arrayContaining([LOT_ID, "33333333-3333-4333-8333-333333333333"])
+    );
+    expect(
+      mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO bon_livraison ("))
+    ).toBe(false);
+    expect(
+      mocks.clientQuery.mock.calls.some((call) =>
+        String(call[0]).includes("INSERT INTO public.bon_livraison_ligne_allocations")
+      )
+    ).toBe(false);
     const workflowAdvanceCall = mocks.clientQuery.mock.calls.find((call) =>
       String(call[0]).includes("checkpoint_code IN (") && String(call[0]).includes("'delivery'")
     );
