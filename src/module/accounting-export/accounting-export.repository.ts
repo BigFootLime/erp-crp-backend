@@ -204,6 +204,44 @@ async function loadSources(client: PoolClient, input: CreateAccountingPreviewDTO
     );
     rows.push(...result.rows);
   }
+  for (const sourceType of ["SUPPLIER_INVOICE", "SUPPLIER_CREDIT_NOTE"] as const) {
+    if (!input.source_types.includes(sourceType)) continue;
+    const documentType = sourceType === "SUPPLIER_INVOICE" ? "INVOICE" : "CREDIT_NOTE";
+    const result = await client.query<AccountingSourceDocument>(
+      `SELECT $3::text AS source_type,source.id::text AS source_id,
+              source.legal_number AS source_number,
+              ${UPDATED_AT_SQL} AS source_updated_at,source.issue_date::text AS entry_date,
+              source.fournisseur_id::text AS client_id,NULLIF(btrim(supplier.compte_tiers),'') AS third_party_account,
+              upper(source.currency) AS currency,NULL::text AS payment_mode,
+              source.total_without_vat::numeric(18,2)::text AS total_ex_tax,
+              source.total_vat::numeric(18,2)::text AS total_tax,
+              source.total_with_vat::numeric(18,2)::text AS total_incl_tax,
+              COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                  'tax_category',item->>'category',
+                  'tax_rate',item->>'rate',
+                  'total_ex_tax',item->>'taxable_amount',
+                  'tax_amount',item->>'tax_amount'
+                ) ORDER BY item->>'category',item->>'rate')
+                FROM jsonb_array_elements(source.vat_breakdown) item
+              ),'[]'::jsonb) AS tax_breakdown,
+              upper(COALESCE(
+                source.seller_snapshot #>> '{postal_address,country_code}',
+                source.seller_snapshot #>> '{postal_address,country}'
+              )) AS partner_country_code,
+              claim.batch_id::text AS claimed_batch_id
+       FROM public.supplier_invoices source
+       JOIN public.fournisseurs supplier ON supplier.id=source.fournisseur_id
+       LEFT JOIN public.accounting_export_source_claims claim
+         ON claim.source_type=$3 AND claim.source_id=source.id::text AND claim.released_at IS NULL
+       WHERE source.document_type=$4
+         AND source.status IN ('APPROVED','ACCOUNTING_EXPORTED','CLOSED')
+         AND source.issue_date BETWEEN $1::date AND $2::date
+       ORDER BY source.issue_date,source.id`,
+      [input.period_from, input.period_to, sourceType, documentType]
+    );
+    rows.push(...result.rows);
+  }
   return rows;
 }
 
@@ -355,6 +393,15 @@ async function runBatchCommand(params: {
         } catch (error) {
           if ((error as { code?: string }).code === "23505") throw new HttpError(409, "ACCOUNTING_SOURCE_ALREADY_EXPORTED", "Une pièce du lot a déjà été exportée par un autre lot.");
           throw error;
+        }
+        if (source.source_type === "SUPPLIER_INVOICE" || source.source_type === "SUPPLIER_CREDIT_NOTE") {
+          await client.query(
+            `UPDATE public.supplier_invoices
+                SET status='ACCOUNTING_EXPORTED',accounting_exported_at=COALESCE(accounting_exported_at,now()),
+                    row_version=row_version+1,updated_at=now()
+              WHERE id=$1::uuid AND status='APPROVED'`,
+            [source.source_id]
+          );
         }
       }
       artifact = new GenericDelimitedV1Adapter().render(lines, mapping.config);

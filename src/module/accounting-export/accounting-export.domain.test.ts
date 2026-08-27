@@ -17,6 +17,14 @@ const mapping: AccountingMappingConfig = {
   default_bank_account: null,
   sales_account_by_tax: { "20": "707000", "5.5": "707100" },
   vat_output_account_by_tax: { "20": "445710", "5.5": "445711" },
+  purchase_journal: "AC",
+  supplier_credit_journal: "AA",
+  purchase_account_by_tax_category: { "S:20": "601000", "K:0": "601100" },
+  vat_input_account_by_tax_category: { "S:20": "445660", "K:0": "445662" },
+  reverse_charge_output_account_by_tax_category: { "K:0": "445200" },
+  self_assessed_vat_rate_by_tax_category: { "K:0": "20" },
+  fx_gain_account: "766000",
+  fx_loss_account: "666000",
   default_axes: { SITE: "CRP" },
 };
 
@@ -67,6 +75,59 @@ describe("accounting export domain", () => {
     expect(buildAccountingPreview([payment], mapping).findings).toEqual([]);
     const blocked = buildAccountingPreview([{ ...payment, payment_mode: "CHEQUE" }], mapping);
     expect(blocked.findings).toContainEqual(expect.objectContaining({ code: "ACCOUNTING_PAYMENT_MAPPING_MISSING", severity: "BLOCKER" }));
+  });
+
+  it("creates balanced domestic supplier invoice and credit-note entries", () => {
+    const invoice = source({
+      source_type: "SUPPLIER_INVOICE",
+      source_id: "11111111-1111-4111-8111-111111111111",
+      source_number: "FF-42",
+      third_party_account: "4010042",
+      tax_breakdown: [{ tax_category: "S", tax_rate: "20", total_ex_tax: "100.00", tax_amount: "20.00" }],
+    });
+    const preview = buildAccountingPreview([invoice], mapping);
+    expect(preview.findings).toEqual([]);
+    expect(preview.lines.map((line) => [line.account_number, line.debit, line.credit])).toEqual([
+      ["4010042", "0.00", "120.00"],
+      ["601000", "100.00", "0.00"],
+      ["445660", "20.00", "0.00"],
+    ]);
+
+    const credit = buildAccountingPreview([{ ...invoice, source_type: "SUPPLIER_CREDIT_NOTE", source_id: "22222222-2222-4222-8222-222222222222" }], mapping);
+    expect(credit.findings).toEqual([]);
+    expect(credit.lines.map((line) => [line.account_number, line.debit, line.credit])).toEqual([
+      ["4010042", "120.00", "0.00"],
+      ["601000", "0.00", "100.00"],
+      ["445660", "0.00", "20.00"],
+    ]);
+  });
+
+  it("autoliquidates a German intra-EU supplier invoice only from an explicit cabinet mapping", () => {
+    const german = source({
+      source_type: "SUPPLIER_INVOICE",
+      source_id: "33333333-3333-4333-8333-333333333333",
+      source_number: "DE-2026-18",
+      third_party_account: "401DE18",
+      partner_country_code: "DE",
+      total_ex_tax: "100.00",
+      total_tax: "0.00",
+      total_incl_tax: "100.00",
+      tax_breakdown: [{ tax_category: "K", tax_rate: "0", total_ex_tax: "100.00", tax_amount: "0.00" }],
+    });
+    const preview = buildAccountingPreview([german], mapping);
+    expect(preview.findings).toEqual([]);
+    expect(preview.currency_totals).toEqual([{ currency: "EUR", debit: "120.00", credit: "120.00", balanced: true }]);
+    expect(preview.lines.map((line) => [line.account_number, line.debit, line.credit])).toEqual([
+      ["401DE18", "0.00", "100.00"],
+      ["601100", "100.00", "0.00"],
+      ["445662", "20.00", "0.00"],
+      ["445200", "0.00", "20.00"],
+    ]);
+
+    const blockedMapping = { ...mapping, self_assessed_vat_rate_by_tax_category: {} };
+    expect(buildAccountingPreview([german], blockedMapping).findings).toContainEqual(
+      expect.objectContaining({ code: "ACCOUNTING_REVERSE_CHARGE_MAPPING_MISSING", severity: "BLOCKER" })
+    );
   });
 
   it("does not replace missing accounts or inconsistent tax data with zero", () => {

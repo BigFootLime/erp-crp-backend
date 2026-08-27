@@ -14,7 +14,8 @@ export type PrimaryContactInput = {
 export type ClientCreateInput = {
   company_name: string;
   email?: string; phone?: string; website_url?: string;
-  siret?: string; vat_number?: string; naf_code?: string;
+  siret?: string; siren?: string; vat_number?: string; naf_code?: string;
+  electronic_address?: { scheme: string; value: string } | null;
   status: "prospect" | "client" | "inactif";
   blocked: boolean; reason?: string; creation_date: string;
   payment_mode_ids: string[];

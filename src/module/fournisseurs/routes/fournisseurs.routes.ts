@@ -2,6 +2,8 @@ import { Router } from "express"
 
 import { authenticateToken, authorizeRole } from "../../auth/middlewares/auth.middleware"
 import { createSecureUpload } from "../../../shared/uploads/secure-upload"
+import { verifyFournisseurElectronicInvoiceAddress } from "../../facturation/electronic-invoicing/electronic-invoice-directory.controller"
+import { requireFinanceCapability } from "../../facturation/middlewares/finance-authorization.middleware"
 import {
   archiveFournisseur,
   attachFournisseurDocuments,
@@ -64,6 +66,12 @@ router.get("/:id/events", listFournisseurEvents)
 // Master writes.
 router.post("/", authorizeRole(...WRITE), createFournisseur)
 router.patch("/:id", authorizeRole(...WRITE), updateFournisseur)
+router.post(
+  "/:id/electronic-invoicing/verify",
+  authorizeRole(...WRITE),
+  requireFinanceCapability("einvoice_admin"),
+  verifyFournisseurElectronicInvoiceAddress,
+)
 router.post("/:id/deactivate", authorizeRole(...QUALIF), deactivateFournisseur)
 router.post("/:id/archive", authorizeRole(...ARCHIVE), archiveFournisseur)
 router.put("/:id/domaines", authorizeRole(...WRITE), replaceFournisseurDomaines)

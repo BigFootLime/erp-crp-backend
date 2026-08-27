@@ -25,6 +25,8 @@ import {
 } from "../controllers/client.controller";
 import { listClientsAnalytics } from "../controllers/clients.analytics.controller"
 import { CLIENT_WRITE_ROLES } from "../client.permissions";
+import { verifyClientElectronicInvoiceAddress } from "../../facturation/electronic-invoicing/electronic-invoice-directory.controller";
+import { requireFinanceCapability } from "../../facturation/middlewares/finance-authorization.middleware";
 // import { uploadClientLogoMulter } from "../upload/client-logo-upload";
 
 
@@ -56,6 +58,12 @@ router.get("/:id/official-documents/:documentId/preview", previewClientOfficialD
 router.get("/:id/official-documents/:documentId/download", downloadClientOfficialDocument);
 router.post("/:id/official-documents/:documentId/print-intents", printClientOfficialDocument);
 router.get("/:id", getClientById);
+router.post(
+  "/:id/electronic-invoicing/verify",
+  requireClientWriteRole,
+  requireFinanceCapability("einvoice_admin"),
+  verifyClientElectronicInvoiceAddress
+);
 
 // 🆕 upload du logo client
 // router.post(

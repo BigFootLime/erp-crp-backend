@@ -21,6 +21,7 @@ import {
   type ElectronicInvoiceSubmissionReceipt,
   sha256Hex,
 } from "./electronic-invoice.domain";
+import { parseInvoiceRegulatorySnapshot } from "./electronic-invoice-regulatory.domain";
 
 type DbQueryer = Pick<PoolClient, "query">;
 
@@ -90,6 +91,10 @@ function sourceMissingFields(source: ElectronicInvoiceSourceDocument): string[] 
   if (!isRecord(billingAddress) || !stringValue(billingAddress, "country")) missing.push("customer.billing_address.country");
   if (!/^[A-Z]{3}$/.test(source.currency)) missing.push("currency");
   if (source.lines.length === 0) missing.push("lines");
+  if (source.documentType === "CREDIT_NOTE") {
+    if (!source.precedingInvoice?.legalNumber) missing.push("preceding_invoice.legal_number");
+    if (!source.precedingInvoice?.issueDate) missing.push("preceding_invoice.issue_date");
+  }
   source.lines.forEach((line, index) => {
     const required = ["description", "quantity", "unit", "unit_price_ex_tax", "vat_rate", "total_ex_tax", "total_incl_tax"];
     for (const key of required) {
@@ -99,7 +104,20 @@ function sourceMissingFields(source: ElectronicInvoiceSourceDocument): string[] 
       }
     }
   });
+  parseInvoiceRegulatorySnapshot(source.regulatorySnapshot);
   return missing;
+}
+
+function assertElectronicInvoicingScope(source: ElectronicInvoiceSourceDocument): void {
+  const regulatory = parseInvoiceRegulatorySnapshot(source.regulatorySnapshot);
+  if (regulatory.transactionScope !== "FR_PRIVATE_B2B") {
+    throw new HttpError(
+      422,
+      "EINVOICE_TRANSACTION_SCOPE_NOT_ROUTABLE",
+      "Seules les opérations B2B privées françaises sont routées vers l'e-invoicing. Utilisez l'e-reporting ou Chorus Pro pour les autres périmètres.",
+      { transaction_scope: regulatory.transactionScope }
+    );
+  }
 }
 
 function mapState(row: Record<string, unknown>): ElectronicInvoiceDocumentState {
@@ -354,6 +372,7 @@ export async function repoLoadElectronicInvoiceSource(
     currency: string;
     issuer_snapshot: Record<string, unknown> | null;
     client_snapshot: Record<string, unknown> | null;
+    regulatory_snapshot: Record<string, unknown> | null;
     total_ht: string;
     total_tax: string;
     total_ttc: string;
@@ -369,6 +388,7 @@ export async function repoLoadElectronicInvoiceSource(
         upper(f.currency) AS currency,
         f.issuer_snapshot,
         f.client_snapshot,
+        f.regulatory_snapshot,
         f.total_ht::text,
         f.total_tax::text,
         f.total_ttc::text,
@@ -409,12 +429,14 @@ export async function repoLoadElectronicInvoiceSource(
     invoiceId: row.id,
     creditNoteId: null,
     documentType: "INVOICE",
+    precedingInvoice: null,
     legalNumber: row.numero,
     issueDate: row.date_emission,
     dueDate: row.date_echeance,
     currency: row.currency,
     issuerSnapshot: row.issuer_snapshot ?? {},
     customerSnapshot: row.client_snapshot ?? {},
+    regulatorySnapshot: row.regulatory_snapshot ?? {},
     lines: row.lines,
     totals: { net: row.total_ht, tax: row.total_tax, gross: row.total_ttc },
   };
@@ -430,10 +452,108 @@ export async function repoLoadElectronicInvoiceSource(
   return source;
 }
 
+export async function repoLoadElectronicCreditNoteSource(
+  creditNoteId: number,
+  queryer: DbQueryer = pool,
+  lock = false
+): Promise<ElectronicInvoiceSourceDocument> {
+  const result = await queryer.query<{
+    id: number;
+    numero: string;
+    date_emission: string;
+    currency: string;
+    issuer_snapshot: Record<string, unknown> | null;
+    client_snapshot: Record<string, unknown> | null;
+    regulatory_snapshot: Record<string, unknown> | null;
+    immutable_snapshot: Record<string, unknown> | null;
+    statut: string;
+    facture_numero: string;
+    facture_date_emission: string;
+  }>(
+    `SELECT a.id::int,a.numero,a.date_emission::text,upper(a.currency) AS currency,
+            a.issuer_snapshot,a.client_snapshot,a.regulatory_snapshot,a.immutable_snapshot,a.statut,
+            f.numero AS facture_numero,f.date_emission::text AS facture_date_emission
+       FROM public.avoir a
+       JOIN public.facture f ON f.id=a.facture_id
+      WHERE a.id=$1
+      ${lock ? "FOR UPDATE OF a" : ""}`,
+    [creditNoteId]
+  );
+  const row = result.rows[0];
+  if (!row) throw new HttpError(404, "AVOIR_NOT_FOUND", "Avoir introuvable.");
+  if (row.statut !== "ISSUED") {
+    throw new HttpError(
+      409,
+      "EINVOICE_SOURCE_NOT_ISSUED",
+      "Seul un avoir légalement émis et immuable peut être transmis à une Plateforme Agréée."
+    );
+  }
+  const immutable = row.immutable_snapshot;
+  const rawLines = Array.isArray(immutable?.lines) ? immutable.lines : [];
+  const rawTotals = isRecord(immutable?.totals) ? immutable.totals : {};
+  const lines = rawLines.map((value, index) => {
+    const line = isRecord(value) ? value : {};
+    return {
+      id: line.facture_line_id ?? index + 1,
+      order: index + 1,
+      description: line.designation,
+      item_code: line.code_piece,
+      quantity: line.quantity_selected,
+      unit: line.unit,
+      unit_price_ex_tax: line.unit_price_ex_tax,
+      discount_percent: line.discount_percent,
+      vat_rate: line.tax_rate_percent,
+      total_ex_tax: line.total_ex_tax,
+      total_incl_tax: line.total_incl_tax,
+    };
+  });
+  const source: ElectronicInvoiceSourceDocument = {
+    invoiceId: null,
+    creditNoteId: row.id,
+    documentType: "CREDIT_NOTE",
+    precedingInvoice: {
+      legalNumber: row.facture_numero,
+      issueDate: row.facture_date_emission,
+      typeCode: 380,
+    },
+    legalNumber: row.numero,
+    issueDate: row.date_emission,
+    dueDate: null,
+    currency: row.currency,
+    issuerSnapshot: row.issuer_snapshot ?? {},
+    customerSnapshot: row.client_snapshot ?? {},
+    regulatorySnapshot: row.regulatory_snapshot ?? {},
+    lines,
+    totals: {
+      net: String(rawTotals.total_ex_tax ?? ""),
+      tax: String(rawTotals.total_tax ?? ""),
+      gross: String(rawTotals.total_incl_tax ?? ""),
+    },
+  };
+  const missing = sourceMissingFields(source);
+  if (missing.length > 0) {
+    throw new HttpError(
+      422,
+      "EINVOICE_REQUIRED_DATA_MISSING",
+      "L'avoir ne contient pas toutes les données obligatoires pour une transmission électronique.",
+      { missing }
+    );
+  }
+  return source;
+}
+
 export async function repoGetElectronicInvoiceState(invoiceId: number): Promise<ElectronicInvoiceDocumentState | null> {
   const result = await pool.query<Record<string, unknown>>(
     `SELECT * FROM public.einvoice_documents WHERE facture_id = $1 AND direction = 'OUTBOUND' LIMIT 1`,
     [invoiceId]
+  );
+  return result.rows[0] ? mapState(result.rows[0]) : null;
+}
+
+export async function repoGetElectronicCreditNoteState(creditNoteId: number): Promise<ElectronicInvoiceDocumentState | null> {
+  const result = await pool.query<Record<string, unknown>>(
+    `SELECT * FROM public.einvoice_documents WHERE avoir_id = $1 AND direction = 'OUTBOUND' LIMIT 1`,
+    [creditNoteId]
   );
   return result.rows[0] ? mapState(result.rows[0]) : null;
 }
@@ -458,8 +578,9 @@ export async function repoListElectronicInvoiceReconciliationCandidates(
   return result.rows.map((row) => ({ state: mapState(row), adapterKey: row.adapter_key }));
 }
 
-export async function repoQueueElectronicInvoice(params: {
-  invoiceId: number;
+async function repoQueueElectronicDocument(params: {
+  invoiceId: number | null;
+  creditNoteId: number | null;
   format: ElectronicInvoiceFormat;
   environment: "sandbox" | "production";
   actor: FinanceActorContext;
@@ -483,11 +604,15 @@ export async function repoQueueElectronicInvoice(params: {
         "Le format demandé n'est pas qualifié pour la Plateforme Agréée active."
       );
     }
-    const source = await repoLoadElectronicInvoiceSource(params.invoiceId, client, true);
+    const source = params.invoiceId !== null
+      ? await repoLoadElectronicInvoiceSource(params.invoiceId, client, true)
+      : await repoLoadElectronicCreditNoteSource(params.creditNoteId!, client, true);
+    assertElectronicInvoicingScope(source);
     const sourceHash = sha256Hex(canonicalJson(source));
     const idempotencyKey = normalizeIdempotencyKey(params.idempotencyKeyRaw);
     const requestHash = financeRequestHash("EINVOICE_QUEUE", {
       invoice_id: params.invoiceId,
+      credit_note_id: params.creditNoteId,
       format: params.format,
       environment: params.environment,
       source_sha256: sourceHash,
@@ -517,22 +642,30 @@ export async function repoQueueElectronicInvoice(params: {
     const inserted = await client.query<Record<string, unknown>>(
       `
         INSERT INTO public.einvoice_documents (
-          direction, document_type, format, facture_id, provider_code,
+          direction, document_type, format, facture_id, avoir_id, provider_code,
           source_sha256, content_sha256, correlation_id, created_by, next_retry_at
-        ) VALUES ('OUTBOUND','INVOICE',$1,$2,$3,$4,NULL,$5::uuid,$6,now())
-        ON CONFLICT (facture_id) WHERE direction = 'OUTBOUND' AND facture_id IS NOT NULL
-        DO UPDATE SET updated_at = public.einvoice_documents.updated_at
+        ) VALUES ('OUTBOUND',$1,$2,$3,$4,$5,$6,NULL,$7::uuid,$8,now())
+        ON CONFLICT DO NOTHING
         RETURNING *
       `,
-      [params.format, params.invoiceId, connection.providerCode, sourceHash, correlationId, params.actor.userId]
+      [source.documentType, params.format, params.invoiceId, params.creditNoteId, connection.providerCode, sourceHash, correlationId, params.actor.userId]
     );
-    const row = inserted.rows[0];
+    let row = inserted.rows[0];
+    if (!row) {
+      const existing = await client.query<Record<string, unknown>>(
+        params.invoiceId !== null
+          ? `SELECT * FROM public.einvoice_documents WHERE direction='OUTBOUND' AND facture_id=$1 FOR UPDATE`
+          : `SELECT * FROM public.einvoice_documents WHERE direction='OUTBOUND' AND avoir_id=$1 FOR UPDATE`,
+        [params.invoiceId ?? params.creditNoteId]
+      );
+      row = existing.rows[0];
+    }
     if (!row) throw new Error("Failed to queue electronic invoice");
     if (String(row.source_sha256) !== sourceHash || String(row.provider_code) !== connection.providerCode) {
       throw new HttpError(
         409,
         "EINVOICE_ALREADY_QUEUED_DIFFERENT_SOURCE",
-        "Cette facture a déjà une transmission électronique avec une autre source ou un autre prestataire."
+        "Ce document a déjà une transmission électronique avec une autre source ou un autre prestataire."
       );
     }
     const state = mapState(row);
@@ -549,8 +682,8 @@ export async function repoQueueElectronicInvoice(params: {
       client,
       actor: params.actor,
       action: "EINVOICE_QUEUED",
-      entityType: "FACTURE",
-      entityId: String(params.invoiceId),
+      entityType: source.documentType === "INVOICE" ? "FACTURE" : "AVOIR",
+      entityId: String(params.invoiceId ?? params.creditNoteId),
       details: {
         electronic_invoice_document_id: state.id,
         provider_code: connection.providerCode,
@@ -567,6 +700,26 @@ export async function repoQueueElectronicInvoice(params: {
   } finally {
     client.release();
   }
+}
+
+export async function repoQueueElectronicInvoice(params: {
+  invoiceId: number;
+  format: ElectronicInvoiceFormat;
+  environment: "sandbox" | "production";
+  actor: FinanceActorContext;
+  idempotencyKeyRaw: string | undefined;
+}): Promise<ElectronicInvoiceDocumentState & { idempotent_replay: boolean }> {
+  return repoQueueElectronicDocument({ ...params, creditNoteId: null });
+}
+
+export async function repoQueueElectronicCreditNote(params: {
+  creditNoteId: number;
+  format: ElectronicInvoiceFormat;
+  environment: "sandbox" | "production";
+  actor: FinanceActorContext;
+  idempotencyKeyRaw: string | undefined;
+}): Promise<ElectronicInvoiceDocumentState & { idempotent_replay: boolean }> {
+  return repoQueueElectronicDocument({ ...params, invoiceId: null });
 }
 
 export type ClaimedElectronicInvoice = {
@@ -615,8 +768,11 @@ export async function repoClaimElectronicInvoice(environment: "sandbox" | "produ
       return null;
     }
     const invoiceId = row.facture_id == null ? null : Number(row.facture_id);
-    if (!invoiceId) throw new Error("Outbound electronic invoice claim has no invoice source");
-    const source = await repoLoadElectronicInvoiceSource(invoiceId, client, false);
+    const creditNoteId = row.avoir_id == null ? null : Number(row.avoir_id);
+    if (!invoiceId && !creditNoteId) throw new Error("Outbound electronic document claim has no local source");
+    const source = invoiceId
+      ? await repoLoadElectronicInvoiceSource(invoiceId, client, false)
+      : await repoLoadElectronicCreditNoteSource(creditNoteId!, client, false);
     await client.query("COMMIT");
     return {
       state: mapState(row),

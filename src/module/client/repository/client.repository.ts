@@ -154,7 +154,7 @@ async function insertClient(
     client_code,
     company_name, contact_id,
     email, phone, website_url,
-    siret, vat_number, naf_code,
+    siret, siren, vat_number, naf_code,
     status, blocked, reason, creation_date,
     biller_id,
      delivery_address_id, bill_address_id, bank_info_id,
@@ -162,19 +162,22 @@ async function insertClient(
     quality_levels,
     devise, encours_max, incoterm, langue,
     compte_tiers, groupe_financier,
+    electronic_address_scheme, electronic_address_value,
+    electronic_address_directory_entry_id, electronic_address_verified_at,
     created_by, updated_by
   ) VALUES (
     $1,$2,$3,
     NULLIF($4,''), NULLIF($5,''), NULLIF($6,''),
-    NULLIF($7,''), NULLIF($8,''), NULLIF($9,''),
-    $10, $11, NULLIF($12,''), COALESCE($13::timestamp, now()),
-    $14,
-    $15, $16, $17,
-    NULLIF($18,''), $19,
-    COALESCE($20::text[], '{}'),
-    NULLIF($21,''), $22, NULLIF($23,''), NULLIF($24,''),
-    NULLIF($25,''), NULLIF($26,''),
-    $27, $27
+    NULLIF($7,''), NULLIF($8,''), NULLIF($9,''), NULLIF($10,''),
+    $11, $12, NULLIF($13,''), COALESCE($14::timestamp, now()),
+    $15,
+    $16, $17, $18,
+    NULLIF($19,''), $20,
+    COALESCE($21::text[], '{}'),
+    NULLIF($22,''), $23, NULLIF($24,''), NULLIF($25,''),
+    NULLIF($26,''), NULLIF($27,''),
+    NULLIF($28,''), NULLIF($29,''), NULL, NULL,
+    $30, $30
   )
   RETURNING client_id
 `;
@@ -184,7 +187,7 @@ async function insertClient(
   clientCode,
   dto.company_name, null,
   dto.email ?? "", dto.phone ?? "", dto.website_url ?? "",
-  dto.siret ?? "", dto.vat_number ?? "", dto.naf_code ?? "",
+  dto.siret ?? "", dto.siren ?? "", dto.vat_number ?? "", dto.naf_code ?? "",
   dto.status, dto.blocked, dto.reason ?? "", dto.creation_date,
    normalizedBillerId,
    delivAddrId, billAddrId, bankInfoId,
@@ -192,6 +195,7 @@ async function insertClient(
    dto.quality_levels ?? [],
    dto.devise ?? "", dto.encours_max ?? null, dto.incoterm ?? "", dto.langue ?? "",
    dto.compte_tiers ?? "", dto.groupe_financier ?? "",
+   dto.electronic_address?.scheme ?? "", dto.electronic_address?.value ?? "",
    createdBy
 ]);
 
@@ -776,6 +780,7 @@ export async function repoPatchClient(
     if (has("phone")) put((p) => `phone = NULLIF(${p}, '')`, patch.phone ?? "");
     if (has("website_url")) put((p) => `website_url = NULLIF(${p}, '')`, patch.website_url ?? "");
     if (has("siret")) put((p) => `siret = NULLIF(${p}, '')`, patch.siret ?? "");
+    if (has("siren")) put((p) => `siren = NULLIF(${p}, '')`, patch.siren ?? "");
     if (has("vat_number")) put((p) => `vat_number = NULLIF(${p}, '')`, patch.vat_number ?? "");
     if (has("naf_code")) put((p) => `naf_code = NULLIF(${p}, '')`, patch.naf_code ?? "");
     if (has("status")) put((p) => `status = ${p}`, patch.status);
@@ -800,6 +805,12 @@ export async function repoPatchClient(
     if (has("langue")) put((p) => `langue = NULLIF(${p}, '')`, patch.langue ?? "");
     if (has("compte_tiers")) put((p) => `compte_tiers = NULLIF(${p}, '')`, patch.compte_tiers ?? "");
     if (has("groupe_financier")) put((p) => `groupe_financier = NULLIF(${p}, '')`, patch.groupe_financier ?? "");
+    if (has("electronic_address")) {
+      put((p) => `electronic_address_scheme = NULLIF(${p}, '')`, patch.electronic_address?.scheme ?? "");
+      put((p) => `electronic_address_value = NULLIF(${p}, '')`, patch.electronic_address?.value ?? "");
+      sets.push("electronic_address_directory_entry_id = NULL");
+      sets.push("electronic_address_verified_at = NULL");
+    }
     // Réactivation : repasser en prospect/client efface l'horodatage d'archivage.
     if (has("status") && patch.status && patch.status !== "inactif") {
       sets.push("archived_at = NULL");

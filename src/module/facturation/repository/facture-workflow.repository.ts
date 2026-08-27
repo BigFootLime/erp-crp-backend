@@ -15,6 +15,10 @@ import {
   type FactureWorkflowStatus,
 } from "../domain/finance-policy";
 import {
+  buildInvoiceRegulatorySnapshot,
+  type InvoiceRegulatorySnapshot,
+} from "../electronic-invoicing/electronic-invoice-regulatory.domain";
+import {
   computeExactDocumentTotals,
   computeExactLineTotals,
   moneyToCents,
@@ -148,6 +152,7 @@ export type FinanceDocumentSnapshot = {
   currency: string;
   client_snapshot: Record<string, unknown>;
   issuer_snapshot: Record<string, unknown>;
+  regulatory_snapshot: InvoiceRegulatorySnapshot;
   lines: FacturePreviewLine[];
   totals: FacturePreview["totals"];
   internal_comment: string | null;
@@ -510,6 +515,21 @@ async function buildFacturePreview(
       message: "Chaque montant est requis lorsqu'un échéancier comporte plusieurs échéances.",
     });
   }
+  let regulatorySnapshot: InvoiceRegulatorySnapshot | null = null;
+  if (policy) {
+    try {
+      regulatorySnapshot = await loadInvoiceRegulatorySnapshot({
+        queryer,
+        clientId: input.client_id,
+        entityCode: policy.legal_entity_code,
+        at: new Date().toISOString().slice(0, 10),
+        selection: input.regulatory,
+      });
+    } catch (error) {
+      if (!(error instanceof HttpError) || error.status >= 500) throw error;
+      blockers.push({ code: error.code, message: error.message });
+    }
+  }
   const previewWithoutHash: Omit<FacturePreview, "preview_hash"> = {
     preview_version: 1,
     client_id: input.client_id,
@@ -524,6 +544,7 @@ async function buildFacturePreview(
       total_incl_tax: totals.totalInclTax,
     },
     due_dates: dueDates,
+    regulatory_snapshot: regulatorySnapshot,
     blockers,
     warnings: [
       {
@@ -580,6 +601,71 @@ async function clientSnapshot(queryer: DbQueryer, clientId: string): Promise<Rec
     throw new HttpError(404, "CLIENT_NOT_FOUND", "Client introuvable.");
   }
   return snapshot as Record<string, unknown>;
+}
+
+async function loadInvoiceRegulatorySnapshot(params: {
+  queryer: DbQueryer;
+  clientId: string;
+  entityCode: string;
+  at: string;
+  selection: FacturePreviewBodyDTO["regulatory"];
+}): Promise<InvoiceRegulatorySnapshot> {
+  const result = await params.queryer.query<{
+    buyer_siren: string | null;
+    buyer_electronic_address: Record<string, unknown>;
+    seller_electronic_address: Record<string, unknown> | null;
+    delivery_address: Record<string, unknown> | null;
+  }>(
+    `
+      SELECT
+        c.siren AS buyer_siren,
+        jsonb_build_object(
+          'scheme', c.electronic_address_scheme,
+          'value', c.electronic_address_value,
+          'directory_entry_id', c.electronic_address_directory_entry_id,
+          'verified_at', c.electronic_address_verified_at
+        ) AS buyer_electronic_address,
+        (
+          SELECT jsonb_build_object(
+            'scheme', m.electronic_address_scheme,
+            'value', m.electronic_address_value,
+            'directory_entry_id', m.electronic_address_directory_entry_id,
+            'verified_at', m.electronic_address_verified_at
+          )
+          FROM public.factureur f
+          JOIN public.finance_legal_mentions m ON m.biller_id = f.biller_id
+          WHERE f.biller_id::text = $2
+            AND m.effective_from <= $3::date
+            AND (m.effective_to IS NULL OR m.effective_to > $3::date)
+          ORDER BY m.effective_from DESC, m.version DESC
+          LIMIT 1
+        ) AS seller_electronic_address,
+        CASE WHEN al.delivery_address_id IS NULL THEN NULL ELSE jsonb_strip_nulls(jsonb_build_object(
+          'name', al.name,
+          'street', al.street,
+          'house_number', al.house_number,
+          'address_complement', al.address_complement,
+          'postal_code', al.postal_code,
+          'city', al.city,
+          'country', al.country
+        )) END AS delivery_address
+      FROM public.clients c
+      LEFT JOIN public.adresse_livraison al ON al.delivery_address_id = c.delivery_address_id
+      WHERE c.client_id = $1
+    `,
+    [params.clientId, params.entityCode, params.at]
+  );
+  const row = result.rows[0];
+  if (!row) throw new HttpError(404, "CLIENT_NOT_FOUND", "Client introuvable.");
+  return buildInvoiceRegulatorySnapshot({
+    billingFrameCode: params.selection.billing_frame_code,
+    operationCategory: params.selection.operation_category,
+    transactionScope: params.selection.transaction_scope,
+    sellerElectronicAddress: row.seller_electronic_address ?? {},
+    buyerElectronicAddress: row.buyer_electronic_address ?? {},
+    buyerSiren: row.buyer_siren ?? "",
+    deliveryAddress: row.delivery_address,
+  });
 }
 
 /**
@@ -649,6 +735,13 @@ export async function repoCreateFactureDraft(params: {
     const { preview, policy, sources } = await buildFacturePreview(client, previewInput, true);
     ensurePreviewUsable(preview, expectedPreviewHash);
     if (!policy) throw new HttpError(503, "BILLING_POLICY_NOT_ACTIVE", "Politique Finance absente.");
+    if (!preview.regulatory_snapshot) {
+      throw new HttpError(
+        422,
+        "EINVOICE_REGULATORY_SNAPSHOT_MISSING",
+        "Les données réglementaires de facturation électronique doivent être qualifiées avant la création du brouillon."
+      );
+    }
 
     const factureId = await nextLegacyId(client, "facture_id_seq");
     const uuidResult = await client.query<{ uuid: string }>("SELECT gen_random_uuid()::text AS uuid");
@@ -673,7 +766,8 @@ export async function repoCreateFactureDraft(params: {
           remise_globale, total_ht, total_ttc, total_tax, currency,
           commentaires, customer_text, row_version, preview_hash,
           policy_version, legal_entity_code, client_snapshot, issuer_snapshot,
-          created_by
+          billing_frame_catalog_version, billing_frame_code, operation_category,
+          transaction_scope, regulatory_snapshot, created_by
         )
         VALUES (
           $1,$2::uuid,$3::varchar,$3::text,NULL,$4,
@@ -681,7 +775,7 @@ export async function repoCreateFactureDraft(params: {
           $8,$9,$10,$11,$12,
           $13,$14,1,$15,
           $16,$17,$18::jsonb,$19::jsonb,
-          $20
+          $20,$21,$22,$23,$24::jsonb,$25
         )
       `,
       [
@@ -704,6 +798,11 @@ export async function repoCreateFactureDraft(params: {
         policy.legal_entity_code,
         JSON.stringify(clientData),
         JSON.stringify(issuerData),
+        preview.regulatory_snapshot.billingFrameCatalogVersion,
+        preview.regulatory_snapshot.billingFrameCode,
+        preview.regulatory_snapshot.operationCategory,
+        preview.regulatory_snapshot.transactionScope,
+        JSON.stringify(preview.regulatory_snapshot),
         params.actor.userId,
       ]
     );
@@ -881,9 +980,13 @@ async function savedPreviewInput(client: PoolClient, factureId: number): Promise
     remise_globale: string;
     commentaires: string | null;
     customer_text: string | null;
+    billing_frame_code: string | null;
+    operation_category: FacturePreviewBodyDTO["regulatory"]["operation_category"] | null;
+    transaction_scope: FacturePreviewBodyDTO["regulatory"]["transaction_scope"] | null;
   }>(
     `
-      SELECT client_id, currency, remise_globale::text AS remise_globale, commentaires, customer_text
+      SELECT client_id, currency, remise_globale::text AS remise_globale, commentaires, customer_text,
+             billing_frame_code, operation_category, transaction_scope
       FROM public.facture
       WHERE id = $1
     `,
@@ -891,6 +994,13 @@ async function savedPreviewInput(client: PoolClient, factureId: number): Promise
   );
   const row = header.rows[0];
   if (!row) throw new HttpError(404, "FACTURE_NOT_FOUND", "Facture introuvable.");
+  if (!row.billing_frame_code || !row.operation_category || !row.transaction_scope) {
+    throw new HttpError(
+      422,
+      "EINVOICE_REGULATORY_SELECTION_MISSING",
+      "Cette facture historique ne contient pas de sélection réglementaire BT-23. Elle doit être qualifiée explicitement avant émission."
+    );
+  }
   const sources = await client.query<{
     source_type: "DELIVERY_LINE" | "MILESTONE" | "DEPOSIT";
     source_id: string;
@@ -922,6 +1032,11 @@ async function savedPreviewInput(client: PoolClient, factureId: number): Promise
     due_dates: dueDates.rows,
     internal_comment: row.commentaires,
     customer_text: row.customer_text,
+    regulatory: {
+      billing_frame_code: row.billing_frame_code as FacturePreviewBodyDTO["regulatory"]["billing_frame_code"],
+      operation_category: row.operation_category,
+      transaction_scope: row.transaction_scope,
+    },
   };
 }
 
@@ -1264,6 +1379,7 @@ export async function repoIssueFacture(params: {
       currency: facture.currency,
       client_snapshot: facture.client_snapshot,
       issuer_snapshot: issuerAtIssue,
+      regulatory_snapshot: preview.regulatory_snapshot!,
       lines: preview.lines,
       totals: preview.totals,
       internal_comment: facture.commentaires,
@@ -1317,6 +1433,7 @@ export async function repoIssueFacture(params: {
             immutable_snapshot = $7::jsonb,
             document_checksum_sha256 = $8,
             issuer_snapshot = $9::jsonb,
+            regulatory_snapshot = $10::jsonb,
             row_version = row_version + 1,
             updated_at = now()
         WHERE id = $1
@@ -1335,6 +1452,7 @@ export async function repoIssueFacture(params: {
         // sans cela, `facture.issuer_snapshot` et le PDF emis diraient deux choses
         // differentes sur la meme piece.
         JSON.stringify(issuerAtIssue),
+        JSON.stringify(preview.regulatory_snapshot),
       ]
     );
     await client.query(

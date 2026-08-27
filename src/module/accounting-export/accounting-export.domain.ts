@@ -2,10 +2,10 @@ import crypto from "node:crypto";
 
 import { HttpError } from "../../utils/httpError";
 import { canonicalJson } from "../facturation/domain/finance-policy";
-import { formatDecimal, moneyToCents, parseDecimal } from "../facturation/domain/decimal-money";
+import { divideHalfUp, formatDecimal, moneyToCents, parseDecimal } from "../facturation/domain/decimal-money";
 
 export const ACCOUNTING_EXPORT_ADAPTER = "GENERIC_DELIMITED_V1" as const;
-export const ACCOUNTING_SOURCE_TYPES = ["INVOICE", "CREDIT_NOTE", "PAYMENT"] as const;
+export const ACCOUNTING_SOURCE_TYPES = ["INVOICE", "CREDIT_NOTE", "PAYMENT", "SUPPLIER_INVOICE", "SUPPLIER_CREDIT_NOTE"] as const;
 export type AccountingSourceType = (typeof ACCOUNTING_SOURCE_TYPES)[number];
 
 export type AccountingMappingConfig = {
@@ -18,6 +18,14 @@ export type AccountingMappingConfig = {
   default_bank_account: string | null;
   sales_account_by_tax: Record<string, string>;
   vat_output_account_by_tax: Record<string, string>;
+  purchase_journal?: string | null;
+  supplier_credit_journal?: string | null;
+  purchase_account_by_tax_category?: Record<string, string>;
+  vat_input_account_by_tax_category?: Record<string, string>;
+  reverse_charge_output_account_by_tax_category?: Record<string, string>;
+  self_assessed_vat_rate_by_tax_category?: Record<string, string>;
+  fx_gain_account?: string | null;
+  fx_loss_account?: string | null;
   default_axes: Record<string, string>;
 };
 
@@ -34,7 +42,8 @@ export type AccountingSourceDocument = {
   total_ex_tax: string;
   total_tax: string;
   total_incl_tax: string;
-  tax_breakdown: Array<{ tax_rate: string; total_ex_tax: string; tax_amount: string }>;
+  tax_breakdown: Array<{ tax_rate: string; tax_category?: string | null; total_ex_tax: string; tax_amount: string }>;
+  partner_country_code?: string | null;
   claimed_batch_id: string | null;
 };
 
@@ -88,6 +97,13 @@ function mappingValue(map: Record<string, string>, key: string): string | null {
   const normalized = normalizeTaxRate(key);
   const found = Object.entries(map).find(([candidate]) => normalizeTaxRate(candidate) === normalized);
   return found?.[1]?.trim() || null;
+}
+
+function supplierMappingValue(map: Record<string, string> | undefined, category: string, rate: string): string | null {
+  if (!map) return null;
+  const exactKey = `${category}:${normalizeTaxRate(rate)}`;
+  const direct = map[exactKey] ?? map[`${category}:${Number(normalizeTaxRate(rate))}`];
+  return direct?.trim() || null;
 }
 
 function validateSourceTotals(source: AccountingSourceDocument): AccountingFinding[] {
@@ -155,7 +171,7 @@ function sourceLines(
     findings.push({
       severity: "BLOCKER",
       code: "ACCOUNTING_THIRD_PARTY_ACCOUNT_MISSING",
-      message: `${source.source_number}: compte tiers client manquant.`,
+        message: `${source.source_number}: compte tiers client ou fournisseur manquant.`,
       source_type: source.source_type,
       source_id: source.source_id,
     });
@@ -200,6 +216,80 @@ function sourceLines(
     }
     push({ ...common, journal_code: journal, account_number: bankAccount, third_party_account: null, debit: source.total_incl_tax, credit: "0.00", tax_rate: null });
     push({ ...common, journal_code: journal, account_number: source.third_party_account ?? "", debit: "0.00", credit: source.total_incl_tax, tax_rate: null });
+    return { lines, findings };
+  }
+
+  const isSupplier = source.source_type === "SUPPLIER_INVOICE" || source.source_type === "SUPPLIER_CREDIT_NOTE";
+  if (isSupplier) {
+    const isCredit = source.source_type === "SUPPLIER_CREDIT_NOTE";
+    const journal = isCredit ? mapping.supplier_credit_journal : mapping.purchase_journal;
+    if (!journal) {
+      findings.push({
+        severity: "BLOCKER",
+        code: "ACCOUNTING_PURCHASE_JOURNAL_MISSING",
+        message: `${source.source_number}: journal d'achat fournisseur absent du mapping validé.`,
+        source_type: source.source_type,
+        source_id: source.source_id,
+      });
+      return { lines, findings };
+    }
+    push({
+      ...common,
+      journal_code: journal,
+      account_number: source.third_party_account ?? "",
+      debit: isCredit ? source.total_incl_tax : "0.00",
+      credit: isCredit ? "0.00" : source.total_incl_tax,
+      tax_rate: null,
+    });
+    for (const tax of source.tax_breakdown) {
+      const rate = normalizeTaxRate(tax.tax_rate);
+      const category = tax.tax_category?.trim().toUpperCase() ?? "";
+      if (!/^[A-Z]{1,3}$/.test(category)) {
+        findings.push({ severity: "BLOCKER", code: "ACCOUNTING_PURCHASE_TAX_CATEGORY_MISSING", message: `${source.source_number}: catégorie fiscale EN16931 absente pour le taux ${rate}.`, source_type: source.source_type, source_id: source.source_id });
+        continue;
+      }
+      const purchaseAccount = supplierMappingValue(mapping.purchase_account_by_tax_category, category, rate);
+      if (!purchaseAccount) {
+        findings.push({ severity: "BLOCKER", code: "ACCOUNTING_PURCHASE_ACCOUNT_MISSING", message: `${source.source_number}: compte de charge/stock absent pour ${category}:${rate}.`, source_type: source.source_type, source_id: source.source_id });
+      } else {
+        push({ ...common, journal_code: journal, account_number: purchaseAccount, third_party_account: null, debit: isCredit ? "0.00" : tax.total_ex_tax, credit: isCredit ? tax.total_ex_tax : "0.00", tax_rate: rate });
+      }
+      const sourceTaxCents = moneyToCents(tax.tax_amount, "Montant TVA achat");
+      const vatInputAccount = supplierMappingValue(mapping.vat_input_account_by_tax_category, category, rate);
+      if (sourceTaxCents !== 0n) {
+        if (!vatInputAccount) {
+          findings.push({ severity: "BLOCKER", code: "ACCOUNTING_VAT_INPUT_ACCOUNT_MISSING", message: `${source.source_number}: compte de TVA déductible absent pour ${category}:${rate}.`, source_type: source.source_type, source_id: source.source_id });
+        } else {
+          push({ ...common, journal_code: journal, account_number: vatInputAccount, third_party_account: null, debit: isCredit ? "0.00" : tax.tax_amount, credit: isCredit ? tax.tax_amount : "0.00", tax_rate: rate });
+        }
+      }
+      if (category === "K" || category === "AE") {
+        const selfAssessedRate = supplierMappingValue(mapping.self_assessed_vat_rate_by_tax_category, category, rate);
+        const outputAccount = supplierMappingValue(mapping.reverse_charge_output_account_by_tax_category, category, rate);
+        if (!selfAssessedRate || !vatInputAccount || !outputAccount) {
+          findings.push({
+            severity: "BLOCKER",
+            code: "ACCOUNTING_REVERSE_CHARGE_MAPPING_MISSING",
+            message: `${source.source_number}: taux français et comptes d'autoliquidation incomplets pour ${category}:${rate}.`,
+            source_type: source.source_type,
+            source_id: source.source_id,
+          });
+          continue;
+        }
+        const rateUnits = parseDecimal(selfAssessedRate, 4, "Taux d'autoliquidation");
+        if (rateUnits <= 0n || rateUnits > 1_000_000n) {
+          findings.push({ severity: "BLOCKER", code: "ACCOUNTING_REVERSE_CHARGE_RATE_INVALID", message: `${source.source_number}: taux d'autoliquidation hors limites pour ${category}:${rate}.`, source_type: source.source_type, source_id: source.source_id });
+          continue;
+        }
+        const selfTaxCents = divideHalfUp(moneyToCents(tax.total_ex_tax, "Base autoliquidation") * rateUnits, 1_000_000n);
+        const selfTax = formatDecimal(selfTaxCents, 2);
+        push({ ...common, journal_code: journal, account_number: vatInputAccount, third_party_account: null, debit: isCredit ? "0.00" : selfTax, credit: isCredit ? selfTax : "0.00", tax_rate: selfAssessedRate });
+        push({ ...common, journal_code: journal, account_number: outputAccount, third_party_account: null, debit: isCredit ? selfTax : "0.00", credit: isCredit ? "0.00" : selfTax, tax_rate: selfAssessedRate });
+      }
+    }
+    if (source.currency !== "EUR" && (!mapping.fx_gain_account || !mapping.fx_loss_account)) {
+      findings.push({ severity: "WARNING", code: "ACCOUNTING_FX_ACCOUNTS_MISSING", message: `${source.source_number}: comptes d'écart de change non configurés; le règlement devra être traité dans le logiciel du cabinet.`, source_type: source.source_type, source_id: source.source_id });
+    }
     return { lines, findings };
   }
 

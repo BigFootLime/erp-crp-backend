@@ -1,5 +1,6 @@
 import { HttpError } from "../../../../../utils/httpError";
 import type { ElectronicInvoiceSourceDocument } from "../../electronic-invoice.domain";
+import { parseInvoiceRegulatorySnapshot } from "../../electronic-invoice-regulatory.domain";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -183,7 +184,7 @@ function postalAddress(source: Readonly<JsonRecord>, prefix: string): JsonRecord
   };
 }
 
-function partyAddressIdentifier(siret: string | null, siren: string | null, field: string) {
+function partyLegalIdentifier(siret: string | null, siren: string | null, field: string) {
   if (siret && /^\d{14}$/.test(siret)) return { scheme: "0009", value: siret };
   if (siren && /^\d{9}$/.test(siren)) return { scheme: "0002", value: siren };
   throw new HttpError(422, "EINVOICE_PARTY_IDENTIFIER_REQUIRED", `L'identifiant ${field} est invalide.`);
@@ -236,17 +237,29 @@ function lineRecord(line: Readonly<JsonRecord>, index: number): {
 }
 
 export function buildSuperPdpEn16931Invoice(source: ElectronicInvoiceSourceDocument): JsonRecord {
-  if (source.documentType !== "INVOICE") {
-    throw new HttpError(422, "EINVOICE_DOCUMENT_TYPE_UNSUPPORTED", "L'adaptateur SUPER PDP ne prépare ici que les factures.");
+  if (source.documentType === "CREDIT_NOTE" && !source.precedingInvoice) {
+    throw new HttpError(
+      422,
+      "EINVOICE_PRECEDING_INVOICE_REQUIRED",
+      "Un avoir électronique doit référencer la facture qu'il corrige."
+    );
   }
   const issuer = record(source.issuerSnapshot, "issuer");
   const customer = record(source.customerSnapshot, "customer");
+  const regulatory = parseInvoiceRegulatorySnapshot(source.regulatorySnapshot);
+  if (!regulatory.buyerElectronicAddress || !regulatory.buyerSiren) {
+    throw new HttpError(
+      422,
+      "EINVOICE_BUYER_ROUTING_REQUIRED",
+      "Le SIREN et l'adresse électronique de l'acheteur sont obligatoires pour l'e-invoicing français."
+    );
+  }
   const billingAddress = record(customer.billing_address, "customer.billing_address");
   const sellerSiren = requiredString(issuer, "siren", "issuer.siren").replace(/\s/g, "");
   const sellerSiret = optionalString(issuer, "siret")?.replace(/\s/g, "") ?? null;
   const buyerSiret = requiredString(customer, "siret", "customer.siret").replace(/\s/g, "");
-  const sellerIdentifier = partyAddressIdentifier(sellerSiret, sellerSiren, "vendeur");
-  const buyerIdentifier = partyAddressIdentifier(buyerSiret, null, "acheteur");
+  const sellerIdentifier = partyLegalIdentifier(sellerSiret, sellerSiren, "vendeur");
+  const buyerIdentifier = partyLegalIdentifier(buyerSiret, null, "acheteur");
   const lineResults = source.lines.map((line, index) => lineRecord(record(line, `lines[${index}]`), index));
   const vatGroups = new Map<string, { net: Decimal; tax: Decimal }>();
   for (const result of lineResults) {
@@ -259,25 +272,41 @@ export function buildSuperPdpEn16931Invoice(source: ElectronicInvoiceSourceDocum
   return {
     number: source.legalNumber,
     issue_date: source.issueDate,
-    type_code: 380,
+    type_code: source.documentType === "CREDIT_NOTE" ? 381 : 380,
+    ...(source.precedingInvoice ? {
+      preceding_invoice_references: [{
+        reference: source.precedingInvoice.legalNumber,
+        issue_date: source.precedingInvoice.issueDate,
+        preceding_invoice_type_code: source.precedingInvoice.typeCode,
+      }],
+    } : {}),
     currency_code: currency,
-    process_control: { specification_identifier: "urn:cen.eu:en16931:2017" },
+    process_control: {
+      business_process_type: regulatory.billingFrameCode,
+      specification_identifier: "urn:cen.eu:en16931:2017",
+    },
     seller: {
       name: requiredString(issuer, "company_name", "issuer.company_name"),
-      electronic_address: sellerIdentifier,
+      electronic_address: {
+        scheme: regulatory.sellerElectronicAddress.scheme,
+        value: regulatory.sellerElectronicAddress.value,
+      },
       legal_registration_identifier: sellerIdentifier,
       vat_identifier: requiredString(issuer, "vat_number", "issuer.vat_number").replace(/\s/g, ""),
       postal_address: postalAddress(issuer, "seller"),
     },
     buyer: {
       name: requiredString(customer, "company_name", "customer.company_name"),
-      electronic_address: buyerIdentifier,
+      electronic_address: {
+        scheme: regulatory.buyerElectronicAddress.scheme,
+        value: regulatory.buyerElectronicAddress.value,
+      },
       legal_registration_identifier: buyerIdentifier,
       ...(optionalString(customer, "vat_number") ? { vat_identifier: optionalString(customer, "vat_number")?.replace(/\s/g, "") } : {}),
       postal_address: postalAddress(billingAddress, "buyer"),
     },
-    ...(source.dueDate ? { payment_due_date: source.dueDate } : {}),
-    ...(iban ? {
+    ...(source.documentType === "INVOICE" && source.dueDate ? { payment_due_date: source.dueDate } : {}),
+    ...(source.documentType === "INVOICE" && iban ? {
       payment_instructions: {
         payment_means_type_code: "58",
         remittance_information: source.legalNumber,

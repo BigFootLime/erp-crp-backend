@@ -13,6 +13,7 @@ const PARENT_POLICIES: Readonly<Record<string, ParentPolicy>> = {
   FOURNISSEUR: { moduleKey: "fournisseurs", canonicalType: "FOURNISSEUR", identity: "uuid" },
   DEVIS: { moduleKey: "devis", canonicalType: "DEVIS", identity: "integer" },
   FACTURE: { moduleKey: "facturation", canonicalType: "FACTURE", identity: "integer" },
+  SUPPLIER_INVOICE: { moduleKey: "facturation", canonicalType: "SUPPLIER_INVOICE", identity: "uuid" },
   AVOIR: { moduleKey: "facturation", canonicalType: "AVOIR", identity: "integer" },
   BON_LIVRAISON: { moduleKey: "livraisons", canonicalType: "BON_LIVRAISON", identity: "uuid" },
   LIVRAISON: { moduleKey: "livraisons", canonicalType: "BON_LIVRAISON", identity: "uuid" },

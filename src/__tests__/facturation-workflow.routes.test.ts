@@ -139,6 +139,11 @@ describe("BUG-CERP-0016 - contrat HTTP workflow facture v1", () => {
       }],
       global_discount_percent: "0",
       due_dates: [{ due_date: "2026-08-31", label: "Echeance principale" }],
+      regulatory: {
+        billing_frame_code: "B1",
+        operation_category: "GOODS",
+        transaction_scope: "FR_PRIVATE_B2B",
+      },
       internal_comment: null,
       customer_text: null,
       preview_hash: "a".repeat(64),

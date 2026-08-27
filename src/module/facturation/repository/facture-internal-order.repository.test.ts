@@ -29,6 +29,11 @@ const previewInput = {
   }],
   global_discount_percent: "0",
   due_dates: [{ due_date: "2026-09-03", label: "Échéance" }],
+  regulatory: {
+    billing_frame_code: "B1" as const,
+    operation_category: "GOODS" as const,
+    transaction_scope: "FR_PRIVATE_B2B" as const,
+  },
   internal_comment: null,
   customer_text: null,
 };
