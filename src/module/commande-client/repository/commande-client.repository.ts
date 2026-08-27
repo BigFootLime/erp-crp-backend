@@ -79,6 +79,7 @@ import {
   commandeArticleIneligibilityCodeSql,
   type CommandeArticleIneligibilityCode,
 } from "../../stock/domain/commande-article-eligibility";
+import { applyOrderLineSalePriceTx } from "../../stock/repository/article-sale-price.repository";
 
 function normalizeStoredPath(filePath: string) {
   const rel = path.isAbsolute(filePath) ? path.relative(process.cwd(), filePath) : filePath;
@@ -2805,6 +2806,10 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
             cl.quantite::float8 AS quantite,
             cl.unite,
             cl.prix_unitaire_ht::float8 AS prix_unitaire_ht,
+            cl.sale_price_reference_at_entry::float8 AS sale_price_reference_at_entry,
+            cl.sale_price_reference_source,
+            cl.sale_price_decision,
+            cl.sale_price_history_id::text AS sale_price_history_id,
             cl.remise_ligne::float8 AS remise_ligne,
             cl.taux_tva::float8 AS taux_tva,
             cl.delai_client::text AS delai_client,
@@ -3046,6 +3051,7 @@ export async function repoGetCommandeDocumentFileMeta(commandeId: string, docId:
 type InsertCommandeLignesOptions = {
   officialize_preparatory_data: boolean;
   commande_id_int: number;
+  actor_user_id: number | null;
 };
 
 async function insertCommandeLignes(
@@ -3113,6 +3119,59 @@ async function insertCommandeLignes(
       ? l.unite.trim()
       : resolved.article_unite;
 
+    const quoteLineId = l.reference_price_quote_line_id ?? null;
+    if (quoteLineId !== null) {
+      const quotePrice = await client.query<{ prix_unitaire_ht: number }>(
+        `SELECT dl.prix_unitaire_ht::float8 AS prix_unitaire_ht
+           FROM public.devis_ligne dl
+           JOIN public.devis d ON d.id = dl.devis_id
+           JOIN public.commande_client commande ON commande.id = $2::bigint
+          WHERE dl.id = $1::bigint
+            AND d.client_id = commande.client_id
+            AND d.statut = 'ACCEPTE'
+            AND (
+              dl.article_id = $3::uuid
+              OR EXISTS (
+                SELECT 1
+                FROM public.article_devis ad
+                WHERE ad.devis_ligne_id = dl.id
+                  AND (
+                    ad.source_official_article_id = $3::uuid
+                    OR ($4::uuid IS NOT NULL AND ad.id = $4::uuid)
+                  )
+              )
+            )
+          LIMIT 1`,
+        [quoteLineId, commandeId, resolved.article_id, sourceArticleDevisId]
+      );
+      const acceptedQuotePrice = quotePrice.rows[0]?.prix_unitaire_ht;
+      if (acceptedQuotePrice === undefined) {
+        throw new HttpError(
+          409,
+          "ARTICLE_QUOTE_PRICE_INVALID",
+          "Le devis proposé n'est plus accepté ou ne correspond pas à cet article et à ce client."
+        );
+      }
+      if (Math.abs(Number(acceptedQuotePrice) - Number(l.prix_unitaire_ht)) >= 0.00005) {
+        throw new HttpError(
+          409,
+          "ARTICLE_QUOTE_PRICE_CHANGED",
+          "Le prix repris du devis a été modifié. Retirez la référence au devis ou reprenez son prix exact.",
+          { quote_line_id: quoteLineId, quote_price: Number(acceptedQuotePrice), proposed_price: l.prix_unitaire_ht }
+        );
+      }
+    }
+    const referencePrice = await applyOrderLineSalePriceTx(client, {
+      article_id: resolved.article_id,
+      proposed_price: l.prix_unitaire_ht,
+      decision: l.reference_price_decision ?? null,
+      source: quoteLineId !== null ? "QUOTE" : "CUSTOMER_ORDER",
+      source_entity_type: quoteLineId !== null ? "DEVIS_LIGNE" : "COMMANDE",
+      source_entity_id: quoteLineId !== null ? String(quoteLineId) : commandeId,
+      actor_user_id: options.actor_user_id,
+      line_index: lineIndex,
+    });
+
     const insertRes = await client.query<{ id: string }>(
       `
         INSERT INTO commande_ligne (
@@ -3131,7 +3190,11 @@ async function insertCommandeLignes(
           devis_numero,
           famille,
           source_article_devis_id,
-          source_dossier_devis_id
+          source_dossier_devis_id,
+          sale_price_reference_at_entry,
+          sale_price_reference_source,
+          sale_price_decision,
+          sale_price_history_id
         ) VALUES (
           $1,
           $2::uuid,
@@ -3148,7 +3211,11 @@ async function insertCommandeLignes(
           $13,
           $14,
           $15::uuid,
-          $16::uuid
+          $16::uuid,
+          $17,
+          $18,
+          $19,
+          $20::uuid
         )
         RETURNING id::bigint::text AS id
       `,
@@ -3169,6 +3236,10 @@ async function insertCommandeLignes(
         l.famille ?? null,
         sourceArticleDevisId,
         sourceDossierDevisId,
+        referencePrice.reference_price,
+        referencePrice.reference_source,
+        referencePrice.decision,
+        referencePrice.history_id,
       ]
     );
 
@@ -3376,7 +3447,11 @@ async function transitionLinkedDevisArticlesToValide(
   return updated.rowCount ?? 0;
 }
 
-export async function repoCreateCommande(input: CreateCommandeInput, documents: UploadedDocument[]) {
+export async function repoCreateCommande(
+  input: CreateCommandeInput,
+  documents: UploadedDocument[],
+  actorUserId: number | null = null
+) {
   const client = await pool.connect();
   let notifications: AppNotification[] = [];
   let commandeIdForReconciliation: string | null = null;
@@ -3483,6 +3558,7 @@ export async function repoCreateCommande(input: CreateCommandeInput, documents: 
     await insertCommandeLignes(client, commandeId, input.lignes, {
       officialize_preparatory_data: input.officialize_preparatory_data ?? false,
       commande_id_int: commandeIdInt,
+      actor_user_id: actorUserId,
     });
     await insertCommandeEcheances(client, commandeId, input.echeances ?? []);
     await insertCommandeDocuments(client, commandeId, documents, movedDocuments);
@@ -3697,7 +3773,12 @@ async function queueCommandeCreationPdf(
   });
 }
 
-export async function repoUpdateCommande(id: string, input: CreateCommandeInput, documents: UploadedDocument[]) {
+export async function repoUpdateCommande(
+  id: string,
+  input: CreateCommandeInput,
+  documents: UploadedDocument[],
+  actorUserId: number | null = null
+) {
   const client = await pool.connect();
   const movedDocuments: CommandeDocumentMove[] = [];
   try {
@@ -3861,6 +3942,7 @@ export async function repoUpdateCommande(id: string, input: CreateCommandeInput,
     await insertCommandeLignes(client, id, input.lignes, {
       officialize_preparatory_data: input.officialize_preparatory_data ?? false,
       commande_id_int: toInt(id, "commande_id"),
+      actor_user_id: actorUserId,
     });
     await insertCommandeEcheances(client, id, input.echeances ?? []);
     await insertCommandeDocuments(client, id, documents, movedDocuments);
@@ -6263,6 +6345,7 @@ export async function repoDuplicateCommande(id: string) {
         quantite: Number(r.quantite),
         unite: (r.unite as string | null) ?? null,
         prix_unitaire_ht: Number(r.prix_unitaire_ht),
+        reference_price_decision: "KEEP" as const,
         remise_ligne: r.remise_ligne === null ? null : Number(r.remise_ligne),
         taux_tva: r.taux_tva === null ? null : Number(r.taux_tva),
         delai_client: r.delai_client ? String(r.delai_client) : null,
@@ -6273,6 +6356,7 @@ export async function repoDuplicateCommande(id: string) {
       await insertCommandeLignes(client, String(newIdInt), lignesPayload, {
         officialize_preparatory_data: true,
         commande_id_int: newIdInt,
+        actor_user_id: null,
       });
     }
 

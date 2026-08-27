@@ -24,6 +24,43 @@ export type ArticleBusinessCategory =
   | "sous_traitance"
   | "piece_finie_fabriquee";
 export type ArticleWorkflowStatus = "EN_DEVIS" | "VALIDE";
+export type ArticleSalePriceSource = "ARTICLE_SHEET" | "QUOTE" | "CUSTOMER_ORDER";
+
+export type ArticleQuotePriceSuggestion = {
+  devis_id: number;
+  devis_numero: string;
+  devis_ligne_id: number;
+  price: number;
+  designation: string;
+  code_piece: string | null;
+  source_article_devis_id: string | null;
+  source_dossier_devis_id: string | null;
+};
+
+export type ArticleFinancialAnalysis = {
+  method: "MARGIN_ENGINE_ACTUAL_OF_WEIGHTED";
+  currency: string;
+  completed_work_orders: number;
+  covered_work_orders: number;
+  produced_quantity: number;
+  actual_hours: number;
+  actual_cost_total_ht: number | null;
+  average_actual_cost_per_unit: number | null;
+  delivered_quantity: number;
+  delivered_revenue_ht: number;
+  average_invoiced_unit_price: number | null;
+  coverage_complete: boolean;
+  missing_inputs: string[];
+  work_order_scopes: Array<{
+    of_id: number;
+    of_number: string;
+    produced_quantity: number;
+    cost_total_ht: number | null;
+    reliability: "ESTIMATED" | "PARTIAL" | "ACTUAL";
+    missing_inputs: string[];
+  }>;
+  calculated_at: string;
+};
 
 export type StockArticleCategoryOption = {
   code: ArticleBusinessCategory;
@@ -181,6 +218,13 @@ export type StockArticleListItem = {
   lot_tracking: boolean;
   is_sold: boolean;
   is_active: boolean;
+  sale_price_reference: number | null;
+  sale_price_currency: string;
+  sale_price_source: ArticleSalePriceSource | null;
+  sale_price_source_entity_type: string | null;
+  sale_price_source_entity_id: string | null;
+  sale_price_updated_at: string | null;
+  quote_price_suggestion: ArticleQuotePriceSuggestion | null;
   commande_client_eligible: boolean;
   commande_client_ineligibility_code: CommandeArticleIneligibilityCode | null;
   row_version: number;
@@ -227,6 +271,7 @@ export type StockArticleDetail = StockArticleListItem & {
   open_supplier_orders: ArticleOpenSupplierOrder[];
   documents: StockDocument[];
   costs_redacted: boolean;
+  financial_analysis: ArticleFinancialAnalysis | null;
 };
 
 export type ArticleWhereUsedType =
