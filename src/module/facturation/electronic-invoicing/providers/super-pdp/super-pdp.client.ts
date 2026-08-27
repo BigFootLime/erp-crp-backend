@@ -34,12 +34,96 @@ const providerEventSchema = z.object({
   data: z.object({ reason: z.string().optional() }).passthrough().optional(),
 }).passthrough();
 
+const providerElectronicAddressSchema = z.object({
+  scheme: z.string().min(1).max(20),
+  value: z.string().min(1).max(200),
+}).passthrough();
+
+const providerPartySchema = z.object({
+  name: z.string().min(1).max(500),
+  electronic_address: providerElectronicAddressSchema.optional(),
+  legal_registration_identifier: z.object({
+    scheme: z.string().max(20),
+    value: z.string().min(1).max(200),
+  }).passthrough().optional(),
+  identifiers: z.array(z.object({
+    scheme: z.string().max(20).optional(),
+    value: z.string().min(1).max(200),
+  }).passthrough()).optional(),
+  vat_identifier: z.string().max(40).optional(),
+}).passthrough();
+
+const providerDecimalSchema = z.union([z.string(), z.number()]);
+const providerAmountSchema = z.union([
+  providerDecimalSchema,
+  z.object({ value: providerDecimalSchema }).passthrough(),
+]);
+
+const providerInvoiceLineSchema = z.object({
+  identifier: z.string().min(1).max(200),
+  invoiced_quantity: providerDecimalSchema.optional(),
+  invoiced_quantity_code: z.string().max(20).optional(),
+  net_amount: providerDecimalSchema,
+  referenced_purchase_order_line_reference: z.string().max(200).optional(),
+  purchase_order_reference_from_buyer: z.string().max(200).optional(),
+  item_information: z.object({
+    name: z.string().min(1).max(1000),
+    description: z.string().max(4000).optional(),
+    buyer_identifier: z.string().max(200).optional(),
+    seller_identifier: z.string().max(200).optional(),
+  }).passthrough(),
+  price_details: z.object({
+    item_net_price: providerDecimalSchema.optional(),
+    item_gross_price: providerDecimalSchema.optional(),
+  }).passthrough(),
+  vat_information: z.object({
+    vat_category_code: z.string().max(20).optional(),
+    vat_category_rate: providerDecimalSchema.optional(),
+  }).passthrough().optional(),
+}).passthrough();
+
+const providerSupportingDocumentSchema = z.object({
+  key: z.string().min(1).max(200),
+  document_reference: z.string().min(1).max(200),
+  attached_document: z.object({
+    document: z.string().optional(),
+    filename: z.string().min(1).max(255),
+    mime_code: z.string().min(1).max(120),
+  }).passthrough().optional(),
+}).passthrough();
+
+const providerEnInvoiceSchema = z.object({
+  number: z.string().min(1).max(200),
+  issue_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  payment_due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  type_code: z.coerce.number().int().positive(),
+  currency_code: z.string().regex(/^[A-Z]{3}$/),
+  purchase_order_reference: z.string().max(200).optional(),
+  seller: providerPartySchema,
+  buyer: providerPartySchema,
+  totals: z.object({
+    total_without_vat: providerDecimalSchema,
+    total_vat_amount: providerAmountSchema.optional(),
+    total_with_vat: providerDecimalSchema,
+    amount_due_for_payment: providerDecimalSchema,
+  }).passthrough(),
+  vat_break_down: z.array(z.object({
+    vat_category_code: z.string().max(20),
+    vat_category_rate: providerDecimalSchema.optional(),
+    vat_category_taxable_amount: providerDecimalSchema,
+    vat_category_tax_amount: providerDecimalSchema,
+  }).passthrough()),
+  lines: z.array(providerInvoiceLineSchema),
+  additional_supporting_documents: z.array(providerSupportingDocumentSchema).optional(),
+}).passthrough();
+
 const invoiceSchema = z.object({
   id: z.coerce.number().int().positive(),
   company_id: z.coerce.number().int().positive(),
   created_at: z.string().datetime(),
   direction: z.enum(["in", "out"]),
   external_id: z.string().max(36).optional(),
+  en_invoice: providerEnInvoiceSchema.optional(),
   events: z.array(providerEventSchema).optional(),
 }).passthrough();
 
@@ -55,8 +139,53 @@ const eventListSchema = z.object({
   has_after: z.boolean(),
 }).passthrough();
 
-type ProviderInvoice = z.infer<typeof invoiceSchema>;
+const eReportingItemSchema = z.object({ id: z.coerce.number().int().positive() }).passthrough();
+const eReportingCreateResponseSchema = z.object({ data: z.array(eReportingItemSchema).min(1) }).passthrough();
+const eReportingPeriodSchema = z.object({
+  id: z.coerce.number().int().positive(),
+  company_id: z.coerce.number().int().positive(),
+  kind: z.enum(["transaction", "payment"]),
+  role_code: z.enum(["BY", "SE"]),
+  start_period: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  end_period: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  events: z.array(z.unknown()),
+}).passthrough();
+const eReportingPeriodListSchema = z.object({
+  data: z.array(eReportingPeriodSchema),
+  has_more: z.boolean(),
+}).passthrough();
+
+const frenchDirectoryCompanySchema = z.object({
+  number: z.string().regex(/^\d{9}$/),
+  formal_name: z.string().min(1),
+  address: z.string(),
+  postcode: z.string(),
+  city: z.string(),
+  country: z.string(),
+}).passthrough();
+
+const frenchDirectoryCompaniesSchema = z.object({
+  data: z.array(frenchDirectoryCompanySchema),
+  has_more: z.boolean(),
+}).passthrough();
+
+const frenchDirectoryEntrySchema = z.object({
+  company: frenchDirectoryCompanySchema,
+  identifier: z.string().regex(/^[A-Za-z0-9]{4}:[^\s\u0000-\u001F\u007F]+$/),
+  is_active: z.boolean(),
+}).passthrough();
+
+const frenchDirectoryEntriesSchema = z.object({
+  data: z.array(frenchDirectoryEntrySchema),
+}).passthrough();
+
+export type SuperPdpProviderInvoice = z.infer<typeof invoiceSchema>;
+export type SuperPdpEnInvoice = z.infer<typeof providerEnInvoiceSchema>;
 export type SuperPdpProviderEvent = z.infer<typeof providerEventSchema>;
+export type SuperPdpEReportingItem = z.infer<typeof eReportingItemSchema>;
+export type SuperPdpEReportingPeriod = z.infer<typeof eReportingPeriodSchema>;
+export type SuperPdpFrenchDirectoryCompany = z.infer<typeof frenchDirectoryCompanySchema>;
+export type SuperPdpFrenchDirectoryEntry = z.infer<typeof frenchDirectoryEntrySchema>;
 
 export type SuperPdpEnvironment = "sandbox" | "production";
 export type SuperPdpOAuthMode = "client_credentials" | "authorization_code";
@@ -473,7 +602,56 @@ export class SuperPdpClient {
     return content;
   }
 
-  private async findInvoiceByExternalId(externalId: string): Promise<ProviderInvoice | null> {
+  async searchFrenchDirectoryCompanies(params: {
+    number?: string;
+    formalNameStartsWith?: string;
+    postCodeStartsWith?: string;
+    limit?: number;
+  }): Promise<{ data: SuperPdpFrenchDirectoryCompany[]; has_more: boolean }> {
+    const query = new URLSearchParams();
+    if (params.number) query.set("number", params.number);
+    if (params.formalNameStartsWith) query.set("formal_name_starts_with", params.formalNameStartsWith);
+    if (params.postCodeStartsWith) query.set("post_code_starts_with", params.postCodeStartsWith);
+    query.set("limit", String(params.limit ?? 100));
+    const response = await this.request(
+      `/v1.beta/french_directory/companies?${query.toString()}`,
+      { headers: { Accept: "application/json" } },
+      false
+    );
+    const parsed = frenchDirectoryCompaniesSchema.safeParse(
+      JSON.parse((await boundedBody(response)).toString("utf8")) as unknown
+    );
+    if (!parsed.success) {
+      throw new SuperPdpProviderError({
+        code: "SUPER_PDP_DIRECTORY_COMPANIES_INVALID",
+        message: "La réponse de recherche de l'annuaire SUPER PDP est invalide.",
+        httpStatus: 502,
+      });
+    }
+    return parsed.data;
+  }
+
+  async listFrenchDirectoryEntries(number: string): Promise<SuperPdpFrenchDirectoryEntry[]> {
+    const query = new URLSearchParams({ number });
+    const response = await this.request(
+      `/v1.beta/french_directory/entries?${query.toString()}`,
+      { headers: { Accept: "application/json" } },
+      false
+    );
+    const parsed = frenchDirectoryEntriesSchema.safeParse(
+      JSON.parse((await boundedBody(response)).toString("utf8")) as unknown
+    );
+    if (!parsed.success) {
+      throw new SuperPdpProviderError({
+        code: "SUPER_PDP_DIRECTORY_ENTRIES_INVALID",
+        message: "La réponse des adresses de l'annuaire SUPER PDP est invalide.",
+        httpStatus: 502,
+      });
+    }
+    return parsed.data.data;
+  }
+
+  private async findInvoiceByExternalId(externalId: string): Promise<SuperPdpProviderInvoice | null> {
     let startingAfterId: number | null = null;
     const visited = new Set<number>();
     for (;;) {
@@ -510,7 +688,7 @@ export class SuperPdpClient {
     correlationId: string;
     content: Buffer;
     contentType: string;
-  }): Promise<{ invoice: ProviderInvoice; requestId: string | null; replayed: boolean }> {
+  }): Promise<{ invoice: SuperPdpProviderInvoice; requestId: string | null; replayed: boolean }> {
     const existing = await this.findInvoiceByExternalId(params.localDocumentId);
     if (existing) return { invoice: existing, requestId: null, replayed: true };
     const query = new URLSearchParams({ external_id: params.localDocumentId });
@@ -536,7 +714,7 @@ export class SuperPdpClient {
   }
 
   async retrieveInvoice(providerDocumentId: string, correlationId: string): Promise<{
-    invoice: ProviderInvoice;
+    invoice: SuperPdpProviderInvoice;
     events: SuperPdpProviderEvent[];
   }> {
     if (!/^\d+$/.test(providerDocumentId)) {
@@ -587,5 +765,186 @@ export class SuperPdpClient {
       startingAfterId = last.id;
     }
     return { invoice: parsed.data, events: allEvents };
+  }
+
+  async listIncomingInvoices(params: {
+    startingAfterId?: number | null;
+    limit?: number;
+    date?: string;
+  }): Promise<{ data: SuperPdpProviderInvoice[]; has_after: boolean }> {
+    const query = new URLSearchParams({ direction: "in", order: "asc", limit: String(params.limit ?? 100) });
+    if (params.startingAfterId != null) query.set("starting_after_id", String(params.startingAfterId));
+    if (params.date) query.set("date", params.date);
+    const response = await this.request(`/v1.beta/invoices?${query.toString()}`, {
+      headers: { Accept: "application/json" },
+    }, true);
+    const parsed = invoiceListSchema.safeParse(JSON.parse((await boundedBody(response)).toString("utf8")) as unknown);
+    if (!parsed.success || parsed.data.data.some((invoice) => invoice.direction !== "in")) {
+      throw new SuperPdpProviderError({
+        code: "SUPER_PDP_INBOUND_INVOICE_LIST_INVALID",
+        message: "La liste de factures fournisseurs SUPER PDP est invalide.",
+        httpStatus: 502,
+      });
+    }
+    return { data: parsed.data.data, has_after: parsed.data.has_after };
+  }
+
+  async downloadInvoiceRepresentation(
+    providerDocumentId: string,
+    format: "original" | "factur-x",
+    correlationId: string
+  ): Promise<{ content: Buffer; contentType: string; fileName: string }> {
+    if (!/^\d+$/.test(providerDocumentId)) {
+      throw new HttpError(422, "SUPER_PDP_DOCUMENT_ID_INVALID", "L'identifiant de facture SUPER PDP est invalide.");
+    }
+    const response = await this.request(
+      `/v1.beta/invoices/${providerDocumentId}?format=${encodeURIComponent(format)}`,
+      {
+        headers: {
+          Accept: format === "factur-x" ? "application/pdf" : "application/pdf, application/xml",
+          "Request-Id": correlationId,
+        },
+      },
+      true
+    );
+    const content = await boundedBody(response);
+    const responseContentType = (response.headers.get("content-type") ?? "application/octet-stream")
+      .split(";")[0]!.trim().toLowerCase();
+    const isPdf = content.subarray(0, 5).toString("ascii") === "%PDF-";
+    if (format === "factur-x" && !isPdf) {
+      throw new SuperPdpProviderError({
+        code: "SUPER_PDP_FACTUR_X_INVALID",
+        message: "La représentation Factur-X fournisseur retournée par SUPER PDP est invalide.",
+        httpStatus: 502,
+      });
+    }
+    if (format === "original" && content.length === 0) {
+      throw new SuperPdpProviderError({
+        code: "SUPER_PDP_ORIGINAL_EMPTY",
+        message: "La facture fournisseur originale retournée par SUPER PDP est vide.",
+        httpStatus: 502,
+      });
+    }
+    const extension = isPdf ? "pdf" : "xml";
+    return {
+      content,
+      contentType: isPdf ? "application/pdf" : responseContentType,
+      fileName: `superpdp-${providerDocumentId}-${format}.${extension}`,
+    };
+  }
+
+  async createInvoiceEvent(params: {
+    providerDocumentId: string;
+    statusCode: 205 | 206 | 208 | 211 | 212;
+    details: Array<{ reason?: string }>;
+    correlationId: string;
+    idempotencyKey: string;
+  }): Promise<SuperPdpProviderEvent> {
+    if (!/^\d+$/.test(params.providerDocumentId)) {
+      throw new HttpError(422, "SUPER_PDP_DOCUMENT_ID_INVALID", "L'identifiant de facture SUPER PDP est invalide.");
+    }
+    const response = await this.request("/v1.beta/invoice_events", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "Request-Id": params.correlationId,
+        "Idempotency-Key": params.idempotencyKey,
+      },
+      body: JSON.stringify({
+        invoice_id: Number(params.providerDocumentId),
+        status_code: `fr:${params.statusCode}`,
+        ...(params.details.length > 0 ? { details: params.details } : {}),
+      }),
+    }, true);
+    const parsed = providerEventSchema.safeParse(JSON.parse((await boundedBody(response)).toString("utf8")) as unknown);
+    if (!parsed.success || String(parsed.data.invoice_id) !== params.providerDocumentId) {
+      throw new SuperPdpProviderError({
+        code: "SUPER_PDP_EVENT_RESPONSE_INVALID",
+        message: "L'accusé de statut fournisseur SUPER PDP est invalide.",
+        httpStatus: 502,
+      });
+    }
+    return parsed.data;
+  }
+
+  async createB2BIntInvoices(params: {
+    data: readonly Readonly<Record<string, unknown>>[];
+    correlationId: string;
+    idempotencyKey: string;
+  }): Promise<SuperPdpEReportingItem[]> {
+    const response = await this.request("/v1.beta/b2bint_invoices", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "Request-Id": params.correlationId,
+        "Idempotency-Key": params.idempotencyKey,
+      },
+      body: JSON.stringify({ data: params.data }),
+    }, true);
+    const parsed = eReportingCreateResponseSchema.safeParse(
+      JSON.parse((await boundedBody(response)).toString("utf8")) as unknown
+    );
+    if (!parsed.success || parsed.data.data.length !== params.data.length) {
+      throw new SuperPdpProviderError({
+        code: "SUPER_PDP_B2BINT_INVOICE_RESPONSE_INVALID",
+        message: "L'accusé des transactions internationales SUPER PDP est invalide.",
+        httpStatus: 502,
+      });
+    }
+    return parsed.data.data;
+  }
+
+  async createB2BIntPayments(params: {
+    data: readonly Readonly<Record<string, unknown>>[];
+    correlationId: string;
+    idempotencyKey: string;
+  }): Promise<SuperPdpEReportingItem[]> {
+    const response = await this.request("/v1.beta/b2bint_payments", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "Request-Id": params.correlationId,
+        "Idempotency-Key": params.idempotencyKey,
+      },
+      body: JSON.stringify({ data: params.data }),
+    }, true);
+    const parsed = eReportingCreateResponseSchema.safeParse(
+      JSON.parse((await boundedBody(response)).toString("utf8")) as unknown
+    );
+    if (!parsed.success || parsed.data.data.length !== params.data.length) {
+      throw new SuperPdpProviderError({
+        code: "SUPER_PDP_B2BINT_PAYMENT_RESPONSE_INVALID",
+        message: "L'accusé des paiements internationaux SUPER PDP est invalide.",
+        httpStatus: 502,
+      });
+    }
+    return parsed.data.data;
+  }
+
+  async listEReportingPeriods(params: {
+    roleCode?: "SE" | "BY";
+    startingAfterId?: number | null;
+    limit?: number;
+  }): Promise<{ data: SuperPdpEReportingPeriod[]; has_more: boolean }> {
+    const query = new URLSearchParams({ order: "asc", limit: String(params.limit ?? 100) });
+    if (params.roleCode) query.set("role_code", params.roleCode);
+    if (params.startingAfterId != null) query.set("starting_after_id", String(params.startingAfterId));
+    const response = await this.request(`/v1.beta/ereportings?${query.toString()}`, {
+      headers: { Accept: "application/json" },
+    }, true);
+    const parsed = eReportingPeriodListSchema.safeParse(
+      JSON.parse((await boundedBody(response)).toString("utf8")) as unknown
+    );
+    if (!parsed.success) {
+      throw new SuperPdpProviderError({
+        code: "SUPER_PDP_EREPORTING_PERIODS_INVALID",
+        message: "La liste des périodes d'e-reporting SUPER PDP est invalide.",
+        httpStatus: 502,
+      });
+    }
+    return parsed.data;
   }
 }

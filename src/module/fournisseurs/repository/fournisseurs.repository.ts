@@ -278,6 +278,12 @@ type FournisseurRow = {
   type_principal: string | null
   tva: string | null
   siret: string | null
+  siren: string | null
+  compte_tiers: string | null
+  electronic_address_scheme: string | null
+  electronic_address_value: string | null
+  electronic_address_directory_entry_id: string | null
+  electronic_address_verified_at: string | null
   email: string | null
   telephone: string | null
   site_web: string | null
@@ -321,6 +327,16 @@ function mapFournisseurRow(r: FournisseurRow, logoAssetId?: string): Fournisseur
     type_principal: r.type_principal ?? null,
     tva: r.tva,
     siret: r.siret,
+    siren: r.siren,
+    compte_tiers: r.compte_tiers,
+    electronic_address: r.electronic_address_scheme && r.electronic_address_value
+      ? {
+          scheme: r.electronic_address_scheme,
+          value: r.electronic_address_value,
+          directory_entry_id: r.electronic_address_directory_entry_id,
+          verified_at: r.electronic_address_verified_at,
+        }
+      : null,
     email: r.email,
     telephone: r.telephone,
     site_web: r.site_web,
@@ -373,6 +389,12 @@ const FOURNISSEUR_SELECT = `
   f.type_principal,
   f.tva,
   f.siret,
+  f.siren,
+  f.compte_tiers,
+  f.electronic_address_scheme,
+  f.electronic_address_value,
+  f.electronic_address_directory_entry_id,
+  f.electronic_address_verified_at::text AS electronic_address_verified_at,
   f.email,
   f.telephone,
   f.site_web,
@@ -615,13 +637,18 @@ export async function repoCreateFournisseur(
     const ins = await client.query<{ id: string }>(
       `INSERT INTO public.fournisseurs (
          code, code_fournisseur, nom, raison_sociale, actif, status, type_principal,
-         tva, siret, email, telephone, site_web, nom_commercial, logo, notes, created_by, updated_by
+         tva, siret, siren, compte_tiers,
+         electronic_address_scheme, electronic_address_value,
+         electronic_address_directory_entry_id, electronic_address_verified_at,
+         email, telephone, site_web, nom_commercial, logo, notes, created_by, updated_by
        ) VALUES (
          $1::text,$1::varchar(30),$2::text,$2::varchar(255),
-         $3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$14
+         $3,$4,$5,$6,$7,$8,$9,$10,NULL,NULL,$11,$12,$13,$14,$15,$16,$17,$17
        ) RETURNING id::text AS id`,
       [code, body.nom, body.actif ?? true, body.status ?? "actif", body.type_principal ?? null,
-       body.tva ?? null, body.siret ?? null, body.email ?? null, body.telephone ?? null, body.site_web ?? null,
+       body.tva ?? null, body.siret ?? null, body.siren ?? null, body.compte_tiers ?? null,
+       body.electronic_address?.scheme ?? null, body.electronic_address?.value ?? null,
+       body.email ?? null, body.telephone ?? null, body.site_web ?? null,
        body.nom_commercial ?? null, body.logo ?? null, body.notes ?? null, audit.user_id]
     )
     const id = ins.rows[0]?.id
@@ -716,6 +743,14 @@ export async function repoUpdateFournisseur(
   if (patch.type_principal !== undefined) sets.push(`type_principal = ${push(patch.type_principal)}`)
   if (patch.tva !== undefined) sets.push(`tva = ${push(patch.tva)}`)
   if (patch.siret !== undefined) sets.push(`siret = ${push(patch.siret)}`)
+  if (patch.siren !== undefined) sets.push(`siren = ${push(patch.siren)}`)
+  if (patch.compte_tiers !== undefined) sets.push(`compte_tiers = ${push(patch.compte_tiers)}`)
+  if (patch.electronic_address !== undefined) {
+    sets.push(`electronic_address_scheme = ${push(patch.electronic_address?.scheme ?? null)}`)
+    sets.push(`electronic_address_value = ${push(patch.electronic_address?.value ?? null)}`)
+    sets.push("electronic_address_directory_entry_id = NULL")
+    sets.push("electronic_address_verified_at = NULL")
+  }
   if (patch.email !== undefined) sets.push(`email = ${push(patch.email)}`)
   if (patch.telephone !== undefined) sets.push(`telephone = ${push(patch.telephone)}`)
   if (patch.site_web !== undefined) sets.push(`site_web = ${push(patch.site_web)}`)

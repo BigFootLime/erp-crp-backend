@@ -10,6 +10,8 @@ import { startMfaArtifactMaintenance } from "./module/auth/services/mfa.service"
 import { startExpiredLockMaintenance } from "./module/locks/services/locks.service";
 import { startReminderMaintenance } from "./module/facturation/services/reminder-job.service";
 import { startElectronicInvoiceMaintenance } from "./module/facturation/electronic-invoicing/electronic-invoice.service";
+import { startSupplierInvoiceMaintenance } from "./module/supplier-invoices/supplier-invoice-inbound.service";
+import { startEReportingMaintenance } from "./module/facturation/electronic-invoicing/electronic-invoice-reporting.service";
 import { startWebhookDeliveryMaintenance } from "./module/integrations/webhooks/webhook.service";
 import { startAuthoritativePdfArchiveMaintenance } from "./shared/authoritative-documents/authoritative-document.worker";
 import { createApplicationShutdown } from "./shared/runtime/application-shutdown";
@@ -56,6 +58,8 @@ async function start(): Promise<void> {
   const stopMfaArtifactMaintenance = startMfaArtifactMaintenance();
   const stopReminderMaintenance = startReminderMaintenance();
   const stopElectronicInvoiceMaintenance = startElectronicInvoiceMaintenance();
+  const stopSupplierInvoiceMaintenance = startSupplierInvoiceMaintenance();
+  const stopEReportingMaintenance = startEReportingMaintenance();
   const stopWebhookDeliveryMaintenance = startWebhookDeliveryMaintenance();
   const stopAuthoritativePdfArchiveMaintenance = startAuthoritativePdfArchiveMaintenance();
 
@@ -85,6 +89,8 @@ async function start(): Promise<void> {
       stopExpiredLockMaintenance,
       stopReminderMaintenance,
       stopElectronicInvoiceMaintenance,
+      stopSupplierInvoiceMaintenance,
+      stopEReportingMaintenance,
       stopWebhookDeliveryMaintenance,
       stopAuthoritativePdfArchiveMaintenance,
     ],

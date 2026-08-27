@@ -1223,6 +1223,7 @@ export async function repoInternalParentLinkExists(entityType: string, entityId:
     FOURNISSEUR: { sql: "SELECT 1 FROM public.fournisseurs WHERE id = $1::uuid LIMIT 1", values: [entityId] },
     DEVIS: { sql: "SELECT 1 FROM public.devis WHERE id = $1::bigint LIMIT 1", values: [entityId] },
     FACTURE: { sql: "SELECT 1 FROM public.facture WHERE id = $1 LIMIT 1", values: [entityId] },
+    SUPPLIER_INVOICE: { sql: "SELECT 1 FROM public.supplier_invoices WHERE id = $1::uuid LIMIT 1", values: [entityId] },
     AVOIR: { sql: "SELECT 1 FROM public.avoir WHERE id = $1 LIMIT 1", values: [entityId] },
     BON_LIVRAISON: { sql: "SELECT 1 FROM public.bon_livraison WHERE id = $1::uuid LIMIT 1", values: [entityId] },
     COMMANDE_CLIENT: { sql: "SELECT 1 FROM public.commande_client WHERE id = $1::bigint LIMIT 1", values: [entityId] },

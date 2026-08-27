@@ -49,7 +49,7 @@ function claimedDraft() {
     reference: "AR-00000001-v1",
     series_number: 1,
     version_number: 1,
-    subject: "Accusé de réception de votre commande CMD-42 — AR-00000001-v1",
+    subject: "Accusé de réception de votre commande PO-42 — AR-00000001-v1",
     body_text: null,
     generated_at: "2026-08-26T10:00:00.000Z",
     generated_by: 7,
@@ -130,7 +130,7 @@ describe("svcSendCommandeAr", () => {
     expect(mocks.sendEmail).toHaveBeenCalledWith(
       expect.objectContaining({
         idempotencyKey: "commande-ar:test",
-        subject: "Accusé de réception de votre commande CMD-42 — AR-00000001-v1",
+        subject: "Accusé de réception de votre commande PO-42 — AR-00000001-v1",
         attachments: [expect.objectContaining({ filename: "AR-00000001-v1.pdf", content: PDF })],
       })
     );

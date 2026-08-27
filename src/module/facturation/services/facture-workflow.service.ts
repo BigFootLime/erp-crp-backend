@@ -15,6 +15,7 @@ import type {
   WorkflowConfirmationBodyDTO,
 } from "../validators/workflow.validators";
 import { writeImmutableFactureDocument } from "./finance-document.service";
+import { svcAutoQueueIssuedElectronicDocument } from "../electronic-invoicing/electronic-invoice.service";
 
 export const svcListEligibleFactureSources = (filters: EligibleSourcesQueryDTO) =>
   repoListEligibleFactureSources(filters);
@@ -41,13 +42,21 @@ export const svcValidateFacture = (params: {
   idempotencyKey: string | undefined;
 }) => repoValidateFacture(params);
 
-export const svcIssueFacture = (params: {
+export const svcIssueFacture = async (params: {
   factureId: number;
   input: WorkflowConfirmationBodyDTO;
   actor: FinanceActorContext;
   idempotencyKey: string | undefined;
-}) =>
-  repoIssueFacture({
+}) => {
+  const result = await repoIssueFacture({
     ...params,
     writeDocument: writeImmutableFactureDocument,
   });
+  await svcAutoQueueIssuedElectronicDocument({
+    documentType: "INVOICE",
+    localId: result.id,
+    rowVersion: result.row_version,
+    actor: params.actor,
+  });
+  return result;
+};

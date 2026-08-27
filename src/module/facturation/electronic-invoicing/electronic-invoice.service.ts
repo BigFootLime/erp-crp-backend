@@ -18,10 +18,12 @@ import {
   repoClaimElectronicInvoice,
   repoDeactivateSuperPdpConnection,
   repoGetElectronicInvoiceConnection,
+  repoGetElectronicCreditNoteState,
   repoGetElectronicInvoiceProviderConfiguration,
   repoListElectronicInvoiceReconciliationCandidates,
   repoGetElectronicInvoiceState,
   repoQueueElectronicInvoice,
+  repoQueueElectronicCreditNote,
   repoRecordElectronicInvoiceFailure,
   repoRecordElectronicInvoiceSuccess,
 } from "./electronic-invoice.repository";
@@ -36,6 +38,16 @@ export function runtimeElectronicInvoiceEnvironment(): "sandbox" | "production" 
   const configured = process.env.EINVOICE_ENVIRONMENT?.trim().toLowerCase();
   if (configured === "sandbox" || configured === "production") return configured;
   return process.env.NODE_ENV === "production" ? "production" : "sandbox";
+}
+
+function assertOutboundProductionEnabled(environment: "sandbox" | "production"): void {
+  if (environment === "production" && process.env.EINVOICE_PRODUCTION_OUTBOUND_ENABLED !== "true") {
+    throw new HttpError(
+      503,
+      "EINVOICE_PRODUCTION_OUTBOUND_DISABLED",
+      "L'émission électronique de production est désactivée jusqu'à l'ouverture explicite du feature flag."
+    );
+  }
 }
 
 function numericField(value: unknown, name: string): number | null {
@@ -182,6 +194,7 @@ export async function svcQueueElectronicInvoice(params: {
   idempotencyKey: string | undefined;
 }) {
   const environment = runtimeElectronicInvoiceEnvironment();
+  assertOutboundProductionEnabled(environment);
   const connection = await repoGetElectronicInvoiceConnection(environment);
   if (!connection) {
     throw new HttpError(
@@ -196,6 +209,79 @@ export async function svcQueueElectronicInvoice(params: {
     environment,
     idempotencyKeyRaw: params.idempotencyKey,
   });
+}
+
+export async function svcGetElectronicCreditNote(creditNoteId: number) {
+  return {
+    readiness: await svcElectronicInvoiceReadiness(),
+    document: await repoGetElectronicCreditNoteState(creditNoteId),
+  };
+}
+
+export async function svcQueueElectronicCreditNote(params: {
+  creditNoteId: number;
+  format: ElectronicInvoiceFormat;
+  actor: FinanceActorContext;
+  idempotencyKey: string | undefined;
+}) {
+  const environment = runtimeElectronicInvoiceEnvironment();
+  assertOutboundProductionEnabled(environment);
+  const connection = await repoGetElectronicInvoiceConnection(environment);
+  if (!connection) {
+    throw new HttpError(
+      503,
+      "EINVOICE_PROVIDER_NOT_CONFIGURED",
+      "Aucune Plateforme Agréée qualifiée n'est activée. Aucun envoi n'a été tenté."
+    );
+  }
+  electronicInvoiceProviderRegistry.resolve(connection.adapterKey);
+  return repoQueueElectronicCreditNote({
+    ...params,
+    environment,
+    idempotencyKeyRaw: params.idempotencyKey,
+  });
+}
+
+export async function svcAutoQueueIssuedElectronicDocument(params: {
+  documentType: "INVOICE" | "CREDIT_NOTE";
+  localId: number;
+  rowVersion: number;
+  actor: FinanceActorContext;
+}): Promise<"DISABLED" | "QUEUED" | "ROUTED_ELSEWHERE" | "FAILED"> {
+  if (process.env.EINVOICE_OUTBOUND_AUTOMATIC_ENABLED !== "true") return "DISABLED";
+  const idempotencyKey = `auto-einvoice-${params.documentType.toLowerCase()}-${params.localId}-v${params.rowVersion}`;
+  try {
+    if (params.documentType === "INVOICE") {
+      await svcQueueElectronicInvoice({
+        invoiceId: params.localId,
+        format: "UBL",
+        actor: params.actor,
+        idempotencyKey,
+      });
+    } else {
+      await svcQueueElectronicCreditNote({
+        creditNoteId: params.localId,
+        format: "UBL",
+        actor: params.actor,
+        idempotencyKey,
+      });
+    }
+    return "QUEUED";
+  } catch (error) {
+    if (error instanceof HttpError && error.code === "EINVOICE_TRANSACTION_SCOPE_NOT_ROUTABLE") {
+      logger.info("electronic_invoice_automatic_routed_elsewhere", {
+        document_type: params.documentType,
+        local_document_id: params.localId,
+      });
+      return "ROUTED_ELSEWHERE";
+    }
+    logger.error("electronic_invoice_automatic_queue_failed", {
+      document_type: params.documentType,
+      local_document_id: params.localId,
+      failure_code: stringField(error, "code") ?? "EINVOICE_AUTOMATIC_QUEUE_FAILED",
+    });
+    return "FAILED";
+  }
 }
 
 export async function svcProcessNextElectronicInvoice(): Promise<boolean> {
@@ -310,6 +396,44 @@ export async function svcReconcileElectronicInvoice(params: {
     actor: params.actor,
   });
   return repoGetElectronicInvoiceState(params.invoiceId);
+}
+
+export async function svcReconcileElectronicCreditNote(params: {
+  creditNoteId: number;
+  correlationId: string;
+  requestId: string;
+  actor: FinanceActorContext;
+}) {
+  const state = await repoGetElectronicCreditNoteState(params.creditNoteId);
+  if (!state) throw new HttpError(404, "EINVOICE_DOCUMENT_NOT_FOUND", "Aucune transmission électronique n'existe pour cet avoir.");
+  if (!state.provider_document_id) {
+    throw new HttpError(409, "EINVOICE_NOT_SUBMITTED", "La transmission est encore en file et ne peut pas être rapprochée.");
+  }
+  const connection = await repoGetElectronicInvoiceConnection(runtimeElectronicInvoiceEnvironment());
+  if (!connection || connection.providerCode !== state.provider_code) {
+    throw new HttpError(503, "EINVOICE_PROVIDER_NOT_CONFIGURED", "La Plateforme Agréée du document n'est pas active.");
+  }
+  const adapter = electronicInvoiceProviderRegistry.resolve(connection.adapterKey);
+  const event = normalizeElectronicInvoiceProviderEvent(
+    await adapter.retrieve(state.provider_document_id, params.correlationId, {
+      direction: state.direction,
+      documentType: state.document_type,
+      format: state.format,
+      invoiceId: state.invoice_id,
+      creditNoteId: state.credit_note_id,
+      documentSha256: state.content_sha256,
+    })
+  );
+  await repoApplyElectronicInvoiceProviderEvent({
+    providerCode: state.provider_code,
+    event,
+    payloadSha256: sha256Hex(canonicalJson(event)),
+    signatureVerified: null,
+    correlationId: params.correlationId,
+    requestId: params.requestId,
+    actor: params.actor,
+  });
+  return repoGetElectronicCreditNoteState(params.creditNoteId);
 }
 
 export async function svcHandleElectronicInvoiceWebhook(params: {

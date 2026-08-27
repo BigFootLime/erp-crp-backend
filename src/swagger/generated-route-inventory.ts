@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "2615909aee68b38c841627b8215e30c98358b4dc2d209644345dca0d54255897";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "c61d7e05cb749239bd6c47dace55bf9b0ba1f03661fd1ea0ff991b87217ab377";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -1978,7 +1978,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/avoirs",
-    "source": "src/module/facturation/routes/avoirs.routes.ts:48",
+    "source": "src/module/facturation/routes/avoirs.routes.ts:56",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -1995,7 +1995,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/avoirs",
-    "source": "src/module/facturation/routes/avoirs.routes.ts:51",
+    "source": "src/module/facturation/routes/avoirs.routes.ts:59",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2012,7 +2012,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "delete",
     "path": "/avoirs/{id}",
-    "source": "src/module/facturation/routes/avoirs.routes.ts:54",
+    "source": "src/module/facturation/routes/avoirs.routes.ts:62",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2029,7 +2029,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/avoirs/{id}",
-    "source": "src/module/facturation/routes/avoirs.routes.ts:49",
+    "source": "src/module/facturation/routes/avoirs.routes.ts:57",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2046,7 +2046,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/avoirs/{id}",
-    "source": "src/module/facturation/routes/avoirs.routes.ts:53",
+    "source": "src/module/facturation/routes/avoirs.routes.ts:61",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2062,8 +2062,59 @@ export const GENERATED_ROUTE_INVENTORY = [
   },
   {
     "method": "get",
+    "path": "/avoirs/{id}/electronic-invoicing",
+    "source": "src/module/facturation/routes/avoirs.routes.ts:47",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireFinanceCapability(einvoice_read)",
+      "getElectronicCreditNote"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireFinanceCapability(einvoice_read)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/avoirs/{id}/electronic-invoicing/reconcile",
+    "source": "src/module/facturation/routes/avoirs.routes.ts:49",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireFinanceCapability(einvoice_reconcile)",
+      "reconcileElectronicCreditNote"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireFinanceCapability(einvoice_reconcile)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/avoirs/{id}/electronic-invoicing/submissions",
+    "source": "src/module/facturation/routes/avoirs.routes.ts:48",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireFinanceCapability(einvoice_submit)",
+      "queueElectronicCreditNote"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireFinanceCapability(einvoice_submit)"
+    ]
+  },
+  {
+    "method": "get",
     "path": "/avoirs/{id}/official-documents",
-    "source": "src/module/facturation/routes/avoirs.routes.ts:42",
+    "source": "src/module/facturation/routes/avoirs.routes.ts:50",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2080,7 +2131,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/avoirs/{id}/official-documents/{documentId}",
-    "source": "src/module/facturation/routes/avoirs.routes.ts:43",
+    "source": "src/module/facturation/routes/avoirs.routes.ts:51",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2097,7 +2148,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/avoirs/{id}/official-documents/{documentId}/download",
-    "source": "src/module/facturation/routes/avoirs.routes.ts:45",
+    "source": "src/module/facturation/routes/avoirs.routes.ts:53",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2114,7 +2165,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/avoirs/{id}/official-documents/{documentId}/preview",
-    "source": "src/module/facturation/routes/avoirs.routes.ts:44",
+    "source": "src/module/facturation/routes/avoirs.routes.ts:52",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2131,7 +2182,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/avoirs/{id}/official-documents/{documentId}/print-intents",
-    "source": "src/module/facturation/routes/avoirs.routes.ts:46",
+    "source": "src/module/facturation/routes/avoirs.routes.ts:54",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2148,7 +2199,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/avoirs/{id}/pdf",
-    "source": "src/module/facturation/routes/avoirs.routes.ts:50",
+    "source": "src/module/facturation/routes/avoirs.routes.ts:58",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2165,7 +2216,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/avoirs/{id}/pdf",
-    "source": "src/module/facturation/routes/avoirs.routes.ts:52",
+    "source": "src/module/facturation/routes/avoirs.routes.ts:60",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2182,7 +2233,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/avoirs/workflow/{id}/issue",
-    "source": "src/module/facturation/routes/avoirs.routes.ts:41",
+    "source": "src/module/facturation/routes/avoirs.routes.ts:46",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2199,7 +2250,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/avoirs/workflow/{id}/request-validation",
-    "source": "src/module/facturation/routes/avoirs.routes.ts:31",
+    "source": "src/module/facturation/routes/avoirs.routes.ts:36",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2216,7 +2267,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/avoirs/workflow/{id}/validate",
-    "source": "src/module/facturation/routes/avoirs.routes.ts:36",
+    "source": "src/module/facturation/routes/avoirs.routes.ts:41",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2233,7 +2284,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/avoirs/workflow/drafts",
-    "source": "src/module/facturation/routes/avoirs.routes.ts:30",
+    "source": "src/module/facturation/routes/avoirs.routes.ts:35",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2250,7 +2301,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/avoirs/workflow/invoices/{id}/eligible-lines",
-    "source": "src/module/facturation/routes/avoirs.routes.ts:24",
+    "source": "src/module/facturation/routes/avoirs.routes.ts:29",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2267,7 +2318,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/avoirs/workflow/preview",
-    "source": "src/module/facturation/routes/avoirs.routes.ts:29",
+    "source": "src/module/facturation/routes/avoirs.routes.ts:34",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2697,7 +2748,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/clients",
-    "source": "src/module/client/routes/client.routes.ts:40",
+    "source": "src/module/client/routes/client.routes.ts:42",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2713,7 +2764,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/clients",
-    "source": "src/module/client/routes/client.routes.ts:39",
+    "source": "src/module/client/routes/client.routes.ts:41",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2731,7 +2782,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/clients/{clientId}/addresses",
-    "source": "src/module/client/routes/client.routes.ts:46",
+    "source": "src/module/client/routes/client.routes.ts:48",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2747,7 +2798,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/clients/{clientId}/contacts",
-    "source": "src/module/client/routes/client.routes.ts:44",
+    "source": "src/module/client/routes/client.routes.ts:46",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2763,7 +2814,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/clients/{clientId}/contacts",
-    "source": "src/module/client/routes/client.routes.ts:45",
+    "source": "src/module/client/routes/client.routes.ts:47",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2781,7 +2832,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "delete",
     "path": "/clients/{id}",
-    "source": "src/module/client/routes/client.routes.ts:72",
+    "source": "src/module/client/routes/client.routes.ts:80",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2799,7 +2850,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/clients/{id}",
-    "source": "src/module/client/routes/client.routes.ts:58",
+    "source": "src/module/client/routes/client.routes.ts:60",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2815,7 +2866,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/clients/{id}",
-    "source": "src/module/client/routes/client.routes.ts:68",
+    "source": "src/module/client/routes/client.routes.ts:76",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2833,7 +2884,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/clients/{id}/archive",
-    "source": "src/module/client/routes/client.routes.ts:74",
+    "source": "src/module/client/routes/client.routes.ts:82",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2851,7 +2902,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/clients/{id}/contact",
-    "source": "src/module/client/routes/client.routes.ts:77",
+    "source": "src/module/client/routes/client.routes.ts:85",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2869,7 +2920,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/clients/{id}/creation-snapshot",
-    "source": "src/module/client/routes/client.routes.ts:48",
+    "source": "src/module/client/routes/client.routes.ts:50",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2885,7 +2936,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/clients/{id}/creation-snapshot/{documentId}/download",
-    "source": "src/module/client/routes/client.routes.ts:50",
+    "source": "src/module/client/routes/client.routes.ts:52",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2901,7 +2952,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/clients/{id}/creation-snapshot/{documentId}/preview",
-    "source": "src/module/client/routes/client.routes.ts:49",
+    "source": "src/module/client/routes/client.routes.ts:51",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2917,7 +2968,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/clients/{id}/creation-snapshot/{documentId}/print-intents",
-    "source": "src/module/client/routes/client.routes.ts:51",
+    "source": "src/module/client/routes/client.routes.ts:53",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2931,9 +2982,29 @@ export const GENERATED_ROUTE_INVENTORY = [
     ]
   },
   {
+    "method": "post",
+    "path": "/clients/{id}/electronic-invoicing/verify",
+    "source": "src/module/client/routes/client.routes.ts:61",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireClientWriteRole",
+      "requireFinanceCapability(einvoice_admin)",
+      "verifyClientElectronicInvoiceAddress"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireClientWriteRole",
+      "requireFinanceCapability(einvoice_admin)"
+    ]
+  },
+  {
     "method": "get",
     "path": "/clients/{id}/official-documents",
-    "source": "src/module/client/routes/client.routes.ts:53",
+    "source": "src/module/client/routes/client.routes.ts:55",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2949,7 +3020,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/clients/{id}/official-documents",
-    "source": "src/module/client/routes/client.routes.ts:54",
+    "source": "src/module/client/routes/client.routes.ts:56",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2967,7 +3038,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/clients/{id}/official-documents/{documentId}/download",
-    "source": "src/module/client/routes/client.routes.ts:56",
+    "source": "src/module/client/routes/client.routes.ts:58",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2983,7 +3054,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/clients/{id}/official-documents/{documentId}/preview",
-    "source": "src/module/client/routes/client.routes.ts:55",
+    "source": "src/module/client/routes/client.routes.ts:57",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2999,7 +3070,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/clients/{id}/official-documents/{documentId}/print-intents",
-    "source": "src/module/client/routes/client.routes.ts:57",
+    "source": "src/module/client/routes/client.routes.ts:59",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3015,7 +3086,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/clients/analytics",
-    "source": "src/module/client/routes/client.routes.ts:41",
+    "source": "src/module/client/routes/client.routes.ts:43",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3031,7 +3102,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/clients/duplicate-check",
-    "source": "src/module/client/routes/client.routes.ts:43",
+    "source": "src/module/client/routes/client.routes.ts:45",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4590,6 +4661,108 @@ export const GENERATED_ROUTE_INVENTORY = [
     ]
   },
   {
+    "method": "get",
+    "path": "/electronic-invoicing/directory/companies",
+    "source": "src/module/facturation/electronic-invoicing/electronic-invoice-directory.routes.ts:13",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireFinanceCapability(einvoice_read)",
+      "searchElectronicInvoiceDirectory"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireFinanceCapability(einvoice_read)"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/electronic-invoicing/directory/entries",
+    "source": "src/module/facturation/electronic-invoicing/electronic-invoice-directory.routes.ts:14",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireFinanceCapability(einvoice_read)",
+      "listElectronicInvoiceDirectory"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireFinanceCapability(einvoice_read)"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/electronic-invoicing/reference-data",
+    "source": "src/module/facturation/electronic-invoicing/electronic-invoice-directory.routes.ts:12",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireFinanceCapability(einvoice_read)",
+      "getElectronicInvoiceReferenceData"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireFinanceCapability(einvoice_read)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/electronic-invoicing/reporting-payments",
+    "source": "src/module/facturation/electronic-invoicing/electronic-invoice-reporting.routes.ts:14",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireFinanceCapability(ereporting_submit)",
+      "createEReportingPayment"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireFinanceCapability(ereporting_submit)"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/electronic-invoicing/reporting-periods",
+    "source": "src/module/facturation/electronic-invoicing/electronic-invoice-reporting.routes.ts:12",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireFinanceCapability(ereporting_read)",
+      "listEReportingPeriods"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireFinanceCapability(ereporting_read)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/electronic-invoicing/reporting-transactions",
+    "source": "src/module/facturation/electronic-invoicing/electronic-invoice-reporting.routes.ts:13",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireFinanceCapability(ereporting_submit)",
+      "createEReportingTransaction"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireFinanceCapability(ereporting_submit)"
+    ]
+  },
+  {
     "method": "post",
     "path": "/electronic-invoicing/webhooks/{providerCode}",
     "source": "src/module/facturation/electronic-invoicing/electronic-invoice-webhook.routes.ts:10",
@@ -5457,7 +5630,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/fournisseurs",
-    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:53",
+    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:55",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5473,7 +5646,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/fournisseurs",
-    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:65",
+    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:67",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5491,7 +5664,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/fournisseurs/{id}",
-    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:61",
+    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:63",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5507,7 +5680,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/fournisseurs/{id}",
-    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:66",
+    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:68",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5525,7 +5698,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/fournisseurs/{id}/adresses",
-    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:78",
+    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:86",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5541,7 +5714,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/fournisseurs/{id}/adresses",
-    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:79",
+    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:87",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5559,7 +5732,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "delete",
     "path": "/fournisseurs/{id}/adresses/{adresseId}",
-    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:81",
+    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:89",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5577,7 +5750,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/fournisseurs/{id}/adresses/{adresseId}",
-    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:80",
+    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:88",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5595,7 +5768,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/fournisseurs/{id}/archive",
-    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:68",
+    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:76",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5613,7 +5786,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/fournisseurs/{id}/catalogue",
-    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:89",
+    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:97",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5629,7 +5802,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/fournisseurs/{id}/catalogue",
-    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:90",
+    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:98",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5647,7 +5820,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "delete",
     "path": "/fournisseurs/{id}/catalogue/{catalogueId}",
-    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:92",
+    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:100",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5665,7 +5838,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/fournisseurs/{id}/catalogue/{catalogueId}",
-    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:91",
+    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:99",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5683,7 +5856,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/fournisseurs/{id}/contacts",
-    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:72",
+    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:80",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5699,7 +5872,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/fournisseurs/{id}/contacts",
-    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:73",
+    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:81",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5717,7 +5890,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "delete",
     "path": "/fournisseurs/{id}/contacts/{contactId}",
-    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:75",
+    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:83",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5735,7 +5908,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/fournisseurs/{id}/contacts/{contactId}",
-    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:74",
+    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:82",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5753,7 +5926,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/fournisseurs/{id}/creation-snapshot",
-    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:57",
+    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:59",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5769,7 +5942,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/fournisseurs/{id}/creation-snapshot/{documentId}/download",
-    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:59",
+    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:61",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5785,7 +5958,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/fournisseurs/{id}/creation-snapshot/{documentId}/preview",
-    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:58",
+    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:60",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5801,7 +5974,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/fournisseurs/{id}/creation-snapshot/{documentId}/print-intents",
-    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:60",
+    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:62",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5817,7 +5990,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/fournisseurs/{id}/deactivate",
-    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:67",
+    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:75",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5835,7 +6008,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/fournisseurs/{id}/documents",
-    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:95",
+    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:103",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5851,7 +6024,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/fournisseurs/{id}/documents",
-    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:96",
+    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:104",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5870,7 +6043,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "delete",
     "path": "/fournisseurs/{id}/documents/{docId}",
-    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:97",
+    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:105",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5888,7 +6061,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/fournisseurs/{id}/documents/{docId}/download",
-    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:98",
+    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:106",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5904,7 +6077,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/fournisseurs/{id}/domaines",
-    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:69",
+    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:77",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5920,9 +6093,29 @@ export const GENERATED_ROUTE_INVENTORY = [
     ]
   },
   {
+    "method": "post",
+    "path": "/fournisseurs/{id}/electronic-invoicing/verify",
+    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:69",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "authorizeRole(...WRITE)",
+      "requireFinanceCapability(einvoice_admin)",
+      "verifyFournisseurElectronicInvoiceAddress"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "authorizeRole(...WRITE)",
+      "requireFinanceCapability(einvoice_admin)"
+    ]
+  },
+  {
     "method": "get",
     "path": "/fournisseurs/{id}/events",
-    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:62",
+    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:64",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5938,7 +6131,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/fournisseurs/{id}/homologations",
-    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:84",
+    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:92",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5954,7 +6147,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/fournisseurs/{id}/homologations",
-    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:85",
+    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:93",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5972,7 +6165,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/fournisseurs/{id}/homologations/{homologationId}",
-    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:86",
+    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:94",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5990,7 +6183,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/fournisseurs/domaines",
-    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:55",
+    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:57",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -6006,7 +6199,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/fournisseurs/doublons",
-    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:54",
+    "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:56",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -19015,6 +19208,142 @@ export const GENERATED_ROUTE_INVENTORY = [
     "authenticated": true,
     "rbac": [
       "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/supplier-invoices",
+    "source": "src/module/supplier-invoices/supplier-invoice.routes.ts:17",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireFinanceCapability(supplier_invoice_read)",
+      "listSupplierInvoices"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireFinanceCapability(supplier_invoice_read)"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/supplier-invoices/{id}",
+    "source": "src/module/supplier-invoices/supplier-invoice.routes.ts:18",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireFinanceCapability(supplier_invoice_read)",
+      "getSupplierInvoice"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireFinanceCapability(supplier_invoice_read)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/supplier-invoices/{id}/approve",
+    "source": "src/module/supplier-invoices/supplier-invoice.routes.ts:22",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireFinanceCapability(supplier_invoice_approve)",
+      "approveSupplierInvoice"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireFinanceCapability(supplier_invoice_approve)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/supplier-invoices/{id}/dispute",
+    "source": "src/module/supplier-invoices/supplier-invoice.routes.ts:23",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireFinanceCapability(supplier_invoice_dispute)",
+      "disputeSupplierInvoice"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireFinanceCapability(supplier_invoice_dispute)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/supplier-invoices/{id}/identify",
+    "source": "src/module/supplier-invoices/supplier-invoice.routes.ts:19",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireFinanceCapability(supplier_invoice_match)",
+      "identifySupplierInvoice"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireFinanceCapability(supplier_invoice_match)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/supplier-invoices/{id}/match",
+    "source": "src/module/supplier-invoices/supplier-invoice.routes.ts:20",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireFinanceCapability(supplier_invoice_match)",
+      "matchSupplierInvoice"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireFinanceCapability(supplier_invoice_match)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/supplier-invoices/{id}/reject",
+    "source": "src/module/supplier-invoices/supplier-invoice.routes.ts:24",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireFinanceCapability(supplier_invoice_dispute)",
+      "rejectSupplierInvoice"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireFinanceCapability(supplier_invoice_dispute)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/supplier-invoices/{id}/request-approval",
+    "source": "src/module/supplier-invoices/supplier-invoice.routes.ts:21",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireFinanceCapability(supplier_invoice_match)",
+      "requestSupplierInvoiceApproval"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireFinanceCapability(supplier_invoice_match)"
     ]
   },
   {

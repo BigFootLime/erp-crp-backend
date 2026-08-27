@@ -4,6 +4,9 @@ export const qualityLevels = z.enum(["Certificat MP", "Certificat TR", "Relevé 
 export const QUALITY_LEVELS = ["Certificat MP", "Certificat TR", "Relevé de valeurs"] as const;
 
 const siretRegex = /^\d{14}$/;
+const sirenRegex = /^\d{9}$/;
+const electronicAddressSchemeRegex = /^[A-Za-z0-9]{4}$/;
+const electronicAddressValueRegex = /^[^\s\u0000-\u001F\u007F]+$/;
 const deviseRegex = /^[A-Za-z]{3}$/;
 const langueRegex = /^[A-Za-z]{2}$/;
 /** Incoterms 2020 — liste officielle ICC. */
@@ -13,6 +16,11 @@ const frVatRegex = /^FR[0-9A-Z]{2}\s?\d{9}$/i;
 const ibanRegex = /^[A-Z]{2}[0-9A-Z]{13,32}$/i;
 const bicRegex = /^[A-Z0-9]{8}([A-Z0-9]{3})?$/i;
 const CIVILITY_OPTIONS = ["Madame", "Monsieur"] as const;
+
+const electronicAddressSchema = z.object({
+  scheme: z.string().trim().regex(electronicAddressSchemeRegex, "Le schéma d'adresse électronique doit contenir 4 caractères alphanumériques").transform((value) => value.toUpperCase()),
+  value: z.string().trim().min(1, "Adresse électronique requise").max(255).regex(electronicAddressValueRegex, "Adresse électronique invalide"),
+}).strict();
 
 function emptyStringToUndefined(value: unknown) {
   if (typeof value !== "string") return value;
@@ -223,6 +231,7 @@ export const createClientSchema = z.object({
   phone: z.preprocess(emptyStringToUndefined, z.string().trim().optional()),
   website_url: z.preprocess(emptyStringToUndefined, z.string().trim().url("URL invalide").optional()),
   siret: z.preprocess(emptyStringToUndefined, z.string().trim().regex(siretRegex, "SIRET invalide").optional()),
+  siren: z.preprocess(emptyStringToUndefined, z.string().trim().regex(sirenRegex, "SIREN invalide").optional()),
   vat_number: z.preprocess(emptyStringToUndefined, z.string().trim().regex(frVatRegex, "TVA invalide").optional()),
   naf_code: z.preprocess(emptyStringToUndefined, z.string().trim().regex(nafRegex, "Code NAF invalide").optional()),
   status: z.enum(["prospect", "client", "inactif"]),
@@ -270,6 +279,8 @@ export const createClientSchema = z.object({
   // (bornes de longueur) : ne jamais rejeter une donnée d'import.
   compte_tiers: z.preprocess(emptyStringToUndefined, z.string().trim().max(64, "Compte tiers trop long").optional()),
   groupe_financier: z.preprocess(emptyStringToUndefined, z.string().trim().max(120, "Groupe financier trop long").optional()),
+  // L'état de vérification reste exclusivement géré par la route annuaire.
+  electronic_address: electronicAddressSchema.nullable().optional(),
 });
 
 export type CreateClientDTO = z.infer<typeof createClientSchema>;

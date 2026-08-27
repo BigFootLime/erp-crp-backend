@@ -35,6 +35,17 @@ export function resolveOutboundEmailRecipients(
   intendedRecipients: readonly string[],
   env: NodeJS.ProcessEnv = process.env
 ): { recipients: string[]; rerouted: boolean } {
+  if (
+    env.CERP_E2E_ISOLATED === "1" &&
+    env.CERP_E2E_MANAGED_STACK === "1" &&
+    env.CERP_E2E_EMAIL_SINK === "1"
+  ) {
+    const recipients = [...new Set(intendedRecipients.map((recipient) => recipient.trim()).filter(Boolean))];
+    if (recipients.length === 0 || recipients.some((recipient) => !recipient.endsWith("@example.local"))) {
+      throw new Error("[SOL-05 isolation] email sink recipients must use example.local");
+    }
+    return { recipients, rerouted: false };
+  }
   if (isTestEmailEnvironment(env)) {
     return { recipients: [...TEST_EMAIL_RECIPIENTS], rerouted: true };
   }

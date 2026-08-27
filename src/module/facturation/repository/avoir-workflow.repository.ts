@@ -4,6 +4,7 @@ import type { PoolClient } from "pg";
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
 import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
+import { parseInvoiceRegulatorySnapshot } from "../electronic-invoicing/electronic-invoice-regulatory.domain";
 import {
   assertAvoirTransition,
   assertSeparationOfDuties,
@@ -79,6 +80,7 @@ export type AvoirDocumentSnapshot = {
   currency: string;
   client_snapshot: Record<string, unknown>;
   issuer_snapshot: Record<string, unknown>;
+  regulatory_snapshot: Record<string, unknown>;
   reason_code: string;
   reason: string;
   lines: AvoirPreviewLine[];
@@ -771,6 +773,22 @@ export async function repoIssueAvoir(params: {
       throw new HttpError(404, "FACTURE_NOT_FOUND", "Facture introuvable.");
     }
     assertInvoiceIssued(invoiceBeforeCredit);
+    const regulatoryResult = await client.query<{
+      billing_frame_catalog_version: string | null;
+      billing_frame_code: string | null;
+      operation_category: string | null;
+      transaction_scope: string | null;
+      regulatory_snapshot: Record<string, unknown> | null;
+    }>(
+      `SELECT billing_frame_catalog_version,billing_frame_code,operation_category,
+              transaction_scope,regulatory_snapshot
+         FROM public.facture WHERE id=$1 FOR UPDATE`,
+      [preview.facture_id]
+    );
+    const correctedInvoiceRegulatory = regulatoryResult.rows[0];
+    const regulatorySnapshot = parseInvoiceRegulatorySnapshot(
+      correctedInvoiceRegulatory?.regulatory_snapshot ?? null
+    );
     const creditCents = moneyToCents(preview.totals.total_incl_tax, "Montant de l'avoir");
     assertInvoiceCreditWithinBalance(invoiceBeforeCredit, creditCents);
     const policy = await client.query<{ policy_version: string; require_distinct_issuer: boolean }>(
@@ -825,6 +843,7 @@ export async function repoIssueAvoir(params: {
       currency: preview.currency,
       client_snapshot: avoir.client_snapshot,
       issuer_snapshot: issuerAtIssue,
+      regulatory_snapshot: regulatorySnapshot,
       reason_code: preview.reason_code,
       reason: preview.reason,
       lines: preview.lines,
@@ -878,9 +897,14 @@ export async function repoIssueAvoir(params: {
             issued_at = now(),
             issued_by = $6,
             immutable_snapshot = $7::jsonb,
-            document_checksum_sha256 = $8,
-            issuer_snapshot = $9::jsonb,
-            row_version = row_version + 1,
+             document_checksum_sha256 = $8,
+             issuer_snapshot = $9::jsonb,
+             billing_frame_catalog_version = $10,
+             billing_frame_code = $11,
+             operation_category = $12,
+             transaction_scope = $13,
+             regulatory_snapshot = $14::jsonb,
+             row_version = row_version + 1,
             updated_at = now()
         WHERE id = $1
         RETURNING row_version
@@ -895,6 +919,11 @@ export async function repoIssueAvoir(params: {
         JSON.stringify(snapshot),
         artifact.checksumSha256,
         JSON.stringify(issuerAtIssue),
+        correctedInvoiceRegulatory?.billing_frame_catalog_version,
+        correctedInvoiceRegulatory?.billing_frame_code,
+        correctedInvoiceRegulatory?.operation_category,
+        correctedInvoiceRegulatory?.transaction_scope,
+        JSON.stringify(regulatorySnapshot),
       ]
     );
     await client.query(

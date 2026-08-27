@@ -54,7 +54,7 @@ export function assertE2EIsolation(env: NodeJS.ProcessEnv = process.env): void {
     assertAllowedUrl(
       "RESEND_API_BASE_URL",
       env.RESEND_API_BASE_URL,
-      managedContainer ? new Set(["host.docker.internal"]) : LOOPBACK_HOSTS
+      managedContainer ? new Set(["email-sink"]) : LOOPBACK_HOSTS
     );
     if (!env.RESEND_FROM.toLowerCase().includes("@example.local")) {
       throw new Error("[SOL-05 isolation] RESEND_FROM must use example.local");

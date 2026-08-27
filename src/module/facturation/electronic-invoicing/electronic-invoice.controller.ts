@@ -7,10 +7,13 @@ import {
   svcActivateSuperPdp,
   svcDeactivateSuperPdp,
   svcGetElectronicInvoice,
+  svcGetElectronicCreditNote,
   svcGetSuperPdpConfiguration,
   svcHandleElectronicInvoiceWebhook,
   svcQueueElectronicInvoice,
+  svcQueueElectronicCreditNote,
   svcReconcileElectronicInvoice,
+  svcReconcileElectronicCreditNote,
 } from "./electronic-invoice.service";
 import {
   electronicInvoiceIdParamsSchema,
@@ -87,6 +90,15 @@ export const getElectronicInvoice: RequestHandler = async (req, res, next) => {
   }
 };
 
+export const getElectronicCreditNote: RequestHandler = async (req, res, next) => {
+  try {
+    const { id } = electronicInvoiceIdParamsSchema.parse(req.params);
+    res.json(await svcGetElectronicCreditNote(id));
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const queueElectronicInvoice: RequestHandler = async (req, res, next) => {
   try {
     const { id } = electronicInvoiceIdParamsSchema.parse(req.params);
@@ -103,11 +115,41 @@ export const queueElectronicInvoice: RequestHandler = async (req, res, next) => 
   }
 };
 
+export const queueElectronicCreditNote: RequestHandler = async (req, res, next) => {
+  try {
+    const { id } = electronicInvoiceIdParamsSchema.parse(req.params);
+    const input = queueElectronicInvoiceBodySchema.parse(req.body);
+    const result = await svcQueueElectronicCreditNote({
+      creditNoteId: id,
+      format: input.format,
+      actor: actorFromRequest(req),
+      idempotencyKey: idempotencyKey(req),
+    });
+    res.status(result.idempotent_replay ? 200 : 202).json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const reconcileElectronicInvoice: RequestHandler = async (req, res, next) => {
   try {
     const { id } = electronicInvoiceIdParamsSchema.parse(req.params);
     res.json(await svcReconcileElectronicInvoice({
       invoiceId: id,
+      correlationId: req.correlationId ?? req.requestId ?? "missing-correlation-id",
+      requestId: req.requestId ?? "missing-request-id",
+      actor: actorFromRequest(req),
+    }));
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const reconcileElectronicCreditNote: RequestHandler = async (req, res, next) => {
+  try {
+    const { id } = electronicInvoiceIdParamsSchema.parse(req.params);
+    res.json(await svcReconcileElectronicCreditNote({
+      creditNoteId: id,
       correlationId: req.correlationId ?? req.requestId ?? "missing-correlation-id",
       requestId: req.requestId ?? "missing-request-id",
       actor: actorFromRequest(req),

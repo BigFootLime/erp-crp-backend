@@ -371,6 +371,9 @@ describe("BUG-CERP-0015 - validation serveur POST/PATCH commandes", () => {
       if (query.includes("FROM public.article_devis_promotion")) {
         return { rows: [{ promoted_article_id: ARTICLE_ID }] };
       }
+      if (query.includes("sale_price_reference::float8 AS sale_price_reference")) {
+        return { rows: [{ sale_price_reference: 19.5, sale_price_currency: "EUR", sale_price_source: "CUSTOMER_ORDER" }] };
+      }
       if (
         query.includes("FROM public.articles a") &&
         (query.includes("WHERE a.id = $1::uuid") || query.includes("AS commande_client_eligible"))

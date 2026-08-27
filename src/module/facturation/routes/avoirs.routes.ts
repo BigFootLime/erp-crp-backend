@@ -11,6 +11,11 @@ import {
 import { avoirLegalArchive } from "../controllers/finance-legal-archive.controller";
 import { requireFinanceCapability } from "../middlewares/finance-authorization.middleware";
 import {
+  getElectronicCreditNote,
+  queueElectronicCreditNote,
+  reconcileElectronicCreditNote,
+} from "../electronic-invoicing/electronic-invoice.controller";
+import {
   createAvoirDraftWorkflow,
   issueAvoirWorkflow,
   listAvoirEligibleLines,
@@ -39,6 +44,9 @@ router.post(
   validateAvoirWorkflow
 );
 router.post("/workflow/:id/issue", requireFinanceCapability("credit_issue"), issueAvoirWorkflow);
+router.get("/:id/electronic-invoicing", requireFinanceCapability("einvoice_read"), getElectronicCreditNote);
+router.post("/:id/electronic-invoicing/submissions", requireFinanceCapability("einvoice_submit"), queueElectronicCreditNote);
+router.post("/:id/electronic-invoicing/reconcile", requireFinanceCapability("einvoice_reconcile"), reconcileElectronicCreditNote);
 router.get("/:id/official-documents", requireFinanceCapability("documents_read"), avoirLegalArchive.list);
 router.get("/:id/official-documents/:documentId", requireFinanceCapability("documents_read"), avoirLegalArchive.get);
 router.get("/:id/official-documents/:documentId/preview", requireFinanceCapability("documents_read"), avoirLegalArchive.preview);

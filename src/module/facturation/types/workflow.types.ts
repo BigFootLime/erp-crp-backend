@@ -3,6 +3,7 @@ import type {
   FactureWorkflowStatus,
   PaymentStatus,
 } from "../domain/finance-policy";
+import type { InvoiceRegulatorySnapshot } from "../electronic-invoicing/electronic-invoice-regulatory.domain";
 
 export type FinanceBlocker = {
   code: string;
@@ -78,6 +79,7 @@ export type FacturePreview = {
     total_incl_tax: string;
   };
   due_dates: FinanceDueDate[];
+  regulatory_snapshot: InvoiceRegulatorySnapshot | null;
   blockers: FinanceBlocker[];
   warnings: FinanceBlocker[];
   preview_hash: string;

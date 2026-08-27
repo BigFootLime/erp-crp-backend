@@ -72,7 +72,7 @@ export const MODULE_CATALOG: readonly ModuleCatalogEntry[] = [
     label: "Facturation",
     description: "Factures, avoirs, règlements, relances et tarification.",
     category: "Commerce",
-    api_prefixes: ["/factures", "/avoirs", "/paiements", "/tarification", "/adv-reminders"],
+    api_prefixes: ["/electronic-invoicing", "/supplier-invoices", "/factures", "/avoirs", "/paiements", "/tarification", "/adv-reminders"],
     nav_page_keys: ["factures", "relances"],
     is_protected: false,
     sort_order: 60,

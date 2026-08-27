@@ -119,6 +119,21 @@ describe("SOL-06 migration release gate", () => {
     expect(source).toContain('path.join(reportDir, "MIGRATION_REHEARSAL_SOL_06.md")');
   });
 
+  it("retire les extensions e-invoicing dépendantes avant les socles SOL-26/SOL-27 pendant la preuve de rollback", () => {
+    const source = fs.readFileSync(path.join(ROOT, "scripts", "migrations", "release-gate.js"), "utf8");
+    const dependentRollback = source.indexOf('patchSupportSql(EINVOICE_CREDIT_REPORTING_PATCH, "rollback")');
+    const supplierRollback = source.indexOf('patchSupportSql(SUPPLIER_INVOICES_PATCH, "rollback")');
+    const regulatoryRollback = source.indexOf('patchSupportSql(EINVOICE_REGULATORY_PATCH, "rollback")');
+    const sol27Rollback = source.indexOf('await runSqlFile(client, accountingExportRollback)');
+    const sol26Rollback = source.indexOf('await runSqlFile(client, electronicInvoicingRollback)');
+
+    expect(dependentRollback).toBeGreaterThanOrEqual(0);
+    expect(supplierRollback).toBeGreaterThan(dependentRollback);
+    expect(regulatoryRollback).toBeGreaterThan(supplierRollback);
+    expect(sol27Rollback).toBeGreaterThan(regulatoryRollback);
+    expect(sol26Rollback).toBeGreaterThan(sol27Rollback);
+  });
+
   it("attend le serveur PostgreSQL final au lieu du serveur temporaire d'initialisation", () => {
     const source = fs.readFileSync(path.join(ROOT, "scripts", "migrations", "release-gate.js"), "utf8");
 

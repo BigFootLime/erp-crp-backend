@@ -39,6 +39,14 @@ export type Fournisseur = {
   type_principal: string | null
   tva: string | null
   siret: string | null
+  siren: string | null
+  compte_tiers: string | null
+  electronic_address: {
+    scheme: string
+    value: string
+    directory_entry_id: string | null
+    verified_at: string | null
+  } | null
   email: string | null
   telephone: string | null
   site_web: string | null

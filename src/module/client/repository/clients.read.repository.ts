@@ -68,8 +68,12 @@ export async function repoGetClientById(clientId: string, options: ClientReadOpt
         NULLIF(btrim(to_jsonb(c)->>'code_client'), '')
       ) AS client_code,
       c.company_name, c.email, c.phone, c.website_url,
-      c.siret, c.vat_number, c.naf_code,
+      c.siret, c.siren, c.vat_number, c.naf_code,
+      c.electronic_address_scheme, c.electronic_address_value,
+      c.electronic_address_directory_entry_id,
+      c.electronic_address_verified_at::text AS electronic_address_verified_at,
       c.status, c.blocked, c.reason, c.creation_date,
+      c.updated_at::text AS updated_at,
       c.observations, c.provided_documents_id,
       concat(c.updated_at::text, ':', COALESCE(logo.version_id, 'no-image')) AS source_revision,
       NULLIF(btrim(to_jsonb(c)->>'devise'), '') AS devise,
@@ -149,12 +153,14 @@ export async function repoGetClientById(clientId: string, options: ClientReadOpt
       phone: r.phone ?? null,
       website_url: r.website_url ?? null,
       siret: r.siret ?? null,
+      siren: r.siren ?? null,
       vat_number: r.vat_number ?? null,
       naf_code: r.naf_code ?? null,
       status: r.status,
       blocked: !!r.blocked,
       reason: r.reason ?? null,
       creation_date: r.creation_date,
+      updated_at: r.updated_at,
       observations: r.observations ?? null,
       provided_documents_id: r.provided_documents_id ?? null,
       source_revision: r.source_revision,
@@ -164,6 +170,14 @@ export async function repoGetClientById(clientId: string, options: ClientReadOpt
       langue: r.langue ?? null,
       compte_tiers: r.compte_tiers ?? null,
       groupe_financier: r.groupe_financier ?? null,
+      electronic_address: r.electronic_address_scheme && r.electronic_address_value
+        ? {
+            scheme: r.electronic_address_scheme,
+            value: r.electronic_address_value,
+            directory_entry_id: r.electronic_address_directory_entry_id ?? null,
+            verified_at: r.electronic_address_verified_at ?? null,
+          }
+        : null,
     },
     biller: r.biller_id
       ? { id: r.biller_id, name: r.biller_name }
@@ -291,7 +305,10 @@ export async function repoListClients(q: string, limit = 25) {
         NULLIF(btrim(to_jsonb(c)->>'code_client'), '')
       ) AS client_code,
       c.company_name, c.email, c.phone, c.website_url,
-      c.siret, c.vat_number, c.naf_code,
+      c.siret, c.siren, c.vat_number, c.naf_code,
+      c.electronic_address_scheme, c.electronic_address_value,
+      c.electronic_address_directory_entry_id,
+      c.electronic_address_verified_at::text AS electronic_address_verified_at,
       c.status, c.blocked, c.reason, c.creation_date,
       c.observations, c.provided_documents_id,
       -- Champs compta — lecture défensive (PK client_id → dépendance fonctionnelle OK sous GROUP BY).
@@ -364,6 +381,7 @@ export async function repoListClients(q: string, limit = 25) {
     phone: string | null;
     website_url: string | null;
     siret: string | null;
+    siren: string | null;
     vat_number: string | null;
     naf_code: string | null;
     status: string;
@@ -373,6 +391,8 @@ export async function repoListClients(q: string, limit = 25) {
     observations: string | null;
     provided_documents_id: string | null;
     compte_tiers: string | null; groupe_financier: string | null;
+    electronic_address_scheme: string | null; electronic_address_value: string | null;
+    electronic_address_directory_entry_id: string | null; electronic_address_verified_at: string | null;
 
     bill_name: string | null; bill_street: string | null; bill_house_number: string | null;
     bill_postal_code: string | null; bill_city: string | null; bill_country: string | null;

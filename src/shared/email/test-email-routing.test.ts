@@ -25,6 +25,22 @@ describe("test email routing safety boundary", () => {
     expect(testSafeEmailSubject("Accuse de reception", delivery.rerouted)).toMatch(/^\[TEST/);
   });
 
+  it("keeps only fixture recipients inside the managed SOL-05 email sink", () => {
+    const env = {
+      NODE_ENV: "test",
+      CERP_E2E_ISOLATED: "1",
+      CERP_E2E_MANAGED_STACK: "1",
+      CERP_E2E_EMAIL_SINK: "1",
+    } as NodeJS.ProcessEnv;
+
+    expect(resolveOutboundEmailRecipients(["client@example.local", "client@example.local"], env)).toEqual({
+      recipients: ["client@example.local"],
+      rerouted: false,
+    });
+    expect(() => resolveOutboundEmailRecipients(["client@example.com"], env)).toThrow(/example\.local/);
+    expect(() => resolveOutboundEmailRecipients([], env)).toThrow(/example\.local/);
+  });
+
   it("keeps deduplicated intended recipients in production", () => {
     expect(resolveOutboundEmailRecipients(
       ["client@example.com", "client@example.com"],

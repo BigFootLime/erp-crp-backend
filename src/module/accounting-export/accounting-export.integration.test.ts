@@ -106,7 +106,11 @@ integration("SOL-27 accounting export repository", () => {
           delimiter: ";", sales_journal: "VE", credit_journal: "AV",
           bank_journal_by_mode: { VIREMENT: "BQ" }, bank_account_by_mode: { VIREMENT: "512100" },
           default_bank_journal: null, default_bank_account: null,
-          sales_account_by_tax: { "20": "707000" }, vat_output_account_by_tax: { "20": "445710" }, default_axes: { SITE: "CRP" },
+          sales_account_by_tax: { "20": "707000" }, vat_output_account_by_tax: { "20": "445710" },
+          purchase_journal: null, supplier_credit_journal: null,
+          purchase_account_by_tax_category: {}, vat_input_account_by_tax_category: {},
+          reverse_charge_output_account_by_tax_category: {}, self_assessed_vat_rate_by_tax_category: {},
+          fx_gain_account: null, fx_loss_account: null, default_axes: { SITE: "CRP" },
         },
       },
     });

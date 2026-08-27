@@ -1,5 +1,11 @@
 import { z } from "zod";
 
+import {
+  EINVOICE_BILLING_FRAME_CODES,
+  EINVOICE_OPERATION_CATEGORIES,
+  EINVOICE_TRANSACTION_SCOPES,
+} from "../electronic-invoicing/electronic-invoice-regulatory.domain";
+
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date attendue au format YYYY-MM-DD");
 const decimal = (maxDecimals: number, label: string) =>
   z
@@ -52,6 +58,14 @@ const dueDateSchema = z
   })
   .strict();
 
+const invoiceRegulatorySelectionSchema = z
+  .object({
+    billing_frame_code: z.enum(EINVOICE_BILLING_FRAME_CODES),
+    operation_category: z.enum(EINVOICE_OPERATION_CATEGORIES),
+    transaction_scope: z.enum(EINVOICE_TRANSACTION_SCOPES),
+  })
+  .strict();
+
 export const facturePreviewBodySchema = z
   .object({
     client_id: z.string().trim().min(1).max(120),
@@ -61,6 +75,7 @@ export const facturePreviewBodySchema = z
     due_dates: z.array(dueDateSchema).min(1).max(24),
     internal_comment: z.string().trim().max(4000).optional().nullable(),
     customer_text: z.string().trim().max(4000).optional().nullable(),
+    regulatory: invoiceRegulatorySelectionSchema,
   })
   .strict();
 

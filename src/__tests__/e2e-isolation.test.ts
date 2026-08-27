@@ -81,12 +81,16 @@ describe("SOL-05 E2E isolation guard", () => {
     container.CERP_E2E_EMAIL_SINK = "1";
     container.RESEND_API_KEY = "disposable";
     container.RESEND_FROM = "CERP SOL-05 <no-reply@example.local>";
-    container.RESEND_API_BASE_URL = "http://host.docker.internal:55001";
+    container.RESEND_API_BASE_URL = "http://email-sink:55001";
 
     expect(() => assertE2EIsolation(container)).not.toThrow();
     expect(e2eListenHost(container)).toBe("0.0.0.0");
 
     container.DATABASE_URL = managedContainerDatabaseUrl("db.production.example");
+    expect(() => assertE2EIsolation(container)).toThrow(/forbidden/);
+
+    container.DATABASE_URL = managedContainerDatabaseUrl("postgres");
+    container.RESEND_API_BASE_URL = "http://host.docker.internal:55001";
     expect(() => assertE2EIsolation(container)).toThrow(/forbidden/);
   });
 
