@@ -1,4 +1,4 @@
--- #677 - Extend SOL-27 immutable accounting exports with supplier invoices and credit notes.
+-- #677 - Extend SOL-27 immutable accounting exports after supplier invoice tables exist.
 BEGIN;
 
 DO $guard$

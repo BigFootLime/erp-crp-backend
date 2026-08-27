@@ -1,3 +1,4 @@
+-- Verification for the dependency-ordered #677 patch.
 DO $verify$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='accounting_batch_sources_677_ck')

@@ -5,11 +5,11 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const root = path.resolve(__dirname, "../..");
-const filename = "20260827_einvoice_credit_reporting_676.sql";
+const filename = "20260827_z_einvoice_credit_reporting_676.sql";
 const patch = fs.readFileSync(path.join(root, "db/patches", filename), "utf8");
-const preflight = fs.readFileSync(path.join(root, "db/patches/support/20260827_einvoice_credit_reporting_676.preflight.sql"), "utf8");
-const verify = fs.readFileSync(path.join(root, "db/patches/support/20260827_einvoice_credit_reporting_676.verify.sql"), "utf8");
-const rollback = fs.readFileSync(path.join(root, "db/patches/support/20260827_einvoice_credit_reporting_676.rollback.sql"), "utf8");
+const preflight = fs.readFileSync(path.join(root, "db/patches/support/20260827_z_einvoice_credit_reporting_676.preflight.sql"), "utf8");
+const verify = fs.readFileSync(path.join(root, "db/patches/support/20260827_z_einvoice_credit_reporting_676.verify.sql"), "utf8");
+const rollback = fs.readFileSync(path.join(root, "db/patches/support/20260827_z_einvoice_credit_reporting_676.rollback.sql"), "utf8");
 const runner = fs.readFileSync(path.join(root, "scripts/db-patches.js"), "utf8");
 const reportingRepository = fs.readFileSync(
   path.join(root, "src/module/facturation/electronic-invoicing/electronic-invoice-reporting.repository.ts"),
@@ -19,7 +19,7 @@ const sha256 = crypto.createHash("sha256").update(patch.replace(/\r\n?/g, "\n"))
 
 describe("EINVOICE-676 migration guards", () => {
   it("pins the exact additive migration in the immutable production runner", () => {
-    expect(sha256).toBe("a8d760a14104a2496e8f6e8c46bf86e219d45e8f4aade66fedee1b4c4acf67de");
+    expect(sha256).toBe("1021100ef8b8d912dfaf690b1057d357582b73675e907fd5464d860d61ded5fe");
     expect(runner).toContain(`"${filename}"`);
     expect(runner).toContain(sha256);
   });

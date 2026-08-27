@@ -5,17 +5,17 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const root = path.resolve(__dirname, "../..");
-const filename = "20260827_accounting_export_supplier_677.sql";
+const filename = "20260827_z_accounting_export_supplier_677.sql";
 const patch = fs.readFileSync(path.join(root, "db/patches", filename), "utf8");
-const preflight = fs.readFileSync(path.join(root, "db/patches/support/20260827_accounting_export_supplier_677.preflight.sql"), "utf8");
-const verify = fs.readFileSync(path.join(root, "db/patches/support/20260827_accounting_export_supplier_677.verify.sql"), "utf8");
-const rollback = fs.readFileSync(path.join(root, "db/patches/support/20260827_accounting_export_supplier_677.rollback.sql"), "utf8");
+const preflight = fs.readFileSync(path.join(root, "db/patches/support/20260827_z_accounting_export_supplier_677.preflight.sql"), "utf8");
+const verify = fs.readFileSync(path.join(root, "db/patches/support/20260827_z_accounting_export_supplier_677.verify.sql"), "utf8");
+const rollback = fs.readFileSync(path.join(root, "db/patches/support/20260827_z_accounting_export_supplier_677.rollback.sql"), "utf8");
 const runner = fs.readFileSync(path.join(root, "scripts/db-patches.js"), "utf8");
 const sha256 = crypto.createHash("sha256").update(patch.replace(/\r\n?/g, "\n")).digest("hex");
 
 describe("ACCOUNTING-EXPORT-677 migration guards", () => {
   it("pins the exact additive migration in the immutable production runner", () => {
-    expect(sha256).toBe("de1bd03efb37635d655c2536a35fe6c99d7be0b447b3bdbd5ed3727d9d77c94f");
+    expect(sha256).toBe("0344c68426dbf7437e1db7e077df68499e11f7d989cd53e1cb131042755f4f16");
     expect(runner).toContain(`"${filename}"`);
     expect(runner).toContain(sha256);
   });

@@ -70,6 +70,11 @@ describe("authoritative PDF/GED entity-contract migration", () => {
     }
     expect(cleanupVerify).toContain("LEGACY_SOL20");
     expect(cleanupVerify).toContain("CLOSED_REGISTRY");
+    expect(verify).toContain("20260823_authoritative_pdf_ged_legacy_profile_cleanup.sql");
+    expect(verify).toContain("AUTHORITATIVE_PDF_GED_ENTITY_CONTRACT_VERIFY_CLEANUP_DRIFT");
+    expect(bridgeVerify).toContain("20260823_authoritative_pdf_ged_legacy_profile_cleanup.sql");
+    expect(bridgeVerify).toContain("trg_ged_validate_canonical_entity_link_20");
+    expect(bridgeVerify).toContain("AUTHORITATIVE_PDF_GED_COMPATIBILITY_VERIFY_CLEANUP_DRIFT");
     expect(bridgeRollback).toContain("immutable entity contract has consumed");
     expect(cleanupRollback).toContain("production legacy cleanup is not automatically reversible");
   });

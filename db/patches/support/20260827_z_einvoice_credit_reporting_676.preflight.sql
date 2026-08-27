@@ -1,3 +1,4 @@
+-- Ordered with 20260827_z_einvoice_credit_reporting_676.sql after supplier invoices.
 DO $preflight$
 BEGIN
   IF to_regclass('public.avoir') IS NULL
