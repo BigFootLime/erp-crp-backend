@@ -59,11 +59,18 @@ export type CommandesAuditContext = {
   client_session_id: string | null;
 };
 
-export const createCommandeSVC = (input: CreateCommandeInput, documents: UploadedDocument[]) =>
-  repoCreateCommande(input, documents);
+export const createCommandeSVC = (
+  input: CreateCommandeInput,
+  documents: UploadedDocument[],
+  actorUserId: number | null = null
+) => repoCreateCommande(input, documents, actorUserId);
 
-export const updateCommandeSVC = (id: string, input: CreateCommandeInput, documents: UploadedDocument[]) =>
-  repoUpdateCommande(id, input, documents);
+export const updateCommandeSVC = (
+  id: string,
+  input: CreateCommandeInput,
+  documents: UploadedDocument[],
+  actorUserId: number | null = null
+) => repoUpdateCommande(id, input, documents, actorUserId);
 
 export const listCommandesSVC = (filters: ListCommandesQueryDTO) => repoListCommandes(filters);
 

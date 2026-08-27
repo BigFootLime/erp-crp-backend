@@ -34,7 +34,16 @@ import {
   recordDirectLotQualityConsumption,
 } from "../../qualite/repository/quality-operational-gate.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
+import { calculateMargin } from "../../margin-engine/domain/margin-engine";
+import {
+  repoBuildCalculationInput,
+  repoLoadScopeIdentity,
+} from "../../margin-engine/repository/margin-engine.repository";
 import { recordMaterialConsumptionOnPost } from "../../traceability/services/material-consumption.automation";
+import {
+  applyArticleSheetSalePriceTx,
+  seedArticleSheetSalePriceTx,
+} from "./article-sale-price.repository";
 import {
   calculateStockAvailability,
   evaluateNegativeStockOverride,
@@ -2862,6 +2871,13 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
       a.lot_tracking,
       a.is_sold,
       a.is_active,
+      a.sale_price_reference::float8 AS sale_price_reference,
+      a.sale_price_currency,
+      a.sale_price_source,
+      a.sale_price_source_entity_type,
+      a.sale_price_source_entity_id,
+      a.sale_price_updated_at::text AS sale_price_updated_at,
+      quote_price.suggestion AS quote_price_suggestion,
       ${commandeArticleEligibleSql("a")} AS commande_client_eligible,
       ${commandeArticleIneligibilityCodeSql("a")} AS commande_client_ineligibility_code,
       a.row_version::int AS row_version,
@@ -2928,14 +2944,36 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
       FROM public.article_category_link acl
       WHERE acl.article_id = a.id
     ) ac ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT jsonb_build_object(
+        'devis_id', d.id,
+        'devis_numero', d.numero,
+        'devis_ligne_id', dl.id,
+        'price', dl.prix_unitaire_ht,
+        'designation', dl.description,
+        'code_piece', a.code,
+        'source_article_devis_id', CASE WHEN ad.source_official_article_id = a.id THEN ad.id ELSE NULL END,
+        'source_dossier_devis_id', CASE WHEN ad.source_official_article_id = a.id THEN dd.id ELSE NULL END
+      ) AS suggestion
+      FROM public.devis_ligne dl
+      JOIN public.devis d ON d.id = dl.devis_id
+      LEFT JOIN public.article_devis ad ON ad.devis_ligne_id = dl.id
+      LEFT JOIN public.dossier_technique_piece_devis dd ON dd.article_devis_id = ad.id
+      WHERE $${values.length + 1}::text IS NOT NULL
+        AND d.client_id = $${values.length + 1}::text
+        AND d.statut = 'ACCEPTE'
+        AND (dl.article_id = a.id OR ad.source_official_article_id = a.id)
+      ORDER BY d.updated_at DESC, dl.id DESC
+      LIMIT 1
+    ) quote_price ON TRUE
     ${whereSql}
     ORDER BY ${orderBy} ${orderDir}
-    LIMIT $${values.length + 1}
-    OFFSET $${values.length + 2}
+    LIMIT $${values.length + 2}
+    OFFSET $${values.length + 3}
   `;
 
   type ArticleRow = Omit<StockArticleListItem, "old_material_definition"> & OldMaterialDefinitionProjection;
-  const rows = await db.query<ArticleRow>(dataSql, [...values, pageSize, offset]);
+  const rows = await db.query<ArticleRow>(dataSql, [...values, filters.client_id ?? null, pageSize, offset]);
   const items = rows.rows.map((row): StockArticleListItem => {
     const {
       material_article_category,
@@ -3000,6 +3038,13 @@ export async function repoGetArticle(id: string, includeCosts = false): Promise<
          a.lot_tracking,
          a.is_sold,
          a.is_active,
+         a.sale_price_reference::float8 AS sale_price_reference,
+         a.sale_price_currency,
+         a.sale_price_source,
+         a.sale_price_source_entity_type,
+         a.sale_price_source_entity_id,
+         a.sale_price_updated_at::text AS sale_price_updated_at,
+         NULL::jsonb AS quote_price_suggestion,
          ${commandeArticleEligibleSql("a")} AS commande_client_eligible,
          ${commandeArticleIneligibilityCodeSql("a")} AS commande_client_ineligibility_code,
          a.row_version::int AS row_version,
@@ -3201,7 +3246,108 @@ export async function repoGetArticle(id: string, includeCosts = false): Promise<
       )
     : Promise.resolve({ rows: [] });
 
-  const [procurementRes, suppliersRes, documents, openSupplierOrdersRes] = await Promise.all([
+  const financialAnalysisPromise = includeCosts && article.piece_technique_id
+    ? (async (): Promise<StockArticleDetail["financial_analysis"]> => {
+        const [workOrdersResult, invoicedResult] = await Promise.all([
+          db.query<{
+            of_id: number;
+            of_number: string;
+            produced_quantity: number;
+          }>(
+            `SELECT fabrication.id::int AS of_id,
+                    fabrication.numero::text AS of_number,
+                    SUM(receipt.qty_ok)::float8 AS produced_quantity
+               FROM public.of_receipts receipt
+               JOIN public.ordres_fabrication fabrication ON fabrication.id = receipt.of_id
+              WHERE fabrication.piece_technique_id = $1::uuid
+                AND receipt.qty_ok > 0
+              GROUP BY fabrication.id, fabrication.numero
+              ORDER BY fabrication.id`,
+            [article.piece_technique_id]
+          ),
+          db.query<{ delivered_quantity: number; delivered_revenue_ht: number }>(
+            `SELECT COALESCE(SUM(source.quantity_consumed), 0)::float8 AS delivered_quantity,
+                    COALESCE(SUM(source.amount_ex_tax), 0)::float8 AS delivered_revenue_ht
+               FROM public.facture_source_allocations source
+               JOIN public.bon_livraison_ligne delivery_line
+                 ON source.source_type = 'DELIVERY_LINE'
+                AND source.source_line_id = delivery_line.id::text
+               JOIN public.commande_ligne line ON line.id = delivery_line.commande_ligne_id
+              WHERE line.article_id = $1::uuid
+                AND source.allocation_status = 'CONSUMED'`,
+            [id]
+          ),
+        ]);
+
+        const scopeResults = await Promise.all(workOrdersResult.rows.map(async (workOrder) => {
+          const identity = await repoLoadScopeIdentity("OF", String(workOrder.of_id));
+          if (!identity) {
+            return {
+              of_id: workOrder.of_id,
+              of_number: workOrder.of_number,
+              produced_quantity: Number(workOrder.produced_quantity),
+              cost_total_ht: null,
+              actual_hours: 0,
+              reliability: "PARTIAL" as const,
+              missing_inputs: ["Périmètre OF introuvable dans le moteur de marge."],
+            };
+          }
+          const input = await repoBuildCalculationInput(identity, "ACTUAL", new Intl.DateTimeFormat("en-CA", {
+            timeZone: "Europe/Paris",
+          }).format(new Date()));
+          const calculation = calculateMargin(input);
+          const costMissing = calculation.missing_inputs.filter((missing) => missing.category !== "REVENUE");
+          return {
+            of_id: workOrder.of_id,
+            of_number: workOrder.of_number,
+            produced_quantity: Number(workOrder.produced_quantity),
+            cost_total_ht: calculation.cost_total_ht == null ? null : Number(calculation.cost_total_ht),
+            actual_hours: Number(calculation.measurements.actual_hours ?? 0),
+            reliability: calculation.reliability,
+            missing_inputs: costMissing.map((missing) => missing.message),
+          };
+        }));
+
+        const coveredScopes = scopeResults.filter((scope) => scope.cost_total_ht !== null && scope.missing_inputs.length === 0);
+        const allCostsCovered = scopeResults.length > 0 && coveredScopes.length === scopeResults.length;
+        const producedQuantity = scopeResults.reduce((sum, scope) => sum + scope.produced_quantity, 0);
+        const actualHours = scopeResults.reduce((sum, scope) => sum + scope.actual_hours, 0);
+        const actualCostTotal = allCostsCovered
+          ? scopeResults.reduce((sum, scope) => sum + (scope.cost_total_ht ?? 0), 0)
+          : null;
+        const deliveredQuantity = Number(invoicedResult.rows[0]?.delivered_quantity ?? 0);
+        const deliveredRevenueHt = Number(invoicedResult.rows[0]?.delivered_revenue_ht ?? 0);
+        const missingInputs = scopeResults.flatMap((scope) =>
+          scope.missing_inputs.map((message) => `${scope.of_number} : ${message}`)
+        );
+        if (scopeResults.length === 0) missingInputs.push("Aucun OF réceptionné pour cet article.");
+        if (deliveredQuantity <= 0) missingInputs.push("Aucune ligne de livraison facturée pour cet article.");
+
+        return {
+          method: "MARGIN_ENGINE_ACTUAL_OF_WEIGHTED",
+          currency: article.sale_price_currency || "EUR",
+          completed_work_orders: scopeResults.length,
+          covered_work_orders: coveredScopes.length,
+          produced_quantity: producedQuantity,
+          actual_hours: actualHours,
+          actual_cost_total_ht: actualCostTotal,
+          average_actual_cost_per_unit: actualCostTotal !== null && producedQuantity > 0
+            ? actualCostTotal / producedQuantity
+            : null,
+          delivered_quantity: deliveredQuantity,
+          delivered_revenue_ht: deliveredRevenueHt,
+          average_invoiced_unit_price: deliveredQuantity > 0 && deliveredRevenueHt > 0
+            ? deliveredRevenueHt / deliveredQuantity
+            : null,
+          coverage_complete: allCostsCovered && deliveredQuantity > 0 && deliveredRevenueHt > 0,
+          missing_inputs: missingInputs,
+          work_order_scopes: scopeResults.map(({ actual_hours: _actualHours, ...scope }) => scope),
+          calculated_at: new Date().toISOString(),
+        };
+      })()
+    : Promise.resolve(null);
+
+  const [procurementRes, suppliersRes, documents, openSupplierOrdersRes, financialResult] = await Promise.all([
     db.query<NonNullable<StockArticleDetail["procurement"]>>(
       `SELECT
          manufacturer_name,
@@ -3243,7 +3389,10 @@ export async function repoGetArticle(id: string, includeCosts = false): Promise<
     ),
     repoListArticleDocuments(id),
     openSupplierOrdersPromise,
+    financialAnalysisPromise,
   ]);
+
+  const financialAnalysis = financialResult;
 
   return {
     ...article,
@@ -3267,6 +3416,7 @@ export async function repoGetArticle(id: string, includeCosts = false): Promise<
     })),
     documents: documents ?? [],
     costs_redacted: !includeCosts,
+    financial_analysis: financialAnalysis,
   };
 }
 
@@ -3543,6 +3693,13 @@ export async function repoCreateArticleTx(
       fourniture_client: body.fourniture_client,
   });
   await syncArticleProcurementProfile(client, id, body.procurement, audit.user_id);
+  if (body.sale_price_reference != null) {
+    await seedArticleSheetSalePriceTx(client, {
+      article_id: id,
+      price: body.sale_price_reference,
+      actor_user_id: audit.user_id,
+    });
+  }
 
   await insertAuditLog(client, audit, {
     action: "stock.articles.create",
@@ -3561,6 +3718,7 @@ export async function repoCreateArticleTx(
       projet_id: normalized.projet_id,
       stock_managed: normalized.stock_managed,
       is_sold: body.is_sold,
+      sale_price_reference: body.sale_price_reference ?? null,
     },
   });
 
@@ -3778,6 +3936,16 @@ export async function repoUpdateArticle(
       throw new HttpError(409, "ARTICLE_VERSION_CONFLICT", "The Article changed since it was loaded.", {
         expected_row_version: patch.expected_row_version,
         current_row_version: current.row_version,
+      });
+    }
+
+    if (Object.prototype.hasOwnProperty.call(patch, "sale_price_reference")) {
+      await applyArticleSheetSalePriceTx(client, {
+        article_id: id,
+        new_price: patch.sale_price_reference ?? null,
+        confirm_overwrite: patch.confirm_sale_price_overwrite ?? false,
+        reason: patch.sale_price_change_reason ?? null,
+        actor_user_id: audit.user_id,
       });
     }
 

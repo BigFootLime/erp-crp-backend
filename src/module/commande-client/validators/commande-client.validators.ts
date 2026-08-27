@@ -26,6 +26,8 @@ export const commandeLigneInputSchema = z.object({
   quantite: z.number().positive(),
   unite: z.string().optional().nullable(),
   prix_unitaire_ht: z.number().min(0),
+  reference_price_decision: z.enum(["KEEP", "SET", "OVERWRITE"]).optional(),
+  reference_price_quote_line_id: z.coerce.number().int().positive().optional().nullable(),
   remise_ligne: z.number().min(0).max(100).optional().default(0),
   taux_tva: z.number().min(0).max(100).optional().default(20),
   delai_client: z.string().optional().nullable(),

@@ -105,6 +105,10 @@ export type CommandeClientLine = {
   quantite: number;
   unite: string | null;
   prix_unitaire_ht: number;
+  sale_price_reference_at_entry: number | null;
+  sale_price_reference_source: "ARTICLE_SHEET" | "QUOTE" | "CUSTOMER_ORDER" | null;
+  sale_price_decision: "KEEP" | "SET" | "OVERWRITE";
+  sale_price_history_id: string | null;
   remise_ligne: number | null;
   taux_tva: number | null;
   delai_client: string | null;
@@ -185,6 +189,8 @@ export type CommandeLigneInput = {
   quantite: number;
   unite?: string | null;
   prix_unitaire_ht: number;
+  reference_price_decision?: "KEEP" | "SET" | "OVERWRITE";
+  reference_price_quote_line_id?: number | null;
   remise_ligne?: number | null;
   taux_tva?: number | null;
   delai_client?: string | null;
