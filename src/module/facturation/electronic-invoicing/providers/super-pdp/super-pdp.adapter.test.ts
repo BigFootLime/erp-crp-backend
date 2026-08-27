@@ -9,6 +9,7 @@ const source: ElectronicInvoiceSourceDocument = {
   invoiceId: 42,
   creditNoteId: null,
   documentType: "INVOICE",
+  precedingInvoice: null,
   legalNumber: "FA-2026-0042",
   issueDate: "2026-08-16",
   dueDate: "2026-09-15",
@@ -29,6 +30,27 @@ const source: ElectronicInvoiceSourceDocument = {
     company_name: "Client industriel",
     billing_address: { street: "2 rue du Client", postal_code: "69003", city: "Lyon", country: "France" },
   },
+  regulatorySnapshot: {
+    specVersion: "DGFiP-FE-V3.2-2026-04-30",
+    billingFrameCatalogVersion: "AFNOR-XP-Z12-012-DGFIP-V3.2-2026-04-30",
+    billingFrameCode: "B1",
+    operationCategory: "GOODS",
+    transactionScope: "FR_PRIVATE_B2B",
+    sellerElectronicAddress: {
+      scheme: "0225",
+      value: "seller-routing-42",
+      directoryEntryId: "seller-directory-42",
+      verifiedAt: "2026-08-16T09:00:00.000Z",
+    },
+    buyerElectronicAddress: {
+      scheme: "0225",
+      value: "buyer-routing-42",
+      directoryEntryId: "buyer-directory-42",
+      verifiedAt: "2026-08-16T09:00:00.000Z",
+    },
+    buyerSiren: "987654321",
+    deliveryAddress: null,
+  },
   lines: [{
     id: 1,
     description: "Pièce usinée",
@@ -42,6 +64,20 @@ const source: ElectronicInvoiceSourceDocument = {
     total_incl_tax: "120.00",
   }],
   totals: { net: "100.00", tax: "20.00", gross: "120.00" },
+};
+
+const creditSource: ElectronicInvoiceSourceDocument = {
+  ...source,
+  invoiceId: null,
+  creditNoteId: 17,
+  documentType: "CREDIT_NOTE",
+  legalNumber: "AV-2026-0017",
+  dueDate: null,
+  precedingInvoice: {
+    legalNumber: source.legalNumber,
+    issueDate: source.issueDate,
+    typeCode: 380,
+  },
 };
 
 const configuration: SuperPdpClientConfiguration = {
@@ -63,8 +99,15 @@ describe("SUPER PDP adapter", () => {
     expect(result).toMatchObject({
       number: "FA-2026-0042",
       currency_code: "EUR",
-      seller: { name: "Croix Rousse Précision" },
-      buyer: { name: "Client industriel" },
+      process_control: { business_process_type: "B1" },
+      seller: {
+        name: "Croix Rousse Précision",
+        electronic_address: { scheme: "0225", value: "seller-routing-42" },
+      },
+      buyer: {
+        name: "Client industriel",
+        electronic_address: { scheme: "0225", value: "buyer-routing-42" },
+      },
       totals: { total_without_vat: "100.00", amount_due_for_payment: "120.00" },
     });
     const line = (result.lines as Array<Record<string, unknown>>)[0];
@@ -74,10 +117,27 @@ describe("SUPER PDP adapter", () => {
     });
     expect(line).not.toHaveProperty("line_vat_amount");
     expect(line).not.toHaveProperty("line_with_vat_net_amount");
+    expect(result.seller).not.toMatchObject({ electronic_address: { value: "12345678900011" } });
+    expect(result.buyer).not.toMatchObject({ electronic_address: { value: "98765432100011" } });
     expect(() => buildSuperPdpEn16931Invoice({
       ...source,
       lines: [{ ...source.lines[0], vat_rate: "0" }],
     })).toThrowError(/catégorie et le motif de TVA/i);
+  });
+
+  it("builds an EN16931 credit note with the immutable corrected-invoice reference", () => {
+    const result = buildSuperPdpEn16931Invoice(creditSource);
+    expect(result).toMatchObject({
+      number: "AV-2026-0017",
+      type_code: 381,
+      preceding_invoice_references: [{
+        reference: "FA-2026-0042",
+        issue_date: "2026-08-16",
+        preceding_invoice_type_code: 380,
+      }],
+    });
+    expect(result).not.toHaveProperty("payment_due_date");
+    expect(result).not.toHaveProperty("payment_instructions");
   });
 
   it("keeps authorization-code mode blocked until a tenant vault is injected", async () => {
@@ -225,6 +285,54 @@ describe("SUPER PDP adapter", () => {
     });
     expect(result).toMatchObject({ replayed: true, invoice: { id: 88 } });
     expect(fetcher.mock.calls.some(([, init]) => init?.method === "POST" && init.body instanceof ArrayBuffer)).toBe(false);
+  });
+
+  it("queries the public French directory without sending OAuth credentials", async () => {
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      const url = new URL(String(input));
+      expect(new Headers(init?.headers).get("Authorization")).toBeNull();
+      if (url.pathname === "/v1.beta/french_directory/companies") {
+        expect(url.searchParams.get("number")).toBe("987654321");
+        return jsonResponse({
+          data: [{
+            number: "987654321",
+            formal_name: "Client industriel",
+            address: "2 rue du Client",
+            postcode: "69003",
+            city: "Lyon",
+            country: "FR",
+          }],
+          has_more: false,
+        });
+      }
+      if (url.pathname === "/v1.beta/french_directory/entries") {
+        expect(url.searchParams.get("number")).toBe("987654321");
+        return jsonResponse({
+          data: [{
+            company: {
+              number: "987654321",
+              formal_name: "Client industriel",
+              address: "2 rue du Client",
+              postcode: "69003",
+              city: "Lyon",
+              country: "FR",
+            },
+            identifier: "0225:987654321",
+            is_active: true,
+          }],
+        });
+      }
+      throw new Error(`Unexpected call ${url.pathname}`);
+    });
+    const client = new SuperPdpClient(configuration, fetcher);
+    await expect(client.searchFrenchDirectoryCompanies({ number: "987654321" })).resolves.toMatchObject({
+      data: [{ number: "987654321" }],
+      has_more: false,
+    });
+    await expect(client.listFrenchDirectoryEntries("987654321")).resolves.toMatchObject([
+      { identifier: "0225:987654321", is_active: true },
+    ]);
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
   it("loads no secret value into metadata and validates environment settings", () => {

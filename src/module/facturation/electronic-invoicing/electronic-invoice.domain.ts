@@ -291,12 +291,18 @@ export type ElectronicInvoiceSourceDocument = {
   invoiceId: number | null;
   creditNoteId: number | null;
   documentType: ElectronicInvoiceDocumentType;
+  precedingInvoice: Readonly<{
+    legalNumber: string;
+    issueDate: string;
+    typeCode: number;
+  }> | null;
   legalNumber: string;
   issueDate: string;
   dueDate: string | null;
   currency: string;
   issuerSnapshot: Readonly<Record<string, unknown>>;
   customerSnapshot: Readonly<Record<string, unknown>>;
+  regulatorySnapshot: Readonly<Record<string, unknown>>;
   lines: ReadonlyArray<Readonly<Record<string, unknown>>>;
   totals: Readonly<{
     net: string;

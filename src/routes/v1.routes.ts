@@ -46,6 +46,8 @@ import chatRoutes from "../module/chat/routes/chat.routes";
 import usersRoutes from "../module/users/routes/users.routes";
 import marginEngineRoutes from "../module/margin-engine/routes/margin-engine.routes";
 import electronicInvoiceWebhookRoutes from "../module/facturation/electronic-invoicing/electronic-invoice-webhook.routes";
+import electronicInvoiceDirectoryRoutes from "../module/facturation/electronic-invoicing/electronic-invoice-directory.routes";
+import electronicInvoiceReportingRoutes from "../module/facturation/electronic-invoicing/electronic-invoice-reporting.routes";
 import accountingExportRoutes from "../module/accounting-export/accounting-export.routes";
 import openApiRoutes from "../swagger/openapi.routes";
 import webhookAdminRoutes from "../module/integrations/webhooks/webhook.routes";
@@ -54,6 +56,7 @@ import clientPortalAdminRoutes from "../module/client-portal/routes/client-porta
 import identificationRoutes from "../module/identification/identification.routes";
 import operationalMediaRoutes from "../module/operational-media/routes/operational-media.routes";
 import subcontractRoutes from "../module/subcontract/subcontract.routes";
+import supplierInvoiceRoutes from "../module/supplier-invoices/supplier-invoice.routes";
 
 import traceabilityRoutes from "../module/traceability/routes/traceability.routes"
 import traceability360Routes from "../module/traceability/routes/traceability-360.routes"
@@ -139,6 +142,8 @@ router.use("/admin", adminRoutes);
 router.use("/affaires", affaireRoutes);
 router.use("/devis", devisRoutes);
 router.use(commercialReferencesRoutes);
+router.use("/electronic-invoicing", electronicInvoiceDirectoryRoutes);
+router.use("/electronic-invoicing", electronicInvoiceReportingRoutes);
 router.use("/factures", facturesRoutes);
 router.use("/avoirs", avoirsRoutes);
 router.use("/paiements", paiementsRoutes);
@@ -147,6 +152,7 @@ router.use("/reporting", reportingRoutes);
 router.use("/adv-reminders", reminderRoutes);
 router.use("/margins", marginEngineRoutes);
 router.use("/accounting-exports", accountingExportRoutes);
+router.use("/supplier-invoices", supplierInvoiceRoutes);
 // Suivi et pointage de production 360 (#274) monté AVANT le routeur historique :
 // ses routes déclarent des capacités fines (refus par défaut) et exigent une
 // clé d'idempotence. Le routeur hérité reste inchangé pour les écrans existants.

@@ -1,6 +1,11 @@
 import { z } from "zod"
 
 const uuid = z.string().uuid()
+const siren = z.string().trim().regex(/^\d{9}$/, "SIREN invalide")
+const electronicAddress = z.object({
+  scheme: z.string().trim().regex(/^[A-Za-z0-9]{4}$/, "Le schéma d'adresse électronique doit contenir 4 caractères alphanumériques").transform((value) => value.toUpperCase()),
+  value: z.string().trim().min(1).max(255).regex(/^[^\s\u0000-\u001F\u007F]+$/, "Adresse électronique invalide"),
+}).strict()
 
 function parseBoolean(value: unknown): boolean | undefined {
   if (value === undefined || value === null) return undefined
@@ -82,6 +87,9 @@ export const createFournisseurSchema = z.object({
       type_principal: optionalText(80),
       tva: optionalText(80),
       siret: optionalText(80),
+      siren: siren.optional(),
+      compte_tiers: optionalText(64),
+      electronic_address: electronicAddress.nullable().optional(),
       email: emailOptional,
       telephone: optionalText(50),
       site_web: urlOptional,
@@ -111,6 +119,9 @@ export const updateFournisseurSchema = z.object({
       type_principal: optionalText(80),
       tva: optionalText(80),
       siret: optionalText(80),
+      siren: siren.optional().nullable(),
+      compte_tiers: optionalText(64),
+      electronic_address: electronicAddress.nullable().optional(),
       email: emailOptional,
       telephone: optionalText(50),
       site_web: urlOptional,

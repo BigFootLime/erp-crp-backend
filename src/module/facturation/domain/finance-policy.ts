@@ -119,6 +119,12 @@ export type FinanceCapability =
   | "einvoice_submit"
   | "einvoice_reconcile"
   | "einvoice_admin"
+  | "supplier_invoice_read"
+  | "supplier_invoice_match"
+  | "supplier_invoice_approve"
+  | "supplier_invoice_dispute"
+  | "ereporting_read"
+  | "ereporting_submit"
   | "accounting_export_read"
   | "accounting_export_execute"
   | "accounting_export_admin"
@@ -164,6 +170,12 @@ const CAPABILITY_ROLES: Record<FinanceCapability, ReadonlySet<string>> = {
   einvoice_submit: new Set([ROLES.accounting, ROLES.accountant, ROLES.director]),
   einvoice_reconcile: new Set([ROLES.accounting, ROLES.accountant, ROLES.director]),
   einvoice_admin: new Set([ROLES.director, ROLES.administrator]),
+  supplier_invoice_read: new Set([ROLES.accounting, ROLES.accountant, ROLES.director, ROLES.administrator]),
+  supplier_invoice_match: new Set([ROLES.accounting, ROLES.accountant, ROLES.director]),
+  supplier_invoice_approve: new Set([ROLES.accounting, ROLES.accountant, ROLES.director]),
+  supplier_invoice_dispute: new Set([ROLES.accounting, ROLES.accountant, ROLES.director]),
+  ereporting_read: new Set([ROLES.accounting, ROLES.accountant, ROLES.director, ROLES.administrator]),
+  ereporting_submit: new Set([ROLES.accounting, ROLES.accountant, ROLES.director]),
   accounting_export_read: new Set([ROLES.accounting, ROLES.accountant, ROLES.director, ROLES.administrator]),
   accounting_export_execute: new Set([ROLES.accounting, ROLES.accountant, ROLES.director]),
   accounting_export_admin: new Set([ROLES.director, ROLES.administrator]),

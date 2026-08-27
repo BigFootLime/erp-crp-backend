@@ -5,8 +5,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   readiness: vi.fn(),
   get: vi.fn(),
+  getCredit: vi.fn(),
   queue: vi.fn(),
+  queueCredit: vi.fn(),
   reconcile: vi.fn(),
+  reconcileCredit: vi.fn(),
   webhook: vi.fn(),
   getConfiguration: vi.fn(),
   activate: vi.fn(),
@@ -16,8 +19,11 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../module/facturation/electronic-invoicing/electronic-invoice.service", () => ({
   svcElectronicInvoiceReadiness: (...args: unknown[]) => mocks.readiness(...args),
   svcGetElectronicInvoice: (...args: unknown[]) => mocks.get(...args),
+  svcGetElectronicCreditNote: (...args: unknown[]) => mocks.getCredit(...args),
   svcQueueElectronicInvoice: (...args: unknown[]) => mocks.queue(...args),
+  svcQueueElectronicCreditNote: (...args: unknown[]) => mocks.queueCredit(...args),
   svcReconcileElectronicInvoice: (...args: unknown[]) => mocks.reconcile(...args),
+  svcReconcileElectronicCreditNote: (...args: unknown[]) => mocks.reconcileCredit(...args),
   svcHandleElectronicInvoiceWebhook: (...args: unknown[]) => mocks.webhook(...args),
   svcGetSuperPdpConfiguration: (...args: unknown[]) => mocks.getConfiguration(...args),
   svcActivateSuperPdp: (...args: unknown[]) => mocks.activate(...args),
@@ -32,6 +38,7 @@ import { errorHandler } from "../middlewares/errorHandler";
 import { validationErrorMiddleware } from "../module/auth/middlewares/validationError.middleware";
 import electronicInvoiceWebhookRoutes from "../module/facturation/electronic-invoicing/electronic-invoice-webhook.routes";
 import factureRoutes from "../module/facturation/routes/factures.routes";
+import avoirRoutes from "../module/facturation/routes/avoirs.routes";
 
 function financeApp(options: { role?: string; authenticated?: boolean } = {}) {
   const app = express();
@@ -45,6 +52,7 @@ function financeApp(options: { role?: string; authenticated?: boolean } = {}) {
     next();
   }) as RequestHandler);
   app.use("/factures", factureRoutes);
+  app.use("/avoirs", avoirRoutes);
   app.use(validationErrorMiddleware);
   app.use(errorHandler);
   return app;
@@ -75,6 +83,26 @@ describe("SOL-26 electronic invoicing HTTP boundary", () => {
       format: "UBL",
       idempotencyKey: "einvoice-submit-42-001",
       actor: expect.objectContaining({ userId: 7, requestId: "request-sol26" }),
+    }));
+  });
+
+  it("queues an issued credit note through the same idempotent provider boundary", async () => {
+    mocks.queueCredit.mockResolvedValue({
+      id: "11111111-1111-4111-8111-111111111111",
+      document_type: "CREDIT_NOTE",
+      credit_note_id: 17,
+      idempotent_replay: false,
+    });
+    const response = await request(financeApp())
+      .post("/avoirs/17/electronic-invoicing/submissions")
+      .set("Idempotency-Key", "einvoice-credit-17-001")
+      .send({ format: "UBL" });
+    expect(response.status, JSON.stringify(response.body)).toBe(202);
+    expect(mocks.queueCredit).toHaveBeenCalledWith(expect.objectContaining({
+      creditNoteId: 17,
+      format: "UBL",
+      idempotencyKey: "einvoice-credit-17-001",
+      actor: expect.objectContaining({ userId: 7 }),
     }));
   });
 
