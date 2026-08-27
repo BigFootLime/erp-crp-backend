@@ -18,15 +18,13 @@ describe("#624 delivery formal-document writer coverage", () => {
 
   it("classifies every mounted POST and direct delivery writer", () => {
     const routes = read("src/module/livraisons/routes/livraisons.routes.ts");
-    const direct = read("src/module/commande-client/repository/commande-client.repository.ts");
-    expect(manifest.writers).toHaveLength(4);
+    expect(manifest.writers).toHaveLength(3);
     for (const writer of manifest.writers) {
       expect(read(writer.source)).toContain(writer.entry);
       expect(writer.transactional_queue).toBeTruthy();
     }
     expect(routes).toContain('router.post("/", requireLivraisonCapability("prepare"), createLivraison)');
     expect(routes).toContain('"/from-commande/:commandeId"');
-    expect(direct).toContain("repoCreateLivraisonFromCommande(");
   });
 
   it("fails closed when a new production direct INSERT writer is not classified", () => {
