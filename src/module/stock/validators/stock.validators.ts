@@ -81,6 +81,7 @@ export const docIdParamSchema = z.object({
 
 export const listArticlesQuerySchema = z.object({
   q: z.string().trim().optional(),
+  client_id: z.string().trim().regex(/^[0-9]{3}$/).optional(),
   client_code: z.string().trim().min(1).max(40).optional(),
   article_type: articleTypeSchema.optional(),
   article_category: articleCategorySchema.optional(),
@@ -349,6 +350,7 @@ export const createArticleSchema = z.object({
       unite: z.string().trim().min(1).max(30).optional().nullable(),
       lot_tracking: z.boolean().optional().default(false),
       is_sold: z.boolean().optional().default(false),
+      sale_price_reference: z.coerce.number().positive().optional().nullable(),
       is_active: z.boolean().optional().default(true),
       notes: z.string().trim().min(1).optional().nullable(),
       article_matiere: articleMatiereSchema.optional(),
@@ -445,6 +447,9 @@ export const updateArticleSchema = z.object({
       unite: z.string().trim().min(1).max(30).optional().nullable(),
       lot_tracking: z.boolean().optional(),
       is_sold: z.boolean().optional(),
+      sale_price_reference: z.coerce.number().positive().optional().nullable(),
+      confirm_sale_price_overwrite: z.boolean().optional().default(false),
+      sale_price_change_reason: z.string().trim().min(3).max(500).optional().nullable(),
       notes: z.string().trim().min(1).optional().nullable(),
       article_matiere: articleMatiereSchema.optional(),
       procurement: articleProcurementSchema.optional(),

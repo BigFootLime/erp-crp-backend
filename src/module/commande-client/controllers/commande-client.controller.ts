@@ -142,7 +142,7 @@ export const createCommande: RequestHandler = async (req, res, next) => {
     }
 
     const documents = getUploadedDocuments(req);
-    const out = await createCommandeSVC(payload, documents);
+    const out = await createCommandeSVC(payload, documents, getUserId(req));
     res.status(201).json(out);
   } catch (err) {
     next(err);
@@ -159,7 +159,7 @@ export const updateCommande: RequestHandler = async (req, res, next) => {
     }
 
     const documents = getUploadedDocuments(req);
-    const out = await updateCommandeSVC(routeParam(req, "id"), payload, documents);
+    const out = await updateCommandeSVC(routeParam(req, "id"), payload, documents, getUserId(req));
     if (!out) {
       res.status(404).json({ error: "Not found" });
       return;
