@@ -18,4 +18,17 @@ describe("isolated deterministic seed contract", () => {
     expect(deleteItems).toBeGreaterThan(guardedReset);
     expect(deleteReviews).toBeGreaterThan(deleteItems);
   });
+
+  it("qualifies the isolated buyer and seller routing data without weakening production guards", () => {
+    const source = readFileSync(path.resolve("scripts/e2e/seed-isolated.js"), "utf8");
+
+    expect(source).toContain("siren='123456789'");
+    expect(source).toContain("electronic_address_value='123456789'");
+    expect(source).toContain("E2E-DIRECTORY-BUYER-123456789");
+    expect(source).toContain("electronic_address_value='380569012'");
+    expect(source).toContain("E2E-DIRECTORY-SELLER-380569012");
+    expect(source.indexOf("assertIsolated();")).toBeLessThan(
+      source.indexOf("E2E-DIRECTORY-BUYER-123456789")
+    );
+  });
 });
