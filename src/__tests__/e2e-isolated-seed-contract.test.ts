@@ -21,14 +21,18 @@ describe("isolated deterministic seed contract", () => {
 
   it("qualifies the isolated buyer and seller routing data without weakening production guards", () => {
     const source = readFileSync(path.resolve("scripts/e2e/seed-isolated.js"), "utf8");
+    const guard = source.indexOf("assertIsolated();");
+    const capabilityCheck = source.indexOf("AS client_routing");
+    const buyerFixture = source.indexOf("E2E-DIRECTORY-BUYER-123456789");
+    const sellerFixture = source.indexOf("E2E-DIRECTORY-SELLER-380569012");
 
     expect(source).toContain("siren='123456789'");
     expect(source).toContain("electronic_address_value='123456789'");
-    expect(source).toContain("E2E-DIRECTORY-BUYER-123456789");
     expect(source).toContain("electronic_address_value='380569012'");
-    expect(source).toContain("E2E-DIRECTORY-SELLER-380569012");
-    expect(source.indexOf("assertIsolated();")).toBeLessThan(
-      source.indexOf("E2E-DIRECTORY-BUYER-123456789")
-    );
+    expect(capabilityCheck).toBeGreaterThan(guard);
+    expect(buyerFixture).toBeGreaterThan(capabilityCheck);
+    expect(sellerFixture).toBeGreaterThan(capabilityCheck);
+    expect(source).toContain("if (regulatoryColumns.rows[0]?.client_routing)");
+    expect(source).toContain("if (regulatoryColumns.rows[0]?.issuer_routing)");
   });
 });

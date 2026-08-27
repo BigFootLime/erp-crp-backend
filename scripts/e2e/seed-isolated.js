@@ -239,27 +239,55 @@ async function main() {
     await client.query(
       `UPDATE public.clients SET
          email='client.e2e@invalid.example',phone='0102030405',
-         siren='123456789',
-         electronic_address_scheme='0002',
-         electronic_address_value='123456789',
-         electronic_address_directory_entry_id='E2E-DIRECTORY-BUYER-123456789',
-         electronic_address_verified_at='2026-08-27T00:00:00.000Z'::timestamptz,
          delivery_address_id='91000000-0000-4000-8000-000000000001',
          bill_address_id='92000000-0000-4000-8000-000000000001',
          contact_id='93000000-0000-4000-8000-000000000001'
        WHERE client_id='901'`
     );
-    await client.query(
-      `UPDATE public.finance_legal_mentions SET
-         electronic_address_scheme='0002',
-         electronic_address_value='380569012',
-         electronic_address_directory_entry_id='E2E-DIRECTORY-SELLER-380569012',
-         electronic_address_verified_at='2026-08-27T00:00:00.000Z'::timestamptz
-       WHERE biller_id=$1::uuid
-         AND effective_from <= $2::date
-         AND (effective_to IS NULL OR effective_to > $2::date)`,
-      [FINANCE_ISSUER_ID, REFERENCE_PERIOD_START]
+    const regulatoryColumns = await client.query(
+      `SELECT
+         count(*) FILTER (
+           WHERE table_name='clients'
+             AND column_name IN (
+               'siren','electronic_address_scheme','electronic_address_value',
+               'electronic_address_directory_entry_id','electronic_address_verified_at'
+             )
+         ) = 5 AS client_routing,
+         count(*) FILTER (
+           WHERE table_name='finance_legal_mentions'
+             AND column_name IN (
+               'electronic_address_scheme','electronic_address_value',
+               'electronic_address_directory_entry_id','electronic_address_verified_at'
+             )
+         ) = 4 AS issuer_routing
+       FROM information_schema.columns
+       WHERE table_schema='public'
+         AND table_name IN ('clients','finance_legal_mentions')`
     );
+    if (regulatoryColumns.rows[0]?.client_routing) {
+      await client.query(
+        `UPDATE public.clients SET
+           siren='123456789',
+           electronic_address_scheme='0002',
+           electronic_address_value='123456789',
+           electronic_address_directory_entry_id='E2E-DIRECTORY-BUYER-123456789',
+           electronic_address_verified_at='2026-08-27T00:00:00.000Z'::timestamptz
+         WHERE client_id='901'`
+      );
+    }
+    if (regulatoryColumns.rows[0]?.issuer_routing) {
+      await client.query(
+        `UPDATE public.finance_legal_mentions SET
+           electronic_address_scheme='0002',
+           electronic_address_value='380569012',
+           electronic_address_directory_entry_id='E2E-DIRECTORY-SELLER-380569012',
+           electronic_address_verified_at='2026-08-27T00:00:00.000Z'::timestamptz
+         WHERE biller_id=$1::uuid
+           AND effective_from <= $2::date
+           AND (effective_to IS NULL OR effective_to > $2::date)`,
+        [FINANCE_ISSUER_ID, REFERENCE_PERIOD_START]
+      );
+    }
     await client.query(
       `INSERT INTO public.fournisseurs (id,code,nom,actif,status)
        VALUES ('50000000-0000-4000-8000-000000000001','E2E-FOURN-001','Fournisseur preuve SOL-05',true,'actif')
