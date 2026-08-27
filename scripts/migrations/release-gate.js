@@ -21,6 +21,10 @@ const ADV_RELIABILITY_PATCH = "20260814_adv_reliability_sol23.sql";
 const PROJECT_OPERATIONS_PATCH = "20260814_project_operations_sol24.sql";
 const ELECTRONIC_INVOICING_PATCH = "20260814_electronic_invoicing_sol26.sql";
 const ACCOUNTING_EXPORT_PATCH = "20260814_accounting_export_sol27.sql";
+const EINVOICE_REGULATORY_PATCH = "20260827_einvoice_regulatory_data_599.sql";
+const SUPPLIER_INVOICES_PATCH = "20260827_supplier_invoices_675.sql";
+const EINVOICE_CREDIT_REPORTING_PATCH = "20260827_z_einvoice_credit_reporting_676.sql";
+const ACCOUNTING_EXPORT_SUPPLIER_PATCH = "20260827_z_accounting_export_supplier_677.sql";
 const API_WEBHOOKS_PATCH = "20260814_api_contract_webhooks_sol28.sql";
 const MFA_POLICY_PATCH = "20260816_mfa_policy_and_device_labels.sql";
 const DEVIS_AUDIT_GRANTS_PATCH = "20260819_devis_preparation_idempotency_grants_002_003.sql";
@@ -530,6 +534,34 @@ async function proveRollback(databaseUrl) {
       "SELECT to_regclass('public.accounting_export_batches') IS NOT NULL AS present"
     );
     if (accountingExportRollback && accountingExportObject.rows[0].present) {
+      const einvoiceCreditReportingRollback = patchSupportSql(EINVOICE_CREDIT_REPORTING_PATCH, "rollback");
+      const einvoiceCreditReportingObject = await client.query(
+        "SELECT to_regclass('public.einvoice_reporting_periods') IS NOT NULL AS present"
+      );
+      if (einvoiceCreditReportingRollback && einvoiceCreditReportingObject.rows[0].present) {
+        await runSqlFile(client, einvoiceCreditReportingRollback);
+      }
+      const accountingExportSupplierRollback = patchSupportSql(ACCOUNTING_EXPORT_SUPPLIER_PATCH, "rollback");
+      const accountingExportSupplierObject = await client.query(
+        "SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='accounting_batch_sources_677_ck') AS present"
+      );
+      if (accountingExportSupplierRollback && accountingExportSupplierObject.rows[0].present) {
+        await runSqlFile(client, accountingExportSupplierRollback);
+      }
+      const supplierInvoicesRollback = patchSupportSql(SUPPLIER_INVOICES_PATCH, "rollback");
+      const supplierInvoicesObject = await client.query(
+        "SELECT to_regclass('public.supplier_invoices') IS NOT NULL AS present"
+      );
+      if (supplierInvoicesRollback && supplierInvoicesObject.rows[0].present) {
+        await runSqlFile(client, supplierInvoicesRollback);
+      }
+      const einvoiceRegulatoryRollback = patchSupportSql(EINVOICE_REGULATORY_PATCH, "rollback");
+      const einvoiceRegulatoryObject = await client.query(
+        "SELECT to_regclass('public.einvoice_billing_frame_catalog') IS NOT NULL AS present"
+      );
+      if (einvoiceRegulatoryRollback && einvoiceRegulatoryObject.rows[0].present) {
+        await runSqlFile(client, einvoiceRegulatoryRollback);
+      }
       await runSqlFile(client, accountingExportRollback);
     }
     const electronicInvoicingRollback = patchSupportSql(ELECTRONIC_INVOICING_PATCH, "rollback");

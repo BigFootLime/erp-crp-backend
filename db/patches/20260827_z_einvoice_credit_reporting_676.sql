@@ -1,4 +1,4 @@
--- #676 - Electronic credit notes and foreign/payment e-reporting foundations.
+-- #676 - Electronic credit notes and foreign/payment e-reporting foundations; ordered after supplier invoices.
 -- Additive and deliberately inactive in production until explicit feature flags are enabled.
 BEGIN;
 

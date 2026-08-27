@@ -1,3 +1,4 @@
+-- Rollback for the dependency-ordered #676 patch.
 DO $rollback$
 BEGIN
   IF current_database() !~* '(test|isolated|scratch)' THEN

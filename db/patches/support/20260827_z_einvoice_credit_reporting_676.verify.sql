@@ -1,3 +1,4 @@
+-- Verification for the dependency-ordered #676 patch.
 DO $verify$
 BEGIN
   IF to_regclass('public.einvoice_reporting_periods') IS NULL
