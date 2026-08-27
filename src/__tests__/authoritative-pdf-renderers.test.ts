@@ -255,7 +255,7 @@ describe("Wave-1 official PDF renderers", () => {
     expect(text).toContain("INTERNE/BROUILLON");
     expect(text).toContain("VERSION7");
     expect(text).toContain("AR-CC-2026-0042");
-    expect(text).toContain("COMMANDECC-2026-0042");
+    expect(text).toContain("RÉFÉRENCECOMMANDECLIENTCC-2026-0042");
     expect(text).not.toContain("ORIGINALGED");
     expect(text).not.toContain("QARENDERV1");
   });

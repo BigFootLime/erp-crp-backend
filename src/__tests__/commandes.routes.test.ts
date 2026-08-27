@@ -319,6 +319,9 @@ describe("/api/v1/commandes", () => {
           is_active: true,
         }],
       }) // resolve article
+      .mockResolvedValueOnce({
+        rows: [{ sale_price_reference: 100, sale_price_currency: "EUR", sale_price_source: "CUSTOMER_ORDER" }],
+      }) // lock reference sale price
       .mockResolvedValueOnce({ rows: [] }) // INSERT commande_ligne
       .mockResolvedValueOnce({ rows: [] }) // INSERT documents_clients
       .mockResolvedValueOnce({ rows: [] }) // INSERT commande_documents
@@ -480,6 +483,9 @@ describe("/api/v1/commandes", () => {
         articlePromoted = true;
         return { rows: [] };
       }
+      if (q.includes("SELECT sale_price_reference::float8 AS sale_price_reference")) {
+        return { rows: [{ sale_price_reference: 100, sale_price_currency: "EUR", sale_price_source: "CUSTOMER_ORDER" }] };
+      }
       if (q.includes("SELECT") && q.includes("FROM public.articles a")) {
         return {
           rows: [
@@ -591,6 +597,9 @@ describe("/api/v1/commandes", () => {
           is_active: true,
         }],
       }) // resolve article
+      .mockResolvedValueOnce({
+        rows: [{ sale_price_reference: 100, sale_price_currency: "EUR", sale_price_source: "CUSTOMER_ORDER" }],
+      }) // lock reference sale price
       .mockResolvedValueOnce({ rows: [] }) // INSERT commande_ligne
       .mockResolvedValueOnce({ rows: [] }); // COMMIT
 
@@ -1373,6 +1382,9 @@ describe("/api/v1/commandes", () => {
           is_active: true,
         }],
       }) // resolve article
+      .mockResolvedValueOnce({
+        rows: [{ sale_price_reference: 100, sale_price_currency: "EUR", sale_price_source: "CUSTOMER_ORDER" }],
+      }) // lock reference sale price
       .mockResolvedValueOnce({ rows: [] }) // insert lignes
       .mockResolvedValueOnce({ rows: [] }) // insert historique
       .mockResolvedValueOnce({ rows: [] }); // COMMIT
@@ -1711,7 +1723,7 @@ describe("/api/v1/commandes", () => {
     expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO affaire"))).toBe(false);
   });
 
-  it("POST /api/v1/commandes/:id/generate-affaires recovers planning and reuses its existing delivery affair", async () => {
+  it("POST /api/v1/commandes/:id/generate-affaires reuses the stock affair and creates the production-remainder affair", async () => {
     process.env.JWT_SECRET = "test-secret";
     const token = jwt.sign(
       { id: 1, username: "test", email: "test@example.com", role: "admin" },
@@ -1772,6 +1784,9 @@ describe("/api/v1/commandes", () => {
         return { rows: [{ ok: 1 }] };
       }
 
+      if (q.includes("FROM commande_to_affaire") && q.includes("AND affaire_id = $2")) {
+        return { rows: Number(Array.isArray(params) ? params[1] : null) === 7 ? [{ id: "1" }] : [] };
+      }
       if (q.includes("FROM commande_to_affaire") && q.includes("WHERE commande_id")) {
         return { rows: [{ affaire_id: 7, role: "LIVRAISON" }] };
       }
@@ -1808,7 +1823,7 @@ describe("/api/v1/commandes", () => {
       }
 
       if (q.includes("nextval('public.affaire_id_seq')")) {
-        return { rows: [{ id: "7" }] };
+        return { rows: [{ id: "8" }] };
       }
 
       if (q.includes("SELECT client_code FROM public.clients")) {
@@ -1825,6 +1840,24 @@ describe("/api/v1/commandes", () => {
 
       if (q.includes("jsonb_build_object") && q.includes("'piece'")) {
         return { rows: [{ snapshot: { piece: { id: PIECE_ID, code: "PT-001" }, version: { version_interne: 1 } } }] };
+      }
+
+      if (q.includes("FROM public.affaire a") && q.includes("FOR UPDATE OF a")) {
+        return {
+          rows: [{
+            id: "8",
+            reference: "AFF-CLI-001-000001",
+            statut: "OUVERTE",
+            type_affaire: "livraison",
+            date_ouverture: "2026-08-27",
+            updated_at: "2026-08-27T12:00:00.000000Z",
+            client_id: "001",
+            client_name: "ACME",
+            commande_id: "123",
+            commande_numero: "CC-123",
+            devis_id: null,
+          }],
+        };
       }
 
       if (q.includes("WITH RECURSIVE tree") && q.includes("public.pieces_techniques_nomenclature")) {
@@ -1885,12 +1918,14 @@ describe("/api/v1/commandes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({
-      affaire_ids: [7],
+      affaire_ids: [7, 8],
       livraison_affaire_id: 7,
+      production_livraison_affaire_id: 8,
+      automatic_stock_production_split: true,
       warnings: ["RECOVERED_PLANNING_WITHOUT_OF_OR_DELIVERY"],
     });
     expect(ofInsertCalls.some((params) => params.includes(3))).toBe(true);
-    expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO affaire"))).toBe(false);
+    expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO affaire"))).toBe(true);
     expect(
       mocks.clientQuery.mock.calls.some(
         (call) =>
