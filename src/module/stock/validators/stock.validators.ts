@@ -758,6 +758,8 @@ export const listBalancesQuerySchema = z.object({
   lot_id: uuid.optional(),
   lot_status: z.enum(["LIBERE", "EN_ATTENTE", "QUARANTAINE", "BLOQUE"]).optional(),
   only_available: z.preprocess(parseBoolean, z.boolean().optional()),
+  physical_state: z.enum(["present", "archived"]).optional(),
+  piece_technique_version_id: uuid.optional(),
   warehouse_id: uuid.optional(),
   location_id: uuid.optional(),
   page: z.coerce.number().int().min(1).optional().default(1),
@@ -832,6 +834,7 @@ export const listMovementsQuerySchema = z.object({
   movement_type: stockMovementTypeSchema.optional(),
   status: stockMovementStatusSchema.optional(),
   article_id: uuid.optional(),
+  piece_technique_version_id: uuid.optional(),
   from: z.string().trim().optional(),
   to: z.string().trim().optional(),
   page: z.coerce.number().int().min(1).optional().default(1),
@@ -994,6 +997,7 @@ export const createInventorySessionSchema = z.object({
       scope_emplacement_id: z.coerce.number().int().positive().optional().nullable(),
       scope_article_id: uuid.optional().nullable(),
       scope_article_category: articleCategorySchema.optional().nullable(),
+      scope_article_prefix: z.string().trim().min(1).max(120).optional().nullable(),
       blind_count: z.boolean().optional().default(false),
       requires_second_count: z.boolean().optional().default(false),
     })
@@ -1003,7 +1007,8 @@ export const createInventorySessionSchema = z.object({
         !body.scope_magasin_id &&
         !body.scope_emplacement_id &&
         !body.scope_article_id &&
-        !body.scope_article_category
+        !body.scope_article_category &&
+        !body.scope_article_prefix
       ) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -1035,6 +1040,9 @@ export const upsertInventoryLineSchema = z.object({
       reason_code: z.string().trim().min(2).max(80).optional().nullable(),
       expected_session_version: z.coerce.number().int().positive(),
       note: z.string().trim().min(1).optional().nullable(),
+      of_references: z.array(z.string().trim().min(1).max(120)).max(4).optional(),
+      mp_references: z.array(z.string().trim().min(1).max(120)).max(4).optional(),
+      tr_references: z.array(z.string().trim().min(1).max(120)).max(4).optional(),
     })
     .strict(),
 });
