@@ -1986,6 +1986,49 @@ async function reserveInventorySessionNo(client: Pick<PoolClient, "query">): Pro
   return inventorySessionNoFromSeq(n);
 }
 
+function inventoryScopeSegment(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+}
+
+async function reserveInventorySessionNoForScope(
+  client: Pick<PoolClient, "query">,
+  body: CreateInventorySessionBodyDTO
+): Promise<string> {
+  if (!body.scope_magasin_id) return reserveInventorySessionNo(client);
+  const scope = await client.query<{ magasin_code: string; rayon_code: string | null }>(
+    `SELECT
+       COALESCE(magasin.code, magasin.code_magasin)::text AS magasin_code,
+       emplacement.code::text AS rayon_code
+     FROM public.magasins magasin
+     LEFT JOIN public.emplacements emplacement
+       ON emplacement.id = $2::bigint AND emplacement.magasin_id = magasin.id
+     WHERE magasin.id = $1::uuid`,
+    [body.scope_magasin_id, body.scope_emplacement_id ?? null]
+  );
+  const row = scope.rows[0];
+  if (!row) return reserveInventorySessionNo(client);
+  const parts = [row.magasin_code, row.rayon_code, body.scope_article_prefix]
+    .map((part) => inventoryScopeSegment(part ?? ""))
+    .filter(Boolean);
+  if (parts.length < 2) return reserveInventorySessionNo(client);
+  const base = parts.join("/");
+  await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`inventory-session:${base}`]);
+  const existing = await client.query<{ total: number }>(
+    `SELECT COUNT(*)::int AS total
+     FROM public.stock_inventory_sessions
+     WHERE session_no = $1 OR session_no LIKE $1 || '-%'`,
+    [base]
+  );
+  const total = existing.rows[0]?.total ?? 0;
+  return total === 0 ? base : `${base}-${String(total + 1).padStart(2, "0")}`;
+}
+
 function parseEffectiveAt(raw: string | null | undefined): Date {
   if (!raw) return new Date();
   const dt = new Date(raw);
@@ -5765,6 +5808,15 @@ export async function repoListConsolidatedInventory(
   const fromSql = `
     FROM public.v_stock_availability_225 b
     JOIN public.articles a ON a.id = b.article_id
+    LEFT JOIN public.pieces_techniques piece ON piece.id = a.piece_technique_id
+    LEFT JOIN LATERAL (
+      SELECT version.plan_reference, version.indice
+      FROM public.piece_technique_versions version
+      WHERE version.piece_technique_id = piece.id
+      ORDER BY (version.statut = 'APPLICABLE') DESC, version.is_current DESC,
+               version.version_interne DESC, version.created_at DESC
+      LIMIT 1
+    ) article_version ON true
     JOIN public.warehouses w ON w.id = b.warehouse_id
     JOIN public.locations loc ON loc.id = b.location_id
     LEFT JOIN public.emplacements e ON e.location_id = b.location_id
@@ -5778,6 +5830,36 @@ export async function repoListConsolidatedInventory(
         AND movement.status = 'POSTED'
         AND movement.source_document_type = 'CERP_HISTORICAL_OPENING'
     ) opening ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT
+        ARRAY(
+          SELECT DISTINCT reference_value
+          FROM (
+            SELECT reference.reference_value
+            FROM public.stock_lot_trace_references reference
+            WHERE reference.lot_id = b.lot_id AND reference.reference_type = 'OF'
+            UNION ALL
+            SELECT fabrication.numero
+            FROM public.of_output_lots output
+            JOIN public.ordres_fabrication fabrication ON fabrication.id = output.of_id
+            WHERE output.lot_id = b.lot_id
+          ) values_of(reference_value)
+          WHERE reference_value IS NOT NULL AND btrim(reference_value) <> ''
+          ORDER BY reference_value
+        ) AS of_references,
+        ARRAY(
+          SELECT DISTINCT reference.reference_value
+          FROM public.stock_lot_trace_references reference
+          WHERE reference.lot_id = b.lot_id AND reference.reference_type = 'MP_LOT'
+          ORDER BY reference.reference_value
+        ) AS mp_references,
+        ARRAY(
+          SELECT DISTINCT reference.reference_value
+          FROM public.stock_lot_trace_references reference
+          WHERE reference.lot_id = b.lot_id AND reference.reference_type = 'TRAITEMENT_LOT'
+          ORDER BY reference.reference_value
+        ) AS tr_references
+    ) traceability ON b.lot_id IS NOT NULL
     LEFT JOIN public.articles_matiere article_material ON article_material.article_id = a.id
     LEFT JOIN public.stock_nuances material_nuance ON material_nuance.id = article_material.nuance_id
     LEFT JOIN public.stock_etats material_etat ON material_etat.id = article_material.etat_id
@@ -5788,6 +5870,9 @@ export async function repoListConsolidatedInventory(
   const rows = await db.query<InventoryRow>(
     `SELECT
        b.article_id::text AS article_id, a.code AS article_code, a.designation AS article_designation,
+       article_version.plan_reference AS article_reference,
+       article_version.indice AS piece_indice,
+       piece.code_client AS client_code,
        a.article_category::text AS material_article_category,
        a.designation AS material_designation,
        COALESCE(article_material.family_code, a.family_code)::text AS material_profile_code,
@@ -5808,7 +5893,11 @@ export async function repoListConsolidatedInventory(
        COALESCE(m.id, '00000000-0000-0000-0000-000000000000')::text AS magasin_id,
        COALESCE(m.code, m.code_magasin, w.code)::text AS magasin_code,
        COALESCE(e.code, loc.code)::text AS rayon_code,
-       b.lot_id::text AS lot_id, l.lot_code, l.stock_trace_code::text AS stock_trace_code, l.qr_payload,
+       b.lot_id::text AS lot_id, l.lot_code,
+       COALESCE(traceability.of_references, ARRAY[]::text[]) AS of_references,
+       COALESCE(traceability.mp_references, ARRAY[]::text[]) AS mp_references,
+       COALESCE(traceability.tr_references, ARRAY[]::text[]) AS tr_references,
+       l.stock_trace_code::text AS stock_trace_code, l.qr_payload,
        CASE WHEN ${effectiveScopeSql} = 'OLD' THEN opening.qty_initial ELSE NULL END::float8 AS qty_initial,
        b.qty_total::float8 AS qty_total, b.qty_reserved::float8 AS qty_reserved,
        b.qty_available::float8 AS qty_available, b.updated_at::text AS updated_at
@@ -5968,11 +6057,27 @@ export async function repoCreateHistoricalImport(body: HistoricalImportBodyDTO, 
       shelf = body.client_number.trim();
     }
     await ensureArticleStockManaged(client, articleId);
+    const historicalTechnicalVersionId = body.kind === "PF"
+      ? (await client.query<{ id: string }>(
+          `SELECT version.id::text AS id
+           FROM public.articles article
+           JOIN public.piece_technique_versions version
+             ON version.piece_technique_id = article.piece_technique_id
+           WHERE article.id = $1::uuid
+           ORDER BY
+             (version.statut = 'APPLICABLE') DESC,
+             version.is_current DESC,
+             version.version_interne DESC,
+             version.created_at DESC
+           LIMIT 1`,
+          [articleId]
+        )).rows[0]?.id ?? null
+      : null;
     const position = await ensureHistoricalPositionTx(client, body.kind, shelf, audit);
     const lotCode = await generateTransactionalBusinessCode(client, { prefix: "LOT" });
     const traceSequence = await client.query<{ value: string }>(`SELECT nextval('public.stock_trace_code_446_seq')::text AS value`);
     const trace = (traceSequence.rows[0]?.value ?? "0").padStart(6, "0");
-    const lot = await client.query<{ id: string }>(`INSERT INTO public.lots (article_id, lot_code, supplier_lot_code, notes, stock_trace_code, qr_payload, origin_stock_scope, source_scope, stock_scope, created_by, updated_by) VALUES ($1::uuid,$2,$3,$4,$5,$6,'OLD','OLD','OLD',$7,$7) RETURNING id::text AS id`, [articleId, lotCode, body.kind === "MP" ? body.lot_number : null, body.notes ?? null, trace, `CERP-STOCK:${trace}`, audit.user_id]);
+    const lot = await client.query<{ id: string }>(`INSERT INTO public.lots (article_id, lot_code, supplier_lot_code, notes, stock_trace_code, qr_payload, origin_stock_scope, source_scope, stock_scope, piece_technique_version_id, created_by, updated_by) VALUES ($1::uuid,$2,$3,$4,$5,$6,'OLD','OLD','OLD',$7::uuid,$8,$8) RETURNING id::text AS id`, [articleId, lotCode, body.kind === "MP" ? body.lot_number : null, body.notes ?? null, trace, `CERP-STOCK:${trace}`, historicalTechnicalVersionId, audit.user_id]);
     const lotId = lot.rows[0]?.id;
     if (!lotId) throw new Error("Unable to create historical lot");
     const refs: Array<["OF" | "MP_LOT" | "TRAITEMENT_LOT", string[]]> = body.kind === "PF"
@@ -6014,6 +6119,11 @@ export async function repoListBalances(filters: ListBalancesQueryDTO): Promise<P
   if (filters.lot_id) where.push(`b.lot_id = ${push(filters.lot_id)}::uuid`);
   if (filters.lot_status) where.push(`b.lot_status = ${push(filters.lot_status)}`);
   if (filters.only_available === true) where.push(`b.qty_available > 0`);
+  if (filters.physical_state === "present") where.push(`b.qty_total > 0`);
+  if (filters.physical_state === "archived") where.push(`b.lot_id IS NOT NULL AND b.qty_total <= 0`);
+  if (filters.piece_technique_version_id) {
+    where.push(`lot.piece_technique_version_id = ${push(filters.piece_technique_version_id)}::uuid`);
+  }
   if (filters.warehouse_id) where.push(`b.warehouse_id = ${push(filters.warehouse_id)}::uuid`);
   if (filters.location_id) where.push(`b.location_id = ${push(filters.location_id)}::uuid`);
   if (filters.q && filters.q.trim().length > 0) {
@@ -6034,6 +6144,7 @@ export async function repoListBalances(filters: ListBalancesQueryDTO): Promise<P
       FROM public.v_stock_availability_225 b
       JOIN public.articles a ON a.id = b.article_id
       LEFT JOIN public.emplacements e ON e.location_id = b.location_id
+      LEFT JOIN public.lots lot ON lot.id = b.lot_id
       ${whereSql}
     `,
     values
@@ -6054,6 +6165,9 @@ export async function repoListBalances(filters: ListBalancesQueryDTO): Promise<P
       e.name AS emplacement_name,
       b.lot_id::text AS lot_id,
       b.lot_code,
+      lot.piece_technique_version_id::text AS piece_technique_version_id,
+      technical_version.indice AS piece_technique_indice,
+      technical_version.plan_reference AS piece_plan_reference,
       COALESCE(traceability.of_references, ARRAY[]::text[]) AS of_references,
       COALESCE(traceability.mp_references, ARRAY[]::text[]) AS mp_references,
       COALESCE(traceability.tr_references, ARRAY[]::text[]) AS tr_references,
@@ -6083,6 +6197,8 @@ export async function repoListBalances(filters: ListBalancesQueryDTO): Promise<P
     LEFT JOIN public.emplacements e ON e.location_id = b.location_id
     LEFT JOIN public.magasins m ON m.id = e.magasin_id
     LEFT JOIN public.lots lot ON lot.id = b.lot_id
+    LEFT JOIN public.piece_technique_versions technical_version
+      ON technical_version.id = lot.piece_technique_version_id
     LEFT JOIN LATERAL (
       SELECT
         ARRAY(
@@ -6442,6 +6558,16 @@ export async function repoListMovements(filters: ListMovementsQueryDTO): Promise
   if (filters.movement_type) where.push(`m.movement_type = ${push(filters.movement_type)}::public.movement_type`);
   if (filters.status) where.push(`m.status = ${push(filters.status)}`);
   if (filters.article_id) where.push(`m.article_id = ${push(filters.article_id)}::uuid`);
+  if (filters.piece_technique_version_id) {
+    const versionParam = push(filters.piece_technique_version_id);
+    where.push(`EXISTS (
+      SELECT 1
+      FROM public.stock_movement_lines version_line
+      JOIN public.lots version_lot ON version_lot.id = version_line.lot_id
+      WHERE version_line.movement_id = m.id
+        AND version_lot.piece_technique_version_id = ${versionParam}::uuid
+    )`);
+  }
   if (filters.from) where.push(`m.effective_at >= ${push(filters.from)}::timestamptz`);
   if (filters.to) where.push(`m.effective_at <= ${push(filters.to)}::timestamptz`);
 
@@ -6461,11 +6587,23 @@ export async function repoListMovements(filters: ListMovementsQueryDTO): Promise
       m.article_id::text AS article_id,
       a.code AS article_code,
       a.designation AS article_designation,
+      COALESCE(technical_version.plan_reference, latest_version.plan_reference) AS article_reference,
+      technical_version.id::text AS piece_technique_version_id,
+      technical_version.indice AS piece_technique_indice,
+      CASE
+        WHEN m.movement_type::text = 'IN' THEN 'IN'
+        WHEN m.movement_type::text IN ('OUT','SCRAP','DEPRECIATE') THEN 'OUT'
+        WHEN m.movement_type::text = 'TRANSFER' THEN 'TRANSFER'
+        WHEN m.movement_type::text IN ('ADJUST','ADJUSTMENT') AND m.qty < 0 THEN 'OUT'
+        WHEN m.movement_type::text IN ('ADJUST','ADJUSTMENT') AND m.qty >= 0 THEN 'IN'
+        ELSE NULL
+      END::text AS direction,
       ABS(m.qty)::float8 AS qty_total,
       m.effective_at::text AS effective_at,
       m.posted_at::text AS posted_at,
       m.source_document_type,
       m.source_document_id,
+      COALESCE(inventory_session.session_no, delivery.numero, fabrication.numero, m.source_document_id) AS source_document_no,
       m.reason_code,
       m.correlation_id::text AS correlation_id,
       m.reversal_of_id::text AS reversal_of_id,
@@ -6474,6 +6612,39 @@ export async function repoListMovements(filters: ListMovementsQueryDTO): Promise
       COALESCE(ml.lines_count, 0)::int AS lines_count
     FROM public.stock_movements m
     JOIN public.articles a ON a.id = m.article_id
+    LEFT JOIN LATERAL (
+      SELECT CASE
+        WHEN COUNT(DISTINCT resolved.version_id) = 1
+          THEN (array_agg(DISTINCT resolved.version_id))[1]
+        ELSE NULL
+      END AS version_id
+      FROM (
+        SELECT lot.piece_technique_version_id AS version_id
+        FROM public.stock_movement_lines line
+        JOIN public.lots lot ON lot.id = line.lot_id
+        WHERE line.movement_id = m.id
+          AND lot.piece_technique_version_id IS NOT NULL
+      ) resolved
+    ) movement_version ON true
+    LEFT JOIN public.piece_technique_versions technical_version
+      ON technical_version.id = movement_version.version_id
+    LEFT JOIN LATERAL (
+      SELECT version.plan_reference
+      FROM public.piece_technique_versions version
+      WHERE version.piece_technique_id = a.piece_technique_id
+      ORDER BY (version.statut = 'APPLICABLE') DESC, version.is_current DESC,
+               version.version_interne DESC, version.created_at DESC
+      LIMIT 1
+    ) latest_version ON true
+    LEFT JOIN public.stock_inventory_sessions inventory_session
+      ON m.source_document_type = 'stock_inventory_session'
+     AND inventory_session.id::text = m.source_document_id
+    LEFT JOIN public.bon_livraison delivery
+      ON m.source_document_type = 'BON_LIVRAISON'
+     AND delivery.id::text = m.source_document_id
+    LEFT JOIN public.ordres_fabrication fabrication
+      ON m.source_document_type = 'OF'
+     AND fabrication.id::text = m.source_document_id
     LEFT JOIN (
       SELECT movement_id, COUNT(*)::int AS lines_count
       FROM public.stock_movement_lines
@@ -8695,6 +8866,9 @@ export async function repoListInventorySessions(
       s.scope_emplacement_id::int AS scope_emplacement_id,
       s.scope_article_id::text AS scope_article_id,
       s.scope_article_category,
+      s.scope_article_prefix,
+      COALESCE(scope_magasin.code, scope_magasin.code_magasin)::text AS scope_magasin_code,
+      scope_emplacement.code::text AS scope_rayon_code,
       s.blind_count,
       s.requires_second_count,
       s.snapshot_at::text AS snapshot_at,
@@ -8709,13 +8883,25 @@ export async function repoListInventorySessions(
       s.updated_at::text AS updated_at,
       s.created_at::text AS created_at,
       COALESCE(agg.adjustment_movements_count, 0)::int AS adjustment_movements_count,
-      last.last_adjustment_movement_id
+      last.last_adjustment_movement_id,
+      COALESCE(progress.lines_count, 0)::int AS lines_count,
+      COALESCE(progress.counted_lines_count, 0)::int AS counted_lines_count
     FROM public.stock_inventory_sessions s
+    LEFT JOIN public.magasins scope_magasin ON scope_magasin.id = s.scope_magasin_id
+    LEFT JOIN public.emplacements scope_emplacement ON scope_emplacement.id = s.scope_emplacement_id
     LEFT JOIN (
       SELECT session_id, COUNT(*)::int AS adjustment_movements_count
       FROM public.stock_inventory_session_movements
       GROUP BY session_id
     ) agg ON agg.session_id = s.id
+    LEFT JOIN (
+      SELECT snapshot.session_id,
+             COUNT(*)::int AS lines_count,
+             COUNT(DISTINCT event.snapshot_line_id)::int AS counted_lines_count
+      FROM public.stock_inventory_snapshot_lines snapshot
+      LEFT JOIN public.stock_inventory_count_events event ON event.snapshot_line_id = snapshot.id
+      GROUP BY snapshot.session_id
+    ) progress ON progress.session_id = s.id
     LEFT JOIN LATERAL (
       SELECT sim.stock_movement_id::text AS last_adjustment_movement_id
       FROM public.stock_inventory_session_movements sim
@@ -8755,7 +8941,7 @@ export async function repoCreateInventorySession(
       return existing.session;
     }
 
-    const sessionNo = await reserveInventorySessionNo(client);
+    const sessionNo = await reserveInventorySessionNoForScope(client, body);
     const ins = await client.query<{ id: string }>(
       `
         INSERT INTO public.stock_inventory_sessions (
@@ -8767,13 +8953,14 @@ export async function repoCreateInventorySession(
           scope_emplacement_id,
           scope_article_id,
           scope_article_category,
+          scope_article_prefix,
           blind_count,
           requires_second_count,
           correlation_id,
           created_by,
           updated_by
         )
-        VALUES ($1,'DRAFT',NULL,$2,$3::uuid,$4::bigint,$5::uuid,$6,$7,$8,$9::uuid,$10,$10)
+        VALUES ($1,'DRAFT',NULL,$2,$3::uuid,$4::bigint,$5::uuid,$6,$7,$8,$9,$10::uuid,$11,$11)
         RETURNING id::text AS id
       `,
       [
@@ -8783,6 +8970,7 @@ export async function repoCreateInventorySession(
         body.scope_emplacement_id ?? null,
         body.scope_article_id ?? null,
         body.scope_article_category ?? null,
+        body.scope_article_prefix ?? null,
         body.blind_count,
         body.requires_second_count,
         command.correlation_id,
@@ -8804,6 +8992,7 @@ export async function repoCreateInventorySession(
           emplacement_id: body.scope_emplacement_id ?? null,
           article_id: body.scope_article_id ?? null,
           article_category: body.scope_article_category ?? null,
+          article_prefix: body.scope_article_prefix ?? null,
         },
       },
     });
@@ -8858,6 +9047,7 @@ export async function repoStartInventorySession(
       scope_emplacement_id: number | null;
       scope_article_id: string | null;
       scope_article_category: string | null;
+      scope_article_prefix: string | null;
     }>(
       `
         SELECT
@@ -8867,7 +9057,8 @@ export async function repoStartInventorySession(
           scope_magasin_id::text AS scope_magasin_id,
           scope_emplacement_id::int AS scope_emplacement_id,
           scope_article_id::text AS scope_article_id,
-          scope_article_category
+          scope_article_category,
+          scope_article_prefix
         FROM public.stock_inventory_sessions
         WHERE id = $1::uuid
         FOR UPDATE
@@ -8921,7 +9112,9 @@ export async function repoStartInventorySession(
         SELECT
           $1::uuid,
           row_number() OVER (
-            ORDER BY article.code, magasin.id, emplacement.code, availability.lot_code NULLS FIRST
+            ORDER BY COALESCE(article_version.plan_reference, article.code),
+                     article_version.indice, magasin.id, emplacement.code,
+                     availability.lot_code NULLS FIRST
           )::int,
           availability.article_id,
           magasin.id,
@@ -8936,13 +9129,27 @@ export async function repoStartInventorySession(
         JOIN public.emplacements emplacement ON emplacement.location_id = availability.location_id
         JOIN public.magasins magasin ON magasin.id = emplacement.magasin_id
         JOIN public.units unit ON unit.id = availability.unit_id
+        LEFT JOIN public.pieces_techniques piece ON piece.id = article.piece_technique_id
+        LEFT JOIN LATERAL (
+          SELECT version.plan_reference, version.indice
+          FROM public.piece_technique_versions version
+          WHERE version.piece_technique_id = piece.id
+          ORDER BY (version.statut = 'APPLICABLE') DESC, version.is_current DESC,
+                   version.version_interne DESC, version.created_at DESC
+          LIMIT 1
+        ) article_version ON true
         WHERE availability.managed_in_stock = true
+          AND availability.qty_on_hand > 0
           AND magasin.is_active = true
           AND emplacement.is_active = true
           AND ($2::uuid IS NULL OR magasin.id = $2::uuid)
           AND ($3::bigint IS NULL OR emplacement.id = $3::bigint)
           AND ($4::uuid IS NULL OR article.id = $4::uuid)
           AND ($5::text IS NULL OR article.article_category::text = $5::text)
+          AND (
+            $6::text IS NULL
+            OR COALESCE(article_version.plan_reference, article.code) ILIKE $6::text || '%'
+          )
         RETURNING id::text AS id
       `,
       [
@@ -8951,6 +9158,7 @@ export async function repoStartInventorySession(
         row.scope_emplacement_id,
         row.scope_article_id,
         row.scope_article_category,
+        row.scope_article_prefix,
       ]
     );
     if (!inserted.rows.length) {
@@ -9015,6 +9223,9 @@ async function repoGetInventorySessionRow(id: string): Promise<StockInventorySes
         s.scope_emplacement_id::int AS scope_emplacement_id,
         s.scope_article_id::text AS scope_article_id,
         s.scope_article_category,
+        s.scope_article_prefix,
+        COALESCE(scope_magasin.code, scope_magasin.code_magasin)::text AS scope_magasin_code,
+        scope_emplacement.code::text AS scope_rayon_code,
         s.blind_count,
         s.requires_second_count,
         s.snapshot_at::text AS snapshot_at,
@@ -9029,13 +9240,25 @@ async function repoGetInventorySessionRow(id: string): Promise<StockInventorySes
         s.updated_at::text AS updated_at,
         s.created_at::text AS created_at,
         COALESCE(agg.adjustment_movements_count, 0)::int AS adjustment_movements_count,
-        last.last_adjustment_movement_id
+        last.last_adjustment_movement_id,
+        COALESCE(progress.lines_count, 0)::int AS lines_count,
+        COALESCE(progress.counted_lines_count, 0)::int AS counted_lines_count
       FROM public.stock_inventory_sessions s
+      LEFT JOIN public.magasins scope_magasin ON scope_magasin.id = s.scope_magasin_id
+      LEFT JOIN public.emplacements scope_emplacement ON scope_emplacement.id = s.scope_emplacement_id
       LEFT JOIN (
         SELECT session_id, COUNT(*)::int AS adjustment_movements_count
         FROM public.stock_inventory_session_movements
         GROUP BY session_id
       ) agg ON agg.session_id = s.id
+      LEFT JOIN (
+        SELECT snapshot.session_id,
+               COUNT(*)::int AS lines_count,
+               COUNT(DISTINCT event.snapshot_line_id)::int AS counted_lines_count
+        FROM public.stock_inventory_snapshot_lines snapshot
+        LEFT JOIN public.stock_inventory_count_events event ON event.snapshot_line_id = snapshot.id
+        GROUP BY snapshot.session_id
+      ) progress ON progress.session_id = s.id
       LEFT JOIN LATERAL (
         SELECT sim.stock_movement_id::text AS last_adjustment_movement_id
         FROM public.stock_inventory_session_movements sim
@@ -9099,6 +9322,9 @@ async function queryInventorySessionLines(
         snapshot.article_id::text AS article_id,
         article.code AS article_code,
         article.designation AS article_designation,
+        COALESCE(technical_version.plan_reference, latest_version.plan_reference) AS article_reference,
+        technical_version.id::text AS piece_technique_version_id,
+        technical_version.indice AS piece_technique_indice,
         snapshot.magasin_id::text AS magasin_id,
         COALESCE(magasin.code, magasin.code_magasin)::text AS magasin_code,
         COALESCE(magasin.name, magasin.libelle)::text AS magasin_name,
@@ -9107,6 +9333,9 @@ async function queryInventorySessionLines(
         emplacement.name AS emplacement_name,
         snapshot.lot_id::text AS lot_id,
         lot.lot_code AS lot_code,
+        COALESCE(traceability.of_references, ARRAY[]::text[]) AS of_references,
+        COALESCE(traceability.mp_references, ARRAY[]::text[]) AS mp_references,
+        COALESCE(traceability.tr_references, ARRAY[]::text[]) AS tr_references,
         latest_count.counted_qty::float8 AS counted_qty,
         CASE
           WHEN session.blind_count = true AND session.status = 'OPEN' THEN NULL
@@ -9128,6 +9357,46 @@ async function queryInventorySessionLines(
       JOIN public.magasins magasin ON magasin.id = snapshot.magasin_id
       JOIN public.emplacements emplacement ON emplacement.id = snapshot.emplacement_id
       LEFT JOIN public.lots lot ON lot.id = snapshot.lot_id
+      LEFT JOIN public.piece_technique_versions technical_version
+        ON technical_version.id = lot.piece_technique_version_id
+      LEFT JOIN LATERAL (
+        SELECT version.plan_reference
+        FROM public.piece_technique_versions version
+        WHERE version.piece_technique_id = article.piece_technique_id
+        ORDER BY (version.statut = 'APPLICABLE') DESC, version.is_current DESC,
+                 version.version_interne DESC, version.created_at DESC
+        LIMIT 1
+      ) latest_version ON true
+      LEFT JOIN LATERAL (
+        SELECT
+          ARRAY(
+            SELECT DISTINCT reference_value
+            FROM (
+              SELECT reference.reference_value
+              FROM public.stock_lot_trace_references reference
+              WHERE reference.lot_id = snapshot.lot_id AND reference.reference_type = 'OF'
+              UNION ALL
+              SELECT fabrication.numero
+              FROM public.of_output_lots output
+              JOIN public.ordres_fabrication fabrication ON fabrication.id = output.of_id
+              WHERE output.lot_id = snapshot.lot_id
+            ) values_of(reference_value)
+            WHERE reference_value IS NOT NULL AND btrim(reference_value) <> ''
+            ORDER BY reference_value
+          ) AS of_references,
+          ARRAY(
+            SELECT DISTINCT reference.reference_value
+            FROM public.stock_lot_trace_references reference
+            WHERE reference.lot_id = snapshot.lot_id AND reference.reference_type = 'MP_LOT'
+            ORDER BY reference.reference_value
+          ) AS mp_references,
+          ARRAY(
+            SELECT DISTINCT reference.reference_value
+            FROM public.stock_lot_trace_references reference
+            WHERE reference.lot_id = snapshot.lot_id AND reference.reference_type = 'TRAITEMENT_LOT'
+            ORDER BY reference.reference_value
+          ) AS tr_references
+      ) traceability ON snapshot.lot_id IS NOT NULL
       LEFT JOIN public.stock_inventory_lines materialized
         ON materialized.session_id = snapshot.session_id
        AND materialized.article_id = snapshot.article_id
@@ -9265,6 +9534,65 @@ export async function repoUpsertInventoryLine(
         422,
         "INVENTORY_REASON_REQUIRED",
         "A reason code is required for an inventory discrepancy"
+      );
+    }
+    const traceUpdates = [
+      ["OF", body.of_references] as const,
+      ["MP_LOT", body.mp_references] as const,
+      ["TRAITEMENT_LOT", body.tr_references] as const,
+    ].filter((entry): entry is readonly ["OF" | "MP_LOT" | "TRAITEMENT_LOT", string[]] => entry[1] !== undefined);
+    if (traceUpdates.length > 0 && !body.lot_id) {
+      throw new HttpError(
+        422,
+        "INVENTORY_LOT_REQUIRED_FOR_TRACEABILITY",
+        "Les références OF, MP et traitement nécessitent un lot."
+      );
+    }
+    if (traceUpdates.length > 0 && body.lot_id) {
+      const previous = await client.query<{ reference_type: string; reference_value: string }>(
+        `SELECT reference_type, reference_value
+         FROM public.stock_lot_trace_references
+         WHERE lot_id = $1::uuid
+           AND reference_type = ANY($2::text[])
+         ORDER BY reference_type, reference_value`,
+        [body.lot_id, traceUpdates.map(([type]) => type)]
+      );
+      for (const [referenceType, references] of traceUpdates) {
+        await client.query(
+          `DELETE FROM public.stock_lot_trace_references
+           WHERE lot_id = $1::uuid AND reference_type = $2`,
+          [body.lot_id, referenceType]
+        );
+        const normalizedReferences = [...new Set(references.map((reference) => reference.trim()).filter(Boolean))];
+        for (const reference of normalizedReferences) {
+          await client.query(
+            `INSERT INTO public.stock_lot_trace_references
+               (lot_id, reference_type, reference_value, created_by)
+             VALUES ($1::uuid,$2,$3,$4)
+             ON CONFLICT DO NOTHING`,
+            [body.lot_id, referenceType, reference, audit.user_id]
+          );
+        }
+      }
+      await client.query(
+        `INSERT INTO public.stock_lot_event_log (
+           lot_id, event_type, old_values, new_values,
+           actor_user_id, correlation_id
+         )
+         VALUES ($1::uuid,'INVENTORY_TRACEABILITY_CORRECTED',$2::jsonb,$3::jsonb,$4,$5::uuid)`,
+        [
+          body.lot_id,
+          JSON.stringify({ references: previous.rows, inventory_session_id: sessionId }),
+          JSON.stringify({
+            references: traceUpdates.map(([reference_type, references]) => ({
+              reference_type,
+              values: [...new Set(references.map((reference) => reference.trim()).filter(Boolean))],
+            })),
+            inventory_session_id: sessionId,
+          }),
+          audit.user_id,
+          command.correlation_id,
+        ]
       );
     }
     if (body.count_round === 2) {

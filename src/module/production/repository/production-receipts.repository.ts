@@ -917,6 +917,7 @@ export async function repoCreateOfReceipt(params: {
       affaire_id: number | null;
       commande_id: number | null;
       commande_ligne_id: number | null;
+      piece_technique_version_id: string | null;
       order_type: string | null;
       client_code: string | null;
       quantite_bonne: number;
@@ -931,6 +932,7 @@ export async function repoCreateOfReceipt(params: {
           fabrication.affaire_id::bigint::int AS affaire_id,
           fabrication.commande_id::bigint::int AS commande_id,
           fabrication.commande_ligne_id::bigint::int AS commande_ligne_id,
+          fabrication.piece_technique_version_id::text AS piece_technique_version_id,
           commande.order_type::text AS order_type,
           piece.code_client::text AS client_code,
           fabrication.quantite_bonne::float8 AS quantite_bonne,
@@ -1023,9 +1025,9 @@ export async function repoCreateOfReceipt(params: {
     if (params.body.lot_mode === "EXISTING") {
       const rawLotId = params.body.lot_id ?? null;
       if (!rawLotId) throw new HttpError(422, "LOT_REQUIRED", "Veuillez selectionner un lot");
-      const lot = await client.query<{ id: string; lot_code: string; lot_status: string | null }>(
+      const lot = await client.query<{ id: string; lot_code: string; lot_status: string | null; piece_technique_version_id: string | null }>(
         `
-          SELECT id::text AS id, lot_code, lot_status
+          SELECT id::text AS id, lot_code, lot_status, piece_technique_version_id::text AS piece_technique_version_id
           FROM public.lots
           WHERE id = $1::uuid AND article_id = $2::uuid
           LIMIT 1
@@ -1034,6 +1036,26 @@ export async function repoCreateOfReceipt(params: {
       );
       const row = lot.rows[0] ?? null;
       if (!row) throw new HttpError(400, "INVALID_LOT", "Lot introuvable pour cet article");
+
+      if (
+        row.piece_technique_version_id
+        && ofRow.piece_technique_version_id
+        && row.piece_technique_version_id !== ofRow.piece_technique_version_id
+      ) {
+        throw new HttpError(
+          409,
+          "LOT_TECHNICAL_VERSION_MISMATCH",
+          "Ce lot appartient à un autre indice technique et ne peut pas recevoir cette production."
+        );
+      }
+      if (!row.piece_technique_version_id && ofRow.piece_technique_version_id) {
+        await client.query(
+          `UPDATE public.lots
+           SET piece_technique_version_id = $2::uuid, updated_at = now(), updated_by = $3
+           WHERE id = $1::uuid AND piece_technique_version_id IS NULL`,
+          [row.id, ofRow.piece_technique_version_id, params.audit.user_id]
+        );
+      }
 
       const lotStatus = row.lot_status ?? "LIBERE";
       if (lotStatus !== params.body.quality_status) {
@@ -1074,9 +1096,10 @@ export async function repoCreateOfReceipt(params: {
         const ins = await client.query<{ id: string }>(
           `
             INSERT INTO public.lots (
-              article_id, lot_code, lot_status, lot_status_note, notes, created_by, updated_by
+              article_id, lot_code, lot_status, lot_status_note, notes,
+              piece_technique_version_id, created_by, updated_by
             )
-            VALUES ($1::uuid,$2,$3,$4,$5,$6,$6)
+            VALUES ($1::uuid,$2,$3,$4,$5,$6::uuid,$7,$7)
             RETURNING id::text AS id
           `,
           [
@@ -1085,6 +1108,7 @@ export async function repoCreateOfReceipt(params: {
             params.body.quality_status,
             params.body.quality_reason ?? null,
             params.body.commentaire ?? null,
+            ofRow.piece_technique_version_id,
             params.audit.user_id,
           ]
         );

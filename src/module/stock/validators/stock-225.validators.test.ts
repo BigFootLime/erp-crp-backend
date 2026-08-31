@@ -205,6 +205,7 @@ describe("#225 stock validators", () => {
   }> = [
     { name: "magasin scope", body: { scope_magasin_id: UUID_A }, valid: true },
     { name: "article scope", body: { scope_article_id: UUID_A }, valid: true },
+    { name: "article reference prefix", body: { scope_article_prefix: "160" }, valid: true },
     { name: "category scope", body: { scope_article_category: "matiere" }, valid: true },
     {
       name: "emplacement with parent",
@@ -242,6 +243,26 @@ describe("#225 stock validators", () => {
     expect(
       upsertInventoryLineSchema.safeParse({
         body: { ...base, expected_session_version: 0 },
+      }).success
+    ).toBe(false);
+    expect(
+      upsertInventoryLineSchema.safeParse({
+        body: {
+          ...base,
+          lot_id: UUID_C,
+          of_references: ["OF-2026-001"],
+          mp_references: ["MP-7075-001"],
+          tr_references: ["TR-ANO-001"],
+        },
+      }).success
+    ).toBe(true);
+    expect(
+      upsertInventoryLineSchema.safeParse({
+        body: {
+          ...base,
+          lot_id: UUID_C,
+          of_references: ["1", "2", "3", "4", "5"],
+        },
       }).success
     ).toBe(false);
   });

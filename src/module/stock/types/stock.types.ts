@@ -9,7 +9,9 @@ export type Paginated<T> = {
 export type HistoricalStockImport = { article_id: string; lot_id: string; movement_id: string; stock_trace_code: string; qr_payload: string; replayed: boolean };
 export type ConsolidatedInventoryRow = {
   article_id: string; article_code: string; article_designation: string; old_material_definition: string | null; scope: "OLD" | "NEW";
+  article_reference: string | null; piece_indice: string | null; client_code: string | null;
   magasin_id: string; magasin_code: string; rayon_code: string; lot_id: string | null; lot_code: string | null;
+  of_references: string[]; mp_references: string[]; tr_references: string[];
   stock_trace_code: string | null; qr_payload: string | null; qty_initial: number | null; qty_total: number; qty_reserved: number; qty_available: number;
   updated_at: string;
 };
@@ -412,6 +414,9 @@ export type StockBalanceRow = {
   emplacement_name: string | null;
   lot_id: string | null;
   lot_code: string | null;
+  piece_technique_version_id: string | null;
+  piece_technique_indice: string | null;
+  piece_plan_reference: string | null;
   of_references: string[];
   mp_references: string[];
   tr_references: string[];
@@ -456,11 +461,16 @@ export type StockMovementListItem = {
   article_id: string;
   article_code: string;
   article_designation: string;
+  article_reference: string | null;
+  piece_technique_version_id: string | null;
+  piece_technique_indice: string | null;
+  direction: "IN" | "OUT" | "TRANSFER" | null;
   qty_total: number;
   effective_at: string;
   posted_at: string | null;
   source_document_type: string | null;
   source_document_id: string | null;
+  source_document_no: string | null;
   reason_code: string | null;
   correlation_id: string | null;
   reversal_of_id: string | null;
@@ -689,6 +699,9 @@ export type StockInventorySessionListItem = {
   scope_emplacement_id: number | null;
   scope_article_id: string | null;
   scope_article_category: ArticleCategory | null;
+  scope_article_prefix: string | null;
+  scope_magasin_code: string | null;
+  scope_rayon_code: string | null;
   blind_count: boolean;
   requires_second_count: boolean;
   snapshot_at: string | null;
@@ -704,6 +717,8 @@ export type StockInventorySessionListItem = {
   created_at: string;
   adjustment_movements_count: number;
   last_adjustment_movement_id: string | null;
+  lines_count: number;
+  counted_lines_count: number;
 };
 
 export type StockInventorySessionLine = {
@@ -714,6 +729,9 @@ export type StockInventorySessionLine = {
   article_id: string;
   article_code: string;
   article_designation: string;
+  article_reference: string | null;
+  piece_technique_version_id: string | null;
+  piece_technique_indice: string | null;
   magasin_id: string;
   magasin_code: string;
   magasin_name: string;
@@ -722,6 +740,9 @@ export type StockInventorySessionLine = {
   emplacement_name: string | null;
   lot_id: string | null;
   lot_code: string | null;
+  of_references: string[];
+  mp_references: string[];
+  tr_references: string[];
   counted_qty: number | null;
   qty_on_hand: number | null;
   delta_qty: number | null;
