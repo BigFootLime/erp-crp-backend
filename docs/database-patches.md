@@ -722,3 +722,15 @@ after use, disable the worker and preserve evidence.
 # 2026-08-14 — Portail client isolé (SOL-29)
 
 `20260814_client_portal_sol29.sql` ajoute les identités portail séparées des utilisateurs ERP, les jetons à usage unique, reçus idempotents, publications GED explicites, accusés et audits append-only, limites d’authentification persistées et trois projections commerciales en liste blanche. Le trigger `trg_client_portal_ack_tenant_guard_sol29` refuse aussi un accusé entre deux clients différents. Exécuter le preflight après une sauvegarde vérifiée, appliquer seulement le patch immuable, lancer le verify puis un replay. Le rollback est autorisé uniquement avant toute preuve portail ; après usage, désactiver les routes et conserver les données d’audit.
+
+# 2026-09-01 — Écarts d’inventaire visibles dès la pause
+
+`20260901_stock_inventory_draft_adjustments.sql` relie chaque mouvement
+d’ajustement d’inventaire à sa ligne de snapshot. Un écart sauvegardé crée un
+mouvement `DRAFT`, sans impact sur le stock ; la clôture approuvée comptabilise
+ce même mouvement. Une correction ramenée au théorique ou l’annulation de la
+session passe la preuve en `CANCELLED` sans suppression. Exécuter le preflight,
+réaliser et vérifier une sauvegarde restaurable, appliquer le patch puis lancer
+le verify sur `cerp_test` avant de répéter la même séquence sur `cerp_prod`. Le
+rollback en place est volontairement refusé dès lors qu’il pourrait supprimer
+un lien d’audit.
