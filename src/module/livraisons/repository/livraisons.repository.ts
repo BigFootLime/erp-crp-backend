@@ -3520,9 +3520,9 @@ export async function repoListPreparationCart(filters: PreparationCartQueryDTO):
         e.id::bigint::int AS emplacement_id,
         e.code AS emplacement_code,
         r.of_id::bigint::int AS of_id,
-        ofa.numero AS of_numero,
-        l.mp_reference,
-        l.tr_reference,
+        COALESCE(NULLIF(ofa.numero, ''), lot_trace.of_reference) AS of_numero,
+        COALESCE(lot_trace.mp_reference, NULLIF(l.mp_reference, '')) AS mp_reference,
+        COALESCE(lot_trace.tr_reference, NULLIF(l.tr_reference, '')) AS tr_reference,
         v.created_at::text AS verified_at,
         v.snapshot AS verification_snapshot
       FROM public.stock_reservations r
@@ -3536,6 +3536,44 @@ export async function repoListPreparationCart(filters: PreparationCartQueryDTO):
       LEFT JOIN public.emplacements e ON e.location_id = r.location_id
       LEFT JOIN public.magasins m ON m.id = e.magasin_id
       LEFT JOIN public.ordres_fabrication ofa ON ofa.id = r.of_id
+      LEFT JOIN LATERAL (
+        SELECT
+          (
+            SELECT string_agg(reference_value, ' · ' ORDER BY reference_value)
+            FROM (
+              SELECT DISTINCT reference_value
+              FROM (
+                SELECT reference.reference_value
+                FROM public.stock_lot_trace_references reference
+                WHERE reference.lot_id = r.lot_id AND reference.reference_type = 'OF'
+                UNION ALL
+                SELECT fabrication.numero
+                FROM public.of_output_lots output
+                JOIN public.ordres_fabrication fabrication ON fabrication.id = output.of_id
+                WHERE output.lot_id = r.lot_id
+              ) values_of(reference_value)
+              WHERE reference_value IS NOT NULL AND btrim(reference_value) <> ''
+            ) distinct_of
+          ) AS of_reference,
+          (
+            SELECT string_agg(reference_value, ' · ' ORDER BY reference_value)
+            FROM (
+              SELECT DISTINCT reference.reference_value
+              FROM public.stock_lot_trace_references reference
+              WHERE reference.lot_id = r.lot_id AND reference.reference_type = 'MP_LOT'
+                AND btrim(reference.reference_value) <> ''
+            ) distinct_mp(reference_value)
+          ) AS mp_reference,
+          (
+            SELECT string_agg(reference_value, ' · ' ORDER BY reference_value)
+            FROM (
+              SELECT DISTINCT reference.reference_value
+              FROM public.stock_lot_trace_references reference
+              WHERE reference.lot_id = r.lot_id AND reference.reference_type = 'TRAITEMENT_LOT'
+                AND btrim(reference.reference_value) <> ''
+            ) distinct_tr(reference_value)
+          ) AS tr_reference
+      ) lot_trace ON r.lot_id IS NOT NULL
       LEFT JOIN LATERAL (
         SELECT pv.plan_reference
         FROM public.piece_technique_versions pv
@@ -3608,12 +3646,21 @@ export async function repoListPreparationCart(filters: PreparationCartQueryDTO):
         emplacement_id: row.emplacement_id === null ? null : Number(row.emplacement_id),
         emplacement_code: row.emplacement_code,
         of_id: row.of_id === null ? null : Number(row.of_id),
-        of_numero: row.of_numero,
+        of_numero:
+          typeof snapshot.of_number === "string" && snapshot.of_number.trim() !== ""
+            ? snapshot.of_number
+            : row.of_numero,
         // Before the first scan, expose the authoritative lot provenance.  A
         // later verification/correction snapshot is still preferred because it
         // is the immutable evidence used by the prepared BL.
-        mp_reference: typeof snapshot.mp_reference === "string" ? snapshot.mp_reference : row.mp_reference,
-        tr_reference: typeof snapshot.tr_reference === "string" ? snapshot.tr_reference : row.tr_reference,
+        mp_reference:
+          typeof snapshot.mp_reference === "string" && snapshot.mp_reference.trim() !== ""
+            ? snapshot.mp_reference
+            : row.mp_reference,
+        tr_reference:
+          typeof snapshot.tr_reference === "string" && snapshot.tr_reference.trim() !== ""
+            ? snapshot.tr_reference
+            : row.tr_reference,
         verified_qty: verifiedQty,
         verified_at: row.verified_at,
       }
@@ -3646,14 +3693,52 @@ export async function repoVerifyPreparationLot(
           (r.qty_reserved - r.qty_consumed - r.qty_prepared)::float8 AS qty_available,
           l.lot_code,
           l.id::text AS lot_id,
-          ofa.numero AS of_numero,
-          l.mp_reference,
-          l.tr_reference,
+          COALESCE(NULLIF(ofa.numero, ''), lot_trace.of_reference) AS of_numero,
+          COALESCE(lot_trace.mp_reference, NULLIF(l.mp_reference, '')) AS mp_reference,
+          COALESCE(lot_trace.tr_reference, NULLIF(l.tr_reference, '')) AS tr_reference,
           r.article_id::text AS article_id,
           r.source_scope
         FROM public.stock_reservations r
         JOIN public.lots l ON l.id = r.lot_id
         LEFT JOIN public.ordres_fabrication ofa ON ofa.id = r.of_id
+        LEFT JOIN LATERAL (
+          SELECT
+            (
+              SELECT string_agg(reference_value, ' · ' ORDER BY reference_value)
+              FROM (
+                SELECT DISTINCT reference_value
+                FROM (
+                  SELECT reference.reference_value
+                  FROM public.stock_lot_trace_references reference
+                  WHERE reference.lot_id = r.lot_id AND reference.reference_type = 'OF'
+                  UNION ALL
+                  SELECT fabrication.numero
+                  FROM public.of_output_lots output
+                  JOIN public.ordres_fabrication fabrication ON fabrication.id = output.of_id
+                  WHERE output.lot_id = r.lot_id
+                ) values_of(reference_value)
+                WHERE reference_value IS NOT NULL AND btrim(reference_value) <> ''
+              ) distinct_of
+            ) AS of_reference,
+            (
+              SELECT string_agg(reference_value, ' · ' ORDER BY reference_value)
+              FROM (
+                SELECT DISTINCT reference.reference_value
+                FROM public.stock_lot_trace_references reference
+                WHERE reference.lot_id = r.lot_id AND reference.reference_type = 'MP_LOT'
+                  AND btrim(reference.reference_value) <> ''
+              ) distinct_mp(reference_value)
+            ) AS mp_reference,
+            (
+              SELECT string_agg(reference_value, ' · ' ORDER BY reference_value)
+              FROM (
+                SELECT DISTINCT reference.reference_value
+                FROM public.stock_lot_trace_references reference
+                WHERE reference.lot_id = r.lot_id AND reference.reference_type = 'TRAITEMENT_LOT'
+                  AND btrim(reference.reference_value) <> ''
+              ) distinct_tr(reference_value)
+            ) AS tr_reference
+        ) lot_trace ON r.lot_id IS NOT NULL
         WHERE r.id = $1::uuid AND r.status = 'ACTIVE'
         FOR UPDATE OF r, l
       `,

@@ -6,7 +6,7 @@ export type Paginated<T> = {
   total: number;
 };
 
-export type HistoricalStockImport = { article_id: string; lot_id: string; movement_id: string; stock_trace_code: string; qr_payload: string; replayed: boolean };
+export type HistoricalStockImport = { article_id: string; lot_id: string; lot_code: string; movement_id: string; stock_trace_code: string; qr_payload: string; replayed: boolean };
 export type ConsolidatedInventoryRow = {
   article_id: string; article_code: string; article_designation: string; old_material_definition: string | null; scope: "OLD" | "NEW";
   article_reference: string | null; piece_indice: string | null; client_code: string | null;

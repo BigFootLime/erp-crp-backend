@@ -6093,7 +6093,7 @@ export async function repoCreateHistoricalImport(body: HistoricalImportBodyDTO, 
     if (!movementId) throw new Error("Unable to post historical opening movement");
     await client.query(`INSERT INTO public.stock_movement_lines (movement_id,line_no,article_id,lot_id,qty,unite,dst_magasin_id,dst_emplacement_id,created_by,updated_by) VALUES ($1::uuid,1,$2::uuid,$3::uuid,$4,$5,$6::uuid,$7::bigint,$8,$8)`, [movementId, articleId, lotId, body.quantity, body.kind === "MP" ? body.unite ?? null : null, position.magasinId, position.emplacementId, audit.user_id]);
     await insertMovementEvent(client, { movement_id: movementId, event_type: "CREATED_POSTED", old_values: null, new_values: { status: "POSTED", source: "CERP_HISTORICAL_OPENING" }, user_id: audit.user_id });
-    const result: HistoricalStockImport = { article_id: articleId, lot_id: lotId, movement_id: movementId, stock_trace_code: trace, qr_payload: `CERP-STOCK:${trace}`, replayed: false };
+    const result: HistoricalStockImport = { article_id: articleId, lot_id: lotId, lot_code: lotCode, movement_id: movementId, stock_trace_code: trace, qr_payload: `CERP-STOCK:${trace}`, replayed: false };
     await insertAuditLog(client, audit, { action: "stock.historical-import.create", entity_type: "stock_movements", entity_id: movementId, details: { kind: body.kind, article_id: articleId, lot_id: lotId, stock_scope: "OLD" } });
     await completeStockCommand(client, { audit, command, command_type: "MOVEMENT_CREATE", resource_type: "stock_movement", resource_id: movementId, result_payload: result });
     await client.query("COMMIT");
