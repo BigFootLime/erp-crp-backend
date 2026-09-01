@@ -139,6 +139,12 @@ describe("Commande → stock → OF receipt → delivery contracts", () => {
     expect(deliveryRepository).toMatch(/MP_SCAN_MISMATCH/);
     expect(deliveryRepository).toMatch(/TR_SCAN_MISMATCH/);
     expect(deliveryRepository).toMatch(/body\.of_number !== undefined && body\.of_number !== reservation\.of_numero/);
+    expect(deliveryRepository).toMatch(/stock_lot_trace_references/);
+    expect(deliveryRepository).toMatch(/reference_type = 'OF'/);
+    expect(deliveryRepository).toMatch(/reference_type = 'MP_LOT'/);
+    expect(deliveryRepository).toMatch(/reference_type = 'TRAITEMENT_LOT'/);
+    expect(deliveryRepository).toMatch(/public\.of_output_lots/);
+    expect(deliveryRepository).toMatch(/typeof snapshot\.of_number === "string"/);
     expect(deliveryRepository).toMatch(/requested_at = now\(\)/);
     expect(deliveryRepository).toMatch(/plan_reference/);
     expect(deliveryRepository).toMatch(/plan_index/);
@@ -147,6 +153,7 @@ describe("Commande → stock → OF receipt → delivery contracts", () => {
     expect(stockRepository).toMatch(/AS mp_references/);
     expect(stockRepository).toMatch(/AS tr_references/);
     expect(stockRepository).toMatch(/public\.of_output_lots/);
+    expect(stockRepository).toMatch(/lot_code: lotCode/);
     expect(livraisonRoutes).toMatch(/preparation-cart\/correct/);
     expect(livraisonRoutes).toMatch(/requireStockCorrectionPermission/);
     expect(livraisonRoutes).toMatch(/:id\/print-status/);
