@@ -6588,8 +6588,9 @@ export async function repoListMovements(filters: ListMovementsQueryDTO): Promise
       a.code AS article_code,
       a.designation AS article_designation,
       COALESCE(technical_version.plan_reference, latest_version.plan_reference) AS article_reference,
-      technical_version.id::text AS piece_technique_version_id,
-      technical_version.indice AS piece_technique_indice,
+      COALESCE(technical_version.id, latest_version.id)::text AS piece_technique_version_id,
+      COALESCE(technical_version.indice, latest_version.indice) AS piece_technique_indice,
+      COALESCE(technical_version.version_interne, latest_version.version_interne)::int AS piece_technique_version,
       CASE
         WHEN m.movement_type::text = 'IN' THEN 'IN'
         WHEN m.movement_type::text IN ('OUT','SCRAP','DEPRECIATE') THEN 'OUT'
@@ -6629,7 +6630,7 @@ export async function repoListMovements(filters: ListMovementsQueryDTO): Promise
     LEFT JOIN public.piece_technique_versions technical_version
       ON technical_version.id = movement_version.version_id
     LEFT JOIN LATERAL (
-      SELECT version.plan_reference
+      SELECT version.id, version.plan_reference, version.indice, version.version_interne
       FROM public.piece_technique_versions version
       WHERE version.piece_technique_id = a.piece_technique_id
       ORDER BY (version.statut = 'APPLICABLE') DESC, version.is_current DESC,
