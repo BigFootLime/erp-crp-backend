@@ -676,6 +676,7 @@ type HeaderRow = {
   numero: string
   statut: BonLivraisonStatut
   client_id: string
+  client_code: string | null
   client_company_name: string
   commande_id: string | null
   commande_numero: string | null
@@ -720,6 +721,7 @@ async function getHeader(client: PoolClient, id: string, opts?: { forUpdate?: bo
       bl.numero,
       bl.statut,
       bl.client_id,
+      c.client_code,
       c.company_name AS client_company_name,
       bl.commande_id::text AS commande_id,
       cc.numero AS commande_numero,
@@ -847,7 +849,11 @@ export async function repoGetLivraisonDetail(id: string): Promise<BonLivraisonDe
       id: headerRow.id,
       numero: headerRow.numero,
       statut: headerRow.statut,
-      client: { client_id: headerRow.client_id, company_name: headerRow.client_company_name },
+      client: {
+        client_id: headerRow.client_id,
+        client_code: headerRow.client_code,
+        company_name: headerRow.client_company_name,
+      },
       commande: headerRow.commande_id && headerRow.commande_numero ? { id: toInt(headerRow.commande_id, "bon_livraison.commande_id"), numero: headerRow.commande_numero } : null,
       commande_numeros: headerRow.commande_numeros,
       affaire: headerRow.affaire_id && headerRow.affaire_reference ? { id: toInt(headerRow.affaire_id, "bon_livraison.affaire_id"), reference: headerRow.affaire_reference } : null,
@@ -969,6 +975,18 @@ export async function repoGetLivraisonDetail(id: string): Promise<BonLivraisonDe
       stock_batch_id: string | null
       reservation_id: string | null
       reservation_status: string | null
+      source_scope: "OLD" | "NEW"
+      commande_numero: string | null
+      affaire_reference: string | null
+      article_reference: string | null
+      article_indice: string | null
+      article_version: number | null
+      quantite_commandee: string | number | null
+      quantite_restante: string | number | null
+      of_numero: string | null
+      mp_reference: string | null
+      tr_reference: string | null
+      verified_at: string | null
       stock_movement_line_id: string | null
       quantite: string | number
       unite: string | null
@@ -1002,6 +1020,42 @@ export async function repoGetLivraisonDetail(id: string): Promise<BonLivraisonDe
         a.stock_batch_id::text AS stock_batch_id,
         a.reservation_id::text AS reservation_id,
         reservation.status AS reservation_status,
+        CASE WHEN COALESCE(reservation.source_scope, lot.source_scope, 'NEW') = 'OLD' THEN 'OLD' ELSE 'NEW' END AS source_scope,
+        commande.numero AS commande_numero,
+        allocation_affaire.reference AS affaire_reference,
+        COALESCE(
+          NULLIF(technical_version.plan_reference, ''),
+          NULLIF(applicable_version.plan_reference, ''),
+          NULLIF(l.code_piece, '')
+        ) AS article_reference,
+        COALESCE(
+          NULLIF(technical_version.indice, ''),
+          NULLIF(applicable_version.indice, ''),
+          article.plan_index::text
+        ) AS article_indice,
+        COALESCE(technical_version.version_interne, applicable_version.version_interne)::int AS article_version,
+        commande_allocation.qty_ordered AS quantite_commandee,
+        CASE
+          WHEN delivery.statut IN ('DRAFT', 'READY')
+            THEN GREATEST(0, COALESCE(commande_allocation.qty_remaining, commande_allocation.qty_ordered, 0) - a.quantite)
+          ELSE GREATEST(0, COALESCE(commande_allocation.qty_remaining, 0))
+        END AS quantite_restante,
+        COALESCE(
+          NULLIF(a.verification_snapshot->>'of_number', ''),
+          NULLIF(fabrication.numero, ''),
+          lot_trace.of_reference
+        ) AS of_numero,
+        COALESCE(
+          NULLIF(a.verification_snapshot->>'mp_reference', ''),
+          lot_trace.mp_reference,
+          NULLIF(lot.mp_reference, '')
+        ) AS mp_reference,
+        COALESCE(
+          NULLIF(a.verification_snapshot->>'tr_reference', ''),
+          lot_trace.tr_reference,
+          NULLIF(lot.tr_reference, '')
+        ) AS tr_reference,
+        a.verified_at::text AS verified_at,
         a.stock_movement_line_id::text AS stock_movement_line_id,
         a.quantite,
         a.unite,
@@ -1017,10 +1071,72 @@ export async function repoGetLivraisonDetail(id: string): Promise<BonLivraisonDe
         ub.surname AS updated_by_surname
       FROM public.bon_livraison_ligne_allocations a
       JOIN public.bon_livraison_ligne l ON l.id = a.bon_livraison_ligne_id
+      JOIN public.bon_livraison delivery ON delivery.id = l.bon_livraison_id
       LEFT JOIN public.lots lot ON lot.id = a.lot_id
+      LEFT JOIN public.articles article ON article.id = a.article_id
       LEFT JOIN public.magasins magasin ON magasin.id = a.magasin_id
       LEFT JOIN public.emplacements emplacement ON emplacement.id = a.emplacement_id
       LEFT JOIN public.stock_reservations reservation ON reservation.id = a.reservation_id
+      LEFT JOIN public.commande_ligne_affaire_allocation commande_allocation
+        ON commande_allocation.id = a.commande_ligne_affaire_allocation_id
+      LEFT JOIN public.commande_client commande ON commande.id = commande_allocation.commande_id
+      LEFT JOIN public.affaire allocation_affaire
+        ON allocation_affaire.id = commande_allocation.livraison_affaire_id
+      LEFT JOIN public.ordres_fabrication fabrication ON fabrication.id = reservation.of_id
+      LEFT JOIN public.piece_technique_versions technical_version
+        ON technical_version.id = lot.piece_technique_version_id
+      LEFT JOIN LATERAL (
+        SELECT version.plan_reference, version.indice, version.version_interne
+        FROM public.piece_technique_versions version
+        WHERE version.piece_technique_id = article.piece_technique_id
+        ORDER BY
+          version.is_current DESC,
+          (lower(version.statut) = 'applicable') DESC,
+          version.updated_at DESC,
+          version.created_at DESC,
+          version.id ASC
+        LIMIT 1
+      ) applicable_version ON true
+      LEFT JOIN LATERAL (
+        SELECT
+          (
+            SELECT string_agg(reference_value, ' · ' ORDER BY reference_value)
+            FROM (
+              SELECT DISTINCT reference_value
+              FROM (
+                SELECT reference.reference_value
+                FROM public.stock_lot_trace_references reference
+                WHERE reference.lot_id = a.lot_id AND reference.reference_type = 'OF'
+                UNION ALL
+                SELECT linked_of.numero
+                FROM public.of_output_lots output
+                JOIN public.ordres_fabrication linked_of ON linked_of.id = output.of_id
+                WHERE output.lot_id = a.lot_id
+              ) values_of(reference_value)
+              WHERE reference_value IS NOT NULL AND btrim(reference_value) <> ''
+            ) distinct_of
+          ) AS of_reference,
+          (
+            SELECT string_agg(reference_value, ' · ' ORDER BY reference_value)
+            FROM (
+              SELECT DISTINCT reference.reference_value
+              FROM public.stock_lot_trace_references reference
+              WHERE reference.lot_id = a.lot_id
+                AND reference.reference_type = 'MP_LOT'
+                AND btrim(reference.reference_value) <> ''
+            ) distinct_mp(reference_value)
+          ) AS mp_reference,
+          (
+            SELECT string_agg(reference_value, ' · ' ORDER BY reference_value)
+            FROM (
+              SELECT DISTINCT reference.reference_value
+              FROM public.stock_lot_trace_references reference
+              WHERE reference.lot_id = a.lot_id
+                AND reference.reference_type = 'TRAITEMENT_LOT'
+                AND btrim(reference.reference_value) <> ''
+            ) distinct_tr(reference_value)
+          ) AS tr_reference
+      ) lot_trace ON a.lot_id IS NOT NULL
       LEFT JOIN users cb ON cb.id = a.created_by
       LEFT JOIN users ub ON ub.id = a.updated_by
       WHERE l.bon_livraison_id = $1::uuid
@@ -1046,6 +1162,22 @@ export async function repoGetLivraisonDetail(id: string): Promise<BonLivraisonDe
         stock_batch_id: r.stock_batch_id,
         reservation_id: r.reservation_id,
         reservation_status: r.reservation_status,
+        source_scope: r.source_scope,
+        commande_numero: r.commande_numero,
+        affaire_reference: r.affaire_reference,
+        article_reference: r.article_reference,
+        article_indice: r.article_indice,
+        article_version: r.article_version,
+        quantite_commandee: r.quantite_commandee === null
+          ? null
+          : toFloat(r.quantite_commandee, "bon_livraison_ligne_allocations.quantite_commandee"),
+        quantite_restante: r.quantite_restante === null
+          ? null
+          : toFloat(r.quantite_restante, "bon_livraison_ligne_allocations.quantite_restante"),
+        of_numero: r.of_numero,
+        mp_reference: r.mp_reference,
+        tr_reference: r.tr_reference,
+        verified_at: r.verified_at,
         stock_movement_line_id: r.stock_movement_line_id,
         quantite: toFloat(r.quantite, "bon_livraison_ligne_allocations.quantite"),
         unite: r.unite,
@@ -5055,8 +5187,17 @@ export async function repoCreateLivraisonFromReservations(params: {
       bon_livraison_id: bonLivraisonId,
       event_type: "CREATED_FROM_RESERVATIONS",
       user_id: userId,
-      new_values: { reservation_ids: ids, preview_hash: previewHash },
+      new_values: { reservation_ids: ids, preview_hash: previewHash, statut: "DRAFT" },
     })
+
+    // The preparation cart only accepts already-active command reservations
+    // whose physical lots were verified before this transaction. Reuse the
+    // canonical preparation command in the same transaction so the BL opens
+    // directly as READY without a misleading second "reserve stock" action.
+    // This also rebinds the existing reservations to their BL lines and keeps
+    // the usual PREPARATION_READY event/audit trail.
+    await prepareLivraisonInTransaction(db, bonLivraisonId, userId)
+
     const result = { id: bonLivraisonId, numero, shipping_version: 1, preview_hash: previewHash }
     await db.query(
       `

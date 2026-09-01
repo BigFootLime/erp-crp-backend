@@ -464,6 +464,7 @@ export type StockMovementListItem = {
   article_reference: string | null;
   piece_technique_version_id: string | null;
   piece_technique_indice: string | null;
+  piece_technique_version: number | null;
   direction: "IN" | "OUT" | "TRANSFER" | null;
   qty_total: number;
   effective_at: string;
