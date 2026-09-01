@@ -8891,9 +8891,11 @@ export async function repoListInventorySessions(
     LEFT JOIN public.magasins scope_magasin ON scope_magasin.id = s.scope_magasin_id
     LEFT JOIN public.emplacements scope_emplacement ON scope_emplacement.id = s.scope_emplacement_id
     LEFT JOIN (
-      SELECT session_id, COUNT(*)::int AS adjustment_movements_count
-      FROM public.stock_inventory_session_movements
-      GROUP BY session_id
+      SELECT link.session_id, COUNT(*)::int AS adjustment_movements_count
+      FROM public.stock_inventory_session_movements link
+      JOIN public.stock_movements movement ON movement.id = link.stock_movement_id
+      WHERE movement.status <> 'CANCELLED'
+      GROUP BY link.session_id
     ) agg ON agg.session_id = s.id
     LEFT JOIN (
       SELECT snapshot.session_id,
@@ -8906,7 +8908,9 @@ export async function repoListInventorySessions(
     LEFT JOIN LATERAL (
       SELECT sim.stock_movement_id::text AS last_adjustment_movement_id
       FROM public.stock_inventory_session_movements sim
+      JOIN public.stock_movements movement ON movement.id = sim.stock_movement_id
       WHERE sim.session_id = s.id
+        AND movement.status <> 'CANCELLED'
       ORDER BY sim.created_at DESC, sim.id DESC
       LIMIT 1
     ) last ON true
@@ -9248,9 +9252,11 @@ async function repoGetInventorySessionRow(id: string): Promise<StockInventorySes
       LEFT JOIN public.magasins scope_magasin ON scope_magasin.id = s.scope_magasin_id
       LEFT JOIN public.emplacements scope_emplacement ON scope_emplacement.id = s.scope_emplacement_id
       LEFT JOIN (
-        SELECT session_id, COUNT(*)::int AS adjustment_movements_count
-        FROM public.stock_inventory_session_movements
-        GROUP BY session_id
+        SELECT link.session_id, COUNT(*)::int AS adjustment_movements_count
+        FROM public.stock_inventory_session_movements link
+        JOIN public.stock_movements movement ON movement.id = link.stock_movement_id
+        WHERE movement.status <> 'CANCELLED'
+        GROUP BY link.session_id
       ) agg ON agg.session_id = s.id
       LEFT JOIN (
         SELECT snapshot.session_id,
@@ -9263,7 +9269,9 @@ async function repoGetInventorySessionRow(id: string): Promise<StockInventorySes
       LEFT JOIN LATERAL (
         SELECT sim.stock_movement_id::text AS last_adjustment_movement_id
         FROM public.stock_inventory_session_movements sim
+        JOIN public.stock_movements movement ON movement.id = sim.stock_movement_id
         WHERE sim.session_id = s.id
+          AND movement.status <> 'CANCELLED'
         ORDER BY sim.created_at DESC, sim.id DESC
         LIMIT 1
       ) last ON true
@@ -9283,10 +9291,12 @@ export async function repoGetInventorySession(id: string): Promise<StockInventor
 
   const ids = await db.query<{ id: string }>(
     `
-      SELECT stock_movement_id::text AS id
-      FROM public.stock_inventory_session_movements
-      WHERE session_id = $1::uuid
-      ORDER BY created_at ASC, id ASC
+      SELECT link.stock_movement_id::text AS id
+      FROM public.stock_inventory_session_movements link
+      JOIN public.stock_movements movement ON movement.id = link.stock_movement_id
+      WHERE link.session_id = $1::uuid
+        AND movement.status <> 'CANCELLED'
+      ORDER BY link.created_at ASC, link.id ASC
     `,
     [id]
   );
@@ -9450,6 +9460,220 @@ async function repoGetInventoryLineById(lineId: string): Promise<StockInventoryS
   return rows?.[0] ?? null;
 }
 
+type InventoryDraftAdjustmentTarget = {
+  id: string;
+  line_no: number;
+  article_id: string;
+  magasin_id: string;
+  emplacement_id: number;
+  lot_id: string | null;
+  stock_level_id: string;
+  stock_batch_id: string | null;
+  theoretical_qty: number;
+  unit_code: string;
+};
+
+/**
+ * Keep one actionable DRAFT adjustment aligned with the latest count for a
+ * snapshot line. Saving/pausing therefore leaves an immediate movement trace,
+ * while physical stock remains unchanged until the inventory is approved and
+ * closed. Superseded drafts are cancelled, never deleted.
+ */
+async function syncInventoryDraftAdjustment(
+  client: PoolClient,
+  args: {
+    session_id: string;
+    session_no: string;
+    snapshot: InventoryDraftAdjustmentTarget;
+    counted_qty: number;
+    reason_code: string | null;
+    note: string | null;
+    correlation_id: string;
+    audit: AuditContext;
+  }
+): Promise<string | null> {
+  const delta = args.counted_qty - args.snapshot.theoretical_qty;
+  const existing = await client.query<{
+    id: string;
+    movement_no: string;
+    qty: number;
+  }>(
+    `
+      SELECT
+        movement.id::text AS id,
+        movement.movement_no,
+        movement.qty::float8 AS qty
+      FROM public.stock_inventory_session_movements link
+      JOIN public.stock_movements movement ON movement.id = link.stock_movement_id
+      WHERE link.session_id = $1::uuid
+        AND link.snapshot_line_id = $2::uuid
+        AND movement.status = 'DRAFT'
+      ORDER BY link.created_at DESC, link.id DESC
+      LIMIT 1
+      FOR UPDATE OF movement
+    `,
+    [args.session_id, args.snapshot.id]
+  );
+  const draft = existing.rows[0] ?? null;
+
+  if (Math.abs(delta) <= 1e-9) {
+    if (!draft) return null;
+    await client.query(
+      `
+        UPDATE public.stock_movements
+        SET status = 'CANCELLED', correlation_id = $2::uuid,
+            updated_at = now(), updated_by = $3
+        WHERE id = $1::uuid
+      `,
+      [draft.id, args.correlation_id, args.audit.user_id]
+    );
+    await insertMovementEvent(client, {
+      movement_id: draft.id,
+      event_type: "CANCELLED",
+      old_values: { status: "DRAFT", qty: draft.qty },
+      new_values: {
+        status: "CANCELLED",
+        reason: "INVENTORY_COUNT_MATCHES_SNAPSHOT",
+        inventory_session_id: args.session_id,
+        snapshot_line_id: args.snapshot.id,
+      },
+      user_id: args.audit.user_id,
+    });
+    return null;
+  }
+
+  const direction: "IN" | "OUT" = delta > 0 ? "IN" : "OUT";
+  const lineNote = args.note ?? args.reason_code ?? `Inventaire ${args.session_no}`;
+  if (draft) {
+    await client.query(
+      `
+        UPDATE public.stock_movements
+        SET qty = $2, effective_at = now(), reason_code = $3, notes = $4,
+            correlation_id = $5::uuid, updated_at = now(), updated_by = $6
+        WHERE id = $1::uuid
+      `,
+      [draft.id, delta, args.reason_code, args.note ?? `Inventaire ${args.session_no}`, args.correlation_id, args.audit.user_id]
+    );
+    await client.query(
+      `
+        UPDATE public.stock_movement_lines
+        SET qty = $2, direction = $3,
+            src_magasin_id = CASE WHEN $3 = 'OUT' THEN $4::uuid ELSE NULL END,
+            src_emplacement_id = CASE WHEN $3 = 'OUT' THEN $5::bigint ELSE NULL END,
+            dst_magasin_id = CASE WHEN $3 = 'IN' THEN $4::uuid ELSE NULL END,
+            dst_emplacement_id = CASE WHEN $3 = 'IN' THEN $5::bigint ELSE NULL END,
+            note = $6, updated_at = now(), updated_by = $7
+        WHERE movement_id = $1::uuid
+      `,
+      [draft.id, Math.abs(delta), direction, args.snapshot.magasin_id, args.snapshot.emplacement_id, lineNote, args.audit.user_id]
+    );
+    await insertMovementEvent(client, {
+      movement_id: draft.id,
+      event_type: "INVENTORY_DRAFT_UPDATED",
+      old_values: { status: "DRAFT", qty: draft.qty },
+      new_values: {
+        status: "DRAFT",
+        qty: delta,
+        inventory_session_id: args.session_id,
+        snapshot_line_id: args.snapshot.id,
+        theoretical_qty: args.snapshot.theoretical_qty,
+        counted_qty: args.counted_qty,
+      },
+      user_id: args.audit.user_id,
+    });
+    return draft.id;
+  }
+
+  const movementNo = await reserveMovementNo(client);
+  const movement = await client.query<{ id: string }>(
+    `
+      INSERT INTO public.stock_movements (
+        movement_no, movement_type, status, article_id,
+        stock_level_id, stock_batch_id, qty, currency,
+        effective_at, source_document_type, source_document_id,
+        reason_code, notes, correlation_id,
+        user_id, created_by, updated_by
+      )
+      VALUES (
+        $1,'ADJUSTMENT','DRAFT',$2::uuid,$3::uuid,$4::uuid,$5,'EUR',
+        now(),'stock_inventory_session',$6::uuid,$7,$8,$9::uuid,$10,$10,$10
+      )
+      RETURNING id::text AS id
+    `,
+    [
+      movementNo,
+      args.snapshot.article_id,
+      args.snapshot.stock_level_id,
+      args.snapshot.stock_batch_id,
+      delta,
+      args.session_id,
+      args.reason_code ?? "INVENTORY",
+      args.note ?? `Inventaire ${args.session_no}`,
+      args.correlation_id,
+      args.audit.user_id,
+    ]
+  );
+  const movementId = movement.rows[0]?.id;
+  if (!movementId) throw new Error("Failed to create inventory draft adjustment");
+
+  await client.query(
+    `
+      INSERT INTO public.stock_movement_lines (
+        movement_id, line_no, article_id, lot_id,
+        qty, unite,
+        src_magasin_id, src_emplacement_id,
+        dst_magasin_id, dst_emplacement_id,
+        direction, note, created_by, updated_by
+      )
+      VALUES (
+        $1::uuid,1,$2::uuid,$3::uuid,$4,$5,
+        CASE WHEN $6 = 'OUT' THEN $7::uuid ELSE NULL END,
+        CASE WHEN $6 = 'OUT' THEN $8::bigint ELSE NULL END,
+        CASE WHEN $6 = 'IN' THEN $7::uuid ELSE NULL END,
+        CASE WHEN $6 = 'IN' THEN $8::bigint ELSE NULL END,
+        $6,$9,$10,$10
+      )
+    `,
+    [
+      movementId,
+      args.snapshot.article_id,
+      args.snapshot.lot_id,
+      Math.abs(delta),
+      args.snapshot.unit_code,
+      direction,
+      args.snapshot.magasin_id,
+      args.snapshot.emplacement_id,
+      lineNote,
+      args.audit.user_id,
+    ]
+  );
+  await client.query(
+    `
+      INSERT INTO public.stock_inventory_session_movements (
+        session_id, stock_movement_id, snapshot_line_id
+      )
+      VALUES ($1::uuid,$2::uuid,$3::uuid)
+    `,
+    [args.session_id, movementId, args.snapshot.id]
+  );
+  await insertMovementEvent(client, {
+    movement_id: movementId,
+    event_type: "CREATED",
+    old_values: null,
+    new_values: {
+      status: "DRAFT",
+      movement_type: "ADJUSTMENT",
+      qty: delta,
+      inventory_session_id: args.session_id,
+      snapshot_line_id: args.snapshot.id,
+      theoretical_qty: args.snapshot.theoretical_qty,
+      counted_qty: args.counted_qty,
+    },
+    user_id: args.audit.user_id,
+  });
+  return movementId;
+}
+
 export async function repoUpsertInventoryLine(
   sessionId: string,
   body: UpsertInventoryLineBodyDTO,
@@ -9473,11 +9697,12 @@ export async function repoUpsertInventoryLine(
 
     const lock = await client.query<{
       status: string;
+      session_no: string;
       row_version: number;
       requires_second_count: boolean;
     }>(
       `
-        SELECT status, row_version::int AS row_version, requires_second_count
+        SELECT status, session_no, row_version::int AS row_version, requires_second_count
         FROM public.stock_inventory_sessions
         WHERE id = $1::uuid
         FOR UPDATE
@@ -9502,13 +9727,27 @@ export async function repoUpsertInventoryLine(
     const snapshot = await client.query<{
       id: string;
       line_no: number;
+      article_id: string;
+      magasin_id: string;
+      emplacement_id: number;
+      lot_id: string | null;
+      stock_level_id: string;
+      stock_batch_id: string | null;
       theoretical_qty: number;
+      unit_code: string;
     }>(
       `
         SELECT
           id::text AS id,
           line_no::int AS line_no,
-          theoretical_qty::float8 AS theoretical_qty
+          article_id::text AS article_id,
+          magasin_id::text AS magasin_id,
+          emplacement_id::int AS emplacement_id,
+          lot_id::text AS lot_id,
+          stock_level_id::text AS stock_level_id,
+          stock_batch_id::text AS stock_batch_id,
+          theoretical_qty::float8 AS theoretical_qty,
+          unit_code
         FROM public.stock_inventory_snapshot_lines
         WHERE session_id = $1::uuid
           AND article_id = $2::uuid
@@ -9695,6 +9934,17 @@ export async function repoUpsertInventoryLine(
       lineId = idRow;
     }
 
+    const draftAdjustmentMovementId = await syncInventoryDraftAdjustment(client, {
+      session_id: sessionId,
+      session_no: s.session_no,
+      snapshot: snapshotLine,
+      counted_qty: body.counted_qty,
+      reason_code: body.reason_code ?? null,
+      note: body.note ?? null,
+      correlation_id: command.correlation_id,
+      audit,
+    });
+
     await insertAuditLog(client, audit, {
       action: "stock.inventory_sessions.lines.upsert",
       entity_type: "stock_inventory_lines",
@@ -9711,6 +9961,7 @@ export async function repoUpsertInventoryLine(
         counted_qty: body.counted_qty,
         theoretical_qty: snapshotLine.theoretical_qty,
         reason_code: body.reason_code ?? null,
+        draft_adjustment_movement_id: draftAdjustmentMovementId,
       },
     });
 
@@ -9734,6 +9985,7 @@ export async function repoUpsertInventoryLine(
         inventory_line_id: lineId,
         count_event_id: countEventId,
         count_round: body.count_round,
+        draft_adjustment_movement_id: draftAdjustmentMovementId,
       },
     });
 
@@ -9952,6 +10204,33 @@ export async function repoCancelInventorySession(
       throw new HttpError(409, "CONCURRENT_MODIFICATION", "Inventory session version has changed");
     }
 
+    const cancelledDrafts = await client.query<{ id: string; qty: number }>(
+      `
+        UPDATE public.stock_movements movement
+        SET status = 'CANCELLED', correlation_id = $2::uuid,
+            updated_at = now(), updated_by = $3
+        FROM public.stock_inventory_session_movements link
+        WHERE link.session_id = $1::uuid
+          AND link.stock_movement_id = movement.id
+          AND movement.status = 'DRAFT'
+        RETURNING movement.id::text AS id, movement.qty::float8 AS qty
+      `,
+      [id, command.correlation_id, audit.user_id]
+    );
+    for (const movement of cancelledDrafts.rows) {
+      await insertMovementEvent(client, {
+        movement_id: movement.id,
+        event_type: "CANCELLED",
+        old_values: { status: "DRAFT", qty: movement.qty },
+        new_values: {
+          status: "CANCELLED",
+          reason: "INVENTORY_SESSION_CANCELLED",
+          inventory_session_id: id,
+        },
+        user_id: audit.user_id,
+      });
+    }
+
     await client.query(
       `
         UPDATE public.stock_inventory_sessions
@@ -9976,6 +10255,7 @@ export async function repoCancelInventorySession(
         session_no: row.session_no,
         previous_status: row.status,
         reason: body.reason,
+        cancelled_draft_adjustments: cancelledDrafts.rows.length,
         correlation_id: command.correlation_id,
       },
     });
@@ -10133,6 +10413,28 @@ export async function repoCloseInventorySession(
       }))
       .filter((line) => Math.abs(line.delta_qty) > 1e-9);
     const postedAt = new Date().toISOString();
+    const drafts = await client.query<{
+      id: string;
+      snapshot_line_id: string;
+      qty: number;
+    }>(
+      `
+        SELECT
+          movement.id::text AS id,
+          link.snapshot_line_id::text AS snapshot_line_id,
+          movement.qty::float8 AS qty
+        FROM public.stock_inventory_session_movements link
+        JOIN public.stock_movements movement ON movement.id = link.stock_movement_id
+        WHERE link.session_id = $1::uuid
+          AND link.snapshot_line_id IS NOT NULL
+          AND movement.status = 'DRAFT'
+        ORDER BY link.created_at DESC, link.id DESC
+        FOR UPDATE OF movement
+      `,
+      [id]
+    );
+    const draftBySnapshotLine = new Map(drafts.rows.map((draft) => [draft.snapshot_line_id, draft]));
+    const postedDraftIds = new Set<string>();
 
     for (const adj of adjustments) {
       const delta = adj.delta_qty;
@@ -10151,108 +10453,146 @@ export async function repoCloseInventorySession(
           allow_nonreleased_adjustment: true,
         });
       }
-      const movementNo = await reserveMovementNo(client);
+      const draft = draftBySnapshotLine.get(adj.snapshot_line_id) ?? null;
+      let movementId: string;
+      if (draft) {
+        if (Math.abs(draft.qty - delta) > 1e-9) {
+          throw new HttpError(409, "INVENTORY_DRAFT_MISMATCH", "Inventory draft adjustment no longer matches the approved count");
+        }
+        movementId = draft.id;
+        postedDraftIds.add(draft.id);
+        await client.query(
+          `
+            UPDATE public.stock_movements
+            SET status = 'POSTED', posted_at = $2, posted_by = $3,
+                notes = COALESCE($4, notes), correlation_id = $5::uuid,
+                updated_at = now(), updated_by = $3
+            WHERE id = $1::uuid
+          `,
+          [movementId, postedAt, audit.user_id, body.reason ?? null, command.correlation_id]
+        );
+        await insertMovementEvent(client, {
+          movement_id: movementId,
+          event_type: "POSTED",
+          old_values: { status: "DRAFT", qty: delta },
+          new_values: {
+            status: "POSTED",
+            movement_type: "ADJUSTMENT",
+            delta,
+            inventory_session_id: id,
+            snapshot_line_id: adj.snapshot_line_id,
+            theoretical_qty: adj.theoretical_qty,
+            counted_qty: adj.counted_qty,
+            correlation_id: command.correlation_id,
+          },
+          user_id: audit.user_id,
+        });
+      } else {
+        // Compatibility path for inventories opened before this migration.
+        const movementNo = await reserveMovementNo(client);
+        const movement = await client.query<{ id: string }>(
+          `
+            INSERT INTO public.stock_movements (
+              movement_no, movement_type, status, article_id,
+              stock_level_id, stock_batch_id, qty, currency,
+              effective_at, posted_at, posted_by,
+              source_document_type, source_document_id,
+              reason_code, correlation_id, notes,
+              user_id, created_by, updated_by
+            )
+            VALUES (
+              $1,'ADJUSTMENT','POSTED',$2::uuid,$3::uuid,$4::uuid,$5,'EUR',
+              now(),$6,$7,'stock_inventory_session',$8::uuid,'INVENTORY',$9::uuid,$10,$7,$7,$7
+            )
+            RETURNING id::text AS id
+          `,
+          [
+            movementNo,
+            adj.article_id,
+            adj.stock_level_id,
+            adj.stock_batch_id,
+            delta,
+            postedAt,
+            audit.user_id,
+            id,
+            command.correlation_id,
+            body.reason ?? `Inventaire ${s.session_no}`,
+          ]
+        );
+        movementId = movement.rows[0]?.id ?? "";
+        if (!movementId) throw new Error("Failed to create adjustment movement");
+        await client.query(
+          `
+            INSERT INTO public.stock_movement_lines (
+              movement_id, line_no, article_id, lot_id, qty, unite,
+              src_magasin_id, src_emplacement_id,
+              dst_magasin_id, dst_emplacement_id,
+              direction, note, created_by, updated_by
+            )
+            VALUES ($1::uuid,1,$2::uuid,$3::uuid,$4,$5,$6::uuid,$7::bigint,$8::uuid,$9::bigint,$10,$11,$12,$12)
+          `,
+          [
+            movementId,
+            adj.article_id,
+            adj.lot_id ?? null,
+            Math.abs(delta),
+            adj.unit_code,
+            direction === "OUT" ? adj.magasin_id : null,
+            direction === "OUT" ? adj.emplacement_id : null,
+            direction === "IN" ? adj.magasin_id : null,
+            direction === "IN" ? adj.emplacement_id : null,
+            direction,
+            adj.note ?? adj.reason_code ?? body.reason ?? null,
+            audit.user_id,
+          ]
+        );
+        await insertMovementEvent(client, {
+          movement_id: movementId,
+          event_type: "CREATED_POSTED",
+          old_values: null,
+          new_values: {
+            status: "POSTED",
+            movement_type: "ADJUSTMENT",
+            delta,
+            inventory_session_id: id,
+            snapshot_line_id: adj.snapshot_line_id,
+            theoretical_qty: adj.theoretical_qty,
+            counted_qty: adj.counted_qty,
+            correlation_id: command.correlation_id,
+          },
+          user_id: audit.user_id,
+        });
+        await client.query(
+          `
+            INSERT INTO public.stock_inventory_session_movements (
+              session_id, stock_movement_id, snapshot_line_id
+            )
+            VALUES ($1::uuid,$2::uuid,$3::uuid)
+            ON CONFLICT DO NOTHING
+          `,
+          [id, movementId, adj.snapshot_line_id]
+        );
+      }
+    }
 
-      const movement = await client.query<{ id: string }>(
-        `
-          INSERT INTO public.stock_movements (
-            movement_no,
-            movement_type,
-            status,
-            article_id,
-            stock_level_id,
-            stock_batch_id,
-            qty,
-            currency,
-            effective_at,
-            posted_at,
-            posted_by,
-            source_document_type,
-            source_document_id,
-            reason_code,
-            correlation_id,
-            notes,
-            user_id,
-            created_by,
-            updated_by
-          )
-          VALUES (
-            $1,'ADJUSTMENT','POSTED',$2::uuid,$3::uuid,$4::uuid,$5,'EUR',
-            now(),$6,$7,$8,$9,'INVENTORY',$10::uuid,$11,$7,$7,$7
-          )
-          RETURNING id::text AS id
-        `,
-        [
-          movementNo,
-          adj.article_id,
-          adj.stock_level_id,
-          adj.stock_batch_id,
-          delta,
-          postedAt,
-          audit.user_id,
-          "stock_inventory_session",
-          id,
-          command.correlation_id,
-          body.reason ?? `inventory ${s.session_no}`,
-        ]
-      );
-      const movementId = movement.rows[0]?.id;
-      if (!movementId) throw new Error("Failed to create adjustment movement");
-
+    for (const draft of drafts.rows) {
+      if (postedDraftIds.has(draft.id)) continue;
       await client.query(
         `
-          INSERT INTO public.stock_movement_lines (
-            movement_id, line_no, article_id, lot_id,
-            qty, unite,
-            src_magasin_id, src_emplacement_id,
-            dst_magasin_id, dst_emplacement_id,
-            direction,
-            note,
-            created_by, updated_by
-          )
-          VALUES ($1::uuid,1,$2::uuid,$3::uuid,$4,$5,$6::uuid,$7::bigint,$8::uuid,$9::bigint,$10,$11,$12,$12)
+          UPDATE public.stock_movements
+          SET status = 'CANCELLED', correlation_id = $2::uuid,
+              updated_at = now(), updated_by = $3
+          WHERE id = $1::uuid
         `,
-        [
-          movementId,
-          adj.article_id,
-          adj.lot_id ?? null,
-          Math.abs(delta),
-          adj.unit_code,
-          direction === "OUT" ? adj.magasin_id : null,
-          direction === "OUT" ? adj.emplacement_id : null,
-          direction === "IN" ? adj.magasin_id : null,
-          direction === "IN" ? adj.emplacement_id : null,
-          direction,
-          adj.note ?? adj.reason_code ?? body.reason ?? null,
-          audit.user_id,
-        ]
+        [draft.id, command.correlation_id, audit.user_id]
       );
-
       await insertMovementEvent(client, {
-        movement_id: movementId,
-        event_type: "CREATED_POSTED",
-        old_values: null,
-        new_values: {
-          status: "POSTED",
-          movement_type: "ADJUSTMENT",
-          delta,
-          inventory_session_id: id,
-          snapshot_line_id: adj.snapshot_line_id,
-          theoretical_qty: adj.theoretical_qty,
-          counted_qty: adj.counted_qty,
-          correlation_id: command.correlation_id,
-        },
+        movement_id: draft.id,
+        event_type: "CANCELLED",
+        old_values: { status: "DRAFT", qty: draft.qty },
+        new_values: { status: "CANCELLED", reason: "INVENTORY_NO_FINAL_DISCREPANCY" },
         user_id: audit.user_id,
       });
-
-      await client.query(
-        `
-          INSERT INTO public.stock_inventory_session_movements (session_id, stock_movement_id)
-          VALUES ($1::uuid,$2::uuid)
-          ON CONFLICT DO NOTHING
-        `,
-        [id, movementId]
-      );
     }
 
     await client.query(
