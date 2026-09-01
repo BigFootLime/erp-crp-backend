@@ -31,6 +31,7 @@ export type UserLite = {
 
 export type ClientLite = {
   client_id: string
+  client_code?: string | null
   company_name: string
 }
 
@@ -131,6 +132,18 @@ export type BonLivraisonLigneAllocation = {
   stock_batch_id: string | null
   reservation_id: string | null
   reservation_status: string | null
+  source_scope: "OLD" | "NEW"
+  commande_numero: string | null
+  affaire_reference: string | null
+  article_reference: string | null
+  article_indice: string | null
+  article_version: number | null
+  quantite_commandee: number | null
+  quantite_restante: number | null
+  of_numero: string | null
+  mp_reference: string | null
+  tr_reference: string | null
+  verified_at: string | null
   stock_movement_line_id: string | null
   quantite: number
   unite: string | null

@@ -1012,9 +1012,10 @@ describePg("stock/delivery repositories — isolated PostgreSQL invariants", () 
       commande_id: number | null;
       affaire_id: number | null;
       adresse_livraison_id: string | null;
+      statut: string;
     }>(
       `SELECT client_id::text, commande_id::bigint::int, affaire_id::bigint::int,
-              adresse_livraison_id::text
+              adresse_livraison_id::text, statut
        FROM public.bon_livraison
        WHERE id = $1::uuid`,
       [result.id]
@@ -1033,6 +1034,7 @@ describePg("stock/delivery repositories — isolated PostgreSQL invariants", () 
         commande_id: null,
         affaire_id: null,
         adresse_livraison_id: ids.deliveryAddress,
+        statut: "READY",
       },
     ]);
     expect(lines.rows).toEqual([{ commande_ligne_id: 43 }, { commande_ligne_id: 45 }]);
@@ -1108,7 +1110,7 @@ describePg("stock/delivery repositories — isolated PostgreSQL invariants", () 
       [ids.reservation]
     );
     const preparedBlCount = await harnessPool.query<{ count: string }>(
-      `SELECT COUNT(*)::text AS count FROM public.bon_livraison WHERE statut = 'DRAFT'`
+      `SELECT COUNT(*)::text AS count FROM public.bon_livraison WHERE statut = 'READY'`
     );
     expect(preparedReservation.rows).toEqual([{ qty_prepared: 5, qty_consumed: 0 }]);
     expect(countValue(preparedBlCount.rows[0])).toBe(1);
@@ -1116,7 +1118,6 @@ describePg("stock/delivery repositories — isolated PostgreSQL invariants", () 
     const preparation = successfulPreparation.value;
     const preview = await deliveryRepository.repoGetLivraisonPreparationPreview(preparation.id);
     if (!preview) throw new Error("Expected a preparation preview");
-    await harnessPool.query(`UPDATE public.bon_livraison SET statut = 'READY' WHERE id = $1::uuid`, [preparation.id]);
     await harnessPool.query(
       `INSERT INTO public.bon_livraison_pack_versions (bon_livraison_id, version, status) VALUES ($1::uuid, 1, 'GENERATED')`,
       [preparation.id]
