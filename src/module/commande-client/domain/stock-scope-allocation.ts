@@ -7,6 +7,8 @@ export type CommandeStockAvailability = {
 
 export type CommandeStockDemandLine = {
   article_id: string | null;
+  /** Article + version key for version-scoped orders; falls back to article_id for legacy lines. */
+  stock_key?: string | null;
   requested_qty: number;
 };
 
@@ -41,13 +43,14 @@ export function allocateCommandeStockOldThenNew(
   return lines.map((line) => {
     const requestedQty = finiteNonNegative(line.requested_qty);
     const articleId = line.article_id;
-    const configured = articleId ? availabilityByArticle.get(articleId) : undefined;
+    const stockKey = line.stock_key ?? articleId;
+    const configured = stockKey ? availabilityByArticle.get(stockKey) : undefined;
     const initial = {
       OLD: finiteNonNegative(configured?.OLD),
       NEW: finiteNonNegative(configured?.NEW),
     };
-    const remaining = articleId
-      ? remainingByArticle.get(articleId) ?? { ...initial }
+    const remaining = stockKey
+      ? remainingByArticle.get(stockKey) ?? { ...initial }
       : { OLD: 0, NEW: 0 };
 
     const oldAvailable = finiteNonNegative(remaining.OLD);
@@ -58,8 +61,8 @@ export function allocateCommandeStockOldThenNew(
     const availableUsed = oldUsed + newUsed;
     const shortage = Math.max(0, requestedQty - availableUsed);
 
-    if (articleId) {
-      remainingByArticle.set(articleId, {
+    if (stockKey) {
+      remainingByArticle.set(stockKey, {
         OLD: Math.max(0, oldAvailable - oldUsed),
         NEW: Math.max(0, newAvailable - newUsed),
       });

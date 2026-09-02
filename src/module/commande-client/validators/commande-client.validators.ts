@@ -5,6 +5,16 @@ import { COMMANDE_CHECKPOINT_STATUSES } from "../workflow/commande-client-workfl
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date (expected YYYY-MM-DD)");
 
 export const commandeOrderTypeSchema = z.enum(["FERME", "CADRE", "INTERNE"]);
+export const commandeCreationFlowVersionSchema = z.union([z.literal(1), z.literal(2)]);
+export const commandeReconciliationSourceSchema = z.enum(["ORDER", "QUOTE", "CERP"]);
+
+export const commandeLineReconciliationSchema = z
+  .object({
+    status: z.enum(["PENDING", "RESOLVED"]),
+    sources: z.record(z.string(), z.unknown()).default({}),
+    decisions: z.record(z.string(), commandeReconciliationSourceSchema).default({}),
+  })
+  .strict();
 
 export const cadreReleaseStatusSchema = z.enum(["PLANNED", "SENT", "CONFIRMED", "DELIVERED", "CANCELLED"]);
 
@@ -20,6 +30,8 @@ export const commandeLigneInputSchema = z.object({
   designation: z.string().min(1),
   article_id: z.string().uuid().optional().nullable(),
   piece_technique_id: z.string().uuid().optional().nullable(),
+  piece_technique_version_id: z.string().uuid().optional().nullable(),
+  source_devis_ligne_id: z.coerce.number().int().positive().optional().nullable(),
   source_article_devis_id: z.string().uuid().optional().nullable(),
   source_dossier_devis_id: z.string().uuid().optional().nullable(),
   code_piece: z.string().optional().nullable(),
@@ -34,6 +46,7 @@ export const commandeLigneInputSchema = z.object({
   delai_interne: z.string().optional().nullable(),
   devis_numero: z.string().optional().nullable(),
   famille: z.string().optional().nullable(),
+  reconciliation: commandeLineReconciliationSchema.optional().nullable(),
   article_devis_data: z
     .object({
       id: z.string().uuid(),
@@ -81,6 +94,7 @@ export const createCommandeBodySchema = z.preprocess((value) => {
 },
 z.object({
   order_type: commandeOrderTypeSchema.optional().default("FERME"),
+  creation_flow_version: commandeCreationFlowVersionSchema.optional().default(1),
   numero: z.string().trim().min(1).optional(),
   client_id: z.string().trim().min(1).optional().nullable(),
   devis_id: z.coerce.number().int().positive().optional().nullable(),
@@ -133,6 +147,49 @@ z.object({
   echeances: z.array(commandeEcheanceInputSchema).optional().default([]),
 }))
   .superRefine((val, ctx) => {
+    if (val.creation_flow_version === 2) {
+      const requiredDecisions = ["designation", "quantite", "unite", "prix_unitaire_ht", "piece_technique_version_id"];
+      val.lignes.forEach((line, index) => {
+        if (!line.piece_technique_version_id) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "piece_technique_version_id is required for reconciled order lines",
+            path: ["lignes", index, "piece_technique_version_id"],
+          });
+        }
+        if (line.reconciliation?.status !== "RESOLVED") {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "reconciliation must be resolved before saving the order",
+            path: ["lignes", index, "reconciliation"],
+          });
+          return;
+        }
+        const expected = val.order_type === "INTERNE"
+          ? requiredDecisions
+          : [...requiredDecisions, "delai_client"];
+        expected.forEach((field) => {
+          if (!line.reconciliation?.decisions[field]) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: `reconciliation decision is required for ${field}`,
+              path: ["lignes", index, "reconciliation", "decisions", field],
+            });
+          }
+        });
+        if (
+          Object.values(line.reconciliation.decisions).some((source) => source === "QUOTE")
+          && !line.source_devis_ligne_id
+        ) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "source_devis_ligne_id is required when a quote value is selected",
+            path: ["lignes", index, "source_devis_ligne_id"],
+          });
+        }
+      });
+    }
+
     if (val.order_type !== "INTERNE") {
       const clientId = typeof val.client_id === "string" ? val.client_id.trim() : "";
       if (!clientId) {
