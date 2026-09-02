@@ -2705,6 +2705,7 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
       cc.client_id,
       cc.devis_id::text AS devis_id,
       cc.source_devis_version_id::text AS source_devis_version_id,
+      cc.creation_flow_version,
       cc.contact_id::text AS contact_id,
       cc.destinataire_id::text AS destinataire_id,
       cc.adresse_facturation_id::text AS adresse_facturation_id,
@@ -2748,6 +2749,7 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
     client_id: string | null;
     devis_id: string | null;
     source_devis_version_id: string | null;
+    creation_flow_version: number;
     contact_id: string | null;
     destinataire_id: string | null;
     adresse_facturation_id: string | null;
@@ -2786,6 +2788,7 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
     id: toInt(commandeRow.id, "commande.id"),
     devis_id: toNullableInt(commandeRow.devis_id, "commande.devis_id"),
     source_devis_version_id: toNullableInt(commandeRow.source_devis_version_id, "commande.source_devis_version_id"),
+    creation_flow_version: commandeRow.creation_flow_version === 2 ? 2 : 1,
   };
 
   const inc = includeFlags(includes);
@@ -2801,6 +2804,8 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
             COALESCE(a.code, cl.code_piece) AS code_piece,
             cl.article_id::text AS article_id,
             COALESCE(cl.piece_technique_id::text, a.piece_technique_id::text) AS piece_technique_id,
+            cl.piece_technique_version_id::text AS piece_technique_version_id,
+            cl.source_devis_ligne_id::bigint::int AS source_devis_ligne_id,
             cl.source_article_devis_id::text AS source_article_devis_id,
             cl.source_dossier_devis_id::text AS source_dossier_devis_id,
             cl.quantite::float8 AS quantite,
@@ -2817,7 +2822,11 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
             cl.total_ht::float8 AS total_ht,
             cl.total_ttc::float8 AS total_ttc,
             cl.devis_numero,
-            cl.famille
+            cl.famille,
+            cl.reconciliation_status,
+            cl.reconciliation_sources,
+            cl.reconciliation_decisions,
+            cl.reconciliation_resolved_at::text AS reconciliation_resolved_at
           FROM commande_ligne cl
           LEFT JOIN public.articles a ON a.id = cl.article_id
           WHERE cl.commande_id = $1
@@ -3052,7 +3061,152 @@ type InsertCommandeLignesOptions = {
   officialize_preparatory_data: boolean;
   commande_id_int: number;
   actor_user_id: number | null;
+  creation_flow_version: 1 | 2;
 };
+
+const RECONCILIATION_REQUIRED_FIELDS = [
+  "designation",
+  "quantite",
+  "unite",
+  "prix_unitaire_ht",
+  "piece_technique_version_id",
+] as const;
+
+function reconciliationRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function reconciliationSnapshotMatches(field: string, expected: unknown, actual: unknown): boolean {
+  if (field === "quantite" || field === "prix_unitaire_ht") {
+    const expectedNumber = Number(expected);
+    const actualNumber = Number(actual);
+    return Number.isFinite(expectedNumber)
+      && Number.isFinite(actualNumber)
+      && Math.abs(expectedNumber - actualNumber) < 0.000001;
+  }
+  const normalizedExpected = expected === null || expected === undefined ? "" : String(expected).trim();
+  const normalizedActual = actual === null || actual === undefined ? "" : String(actual).trim();
+  return normalizedExpected === normalizedActual;
+}
+
+async function validateCommandeLineTechnicalContext(
+  client: Queryable,
+  line: CreateCommandeInput["lignes"][number],
+  resolved: CommandeLineArticleResolution,
+  lineIndex: number,
+  options: InsertCommandeLignesOptions
+): Promise<void> {
+  const versionId = typeof line.piece_technique_version_id === "string"
+    ? line.piece_technique_version_id.trim()
+    : "";
+
+  if (options.creation_flow_version === 2 && !versionId) {
+    throw new HttpError(400, "PIECE_VERSION_REQUIRED", "Une version technique doit être choisie pour chaque ligne.", {
+      field: `lignes.${lineIndex}.piece_technique_version_id`,
+      line_index: lineIndex,
+    });
+  }
+
+  if (versionId) {
+    const version = await client.query<{ id: string }>(
+      `SELECT id::text AS id
+         FROM public.piece_technique_versions
+        WHERE id = $1::uuid
+          AND piece_technique_id = $2::uuid
+        LIMIT 1`,
+      [versionId, resolved.piece_technique_id]
+    );
+    if (!resolved.piece_technique_id || !version.rows[0]) {
+      throw new HttpError(
+        409,
+        "PIECE_VERSION_MISMATCH",
+        "La version technique choisie n'appartient pas à la Pièce de l'Article.",
+        { field: `lignes.${lineIndex}.piece_technique_version_id`, line_index: lineIndex, version_id: versionId }
+      );
+    }
+  }
+
+  if (options.creation_flow_version !== 2) return;
+  const reconciliation = line.reconciliation;
+  if (!reconciliation || reconciliation.status !== "RESOLVED") {
+    throw new HttpError(409, "ORDER_RECONCILIATION_REQUIRED", "Le rapprochement de chaque ligne doit être terminé.", {
+      field: `lignes.${lineIndex}.reconciliation`,
+      line_index: lineIndex,
+    });
+  }
+
+  const required = [
+    ...RECONCILIATION_REQUIRED_FIELDS,
+    ...(line.delai_client ? ["delai_client"] : []),
+  ];
+  const missing = required.filter((field) => !reconciliation.decisions[field]);
+  if (missing.length > 0) {
+    throw new HttpError(409, "ORDER_RECONCILIATION_INCOMPLETE", "Des choix de rapprochement sont encore manquants.", {
+      field: `lignes.${lineIndex}.reconciliation`,
+      line_index: lineIndex,
+      missing_fields: missing,
+    });
+  }
+
+  // Le statut RESOLVED ne suffit pas : une ligne peut avoir été modifiée après la fenêtre
+  // de comparaison (ou provenir d'un ancien brouillon local). Le snapshot choisi doit donc
+  // correspondre exactement aux valeurs que nous allons persister.
+  const selected = reconciliationRecord(reconciliation.sources.selected);
+  const currentValues: Record<string, unknown> = {
+    designation: line.designation,
+    quantite: line.quantite,
+    unite: line.unite ?? "u",
+    prix_unitaire_ht: line.prix_unitaire_ht,
+    delai_client: line.delai_client ?? null,
+    article_id: resolved.article_id,
+    piece_technique_id: resolved.piece_technique_id,
+    piece_technique_version_id: versionId,
+  };
+  const staleFields = selected
+    ? Object.entries(currentValues)
+        .filter(([field, actual]) => !reconciliationSnapshotMatches(field, selected[field], actual))
+        .map(([field]) => field)
+    : Object.keys(currentValues);
+  if (staleFields.length > 0) {
+    throw new HttpError(
+      409,
+      "ORDER_RECONCILIATION_STALE",
+      "La ligne a changé depuis le rapprochement. Vérifiez à nouveau les valeurs retenues.",
+      {
+        field: `lignes.${lineIndex}.reconciliation`,
+        line_index: lineIndex,
+        stale_fields: staleFields,
+      }
+    );
+  }
+
+  const quoteSelected = Object.values(reconciliation.decisions).some((source) => source === "QUOTE");
+  if (quoteSelected) {
+    const quoteLineId = line.source_devis_ligne_id ?? null;
+    const quoteLine = quoteLineId === null
+      ? { rows: [] as Array<{ id: string }> }
+      : await client.query<{ id: string }>(
+          `SELECT dl.id::text AS id
+             FROM public.devis_ligne dl
+             JOIN public.devis d ON d.id = dl.devis_id
+             JOIN public.commande_client commande ON commande.id = $2::bigint
+            WHERE dl.id = $1::bigint
+              AND d.client_id = commande.client_id
+              AND d.statut = 'ACCEPTE'
+              AND (commande.devis_id IS NULL OR commande.devis_id = d.id)
+            LIMIT 1`,
+          [quoteLineId, options.commande_id_int]
+        );
+    if (!quoteLine.rows[0]) {
+      throw new HttpError(409, "ORDER_RECONCILIATION_QUOTE_INVALID", "La ligne de devis choisie n'est plus utilisable.", {
+        field: `lignes.${lineIndex}.source_devis_ligne_id`,
+        line_index: lineIndex,
+      });
+    }
+  }
+}
 
 async function insertCommandeLignes(
   client: PoolClient,
@@ -3111,6 +3265,8 @@ async function insertCommandeLignes(
     } else {
       resolved = await resolveCommandeLineArticle(client, l, lineIndex);
     }
+
+    await validateCommandeLineTechnicalContext(client, l, resolved, lineIndex, options);
 
     const designation = typeof l.designation === "string" && l.designation.trim().length > 0
       ? l.designation.trim()
@@ -3195,6 +3351,13 @@ async function insertCommandeLignes(
           sale_price_reference_source,
           sale_price_decision,
           sale_price_history_id
+          ,piece_technique_version_id
+          ,source_devis_ligne_id
+          ,reconciliation_status
+          ,reconciliation_sources
+          ,reconciliation_decisions
+          ,reconciliation_resolved_at
+          ,reconciliation_resolved_by
         ) VALUES (
           $1,
           $2::uuid,
@@ -3215,7 +3378,14 @@ async function insertCommandeLignes(
           $17,
           $18,
           $19,
-          $20::uuid
+          $20::uuid,
+          $21::uuid,
+          $22::bigint,
+          $23,
+          $24::jsonb,
+          $25::jsonb,
+          $26::timestamptz,
+          $27::bigint
         )
         RETURNING id::bigint::text AS id
       `,
@@ -3240,6 +3410,13 @@ async function insertCommandeLignes(
         referencePrice.reference_source,
         referencePrice.decision,
         referencePrice.history_id,
+        l.piece_technique_version_id ?? null,
+        l.source_devis_ligne_id ?? null,
+        l.reconciliation?.status ?? "LEGACY",
+        JSON.stringify(l.reconciliation?.sources ?? {}),
+        JSON.stringify(l.reconciliation?.decisions ?? {}),
+        l.reconciliation?.status === "RESOLVED" ? new Date().toISOString() : null,
+        l.reconciliation?.status === "RESOLVED" ? options.actor_user_id : null,
       ]
     );
 
@@ -3513,9 +3690,10 @@ export async function repoCreateCommande(
         total_ht,
         total_ttc,
         devis_id,
-        source_devis_version_id
+        source_devis_version_id,
+        creation_flow_version
       ) VALUES (
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30
       )
       RETURNING id::text AS id
     `;
@@ -3549,6 +3727,7 @@ export async function repoCreateCommande(
       input.total_ttc ?? 0,
       input.devis_id ?? null,
       input.source_devis_version_id ?? input.devis_id ?? null,
+      input.creation_flow_version ?? 1,
     ];
     const ins = await client.query<{ id: string }>(insertSql, insertParams);
     const commandeId = ins.rows[0]?.id;
@@ -3559,6 +3738,7 @@ export async function repoCreateCommande(
       officialize_preparatory_data: input.officialize_preparatory_data ?? false,
       commande_id_int: commandeIdInt,
       actor_user_id: actorUserId,
+      creation_flow_version: input.creation_flow_version ?? 1,
     });
     await insertCommandeEcheances(client, commandeId, input.echeances ?? []);
     await insertCommandeDocuments(client, commandeId, documents, movedDocuments);
@@ -3799,6 +3979,7 @@ export async function repoUpdateCommande(
       dest_stock_magasin_id: string | null;
       dest_stock_emplacement_id: string | null;
       ar_sent_at: string | null;
+      creation_flow_version: number;
     }>(
       `
       SELECT
@@ -3811,7 +3992,8 @@ export async function repoUpdateCommande(
         cadre_end_date::text AS cadre_end_date,
         dest_stock_magasin_id::text AS dest_stock_magasin_id,
         dest_stock_emplacement_id::text AS dest_stock_emplacement_id,
-        ar_sent_at::text AS ar_sent_at
+        ar_sent_at::text AS ar_sent_at,
+        creation_flow_version
       FROM commande_client
       WHERE id = $1::bigint
       FOR UPDATE
@@ -3832,6 +4014,14 @@ export async function repoUpdateCommande(
     }
 
     const existingOrderType = coerceOrderType(existing.order_type);
+    const existingFlowVersion = existing.creation_flow_version === 2 ? 2 : 1;
+    if (input.creation_flow_version !== undefined && input.creation_flow_version !== existingFlowVersion) {
+      throw new HttpError(
+        409,
+        "COMMANDE_CREATION_FLOW_IMMUTABLE",
+        "Le parcours de création d'une commande est immuable après son enregistrement."
+      );
+    }
     if (input.order_type !== undefined && input.order_type !== existingOrderType) {
       throw new HttpError(
         409,
@@ -3943,6 +4133,7 @@ export async function repoUpdateCommande(
       officialize_preparatory_data: input.officialize_preparatory_data ?? false,
       commande_id_int: toInt(id, "commande_id"),
       actor_user_id: actorUserId,
+      creation_flow_version: existingFlowVersion,
     });
     await insertCommandeEcheances(client, id, input.echeances ?? []);
     await insertCommandeDocuments(client, id, documents, movedDocuments);
@@ -4244,6 +4435,51 @@ export async function repoAnalyzeCommandeStock(id: string, audit: AuditContext) 
   return withRealtimeOutboxTransaction(client, (tx) => analyzeCommandeStockTx(tx, commandeId, audit));
 }
 
+async function assertCommandeTechnicalVersionsLaunchable(
+  db: PoolClient,
+  commandeId: number,
+  creationFlowVersion: number
+): Promise<void> {
+  if (creationFlowVersion !== 2) return;
+  const invalid = await db.query<{
+    commande_ligne_id: number;
+    version_id: string | null;
+    indice: string | null;
+    statut: string | null;
+    date_effet: string | null;
+  }>(
+    `SELECT cl.id::bigint::int AS commande_ligne_id,
+            version.id::text AS version_id,
+            version.indice,
+            version.statut,
+            version.date_effet::text AS date_effet
+       FROM public.commande_ligne cl
+       LEFT JOIN public.piece_technique_versions version
+         ON version.id = cl.piece_technique_version_id
+        AND version.piece_technique_id = cl.piece_technique_id
+      WHERE cl.commande_id = $1::bigint
+        AND (
+          cl.reconciliation_status <> 'RESOLVED'
+          OR version.id IS NULL
+          OR version.statut <> 'APPLICABLE'
+          OR (version.date_effet IS NOT NULL AND version.date_effet > CURRENT_DATE)
+        )
+      ORDER BY cl.id
+      LIMIT 1`,
+    [commandeId]
+  );
+  const line = invalid.rows[0];
+  if (!line) return;
+  throw new HttpError(
+    409,
+    "COMMAND_LINE_VERSION_NOT_APPLICABLE",
+    line.version_id
+      ? `L'indice ${line.indice ?? "sélectionné"} de la ligne ${line.commande_ligne_id} n'est pas applicable.`
+      : `La ligne ${line.commande_ligne_id} n'a pas de version technique applicable.`,
+    line
+  );
+}
+
 export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAffairesV3BodyDTO, audit: AuditContext) {
   const commandeId = toInt(id, "commande_id");
   const client = await pool.connect();
@@ -4260,13 +4496,15 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       dest_stock_emplacement_id: string | null;
       ar_sent_at: string | null;
       updated_at: string | null;
+      creation_flow_version: number;
     }>(
       `
       SELECT client_id, type_affaire, order_type, devis_id::text AS devis_id, numero,
              dest_stock_magasin_id::text AS dest_stock_magasin_id,
              dest_stock_emplacement_id::bigint::text AS dest_stock_emplacement_id,
              ar_sent_at::text AS ar_sent_at,
-             updated_at::text AS updated_at
+             updated_at::text AS updated_at,
+             creation_flow_version
       FROM commande_client
       WHERE id = $1
       FOR UPDATE
@@ -4294,6 +4532,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
     }
 
     const orderType = coerceOrderType(commande.order_type);
+    await assertCommandeTechnicalVersionsLaunchable(client, commandeId, commande.creation_flow_version);
     const requestedLivraisonCountRaw = typeof body.livraison_count === "number" ? body.livraison_count : 1;
     const requestedLivraisonCount = Math.max(1, Math.min(10, Math.trunc(requestedLivraisonCountRaw)));
 
@@ -4855,6 +5094,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
           client_id: orderType === "INTERNE" ? ref?.piece_client_id ?? clientId : clientId,
           root_article_id: l.article_id,
           root_piece_technique_id: pieceTechniqueId,
+          root_pinned_version_id: ref?.piece_technique_version_id ?? null,
           qty_to_produce: qtyToProduce,
           user_id: audit.user_id,
         });
@@ -5154,6 +5394,7 @@ type CommandeLineRef = {
   article_code: string | null;
   article_designation: string | null;
   piece_technique_id: string | null;
+  piece_technique_version_id?: string | null;
   piece_code: string | null;
   piece_designation: string | null;
   piece_client_id: string | null;
@@ -5169,6 +5410,7 @@ async function selectCommandeLineRefs(db: PoolClient, commandeId: number): Promi
     article_code: string | null;
     article_designation: string | null;
     piece_technique_id: string | null;
+    piece_technique_version_id: string | null;
     piece_code: string | null;
     piece_designation: string | null;
     piece_client_id: string | null;
@@ -5183,6 +5425,7 @@ async function selectCommandeLineRefs(db: PoolClient, commandeId: number): Promi
         COALESCE(a.code, legacy.article_code, cl.code_piece) AS article_code,
         COALESCE(a.designation, legacy.article_designation, cl.designation) AS article_designation,
         COALESCE(cl.piece_technique_id::text, a.piece_technique_id::text, legacy.piece_technique_id) AS piece_technique_id,
+        cl.piece_technique_version_id::text AS piece_technique_version_id,
         COALESCE(pt.code_piece, legacy.piece_code) AS piece_code,
         COALESCE(pt.designation, legacy.piece_designation) AS piece_designation,
         COALESCE(pt.client_id::text, legacy.piece_client_id) AS piece_client_id,
@@ -5230,6 +5473,10 @@ async function selectCommandeLineRefs(db: PoolClient, commandeId: number): Promi
         : null,
     piece_technique_id:
       typeof r.piece_technique_id === "string" && r.piece_technique_id.trim().length > 0 ? r.piece_technique_id.trim() : null,
+    piece_technique_version_id:
+      typeof r.piece_technique_version_id === "string" && r.piece_technique_version_id.trim().length > 0
+        ? r.piece_technique_version_id.trim()
+        : null,
     piece_code: typeof r.piece_code === "string" && r.piece_code.trim().length > 0 ? r.piece_code.trim() : null,
     piece_designation:
       typeof r.piece_designation === "string" && r.piece_designation.trim().length > 0
@@ -5279,22 +5526,33 @@ async function loadAvailableQtyByArticle(db: PoolClient, params: {
   return out;
 }
 
+function commandeStockKey(articleId: string, versionId: string | null): string {
+  return versionId ? `${articleId}:${versionId}` : articleId;
+}
+
 async function loadScopedAvailableQtyByArticle(
   db: PoolClient,
-  articleIds: string[]
+  refs: CommandeLineRef[]
 ): Promise<Map<string, CommandeStockAvailability>> {
   const out = new Map<string, CommandeStockAvailability>();
-  for (const articleId of articleIds) out.set(articleId, { OLD: 0, NEW: 0 });
+  const articleIds = Array.from(
+    new Set(refs.map((ref) => ref.article_id).filter((value): value is string => Boolean(value)))
+  );
+  for (const ref of refs) {
+    if (ref.article_id) out.set(commandeStockKey(ref.article_id, ref.piece_technique_version_id ?? null), { OLD: 0, NEW: 0 });
+  }
   if (articleIds.length === 0) return out;
 
   const res = await db.query<{
     article_id: string;
+    piece_technique_version_id: string | null;
     stock_scope: "OLD" | "NEW";
     qty_available: number;
   }>(
     `
       SELECT
         availability.article_id::text AS article_id,
+        lot.piece_technique_version_id::text AS piece_technique_version_id,
         CASE
           WHEN lot.origin_stock_scope = 'OLD' THEN 'OLD'
           ELSE COALESCE(lot.source_scope, lot.stock_scope, warehouse.stock_scope, 'NEW')
@@ -5308,6 +5566,7 @@ async function loadScopedAvailableQtyByArticle(
         AND warehouse.stock_scope IN ('OLD', 'NEW')
       GROUP BY
         availability.article_id,
+        lot.piece_technique_version_id,
         CASE
           WHEN lot.origin_stock_scope = 'OLD' THEN 'OLD'
           ELSE COALESCE(lot.source_scope, lot.stock_scope, warehouse.stock_scope, 'NEW')
@@ -5317,9 +5576,18 @@ async function loadScopedAvailableQtyByArticle(
   );
 
   for (const row of res.rows) {
-    const current = out.get(row.article_id) ?? { OLD: 0, NEW: 0 };
-    current[row.stock_scope] = Math.max(0, Number(row.qty_available ?? 0));
-    out.set(row.article_id, current);
+    const quantity = Math.max(0, Number(row.qty_available ?? 0));
+    const legacyKey = commandeStockKey(row.article_id, null);
+    const legacy = out.get(legacyKey) ?? { OLD: 0, NEW: 0 };
+    legacy[row.stock_scope] += quantity;
+    out.set(legacyKey, legacy);
+
+    if (row.piece_technique_version_id) {
+      const versionKey = commandeStockKey(row.article_id, row.piece_technique_version_id);
+      const versioned = out.get(versionKey) ?? { OLD: 0, NEW: 0 };
+      versioned[row.stock_scope] += quantity;
+      out.set(versionKey, versioned);
+    }
   }
   return out;
 }
@@ -5333,6 +5601,7 @@ export type CommandeStockAnalysisLine = {
   article_code: string | null;
   article_designation: string | null;
   piece_technique_id: string | null;
+  piece_technique_version_id?: string | null;
   piece_code: string | null;
   piece_designation: string | null;
   requested_qty: number;
@@ -5386,6 +5655,7 @@ function buildZeroStockAnalysisLines(refs: CommandeLineRef[]): CommandeStockAnal
       article_code: ref.article_code,
       article_designation: ref.article_designation,
       piece_technique_id: ref.piece_technique_id,
+      piece_technique_version_id: ref.piece_technique_version_id,
       piece_code: ref.piece_code,
       piece_designation: ref.piece_designation,
       requested_qty: requestedQty,
@@ -5406,13 +5676,13 @@ async function computeCommandeStockAnalysis(db: PoolClient, params: {
   commande_id: number;
 }): Promise<CommandeStockAnalysis> {
   const refs = await selectCommandeLineRefs(db, params.commande_id);
-  const articleIds = Array.from(
-    new Set(refs.map((r) => r.article_id).filter((v): v is string => typeof v === "string" && v.length > 0))
-  );
-
-  const availableByArticle = await loadScopedAvailableQtyByArticle(db, articleIds);
+  const availableByArticle = await loadScopedAvailableQtyByArticle(db, refs);
   const allocations = allocateCommandeStockOldThenNew(
-    refs.map((ref) => ({ article_id: ref.article_id, requested_qty: Number(ref.qty_ordered) })),
+    refs.map((ref) => ({
+      article_id: ref.article_id,
+      stock_key: ref.article_id ? commandeStockKey(ref.article_id, ref.piece_technique_version_id ?? null) : null,
+      requested_qty: Number(ref.qty_ordered),
+    })),
     availableByArticle
   );
 
@@ -5437,6 +5707,7 @@ async function computeCommandeStockAnalysis(db: PoolClient, params: {
       article_code: r.article_code,
       article_designation: r.article_designation,
       piece_technique_id: r.piece_technique_id,
+      piece_technique_version_id: r.piece_technique_version_id,
       piece_code: r.piece_code,
       piece_designation: r.piece_designation,
       requested_qty: requestedQty,
@@ -5449,6 +5720,7 @@ async function computeCommandeStockAnalysis(db: PoolClient, params: {
 
 type ScopedDeliveryStockCandidate = {
   article_id: string;
+  piece_technique_version_id: string | null;
   stock_scope: "OLD" | "NEW";
   stock_level_id: string;
   stock_batch_id: string | null;
@@ -5473,6 +5745,7 @@ async function loadScopedDeliveryStockCandidates(
     `
       SELECT
         availability.article_id::text AS article_id,
+        lot.piece_technique_version_id::text AS piece_technique_version_id,
         CASE
           WHEN lot.origin_stock_scope = 'OLD' THEN 'OLD'
           ELSE COALESCE(lot.source_scope, lot.stock_scope, warehouse.stock_scope, 'NEW')
@@ -5539,6 +5812,10 @@ function planDeliveryAllocations(
     for (let index = 0; index < candidates.length && remaining > 1e-9; index += 1) {
       const candidate = candidates[index];
       if (!candidate || candidate.article_id !== line.article_id) continue;
+      if (
+        line.piece_technique_version_id
+        && candidate.piece_technique_version_id !== line.piece_technique_version_id
+      ) continue;
       const available = Number(remainingByCandidate.get(index) ?? 0);
       if (available <= 1e-9) continue;
       const quantity = Math.min(remaining, available);
@@ -6357,6 +6634,7 @@ export async function repoDuplicateCommande(id: string) {
         officialize_preparatory_data: true,
         commande_id_int: newIdInt,
         actor_user_id: null,
+        creation_flow_version: 1,
       });
     }
 

@@ -8,6 +8,8 @@ export type ClientLite = {
 };
 
 export type CommandeOrderType = "FERME" | "CADRE" | "INTERNE";
+export type CommandeCreationFlowVersion = 1 | 2;
+export type CommandeReconciliationSource = "ORDER" | "QUOTE" | "CERP";
 
 export type CadreReleaseStatus = "PLANNED" | "SENT" | "CONFIRMED" | "DELIVERED" | "CANCELLED";
 
@@ -17,6 +19,7 @@ export type CommandeClient = {
   client_id: string | null;
   devis_id?: number | null;
   source_devis_version_id?: number | null;
+  creation_flow_version: CommandeCreationFlowVersion;
   contact_id: string | null;
   destinataire_id: string | null;
   adresse_facturation_id: string | null;
@@ -98,6 +101,8 @@ export type CommandeClientLine = {
   commande_id: number;
   article_id?: string | null;
   piece_technique_id?: string | null;
+  piece_technique_version_id?: string | null;
+  source_devis_ligne_id?: number | null;
   source_article_devis_id?: string | null;
   source_dossier_devis_id?: string | null;
   designation: string;
@@ -117,6 +122,10 @@ export type CommandeClientLine = {
   total_ttc: number;
   devis_numero: string | null;
   famille: string | null;
+  reconciliation_status: "LEGACY" | "PENDING" | "RESOLVED";
+  reconciliation_sources: Record<string, unknown>;
+  reconciliation_decisions: Record<string, CommandeReconciliationSource>;
+  reconciliation_resolved_at: string | null;
 };
 
 export type CommandeEcheance = {
@@ -182,6 +191,8 @@ export type CommandeToAffaire = {
 export type CommandeLigneInput = {
   article_id?: string | null;
   piece_technique_id?: string | null;
+  piece_technique_version_id?: string | null;
+  source_devis_ligne_id?: number | null;
   source_article_devis_id?: string | null;
   source_dossier_devis_id?: string | null;
   designation: string;
@@ -197,6 +208,11 @@ export type CommandeLigneInput = {
   delai_interne?: string | null;
   devis_numero?: string | null;
   famille?: string | null;
+  reconciliation?: {
+    status: "PENDING" | "RESOLVED";
+    sources: Record<string, unknown>;
+    decisions: Record<string, CommandeReconciliationSource>;
+  } | null;
   article_devis_data?: {
     id: string;
     devis_id: number;
@@ -233,6 +249,7 @@ export type CreateCommandeInput = {
   devis_id?: number | null;
   source_devis_updated_at?: string | null;
   source_devis_version_id?: number | null;
+  creation_flow_version?: CommandeCreationFlowVersion;
   officialize_preparatory_data?: boolean;
   date_commande?: string;
   contact_id?: string | null;

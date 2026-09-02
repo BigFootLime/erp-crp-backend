@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { allocateCommandeStockOldThenNew } from "./stock-scope-allocation";
 
 const ARTICLE = "11111111-1111-1111-1111-111111111111";
+const VERSION_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const VERSION_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 describe("allocateCommandeStockOldThenNew", () => {
   it.each([
@@ -36,5 +38,21 @@ describe("allocateCommandeStockOldThenNew", () => {
 
     expect(lines[0]).toMatchObject({ old_used_qty: 4, new_used_qty: 0, shortage_qty: 0 });
     expect(lines[1]).toMatchObject({ old_used_qty: 1, new_used_qty: 2, shortage_qty: 2 });
+  });
+
+  it("keeps the stock of two technical versions strictly separated", () => {
+    const lines = allocateCommandeStockOldThenNew(
+      [
+        { article_id: ARTICLE, stock_key: `${ARTICLE}::${VERSION_A}`, requested_qty: 6 },
+        { article_id: ARTICLE, stock_key: `${ARTICLE}::${VERSION_B}`, requested_qty: 6 },
+      ],
+      new Map([
+        [`${ARTICLE}::${VERSION_A}`, { OLD: 6, NEW: 0 }],
+        [`${ARTICLE}::${VERSION_B}`, { OLD: 0, NEW: 4 }],
+      ])
+    );
+
+    expect(lines[0]).toMatchObject({ old_used_qty: 6, new_used_qty: 0, shortage_qty: 0 });
+    expect(lines[1]).toMatchObject({ old_used_qty: 0, new_used_qty: 4, shortage_qty: 2 });
   });
 });
