@@ -790,6 +790,7 @@ function buildCommandeDraftFromDevisRows(
         const resolved = codePiece ? articleByCode.get(codePiece) ?? null : null;
         const preparatory = codePiece ? preparatoryByCode.get(codePiece) ?? null : null;
         return {
+          source_devis_ligne_id: toInt(line.id, "devis_ligne.id"),
           article_id: line.article_id ?? resolved?.article_id ?? null,
           piece_technique_id: line.piece_technique_id ?? resolved?.piece_technique_id ?? null,
           source_article_devis_id: line.source_article_devis_id ?? preparatory?.source_article_devis_id ?? null,
@@ -799,6 +800,7 @@ function buildCommandeDraftFromDevisRows(
           quantite: line.quantite,
           unite: line.unite ?? "u",
           prix_unitaire_ht: line.prix_unitaire_ht,
+          reference_price_quote_line_id: toInt(line.id, "devis_ligne.id"),
           remise_ligne: line.remise_ligne ?? 0,
           taux_tva: line.taux_tva ?? 20,
           delai_client: null,
