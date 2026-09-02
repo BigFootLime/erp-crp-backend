@@ -25,7 +25,7 @@ RUN printf '%s\n' \
       "https://dl-cdn.alpinelinux.org/alpine/v3.24/community" \
       > /etc/apk/repositories \
   && apk add --no-cache \
-    "curl=8.21.0-r0" \
+    "curl=8.22.0-r0" \
     "tini=0.19.0-r3" \
     "su-exec=0.3-r0" \
     "clamav=1.4.6-r0" \
