@@ -91,6 +91,7 @@ function ofHeaderRow(overrides: Record<string, unknown> = {}) {
     piece_technique_version_id: VERSION_ID,
     technical_snapshot_sha256: "a".repeat(64),
     technical_snapshot_at: "2026-07-22T09:00:00.000Z",
+    technical_readiness: "VALIDATED",
     piece_code: "PT-ROOT",
     piece_designation: "Piece mere",
     quantite_lancee: 26,
@@ -137,6 +138,7 @@ beforeEach(() => {
 describe("#170 OF state machine + optimistic lock (PATCH /production/ofs/:id)", () => {
   function installOfForUpdate(params: {
     statut: string;
+    technical_readiness?: "INCOMPLETE" | "READY_FOR_REVIEW" | "VALIDATED" | "BLOCKED";
     updated_at?: string;
     quantite_bonne?: number;
     received_qty_ok?: number;
@@ -151,6 +153,7 @@ describe("#170 OF state machine + optimistic lock (PATCH /production/ofs/:id)", 
             id: "5",
             commande_id: null,
             statut: params.statut,
+            technical_readiness: params.technical_readiness ?? "VALIDATED",
             quantite_bonne: params.quantite_bonne ?? 0,
             updated_at: params.updated_at ?? OF_UPDATED_AT,
           }],
@@ -186,6 +189,17 @@ describe("#170 OF state machine + optimistic lock (PATCH /production/ofs/:id)", 
       .patch("/api/v1/production/ofs/5")
       .send({ statut: "PLANIFIE", expected_updated_at: OF_UPDATED_AT });
     expect(res.status).toBe(200);
+  });
+
+  it("refuses BROUILLON -> PLANIFIE while the technical preparation is incomplete", async () => {
+    installOfForUpdate({ statut: "BROUILLON", technical_readiness: "INCOMPLETE" });
+    const res = await request(app)
+      .patch("/api/v1/production/ofs/5")
+      .send({ statut: "PLANIFIE", expected_updated_at: OF_UPDATED_AT });
+
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ code: "OF_TECHNICAL_PREPARATION_REQUIRED" });
+    expect(mocks.clientQuery.mock.calls.some(([sql]) => String(sql).includes("UPDATE ordres_fabrication SET"))).toBe(false);
   });
 
   it("refuses TERMINE -> CLOTURE until every good part has a posted stock receipt", async () => {

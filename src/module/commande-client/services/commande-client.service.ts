@@ -1,8 +1,13 @@
 import type { CreateCommandeInput, UploadedDocument } from "../types/commande-client.types";
 import type {
+  CreateQuickTechnicalPieceBodyDTO,
   GenerateAffairesV3BodyDTO,
   ListCommandesQueryDTO,
 } from "../validators/commande-client.validators";
+import {
+  repoCreateQuickTechnicalPiece,
+} from "../repository/commande-quick-piece.repository";
+import type { AuditContext } from "../../stock/repository/stock.repository";
 import {
   repoCreateCommande,
   repoDeleteCommande,
@@ -64,6 +69,12 @@ export const createCommandeSVC = (
   documents: UploadedDocument[],
   actorUserId: number | null = null
 ) => repoCreateCommande(input, documents, actorUserId);
+
+export const createQuickTechnicalPieceSVC = (
+  body: CreateQuickTechnicalPieceBodyDTO,
+  audit: AuditContext,
+  idempotencyKey: string
+) => repoCreateQuickTechnicalPiece(body, audit, idempotencyKey);
 
 export const updateCommandeSVC = (
   id: string,

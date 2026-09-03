@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import crypto from "node:crypto";
+import type { TechnicalDraftDTO, TechnicalDraftSection, TechnicalDraftValue } from "../types/technical-draft.types";
 import path from "node:path";
 import type { PoolClient } from "pg";
 import pool from "../../../config/database";
@@ -237,6 +238,69 @@ export type CommandeDraftFromDevis = {
     source_devis_updated_at: string | null;
   };
 };
+
+const TECHNICAL_SECTION_KEYS = {
+  identity: ["code_piece", "designation", "indice_externe", "plan_reference"],
+  material: ["matiere", "matiere_prevue", "nuance", "forme", "dimensions"],
+  bom: ["nomenclature", "bom"],
+  routing: ["gamme", "routing"],
+  operations: ["operations"],
+  treatments: ["traitements", "sous_traitance", "achats"],
+  quality: ["qualite", "quality", "exigences_qualite"],
+  documents: ["documents", "plans"],
+} as const;
+
+function quoteValue(value: unknown, sourceRef: string | null): TechnicalDraftValue {
+  const needsMatching = typeof value === "string" && value.trim().length > 0;
+  return { value, source: "DEVIS", source_ref: sourceRef, needs_matching: needsMatching || undefined };
+}
+
+function buildTechnicalDraft(params: {
+  devisId: number;
+  dossierId: string | null;
+  codePiece: string | null;
+  designation: string;
+  payload: Record<string, unknown> | null;
+}): TechnicalDraftDTO {
+  const raw = { ...(params.payload ?? {}) };
+  if (params.codePiece && raw.code_piece === undefined) raw.code_piece = params.codePiece;
+  if (raw.designation === undefined) raw.designation = params.designation;
+  const consumed = new Set<string>();
+  const makeSection = (keys: readonly string[]): TechnicalDraftSection => {
+    const values: Record<string, TechnicalDraftValue> = {};
+    for (const key of keys) {
+      if (raw[key] === undefined || raw[key] === null || raw[key] === "") continue;
+      consumed.add(key);
+      values[key] = quoteValue(raw[key], params.dossierId);
+    }
+    return { version: 1, values };
+  };
+  const sections = {
+    identity: makeSection(TECHNICAL_SECTION_KEYS.identity),
+    material: makeSection(TECHNICAL_SECTION_KEYS.material),
+    bom: makeSection(TECHNICAL_SECTION_KEYS.bom),
+    routing: makeSection(TECHNICAL_SECTION_KEYS.routing),
+    operations: makeSection(TECHNICAL_SECTION_KEYS.operations),
+    treatments: makeSection(TECHNICAL_SECTION_KEYS.treatments),
+    quality: makeSection(TECHNICAL_SECTION_KEYS.quality),
+    documents: makeSection(TECHNICAL_SECTION_KEYS.documents),
+  };
+  const populated = Object.values(sections).filter((section) => Object.keys(section.values).length > 0).length;
+  const unmapped = Object.fromEntries(
+    Object.entries(raw)
+      .filter(([key]) => !consumed.has(key))
+      .map(([key, value]) => [key, quoteValue(value, params.dossierId)])
+  );
+  return {
+    schema_version: 1,
+    source: "DEVIS",
+    source_devis_id: params.devisId,
+    source_dossier_id: params.dossierId,
+    completion_percent: Math.round((populated / Object.keys(sections).length) * 100),
+    sections,
+    unmapped,
+  };
+}
 
 /* ----------------------- #167 : audit, idempotence, fraîcheur ----------------------- */
 
@@ -789,6 +853,13 @@ function buildCommandeDraftFromDevisRows(
         const codePiece = typeof line.code_piece === "string" && line.code_piece.trim().length > 0 ? line.code_piece.trim() : null;
         const resolved = codePiece ? articleByCode.get(codePiece) ?? null : null;
         const preparatory = codePiece ? preparatoryByCode.get(codePiece) ?? null : null;
+        const technicalDraft = buildTechnicalDraft({
+          devisId,
+          dossierId: preparatory?.dossier_technique_piece_devis?.id ?? null,
+          codePiece,
+          designation: line.description,
+          payload: preparatory?.dossier_technique_piece_devis?.payload ?? null,
+        });
         return {
           source_devis_ligne_id: toInt(line.id, "devis_ligne.id"),
           article_id: line.article_id ?? resolved?.article_id ?? null,
@@ -809,6 +880,7 @@ function buildCommandeDraftFromDevisRows(
           famille: null,
           article_devis_data: preparatory?.article_devis ?? null,
           dossier_technique_piece_devis_data: preparatory?.dossier_technique_piece_devis ?? null,
+          technical_draft: technicalDraft,
         };
       }),
       echeances: [],

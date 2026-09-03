@@ -21,6 +21,9 @@ import {
   previewOfGenerationSchema,
   reorderOfOperationsSchema,
   releaseOfSchema,
+  patchOfTechnicalPreparationSchema,
+  submitOfTechnicalPreparationSchema,
+  validateOfTechnicalPreparationSchema,
   startOfTimeLogSchema,
   stopOfTimeLogSchema,
   updateMachineSchema,
@@ -52,6 +55,10 @@ import {
   svcReorderOfOperations,
   svcGetOfReadiness,
   svcReleaseOrdreFabrication,
+  svcGetOfTechnicalPreparation,
+  svcPatchOfTechnicalPreparation,
+  svcSubmitOfTechnicalPreparation,
+  svcValidateOfTechnicalPreparation,
   svcStartOfOperationTimeLog,
   svcStopOfOperationTimeLog,
   svcUpdateOrdreFabrication,
@@ -393,6 +400,37 @@ export const releaseOrdreFabrication = asyncHandler(async (req, res) => {
   const { id } = ofIdParamSchema.parse({ params: req.params }).params;
   const body = releaseOfSchema.parse({ body: parseBody(req) }).body;
   const out = await svcReleaseOrdreFabrication({ id, body, audit });
+  res.status(200).json(out);
+});
+
+export const getOfTechnicalPreparation = asyncHandler(async (req, res) => {
+  const { id } = ofIdParamSchema.parse({ params: req.params }).params;
+  const out = await svcGetOfTechnicalPreparation({ id });
+  if (!out) { res.status(404).json({ error: "Not found" }); return; }
+  res.status(200).json(out);
+});
+
+export const patchOfTechnicalPreparation = asyncHandler(async (req, res) => {
+  const { id } = ofIdParamSchema.parse({ params: req.params }).params;
+  const body = patchOfTechnicalPreparationSchema.parse({ body: parseBody(req) }).body;
+  const out = await svcPatchOfTechnicalPreparation({ id, body, audit: buildAuditContext(req) });
+  if (!out) { res.status(404).json({ error: "Not found" }); return; }
+  res.status(200).json(out);
+});
+
+export const submitOfTechnicalPreparation = asyncHandler(async (req, res) => {
+  const { id } = ofIdParamSchema.parse({ params: req.params }).params;
+  const body = submitOfTechnicalPreparationSchema.parse({ body: parseBody(req) }).body;
+  const out = await svcSubmitOfTechnicalPreparation({ id, body, audit: buildAuditContext(req) });
+  if (!out) { res.status(404).json({ error: "Not found" }); return; }
+  res.status(200).json(out);
+});
+
+export const validateOfTechnicalPreparation = asyncHandler(async (req, res) => {
+  const { id } = ofIdParamSchema.parse({ params: req.params }).params;
+  const body = validateOfTechnicalPreparationSchema.parse({ body: parseBody(req) }).body;
+  const out = await svcValidateOfTechnicalPreparation({ id, body, audit: buildAuditContext(req) });
+  if (!out) { res.status(404).json({ error: "Not found" }); return; }
   res.status(200).json(out);
 });
 

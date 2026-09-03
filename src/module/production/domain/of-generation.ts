@@ -610,6 +610,7 @@ export type GeneratedOfRef = {
   generation_level: number;
   commande_ligne_id: number | null;
   operations_count: number;
+  technical_readiness?: "INCOMPLETE" | "READY_FOR_REVIEW" | "VALIDATED" | "BLOCKED";
 };
 
 export type RecursiveOfGenerationResult = {
@@ -620,6 +621,133 @@ export type RecursiveOfGenerationResult = {
   purchase_requirements: PurchaseRequirement[];
   warnings: string[];
 };
+
+/**
+ * Creates the traceable root placeholder required by a validated commercial
+ * order when its technical revision is not applicable yet. No operation,
+ * structure or technical snapshot is invented. The same line/batch is reused
+ * on retry; it becomes planifiable only through technical preparation.
+ */
+export async function createIncompleteDraftOrdreFabrication(tx: Queryable, params: {
+  commande_id: number;
+  commande_numero: string;
+  commande_ligne_id: number;
+  livraison_affaire_id: number | null;
+  client_id: string | null;
+  article_id: string | null;
+  piece_technique_id: string;
+  selected_version_id?: string | null;
+  qty_to_produce: number;
+  user_id: number;
+}): Promise<GeneratedOfRef> {
+  const existing = await tx.query<GeneratedOfRef>(
+    `SELECT o.id::bigint::int AS id,
+            COALESCE(o.root_of_id, o.id)::bigint::int AS root_of_id,
+            o.parent_of_id::bigint::int AS parent_of_id,
+            o.generation_level::int AS generation_level,
+            o.commande_ligne_id::bigint::int AS commande_ligne_id,
+            (SELECT count(*)::int FROM public.of_operations op WHERE op.of_id = o.id) AS operations_count
+       FROM public.ordres_fabrication o
+      WHERE o.commande_id = $1::bigint
+        AND o.commande_ligne_id = $2::bigint
+        AND o.statut::text <> 'ANNULE'
+      ORDER BY o.id
+      LIMIT 1`,
+    [params.commande_id, params.commande_ligne_id]
+  );
+  if (existing.rows[0]) return existing.rows[0];
+
+  const ofId = await allocateOrdreFabricationId(tx);
+  const batchId = crypto.randomUUID();
+  const numero = await generateTransactionalBusinessCode(tx, { prefix: "OF" });
+  const sourceHash = crypto.createHash("sha256").update(JSON.stringify({
+    commande_id: params.commande_id,
+    commande_ligne_id: params.commande_ligne_id,
+    piece_technique_id: params.piece_technique_id,
+    selected_version_id: params.selected_version_id ?? null,
+    qty: params.qty_to_produce,
+    readiness: "INCOMPLETE",
+  })).digest("hex");
+
+  await tx.query(
+    `INSERT INTO public.of_generation_batches (
+       id, source_type, commande_id, commande_ligne_id, affaire_id,
+       root_of_id, root_piece_technique_id, requested_qty, metadata,
+       source_hash, created_by
+     ) VALUES (
+       $1::uuid, 'COMMANDE_CLIENT', $2::bigint, $3::bigint, $4::bigint,
+       NULL, $5::uuid, $6, $7::jsonb, $8, $9
+     )`,
+    [
+      batchId,
+      params.commande_id,
+      params.commande_ligne_id,
+      params.livraison_affaire_id,
+      params.piece_technique_id,
+      params.qty_to_produce,
+      JSON.stringify({ commande_numero: params.commande_numero, technical_readiness: "INCOMPLETE" }),
+      sourceHash,
+      params.user_id,
+    ]
+  );
+
+  await tx.query(
+    `INSERT INTO public.ordres_fabrication (
+       id, numero, affaire_id, commande_id, commande_ligne_id, article_id,
+       client_id, piece_technique_id, parent_of_id, root_of_id,
+       generation_batch_id, generation_level, structure_path,
+       quantity_per_parent, quantity_cumulative, quantite_lancee,
+       statut, priority, notes, technical_readiness, technical_preparation,
+       created_by, updated_by
+     ) VALUES (
+       $1,$2,$3::bigint,$4::bigint,$5::bigint,$6::uuid,$7,$8::uuid,
+       NULL,$1,$9::uuid,0,$10,1,1,$11,
+       'BROUILLON'::of_status,'NORMAL'::of_priority,$12,'INCOMPLETE',$13::jsonb,$14,$14
+     )`,
+    [
+      ofId,
+      numero,
+      params.livraison_affaire_id,
+      params.commande_id,
+      params.commande_ligne_id,
+      params.article_id,
+      params.client_id,
+      params.piece_technique_id,
+      batchId,
+      String(ofId),
+      params.qty_to_produce,
+      `Commande ${params.commande_numero} — dossier technique à compléter avant planification`,
+      JSON.stringify({
+        source: "CUSTOMER_ORDER",
+        selected_draft_version_id: params.selected_version_id ?? null,
+        missing_sections: ["plan", "material", "structure", "routing", "quality"],
+      }),
+      params.user_id,
+    ]
+  );
+
+  await tx.query(
+    `UPDATE public.of_generation_batches
+        SET root_of_id = $2::bigint,
+            result = $3::jsonb
+      WHERE id = $1::uuid`,
+    [
+      batchId,
+      ofId,
+      JSON.stringify({ root_of_id: ofId, of_ids: [ofId], source_hash: sourceHash, technical_readiness: "INCOMPLETE" }),
+    ]
+  );
+
+  return {
+    id: ofId,
+    root_of_id: ofId,
+    parent_of_id: null,
+    generation_level: 0,
+    commande_ligne_id: params.commande_ligne_id,
+    operations_count: 0,
+    technical_readiness: "INCOMPLETE",
+  };
+}
 
 export type OfGenerationSourceType = "COMMANDE_CLIENT" | "AFFAIRE" | "MANUAL";
 
@@ -756,6 +884,8 @@ export async function createRecursiveOrdresFabrication(tx: Queryable, params: {
           technical_snapshot,
           technical_snapshot_sha256,
           technical_snapshot_at,
+          technical_readiness,
+          technical_preparation,
           parent_of_id,
           root_of_id,
           generation_batch_id,
@@ -772,7 +902,7 @@ export async function createRecursiveOrdresFabrication(tx: Queryable, params: {
           updated_by
         ) VALUES (
           $1,$2,$3::bigint,$4::bigint,$5::bigint,$6::uuid,$7,$8::uuid,
-          $9::uuid,$10::jsonb,$11,now(),
+          $9::uuid,$10::jsonb,$11,now(),'VALIDATED','{}'::jsonb,
           $12::bigint,$13::bigint,$14::uuid,$15,$16::uuid,$17,$18,$19,
           $20,'BROUILLON'::of_status,'NORMAL'::of_priority,$21,$22,$22
         )
@@ -884,6 +1014,7 @@ export async function createRecursiveOrdresFabrication(tx: Queryable, params: {
       generation_level: node.level,
       commande_ligne_id: params.commande_ligne_id,
       operations_count: operationsCount,
+      technical_readiness: "VALIDATED",
     });
   }
 

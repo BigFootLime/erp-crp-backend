@@ -1,3 +1,5 @@
+import type { TechnicalDraftDTO } from "../../devis/types/technical-draft.types";
+
 export type ClientLite = {
   client_id: string;
   company_name: string;
@@ -234,6 +236,7 @@ export type CommandeLigneInput = {
     source_official_piece_technique_id?: string | null;
     payload?: Record<string, unknown>;
   } | null;
+  technical_draft?: TechnicalDraftDTO | null;
 };
 
 export type CommandeEcheanceInput = {
@@ -250,6 +253,7 @@ export type CreateCommandeInput = {
   source_devis_updated_at?: string | null;
   source_devis_version_id?: number | null;
   creation_flow_version?: CommandeCreationFlowVersion;
+  save_intent?: "DRAFT" | "VALIDATE";
   officialize_preparatory_data?: boolean;
   date_commande?: string;
   contact_id?: string | null;

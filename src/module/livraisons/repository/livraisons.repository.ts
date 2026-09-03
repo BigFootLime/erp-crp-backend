@@ -3483,6 +3483,8 @@ export type PreparationCartItem = {
   commande_numero: string
   livraison_affaire_id: number | null
   affaire_reference: string | null
+  principal_affaire_reference: string | null
+  remaining_production_qty: number
   commande_ligne_id: number
   allocation_id: number | null
   client_id: string
@@ -3544,7 +3546,12 @@ export async function repoListPreparationCart(filters: PreparationCartQueryDTO):
   const page = filters.page ?? 1
   const pageSize = filters.pageSize ?? 100
   const offset = (page - 1) * pageSize
-  const where: string[] = ["r.status = 'ACTIVE'", "r.qty_reserved > r.qty_consumed + r.qty_prepared"]
+  const where: string[] = [
+    "r.status = 'ACTIVE'",
+    "r.qty_reserved > r.qty_consumed + r.qty_prepared",
+    "af.is_principal = false",
+    "af.delivery_readiness_state = 'READY_FOR_BL'",
+  ]
   const values: unknown[] = []
   const push = (value: unknown) => {
     values.push(value)
@@ -3597,6 +3604,8 @@ export async function repoListPreparationCart(filters: PreparationCartQueryDTO):
     commande_numero: string
     livraison_affaire_id: number | null
     affaire_reference: string | null
+    principal_affaire_reference: string | null
+    remaining_production_qty: number
     commande_ligne_id: number
     allocation_id: number | null
     client_id: string
@@ -3631,6 +3640,8 @@ export async function repoListPreparationCart(filters: PreparationCartQueryDTO):
         cc.numero AS commande_numero,
         r.livraison_affaire_id::bigint::int AS livraison_affaire_id,
         af.reference AS affaire_reference,
+        parent_af.reference AS principal_affaire_reference,
+        COALESCE(production_progress.remaining_production_qty, 0)::float8 AS remaining_production_qty,
         a.commande_ligne_id::bigint::int AS commande_ligne_id,
         a.id::bigint::int AS allocation_id,
         cc.client_id::text AS client_id,
@@ -3663,11 +3674,24 @@ export async function repoListPreparationCart(filters: PreparationCartQueryDTO):
       JOIN public.commande_ligne cl ON cl.id = a.commande_ligne_id
       LEFT JOIN public.clients c ON c.client_id = cc.client_id
       LEFT JOIN public.affaire af ON af.id = r.livraison_affaire_id
+      LEFT JOIN public.affaire parent_af ON parent_af.id = af.parent_affaire_id
       JOIN public.articles art ON art.id = r.article_id
       LEFT JOIN public.lots l ON l.id = r.lot_id
       LEFT JOIN public.emplacements e ON e.location_id = r.location_id
       LEFT JOIN public.magasins m ON m.id = e.magasin_id
       LEFT JOIN public.ordres_fabrication ofa ON ofa.id = r.of_id
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(sum(greatest(
+          COALESCE(parent_of.quantite_lancee, 0)
+          - COALESCE(parent_of.quantite_bonne, 0)
+          - COALESCE(parent_of.quantite_rebut, 0),
+          0
+        )), 0)::float8 AS remaining_production_qty
+        FROM public.ordres_fabrication parent_of
+        JOIN public.affaire child_affaire ON child_affaire.id = parent_of.affaire_id
+        WHERE child_affaire.parent_affaire_id = parent_af.id
+          AND parent_of.statut::text <> 'ANNULE'
+      ) production_progress ON parent_af.id IS NOT NULL
       LEFT JOIN LATERAL (
         SELECT
           (
@@ -3757,6 +3781,8 @@ export async function repoListPreparationCart(filters: PreparationCartQueryDTO):
         commande_numero: row.commande_numero,
         livraison_affaire_id: row.livraison_affaire_id === null ? null : Number(row.livraison_affaire_id),
         affaire_reference: row.affaire_reference,
+        principal_affaire_reference: row.principal_affaire_reference,
+        remaining_production_qty: Number(row.remaining_production_qty ?? 0),
         commande_ligne_id: Number(row.commande_ligne_id),
         allocation_id: row.allocation_id === null ? null : Number(row.allocation_id),
         client_id: row.client_id,

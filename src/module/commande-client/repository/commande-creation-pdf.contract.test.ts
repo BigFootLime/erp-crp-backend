@@ -63,7 +63,9 @@ describe("commande creation PDF transaction contract", () => {
   it("covers every lifecycle-created affaire while preserving replay no-op paths", () => {
     const created = (source.match(/await createAffaire\(client/g) ?? []).length;
     const queued = (source.match(/await queueAffaireCreationPdf\(client/g) ?? []).length;
-    expect(created).toBe(5);
+    // The command workflow now creates the principal affair in addition to the
+    // delivery affairs covered by the historical contract.
+    expect(created).toBe(6);
     expect(queued).toBe(created);
     expect(source).toContain('documentKind: "AFFAIR_CREATION_SNAPSHOT"');
     expect(source).toContain('idempotencyKey: `affaire:${affaire.id}:creation:v1`');

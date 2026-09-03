@@ -1,5 +1,15 @@
 import type { RequestHandler } from "express";
 import { z } from "zod";
+
+export const createQuickTechnicalPieceBodySchema = z.object({
+  client_id: z.string().trim().regex(/^[0-9]{3}$/, "Client invalide."),
+  reference: z.string().trim().min(1, "La référence est obligatoire.").max(100),
+  indice_client: z.string().trim().min(1, "L'indice client est obligatoire.").max(50),
+  designation: z.string().trim().min(1, "La désignation est obligatoire.").max(400),
+  plan_reference: z.string().trim().max(160).optional().nullable(),
+}).strict();
+
+export type CreateQuickTechnicalPieceBodyDTO = z.infer<typeof createQuickTechnicalPieceBodySchema>;
 import { COMMANDE_CHECKPOINT_STATUSES } from "../workflow/commande-client-workflow.definition";
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date (expected YYYY-MM-DD)");
@@ -17,6 +27,37 @@ export const commandeLineReconciliationSchema = z
   .strict();
 
 export const cadreReleaseStatusSchema = z.enum(["PLANNED", "SENT", "CONFIRMED", "DELIVERED", "CANCELLED"]);
+
+const technicalDraftValueSchema = z.object({
+  value: z.unknown(),
+  source: z.enum(["DEVIS", "COMMANDE", "CERP", "MANUAL"]),
+  source_ref: z.string().optional().nullable(),
+  needs_matching: z.boolean().optional(),
+}).strict();
+
+const technicalDraftSectionSchema = z.object({
+  version: z.literal(1),
+  values: z.record(z.string(), technicalDraftValueSchema),
+}).strict();
+
+const technicalDraftSchema = z.object({
+  schema_version: z.literal(1),
+  source: z.literal("DEVIS"),
+  source_devis_id: z.coerce.number().int().positive(),
+  source_dossier_id: z.string().uuid().optional().nullable(),
+  completion_percent: z.coerce.number().int().min(0).max(100),
+  sections: z.object({
+    identity: technicalDraftSectionSchema,
+    material: technicalDraftSectionSchema,
+    bom: technicalDraftSectionSchema,
+    routing: technicalDraftSectionSchema,
+    operations: technicalDraftSectionSchema,
+    treatments: technicalDraftSectionSchema,
+    quality: technicalDraftSectionSchema,
+    documents: technicalDraftSectionSchema,
+  }).strict(),
+  unmapped: z.record(z.string(), technicalDraftValueSchema),
+}).strict();
 
 const boolFromQuery = z.preprocess((value) => {
   if (typeof value !== "string") return value;
@@ -74,6 +115,7 @@ export const commandeLigneInputSchema = z.object({
     })
     .optional()
     .nullable(),
+  technical_draft: technicalDraftSchema.optional().nullable(),
 });
 
 export const commandeEcheanceInputSchema = z.object({
@@ -95,6 +137,7 @@ export const createCommandeBodySchema = z.preprocess((value) => {
 z.object({
   order_type: commandeOrderTypeSchema.optional().default("FERME"),
   creation_flow_version: commandeCreationFlowVersionSchema.optional().default(1),
+  save_intent: z.enum(["DRAFT", "VALIDATE"]).optional().default("VALIDATE"),
   numero: z.string().trim().min(1).optional(),
   client_id: z.string().trim().min(1).optional().nullable(),
   devis_id: z.coerce.number().int().positive().optional().nullable(),
@@ -147,16 +190,9 @@ z.object({
   echeances: z.array(commandeEcheanceInputSchema).optional().default([]),
 }))
   .superRefine((val, ctx) => {
-    if (val.creation_flow_version === 2) {
-      const requiredDecisions = ["designation", "quantite", "unite", "prix_unitaire_ht", "piece_technique_version_id"];
+    if (val.creation_flow_version === 2 && val.save_intent === "VALIDATE") {
+      const requiredDecisions = ["designation", "quantite", "unite", "prix_unitaire_ht"];
       val.lignes.forEach((line, index) => {
-        if (!line.piece_technique_version_id) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            message: "piece_technique_version_id is required for reconciled order lines",
-            path: ["lignes", index, "piece_technique_version_id"],
-          });
-        }
         if (line.reconciliation?.status !== "RESOLVED") {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,

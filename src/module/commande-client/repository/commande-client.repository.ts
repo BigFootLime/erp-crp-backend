@@ -53,6 +53,7 @@ import {
   type CommandeWorkflowTransitionCause,
 } from "../workflow/commande-client-workflow.definition";
 import {
+  createIncompleteDraftOrdreFabrication,
   createRecursiveOrdresFabrication,
   type GeneratedOfRef,
 } from "../../production/domain/of-generation";
@@ -330,6 +331,7 @@ type PreparatorySourceBundle = {
     source_official_piece_technique_id: string | null;
     payload: Record<string, unknown>;
   } | null;
+  technical_draft: CreateCommandeInput["lignes"][number]["technical_draft"];
 };
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -425,6 +427,7 @@ async function loadPreparatorySourceBundle(
             payload: dossierData.payload ?? {},
           }
         : null,
+      technical_draft: line.technical_draft ?? null,
     };
   }
 
@@ -506,6 +509,7 @@ async function loadPreparatorySourceBundle(
           payload: row.dossier_payload ?? {},
         }
       : null,
+    technical_draft: line.technical_draft ?? null,
   };
 }
 
@@ -598,7 +602,7 @@ async function ensureOfficialPieceFromPreparatory(
           $6,
           $7,
           'ACTIVE',
-          false,
+          0,
           NULL,
           NULL,
           $8,
@@ -664,6 +668,79 @@ async function ensureOfficialPieceFromPreparatory(
     `,
     [dossier.id, officialPieceId, commandeId]
   );
+
+  // A promoted quote dossier is immediately usable commercially, but its
+  // technical content is deliberately born as a mutable draft.  Reuse the
+  // existing draft for the same customer index; never mutate an applicable
+  // revision.  This also guarantees that the order line can pin an explicit
+  // revision without pretending it is production-ready.
+  const payload = asRecord(dossier.payload);
+  const structuredDraft = source.technical_draft ?? null;
+  const identityValues = structuredDraft?.sections.identity.values ?? {};
+  const materialValues = structuredDraft?.sections.material.values ?? {};
+  const structuredIndex = identityValues.indice_externe?.value;
+  const structuredPlanReference = identityValues.plan_reference?.value;
+  const structuredMaterial = materialValues.matiere_prevue?.value ?? materialValues.matiere?.value;
+  const externalIndex = typeof structuredIndex === "string" && structuredIndex.trim()
+    ? structuredIndex.trim()
+    : typeof payload.indice_externe === "string" && payload.indice_externe.trim()
+      ? payload.indice_externe.trim()
+      : "NA";
+  const planReference = typeof structuredPlanReference === "string" && structuredPlanReference.trim()
+    ? structuredPlanReference.trim()
+    : typeof payload.plan_reference === "string" && payload.plan_reference.trim()
+      ? payload.plan_reference.trim()
+      : dossier.code_piece;
+  const existingDraft = await db.query<{ id: string }>(
+    `SELECT id::text AS id
+       FROM public.piece_technique_versions
+      WHERE piece_technique_id = $1::uuid
+        AND COALESCE(indice_externe_original, indice) = $2
+        AND statut = 'BROUILLON'
+      ORDER BY version_interne DESC NULLS LAST, created_at DESC
+      LIMIT 1`,
+    [officialPieceId, externalIndex]
+  );
+  if (!existingDraft.rows[0]) {
+    const nextVersion = await db.query<{ version_interne: number }>(
+      `SELECT COALESCE(max(version_interne), 0)::int + 1 AS version_interne
+         FROM public.piece_technique_versions
+        WHERE piece_technique_id = $1::uuid`,
+      [officialPieceId]
+    );
+    const internalVersion = nextVersion.rows[0]?.version_interne ?? 1;
+    await db.query(
+      `INSERT INTO public.piece_technique_versions (
+         piece_technique_id, indice, plan_reference,
+         indice_externe_original, indice_externe_normalise,
+         version_interne, code_metier, statut, is_current,
+         raison_changement, motif_modification, matiere_prevue,
+         commentaire_revision, created_by, updated_by
+       ) VALUES (
+         $1::uuid, $2, $3, $2, upper(regexp_replace($2, '[^A-Za-z0-9]+', '', 'g')),
+         $4, concat($3, '-', $2, '-R', lpad($4::text, 2, '0')),
+         'BROUILLON', false, 'Import depuis devis', 'Import depuis devis',
+         $5, $6, NULL, NULL
+       )`,
+      [
+        officialPieceId,
+        externalIndex,
+        planReference,
+        internalVersion,
+        typeof structuredMaterial === "string"
+          ? structuredMaterial
+          : typeof payload.matiere === "string"
+            ? payload.matiere
+            : null,
+        JSON.stringify({
+          source: "DEVIS",
+          technical_draft: structuredDraft ?? payload,
+          completion_percent: structuredDraft?.completion_percent ?? null,
+          unmapped_fields: structuredDraft ? Object.keys(structuredDraft.unmapped) : [],
+        }),
+      ]
+    );
+  }
 
   return officialPieceId;
 }
@@ -846,30 +923,48 @@ async function hasCommandeToAffaireRoleColumn(db: Queryable): Promise<boolean> {
 }
 
 type CommandeToAffaireRole = "LIVRAISON" | null;
-type CommandeToAffaireMapping = { affaire_id: number; role: CommandeToAffaireRole };
+type CommandeToAffaireMapping = {
+  affaire_id: number;
+  role: CommandeToAffaireRole;
+  is_principal: boolean;
+  delivery_readiness_state: string | null;
+};
 
 async function listCommandeToAffaireMappings(db: Queryable, commandeId: number): Promise<CommandeToAffaireMapping[]> {
   const hasRoleColumn = await hasCommandeToAffaireRoleColumn(db);
   const sql = hasRoleColumn
     ? `
-      SELECT affaire_id::int AS affaire_id, role
-      FROM commande_to_affaire
-      WHERE commande_id = $1
-      ORDER BY date_conversion DESC NULLS LAST, id DESC
+      SELECT cta.affaire_id::int AS affaire_id,
+             cta.role,
+             COALESCE(a.is_principal, false) AS is_principal,
+             a.delivery_readiness_state::text AS delivery_readiness_state
+      FROM commande_to_affaire cta
+      JOIN public.affaire a ON a.id = cta.affaire_id
+      WHERE cta.commande_id = $1
+      ORDER BY cta.date_conversion DESC NULLS LAST, cta.id DESC
       `
     : `
       SELECT
         affaire_id::int AS affaire_id,
-        'LIVRAISON' AS role
+        'LIVRAISON' AS role,
+        false AS is_principal,
+        NULL::text AS delivery_readiness_state
       FROM commande_to_affaire
       WHERE commande_id = $1
       ORDER BY id ASC
       `;
 
-  const res = await db.query<{ affaire_id: number; role: string | null }>(sql, [commandeId]);
+  const res = await db.query<{
+    affaire_id: number;
+    role: string | null;
+    is_principal: boolean;
+    delivery_readiness_state: string | null;
+  }>(sql, [commandeId]);
   return res.rows.map((r) => ({
     affaire_id: r.affaire_id,
     role: r.role === "LIVRAISON" ? r.role : null,
+    is_principal: r.is_principal === true,
+    delivery_readiness_state: r.delivery_readiness_state ?? null,
   }));
 }
 
@@ -881,6 +976,7 @@ async function listGeneratedOfRefs(db: Queryable, commandeId: number): Promise<G
     generation_level: number;
     commande_ligne_id: number;
     operations_count: number;
+    technical_readiness: "INCOMPLETE" | "READY_FOR_REVIEW" | "VALIDATED" | "BLOCKED";
   }>(
     `
       SELECT
@@ -889,6 +985,7 @@ async function listGeneratedOfRefs(db: Queryable, commandeId: number): Promise<G
         o.parent_of_id::bigint::int AS parent_of_id,
         o.generation_level::int AS generation_level,
         o.commande_ligne_id::bigint::int AS commande_ligne_id,
+        o.technical_readiness::text AS technical_readiness,
         (SELECT count(*)::int FROM public.of_operations op WHERE op.of_id = o.id) AS operations_count
       FROM public.ordres_fabrication o
       WHERE o.commande_id = $1
@@ -906,7 +1003,21 @@ async function listGeneratedOfRefs(db: Queryable, commandeId: number): Promise<G
     generation_level: Number(row.generation_level),
     commande_ligne_id: Number(row.commande_ligne_id),
     operations_count: Number(row.operations_count ?? 0),
+    technical_readiness: row.technical_readiness,
   }));
+}
+
+async function listActiveCommandeReservationIds(db: Queryable, commandeId: number): Promise<string[]> {
+  const res = await db.query<{ id: string }>(
+    `SELECT reservation.id::text AS id
+       FROM public.stock_reservations reservation
+       JOIN public.commande_ligne line ON line.id = reservation.commande_ligne_id
+      WHERE line.commande_id = $1::bigint
+        AND reservation.status = 'ACTIVE'
+      ORDER BY reservation.created_at, reservation.id`,
+    [commandeId]
+  );
+  return res.rows.map((row) => row.id);
 }
 
 type StockOnHandSource = {
@@ -3062,6 +3173,7 @@ type InsertCommandeLignesOptions = {
   commande_id_int: number;
   actor_user_id: number | null;
   creation_flow_version: 1 | 2;
+  save_intent: "DRAFT" | "VALIDATE";
 };
 
 const RECONCILIATION_REQUIRED_FIELDS = [
@@ -3069,27 +3181,7 @@ const RECONCILIATION_REQUIRED_FIELDS = [
   "quantite",
   "unite",
   "prix_unitaire_ht",
-  "piece_technique_version_id",
 ] as const;
-
-function reconciliationRecord(value: unknown): Record<string, unknown> | null {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null;
-}
-
-function reconciliationSnapshotMatches(field: string, expected: unknown, actual: unknown): boolean {
-  if (field === "quantite" || field === "prix_unitaire_ht") {
-    const expectedNumber = Number(expected);
-    const actualNumber = Number(actual);
-    return Number.isFinite(expectedNumber)
-      && Number.isFinite(actualNumber)
-      && Math.abs(expectedNumber - actualNumber) < 0.000001;
-  }
-  const normalizedExpected = expected === null || expected === undefined ? "" : String(expected).trim();
-  const normalizedActual = actual === null || actual === undefined ? "" : String(actual).trim();
-  return normalizedExpected === normalizedActual;
-}
 
 async function validateCommandeLineTechnicalContext(
   client: Queryable,
@@ -3097,17 +3189,10 @@ async function validateCommandeLineTechnicalContext(
   resolved: CommandeLineArticleResolution,
   lineIndex: number,
   options: InsertCommandeLignesOptions
-): Promise<void> {
+): Promise<NonNullable<CreateCommandeInput["lignes"][number]["reconciliation"]> | null> {
   const versionId = typeof line.piece_technique_version_id === "string"
     ? line.piece_technique_version_id.trim()
     : "";
-
-  if (options.creation_flow_version === 2 && !versionId) {
-    throw new HttpError(400, "PIECE_VERSION_REQUIRED", "Une version technique doit être choisie pour chaque ligne.", {
-      field: `lignes.${lineIndex}.piece_technique_version_id`,
-      line_index: lineIndex,
-    });
-  }
 
   if (versionId) {
     const version = await client.query<{ id: string }>(
@@ -3128,7 +3213,9 @@ async function validateCommandeLineTechnicalContext(
     }
   }
 
-  if (options.creation_flow_version !== 2) return;
+  if (options.creation_flow_version !== 2 || options.save_intent === "DRAFT") {
+    return line.reconciliation ?? null;
+  }
   const reconciliation = line.reconciliation;
   if (!reconciliation || reconciliation.status !== "RESOLVED") {
     throw new HttpError(409, "ORDER_RECONCILIATION_REQUIRED", "Le rapprochement de chaque ligne doit être terminé.", {
@@ -3150,10 +3237,10 @@ async function validateCommandeLineTechnicalContext(
     });
   }
 
-  // Le statut RESOLVED ne suffit pas : une ligne peut avoir été modifiée après la fenêtre
-  // de comparaison (ou provenir d'un ancien brouillon local). Le snapshot choisi doit donc
-  // correspondre exactement aux valeurs que nous allons persister.
-  const selected = reconciliationRecord(reconciliation.sources.selected);
+  // Le snapshot serveur est construit ici, une seule fois, à partir des
+  // valeurs réellement persistées. Le client fournit les décisions et les
+  // sources, jamais un verrou de fraîcheur autoritaire : cela supprime le faux
+  // blocage « La ligne a changé » sans relâcher les arbitrages commerciaux.
   const currentValues: Record<string, unknown> = {
     designation: line.designation,
     quantite: line.quantite,
@@ -3164,24 +3251,6 @@ async function validateCommandeLineTechnicalContext(
     piece_technique_id: resolved.piece_technique_id,
     piece_technique_version_id: versionId,
   };
-  const staleFields = selected
-    ? Object.entries(currentValues)
-        .filter(([field, actual]) => !reconciliationSnapshotMatches(field, selected[field], actual))
-        .map(([field]) => field)
-    : Object.keys(currentValues);
-  if (staleFields.length > 0) {
-    throw new HttpError(
-      409,
-      "ORDER_RECONCILIATION_STALE",
-      "La ligne a changé depuis le rapprochement. Vérifiez à nouveau les valeurs retenues.",
-      {
-        field: `lignes.${lineIndex}.reconciliation`,
-        line_index: lineIndex,
-        stale_fields: staleFields,
-      }
-    );
-  }
-
   const quoteSelected = Object.values(reconciliation.decisions).some((source) => source === "QUOTE");
   if (quoteSelected) {
     const quoteLineId = line.source_devis_ligne_id ?? null;
@@ -3206,6 +3275,98 @@ async function validateCommandeLineTechnicalContext(
       });
     }
   }
+
+  return {
+    ...reconciliation,
+    sources: {
+      ...reconciliation.sources,
+      selected: currentValues,
+      resolved_at_server: new Date().toISOString(),
+    },
+  };
+}
+
+async function advanceCustomerOrderV2AfterLaunch(params: {
+  tx: Queryable;
+  commande_id: number;
+  user_id: number;
+  has_technical_warnings: boolean;
+  of_ids: number[];
+}) {
+  const targetStatus: CommandeWorkflowStatus = params.has_technical_warnings
+    ? "ATTENTE_TECHNIQUE"
+    : "ATTENTE_PLANNING";
+
+  await params.tx.query(
+    `
+      UPDATE public.commande_client_workflow_checkpoint
+      SET status = CASE
+            WHEN checkpoint_code IN ('order_intake', 'commercial_review', 'stock_check', 'of_generation') THEN 'done'
+            WHEN checkpoint_code = 'technical_analysis' THEN
+              CASE WHEN $3::boolean THEN 'active' ELSE 'done' END
+            WHEN checkpoint_code = 'planning_validation' THEN
+              CASE WHEN $3::boolean THEN 'pending' ELSE 'active' END
+            ELSE status
+          END,
+          completed_at = CASE
+            WHEN checkpoint_code IN ('order_intake', 'commercial_review', 'stock_check', 'of_generation')
+              OR (checkpoint_code = 'technical_analysis' AND NOT $3::boolean)
+              THEN COALESCE(completed_at, now())
+            ELSE NULL
+          END,
+          completed_by = CASE
+            WHEN checkpoint_code IN ('order_intake', 'commercial_review', 'stock_check', 'of_generation')
+              OR (checkpoint_code = 'technical_analysis' AND NOT $3::boolean)
+              THEN COALESCE(completed_by, $2::int)
+            ELSE NULL
+          END,
+          metadata = COALESCE(metadata, '{}'::jsonb) || $4::jsonb,
+          updated_at = now()
+      WHERE commande_id = $1
+        AND checkpoint_code IN (
+          'order_intake', 'commercial_review', 'technical_analysis', 'stock_check',
+          'of_generation', 'planning_validation'
+        )
+    `,
+    [
+      params.commande_id,
+      params.user_id,
+      params.has_technical_warnings,
+      JSON.stringify({
+        flow_version: 2,
+        commercial_validation: true,
+        of_ids: params.of_ids,
+      }),
+    ]
+  );
+
+  const last = await params.tx.query<{ nouveau_statut: string | null }>(
+    `SELECT nouveau_statut
+       FROM public.commande_historique
+      WHERE commande_id = $1
+      ORDER BY date_action DESC, id DESC
+      LIMIT 1`,
+    [params.commande_id]
+  );
+  const current = normalizeCommandeWorkflowStatus(last.rows[0]?.nouveau_statut ?? null) ?? "BROUILLON";
+  if (current !== targetStatus) {
+    await params.tx.query(
+      `INSERT INTO public.commande_historique
+        (commande_id, user_id, ancien_statut, nouveau_statut, commentaire)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [
+        params.commande_id,
+        params.user_id,
+        current,
+        targetStatus,
+        params.has_technical_warnings
+          ? "Commande validée commercialement — préparation technique à compléter"
+          : "Commande validée commercialement — OF prêts à planifier",
+      ]
+    );
+  }
+
+  return targetStatus;
 }
 
 async function insertCommandeLignes(
@@ -3266,7 +3427,23 @@ async function insertCommandeLignes(
       resolved = await resolveCommandeLineArticle(client, l, lineIndex);
     }
 
-    await validateCommandeLineTechnicalContext(client, l, resolved, lineIndex, options);
+    let effectiveVersionId = l.piece_technique_version_id ?? null;
+    if (!effectiveVersionId && resolved.piece_technique_id) {
+      const draftVersion = await client.query<{ id: string }>(
+        `SELECT id::text AS id
+           FROM public.piece_technique_versions
+          WHERE piece_technique_id = $1::uuid
+          ORDER BY
+            CASE statut WHEN 'BROUILLON' THEN 0 WHEN 'EN_VALIDATION' THEN 1 WHEN 'APPLICABLE' THEN 2 ELSE 3 END,
+            version_interne DESC NULLS LAST,
+            created_at DESC
+          LIMIT 1`,
+        [resolved.piece_technique_id]
+      );
+      effectiveVersionId = draftVersion.rows[0]?.id ?? null;
+    }
+    const effectiveLine = { ...l, piece_technique_version_id: effectiveVersionId };
+    const reconciliation = await validateCommandeLineTechnicalContext(client, effectiveLine, resolved, lineIndex, options);
 
     const designation = typeof l.designation === "string" && l.designation.trim().length > 0
       ? l.designation.trim()
@@ -3410,13 +3587,13 @@ async function insertCommandeLignes(
         referencePrice.reference_source,
         referencePrice.decision,
         referencePrice.history_id,
-        l.piece_technique_version_id ?? null,
+        effectiveVersionId,
         l.source_devis_ligne_id ?? null,
-        l.reconciliation?.status ?? "LEGACY",
-        JSON.stringify(l.reconciliation?.sources ?? {}),
-        JSON.stringify(l.reconciliation?.decisions ?? {}),
-        l.reconciliation?.status === "RESOLVED" ? new Date().toISOString() : null,
-        l.reconciliation?.status === "RESOLVED" ? options.actor_user_id : null,
+        reconciliation?.status ?? "LEGACY",
+        JSON.stringify(reconciliation?.sources ?? {}),
+        JSON.stringify(reconciliation?.decisions ?? {}),
+        reconciliation?.status === "RESOLVED" ? new Date().toISOString() : null,
+        reconciliation?.status === "RESOLVED" ? options.actor_user_id : null,
       ]
     );
 
@@ -3739,6 +3916,7 @@ export async function repoCreateCommande(
       commande_id_int: commandeIdInt,
       actor_user_id: actorUserId,
       creation_flow_version: input.creation_flow_version ?? 1,
+      save_intent: input.save_intent ?? "VALIDATE",
     });
     await insertCommandeEcheances(client, commandeId, input.echeances ?? []);
     await insertCommandeDocuments(client, commandeId, documents, movedDocuments);
@@ -4134,6 +4312,7 @@ export async function repoUpdateCommande(
       commande_id_int: toInt(id, "commande_id"),
       actor_user_id: actorUserId,
       creation_flow_version: existingFlowVersion,
+      save_intent: input.save_intent ?? "VALIDATE",
     });
     await insertCommandeEcheances(client, id, input.echeances ?? []);
     await insertCommandeDocuments(client, id, documents, movedDocuments);
@@ -4435,51 +4614,6 @@ export async function repoAnalyzeCommandeStock(id: string, audit: AuditContext) 
   return withRealtimeOutboxTransaction(client, (tx) => analyzeCommandeStockTx(tx, commandeId, audit));
 }
 
-async function assertCommandeTechnicalVersionsLaunchable(
-  db: PoolClient,
-  commandeId: number,
-  creationFlowVersion: number
-): Promise<void> {
-  if (creationFlowVersion !== 2) return;
-  const invalid = await db.query<{
-    commande_ligne_id: number;
-    version_id: string | null;
-    indice: string | null;
-    statut: string | null;
-    date_effet: string | null;
-  }>(
-    `SELECT cl.id::bigint::int AS commande_ligne_id,
-            version.id::text AS version_id,
-            version.indice,
-            version.statut,
-            version.date_effet::text AS date_effet
-       FROM public.commande_ligne cl
-       LEFT JOIN public.piece_technique_versions version
-         ON version.id = cl.piece_technique_version_id
-        AND version.piece_technique_id = cl.piece_technique_id
-      WHERE cl.commande_id = $1::bigint
-        AND (
-          cl.reconciliation_status <> 'RESOLVED'
-          OR version.id IS NULL
-          OR version.statut <> 'APPLICABLE'
-          OR (version.date_effet IS NOT NULL AND version.date_effet > CURRENT_DATE)
-        )
-      ORDER BY cl.id
-      LIMIT 1`,
-    [commandeId]
-  );
-  const line = invalid.rows[0];
-  if (!line) return;
-  throw new HttpError(
-    409,
-    "COMMAND_LINE_VERSION_NOT_APPLICABLE",
-    line.version_id
-      ? `L'indice ${line.indice ?? "sélectionné"} de la ligne ${line.commande_ligne_id} n'est pas applicable.`
-      : `La ligne ${line.commande_ligne_id} n'a pas de version technique applicable.`,
-    line
-  );
-}
-
 export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAffairesV3BodyDTO, audit: AuditContext) {
   const commandeId = toInt(id, "commande_id");
   const client = await pool.connect();
@@ -4532,11 +4666,10 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
     }
 
     const orderType = coerceOrderType(commande.order_type);
-    await assertCommandeTechnicalVersionsLaunchable(client, commandeId, commande.creation_flow_version);
     const requestedLivraisonCountRaw = typeof body.livraison_count === "number" ? body.livraison_count : 1;
     const requestedLivraisonCount = Math.max(1, Math.min(10, Math.trunc(requestedLivraisonCountRaw)));
 
-    if (orderType !== "INTERNE") {
+    if (orderType !== "INTERNE" && commande.creation_flow_version !== 2) {
       const workflowHeader = await loadCommandeWorkflowHeaderWithStatus(client, commandeId);
       if (!workflowHeader) throw new HttpError(404, "COMMANDE_NOT_FOUND", "Commande not found");
       await repoEnsureCommandeWorkflowCheckpoints(client, commandeId, workflowHeader.statut);
@@ -4682,7 +4815,29 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
 
     // Idempotency + split delivery support: allow multiple LIVRAISON mappings per commande.
     const existingMappings = await listCommandeToAffaireMappings(client, commandeId);
-    const existingLivraisons = existingMappings.filter((r) => r.role === "LIVRAISON");
+    const existingLivraisons = existingMappings.filter((r) => r.role === "LIVRAISON" && !r.is_principal);
+    let principalAffaireId = existingMappings.find((r) => r.is_principal)?.affaire_id ?? null;
+
+    if (orderType !== "INTERNE" && principalAffaireId === null) {
+      principalAffaireId = await createAffaire(client, {
+        commande_id: commandeId,
+        devis_id: commande.devis_id ? toNullableInt(commande.devis_id, "commande.devis_id") : null,
+        client_id: clientId as string,
+        is_principal: true,
+        parent_affaire_id: null,
+        delivery_readiness_state: "WAITING_STOCK",
+      });
+      await insertCommandeToAffaireMapping(client, {
+        commande_id: commandeId,
+        affaire_id: principalAffaireId,
+        role: null,
+        commentaire: "Affaire principale générée depuis la commande",
+      });
+      await queueAffaireCreationPdf(client, {
+        affaireId: principalAffaireId,
+        actorUserId: audit.user_id,
+      });
+    }
 
     if (orderType === "INTERNE") {
       const existingOfs = await listGeneratedOfRefs(client, commandeId);
@@ -4697,7 +4852,9 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         const workflowHeader = planningRepaired
           ? null
           : await loadCommandeWorkflowHeaderWithStatus(client, commandeId);
+        const draftOfs = existingOfs.filter((of) => of.technical_readiness !== "VALIDATED");
         return {
+          principal_affaire_id: null,
           affaire_ids: [],
           livraison_affaire_id: null,
           requires_confirmation: false,
@@ -4706,6 +4863,14 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
           idempotent_replay: true,
           workflow_status: planningRepaired ? "ATTENTE_PLANNING" : workflowHeader?.statut ?? null,
           of_ids: existingOfs.map((of) => of.id),
+          draft_of_ids: draftOfs.map((of) => of.id),
+          delivery_tranches: [],
+          reservations_created: [],
+          technical_warnings: draftOfs.map((of) => ({
+            commande_ligne_id: of.commande_ligne_id,
+            code: "TECHNICAL_PREPARATION_REQUIRED",
+            message: "OF brouillon : le dossier technique doit être complété et validé avant planification.",
+          })),
           root_of_ids: existingOfs.filter((of) => of.parent_of_id === null).map((of) => of.id),
           child_of_ids: existingOfs.filter((of) => of.parent_of_id !== null).map((of) => of.id),
           ofs: existingOfs,
@@ -4720,7 +4885,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       }
     }
 
-    if (recoveredInvalidPlanningState && existingMappings.length > 0 && existingLivraisons.length === 0) {
+    if (recoveredInvalidPlanningState && existingLivraisons.length === 0 && existingMappings.some((mapping) => !mapping.is_principal)) {
       throw new HttpError(
         409,
         "COMMANDE_AFFAIRE_MAPPING_INVALID",
@@ -4728,7 +4893,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       );
     }
 
-    if (orderType !== "INTERNE" && existingMappings.length > 0 && !recoveredInvalidPlanningState) {
+    if (orderType !== "INTERNE" && existingLivraisons.length > 0 && !recoveredInvalidPlanningState) {
       if (existingLivraisons.length >= requestedLivraisonCount) {
         const livraison = existingLivraisons[0]?.affaire_id ?? null;
         const existingOfs = await listGeneratedOfRefs(client, commandeId);
@@ -4739,7 +4904,10 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
           ar_sent_at: commande.ar_sent_at,
           of_ids: existingOfs.map((of) => of.id),
         });
+        const draftOfs = existingOfs.filter((of) => of.technical_readiness !== "VALIDATED");
+        const reservationIds = await listActiveCommandeReservationIds(client, commandeId);
         return {
+          principal_affaire_id: principalAffaireId,
           affaire_ids: existingLivraisons.map((r) => r.affaire_id),
           livraison_affaire_id: livraison,
           requires_confirmation: false,
@@ -4747,7 +4915,19 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
           generation_mode: "CUSTOMER_ORDER",
           idempotent_replay: true,
           workflow_status: planningRepaired ? "ATTENTE_PLANNING" : null,
+          reservations_created: reservationIds,
           of_ids: existingOfs.map((of) => of.id),
+          draft_of_ids: draftOfs.map((of) => of.id),
+          delivery_tranches: existingLivraisons.map((tranche) => ({
+            affaire_id: tranche.affaire_id,
+            parent_affaire_id: principalAffaireId,
+            readiness_state: tranche.delivery_readiness_state ?? "WAITING_STOCK",
+          })),
+          technical_warnings: draftOfs.map((of) => ({
+            commande_ligne_id: of.commande_ligne_id,
+            code: "TECHNICAL_PREPARATION_REQUIRED",
+            message: "OF brouillon : le dossier technique doit être complété et validé avant planification.",
+          })),
           root_of_ids: existingOfs.filter((of) => of.parent_of_id === null).map((of) => of.id),
           child_of_ids: existingOfs.filter((of) => of.parent_of_id !== null).map((of) => of.id),
           ofs: existingOfs,
@@ -4768,6 +4948,8 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
           commande_id: commandeId,
           devis_id: commande.devis_id ? toNullableInt(commande.devis_id, "commande.devis_id") : null,
           client_id: clientId as string,
+          parent_affaire_id: principalAffaireId,
+          delivery_readiness_state: "WAITING_STOCK",
         });
         await insertCommandeToAffaireMapping(client, {
           commande_id: commandeId,
@@ -4783,6 +4965,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       const nextLivraisons = nextMappings.filter((r) => r.role === "LIVRAISON");
       const livraison = nextLivraisons[0]?.affaire_id ?? null;
       return {
+        principal_affaire_id: principalAffaireId,
         affaire_ids: nextLivraisons.map((r) => r.affaire_id),
         livraison_affaire_id: livraison,
         requires_confirmation: false,
@@ -4924,6 +5107,8 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         commande_id: commandeId,
         devis_id: commande.devis_id ? toNullableInt(commande.devis_id, "commande.devis_id") : null,
         client_id: clientId as string,
+        parent_affaire_id: principalAffaireId,
+        delivery_readiness_state: "WAITING_STOCK",
       });
       await insertCommandeToAffaireMapping(client, {
         commande_id: commandeId,
@@ -4942,6 +5127,8 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         commande_id: commandeId,
         devis_id: commande.devis_id ? toNullableInt(commande.devis_id, "commande.devis_id") : null,
         client_id: clientId as string,
+        parent_affaire_id: principalAffaireId,
+        delivery_readiness_state: "WAITING_STOCK",
       });
       await insertCommandeToAffaireMapping(client, {
         commande_id: commandeId,
@@ -5069,6 +5256,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
 
     const generatedOfs: GeneratedOfRef[] = [];
     const generationWarnings: string[] = [];
+    const technicalWarnings: Array<{ commande_ligne_id: number; code: string; message: string }> = [];
     if (needsProduction) {
       const byLine = new Map<number, CommandeLineRef>(refs.map((r) => [r.commande_ligne_id, r] as const));
 
@@ -5086,20 +5274,41 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
           );
         }
 
-        const generated = await createRecursiveOrdresFabrication(client, {
-          commande_id: commandeId,
-          commande_numero: commande.numero,
-          commande_ligne_id: l.commande_ligne_id,
-          livraison_affaire_id: productionLivraisonAffaireId,
-          client_id: orderType === "INTERNE" ? ref?.piece_client_id ?? clientId : clientId,
-          root_article_id: l.article_id,
-          root_piece_technique_id: pieceTechniqueId,
-          root_pinned_version_id: ref?.piece_technique_version_id ?? null,
-          qty_to_produce: qtyToProduce,
-          user_id: audit.user_id,
-        });
-        generatedOfs.push(...generated.ofs);
-        generationWarnings.push(...generated.warnings);
+        if (ref?.piece_technique_version_status === "APPLICABLE" && ref.piece_technique_version_effective) {
+          const generated = await createRecursiveOrdresFabrication(client, {
+            commande_id: commandeId,
+            commande_numero: commande.numero,
+            commande_ligne_id: l.commande_ligne_id,
+            livraison_affaire_id: productionLivraisonAffaireId,
+            client_id: orderType === "INTERNE" ? ref?.piece_client_id ?? clientId : clientId,
+            root_article_id: l.article_id,
+            root_piece_technique_id: pieceTechniqueId,
+            root_pinned_version_id: ref?.piece_technique_version_id ?? null,
+            qty_to_produce: qtyToProduce,
+            user_id: audit.user_id,
+          });
+          generatedOfs.push(...generated.ofs);
+          generationWarnings.push(...generated.warnings);
+        } else {
+          const draftOf = await createIncompleteDraftOrdreFabrication(client, {
+            commande_id: commandeId,
+            commande_numero: commande.numero,
+            commande_ligne_id: l.commande_ligne_id,
+            livraison_affaire_id: productionLivraisonAffaireId,
+            client_id: orderType === "INTERNE" ? ref?.piece_client_id ?? clientId : clientId,
+            article_id: l.article_id,
+            piece_technique_id: pieceTechniqueId,
+            selected_version_id: ref?.piece_technique_version_id ?? null,
+            qty_to_produce: qtyToProduce,
+            user_id: audit.user_id,
+          });
+          generatedOfs.push(draftOf);
+          technicalWarnings.push({
+            commande_ligne_id: l.commande_ligne_id,
+            code: "TECHNICAL_PREPARATION_REQUIRED",
+            message: "OF brouillon créé : le dossier technique doit être complété et validé avant planification.",
+          });
+        }
       }
     }
 
@@ -5108,6 +5317,23 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
     // filed only for its business roots, inside this launch transaction.
     for (const root of generatedOfs.filter((of) => of.parent_of_id === null)) {
       await queueRootOfCreationPdf(client, { ofId: root.id, actorUserId: audit.user_id });
+    }
+    if (livraisonAffaireId !== null) {
+      const reservedTotal = Array.from(quantitiesToReserve.values()).reduce((sum, value) => sum + Number(value), 0);
+      await client.query(
+        `UPDATE public.affaire
+            SET delivery_readiness_state = $2, updated_at = now()
+          WHERE id = $1::bigint`,
+        [livraisonAffaireId, reservedTotal > 0 ? "READY_FOR_BL" : needsProduction ? "WAITING_TECHNICAL" : "WAITING_STOCK"]
+      );
+    }
+    if (productionLivraisonAffaireId !== null && productionLivraisonAffaireId !== livraisonAffaireId) {
+      await client.query(
+        `UPDATE public.affaire
+            SET delivery_readiness_state = $2, updated_at = now()
+          WHERE id = $1::bigint`,
+        [productionLivraisonAffaireId, technicalWarnings.length > 0 ? "WAITING_TECHNICAL" : "WAITING_STOCK"]
+      );
     }
     let workflowStatus: string | null = null;
     if (orderType === "INTERNE") {
@@ -5132,14 +5358,24 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         user_id: audit.user_id,
       });
     } else {
-      const transition = await advanceCustomerOrderWorkflowAfterLaunch({
-        tx: client,
-        commande_id: commandeId,
-        user_id: audit.user_id,
-        needs_production: needsProduction,
-        of_ids: ofIds,
-      });
-      workflowStatus = transition.nouveau_statut;
+      if (commande.creation_flow_version === 2) {
+        workflowStatus = await advanceCustomerOrderV2AfterLaunch({
+          tx: client,
+          commande_id: commandeId,
+          user_id: audit.user_id,
+          has_technical_warnings: technicalWarnings.length > 0,
+          of_ids: ofIds,
+        });
+      } else {
+        const transition = await advanceCustomerOrderWorkflowAfterLaunch({
+          tx: client,
+          commande_id: commandeId,
+          user_id: audit.user_id,
+          needs_production: needsProduction,
+          of_ids: ofIds,
+        });
+        workflowStatus = transition.nouveau_statut;
+      }
     }
 
     await insertCommandeEvent(client, {
@@ -5155,6 +5391,8 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         bon_livraison_id: bonLivraisonId,
         reservations_created: reservationsCreated.length,
         of_created: ofIds.length,
+        principal_affaire_id: principalAffaireId,
+        technical_warnings: technicalWarnings,
         recovered_invalid_planning_state: recoveredInvalidPlanningState,
       },
       user_id: audit.user_id,
@@ -5196,6 +5434,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
     await client.query(`UPDATE commande_client SET updated_at = now() WHERE id = $1`, [commandeId]);
 
     return {
+      principal_affaire_id: principalAffaireId,
       affaire_ids: livraisonAffaireIds,
       livraison_affaire_id: livraisonAffaireId,
       production_livraison_affaire_id: productionLivraisonAffaireId,
@@ -5205,6 +5444,20 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       bon_livraison_id: bonLivraisonId,
       reservations_created: reservationsCreated,
       of_ids: ofIds,
+      draft_of_ids: generatedOfs
+        .filter((of) => technicalWarnings.some((warning) => warning.commande_ligne_id === of.commande_ligne_id))
+        .map((of) => of.id),
+      delivery_tranches: livraisonAffaireIds.map((affaireId) => ({
+        affaire_id: affaireId,
+        parent_affaire_id: principalAffaireId,
+        readiness_state:
+          affaireId === livraisonAffaireId && Array.from(quantitiesToReserve.values()).some((value) => Number(value) > 0)
+            ? "READY_FOR_BL"
+            : technicalWarnings.length > 0
+              ? "WAITING_TECHNICAL"
+              : "WAITING_STOCK",
+      })),
+      technical_warnings: technicalWarnings,
       root_of_ids: generatedOfs.filter((of) => of.parent_of_id === null).map((of) => of.id),
       child_of_ids: generatedOfs.filter((of) => of.parent_of_id !== null).map((of) => of.id),
       ofs: generatedOfs,
@@ -5223,6 +5476,9 @@ type AffaireCreationInput = {
   commande_id: number;
   client_id: string;
   devis_id?: number | null;
+  is_principal?: boolean;
+  parent_affaire_id?: number | null;
+  delivery_readiness_state?: "WAITING_TECHNICAL" | "WAITING_STOCK" | "PARTIALLY_AVAILABLE" | "READY_FOR_BL";
 };
 
 async function createAffaire(db: PoolClient, input: AffaireCreationInput): Promise<number> {
@@ -5240,10 +5496,23 @@ async function createAffaire(db: PoolClient, input: AffaireCreationInput): Promi
 
   await db.query(
     `
-    INSERT INTO affaire (id, reference, client_id, commande_id, devis_id, type_affaire)
-    VALUES ($1, $2, $3, $4, $5, $6)
+    INSERT INTO affaire (
+      id, reference, client_id, commande_id, devis_id, type_affaire,
+      is_principal, parent_affaire_id, delivery_readiness_state
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8::bigint, $9)
     `,
-    [id, reference, input.client_id, input.commande_id, input.devis_id ?? null, typeAffaire]
+    [
+      id,
+      reference,
+      input.client_id,
+      input.commande_id,
+      input.devis_id ?? null,
+      typeAffaire,
+      input.is_principal ?? false,
+      input.parent_affaire_id ?? null,
+      input.delivery_readiness_state ?? "WAITING_STOCK",
+    ]
   );
   return id;
 }
@@ -5322,7 +5591,7 @@ async function queueAffaireCreationPdf(
 type MappingInsertInput = {
   commande_id: number;
   affaire_id: number;
-  role: "LIVRAISON";
+  role: "LIVRAISON" | null;
   commentaire: string | null;
 };
 
@@ -5395,6 +5664,8 @@ type CommandeLineRef = {
   article_designation: string | null;
   piece_technique_id: string | null;
   piece_technique_version_id?: string | null;
+  piece_technique_version_status: string | null;
+  piece_technique_version_effective: boolean;
   piece_code: string | null;
   piece_designation: string | null;
   piece_client_id: string | null;
@@ -5411,6 +5682,8 @@ async function selectCommandeLineRefs(db: PoolClient, commandeId: number): Promi
     article_designation: string | null;
     piece_technique_id: string | null;
     piece_technique_version_id: string | null;
+    piece_technique_version_status: string | null;
+    piece_technique_version_effective: boolean;
     piece_code: string | null;
     piece_designation: string | null;
     piece_client_id: string | null;
@@ -5426,6 +5699,8 @@ async function selectCommandeLineRefs(db: PoolClient, commandeId: number): Promi
         COALESCE(a.designation, legacy.article_designation, cl.designation) AS article_designation,
         COALESCE(cl.piece_technique_id::text, a.piece_technique_id::text, legacy.piece_technique_id) AS piece_technique_id,
         cl.piece_technique_version_id::text AS piece_technique_version_id,
+        version.statut AS piece_technique_version_status,
+        (version.statut = 'APPLICABLE' AND (version.date_effet IS NULL OR version.date_effet <= CURRENT_DATE)) AS piece_technique_version_effective,
         COALESCE(pt.code_piece, legacy.piece_code) AS piece_code,
         COALESCE(pt.designation, legacy.piece_designation) AS piece_designation,
         COALESCE(pt.client_id::text, legacy.piece_client_id) AS piece_client_id,
@@ -5433,6 +5708,7 @@ async function selectCommandeLineRefs(db: PoolClient, commandeId: number): Promi
       FROM commande_ligne cl
       LEFT JOIN public.articles a ON a.id = cl.article_id
       LEFT JOIN public.pieces_techniques pt ON pt.id = COALESCE(cl.piece_technique_id, a.piece_technique_id)
+      LEFT JOIN public.piece_technique_versions version ON version.id = cl.piece_technique_version_id
       LEFT JOIN LATERAL (
         SELECT
           a.id::text AS article_id,
@@ -5477,6 +5753,8 @@ async function selectCommandeLineRefs(db: PoolClient, commandeId: number): Promi
       typeof r.piece_technique_version_id === "string" && r.piece_technique_version_id.trim().length > 0
         ? r.piece_technique_version_id.trim()
         : null,
+    piece_technique_version_status: r.piece_technique_version_status ?? null,
+    piece_technique_version_effective: r.piece_technique_version_effective === true,
     piece_code: typeof r.piece_code === "string" && r.piece_code.trim().length > 0 ? r.piece_code.trim() : null,
     piece_designation:
       typeof r.piece_designation === "string" && r.piece_designation.trim().length > 0
@@ -6635,6 +6913,7 @@ export async function repoDuplicateCommande(id: string) {
         commande_id_int: newIdInt,
         actor_user_id: null,
         creation_flow_version: 1,
+        save_intent: "VALIDATE",
       });
     }
 
