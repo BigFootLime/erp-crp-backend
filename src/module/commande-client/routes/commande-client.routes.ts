@@ -10,6 +10,7 @@ import {
   addCadreReleaseLine,
   analyzeCommandeStock,
   createCommande,
+  createQuickTechnicalPiece,
   createCadreRelease,
   cancelCadreRelease,
   deleteCommande,
@@ -117,6 +118,9 @@ const rejectDirectCommandeStatusMutation: RequestHandler = (_req, _res, next) =>
 
 // POST /api/v1/commandes  (multipart: data + documents[])
 router.post("/", upload.array("documents[]"), parseCommandeBody, createCommande)
+
+// Création commerciale courte : PT + R01 brouillon + article dans une transaction.
+router.post("/technical-pieces/quick", authenticateToken, createQuickTechnicalPiece)
 
 // GET /api/v1/commandes
 router.get("/", listCommandes)

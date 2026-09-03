@@ -7,6 +7,7 @@ import { sendSecureStoredFile } from "../../../shared/uploads/secure-download";
 import { createCreationSnapshotHandlers } from "../../../shared/authoritative-documents/creation-snapshot-http";
 import {
   createCommandeSVC,
+  createQuickTechnicalPieceSVC,
   createCadreReleaseSVC,
   deleteCommandeSVC,
   deleteCadreReleaseLineSVC,
@@ -34,6 +35,7 @@ import {
 } from "../services/commande-client.service";
 import {
   cadreReleaseStatusSchema,
+  createQuickTechnicalPieceBodySchema,
   createCadreReleaseBodySchema,
   createCadreReleaseLineBodySchema,
   listCommandesQuerySchema,
@@ -131,6 +133,36 @@ function buildAudit(req: Request) {
     client_session_id: null,
   };
 }
+
+function getRequiredIdempotencyKey(req: Request): string {
+  const value = req.header("Idempotency-Key")?.trim();
+  if (!value || value.length < 8 || value.length > 160) {
+    throw new HttpError(
+      400,
+      "IDEMPOTENCY_KEY_REQUIRED",
+      "Une clé de création valide est requise. Réessayez depuis le formulaire."
+    );
+  }
+  return value;
+}
+
+export const createQuickTechnicalPiece: RequestHandler = async (req, res, next) => {
+  try {
+    const parsed = createQuickTechnicalPieceBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Informations invalides." });
+      return;
+    }
+    const out = await createQuickTechnicalPieceSVC(
+      parsed.data,
+      buildAudit(req),
+      getRequiredIdempotencyKey(req)
+    );
+    res.status(201).json(out);
+  } catch (error) {
+    next(error);
+  }
+};
 
 // POST /api/v1/commandes (multipart)
 export const createCommande: RequestHandler = async (req, res, next) => {

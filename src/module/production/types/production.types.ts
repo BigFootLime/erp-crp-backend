@@ -105,6 +105,7 @@ export type OrdreFabricationListItem = {
   production_group_id: string | null;
   production_group_code: string | null;
   piece_technique_id: string;
+  technical_readiness: "INCOMPLETE" | "READY_FOR_REVIEW" | "VALIDATED" | "BLOCKED";
   piece_code: string;
   piece_designation: string;
   quantite_lancee: number;
@@ -181,6 +182,8 @@ export type OrdreFabricationDetail = {
   piece_technique_version_id: string | null;
   technical_snapshot_sha256: string | null;
   technical_snapshot_at: string | null;
+  technical_readiness: "INCOMPLETE" | "READY_FOR_REVIEW" | "VALIDATED" | "BLOCKED";
+  technical_preparation: Record<string, unknown>;
   piece_code: string;
   piece_designation: string;
   quantite_lancee: number;
