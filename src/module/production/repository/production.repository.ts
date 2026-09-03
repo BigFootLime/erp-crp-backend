@@ -42,6 +42,9 @@ import type {
   UpdatePosteBodyDTO,
   ReorderOfOperationsBodyDTO,
   ReleaseOfBodyDTO,
+  PatchOfTechnicalPreparationBodyDTO,
+  SubmitOfTechnicalPreparationBodyDTO,
+  ValidateOfTechnicalPreparationBodyDTO,
 } from "../validators/production.validators";
 import {
   OF_STATUT_TRANSITIONS,
@@ -2692,6 +2695,8 @@ async function selectOfHeader(
     piece_technique_version_id: string | null;
     technical_snapshot_sha256: string | null;
     technical_snapshot_at: string | null;
+    technical_readiness: OrdreFabricationDetail["technical_readiness"];
+    technical_preparation: Record<string, unknown>;
     piece_code: string;
     piece_designation: string;
     quantite_lancee: number;
@@ -2733,6 +2738,8 @@ async function selectOfHeader(
         o.piece_technique_version_id::text AS piece_technique_version_id,
         o.technical_snapshot_sha256,
         o.technical_snapshot_at::text AS technical_snapshot_at,
+        o.technical_readiness,
+        o.technical_preparation,
         pt.code_piece AS piece_code,
         pt.designation AS piece_designation,
         o.quantite_lancee::float8 AS quantite_lancee,
@@ -2786,6 +2793,8 @@ async function selectOfHeader(
     piece_technique_version_id: row.piece_technique_version_id,
     technical_snapshot_sha256: row.technical_snapshot_sha256,
     technical_snapshot_at: row.technical_snapshot_at,
+    technical_readiness: row.technical_readiness,
+    technical_preparation: row.technical_preparation ?? {},
     piece_code: row.piece_code,
     piece_designation: row.piece_designation,
     quantite_lancee: Number(row.quantite_lancee),
@@ -3136,6 +3145,7 @@ export async function repoListOrdresFabrication(filters: ListOfQueryDTO): Promis
   if (filters.piece_technique_id) where.push(`o.piece_technique_id = ${push(filters.piece_technique_id)}::uuid`);
   if (filters.statut) where.push(`o.statut = ${push(filters.statut)}::of_status`);
   if (filters.priority) where.push(`o.priority = ${push(filters.priority)}::of_priority`);
+  if (filters.technical_readiness) where.push(`o.technical_readiness = ${push(filters.technical_readiness)}`);
 
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
   const page = filters.page ?? 1;
@@ -3187,6 +3197,7 @@ export async function repoListOrdresFabrication(filters: ListOfQueryDTO): Promis
     updated_at: string;
     total_ops: number;
     done_ops: number;
+    technical_readiness: OrdreFabricationListItem["technical_readiness"];
   };
 
   const dataRes = await pool.query<Row>(
@@ -3220,7 +3231,8 @@ export async function repoListOrdresFabrication(filters: ListOfQueryDTO): Promis
         o.date_fin_prevue::text AS date_fin_prevue,
         o.updated_at::text AS updated_at,
         COALESCE(ops.total_ops, 0)::int AS total_ops,
-        COALESCE(ops.done_ops, 0)::int AS done_ops
+        COALESCE(ops.done_ops, 0)::int AS done_ops,
+        o.technical_readiness
       FROM ordres_fabrication o
       JOIN pieces_techniques pt ON pt.id = o.piece_technique_id
       LEFT JOIN clients c ON c.client_id = o.client_id
@@ -3270,6 +3282,7 @@ export async function repoListOrdresFabrication(filters: ListOfQueryDTO): Promis
     updated_at: r.updated_at,
     total_ops: Number(r.total_ops),
     done_ops: Number(r.done_ops),
+    technical_readiness: r.technical_readiness,
   }));
 
   return { items, total };
@@ -3311,6 +3324,7 @@ type OfTreeRow = {
   production_group_id: string | null;
   production_group_code: string | null;
   piece_technique_id: string;
+  technical_readiness: OrdreFabricationListItem["technical_readiness"];
   piece_code: string;
   piece_designation: string;
   quantite_lancee: number;
@@ -3344,6 +3358,7 @@ function mapOfTreeRow(row: OfTreeRow): OrdreFabricationTreeNode {
     production_group_id: row.production_group_id,
     production_group_code: row.production_group_code,
     piece_technique_id: row.piece_technique_id,
+    technical_readiness: row.technical_readiness,
     piece_code: row.piece_code,
     piece_designation: row.piece_designation,
     quantite_lancee: Number(row.quantite_lancee),
@@ -3419,6 +3434,7 @@ export async function repoGetOrdreFabricationTree(id: number): Promise<OrdreFabr
         e.production_group_id::text AS production_group_id,
         pg.code AS production_group_code,
         e.piece_technique_id::text AS piece_technique_id,
+        e.technical_readiness,
         pt.code_piece AS piece_code,
         pt.designation AS piece_designation,
         e.quantite_lancee::float8 AS quantite_lancee,
@@ -3642,6 +3658,7 @@ export async function repoUpdateOrdreFabrication(params: {
       id: string;
       commande_id: string | null;
       statut: string;
+      technical_readiness: string;
       quantite_bonne: number;
       updated_at: string | null;
     }>(
@@ -3650,6 +3667,7 @@ export async function repoUpdateOrdreFabrication(params: {
           id::text AS id,
           commande_id::text AS commande_id,
           statut::text AS statut,
+          technical_readiness,
           quantite_bonne::float8 AS quantite_bonne,
           to_char(
             updated_at AT TIME ZONE 'UTC',
@@ -3691,6 +3709,14 @@ export async function repoUpdateOrdreFabrication(params: {
         "OF_INVALID_TRANSITION",
         `Transition ${currentStatut} → ${requestedStatut} refusée par l'automate OF.`,
         { from: currentStatut, to: requestedStatut, allowed: OF_STATUT_TRANSITIONS[currentStatut] }
+      );
+    }
+    if (statutChanges && currentStatut === "BROUILLON" && requestedStatut !== "BROUILLON" && ofRow.technical_readiness !== "VALIDATED") {
+      throw new HttpError(
+        409,
+        "OF_TECHNICAL_PREPARATION_REQUIRED",
+        "Complétez et validez le dossier technique avant de planifier cet OF.",
+        { technical_readiness: ofRow.technical_readiness }
       );
     }
     if (statutChanges && params.audit.user_role !== undefined) {
@@ -4330,4 +4356,209 @@ export async function repoReorderOfOperations(params: {
   });
   if (!updated) return null;
   return repoGetOrdreFabrication({ id: params.of_id, user_id: params.audit.user_id });
+}
+
+const REQUIRED_TECHNICAL_SECTIONS = ["plan", "material", "structure", "routing", "quality"] as const;
+
+function missingTechnicalPreparationSections(value: unknown): string[] {
+  const record = typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  const sections = typeof record.sections === "object" && record.sections !== null && !Array.isArray(record.sections)
+    ? record.sections as Record<string, unknown>
+    : {};
+  return REQUIRED_TECHNICAL_SECTIONS.filter((key) => {
+    const section = sections[key];
+    return !(typeof section === "object" && section !== null && Object.keys(section as Record<string, unknown>).length > 0);
+  });
+}
+
+async function getOfTechnicalPreparationTx(db: DbQueryer, id: number) {
+  const result = await db.query<{
+    id: number;
+    numero: string;
+    statut: string;
+    technical_readiness: string;
+    technical_preparation: Record<string, unknown>;
+    piece_technique_id: string;
+    piece_technique_version_id: string | null;
+    updated_at: string;
+  }>(
+    `SELECT id::bigint::int AS id, numero, statut::text AS statut,
+            technical_readiness, technical_preparation,
+            piece_technique_id::text AS piece_technique_id,
+            piece_technique_version_id::text AS piece_technique_version_id,
+            updated_at::text AS updated_at
+       FROM public.ordres_fabrication
+      WHERE id = $1::bigint`,
+    [id]
+  );
+  const row = result.rows[0] ?? null;
+  if (!row) return null;
+  return { ...row, missing_sections: missingTechnicalPreparationSections(row.technical_preparation) };
+}
+
+export async function repoGetOfTechnicalPreparation(params: { id: number }) {
+  return getOfTechnicalPreparationTx(pool, params.id);
+}
+
+export async function repoPatchOfTechnicalPreparation(params: {
+  id: number;
+  body: PatchOfTechnicalPreparationBodyDTO;
+  audit: AuditContext;
+}) {
+  const client = await pool.connect();
+  return withRealtimeOutboxTransaction(client, async (tx) => {
+    const current = await tx.query<{
+      statut: string;
+      technical_readiness: string;
+      technical_preparation: Record<string, unknown>;
+      updated_at: string;
+    }>(
+      `SELECT statut::text AS statut, technical_readiness, technical_preparation, updated_at::text AS updated_at
+         FROM public.ordres_fabrication WHERE id = $1::bigint FOR UPDATE`,
+      [params.id]
+    );
+    const row = current.rows[0];
+    if (!row) return null;
+    if (row.statut !== "BROUILLON" || row.technical_readiness === "VALIDATED") {
+      throw new HttpError(409, "OF_TECHNICAL_PREPARATION_LOCKED", "La préparation technique de cet OF est verrouillée.");
+    }
+    if (params.body.expected_updated_at && params.body.expected_updated_at !== row.updated_at) {
+      throw new HttpError(409, "CONCURRENT_MODIFICATION", "L'OF a été modifié. Rechargez sa préparation technique.");
+    }
+    const previous = row.technical_preparation ?? {};
+    const previousSections = typeof previous.sections === "object" && previous.sections !== null
+      ? previous.sections as Record<string, unknown>
+      : {};
+    const next = {
+      ...previous,
+      selected_version_id: params.body.selected_version_id ?? previous.selected_version_id ?? null,
+      sections: { ...previousSections, ...params.body.sections },
+      last_saved_at: new Date().toISOString(),
+      last_saved_by: params.audit.user_id,
+    };
+    await tx.query(
+      `UPDATE public.ordres_fabrication
+          SET technical_preparation = $2::jsonb,
+              technical_readiness = 'INCOMPLETE',
+              technical_submitted_at = NULL,
+              technical_submitted_by = NULL,
+              updated_at = now(), updated_by = $3
+        WHERE id = $1::bigint`,
+      [params.id, JSON.stringify(next), params.audit.user_id]
+    );
+    await insertAuditLog(tx, params.audit, {
+      action: "production.of.technical-preparation.update",
+      entity_type: "ordres_fabrication",
+      entity_id: String(params.id),
+      details: { changed_sections: Object.keys(params.body.sections ?? {}) },
+    });
+    return getOfTechnicalPreparationTx(tx, params.id);
+  });
+}
+
+export async function repoSubmitOfTechnicalPreparation(params: {
+  id: number;
+  body: SubmitOfTechnicalPreparationBodyDTO;
+  audit: AuditContext;
+}) {
+  const client = await pool.connect();
+  return withRealtimeOutboxTransaction(client, async (tx) => {
+    const current = await tx.query<{ statut: string; technical_readiness: string; technical_preparation: Record<string, unknown>; updated_at: string }>(
+      `SELECT statut::text AS statut, technical_readiness, technical_preparation, updated_at::text AS updated_at
+         FROM public.ordres_fabrication WHERE id = $1::bigint FOR UPDATE`,
+      [params.id]
+    );
+    const row = current.rows[0];
+    if (!row) return null;
+    if (row.statut !== "BROUILLON" || row.technical_readiness === "VALIDATED") {
+      throw new HttpError(409, "OF_TECHNICAL_PREPARATION_LOCKED", "La préparation technique de cet OF est verrouillée.");
+    }
+    if (params.body.expected_updated_at && params.body.expected_updated_at !== row.updated_at) {
+      throw new HttpError(409, "CONCURRENT_MODIFICATION", "L'OF a été modifié. Rechargez sa préparation technique.");
+    }
+    const missing = missingTechnicalPreparationSections(row.technical_preparation);
+    if (missing.length > 0) {
+      throw new HttpError(422, "OF_TECHNICAL_PREPARATION_INCOMPLETE", "Le dossier technique est incomplet.", { missing_sections: missing });
+    }
+    await tx.query(
+      `UPDATE public.ordres_fabrication
+          SET technical_readiness = 'READY_FOR_REVIEW', technical_submitted_at = now(),
+              technical_submitted_by = $2, updated_at = now(), updated_by = $2
+        WHERE id = $1::bigint`,
+      [params.id, params.audit.user_id]
+    );
+    await insertAuditLog(tx, params.audit, {
+      action: "production.of.technical-preparation.submit",
+      entity_type: "ordres_fabrication",
+      entity_id: String(params.id),
+      details: { missing_sections: [] },
+    });
+    return getOfTechnicalPreparationTx(tx, params.id);
+  });
+}
+
+export async function repoValidateOfTechnicalPreparation(params: {
+  id: number;
+  body: ValidateOfTechnicalPreparationBodyDTO;
+  audit: AuditContext;
+}) {
+  const client = await pool.connect();
+  return withRealtimeOutboxTransaction(client, async (tx) => {
+    const current = await tx.query<{
+      statut: string;
+      technical_readiness: string;
+      technical_preparation: Record<string, unknown>;
+      piece_technique_id: string;
+      updated_at: string;
+    }>(
+      `SELECT statut::text AS statut, technical_readiness, technical_preparation,
+              piece_technique_id::text AS piece_technique_id, updated_at::text AS updated_at
+         FROM public.ordres_fabrication WHERE id = $1::bigint FOR UPDATE`,
+      [params.id]
+    );
+    const row = current.rows[0];
+    if (!row) return null;
+    if (row.statut !== "BROUILLON" || row.technical_readiness !== "READY_FOR_REVIEW") {
+      throw new HttpError(409, "OF_TECHNICAL_REVIEW_REQUIRED", "Soumettez d'abord le dossier technique complet.");
+    }
+    if (params.body.expected_updated_at && params.body.expected_updated_at !== row.updated_at) {
+      throw new HttpError(409, "CONCURRENT_MODIFICATION", "L'OF a été modifié. Rechargez sa préparation technique.");
+    }
+    const selected = typeof row.technical_preparation?.selected_version_id === "string"
+      ? row.technical_preparation.selected_version_id
+      : null;
+    const technical = await loadApplicableTechnicalSnapshot(tx, row.piece_technique_id, { pinned_version_id: selected });
+    await tx.query(
+      `INSERT INTO public.of_technical_snapshots (
+         of_id, piece_technique_version_id, snapshot, snapshot_sha256, created_by
+       ) VALUES ($1::bigint, $2::uuid, $3::jsonb, $4, $5)`,
+      [params.id, technical.version_id, JSON.stringify(technical.snapshot), technical.sha256, params.audit.user_id]
+    );
+    const operationsCount = await copyPieceOperationsToOf(tx, {
+      of_id: params.id,
+      piece_technique_id: row.piece_technique_id,
+      gamme_id: technical.gamme_id,
+    });
+    await tx.query(
+      `UPDATE public.ordres_fabrication
+          SET piece_technique_version_id = $2::uuid,
+              technical_snapshot = $3::jsonb,
+              technical_snapshot_sha256 = $4,
+              technical_snapshot_at = now(),
+              technical_readiness = 'VALIDATED',
+              technical_validated_at = now(), technical_validated_by = $5,
+              updated_at = now(), updated_by = $5
+        WHERE id = $1::bigint`,
+      [params.id, technical.version_id, JSON.stringify(technical.snapshot), technical.sha256, params.audit.user_id]
+    );
+    await insertAuditLog(tx, params.audit, {
+      action: "production.of.technical-preparation.validate",
+      entity_type: "ordres_fabrication",
+      entity_id: String(params.id),
+      details: { piece_technique_version_id: technical.version_id, snapshot_sha256: technical.sha256, operations_count: operationsCount },
+    });
+    return getOfTechnicalPreparationTx(tx, params.id);
+  });
 }

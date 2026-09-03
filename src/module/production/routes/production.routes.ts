@@ -22,6 +22,10 @@ import {
   getOfReceiptContext,
   getOfCreationSnapshot,
   getOfTechnicalSnapshot,
+  getOfTechnicalPreparation,
+  patchOfTechnicalPreparation,
+  submitOfTechnicalPreparation,
+  validateOfTechnicalPreparation,
   getOfTraceability,
   getOrdreFabrication,
   getOrdreFabricationTree,
@@ -218,6 +222,10 @@ router.post("/ofs/generate/preview", requireOfCapability("generate"), previewOfG
 router.post("/ofs/generate", requireOfCapability("generate"), generateOfs);
 router.get("/ofs/:id/tree", getOrdreFabricationTree);
 router.get("/ofs/:id/technical-snapshot", getOfTechnicalSnapshot);
+router.get("/ofs/:id/technical-preparation", requireOfCapability("read"), getOfTechnicalPreparation);
+router.patch("/ofs/:id/technical-preparation", requireOfCapability("edit_prelaunch"), patchOfTechnicalPreparation);
+router.post("/ofs/:id/technical-preparation/submit", requireOfCapability("edit_prelaunch"), submitOfTechnicalPreparation);
+router.post("/ofs/:id/technical-preparation/validate", requireOfCapability("release"), validateOfTechnicalPreparation);
 // Internal creation snapshot, filed automatically on root creation. Same read
 // middleware as the OF card; no route can issue or reissue it.
 router.get("/ofs/:id/creation-snapshot", getOfCreationSnapshot);

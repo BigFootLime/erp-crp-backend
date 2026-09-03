@@ -18,6 +18,9 @@ import type {
   UpdateOfOperationBodyDTO,
   UpdatePosteBodyDTO,
   StopOfTimeLogBodyDTO,
+  PatchOfTechnicalPreparationBodyDTO,
+  SubmitOfTechnicalPreparationBodyDTO,
+  ValidateOfTechnicalPreparationBodyDTO,
 } from "../validators/production.validators";
 import * as repo from "../repository/production.repository";
 import * as receiptsRepo from "../repository/production-receipts.repository";
@@ -86,6 +89,15 @@ export const svcUpdateOrdreFabrication = (params: { id: number; patch: UpdateOfB
 export const svcGetOfReadiness = (params: { id: number }) => repo.repoGetOfReadiness(params);
 export const svcReleaseOrdreFabrication = (params: { id: number; body: ReleaseOfBodyDTO; audit: repo.AuditContext }) =>
   repo.repoReleaseOrdreFabrication(params);
+
+export const svcGetOfTechnicalPreparation = (params: { id: number }) =>
+  repo.repoGetOfTechnicalPreparation(params);
+export const svcPatchOfTechnicalPreparation = (params: { id: number; body: PatchOfTechnicalPreparationBodyDTO; audit: repo.AuditContext }) =>
+  repo.repoPatchOfTechnicalPreparation(params);
+export const svcSubmitOfTechnicalPreparation = (params: { id: number; body: SubmitOfTechnicalPreparationBodyDTO; audit: repo.AuditContext }) =>
+  repo.repoSubmitOfTechnicalPreparation(params);
+export const svcValidateOfTechnicalPreparation = (params: { id: number; body: ValidateOfTechnicalPreparationBodyDTO; audit: repo.AuditContext }) =>
+  repo.repoValidateOfTechnicalPreparation(params);
 
 export const svcUpdateOrdreFabricationOperation = (params: {
   of_id: number;

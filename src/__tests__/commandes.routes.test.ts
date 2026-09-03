@@ -319,6 +319,7 @@ describe("/api/v1/commandes", () => {
           is_active: true,
         }],
       }) // resolve article
+      .mockResolvedValueOnce({ rows: [] }) // optional latest PT revision
       .mockResolvedValueOnce({
         rows: [{ sale_price_reference: 100, sale_price_currency: "EUR", sale_price_source: "CUSTOMER_ORDER" }],
       }) // lock reference sale price
@@ -555,9 +556,8 @@ describe("/api/v1/commandes", () => {
     expect(articleSubtypeUpsertCalls.length).toBe(2);
     expect(String(articleSubtypeUpsertCalls[0]?.[0])).toContain("ON CONFLICT (article_id) DO UPDATE");
     expect(pieceCreateCalls[0]?.[1]).not.toContain("33333333-3333-3333-3333-333333333333");
-    // La colonne pieces_techniques.en_fabrication est booléenne sur le schéma réel.
-    // PostgreSQL refuse un entier ici : le test fige le contrat que les mocks n'exécutent pas.
-    expect(String(pieceCreateCalls[0]?.[0])).toMatch(/'ACTIVE',\s*false,\s*NULL/i);
+    // Le schéma historique de CERP porte ce drapeau sous forme entière (0/1).
+    expect(String(pieceCreateCalls[0]?.[0])).toMatch(/'ACTIVE',\s*0,\s*NULL/i);
   });
 
   it("PATCH /api/v1/commandes/:id works and replaces lignes", async () => {
@@ -597,6 +597,7 @@ describe("/api/v1/commandes", () => {
           is_active: true,
         }],
       }) // resolve article
+      .mockResolvedValueOnce({ rows: [] }) // optional latest PT revision
       .mockResolvedValueOnce({
         rows: [{ sale_price_reference: 100, sale_price_currency: "EUR", sale_price_source: "CUSTOMER_ORDER" }],
       }) // lock reference sale price
@@ -1382,6 +1383,7 @@ describe("/api/v1/commandes", () => {
           is_active: true,
         }],
       }) // resolve article
+      .mockResolvedValueOnce({ rows: [] }) // optional latest PT revision
       .mockResolvedValueOnce({
         rows: [{ sale_price_reference: 100, sale_price_currency: "EUR", sale_price_source: "CUSTOMER_ORDER" }],
       }) // lock reference sale price
@@ -1414,6 +1416,7 @@ describe("/api/v1/commandes", () => {
     const LOT_ID = "99999999-9999-4999-8999-999999999998";
 
     let fullStockReplay = false;
+    let affaireSeq = 6;
     mocks.clientQuery.mockImplementation(async (sql: unknown, params?: unknown[]) => {
       const q = String(sql);
       const p0 = Array.isArray(params) ? params[0] : undefined;
@@ -1487,8 +1490,15 @@ describe("/api/v1/commandes", () => {
         return { rows: [{ ok: 1 }] };
       }
 
-      if (q.includes("FROM commande_to_affaire") && q.includes("WHERE commande_id")) {
-        return { rows: fullStockReplay ? [{ affaire_id: 7, role: "LIVRAISON" }] : [] };
+      if (q.includes("FROM commande_to_affaire cta")) {
+        return {
+          rows: fullStockReplay
+            ? [
+                { affaire_id: 7, role: null, is_principal: true, delivery_readiness_state: "WAITING_STOCK" },
+                { affaire_id: 8, role: "LIVRAISON", is_principal: false, delivery_readiness_state: "READY_FOR_BL" },
+              ]
+            : [],
+        };
       }
 
       if (q.includes("FROM public.erp_settings") && String(p0) === "stock.default_shipping_location") {
@@ -1508,6 +1518,9 @@ describe("/api/v1/commandes", () => {
               qty_ordered: 1,
               article_id: ARTICLE_ID,
               piece_technique_id: PIECE_ID,
+              piece_technique_version_id: "55555555-5555-5555-5555-555555555555",
+              piece_technique_version_status: "APPLICABLE",
+              piece_technique_version_effective: true,
             },
           ],
         };
@@ -1517,6 +1530,7 @@ describe("/api/v1/commandes", () => {
         return {
           rows: [{
             article_id: ARTICLE_ID,
+            piece_technique_version_id: "55555555-5555-5555-5555-555555555555",
             stock_scope: "OLD",
             stock_level_id: "33333333-3333-4333-8333-333333333333",
             stock_batch_id: null,
@@ -1530,11 +1544,12 @@ describe("/api/v1/commandes", () => {
       }
 
       if (q.includes("FROM public.v_stock_availability_225 availability") && q.includes("warehouse.stock_scope")) {
-        return { rows: [{ article_id: ARTICLE_ID, stock_scope: "OLD", qty_available: 1 }] };
+        return { rows: [{ article_id: ARTICLE_ID, piece_technique_version_id: "55555555-5555-5555-5555-555555555555", stock_scope: "OLD", qty_available: 1 }] };
       }
 
       if (q.includes("nextval('public.affaire_id_seq')")) {
-        return { rows: [{ id: "7" }] };
+        affaireSeq += 1;
+        return { rows: [{ id: String(affaireSeq) }] };
       }
 
       if (q.includes("SELECT client_code FROM public.clients")) {
@@ -1665,6 +1680,7 @@ describe("/api/v1/commandes", () => {
     ).toBe(false);
 
     mocks.clientQuery.mockClear();
+    affaireSeq = 6;
 
     const res = await request(app)
       .post("/api/v1/commandes/123/generate-affaires")
@@ -1673,7 +1689,8 @@ describe("/api/v1/commandes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({
-      affaire_ids: [7],
+      principal_affaire_id: 7,
+      affaire_ids: [8],
       bon_livraison_id: null,
       reservations_created: [expect.any(String)],
       of_ids: [],
@@ -1715,8 +1732,9 @@ describe("/api/v1/commandes", () => {
       .send({});
     expect(replay.status).toBe(200);
     expect(replay.body).toMatchObject({
-      affaire_ids: [7],
-      livraison_affaire_id: 7,
+      principal_affaire_id: 7,
+      affaire_ids: [8],
+      livraison_affaire_id: 8,
       idempotent_replay: true,
       of_ids: [],
     });
@@ -1787,8 +1805,13 @@ describe("/api/v1/commandes", () => {
       if (q.includes("FROM commande_to_affaire") && q.includes("AND affaire_id = $2")) {
         return { rows: Number(Array.isArray(params) ? params[1] : null) === 7 ? [{ id: "1" }] : [] };
       }
-      if (q.includes("FROM commande_to_affaire") && q.includes("WHERE commande_id")) {
-        return { rows: [{ affaire_id: 7, role: "LIVRAISON" }] };
+      if (q.includes("FROM commande_to_affaire cta")) {
+        return {
+          rows: [
+            { affaire_id: 6, role: null, is_principal: true, delivery_readiness_state: "WAITING_STOCK" },
+            { affaire_id: 7, role: "LIVRAISON", is_principal: false, delivery_readiness_state: "READY_FOR_BL" },
+          ],
+        };
       }
 
       if (q.includes("FROM public.erp_settings") && String(p0) === "stock.default_shipping_location") {
@@ -1808,6 +1831,9 @@ describe("/api/v1/commandes", () => {
               qty_ordered: 2,
               article_id: ARTICLE_ID,
               piece_technique_id: PIECE_ID,
+              piece_technique_version_id: "55555555-5555-5555-5555-555555555555",
+              piece_technique_version_status: "APPLICABLE",
+              piece_technique_version_effective: true,
             },
           ],
         };
@@ -1815,7 +1841,7 @@ describe("/api/v1/commandes", () => {
 
       // One OLD/NEW unit is already covered by a legacy grouped-delivery reservation.
       if (q.includes("FROM public.v_stock_availability_225 availability") && q.includes("warehouse.stock_scope")) {
-        return { rows: [{ article_id: ARTICLE_ID, stock_scope: "OLD", qty_available: 1 }] };
+        return { rows: [{ article_id: ARTICLE_ID, piece_technique_version_id: "55555555-5555-5555-5555-555555555555", stock_scope: "OLD", qty_available: 1 }] };
       }
 
       if (q.includes("FROM public.stock_reservations reservation") && q.includes("JOIN public.commande_ligne line")) {
@@ -1918,6 +1944,7 @@ describe("/api/v1/commandes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({
+      principal_affaire_id: 6,
       affaire_ids: [7, 8],
       livraison_affaire_id: 7,
       production_livraison_affaire_id: 8,
@@ -2004,7 +2031,7 @@ describe("/api/v1/commandes", () => {
         return { rows: [{ ok: 1 }] };
       }
 
-      if (q.includes("FROM commande_to_affaire") && q.includes("WHERE commande_id")) {
+      if (q.includes("FROM commande_to_affaire cta")) {
         return { rows: [] };
       }
 
@@ -2025,6 +2052,9 @@ describe("/api/v1/commandes", () => {
               qty_ordered: 2,
               article_id: ARTICLE_ID,
               piece_technique_id: ROOT_PIECE_ID,
+              piece_technique_version_id: "55555555-5555-5555-5555-555555555555",
+              piece_technique_version_status: "APPLICABLE",
+              piece_technique_version_effective: true,
             },
           ],
         };
@@ -2245,7 +2275,7 @@ describe("/api/v1/commandes", () => {
       }
       if (q.includes("FROM public.erp_settings")) return { rows: [] };
       if (q.includes("FROM pg_attribute") && q.includes("commande_to_affaire")) return { rows: [{ ok: 1 }] };
-      if (q.includes("FROM commande_to_affaire") && q.includes("WHERE commande_id")) return { rows: [] };
+      if (q.includes("FROM commande_to_affaire cta")) return { rows: [] };
       if (q.includes("FROM commande_ligne") && q.includes("LEFT JOIN LATERAL")) {
         return {
           rows: [
@@ -2255,6 +2285,9 @@ describe("/api/v1/commandes", () => {
               qty_ordered: 2,
               article_id: ARTICLE_ID,
               piece_technique_id: PIECE_ID,
+              piece_technique_version_id: "55555555-5555-5555-5555-555555555555",
+              piece_technique_version_status: "APPLICABLE",
+              piece_technique_version_effective: true,
             },
           ],
         };
@@ -2313,7 +2346,7 @@ describe("/api/v1/commandes", () => {
       }
       if (q.includes("FROM public.erp_settings")) return { rows: [] };
       if (q.includes("FROM pg_attribute") && q.includes("commande_to_affaire")) return { rows: [{ ok: 1 }] };
-      if (q.includes("FROM commande_to_affaire") && q.includes("WHERE commande_id")) return { rows: [] };
+      if (q.includes("FROM commande_to_affaire cta")) return { rows: [] };
       if (q.includes("FROM commande_ligne") && q.includes("LEFT JOIN LATERAL")) {
         return {
           rows: [
@@ -2325,6 +2358,9 @@ describe("/api/v1/commandes", () => {
               article_code: "ART-001",
               article_designation: "Article test",
               piece_technique_id: ROOT_PIECE_ID,
+              piece_technique_version_id: "55555555-5555-5555-5555-555555555555",
+              piece_technique_version_status: "APPLICABLE",
+              piece_technique_version_effective: true,
               piece_code: "ROOT",
               piece_designation: "Piece mere",
             },
@@ -2447,7 +2483,7 @@ describe("/api/v1/commandes", () => {
       }
       if (q.includes("FROM public.erp_settings")) return { rows: [] };
       if (q.includes("FROM pg_attribute") && q.includes("commande_to_affaire")) return { rows: [{ ok: 1 }] };
-      if (q.includes("FROM commande_to_affaire") && q.includes("WHERE commande_id")) {
+      if (q.includes("FROM commande_to_affaire cta")) {
         return { rows: [{ affaire_id: 7, role: "LIVRAISON" }] };
       }
       if (q.includes("FROM public.ordres_fabrication") && q.includes("generation_batch_id IS NOT NULL")) {

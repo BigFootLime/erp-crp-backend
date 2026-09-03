@@ -332,6 +332,7 @@ export const listOfQuerySchema = z.object({
   piece_technique_id: uuid.optional(),
   statut: ofStatusSchema.optional(),
   priority: ofPrioritySchema.optional(),
+  technical_readiness: z.enum(["INCOMPLETE", "READY_FOR_REVIEW", "VALIDATED", "BLOCKED"]).optional(),
   page: z.coerce.number().int().min(1).optional().default(1),
   pageSize: z.coerce.number().int().min(1).max(200).optional().default(20),
   sortBy: z
@@ -407,6 +408,39 @@ export const releaseOfSchema = z.object({
   }),
 });
 export type ReleaseOfBodyDTO = z.infer<typeof releaseOfSchema>["body"];
+
+const technicalPreparationSectionSchema = z.record(z.string(), z.unknown());
+
+export const patchOfTechnicalPreparationSchema = z.object({
+  body: z.object({
+    expected_updated_at: z.string().datetime({ offset: true }).optional(),
+    selected_version_id: uuid.optional().nullable(),
+    sections: z.object({
+      plan: technicalPreparationSectionSchema.optional(),
+      material: technicalPreparationSectionSchema.optional(),
+      structure: technicalPreparationSectionSchema.optional(),
+      routing: technicalPreparationSectionSchema.optional(),
+      documents: technicalPreparationSectionSchema.optional(),
+      quality: technicalPreparationSectionSchema.optional(),
+      stock_compatibility: technicalPreparationSectionSchema.optional(),
+    }).partial().optional().default({}),
+  }).strict(),
+});
+export type PatchOfTechnicalPreparationBodyDTO = z.infer<typeof patchOfTechnicalPreparationSchema>["body"];
+
+export const submitOfTechnicalPreparationSchema = z.object({
+  body: z.object({
+    expected_updated_at: z.string().datetime({ offset: true }).optional(),
+  }).strict().default({}),
+});
+export type SubmitOfTechnicalPreparationBodyDTO = z.infer<typeof submitOfTechnicalPreparationSchema>["body"];
+
+export const validateOfTechnicalPreparationSchema = z.object({
+  body: z.object({
+    expected_updated_at: z.string().datetime({ offset: true }).optional(),
+  }).strict().default({}),
+});
+export type ValidateOfTechnicalPreparationBodyDTO = z.infer<typeof validateOfTechnicalPreparationSchema>["body"];
 
 // #170 — réordonnancement des opérations avant lancement (DnD ou clavier).
 export const reorderOfOperationsSchema = z.object({
