@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { reserveProducedQtyForCommandeLine } from "./production-receipts.repository";
+import {
+  reserveProducedComponentForParentOf,
+  reserveProducedQtyForCommandeLine,
+} from "./production-receipts.repository";
 
 const ids = {
   article: "11111111-1111-1111-1111-111111111111",
@@ -75,5 +78,70 @@ describe("reserveProducedQtyForCommandeLine", () => {
 
     const levelUpdate = client.query.mock.calls.find(([sql]) => String(sql).includes("UPDATE public.stock_levels"));
     expect(levelUpdate?.[1]).toEqual([ids.level, 5, 7]);
+  });
+});
+
+describe("reserveProducedComponentForParentOf", () => {
+  it("reserves only the missing component quantity for the consuming OF", async () => {
+    const requirementId = "77777777-7777-4777-8777-777777777777";
+    const reservationId = "88888888-8888-4888-8888-888888888888";
+    const client = {
+      query: vi.fn(async (sql: unknown, _params?: unknown[]) => {
+        const text = String(sql);
+        if (text.includes("FROM public.of_component_requirements requirement") && text.includes("FOR UPDATE")) {
+          return { rows: [{ id: requirementId, consuming_of_id: 42, component_article_id: ids.article, required_qty: 10 }] };
+        }
+        if (text.includes("FROM public.stock_levels") && text.includes("available_qty")) {
+          return { rows: [{ available_qty: 20 }] };
+        }
+        if (text.includes("FROM public.stock_batches") && text.includes("available_qty")) {
+          return { rows: [{ available_qty: 20 }] };
+        }
+        if (text.includes("sum(reservation.qty_reserved)") && !text.includes("UPDATE public.of_component_requirements")) {
+          return { rows: [{ reserved_qty: 4 }] };
+        }
+        if (text.includes("INSERT INTO public.stock_reservations")) return { rows: [{ id: reservationId }] };
+        return { rows: [] };
+      }),
+    };
+
+    await expect(reserveProducedComponentForParentOf(client as never, {
+      component_of_id: 84,
+      article_id: ids.article,
+      location_id: ids.location,
+      stock_level_id: ids.level,
+      stock_batch_id: ids.batch,
+      lot_id: ids.lot,
+      qty_ok: 8,
+      actor_user_id: 7,
+      quality_gate_already_held: true,
+    })).resolves.toEqual({
+      matched: true,
+      reservation_id: reservationId,
+      qty_reserved: 6,
+      reservation_ids: [reservationId],
+    });
+
+    const reservationInsert = client.query.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO public.stock_reservations"));
+    const levelUpdate = client.query.mock.calls.find(([sql]) => String(sql).includes("UPDATE public.stock_levels"));
+    const batchUpdate = client.query.mock.calls.find(([sql]) => String(sql).includes("UPDATE public.stock_batches"));
+    expect(reservationInsert?.[1]).toEqual(expect.arrayContaining([6, requirementId, 42]));
+    expect(levelUpdate?.[1]).toEqual([ids.level, 6, 7]);
+    expect(batchUpdate?.[1]).toEqual([ids.batch, 6]);
+  });
+
+  it("does not turn an unrelated production receipt into a component reservation", async () => {
+    const client = { query: vi.fn(async () => ({ rows: [] })) };
+
+    await expect(reserveProducedComponentForParentOf(client as never, {
+      component_of_id: 84,
+      article_id: ids.article,
+      location_id: ids.location,
+      stock_level_id: ids.level,
+      stock_batch_id: ids.batch,
+      lot_id: ids.lot,
+      qty_ok: 8,
+      actor_user_id: 7,
+    })).resolves.toEqual({ matched: false, reservation_id: null, qty_reserved: 0, reservation_ids: [] });
   });
 });
