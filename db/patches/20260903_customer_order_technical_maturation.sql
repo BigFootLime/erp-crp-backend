@@ -22,7 +22,12 @@ $$;
 
 ALTER TABLE public.affaire
   ADD COLUMN IF NOT EXISTS parent_affaire_id bigint,
+  ADD COLUMN IF NOT EXISTS devis_id bigint REFERENCES public.devis(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS date_ouverture date,
   ADD COLUMN IF NOT EXISTS delivery_readiness_state text NOT NULL DEFAULT 'WAITING_STOCK';
+
+ALTER TABLE public.commande_to_affaire
+  ADD COLUMN IF NOT EXISTS role text;
 
 DO $$
 BEGIN
@@ -73,7 +78,7 @@ WITH commandes_sans_principale AS (
 )
 INSERT INTO public.affaire (
   reference, client_id, commande_id, devis_id, type_affaire,
-  is_principal, parent_affaire_id, delivery_readiness_state
+  statut, date_ouverture, is_principal, parent_affaire_id, delivery_readiness_state
 )
 SELECT
   'AFF-MERE-' || source.commande_id::text,
@@ -81,6 +86,8 @@ SELECT
   source.commande_id,
   source.devis_id,
   'livraison',
+  'OUVERTE',
+  CURRENT_DATE,
   true,
   NULL,
   'WAITING_STOCK'

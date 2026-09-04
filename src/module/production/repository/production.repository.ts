@@ -57,7 +57,17 @@ import {
   type OfStatut,
 } from "../domain/of-status";
 import { capabilityForOfTransition, roleHasOfCapability } from "../domain/of-rbac";
-import { copyPieceOperationsToOf, loadApplicableTechnicalSnapshot } from "../domain/of-generation";
+import {
+  copyPieceOperationsToOf,
+  createRecursiveOrdresFabrication,
+  loadApplicableTechnicalSnapshot,
+} from "../domain/of-generation";
+import { planAssemblyRequirements } from "../../commande-client/domain/assembly-planning";
+import {
+  allocateInternalContractOfs,
+  createInternalContractDraft,
+  persistAndReserveAssemblyComponents,
+} from "../../commande-client/repository/commande-client.repository";
 import { PLANNED_OPERATION_DURATION_MINUTES_SQL } from "../domain/planned-operation-duration";
 import { enqueueProductionOfChanged, productionRealtimeActionFromAudit } from "./production-realtime.repository";
 import { findAssetIdsByStorageKeys } from "../../operational-media/repository/operational-media.repository";
@@ -105,6 +115,16 @@ async function evaluateOfReadiness(tx: DbQueryer, ofId: number): Promise<OfReadi
     technical_snapshot_present: boolean; instruction_covered_count: number; quality_plan_count: number; open_nc_count: number;
     material_requirement_count: number; material_requirement_covered_count: number;
     material_requirement_evidence: Array<{ article_id: string; required_qty: number; reserved_qty: number; covered: boolean }>;
+    open_component_requirement_count: number;
+    component_requirement_evidence: Array<{
+      requirement_id: string;
+      structure_path: string;
+      component_kind: string;
+      action: string;
+      status: string;
+      required_qty: number;
+      reserved_qty: number;
+    }>;
     quality_plan_evidence: Array<{ control_id: string; plan_id: string | null; plan_version: number | null; snapshot_sha256: string }>;
     released_at: string | null; override: boolean | null;
   }>(`
@@ -144,6 +164,29 @@ async function evaluateOfReadiness(tx: DbQueryer, ofId: number): Promise<OfReadi
       material.material_requirement_count,
       material.material_requirement_covered_count,
       material.material_requirement_evidence,
+      (SELECT count(*)::int
+         FROM public.of_component_requirements requirement
+        WHERE requirement.consuming_of_id = o.id
+          AND requirement.status IN ('OPEN', 'BLOCKED')) AS open_component_requirement_count,
+      COALESCE((
+        SELECT jsonb_agg(jsonb_build_object(
+          'requirement_id', requirement.id::text,
+          'structure_path', requirement.structure_path,
+          'component_kind', requirement.component_kind,
+          'action', requirement.action,
+          'status', requirement.status,
+          'required_qty', requirement.required_qty,
+          'reserved_qty', COALESCE((
+            SELECT sum(reservation.qty_reserved)
+              FROM public.stock_reservations reservation
+             WHERE reservation.of_component_requirement_id = requirement.id
+               AND reservation.status = 'ACTIVE'
+               AND (reservation.expires_at IS NULL OR reservation.expires_at > statement_timestamp())
+          ), 0)
+        ) ORDER BY requirement.structure_path)
+          FROM public.of_component_requirements requirement
+         WHERE requirement.consuming_of_id = o.id
+      ), '[]'::jsonb) AS component_requirement_evidence,
       (SELECT count(*)::int FROM public.stock_reservations sr
         WHERE sr.of_id = o.id AND sr.status = 'ACTIVE'
           AND (sr.expires_at IS NULL OR sr.expires_at > statement_timestamp())) AS reservation_count,
@@ -199,7 +242,10 @@ async function evaluateOfReadiness(tx: DbQueryer, ofId: number): Promise<OfReadi
   // Requirements come from the OF's immutable technical snapshot. Coverage is
   // proven per article and quantity; an unrelated or undersized reservation can
   // never release the material gate.
-  if (row.material_requirement_covered_count < row.material_requirement_count) blockers.push("MATERIAL_RESERVATION_MISSING");
+  if (
+    row.material_requirement_covered_count < row.material_requirement_count
+    || row.open_component_requirement_count > 0
+  ) blockers.push("MATERIAL_RESERVATION_MISSING");
   if (row.planned_event_count < 1) blockers.push("CAPACITY_OR_CALENDAR_MISSING");
   if (row.instruction_covered_count < row.operation_count) blockers.push("PROGRAM_OR_INSTRUCTION_MISSING");
   if (row.quality_plan_count < 1 || row.open_nc_count > 0) blockers.push("QUALITY_PLAN_MISSING");
@@ -216,6 +262,8 @@ async function evaluateOfReadiness(tx: DbQueryer, ofId: number): Promise<OfReadi
     material_requirement_count: row.material_requirement_count,
     material_requirement_covered_count: row.material_requirement_covered_count,
     material_requirement_evidence: Array.isArray(row.material_requirement_evidence) ? row.material_requirement_evidence : [],
+    open_component_requirement_count: row.open_component_requirement_count,
+    component_requirement_evidence: Array.isArray(row.component_requirement_evidence) ? row.component_requirement_evidence : [],
     reservation_count: row.reservation_count,
     // These dimensions are evaluated only when the OF's quality/procurement
     // sources declare them applicable; this schema does not infer an obligation
@@ -4511,11 +4559,39 @@ export async function repoValidateOfTechnicalPreparation(params: {
       technical_readiness: string;
       technical_preparation: Record<string, unknown>;
       piece_technique_id: string;
+      commande_id: number | null;
+      commande_ligne_id: number | null;
+      affaire_id: number | null;
+      client_id: string | null;
+      article_id: string | null;
+      article_code: string | null;
+      article_designation: string | null;
+      quantite_lancee: number;
+      generation_level: number;
+      commande_numero: string | null;
+      delivery_due_date: string | null;
       updated_at: string;
     }>(
-      `SELECT statut::text AS statut, technical_readiness, technical_preparation,
-              piece_technique_id::text AS piece_technique_id, updated_at::text AS updated_at
-         FROM public.ordres_fabrication WHERE id = $1::bigint FOR UPDATE`,
+      `SELECT ordre.statut::text AS statut, ordre.technical_readiness, ordre.technical_preparation,
+              ordre.piece_technique_id::text AS piece_technique_id,
+              ordre.commande_id::bigint::int AS commande_id,
+              ordre.commande_ligne_id::bigint::int AS commande_ligne_id,
+              ordre.affaire_id::bigint::int AS affaire_id,
+              ordre.client_id::text AS client_id,
+              ordre.article_id::text AS article_id,
+              article.code AS article_code,
+              article.designation AS article_designation,
+              ordre.quantite_lancee::float8 AS quantite_lancee,
+              ordre.generation_level::int AS generation_level,
+              commande.numero AS commande_numero,
+              ligne.delai_client::text AS delivery_due_date,
+              ordre.updated_at::text AS updated_at
+         FROM public.ordres_fabrication ordre
+         LEFT JOIN public.commande_client commande ON commande.id = ordre.commande_id
+         LEFT JOIN public.commande_ligne ligne ON ligne.id = ordre.commande_ligne_id
+         LEFT JOIN public.articles article ON article.id = ordre.article_id
+        WHERE ordre.id = $1::bigint
+        FOR UPDATE OF ordre`,
       [params.id]
     );
     const row = current.rows[0];
@@ -4530,6 +4606,164 @@ export async function repoValidateOfTechnicalPreparation(params: {
       ? row.technical_preparation.selected_version_id
       : null;
     const technical = await loadApplicableTechnicalSnapshot(tx, row.piece_technique_id, { pinned_version_id: selected });
+    const assemblyFeatureEnabled = row.technical_preparation?.assembly_feature_enabled === true;
+    if (assemblyFeatureEnabled) {
+      if (
+        row.generation_level !== 0
+        || row.commande_id === null
+        || row.commande_ligne_id === null
+        || row.article_id === null
+      ) {
+        throw new HttpError(
+          409,
+          "ASSEMBLY_ROOT_CONTEXT_MISSING",
+          "Le contexte Article/commande de l'OF racine est incomplet. La validation n'a rien modifié."
+        );
+      }
+      const assemblyPlan = await planAssemblyRequirements(tx, {
+        root_article_id: row.article_id,
+        root_piece_technique_id: row.piece_technique_id,
+        root_piece_technique_version_id: technical.version_id,
+        quantity: Number(row.quantite_lancee),
+        due_date: row.delivery_due_date,
+      });
+      if (
+        assemblyPlan.manufacturing_mode === "ASSEMBLY"
+        && assemblyPlan.assembly_supply_strategy === "INTERNAL_CONTRACT"
+      ) {
+        const contractAllocations = await allocateInternalContractOfs(tx, {
+          commande_ligne_id: row.commande_ligne_id,
+          livraison_affaire_id: row.affaire_id,
+          allocations: assemblyPlan.contract_allocations,
+          user_id: params.audit.user_id,
+        });
+        const internalContractCommandId = assemblyPlan.quantity_to_assemble > 1e-9
+          ? await createInternalContractDraft(tx, {
+              source_commande_ligne_id: row.commande_ligne_id,
+              article_id: row.article_id,
+              piece_technique_id: row.piece_technique_id,
+              piece_technique_version_id: technical.version_id,
+              designation: row.article_designation ?? row.article_code ?? "Assemblage",
+              code_piece: row.article_code,
+              quantity: assemblyPlan.quantity_to_assemble,
+              due_date: row.delivery_due_date,
+              user_id: params.audit.user_id,
+            })
+          : null;
+        await tx.query(
+          `INSERT INTO public.of_technical_snapshots (
+             of_id, piece_technique_version_id, snapshot, snapshot_sha256, created_by
+           ) VALUES ($1::bigint, $2::uuid, $3::jsonb, $4, $5)`,
+          [params.id, technical.version_id, JSON.stringify(technical.snapshot), technical.sha256, params.audit.user_id]
+        );
+        await tx.query(
+          `UPDATE public.ordres_fabrication
+              SET piece_technique_version_id = $2::uuid,
+                  technical_snapshot = $3::jsonb,
+                  technical_snapshot_sha256 = $4,
+                  technical_snapshot_at = now(),
+                  technical_readiness = 'VALIDATED',
+                  technical_validated_at = now(), technical_validated_by = $5,
+                  technical_preparation = COALESCE(technical_preparation, '{}'::jsonb)
+                    || jsonb_build_object(
+                         'assembly_plan', $6::jsonb,
+                         'contract_allocation_ids', $7::jsonb,
+                         'internal_contract_command_id', $8::bigint,
+                         'supplied_by_internal_contract', true
+                       ),
+                  statut = 'ANNULE'::of_status,
+                  notes = CONCAT_WS(E'\n', NULLIF(notes, ''), 'Remplacé automatiquement par une couverture de contrat interne.'),
+                  updated_at = now(), updated_by = $5
+            WHERE id = $1::bigint`,
+          [
+            params.id,
+            technical.version_id,
+            JSON.stringify(technical.snapshot),
+            technical.sha256,
+            params.audit.user_id,
+            JSON.stringify(assemblyPlan),
+            JSON.stringify(contractAllocations.map((allocation) => allocation.allocation_id)),
+            internalContractCommandId,
+          ]
+        );
+        await insertAuditLog(tx, params.audit, {
+          action: "production.of.technical-preparation.validate",
+          entity_type: "ordres_fabrication",
+          entity_id: String(params.id),
+          details: {
+            piece_technique_version_id: technical.version_id,
+            snapshot_sha256: technical.sha256,
+            assembly_plan_hash: assemblyPlan.supply_plan_hash,
+            supply_strategy: "INTERNAL_CONTRACT",
+            contract_allocation_ids: contractAllocations.map((allocation) => allocation.allocation_id),
+            internal_contract_command_id: internalContractCommandId,
+            replaced_placeholder_of: true,
+          },
+        });
+        return getOfTechnicalPreparationTx(tx, params.id);
+      }
+      const generated = await createRecursiveOrdresFabrication(tx, {
+        source_type: "COMMANDE_CLIENT",
+        commande_id: row.commande_id,
+        commande_numero: row.commande_numero,
+        commande_ligne_id: row.commande_ligne_id,
+        livraison_affaire_id: row.affaire_id,
+        client_id: row.client_id,
+        root_article_id: row.article_id,
+        root_piece_technique_id: row.piece_technique_id,
+        root_pinned_version_id: technical.version_id,
+        qty_to_produce: Number(row.quantite_lancee),
+        user_id: params.audit.user_id,
+        existing_root_of_id: params.id,
+        planned_quantities_by_path:
+          assemblyPlan.manufacturing_mode === "ASSEMBLY"
+            ? assemblyPlan.planned_of_quantities_by_path
+            : undefined,
+      });
+      const artifacts = assemblyPlan.manufacturing_mode === "ASSEMBLY"
+        ? await persistAndReserveAssemblyComponents(tx, {
+            commande_id: row.commande_id,
+            commande_ligne_id: row.commande_ligne_id,
+            user_id: params.audit.user_id,
+            batch_id: generated.batch_id,
+            assembly_plan: assemblyPlan,
+            generated_ofs: generated.ofs,
+          })
+        : { component_reservation_ids: [], purchase_requirement_ids: [] };
+      await tx.query(
+        `UPDATE public.ordres_fabrication
+            SET technical_preparation = COALESCE(technical_preparation, '{}'::jsonb)
+              || jsonb_build_object(
+                   'assembly_plan', $2::jsonb,
+                   'assembly_plan_recalculated_at', now(),
+                   'component_reservation_ids', $3::jsonb,
+                   'purchase_requirement_ids', $4::jsonb
+                 ),
+                updated_at = now(), updated_by = $5
+          WHERE id = $1::bigint`,
+        [
+          params.id,
+          JSON.stringify(assemblyPlan),
+          JSON.stringify(artifacts.component_reservation_ids),
+          JSON.stringify(artifacts.purchase_requirement_ids),
+          params.audit.user_id,
+        ]
+      );
+      await insertAuditLog(tx, params.audit, {
+        action: "production.of.technical-preparation.validate",
+        entity_type: "ordres_fabrication",
+        entity_id: String(params.id),
+        details: {
+          piece_technique_version_id: technical.version_id,
+          snapshot_sha256: technical.sha256,
+          assembly_plan_hash: assemblyPlan.supply_plan_hash,
+          generated_child_of_ids: generated.ofs.filter((of) => of.parent_of_id !== null).map((of) => of.id),
+          component_reservation_ids: artifacts.component_reservation_ids,
+          purchase_requirement_ids: artifacts.purchase_requirement_ids,
+        },
+      });
+      return getOfTechnicalPreparationTx(tx, params.id);
+    }
     await tx.query(
       `INSERT INTO public.of_technical_snapshots (
          of_id, piece_technique_version_id, snapshot, snapshot_sha256, created_by

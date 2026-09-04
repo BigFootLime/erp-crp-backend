@@ -20,6 +20,8 @@ export type QuickTechnicalPieceResult = {
   indice_client: string;
   designation: string;
   technical_status: "BROUILLON";
+  manufacturing_mode: "SIMPLE" | "ASSEMBLY";
+  assembly_supply_strategy: "MAKE_TO_ORDER" | "INTERNAL_CONTRACT";
 };
 
 export async function repoCreateQuickTechnicalPiece(
@@ -45,7 +47,9 @@ export async function repoCreateQuickTechnicalPiece(
               p.code_piece AS reference,
               v.indice AS indice_client,
               p.designation,
-              'BROUILLON'::text AS technical_status
+              'BROUILLON'::text AS technical_status,
+              v.manufacturing_mode,
+              v.assembly_supply_strategy
          FROM public.commande_quick_piece_idempotence i
          JOIN public.pieces_techniques p ON p.id = i.piece_technique_id
          JOIN public.piece_technique_versions v ON v.id = i.piece_technique_version_id
@@ -109,7 +113,7 @@ export async function repoCreateQuickTechnicalPiece(
          $1::uuid, NULL, $1::uuid, NULL,
          1, $2::varchar(3), $3, $3, NULL,
          $4, $5, $4, NULL, 0,
-         'ACTIVE', 0, NULL, NULL, $2::text,
+         'ACTIVE', false, NULL, NULL, $2::text,
          $6, false
        )
        RETURNING updated_at::text AS updated_at`,
@@ -124,15 +128,23 @@ export async function repoCreateQuickTechnicalPiece(
          indice_externe_original, indice_externe_normalise,
          version_interne, code_metier, statut, is_current,
          raison_changement, motif_modification, commentaire_revision,
-         created_by, updated_by
+         created_by, updated_by, manufacturing_mode, assembly_supply_strategy
        ) VALUES (
          $1::uuid, $2::uuid, $3::text, $4::text,
          $3::text, upper(regexp_replace($3::text, '[^A-Za-z0-9]+', '', 'g')),
          1, concat($4::text, '-', $3::text, '-R01'), 'BROUILLON', false,
          'Création depuis une commande client', 'Création depuis une commande client',
-         jsonb_build_object('source', 'COMMANDE_REÇUE'), $5, $5
+         jsonb_build_object('source', 'COMMANDE_REÇUE'), $5, $5, $6, $7
        )`,
-      [versionId, pieceId, body.indice_client, planReference, audit.user_id]
+      [
+        versionId,
+        pieceId,
+        body.indice_client,
+        planReference,
+        audit.user_id,
+        body.manufacturing_mode,
+        body.assembly_supply_strategy,
+      ]
     );
 
     const article = await repoCreateArticleTx(
@@ -192,6 +204,8 @@ export async function repoCreateQuickTechnicalPiece(
       indice_client: body.indice_client,
       designation: body.designation,
       technical_status: "BROUILLON",
+      manufacturing_mode: body.manufacturing_mode,
+      assembly_supply_strategy: body.assembly_supply_strategy,
     };
   } catch (error) {
     await client.query("ROLLBACK");
