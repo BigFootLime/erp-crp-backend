@@ -14,6 +14,22 @@ VALUES (
 )
 ON CONFLICT (key) DO NOTHING;
 
+-- Réparations de schéma rendues nécessaires par les créations modernes
+-- d'affaires. Elles restent ici afin de ne jamais modifier le checksum du
+-- patch 20260903 déjà appliqué en test et en production.
+ALTER TABLE public.affaire
+  ADD COLUMN IF NOT EXISTS devis_id bigint REFERENCES public.devis(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS date_ouverture date;
+
+ALTER TABLE public.commande_to_affaire
+  ADD COLUMN IF NOT EXISTS role text;
+
+UPDATE public.affaire
+SET statut = COALESCE(statut, 'OUVERTE'),
+    date_ouverture = COALESCE(date_ouverture, CURRENT_DATE),
+    updated_at = now()
+WHERE is_principal;
+
 ALTER TABLE public.piece_technique_versions
   ADD COLUMN IF NOT EXISTS manufacturing_mode text NOT NULL DEFAULT 'SIMPLE',
   ADD COLUMN IF NOT EXISTS assembly_supply_strategy text NOT NULL DEFAULT 'MAKE_TO_ORDER';
