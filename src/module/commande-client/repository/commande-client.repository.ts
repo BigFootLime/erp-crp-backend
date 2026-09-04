@@ -59,7 +59,10 @@ import {
 } from "../../production/domain/of-generation";
 import { queueRootOfCreationPdf } from "../../production/domain/of-creation-pdf";
 import { canActOnCommandeWorkflowCheckpoint, canLaunchInternalOrder } from "../domain/commande-client-rbac";
-import { resolveCustomerOrderLaunchMode } from "../domain/commande-client-launch";
+import {
+  resolveCustomerOrderLaunchMode,
+  resolveDeliveryReadinessState,
+} from "../domain/commande-client-launch";
 import {
   assertCommandeFullyInvoiced,
   assertCommandeFullyShipped,
@@ -81,6 +84,14 @@ import {
   type CommandeArticleIneligibilityCode,
 } from "../../stock/domain/commande-article-eligibility";
 import { applyOrderLineSalePriceTx } from "../../stock/repository/article-sale-price.repository";
+import {
+  computeCommandeSupplyPlanHash,
+  createAssemblyPlanningLedger,
+  planAssemblyRequirements,
+  type AssemblyPlan,
+  type AssemblySupplyStrategy,
+  type ManufacturingMode,
+} from "../domain/assembly-planning";
 
 function normalizeStoredPath(filePath: string) {
   const rel = path.isAbsolute(filePath) ? path.relative(process.cwd(), filePath) : filePath;
@@ -3292,30 +3303,37 @@ async function advanceCustomerOrderV2AfterLaunch(params: {
   user_id: number;
   has_technical_warnings: boolean;
   of_ids: number[];
+  waiting_contract_supply?: boolean;
 }) {
   const targetStatus: CommandeWorkflowStatus = params.has_technical_warnings
     ? "ATTENTE_TECHNIQUE"
-    : "ATTENTE_PLANNING";
+    : params.waiting_contract_supply
+      ? "ATTENTE_OF"
+      : "ATTENTE_PLANNING";
 
   await params.tx.query(
     `
       UPDATE public.commande_client_workflow_checkpoint
       SET status = CASE
-            WHEN checkpoint_code IN ('order_intake', 'commercial_review', 'stock_check', 'of_generation') THEN 'done'
+            WHEN checkpoint_code IN ('order_intake', 'commercial_review', 'stock_check') THEN 'done'
+            WHEN checkpoint_code = 'of_generation' THEN
+              CASE WHEN $5::boolean THEN 'active' ELSE 'done' END
             WHEN checkpoint_code = 'technical_analysis' THEN
               CASE WHEN $3::boolean THEN 'active' ELSE 'done' END
             WHEN checkpoint_code = 'planning_validation' THEN
-              CASE WHEN $3::boolean THEN 'pending' ELSE 'active' END
+              CASE WHEN $3::boolean OR $5::boolean THEN 'pending' ELSE 'active' END
             ELSE status
           END,
           completed_at = CASE
-            WHEN checkpoint_code IN ('order_intake', 'commercial_review', 'stock_check', 'of_generation')
+            WHEN checkpoint_code IN ('order_intake', 'commercial_review', 'stock_check')
+              OR (checkpoint_code = 'of_generation' AND NOT $5::boolean)
               OR (checkpoint_code = 'technical_analysis' AND NOT $3::boolean)
               THEN COALESCE(completed_at, now())
             ELSE NULL
           END,
           completed_by = CASE
-            WHEN checkpoint_code IN ('order_intake', 'commercial_review', 'stock_check', 'of_generation')
+            WHEN checkpoint_code IN ('order_intake', 'commercial_review', 'stock_check')
+              OR (checkpoint_code = 'of_generation' AND NOT $5::boolean)
               OR (checkpoint_code = 'technical_analysis' AND NOT $3::boolean)
               THEN COALESCE(completed_by, $2::int)
             ELSE NULL
@@ -3337,6 +3355,7 @@ async function advanceCustomerOrderV2AfterLaunch(params: {
         commercial_validation: true,
         of_ids: params.of_ids,
       }),
+      params.waiting_contract_supply === true,
     ]
   );
 
@@ -3361,7 +3380,9 @@ async function advanceCustomerOrderV2AfterLaunch(params: {
         targetStatus,
         params.has_technical_warnings
           ? "Commande validée commercialement — préparation technique à compléter"
-          : "Commande validée commercialement — OF prêts à planifier",
+          : params.waiting_contract_supply
+            ? "Commande validée commercialement — couverture par contrat interne en attente"
+            : "Commande validée commercialement — OF prêts à planifier",
       ]
     );
   }
@@ -4523,6 +4544,8 @@ async function analyzeCommandeStockTx(
   );
   const commande = commandeRes.rows[0] ?? null;
   if (!commande) return null;
+  const assemblyFeatureEnabled = commande.order_type !== "INTERNE"
+    && await isCommandAssemblyFlowEnabled(client, audit.user_id);
 
   let locationId: string | null = null;
   let analysis: CommandeStockAnalysis;
@@ -4545,11 +4568,18 @@ async function analyzeCommandeStockTx(
       emplacement_id: emplacementId,
       label: "dest_stock_location",
     });
+    const lines = buildZeroStockAnalysisLines(await selectCommandeLineRefs(client, commandeId));
     analysis = {
-      lines: buildZeroStockAnalysisLines(await selectCommandeLineRefs(client, commandeId)),
+      lines,
+      analysis_version: 2,
+      supply_plan_hash: computeCommandeSupplyPlanHash(lines),
+      assembly_feature_enabled: false,
     };
   } else {
-    analysis = await computeCommandeStockAnalysis(client, { commande_id: commandeId });
+    analysis = await computeCommandeStockAnalysis(client, {
+      commande_id: commandeId,
+      assembly_feature_enabled: assemblyFeatureEnabled,
+    });
   }
 
   const hasPartial = analysis.lines.some((line) => line.status === "PARTIAL");
@@ -4569,6 +4599,9 @@ async function analyzeCommandeStockTx(
 
   const result = {
     commande_id: commandeId,
+    analysis_version: analysis.analysis_version,
+    supply_plan_hash: analysis.supply_plan_hash,
+    assembly_feature_enabled: analysis.assembly_feature_enabled,
     location_id: locationId,
     stock_scope_order: ["OLD", "NEW"] as const,
     lines: analysis.lines,
@@ -4586,6 +4619,8 @@ async function analyzeCommandeStockTx(
       suggested_scenario,
       needs_confirmation,
       suggested_decision,
+      analysis_version: analysis.analysis_version,
+      supply_plan_hash: analysis.supply_plan_hash,
     },
     user_id: audit.user_id,
   });
@@ -4649,6 +4684,8 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
     if (!commande) {
       return null;
     }
+    const assemblyFeatureEnabled = commande.order_type !== "INTERNE"
+      && await isCommandAssemblyFlowEnabled(client, audit.user_id);
 
     // #168 : verrou optimiste — refuse un lancement dont l'aperçu « Vérifier et lancer » est
     // périmé (la commande a changé entre l'aperçu et la confirmation). Sans jeton, comportement
@@ -4995,16 +5032,33 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
 
     let analysis: CommandeStockAnalysis;
     if (orderType === "INTERNE") {
+      const lines = buildZeroStockAnalysisLines(refs);
       analysis = {
-        lines: buildZeroStockAnalysisLines(refs),
+        lines,
+        analysis_version: 2,
+        supply_plan_hash: computeCommandeSupplyPlanHash(lines),
+        assembly_feature_enabled: false,
       };
     } else {
       // Fail closed: generation must use the same authoritative OLD -> NEW
       // availability projection as the preview, never silently fall back to zero.
-      analysis = await computeCommandeStockAnalysis(client, { commande_id: commandeId });
+      analysis = await computeCommandeStockAnalysis(client, {
+        commande_id: commandeId,
+        assembly_feature_enabled: assemblyFeatureEnabled,
+      });
     }
 
     const stockAnalysis = analysis;
+    if (
+      body.expected_supply_plan_hash
+      && body.expected_supply_plan_hash !== stockAnalysis.supply_plan_hash
+    ) {
+      throw new HttpError(
+        409,
+        "COMMANDE_SUPPLY_PLAN_STALE",
+        "Le stock, la composition ou la couverture contrat a changé. Relancez l'analyse avant de valider."
+      );
+    }
     const deliveryAffairPlan = resolveDeliveryAffairPlan(stockAnalysis.lines, requestedLivraisonCount);
     const effectiveLivraisonCount =
       orderType === "INTERNE" ? 0 : deliveryAffairPlan.affaire_count;
@@ -5021,7 +5075,9 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
     const productionByLine = new Map<number, number>();
     for (const line of stockAnalysis.lines) {
       const minimum = orderType === "INTERNE" ? line.requested_qty : line.shortage_qty;
-      const requested = requestedProductionByLine.get(line.commande_ligne_id);
+      const requested = commande.creation_flow_version === 2
+        ? undefined
+        : requestedProductionByLine.get(line.commande_ligne_id);
       const quantity = requested ?? minimum;
       if (!Number.isFinite(quantity) || quantity < 0) {
         throw new HttpError(
@@ -5053,7 +5109,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
     else if (needsProduction && decision === null) decision = "SHIP_ALL_TOGETHER";
 
     const overrides = new Map<number, number>();
-    for (const l of body.lines ?? []) {
+    for (const l of commande.creation_flow_version === 2 ? [] : body.lines ?? []) {
       overrides.set(l.commande_ligne_id, Number(l.qty_ship_now));
     }
 
@@ -5257,6 +5313,10 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
     const generatedOfs: GeneratedOfRef[] = [];
     const generationWarnings: string[] = [];
     const technicalWarnings: Array<{ commande_ligne_id: number; code: string; message: string }> = [];
+    const componentReservationIds: string[] = [];
+    const purchaseRequirementIds: string[] = [];
+    const contractAllocations: Array<AssemblyPlan["contract_allocations"][number] & { allocation_id: string }> = [];
+    const internalContractCommandIds: number[] = [];
     if (needsProduction) {
       const byLine = new Map<number, CommandeLineRef>(refs.map((r) => [r.commande_ligne_id, r] as const));
 
@@ -5274,7 +5334,33 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
           );
         }
 
-        if (ref?.piece_technique_version_status === "APPLICABLE" && ref.piece_technique_version_effective) {
+        if (
+          orderType !== "INTERNE"
+          && l.assembly_plan?.manufacturing_mode === "ASSEMBLY"
+          && l.assembly_plan.technical_status === "READY"
+          && l.assembly_plan.assembly_supply_strategy === "INTERNAL_CONTRACT"
+        ) {
+          contractAllocations.push(...await allocateInternalContractOfs(client, {
+            commande_ligne_id: l.commande_ligne_id,
+            livraison_affaire_id: productionLivraisonAffaireId,
+            allocations: l.assembly_plan.contract_allocations,
+            user_id: audit.user_id,
+          }));
+          if (l.assembly_plan.quantity_to_assemble > 1e-9 && ref?.piece_technique_version_id && l.article_id) {
+            internalContractCommandIds.push(await createInternalContractDraft(client, {
+              source_commande_ligne_id: l.commande_ligne_id,
+              article_id: l.article_id,
+              piece_technique_id: pieceTechniqueId,
+              piece_technique_version_id: ref.piece_technique_version_id,
+              designation: l.article_designation ?? l.piece_designation ?? l.code_piece ?? "Assemblage",
+              code_piece: l.article_code ?? l.code_piece,
+              quantity: l.assembly_plan.quantity_to_assemble,
+              due_date: ref.delivery_due_date,
+              user_id: audit.user_id,
+            }));
+          }
+          generationWarnings.push(...l.assembly_plan.warnings);
+        } else if (ref?.piece_technique_version_status === "APPLICABLE" && ref.piece_technique_version_effective) {
           const generated = await createRecursiveOrdresFabrication(client, {
             commande_id: commandeId,
             commande_numero: commande.numero,
@@ -5286,9 +5372,34 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
             root_pinned_version_id: ref?.piece_technique_version_id ?? null,
             qty_to_produce: qtyToProduce,
             user_id: audit.user_id,
+            planned_quantities_by_path:
+              l.assembly_plan?.manufacturing_mode === "ASSEMBLY"
+                ? l.assembly_plan.planned_of_quantities_by_path
+                : undefined,
           });
           generatedOfs.push(...generated.ofs);
           generationWarnings.push(...generated.warnings);
+          if (l.assembly_plan?.manufacturing_mode === "ASSEMBLY") {
+            const artifacts = await persistAndReserveAssemblyComponents(client, {
+              commande_id: commandeId,
+              commande_ligne_id: l.commande_ligne_id,
+              user_id: audit.user_id,
+              batch_id: generated.batch_id,
+              assembly_plan: l.assembly_plan,
+              generated_ofs: generated.ofs,
+            });
+            componentReservationIds.push(...artifacts.component_reservation_ids);
+            purchaseRequirementIds.push(...artifacts.purchase_requirement_ids);
+            for (const warning of l.assembly_plan.warnings) {
+              technicalWarnings.push({
+                commande_ligne_id: l.commande_ligne_id,
+                code: warning,
+                message: warning === "ASSEMBLY_COMPOSITION_EMPTY"
+                  ? "La composition de l'assemblage doit être complétée avant sa libération."
+                  : "Le dossier d'un composant doit être complété avant la fabrication.",
+              });
+            }
+          }
         } else {
           const draftOf = await createIncompleteDraftOrdreFabrication(client, {
             commande_id: commandeId,
@@ -5301,6 +5412,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
             selected_version_id: ref?.piece_technique_version_id ?? null,
             qty_to_produce: qtyToProduce,
             user_id: audit.user_id,
+            assembly_feature_enabled: assemblyFeatureEnabled,
           });
           generatedOfs.push(draftOf);
           technicalWarnings.push({
@@ -5318,13 +5430,20 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
     for (const root of generatedOfs.filter((of) => of.parent_of_id === null)) {
       await queueRootOfCreationPdf(client, { ofId: root.id, actorUserId: audit.user_id });
     }
+    const reservedTotal = Array.from(quantitiesToReserve.values()).reduce((sum, value) => sum + Number(value), 0);
+    const livraisonCarriesOpenProduction = needsProduction
+      && productionLivraisonAffaireId === livraisonAffaireId;
+    const livraisonReadinessState = resolveDeliveryReadinessState({
+      technicalWarningCount: technicalWarnings.length,
+      carriesOpenProduction: livraisonCarriesOpenProduction,
+      reservedQuantity: reservedTotal,
+    });
     if (livraisonAffaireId !== null) {
-      const reservedTotal = Array.from(quantitiesToReserve.values()).reduce((sum, value) => sum + Number(value), 0);
       await client.query(
         `UPDATE public.affaire
             SET delivery_readiness_state = $2, updated_at = now()
           WHERE id = $1::bigint`,
-        [livraisonAffaireId, reservedTotal > 0 ? "READY_FOR_BL" : needsProduction ? "WAITING_TECHNICAL" : "WAITING_STOCK"]
+        [livraisonAffaireId, livraisonReadinessState]
       );
     }
     if (productionLivraisonAffaireId !== null && productionLivraisonAffaireId !== livraisonAffaireId) {
@@ -5365,6 +5484,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
           user_id: audit.user_id,
           has_technical_warnings: technicalWarnings.length > 0,
           of_ids: ofIds,
+          waiting_contract_supply: contractAllocations.length > 0 || internalContractCommandIds.length > 0,
         });
       } else {
         const transition = await advanceCustomerOrderWorkflowAfterLaunch({
@@ -5393,6 +5513,10 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         of_created: ofIds.length,
         principal_affaire_id: principalAffaireId,
         technical_warnings: technicalWarnings,
+        component_reservation_ids: componentReservationIds,
+        purchase_requirement_ids: purchaseRequirementIds,
+        contract_allocations: contractAllocations,
+        internal_contract_command_ids: internalContractCommandIds,
         recovered_invalid_planning_state: recoveredInvalidPlanningState,
       },
       user_id: audit.user_id,
@@ -5413,6 +5537,10 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         bon_livraison_id: bonLivraisonId,
         reservations_created: reservationsCreated,
         of_ids: ofIds,
+        component_reservation_ids: componentReservationIds,
+        purchase_requirement_ids: purchaseRequirementIds,
+        contract_allocations: contractAllocations,
+        internal_contract_command_ids: internalContractCommandIds,
         recovered_invalid_planning_state: recoveredInvalidPlanningState,
       },
     });
@@ -5444,6 +5572,15 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       bon_livraison_id: bonLivraisonId,
       reservations_created: reservationsCreated,
       of_ids: ofIds,
+      assembly_of_ids: generatedOfs
+        .filter((of) => stockAnalysis.lines.some((line) => line.assembly_plan?.manufacturing_mode === "ASSEMBLY" && line.commande_ligne_id === of.commande_ligne_id))
+        .map((of) => of.id),
+      component_reservation_ids: componentReservationIds,
+      purchase_requirement_ids: purchaseRequirementIds,
+      contract_allocations: contractAllocations,
+      contract_allocation_ids: contractAllocations.map((allocation) => allocation.allocation_id),
+      internal_contract_command_ids: internalContractCommandIds,
+      internal_contract_commande_ids: internalContractCommandIds,
       draft_of_ids: generatedOfs
         .filter((of) => technicalWarnings.some((warning) => warning.commande_ligne_id === of.commande_ligne_id))
         .map((of) => of.id),
@@ -5451,8 +5588,8 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         affaire_id: affaireId,
         parent_affaire_id: principalAffaireId,
         readiness_state:
-          affaireId === livraisonAffaireId && Array.from(quantitiesToReserve.values()).some((value) => Number(value) > 0)
-            ? "READY_FOR_BL"
+          affaireId === livraisonAffaireId
+            ? livraisonReadinessState
             : technicalWarnings.length > 0
               ? "WAITING_TECHNICAL"
               : "WAITING_STOCK",
@@ -5498,9 +5635,9 @@ async function createAffaire(db: PoolClient, input: AffaireCreationInput): Promi
     `
     INSERT INTO affaire (
       id, reference, client_id, commande_id, devis_id, type_affaire,
-      is_principal, parent_affaire_id, delivery_readiness_state
+      statut, date_ouverture, is_principal, parent_affaire_id, delivery_readiness_state
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8::bigint, $9)
+    VALUES ($1, $2, $3, $4, $5, $6, 'OUVERTE', CURRENT_DATE, $7, $8::bigint, $9)
     `,
     [
       id,
@@ -5670,6 +5807,9 @@ type CommandeLineRef = {
   piece_designation: string | null;
   piece_client_id: string | null;
   piece_client_code: string | null;
+  delivery_due_date: string | null;
+  manufacturing_mode: ManufacturingMode;
+  assembly_supply_strategy: AssemblySupplyStrategy;
 };
 
 async function selectCommandeLineRefs(db: PoolClient, commandeId: number): Promise<CommandeLineRef[]> {
@@ -5688,6 +5828,9 @@ async function selectCommandeLineRefs(db: PoolClient, commandeId: number): Promi
     piece_designation: string | null;
     piece_client_id: string | null;
     piece_client_code: string | null;
+    delivery_due_date: string | null;
+    manufacturing_mode: ManufacturingMode | null;
+    assembly_supply_strategy: AssemblySupplyStrategy | null;
   }>(
     `
       SELECT
@@ -5704,7 +5847,10 @@ async function selectCommandeLineRefs(db: PoolClient, commandeId: number): Promi
         COALESCE(pt.code_piece, legacy.piece_code) AS piece_code,
         COALESCE(pt.designation, legacy.piece_designation) AS piece_designation,
         COALESCE(pt.client_id::text, legacy.piece_client_id) AS piece_client_id,
-        COALESCE(pt.code_client, legacy.piece_client_code) AS piece_client_code
+        COALESCE(pt.code_client, legacy.piece_client_code) AS piece_client_code,
+        cl.delai_client::text AS delivery_due_date,
+        COALESCE(version.manufacturing_mode, 'SIMPLE') AS manufacturing_mode,
+        COALESCE(version.assembly_supply_strategy, 'MAKE_TO_ORDER') AS assembly_supply_strategy
       FROM commande_ligne cl
       LEFT JOIN public.articles a ON a.id = cl.article_id
       LEFT JOIN public.pieces_techniques pt ON pt.id = COALESCE(cl.piece_technique_id, a.piece_technique_id)
@@ -5764,6 +5910,9 @@ async function selectCommandeLineRefs(db: PoolClient, commandeId: number): Promi
       typeof r.piece_client_id === "string" && r.piece_client_id.trim().length > 0 ? r.piece_client_id.trim() : null,
     piece_client_code:
       typeof r.piece_client_code === "string" && r.piece_client_code.trim().length > 0 ? r.piece_client_code.trim() : null,
+    delivery_due_date: r.delivery_due_date ?? null,
+    manufacturing_mode: r.manufacturing_mode ?? "SIMPLE",
+    assembly_supply_strategy: r.assembly_supply_strategy ?? "MAKE_TO_ORDER",
   }));
 }
 
@@ -5892,11 +6041,37 @@ export type CommandeStockAnalysisLine = {
   shortage_qty: number;
   proposed_production_qty: number;
   status: StockAvailabilityStatus;
+  manufacturing_mode?: ManufacturingMode;
+  assembly_supply_strategy?: AssemblySupplyStrategy;
+  assembly_plan?: AssemblyPlan | null;
 };
 
 type CommandeStockAnalysis = {
   lines: CommandeStockAnalysisLine[];
+  analysis_version: 2;
+  supply_plan_hash: string;
+  assembly_feature_enabled: boolean;
 };
+
+const COMMAND_ASSEMBLY_FLOW_FLAG = "COMMAND_ASSEMBLY_FLOW";
+
+async function isCommandAssemblyFlowEnabled(db: PoolClient, userId: number): Promise<boolean> {
+  const result = await db.query<{ global_enabled: boolean; user_enabled: boolean | null }>(
+    `SELECT flag.enabled AS global_enabled, assignment.enabled AS user_enabled
+       FROM public.app_feature_flags flag
+       LEFT JOIN public.app_feature_flag_users assignment
+         ON assignment.feature_flag_id = flag.id
+        AND assignment.user_id = $2::int
+      WHERE flag.key = $1
+      LIMIT 1`,
+    [COMMAND_ASSEMBLY_FLOW_FLAG, userId]
+  );
+  const row = result.rows[0];
+  if (!row) return false;
+  return row.user_enabled === null || row.user_enabled === undefined
+    ? row.global_enabled === true
+    : row.user_enabled === true;
+}
 
 export type DeliveryAffairPlan = {
   automatic_stock_production_split: boolean;
@@ -5946,12 +6121,16 @@ function buildZeroStockAnalysisLines(refs: CommandeLineRef[]): CommandeStockAnal
       shortage_qty: requestedQty,
       proposed_production_qty: requestedQty,
       status: requestedQty > 0 ? "NONE" : "FULL",
+      manufacturing_mode: ref.manufacturing_mode,
+      assembly_supply_strategy: ref.assembly_supply_strategy,
+      assembly_plan: null,
     };
   });
 }
 
 async function computeCommandeStockAnalysis(db: PoolClient, params: {
   commande_id: number;
+  assembly_feature_enabled: boolean;
 }): Promise<CommandeStockAnalysis> {
   const refs = await selectCommandeLineRefs(db, params.commande_id);
   const availableByArticle = await loadScopedAvailableQtyByArticle(db, refs);
@@ -5964,7 +6143,11 @@ async function computeCommandeStockAnalysis(db: PoolClient, params: {
     availableByArticle
   );
 
-  const lines: CommandeStockAnalysisLine[] = refs.map((r, index) => {
+  const ledger = createAssemblyPlanningLedger();
+  const lines: CommandeStockAnalysisLine[] = [];
+  for (let index = 0; index < refs.length; index += 1) {
+    const r = refs[index];
+    if (!r) continue;
     const requestedQty = Number(r.qty_ordered);
     const allocation = allocations[index] ?? {
       old_available_qty: 0,
@@ -5978,7 +6161,17 @@ async function computeCommandeStockAnalysis(db: PoolClient, params: {
       status: requestedQty > 0 ? "NONE" as const : "FULL" as const,
     };
 
-    return {
+    const assemblyPlan = params.assembly_feature_enabled && r.article_id && r.piece_technique_id && allocation.shortage_qty > 0
+      ? await planAssemblyRequirements(db, {
+          root_article_id: r.article_id,
+          root_piece_technique_id: r.piece_technique_id,
+          root_piece_technique_version_id: r.piece_technique_version_id ?? null,
+          quantity: allocation.shortage_qty,
+          due_date: r.delivery_due_date,
+          ledger,
+        })
+      : null;
+    lines.push({
       commande_ligne_id: r.commande_ligne_id,
       code_piece: r.code_piece,
       article_id: r.article_id,
@@ -5990,10 +6183,18 @@ async function computeCommandeStockAnalysis(db: PoolClient, params: {
       piece_designation: r.piece_designation,
       requested_qty: requestedQty,
       ...allocation,
-    };
-  });
+      manufacturing_mode: r.manufacturing_mode,
+      assembly_supply_strategy: r.assembly_supply_strategy,
+      assembly_plan: assemblyPlan,
+    });
+  }
 
-  return { lines };
+  return {
+    lines,
+    analysis_version: 2,
+    supply_plan_hash: computeCommandeSupplyPlanHash(lines),
+    assembly_feature_enabled: params.assembly_feature_enabled,
+  };
 }
 
 type ScopedDeliveryStockCandidate = {
@@ -6064,6 +6265,297 @@ async function loadScopedDeliveryStockCandidates(
     [articleIds]
   );
   return rows.rows.map((row) => ({ ...row, qty_available: Math.max(0, Number(row.qty_available)) }));
+}
+
+type AssemblyArtifacts = {
+  component_reservation_ids: string[];
+  purchase_requirement_ids: string[];
+};
+
+export async function persistAndReserveAssemblyComponents(
+  db: PoolClient,
+  params: {
+    commande_id: number;
+    commande_ligne_id: number;
+    user_id: number;
+    batch_id: string;
+    assembly_plan: AssemblyPlan;
+    generated_ofs: GeneratedOfRef[];
+  }
+): Promise<AssemblyArtifacts> {
+  const ofByPath = new Map(
+    params.generated_ofs
+      .filter((of): of is GeneratedOfRef & { structure_path: string } => Boolean(of.structure_path))
+      .map((of) => [of.structure_path, of] as const)
+  );
+  const componentReservationIds: string[] = [];
+  const purchaseRequirementIds: string[] = [];
+
+  for (const component of params.assembly_plan.components) {
+    const consumingOf = ofByPath.get(component.parent_structure_path);
+    if (!consumingOf) continue;
+    const componentOf = ofByPath.get(component.structure_path) ?? null;
+    const required = await db.query<{ id: string }>(
+      `INSERT INTO public.of_component_requirements (
+         generation_batch_id, consuming_of_id, component_of_id,
+         parent_piece_technique_id, parent_piece_technique_version_id,
+         component_kind, component_article_id, component_piece_technique_id,
+         component_piece_technique_version_id, structure_path, quantity_per_parent,
+         required_qty, old_reserved_qty, new_reserved_qty, shortage_qty,
+         action, status, purchase_requirement, created_by
+       ) VALUES (
+         $1::uuid,$2::bigint,$3::bigint,$4::uuid,$5::uuid,$6,$7::uuid,$8::uuid,$9::uuid,
+         $10,$11,$12,$13,$14,$15::numeric,$16,
+         CASE WHEN $15::numeric <= 0 THEN 'COVERED' ELSE 'OPEN' END,
+         CASE WHEN $16 = 'PURCHASE' THEN jsonb_build_object(
+           'article_id', $7::uuid, 'designation', $17::text, 'quantity', $15::numeric
+         ) ELSE NULL END,
+         $18
+       )
+       ON CONFLICT (generation_batch_id, structure_path)
+       DO UPDATE SET updated_at = now()
+       RETURNING id::text AS id`,
+      [
+        params.batch_id,
+        consumingOf.id,
+        componentOf?.id ?? null,
+        component.parent_piece_technique_id,
+        component.parent_piece_technique_version_id,
+        component.kind,
+        component.article_id,
+        component.piece_technique_id,
+        component.piece_technique_version_id,
+        component.structure_path,
+        component.quantity_per_parent,
+        component.required_qty,
+        component.old_used_qty,
+        component.new_used_qty,
+        component.shortage_qty,
+        component.action,
+        component.designation,
+        params.user_id,
+      ]
+    );
+    const requirementId = required.rows[0]?.id;
+    if (!requirementId) throw new Error("ASSEMBLY_COMPONENT_REQUIREMENT_NOT_CREATED");
+    if (component.action === "PURCHASE") purchaseRequirementIds.push(requirementId);
+
+    const quantityToReserve = Number(component.old_used_qty) + Number(component.new_used_qty);
+    if (!component.article_id || quantityToReserve <= 1e-9) continue;
+    const candidates = (await loadScopedDeliveryStockCandidates(db, [component.article_id]))
+      .filter((candidate) => !component.piece_technique_version_id
+        || candidate.piece_technique_version_id === component.piece_technique_version_id);
+    let remaining = quantityToReserve;
+    for (const candidate of candidates) {
+      if (remaining <= 1e-9) break;
+      const quantity = Math.min(remaining, candidate.qty_available);
+      if (quantity <= 1e-9 || !candidate.lot_id) continue;
+      const lotState = await db.query<{ lot_status: string | null; source_scope: string | null }>(
+        `SELECT lot_status, source_scope FROM public.lots WHERE id = $1::uuid FOR UPDATE`,
+        [candidate.lot_id]
+      );
+      const lot = lotState.rows[0];
+      if (!lot || (lot.lot_status ?? "LIBERE") !== "LIBERE") continue;
+      if (candidate.stock_scope !== "OLD") {
+        await assertOperationalLotQualityEligibility({
+          client: db,
+          lotId: candidate.lot_id,
+          qty: quantity,
+          purpose: "RESERVE",
+        });
+      }
+      const level = await db.query<{ available: number }>(
+        `SELECT (qty_total - qty_reserved - qty_depreciated)::float8 AS available
+           FROM public.stock_levels WHERE id = $1::uuid FOR UPDATE`,
+        [candidate.stock_level_id]
+      );
+      if (Number(level.rows[0]?.available ?? 0) + 1e-9 < quantity) continue;
+      if (candidate.stock_batch_id) {
+        const batch = await db.query<{ available: number }>(
+          `SELECT (qty_total - qty_reserved)::float8 AS available
+             FROM public.stock_batches WHERE id = $1::uuid FOR UPDATE`,
+          [candidate.stock_batch_id]
+        );
+        if (Number(batch.rows[0]?.available ?? 0) + 1e-9 < quantity) continue;
+      }
+
+      await db.query(
+        `UPDATE public.stock_levels
+            SET qty_reserved = qty_reserved + $2, updated_at = now(), updated_by = $3
+          WHERE id = $1::uuid`,
+        [candidate.stock_level_id, quantity, params.user_id]
+      );
+      if (candidate.stock_batch_id) {
+        await db.query(
+          `UPDATE public.stock_batches SET qty_reserved = qty_reserved + $2 WHERE id = $1::uuid`,
+          [candidate.stock_batch_id, quantity]
+        );
+      }
+      const reservation = await db.query<{ id: string }>(
+        `INSERT INTO public.stock_reservations (
+           article_id, location_id, qty_reserved, source_type, source_id,
+           commande_ligne_id, status, lot_id, stock_batch_id, stock_level_id,
+           source_scope, reason, of_id, of_component_requirement_id, created_by, updated_by
+         ) VALUES (
+           $1::uuid,$2::uuid,$3,'OF_COMPONENT',$4,$5::bigint,'ACTIVE',$6::uuid,$7::uuid,$8::uuid,
+           $9,$10,$11::bigint,$4::uuid,$12,$12
+         )
+         ON CONFLICT (of_component_requirement_id, stock_batch_id)
+           WHERE status = 'ACTIVE' AND of_component_requirement_id IS NOT NULL AND stock_batch_id IS NOT NULL
+         DO UPDATE SET updated_at = now(), updated_by = EXCLUDED.updated_by
+         RETURNING id::text AS id`,
+        [
+          component.article_id,
+          candidate.location_id,
+          quantity,
+          requirementId,
+          params.commande_ligne_id,
+          candidate.lot_id,
+          candidate.stock_batch_id,
+          candidate.stock_level_id,
+          lot.source_scope === "OLD" ? "OLD" : candidate.stock_scope,
+          `Composant réservé pour OF ${consumingOf.id}`,
+          consumingOf.id,
+          params.user_id,
+        ]
+      );
+      const reservationId = reservation.rows[0]?.id;
+      if (reservationId) componentReservationIds.push(reservationId);
+      remaining = Number((remaining - quantity).toFixed(6));
+    }
+    if (remaining > 1e-9) {
+      throw new HttpError(
+        409,
+        "ASSEMBLY_COMPONENT_STOCK_CHANGED",
+        `Le stock du composant ${component.article_code ?? component.designation} a changé. Relancez l'analyse.`
+      );
+    }
+  }
+
+  return {
+    component_reservation_ids: componentReservationIds,
+    purchase_requirement_ids: purchaseRequirementIds,
+  };
+}
+
+export async function allocateInternalContractOfs(
+  db: PoolClient,
+  params: {
+    commande_ligne_id: number;
+    livraison_affaire_id: number | null;
+    allocations: AssemblyPlan["contract_allocations"];
+    user_id: number;
+  }
+) {
+  const created: Array<AssemblyPlan["contract_allocations"][number] & { allocation_id: string }> = [];
+  for (const allocation of params.allocations) {
+    const row = await db.query<{ id: string }>(
+      `INSERT INTO public.internal_contract_of_allocations (
+         of_id, commande_ligne_id, livraison_affaire_id, quantity, created_by
+       ) VALUES ($1::bigint,$2::bigint,$3::bigint,$4,$5)
+       ON CONFLICT (of_id, commande_ligne_id, livraison_affaire_id)
+       DO UPDATE SET updated_at = now()
+       RETURNING id::text AS id`,
+      [allocation.of_id, params.commande_ligne_id, params.livraison_affaire_id, allocation.quantity, params.user_id]
+    );
+    const allocationId = row.rows[0]?.id;
+    if (!allocationId) throw new Error("INTERNAL_CONTRACT_ALLOCATION_NOT_CREATED");
+    created.push({ ...allocation, allocation_id: allocationId });
+  }
+  return created;
+}
+
+export async function createInternalContractDraft(
+  db: PoolClient,
+  params: {
+    source_commande_ligne_id: number;
+    article_id: string;
+    piece_technique_id: string;
+    piece_technique_version_id: string;
+    designation: string;
+    code_piece: string | null;
+    quantity: number;
+    due_date: string | null;
+    user_id: number;
+  }
+): Promise<number> {
+  const existing = await db.query<{ id: number }>(
+    `SELECT id::bigint::int AS id
+       FROM public.commande_client
+      WHERE internal_contract_source_line_id = $1::bigint
+        AND order_type = 'INTERNE'
+        AND internal_order_purpose = 'CONTRACT'
+      FOR UPDATE`,
+    [params.source_commande_ligne_id]
+  );
+  if (existing.rows[0]) return existing.rows[0].id;
+
+  const idRow = await db.query<{ id: string }>(
+    `SELECT nextval('public.commande_client_id_seq')::bigint::text AS id`
+  );
+  const rawId = idRow.rows[0]?.id;
+  if (!rawId) throw new Error("INTERNAL_CONTRACT_COMMAND_ID_NOT_ALLOCATED");
+  const commandeId = toInt(rawId, "commande_client.id");
+  const numero = await generateCommandeCode(db, { client_code: "CONTRACT", date: new Date() });
+  await db.query(
+    `INSERT INTO public.commande_client (
+       id, numero, client_id, date_commande, type_affaire, order_type,
+       internal_order_purpose, internal_contract_source_line_id,
+       total_ht, total_ttc, creation_flow_version, commentaire
+     ) VALUES (
+       $1,$2,NULL,CURRENT_DATE,'livraison','INTERNE','CONTRACT',$3::bigint,0,0,2,$4
+     )`,
+    [
+      commandeId,
+      numero,
+      params.source_commande_ligne_id,
+      `Brouillon de contrat interne créé pour couvrir la ligne client ${params.source_commande_ligne_id}`,
+    ]
+  );
+  await insertCommandeLignes(db, String(commandeId), [{
+    designation: params.designation,
+    article_id: params.article_id,
+    piece_technique_id: params.piece_technique_id,
+    piece_technique_version_id: params.piece_technique_version_id,
+    code_piece: params.code_piece,
+    quantite: params.quantity,
+    unite: "u",
+    prix_unitaire_ht: 0,
+    remise_ligne: 0,
+    taux_tva: 20,
+    delai_client: params.due_date,
+    delai_interne: params.due_date,
+    devis_numero: null,
+    famille: null,
+    reconciliation: {
+      status: "RESOLVED",
+      sources: {},
+      decisions: {
+        designation: "CERP",
+        quantite: "CERP",
+        unite: "CERP",
+        prix_unitaire_ht: "CERP",
+      },
+    },
+  }], {
+    officialize_preparatory_data: false,
+    commande_id_int: commandeId,
+    actor_user_id: params.user_id,
+    creation_flow_version: 2,
+    save_intent: "DRAFT",
+  });
+  await repoEnsureCommandeWorkflowCheckpoints(db, commandeId, "ATTENTE_TECHNIQUE");
+  await insertCommandeEvent(db, {
+    commande_id: commandeId,
+    event_type: "INTERNAL_CONTRACT_DRAFT_CREATED",
+    new_values: {
+      source_commande_ligne_id: params.source_commande_ligne_id,
+      quantity: params.quantity,
+      article_id: params.article_id,
+    },
+    user_id: params.user_id,
+  });
+  return commandeId;
 }
 
 function planDeliveryAllocations(

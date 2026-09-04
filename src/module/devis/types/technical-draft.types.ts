@@ -18,7 +18,7 @@ export type TechnicalDraftSection = {
  * never silently promoted into official reference data.
  */
 export type TechnicalDraftDTO = {
-  schema_version: 1;
+  schema_version: 1 | 2;
   source: "DEVIS";
   source_devis_id: number;
   source_dossier_id?: string | null;
@@ -32,6 +32,7 @@ export type TechnicalDraftDTO = {
     treatments: TechnicalDraftSection;
     quality: TechnicalDraftSection;
     documents: TechnicalDraftSection;
+    manufacturing?: TechnicalDraftSection;
   };
   unmapped: Record<string, TechnicalDraftValue>;
 };

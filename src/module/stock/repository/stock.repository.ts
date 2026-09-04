@@ -2931,7 +2931,9 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
         'indice', av.indice,
         'statut', av.statut,
         'plan_reference', av.plan_reference,
-        'date_application', av.date_application
+        'date_application', av.date_application,
+        'manufacturing_mode', av.manufacturing_mode,
+        'assembly_supply_strategy', av.assembly_supply_strategy
       ) END AS applicable_version,
       COALESCE(bs.qty_available, 0)::float8 AS qty_available,
       COALESCE(bs.qty_reserved, 0)::float8 AS qty_reserved,
@@ -2952,7 +2954,8 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
     LEFT JOIN public.stock_sous_etats material_sous_etat
       ON material_sous_etat.id = article_material.sous_etat_id
     LEFT JOIN LATERAL (
-      SELECT v.id, v.indice, v.statut, v.plan_reference, v.date_application::text AS date_application
+      SELECT v.id, v.indice, v.statut, v.plan_reference, v.date_application::text AS date_application,
+             v.manufacturing_mode, v.assembly_supply_strategy
       FROM public.piece_technique_versions v
       WHERE v.piece_technique_id = a.piece_technique_id
         AND v.statut = 'APPLICABLE'
@@ -3098,7 +3101,9 @@ export async function repoGetArticle(id: string, includeCosts = false): Promise<
            'indice', av.indice,
            'statut', av.statut,
            'plan_reference', av.plan_reference,
-           'date_application', av.date_application
+           'date_application', av.date_application,
+           'manufacturing_mode', av.manufacturing_mode,
+           'assembly_supply_strategy', av.assembly_supply_strategy
          ) END AS applicable_version,
          a.notes,
          CASE
@@ -3150,7 +3155,8 @@ export async function repoGetArticle(id: string, includeCosts = false): Promise<
        LEFT JOIN public.articles_achat aa
          ON aa.article_id = a.id
        LEFT JOIN LATERAL (
-         SELECT v.id, v.indice, v.statut, v.plan_reference, v.date_application::text AS date_application
+         SELECT v.id, v.indice, v.statut, v.plan_reference, v.date_application::text AS date_application,
+                v.manufacturing_mode, v.assembly_supply_strategy
          FROM public.piece_technique_versions v
          WHERE v.piece_technique_id = a.piece_technique_id
            AND v.statut = 'APPLICABLE'

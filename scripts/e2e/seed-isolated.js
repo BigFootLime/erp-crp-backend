@@ -510,12 +510,14 @@ async function main() {
          ) ON CONFLICT (piece_technique_version_id,id_outil) DO NOTHING`
       );
       await client.query(
-        `INSERT INTO public.ordres_fabrication (
+         `INSERT INTO public.ordres_fabrication (
            id,numero,piece_technique_id,piece_technique_version_id,quantite_lancee,quantite_bonne,
-           statut,technical_snapshot,technical_snapshot_sha256,technical_snapshot_at,created_by,updated_by
+           statut,technical_readiness,technical_snapshot,technical_snapshot_sha256,technical_snapshot_at,
+           technical_validated_at,technical_validated_by,created_by,updated_by
          ) VALUES (
            920001,'OF-E2E-SOL20','21000000-0000-4000-8000-000000000001',
-           '23000000-0000-4000-8000-000000000001',100,100,'TERMINE',$1::jsonb,$2,now(),
+           '23000000-0000-4000-8000-000000000001',100,100,'TERMINE','VALIDATED',$1::jsonb,$2,now(),now(),
+           (SELECT id FROM public.users WHERE username='KEENAN'),
            (SELECT id FROM public.users WHERE username='KEENAN'),
            (SELECT id FROM public.users WHERE username='KEENAN')
          ) ON CONFLICT (id) DO NOTHING`,

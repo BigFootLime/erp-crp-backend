@@ -43,6 +43,8 @@ export type PieceTechniqueVersionRow = {
   updated_at: string
   created_by: number | null
   updated_by: number | null
+  manufacturing_mode: "SIMPLE" | "ASSEMBLY"
+  assembly_supply_strategy: "MAKE_TO_ORDER" | "INTERNAL_CONTRACT"
 }
 
 const VERSION_COLUMNS = `
@@ -53,7 +55,8 @@ const VERSION_COLUMNS = `
   motif_modification, impact_parents, valide_par, date_validation::text AS date_validation, date_application::text AS date_application,
   date_effet::text AS date_effet,
   commentaire_validation, date_revision::text AS date_revision, created_at::text AS created_at,
-  updated_at::text AS updated_at, created_by, updated_by
+  updated_at::text AS updated_at, created_by, updated_by,
+  manufacturing_mode, assembly_supply_strategy
 `
 
 async function insertAudit(
@@ -176,8 +179,8 @@ export async function repoCreateVersion(
       `INSERT INTO public.piece_technique_versions
         (piece_technique_id, indice, indice_externe_original, plan_reference, matiere_prevue, code_metier, motif_modification, date_effet, statut, is_current,
          commentaire_revision, type_changement, raison_changement, impact_interchangeabilite, impact_parents,
-         date_revision, created_by, updated_by)
-       VALUES ($1,$2,$2,$3,$4,$5,$8,$9::date,'BROUILLON',false,$6,$7,$8,$10,$11, now(), $12,$12)
+         date_revision, created_by, updated_by, manufacturing_mode, assembly_supply_strategy)
+       VALUES ($1,$2,$2,$3,$4,$5,$8,$9::date,'BROUILLON',false,$6,$7,$8,$10,$11, now(), $12,$12,$13,$14)
        RETURNING ${VERSION_COLUMNS}`,
       [
         pieceTechniqueId,
@@ -192,6 +195,8 @@ export async function repoCreateVersion(
         body.impact_interchangeabilite ?? null,
         body.impact_parents ?? null,
         audit.user_id,
+        body.manufacturing_mode ?? "SIMPLE",
+        body.assembly_supply_strategy ?? "MAKE_TO_ORDER",
       ]
     )
     const row = res.rows[0]
@@ -266,6 +271,8 @@ export async function repoUpdateVersion(
     if (body.impact_interchangeabilite !== undefined) push("impact_interchangeabilite", body.impact_interchangeabilite)
     if (body.impact_parents !== undefined) push("impact_parents", body.impact_parents)
     if (body.date_effet !== undefined) push("date_effet", body.date_effet)
+    if (body.manufacturing_mode !== undefined) push("manufacturing_mode", body.manufacturing_mode)
+    if (body.assembly_supply_strategy !== undefined) push("assembly_supply_strategy", body.assembly_supply_strategy)
 
     values.push(audit.user_id)
     sets.push(`updated_by = $${values.length}`)
@@ -527,8 +534,8 @@ export async function repoCreateNextVersion(
   const client = await db.connect()
   try {
     await client.query("BEGIN")
-    const src = await client.query<{ id: string; plan_reference: string | null; matiere_prevue: string | null }>(
-      `SELECT id::text AS id, plan_reference, matiere_prevue FROM public.piece_technique_versions
+    const src = await client.query<{ id: string; plan_reference: string | null; matiere_prevue: string | null; manufacturing_mode: "SIMPLE" | "ASSEMBLY"; assembly_supply_strategy: "MAKE_TO_ORDER" | "INTERNAL_CONTRACT" }>(
+      `SELECT id::text AS id, plan_reference, matiere_prevue, manufacturing_mode, assembly_supply_strategy FROM public.piece_technique_versions
        WHERE id = $1 AND piece_technique_id = $2`,
       [sourceVersionId, pieceTechniqueId]
     )
@@ -544,8 +551,8 @@ export async function repoCreateNextVersion(
       `INSERT INTO public.piece_technique_versions
         (piece_technique_id, indice, indice_externe_original, plan_reference, matiere_prevue, code_metier, motif_modification, date_effet, statut, is_current,
          commentaire_revision, type_changement, raison_changement, impact_interchangeabilite, impact_parents,
-         date_revision, created_by, updated_by)
-       VALUES ($1,$2,$2,$3,$4,$5,$8,$9::date,'BROUILLON',false,$6,$7,$8,$10,$11, now(), $12,$12)
+         date_revision, created_by, updated_by, manufacturing_mode, assembly_supply_strategy)
+       VALUES ($1,$2,$2,$3,$4,$5,$8,$9::date,'BROUILLON',false,$6,$7,$8,$10,$11, now(), $12,$12,$13,$14)
        RETURNING ${VERSION_COLUMNS}`,
       [
         pieceTechniqueId,
@@ -560,6 +567,8 @@ export async function repoCreateNextVersion(
         body.impact_interchangeabilite ?? null,
         body.impact_parents ?? null,
         audit.user_id,
+        body.manufacturing_mode ?? source.manufacturing_mode,
+        body.assembly_supply_strategy ?? source.assembly_supply_strategy,
       ]
     )
     const row = res.rows[0]

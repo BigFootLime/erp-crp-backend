@@ -14,3 +14,16 @@ export function resolveCustomerOrderLaunchMode(params: {
   if (!params.needsProduction) return "STOCK_ONLY";
   return "PRODUCTION_WITH_PLANNING";
 }
+
+export type DeliveryReadinessState = "WAITING_TECHNICAL" | "WAITING_STOCK" | "READY_FOR_BL";
+
+export function resolveDeliveryReadinessState(params: {
+  technicalWarningCount: number;
+  carriesOpenProduction: boolean;
+  reservedQuantity: number;
+}): DeliveryReadinessState {
+  if (params.technicalWarningCount > 0) return "WAITING_TECHNICAL";
+  if (params.carriesOpenProduction) return "WAITING_STOCK";
+  if (params.reservedQuantity > 0) return "READY_FOR_BL";
+  return "WAITING_STOCK";
+}

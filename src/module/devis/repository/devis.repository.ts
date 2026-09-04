@@ -248,6 +248,7 @@ const TECHNICAL_SECTION_KEYS = {
   treatments: ["traitements", "sous_traitance", "achats"],
   quality: ["qualite", "quality", "exigences_qualite"],
   documents: ["documents", "plans"],
+  manufacturing: ["manufacturing_mode", "assembly_supply_strategy", "mode_fabrication", "contrat_interne"],
 } as const;
 
 function quoteValue(value: unknown, sourceRef: string | null): TechnicalDraftValue {
@@ -284,6 +285,7 @@ function buildTechnicalDraft(params: {
     treatments: makeSection(TECHNICAL_SECTION_KEYS.treatments),
     quality: makeSection(TECHNICAL_SECTION_KEYS.quality),
     documents: makeSection(TECHNICAL_SECTION_KEYS.documents),
+    manufacturing: makeSection(TECHNICAL_SECTION_KEYS.manufacturing),
   };
   const populated = Object.values(sections).filter((section) => Object.keys(section.values).length > 0).length;
   const unmapped = Object.fromEntries(
@@ -292,7 +294,7 @@ function buildTechnicalDraft(params: {
       .map(([key, value]) => [key, quoteValue(value, params.dossierId)])
   );
   return {
-    schema_version: 1,
+    schema_version: 2,
     source: "DEVIS",
     source_devis_id: params.devisId,
     source_dossier_id: params.dossierId,

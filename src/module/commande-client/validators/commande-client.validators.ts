@@ -7,6 +7,8 @@ export const createQuickTechnicalPieceBodySchema = z.object({
   indice_client: z.string().trim().min(1, "L'indice client est obligatoire.").max(50),
   designation: z.string().trim().min(1, "La désignation est obligatoire.").max(400),
   plan_reference: z.string().trim().max(160).optional().nullable(),
+  manufacturing_mode: z.enum(["SIMPLE", "ASSEMBLY"]).optional().default("SIMPLE"),
+  assembly_supply_strategy: z.enum(["MAKE_TO_ORDER", "INTERNAL_CONTRACT"]).optional().default("MAKE_TO_ORDER"),
 }).strict();
 
 export type CreateQuickTechnicalPieceBodyDTO = z.infer<typeof createQuickTechnicalPieceBodySchema>;
@@ -41,7 +43,7 @@ const technicalDraftSectionSchema = z.object({
 }).strict();
 
 const technicalDraftSchema = z.object({
-  schema_version: z.literal(1),
+  schema_version: z.union([z.literal(1), z.literal(2)]),
   source: z.literal("DEVIS"),
   source_devis_id: z.coerce.number().int().positive(),
   source_dossier_id: z.string().uuid().optional().nullable(),
@@ -55,6 +57,7 @@ const technicalDraftSchema = z.object({
     treatments: technicalDraftSectionSchema,
     quality: technicalDraftSectionSchema,
     documents: technicalDraftSectionSchema,
+    manufacturing: technicalDraftSectionSchema.optional(),
   }).strict(),
   unmapped: z.record(z.string(), technicalDraftValueSchema),
 }).strict();
@@ -528,6 +531,7 @@ export const generateAffairesV3Schema = z
         // #168 : jeton d'aperçu optionnel. Si fourni, doit égaler commande_client.updated_at,
         // sinon 409 COMMANDE_PREVIEW_STALE (l'aperçu « Vérifier et lancer » est périmé).
         expected_updated_at: z.string().min(1).optional(),
+        expected_supply_plan_hash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
         livraison_count: z.coerce.number().int().min(1).max(10).optional().default(1),
         lines: z
           .array(

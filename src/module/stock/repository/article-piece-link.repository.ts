@@ -20,6 +20,8 @@ export type ArticleDefinitionTechnique = {
     plan_reference: string | null
     matiere_prevue: string | null
     date_application: string | null
+    manufacturing_mode: "SIMPLE" | "ASSEMBLY"
+    assembly_supply_strategy: "MAKE_TO_ORDER" | "INTERNAL_CONTRACT"
   } | null
   has_applicable_version: boolean
   warning: string | null
@@ -86,8 +88,11 @@ export async function repoGetArticleDefinitionTechnique(articleId: string): Prom
       plan_reference: string | null
       matiere_prevue: string | null
       date_application: string | null
+      manufacturing_mode: "SIMPLE" | "ASSEMBLY"
+      assembly_supply_strategy: "MAKE_TO_ORDER" | "INTERNAL_CONTRACT"
     }>(
-      `SELECT id::text AS id, indice, statut, plan_reference, matiere_prevue, date_application::text AS date_application
+      `SELECT id::text AS id, indice, statut, plan_reference, matiere_prevue, date_application::text AS date_application,
+              manufacturing_mode, assembly_supply_strategy
        FROM public.piece_technique_versions
        WHERE piece_technique_id = $1::uuid AND statut = 'APPLICABLE'
        ORDER BY date_application DESC NULLS LAST LIMIT 1`,

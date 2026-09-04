@@ -200,6 +200,7 @@ export async function reserveProducedQtyForCommandeLine(
     of_id?: number | null;
     /** Caller already holds the canonical Quality lock for this lot. */
     quality_gate_already_held?: boolean;
+    livraison_affaire_id?: number | null;
   }
 ): Promise<{ reservation_id: string; qty_reserved: number } | null> {
   if (!Number.isFinite(args.qty_ok) || args.qty_ok <= 0) return null;
@@ -225,11 +226,12 @@ export async function reserveProducedQtyForCommandeLine(
       SELECT id::bigint::int AS id, livraison_affaire_id::bigint::int AS livraison_affaire_id
       FROM public.commande_ligne_affaire_allocation
       WHERE commande_ligne_id = $1::bigint
+        AND ($2::bigint IS NULL OR livraison_affaire_id = $2::bigint)
       ORDER BY updated_at DESC, id DESC
       LIMIT 1
       FOR UPDATE
     `,
-    [args.commande_ligne_id]
+    [args.commande_ligne_id, args.livraison_affaire_id ?? null]
   );
   const businessAllocation = allocationRes.rows[0] ?? null;
   if (!businessAllocation) {
@@ -416,6 +418,285 @@ export async function reserveProducedQtyForCommandeLine(
 
   const reservationId = insertReservation.rows[0]?.id ?? null;
   return reservationId ? { reservation_id: reservationId, qty_reserved: qtyToReserve } : null;
+}
+
+async function reserveInternalContractReceiptForCustomers(
+  client: Pick<PoolClient, "query">,
+  args: {
+    of_id: number;
+    article_id: string;
+    location_id: string;
+    stock_level_id: string;
+    stock_batch_id: string;
+    lot_id: string;
+    qty_ok: number;
+    actor_user_id: number;
+    quality_gate_already_held?: boolean;
+  }
+): Promise<{ reservation_id: string; qty_reserved: number; reservation_ids: string[] } | null> {
+  if (!Number.isFinite(args.qty_ok) || args.qty_ok <= 0) return null;
+  const allocations = await client.query<{
+    id: string;
+    commande_ligne_id: number;
+    livraison_affaire_id: number | null;
+    remaining_qty: number;
+  }>(
+    `SELECT allocation.id::text AS id,
+            allocation.commande_ligne_id::bigint::int AS commande_ligne_id,
+            allocation.livraison_affaire_id::bigint::int AS livraison_affaire_id,
+            GREATEST(0, allocation.quantity - allocation.quantity_received)::float8 AS remaining_qty
+       FROM public.internal_contract_of_allocations allocation
+       JOIN public.commande_ligne line ON line.id = allocation.commande_ligne_id
+      WHERE allocation.of_id = $1::bigint
+        AND allocation.status IN ('ALLOCATED', 'PARTIALLY_RECEIVED')
+        AND allocation.quantity_received < allocation.quantity
+      ORDER BY COALESCE(line.delai_client, '9999-12-31'::date), allocation.created_at, allocation.id
+      FOR UPDATE OF allocation`,
+    [args.of_id]
+  );
+  let remaining = args.qty_ok;
+  let reservedQty = 0;
+  const reservationIds: string[] = [];
+  for (const allocation of allocations.rows) {
+    if (remaining <= 1e-9) break;
+    const requested = Math.min(remaining, Number(allocation.remaining_qty));
+    const reserved = await reserveProducedQtyForCommandeLine(client, {
+      commande_ligne_id: allocation.commande_ligne_id,
+      article_id: args.article_id,
+      location_id: args.location_id,
+      stock_level_id: args.stock_level_id,
+      stock_batch_id: args.stock_batch_id,
+      lot_id: args.lot_id,
+      qty_ok: requested,
+      actor_user_id: args.actor_user_id,
+      of_id: args.of_id,
+      livraison_affaire_id: allocation.livraison_affaire_id,
+      quality_gate_already_held: args.quality_gate_already_held,
+    });
+    const applied = Number(reserved?.qty_reserved ?? 0);
+    if (applied <= 0) continue;
+    await client.query(
+      `UPDATE public.internal_contract_of_allocations
+          SET quantity_received = quantity_received + $2,
+              status = CASE
+                WHEN quantity_received + $2 >= quantity THEN 'RECEIVED'
+                ELSE 'PARTIALLY_RECEIVED'
+              END,
+              updated_at = now()
+        WHERE id = $1::uuid`,
+      [allocation.id, applied]
+    );
+    reservationIds.push(reserved!.reservation_id);
+    reservedQty += applied;
+    remaining -= applied;
+  }
+  return reservationIds.length
+    ? { reservation_id: reservationIds[0]!, qty_reserved: reservedQty, reservation_ids: reservationIds }
+    : null;
+}
+
+type ComponentReceiptReservation = {
+  matched: boolean;
+  reservation_id: string | null;
+  qty_reserved: number;
+  reservation_ids: string[];
+};
+
+/**
+ * A child OF produces a component for another OF, not the finished article
+ * bought by the customer. Its released output is therefore reserved against
+ * the exact component requirements of the consuming OF. Any surplus remains
+ * ordinary NEW stock.
+ */
+export async function reserveProducedComponentForParentOf(
+  client: Pick<PoolClient, "query">,
+  args: {
+    component_of_id: number;
+    article_id: string;
+    location_id: string;
+    stock_level_id: string;
+    stock_batch_id: string;
+    lot_id: string;
+    qty_ok: number;
+    actor_user_id: number;
+    quality_gate_already_held?: boolean;
+  }
+): Promise<ComponentReceiptReservation> {
+  if (!Number.isFinite(args.qty_ok) || args.qty_ok <= 0) {
+    return { matched: false, reservation_id: null, qty_reserved: 0, reservation_ids: [] };
+  }
+
+  const requirements = await client.query<{
+    id: string;
+    consuming_of_id: number;
+    component_article_id: string | null;
+    required_qty: number;
+  }>(
+    `SELECT requirement.id::text AS id,
+            requirement.consuming_of_id::bigint::int AS consuming_of_id,
+            requirement.component_article_id::text AS component_article_id,
+            requirement.required_qty::float8 AS required_qty
+       FROM public.of_component_requirements requirement
+      WHERE requirement.component_of_id = $1::bigint
+        AND requirement.status IN ('OPEN', 'COVERED')
+      ORDER BY requirement.created_at, requirement.id
+      FOR UPDATE`,
+    [args.component_of_id]
+  );
+  if (!requirements.rows.length) {
+    return { matched: false, reservation_id: null, qty_reserved: 0, reservation_ids: [] };
+  }
+  const mismatched = requirements.rows.find(
+    (requirement) => requirement.component_article_id !== args.article_id
+  );
+  if (mismatched) {
+    throw new HttpError(
+      409,
+      "ASSEMBLY_COMPONENT_ARTICLE_MISMATCH",
+      "L'article produit par le sous-OF ne correspond pas au composant attendu par l'OF parent."
+    );
+  }
+
+  const levelResult = await client.query<{ available_qty: number }>(
+    `SELECT (qty_total - qty_reserved - qty_depreciated)::float8 AS available_qty
+       FROM public.stock_levels
+      WHERE id = $1::uuid
+      FOR UPDATE`,
+    [args.stock_level_id]
+  );
+  const batchResult = await client.query<{ available_qty: number }>(
+    `SELECT (qty_total - qty_reserved)::float8 AS available_qty
+       FROM public.stock_batches
+      WHERE id = $1::uuid AND lot_id = $2::uuid
+      FOR UPDATE`,
+    [args.stock_batch_id, args.lot_id]
+  );
+  if (!levelResult.rows[0]) {
+    throw new HttpError(409, "STOCK_LEVEL_NOT_FOUND", "Niveau de stock introuvable pour le composant produit.");
+  }
+  if (!batchResult.rows[0]) {
+    throw new HttpError(409, "STOCK_BATCH_NOT_FOUND", "Lot de stock introuvable pour le composant produit.");
+  }
+
+  let remainingOutput = Math.min(
+    args.qty_ok,
+    Number(levelResult.rows[0].available_qty),
+    Number(batchResult.rows[0].available_qty)
+  );
+  let reservedQty = 0;
+  const reservationIds: string[] = [];
+
+  for (const requirement of requirements.rows) {
+    const coverageResult = await client.query<{ reserved_qty: number }>(
+      `SELECT COALESCE(sum(reservation.qty_reserved), 0)::float8 AS reserved_qty
+         FROM public.stock_reservations reservation
+        WHERE reservation.of_component_requirement_id = $1::uuid
+          AND reservation.status = 'ACTIVE'
+          AND (reservation.expires_at IS NULL OR reservation.expires_at > statement_timestamp())`,
+      [requirement.id]
+    );
+    const alreadyReserved = Number(coverageResult.rows[0]?.reserved_qty ?? 0);
+    const missingQty = Math.max(0, Number(requirement.required_qty) - alreadyReserved);
+    if (missingQty <= 1e-9) {
+      await client.query(
+        `UPDATE public.of_component_requirements
+            SET status = 'COVERED', updated_at = now()
+          WHERE id = $1::uuid`,
+        [requirement.id]
+      );
+      continue;
+    }
+    if (remainingOutput <= 1e-9) break;
+
+    const quantity = Math.min(missingQty, remainingOutput);
+    if (!args.quality_gate_already_held) {
+      await assertOperationalLotQualityEligibility({
+        client,
+        lotId: args.lot_id,
+        qty: quantity,
+        purpose: "RESERVE",
+      });
+    }
+
+    const reservation = await client.query<{ id: string }>(
+      `INSERT INTO public.stock_reservations (
+         article_id, location_id, qty_reserved, source_type, source_id,
+         status, lot_id, stock_batch_id, stock_level_id, source_scope,
+         reason, of_id, of_component_requirement_id, created_by, updated_by
+       ) VALUES (
+         $1::uuid,$2::uuid,$3,'OF_COMPONENT',$4,'ACTIVE',$5::uuid,$6::uuid,$7::uuid,
+         'NEW',$8,$9::bigint,$4::uuid,$10,$10
+       )
+       ON CONFLICT (of_component_requirement_id, stock_batch_id)
+         WHERE status = 'ACTIVE'
+           AND of_component_requirement_id IS NOT NULL
+           AND stock_batch_id IS NOT NULL
+       DO UPDATE SET
+         qty_reserved = public.stock_reservations.qty_reserved + EXCLUDED.qty_reserved,
+         updated_at = now(),
+         updated_by = EXCLUDED.updated_by
+       RETURNING id::text AS id`,
+      [
+        args.article_id,
+        args.location_id,
+        quantity,
+        requirement.id,
+        args.lot_id,
+        args.stock_batch_id,
+        args.stock_level_id,
+        `Production du sous-OF ${args.component_of_id} réservée pour l'OF ${requirement.consuming_of_id}`,
+        requirement.consuming_of_id,
+        args.actor_user_id,
+      ]
+    );
+    const reservationId = reservation.rows[0]?.id;
+    if (!reservationId) throw new Error("ASSEMBLY_COMPONENT_RESERVATION_NOT_CREATED");
+    reservationIds.push(reservationId);
+    reservedQty += quantity;
+    remainingOutput -= quantity;
+
+    await client.query(
+      `UPDATE public.of_component_requirements requirement
+          SET status = CASE
+                WHEN COALESCE((
+                  SELECT sum(reservation.qty_reserved)
+                    FROM public.stock_reservations reservation
+                   WHERE reservation.of_component_requirement_id = requirement.id
+                     AND reservation.status = 'ACTIVE'
+                     AND (reservation.expires_at IS NULL OR reservation.expires_at > statement_timestamp())
+                ), 0) + 0.000000001 >= requirement.required_qty
+                  THEN 'COVERED'
+                ELSE 'OPEN'
+              END,
+              updated_at = now()
+        WHERE requirement.id = $1::uuid`,
+      [requirement.id]
+    );
+  }
+
+  if (reservedQty > 1e-9) {
+    await client.query(
+      `UPDATE public.stock_levels
+          SET qty_reserved = qty_reserved + $2,
+              updated_at = now(),
+              updated_by = $3
+        WHERE id = $1::uuid`,
+      [args.stock_level_id, reservedQty, args.actor_user_id]
+    );
+    await client.query(
+      `UPDATE public.stock_batches
+          SET qty_reserved = qty_reserved + $2
+        WHERE id = $1::uuid`,
+      [args.stock_batch_id, reservedQty]
+    );
+  }
+
+  return {
+    matched: true,
+    reservation_id: reservationIds[0] ?? null,
+    qty_reserved: reservedQty,
+    reservation_ids: reservationIds,
+  };
 }
 
 export async function resolveUnitIdForArticle(
@@ -919,6 +1200,7 @@ export async function repoCreateOfReceipt(params: {
       commande_ligne_id: number | null;
       piece_technique_version_id: string | null;
       order_type: string | null;
+      internal_order_purpose: string | null;
       client_code: string | null;
       quantite_bonne: number;
       statut: string;
@@ -934,6 +1216,7 @@ export async function repoCreateOfReceipt(params: {
           fabrication.commande_ligne_id::bigint::int AS commande_ligne_id,
           fabrication.piece_technique_version_id::text AS piece_technique_version_id,
           commande.order_type::text AS order_type,
+          commande.internal_order_purpose::text AS internal_order_purpose,
           piece.code_client::text AS client_code,
           fabrication.quantite_bonne::float8 AS quantite_bonne,
           fabrication.statut::text AS statut,
@@ -1320,8 +1603,35 @@ export async function repoCreateOfReceipt(params: {
       if (!nonConformityId) throw new Error("Failed to create production non-conformity");
     }
 
-    const autoReservation =
-      !isInternalOrder && params.body.quality_status === "LIBERE" && typeof ofRow.commande_ligne_id === "number"
+    const componentReservation = params.body.quality_status === "LIBERE"
+      ? await reserveProducedComponentForParentOf(client, {
+          component_of_id: params.of_id,
+          article_id: article.id,
+          location_id: map.location_id,
+          stock_level_id: stockLevelId,
+          stock_batch_id: stockBatchId,
+          lot_id: lotId,
+          qty_ok: params.body.qty_ok,
+          actor_user_id: params.audit.user_id,
+          quality_gate_already_held: qualityDecision !== null,
+        })
+      : { matched: false, reservation_id: null, qty_reserved: 0, reservation_ids: [] };
+
+    const autoReservation = componentReservation.matched
+      ? componentReservation
+      : isInternalOrder && ofRow.internal_order_purpose === "CONTRACT" && params.body.quality_status === "LIBERE"
+        ? await reserveInternalContractReceiptForCustomers(client, {
+            of_id: params.of_id,
+            article_id: article.id,
+            location_id: map.location_id,
+            stock_level_id: stockLevelId,
+            stock_batch_id: stockBatchId,
+            lot_id: lotId,
+            qty_ok: params.body.qty_ok,
+            actor_user_id: params.audit.user_id,
+            quality_gate_already_held: qualityDecision !== null,
+          })
+        : !isInternalOrder && params.body.quality_status === "LIBERE" && typeof ofRow.commande_ligne_id === "number"
         ? await reserveProducedQtyForCommandeLine(client, {
             commande_ligne_id: ofRow.commande_ligne_id,
             article_id: article.id,
@@ -1417,6 +1727,9 @@ export async function repoCreateOfReceipt(params: {
       ]
     );
 
+    const automaticReservationIds = autoReservation && "reservation_ids" in autoReservation
+      ? autoReservation.reservation_ids
+      : autoReservation?.reservation_id ? [autoReservation.reservation_id] : [];
     await insertAuditLog(client, params.audit, {
       action: "production.of.receipt",
       entity_type: "ordres_fabrication",
@@ -1436,6 +1749,7 @@ export async function repoCreateOfReceipt(params: {
         commande_ligne_id: ofRow.commande_ligne_id ?? null,
         article_id: article.id,
         auto_reservation_id: autoReservation?.reservation_id ?? null,
+        auto_reservation_ids: automaticReservationIds,
         auto_reserved_qty: autoReservation?.qty_reserved ?? 0,
         non_conformity_id: nonConformityId,
         idempotency_key: params.idempotency_key,

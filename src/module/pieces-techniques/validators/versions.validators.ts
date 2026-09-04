@@ -22,6 +22,12 @@ const sqlDateSchema = z
 export const typeChangementSchema = z.enum(["EVOLUTION", "MODIFICATION"])
 export type TypeChangementDTO = z.infer<typeof typeChangementSchema>
 
+export const manufacturingModeSchema = z.enum(["SIMPLE", "ASSEMBLY"])
+export type ManufacturingModeDTO = z.infer<typeof manufacturingModeSchema>
+
+export const assemblySupplyStrategySchema = z.enum(["MAKE_TO_ORDER", "INTERNAL_CONTRACT"])
+export type AssemblySupplyStrategyDTO = z.infer<typeof assemblySupplyStrategySchema>
+
 export const versionIdParamSchema = z.object({
   params: z.object({ id: uuidRouteParam("id"), versionId: uuidRouteParam("versionId") }),
 })
@@ -36,6 +42,8 @@ const versionCoreBody = z.object({
   impact_interchangeabilite: z.boolean().optional().nullable(),
   impact_parents: z.string().max(2000).optional().nullable(),
   date_effet: z.string().date().optional().nullable(),
+  manufacturing_mode: manufacturingModeSchema.optional(),
+  assembly_supply_strategy: assemblySupplyStrategySchema.optional(),
 })
 
 export const createVersionSchema = z.object({ body: versionCoreBody })
