@@ -26,7 +26,7 @@ Exécuter ensuite `db/patches/support/20260905_production_preparation_consolidat
 
 ## Activation progressive
 
-Dans les réglages administratifs existants des fonctionnalités, activer `PRODUCTION_WORKBENCH` sur l'environnement de recette. Tester un OF simple, un assemblage incomplet et une pièce sans TR/sous-traitance. Vérifier uploads propres, plan publié, fiche vierge téléchargeable et droits lecture/préparation/validation avec des comptes distincts.
+Activer par une transaction d’exploitation tracée dans `erp_audit_logs` (aucun écran générique de gestion des flags n’est actuellement disponible) `PRODUCTION_WORKBENCH` sur l'environnement de recette. Tester un OF simple, un assemblage incomplet et une pièce sans TR/sous-traitance. Vérifier uploads propres, plan publié, fiche vierge téléchargeable et droits lecture/préparation/validation avec des comptes distincts.
 
 Activer ensuite `PRODUCTION_CONSOLIDATION`. Préparer deux OF compatibles, ajouter un surplus, contrôler charge/allocations, planifier uniquement le producteur puis exécuter une réception partielle et une libération qualité. Vérifier composants de deux parents, réservation des bonnes demandes, surplus non réservé et absence de nouveaux AR/BL automatiques.
 
@@ -49,3 +49,5 @@ Dissoudre un groupe seulement depuis l'API métier, avant planning/exécution/r�
 Les tests de règles utilisent `pnpm test:run`. Le test `src/module/production/repository/production-workbench.integration.test.ts` ne s'active qu'avec `CERP_E2E_ISOLATED=1` et l'URL exacte de la fixture locale. Il crée des données synthétiques exclusivement. Ne pas activer ces variables pour la suite entière : d'autres fixtures historiques possèdent leur propre contrat d'isolation.
 
 Le helper `production-workbench-runtime.cjs` prépare le compte synthétique, démarre API/Vite en boucle locale puis lance le spec Playwright du frontend. Ses identifiants temporaires résident hors des dépôts, dans le dossier de runtime isolé. Ne jamais les versionner ou les publier.
+
+La liste des responsables de programmation et la validation de l’affectation utilisent les rôles actifs du catalogue, principaux ou secondaires. Un compte inactif ou dépourvu d’un rôle éligible reste refusé.

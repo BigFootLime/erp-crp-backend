@@ -6,6 +6,7 @@ import type { AuditContext } from "./production.repository";
 import { synchronizeDraftChildrenTx } from "./preparation-children.repository";
 import {
   assertPreparationMutable,
+  PROGRAMMING_ASSIGNEE_PREDICATE_SQL,
   loadPreparationOrder,
   persistPreparationEvaluation,
   preparationAudit,
@@ -102,7 +103,7 @@ export async function repoSaveProgrammingTask(
       );
     const user = (
       await tx.query(
-        `SELECT id FROM public.users WHERE id=$1 AND status='Active' AND (lower(role) SIMILAR TO '%(admin|directeur|program|method|méthod|production)%')`,
+        `SELECT u.id FROM public.users u WHERE u.id=$1 AND ${PROGRAMMING_ASSIGNEE_PREDICATE_SQL}`,
         [input.assignee_id],
       )
     ).rows[0];

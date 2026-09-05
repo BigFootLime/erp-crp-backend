@@ -16,6 +16,15 @@ import {
 } from "../domain/preparation-rules";
 
 type Db = Pick<PoolClient, "query">;
+/** Same active-role eligibility for the picker and the assignment transaction. */
+export const PROGRAMMING_ASSIGNEE_PREDICATE_SQL = `u.status='Active' AND EXISTS (
+  SELECT 1 FROM public.app_roles r
+  WHERE r.is_active AND lower(r.role_key) SIMILAR TO '%(admin|directeur|program|method|méthod|production)%'
+    AND (r.role_key=u.role OR EXISTS (
+      SELECT 1 FROM public.user_role_assignments a WHERE a.user_id=u.id AND a.role_key=r.role_key
+    ))
+)`;
+
 export async function usesPreparationRules(tx: Db, id?: number) {
   const result = await tx.query<{ enabled: boolean }>(
     `SELECT (EXISTS(SELECT 1 FROM public.app_feature_flags WHERE key='PRODUCTION_WORKBENCH' AND enabled)
@@ -356,7 +365,7 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
     ).rows[0] ?? null;
   const programmers = (
     await tx.query(
-      `SELECT id,COALESCE(NULLIF(trim(concat_ws(' ',name,surname)),''),username) AS name FROM public.users WHERE status='Active' AND lower(role) SIMILAR TO '%(admin|directeur|program|method|méthod|production)%' ORDER BY name,id LIMIT 200`,
+      `SELECT u.id,COALESCE(NULLIF(trim(concat_ws(' ',u.name,u.surname)),''),u.username) AS name FROM public.users u WHERE ${PROGRAMMING_ASSIGNEE_PREDICATE_SQL} ORDER BY name,u.id LIMIT 200`,
     )
   ).rows;
   const purchaseSources = (
