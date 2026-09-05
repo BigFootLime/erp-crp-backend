@@ -1,3 +1,5 @@
+import {preparationAudit} from './production-preparation.repository';
+import {synchronizeDraftChildrenTx} from './preparation-children.repository';
 import type { PoolClient } from "pg";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
@@ -72,6 +74,7 @@ import { PLANNED_OPERATION_DURATION_MINUTES_SQL } from "../domain/planned-operat
 import { enqueueProductionOfChanged, productionRealtimeActionFromAudit } from "./production-realtime.repository";
 import { findAssetIdsByStorageKeys } from "../../operational-media/repository/operational-media.repository";
 import { promoteOperationalImage } from "../../operational-media/services/operational-media-promotion.service";
+import { assertOfPreparationReady, evaluateOfPreparation, usesPreparationRules } from './production-preparation.repository';
 
 export type AuditContext = {
   user_id: number;
@@ -3544,6 +3547,21 @@ export async function repoCreateOrdreFabrication(params: {
   const client = await pool.connect();
   try {
     const ofId = await withRealtimeOutboxTransaction(client, async (client) => {
+    if (await usesPreparationRules(client)) {
+      if (params.body.statut !== 'BROUILLON') throw new HttpError(422,'OF_PREPARATION_REQUIRED','Créez cet OF en brouillon puis complétez sa préparation.');
+      const generated = await createRecursiveOrdresFabrication(client,{
+        source_type:'MANUAL',commande_id:params.body.commande_id??null,commande_numero:null,commande_ligne_id:null,
+        livraison_affaire_id:params.body.affaire_id??null,client_id:params.body.client_id??null,root_article_id:null,
+        root_piece_technique_id:params.body.piece_technique_id,root_pinned_version_id:params.body.piece_technique_version_id,
+        qty_to_produce:params.body.quantite_lancee,user_id:params.audit.user_id,
+      });
+      await client.query(`UPDATE public.ordres_fabrication SET priority=$2::of_priority,date_lancement_prevue=$3::date,date_fin_prevue=$4::date,
+        notes=CASE WHEN id=$5::bigint THEN COALESCE($6,notes) ELSE notes END WHERE id=ANY($1::bigint[])`,
+        [generated.ofs.map(o=>o.id),params.body.priority,params.body.date_lancement_prevue??null,params.body.date_fin_prevue??null,generated.root_of_id,params.body.notes??null]);
+      await insertAuditLog(client,params.audit,{action:'production.of.create',entity_type:'ordres_fabrication',entity_id:String(generated.root_of_id),details:{preparation_required:true,child_of_ids:generated.ofs.map(o=>o.id)}});
+      await queueRootOfCreationPdf(client,{ofId:generated.root_of_id,actorUserId:params.audit.user_id});
+      return generated.root_of_id;
+    }
     const pt = await client.query<{ id: string }>(
       `SELECT id::text AS id FROM pieces_techniques WHERE id = $1::uuid LIMIT 1`,
       [params.body.piece_technique_id]
@@ -4417,7 +4435,7 @@ function missingTechnicalPreparationSections(value: unknown): string[] {
     : {};
   return REQUIRED_TECHNICAL_SECTIONS.filter((key) => {
     const section = sections[key];
-    return !(typeof section === "object" && section !== null && Object.keys(section as Record<string, unknown>).length > 0);
+    return !(typeof section === "object" && section !== null && (section as Record<string, unknown>).confirmed === true);
   });
 }
 
@@ -4443,6 +4461,10 @@ async function getOfTechnicalPreparationTx(db: DbQueryer, id: number) {
   );
   const row = result.rows[0] ?? null;
   if (!row) return null;
+  if (await usesPreparationRules(db, id)) {
+    const evaluation = await evaluateOfPreparation(db, id);
+    return { ...row, items: evaluation.items, missing_sections: evaluation.items.filter(i => i.required && i.status !== 'READY').map(i => i.key) };
+  }
   return { ...row, missing_sections: missingTechnicalPreparationSections(row.technical_preparation) };
 }
 
@@ -4523,10 +4545,12 @@ export async function repoSubmitOfTechnicalPreparation(params: {
     if (row.statut !== "BROUILLON" || row.technical_readiness === "VALIDATED") {
       throw new HttpError(409, "OF_TECHNICAL_PREPARATION_LOCKED", "La préparation technique de cet OF est verrouillée.");
     }
-    if (params.body.expected_updated_at && params.body.expected_updated_at !== row.updated_at) {
+    if (params.body.expected_updated_at && Date.parse(params.body.expected_updated_at) !== Date.parse(row.updated_at)) {
       throw new HttpError(409, "CONCURRENT_MODIFICATION", "L'OF a été modifié. Rechargez sa préparation technique.");
     }
-    const missing = missingTechnicalPreparationSections(row.technical_preparation);
+    const workbench = await usesPreparationRules(tx, params.id);
+    const evaluation = workbench ? await assertOfPreparationReady(tx, params.id) : null;
+    const missing = evaluation ? [] : missingTechnicalPreparationSections(row.technical_preparation);
     if (missing.length > 0) {
       throw new HttpError(422, "OF_TECHNICAL_PREPARATION_INCOMPLETE", "Le dossier technique est incomplet.", { missing_sections: missing });
     }
@@ -4599,14 +4623,29 @@ export async function repoValidateOfTechnicalPreparation(params: {
     if (row.statut !== "BROUILLON" || row.technical_readiness !== "READY_FOR_REVIEW") {
       throw new HttpError(409, "OF_TECHNICAL_REVIEW_REQUIRED", "Soumettez d'abord le dossier technique complet.");
     }
-    if (params.body.expected_updated_at && params.body.expected_updated_at !== row.updated_at) {
+    if (params.body.expected_updated_at && Date.parse(params.body.expected_updated_at) !== Date.parse(row.updated_at)) {
       throw new HttpError(409, "CONCURRENT_MODIFICATION", "L'OF a été modifié. Rechargez sa préparation technique.");
     }
     const selected = typeof row.technical_preparation?.selected_version_id === "string"
       ? row.technical_preparation.selected_version_id
       : null;
-    const technical = await loadApplicableTechnicalSnapshot(tx, row.piece_technique_id, { pinned_version_id: selected });
-    const assemblyFeatureEnabled = row.technical_preparation?.assembly_feature_enabled === true;
+    let preparationEvidence: Awaited<ReturnType<typeof assertOfPreparationReady>> | undefined;
+    if (await usesPreparationRules(tx, params.id)) {
+      const evaluation = preparationEvidence = await assertOfPreparationReady(tx, params.id);
+      await tx.query(`INSERT INTO public.piece_version_preparation(piece_technique_version_id,decisions,approved_source_hash,approved_at,approved_by,updated_by)
+        VALUES($1::uuid,$2::jsonb,$3,now(),$4,$4) ON CONFLICT(piece_technique_version_id) DO UPDATE
+        SET approved_source_hash=excluded.approved_source_hash,approved_at=now(),approved_by=excluded.approved_by`,
+        [evaluation.of.version_id,JSON.stringify(evaluation.decisions),evaluation.source_hash,params.audit.user_id]);
+      await tx.query(`UPDATE public.ordres_fabrication SET preparation_rules_version=$2,
+        technical_preparation=technical_preparation||jsonb_build_object('self_inspection_sheet_id',$3::text,'prepared_source_hash',$4::text) WHERE id=$1`,[params.id,evaluation.rules_version,evaluation.sheet?.id,evaluation.source_hash]);
+    }
+    const technical = await loadApplicableTechnicalSnapshot(tx, row.piece_technique_id, { pinned_version_id: selected, preparation_evidence:preparationEvidence?.sources });
+    if(preparationEvidence){
+      const affected=await synchronizeDraftChildrenTx(tx,params.id,params.audit.user_id);
+      for(const childId of affected)await preparationAudit(tx,params.audit,childId,'production.preparation.structure.synchronize',{parent_of_id:params.id});
+    }
+    const internalStrategy=(await tx.query<{assembly_supply_strategy:string}>('SELECT assembly_supply_strategy FROM public.piece_technique_versions WHERE id=$1::uuid',[technical.version_id])).rows[0]?.assembly_supply_strategy;
+    const assemblyFeatureEnabled = row.technical_preparation?.assembly_feature_enabled === true && (!preparationEvidence || internalStrategy==='INTERNAL_CONTRACT');
     if (assemblyFeatureEnabled) {
       if (
         row.generation_level !== 0
@@ -4715,6 +4754,8 @@ export async function repoValidateOfTechnicalPreparation(params: {
         qty_to_produce: Number(row.quantite_lancee),
         user_id: params.audit.user_id,
         existing_root_of_id: params.id,
+        root_preparation_evidence:preparationEvidence?.sources,
+        force_preparation: Boolean(preparationEvidence),
         planned_quantities_by_path:
           assemblyPlan.manufacturing_mode === "ASSEMBLY"
             ? assemblyPlan.planned_of_quantities_by_path

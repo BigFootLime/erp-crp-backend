@@ -1563,6 +1563,8 @@ async function repoListOperations(pieceTechniqueId: string): Promise<Operation[]
 }
 
 type AchatRow = {
+  piece_technique_version_id: string | null;
+  article_id: string | null;
   id: string;
   phase: number | null;
   type_achat: string;
@@ -1595,6 +1597,8 @@ async function repoListAchats(pieceTechniqueId: string): Promise<Achat[]> {
       id::text AS id,
       phase,
       type_achat,
+      article_id::text AS article_id,
+      piece_technique_version_id::text AS piece_technique_version_id,
       famille_piece_id::text AS famille_piece_id,
       nom,
       fournisseur_id::text AS fournisseur_id,
@@ -1625,6 +1629,8 @@ async function repoListAchats(pieceTechniqueId: string): Promise<Achat[]> {
     id: r.id,
     phase: r.phase,
     type_achat: (r.type_achat as TypeAchat) ?? "DIVERS",
+    article_id: r.article_id,
+    piece_technique_version_id: r.piece_technique_version_id,
     famille_piece_id: r.famille_piece_id,
     nom: r.nom,
     fournisseur_id: r.fournisseur_id,
@@ -3291,14 +3297,18 @@ export async function repoAddAchat(
         designation,
         designation_2,
         designation_3,
-        type_achat
+        type_achat,
+        article_id,
+        piece_technique_version_id
       )
       VALUES (
         $1::uuid,$2,$3::uuid,$4,$5::uuid,$6,$7,$8,
-        $9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24
+        $9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25::uuid,$26::uuid
       )
       RETURNING
         id::text AS id,
+        article_id::text AS article_id,
+        piece_technique_version_id::text AS piece_technique_version_id,
         phase,
         famille_piece_id::text AS famille_piece_id,
         nom,
@@ -3348,12 +3358,16 @@ export async function repoAddAchat(
       body.designation_2 ?? null,
       body.designation_3 ?? null,
       body.type_achat ?? "DIVERS",
+      body.article_id ?? null,
+      body.piece_technique_version_id ?? null,
     ]
   );
 
   const r = res.rows[0];
   return {
     id: r.id,
+    article_id: r.article_id,
+    piece_technique_version_id: r.piece_technique_version_id,
     phase: r.phase,
     type_achat: (r.type_achat as TypeAchat) ?? "DIVERS",
     famille_piece_id: r.famille_piece_id,
@@ -3393,6 +3407,9 @@ export async function repoUpdateAchat(
   };
 
   if (body.phase !== undefined) sets.push(`phase = ${push(body.phase)}`);
+  if (body.type_achat !== undefined) sets.push(`type_achat = ${push(body.type_achat)}`);
+  if (body.article_id !== undefined) sets.push(`article_id = ${push(body.article_id)}::uuid`);
+  if (body.piece_technique_version_id !== undefined) sets.push(`piece_technique_version_id = ${push(body.piece_technique_version_id)}::uuid`);
   if (body.famille_piece_id !== undefined) sets.push(`famille_piece_id = ${push(body.famille_piece_id)}::uuid`);
   if (body.nom !== undefined) sets.push(`nom = ${push(body.nom)}`);
   if (body.fournisseur_id !== undefined) sets.push(`fournisseur_id = ${push(body.fournisseur_id)}::uuid`);
@@ -3422,6 +3439,9 @@ export async function repoUpdateAchat(
     WHERE id = ${push(achatId)}::uuid AND piece_technique_id = ${push(pieceTechniqueId)}::uuid
     RETURNING
       id::text AS id,
+      type_achat,
+      article_id::text AS article_id,
+      piece_technique_version_id::text AS piece_technique_version_id,
       phase,
       famille_piece_id::text AS famille_piece_id,
       nom,
@@ -3450,6 +3470,9 @@ export async function repoUpdateAchat(
   if (!r) return null;
   return {
     id: r.id,
+    type_achat: r.type_achat as TypeAchat,
+    article_id: r.article_id,
+    piece_technique_version_id: r.piece_technique_version_id,
     phase: r.phase,
     famille_piece_id: r.famille_piece_id,
     nom: r.nom,

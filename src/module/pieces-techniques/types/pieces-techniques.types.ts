@@ -124,6 +124,8 @@ export type TypeAchat =
   | "DIVERS"
 
 export type Achat = {
+  article_id?: string | null
+  piece_technique_version_id?: string | null
   id?: string
   phase?: number | null
   // Catégorie de nomenclature d'achat (B3.5). Défaut 'DIVERS' côté base.

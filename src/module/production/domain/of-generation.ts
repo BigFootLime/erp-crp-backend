@@ -1,3 +1,5 @@
+import {createPreparationDraftTree} from './preparation-generation';
+import {synchronizeDraftChildrenTx} from '../repository/preparation-children.repository';
 // Moteur unique de génération récursive des OF (#55/#141/#170).
 //
 // Ce module de domaine est LE service partagé exigé par #170 : le lancement de
@@ -19,6 +21,7 @@ import crypto from "node:crypto";
 import type { PoolClient } from "pg";
 import { HttpError } from "../../../utils/httpError";
 import { generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
+import { usesPreparationRules } from '../repository/production-preparation.repository';
 
 export type Queryable = Pick<PoolClient, "query">;
 
@@ -386,7 +389,7 @@ async function loadVersionNotApplicableDetails(
 export async function loadApplicableTechnicalSnapshot(
   tx: Queryable,
   pieceTechniqueId: string,
-  opts?: { pinned_version_id?: string | null }
+  opts?: { pinned_version_id?: string | null; preparation_evidence?: unknown }
 ): Promise<ApplicableTechnicalSnapshot> {
   const pinned = opts?.pinned_version_id ?? null;
   const versionRes = await tx.query<{
@@ -432,6 +435,7 @@ export async function loadApplicableTechnicalSnapshot(
   const snapshotRes = await tx.query<{ snapshot: unknown }>(
     `
       SELECT jsonb_build_object(
+        'snapshot_schema_version', 2,
         'piece', jsonb_build_object('id', pt.id::text, 'code', pt.code_piece, 'designation', pt.designation),
         'version', jsonb_build_object(
           'id', v.id::text,
@@ -440,6 +444,7 @@ export async function loadApplicableTechnicalSnapshot(
           'plan_reference', v.plan_reference,
           'code_metier', v.code_metier,
           'date_effet', v.date_effet
+          ,'manufacturing_mode', v.manufacturing_mode
         ),
         'gamme', CASE WHEN g.id IS NULL THEN NULL ELSE jsonb_build_object(
           'id', g.id::text, 'nom', g.nom, 'code', g.code, 'designation', g.designation,
@@ -511,14 +516,25 @@ export async function loadApplicableTechnicalSnapshot(
           ) ORDER BY pa.phase NULLS LAST, pa.id)
           FROM public.pieces_techniques_achats pa
           WHERE pa.piece_technique_id = pt.id
+            AND (pa.piece_technique_version_id = v.id OR (pa.piece_technique_version_id IS NULL AND NOT EXISTS(
+              SELECT 1 FROM public.pieces_techniques_achats scoped WHERE scoped.piece_technique_version_id=v.id)))
         ), '[]'::jsonb),
-        'documents', COALESCE((
+        'legacy_documents', COALESCE((
           SELECT jsonb_agg(jsonb_build_object(
             'id', doc.id::text, 'name', doc.original_name, 'mime_type', doc.mime_type, 'sha256', doc.sha256
           ) ORDER BY doc.created_at, doc.id)
           FROM public.pieces_techniques_documents doc
           WHERE doc.piece_technique_id = pt.id AND doc.removed_at IS NULL
-        ), '[]'::jsonb)
+        ), '[]'::jsonb),
+        'documents', COALESCE((
+          SELECT jsonb_agg(jsonb_build_object('id',d.id,'version_id',dv.id,'role',l.link_role,'sha256',b.sha256) ORDER BY d.id,l.link_role)
+          FROM public.ged_document_links l JOIN public.ged_documents d ON d.id=l.document_id AND d.archived_at IS NULL
+          JOIN public.ged_document_versions dv ON dv.id=d.current_version_id AND dv.status='APPLICABLE'
+          JOIN public.ged_blobs b ON b.id=dv.blob_id
+          JOIN public.ged_upload_sessions us ON us.id=dv.upload_session_id AND us.scan_status='clean' AND us.quarantine_status='released'
+          WHERE l.entity_type='PIECE_TECHNIQUE_VERSION' AND l.entity_id=v.id::text
+        ),'[]'::jsonb),
+        'preparation_decisions', COALESCE((SELECT decisions FROM public.piece_version_preparation WHERE piece_technique_version_id=v.id),'{}'::jsonb)
       ) AS snapshot
       FROM public.pieces_techniques pt
       JOIN public.piece_technique_versions v ON v.id = $2::uuid
@@ -527,7 +543,9 @@ export async function loadApplicableTechnicalSnapshot(
     `,
     [pieceTechniqueId, version.version_id, version.gamme_id]
   );
-  const snapshot = snapshotRes.rows[0]?.snapshot;
+  const rawSnapshot = snapshotRes.rows[0]?.snapshot;
+  const snapshot = rawSnapshot && opts?.preparation_evidence
+    ? {...rawSnapshot as Record<string,unknown>, preparation_evidence:opts.preparation_evidence} : rawSnapshot;
   if (!snapshot) {
     throw new HttpError(422, "TECHNICAL_DATA_INCOMPLETE", "Impossible de figer les données techniques de l'OF.");
   }
@@ -745,6 +763,10 @@ export async function createIncompleteDraftOrdreFabrication(tx: Queryable, param
     ]
   );
 
+  if(await usesPreparationRules(tx)){
+    await tx.query('UPDATE public.ordres_fabrication SET preparation_rules_version=1 WHERE id=$1',[ofId]);
+    await synchronizeDraftChildrenTx(tx,ofId,params.user_id);
+  }
   return {
     id: ofId,
     root_of_id: ofId,
@@ -787,7 +809,11 @@ export async function createRecursiveOrdresFabrication(tx: Queryable, params: {
    * OF when the technical revision becomes applicable.
    */
   existing_root_of_id?: number | null;
+  force_preparation?: boolean;
+  root_preparation_evidence?: unknown;
 }): Promise<RecursiveOfGenerationResult> {
+  const preparationEnabled = params.force_preparation === true || await usesPreparationRules(tx);
+  if(preparationEnabled&&!params.existing_root_of_id&&!params.planned_quantities_by_path)return createPreparationDraftTree(tx,params);
   const sourceType: OfGenerationSourceType = params.source_type ?? "COMMANDE_CLIENT";
   const fullTree = await loadFabricationGenerationTree(tx, params.root_piece_technique_id);
   if (!fullTree.length) {
@@ -820,7 +846,7 @@ export async function createRecursiveOrdresFabrication(tx: Queryable, params: {
     const cacheKey = `${node.piece_technique_id}:${pinned ?? ""}`;
     let technical = technicalByPiece.get(cacheKey);
     if (!technical) {
-      technical = await loadApplicableTechnicalSnapshot(tx, node.piece_technique_id, { pinned_version_id: pinned });
+      technical = await loadApplicableTechnicalSnapshot(tx, node.piece_technique_id, { pinned_version_id: pinned,preparation_evidence:node.level===0?params.root_preparation_evidence:undefined });
       technicalByPiece.set(cacheKey, technical);
     }
     technicalByKey.set(node.key, technical);
@@ -963,6 +989,7 @@ export async function createRecursiveOrdresFabrication(tx: Queryable, params: {
     const technical = technicalByKey.get(node.key);
     if (!technical) throw new Error(`Missing technical snapshot for fabrication node ${node.key}`);
     const reusesExistingRoot = node.level === 0 && existingRoot?.id === ofId;
+    const deferPreparation = preparationEnabled && !reusesExistingRoot;
     const numero = reusesExistingRoot
       ? existingRoot.numero
       : await generateTransactionalBusinessCode(tx, { prefix: "OF" });
@@ -1061,7 +1088,9 @@ export async function createRecursiveOrdresFabrication(tx: Queryable, params: {
           updated_by
         ) VALUES (
           $1,$2,$3::bigint,$4::bigint,$5::bigint,$6::uuid,$7,$8::uuid,
-          $9::uuid,$10::jsonb,$11,now(),'VALIDATED','{}'::jsonb,
+          $9::uuid,$10::jsonb,$11,CASE WHEN $23::boolean THEN NULL ELSE now() END,
+          CASE WHEN $23::boolean THEN 'INCOMPLETE' ELSE 'VALIDATED' END,
+          CASE WHEN $23::boolean THEN jsonb_build_object('selected_version_id',$24::text) ELSE '{}'::jsonb END,
           $12::bigint,$13::bigint,$14::uuid,$15,$16::uuid,$17,$18,$19,
           $20,'BROUILLON'::of_status,'NORMAL'::of_priority,$21,$22,$22
         )
@@ -1075,9 +1104,9 @@ export async function createRecursiveOrdresFabrication(tx: Queryable, params: {
           articleId,
           params.client_id,
           node.piece_technique_id,
-          technical.version_id,
-          JSON.stringify(technical.snapshot),
-          technical.sha256,
+          deferPreparation ? null : technical.version_id,
+          deferPreparation ? null : JSON.stringify(technical.snapshot),
+          deferPreparation ? null : technical.sha256,
           parentOfId,
           rootOfId,
           batchId,
@@ -1089,23 +1118,26 @@ export async function createRecursiveOrdresFabrication(tx: Queryable, params: {
           qtyLancee,
           `${noteSource} (${notePrefix} ${node.code_piece})`,
           params.user_id,
+          deferPreparation,
+          technical.version_id,
         ]
       );
     }
 
-    const operationsCount = await copyPieceOperationsToOf(tx, {
+    if (deferPreparation) await tx.query('UPDATE public.ordres_fabrication SET preparation_rules_version=1 WHERE id=$1',[ofId]);
+    const operationsCount = deferPreparation ? 0 : await copyPieceOperationsToOf(tx, {
       of_id: ofId,
       piece_technique_id: node.piece_technique_id,
       gamme_id: technical.gamme_id,
     });
-    if (operationsCount === 0) {
+    if (operationsCount === 0 && !deferPreparation) {
       // A legitimate article may not require workshop operations yet. Keep a
       // traceable OF and its immutable technical snapshot, but let the order
       // workflow bypass the planning checkpoint that has nothing to schedule.
       warnings.push(`GAMME_WITHOUT_OPERATION:${node.code_piece}`);
     }
 
-    await tx.query(
+    if (!deferPreparation) await tx.query(
       `
         INSERT INTO public.of_technical_snapshots (
           of_id, piece_technique_version_id, snapshot, snapshot_sha256, created_by
@@ -1174,7 +1206,7 @@ export async function createRecursiveOrdresFabrication(tx: Queryable, params: {
       generation_level: node.level,
       commande_ligne_id: params.commande_ligne_id,
       operations_count: operationsCount,
-      technical_readiness: "VALIDATED",
+      technical_readiness: deferPreparation ? "INCOMPLETE" : "VALIDATED",
       structure_path: node.key,
     });
   }

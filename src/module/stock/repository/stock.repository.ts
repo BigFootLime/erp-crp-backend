@@ -1,3 +1,4 @@
+import {reconcileReleasedConsolidationLot} from '../../production/repository/production-receipts.repository';
 import type { PoolClient } from "pg";
 import crypto from "node:crypto";
 import { createReadStream } from "node:fs";
@@ -5477,6 +5478,7 @@ export async function repoUpdateLotQuality(
       `,
       [id, body.lot_status, body.reason, audit.user_id]
     );
+    if(body.lot_status==='LIBERE')await reconcileReleasedConsolidationLot(client,id,audit.user_id);
     await client.query(
       `
         INSERT INTO public.stock_lot_event_log (
