@@ -9,7 +9,6 @@ ON CONFLICT (key) DO NOTHING;
 ALTER TABLE public.ordres_fabrication
   ADD COLUMN IF NOT EXISTS planning_wait_started_at timestamptz,
   ADD COLUMN IF NOT EXISTS preparation_rules_version integer;
-UPDATE public.ordres_fabrication SET planning_wait_started_at = created_at WHERE planning_wait_started_at IS NULL;
 ALTER TABLE public.ordres_fabrication ALTER COLUMN planning_wait_started_at SET DEFAULT now();
 CREATE INDEX IF NOT EXISTS of_preparation_wait_idx ON public.ordres_fabrication(planning_wait_started_at, id)
   WHERE statut IN ('BROUILLON','PLANIFIE');
@@ -180,5 +179,8 @@ DROP TRIGGER IF EXISTS check_consolidation_quantity_712 ON public.production_con
 CREATE CONSTRAINT TRIGGER check_consolidation_quantity_712 AFTER INSERT OR UPDATE ON public.production_consolidations DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.fn_check_consolidation_quantity_712();
 DROP TRIGGER IF EXISTS check_consolidation_quantity_712 ON public.production_consolidation_allocations;
 CREATE CONSTRAINT TRIGGER check_consolidation_quantity_712 AFTER INSERT OR UPDATE ON public.production_consolidation_allocations DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.fn_check_consolidation_quantity_712();
+
+-- Run the historical backfill after all DDL: populated databases have deferred OF triggers.
+UPDATE public.ordres_fabrication SET planning_wait_started_at = created_at WHERE planning_wait_started_at IS NULL;
 
 COMMIT;

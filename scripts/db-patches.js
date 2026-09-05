@@ -98,7 +98,7 @@ const IMMUTABLE_ONLY_PATCHES = Object.freeze({
   "20260903_customer_order_technical_maturation.sql":
     "7a1e9221563f6b92c4e3e4f9c8c75a2f586ba9f15a9a0739c57e02bbe6fefb9e",
   "20260905_production_preparation_consolidation_01.sql":
-    "ab6011af599ed86e302902d1e4ecf05f15bbec1cb6c35d9ccb3ef340b6c313cf",
+    "7ba3fad285c5ed5f6123d826a7763d1a64b2ca95eb7c0104aaad165bf603a6d7",
   "20260905_production_preparation_consolidation_02.sql":
     "f13bb056b0ffcc0ada6f1d40da1ba13bd48e89ba76bcc4fd681286ddd985bcb9",
   "20260905_production_preparation_consolidation_03.sql":

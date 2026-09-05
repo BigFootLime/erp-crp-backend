@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { repoReusePreparationStock } from "./preparation-stock-reuse.repository";
 import { reconcileReleasedConsolidationLot } from "./production-receipts.repository";
 import { createRecursiveOrdresFabrication } from "../domain/of-generation";
@@ -99,6 +101,22 @@ describe.skipIf(!isolated)(
     });
     afterAll(async () => {
       await pool.end();
+    });
+    it("applies the initial migration with populated OF rows and deferred constraints", async () => {
+      await pool.query("UPDATE public.ordres_fabrication SET planning_wait_started_at=NULL WHERE id=$1", [fixture.ids[0]]);
+      const sql = readFileSync(resolve(process.cwd(), "db/patches/20260905_production_preparation_consolidation_01.sql"), "utf8")
+        .replace(/^BEGIN;$/m, "").replace(/^COMMIT;$/m, "");
+      const tx = await pool.connect();
+      try {
+        await tx.query("BEGIN");
+        await tx.query(sql);
+        await tx.query("SET CONSTRAINTS ALL IMMEDIATE");
+        const result = await tx.query("SELECT planning_wait_started_at=created_at AS backfilled FROM public.ordres_fabrication WHERE id=$1", [fixture.ids[0]]);
+        expect(result.rows[0].backfilled).toBe(true);
+      } finally {
+        await tx.query("ROLLBACK");
+        tx.release();
+      }
     });
     it("returns the same active population in counters and unfiltered total", async () => {
       const result = await repoProductionWorklist({
