@@ -118,6 +118,24 @@ describe.skipIf(!isolated)(
         tx.release();
       }
     });
+    it("offers and accepts secondary programming roles but rejects unassigned or inactive users", async () => {
+      const f = await seedProductionWorkbenchFixture();
+      const username = `E2E712-PROGRAMMER-${randomUUID()}`;
+      const user = (await pool.query("INSERT INTO public.users(username,password,role,status,email) VALUES($1,'DISABLED_TEST_CREDENTIAL','Employee','Active',$2) RETURNING id", [username, `${username}@example.invalid`])).rows[0].id;
+      let e = await evaluateOfPreparation(pool, f.ids[0]);
+      const input = () => ({ expected_updated_at: e.of.updated_at, assignee_id: user, estimated_hours: 2, status: "TODO" as const });
+      expect(e.programmers).not.toEqual(expect.arrayContaining([expect.objectContaining({id:user})]));
+      await expect(repoSaveProgrammingTask(f.ids[0], input(), f.audit)).rejects.toMatchObject({code:"PROGRAMMER_REQUIRED"});
+      await pool.query("INSERT INTO public.user_role_assignments(user_id,role_key) VALUES($1,'Programmation')", [user]);
+      e = await evaluateOfPreparation(pool, f.ids[0]);
+      expect(e.programmers).toEqual(expect.arrayContaining([expect.objectContaining({id:user})]));
+      await repoSaveProgrammingTask(f.ids[0], input(), f.audit);
+      const f2 = await seedProductionWorkbenchFixture();
+      await pool.query("UPDATE public.users SET status='Inactive' WHERE id=$1", [user]);
+      const inactive = await evaluateOfPreparation(pool, f2.ids[0]);
+      expect(inactive.programmers).not.toEqual(expect.arrayContaining([expect.objectContaining({id:user})]));
+      await expect(repoSaveProgrammingTask(f2.ids[0], {...input(),expected_updated_at:inactive.of.updated_at}, f2.audit)).rejects.toMatchObject({code:"PROGRAMMER_REQUIRED"});
+    });
     it("returns the same active population in counters and unfiltered total", async () => {
       const result = await repoProductionWorklist({
         q: "",
