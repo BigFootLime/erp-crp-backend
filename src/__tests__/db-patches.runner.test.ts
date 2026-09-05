@@ -200,6 +200,7 @@ describe("database patch runner", () => {
     const patches = runner.listPatches(resolve(repoRoot, "db/patches"));
     const workbench = patches.filter((patch) => patch.filename.startsWith("20260905_production_preparation_consolidation"));
     expect(workbench).toHaveLength(5);
+    expect(workbench[0].filename).toBe("20260905_production_preparation_consolidation_01.sql");
     for (const patch of workbench) {
       expect(runner.parseArgs(["up", "--only", patch.filename]).only).toBe(patch.filename);
       expect(runner.immutableOnlyPatch(patches, patch.filename)).toEqual(patch);

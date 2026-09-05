@@ -14,7 +14,7 @@ Exécuter `db/patches/support/20260905_production_preparation_consolidation.pref
 
 Patches, dans cet ordre :
 
-1. `20260905_production_preparation_consolidation.sql` : preuves, achats par indice, priorité, allocations, protections.
+1. `20260905_production_preparation_consolidation_01.sql` : preuves, achats par indice, priorité, allocations, protections.
 2. `20260905_production_preparation_consolidation_02.sql` : programmation, réemploi, transferts, protection de l'exécution.
 3. `20260905_production_preparation_consolidation_03.sql` : sous-OF de surplus, compatibilité enum et fiche liée à la quantité.
 4. `20260905_production_preparation_consolidation_04.sql` : contrôle différé de conservation, adapté à chacune des tables.
