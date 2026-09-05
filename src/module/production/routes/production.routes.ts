@@ -1,4 +1,10 @@
+import {productionWorkbenchConfig} from '../controllers/production-workbench.controller';
 import { Router, type RequestHandler } from "express";
+import {synchronizePreparationChildren} from '../controllers/production-workbench.controller';
+import {reusePreparationStock} from '../controllers/production-workbench.controller';
+import {saveProgrammingTask,importPreparationPurchases} from '../controllers/production-workbench.controller';
+import { previewConsolidation,createConsolidation,getConsolidation,dissolveConsolidation } from '../controllers/production-workbench.controller';
+import { productionWorklist,preparationWorkbench,savePreparationDecisions,selectPreparationVersion,reviewPreparationStock,generateSelfInspection,downloadSelfInspection } from '../controllers/production-workbench.controller';
 
 import {
   hasGrantedAccountModuleAccess,
@@ -218,6 +224,22 @@ router.delete("/postes/:id", requireAdmin, archivePoste);
 // OF — lectures au JWT (consommées par planning/commandes/affaires),
 // mutations sous capacités #170 (refus par défaut).
 router.get("/ofs", listOrdresFabrication);
+router.get('/workbench/config',requireOfCapability('read'),productionWorkbenchConfig);
+router.get('/worklist',requireOfCapability('read'),productionWorklist);
+router.post('/consolidations/preview',requireOfCapability('generate'),previewConsolidation);
+router.post('/consolidations',requireOfCapability('generate'),createConsolidation);
+router.get('/consolidations/:id',requireOfCapability('read'),getConsolidation);
+router.post('/consolidations/:id/dissolve',requireOfCapability('cancel'),dissolveConsolidation);
+router.get('/ofs/:id/workbench',requireOfCapability('read'),preparationWorkbench);
+router.post('/ofs/:id/workbench/children/synchronize',requireOfCapability('generate'),synchronizePreparationChildren);
+router.post('/ofs/:id/workbench/programming',requireOfCapability('revise'),saveProgrammingTask);
+router.post('/ofs/:id/workbench/purchases/import',requireOfCapability('edit_prelaunch'),importPreparationPurchases);
+router.patch('/ofs/:id/workbench/decisions',requireOfCapability('edit_prelaunch'),savePreparationDecisions);
+router.post('/ofs/:id/workbench/version',requireOfCapability('edit_prelaunch'),selectPreparationVersion);
+router.post('/ofs/:id/workbench/stock-review',requireOfCapability('edit_prelaunch'),reviewPreparationStock);
+router.post('/ofs/:id/workbench/stock-reuse',requireOfCapability('quality_decision'),reusePreparationStock);
+router.post('/ofs/:id/workbench/self-inspection',requireOfCapability('edit_prelaunch'),generateSelfInspection);
+router.get('/ofs/:id/workbench/self-inspection/:sheetId',requireOfCapability('read'),downloadSelfInspection);
 router.post("/ofs/generate/preview", requireOfCapability("generate"), previewOfGeneration);
 router.post("/ofs/generate", requireOfCapability("generate"), generateOfs);
 router.get("/ofs/:id/tree", getOrdreFabricationTree);

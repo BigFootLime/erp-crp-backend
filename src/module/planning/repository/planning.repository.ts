@@ -1672,6 +1672,7 @@ export async function repoListOfOperationsForAutoplan(params: {
       FROM public.ordres_fabrication o
       JOIN public.of_operations op ON op.of_id = o.id
       WHERE o.id = ANY($1::bigint[])
+        AND NOT EXISTS(SELECT 1 FROM public.production_consolidation_allocations coverage WHERE coverage.source_of_id=o.id AND coverage.state='ACTIVE')
         ${includeDone ? "" : "AND op.status::text <> 'DONE'"}
       ORDER BY o.id ASC, op.phase ASC, op.id ASC
     `,

@@ -21,8 +21,8 @@ describe("#880 — gamme vide non bloquante", () => {
   it("conserve l'OF et expose un avertissement au lieu d'annuler la transaction", () => {
     const source = read("src/module/production/domain/of-generation.ts");
     const copy = source.slice(
-      source.indexOf("const operationsCount = await copyPieceOperationsToOf"),
-      source.indexOf("await tx.query(\n      `\n        INSERT INTO public.of_technical_snapshots")
+      source.indexOf("const operationsCount ="),
+      source.indexOf("purchaseRequirements.push(")
     );
 
     expect(copy).toContain("GAMME_WITHOUT_OPERATION:");
