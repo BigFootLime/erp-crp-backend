@@ -40,7 +40,7 @@ describe("autonomous ClamAV Docker contract", () => {
     expect(dockerfile).toContain('"clamav-daemon=1.4.6-r0"');
     expect(dockerfile).toContain('"clamav-clamdscan=1.4.6-r0"');
     expect(dockerfile).toContain('"freshclam=1.4.6-r0"');
-    expect(dockerfile).toContain('"curl=8.21.0-r0"');
+    expect(dockerfile).toContain('"curl=8.22.0-r0"');
     expect(dockerfile).toContain('"tini=0.19.0-r3"');
     expect(dockerfile).toContain('"su-exec=0.3-r0"');
     expect(dockerfile).not.toMatch(/RUN\s+freshclam/);

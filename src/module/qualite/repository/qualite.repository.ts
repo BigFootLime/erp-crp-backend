@@ -1,3 +1,4 @@
+import {reconcileReleasedConsolidationLot} from '../../production/repository/production-receipts.repository';
 import type { PoolClient } from "pg";
 import crypto from "node:crypto";
 import { createReadStream } from "node:fs";
@@ -3088,6 +3089,7 @@ export async function repoCreateNonConformityDisposition(params: {
           `UPDATE public.lots SET lot_status = 'LIBERE', lot_status_note = $2, updated_at = now(), updated_by = $3 WHERE id = $1::uuid`,
           [lotId, `NC ${row.reference} : lot libere`, audit.user_id]
         );
+        await reconcileReleasedConsolidationLot(tx,lotId,audit.user_id);
       }
     }
 

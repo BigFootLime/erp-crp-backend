@@ -91,6 +91,15 @@ async function main() {
   let normalized = false;
   let stopBoundaryFound = false;
   for (const filename of orderedPatches()) {
+    if (filename === '20260903_customer_order_technical_maturation.sql') {
+      // The September migration expects these historical columns. Its checksum
+      // is already deployed: repair only this disposable bootstrap contract.
+      const maturation = new Client({ connectionString: process.env.DATABASE_URL });
+      await maturation.connect();
+      try {
+        await maturation.query('ALTER TABLE public.affaire ADD COLUMN IF NOT EXISTS devis_id bigint REFERENCES public.devis(id); ALTER TABLE public.commande_to_affaire ADD COLUMN IF NOT EXISTS role text');
+      } finally { await maturation.end(); }
+    }
     if (filename === stopBefore) {
       stopBoundaryFound = true;
       break;

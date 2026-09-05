@@ -196,6 +196,18 @@ function inventoryClient(appliedRows: Array<{ filename: string; sha256: string; 
 }
 
 describe("database patch runner", () => {
+  it("selects all five workbench patches and rejects a changed grant patch", () => {
+    const patches = runner.listPatches(resolve(repoRoot, "db/patches"));
+    const workbench = patches.filter((patch) => patch.filename.startsWith("20260905_production_preparation_consolidation"));
+    expect(workbench).toHaveLength(5);
+    expect(workbench[0].filename).toBe("20260905_production_preparation_consolidation_01.sql");
+    for (const patch of workbench) {
+      expect(runner.parseArgs(["up", "--only", patch.filename]).only).toBe(patch.filename);
+      expect(runner.immutableOnlyPatch(patches, patch.filename)).toEqual(patch);
+      expect(() => runner.immutableOnlyPatch([{ ...patch, sha256: "0".repeat(64) }], patch.filename)).toThrow(/checksum mismatch/);
+    }
+  });
+
   it("uses the same deterministic LF checksum on Windows and Linux checkouts", () => {
     const lf = "BEGIN;\nSELECT 'rate-limit';\nCOMMIT;\n";
     const crlf = lf.replace(/\n/g, "\r\n");

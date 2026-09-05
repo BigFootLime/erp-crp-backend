@@ -1,3 +1,4 @@
+import {reconcileReleasedConsolidationLot} from '../../production/repository/production-receipts.repository';
 // Repository Qualité 360 (#228).
 //
 // Toutes les décisions passent par une transaction, un verrou optimiste, un
@@ -2302,6 +2303,8 @@ export async function repoDecideExecution(params: {
         context: { source: "release_decision" },
       });
     }
+
+    if(before.lot_id)await reconcileReleasedConsolidationLot(client,before.lot_id,params.actor.user_id);
 
     await insertQualityEvent(client, {
       entity_type: "RELEASE",
