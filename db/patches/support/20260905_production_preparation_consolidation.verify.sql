@@ -5,6 +5,7 @@ DECLARE tab text;
 BEGIN
   FOREACH tab IN ARRAY ARRAY['piece_version_preparation','of_preparation_evaluations','of_stock_reviews','of_self_inspection_sheets','piece_version_programming_tasks','of_stock_reuse_decisions','production_consolidations','production_consolidation_allocations','production_consolidation_receipt_allocations','production_consolidation_component_transfers'] LOOP
     IF to_regclass('public.'||tab) IS NULL THEN RAISE EXCEPTION 'Missing workbench table: %',tab; END IF;
+    IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='cerp_app') AND (NOT has_table_privilege('cerp_app','public.'||tab,'SELECT') OR NOT has_table_privilege('cerp_app','public.'||tab,'INSERT')) THEN RAISE EXCEPTION 'Missing runtime privileges: %',tab; END IF;
   END LOOP;
   IF (SELECT count(*) FROM public.app_feature_flags WHERE key IN ('PRODUCTION_WORKBENCH','PRODUCTION_CONSOLIDATION'))<>2 THEN RAISE EXCEPTION 'Missing feature flags'; END IF;
   IF NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid='public.ordres_fabrication'::regclass AND tgname='guard_covered_execution_712' AND tgenabled<>'D') OR NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid='public.ordres_fabrication'::regclass AND tgname='guard_preparation_execution_712' AND tgenabled<>'D') THEN RAISE EXCEPTION 'Missing execution protections'; END IF;

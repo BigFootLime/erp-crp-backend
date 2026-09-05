@@ -97,6 +97,16 @@ const IMMUTABLE_ONLY_PATCHES = Object.freeze({
     "df4b000e8db91dc7bf37fb0bb54b37a48cc1cc404427276faef409bd5c60d6c1",
   "20260903_customer_order_technical_maturation.sql":
     "7a1e9221563f6b92c4e3e4f9c8c75a2f586ba9f15a9a0739c57e02bbe6fefb9e",
+  "20260905_production_preparation_consolidation.sql":
+    "ab6011af599ed86e302902d1e4ecf05f15bbec1cb6c35d9ccb3ef340b6c313cf",
+  "20260905_production_preparation_consolidation_02.sql":
+    "f13bb056b0ffcc0ada6f1d40da1ba13bd48e89ba76bcc4fd681286ddd985bcb9",
+  "20260905_production_preparation_consolidation_03.sql":
+    "051f4ca60fd5ee45075cb402a7e0ea9f892e1d1d2986b2833b38e039d402b718",
+  "20260905_production_preparation_consolidation_04.sql":
+    "78e0700d50c65ba05565b9cb042fa6cc75ef6d00839f5ae4bf8e961752d4ef6b",
+  "20260905_production_preparation_consolidation_05_grants.sql":
+    "05f1a5c11c9e2f319f593501d9a4187b429a2b9a035ef581523f9ab63cf65bd1",
 });
 const REALTIME_V1_FILENAME = "20260804_realtime_shared_control_plane.sql";
 const REALTIME_V1_SHA256 = "a532c87aa9962b6171b65db421ee82069ed177bf6f5becb52295df4dacbc76f6";

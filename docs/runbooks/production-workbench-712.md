@@ -4,7 +4,7 @@ Propriétaire : exploitation CERP. Dernière vérification locale : 2026-09-05.
 
 ## Précontrôles
 
-Confirmer le couple de versions frontend/backend et la base cible. Les quatre patches du 5 septembre sont une seule livraison ; les appliquer dans l'ordre lexical après les migrations existantes, avec le runner canonique `scripts/db-patches.js`. Ne jamais modifier les checksums des anciennes migrations. L'environnement isolé de recette est PostgreSQL 18 sur boucle locale, port 55432, base `cerp_test` ; il n'est pas la production.
+Confirmer le couple de versions frontend/backend et la base cible. Les cinq patches du 5 septembre sont une seule livraison ; les appliquer dans l'ordre lexical après les migrations existantes, avec le runner canonique `scripts/db-patches.js`. Ne jamais modifier les checksums des anciennes migrations. L'environnement isolé de recette est PostgreSQL 18 sur boucle locale, port 55432, base `cerp_test` ; il n'est pas la production.
 
 Avant production : disposer de la sauvegarde chiffrée et de sa preuve de restauration selon le runbook existant, vérifier les droits du rôle applicatif, GED privée, scanner, audit/outbox et compatibilité des versions servies. La sauvegarde de production n'a pas été effectuée dans ce chantier local.
 
@@ -18,8 +18,9 @@ Patches, dans cet ordre :
 2. `20260905_production_preparation_consolidation_02.sql` : programmation, réemploi, transferts, protection de l'exécution.
 3. `20260905_production_preparation_consolidation_03.sql` : sous-OF de surplus, compatibilité enum et fiche liée à la quantité.
 4. `20260905_production_preparation_consolidation_04.sql` : contrôle différé de conservation, adapté à chacune des tables.
+5. `20260905_production_preparation_consolidation_05_grants.sql` : droits applicatifs minimaux, y compris les lectures des triggers ; aucune attribution globale ni changement des tables d’audit historiques.
 
-Utiliser le dry-run et le filtre `--only` du runner canonique pour chacun, puis appliquer après la validation de livraison. Les opérations ALTER/TRIGGER nécessitent une fenêtre sans écritures concurrentes de production. Les scripts `scripts/e2e/*isolated*` et le contrat historique de fixture ne doivent jamais être utilisés sur une base métier.
+Utiliser le dry-run et le filtre `--only` du runner canonique pour chacun, puis appliquer après la validation de livraison. Les opérations ALTER/TRIGGER nécessitent une fenêtre sans écritures concurrentes de production jusqu’à application des cinq patches et vérification des droits. Chaque sélection est enregistrée avec son empreinte LF immuable ; le runner valide tout l’inventaire avant toute application. Utiliser PostgreSQL peer auth sur HYPERBOX2. Les scripts `scripts/e2e/*isolated*` et le contrat historique de fixture ne doivent jamais être utilisés sur une base métier.
 
 Exécuter ensuite `db/patches/support/20260905_production_preparation_consolidation.verify.sql`. Déployer le backend compatible avant le frontend ; les deux flags sont créés désactivés.
 
