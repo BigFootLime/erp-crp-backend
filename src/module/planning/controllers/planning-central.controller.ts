@@ -3,11 +3,14 @@ import { z } from "zod";
 import { asyncHandler } from "../../../utils/asyncHandler";
 import { buildAuditContext } from "./planning.controller";
 import { readCentralSettings, readCentralSnapshot } from "../repository/planning-central.repository";
-import { createCentralSimulation, getCentralSimulation, applyCentralSimulation, assertCentralActivation } from "../services/planning-central.service";
-import { centralApplySchema, centralSimulationSchema, centralWindowSchema } from "../validators/planning-central.validators";
+import { createCentralSimulation, getCentralSimulation, applyCentralSimulation, assertCentralActivation, unplanCentral } from "../services/planning-central.service";
+import { centralApplySchema, centralSimulationSchema, centralWindowSchema, centralUnplanSchema } from "../validators/planning-central.validators";
 import { requestHasElevatedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import { roleHasPlanningCapability } from "../domain/planning-rbac";
 const key = (value: unknown) => typeof value === "string" ? value : "";
+export const centralUnplan: RequestHandler = asyncHandler(async(req,res)=>{
+  res.json(await unplanCentral(centralUnplanSchema.parse(req.body),buildAuditContext(req),key(req.headers["idempotency-key"])));
+});
 export const centralStatus: RequestHandler = asyncHandler(async (req,res)=>{
   res.setHeader("Cache-Control","no-store");res.json({apiVersion:2,...await readCentralSettings(),
     canManageSchedule:requestHasElevatedAccountModuleAccess(req) || roleHasPlanningCapability(req.user?.role,"manage_schedule")});

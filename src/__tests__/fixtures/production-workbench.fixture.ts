@@ -10,11 +10,12 @@ export async function seedProductionWorkbenchFixture(
     componentQuantity?: number;
   } = {},
 ) {
-  if (
-    process.env.CERP_E2E_ISOLATED !== "1" ||
-    process.env.DATABASE_URL !==
-      "postgresql://cerp_712@127.0.0.1:55432/cerp_test"
-  )
+  const url = new URL(process.env.DATABASE_URL || "http://invalid");
+  const managedSol05 = process.env.CERP_E2E_MANAGED_STACK === "1"
+    && url.hostname === "127.0.0.1" && url.port === "55432"
+    && url.pathname === "/cerp_test" && url.username === "cerp_e2e";
+  if (process.env.CERP_E2E_ISOLATED !== "1" || (!managedSol05 &&
+    process.env.DATABASE_URL !== "postgresql://cerp_712@127.0.0.1:55432/cerp_test"))
     throw Error("Isolated fixture only");
   const tx = await pool.connect();
   await tx.query("BEGIN");

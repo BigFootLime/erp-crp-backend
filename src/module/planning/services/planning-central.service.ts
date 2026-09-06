@@ -6,12 +6,50 @@ import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repos
 import { schedule } from "../domain/central-scheduler";
 import { centralCanonicalJson } from "../domain/central-canonical-json";
 import { readCentralDependencies, readCentralSettings, readCentralSnapshot } from "../repository/planning-central.repository";
-import { assertOperationResourceCompatible, assertResourceSchedulable, type AuditContext } from "../repository/planning.repository";
-import type { CentralSimulationInput } from "../validators/planning-central.validators";
+import { assertOperationResourceCompatible, assertResourceSchedulable, repoArchivePlanningEvent, type AuditContext } from "../repository/planning.repository";
+import type { CentralSimulationInput, CentralUnplanInput } from "../validators/planning-central.validators";
 import type { CentralSnapshot, ScheduleResult } from "../types/planning-central.types";
 import { PROGRAMMING_ASSIGNEE_PREDICATE_SQL } from "../../production/repository/production-preparation.repository";
 
 const levels: CentralSnapshot["activation"][] = ["OBSERVE","READ","SIMULATE","COMMIT","EXECUTE","LEARN"];
+export async function unplanCentral(input: CentralUnplanInput, audit: AuditContext, key: string) {
+  return command(audit,key,"unplan",input,async tx => {
+    await tx.query("SELECT revision FROM public.planning_central_settings WHERE singleton FOR UPDATE");
+    const settings=await readCentralSettings(tx);
+    assertCentralActivation(settings.activation,"COMMIT");
+    if(settings.revision!==input.revision) throw stale();
+    const snapshot=await readCentralSnapshot({from:input.from,to:input.to,limit:10000,includeTaskIds:input.tasks.map(t=>t.id)},tx);
+    const selected=input.tasks.map(request => {
+      const task=snapshot.tasks.find(t=>t.id===request.id);
+      if(!task || task.version!==request.expectedVersion) throw stale();
+      if(!task.committed || task.locked || task.commitment!=="COMMITTED" || task.actual)
+        throw new HttpError(409,"PLANNING_UNPLAN_LOCKED","Une opération commencée, terminée ou verrouillée ne peut pas être retirée du planning.");
+      if(task.source!=="OPERATION" && !task.id.startsWith("version-program:"))
+        throw new HttpError(409,"PLANNING_UNPLAN_UNSUPPORTED","Utilisez le parcours historique pour cette programmation.");
+      return task;
+    });
+    for(const task of selected) {
+      if(task.source==="OPERATION") {
+        const events=await tx.query<{id:string;status:string}>("SELECT id::text,status::text FROM public.planning_events WHERE of_operation_id=$1::uuid AND archived_at IS NULL AND status<>'CANCELLED' FOR UPDATE",[task.operationId]);
+        if(!events.rows.length || events.rows.some(event=>event.status!=="PLANNED"))
+          throw new HttpError(409,"PLANNING_UNPLAN_LOCKED","Un créneau commencé ou terminé ne peut pas être retiré.");
+        for(const event of events.rows) await repoArchivePlanningEvent({id:event.id,audit,tx});
+      }
+      await tx.query("UPDATE public.planning_tasks SET committed_start=NULL,committed_end=NULL,forecast_start=NULL,forecast_end=NULL,version=version+1,updated_at=clock_timestamp() WHERE id=$1",[task.id]);
+    }
+    // Programming-only changes must advance the same revision as machine events.
+    await tx.query("UPDATE public.planning_central_settings SET revision=revision+1,updated_at=clock_timestamp() WHERE singleton");
+    const ids=selected.map(t=>t.id), affected=new Set(ids);
+    const dependencies=await readCentralDependencies(tx);
+    let grew=true;
+    while(grew) { grew=false; for(const d of dependencies) if(affected.has(d.predecessorId) && !affected.has(d.successorId)) {affected.add(d.successorId);grew=true;} }
+    await tx.query("INSERT INTO public.planning_recalculation_jobs(entity_table,entity_id,source_revision) SELECT 'planning_tasks',unnest($1::text[]),revision FROM public.planning_central_settings WHERE singleton",[[...affected]]);
+    await repoInsertAuditLog({user_id:audit.user_id,tx,ip:audit.ip,user_agent:audit.user_agent,device_type:audit.device_type,os:audit.os,browser:audit.browser,
+      body:{event_type:"ACTION",action:"planning.central.unplan",page_key:audit.page_key,entity_type:"planning_tasks",entity_id:ids[0],path:audit.path,client_session_id:audit.client_session_id,
+        details:{removed:ids,previous:selected.map(t=>({id:t.id,committed:t.committed})),affected:[...affected]}}});
+    return {revision:(await readCentralSettings(tx)).revision,removed:ids,affected:[...affected]};
+  });
+}
 export function assertCentralActivation(actual: CentralSnapshot["activation"], required: CentralSnapshot["activation"]) {
   if (levels.indexOf(actual) < levels.indexOf(required))
     throw new HttpError(409,"PLANNING_ACTIVATION_REQUIRED","Cette étape du planning central n'est pas encore activée.");
