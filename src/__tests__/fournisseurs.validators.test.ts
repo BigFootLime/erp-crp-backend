@@ -30,6 +30,12 @@ describe("fournisseurs validators (#163)", () => {
     if (ok.success) expect(ok.data.body.email).toBeNull()
   })
 
+  it("accepts an empty optional SIREN from onboarding but rejects malformed identifiers (#722)", () => {
+    expect(createFournisseurSchema.safeParse({ body: { nom: "TEST fournisseur", siren: null } }).success).toBe(true)
+    expect(createFournisseurSchema.safeParse({ body: { nom: "TEST fournisseur", siren: "123456789" } }).success).toBe(true)
+    expect(createFournisseurSchema.safeParse({ body: { nom: "TEST fournisseur", siren: "incorrect" } }).success).toBe(false)
+  })
+
   it("update is tri-state (all optional), accepts expected_updated_at, rejects code", () => {
     expect(updateFournisseurSchema.safeParse({ body: {} }).success).toBe(true)
     expect(updateFournisseurSchema.safeParse({ body: { expected_updated_at: new Date().toISOString() } }).success).toBe(true)
