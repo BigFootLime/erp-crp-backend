@@ -1287,7 +1287,7 @@ type CatalogueRow = {
 const CATALOGUE_SELECT = `
   id::text AS id, fournisseur_id::text AS fournisseur_id, type, article_id::text AS article_id, designation,
   reference_fournisseur, unite, prix_unitaire::float8 AS prix_unitaire,
-  COALESCE(to_jsonb(public.fournisseur_catalogue) ->> 'pricing_basis', 'NONE') AS pricing_basis,
+  COALESCE(to_jsonb(fournisseur_catalogue) ->> 'pricing_basis', 'NONE') AS pricing_basis,
   devise, delai_jours, moq::float8 AS moq, conditions,
   incoterm, prix_multiple::float8 AS prix_multiple, valid_from::text AS valid_from, valid_to::text AS valid_to,
   exigence_qualite, requiert_controle_reception, actif,
