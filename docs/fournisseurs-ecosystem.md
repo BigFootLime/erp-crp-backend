@@ -8,6 +8,8 @@ the legacy outillage supplier tables and their numeric identifiers.
 
 Creation accepts a missing or null optional `siren`, matching the onboarding form
 and update contract (#722). A supplied identifier must still contain nine digits.
+The creation INSERT also binds the electronic address value separately from the
+contact fields and actor identifiers (#725), preserving the full column mapping.
 
 ## Source of truth (canonical)
 
