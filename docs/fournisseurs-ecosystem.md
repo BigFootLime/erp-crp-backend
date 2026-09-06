@@ -10,6 +10,8 @@ Creation accepts a missing or null optional `siren`, matching the onboarding for
 and update contract (#722). A supplied identifier must still contain nine digits.
 The creation INSERT also binds the electronic address value separately from the
 contact fields and actor identifiers (#725), preserving the full column mapping.
+Catalogue projections use the PostgreSQL whole-row table reference without schema
+qualification (#728), including when reading the optional pricing-basis field.
 
 ## Source of truth (canonical)
 
