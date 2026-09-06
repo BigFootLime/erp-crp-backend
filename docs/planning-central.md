@@ -14,6 +14,14 @@ Récupération : revenir à `OBSERVE` et redéployer les deux artefacts précéd
 
 ## Validation
 
+Le retrait `POST /planning/v2/unplan` exige le droit de planifier, une clé d’idempotence, la révision attendue et les versions des opérations. Il archive les événements canoniques dans une transaction commune, conserve les OF et leurs quantités, refuse les créneaux commencés ou verrouillés, invalide les prévisions concernées et conserve la trace des dates retirées. Retirer un créneau ne fait jamais avancer le statut d’un OF ni son workflow commercial. La programmation par version revient elle aussi dans la file ; les programmations historiques restent gérées par leur parcours existant.
+
+La conversion d’une révision préparatoire depuis un devis type explicitement les paramètres texte et entier utilisés par `concat` et `lpad`, afin d’éviter les erreurs PostgreSQL `42P08` lors de l’officialisation de la pièce brouillon.
+
+La recette isolée prépare désormais explicitement le dossier de démonstration du workbench avec ses décisions métier. Ce complément est limité au serveur PostgreSQL jetable SOL-05 et restaure les indicateurs d’activation après le scénario. Les bases atelier ne sont jamais utilisées par ce script.
+
+La recette de conversion devis → commande a exposé une différence du champ historique `pieces_techniques.en_fabrication` : entier sur l’atelier, booléen sur certaines installations. Les deux créations de dossier depuis une commande transmettent désormais `0` en paramètre PostgreSQL, typé par la colonne cible, pour représenter « pas en fabrication » dans les deux schémas sans les modifier.
+
 Le contrôle de release a détecté les avis [fast-uri](https://github.com/advisories/GHSA-5jgf-p345-68v8) et, côté frontend, [Browserslist](https://github.com/advisories/GHSA-c83g-rgw3-j3cx). Les résolutions transitives utilisent respectivement 3.1.6 et 4.28.7, avec verrouillage pnpm ; le seuil de sécurité du contrôle reste inchangé.
 
 Tests du calendrier civil, du choix qualifié, des dépendances, de la capacité partagée, de l’idempotence, de la concurrence et de la conservation des engagements. La recette PostgreSQL locale utilise uniquement une instance jetable explicitement identifiée ; le contrôle de release complet reste exigé avant publication.

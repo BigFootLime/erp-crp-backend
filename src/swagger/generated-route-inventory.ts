@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "f2892d254f1c77cb81114255183c4f5137428f88e63793c22366ccda245f1270";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "d241b68ff97aa218426a8b7555f5d283c4e062dcdee8a3899d6395000a267049";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -11565,6 +11565,26 @@ export const GENERATED_ROUTE_INVENTORY = [
       "moduleAccessGate",
       "requireProductionOrAdmin",
       "requirePlanningCapability(read)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/planning/v2/unplan",
+    "source": "src/module/planning/routes/planning-central.routes.ts:11",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireProductionOrAdmin",
+      "requirePlanningCapability(manage_schedule)",
+      "centralUnplan"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireProductionOrAdmin",
+      "requirePlanningCapability(manage_schedule)"
     ]
   },
   {

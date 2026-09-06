@@ -2,20 +2,23 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createHash, randomUUID } from "node:crypto";
 import pool from "../../../config/database";
 import { readCentralResources, readCentralSnapshot } from "./planning-central.repository";
-import { applyCentralSimulation, createCentralSimulation } from "../services/planning-central.service";
+import { applyCentralSimulation, createCentralSimulation, unplanCentral } from "../services/planning-central.service";
 import type { AuditContext } from "./planning.repository";
-const isolated=process.env.CERP_E2E_ISOLATED==="1" && process.env.DATABASE_URL==="postgresql://cerp_e2e@127.0.0.1:55636/cerp_test";
+const databaseUrl=new URL(process.env.DATABASE_URL || "http://invalid");
+const managed=process.env.CERP_E2E_MANAGED_STACK==="1" && databaseUrl.hostname==="127.0.0.1" && databaseUrl.port==="55432" && databaseUrl.pathname==="/cerp_test" && databaseUrl.username==="cerp_e2e";
+const isolated=process.env.CERP_E2E_ISOLATED==="1" && (managed || process.env.DATABASE_URL==="postgresql://cerp_e2e@127.0.0.1:55636/cerp_test");
 const from="2026-09-07T06:00:00.000Z",to="2026-09-14T18:00:00.000Z";
 describe.skipIf(!isolated)("Planning central — PostgreSQL réel isolé",()=>{
-  let actor:number;
+  let actor:number, previousActivation:string;
   const audit=():AuditContext=>({user_id:actor,role:"Responsable Programmation",ip:null,user_agent:null,device_type:null,os:null,browser:null,path:"/planning/v2",page_key:"planning",client_session_id:null});
   beforeAll(async()=>{
-    const identity=await pool.query("SHOW data_directory");
-    expect(identity.rows[0].data_directory).toBe("/tmp/cerp-planning-20260906-pg/data");
+    if(managed) expect((await pool.query("SELECT current_database() AS db,current_user AS role")).rows[0]).toEqual({db:"cerp_test",role:"cerp_e2e"});
+    else expect((await pool.query("SHOW data_directory")).rows[0].data_directory).toBe("/tmp/cerp-planning-20260906-pg/data");
     actor=Number((await pool.query("SELECT id FROM public.users WHERE username='E2E_PLANNER'")).rows[0].id);
+    previousActivation=(await pool.query("SELECT activation FROM public.planning_central_settings WHERE singleton")).rows[0].activation;
     await pool.query("UPDATE public.planning_central_settings SET activation='COMMIT'");
   });
-  afterAll(()=>pool.end());
+  afterAll(async()=>{ if(previousActivation) await pool.query("UPDATE public.planning_central_settings SET activation=$1 WHERE singleton",[previousActivation]); await pool.end(); });
   async function fixture() {
     const suffix=randomUUID().slice(0,8),piece=randomUUID(),version=randomUUID(),task=randomUUID(),calendar=randomUUID();
     const user=Number((await pool.query(`INSERT INTO public.users(username,password,email,role,status)
@@ -57,6 +60,38 @@ describe.skipIf(!isolated)("Planning central — PostgreSQL réel isolé",()=>{
     expect(task).toBeDefined();
     return {revision:snapshot.revision,from,to,changes:[{taskId,expectedVersion:task.version,earliestStart:from}]};
   }
+  async function plannedFixture() {
+    const f=await operationFixture(), proposal=await createCentralSimulation(await intent("op:"+f.operations[0]),audit(),randomUUID());
+    await applyCentralSimulation(proposal.id,proposal.revision,audit(),randomUUID());
+    const snapshot=await readCentralSnapshot({from,to,limit:1000});
+    return {f,input:{from,to,revision:snapshot.revision,tasks:f.operations.map(id=>({id:"op:"+id,expectedVersion:snapshot.tasks.find(t=>t.id==="op:"+id)!.version}))}};
+  }
+  it("retire les créneaux ensemble sans supprimer les OF, opérations ou quantités, et rejoue une seule fois",async()=>{
+    const {f,input}=await plannedFixture(),key=randomUUID();
+    const first=await unplanCentral(input,audit(),key);
+    expect(await unplanCentral(input,audit(),key)).toEqual(first);
+    expect(first.removed).toEqual(input.tasks.map(t=>t.id));
+    const events=await pool.query("SELECT status,archived_at FROM public.planning_events WHERE of_id=$1",[f.of]);
+    expect(events.rows).toHaveLength(2);
+    expect(events.rows.every(e=>e.status==="CANCELLED" && e.archived_at)).toBe(true);
+    expect((await pool.query("SELECT quantite_lancee::float8 AS quantity,statut FROM public.ordres_fabrication WHERE id=$1",[f.of])).rows).toEqual([{quantity:10,statut:"BROUILLON"}]);
+    expect((await pool.query("SELECT id FROM public.of_operations WHERE of_id=$1",[f.of])).rows).toHaveLength(2);
+    const snapshot=await readCentralSnapshot({from,to,limit:1000});
+    expect(snapshot.tasks.filter(t=>t.ofId===f.of).every(t=>t.committed===null && t.commitment==="FORECAST")).toBe(true);
+  });
+  it("une opération verrouillée refuse tout le lot sans retirer le premier créneau",async()=>{
+    const {f}=await plannedFixture();
+    await pool.query("UPDATE public.planning_tasks SET locked=true,version=version+1 WHERE id=$1",["op:"+f.operations[1]]);
+    const snapshot=await readCentralSnapshot({from,to,limit:1000});
+    await expect(unplanCentral({from,to,revision:snapshot.revision,tasks:f.operations.map(id=>({id:"op:"+id,expectedVersion:snapshot.tasks.find(t=>t.id==="op:"+id)!.version}))},audit(),randomUUID())).rejects.toMatchObject({code:"PLANNING_UNPLAN_LOCKED"});
+    expect((await pool.query("SELECT id FROM public.planning_events WHERE of_id=$1 AND archived_at IS NULL",[f.of])).rows).toHaveLength(2);
+  });
+  it("une modification concurrente refuse le retrait obsolète",async()=>{
+    const {f,input}=await plannedFixture();
+    await pool.query("UPDATE public.of_operations SET updated_at=clock_timestamp() WHERE id=$1",[f.operations[0]]);
+    await expect(unplanCentral(input,audit(),randomUUID())).rejects.toMatchObject({code:"PLANNING_SIMULATION_OBSOLETE"});
+    expect((await pool.query("SELECT id FROM public.planning_events WHERE of_id=$1 AND archived_at IS NULL",[f.of])).rows).toHaveLength(2);
+  });
   it("une simulation ne modifie aucun engagement ; application atomique et replay idempotent",async()=>{
     const f=await fixture(),input=await intent(f.task),key=randomUUID();
     const first=await createCentralSimulation(input,audit(),key);

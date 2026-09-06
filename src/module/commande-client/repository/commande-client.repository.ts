@@ -613,7 +613,7 @@ async function ensureOfficialPieceFromPreparatory(
           $6,
           $7,
           'ACTIVE',
-          0,
+          $10,
           NULL,
           NULL,
           $8,
@@ -632,6 +632,7 @@ async function ensureOfficialPieceFromPreparatory(
         maybePrixUnitaire,
         maybeCodeClient,
         maybeClientName,
+        0,
       ]
     );
     const created = inserted.rows[0];
@@ -728,8 +729,8 @@ async function ensureOfficialPieceFromPreparatory(
          raison_changement, motif_modification, matiere_prevue,
          commentaire_revision, created_by, updated_by
        ) VALUES (
-         $1::uuid, $2, $3, $2, upper(regexp_replace($2, '[^A-Za-z0-9]+', '', 'g')),
-         $4, concat($3, '-', $2, '-R', lpad($4::text, 2, '0')),
+         $1::uuid, $2::text, $3::text, $2::text, upper(regexp_replace($2::text, '[^A-Za-z0-9]+', '', 'g')),
+         $4::integer, concat($3::text, '-', $2::text, '-R', lpad(($4::integer)::text, 2, '0')),
          'BROUILLON', false, 'Import depuis devis', 'Import depuis devis',
          $5, $6, NULL, NULL
        )`,

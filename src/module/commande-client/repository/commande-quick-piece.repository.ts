@@ -113,11 +113,11 @@ export async function repoCreateQuickTechnicalPiece(
          $1::uuid, NULL, $1::uuid, NULL,
          1, $2::varchar(3), $3, $3, NULL,
          $4, $5, $4, NULL, 0,
-         'ACTIVE', false, NULL, NULL, $2::text,
+         'ACTIVE', $7, NULL, NULL, $2::text,
          $6, false
        )
        RETURNING updated_at::text AS updated_at`,
-      [pieceId, body.client_id, audit.user_id, body.designation, body.reference, clientRow.rows[0].company_name]
+      [pieceId, body.client_id, audit.user_id, body.designation, body.reference, clientRow.rows[0].company_name, 0]
     );
 
     const versionId = crypto.randomUUID();

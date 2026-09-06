@@ -835,6 +835,7 @@ async function syncLinkedOfOperationFromPlanning(params: {
   of_operation_id: string;
   user_id: number;
   user_role: string | null | undefined;
+  promoteOf?: boolean;
 }): Promise<{ of_id: number | null; notifications: AppNotification[] }> {
   const summary = await params.tx.query<{
     of_id: string;
@@ -898,7 +899,7 @@ async function syncLinkedOfOperationFromPlanning(params: {
   );
 
   const ofId = toInt(row.of_id, "of_operations.of_id");
-  const notifications = await maybePromoteOfAndCommandeAfterPlanning({
+  const notifications = params.promoteOf === false ? [] : await maybePromoteOfAndCommandeAfterPlanning({
     tx: params.tx,
     of_id: ofId,
     user_id: params.user_id,
@@ -2303,9 +2304,8 @@ export async function repoPatchPlanningEvent(params: {
   }
 }
 
-export async function repoArchivePlanningEvent(params: { id: string; audit: AuditContext }): Promise<boolean | null> {
-  const client = await pool.connect();
-  return withRealtimeOutboxTransaction(client, async () => {
+export async function repoArchivePlanningEvent(params: { id: string; audit: AuditContext; tx?: PoolClient }): Promise<boolean | null> {
+  const archive = async (client: PoolClient) => {
     const beforeRes = await client.query<{ id: string; archived_at: string | null; of_id: string | null; of_operation_id: string | null }>(
       `
         SELECT
@@ -2392,6 +2392,8 @@ export async function repoArchivePlanningEvent(params: { id: string; audit: Audi
         of_operation_id: before.of_operation_id,
         user_id: params.audit.user_id,
         user_role: params.audit.role,
+        // Removing a slot must never advance the OF or its commercial workflow.
+        promoteOf: false,
       });
       synchronizedOfId = sync.of_id ?? synchronizedOfId;
       notifications = sync.notifications;
@@ -2412,7 +2414,8 @@ export async function repoArchivePlanningEvent(params: { id: string; audit: Audi
       mutation_key: realtimeAudit.id,
     });
     return true;
-  });
+  };
+  return params.tx ? archive(params.tx) : withRealtimeOutboxTransaction(await pool.connect(), archive);
 }
 
 export async function repoRestorePlanningEvent(params: {

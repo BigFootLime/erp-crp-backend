@@ -16,6 +16,13 @@ export const centralSimulationSchema = z.object({
   { message: "Fenêtre de simulation invalide." })
   .refine(q => new Set(q.changes.map(c => c.taskId)).size === q.changes.length, { message: "Une opération ne peut être déplacée deux fois." });
 export const centralApplySchema = z.object({ revision: z.string().regex(/^\d+$/) });
+export const centralUnplanSchema = z.object({
+  revision: z.string().regex(/^\d+$/), from: instant, to: instant,
+  tasks: z.array(z.object({ id: z.string().min(1).max(100), expectedVersion: z.string().min(1).max(200) })).min(1).max(100),
+}).refine(q => Date.parse(q.to) > Date.parse(q.from) && Date.parse(q.to)-Date.parse(q.from) <= 367*86400000,
+  { message: "Fenêtre de déplanification invalide." })
+  .refine(q => new Set(q.tasks.map(t => t.id)).size === q.tasks.length, { message: "Une opération ne peut être retirée deux fois." });
+export type CentralUnplanInput = z.infer<typeof centralUnplanSchema>;
 export const centralTaskConfigSchema = z.object({
   expectedVersion: z.string().min(1).max(200),
   envelopeMinutes: z.number().min(0).max(1000000).nullable().optional(),
