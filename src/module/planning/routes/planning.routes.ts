@@ -1,4 +1,5 @@
 import { Router, type RequestHandler } from "express";
+import centralRouter from "./planning-central.routes";
 import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
 import { createSecureUpload } from "../../../shared/uploads/secure-upload";
@@ -48,6 +49,7 @@ const router = Router();
 
 router.use(authenticateToken);
 router.use(requireProductionOrAdmin);
+router.use("/v2", centralRouter);
 
 router.get("/health", healthPlanning);
 

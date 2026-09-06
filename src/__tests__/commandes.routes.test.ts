@@ -556,8 +556,9 @@ describe("/api/v1/commandes", () => {
     expect(articleSubtypeUpsertCalls.length).toBe(2);
     expect(String(articleSubtypeUpsertCalls[0]?.[0])).toContain("ON CONFLICT (article_id) DO UPDATE");
     expect(pieceCreateCalls[0]?.[1]).not.toContain("33333333-3333-3333-3333-333333333333");
-    // Le schéma historique de CERP porte ce drapeau sous forme entière (0/1).
-    expect(String(pieceCreateCalls[0]?.[0])).toMatch(/'ACTIVE',\s*0,\s*NULL/i);
+    // PostgreSQL infère le paramètre depuis la colonne historique (entier ou booléen).
+    expect(String(pieceCreateCalls[0]?.[0])).toMatch(/'ACTIVE',\s*\$10,\s*NULL/i);
+    expect(pieceCreateCalls[0]?.[1]?.[9]).toBe(0);
   });
 
   it("PATCH /api/v1/commandes/:id works and replaces lignes", async () => {
