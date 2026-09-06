@@ -193,7 +193,7 @@ function machineBlockedReason(params: {
   return null;
 }
 
-async function assertResourceSchedulable(
+export async function assertResourceSchedulable(
   q: DbQueryer,
   resource: { machine_id: string | null; poste_id: string | null }
 ): Promise<void> {
