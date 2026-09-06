@@ -196,6 +196,16 @@ function inventoryClient(appliedRows: Array<{ filename: string; sha256: string; 
 }
 
 describe("database patch runner", () => {
+  it("limits planning publication to the three immutable planning patches", () => {
+    const patches = runner.listPatches(resolve(repoRoot, "db/patches"));
+    const filenames = ["20260906_planning_central.sql", "20260906_planning_central_batch_constraints.sql", "20260906_planning_resource_invalidation.sql"];
+    for (const filename of filenames) {
+      const patch = patches.find((item) => item.filename === filename)!;
+      expect(runner.parseArgs(["up", "--only", filename]).only).toBe(filename);
+      expect(runner.immutableOnlyPatch(patches, filename)).toEqual(patch);
+      expect(() => runner.immutableOnlyPatch([{ ...patch, sha256: "0".repeat(64) }], filename)).toThrow(/checksum mismatch/);
+    }
+  });
   it("selects all five workbench patches and rejects a changed grant patch", () => {
     const patches = runner.listPatches(resolve(repoRoot, "db/patches"));
     const workbench = patches.filter((patch) => patch.filename.startsWith("20260905_production_preparation_consolidation"));

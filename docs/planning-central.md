@@ -8,7 +8,7 @@ Cette publication couvre les vues et la planification validée. Les écritures d
 
 ## Mise en service et récupération
 
-Avant migration : sauvegarde locale atelier, intégrité du dump, lecture des scripts `db/patches/support/20260906_planning*.preflight.sql` et contrôle de la base sélectionnée. Appliquer les trois patches dans l’ordre central, batch_constraints, resource_invalidation ; enregistrer leurs empreintes normalisées dans `cerp_schema_migrations`, puis exécuter les scripts `verify.sql`. L’activation reste `OBSERVE` par défaut. Après déploiement et contrôle authentifié de la nouvelle API, progresser vers `READ`, `SIMULATE`, puis `COMMIT`.
+Avant migration : sauvegarde locale atelier, intégrité du dump, lecture des scripts `db/patches/support/20260906_planning*.preflight.sql` et contrôle de la base sélectionnée. Appliquer les trois patches dans l’ordre central, batch_constraints, resource_invalidation avec `node scripts/db-patches.js up --only <nom-exact.sql>` (d’abord `--dry-run`). Le runner vérifie les empreintes immuables, conserve le verrou et enregistre chaque patch avec son empreinte dans la même transaction ; exécuter ensuite les scripts `verify.sql`. Ne pas appliquer les autres patches en attente dans cette fenêtre. L’activation reste `OBSERVE` par défaut. Après déploiement et contrôle authentifié de la nouvelle API, progresser vers `READ`, `SIMULATE`, puis `COMMIT`.
 
 Récupération : revenir à `OBSERVE` et redéployer les deux artefacts précédents identifiés par SHA. Les créneaux canoniques et les métadonnées sont conservés. Aucun retour arrière SQL destructif n’est requis. Une restauration complète de données reste une opération distincte à autoriser.
 

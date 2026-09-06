@@ -11,6 +11,12 @@ const DEFAULT_PATCH_DIR = path.join(ROOT_DIR, "db", "patches");
 const MIGRATION_TABLE = "public.cerp_schema_migrations";
 const LOCK_NAME = "cerp_schema_migrations";
 const IMMUTABLE_ONLY_PATCHES = Object.freeze({
+  "20260906_planning_central.sql":
+    "efeb375ee3ba8116d54c13dc5fec8ea21fd991e29536f7fdb0756119740506d8",
+  "20260906_planning_central_batch_constraints.sql":
+    "4624da2fcfe8c41ed31a667b53c20009d999b3bcd4118ea05589a8b98b66435d",
+  "20260906_planning_resource_invalidation.sql":
+    "4e5bc5f12c1269507bf2b31d12b2751a9504e73332be1cad9b18d0ee9997502a",
   "20260216_planning_visuals_programmation.sql":
     "e220d040caae9b18bb42d3c970104b2d2612bce53dac6b43c4aac60268491a1b",
   "20260804_auth_rate_limit_buckets.sql":
