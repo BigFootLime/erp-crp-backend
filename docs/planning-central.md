@@ -14,4 +14,6 @@ Récupération : revenir à `OBSERVE` et redéployer les deux artefacts précéd
 
 ## Validation
 
+Le contrôle de release a détecté les avis [fast-uri](https://github.com/advisories/GHSA-5jgf-p345-68v8) et, côté frontend, [Browserslist](https://github.com/advisories/GHSA-c83g-rgw3-j3cx). Les résolutions transitives utilisent respectivement 3.1.6 et 4.28.7, avec verrouillage pnpm ; le seuil de sécurité du contrôle reste inchangé.
+
 Tests du calendrier civil, du choix qualifié, des dépendances, de la capacité partagée, de l’idempotence, de la concurrence et de la conservation des engagements. La recette PostgreSQL locale utilise uniquement une instance jetable explicitement identifiée ; le contrôle de release complet reste exigé avant publication.
