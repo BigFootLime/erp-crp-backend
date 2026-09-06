@@ -135,7 +135,7 @@ export function taskFromRow(row: Row, observations: DurationObservation[] = []):
 export async function readCentralResources(tx: CentralQuery, from: string, to: string): Promise<Resource[]> {
   const {rows} = await tx.query<Row>(`
     WITH resources AS (
-      SELECT 'machine:'||id::text AS id,'MACHINE'::text AS kind,code||' · '||name AS label,'machine:'||id::text AS capacity_id FROM public.machines WHERE archived_at IS NULL
+      SELECT 'machine:'||id::text AS id,'MACHINE'::text AS kind,name AS label,'machine:'||id::text AS capacity_id FROM public.machines WHERE archived_at IS NULL
       UNION ALL SELECT 'poste:'||id::text,'POSTE',code||' · '||label,COALESCE('machine:'||machine_id::text,'poste:'||id::text) FROM public.postes WHERE is_active
       UNION ALL SELECT 'person:'||u.id::text,'PERSON',COALESCE(rc.display_label,u.username),'person:'||u.id::text
         FROM public.users u LEFT JOIN public.planning_resource_calendars rc ON rc.user_id=u.id
