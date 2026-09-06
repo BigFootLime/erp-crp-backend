@@ -6,6 +6,9 @@ The Fournisseurs module is the **authoritative supplier reference** and the sour
 truth for purchasing. It supports a generic, multi-domain supplier model while preserving
 the legacy outillage supplier tables and their numeric identifiers.
 
+Creation accepts a missing or null optional `siren`, matching the onboarding form
+and update contract (#722). A supplied identifier must still contain nine digits.
+
 ## Source of truth (canonical)
 
 - `public.fournisseurs` — **canonical UUID supplier record**. Extended with `status`,
