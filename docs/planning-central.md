@@ -2,6 +2,8 @@
 
 L’API `/planning/v2` lit les opérations canoniques, conserve les commandes avec pièce brouillon et propose des créneaux avant validation. Les commandes de simulation/application sont transactionnelles, versionnées, idempotentes et soumises aux droits existants. Un pointage ou une modification de ressource invalide un aperçu devenu ancien.
 
+Depuis #721, les ressources machines affichent uniquement leur nom dans les lignes et les sélecteurs du planning central. Le code et l’identifiant machine restent conservés dans le référentiel ; les affectations et capacités utilisent toujours les mêmes identifiants.
+
 Le calcul reprend l’ordre des phases de gamme en l’absence de dépendance explicite. Il choisit une machine qualifiée selon priorité, échéance, ancienneté puis identifiant stable. Machines et postes liés partagent la capacité. Les absences et événements de maintenance sont soustraits aux calendriers. Une affectation de calendrier explicite prime ; à défaut, le calendrier atelier actif est repris uniquement s’il est unique. Aucun horaire n’est inventé lorsqu’il manque.
 
 Cette publication couvre les vues et la planification validée. Les écritures de couverture future, les modifications des réceptions/contrôles qualité et l’apprentissage continu restent hors de ce lot. La réponse indique `coverageAvailable: false` et ne publie pas une projection inachevée. Le moteur statistique pur reste testé mais non raccordé aux observations canoniques. Ne pas activer `EXECUTE` ou `LEARN` pour cette livraison.

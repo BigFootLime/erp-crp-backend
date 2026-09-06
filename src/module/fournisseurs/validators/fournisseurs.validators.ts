@@ -87,7 +87,7 @@ export const createFournisseurSchema = z.object({
       type_principal: optionalText(80),
       tva: optionalText(80),
       siret: optionalText(80),
-      siren: siren.optional(),
+      siren: siren.nullable().optional(),
       compte_tiers: optionalText(64),
       electronic_address: electronicAddress.nullable().optional(),
       email: emailOptional,
