@@ -1154,7 +1154,7 @@ export async function repoGetOfReceiptContext(params: { of_id: number }): Promis
         o.numero,
         o.piece_technique_id::text AS piece_technique_id,
         o.article_id::text AS article_id,
-        pt.code AS piece_code,
+        pt.code_piece AS piece_code,
         pt.designation AS piece_designation,
         o.quantite_lancee::float8 AS quantite_lancee,
         o.quantite_bonne::float8 AS quantite_bonne,
