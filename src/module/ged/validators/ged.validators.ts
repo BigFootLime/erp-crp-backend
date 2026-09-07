@@ -62,3 +62,11 @@ export const listQuerySchema = z.object({
 });
 
 export const uuidParamSchema = z.string().uuid("Identifiant invalide.");
+
+export const reuseRevisionDocumentBodySchema = z.object({
+  revision_id: uuidParamSchema,
+  expected_version_id: uuidParamSchema,
+  link_role: z.enum(["PLAN_CLIENT", "PLAN_FABRICATION"]),
+  reason: trimmed(3, 500),
+}).strict();
+export type ReuseRevisionDocumentBody = z.infer<typeof reuseRevisionDocumentBodySchema>;

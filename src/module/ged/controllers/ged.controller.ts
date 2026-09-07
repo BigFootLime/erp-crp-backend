@@ -5,13 +5,29 @@ import type { NextFunction, Request, Response } from "express";
 import { HttpError } from "../../../utils/httpError";
 import { sendSecureStoredFile } from "../../../shared/uploads/secure-download";
 import * as service from "../services/ged.service";
+import * as revisionLinks from "../services/ged-revision-links.service";
 import {
   listQuerySchema,
+  reuseRevisionDocumentBodySchema,
   newVersionBodySchema,
   transitionBodySchema,
   uploadDocumentBodySchema,
   uuidParamSchema,
 } from "../validators/ged.validators";
+
+export async function listReusableRevisionDocuments(req: Request, res: Response, next: NextFunction) {
+  try {
+    res.json({ data: await revisionLinks.listReusableRevisionDocuments(actorFrom(req), parseUuid(req.params.revisionId, "Révision")) });
+  } catch (err) { next(err); }
+}
+
+export async function reuseRevisionDocument(req: Request, res: Response, next: NextFunction) {
+  try {
+    const input = reuseRevisionDocumentBodySchema.safeParse(req.body);
+    if (!input.success) throw new HttpError(400, "VALIDATION_ERROR", "Champs invalides.", input.error.flatten());
+    res.json({ data: await revisionLinks.reuseRevisionDocument(actorFrom(req), parseUuid(req.params.id, "Document"), input.data) });
+  } catch (err) { next(err); }
+}
 
 function actorFrom(req: Request): service.GedActor {
   const user = req.user;
