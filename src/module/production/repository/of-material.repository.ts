@@ -38,7 +38,7 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
       LEAST(b.quantite_couverte,GREATEST(0,COALESCE(r.received,0)-COALESCE(b.earlier,0)))::float8 AS received,
       COALESCE(t.transferred,0)::float8 AS transferred
     FROM allocations b JOIN public.commande_fournisseur_ligne l ON l.id=b.ligne_id JOIN public.commande_fournisseur c ON c.id=l.commande_id
-    LEFT JOIN LATERAL(SELECT sum(rl.qty_received*COALESCE(l.coef_conversion,1)) AS received FROM public.reception_fournisseur_lignes rl WHERE rl.commande_fournisseur_ligne_id=l.id) r ON true
+    LEFT JOIN LATERAL(SELECT sum(rl.qty_received*COALESCE(rl.stock_conversion_coef,l.coef_conversion,1)) AS received FROM public.reception_fournisseur_lignes rl WHERE rl.commande_fournisseur_ligne_id=l.id) r ON true
     LEFT JOIN LATERAL(SELECT sum(sr.qty_reserved) AS transferred FROM public.of_material_receipt_transfers t JOIN public.stock_reservations sr ON sr.id=t.reservation_id WHERE t.purchase_need_id=b.id) t ON true
     WHERE b.besoin_of_id=$1 AND c.statut<>'ANNULEE' AND l.statut_ligne<>'ANNULEE' ORDER BY b.created_at,b.id`,[ofId])).rows;
   const articleIds=[...new Set(purchases.flatMap(p=>p.article_id?[p.article_id]:[]))];

@@ -41,6 +41,9 @@ export type ReceptionFournisseurListItem = {
 }
 
 export type ReceptionFournisseurLine = {
+  quality?:{controlId:string|null;released:number;held:number;unit:string|null;stockable:number;blocking:string[]}
+  stock_unit?:string|null
+  stock_conversion_coef?:number|null
   id: string
   reception_id: string
   line_no: number

@@ -7,6 +7,7 @@ import {reconcileReleasedConsolidationLot} from '../../production/repository/pro
 
 import type { PoolClient } from "pg";
 import {resolveStockLotContext} from "./quality-stock-lot-context";
+import {applyMaterialLotDecision} from "./quality-material-lot-decision";
 
 import pool from "../../../config/database";
 import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
@@ -1148,6 +1149,7 @@ export async function repoPreviewExecution(body: ExecutionPreviewBodyDTO): Promi
 }
 
 export type ExecutionDetail = {
+  characteristics: QualityCharacteristicSpec[];
   id: string;
   reference: string;
   status: string;
@@ -1310,6 +1312,7 @@ function buildExecutionDetail(row: ExecutionRow, measurements: ExecutionDetail["
   return {
     id: row.id,
     reference: row.reference,
+    characteristics: integrity === "OK" ? characteristicsFromSnapshot(row.plan_snapshot) : [],
     status: row.status,
     verdict: row.verdict ?? legacyResultToVerdict(row.result),
     verdict_computed: row.verdict_computed,
@@ -1413,6 +1416,10 @@ export async function repoCreateExecution(params: {
     }
 
     const scopedBody = await resolveStockLotContext(client, await resolveLotReleaseAllocation(client, params.body), true);
+    if(scopedBody.source_type==="LOT"&&["RECHECK","RECEPTION"].includes(scopedBody.trigger)){
+      const pending=(await client.query<{id:string;reference:string}>("SELECT id::text,reference FROM public.quality_control WHERE lot_id=$1::uuid AND validation_date IS NULL ORDER BY control_date DESC,id DESC LIMIT 1",[scopedBody.lot_id])).rows[0];
+      if(pending)throw new HttpError(409,"QUALITY_LOT_CONTROL_PENDING",`Le contrôle ${pending.reference} est déjà ouvert pour ce lot. Terminez-le avant d’en créer un autre.`,{control_id:pending.id});
+    }
     const built = await buildExecutionSnapshot(client, scopedBody);
     // L'aperçu doit encore correspondre au plan applicable : sinon le référentiel
     // a bougé entre l'aperçu et la confirmation.
@@ -1462,8 +1469,8 @@ export async function repoCreateExecution(params: {
         source.source_id,
         params.body.trigger,
         params.body.lot_id ?? null,
-        params.body.article_id ?? null,
-        params.body.fournisseur_id ?? null,
+        scopedBody.article_id ?? null,
+        scopedBody.fournisseur_id ?? null,
         params.body.reception_ligne_id ?? null,
         params.body.bon_livraison_id ?? null,
         params.body.delivery_allocation_id ?? null,
@@ -2121,6 +2128,9 @@ export async function repoDecideExecution(params: {
   idempotencyKey: string | null | undefined;
 }): Promise<ExecutionDetail | null> {
   return withTransaction(async (client) => {
+    // Stock writes lock the lot before its control. Keep the same order here.
+    const scope=await selectExecutionRow(client,params.id);
+    if(scope?.lot_id)await client.query("SELECT id FROM public.lots WHERE id=$1::uuid FOR UPDATE",[scope.lot_id]);
     const before = await selectExecutionRow(client, params.id, true);
     if (!before) return null;
 
@@ -2160,6 +2170,8 @@ export async function repoDecideExecution(params: {
         "La decision doit porter sur la source exacte figee dans l'execution."
       );
     }
+    if(params.body.unite.trim().toUpperCase()!==before.unite?.trim().toUpperCase())
+      throw new HttpError(422,"QUALITY_RELEASE_UNIT_MISMATCH","La décision doit conserver l’unité du contrôle.");
 
     const specs = characteristicsFromSnapshot(before.plan_snapshot);
     const samples = await loadSamples(client, params.id);
@@ -2269,7 +2281,7 @@ export async function repoDecideExecution(params: {
         params.body.decision,
         params.body.object_type,
         params.body.object_id,
-        params.body.decision === "HOLD" ? outcome.qty_held : outcome.qty_released,
+        ["HOLD","REJECT"].includes(params.body.decision) ? outcome.qty_held : outcome.qty_released,
         params.body.unite,
         requestedVerdict,
         derogation?.id ?? null,
@@ -2282,6 +2294,8 @@ export async function repoDecideExecution(params: {
       ]
     );
     const decisionId = decisionRes.rows[0]!.id;
+
+    const materialLotDecision=await applyMaterialLotDecision(client,{execution:before,decision:params.body.decision,released:outcome.ledger.released,unit:params.body.unite,actorId:params.actor.user_id,decisionId});
 
     const deliveryLotReleased = await releaseQuarantinedLotForFullDeliveryDecision({
       client,
@@ -2321,6 +2335,7 @@ export async function repoDecideExecution(params: {
         qty_held: outcome.qty_held,
         derogation_id: derogation?.id ?? null,
         delivery_lot_released: deliveryLotReleased,
+        material_lot_decision: materialLotDecision,
       },
       correlation_id: before.correlation_id,
       idempotency_key: idem.idempotencyKey,

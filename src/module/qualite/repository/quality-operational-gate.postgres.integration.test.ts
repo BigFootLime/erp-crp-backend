@@ -116,7 +116,7 @@ describePostgres("Quality 360 operational gate — real PostgreSQL concurrency (
           id uuid PRIMARY KEY, lot_id uuid, source_type text, source_id text,
           control_date timestamptz NOT NULL, qty_released numeric NOT NULL DEFAULT 0,
           qty_held numeric NOT NULL DEFAULT 0, qty_consumed numeric NOT NULL DEFAULT 0,
-          unite text, validation_date timestamptz, verdict text, updated_at timestamptz NOT NULL DEFAULT now()
+          unite text, validation_date timestamptz, verdict text, updated_at timestamptz NOT NULL DEFAULT now(),trigger_type text,reception_ligne_id uuid
         );
         CREATE TABLE IF NOT EXISTS public.stock_reservations (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), lot_id uuid, qty_reserved numeric NOT NULL, status text NOT NULL);
         CREATE TABLE IF NOT EXISTS public.non_conformity (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), lot_id uuid, status text NOT NULL);

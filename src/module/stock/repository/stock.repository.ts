@@ -6671,8 +6671,8 @@ export async function repoListMovements(filters: ListMovementsQueryDTO): Promise
 
 type MovementRow = StockMovementDetail["movement"];
 
-export async function repoGetMovement(id: string): Promise<StockMovementDetail | null> {
-  const m = await db.query<MovementRow>(
+export async function repoGetMovement(id: string, tx: Pick<PoolClient, "query"> = db): Promise<StockMovementDetail | null> {
+  const m = await tx.query<MovementRow>(
     `
       SELECT
         id::text AS id,
@@ -6704,7 +6704,7 @@ export async function repoGetMovement(id: string): Promise<StockMovementDetail |
   const movement = m.rows[0] ?? null;
   if (!movement) return null;
 
-  const l = await db.query<StockMovementLineDetail>(
+  const l = await tx.query<StockMovementLineDetail>(
     `
       SELECT
         l.id::text AS id,
@@ -6746,7 +6746,7 @@ export async function repoGetMovement(id: string): Promise<StockMovementDetail |
     [id]
   );
 
-  const docs = await db.query<StockDocument>(
+  const docs = await tx.query<StockDocument>(
     `
       SELECT
         sd.id::text AS document_id,
@@ -6761,7 +6761,7 @@ export async function repoGetMovement(id: string): Promise<StockMovementDetail |
     [id]
   );
 
-  const events = await db.query<StockMovementEvent>(
+  const events = await tx.query<StockMovementEvent>(
     `
       SELECT
         id::text AS id,
@@ -7430,11 +7430,12 @@ export async function repoCompensateMovement(
 export async function repoCreateMovement(
   body: CreateMovementBodyDTO,
   audit: AuditContext,
-  options: { trusted_source_flow?: boolean } = {}
+  options: { trusted_source_flow?: boolean; client?: PoolClient } = {}
 ): Promise<StockMovementDetail> {
-  const client = await db.connect();
+  const client = options.client ?? await db.connect();
+  const ownsTransaction = !options.client;
   try {
-    await client.query("BEGIN");
+    if (ownsTransaction) await client.query("BEGIN");
 
     const { idempotency_key: _bodyIdempotencyKey, ...requestPayload } = body;
     const command = await beginStockCommand(client, {
@@ -7445,8 +7446,8 @@ export async function repoCreateMovement(
     });
     if (command.existing) {
       const existingId = command.existing.resource_id;
-      await client.query("COMMIT");
-      const existing = await repoGetMovement(existingId);
+      if (ownsTransaction) await client.query("COMMIT");
+      const existing = await repoGetMovement(existingId, options.client);
       if (!existing) throw new Error("Idempotent movement receipt points to a missing movement");
       return existing;
     }
@@ -7655,8 +7656,8 @@ export async function repoCreateMovement(
             legacy_idempotency_recovery: true,
           },
         });
-        await client.query("COMMIT");
-        const out = await repoGetMovement(id);
+        if (ownsTransaction) await client.query("COMMIT");
+        const out = await repoGetMovement(id, options.client);
         if (!out) throw new Error("Failed to read existing idempotent movement");
         return out;
       }
@@ -7757,15 +7758,15 @@ export async function repoCreateMovement(
       },
     });
 
-    await client.query("COMMIT");
-    const out = await repoGetMovement(movementId);
+    if (ownsTransaction) await client.query("COMMIT");
+    const out = await repoGetMovement(movementId, options.client);
     if (!out) throw new Error("Failed to read created movement");
     return out;
   } catch (err) {
-    await client.query("ROLLBACK");
+    if (ownsTransaction) await client.query("ROLLBACK");
     throw err;
   } finally {
-    client.release();
+    if (ownsTransaction) client.release();
   }
 }
 
@@ -7808,11 +7809,13 @@ export async function repoPostMovement(
   id: string,
   body: PostMovementBodyDTO,
   audit: AuditContext,
-  idempotencyKey: string
+  idempotencyKey: string,
+  externalClient?: PoolClient
 ): Promise<StockMovementDetail | null> {
-  const client = await db.connect();
+  const client = externalClient ?? await db.connect();
+  const ownsTransaction = !externalClient;
   try {
-    await client.query("BEGIN");
+    if (ownsTransaction) await client.query("BEGIN");
 
     const command = await beginStockCommand(client, {
       audit,
@@ -7822,8 +7825,8 @@ export async function repoPostMovement(
     });
     if (command.existing) {
       const existingId = command.existing.resource_id;
-      await client.query("COMMIT");
-      return repoGetMovement(existingId);
+      if (ownsTransaction) await client.query("COMMIT");
+      return await repoGetMovement(existingId, externalClient);
     }
 
     const lock = await client.query<{
@@ -7859,7 +7862,7 @@ export async function repoPostMovement(
 
     const m = lock.rows[0] ?? null;
     if (!m) {
-      await client.query("ROLLBACK");
+      if (ownsTransaction) await client.query("ROLLBACK");
       return null;
     }
     if (m.status !== "DRAFT") {
@@ -8180,8 +8183,8 @@ export async function repoPostMovement(
         },
       });
 
-      await client.query("COMMIT");
-      return repoGetMovement(id);
+      if (ownsTransaction) await client.query("COMMIT");
+      return await repoGetMovement(id, externalClient);
     }
 
     const lockedStates = await lockStockStates(client, [
@@ -8271,13 +8274,13 @@ export async function repoPostMovement(
       },
     });
 
-    await client.query("COMMIT");
-    return repoGetMovement(id);
+    if (ownsTransaction) await client.query("COMMIT");
+    return await repoGetMovement(id, externalClient);
   } catch (err) {
-    await client.query("ROLLBACK");
+    if (ownsTransaction) await client.query("ROLLBACK");
     throw err;
   } finally {
-    client.release();
+    if (ownsTransaction) client.release();
   }
 }
 

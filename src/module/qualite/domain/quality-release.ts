@@ -221,7 +221,10 @@ export function evaluateReleaseRequest(request: ReleaseRequest): ReleaseOutcome 
   }
 
   if (request.decision === "REJECT") {
-    return { decision: "REJECT", qty_released: 0, qty_held: 0, ledger: request.ledger };
+    if(request.qty>remainingUndisposedQty(request.ledger)+EPS)throw new HttpError(422,"QUALITY_REJECT_QTY_EXCEEDS_ALLOWED","La quantité refusée dépasse la quantité restant à décider.");
+    // A refusal does not invent a supplier return or a scrap movement.
+    // Keep that exact quantity held until its disposition is carried out.
+    return { decision: "REJECT", qty_released: 0, qty_held: request.qty, ledger: {...request.ledger,held:request.ledger.held+request.qty} };
   }
 
   if (request.verdict === "NON_CONFORME" && !request.hasDerogation) {
@@ -270,7 +273,7 @@ export function evaluateReleaseRequest(request: ReleaseRequest): ReleaseOutcome 
     decision: request.decision,
     qty_released: request.qty,
     qty_held: request.decision === "PARTIAL" ? held : 0,
-    ledger: nextLedger,
+    ledger: request.decision === "PARTIAL" ? {...nextLedger,held:nextLedger.held+held} : nextLedger,
   };
 }
 

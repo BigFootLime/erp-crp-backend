@@ -1,10 +1,11 @@
 import type {PoolClient} from "pg";
 import {HttpError} from "../../../utils/httpError";
 import type {ExecutionPreviewBodyDTO} from "../validators/quality-360.validators";
+import {resolveReceiptLotContext} from "./quality-receipt-lot-context";
 
 /** A stock recheck gets its article and physical population from the actual lot. */
 export async function resolveStockLotContext(q:Pick<PoolClient,"query">,body:ExecutionPreviewBodyDTO,lock=false):Promise<ExecutionPreviewBodyDTO>{
-  if(body.source_type!=="LOT"||body.trigger!=="RECHECK")return body;
+  if(body.source_type!=="LOT"||body.trigger!=="RECHECK")return resolveReceiptLotContext(q,body,lock);
   if(body.lot_id!==body.source_id||!body.article_id||body.of_id||body.reception_ligne_id||body.bon_livraison_id||body.delivery_allocation_id||body.operation_code||body.fournisseur_id){
     throw new HttpError(422,"QUALITY_STOCK_LOT_SCOPE_INVALID","Le contrôle matière doit désigner un lot et son article, sans autre objet consommateur.");
   }
