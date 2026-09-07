@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   accuseSchema,
+  addLigneSchema,
+  deleteLigneSchema,
+  generateDocumentSchema,
+  reorderLignesSchema,
+  updateLigneSchema,
   createCommandeSchema,
   ligneInputSchema,
   listCommandesQuerySchema,
@@ -28,6 +33,30 @@ const baseCreate = {
 };
 
 describe("validators commandes fournisseurs (#172) — Zod strict", () => {
+  it.each(["2026-09-07 01:20:30.123456+00", "2026-09-07 03:20:30.123456+02:00", "2026-09-07T01:20:30.123456Z"])(
+    "conserve le jeton exact %s sur toutes les modifications protégées", (token) => {
+      const requests = [
+        [updateCommandeSchema, { note_interne: "recette" }],
+        [addLigneSchema, { ligne: baseLigne }],
+        [updateLigneSchema, { patch: { quantite: 2 } }],
+        [deleteLigneSchema, {}],
+        [reorderLignesSchema, { ordre: [UUID] }],
+        [transitionSchema, { to: "ENVOYEE" }],
+        [accuseSchema, { reference_fournisseur: "AR-RECETTE" }],
+        [generateDocumentSchema, {}],
+      ] as const;
+      for (const [schema, body] of requests) {
+        expect(schema.parse({ body: { ...body, expected_updated_at: token } }).body?.expected_updated_at).toBe(token);
+      }
+    }
+  );
+
+  it.each(["", "anything", "2026-02-30 12:00:00+00", "2026-09-07 25:00:00+00", "2026-09-07 12:00:00", "2026-09-07 12:00:00.1234567+00"])(
+    "rejette le jeton mal formé %s", (token) => {
+      expect(updateCommandeSchema.safeParse({ body: { expected_updated_at: token } }).success).toBe(false);
+    }
+  );
+
   it("accepte une création minimale valide et applique les défauts serveur", () => {
     const parsed = createCommandeSchema.parse({ body: baseCreate });
     expect(parsed.body.origine).toBe("MANUEL");

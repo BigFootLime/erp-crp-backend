@@ -29,6 +29,12 @@ immuable, jamais accepté du client. Les montants sont masqués (`null` +
 
 ## Écriture (brouillon)
 
+`expected_updated_at` reprend exactement le texte `updated_at` reçu de la fiche,
+y compris les microsecondes et le décalage horaire. Les représentations ISO et
+PostgreSQL (`2026-09-07 01:20:30.123456+00`) sont acceptées par les validateurs.
+Le serveur compare toujours le jeton exact sous verrou ; un jeton différent
+provoque 409. Le client ne doit pas convertir ce jeton en `Date` (#737).
+
 - `POST /` — `create`. Body : `fournisseur_id` (uuid requis), `origine`, devise ISO,
   conditions, incoterm (enum), dates, commentaires public/interne, frais de port,
   `lignes[]` (≤200 ; type enum ; article/catalogue requis sauf LIBRE_CONTROLEE/PRESTATION ;
