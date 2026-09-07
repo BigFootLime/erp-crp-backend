@@ -7,6 +7,7 @@ import { enqueueProductionOfChanged } from "./production-realtime.repository";
 import type { AuditContext } from "./production.repository";
 import {
   evaluatePreparation,
+  preparationOperationIssues,
   isPreparationReady,
   PREPARATION_RULES_VERSION,
   sourceHash,
@@ -96,6 +97,7 @@ type TechnicalSources = {
   operations: Array<{
     id: string;
     designation: string;
+    type_operation?: string | null;
     machine_family_code: string | null;
     cf_id: string | null;
     tp: number;
@@ -316,15 +318,8 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
       sources.gamme?.statut === "APPLICABLE" && sources.gamme.is_current
         ? sources.operations.length
         : 0,
-    invalid_operations: sources.operations.filter(
-      (o) =>
-        !o.designation?.trim() ||
-        !o.cf_id ||
-        !o.machine_family_code ||
-        Number(o.tp) < 0 ||
-        Number(o.tf_unit) < 0 ||
-        Number(o.tp) + Number(o.tf_unit) <= 0,
-    ).length,
+    invalid_operations: sources.operations.filter((o) => preparationOperationIssues(o).length > 0).length,
+    operation_issues: sources.operations.flatMap((o) => preparationOperationIssues(o).map((issue) => `${o.designation || "Opération"} : ${issue}`)),
     component_count: sources.components.length,
     invalid_components: sources.components.filter(
       (c) =>

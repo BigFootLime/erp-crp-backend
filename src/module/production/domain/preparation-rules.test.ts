@@ -3,9 +3,27 @@ import {
   evaluatePreparation,
   isPreparationReady,
   planningUrgency,
+  preparationOperationIssues,
   sourceHash,
   type PreparationFacts,
 } from "./preparation-rules";
+
+describe("operation-specific preparation evidence", () => {
+  const manual = { designation: "Contrôle final", type_operation: "CONTROLE", cf_id: null, machine_family_code: null, tp: 0.1, tf_unit: 0.02 };
+  it.each(["CONTROLE", "DECOUPE", "LAVAGE", "EMBALLAGE", "AUTRE"])("does not invent a CNC family for %s", (type_operation) => {
+    expect(preparationOperationIssues({ ...manual, type_operation })).toEqual([]);
+  });
+  it.each(["FRAISAGE", "TOURNAGE", "REPRISE", null])("requires CNC qualification for %s", (type_operation) => {
+    expect(preparationOperationIssues({ ...manual, type_operation })).toEqual(["Centre de frais manquant", "Famille machine manquante"]);
+  });
+  it("keeps unknown external lead time distinct from productive machine time", () => {
+    expect(preparationOperationIssues({ ...manual, type_operation: "SOUS_TRAITANCE", tp: 0, tf_unit: 0 })).toEqual([]);
+    expect(preparationOperationIssues({ ...manual, tp: 0, tf_unit: 0 })).toContain("Temps de préparation ou de fabrication requis");
+  });
+  it.each([-1, NaN, Infinity])("rejects invalid observed route times %s", (tp) => {
+    expect(preparationOperationIssues({ ...manual, tp })).toContain("Temps invalide");
+  });
+});
 function complete(): PreparationFacts {
   return {
     version_id: "v2",

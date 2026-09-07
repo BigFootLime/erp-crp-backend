@@ -51,3 +51,11 @@ Les tests de règles utilisent `pnpm test:run`. Le test `src/module/production/r
 Le helper `production-workbench-runtime.cjs` prépare le compte synthétique, démarre API/Vite en boucle locale puis lance le spec Playwright du frontend. Ses identifiants temporaires résident hors des dépôts, dans le dossier de runtime isolé. Ne jamais les versionner ou les publier.
 
 La liste des responsables de programmation et la validation de l’affectation utilisent les rôles actifs du catalogue, principaux ou secondaires. Un compte inactif ou dépourvu d’un rôle éligible reste refusé.
+
+## Correction de recette du 7 septembre 2026 - #731
+
+La preparation distingue maintenant les operations CN (tournage, fraisage, reprise et lignes historiques sans type), qui exigent toujours centre de frais et famille machine, des operations manuelles (decoupe, controle, lavage, emballage et autres). Une operation manuelle conserve l'exigence d'un temps positif ; le poste et le creneau sont affectes au planning. Une prestation externe n'exige pas de famille CNC et peut conserver zero temps productif : son delai fournisseur reste une information distincte. Aucune cadence machine n'est inventee a partir du delai de transport ou de traitement.
+
+Les motifs sont rapportes par designation d'operation dans la rubrique Gamme. Le snapshot conserve les champs originaux et la generation reutilise ses jointures optionnelles existantes. Cette correction ne cree aucun creneau, n'affecte aucune ressource et ne remplace pas un delai externe inconnu par une promesse. Le moteur de simulation continue de refuser une tache dont la duree reste absente ou nulle. La connexion des delais externes au planning doit etre verifiee dans la recette dediee.
+
+Verification : 36 tests de regles de preparation, dont operations manuelles, qualification CN, temps negatifs/non finis et distinction des temps externes. Aucun changement de schema ni mutation de la base de recette par script.
