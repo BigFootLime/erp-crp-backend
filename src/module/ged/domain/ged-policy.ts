@@ -147,19 +147,21 @@ export function assertVersionMutable(status: GedVersionStatus): void {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Le déposant d'une version ne peut pas l'approuver. Rejoué ici en plus du
+ * Le déposant ne peut pas l'approuver, sauf superutilisateur actif vérifié en base.
+ * Décision du propriétaire du 07/09/2026 (#758). Rejoué ici en plus du
  * trigger `fn_ged_version_separation_of_duties` : le service donne un message
  * lisible, la base garantit que la règle survit à un script.
  */
 export function assertDistinctApprover(
   createdBy: number | null | undefined,
-  approverId: number
+  approverId: number,
+  verifiedActiveSuperadmin = false
 ): void {
-  if (createdBy != null && createdBy === approverId) {
+  if (createdBy != null && createdBy === approverId && !verifiedActiveSuperadmin) {
     throw new HttpError(
       409,
       "GED_APPROVAL_SELF",
-      "Le déposant d'une version ne peut pas l'approuver lui-même."
+      "Seul un superutilisateur actif peut approuver son propre dépôt. Un autre approbateur est requis pour ce compte."
     );
   }
 }
