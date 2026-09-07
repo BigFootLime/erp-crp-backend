@@ -744,7 +744,7 @@ export async function assertCommandePlanningResourcesCompatible(params: {
   }
 }
 
-async function syncPlanningCoordinates(params: {
+export async function syncPlanningCoordinates(params: {
   tx: DbQueryer;
   of_operation_id: string | null;
   of_id: number | null;
