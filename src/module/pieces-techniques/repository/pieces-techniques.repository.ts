@@ -2840,6 +2840,7 @@ export async function repoAddBomLine(pieceTechniqueId: string, body: AddBomLineB
   const client = await db.connect();
   try {
     await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('piece-bom:' || $1::text, 0))", [pieceTechniqueId]);
     const exists = await ensurePieceTechniqueExists(client, pieceTechniqueId);
     if (!exists) {
       await client.query("ROLLBACK");
@@ -2916,6 +2917,7 @@ export async function repoUpdateBomLine(
   const client = await db.connect();
   try {
     await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('piece-bom:' || $1::text, 0))", [pieceTechniqueId]);
 
     if (body.child_piece_id !== undefined) {
       await ensureBomLinkAllowed(client, pieceTechniqueId, body.child_piece_id);
