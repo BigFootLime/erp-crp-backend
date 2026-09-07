@@ -110,6 +110,11 @@ describe("GED — cycle de vie", () => {
 });
 
 describe("GED — séparation des tâches", () => {
+  it("autorise uniquement l'exception superutilisateur actif vérifiée côté serveur", () => {
+    expect(() => assertDistinctApprover(42, 42, true)).not.toThrow();
+    expect(() => assertDistinctApprover(42, 42, false)).toThrowError(HttpError);
+    expect(() => assertDistinctApprover(42, 42, undefined)).toThrowError(HttpError);
+  });
   it("refuse qu'un déposant approuve sa propre version", () => {
     expect(() => assertDistinctApprover(42, 42)).toThrowError(HttpError);
     try {
