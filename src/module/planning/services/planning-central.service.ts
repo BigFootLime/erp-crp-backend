@@ -6,7 +6,7 @@ import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repos
 import { schedule } from "../domain/central-scheduler";
 import { centralCanonicalJson } from "../domain/central-canonical-json";
 import { readCentralDependencies, readCentralSettings, readCentralSnapshot } from "../repository/planning-central.repository";
-import { assertOperationResourceCompatible, assertResourceSchedulable, repoArchivePlanningEvent, type AuditContext } from "../repository/planning.repository";
+import { assertOperationResourceCompatible, assertResourceSchedulable, repoArchivePlanningEvent, syncPlanningCoordinates, type AuditContext } from "../repository/planning.repository";
 import type { CentralSimulationInput, CentralUnplanInput } from "../validators/planning-central.validators";
 import type { CentralSnapshot, ScheduleResult } from "../types/planning-central.types";
 import { PROGRAMMING_ASSIGNEE_PREDICATE_SQL } from "../../production/repository/production-preparation.repository";
@@ -139,6 +139,9 @@ export async function applyCentralSimulation(id:string,revision:string,audit:Aud
         else await tx.query(`INSERT INTO public.planning_events(id,kind,status,priority,of_id,of_operation_id,title,start_ts,end_ts,machine_id,poste_id,created_by,updated_by)
           VALUES(gen_random_uuid(),'OF_OPERATION','PLANNED','NORMAL',$1,$2,$3,$4,$5,$6,$7,$8,$8)`,
           [task.ofId,task.operationId,task.label,change.after.start,change.after.end,resource.machine_id,resource.poste_id,audit.user_id]);
+        // Keep the OF workspace on the same canonical coordinates as legacy planning.
+        // In particular, unplanning clears the assignment; applying again must restore it.
+        await syncPlanningCoordinates({tx,of_operation_id:task.operationId,of_id:task.ofId});
       } else if(task.id.startsWith("version-program:")) {
         const person=change.resourceIds[0];
         if(!person?.startsWith("person:") || change.resourceIds.length!==1)throw new HttpError(422,"PLANNING_PROGRAMMER_REQUIRED","Sélectionnez un programmeur.");
