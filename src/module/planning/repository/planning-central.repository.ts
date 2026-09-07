@@ -228,7 +228,7 @@ export async function readCentralSnapshot(query: CentralWindow & { includeTaskId
   const tasks = visible.map(row => taskFromRow(row));
   const operationIds = tasks.flatMap(task => task.operationId ? [task.operationId] : []);
   if (operationIds.length) {
-    const { rows: qualifications } = await tx.query<{id:string;family:string|null;eligible:string[]}>(`
+    const { rows: qualifications } = await tx.query<{id:string;family:string|null;operation_type:string|null;eligible:string[]}>(`
       WITH qualified_resources AS (
         SELECT 'machine:'||m.id::text AS id,upper(btrim(m.machine_family_code)) AS family
         FROM public.machines m WHERE m.archived_at IS NULL AND m.status::text='ACTIVE' AND m.is_available IS NOT FALSE
@@ -239,16 +239,30 @@ export async function readCentralSnapshot(query: CentralWindow & { includeTaskId
         WHERE p.is_active AND m.archived_at IS NULL AND m.status::text='ACTIVE' AND m.is_available IS NOT FALSE
           AND COALESCE((to_jsonb(m)->>'scheduling_enabled')::boolean,true)
       )
-      SELECT op.id::text,NULLIF(btrim(op.machine_family_code),'') AS family,
-        COALESCE(array_agg(r.id ORDER BY r.id) FILTER(WHERE r.id IS NOT NULL),'{}'::text[]) AS eligible
-      FROM public.of_operations op LEFT JOIN qualified_resources r
+      SELECT op.id::text,NULLIF(btrim(op.machine_family_code),'') AS family,frozen.operation_type,
+        CASE WHEN NULLIF(btrim(op.machine_family_code),'') IS NULL
+          AND frozen.operation_type IN ('DECOUPE','CONTROLE','LAVAGE','EMBALLAGE','AUTRE')
+          AND p.id IS NOT NULL AND p.is_active AND p.archived_at IS NULL AND p.machine_id IS NULL AND op.machine_id IS NULL
+          THEN ARRAY['poste:'||p.id::text]
+          ELSE COALESCE(array_agg(r.id ORDER BY r.id) FILTER(WHERE r.id IS NOT NULL),'{}'::text[]) END AS eligible
+      FROM public.of_operations op
+      JOIN public.ordres_fabrication o ON o.id=op.of_id
+      LEFT JOIN public.postes p ON p.id=op.poste_id
+      LEFT JOIN LATERAL (SELECT value->>'type_operation' AS operation_type
+        FROM jsonb_array_elements(COALESCE(o.technical_snapshot->'operations','[]'::jsonb))
+        WHERE value->>'phase'=op.phase::text LIMIT 1) frozen ON true
+      LEFT JOIN qualified_resources r
         ON r.family=upper(NULLIF(btrim(op.machine_family_code),''))
-      WHERE op.id=ANY($1::uuid[]) GROUP BY op.id`,[operationIds]);
+      WHERE op.id=ANY($1::uuid[]) GROUP BY op.id,p.id,frozen.operation_type`,[operationIds]);
     const byId = new Map(qualifications.map(row => [row.id,row]));
     for (const task of tasks) if (task.operationId) {
       const qualification = byId.get(task.operationId);
       task.eligibleResourceIds = qualification?.eligible ?? [];
-      if (!qualification?.family) task.blockers.push("Famille machine à définir dans la gamme.");
+      if (!qualification?.family) {
+        const manual = ["DECOUPE", "CONTROLE", "LAVAGE", "EMBALLAGE", "AUTRE"].includes(qualification?.operation_type ?? "");
+        if (!manual) task.blockers.push("Famille machine à définir dans la gamme.");
+        else if (!task.eligibleResourceIds.length) task.blockers.push("Poste de travail à affecter dans la fiche OF.");
+      }
       task.version = createHash("sha256").update(task.version+JSON.stringify(task.eligibleResourceIds)).digest("hex");
     }
   }

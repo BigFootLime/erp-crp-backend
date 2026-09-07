@@ -610,10 +610,9 @@ function resolveResource(params: {
 }
 
 /**
- * A planning resource may be a poste backed by a machine.  An OF operation is
- * only assignable when its frozen machine-family requirement matches that
- * machine's explicit, human-qualified family.  We intentionally do not infer
- * a family from machine type, label, or historical qualifications.
+ * CNC requirements match an explicitly qualified machine family. Manual work
+ * without a family uses its explicitly assigned autonomous workstation instead.
+ * No qualification is inferred from labels or historical activity.
  */
 export async function assertOperationResourceCompatible(params: {
   tx: DbQueryer;
@@ -629,6 +628,11 @@ export async function assertOperationResourceCompatible(params: {
     machine_id: string | null;
     machine_code: string | null;
     machine_family_code: string | null;
+    operation_type?: string | null;
+    assigned_poste_id?: string | null;
+    selected_poste_id?: string | null;
+    poste_active?: boolean;
+    operation_machine_id?: string | null;
   }>(
     `
       SELECT
@@ -637,7 +641,11 @@ export async function assertOperationResourceCompatible(params: {
         NULLIF(btrim(op.machine_family_code), '') AS required_machine_family_code,
         m.id::text AS machine_id,
         m.code AS machine_code,
-        NULLIF(btrim(m.machine_family_code), '') AS machine_family_code
+        NULLIF(btrim(m.machine_family_code), '') AS machine_family_code,
+        (SELECT value->>'type_operation' FROM jsonb_array_elements(COALESCE(o.technical_snapshot->'operations','[]'::jsonb))
+          WHERE value->>'phase'=op.phase::text LIMIT 1) AS operation_type,
+        op.poste_id::text AS assigned_poste_id,p.id::text AS selected_poste_id,op.machine_id::text AS operation_machine_id,
+        p.is_active AND p.archived_at IS NULL AS poste_active
       FROM public.of_operations op
       JOIN public.ordres_fabrication o ON o.id = op.of_id
       LEFT JOIN public.postes p ON p.id = $3::uuid
@@ -649,6 +657,15 @@ export async function assertOperationResourceCompatible(params: {
   );
   const row = res.rows[0] ?? null;
   if (!row) throw new HttpError(404, "OF_OPERATION_NOT_FOUND", "OF operation not found");
+  // A manual route explicitly assigns its autonomous workstation on the OF.
+  // Never infer a qualification from a label or accept an arbitrary workstation.
+  if (!row.required_machine_family_code && ["DECOUPE", "CONTROLE", "LAVAGE", "EMBALLAGE", "AUTRE"].includes(row.operation_type ?? "")) {
+    if (!row.machine_id && !row.operation_machine_id && !params.resource.machine_id && row.poste_active &&
+        row.assigned_poste_id && row.assigned_poste_id === row.selected_poste_id) return;
+    throw new HttpError(422, "PLANNING_MANUAL_POSTE_REQUIRED",
+      "Affectez un poste autonome actif à cette opération manuelle dans la fiche OF, puis sélectionnez ce poste.",
+      { operation_id: row.operation_id });
+  }
   if (!row.required_machine_family_code) {
     throw new HttpError(
       422,
