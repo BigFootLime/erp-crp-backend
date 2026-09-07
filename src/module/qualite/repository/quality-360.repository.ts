@@ -6,6 +6,7 @@ import {reconcileReleasedConsolidationLot} from '../../production/repository/pro
 // d'idempotence. Aucun code métier n'est calculé côté client, aucun MAX()+1.
 
 import type { PoolClient } from "pg";
+import {resolveStockLotContext} from "./quality-stock-lot-context";
 
 import pool from "../../../config/database";
 import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
@@ -1132,7 +1133,7 @@ async function resolveLotReleaseAllocation(
 
 export async function repoPreviewExecution(body: ExecutionPreviewBodyDTO): Promise<ExecutionPreview> {
   assertSourceRef({ source_type: body.source_type, source_id: body.source_id });
-  const scopedBody = await resolveLotReleaseAllocation(pool, body);
+  const scopedBody = await resolveStockLotContext(pool, await resolveLotReleaseAllocation(pool, body));
   const built = await buildExecutionSnapshot(pool, scopedBody);
   return {
     plan: { id: built.plan.id, code: built.plan.code, version: built.plan.version },
@@ -1411,7 +1412,7 @@ export async function repoCreateExecution(params: {
       if (replayed) return buildExecutionDetail(replayed, await selectMeasurements(client, replayed.id));
     }
 
-    const scopedBody = await resolveLotReleaseAllocation(client, params.body);
+    const scopedBody = await resolveStockLotContext(client, await resolveLotReleaseAllocation(client, params.body), true);
     const built = await buildExecutionSnapshot(client, scopedBody);
     // L'aperçu doit encore correspondre au plan applicable : sinon le référentiel
     // a bougé entre l'aperçu et la confirmation.
@@ -1452,7 +1453,7 @@ export async function repoCreateExecution(params: {
         controlType,
         params.body.controlled_by ?? params.actor.user_id,
         params.body.of_id ?? null,
-        params.body.piece_technique_id ?? null,
+        scopedBody.piece_technique_id ?? null,
         built.plan.id,
         built.plan.version,
         JSON.stringify(built.snapshot.payload),

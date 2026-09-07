@@ -44,14 +44,15 @@ const numeric = (value: unknown): number => {
  * missing control/release quantity remains a zero quantity and is therefore
  * rejected by `assertQualityEligibility`; it is never converted into a pass.
  */
-export async function assertOperationalLotQualityEligibility(params: {
+async function inspectOperationalLotQualityEligibility(params: {
   client: Queryable;
   lotId: string;
   qty: number;
   /** Physical movement/reservation unit when the caller has one. */
   unit?: string | null;
   purpose: QualityEligibilityPurpose;
-}): Promise<OperationalQualityDecision> {
+  lockRows:boolean;
+}) {
   const lotRes = await params.client.query<{
     lot_code: string;
     lot_status: EligibilityTarget["lot_status"];
@@ -62,7 +63,7 @@ export async function assertOperationalLotQualityEligibility(params: {
       FROM public.lots lot
       JOIN public.articles article ON article.id = lot.article_id
       WHERE lot.id = $1::uuid
-      FOR UPDATE
+      ${params.lockRows ? "FOR UPDATE" : ""}
     `,
     [params.lotId]
   );
@@ -90,7 +91,7 @@ export async function assertOperationalLotQualityEligibility(params: {
          OR (qc.source_type = 'LOT' AND qc.source_id = $1::text)
       ORDER BY qc.control_date DESC, qc.id DESC
       LIMIT 1
-      FOR UPDATE
+      ${params.lockRows ? "FOR UPDATE" : ""}
     `,
     [params.lotId]
   );
@@ -132,7 +133,7 @@ export async function assertOperationalLotQualityEligibility(params: {
       FROM public.stock_reservations
       WHERE lot_id = $1::uuid
         AND status IN ('ACTIVE', 'CONSUMED')
-      FOR SHARE
+      ${params.lockRows ? "FOR SHARE" : ""}
     `,
     [params.lotId]
   );
@@ -192,9 +193,11 @@ export async function assertOperationalLotQualityEligibility(params: {
     ...target,
     qty_requested: target.qty_requested + alreadyCommittedQty,
   };
-  evaluateQualityEligibility(evaluationTarget, params.purpose, at);
-  assertQualityEligibility(evaluationTarget, params.purpose, at);
+  const eligibility=evaluateQualityEligibility(evaluationTarget,params.purpose,at);
   return {
+    eligibility,
+    evaluationTarget,
+    available:Math.max(0,eligibility.qty_allowed-alreadyCommittedQty),
     purpose: params.purpose,
     target,
     already_committed_qty: alreadyCommittedQty,
@@ -205,6 +208,15 @@ export async function assertOperationalLotQualityEligibility(params: {
       derogation_ids: concessions.rows.map((row) => row.derogation_id),
     },
   };
+}
+
+export async function readOperationalLotQualityEligibility(params:{client:Queryable;lotId:string;qty:number;unit?:string|null;purpose:QualityEligibilityPurpose}){
+  return inspectOperationalLotQualityEligibility({...params,lockRows:false});
+}
+export async function assertOperationalLotQualityEligibility(params:{client:Queryable;lotId:string;qty:number;unit?:string|null;purpose:QualityEligibilityPurpose}):Promise<OperationalQualityDecision>{
+  const decision=await inspectOperationalLotQualityEligibility({...params,lockRows:true});
+  assertQualityEligibility(decision.evaluationTarget,params.purpose,new Date(decision.evaluated_at));
+  return {purpose:decision.purpose,target:decision.target,already_committed_qty:decision.already_committed_qty,evaluated_at:decision.evaluated_at,evidence:decision.evidence};
 }
 
 /**

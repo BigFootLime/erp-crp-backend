@@ -1,4 +1,5 @@
 import type {PoolClient} from "pg";
+import {readOperationalLotQualityEligibility} from "../../qualite/repository/quality-operational-gate.repository";
 import type {MaterialLotVerification} from "../validators/of-material.validators";
 import pool from "../../../config/database";
 import {HttpError} from "../../../utils/httpError";
@@ -14,7 +15,7 @@ const emptyRequirements=():MaterialRequirements=>({grade:null,condition:null,own
 type Purchase={id:string;article_id:string|null;nom?:string;designation?:string;quantite:number;unite_prix:string|null;fournisseur_id:string|null;pu_achat?:number|null;type_achat:string;gamme_operation_id?:string|null};
 type NeedRow={id:string;source_ref:string;technical_version_id:string;technical_hash:string;operation_id:string|null;article_id:string|null;required_qty:number;unit:string|null;supply_mode:"PURCHASE"|"CUSTOMER";requirements:MaterialRequirements;specification_reviewed_at:string|null;debit_rule:DebitRule|null;allow_partial:boolean;supplier_id:string|null;destination_id:string|null;row_version:number;superseded_at:string|null};
 export type NeedConfiguration={operationId:string;requirements:MaterialRequirements;supplyMode:"PURCHASE"|"CUSTOMER";debitRule:DebitRule;allowPartial:boolean;supplierId:string|null;destinationId:string|null};
-type Candidate=MaterialLot&{magasinId:string;emplacementId:number;version:string;properties:Record<string,unknown>;propertiesHash:string;documents:Array<{id:string;label:string;receptionId:string}>};
+type Candidate=MaterialLot&{magasinId:string;emplacementId:number;version:string;properties:Record<string,unknown>;propertiesHash:string;qualityControlId:string|null;qualityExplanation:string[];documents:Array<{id:string;label:string;receptionId:string}>};
 
 export async function readMaterialTx(tx:DossierDb,ofId:number){
   const dossier=await readOfDossierTx(tx,ofId);
@@ -45,6 +46,7 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
   const lots=(await tx.query<Candidate>(`SELECT l.id::text,b.id::text AS "batchId",l.article_id::text AS "articleId",l.lot_code AS code,a.unite AS unit,l.lot_status AS quality,
     GREATEST(0,LEAST(b.qty_total-b.qty_reserved-b.qty_depreciated,s.qty_total-s.qty_reserved-s.qty_depreciated))::float8 AS available,s.id::text AS "stockLevelId",GREATEST(0,s.qty_total-s.qty_reserved-s.qty_depreciated)::float8 AS "levelAvailable",
     COALESCE(l.received_at::text,l.created_at::text) AS "receivedAt",l.material_properties->>'grade' AS grade,l.material_properties->>'condition' AS condition,
+    (SELECT COALESCE(sum(GREATEST(0,physical.qty_total-physical.qty_depreciated)),0)::float8 FROM public.stock_batches physical WHERE physical.lot_id=l.id) AS "physicalQuantity",
     COALESCE(l.client_proprietaire_id,m.client_proprietaire_id) AS "ownerClientId",COALESCE(l.material_properties->'dimensions','{}') AS dimensions,
     COALESCE(l.material_properties->'certificates','[]') AS certificates,false AS "manualVerified",COALESCE(l.material_properties,'{}'::jsonb) AS properties,
     e.magasin_id::text AS "magasinId",e.id::bigint::int AS "emplacementId",concat_ws(':',l.updated_at,s.updated_at,b.qty_reserved,b.qty_total) AS version
@@ -52,6 +54,17 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
     JOIN public.articles a ON a.id=l.article_id LEFT JOIN public.articles_matiere m ON m.article_id=a.id
     JOIN public.emplacements e ON e.location_id=s.location_id WHERE l.article_id=ANY($1::uuid[]) AND b.qty_total>0
     ORDER BY l.received_at NULLS LAST,l.created_at,l.id,b.id`,[articleIds])).rows;
+  const qualityByLot=new Map<string,{available:number;blocks:string[];explanation:string[];controlId:string|null}>();
+  for(const lot of lots){
+    if(!qualityByLot.has(lot.id)){
+      try{
+        const decision=await readOperationalLotQualityEligibility({client:tx,lotId:lot.id,qty:lots.filter(l=>l.id===lot.id).reduce((sum,l)=>sum+l.available,0),unit:lot.unit,purpose:"RESERVE"});
+        qualityByLot.set(lot.id,{available:decision.available,blocks:decision.eligibility.blocks.filter(b=>b.code!=="QTY_NOT_RELEASED"||decision.available===0).map(b=>`${b.message} ${b.expected_action}`),explanation:decision.eligibility.blocks.map(b=>`${b.message} ${b.expected_action}`),controlId:decision.evidence.control_ids[0]??null});
+      }catch(error){if(!(error instanceof HttpError)||error.status>=500)throw error;qualityByLot.set(lot.id,{available:0,blocks:[error.message],explanation:[error.message],controlId:null});}
+    }
+    const decision=qualityByLot.get(lot.id)!;
+    lot.qualityAvailable=decision.available;lot.qualityBlocks=decision.blocks;lot.qualityExplanation=decision.explanation;lot.qualityControlId=decision.controlId;
+  }
   const documents=(await tx.query(`SELECT DISTINCT rl.lot_id::text,d.id::text,COALESCE(d.label,d.original_name) AS label,d.reception_id::text AS "receptionId",d.sha256
     FROM public.reception_fournisseur_documents d JOIN public.reception_fournisseur_lignes rl ON rl.reception_id=d.reception_id AND(d.reception_line_id IS NULL OR d.reception_line_id=rl.id)
     WHERE rl.lot_id=ANY($1::uuid[]) AND d.removed_at IS NULL AND d.document_type='CERTIFICAT_MATIERE' ORDER BY 2`,[lots.map(l=>l.id)])).rows;
@@ -96,11 +109,12 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
   });
   // Per-need checks are never generalized to another reference or revision.
   const remaining=new Map(lots.map(l=>[l.batchId,l.available]));
+  const remainingQuality=new Map(lots.map(l=>[l.id,l.qualityAvailable??0]));
   const remainingLevels=new Map(lots.filter(l=>l.stockLevelId).map(l=>[l.stockLevelId!,l.levelAvailable!]));
   const coverage=needs.map(need=>{
-    const candidates=lots.map(l=>({...l,available:remaining.get(l.batchId)??0,levelAvailable:l.stockLevelId?remainingLevels.get(l.stockLevelId):undefined,manualVerified:checks.some(c=>c.need_id===need.id&&c.lot_id===l.id&&c.requirements_hash===coverageFingerprint(need.requirements)&&c.lot_properties_hash===l.propertiesHash&&c.manual_checks_confirmed)}));
+    const candidates=lots.map(l=>({...l,available:remaining.get(l.batchId)??0,qualityAvailable:remainingQuality.get(l.id)??0,levelAvailable:l.stockLevelId?remainingLevels.get(l.stockLevelId):undefined,manualVerified:checks.some(c=>c.need_id===need.id&&c.lot_id===l.id&&c.requirements_hash===coverageFingerprint(need.requirements)&&c.lot_properties_hash===l.propertiesHash&&c.manual_checks_confirmed)}));
     const proposal=proposeMaterialCoverage([need],candidates)[0];
-    for(const s of proposal.selections){remaining.set(s.batchId,quantity((remaining.get(s.batchId)??0)-s.quantity));const levelId=lots.find(l=>l.batchId===s.batchId)?.stockLevelId;if(levelId)remainingLevels.set(levelId,quantity((remainingLevels.get(levelId)??0)-s.quantity));}
+    for(const s of proposal.selections){remainingQuality.set(s.lotId,quantity((remainingQuality.get(s.lotId)??0)-s.quantity));remaining.set(s.batchId,quantity((remaining.get(s.batchId)??0)-s.quantity));const levelId=lots.find(l=>l.batchId===s.batchId)?.stockLevelId;if(levelId)remainingLevels.set(levelId,quantity((remainingLevels.get(levelId)??0)-s.quantity));}
     return {...need,...proposal,purchase:purchaseQuantity(proposal.purchaseMissing,need.catalog?.moq??null,need.catalog?.lot_achat??null)};
   });
   return {enabled:true as const,ofId,number:dossier.number,quantity:dossier.quantity,dossierStatus:dossier.status,technicalVersion:of.revision as string|null,

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   assertOperationalLotQualityEligibility,
+  readOperationalLotQualityEligibility,
   recordDirectLotQualityConsumption,
 } from "./quality-operational-gate.repository";
 
@@ -37,6 +38,15 @@ function queryClient(input: {
 }
 
 describe("operational Quality 360 gate", () => {
+  it("previews the remaining released quantity without taking write locks or granting a write", async () => {
+    const client = queryClient({ released: 80, consumed: 5, committed: 15 });
+    const preview = await readOperationalLotQualityEligibility({client: client as never, lotId: LOT_ID, qty: 100, purpose: "RESERVE"});
+    expect(preview.available).toBe(60);
+    expect(preview.eligibility.blocks).toContainEqual(expect.objectContaining({code: "QTY_NOT_RELEASED"}));
+    expect(client.query.mock.calls.every(([sql]) => !/FOR UPDATE|FOR SHARE/.test(sql))).toBe(true);
+    await expect(assertOperationalLotQualityEligibility({client: client as never, lotId: LOT_ID, qty: 61, purpose: "RESERVE"})).rejects.toMatchObject({code: "QUALITY_NOT_ELIGIBLE"});
+    await expect(assertOperationalLotQualityEligibility({client: client as never, lotId: LOT_ID, qty: 60, purpose: "RESERVE"})).resolves.toBeDefined();
+  });
   it("allows a released, controlled lot and retains immutable evidence ids", async () => {
     const client = queryClient({ released: 10 });
     const decision = await assertOperationalLotQualityEligibility({

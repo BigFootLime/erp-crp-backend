@@ -14,6 +14,7 @@ export type MaterialLot={
   ownerClientId:string|null; dimensions:Record<string,number>; certificates:string[];
   manualVerified:boolean;
   stockLevelId?:string;levelAvailable?:number;
+  qualityAvailable?:number;qualityBlocks?:string[];
 };
 export type MaterialNeed={
   key:string; articleId:string|null; unit:string|null; required:number; requirements:MaterialRequirements;
@@ -22,6 +23,7 @@ export type MaterialNeed={
 const normalized=(value:string|null)=>value?.trim().normalize("NFKC").toLocaleUpperCase("fr-FR")??null;
 export function lotCompatibility(need:MaterialNeed,lot:MaterialLot):string[]{
   const reasons:string[]=[];
+  reasons.push(...(lot.qualityBlocks??[]));
   if(!need.articleId||lot.articleId!==need.articleId)reasons.push("Article incompatible.");
   if(!need.unit||normalized(need.unit)!==normalized(lot.unit))reasons.push("Unité à compléter ou conversion à confirmer.");
   if(lot.quality!=="LIBERE")reasons.push("Lot non libéré par la qualité.");
@@ -46,14 +48,15 @@ export function materialBalance(need:MaterialNeed){
 export function proposeMaterialCoverage(needs:MaterialNeed[],lots:MaterialLot[]){
   const available=new Map(lots.map(l=>[l.batchId,milli(Math.max(0,l.available))]));
   const levels=new Map(lots.filter(l=>l.stockLevelId&&l.levelAvailable!==undefined).map(l=>[l.stockLevelId!,milli(Math.max(0,l.levelAvailable!))]));
+  const released=new Map(lots.filter(l=>l.qualityAvailable!==undefined).map(l=>[l.id,milli(Math.max(0,l.qualityAvailable!))]));
   const ordered=[...lots].sort((a,b)=>a.receivedAt.localeCompare(b.receivedAt)||a.id.localeCompare(b.id)||a.batchId.localeCompare(b.batchId));
   return needs.map(need=>{
     const balance=materialBalance(need),selections:Array<{batchId:string;lotId:string;quantity:number}>=[];
     let missing=milli(balance.missing);
     const candidates=ordered.filter(l=>l.articleId===need.articleId).map(lot=>{
-      const reasons=lotCompatibility(need,lot),free=Math.min(available.get(lot.batchId)??0,lot.stockLevelId?levels.get(lot.stockLevelId)??Infinity:Infinity);
+      const reasons=lotCompatibility(need,lot),free=Math.min(available.get(lot.batchId)??0,lot.stockLevelId?levels.get(lot.stockLevelId)??Infinity:Infinity,released.get(lot.id)??Infinity);
       const take=reasons.length?0:Math.min(missing,free);
-      if(take>0){selections.push({batchId:lot.batchId,lotId:lot.id,quantity:take/1000});available.set(lot.batchId,(available.get(lot.batchId)??0)-take);if(lot.stockLevelId&&levels.has(lot.stockLevelId))levels.set(lot.stockLevelId,levels.get(lot.stockLevelId)!-take);missing-=take;}
+      if(take>0){selections.push({batchId:lot.batchId,lotId:lot.id,quantity:take/1000});available.set(lot.batchId,(available.get(lot.batchId)??0)-take);if(lot.stockLevelId&&levels.has(lot.stockLevelId))levels.set(lot.stockLevelId,levels.get(lot.stockLevelId)!-take);if(released.has(lot.id))released.set(lot.id,released.get(lot.id)!-take);missing-=take;}
       return {lot,reasons,available:free/1000,proposed:take/1000};
     });
     return {...balance,key:need.key,candidates,selections,purchaseMissing:missing/1000};

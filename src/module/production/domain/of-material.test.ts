@@ -3,6 +3,17 @@ import {materialPropertiesFingerprint,materialBalance,proposeMaterialCoverage,lo
 const need:MaterialNeed={key:"n",articleId:"a",unit:"u",required:100,reserved:0,consumed:0,expected:0,receivedBlocked:0,requirements:{grade:null,condition:null,ownerClientId:null,dimensions:{},certificates:[],manualChecks:[]}};
 const lot:MaterialLot={id:"l",batchId:"b",articleId:"a",code:"LOT-1",unit:"u",quality:"LIBERE",available:60,receivedAt:"2026-09-01",grade:null,condition:null,ownerClientId:null,dimensions:{},certificates:[],manualVerified:false};
 describe("Material coverage",()=>{
+  it("shares a finite quality release across locations and needs for the same lot",()=>{
+    const result=proposeMaterialCoverage([{...need,required:50},{...need,key:"second",required:50}],[{...lot,qualityAvailable:70},{...lot,batchId:"b2",qualityAvailable:70}]);
+    expect(result[0].selections.map(s=>s.quantity)).toEqual([50]);
+    expect(result[1].selections.map(s=>s.quantity)).toEqual([10,10]);
+    expect(result[1].purchaseMissing).toBe(30);
+  });
+  it("excludes a quality-blocked lot before asking the operator to confirm",()=>{
+    const result=proposeMaterialCoverage([need],[{...lot,qualityAvailable:60,qualityBlocks:["Contrôle obligatoire en attente."]}])[0];
+    expect(result.selections).toEqual([]);
+    expect(result.candidates[0].reasons).toContain("Contrôle obligatoire en attente.");
+  });
   it("keeps evidence stable after JSONB reorders nested keys",()=>{expect(materialPropertiesFingerprint({unit:"u",properties:{dimensions:{diameter:25,length:35},grade:"6082"}})).toBe(materialPropertiesFingerprint({properties:{grade:"6082",dimensions:{length:35,diameter:25}},unit:"u"}));});
   it("respects reservations recorded at location level across distinct batches",()=>{const result=proposeMaterialCoverage([need],[{...lot,stockLevelId:"s",levelAvailable:70},{...lot,id:"l2",batchId:"b2",stockLevelId:"s",levelAvailable:70}])[0];expect(result.selections.map(s=>s.quantity)).toEqual([60,10]);expect(result.purchaseMissing).toBe(30);});
   it("reserves 60 and buys 40, or only 15 when 25 are already assigned",()=>{expect(proposeMaterialCoverage([need],[lot])[0].purchaseMissing).toBe(40);expect(proposeMaterialCoverage([{...need,expected:25}],[lot])[0].purchaseMissing).toBe(15);});
