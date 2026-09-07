@@ -59,3 +59,9 @@ La preparation distingue maintenant les operations CN (tournage, fraisage, repri
 Les motifs sont rapportes par designation d'operation dans la rubrique Gamme. Le snapshot conserve les champs originaux et la generation reutilise ses jointures optionnelles existantes. Cette correction ne cree aucun creneau, n'affecte aucune ressource et ne remplace pas un delai externe inconnu par une promesse. Le moteur de simulation continue de refuser une tache dont la duree reste absente ou nulle. La connexion des delais externes au planning doit etre verifiee dans la recette dediee.
 
 Verification : 36 tests de regles de preparation, dont operations manuelles, qualification CN, temps negatifs/non finis et distinction des temps externes. Aucun changement de schema ni mutation de la base de recette par script.
+
+## Correction de copie d'indice - #734 (7 septembre 2026)
+
+La creation d'une revision technique utilise desormais la meme copie des operations que la revision d'une gamme. Tous les attributs metier non generes suivent l'operation : programme, famille machine, postes, references de taux, temps persistants et finitions. Seuls l'identite, la gamme cible et les traces de creation/ecriture changent. Les liens de finition pointent sur la nouvelle operation. L'ensemble reste dans la transaction et le nouvel indice reste brouillon. Ni document GED ni approbation qualite n'est attribue automatiquement a une nouvelle definition.
+
+Anomalie reproduite manuellement sur TEST-PL-001 : perte du programme O9101 et de la famille T a la copie avant correction. Verification ciblee : 21 tests (copie partagee, versions et gammes) et TypeScript ; poursuite de la recette par l'interface sur cerp_test.

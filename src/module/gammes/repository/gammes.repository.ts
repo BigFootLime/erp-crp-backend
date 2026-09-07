@@ -204,6 +204,68 @@ async function copyableColumns(
   return res.rows.map((row) => row.column_name)
 }
 
+/** Shared by gamme revision and technical-index revision; preserve every business column. */
+export async function copyGammeOperationsTx(tx: Pick<PoolClient, "query">, sourceGammeId: string, targetGammeId: string, userId: number): Promise<number> {
+const opColumns = await copyableColumns(tx, "pieces_techniques_operations", [
+  "id",
+  "gamme_id",
+  "created_at",
+  "updated_at",
+  "created_by",
+  "updated_by",
+])
+const opColumnList = opColumns.map((c) => `"${c}"`).join(", ")
+const copiedOps = await tx.query<{ new_id: string; old_id: string }>(
+  `WITH copied AS (
+     INSERT INTO public.pieces_techniques_operations
+       (gamme_id, ${opColumnList}, created_by, updated_by)
+     SELECT $2::uuid, ${opColumns.map((c) => `o."${c}"`).join(", ")}, $3, $3
+       FROM public.pieces_techniques_operations o
+      WHERE o.gamme_id = $1
+      ORDER BY o.ordre ASC, o.phase ASC, o.created_at ASC
+     RETURNING id::text AS new_id, ordre, phase
+   )
+   SELECT c.new_id,
+          (SELECT o.id::text
+             FROM public.pieces_techniques_operations o
+            WHERE o.gamme_id = $1 AND o.ordre = c.ordre AND o.phase IS NOT DISTINCT FROM c.phase
+            LIMIT 1) AS old_id
+     FROM copied c`,
+  [sourceGammeId, targetGammeId, userId]
+)
+
+// Liens de finition : chaque ligne suit SON opération dupliquée. Une
+// finition orpheline serait pire qu'absente.
+const finitionsTable = await tx.query<{ present: boolean }>(
+  `SELECT to_regclass('public.gamme_operation_finitions') IS NOT NULL AS present`
+)
+if (finitionsTable.rows[0]?.present) {
+  const finitionColumns = await copyableColumns(tx, "gamme_operation_finitions", [
+    "id",
+    "gamme_id",
+    "gamme_operation_id",
+    "created_at",
+    "updated_at",
+    "created_by",
+    "updated_by",
+  ])
+  const finitionList = finitionColumns.map((c) => `"${c}"`).join(", ")
+  for (const pair of copiedOps.rows) {
+    if (!pair.old_id) continue
+    await tx.query(
+      `INSERT INTO public.gamme_operation_finitions
+         (gamme_id, gamme_operation_id, ${finitionList}, created_by, updated_by)
+       SELECT $2::uuid, $3::uuid, ${finitionColumns.map((c) => `f."${c}"`).join(", ")}, $4, $4
+         FROM public.gamme_operation_finitions f
+        WHERE f.gamme_operation_id = $1::uuid`,
+      [pair.old_id, targetGammeId, pair.new_id, userId]
+    )
+  }
+}
+
+  return copiedOps.rowCount ?? 0
+}
+
 export type GammeRevisionResult = { gamme: GammeRow; operations_copied: number; replayed: boolean }
 
 /**
@@ -323,72 +385,17 @@ export async function repoCreateGammeRevision(
     )
     const created = createdRes.rows[0]
 
-    const opColumns = await copyableColumns(client, "pieces_techniques_operations", [
-      "id",
-      "gamme_id",
-      "created_at",
-      "updated_at",
-      "created_by",
-      "updated_by",
-    ])
-    const opColumnList = opColumns.map((c) => `"${c}"`).join(", ")
-    const copiedOps = await client.query<{ new_id: string; old_id: string }>(
-      `WITH copied AS (
-         INSERT INTO public.pieces_techniques_operations
-           (gamme_id, ${opColumnList}, created_by, updated_by)
-         SELECT $2::uuid, ${opColumns.map((c) => `o."${c}"`).join(", ")}, $3, $3
-           FROM public.pieces_techniques_operations o
-          WHERE o.gamme_id = $1
-          ORDER BY o.ordre ASC, o.phase ASC, o.created_at ASC
-         RETURNING id::text AS new_id, ordre, phase
-       )
-       SELECT c.new_id,
-              (SELECT o.id::text
-                 FROM public.pieces_techniques_operations o
-                WHERE o.gamme_id = $1 AND o.ordre = c.ordre AND o.phase IS NOT DISTINCT FROM c.phase
-                LIMIT 1) AS old_id
-         FROM copied c`,
-      [gammeId, created.id, audit.user_id]
-    )
-
-    // Liens de finition : chaque ligne suit SON opération dupliquée. Une
-    // finition orpheline serait pire qu'absente.
-    const finitionsTable = await client.query<{ present: boolean }>(
-      `SELECT to_regclass('public.gamme_operation_finitions') IS NOT NULL AS present`
-    )
-    if (finitionsTable.rows[0]?.present) {
-      const finitionColumns = await copyableColumns(client, "gamme_operation_finitions", [
-        "id",
-        "gamme_id",
-        "gamme_operation_id",
-        "created_at",
-        "updated_at",
-        "created_by",
-        "updated_by",
-      ])
-      const finitionList = finitionColumns.map((c) => `"${c}"`).join(", ")
-      for (const pair of copiedOps.rows) {
-        if (!pair.old_id) continue
-        await client.query(
-          `INSERT INTO public.gamme_operation_finitions
-             (gamme_id, gamme_operation_id, ${finitionList}, created_by, updated_by)
-           SELECT $2::uuid, $3::uuid, ${finitionColumns.map((c) => `f."${c}"`).join(", ")}, $4, $4
-             FROM public.gamme_operation_finitions f
-            WHERE f.gamme_operation_id = $1::uuid`,
-          [pair.old_id, created.id, pair.new_id, audit.user_id]
-        )
-      }
-    }
+    const operationsCopied = await copyGammeOperationsTx(client, gammeId, created.id, audit.user_id)
 
     await insertAudit(client, audit, "gammes.revision.create", "gamme", created.id, {
       source_gamme_id: gammeId,
       source_statut: source.statut,
       piece_technique_version_id: source.piece_technique_version_id,
-      operations_copied: copiedOps.rowCount ?? 0,
+      operations_copied: operationsCopied,
     })
 
     await client.query("COMMIT")
-    return { gamme: created, operations_copied: copiedOps.rowCount ?? 0, replayed: false }
+    return { gamme: created, operations_copied: operationsCopied, replayed: false }
   } catch (e) {
     await client.query("ROLLBACK").catch(() => {})
     throw e
