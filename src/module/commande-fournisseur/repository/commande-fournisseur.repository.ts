@@ -201,7 +201,7 @@ export function sha256Hex(payload: string): string {
   return crypto.createHash("sha256").update(payload, "utf8").digest("hex");
 }
 
-async function insertAuditLog(
+export async function insertAuditLog(
   tx: DbQueryer,
   audit: AuditContext,
   entry: {
@@ -253,7 +253,7 @@ function isPgUniqueViolation(err: unknown): boolean {
 }
 
 /** Jeton de concurrence optimiste : représentation ::text exacte (pattern affaire #169). */
-function assertOptimisticToken(expected: string | undefined, current: string | null) {
+export function assertOptimisticToken(expected: string | undefined, current: string | null) {
   if (expected && current && expected !== current) {
     throw new HttpError(
       409,
@@ -276,7 +276,7 @@ type HeaderLockRow = {
   date_promesse: string | null;
 };
 
-async function lockHeader(tx: DbQueryer, id: string): Promise<HeaderLockRow> {
+export async function lockHeader(tx: DbQueryer, id: string): Promise<HeaderLockRow> {
   const res = await tx.query<HeaderLockRow>(
     `SELECT id, code, statut, fournisseur_id, devise, version_document, date_promesse::text,
             frais_port_ht::text, tva_frais_pct::text, updated_at::text AS updated_at_token
@@ -291,7 +291,7 @@ async function lockHeader(tx: DbQueryer, id: string): Promise<HeaderLockRow> {
 }
 
 /** Recalcule et persiste les totaux serveur à partir des lignes ACTIVE (source unique). */
-async function recomputeTotauxTx(tx: DbQueryer, commandeId: string): Promise<void> {
+export async function recomputeTotauxTx(tx: DbQueryer, commandeId: string): Promise<void> {
   const lignes = await tx.query<{
     quantite: string;
     prix_unitaire_ht: string;
@@ -338,7 +338,7 @@ type FournisseurRow = {
   actif: boolean | null;
 };
 
-async function fetchFournisseurMini(tx: DbQueryer, fournisseurId: string): Promise<FournisseurMini> {
+export async function fetchFournisseurMini(tx: DbQueryer, fournisseurId: string): Promise<FournisseurMini> {
   const res = await tx.query<FournisseurRow>(
     `SELECT id, COALESCE(code, code_fournisseur) AS code, COALESCE(nom, raison_sociale) AS nom, status, actif
        FROM public.fournisseurs WHERE id = $1::uuid`,
@@ -349,7 +349,7 @@ async function fetchFournisseurMini(tx: DbQueryer, fournisseurId: string): Promi
   return { id: row.id, code: row.code, nom: row.nom, status: row.status, actif: row.actif };
 }
 
-function assertFournisseurCommandable(f: FournisseurMini) {
+export function assertFournisseurCommandable(f: FournisseurMini) {
   const inactive = f.actif === false || f.status === "archive" || f.status === "inactif";
   if (inactive) {
     throw new HttpError(
@@ -974,7 +974,7 @@ export async function repoCreateCommandeFournisseur(
 
 /* --------------------------------- update draft -------------------------------- */
 
-function assertDraft(statut: CommandeFournisseurStatut) {
+export function assertDraft(statut: CommandeFournisseurStatut) {
   if (statut !== "BROUILLON") {
     throw new HttpError(
       422,
