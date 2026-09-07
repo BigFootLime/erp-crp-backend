@@ -240,6 +240,17 @@ describe("/api/v1/commandes-fournisseurs — création", () => {
 });
 
 describe("/api/v1/commandes-fournisseurs — verrou optimiste & brouillon", () => {
+  it("accepte le jeton PostgreSQL émis par la fiche et conserve le contrôle à la microseconde", async () => {
+    state.header.updated_at_token = "2026-09-07 01:20:30.123456+00";
+    const stale = await request(app).patch(`/api/v1/commandes-fournisseurs/${UUID}`)
+      .send({ expected_updated_at: "2026-09-07 01:20:30.123455+00", note_interne: "maj" });
+    expect(stale.status).toBe(409);
+    expect(stale.body.code).toBe("CONCURRENT_MODIFICATION");
+    const current = await request(app).patch(`/api/v1/commandes-fournisseurs/${UUID}`)
+      .send({ expected_updated_at: state.header.updated_at_token, note_interne: "maj" });
+    expect(current.status).toBe(204);
+  });
+
   it("PATCH avec jeton périmé → 409 CONCURRENT_MODIFICATION", async () => {
     const res = await request(app)
       .patch(`/api/v1/commandes-fournisseurs/${UUID}`)
