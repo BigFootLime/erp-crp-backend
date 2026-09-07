@@ -1,5 +1,6 @@
 // src/module/pieces-techniques/repository/pieces-techniques.repository.ts
 import type { PoolClient } from "pg";
+import { currentDossierTotalsSql } from "./dossier-totals.sql";
 import crypto from "node:crypto";
 import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
@@ -417,6 +418,7 @@ export async function repoListPieceTechniques(filters: ListPiecesTechniquesQuery
       -- #146 : la version applicable porte aussi l'indice et la référence de plan, deux
       -- informations que le préparateur cherchait jusqu'ici en ouvrant chaque fiche.
       SELECT
+        v.id,
         v.code_metier,
         COALESCE(NULLIF(btrim(v.indice_externe_original), ''), NULLIF(btrim(v.indice), '')) AS indice,
         v.plan_reference,
@@ -437,20 +439,7 @@ export async function repoListPieceTechniques(filters: ListPiecesTechniquesQuery
       FROM pieces_techniques_nomenclature
       GROUP BY parent_piece_technique_id
     ) nb ON nb.parent_piece_technique_id = p.id
-    LEFT JOIN (
-      SELECT piece_technique_id,
-             COUNT(*)::int AS operations_count,
-             COALESCE(SUM(cout_mo), 0)::float8 AS cout_mo_total
-      FROM pieces_techniques_operations
-      GROUP BY piece_technique_id
-    ) no ON no.piece_technique_id = p.id
-    LEFT JOIN (
-      SELECT piece_technique_id,
-             COUNT(*)::int AS achats_count,
-             COALESCE(SUM(total_achat_ht), 0)::float8 AS achats_total_ht
-      FROM pieces_techniques_achats
-      GROUP BY piece_technique_id
-    ) na ON na.piece_technique_id = p.id
+    ${currentDossierTotalsSql("p.id", "current_version.id")}
     ${whereSql}
     ORDER BY ${orderBy} ${orderDir}
     LIMIT $${values.length + 1}
@@ -1454,29 +1443,22 @@ export async function repoGetFabricationTree(pieceTechniqueId: string, maxDepth 
       )
       SELECT
         e.*,
-        COALESCE(ops.operations_count, 0)::int AS operations_count,
-        COALESCE(ops.operations_temps_total, 0)::float8 AS operations_temps_total,
-        COALESCE(ops.operations_cout_mo, 0)::float8 AS operations_cout_mo,
-        COALESCE(achats.achats_count, 0)::int AS achats_count,
-        COALESCE(achats.achats_total_ht, 0)::float8 AS achats_total_ht,
-        COALESCE(achats.achats_total_ttc, 0)::float8 AS achats_total_ttc
+        COALESCE(no.operations_count, 0)::int AS operations_count,
+        COALESCE(no.operations_temps_total, 0)::float8 AS operations_temps_total,
+        COALESCE(no.cout_mo_total, 0)::float8 AS operations_cout_mo,
+        COALESCE(na.achats_count, 0)::int AS achats_count,
+        COALESCE(na.achats_total_ht, 0)::float8 AS achats_total_ht,
+        COALESCE(na.achats_total_ttc, 0)::float8 AS achats_total_ttc
       FROM enriched e
       LEFT JOIN LATERAL (
-        SELECT
-          COUNT(*)::int AS operations_count,
-          COALESCE(SUM(temps_total), 0)::float8 AS operations_temps_total,
-          COALESCE(SUM(cout_mo), 0)::float8 AS operations_cout_mo
-        FROM pieces_techniques_operations op
-        WHERE op.piece_technique_id = e.piece_technique_id::uuid
-      ) ops ON TRUE
-      LEFT JOIN LATERAL (
-        SELECT
-          COUNT(*)::int AS achats_count,
-          COALESCE(SUM(total_achat_ht), 0)::float8 AS achats_total_ht,
-          COALESCE(SUM(total_achat_ttc), 0)::float8 AS achats_total_ttc
-        FROM pieces_techniques_achats achat
-        WHERE achat.piece_technique_id = e.piece_technique_id::uuid
-      ) achats ON TRUE
+        SELECT v.id FROM public.piece_technique_versions v
+        WHERE v.piece_technique_id = e.piece_technique_id::uuid
+          AND v.statut <> 'OBSOLETE'
+        ORDER BY CASE WHEN v.statut = 'APPLICABLE' THEN 0 ELSE 1 END,
+          v.version_interne DESC NULLS LAST, v.created_at DESC, v.id DESC
+        LIMIT 1
+      ) current_version ON true
+      ${currentDossierTotalsSql("e.piece_technique_id::uuid", "current_version.id")}
       ORDER BY e.order_path ASC, e.piece_technique_id ASC
     `,
     [pieceTechniqueId, depth]
