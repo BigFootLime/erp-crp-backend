@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg";
+import {assertLegacyMaterialWrite} from "../../stock/repository/of-material-write-guard";
 import crypto from "node:crypto";
 
 import db from "../../../config/database";
@@ -772,8 +773,10 @@ async function insertLigneTx(
   commandeId: string,
   position: number,
   ligne: CreateCommandeBodyDTO["lignes"][number],
-  userId: number
+  userId: number,
+  materialCoverageConfirmed = false
 ): Promise<string> {
+  if(ligne.type==="MATIERE"&&ligne.of_id&&!materialCoverageConfirmed)await assertLegacyMaterialWrite(tx,ligne.of_id,ligne.article_id??null);
   const res = await tx.query<{ id: string }>(
     `INSERT INTO public.commande_fournisseur_ligne (
         commande_id, position, type, article_id, catalogue_id, reference_fournisseur,
@@ -2204,6 +2207,48 @@ export async function repoConfirmPropositions(
 }
 
 /* ----------------------------------- duplication ----------------------------------- */
+
+export type MaterialDraftLine = {
+  needId: string; sourceRef: string; ofId: number; articleId: string; designation: string;
+  supplierId: string; currency: string; destinationId: string | null; unit: string;
+  quantity: number; assigned: number; price: number; due: string | null;
+  requirements: string[]; operation: string;
+};
+/** Called inside the coverage transaction, after reservations and net-shortage checks. */
+export async function createMaterialDraftsTx(tx: PoolClient, lines: MaterialDraftLine[], audit: AuditContext) {
+  const groups = new Map<string, MaterialDraftLine[]>();
+  for (const line of lines) {
+    const key = JSON.stringify([line.supplierId, line.currency, line.destinationId]);
+    groups.set(key, [...(groups.get(key) ?? []), line]);
+  }
+  const commands: Array<{id: string; code: string}> = [];
+  for (const group of groups.values()) {
+    const first = group[0];
+    assertFournisseurCommandable(await fetchFournisseurMini(tx, first.supplierId));
+    const code = await generateCommandeFournisseurCode(tx);
+    const id = (await tx.query<{id:string}>(`INSERT INTO public.commande_fournisseur
+      (code,origine,fournisseur_id,devise,magasin_livraison_id,note_interne,created_by,updated_by)
+      VALUES($1,'RUPTURE_OF',$2::uuid,$3,$4::uuid,'Préparé après confirmation de la couverture matière. À relire avant validation.', $5,$5) RETURNING id`,
+      [code,first.supplierId,first.currency,first.destinationId,audit.user_id])).rows[0].id;
+    for (const [index,line] of group.entries()) {
+      const lineId = await insertLigneTx(tx,id,index+1,{
+        type:"MATIERE",article_id:line.articleId,designation:line.designation,unite:line.unit,unite_stock:line.unit,coef_conversion:1,
+        quantite:line.quantity,prix_unitaire_ht:line.price,remise_pct:0,tva_pct:20,frais_ht:0,date_besoin:line.due,
+        of_id:line.ofId,operation_libelle:line.operation,magasin_id:line.destinationId,
+        exigences_qualite:line.requirements.map(valeur=>({type:"SPECIFICATION" as const,valeur,obligatoire:true})),documents_attendus:[],besoins:[],
+      },audit.user_id,true);
+      await tx.query(`INSERT INTO public.commande_fournisseur_ligne_besoin
+        (ligne_id,besoin_type,besoin_ref,besoin_of_id,of_id,quantite_couverte,material_need_id)
+        VALUES($1::uuid,'OF_MATERIAL',$2,$3,$3,$4,$5::uuid)`,[lineId,line.sourceRef,line.ofId,line.assigned,line.needId]);
+    }
+    await recomputeTotauxTx(tx,id);
+    await insertTransitionRow(tx,id,null,"BROUILLON","Couverture matière confirmée",audit.user_id);
+    await queueSupplierPurchaseOrderCreationPdfTx(tx,{commandeId:id,code,actorUserId:audit.user_id});
+    await insertAuditLog(tx,audit,{action:"commandes_fournisseurs.material.draft",entity_type:"commande_fournisseur",entity_id:id,details:{code,needs:group.map(l=>({needId:l.needId,ordered:l.quantity,assigned:l.assigned,surplus:l.quantity-l.assigned}))}});
+    commands.push({id,code});
+  }
+  return commands;
+}
 
 export async function repoDuplicateAsDraft(
   id: string,

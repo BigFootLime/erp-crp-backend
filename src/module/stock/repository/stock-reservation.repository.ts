@@ -1,4 +1,6 @@
 import db from "../../../config/database";
+import type { PoolClient } from "pg";
+import { assertLegacyMaterialWrite } from "./of-material-write-guard";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import { assertOperationalLotQualityEligibility } from "../../qualite/repository/quality-operational-gate.repository";
@@ -181,15 +183,15 @@ export async function repoListStockReservations(
   return { items: rows.rows, total: count.rows[0]?.total ?? 0 };
 }
 
-export async function repoGetStockReservation(id: string): Promise<StockReservationDetail | null> {
-  const reservation = await db.query<StockReservationListItem>(
+export async function repoGetStockReservation(id: string, tx: Pick<PoolClient,"query"> = db): Promise<StockReservationDetail | null> {
+  const reservation = await tx.query<StockReservationListItem>(
     `${RESERVATION_SELECT} WHERE reservation.id = $1::uuid`,
     [id]
   );
   const row = reservation.rows[0] ?? null;
   if (!row) return null;
 
-  const events = await db.query<StockReservationEvent>(
+  const events = await tx.query<StockReservationEvent>(
     `
       SELECT
         id::text AS id,
@@ -212,11 +214,13 @@ export async function repoGetStockReservation(id: string): Promise<StockReservat
 export async function repoCreateStockReservation(
   body: CreateStockReservationBodyDTO,
   audit: AuditContext,
-  idempotencyKey: string
+  idempotencyKey: string,
+  transaction?: PoolClient,
+  materialNeedId?: string
 ): Promise<StockReservationDetail> {
-  const client = await db.connect();
+  const client = transaction ?? await db.connect();
   try {
-    await client.query("BEGIN");
+    if (!transaction) await client.query("BEGIN");
     const command = await beginStockCommand(client, {
       audit,
       idempotency_key: idempotencyKey,
@@ -224,11 +228,13 @@ export async function repoCreateStockReservation(
       request_payload: body,
     });
     if (command.existing) {
-      await client.query("COMMIT");
-      const existing = await repoGetStockReservation(command.existing.resource_id);
+      if (!transaction) await client.query("COMMIT");
+      const existing = await repoGetStockReservation(command.existing.resource_id, client);
       if (!existing) throw new Error("Idempotent reservation receipt points to a missing reservation");
       return existing;
     }
+
+    if(body.source.source_type==="OF"&&!materialNeedId)await assertLegacyMaterialWrite(client,body.source.of_id,body.article_id);
 
     const article = await client.query<{ stock_managed: boolean; lot_tracking: boolean }>(
       `SELECT stock_managed, lot_tracking FROM public.articles WHERE id = $1::uuid`,
@@ -371,6 +377,7 @@ export async function repoCreateStockReservation(
     );
     const reservationId = inserted.rows[0]?.id;
     if (!reservationId) throw new Error("Failed to create stock reservation");
+    if(materialNeedId)await client.query("UPDATE public.stock_reservations SET material_need_id=$2::uuid WHERE id=$1::uuid",[reservationId,materialNeedId]);
 
     if (qualityDecision) {
       await repoInsertAuditLog({
@@ -406,20 +413,20 @@ export async function repoCreateStockReservation(
         qty_reserved: body.qty,
       },
     });
-    await client.query("COMMIT");
+    if (!transaction) await client.query("COMMIT");
 
-    const out = await repoGetStockReservation(reservationId);
+    const out = await repoGetStockReservation(reservationId, client);
     if (!out) throw new Error("Failed to reload stock reservation");
     return out;
   } catch (error) {
-    await client.query("ROLLBACK");
+    if (!transaction) await client.query("ROLLBACK");
     const pgCode = (error as { code?: unknown })?.code;
     if (pgCode === "23503") {
       throw new HttpError(409, "INVALID_SOURCE_REFERENCE", "Reservation source does not exist");
     }
     throw error;
   } finally {
-    client.release();
+    if (!transaction) client.release();
   }
 }
 
