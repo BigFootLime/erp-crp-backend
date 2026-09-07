@@ -535,6 +535,9 @@ export async function repoCreateNextVersion(
   const client = await db.connect()
   try {
     await client.query("BEGIN")
+    // Les rangs de nomenclature sont uniques par pièce, toutes versions confondues.
+    // Même verrou que les ajouts/modifications de composants, avant toute allocation.
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('piece-bom:' || $1::text, 0))", [pieceTechniqueId])
     const src = await client.query<{ id: string; plan_reference: string | null; matiere_prevue: string | null; manufacturing_mode: "SIMPLE" | "ASSEMBLY"; assembly_supply_strategy: "MAKE_TO_ORDER" | "INTERNAL_CONTRACT" }>(
       `SELECT id::text AS id, plan_reference, matiere_prevue, manufacturing_mode, assembly_supply_strategy FROM public.piece_technique_versions
        WHERE id = $1 AND piece_technique_id = $2`,
@@ -611,11 +614,18 @@ export async function repoCreateNextVersion(
       `INSERT INTO public.pieces_techniques_nomenclature
         (parent_piece_technique_id, parent_piece_technique_version_id, child_piece_technique_id,
          child_piece_technique_version_id, child_article_id, rang, quantite, repere, designation)
-       SELECT parent_piece_technique_id, $2::uuid, child_piece_technique_id,
-              child_piece_technique_version_id, child_article_id, rang, quantite, repere, designation
-         FROM public.pieces_techniques_nomenclature
-        WHERE parent_piece_technique_id = $1::uuid
-          AND parent_piece_technique_version_id = $3::uuid`,
+       SELECT n.parent_piece_technique_id, $2::uuid, n.child_piece_technique_id,
+              n.child_piece_technique_version_id, n.child_article_id,
+              (r.max_rang + 10 * row_number() OVER (ORDER BY n.rang, n.id))::integer,
+              n.quantite, n.repere, n.designation
+         FROM public.pieces_techniques_nomenclature n
+         CROSS JOIN (
+           SELECT COALESCE(MAX(rang), 0)::bigint AS max_rang
+             FROM public.pieces_techniques_nomenclature
+            WHERE parent_piece_technique_id = $1::uuid
+         ) r
+        WHERE n.parent_piece_technique_id = $1::uuid
+          AND n.parent_piece_technique_version_id = $3::uuid`,
       [pieceTechniqueId, row.id, sourceVersionId]
     )
     copied.version_nomenclature_lines = copiedBom.rowCount ?? 0
@@ -631,7 +641,9 @@ export async function repoCreateNextVersion(
     return { ...row, copied }
   } catch (e) {
     await client.query("ROLLBACK").catch(() => {})
-    if ((e as { code?: string })?.code === "23505") throw new HttpError(409, "CONFLICT", "Cet indice existe déjà pour cette pièce")
+    if ((e as { code?: string })?.code === "23505") {
+      throw new HttpError(409, "CONFLICT", "Une donnée de la nouvelle version entre en conflit avec une donnée existante. Actualisez les indices avant de réessayer.")
+    }
     throw e
   } finally {
     client.release()
