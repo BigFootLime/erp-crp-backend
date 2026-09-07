@@ -103,7 +103,7 @@ export async function getOfMaterial(ofId:number){
   try{await tx.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");const result=await materialWorkflowEnabled(tx)?await readMaterialTx(tx,ofId):{enabled:false as const};await tx.query("COMMIT");return result;}
   catch(error){await tx.query("ROLLBACK");throw error;}finally{tx.release();}
 }
-async function materialCommand<T>(ofId:number,type:string,body:{expectedVersion:string;idempotencyKey:string},audit:AuditContext,action:(tx:PoolClient,current:Awaited<ReturnType<typeof readMaterialTx>>)=>Promise<T>){
+async function materialCommand<T>(ofId:number,type:string,body:{expectedVersion:string;idempotencyKey:string;sourceRef?:string},audit:AuditContext,action:(tx:PoolClient,current:Awaited<ReturnType<typeof readMaterialTx>>)=>Promise<T>){
   return withRealtimeOutboxTransaction(await pool.connect(),async tx=>{
     await tx.query("SELECT revision FROM public.planning_central_settings WHERE singleton FOR UPDATE");
     await tx.query("SELECT id FROM public.ordres_fabrication WHERE id=$1 FOR UPDATE",[ofId]);
@@ -122,7 +122,7 @@ async function materialCommand<T>(ofId:number,type:string,body:{expectedVersion:
 }
 
 export async function configureOfMaterial(ofId:number,sourceRef:string,body:{expectedVersion:string;idempotencyKey:string;configuration:NeedConfiguration},audit:AuditContext){
-  return materialCommand(ofId,"CONFIGURE",body,audit,async(tx,current)=>{
+  return materialCommand(ofId,"CONFIGURE",{...body,sourceRef},audit,async(tx,current)=>{
     const need=current.needs.find(n=>n.key===sourceRef),c=body.configuration;
     if(!need||!current.technicalVersion||!current.technicalHash)throw new HttpError(409,"MATERIAL_DEFINITION_REQUIRED","La matière doit être définie dans la version technique figée.");
     if(!current.operations.some(o=>o.id===c.operationId))throw new HttpError(422,"MATERIAL_OPERATION_INVALID","Choisissez une opération de cet OF.");
