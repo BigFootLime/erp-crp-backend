@@ -49,6 +49,7 @@ export type PreparationFacts = {
   required_documents_missing: number;
   routing_count: number;
   invalid_operations: number;
+  operation_issues?: string[];
   component_count: number;
   invalid_components: number;
   quality_plan_id: string | null;
@@ -58,6 +59,32 @@ export type PreparationFacts = {
   stock_review_current: boolean;
   sheet_current: boolean;
 };
+
+export type PreparationOperation = {
+  designation: string;
+  type_operation?: string | null;
+  cf_id: string | null;
+  machine_family_code: string | null;
+  tp: number;
+  tf_unit: number;
+};
+
+/** Preparation proves a route, not an assigned slot. Manual work uses a poste;
+ * external lead time is not a productive CNC cycle and may still be unknown. */
+export function preparationOperationIssues(operation: PreparationOperation): string[] {
+  const issues: string[] = [];
+  const type = operation.type_operation;
+  const cnc = !type || ["TOURNAGE", "FRAISAGE", "REPRISE"].includes(type);
+  if (!operation.designation?.trim()) issues.push("Désignation manquante");
+  if (cnc && !operation.cf_id) issues.push("Centre de frais manquant");
+  if (cnc && !operation.machine_family_code) issues.push("Famille machine manquante");
+  const setup = Number(operation.tp), cycle = Number(operation.tf_unit);
+  if (!Number.isFinite(setup) || !Number.isFinite(cycle) || setup < 0 || cycle < 0)
+    issues.push("Temps invalide");
+  else if (type !== "SOUS_TRAITANCE" && setup + cycle <= 0)
+    issues.push("Temps de préparation ou de fabrication requis");
+  return issues;
+}
 
 /** Stable nested-object order; arrays preserve the domain order of phases and allocations. */
 export function sourceHash(value: unknown): string {
@@ -172,7 +199,7 @@ export function evaluatePreparation(f: PreparationFacts): PreparationItem[] {
     "routing",
     "Gamme",
     f.routing_count > 0 && f.invalid_operations === 0,
-    "Gamme applicable, opérations, ressources et temps renseignés.",
+    f.operation_issues?.length ? f.operation_issues.join(" ; ") : "Gamme applicable, opérations, ressources et temps renseignés.",
   );
   add(
     "quality",
