@@ -22,6 +22,29 @@ async function expectCode(row: Record<string, unknown>, code: string) {
 }
 
 describe("planning machine qualification invariant", () => {
+  it.each(["DECOUPE", "CONTROLE", "LAVAGE", "EMBALLAGE", "AUTRE"])("accepts an explicitly assigned autonomous poste for %s", async (operation_type) => {
+    const tx = queryer({ operation_id: operationId, operation_type, required_machine_family_code: null,
+      machine_id: null, assigned_poste_id: "poste-1", selected_poste_id: "poste-1", poste_active: true });
+    await expect(assertOperationResourceCompatible({ tx, of_operation_id: operationId,
+      resource: { machine_id: null, poste_id: "poste-1" } })).resolves.toBeUndefined();
+  });
+
+  it.each([
+    { selected_poste_id: "poste-2" }, { poste_active: false }, { assigned_poste_id: null }, { machine_id: machineId }, { operation_machine_id: machineId },
+  ])("rejects an unassigned, inactive or machine-backed manual poste: %j", async (override) => {
+    const tx = queryer({ operation_id: operationId, operation_type: "CONTROLE", required_machine_family_code: null,
+      machine_id: null, assigned_poste_id: "poste-1", selected_poste_id: "poste-1", poste_active: true, ...override });
+    await expect(assertOperationResourceCompatible({ tx, of_operation_id: operationId,
+      resource: { machine_id: null, poste_id: "poste-1" } })).rejects.toMatchObject({ code: "PLANNING_MANUAL_POSTE_REQUIRED" });
+  });
+
+  it.each(["FRAISAGE", "SOUS_TRAITANCE", null])("never exempts an unknown, CNC or external operation: %s", async (operation_type) => {
+    const tx = queryer({ operation_id: operationId, operation_type, required_machine_family_code: null,
+      machine_id: null, assigned_poste_id: "poste-1", selected_poste_id: "poste-1", poste_active: true });
+    await expect(assertOperationResourceCompatible({ tx, of_operation_id: operationId,
+      resource: { machine_id: null, poste_id: "poste-1" } })).rejects.toMatchObject({ code: "PLANNING_OPERATION_FAMILY_REQUIRED" });
+  });
+
   it("blocks an operation whose required family is not qualified", async () => {
     await expectCode({
       operation_id: operationId,
