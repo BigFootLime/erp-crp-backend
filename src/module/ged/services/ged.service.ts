@@ -13,6 +13,7 @@ import type { PoolClient } from "pg";
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
 import logger from "../../../utils/logger";
+import { repoIsSuperadmin } from "../../access-control/repository/access-control.repository";
 import {
   cleanupUploadsAfterConfirmedRollback,
   cleanupUploadsAfterReconciledNoCommit,
@@ -1076,8 +1077,13 @@ async function transitionVersion(
 
     assertVersionTransition(version.status, target);
 
+    let selfApprovalBySuperadmin = false;
     if (options.requireDistinctApprover) {
-      assertDistinctApprover(version.created_by, actor.id);
+      if (version.created_by === actor.id) {
+        // Même base/transaction que le document, jamais une déclaration client.
+        selfApprovalBySuperadmin = await repoIsSuperadmin(actor.id, tx);
+      }
+      assertDistinctApprover(version.created_by, actor.id, selfApprovalBySuperadmin);
     }
 
     if (target === "APPLICABLE") {
@@ -1099,7 +1105,11 @@ async function transitionVersion(
     }
     if (target === "APPROUVE") {
       await repoInsertApproval(tx, {
-        version_id: version.id, decision: "APPROVED", comment: options.comment ?? null, decided_by: actor.id,
+        version_id: version.id, decision: "APPROVED",
+        comment: selfApprovalBySuperadmin
+          ? ["Approbation de son propre dépôt par un superutilisateur actif (politique GED #758).", options.comment].filter(Boolean).join("\n")
+          : options.comment ?? null,
+        decided_by: actor.id,
       });
     }
 
@@ -1111,7 +1121,8 @@ async function transitionVersion(
       version_id: version.id,
       event_type: eventByTarget[target] ?? "SUBMIT",
       actor_id: actor.id,
-      details: { from: version.status, to: target, version_number: version.version_number },
+      details: { from: version.status, to: target, version_number: version.version_number,
+        ...(target === "APPROUVE" ? { self_approval_by_superadmin: selfApprovalBySuperadmin, approval_policy: "ged-758" } : {}) },
     });
 
     return version.document_id;
