@@ -654,13 +654,14 @@ export async function repoInsertApproval(
 export async function repoAddLink(
   tx: Pick<PoolClient, "query">,
   input: { document_id: string; entity_type: string; entity_id: string; link_role: string | null; created_by: number | null }
-): Promise<void> {
-  await tx.query(
+): Promise<boolean> {
+  const result = await tx.query(
     `INSERT INTO public.ged_document_links (document_id, entity_type, entity_id, link_role, created_by)
      VALUES ($1::uuid, $2, $3, $4, $5)
-     ON CONFLICT (document_id, entity_type, entity_id, link_role) DO NOTHING`,
+     ON CONFLICT (document_id, entity_type, entity_id, link_role) DO NOTHING RETURNING id`,
     [input.document_id, input.entity_type, input.entity_id, input.link_role, input.created_by]
   );
+  return (result.rowCount ?? 0) > 0;
 }
 
 /* -------------------------------------------------------------------------- */

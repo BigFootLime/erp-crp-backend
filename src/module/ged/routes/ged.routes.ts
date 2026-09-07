@@ -26,6 +26,8 @@ router.post("/quarantine/:sessionId/release", requireGedCapability("admin"), con
 router.delete("/quarantine/:sessionId", requireGedCapability("admin"), controller.deleteQuarantine);
 
 /* Documents */
+router.get("/piece-revisions/:revisionId/reusable-documents", requireGedCapability("upload"), controller.listReusableRevisionDocuments);
+router.post("/documents/:id/revision-links", requireGedCapability("upload"), controller.reuseRevisionDocument);
 router.get("/documents", requireGedCapability("read"), controller.listDocuments);
 router.post("/documents", requireGedCapability("upload"), upload.single("file"), controller.postDocument);
 router.get("/documents/:id", requireGedCapability("read"), controller.getDocument);

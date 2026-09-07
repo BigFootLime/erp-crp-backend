@@ -1,6 +1,7 @@
 import { resolveAccessProfile } from "../../access-control/services/access-control.service";
 import { HttpError } from "../../../utils/httpError";
 import { repoInternalListDocumentParentLinks, repoInternalParentLinkExists } from "../repository/ged.repository";
+import { repoResolveRevisionBusinessParent } from "../repository/ged-revision-links.repository";
 
 type ParentIdentity = "text" | "integer" | "uuid";
 type ParentPolicy = Readonly<{ moduleKey: string; canonicalType: string; identity: ParentIdentity }>;
@@ -65,6 +66,11 @@ function canonicalParentId(value: string, identity: ParentIdentity): string | nu
  */
 export async function assertGedVersionParentReadable(actorUserId: number, documentId: string): Promise<{ moduleKey: string; entityType: string; entityId: string }> {
   const links = await repoInternalListDocumentParentLinks(documentId);
+  if (links.length > 1 && links.every(link => link.entity_type === "PIECE_TECHNIQUE_VERSION" && UUID.test(link.entity_id))) {
+    const pieceId = await repoResolveRevisionBusinessParent(links.map(link => link.entity_id));
+    if (!pieceId) opaqueNotFound();
+    return assertGedParentLinkWritable(actorUserId, { entity_type: "PIECE_TECHNIQUE", entity_id: pieceId });
+  }
   if (links.length !== 1) opaqueNotFound();
   const link = links[0];
   const policy = policyFor(link.entity_type);
