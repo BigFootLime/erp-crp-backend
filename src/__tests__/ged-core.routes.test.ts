@@ -79,6 +79,15 @@ beforeEach(() => {
 });
 
 describe("GED — RBAC des routes", () => {
+  it("refuse la réutilisation à un rôle lecture seule et valide le corps avant toute écriture", async () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    const denied = await request(app).post(`/api/v1/ged/documents/${id}/revision-links`).set("x-test-role", "Atelier").send({});
+    expect(denied.status).toBe(403);
+    const invalid = await request(app).post(`/api/v1/ged/documents/${id}/revision-links`).send({ revision_id: id, expected_version_id: id, link_role: "PLAN_CLIENT", reason: " " });
+    expect(invalid.status).toBe(400);
+    expect(mocks.poolConnect).not.toHaveBeenCalled();
+    assertNoPathLeak(invalid.body);
+  });
   it("refuse la lecture à un rôle non habilité", async () => {
     const res = await request(app).get("/api/v1/ged/classes").set("x-test-role", "stagiaire-externe");
     expect(res.status).toBe(403);

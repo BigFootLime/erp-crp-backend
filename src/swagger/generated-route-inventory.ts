@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "d241b68ff97aa218426a8b7555f5d283c4e062dcdee8a3899d6395000a267049";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "e600db3650234753fe6aa03265cb9f5a3d032245f398c12d058c1c67dfaaeeb2";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -6521,7 +6521,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/ged/documents",
-    "source": "src/module/ged/routes/ged.routes.ts:29",
+    "source": "src/module/ged/routes/ged.routes.ts:31",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -6538,7 +6538,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/ged/documents",
-    "source": "src/module/ged/routes/ged.routes.ts:30",
+    "source": "src/module/ged/routes/ged.routes.ts:32",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -6556,7 +6556,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/ged/documents/{id}",
-    "source": "src/module/ged/routes/ged.routes.ts:31",
+    "source": "src/module/ged/routes/ged.routes.ts:33",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -6573,7 +6573,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/ged/documents/{id}/history",
-    "source": "src/module/ged/routes/ged.routes.ts:32",
+    "source": "src/module/ged/routes/ged.routes.ts:34",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -6589,8 +6589,25 @@ export const GENERATED_ROUTE_INVENTORY = [
   },
   {
     "method": "post",
+    "path": "/ged/documents/{id}/revision-links",
+    "source": "src/module/ged/routes/ged.routes.ts:30",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireGedCapability(upload)",
+      "controller.reuseRevisionDocument"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireGedCapability(upload)"
+    ]
+  },
+  {
+    "method": "post",
     "path": "/ged/documents/{id}/versions",
-    "source": "src/module/ged/routes/ged.routes.ts:33",
+    "source": "src/module/ged/routes/ged.routes.ts:35",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -6620,6 +6637,23 @@ export const GENERATED_ROUTE_INVENTORY = [
     "rbac": [
       "moduleAccessGate",
       "requireGedCapability(read)"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/ged/piece-revisions/{revisionId}/reusable-documents",
+    "source": "src/module/ged/routes/ged.routes.ts:29",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireGedCapability(upload)",
+      "controller.listReusableRevisionDocuments"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireGedCapability(upload)"
     ]
   },
   {
@@ -6710,7 +6744,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/ged/versions/{versionId}/approve",
-    "source": "src/module/ged/routes/ged.routes.ts:42",
+    "source": "src/module/ged/routes/ged.routes.ts:44",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -6727,7 +6761,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/ged/versions/{versionId}/content",
-    "source": "src/module/ged/routes/ged.routes.ts:47",
+    "source": "src/module/ged/routes/ged.routes.ts:49",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -6744,7 +6778,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/ged/versions/{versionId}/obsolete",
-    "source": "src/module/ged/routes/ged.routes.ts:44",
+    "source": "src/module/ged/routes/ged.routes.ts:46",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -6761,7 +6795,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/ged/versions/{versionId}/publish",
-    "source": "src/module/ged/routes/ged.routes.ts:43",
+    "source": "src/module/ged/routes/ged.routes.ts:45",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -6778,7 +6812,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/ged/versions/{versionId}/submit",
-    "source": "src/module/ged/routes/ged.routes.ts:41",
+    "source": "src/module/ged/routes/ged.routes.ts:43",
     "middleware": [
       "anonymous",
       "authenticateToken",
