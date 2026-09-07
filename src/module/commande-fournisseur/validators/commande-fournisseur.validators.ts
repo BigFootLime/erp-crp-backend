@@ -19,6 +19,15 @@ const dateOnly = z
     return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === v;
   }, "Date calendaire invalide");
 const isoDateTime = z.string().datetime({ offset: true });
+// Les fiches et le verrou renvoient updated_at::text avec sa précision PostgreSQL.
+// Valider la forme sans transformer le jeton comparé exactement par le dépôt.
+const revisionToken = z.union([
+  isoDateTime,
+  z.string().max(64)
+    .regex(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{1,6})?[+-]\d{2}(?::\d{2})?$/)
+    .refine((value) => isoDateTime.safeParse(value.replace(" ", "T").replace(/([+-]\d{2})$/, "$1:00")).success,
+      "Jeton de version invalide"),
+]);
 const money = z.number().finite().min(0).max(99_999_999);
 const pct = z.number().finite().min(0).max(100);
 const qty = z.number().finite().gt(0).max(9_999_999);
@@ -189,7 +198,7 @@ export type CreateCommandeBodyDTO = z.infer<typeof createCommandeSchema>["body"]
 export const updateCommandeSchema = z.object({
   body: z
     .object({
-      expected_updated_at: isoDateTime.optional(),
+      expected_updated_at: revisionToken.optional(),
       contact_id: uuid.nullish(),
       adresse_commande_id: uuid.nullish(),
       magasin_livraison_id: uuid.nullish(),
@@ -211,14 +220,14 @@ export const updateCommandeSchema = z.object({
 export type UpdateCommandeBodyDTO = z.infer<typeof updateCommandeSchema>["body"];
 
 export const addLigneSchema = z.object({
-  body: z.object({ ligne: ligneInputSchema, expected_updated_at: isoDateTime.optional() }).strict(),
+  body: z.object({ ligne: ligneInputSchema, expected_updated_at: revisionToken.optional() }).strict(),
 });
 export type AddLigneBodyDTO = z.infer<typeof addLigneSchema>["body"];
 
 export const updateLigneSchema = z.object({
   body: z
     .object({
-      expected_updated_at: isoDateTime.optional(),
+      expected_updated_at: revisionToken.optional(),
       patch: ligneInputSchema
         .innerType()
         .partial()
@@ -229,13 +238,13 @@ export const updateLigneSchema = z.object({
 export type UpdateLigneBodyDTO = z.infer<typeof updateLigneSchema>["body"];
 
 export const deleteLigneSchema = z.object({
-  body: z.object({ expected_updated_at: isoDateTime.optional() }).strict().optional(),
+  body: z.object({ expected_updated_at: revisionToken.optional() }).strict().optional(),
 });
 
 export const reorderLignesSchema = z.object({
   body: z
     .object({
-      expected_updated_at: isoDateTime.optional(),
+      expected_updated_at: revisionToken.optional(),
       ordre: z.array(uuid).min(1).max(200),
     })
     .strict(),
@@ -249,7 +258,7 @@ export const transitionSchema = z.object({
     .object({
       to: commandeFournisseurStatutSchema,
       motif: z.string().trim().min(3).max(1000).optional(),
-      expected_updated_at: isoDateTime.optional(),
+      expected_updated_at: revisionToken.optional(),
       idempotency_key: z.string().trim().min(8).max(120).optional(),
     })
     .strict(),
@@ -262,7 +271,7 @@ export const accuseSchema = z.object({
       reference_fournisseur: shortText,
       date_accuse: isoDateTime.optional(),
       date_promesse: dateOnly.nullish(),
-      expected_updated_at: isoDateTime.optional(),
+      expected_updated_at: revisionToken.optional(),
     })
     .strict(),
 });
@@ -272,7 +281,7 @@ export const generateDocumentSchema = z.object({
   body: z
     .object({
       motif_revision: z.string().trim().min(3).max(500).optional(),
-      expected_updated_at: isoDateTime.optional(),
+      expected_updated_at: revisionToken.optional(),
     })
     .strict()
     .optional(),
