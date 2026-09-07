@@ -1,3 +1,4 @@
+import { copyGammeOperationsTx } from "../../gammes/repository/gammes.repository"
 // src/module/pieces-techniques/repository/versions.repository.ts
 // GPAO B2.1 — repository des versions/indices d'une pièce technique.
 import type { PoolClient } from "pg"
@@ -603,17 +604,7 @@ export async function repoCreateNextVersion(
       if (!copiedGammeId) throw new Error("Impossible de copier la gamme courante de la version source")
       copied.current_gamme = true
 
-      const copiedOperations = await client.query(
-        `INSERT INTO public.pieces_techniques_operations
-          (piece_technique_id, gamme_id, ordre, phase, designation, designation_2, type_operation, machine_id,
-           poste_id, cf_id, tp, tf_unit, qte, coef, taux_horaire, prix, temps_total, cout_mo, consignes)
-         SELECT piece_technique_id, $2::uuid, ordre, phase, designation, designation_2, type_operation, machine_id,
-                poste_id, cf_id, tp, tf_unit, qte, coef, taux_horaire, prix, temps_total, cout_mo, consignes
-           FROM public.pieces_techniques_operations
-          WHERE gamme_id = $1`,
-        [sourceGammeId, copiedGammeId]
-      )
-      copied.gamme_operations = copiedOperations.rowCount ?? 0
+      copied.gamme_operations = await copyGammeOperationsTx(client, sourceGammeId, copiedGammeId, audit.user_id)
     }
 
     const copiedBom = await client.query(
