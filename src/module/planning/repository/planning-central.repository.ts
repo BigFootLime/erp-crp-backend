@@ -87,7 +87,8 @@ WITH operation_rows AS (
 ), version_program_rows AS (
  SELECT t.id,NULL::text AS operation_id,pr.id::text AS programming_id,NULL::bigint AS draft_of_id,
    t.version,t.envelope_minutes,t.earliest_start,t.forecast_start,t.forecast_end,t.locked,t.blockers,t.configuration_key,
-   NULL::bigint,NULL::bigint,NULL::text,pt.code_piece,v.id::text,'Préparer le programme — indice '||v.indice,0::int,
+   NULL::bigint,NULL::bigint,NULL::text,pt.code_piece,v.id::text,
+   'Préparer le programme — indice '||v.indice||' · révision interne '||COALESCE(v.version_interne::text,'non renseignée'),0::int,
    'programming'::text,false,NULL::text,1::numeric,CASE WHEN pr.status='DONE' THEN 1 ELSE 0 END::numeric,
    0::numeric,0::numeric,0::numeric,'person:'||pr.assignee_id::text,t.committed_start,t.committed_end,
    NULL::timestamptz,pr.completed_at,pr.status,'VALIDATED'::text,NULL::text,1::int,
@@ -95,6 +96,9 @@ WITH operation_rows AS (
  FROM public.planning_tasks t JOIN public.piece_version_programming_tasks pr ON pr.id=t.version_programming_id
  JOIN public.piece_technique_versions v ON v.id=pr.piece_technique_version_id
  JOIN public.pieces_techniques pt ON pt.id=v.piece_technique_id
+ WHERE v.statut<>'OBSOLETE' OR t.locked OR t.committed_start IS NOT NULL OR pr.status<>'TODO'
+   OR EXISTS(SELECT 1 FROM public.ordres_fabrication consumer
+     WHERE consumer.piece_technique_version_id=v.id AND consumer.statut::text NOT IN ('ANNULE','TERMINE'))
 ), tasks AS (SELECT * FROM operation_rows UNION ALL SELECT * FROM draft_rows UNION ALL
  SELECT * FROM legacy_program_rows UNION ALL SELECT * FROM version_program_rows)
 SELECT *,count(*) OVER()::int AS total FROM tasks
