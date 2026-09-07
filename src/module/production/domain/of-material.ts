@@ -13,6 +13,7 @@ export type MaterialLot={
   available:number; receivedAt:string; grade:string|null; condition:string|null;
   ownerClientId:string|null; dimensions:Record<string,number>; certificates:string[];
   manualVerified:boolean;
+  stockLevelId?:string;levelAvailable?:number;
 };
 export type MaterialNeed={
   key:string; articleId:string|null; unit:string|null; required:number; requirements:MaterialRequirements;
@@ -44,14 +45,15 @@ export function materialBalance(need:MaterialNeed){
 /** Shared pool is debited as each need is proposed, including unreserved demand. */
 export function proposeMaterialCoverage(needs:MaterialNeed[],lots:MaterialLot[]){
   const available=new Map(lots.map(l=>[l.batchId,milli(Math.max(0,l.available))]));
+  const levels=new Map(lots.filter(l=>l.stockLevelId&&l.levelAvailable!==undefined).map(l=>[l.stockLevelId!,milli(Math.max(0,l.levelAvailable!))]));
   const ordered=[...lots].sort((a,b)=>a.receivedAt.localeCompare(b.receivedAt)||a.id.localeCompare(b.id)||a.batchId.localeCompare(b.batchId));
   return needs.map(need=>{
     const balance=materialBalance(need),selections:Array<{batchId:string;lotId:string;quantity:number}>=[];
     let missing=milli(balance.missing);
     const candidates=ordered.filter(l=>l.articleId===need.articleId).map(lot=>{
-      const reasons=lotCompatibility(need,lot),free=available.get(lot.batchId)??0;
+      const reasons=lotCompatibility(need,lot),free=Math.min(available.get(lot.batchId)??0,lot.stockLevelId?levels.get(lot.stockLevelId)??Infinity:Infinity);
       const take=reasons.length?0:Math.min(missing,free);
-      if(take>0){selections.push({batchId:lot.batchId,lotId:lot.id,quantity:take/1000});available.set(lot.batchId,free-take);missing-=take;}
+      if(take>0){selections.push({batchId:lot.batchId,lotId:lot.id,quantity:take/1000});available.set(lot.batchId,(available.get(lot.batchId)??0)-take);if(lot.stockLevelId&&levels.has(lot.stockLevelId))levels.set(lot.stockLevelId,levels.get(lot.stockLevelId)!-take);missing-=take;}
       return {lot,reasons,available:free/1000,proposed:take/1000};
     });
     return {...balance,key:need.key,candidates,selections,purchaseMissing:missing/1000};
@@ -66,6 +68,11 @@ export function purchaseQuantity(shortage:number,minimum:number|null,pack:number
   return {ordered,assigned:quantity(shortage),surplus:quantity(ordered-shortage)};
 }
 export function coverageFingerprint(value:unknown){return createHash("sha256").update(JSON.stringify(value)).digest("hex");}
+/** JSONB may reorder object keys; evidence must survive that round trip. */
+export function materialPropertiesFingerprint(value:unknown):string{
+  const canonical=(input:unknown):unknown=>Array.isArray(input)?input.map(canonical):input&&typeof input==="object"?Object.fromEntries(Object.entries(input).sort(([a],[b])=>a.localeCompare(b,"en")).map(([key,item])=>[key,canonical(item)])):input;
+  return coverageFingerprint(canonical(value));
+}
 
 export type DebitRule={form:"UNIT"|"BAR"|"SHEET";stockUnit:string;unitsPerBlank:number;kerfPerBlank:number;yieldValidated:boolean};
 export function debitQuantity(rule:DebitRule,blanks:number){

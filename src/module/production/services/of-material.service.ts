@@ -1,1 +1,1 @@
-export {getOfMaterial,configureOfMaterial,confirmOfMaterial} from "../repository/of-material.repository";
+export {getOfMaterial,configureOfMaterial,confirmOfMaterial,verifyOfMaterialLot} from "../repository/of-material.repository";

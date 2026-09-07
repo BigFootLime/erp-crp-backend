@@ -16,7 +16,7 @@ import { authenticateToken } from "../../auth/middlewares/auth.middleware";
 import { HttpError } from "../../../utils/httpError";
 import { roleHasMachineCapability, type MachineCapability } from "../domain/machine-rbac";
 import { roleHasOfCapability, type OfCapability } from "../domain/of-rbac";
-import {readMaterial,configureMaterial,confirmMaterial} from "../controllers/of-material.controller";
+import {readMaterial,configureMaterial,confirmMaterial,verifyMaterialLot} from "../controllers/of-material.controller";
 import {
   archiveMachine,
   archivePoste,
@@ -236,6 +236,7 @@ router.get('/ofs/:id/workbench',requireOfCapability('read'),preparationWorkbench
 router.get('/ofs/:id/dossier',requireOfCapability('read'),readDossier);
 router.get('/ofs/:id/material',requireOfCapability('read'),readMaterial);
 router.post('/ofs/:id/material/:sourceRef/configure',requireOfCapability('read'),configureMaterial);
+router.post('/ofs/:id/material/:sourceRef/verify-lot',requireOfCapability('read'),verifyMaterialLot);
 router.post('/ofs/:id/material/confirm',requireOfCapability('read'),confirmMaterial);
 router.post('/ofs/:id/complete',requireOfCapability('release'),completeDossier);
 router.post('/ofs/:id/workbench/children/synchronize',requireOfCapability('generate'),synchronizePreparationChildren);

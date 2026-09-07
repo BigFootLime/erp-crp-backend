@@ -1,8 +1,10 @@
 import {describe,it,expect} from "vitest";
-import {materialBalance,proposeMaterialCoverage,lotCompatibility,purchaseQuantity,debitQuantity,type MaterialNeed,type MaterialLot} from "./of-material";
+import {materialPropertiesFingerprint,materialBalance,proposeMaterialCoverage,lotCompatibility,purchaseQuantity,debitQuantity,type MaterialNeed,type MaterialLot} from "./of-material";
 const need:MaterialNeed={key:"n",articleId:"a",unit:"u",required:100,reserved:0,consumed:0,expected:0,receivedBlocked:0,requirements:{grade:null,condition:null,ownerClientId:null,dimensions:{},certificates:[],manualChecks:[]}};
 const lot:MaterialLot={id:"l",batchId:"b",articleId:"a",code:"LOT-1",unit:"u",quality:"LIBERE",available:60,receivedAt:"2026-09-01",grade:null,condition:null,ownerClientId:null,dimensions:{},certificates:[],manualVerified:false};
 describe("Material coverage",()=>{
+  it("keeps evidence stable after JSONB reorders nested keys",()=>{expect(materialPropertiesFingerprint({unit:"u",properties:{dimensions:{diameter:25,length:35},grade:"6082"}})).toBe(materialPropertiesFingerprint({properties:{grade:"6082",dimensions:{length:35,diameter:25}},unit:"u"}));});
+  it("respects reservations recorded at location level across distinct batches",()=>{const result=proposeMaterialCoverage([need],[{...lot,stockLevelId:"s",levelAvailable:70},{...lot,id:"l2",batchId:"b2",stockLevelId:"s",levelAvailable:70}])[0];expect(result.selections.map(s=>s.quantity)).toEqual([60,10]);expect(result.purchaseMissing).toBe(30);});
   it("reserves 60 and buys 40, or only 15 when 25 are already assigned",()=>{expect(proposeMaterialCoverage([need],[lot])[0].purchaseMissing).toBe(40);expect(proposeMaterialCoverage([{...need,expected:25}],[lot])[0].purchaseMissing).toBe(15);});
   it("does not reserve or buy again after confirmation",()=>{const result=proposeMaterialCoverage([{...need,reserved:60,expected:40}],[lot])[0];expect(result.purchaseMissing).toBe(0);expect(result.selections).toEqual([]);});
   it("transfers expected to physical and then consumed without creating a new need",()=>{expect(materialBalance({...need,reserved:80,expected:20}).missing).toBe(0);expect(materialBalance({...need,reserved:30,consumed:50,expected:20}).missing).toBe(0);});
