@@ -74,3 +74,10 @@ Activation test 1d7ccba6 : sauvegarde 485a66febffacbbab2eb02115f36dc1e192ebeba12
 - Débit raccordé au stock canonique, à la déclaration par opération et au transfert optionnel dans une transaction commune. Le scénario 20 sur 60 conserve 40 réservés. Les échecs de déclaration et de transfert remontent au propriétaire de la transaction. Formulaire atelier avec proposition relue, quantités et intention de nouvelle tentative conservées.
 - Vérification : 344 tests ciblés réussis (qualité, consommation partielle, orchestration du débit et propriété de transaction) ; compilations TypeScript backend et frontend réussies. Ces tests utilisent des doubles et ne remplacent pas la recette métier ni une preuve de concurrence PostgreSQL réelle.
 - WP-254 actualisé par interface. Recette UI et extensions chutes/corrections, couverture future, bruts client, GED et révisions restent en cours.
+
+
+### Recette 60/40 et démarrage — 8 septembre
+
+CQ-921 : refus UI sans justification, puis libération de 79 u avec justification explicite de recette. OF-852 : réservation confirmée de 60 u et création du brouillon BCF-2026-0925 de 40 u. La découpe affiche 60 utilisables ; le tournage conserve ses blocages programme et transfert.
+
+Le démarrage a révélé deux backstops historiques : programme global SQL puis preuve immuable de libération de l’OF. Le premier est désormais limité à l’opération figée pour un dossier Complet ; la vérification PostgreSQL annulée autorise la découpe et refuse toujours le tournage. Le démarrage effectif enregistre désormais sa portée opération/quantité dans le registre immuable existant of_release_decisions, avant de passer l’OF En cours. Aucun trigger ni contrôle de libération n’est retiré. La poursuite de la recette vérifie ces corrections.

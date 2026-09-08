@@ -1171,9 +1171,20 @@ export async function repoStartExecution(params: {
     // With the material workflow, Complet prepares the dossier and this real,
     // guarded operation start enters fabrication. Legacy dossiers keep their
     // previous explicit-release policy.
-    if (materialAuthorization) await client.query(`UPDATE public.ordres_fabrication
+    if (materialAuthorization) {
+      // Keep the existing immutable manufacturing-entry ledger. This decision
+      // records the operator's first real start and its operation/quantity scope;
+      // it does not authorize every later operation of the OF.
+      await client.query(`INSERT INTO public.of_release_decisions(of_id,decision,override,evidence,decided_by)
+        SELECT o.id,'RELEASED',false,jsonb_build_object('scope','OPERATION_START','pointage_id',$2::text,
+          'operation_authorization',$3::jsonb,'dossier_validation_id',v.id::text),$4
+        FROM public.ordres_fabrication o JOIN public.of_dossier_validations v ON v.of_id=o.id AND v.invalidated_at IS NULL
+        WHERE o.id=$1 AND o.statut IN ('BROUILLON','PLANIFIE')
+        ON CONFLICT(of_id) DO NOTHING`,[params.body.of_id,id,JSON.stringify(materialAuthorization),params.audit.user_id]);
+      await client.query(`UPDATE public.ordres_fabrication
       SET statut='EN_COURS'::public.of_status,date_lancement_reelle=COALESCE(date_lancement_reelle,CURRENT_DATE),updated_at=now(),updated_by=$2
       WHERE id=$1 AND statut IN ('BROUILLON','PLANIFIE','EN_PAUSE')`,[params.body.of_id,params.audit.user_id]);
+    }
 
     if (operation && operation.status !== "RUNNING") {
       await client.query(
