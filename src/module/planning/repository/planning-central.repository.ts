@@ -191,7 +191,8 @@ export async function readCentralDependencies(tx: CentralQuery): Promise<Depende
   const {rows} = await tx.query<Row>(`
     WITH route AS (
       SELECT 'op:'||id::text AS successor_id,'op:'||lag(id) OVER(PARTITION BY of_id ORDER BY phase,id)::text AS predecessor_id
-      FROM public.of_operations WHERE status::text<>'CANCELLED'
+      FROM public.of_operations op WHERE status::text<>'CANCELLED'
+        AND(op.revision_id IS NULL OR EXISTS(SELECT 1 FROM public.of_revisions r WHERE r.id=op.revision_id AND r.statut='ACTIVE'))
     )
     SELECT predecessor_id,successor_id,transfer_quantity,lag_minutes,
       COALESCE((SELECT sum(b.released_quantity) FROM public.production_transfer_batches b
@@ -209,7 +210,10 @@ export async function readCentralDependencies(tx: CentralQuery): Promise<Depende
     FROM public.piece_version_programming_tasks pr
     JOIN public.ordres_fabrication o ON o.piece_technique_version_id=pr.piece_technique_version_id
     JOIN public.of_operations op ON op.of_id=o.id
-    WHERE EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(o.technical_snapshot->'operations','[]')) value
+    WHERE o.technical_snapshot->'preparation_decisions'->'programming'->>'mode'='TASK'
+      AND pr.id::text=o.technical_snapshot->'preparation_decisions'->'programming'->>'task_id'
+      AND(op.revision_id IS NULL OR EXISTS(SELECT 1 FROM public.of_revisions r WHERE r.id=op.revision_id AND r.statut='ACTIVE'))
+      AND EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(o.technical_snapshot->'operations','[]')) value
       WHERE value->>'phase'=op.phase::text AND value->>'type_operation' IN ('FRAISAGE','TOURNAGE','REPRISE'))`);
   return rows.map(r => ({ predecessorId:String(r.predecessor_id),successorId:String(r.successor_id),
     transferQuantity:r.transfer_quantity == null ? null : num(r.transfer_quantity),

@@ -1,7 +1,7 @@
 import {beforeEach,describe,expect,it,vi} from 'vitest';
 const m=vi.hoisted(()=>({query:vi.fn(),connect:vi.fn(),snapshot:vi.fn(),material:vi.fn(),readiness:vi.fn(),event:vi.fn(),release:vi.fn()}));
 vi.mock('../../../config/database',()=>({default:{query:m.query,connect:m.connect}}));
-vi.mock('../repository/planning-central.repository',()=>({readCentralSnapshot:m.snapshot}));
+vi.mock('../repository/planning-central.repository',()=>({readCentralSnapshot:m.snapshot,readCentralDependencies:async()=>[{predecessorId:'program:done',successorId:'op:1'}]}));
 vi.mock('../../production/repository/of-dossier.repository',()=>({materialWorkflowEnabled:async()=>true}));
 vi.mock('../../production/repository/of-material.repository',()=>({readMaterialTx:m.material}));
 vi.mock('../../production/repository/operation-readiness.repository',()=>({readOperationReadinessTx:m.readiness}));
@@ -22,6 +22,7 @@ describe('durable planning projection',()=>{
     const update=m.query.mock.calls.find(([sql])=>sql.includes('SET forecast_start='));
     expect(update?.[1]).toEqual(['op:1',start,'2026-09-14T09:00:00.000Z','[]']);
     expect(m.snapshot.mock.results[0]).toBeDefined();
+    expect(m.snapshot.mock.calls[0][0].includeTaskIds).toContain('program:done');
     expect(m.query.mock.calls.some(([sql])=>/UPDATE public.planning_events|SET committed_|SET.*machine_id/.test(sql))).toBe(false);
     expect(m.query).toHaveBeenCalledWith('COMMIT');expect(m.event).toHaveBeenCalledOnce();
     vi.useRealTimers();

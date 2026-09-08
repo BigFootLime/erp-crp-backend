@@ -1,7 +1,7 @@
 import pool from '../../../config/database';
 import {withRealtimeOutboxTransaction} from '../../../shared/realtime/realtime-outbox-transaction';
 import {enqueueEntityChanged} from '../../../shared/realtime/realtime-outbox.service';
-import {readCentralSnapshot} from '../repository/planning-central.repository';
+import {readCentralSnapshot,readCentralDependencies} from '../repository/planning-central.repository';
 import {materialWorkflowEnabled} from '../../production/repository/of-dossier.repository';
 import {readMaterialTx} from '../../production/repository/of-material.repository';
 import {readOperationReadinessTx} from '../../production/repository/operation-readiness.repository';
@@ -29,7 +29,11 @@ export async function runPlanningForecastOnce(){
       ORDER BY t.id LIMIT 2001`)).rows.map(r=>r.id);
     if(ids.length>2000)throw new HttpError(503,'FORECAST_WINDOW_TOO_DENSE','Calcul trop volumineux.');
     const now=new Date().toISOString(),to=new Date(Date.parse(now)+180*86400000).toISOString();
-    const snapshot=await readCentralSnapshot({from:now,to,limit:10000,includeTaskIds:ids},tx);
+    const dependencies=await readCentralDependencies(tx),included=new Set(ids);
+    let grew=true;
+    while(grew){grew=false;for(const edge of dependencies)if(included.has(edge.successorId)&&!included.has(edge.predecessorId)){included.add(edge.predecessorId);grew=true;}}
+    if(included.size>10000)throw new HttpError(503,'FORECAST_WINDOW_TOO_DENSE','Calcul trop volumineux.');
+    const snapshot=await readCentralSnapshot({from:now,to,limit:10000,includeTaskIds:[...included]},tx);
     if(snapshot.nextCursor)throw new HttpError(503,'FORECAST_WINDOW_TOO_DENSE','Calcul trop volumineux.');
     const activeIds=new Set(ids),ofIds=[...new Set(snapshot.tasks.filter(t=>activeIds.has(t.id)).flatMap(t=>t.ofId?[t.ofId]:[]))];
     const tasks=snapshot.tasks.map(t=>({...t,blockers:[...t.blockers]}));
