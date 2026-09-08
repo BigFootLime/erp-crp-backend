@@ -239,7 +239,7 @@ describe("#274 idempotence", () => {
   });
 
   it("n'exige PAS de clé sur l'aperçu, qui n'écrit rien", async () => {
-    mocks.poolQuery.mockImplementation((sql: string) => {
+    mocks.clientQuery.mockImplementation((sql: string) => {
       if (sql.includes("FROM public.ordres_fabrication o WHERE o.id")) {
         return {
           rows: [{ id: 10, numero: "OF-2026-0010", quantite_lancee: 10, quantite_bonne: 0, quantite_rebut: 0 }],
@@ -266,6 +266,8 @@ describe("#274 idempotence", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.preview_hash).toHaveLength(64);
+    expect(mocks.clientQuery).toHaveBeenCalledWith('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    expect(mocks.clientQuery.mock.calls.some(([sql])=>/^\s*(INSERT|UPDATE|DELETE)/i.test(String(sql)))).toBe(false);
     // L'aperçu annonce explicitement ce qu'il ne fera PAS.
     expect(res.body.warnings.join(" ")).toMatch(/aucune entrée en stock/i);
   });
@@ -780,6 +782,28 @@ describe("#274 référentiel et indicateurs", () => {
 /* Fin d'opération : atomicité et frontières                                  */
 /* -------------------------------------------------------------------------- */
 
+describe('reprise après pause réelle',()=>{
+  it('reprend un segment arrêté par Pause sans compter la pause ni réécrire le segment passé',async()=>{
+    const paused={...executionRow(),status:'DONE',end_ts:'2026-09-08T09:00:00Z',of_id:10,operation_id:OP_ID,operator_user_id:7,machine_id:MACHINE_ID,poste_id:null,activity_code:'PRODUCTION',validated_at:null,submitted_at:null};
+    mocks.poolQuery.mockImplementation(()=>({rows:[paused]}));
+    mocks.clientQuery.mockImplementation((sql:string)=>{
+      if(sql.includes('FROM public.production_pointages')&&sql.includes('FOR UPDATE')&&sql.includes('WHERE id ='))return {rows:[paused]};
+      if(sql.includes('SELECT event_type FROM public.production_pointage_events'))return {rows:[{event_type:'PAUSE'}]};
+      if(sql.includes('FROM public.machines WHERE id'))return {rows:[{status:'ACTIVE'}]};
+      if(sql.includes('FROM public.production_activity_categories'))return {rows:[CATEGORY_ROW]};
+      if(sql.includes('INSERT INTO public.production_pointages'))return {rows:[{id:POINTAGE_ID}]};
+      return {rows:[]};
+    });
+    const response=await request(app).post(`${BASE}/${POINTAGE_ID}/resume`).set('x-test-role',OPERATOR).set('x-test-user-id','7').set('Idempotency-Key',KEY).send({activity_code:'PRODUCTION'});
+    expect(response.status,response.body.message).toBe(200);
+    const statements=mocks.clientQuery.mock.calls.map(([sql])=>String(sql));
+    expect(statements.some(sql=>sql.includes('UPDATE public.production_pointages'))).toBe(false);
+    const insert=statements.find(sql=>sql.includes('INSERT INTO public.production_pointages'));
+    expect(insert).toContain('now(),');
+    expect(insert).not.toContain('p.end_ts,');
+  });
+});
+
 describe("#274 fin d'opération", () => {
   function mockPreviewQueries(target: typeof mocks.poolQuery | typeof mocks.clientQuery) {
     target.mockImplementation((sql: string) => {
@@ -832,7 +856,7 @@ describe("#274 fin d'opération", () => {
   });
 
   it("annonce dans l'aperçu qu'aucune entrée en stock n'est créée", async () => {
-    mockPreviewQueries(mocks.poolQuery);
+    mockPreviewQueries(mocks.clientQuery);
 
     const res = await request(app)
       .post(`${BASE}/operations/finish/preview`)
@@ -847,7 +871,7 @@ describe("#274 fin d'opération", () => {
   });
 
   it("refuse 422 une opération qui n'appartient pas à l'OF indiqué", async () => {
-    mocks.poolQuery.mockImplementation((sql: string) => {
+    mocks.clientQuery.mockImplementation((sql: string) => {
       if (sql.includes("FROM public.ordres_fabrication o WHERE o.id")) {
         return {
           rows: [{ id: 10, numero: "OF-2026-0010", quantite_lancee: 10, quantite_bonne: 0, quantite_rebut: 0 }],
@@ -874,7 +898,7 @@ describe("#274 fin d'opération", () => {
   });
 
   it("refuse 404 un OF inexistant", async () => {
-    mocks.poolQuery.mockResolvedValue({ rows: [] });
+    mocks.clientQuery.mockResolvedValue({ rows: [] });
     const res = await request(app)
       .post(`${BASE}/operations/finish/preview`)
       .set("x-test-role", OPERATOR)

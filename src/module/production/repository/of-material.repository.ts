@@ -26,8 +26,10 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
   const purchases=(of.purchases as Purchase[]).filter(p=>p.type_achat==="MATIERE");
   const saved=(await tx.query<NeedRow>("SELECT * FROM public.of_material_needs WHERE of_id=$1 ORDER BY created_at,id",[ofId])).rows;
   const reservations=(await tx.query(`SELECT r.id::text,r.material_need_id::text,r.article_id::text,r.qty_reserved::float8,r.qty_consumed::float8,r.status,r.row_version,r.lot_id::text,
+    r.stock_batch_id::text,(r.expires_at IS NULL OR r.expires_at>now()) AS unexpired,
     l.lot_status FROM public.stock_reservations r LEFT JOIN public.lots l ON l.id=r.lot_id
-    WHERE(r.of_id=$1 OR(r.source_type='OF' AND r.source_id=$1::text)) AND r.status IN ('ACTIVE','CONSUMED') ORDER BY r.created_at,r.id`,[ofId])).rows;
+    WHERE(r.of_id=$1 OR(r.source_type='OF' AND r.source_id=$1::text)) AND r.status IN ('ACTIVE','CONSUMED')
+      AND(r.status='CONSUMED' OR r.qty_consumed>0 OR r.expires_at IS NULL OR r.expires_at>now()) ORDER BY r.created_at,r.id`,[ofId])).rows;
   // Allocate receipts along promised quantities in the stable allocation order.
   // The same physical receipt can never be subtracted from each recipient.
   const promises=(await tx.query(`WITH allocations AS(
@@ -87,7 +89,7 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
     const expected=promises.filter(b=>b.material_need_id===row?.id||!b.material_need_id&&b.besoin_ref===p.id);
     let required=Number(p.quantite)*dossier.quantity;
     if(row?.debit_rule)required=debitQuantity(row.debit_rule,dossier.quantity);
-    const physical=attached.filter(r=>r.status==="ACTIVE").reduce((sum,r)=>sum+Math.max(0,r.qty_reserved-r.qty_consumed),0);
+    const physical=attached.filter(r=>r.status==="ACTIVE"&&r.unexpired).reduce((sum,r)=>sum+Math.max(0,r.qty_reserved-r.qty_consumed),0);
     const consumed=attached.reduce((sum,r)=>sum+(r.status==="CONSUMED"?r.qty_reserved:r.qty_consumed),0);
     const need:MaterialNeed={key:p.id,articleId:p.article_id,unit:row?.unit??p.unite_prix??article?.unite??null,required,requirements,
       reserved:physical,consumed,expected:expected.reduce((sum,b)=>sum+Math.max(0,b.assigned-b.received),0),receivedBlocked:expected.reduce((sum,b)=>sum+Math.max(0,b.received-b.transferred),0)};
