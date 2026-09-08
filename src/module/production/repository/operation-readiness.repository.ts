@@ -119,7 +119,8 @@ export async function assertMaterialOperationStartTx(tx:PoolClient,ofId:number,o
   await tx.query('SELECT id FROM public.ordres_fabrication WHERE id=$1 FOR UPDATE',[ofId]);
   if(!operationId)throw new HttpError(409,'OPERATION_REQUIRED','Choisissez l’opération à démarrer dans le dossier OF.');
   const reservations=(await tx.query<{lot_id:string}>(`SELECT DISTINCT r.lot_id::text FROM public.stock_reservations r
-    LEFT JOIN public.of_material_needs n ON n.id=r.material_need_id
+    LEFT JOIN public.v_of_material_need_destinations destination ON destination.source_need_id=r.material_need_id
+    LEFT JOIN public.of_material_needs n ON n.id=destination.target_need_id
     LEFT JOIN public.of_component_requirements c ON c.id=r.of_component_requirement_id
     WHERE r.status='ACTIVE' AND r.lot_id IS NOT NULL AND(r.expires_at IS NULL OR r.expires_at>now()) AND
       ((n.of_id=$1 AND n.operation_id=$2::uuid) OR(c.consuming_of_id=$1 AND EXISTS(SELECT 1 FROM public.of_operations op

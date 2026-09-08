@@ -5,3 +5,4 @@ export {debitOfMaterial} from "../repository/of-material-debit.repository";
 export {correctMaterialDebit} from '../repository/material-debit-correction.repository';
 export {commandMaterialTransfer} from '../repository/material-transfer.repository';
 export {commandCustomerMaterial} from '../repository/customer-material.repository';
+export {reconcileMaterialRevision} from '../repository/material-reconciliation.repository';

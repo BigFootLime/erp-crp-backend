@@ -43,3 +43,8 @@ export type MaterialDebitCorrection=z.infer<typeof materialDebitCorrectionSchema
 export const materialTransferSchema=materialCommandSchema.extend({debitId:z.string().uuid(),successorOperationId:z.string().uuid(),
   action:z.enum(['RELEASE','RETURN']),quantity:z.number().int().positive().max(1e9),reason:z.string().trim().min(10).max(2000)}).strict();
 export type MaterialTransfer=z.infer<typeof materialTransferSchema>;
+export const materialReconciliationSchema=materialCommandSchema.extend({previousNeedId:z.string().uuid(),targetNeedId:z.string().uuid().nullable(),
+  disposition:z.enum(['CARRY','KEEP_SEPARATE']),reason:z.string().trim().min(10).max(2000)}).strict().superRefine((v,ctx)=>{
+  if((v.disposition==='CARRY')!==(v.targetNeedId!==null))ctx.addIssue({code:'custom',path:['targetNeedId'],message:'Choisissez un besoin destinataire pour reprendre la couverture, ou conservez l’engagement séparément.'});
+});
+export type MaterialReconciliation=z.infer<typeof materialReconciliationSchema>;

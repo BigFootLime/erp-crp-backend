@@ -14,6 +14,8 @@ import {correctMaterialDebit,commandMaterialTransfer} from '../services/of-mater
 import {debitOfMaterial} from '../services/of-material.service';
 import {customerMaterialCommandSchema} from '../validators/customer-material.validators';
 import {commandCustomerMaterial} from '../services/of-material.service';
+import {reconcileMaterialRevision} from '../services/of-material.service';
+import {materialReconciliationSchema} from '../validators/of-material.validators';
 
 function rights(req:Request){
   const granted=requestHasGrantedAccountModuleAccess(req);
@@ -25,6 +27,11 @@ function present(data:Awaited<ReturnType<typeof getOfMaterial>>,req:Request){
   return {...data,permissions:access,needs:data.needs.map(n=>({...n,price:access.canReadPrices?n.price:null,catalog:n.catalog?{...n.catalog,prix_unitaire:access.canReadPrices?n.catalog.prix_unitaire:null}:null}))};
 }
 export const readMaterial=asyncHandler(async(req,res)=>{res.json(present(await getOfMaterial(identity.parse(req.params).id),req));});
+export const reconcileMaterial=asyncHandler(async(req,res)=>{
+  const access=rights(req);
+  if(!access.canConfigure||!access.canConfirm)throw new HttpError(403,'MATERIAL_RECONCILIATION_FORBIDDEN','Les droits de préparation et de gestion des réservations sont nécessaires pour rapprocher les engagements.');
+  res.json(present(await reconcileMaterialRevision(identity.parse(req.params).id,materialReconciliationSchema.parse(req.body),buildAuditContext(req)),req));
+});
 export const customerMaterial=asyncHandler(async(req,res)=>{
   const body=customerMaterialCommandSchema.parse(req.body);
   const access=rights(req);

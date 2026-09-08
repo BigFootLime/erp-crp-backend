@@ -8,7 +8,9 @@ export async function transferCustomerMaterialReceiptTx(tx:PoolClient,receiptId:
   const r=(await tx.query(`SELECT c.id::text AS call_id,c.client_id,n.id::text AS need_id,n.of_id,n.unit,n.article_id::text,n.superseded_at,
     m.status,ml.qty::float8,ml.unite,ml.article_id::text AS received_article,ml.dst_magasin_id::text,ml.dst_emplacement_id,l.lot_id::text,lot.client_proprietaire_id
     FROM public.reception_fournisseur_stock_receipts s JOIN public.reception_fournisseur_lignes l ON l.id=s.reception_line_id
-    JOIN public.of_customer_material_calls c ON c.id=l.customer_material_call_id JOIN public.of_material_needs n ON n.id=c.need_id
+    JOIN public.of_customer_material_calls c ON c.id=l.customer_material_call_id
+    JOIN public.v_of_material_need_destinations destination ON destination.source_need_id=c.need_id
+    JOIN public.of_material_needs n ON n.id=destination.target_need_id
     JOIN public.stock_movements m ON m.id=s.stock_movement_id JOIN public.stock_movement_lines ml ON ml.movement_id=m.id AND ml.line_no=1
     JOIN public.lots lot ON lot.id=l.lot_id WHERE s.id=$1::uuid`,[receiptId])).rows[0];
   if(!r)return [];

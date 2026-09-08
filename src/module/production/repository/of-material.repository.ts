@@ -11,10 +11,11 @@ import {materialPropertiesFingerprint,coverageFingerprint,debitQuantity,proposeM
 import {readFutureMaterialSupplyTx,futureSupplyCompatibility} from './material-future-supply.repository';
 import {readCustomerMaterialCallsTx} from './customer-material-read.repository';
 import {readMaterialDebitsTx} from './material-debit-history.repository';
+import {materialCarryBlockers} from '../domain/material-reconciliation';
 
 const emptyRequirements=():MaterialRequirements=>({grade:null,condition:null,ownerClientId:null,dimensions:{},certificates:[],manualChecks:[]});
 type Purchase={id:string;article_id:string|null;nom?:string;designation?:string;quantite:number;unite_prix:string|null;fournisseur_id:string|null;pu_achat?:number|null;type_achat:string;gamme_operation_id?:string|null};
-type NeedRow={id:string;source_ref:string;technical_version_id:string;technical_hash:string;operation_id:string|null;article_id:string|null;required_qty:number;unit:string|null;supply_mode:"PURCHASE"|"CUSTOMER";requirements:MaterialRequirements;specification_reviewed_at:string|null;debit_rule:DebitRule|null;allow_partial:boolean;supplier_id:string|null;destination_id:string|null;row_version:number;superseded_at:string|null};
+type NeedRow={id:string;source_ref:string;designation:string;technical_version_id:string;technical_hash:string;operation_id:string|null;article_id:string|null;required_qty:number;unit:string|null;supply_mode:"PURCHASE"|"CUSTOMER";requirements:MaterialRequirements;specification_reviewed_at:string|null;debit_rule:DebitRule|null;allow_partial:boolean;supplier_id:string|null;destination_id:string|null;row_version:number;superseded_at:string|null};
 export type NeedConfiguration={operationId:string;requirements:MaterialRequirements;supplyMode:"PURCHASE"|"CUSTOMER";debitRule:DebitRule;allowPartial:boolean;supplierId:string|null;destinationId:string|null};
 export type Candidate=MaterialLot&{magasinId:string;emplacementId:number;version:string;properties:Record<string,unknown>;propertiesHash:string;qualityControlId:string|null;qualityExplanation:string[];documents:Array<{id:string;label:string;receptionId:string}>};
 
@@ -26,15 +27,21 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
     FROM public.ordres_fabrication o WHERE o.id=$1`,[ofId])).rows[0];
   const purchases=(of.purchases as Purchase[]).filter(p=>p.type_achat==="MATIERE");
   const saved=(await tx.query<NeedRow>("SELECT * FROM public.of_material_needs WHERE of_id=$1 ORDER BY created_at,id",[ofId])).rows;
+  const destinations=(await tx.query<{source_need_id:string;target_need_id:string}>("SELECT source_need_id::text,target_need_id::text FROM public.v_of_material_need_destinations WHERE of_id=$1",[ofId])).rows;
+  const reconciliations=(await tx.query<{id:string;previous_need_id:string;target_need_id:string|null;disposition:'CARRY'|'KEEP_SEPARATE';reason:string;created_at:string;actor:string;reviewed_snapshot:Record<string,unknown>}>(`SELECT r.*,r.created_at::text,u.username AS actor FROM public.of_material_revision_resolutions r JOIN public.users u ON u.id=r.created_by WHERE r.of_id=$1 ORDER BY r.created_at,r.id`,[ofId])).rows;
+  const destinationByNeed=new Map(destinations.map(d=>[d.source_need_id,d.target_need_id]));
+  const effectiveNeed=(id:string|null)=>id?destinationByNeed.get(id)??id:null;
   const customerCalls=await readCustomerMaterialCallsTx(tx,ofId);
   const debits=await readMaterialDebitsTx(tx,ofId);
   const debitAdjustments=(await tx.query<{need_id:string;adjustment:number}>(`SELECT s.need_id::text,
     sum(COALESCE(s.actual_qty,abs(m.qty))-COALESCE(s.planned_qty,abs(m.qty)))::float8 AS adjustment
     FROM public.production_material_debit_sources s JOIN public.production_material_debits d ON d.id=s.debit_id
     JOIN public.stock_movements m ON m.id=s.stock_movement_id WHERE d.of_id=$1 GROUP BY s.need_id`,[ofId])).rows;
+  const adjustmentsByNeed=new Map<string,number>();
+  for(const d of debitAdjustments){const id=effectiveNeed(d.need_id)!;adjustmentsByNeed.set(id,(adjustmentsByNeed.get(id)??0)+d.adjustment);}
   const reservations=(await tx.query(`SELECT r.id::text,r.material_need_id::text,r.article_id::text,r.qty_reserved::float8,r.qty_consumed::float8,r.status,r.row_version,r.lot_id::text,
     r.stock_batch_id::text,(r.expires_at IS NULL OR r.expires_at>now()) AS unexpired,
-    l.lot_status FROM public.stock_reservations r LEFT JOIN public.lots l ON l.id=r.lot_id
+    l.lot_status,l.lot_code FROM public.stock_reservations r LEFT JOIN public.lots l ON l.id=r.lot_id
     WHERE(r.of_id=$1 OR(r.source_type='OF' AND r.source_id=$1::text)) AND(r.status IN ('ACTIVE','CONSUMED') OR r.qty_consumed>0)
       AND(r.status='CONSUMED' OR r.qty_consumed>0 OR r.expires_at IS NULL OR r.expires_at>now()) ORDER BY r.created_at,r.id`,[ofId])).rows;
   // Allocate receipts along promised quantities in the stable allocation order.
@@ -97,13 +104,13 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
     const row=saved.find(n=>n.source_ref===p.id&&n.technical_version_id===of.revision&&!n.superseded_at);
     const article=articles.find(a=>a.id===p.article_id),requirements=row?.requirements??emptyRequirements();
     const operation=dossier.operations.find(op=>op.id===row?.operation_id)??null;
-    const attached=reservations.filter(r=>r.material_need_id===row?.id||!r.material_need_id&&r.article_id===p.article_id&&!usedLegacy.has(r.id));
+    const attached=reservations.filter(r=>effectiveNeed(r.material_need_id)===row?.id||!r.material_need_id&&r.article_id===p.article_id&&!usedLegacy.has(r.id));
     attached.filter(r=>!r.material_need_id).forEach(r=>usedLegacy.add(r.id));
-    const expected=promises.filter(b=>b.material_need_id===row?.id||!b.material_need_id&&b.besoin_ref===p.id);
+    const expected=promises.filter(b=>effectiveNeed(b.material_need_id)===row?.id||!b.material_need_id&&b.besoin_ref===p.id);
     const customer=customerCalls.filter(c=>c.need_id===row?.id&&c.status!=='CANCELLED');
     let required=Number(p.quantite)*dossier.quantity;
     if(row?.debit_rule)required=debitQuantity(row.debit_rule,dossier.quantity);
-    const consumptionAdjustment=debitAdjustments.find(d=>d.need_id===row?.id)?.adjustment??0;
+    const consumptionAdjustment=row?.id?adjustmentsByNeed.get(row.id)??0:0;
     required=quantity(Math.max(0,required+consumptionAdjustment));
     const physical=attached.filter(r=>r.status==="ACTIVE"&&r.unexpired).reduce((sum,r)=>sum+Math.max(0,r.qty_reserved-r.qty_consumed),0);
     const consumed=attached.reduce((sum,r)=>sum+(r.status==="CONSUMED"?r.qty_reserved:r.qty_consumed),0);
@@ -135,10 +142,21 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
     for(const s of proposal.selections){remainingQuality.set(s.lotId,quantity((remainingQuality.get(s.lotId)??0)-s.quantity));remaining.set(s.batchId,quantity((remaining.get(s.batchId)??0)-s.quantity));const levelId=lots.find(l=>l.batchId===s.batchId)?.stockLevelId;if(levelId)remainingLevels.set(levelId,quantity((remainingLevels.get(levelId)??0)-s.quantity));}
     return {...need,...proposal,futureSupplies:futureSupplies.filter(s=>s.articleId===need.articleId).map(s=>({...s,reasons:futureSupplyCompatibility(need,s)})),purchase:purchaseQuantity(proposal.purchaseMissing,need.catalog?.moq??null,need.catalog?.lot_achat??null)};
   });
+  const previousNeeds=saved.filter(n=>!needs.some(current=>current.id===n.id)&&!reconciliations.some(r=>r.previous_need_id===n.id)).map(n=>{
+    const attached=reservations.filter(r=>effectiveNeed(r.material_need_id)===n.id),expected=promises.filter(p=>effectiveNeed(p.material_need_id)===n.id);
+    const calls=customerCalls.filter(c=>c.need_id===n.id&&c.status!=='CANCELLED');
+    const consumed=attached.reduce((sum,r)=>sum+Number(r.status==='CONSUMED'?r.qty_reserved:r.qty_consumed),0);
+    const identity={articleId:n.article_id,unit:n.unit,supplyMode:n.supply_mode,requirements:n.requirements,debitRule:n.debit_rule,operationId:n.operation_id,consumed};
+    return {...n,required_qty:Number(n.required_qty),consumed,reserved:attached.filter(r=>r.status==='ACTIVE'&&r.unexpired).reduce((sum,r)=>sum+Math.max(0,r.qty_reserved-r.qty_consumed),0),
+      expected:expected.reduce((sum,p)=>sum+Math.max(0,p.assigned-p.received),0)+calls.reduce((sum,c)=>sum+Math.max(0,c.quantity-c.received),0),
+      receivedBlocked:expected.reduce((sum,p)=>sum+Math.max(0,p.received-p.transferred),0)+calls.reduce((sum,c)=>sum+Math.max(0,c.received-c.transferred),0),
+      reservations:attached,promises:expected,customerCalls:calls,
+      targets:needs.filter(t=>t.id).map(t=>({id:t.id!,designation:t.designation,required:t.required,blockers:[...t.blockers,...materialCarryBlockers(identity,t)]}))};
+  });
   return {enabled:true as const,ofId,number:dossier.number,quantity:dossier.quantity,dossierStatus:dossier.status,technicalVersion:of.revision as string|null,
     technicalHash:of.hash as string|null,clientId:of.client_id as string|null,operations:dossier.operations,
-    version:coverageFingerprint({dossier:dossier.version,saved,reservations,promises,lots,checks,catalogs,documents,futureSupplies,customerCalls,debitAdjustments,debits}),needs:coverage,customerCalls,debits,
-    previousNeeds:saved.filter(n=>n.technical_version_id!==of.revision||n.superseded_at),
+    version:coverageFingerprint({dossier:dossier.version,saved,reservations,promises,lots,checks,catalogs,documents,futureSupplies,customerCalls,debitAdjustments,debits,destinations,reconciliations}),needs:coverage,customerCalls,debits,
+    previousNeeds,reconciliations,
     suppliers:(await tx.query("SELECT id::text,COALESCE(nom,raison_sociale) AS name FROM public.fournisseurs WHERE actif IS NOT FALSE ORDER BY COALESCE(nom,raison_sociale)")).rows,
     destinations:(await tx.query("SELECT id::text,COALESCE(code,code_magasin) AS name FROM public.magasins ORDER BY COALESCE(code,code_magasin)")).rows};
 }
@@ -170,6 +188,9 @@ export async function configureOfMaterial(ofId:number,sourceRef:string,body:{exp
     const need=current.needs.find(n=>n.key===sourceRef),c=body.configuration;
     if(!need||!current.technicalVersion||!current.technicalHash)throw new HttpError(409,"MATERIAL_DEFINITION_REQUIRED","La matière doit être définie dans la version technique figée.");
     if(!current.operations.some(o=>o.id===c.operationId))throw new HttpError(422,"MATERIAL_OPERATION_INVALID","Choisissez une opération de cet OF.");
+    const hasDebit=need.consumed>0||current.debits.some(d=>d.sources.some((s:{reservationId:string})=>need.reservations.some(r=>r.id===s.reservationId)));
+    if(hasDebit&&(c.operationId!==need.operationId||coverageFingerprint(c.debitRule)!==coverageFingerprint(need.debitRule)||c.supplyMode!==need.supplyMode))
+      throw new HttpError(409,'MATERIAL_DEBIT_DEFINITION_FROZEN','Un débit est déjà tracé : conservez son opération, sa règle de conversion et son origine. Faites traiter une nouvelle définition par le parcours de révision.');
     if(current.customerCalls.some(call=>call.need_id===need.id&&call.status!=='CANCELLED')&&(c.supplyMode!=='CUSTOMER'||c.requirements.ownerClientId!==need.requirements.ownerClientId))
       throw new HttpError(409,'CUSTOMER_MATERIAL_CALL_ACTIVE','Un appel client existe : conservez son propriétaire et son origine, ou annulez l’appel non réceptionné avant de modifier la fourniture.');
     if(c.supplyMode==="CUSTOMER"&&(!current.clientId||c.requirements.ownerClientId!==current.clientId))throw new HttpError(422,"MATERIAL_OWNER_REQUIRED","La matière fournie par le client doit conserver ce client propriétaire.");

@@ -21,7 +21,8 @@ export async function consumeMaterialReservationTx(tx:PoolClient,input:Input,aud
     qty_reserved:number;qty_consumed:number;qty_prepared:number;row_version:number;status:string;unexpired:boolean;
   }>(`SELECT r.article_id::text,r.lot_id::text,r.stock_batch_id::text,b.stock_level_id::text,e.magasin_id::text,e.id::int AS emplacement_id,a.unite AS unit,
     r.qty_reserved::float8,r.qty_consumed::float8,r.qty_prepared::float8,r.row_version,r.status,(r.expires_at IS NULL OR r.expires_at>now()) AS unexpired
-    FROM public.stock_reservations r JOIN public.of_material_needs n ON n.id=r.material_need_id
+    FROM public.stock_reservations r JOIN public.v_of_material_need_destinations destination ON destination.source_need_id=r.material_need_id
+    JOIN public.of_material_needs n ON n.id=destination.target_need_id
     JOIN public.stock_batches b ON b.id=r.stock_batch_id AND b.lot_id=r.lot_id
     JOIN public.stock_levels s ON s.id=b.stock_level_id AND s.article_id=r.article_id AND s.location_id=r.location_id
     JOIN public.emplacements e ON e.location_id=r.location_id JOIN public.articles a ON a.id=r.article_id
