@@ -1,5 +1,5 @@
 import {describe,it,expect} from 'vitest';
-import {futureSupplyBalance} from './material-future-supply';
+import {futureSupplyBalance,receivedAllocationQuantity} from './material-future-supply';
 describe('future supply in stock units',()=>{
   it('accepts the purchase repository row with its descriptive columns',()=>{const row={id:'purchase-line',code:'BCF-TEST',due:null,ordered:100,cancelled:0,coefficient:1,assigned:75,received:0};expect(futureSupplyBalance(row).available).toBe(25)});
   it('makes 25 of 100 free when 75 are already promised',()=>expect(futureSupplyBalance({ordered:100,cancelled:0,coefficient:1,assigned:75,received:0})).toEqual({capacity:100,available:25,unassignedReceived:0}));
@@ -8,5 +8,11 @@ describe('future supply in stock units',()=>{
   it('converts purchased bars and cancellations to stock length',()=>expect(futureSupplyBalance({ordered:10,cancelled:2,coefficient:6,assigned:30,received:6}).available).toBe(18));
   it('rounds partial quantities using stock precision',()=>expect(futureSupplyBalance({ordered:.3,cancelled:0,coefficient:1,assigned:.2,received:0}).available).toBe(.1));
   it('never reoffers an overallocated purchase',()=>expect(futureSupplyBalance({ordered:10,cancelled:0,coefficient:1,assigned:12,received:0}).available).toBe(0));
+  it('reserves future stock after twenty already received without an assignment',()=>expect(futureSupplyBalance({ordered:100,cancelled:0,coefficient:1,assigned:30,received:20,allocationEnd:50}).available).toBe(50));
+  it('does not retroactively assign prior received stock',()=>expect(receivedAllocationQuantity(0,20,20,30)).toBe(0));
+  it('assigns the full later receipt even if the prior unassigned twenty are quarantined',()=>expect(receivedAllocationQuantity(20,30,20,30)).toBe(30));
+  it('shares a partial receipt between existing promises exactly once',()=>expect([receivedAllocationQuantity(40,30,0,50),receivedAllocationQuantity(40,30,50,25)]).toEqual([10,20]));
+  it('does not move a later lot into an earlier refused promise',()=>expect(receivedAllocationQuantity(50,25,0,50)).toBe(0));
+  it('supports multiple postings on the same receipt line',()=>expect([receivedAllocationQuantity(0,15,0,40),receivedAllocationQuantity(15,25,0,40)]).toEqual([15,25]));
   it.each([-1,NaN,Infinity])('rejects invalid quantities %s',ordered=>expect(()=>futureSupplyBalance({ordered,cancelled:0,coefficient:1,assigned:0,received:0})).toThrow());
 });

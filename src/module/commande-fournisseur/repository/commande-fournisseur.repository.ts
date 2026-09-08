@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg";
+import {findUntouchedMaterialDraftTx,recordMaterialDraftBaselineTx} from './material-draft-baseline.repository';
 import {assertPurchaseLineCoveragePatch,type AllocatedPurchaseLine} from '../domain/purchase-line-coverage';
 import {assertLegacyMaterialWrite} from "../../stock/repository/of-material-write-guard";
 import crypto from "node:crypto";
@@ -2231,13 +2232,15 @@ export async function createMaterialDraftsTx(tx: PoolClient, lines: MaterialDraf
   for (const group of groups.values()) {
     const first = group[0];
     assertFournisseurCommandable(await fetchFournisseurMini(tx, first.supplierId));
-    const code = await generateCommandeFournisseurCode(tx);
-    const id = (await tx.query<{id:string}>(`INSERT INTO public.commande_fournisseur
+    const reusable = await findUntouchedMaterialDraftTx(tx,first);
+    const code = reusable?.code ?? await generateCommandeFournisseurCode(tx);
+    const id = reusable?.id ?? (await tx.query<{id:string}>(`INSERT INTO public.commande_fournisseur
       (code,origine,fournisseur_id,devise,magasin_livraison_id,note_interne,created_by,updated_by)
       VALUES($1,'RUPTURE_OF',$2::uuid,$3,$4::uuid,'Préparé après confirmation de la couverture matière. À relire avant validation.', $5,$5) RETURNING id`,
       [code,first.supplierId,first.currency,first.destinationId,audit.user_id])).rows[0].id;
+    const position = reusable ? Number((await tx.query('SELECT COALESCE(max(position),0) AS position FROM public.commande_fournisseur_ligne WHERE commande_id=$1::uuid',[id])).rows[0].position) : 0;
     for (const [index,line] of group.entries()) {
-      const lineId = await insertLigneTx(tx,id,index+1,{
+      const lineId = await insertLigneTx(tx,id,position+index+1,{
         type:"MATIERE",article_id:line.articleId,designation:line.designation,unite:line.unit,unite_stock:line.unit,coef_conversion:1,
         quantite:line.quantity,prix_unitaire_ht:line.price,remise_pct:0,tva_pct:20,frais_ht:0,date_besoin:line.due,
         of_id:line.ofId,operation_libelle:line.operation,magasin_id:line.destinationId,
@@ -2248,9 +2251,12 @@ export async function createMaterialDraftsTx(tx: PoolClient, lines: MaterialDraf
         VALUES($1::uuid,'OF_MATERIAL',$2,$3,$3,$4,$5::uuid)`,[lineId,line.sourceRef,line.ofId,line.assigned,line.needId]);
     }
     await recomputeTotauxTx(tx,id);
-    await insertTransitionRow(tx,id,null,"BROUILLON","Couverture matière confirmée",audit.user_id);
-    await queueSupplierPurchaseOrderCreationPdfTx(tx,{commandeId:id,code,actorUserId:audit.user_id});
-    await insertAuditLog(tx,audit,{action:"commandes_fournisseurs.material.draft",entity_type:"commande_fournisseur",entity_id:id,details:{code,needs:group.map(l=>({needId:l.needId,ordered:l.quantity,assigned:l.assigned,surplus:l.quantity-l.assigned}))}});
+    if(!reusable){
+      await insertTransitionRow(tx,id,null,"BROUILLON","Couverture matière confirmée",audit.user_id);
+      await queueSupplierPurchaseOrderCreationPdfTx(tx,{commandeId:id,code,actorUserId:audit.user_id});
+    }
+    await recordMaterialDraftBaselineTx(tx,id);
+    await insertAuditLog(tx,audit,{action:"commandes_fournisseurs.material.draft",entity_type:"commande_fournisseur",entity_id:id,details:{code,extended:!!reusable,needs:group.map(l=>({needId:l.needId,ordered:l.quantity,assigned:l.assigned,surplus:l.quantity-l.assigned}))}});
     commands.push({id,code});
   }
   return commands;
