@@ -44,14 +44,16 @@ const numeric = (value: unknown): number => {
  * missing control/release quantity remains a zero quantity and is therefore
  * rejected by `assertQualityEligibility`; it is never converted into a pass.
  */
-export async function assertOperationalLotQualityEligibility(params: {
+async function inspectOperationalLotQualityEligibility(params: {
   client: Queryable;
   lotId: string;
   qty: number;
   /** Physical movement/reservation unit when the caller has one. */
   unit?: string | null;
   purpose: QualityEligibilityPurpose;
-}): Promise<OperationalQualityDecision> {
+  lockRows:boolean;
+  receiptLineId?:string;
+}) {
   const lotRes = await params.client.query<{
     lot_code: string;
     lot_status: EligibilityTarget["lot_status"];
@@ -62,7 +64,7 @@ export async function assertOperationalLotQualityEligibility(params: {
       FROM public.lots lot
       JOIN public.articles article ON article.id = lot.article_id
       WHERE lot.id = $1::uuid
-      FOR UPDATE
+      ${params.lockRows ? "FOR UPDATE" : ""}
     `,
     [params.lotId]
   );
@@ -76,6 +78,8 @@ export async function assertOperationalLotQualityEligibility(params: {
     qty_consumed: string;
     unite: string | null;
     pending: boolean;
+    trigger_type:string|null;
+    reception_ligne_id:string|null;
   }>(
     `
       SELECT
@@ -83,14 +87,14 @@ export async function assertOperationalLotQualityEligibility(params: {
         qc.qty_released::text AS qty_released,
         qc.qty_held::text AS qty_held,
         qc.qty_consumed::text AS qty_consumed,
-        qc.unite,
+        qc.unite,qc.trigger_type,qc.reception_ligne_id::text,
         (qc.validation_date IS NULL OR COALESCE(qc.verdict, 'EN_ATTENTE') = 'EN_ATTENTE') AS pending
       FROM public.quality_control qc
       WHERE qc.lot_id = $1::uuid
          OR (qc.source_type = 'LOT' AND qc.source_id = $1::text)
       ORDER BY qc.control_date DESC, qc.id DESC
       LIMIT 1
-      FOR UPDATE
+      ${params.lockRows ? "FOR UPDATE" : ""}
     `,
     [params.lotId]
   );
@@ -98,6 +102,8 @@ export async function assertOperationalLotQualityEligibility(params: {
   // control exactly as the delivery-release aggregate does; summing historical
   // controls for the same population would over-authorize physical stock.
   const controlIds = controls.rows.map((row) => row.id);
+  if(params.receiptLineId&&(!controls.rows[0]||controls.rows[0].trigger_type!=="RECEPTION"||controls.rows[0].reception_ligne_id!==params.receiptLineId))
+    throw new HttpError(409,"QUALITY_RECEIPT_CONTROL_REQUIRED","Ouvrez le contrôle qualité de cette réception et libérez la quantité acceptée avant la mise en stock.");
   const normalizedUnit = (value: string | null | undefined) => value?.trim().toUpperCase() || null;
   const articleUnit = normalizedUnit(lot.article_unit);
   const requestedUnit = normalizedUnit(params.unit);
@@ -128,15 +134,17 @@ export async function assertOperationalLotQualityEligibility(params: {
   // reservations cannot both spend the same released quantity.
   const commitments = await params.client.query<{ qty: string }>(
     `
-      SELECT qty_reserved::text AS qty
+      SELECT (CASE WHEN status='CONSUMED' OR(status='ACTIVE' AND(expires_at IS NULL OR expires_at>now())) THEN qty_reserved ELSE qty_consumed END)::text AS qty
       FROM public.stock_reservations
       WHERE lot_id = $1::uuid
-        AND status IN ('ACTIVE', 'CONSUMED')
-      FOR SHARE
+        AND(status IN ('ACTIVE', 'CONSUMED') OR qty_consumed>0)
+      ${params.lockRows ? "FOR SHARE" : ""}
     `,
     [params.lotId]
   );
-  const alreadyCommittedQty = commitments.rows.reduce((sum, row) => sum + numeric(row.qty), 0);
+  // Receipt entry measures admitted physical quantity. Reservations and issues
+  // concern that same stock and must not be charged a second time here.
+  const alreadyCommittedQty = params.receiptLineId?0:commitments.rows.reduce((sum, row) => sum + numeric(row.qty), 0);
   const nc = await params.client.query<{ total: number }>(
     `
       SELECT COUNT(*)::int AS total
@@ -177,7 +185,7 @@ export async function assertOperationalLotQualityEligibility(params: {
     lot_status: lot.lot_status,
     qty_released: controls.rows.reduce((sum, row) => sum + numeric(row.qty_released), 0),
     qty_held: controls.rows.reduce((sum, row) => sum + numeric(row.qty_held), 0),
-    qty_consumed: controls.rows.reduce((sum, row) => sum + numeric(row.qty_consumed), 0),
+    qty_consumed: params.receiptLineId?0:controls.rows.reduce((sum, row) => sum + numeric(row.qty_consumed), 0),
     open_nc_without_disposition: Number(nc.rows[0]?.total ?? 0),
     pending_mandatory_controls: controls.rows.filter((row) => row.pending).length,
     derogation: derogation.rows[0] ?? null,
@@ -192,9 +200,11 @@ export async function assertOperationalLotQualityEligibility(params: {
     ...target,
     qty_requested: target.qty_requested + alreadyCommittedQty,
   };
-  evaluateQualityEligibility(evaluationTarget, params.purpose, at);
-  assertQualityEligibility(evaluationTarget, params.purpose, at);
+  const eligibility=evaluateQualityEligibility(evaluationTarget,params.purpose,at);
   return {
+    eligibility,
+    evaluationTarget,
+    available:Math.max(0,eligibility.qty_allowed-alreadyCommittedQty),
     purpose: params.purpose,
     target,
     already_committed_qty: alreadyCommittedQty,
@@ -205,6 +215,25 @@ export async function assertOperationalLotQualityEligibility(params: {
       derogation_ids: concessions.rows.map((row) => row.derogation_id),
     },
   };
+}
+
+export async function readOperationalLotQualityEligibility(params:{client:Queryable;lotId:string;qty:number;unit?:string|null;purpose:QualityEligibilityPurpose}){
+  return inspectOperationalLotQualityEligibility({...params,lockRows:false});
+}
+export async function assertOperationalLotQualityEligibility(params:{client:Queryable;lotId:string;qty:number;unit?:string|null;purpose:QualityEligibilityPurpose}):Promise<OperationalQualityDecision>{
+  const decision=await inspectOperationalLotQualityEligibility({...params,lockRows:true});
+  assertQualityEligibility(decision.evaluationTarget,params.purpose,new Date(decision.evaluated_at));
+  return {purpose:decision.purpose,target:decision.target,already_committed_qty:decision.already_committed_qty,evaluated_at:decision.evaluated_at,evidence:decision.evidence};
+}
+
+/** qty includes this entry and all previous posted entries for the receipt line. */
+export async function assertReceiptLotQualityEligibility(params:{client:Queryable;lotId:string;receiptLineId:string;qty:number;unit:string}){
+  const decision=await inspectOperationalLotQualityEligibility({...params,purpose:"RESERVE",lockRows:true});
+  assertQualityEligibility(decision.evaluationTarget,"RESERVE",new Date(decision.evaluated_at));
+  return decision;
+}
+export async function readReceiptLotQualityEligibility(params:{client:Queryable;lotId:string;receiptLineId:string;qty:number;unit:string}){
+  return inspectOperationalLotQualityEligibility({...params,purpose:"RESERVE",lockRows:false});
 }
 
 /**

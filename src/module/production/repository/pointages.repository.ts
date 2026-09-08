@@ -1,6 +1,7 @@
 import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
+import {assertMaterialOperationStartTx,usesOperationReadiness} from "./operation-readiness.repository";
 import { HttpError } from "../../../utils/httpError";
 import { normalizeStoredImagePath } from "../../../utils/imageStorage";
 import { findAssetIdsByStorageKeys } from "../../operational-media/repository/operational-media.repository";
@@ -805,6 +806,10 @@ export async function repoCreatePointageManual(params: {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    if(await usesOperationReadiness(client,params.body.of_id)){
+      const of=(await client.query<{statut:string}>('SELECT statut::text FROM public.ordres_fabrication WHERE id=$1 FOR SHARE',[params.body.of_id])).rows[0];
+      if(!of||['BROUILLON','PLANIFIE','ANNULE'].includes(of.statut))throw new HttpError(409,'OPERATION_FIRST_START_REQUIRED','Démarrez d’abord l’opération disponible. Une saisie de temps passée ne lance pas la fabrication.');
+    }
 
     const ofDefaults = await ensureOfExists(client, params.body.of_id);
 
@@ -929,6 +934,7 @@ export async function repoStartPointage(params: {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const materialAuthorization=await assertMaterialOperationStartTx(client,params.body.of_id,params.body.operation_id,undefined,params.body.machine_id);
 
     const exists = await client.query<{ id: string }>(
       `SELECT id::text AS id FROM production_pointages WHERE id = $1::uuid LIMIT 1`,
@@ -1000,6 +1006,11 @@ export async function repoStartPointage(params: {
 
     const id = ins.rows[0]?.id;
     if (!id) throw new Error("Failed to start pointage");
+
+    if(materialAuthorization){
+      await client.query(`UPDATE public.ordres_fabrication SET statut='EN_COURS'::public.of_status,date_lancement_reelle=COALESCE(date_lancement_reelle,CURRENT_DATE),updated_at=now(),updated_by=$2 WHERE id=$1`,[params.body.of_id,params.audit.user_id]);
+      await client.query(`UPDATE public.of_operations SET status='RUNNING'::public.of_operation_status,started_at=COALESCE(started_at,now()),updated_at=now() WHERE id=$1::uuid`,[params.body.operation_id]);
+    }
 
     const after = await selectPointageSnapshot(client, id);
 

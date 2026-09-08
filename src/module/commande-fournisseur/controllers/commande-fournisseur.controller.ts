@@ -1,4 +1,7 @@
 import type { Request, RequestHandler } from "express";
+import {z} from 'zod';
+import {supplierConsultationCommandSchema} from '../validators/supplier-consultation.validators';
+import {readSupplierConsultationsSVC,commandSupplierConsultationSVC} from '../services/supplier-consultation.service';
 import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 
 import { HttpError } from "../../../utils/httpError";
@@ -110,6 +113,21 @@ export const getCommandeFournisseurKpis: RequestHandler = async (_req, res, next
   } catch (err) {
     next(err);
   }
+};
+
+export const readSupplierConsultations:RequestHandler=async(req,res,next)=>{
+  try{
+    const {params}=commandeIdParamSchema.parse({params:req.params});
+    const query=z.object({round:z.string().uuid().optional()}).strict().parse(req.query);
+    res.json(await readSupplierConsultationsSVC(params.id,req.user?.role,query.round,buildAuditContext(req).user_id));
+  }catch(error){next(error);}
+};
+export const commandSupplierConsultation:RequestHandler=async(req,res,next)=>{
+  try{
+    const {params}=commandeIdParamSchema.parse({params:req.params});
+    const body=supplierConsultationCommandSchema.parse(req.body);
+    res.json(await commandSupplierConsultationSVC(params.id,body,buildAuditContext(req)));
+  }catch(error){next(error);}
 };
 
 export const getCommandeFournisseur: RequestHandler = async (req, res, next) => {

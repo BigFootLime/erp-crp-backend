@@ -1,4 +1,7 @@
 import type { PoolClient } from "pg"
+import {receiptUnitConversion,convertedStockQuantity} from "../domain/receipt-unit-conversion"
+import {assertReceiptLotQualityEligibility,readReceiptLotQualityEligibility} from "../../qualite/repository/quality-operational-gate.repository"
+import {lockMaterialReceiptRecipientsTx,transferMaterialReceiptTx} from "../../production/repository/of-material-receipts.repository"
 import crypto from "node:crypto"
 import { createReadStream } from "node:fs"
 import fs from "node:fs/promises"
@@ -169,7 +172,10 @@ async function reserveReceptionNo(client: Pick<PoolClient, "query">): Promise<st
 type ReceptionRow = {
   id: string
   reception_no: string
-  fournisseur_id: string
+  fournisseur_id: string|null
+  origin_type?:string
+  client_proprietaire_id?:string|null
+  client_name?:string|null
   status: string
   reception_date: string
   supplier_reference: string | null
@@ -185,6 +191,7 @@ function mapReceptionRow(r: ReceptionRow): ReceptionFournisseur {
     id: r.id,
     reception_no: r.reception_no,
     fournisseur_id: r.fournisseur_id,
+    origin_type:r.origin_type,client_proprietaire_id:r.client_proprietaire_id,client_name:r.client_name,
     status: r.status,
     reception_date: r.reception_date,
     supplier_reference: r.supplier_reference,
@@ -199,7 +206,10 @@ function mapReceptionRow(r: ReceptionRow): ReceptionFournisseur {
 type ReceptionListRow = {
   id: string
   reception_no: string
-  fournisseur_id: string
+  fournisseur_id: string|null
+  origin_type?:string
+  client_proprietaire_id?:string|null
+  client_name?:string|null
   fournisseur_code: string
   fournisseur_nom: string
   status: string
@@ -212,6 +222,8 @@ type ReceptionListRow = {
 }
 
 type LineRow = {
+  stock_unit:string|null
+  stock_conversion_coef:number|null
   id: string
   reception_id: string
   line_no: number
@@ -356,6 +368,7 @@ async function selectLineDetail(tx: DbQueryer, lineId: string): Promise<Receptio
         a.designation AS article_designation,
         l.designation,
         l.qty_received::float8 AS qty_received,
+        l.stock_unit,l.stock_conversion_coef::float8,
         l.unite,
         l.supplier_lot_code,
         l.lot_id::text AS lot_id,
@@ -396,6 +409,7 @@ export async function repoListReceptions(filters: ListReceptionsQueryDTO): Promi
       r.reception_no ILIKE ${p}
       OR COALESCE(r.supplier_reference,'') ILIKE ${p}
       OR f.code ILIKE ${p}
+      OR c.company_name ILIKE ${p}
       OR f.nom ILIKE ${p}
     )`)
   }
@@ -412,7 +426,7 @@ export async function repoListReceptions(filters: ListReceptionsQueryDTO): Promi
   const orderDir = sortDirection(filters.sortDir)
 
   const countRes = await db.query<{ total: number }>(
-    `SELECT COUNT(*)::int AS total FROM public.receptions_fournisseurs r JOIN public.fournisseurs f ON f.id = r.fournisseur_id ${whereSql}`,
+    `SELECT COUNT(*)::int AS total FROM public.receptions_fournisseurs r LEFT JOIN public.fournisseurs f ON f.id = r.fournisseur_id LEFT JOIN public.clients c ON c.client_id=r.client_proprietaire_id ${whereSql}`,
     values
   )
   const total = countRes.rows[0]?.total ?? 0
@@ -421,9 +435,9 @@ export async function repoListReceptions(filters: ListReceptionsQueryDTO): Promi
     SELECT
       r.id::text AS id,
       r.reception_no,
-      r.fournisseur_id::text AS fournisseur_id,
-      f.code AS fournisseur_code,
-      f.nom AS fournisseur_nom,
+      r.fournisseur_id::text AS fournisseur_id,r.origin_type,r.client_proprietaire_id,c.company_name AS client_name,
+      COALESCE(f.code,c.client_code,c.client_id) AS fournisseur_code,
+      COALESCE(f.nom,c.company_name,c.client_id) AS fournisseur_nom,
       r.status,
       r.reception_date::text AS reception_date,
       r.supplier_reference,
@@ -432,7 +446,8 @@ export async function repoListReceptions(filters: ListReceptionsQueryDTO): Promi
       COALESCE(agg.blocked_lines_count, 0)::int AS blocked_lines_count,
       r.updated_at::text AS updated_at
     FROM public.receptions_fournisseurs r
-    JOIN public.fournisseurs f ON f.id = r.fournisseur_id
+    LEFT JOIN public.fournisseurs f ON f.id = r.fournisseur_id
+    LEFT JOIN public.clients c ON c.client_id=r.client_proprietaire_id
     LEFT JOIN (
       SELECT
         l.reception_id,
@@ -496,7 +511,7 @@ export async function repoGetReception(id: string): Promise<ReceptionFournisseur
       SELECT
         id::text AS id,
         reception_no,
-        fournisseur_id::text AS fournisseur_id,
+        fournisseur_id::text AS fournisseur_id,origin_type,client_proprietaire_id,(SELECT company_name FROM public.clients WHERE client_id=receptions_fournisseurs.client_proprietaire_id) AS client_name,
         status,
         reception_date::text AS reception_date,
         supplier_reference,
@@ -525,6 +540,7 @@ export async function repoGetReception(id: string): Promise<ReceptionFournisseur
         a.designation AS article_designation,
         l.designation,
         l.qty_received::float8 AS qty_received,
+        l.stock_unit,l.stock_conversion_coef::float8,
         l.unite,
         l.supplier_lot_code,
         l.lot_id::text AS lot_id,
@@ -653,9 +669,29 @@ export async function repoGetReception(id: string): Promise<ReceptionFournisseur
     [id]
   )
 
+  const enrichedLines:ReceptionFournisseurLine[]=[]
+  for(const row of lines.rows){
+    const line=mapLineRow(row)
+    if(line.lot_id){
+      const unit=line.stock_unit??line.unite,coefficient=line.stock_conversion_coef??1
+      try{
+        if(!unit)throw new HttpError(422,"RECEPTION_UNIT_REQUIRED","Complétez l’unité de réception avant le contrôle matière.")
+        const quality=await readReceiptLotQualityEligibility({client:db,lotId:line.lot_id,receiptLineId:line.id,qty:convertedStockQuantity(line.qty_received,coefficient),unit})
+        const already=receipts.rows.filter(receipt=>receipt.reception_line_id===line.id).reduce((sum,receipt)=>sum+receipt.qty,0)
+        const stockable=Math.max(0,Math.floor((Math.min(line.qty_received,quality.eligibility.qty_allowed/coefficient)-already+1e-9)*1000)/1000)
+        line.quality={controlId:quality.evidence.control_ids[0]??null,released:quality.target.qty_released,held:quality.target.qty_held,unit,stockable,
+          blocking:quality.eligibility.blocks.filter(block=>block.code!=="QTY_NOT_RELEASED").map(block=>`${block.message} ${block.expected_action}`)}
+      }catch(error){
+        if(!(error instanceof HttpError)||error.status>=500)throw error
+        line.quality={controlId:null,released:0,held:0,unit,stockable:0,blocking:[error.message]}
+      }
+    }
+    enrichedLines.push(line)
+  }
+
   return {
     reception: mapReceptionRow(r),
-    lines: lines.rows.map(mapLineRow),
+    lines: enrichedLines,
     documents: docs.rows.map(mapDocumentRow),
     inspections: inspections.rows.map((i) => mapInspectionRow(i, measurementsByInspection.get(i.id) ?? [])),
     stock_receipts: receipts.rows.map(mapReceiptRow),
@@ -710,7 +746,7 @@ export async function repoCreateReception(body: CreateReceptionBodyDTO, audit: A
         RETURNING
           id::text AS id,
           reception_no,
-          fournisseur_id::text AS fournisseur_id,
+          fournisseur_id::text AS fournisseur_id,origin_type,client_proprietaire_id,(SELECT company_name FROM public.clients WHERE client_id=receptions_fournisseurs.client_proprietaire_id) AS client_name,
           status,
           reception_date::text AS reception_date,
           supplier_reference,
@@ -744,6 +780,23 @@ export async function repoCreateReception(body: CreateReceptionBodyDTO, audit: A
   })
 }
 
+/** Trusted orchestration from a customer material call. Receipt lines, lots,
+ * inspections, documents and later IN posting use the existing receipt flow. */
+export async function createCustomerMaterialReceiptTx(tx:PoolClient,input:{callId:string;clientId:string;articleId:string;designation:string;quantity:number;unit:string;date:string;reference:string;note:string},audit:AuditContext){
+  const receptionNo=await reserveReceptionNo(tx)
+  const reception=(await tx.query<{id:string;reception_no:string}>(`INSERT INTO public.receptions_fournisseurs
+    (reception_no,origin_type,client_proprietaire_id,fournisseur_id,status,reception_date,supplier_reference,commentaire,created_by,updated_by)
+    VALUES($1,'CUSTOMER',$2,NULL,'OPEN',$3::date,$4,$5,$6,$6) RETURNING id::text,reception_no`,
+    [receptionNo,input.clientId,input.date,input.reference,input.note,audit.user_id])).rows[0]
+  await insertAuditLog(tx,audit,{action:'receptions.customer.create',entity_type:'RECEPTION_FOURNISSEUR',entity_id:reception.id,
+    details:{reception_no:reception.reception_no,client_id:input.clientId,call_id:input.callId}})
+  const line=await repoCreateLine(reception.id,{article_id:input.articleId,designation:input.designation,qty_received:input.quantity,unite:input.unit,supplier_lot_code:input.reference,notes:input.note},audit,{client:tx,customerCallId:input.callId})
+  if(!line)throw new Error('Customer receipt line was not created')
+  const lot=await repoCreateLotForLine(reception.id,line.id,{supplier_lot_code:input.reference,received_at:input.date,notes:input.note},audit,tx)
+  if(!lot?.lot_id)throw new Error('Customer receipt lot was not created')
+  return {receptionId:reception.id,receptionNo:reception.reception_no,lineId:line.id,lotId:lot.lot_id}
+}
+
 export async function repoPatchReception(id: string, patch: PatchReceptionBodyDTO, audit: AuditContext): Promise<ReceptionFournisseur | null> {
   const client = await db.connect()
   const sets: string[] = []
@@ -769,7 +822,7 @@ export async function repoPatchReception(id: string, patch: PatchReceptionBodyDT
         RETURNING
           id::text AS id,
           reception_no,
-          fournisseur_id::text AS fournisseur_id,
+          fournisseur_id::text AS fournisseur_id,origin_type,client_proprietaire_id,(SELECT company_name FROM public.clients WHERE client_id=receptions_fournisseurs.client_proprietaire_id) AS client_name,
           status,
           reception_date::text AS reception_date,
           supplier_reference,
@@ -795,14 +848,16 @@ export async function repoPatchReception(id: string, patch: PatchReceptionBodyDT
   })
 }
 
-export async function repoCreateLine(receptionId: string, body: CreateLineBodyDTO, audit: AuditContext): Promise<ReceptionFournisseurLine | null> {
-  const client = await db.connect()
-  return withRealtimeOutboxTransaction(client, async (tx) => {
-    const lockReception = await tx.query<{ ok: number }>(
-      `SELECT 1::int AS ok FROM public.receptions_fournisseurs WHERE id = $1::uuid FOR UPDATE`,
+export async function repoCreateLine(receptionId: string, body: CreateLineBodyDTO, audit: AuditContext, internal?:{client:PoolClient;customerCallId:string}): Promise<ReceptionFournisseurLine | null> {
+  const execute=async (tx:PoolClient) => {
+    const lockReception = await tx.query<{ ok: number;origin_type:string;status:string }>(
+      `SELECT 1::int AS ok,origin_type,status FROM public.receptions_fournisseurs WHERE id = $1::uuid FOR UPDATE`,
       [receptionId]
     )
     if (!lockReception.rows[0]?.ok) return null
+    if(lockReception.rows[0].status!=='OPEN')throw new HttpError(409,'RECEPTION_NOT_OPEN','Rouvrez la réception avant d’ajouter une ligne.')
+    if(lockReception.rows[0].origin_type==='CUSTOMER'&&!internal?.customerCallId)
+      throw new HttpError(409,'CUSTOMER_MATERIAL_CALL_REQUIRED','Enregistrez les bruts reçus depuis leur appel client dans le dossier OF.')
 
     const next = await tx.query<{ next_no: number }>(
       `
@@ -818,6 +873,7 @@ export async function repoCreateLine(receptionId: string, body: CreateLineBodyDT
     // fournisseur/article/état vérifiée, puis recalcul transactionnel de l'état de la
     // commande (sur-réception bloquée sans la capacité dédiée — motif requis).
     let commandeIdToRefresh: string | null = null
+    let purchaseConversion:{unit:string|null;stockUnit:string|null;coefficient:number|null}|null=null
     if (body.commande_fournisseur_ligne_id) {
       const cfl = await tx.query<{
         ligne_id: string
@@ -828,9 +884,12 @@ export async function repoCreateLine(receptionId: string, body: CreateLineBodyDT
         cf_fournisseur_id: string
         cf_code: string
         reception_fournisseur_id: string
+        purchase_unit:string|null
+        stock_unit:string|null
+        coefficient:number|null
       }>(
         `SELECT l.id::text AS ligne_id, l.commande_id::text AS commande_id, l.statut_ligne,
-                l.article_id::text AS ligne_article_id,
+                l.article_id::text AS ligne_article_id,l.unite AS purchase_unit,l.unite_stock AS stock_unit,l.coef_conversion::float8 AS coefficient,
                 c.statut AS cf_statut, c.fournisseur_id::text AS cf_fournisseur_id, c.code AS cf_code,
                 r.fournisseur_id::text AS reception_fournisseur_id
            FROM public.commande_fournisseur_ligne l
@@ -858,7 +917,12 @@ export async function repoCreateLine(receptionId: string, body: CreateLineBodyDT
         throw new HttpError(422, "ARTICLE_MISMATCH", "L'article reçu ne correspond pas à la ligne de commande imputée.")
       }
       commandeIdToRefresh = link.commande_id
+      purchaseConversion={unit:link.purchase_unit,stockUnit:link.stock_unit,coefficient:link.coefficient}
     }
+
+    const articleUnit=(await tx.query<{unite:string|null}>("SELECT unite FROM public.articles WHERE id=$1::uuid",[body.article_id])).rows[0]?.unite??null
+    const conversion=receiptUnitConversion({receiptUnit:body.unite??null,articleUnit,purchase:purchaseConversion})
+    convertedStockQuantity(body.qty_received,conversion.coefficient)
 
     const ins = await tx.query<{ id: string }>(
       `
@@ -873,9 +937,12 @@ export async function repoCreateLine(receptionId: string, body: CreateLineBodyDT
           notes,
           commande_fournisseur_ligne_id,
           created_by,
-          updated_by
+          updated_by,
+          stock_unit,
+          stock_conversion_coef,
+          customer_material_call_id
         )
-        VALUES ($1::uuid,$2,$3::uuid,$4,$5,$6,$7,$8,$9::uuid,$10,$10)
+        VALUES ($1::uuid,$2,$3::uuid,$4,$5,$6,$7,$8,$9::uuid,$10,$10,$11,$12,$13::uuid)
         RETURNING id::text AS id
       `,
       [
@@ -884,11 +951,14 @@ export async function repoCreateLine(receptionId: string, body: CreateLineBodyDT
         body.article_id,
         body.designation ?? null,
         body.qty_received,
-        body.unite ?? null,
+        conversion.receiptUnit,
         body.supplier_lot_code ?? null,
         body.notes ?? null,
         body.commande_fournisseur_ligne_id ?? null,
         audit.user_id,
+        conversion.stockUnit,
+        conversion.coefficient,
+        internal?.customerCallId??null,
       ]
     )
     const lineId = ins.rows[0]?.id
@@ -920,17 +990,18 @@ export async function repoCreateLine(receptionId: string, body: CreateLineBodyDT
     const detail = await selectLineDetail(tx, lineId)
 
     return detail
-  })
+  }
+  return internal?execute(internal.client):withRealtimeOutboxTransaction(await db.connect(),execute)
 }
 
 export async function repoCreateLotForLine(
   receptionId: string,
   lineId: string,
   body: CreateLotForLineBodyDTO,
-  audit: AuditContext
+  audit: AuditContext,
+  transactionClient?:PoolClient
 ): Promise<ReceptionFournisseurLine | null> {
-  const client = await db.connect()
-  return withRealtimeOutboxTransaction(client, async (tx) => {
+  const execute=async (tx:PoolClient) => {
     const row = await tx.query<{
       id: string
       reception_id: string
@@ -939,6 +1010,7 @@ export async function repoCreateLotForLine(
       supplier_lot_code: string | null
       lot_id: string | null
       reception_no: string
+      owner_client_id:string|null
     }>(
       `
         SELECT
@@ -948,7 +1020,7 @@ export async function repoCreateLotForLine(
           l.article_id::text AS article_id,
           l.supplier_lot_code,
           l.lot_id::text AS lot_id,
-          r.reception_no
+          r.reception_no,r.client_proprietaire_id AS owner_client_id
         FROM public.reception_fournisseur_lignes l
         JOIN public.receptions_fournisseurs r ON r.id = l.reception_id
         WHERE l.id = $1::uuid
@@ -982,9 +1054,10 @@ export async function repoCreateLotForLine(
             lot_status,
             lot_status_note,
             created_by,
-            updated_by
+            updated_by,
+            client_proprietaire_id
           )
-          VALUES ($1::uuid,$2,$3,$4::date,$5::date,$6::date,$7,$8,$9,$10,$10)
+          VALUES ($1::uuid,$2,$3,$4::date,$5::date,$6::date,$7,$8,$9,$10,$10,$11)
           RETURNING id::text AS id
         `,
         [
@@ -998,6 +1071,7 @@ export async function repoCreateLotForLine(
           "EN_ATTENTE",
           null,
           audit.user_id,
+          line.owner_client_id,
         ]
       )
       lotId = ins.rows[0]?.id ?? ""
@@ -1032,7 +1106,8 @@ export async function repoCreateLotForLine(
     const detail = await selectLineDetail(tx, lineId)
 
     return detail
-  })
+  }
+  return transactionClient?execute(transactionClient):withRealtimeOutboxTransaction(await db.connect(),execute)
 }
 
 export async function repoAttachDocuments(
@@ -1487,6 +1562,7 @@ export async function repoDecideInspection(
   body: DecideInspectionBodyDTO,
   audit: AuditContext
 ): Promise<ReceptionIncomingInspection | null> {
+  if(body.decision==="LIBERE")throw new HttpError(409,"QUALITY_RECEIPT_CONTROL_REQUIRED","Pour libérer une quantité, ouvrez le contrôle qualité de la réception. Les anciennes mesures restent consultables.")
   const client = await db.connect()
   return withRealtimeOutboxTransaction(client, async (tx) => {
     const lock = await tx.query<InspectionRow>(
@@ -1604,8 +1680,8 @@ export async function repoDecideInspection(
   })
 }
 
-async function sumReceiptedQty(lineId: string): Promise<number> {
-  const res = await db.query<{ qty: number }>(
+async function sumReceiptedQty(tx:PoolClient,lineId: string): Promise<number> {
+  const res = await tx.query<{ qty: number }>(
     `
       SELECT COALESCE(SUM(qty), 0)::float8 AS qty
       FROM public.reception_fournisseur_stock_receipts
@@ -1617,13 +1693,25 @@ async function sumReceiptedQty(lineId: string): Promise<number> {
 }
 
 async function repoCreateStockReceiptLocked(
+  tx:PoolClient,
+  materialInstalled:boolean,
   receptionId: string,
   lineId: string,
   body: StockReceiptBodyDTO,
   audit: AuditContext,
   idempotencyKey: string
 ): Promise<{ stock_movement_id: string; movement_no: string | null; posted: StockMovementDetail } | null> {
-  const lineRes = await db.query<{
+  const rawRequestHash=hashStockCommand("RECEPTION_STOCK_RECEIPT",{receptionId,lineId,body})
+  const normalizedReceiptKey=normalizeIdempotencyKey(idempotencyKey)
+  const replay=(await tx.query<{request_hash:string;stock_movement_id:string}>(`SELECT request_hash,stock_movement_id::text
+    FROM public.reception_fournisseur_stock_receipts WHERE created_by=$1 AND idempotency_key=$2`,[audit.user_id,normalizedReceiptKey])).rows[0]
+  if(replay){
+    if(replay.request_hash!==rawRequestHash)throw new HttpError(409,"IDEMPOTENCY_KEY_REUSED","Cette action a déjà été utilisée avec une autre réception ou quantité.")
+    const posted=await repoGetMovement(replay.stock_movement_id,tx)
+    if(!posted)throw new Error("Receipt command points to a missing stock movement")
+    return {stock_movement_id:posted.movement.id,movement_no:posted.movement.movement_no,posted}
+  }
+  const lineRes = await tx.query<{
     id: string
     qty_received: number
     article_id: string
@@ -1631,6 +1719,10 @@ async function repoCreateStockReceiptLocked(
     lot_id: string | null
     lot_status: string | null
     reception_no: string
+    reception_status:string
+    stock_unit:string|null
+    stock_conversion_coef:number|null
+    article_unit:string|null
   }>(
     `
       SELECT
@@ -1640,12 +1732,13 @@ async function repoCreateStockReceiptLocked(
         l.unite,
         l.lot_id::text AS lot_id,
         lot.lot_status,
-        r.reception_no
+        r.reception_no, r.status AS reception_status,l.stock_unit,l.stock_conversion_coef::float8,article.unite AS article_unit
       FROM public.reception_fournisseur_lignes l
       JOIN public.receptions_fournisseurs r ON r.id = l.reception_id
       LEFT JOIN public.lots lot ON lot.id = l.lot_id
+      JOIN public.articles article ON article.id=l.article_id
       WHERE l.id = $1::uuid AND l.reception_id = $2::uuid
-      LIMIT 1
+      FOR UPDATE OF l,r
     `,
     [lineId, receptionId]
   )
@@ -1653,10 +1746,13 @@ async function repoCreateStockReceiptLocked(
   if (!line) return null
   if (!line.lot_id) throw new HttpError(409, "LOT_REQUIRED", "Veuillez d'abord creer le lot")
 
-  const lotStatus = line.lot_status ?? "LIBERE"
-  if (lotStatus !== "LIBERE") {
-    throw new HttpError(409, "LOT_NOT_RELEASED", "Mise en stock impossible: le lot n'est pas libere")
-  }
+  const sameUnit=(a:string|null|undefined,b:string|null|undefined)=>Boolean(a&&b&&a.trim().toUpperCase()===b.trim().toUpperCase())
+  if(body.unite&&!sameUnit(body.unite,line.unite))throw new HttpError(422,"RECEPTION_STOCK_INPUT_UNIT","La quantité à mettre en stock doit être exprimée dans l’unité de réception.")
+  const conversion=line.stock_conversion_coef&&line.stock_unit
+    ?{receiptUnit:line.unite??"",stockUnit:line.stock_unit,coefficient:line.stock_conversion_coef}
+    :receiptUnitConversion({receiptUnit:line.unite,articleUnit:line.article_unit})
+  if(!sameUnit(conversion.stockUnit,line.article_unit))throw new HttpError(409,"RECEPTION_STOCK_UNIT_CHANGED","L’unité de l’article a changé depuis la réception. Faites vérifier la conversion enregistrée.")
+  const stockQty=convertedStockQuantity(body.qty,conversion.coefficient)
 
   const stockCommandKey = hashStockCommand("RECEPTION_STOCK_KEY", {
     actor_user_id: audit.user_id,
@@ -1674,8 +1770,8 @@ async function repoCreateStockReceiptLocked(
         {
           article_id: line.article_id,
           lot_id: line.lot_id,
-          qty: body.qty,
-          unite: body.unite ?? line.unite ?? null,
+          qty: stockQty,
+          unite: conversion.stockUnit,
           unit_cost: null,
           currency: null,
           src_magasin_id: null,
@@ -1689,7 +1785,7 @@ async function repoCreateStockReceiptLocked(
   const normalizedCreateKey = normalizeIdempotencyKey(movementBody.idempotency_key ?? "")
   const { idempotency_key: _idempotencyKey, ...movementRequestPayload } = movementBody
   const expectedRequestHash = hashStockCommand("MOVEMENT_CREATE", movementRequestPayload)
-  const existingCommand = await db.query<{ request_hash: string; resource_id: string }>(
+  const existingCommand = await tx.query<{ request_hash: string; resource_id: string }>(
     `
       SELECT request_hash, resource_id
       FROM public.stock_command_receipts
@@ -1703,7 +1799,7 @@ async function repoCreateStockReceiptLocked(
     if (existing.request_hash !== expectedRequestHash) {
       throw new HttpError(409, "IDEMPOTENCY_KEY_REUSED", "This Idempotency-Key was already used with a different stock command")
     }
-    const linkedReceipt = await db.query(
+    const linkedReceipt = await tx.query(
       `
         SELECT 1
         FROM public.reception_fournisseur_stock_receipts
@@ -1717,7 +1813,7 @@ async function repoCreateStockReceiptLocked(
     if (!linkedReceipt.rows[0]) {
       throw new Error("Idempotent reception movement exists without its reception receipt")
     }
-    const posted = await repoGetMovement(existing.resource_id)
+    const posted = await repoGetMovement(existing.resource_id,tx)
     if (!posted) throw new Error("Idempotent reception receipt points to a missing stock movement")
     return {
       stock_movement_id: posted.movement.id,
@@ -1726,37 +1822,49 @@ async function repoCreateStockReceiptLocked(
     }
   }
 
-  const already = await sumReceiptedQty(lineId)
+  const lotStatus = line.lot_status
+  if (lotStatus !== "LIBERE") {
+    throw new HttpError(409, "LOT_NOT_RELEASED", "Mise en stock impossible: le lot n'est pas libere")
+  }
+
+  if(line.reception_status!=="OPEN")throw new HttpError(409,"RECEPTION_NOT_OPEN","Cette réception est close ou annulée. Rouvrez-la avant une nouvelle mise en stock.")
+
+  const already = await sumReceiptedQty(tx,lineId)
   const remaining = (line.qty_received ?? 0) - already
   if (body.qty > remaining + 1e-9) {
     throw new HttpError(409, "OVER_RECEIPT", "Quantite superieure a la quantite restante a mettre en stock")
   }
 
-  const created = await repoCreateMovement(movementBody, audit, { trusted_source_flow: true })
+  await assertReceiptLotQualityEligibility({client:tx,lotId:line.lot_id,receiptLineId:lineId,qty:convertedStockQuantity(already+body.qty,conversion.coefficient),unit:conversion.stockUnit})
+
+  const created = await repoCreateMovement(movementBody, audit, { trusted_source_flow: true,client:tx })
 
   const posted = await repoPostMovement(
     created.movement.id,
     {},
     audit,
-    `rf-post-${stockCommandKey}`
+    `rf-post-${stockCommandKey}`,
+    tx
   )
   if (!posted) throw new Error("Failed to post stock movement")
 
-  await db.query(
+  const receiptInsert=await tx.query<{id:string}>(
     `
       INSERT INTO public.reception_fournisseur_stock_receipts (
         reception_id,
         reception_line_id,
         stock_movement_id,
         qty,
-        created_by
+        created_by,idempotency_key,request_hash
       )
-      VALUES ($1::uuid,$2::uuid,$3::uuid,$4,$5)
+      VALUES ($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7) RETURNING id::text
     `,
-    [receptionId, lineId, posted.movement.id, body.qty, audit.user_id]
+    [receptionId, lineId, posted.movement.id, body.qty, audit.user_id,normalizedReceiptKey,rawRequestHash]
   )
 
-  await insertAuditLog(db, audit, {
+  if(materialInstalled)await transferMaterialReceiptTx(tx,receiptInsert.rows[0].id,audit)
+
+  await insertAuditLog(tx, audit, {
     action: "receptions.stock_receipt",
     entity_type: "stock_movements",
     entity_id: posted.movement.id,
@@ -1777,16 +1885,10 @@ export async function repoCreateStockReceipt(
   audit: AuditContext,
   idempotencyKey: string
 ): Promise<{ stock_movement_id: string; movement_no: string | null; posted: StockMovementDetail } | null> {
-  const lockClient = await db.connect()
-  const lockKey = `reception-stock-receipt:${audit.user_id}:${idempotencyKey}`
-  try {
-    await lockClient.query(`SELECT pg_advisory_lock(hashtextextended($1, 0))`, [lockKey])
-    return await repoCreateStockReceiptLocked(receptionId, lineId, body, audit, idempotencyKey)
-  } finally {
-    try {
-      await lockClient.query(`SELECT pg_advisory_unlock(hashtextextended($1, 0))`, [lockKey])
-    } finally {
-      lockClient.release()
-    }
-  }
+  const receiptKey=normalizeIdempotencyKey(idempotencyKey)
+  return withRealtimeOutboxTransaction(await db.connect(),async tx=>{
+    const materialInstalled=await lockMaterialReceiptRecipientsTx(tx,lineId)
+    await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[`reception-stock-receipt:${audit.user_id}:${receiptKey}`])
+    return repoCreateStockReceiptLocked(tx,materialInstalled,receptionId,lineId,body,audit,receiptKey)
+  })
 }

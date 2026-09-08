@@ -423,7 +423,7 @@ export async function copyOperationsToRevision(
         hourly_rate_source, hourly_rate_effective_at)
      SELECT of_id, $3::uuid, phase, designation, cf_id, poste_id, machine_id,
             hourly_rate_applied, tp, tf_unit, qte, coef,
-            temps_total_planned, 0, 'A_FAIRE',
+            temps_total_planned, 0, 'TODO',
             source_piece_operation_id, numero_programme, machine_family_code,
             cf_code_snapshot, cf_rate_id, temps_fabrication_planned,
             hourly_rate_source, hourly_rate_effective_at

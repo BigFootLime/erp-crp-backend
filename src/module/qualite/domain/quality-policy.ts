@@ -418,6 +418,26 @@ export function assertReleaseSeparation(params: {
   }
 }
 
+/** Approved #767 policy: the current database superuser may decide their own
+ * control with an explicit reason. It grants no derogation or verdict override. */
+export function assertJustifiedSelfRelease(params: {
+  executorUserId: number | null;
+  deciderUserId: number;
+  isSuperadmin: boolean;
+  justification: string | null | undefined;
+}): boolean {
+  const self = params.executorUserId === params.deciderUserId;
+  assertReleaseSeparation({ ...params, policy: {
+    allowSelfRelease: self && params.isSuperadmin,
+    allowSelfDerogationApproval: false,
+  } });
+  if (self && (params.justification?.trim().length ?? 0) < 10) {
+    throw new HttpError(422, "QUALITY_SELF_RELEASE_JUSTIFICATION_REQUIRED",
+      "Expliquez la validation de votre propre contrôle (10 caractères minimum).");
+  }
+  return self;
+}
+
 export function assertDerogationApprovalSeparation(params: {
   requesterUserId: number | null;
   approverUserId: number;

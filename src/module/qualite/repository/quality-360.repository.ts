@@ -6,6 +6,8 @@ import {reconcileReleasedConsolidationLot} from '../../production/repository/pro
 // d'idempotence. Aucun code métier n'est calculé côté client, aucun MAX()+1.
 
 import type { PoolClient } from "pg";
+import {resolveStockLotContext} from "./quality-stock-lot-context";
+import {applyMaterialLotDecision} from "./quality-material-lot-decision";
 
 import pool from "../../../config/database";
 import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
@@ -13,6 +15,7 @@ import { enqueueEntityChanged } from "../../../shared/realtime/realtime-outbox.s
 import { generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
+import { repoIsSuperadmin } from "../../access-control/repository/access-control.repository";
 
 import {
   assertDerogationApprovalSeparation,
@@ -24,7 +27,7 @@ import {
   assertPlanContentMutable,
   assertPlanTransition,
   assertPreviewFresh,
-  assertReleaseSeparation,
+  assertJustifiedSelfRelease,
   decideQualityReceipt,
   executionStatusForVerdict,
   legacyResultToVerdict,
@@ -1132,7 +1135,7 @@ async function resolveLotReleaseAllocation(
 
 export async function repoPreviewExecution(body: ExecutionPreviewBodyDTO): Promise<ExecutionPreview> {
   assertSourceRef({ source_type: body.source_type, source_id: body.source_id });
-  const scopedBody = await resolveLotReleaseAllocation(pool, body);
+  const scopedBody = await resolveStockLotContext(pool, await resolveLotReleaseAllocation(pool, body));
   const built = await buildExecutionSnapshot(pool, scopedBody);
   return {
     plan: { id: built.plan.id, code: built.plan.code, version: built.plan.version },
@@ -1147,6 +1150,7 @@ export async function repoPreviewExecution(body: ExecutionPreviewBodyDTO): Promi
 }
 
 export type ExecutionDetail = {
+  characteristics: QualityCharacteristicSpec[];
   id: string;
   reference: string;
   status: string;
@@ -1309,6 +1313,7 @@ function buildExecutionDetail(row: ExecutionRow, measurements: ExecutionDetail["
   return {
     id: row.id,
     reference: row.reference,
+    characteristics: integrity === "OK" ? characteristicsFromSnapshot(row.plan_snapshot) : [],
     status: row.status,
     verdict: row.verdict ?? legacyResultToVerdict(row.result),
     verdict_computed: row.verdict_computed,
@@ -1411,7 +1416,11 @@ export async function repoCreateExecution(params: {
       if (replayed) return buildExecutionDetail(replayed, await selectMeasurements(client, replayed.id));
     }
 
-    const scopedBody = await resolveLotReleaseAllocation(client, params.body);
+    const scopedBody = await resolveStockLotContext(client, await resolveLotReleaseAllocation(client, params.body), true);
+    if(scopedBody.source_type==="LOT"&&["RECHECK","RECEPTION"].includes(scopedBody.trigger)){
+      const pending=(await client.query<{id:string;reference:string}>("SELECT id::text,reference FROM public.quality_control WHERE lot_id=$1::uuid AND validation_date IS NULL ORDER BY control_date DESC,id DESC LIMIT 1",[scopedBody.lot_id])).rows[0];
+      if(pending)throw new HttpError(409,"QUALITY_LOT_CONTROL_PENDING",`Le contrôle ${pending.reference} est déjà ouvert pour ce lot. Terminez-le avant d’en créer un autre.`,{control_id:pending.id});
+    }
     const built = await buildExecutionSnapshot(client, scopedBody);
     // L'aperçu doit encore correspondre au plan applicable : sinon le référentiel
     // a bougé entre l'aperçu et la confirmation.
@@ -1452,7 +1461,7 @@ export async function repoCreateExecution(params: {
         controlType,
         params.body.controlled_by ?? params.actor.user_id,
         params.body.of_id ?? null,
-        params.body.piece_technique_id ?? null,
+        scopedBody.piece_technique_id ?? null,
         built.plan.id,
         built.plan.version,
         JSON.stringify(built.snapshot.payload),
@@ -1461,8 +1470,8 @@ export async function repoCreateExecution(params: {
         source.source_id,
         params.body.trigger,
         params.body.lot_id ?? null,
-        params.body.article_id ?? null,
-        params.body.fournisseur_id ?? null,
+        scopedBody.article_id ?? null,
+        scopedBody.fournisseur_id ?? null,
         params.body.reception_ligne_id ?? null,
         params.body.bon_livraison_id ?? null,
         params.body.delivery_allocation_id ?? null,
@@ -2120,6 +2129,9 @@ export async function repoDecideExecution(params: {
   idempotencyKey: string | null | undefined;
 }): Promise<ExecutionDetail | null> {
   return withTransaction(async (client) => {
+    // Stock writes lock the lot before its control. Keep the same order here.
+    const scope=await selectExecutionRow(client,params.id);
+    if(scope?.lot_id)await client.query("SELECT id FROM public.lots WHERE id=$1::uuid FOR UPDATE",[scope.lot_id]);
     const before = await selectExecutionRow(client, params.id, true);
     if (!before) return null;
 
@@ -2147,10 +2159,13 @@ export async function repoDecideExecution(params: {
     }
     assertSnapshotIntegrity(before.plan_snapshot, before.plan_snapshot_sha256);
 
-    // L'auteur de l'exécution ne prononce pas lui-même la libération.
-    assertReleaseSeparation({
+    // Use the current account in this transaction, never a role supplied by the UI.
+    const selfApprovalBySuperadmin = assertJustifiedSelfRelease({
       executorUserId: before.controlled_by,
       deciderUserId: params.actor.user_id,
+      isSuperadmin: before.controlled_by === params.actor.user_id
+        && await repoIsSuperadmin(params.actor.user_id, client),
+      justification: params.body.justification,
     });
     if (params.body.object_type !== before.source_type || params.body.object_id !== before.source_id) {
       throw new HttpError(
@@ -2159,6 +2174,8 @@ export async function repoDecideExecution(params: {
         "La decision doit porter sur la source exacte figee dans l'execution."
       );
     }
+    if(params.body.unite.trim().toUpperCase()!==before.unite?.trim().toUpperCase())
+      throw new HttpError(422,"QUALITY_RELEASE_UNIT_MISMATCH","La décision doit conserver l’unité du contrôle.");
 
     const specs = characteristicsFromSnapshot(before.plan_snapshot);
     const samples = await loadSamples(client, params.id);
@@ -2268,7 +2285,7 @@ export async function repoDecideExecution(params: {
         params.body.decision,
         params.body.object_type,
         params.body.object_id,
-        params.body.decision === "HOLD" ? outcome.qty_held : outcome.qty_released,
+        ["HOLD","REJECT"].includes(params.body.decision) ? outcome.qty_held : outcome.qty_released,
         params.body.unite,
         requestedVerdict,
         derogation?.id ?? null,
@@ -2281,6 +2298,8 @@ export async function repoDecideExecution(params: {
       ]
     );
     const decisionId = decisionRes.rows[0]!.id;
+
+    const materialLotDecision=await applyMaterialLotDecision(client,{execution:before,decision:params.body.decision,released:outcome.ledger.released,unit:params.body.unite,actorId:params.actor.user_id,decisionId});
 
     const deliveryLotReleased = await releaseQuarantinedLotForFullDeliveryDecision({
       client,
@@ -2320,6 +2339,9 @@ export async function repoDecideExecution(params: {
         qty_held: outcome.qty_held,
         derogation_id: derogation?.id ?? null,
         delivery_lot_released: deliveryLotReleased,
+        material_lot_decision: materialLotDecision,
+        self_approval_by_superadmin: selfApprovalBySuperadmin,
+        approval_policy: "quality-767-justified-self-release",
       },
       correlation_id: before.correlation_id,
       idempotency_key: idem.idempotencyKey,
@@ -2335,6 +2357,9 @@ export async function repoDecideExecution(params: {
         qty: params.body.qty,
         verdict: requestedVerdict,
         derogation_id: derogation?.id ?? null,
+        self_approval_by_superadmin: selfApprovalBySuperadmin,
+        approval_policy: "quality-767-justified-self-release",
+        justification: params.body.justification ?? null,
       },
     });
     await saveReceipt({

@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   assertOperationalLotQualityEligibility,
+  assertReceiptLotQualityEligibility,
+  readOperationalLotQualityEligibility,
   recordDirectLotQualityConsumption,
 } from "./quality-operational-gate.repository";
 
@@ -16,13 +18,14 @@ function queryClient(input: {
   committed?: number;
   articleUnit?: string | null;
   controlUnit?: string | null;
+  receiptLineId?:string;
   concession?: { status: string; valid_to: string | null } | null;
 }) {
   const query = vi.fn(async (sql: string) => {
     if (sql.includes("FROM public.lots")) return { rows: [{ lot_code: "LOT-616", lot_status: input.status ?? "LIBERE", article_unit: input.articleUnit ?? "PCS" }] };
     if (sql.includes("FROM public.quality_control qc")) {
       return {
-        rows: [{ id: "00000000-0000-4000-8000-000000000001", qty_released: String(input.released ?? 10), qty_held: "0", qty_consumed: String(input.consumed ?? 0), unite: input.controlUnit ?? "PCS", pending: input.pending ?? false }],
+        rows: [{ id: "00000000-0000-4000-8000-000000000001", qty_released: String(input.released ?? 10), qty_held: "0", qty_consumed: String(input.consumed ?? 0), unite: input.controlUnit ?? "PCS", pending: input.pending ?? false,trigger_type:input.receiptLineId?"RECEPTION":"RECHECK",reception_ligne_id:input.receiptLineId??null }],
       };
     }
     if (sql.includes("FROM public.stock_reservations")) return input.committed ? { rows: [{ qty: String(input.committed) }] } : { rows: [] };
@@ -37,6 +40,25 @@ function queryClient(input: {
 }
 
 describe("operational Quality 360 gate", () => {
+  it("uses the receipt release once, without counting reservations of earlier entries a second time",async()=>{
+    const client=queryClient({receiptLineId:"line",released:60,committed:40,consumed:5});
+    await expect(assertReceiptLotQualityEligibility({client:client as never,lotId:LOT_ID,receiptLineId:"line",qty:60,unit:"PCS"})).resolves.toMatchObject({already_committed_qty:0});
+    await expect(assertReceiptLotQualityEligibility({client:client as never,lotId:LOT_ID,receiptLineId:"line",qty:61,unit:"PCS"})).rejects.toMatchObject({code:"QUALITY_NOT_ELIGIBLE"});
+  });
+  it("cannot use a stock recheck or another incoming line to authorize new stock",async()=>{
+    for(const receiptLineId of [undefined,"other"]){
+      await expect(assertReceiptLotQualityEligibility({client:queryClient({receiptLineId}) as never,lotId:LOT_ID,receiptLineId:"line",qty:1,unit:"PCS"})).rejects.toMatchObject({code:"QUALITY_RECEIPT_CONTROL_REQUIRED"});
+    }
+  });
+  it("previews the remaining released quantity without taking write locks or granting a write", async () => {
+    const client = queryClient({ released: 80, consumed: 5, committed: 15 });
+    const preview = await readOperationalLotQualityEligibility({client: client as never, lotId: LOT_ID, qty: 100, purpose: "RESERVE"});
+    expect(preview.available).toBe(60);
+    expect(preview.eligibility.blocks).toContainEqual(expect.objectContaining({code: "QTY_NOT_RELEASED"}));
+    expect(client.query.mock.calls.every(([sql]) => !/FOR UPDATE|FOR SHARE/.test(sql))).toBe(true);
+    await expect(assertOperationalLotQualityEligibility({client: client as never, lotId: LOT_ID, qty: 61, purpose: "RESERVE"})).rejects.toMatchObject({code: "QUALITY_NOT_ELIGIBLE"});
+    await expect(assertOperationalLotQualityEligibility({client: client as never, lotId: LOT_ID, qty: 60, purpose: "RESERVE"})).resolves.toBeDefined();
+  });
   it("allows a released, controlled lot and retains immutable evidence ids", async () => {
     const client = queryClient({ released: 10 });
     const decision = await assertOperationalLotQualityEligibility({

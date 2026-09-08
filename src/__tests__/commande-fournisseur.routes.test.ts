@@ -59,6 +59,18 @@ import { withRealtimeOutboxDbMock } from "./helpers/realtime-outbox-db-mock";
 
 const UUID = "3b9f2a44-6d3e-4f7a-9c2d-1e5b8a7c6d90";
 
+describe('consultations fournisseur — garde HTTP',()=>{
+  it('refuse lecture et écriture sans droit aux prix',async()=>{
+    const get=await request(app).get(`/api/v1/commandes-fournisseurs/${UUID}/consultations`).set('x-test-role','Responsable Qualite');
+    const post=await request(app).post(`/api/v1/commandes-fournisseurs/${UUID}/consultations/commands`).set('x-test-role','Responsable Qualite').send({action:'OPEN'});
+    expect(get.status).toBe(403);expect(post.status).toBe(403);
+  });
+  it('refuse une écriture sans version et sans clé de répétition',async()=>{
+    const res=await request(app).post(`/api/v1/commandes-fournisseurs/${UUID}/consultations/commands`).send({action:'OPEN',notes:'Test technique'});
+    expect(res.status).toBe(400);
+  });
+});
+
 /** État configurable du dispatcher SQL (mock pg robuste par contenu de requête). */
 const state = {
   header: {

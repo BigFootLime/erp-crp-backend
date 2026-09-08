@@ -1,4 +1,5 @@
 import {productionWorkbenchConfig} from '../controllers/production-workbench.controller';
+import {readDossier,completeDossier} from '../controllers/of-dossier.controller';
 import { Router, type RequestHandler } from "express";
 import {synchronizePreparationChildren} from '../controllers/production-workbench.controller';
 import {reusePreparationStock} from '../controllers/production-workbench.controller';
@@ -15,6 +16,7 @@ import { authenticateToken } from "../../auth/middlewares/auth.middleware";
 import { HttpError } from "../../../utils/httpError";
 import { roleHasMachineCapability, type MachineCapability } from "../domain/machine-rbac";
 import { roleHasOfCapability, type OfCapability } from "../domain/of-rbac";
+import {readMaterial,configureMaterial,confirmMaterial,verifyMaterialLot,readOperationReadiness,debitMaterial,customerMaterial,correctDebitMaterial,transferMaterial,reconcileMaterial} from "../controllers/of-material.controller";
 import {
   archiveMachine,
   archivePoste,
@@ -231,6 +233,18 @@ router.post('/consolidations',requireOfCapability('generate'),createConsolidatio
 router.get('/consolidations/:id',requireOfCapability('read'),getConsolidation);
 router.post('/consolidations/:id/dissolve',requireOfCapability('cancel'),dissolveConsolidation);
 router.get('/ofs/:id/workbench',requireOfCapability('read'),preparationWorkbench);
+router.get('/ofs/:id/dossier',requireOfCapability('read'),readDossier);
+router.get('/ofs/:id/material',requireOfCapability('read'),readMaterial);
+router.get('/ofs/:id/operation-readiness',requireOfCapability('read'),readOperationReadiness);
+router.post('/ofs/:id/material/:sourceRef/configure',requireOfCapability('read'),configureMaterial);
+router.post('/ofs/:id/material/:sourceRef/verify-lot',requireOfCapability('read'),verifyMaterialLot);
+router.post('/ofs/:id/material/confirm',requireOfCapability('read'),confirmMaterial);
+router.post('/ofs/:id/material/debits',requireOfCapability('operate'),debitMaterial);
+router.post('/ofs/:id/material/debit-corrections',requireOfCapability('operate'),correctDebitMaterial);
+router.post('/ofs/:id/material/transfers',requireOfCapability('operate'),transferMaterial);
+router.post('/ofs/:id/material/reconcile-revision',requireOfCapability('read'),reconcileMaterial);
+router.post('/ofs/:id/material/customer-calls',requireOfCapability('read'),customerMaterial);
+router.post('/ofs/:id/complete',requireOfCapability('release'),completeDossier);
 router.post('/ofs/:id/workbench/children/synchronize',requireOfCapability('generate'),synchronizePreparationChildren);
 router.post('/ofs/:id/workbench/programming',requireOfCapability('revise'),saveProgrammingTask);
 router.post('/ofs/:id/workbench/purchases/import',requireOfCapability('edit_prelaunch'),importPreparationPurchases);

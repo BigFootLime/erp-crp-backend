@@ -150,6 +150,11 @@ describe("planning central — contraintes et engagement", () => {
     expect(result.changes[0].after.start).toBe(fixed.committed!.end);
     expect(result.changes).toHaveLength(1);
   });
+  it('uses the real completion of a prerequisite even without a committed slot',()=>{
+    const parent=task('program',{commitment:'DONE',actual:{end:from}}),child=task('mill');
+    const result=schedule({tasks:[parent,child],resources:[resource],from,dependencies:[{predecessorId:'program',successorId:'mill',transferQuantity:null,releasedQuantity:0,lagMinutes:0}],requested:[{taskId:'mill',earliestStart:from}]});
+    expect(result.feasible).toBe(true);expect(result.forecasts.mill.start).toBe(from);
+  });
   it("transfert partiel débloque uniquement lorsque la quantité autorisée est libérée", () => {
     const parent = task("cut", { resourceIds: [] }), child = task("mill");
     const run = (releasedQuantity: number) => schedule({ tasks: [parent, child], resources: [resource], from,

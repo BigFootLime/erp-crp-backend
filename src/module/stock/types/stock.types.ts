@@ -375,6 +375,12 @@ export type StockLotListItem = {
 
 export type StockLotDetail = StockLotListItem & {
   notes: string | null;
+  client_proprietaire_id?: string | null;
+  owner_client_name?: string | null;
+  material_properties?: Record<string, unknown>;
+  unit_code?: string;
+  quantity_on_hand?: number;
+  quantity_reserved?: number;
 };
 
 export type StockLotGenealogyEdge = {

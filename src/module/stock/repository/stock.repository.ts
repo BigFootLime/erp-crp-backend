@@ -2582,7 +2582,7 @@ export function assertStockConsumptionAllowed(
     throw new HttpError(
       409,
       "LOT_NOT_RELEASED",
-      `Lot status ${state.lot_status} does not allow stock consumption`
+      "Ce lot n’est pas libéré pour une consommation de stock. Ouvrez son contrôle qualité."
     );
   }
 
@@ -5260,6 +5260,12 @@ export async function repoGetLot(id: string): Promise<StockLotDetail | null> {
         l.article_id::text AS article_id,
         a.code AS article_code,
         a.designation AS article_designation,
+        a.unite AS unit_code,
+        l.client_proprietaire_id::text AS client_proprietaire_id,
+        c.company_name AS owner_client_name,
+        COALESCE(l.material_properties, '{}'::jsonb) AS material_properties,
+        (SELECT COALESCE(sum(b.qty_total),0)::float8 FROM public.stock_batches b WHERE b.lot_id=l.id) AS quantity_on_hand,
+        (SELECT COALESCE(sum(b.qty_reserved),0)::float8 FROM public.stock_batches b WHERE b.lot_id=l.id) AS quantity_reserved,
         l.lot_code,
         l.lot_status,
         l.lot_status_note,
@@ -5273,6 +5279,7 @@ export async function repoGetLot(id: string): Promise<StockLotDetail | null> {
         l.created_at::text AS created_at
       FROM public.lots l
       JOIN public.articles a ON a.id = l.article_id
+      LEFT JOIN public.clients c ON c.client_id = l.client_proprietaire_id
       WHERE l.id = $1::uuid
     `,
     [id]
@@ -5606,11 +5613,13 @@ export async function repoGetLotGenealogy(id: string): Promise<StockLotGenealogy
 export async function repoCreateLotGenealogy(
   body: CreateLotGenealogyBodyDTO,
   audit: AuditContext,
-  idempotencyKey: string
+  idempotencyKey: string,
+  transactionClient?: PoolClient
 ): Promise<{ correlation_id: string; edges: StockLotGenealogyEdge[] }> {
-  const client = await db.connect();
+  const client = transactionClient ?? await db.connect();
+  const ownsTransaction = !transactionClient;
   try {
-    await client.query("BEGIN");
+    if (ownsTransaction) await client.query("BEGIN");
     const command = await beginStockCommand(client, {
       audit,
       idempotency_key: idempotencyKey,
@@ -5618,7 +5627,7 @@ export async function repoCreateLotGenealogy(
       request_payload: body,
     });
     if (command.existing) {
-      const edges = await db.query<StockLotGenealogyEdge>(
+      const edges = await client.query<StockLotGenealogyEdge>(
         `
           WITH genealogy AS (
             SELECT *
@@ -5630,7 +5639,7 @@ export async function repoCreateLotGenealogy(
         `,
         [command.existing.correlation_id]
       );
-      await client.query("COMMIT");
+      if (ownsTransaction) await client.query("COMMIT");
       return { correlation_id: command.existing.correlation_id, edges: edges.rows };
     }
 
@@ -5756,9 +5765,9 @@ export async function repoCreateLotGenealogy(
         edges_count: contributions.length,
       },
     });
-    await client.query("COMMIT");
+    if (ownsTransaction) await client.query("COMMIT");
 
-    const edges = await db.query<StockLotGenealogyEdge>(
+    const edges = await client.query<StockLotGenealogyEdge>(
       `
         WITH genealogy AS (
           SELECT *
@@ -5772,10 +5781,10 @@ export async function repoCreateLotGenealogy(
     );
     return { correlation_id: command.correlation_id, edges: edges.rows };
   } catch (error) {
-    await client.query("ROLLBACK");
+    if (ownsTransaction) await client.query("ROLLBACK");
     throw error;
   } finally {
-    client.release();
+    if (ownsTransaction) client.release();
   }
 }
 
@@ -6671,8 +6680,8 @@ export async function repoListMovements(filters: ListMovementsQueryDTO): Promise
 
 type MovementRow = StockMovementDetail["movement"];
 
-export async function repoGetMovement(id: string): Promise<StockMovementDetail | null> {
-  const m = await db.query<MovementRow>(
+export async function repoGetMovement(id: string, tx: Pick<PoolClient, "query"> = db): Promise<StockMovementDetail | null> {
+  const m = await tx.query<MovementRow>(
     `
       SELECT
         id::text AS id,
@@ -6704,7 +6713,7 @@ export async function repoGetMovement(id: string): Promise<StockMovementDetail |
   const movement = m.rows[0] ?? null;
   if (!movement) return null;
 
-  const l = await db.query<StockMovementLineDetail>(
+  const l = await tx.query<StockMovementLineDetail>(
     `
       SELECT
         l.id::text AS id,
@@ -6746,7 +6755,7 @@ export async function repoGetMovement(id: string): Promise<StockMovementDetail |
     [id]
   );
 
-  const docs = await db.query<StockDocument>(
+  const docs = await tx.query<StockDocument>(
     `
       SELECT
         sd.id::text AS document_id,
@@ -6761,7 +6770,7 @@ export async function repoGetMovement(id: string): Promise<StockMovementDetail |
     [id]
   );
 
-  const events = await db.query<StockMovementEvent>(
+  const events = await tx.query<StockMovementEvent>(
     `
       SELECT
         id::text AS id,
@@ -7211,6 +7220,9 @@ export async function repoPreviewMovementCompensation(
     [id]
   );
   const built = buildCompensatingMovementBody(detail, body);
+  const materialOwned=(await db.query(`SELECT 1 FROM public.production_material_debit_sources WHERE stock_movement_id=$1::uuid
+    UNION ALL SELECT 1 FROM public.production_material_remnants WHERE stock_movement_id=$1::uuid LIMIT 1`,[id])).rows.length>0;
+  if(materialOwned)built.blockers.push({code:'MATERIAL_DEBIT_CORRECTION_REQUIRED',message:'Corrigez ce mouvement depuis le débit matière de l’OF pour conserver ensemble stock, bruts et transferts.'});
   const existingCompensation = existing.rows[0] ?? null;
   const noExistingCompensation = !existingCompensation;
   const existingMessage = existingCompensation
@@ -7430,11 +7442,12 @@ export async function repoCompensateMovement(
 export async function repoCreateMovement(
   body: CreateMovementBodyDTO,
   audit: AuditContext,
-  options: { trusted_source_flow?: boolean } = {}
+  options: { trusted_source_flow?: boolean; client?: PoolClient } = {}
 ): Promise<StockMovementDetail> {
-  const client = await db.connect();
+  const client = options.client ?? await db.connect();
+  const ownsTransaction = !options.client;
   try {
-    await client.query("BEGIN");
+    if (ownsTransaction) await client.query("BEGIN");
 
     const { idempotency_key: _bodyIdempotencyKey, ...requestPayload } = body;
     const command = await beginStockCommand(client, {
@@ -7445,8 +7458,8 @@ export async function repoCreateMovement(
     });
     if (command.existing) {
       const existingId = command.existing.resource_id;
-      await client.query("COMMIT");
-      const existing = await repoGetMovement(existingId);
+      if (ownsTransaction) await client.query("COMMIT");
+      const existing = await repoGetMovement(existingId, options.client);
       if (!existing) throw new Error("Idempotent movement receipt points to a missing movement");
       return existing;
     }
@@ -7655,8 +7668,8 @@ export async function repoCreateMovement(
             legacy_idempotency_recovery: true,
           },
         });
-        await client.query("COMMIT");
-        const out = await repoGetMovement(id);
+        if (ownsTransaction) await client.query("COMMIT");
+        const out = await repoGetMovement(id, options.client);
         if (!out) throw new Error("Failed to read existing idempotent movement");
         return out;
       }
@@ -7757,15 +7770,15 @@ export async function repoCreateMovement(
       },
     });
 
-    await client.query("COMMIT");
-    const out = await repoGetMovement(movementId);
+    if (ownsTransaction) await client.query("COMMIT");
+    const out = await repoGetMovement(movementId, options.client);
     if (!out) throw new Error("Failed to read created movement");
     return out;
   } catch (err) {
-    await client.query("ROLLBACK");
+    if (ownsTransaction) await client.query("ROLLBACK");
     throw err;
   } finally {
-    client.release();
+    if (ownsTransaction) client.release();
   }
 }
 
@@ -7808,11 +7821,14 @@ export async function repoPostMovement(
   id: string,
   body: PostMovementBodyDTO,
   audit: AuditContext,
-  idempotencyKey: string
+  idempotencyKey: string,
+  externalClient?: PoolClient,
+  reservedConsumption?: {reservationId:string}
 ): Promise<StockMovementDetail | null> {
-  const client = await db.connect();
+  const client = externalClient ?? await db.connect();
+  const ownsTransaction = !externalClient;
   try {
-    await client.query("BEGIN");
+    if (ownsTransaction) await client.query("BEGIN");
 
     const command = await beginStockCommand(client, {
       audit,
@@ -7822,8 +7838,8 @@ export async function repoPostMovement(
     });
     if (command.existing) {
       const existingId = command.existing.resource_id;
-      await client.query("COMMIT");
-      return repoGetMovement(existingId);
+      if (ownsTransaction) await client.query("COMMIT");
+      return await repoGetMovement(existingId, externalClient);
     }
 
     const lock = await client.query<{
@@ -7859,11 +7875,18 @@ export async function repoPostMovement(
 
     const m = lock.rows[0] ?? null;
     if (!m) {
-      await client.query("ROLLBACK");
+      if (ownsTransaction) await client.query("ROLLBACK");
       return null;
     }
     if (m.status !== "DRAFT") {
       throw new HttpError(409, "INVALID_STATUS", "Only DRAFT movements can be posted");
+    }
+
+    if(!externalClient){
+      const materialReversal=(await client.query(`SELECT 1 FROM public.stock_movements m WHERE m.id=$1::uuid AND (
+        EXISTS(SELECT 1 FROM public.production_material_debit_sources s WHERE s.stock_movement_id=m.reversal_of_id) OR
+        EXISTS(SELECT 1 FROM public.production_material_remnants r WHERE r.stock_movement_id=m.reversal_of_id))`,[id])).rows.length>0;
+      if(materialReversal)throw new HttpError(409,'MATERIAL_DEBIT_CORRECTION_REQUIRED','La compensation de ce mouvement doit partager la correction du débit matière de l’OF.');
     }
 
     await ensureArticleStockManaged(client, m.article_id);
@@ -7898,7 +7921,24 @@ export async function repoPostMovement(
     // very transaction that posts the OUT movement.  Transfers merely change
     // location and quality dispositions (SCRAP/ADJUSTMENT) remain dedicated
     // workflows, so neither is treated as a released-material consumption.
-    const directOutQualityDecisions = m.movement_type === "OUT"
+    // Server-owned reservation consumption only. The caller has atomically
+    // linked this exact movement and reduced physical reserved stock. An HTTP
+    // request cannot supply this context or spend the quality release again.
+    let reservedQualityDecision:Awaited<ReturnType<typeof assertOperationalLotQualityEligibility>>|null=null;
+    if(reservedConsumption){
+      if(!externalClient||m.movement_type!=='OUT'||draftLines.rows.length!==1)
+        throw new HttpError(409,'RESERVED_MOVEMENT_CONTEXT_INVALID','La consommation réservée exige une transaction et une ligne de sortie uniques.');
+      const line=draftLines.rows[0];
+      const matching=(await client.query<{lot_id:string}>(`SELECT r.lot_id::text FROM public.stock_reservations r
+        JOIN public.stock_movements mv ON mv.id=r.consumed_stock_movement_id
+        WHERE r.id=$1::uuid AND mv.id=$2::uuid AND r.status IN ('ACTIVE','CONSUMED')
+          AND r.article_id=mv.article_id AND r.stock_batch_id=mv.stock_batch_id AND r.qty_consumed>=abs(mv.qty)
+          AND r.lot_id=$3::uuid AND mv.source_document_type='OF' AND mv.source_document_id=r.of_id::text
+          AND abs(mv.qty)=$4 AND(r.expires_at IS NULL OR r.expires_at>now()) FOR SHARE OF r`,[reservedConsumption.reservationId,id,line.lot_id,Math.abs(Number(line.qty))])).rows[0];
+      if(!matching)throw new HttpError(409,'RESERVED_MOVEMENT_MISMATCH','Le mouvement ne correspond pas à la consommation enregistrée sur cette réservation.');
+      reservedQualityDecision=await assertOperationalLotQualityEligibility({client,lotId:matching.lot_id,qty:0,unit:line.unite,purpose:'RESERVE'});
+    }
+    const directOutQualityDecisions = m.movement_type === "OUT"&&!reservedConsumption
       ? await assertDirectOutMovementQualityEligibility({ client, lines: draftLines.rows })
       : [];
 
@@ -8180,8 +8220,8 @@ export async function repoPostMovement(
         },
       });
 
-      await client.query("COMMIT");
-      return repoGetMovement(id);
+      if (ownsTransaction) await client.query("COMMIT");
+      return await repoGetMovement(id, externalClient);
     }
 
     const lockedStates = await lockStockStates(client, [
@@ -8191,9 +8231,16 @@ export async function repoPostMovement(
       stockTargetKey({ stock_level_id: m.stock_level_id, stock_batch_id: m.stock_batch_id })
     );
     if (!sourceState) throw new Error("Locked stock state missing");
+    // A full reversal of an untouched remnant is a stock correction, not an
+    // authorization to manufacture with unreleased material. Only the shared
+    // production correction transaction can post it. The immutable remnant
+    // proof must match the original IN, lot, location and exact quantity.
+    const remnantReversal = !!externalClient && m.movement_type === 'ADJUSTMENT' && m.qty < 0
+      && await isMaterialRemnantReversalTx(client, id);
     assertStockConsumptionAllowed(sourceState, {
       movement_type: m.movement_type,
       qty: m.qty,
+      allow_nonreleased_adjustment: remnantReversal,
       negative_stock_override: body.negative_stock_override,
     });
 
@@ -8253,6 +8300,9 @@ export async function repoPostMovement(
         movement_type: m.movement_type,
         negative_stock_override: body.negative_stock_override ?? null,
         quality_gates: directOutQualityDecisions,
+        reserved_quality_gate:reservedQualityDecision,
+        consumed_reservation_id:reservedConsumption?.reservationId??null,
+        material_remnant_reversal: remnantReversal,
         traceability_consumptions_recorded: consumption.recorded,
         traceability_consumptions_compensated: consumption.compensated,
       },
@@ -8271,14 +8321,32 @@ export async function repoPostMovement(
       },
     });
 
-    await client.query("COMMIT");
-    return repoGetMovement(id);
+    if (ownsTransaction) await client.query("COMMIT");
+    return await repoGetMovement(id, externalClient);
   } catch (err) {
-    await client.query("ROLLBACK");
+    if (ownsTransaction) await client.query("ROLLBACK");
     throw err;
   } finally {
-    client.release();
+    if (ownsTransaction) client.release();
   }
+}
+
+export async function isMaterialRemnantReversalTx(client: PoolClient, movementId: string): Promise<boolean> {
+  const proof = await client.query(`SELECT r.id FROM public.stock_movements m
+    JOIN public.stock_movements original ON original.id=m.reversal_of_id
+    JOIN public.production_material_remnants r ON r.stock_movement_id=original.id
+    JOIN public.production_material_debits d ON d.id=r.debit_id AND d.compensates_id IS NULL
+    JOIN public.stock_batches b ON b.id=m.stock_batch_id AND b.lot_id=r.lot_id
+    WHERE m.id=$1::uuid AND m.status='DRAFT' AND m.movement_type='ADJUSTMENT' AND m.qty<0
+      AND original.status='POSTED' AND original.movement_type='IN'
+      AND m.article_id=original.article_id AND m.stock_level_id=original.stock_level_id
+      AND m.stock_batch_id=original.stock_batch_id AND m.qty=-original.qty AND abs(m.qty)=r.quantity
+      AND m.source_document_type='STOCK_COMPENSATION' AND m.source_document_id=original.id::text
+      AND NOT EXISTS(SELECT 1 FROM public.stock_reservations s WHERE s.lot_id=r.lot_id AND(s.status='ACTIVE' OR s.qty_consumed>0))
+      AND NOT EXISTS(SELECT 1 FROM public.stock_lot_genealogy_edges e WHERE e.parent_lot_id=r.lot_id)
+      AND NOT EXISTS(SELECT 1 FROM public.stock_movement_lines ml JOIN public.stock_movements used ON used.id=ml.movement_id
+        WHERE ml.lot_id=r.lot_id AND used.id NOT IN(m.id,original.id) AND used.status<>'CANCELLED')`, [movementId]);
+  return proof.rows.length === 1;
 }
 
 export async function repoCancelMovement(

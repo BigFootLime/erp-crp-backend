@@ -1,4 +1,7 @@
 import type { PoolClient } from "pg";
+import {findUntouchedMaterialDraftTx,recordMaterialDraftBaselineTx} from './material-draft-baseline.repository';
+import {assertPurchaseLineCoveragePatch,type AllocatedPurchaseLine} from '../domain/purchase-line-coverage';
+import {assertLegacyMaterialWrite} from "../../stock/repository/of-material-write-guard";
 import crypto from "node:crypto";
 
 import db from "../../../config/database";
@@ -200,7 +203,7 @@ export function sha256Hex(payload: string): string {
   return crypto.createHash("sha256").update(payload, "utf8").digest("hex");
 }
 
-async function insertAuditLog(
+export async function insertAuditLog(
   tx: DbQueryer,
   audit: AuditContext,
   entry: {
@@ -252,7 +255,7 @@ function isPgUniqueViolation(err: unknown): boolean {
 }
 
 /** Jeton de concurrence optimiste : représentation ::text exacte (pattern affaire #169). */
-function assertOptimisticToken(expected: string | undefined, current: string | null) {
+export function assertOptimisticToken(expected: string | undefined, current: string | null) {
   if (expected && current && expected !== current) {
     throw new HttpError(
       409,
@@ -275,7 +278,7 @@ type HeaderLockRow = {
   date_promesse: string | null;
 };
 
-async function lockHeader(tx: DbQueryer, id: string): Promise<HeaderLockRow> {
+export async function lockHeader(tx: DbQueryer, id: string): Promise<HeaderLockRow> {
   const res = await tx.query<HeaderLockRow>(
     `SELECT id, code, statut, fournisseur_id, devise, version_document, date_promesse::text,
             frais_port_ht::text, tva_frais_pct::text, updated_at::text AS updated_at_token
@@ -290,7 +293,7 @@ async function lockHeader(tx: DbQueryer, id: string): Promise<HeaderLockRow> {
 }
 
 /** Recalcule et persiste les totaux serveur à partir des lignes ACTIVE (source unique). */
-async function recomputeTotauxTx(tx: DbQueryer, commandeId: string): Promise<void> {
+export async function recomputeTotauxTx(tx: DbQueryer, commandeId: string): Promise<void> {
   const lignes = await tx.query<{
     quantite: string;
     prix_unitaire_ht: string;
@@ -337,7 +340,7 @@ type FournisseurRow = {
   actif: boolean | null;
 };
 
-async function fetchFournisseurMini(tx: DbQueryer, fournisseurId: string): Promise<FournisseurMini> {
+export async function fetchFournisseurMini(tx: DbQueryer, fournisseurId: string): Promise<FournisseurMini> {
   const res = await tx.query<FournisseurRow>(
     `SELECT id, COALESCE(code, code_fournisseur) AS code, COALESCE(nom, raison_sociale) AS nom, status, actif
        FROM public.fournisseurs WHERE id = $1::uuid`,
@@ -348,7 +351,7 @@ async function fetchFournisseurMini(tx: DbQueryer, fournisseurId: string): Promi
   return { id: row.id, code: row.code, nom: row.nom, status: row.status, actif: row.actif };
 }
 
-function assertFournisseurCommandable(f: FournisseurMini) {
+export function assertFournisseurCommandable(f: FournisseurMini) {
   const inactive = f.actif === false || f.status === "archive" || f.status === "inactif";
   if (inactive) {
     throw new HttpError(
@@ -772,8 +775,10 @@ async function insertLigneTx(
   commandeId: string,
   position: number,
   ligne: CreateCommandeBodyDTO["lignes"][number],
-  userId: number
+  userId: number,
+  materialCoverageConfirmed = false
 ): Promise<string> {
+  if(ligne.type==="MATIERE"&&ligne.of_id&&!materialCoverageConfirmed)await assertLegacyMaterialWrite(tx,ligne.of_id,ligne.article_id??null);
   const res = await tx.query<{ id: string }>(
     `INSERT INTO public.commande_fournisseur_ligne (
         commande_id, position, type, article_id, catalogue_id, reference_fournisseur,
@@ -971,7 +976,7 @@ export async function repoCreateCommandeFournisseur(
 
 /* --------------------------------- update draft -------------------------------- */
 
-function assertDraft(statut: CommandeFournisseurStatut) {
+export function assertDraft(statut: CommandeFournisseurStatut) {
   if (statut !== "BROUILLON") {
     throw new HttpError(
       422,
@@ -1112,15 +1117,20 @@ export async function repoUpdateLigne(
   const client = await db.connect();
   try {
     await client.query("BEGIN");
+    await client.query("SELECT revision FROM public.planning_central_settings WHERE singleton FOR UPDATE");
     const header = await lockHeader(client, id);
     assertOptimisticToken(body.expected_updated_at, header.updated_at_token);
     assertDraft(header.statut);
 
-    const exists = await client.query<{ id: string }>(
-      `SELECT id FROM public.commande_fournisseur_ligne WHERE id = $1::uuid AND commande_id = $2::uuid FOR UPDATE`,
+    const exists = await client.query<AllocatedPurchaseLine&{id:string}>(
+      `SELECT id,type,article_id::text,unite,unite_stock,coef_conversion::float8,quantite::float8,qty_annulee::float8 FROM public.commande_fournisseur_ligne WHERE id = $1::uuid AND commande_id = $2::uuid FOR UPDATE`,
       [ligneId, id]
     );
     if (!exists.rows[0]) throw new HttpError(404, "LIGNE_NOT_FOUND", "Ligne introuvable sur cette commande.");
+
+    const allocation=(await client.query<{qty:number}>(`SELECT COALESCE(sum(CASE WHEN besoin_type='OF_MATERIAL' THEN quantite_couverte ELSE quantite_couverte*$2 END),0)::float8 AS qty
+      FROM public.commande_fournisseur_ligne_besoin WHERE ligne_id=$1::uuid AND NOT annule`,[ligneId,exists.rows[0].coef_conversion??1])).rows[0];
+    assertPurchaseLineCoveragePatch(exists.rows[0],body.patch,allocation.qty);
 
     const sets: string[] = [];
     const values: unknown[] = [ligneId];
@@ -2204,6 +2214,53 @@ export async function repoConfirmPropositions(
 }
 
 /* ----------------------------------- duplication ----------------------------------- */
+
+export type MaterialDraftLine = {
+  needId: string; sourceRef: string; ofId: number; articleId: string; designation: string;
+  supplierId: string; currency: string; destinationId: string | null; unit: string;
+  quantity: number; assigned: number; price: number; due: string | null;
+  requirements: string[]; operation: string;
+};
+/** Called inside the coverage transaction, after reservations and net-shortage checks. */
+export async function createMaterialDraftsTx(tx: PoolClient, lines: MaterialDraftLine[], audit: AuditContext) {
+  const groups = new Map<string, MaterialDraftLine[]>();
+  for (const line of lines) {
+    const key = JSON.stringify([line.supplierId, line.currency, line.destinationId]);
+    groups.set(key, [...(groups.get(key) ?? []), line]);
+  }
+  const commands: Array<{id: string; code: string}> = [];
+  for (const group of groups.values()) {
+    const first = group[0];
+    assertFournisseurCommandable(await fetchFournisseurMini(tx, first.supplierId));
+    const reusable = await findUntouchedMaterialDraftTx(tx,first);
+    const code = reusable?.code ?? await generateCommandeFournisseurCode(tx);
+    const id = reusable?.id ?? (await tx.query<{id:string}>(`INSERT INTO public.commande_fournisseur
+      (code,origine,fournisseur_id,devise,magasin_livraison_id,note_interne,created_by,updated_by)
+      VALUES($1,'RUPTURE_OF',$2::uuid,$3,$4::uuid,'Préparé après confirmation de la couverture matière. À relire avant validation.', $5,$5) RETURNING id`,
+      [code,first.supplierId,first.currency,first.destinationId,audit.user_id])).rows[0].id;
+    const position = reusable ? Number((await tx.query('SELECT COALESCE(max(position),0) AS position FROM public.commande_fournisseur_ligne WHERE commande_id=$1::uuid',[id])).rows[0].position) : 0;
+    for (const [index,line] of group.entries()) {
+      const lineId = await insertLigneTx(tx,id,position+index+1,{
+        type:"MATIERE",article_id:line.articleId,designation:line.designation,unite:line.unit,unite_stock:line.unit,coef_conversion:1,
+        quantite:line.quantity,prix_unitaire_ht:line.price,remise_pct:0,tva_pct:20,frais_ht:0,date_besoin:line.due,
+        of_id:line.ofId,operation_libelle:line.operation,magasin_id:line.destinationId,
+        exigences_qualite:line.requirements.map(valeur=>({type:"SPECIFICATION" as const,valeur,obligatoire:true})),documents_attendus:[],besoins:[],
+      },audit.user_id,true);
+      await tx.query(`INSERT INTO public.commande_fournisseur_ligne_besoin
+        (ligne_id,besoin_type,besoin_ref,besoin_of_id,of_id,quantite_couverte,material_need_id)
+        VALUES($1::uuid,'OF_MATERIAL',$2,$3,$3,$4,$5::uuid)`,[lineId,line.sourceRef,line.ofId,line.assigned,line.needId]);
+    }
+    await recomputeTotauxTx(tx,id);
+    if(!reusable){
+      await insertTransitionRow(tx,id,null,"BROUILLON","Couverture matière confirmée",audit.user_id);
+      await queueSupplierPurchaseOrderCreationPdfTx(tx,{commandeId:id,code,actorUserId:audit.user_id});
+    }
+    await recordMaterialDraftBaselineTx(tx,id);
+    await insertAuditLog(tx,audit,{action:"commandes_fournisseurs.material.draft",entity_type:"commande_fournisseur",entity_id:id,details:{code,extended:!!reusable,needs:group.map(l=>({needId:l.needId,ordered:l.quantity,assigned:l.assigned,surplus:l.quantity-l.assigned}))}});
+    commands.push({id,code});
+  }
+  return commands;
+}
 
 export async function repoDuplicateAsDraft(
   id: string,
