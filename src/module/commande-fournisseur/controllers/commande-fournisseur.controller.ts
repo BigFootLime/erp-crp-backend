@@ -119,7 +119,7 @@ export const readSupplierConsultations:RequestHandler=async(req,res,next)=>{
   try{
     const {params}=commandeIdParamSchema.parse({params:req.params});
     const query=z.object({round:z.string().uuid().optional()}).strict().parse(req.query);
-    res.json(await readSupplierConsultationsSVC(params.id,req.user?.role,query.round));
+    res.json(await readSupplierConsultationsSVC(params.id,req.user?.role,query.round,buildAuditContext(req).user_id));
   }catch(error){next(error);}
 };
 export const commandSupplierConsultation:RequestHandler=async(req,res,next)=>{

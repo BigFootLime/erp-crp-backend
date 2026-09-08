@@ -6,6 +6,7 @@ import { estimateDuration, type DurationObservation } from "../domain/central-es
 import { expandCalendar, type CalendarDefinition } from "../domain/central-calendar";
 import type { CentralSnapshot, CentralTask, Dependency, Resource } from "../types/planning-central.types";
 import type { CentralWindow } from "../validators/planning-central.validators";
+import {readForecastState} from './planning-forecast.repository';
 
 export type CentralQuery = Pick<PoolClient, "query">;
 type Row = Record<string, unknown>;
@@ -55,6 +56,7 @@ WITH operation_rows AS (
  LEFT JOIN LATERAL (SELECT sum(qty_good) AS good,sum(qty_scrap) AS scrap,sum(qty_rework) AS rework
    FROM public.production_quantity_declarations WHERE operation_id=op.id) q ON true
  WHERE o.statut<>'ANNULE' AND op.status::text<>'CANCELLED'
+   AND(op.revision_id IS NULL OR EXISTS(SELECT 1 FROM public.of_revisions r WHERE r.id=op.revision_id AND r.statut='ACTIVE'))
    AND NOT EXISTS(SELECT 1 FROM public.production_consolidation_allocations a WHERE a.source_of_id=o.id AND a.state='ACTIVE')
 ), draft_rows AS (
  SELECT t.id,NULL::text AS operation_id,NULL::text AS programming_id,t.draft_of_id,
@@ -108,7 +110,8 @@ SELECT *,count(*) OVER()::int AS total FROM tasks
  AND ($4::text IS NULL OR reference ILIKE '%'||$4||'%' OR of_number ILIKE '%'||$4||'%' OR label ILIKE '%'||$4||'%')
  AND ($5::text IS NULL OR resource_id=$5)
  AND (id=ANY($8::text[]) OR COALESCE(forecast_start,committed_start) IS NULL OR
-      (COALESCE(forecast_start,committed_start)<$2::timestamptz AND COALESCE(forecast_end,committed_end)>$1::timestamptz))
+      (committed_start<$2::timestamptz AND committed_end>$1::timestamptz) OR
+      (forecast_start<$2::timestamptz AND forecast_end>$1::timestamptz))
  AND ($6::text IS NULL OR id>$6)
  ORDER BY id LIMIT $7::int
 `;
@@ -273,6 +276,6 @@ export async function readCentralSnapshot(query: CentralWindow & { includeTaskId
   // Future allocation writes ship in a separate milestone; their unfinished projection is not published.
   const coverage = {sources:[],demands:[],allocations:[],coverageAvailable:false};
   return {apiVersion:2,revision:settings.revision,generatedAt:new Date().toISOString(),stale:false,activation:settings.activation,
-    tasks,resources,dependencies,...coverage,total:num(rows[0]?.total),
+    tasks,resources,dependencies,...coverage,forecastState:await readForecastState(tx),total:num(rows[0]?.total),
     nextCursor:more ? String(visible[visible.length-1].id) : null};
 }

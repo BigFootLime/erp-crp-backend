@@ -59,6 +59,7 @@ export type CoverageProposal = {
   existing: number; missing: number; risks: string[];
 };
 export type CentralSnapshot = {
+  forecastState?: import('../repository/planning-forecast.repository').ForecastState;
   apiVersion: 2; revision: string; generatedAt: string; stale: boolean;
   activation: "OBSERVE" | "READ" | "SIMULATE" | "COMMIT" | "EXECUTE" | "LEARN";
   tasks: CentralTask[]; resources: Resource[]; dependencies: Dependency[];

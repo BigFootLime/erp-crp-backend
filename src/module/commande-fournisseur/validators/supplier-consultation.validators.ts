@@ -33,7 +33,7 @@ export const supplierOfferResponseSchema=z.object({
 });
 export const supplierConsultationCommandSchema=z.discriminatedUnion('action',[
   z.object({...command,action:z.literal('OPEN'),notes:z.string().trim().max(2000)}).strict(),
-  z.object({...current,action:z.literal('INVITE'),supplier_id:z.string().uuid()}).strict(),
+  z.object({...current,action:z.literal('INVITE'),supplier_id:z.string().uuid(),document_version_ids:z.array(z.string().uuid()).max(50).optional()}).strict(),
   z.object({...current,action:z.literal('RECORD_OFFER'),invitation_id:z.string().uuid(),response:supplierOfferResponseSchema,correction_reason:reason.optional()}).strict(),
   z.object({...current,action:z.literal('SELECT'),offer_id:z.string().uuid(),reason}).strict(),
   z.object({...current,action:z.literal('CLOSE'),reason}).strict(),

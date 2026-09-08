@@ -6,6 +6,7 @@ import {withRealtimeOutboxTransaction} from "../../../shared/realtime/realtime-o
 import {evaluateDossier,type DossierFacts,type DossierOperation} from "../domain/of-dossier";
 import {evaluateOfPreparation,preparationAudit} from "./production-preparation.repository";
 import type {AuditContext} from "./production.repository";
+import {readForecastState} from '../../planning/repository/planning-forecast.repository';
 
 export type DossierDb=Pick<PoolClient,"query">;
 export async function materialWorkflowEnabled(tx:DossierDb=pool) {
@@ -36,13 +37,15 @@ export async function readOfDossierTx(tx:DossierDb,id:number) {
   const dossier=evaluateDossier(facts,validation);
   const ends=operations.flatMap(o=>o.end?[o.end]:[]).sort((a,b)=>Date.parse(a)-Date.parse(b));
   const starts=operations.flatMap(o=>o.start?[o.start]:[]).sort((a,b)=>Date.parse(a)-Date.parse(b));
-  const forecast=(await tx.query<{end:string|null}>(`SELECT max(forecast_end)::text AS end FROM public.planning_tasks t
-    JOIN public.of_operations p ON p.id=t.operation_id WHERE p.of_id=$1`,[id])).rows[0]?.end??null;
+  const forecast=(await tx.query<{end:string|null;issues:string[]}>(`SELECT CASE WHEN count(*) FILTER(WHERE p.status::text<>'DONE' AND t.forecast_end IS NULL)=0 THEN max(t.forecast_end)::text ELSE NULL END AS end,
+    COALESCE((SELECT jsonb_agg(DISTINCT issue) FROM public.planning_tasks ft JOIN public.of_operations fp ON fp.id=ft.operation_id
+      CROSS JOIN LATERAL jsonb_array_elements_text(ft.forecast_issues) issue WHERE fp.id=ANY($1::uuid[])),'[]'::jsonb) AS issues
+    FROM public.planning_tasks t JOIN public.of_operations p ON p.id=t.operation_id WHERE p.id=ANY($1::uuid[])`,[operations.map(o=>o.id)])).rows[0];
   const version=createHash("sha256").update(JSON.stringify([row.updated_at,dossier.sourceHash,operations.map(o=>[o.id,o.start,o.end,o.status]),validation])).digest("hex");
   return {enabled:true,ofId:id,number:row.numero,version,executionStatus:row.status,technicalReadiness:row.technical_readiness,
-    quantity:row.quantite_lancee,...dossier,validation,operations,
+    quantity:row.quantite_lancee,...dossier,validation,operations,forecastState:await readForecastState(tx),forecastIssues:forecast?.issues??[],
     dates:{customerDue:row.customer_due,internalDue:row.internal_due,committedStart:starts[0]??null,committedEnd:ends.at(-1)??null,
-      forecastEnd:forecast,actualStart:row.date_lancement_reelle,actualEnd:row.date_fin_reelle}};
+      forecastEnd:forecast?.end??null,actualStart:row.date_lancement_reelle,actualEnd:row.date_fin_reelle}};
 }
 export async function repoOfDossier(id:number) {
   const tx=await pool.connect();

@@ -8,6 +8,7 @@ import {roleHasCommandeFournisseurCapability} from '../domain/commande-fournisse
 import {assertSelectableSupplierOffer,compareSupplierOffer,consultationSnapshotKey,supplierConsultationRequest,type ConsultationSnapshot,type ConsultationRequestedLine} from '../domain/supplier-consultation';
 import {supplierOfferResponseSchema,type SupplierConsultationCommand,type SupplierOfferResponse} from '../validators/supplier-consultation.validators';
 import {assertDraft,assertFournisseurCommandable,assertOptimisticToken,fetchFournisseurMini,insertAuditLog,lockHeader,recomputeTotauxTx,type AuditContext} from './commande-fournisseur.repository';
+import {readConsultationDocuments,type ConsultationDocument} from './consultation-documents.repository';
 
 type Queryer=Pick<PoolClient,'query'>;
 type Round={id:string;round_no:number;status:'OPEN'|'SELECTED'|'CLOSED';source_revision:string;snapshot:ConsultationSnapshot;row_version:number;notes:string;selected_offer_id:string|null;selection_reason:string|null;decided_at:string|null;created_at:string};
@@ -44,7 +45,7 @@ async function roundTx(tx:Queryer,commandeId:string,id:string){
   return r;
 }
 
-export async function repoReadSupplierConsultations(commandeId:string,role:string|null|undefined,roundId?:string){
+export async function repoReadSupplierConsultations(commandeId:string,role:string|null|undefined,roundId?:string,actorId=0){
   assertAccess({role});
   const header=(await db.query(`SELECT statut,updated_at::text AS revision FROM public.commande_fournisseur WHERE id=$1::uuid`,[commandeId])).rows[0];
   if(!header)throw new HttpError(404,'COMMANDE_FOURNISSEUR_NOT_FOUND','Commande fournisseur introuvable.');
@@ -54,13 +55,14 @@ export async function repoReadSupplierConsultations(commandeId:string,role:strin
   if(!selected)return {enabled:true,rounds,current:null,headerRevision:header.revision};
   const current=(await db.query<Round>(`SELECT *,decided_at::text,created_at::text FROM public.supplier_consultations WHERE id=$1::uuid AND commande_id=$2::uuid`,[selected,commandeId])).rows[0];
   if(!current)throw new HttpError(404,'CONSULTATION_NOT_FOUND','Consultation introuvable.');
-  const invitations=(await db.query<{id:string;supplier_id:string;supplier_name:string;request_text:string;created_at:string}>(`SELECT i.id::text,i.supplier_id::text,COALESCE(f.nom,f.raison_sociale) AS supplier_name,i.request_text,i.created_at::text
+  const invitations=(await db.query<{id:string;supplier_id:string;supplier_name:string;request_text:string;created_at:string;documents:ConsultationDocument[]}>(`SELECT i.id::text,i.supplier_id::text,COALESCE(f.nom,f.raison_sociale) AS supplier_name,i.request_text,i.documents,i.created_at::text
     FROM public.supplier_consultation_invitations i JOIN public.fournisseurs f ON f.id=i.supplier_id WHERE i.consultation_id=$1::uuid ORDER BY i.created_at,i.id`,[current.id])).rows;
   const offers=(await db.query<{id:string;invitation_id:string;revision:number;response:SupplierOfferResponse;correction_reason:string|null;created_at:string;is_latest:boolean}>(`SELECT o.id::text,o.invitation_id::text,o.revision,o.response,o.correction_reason,o.created_at::text,
     NOT EXISTS(SELECT 1 FROM public.supplier_consultation_offers newer WHERE newer.invitation_id=o.invitation_id AND newer.revision>o.revision) AS is_latest
     FROM public.supplier_consultation_offers o JOIN public.supplier_consultation_invitations i ON i.id=o.invitation_id WHERE i.consultation_id=$1::uuid ORDER BY o.created_at,o.id`,[current.id])).rows;
   const today=(await db.query<{today:string}>('SELECT CURRENT_DATE::text AS today')).rows[0].today;
-  return {enabled:true,rounds,headerRevision:header.revision,current:{...current,obsolete:current.status==='OPEN'&&(current.source_revision!==header.revision||header.statut!=='BROUILLON'),invitations,
+  const availableDocuments=current.status==='OPEN'?await readConsultationDocuments(db,commandeId,{user_id:actorId,role}):[];
+  return {enabled:true,rounds,headerRevision:header.revision,availableDocuments,current:{...current,obsolete:current.status==='OPEN'&&(current.source_revision!==header.revision||header.statut!=='BROUILLON'),invitations,
     offers:offers.map(o=>({...o,comparison:compareSupplierOffer(current.snapshot,supplierOfferResponseSchema.parse(o.response),today)}))}};
 }
 
@@ -108,8 +110,11 @@ export async function repoCommandSupplierConsultation(commandeId:string,body:Sup
           const invited=(await tx.query<{supplier_id:string}>(`SELECT supplier_id::text FROM public.supplier_consultation_invitations WHERE consultation_id=$1::uuid`,[round.id])).rows;
           if(invited.some(i=>i.supplier_id===body.supplier_id))throw new HttpError(409,'SUPPLIER_ALREADY_INVITED','La demande de ce fournisseur est déjà préparée.');
           if(invited.length>=20)throw new HttpError(409,'CONSULTATION_SUPPLIER_LIMIT','Une consultation peut comparer au maximum 20 fournisseurs.');
-          await tx.query(`INSERT INTO public.supplier_consultation_invitations(consultation_id,supplier_id,request_text,created_by) VALUES($1::uuid,$2::uuid,$3,$4)`,
-            [round.id,body.supplier_id,supplierConsultationRequest(round.snapshot,supplier.nom??' ',round.notes),audit.user_id]);
+          const documents=await readConsultationDocuments(tx,commandeId,audit,body.document_version_ids??[]);
+          const request=supplierConsultationRequest(round.snapshot,supplier.nom??' ',round.notes)+
+            (documents.length?'\n\nPièces jointes sélectionnées :\n'+documents.map(d=>`${d.code} · ${d.title} · version ${d.version_number} · ${d.original_name}`).join('\n'):'');
+          await tx.query(`INSERT INTO public.supplier_consultation_invitations(consultation_id,supplier_id,request_text,created_by,documents) VALUES($1::uuid,$2::uuid,$3,$4,$5::jsonb)`,
+            [round.id,body.supplier_id,request,audit.user_id,JSON.stringify(documents)]);
         }else if(body.action==='RECORD_OFFER'){
           const invitation=(await tx.query(`SELECT id FROM public.supplier_consultation_invitations WHERE id=$1::uuid AND consultation_id=$2::uuid`,[body.invitation_id,round.id])).rows[0];
           if(!invitation)throw new HttpError(404,'CONSULTATION_INVITATION_NOT_FOUND','Demande fournisseur introuvable.');

@@ -1,0 +1,1 @@
+La colonne est additive. Une reprise du code précédent conserve les références documentaires enregistrées. Ne pas supprimer la colonne ni les demandes ; corriger par une nouvelle consultation. La GED reste seule propriétaire des versions et du contenu.

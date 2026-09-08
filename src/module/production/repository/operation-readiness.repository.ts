@@ -17,9 +17,9 @@ export async function usesOperationReadiness(tx:DossierDb,ofId:number){
     OR EXISTS(SELECT 1 FROM public.of_material_needs WHERE of_id=$1) AS guarded`,[ofId])).rows[0]?.guarded===true;
 }
 
-export async function readOperationReadinessTx(tx:DossierDb,ofId:number){
+export async function readOperationReadinessTx(tx:DossierDb,ofId:number,material?:Awaited<ReturnType<typeof readMaterialTx>>){
   const dossier=await readOfDossierTx(tx,ofId);
-  const coverage=await readMaterialTx(tx,ofId);
+  const coverage=material??await readMaterialTx(tx,ofId);
   const operations=(await tx.query<OperationRow>(`
     SELECT op.id::text,frozen.value->>'type_operation' AS kind,op.machine_id::text,m.status::text AS machine_status,op.updated_at::text,
       COALESCE(q.good,0)::float8 AS good,COALESCE(q.scrap,0)::float8 AS scrap,COALESCE(q.pending,0)::float8 AS pending,COALESCE(q.rework,0)::float8 AS rework,
