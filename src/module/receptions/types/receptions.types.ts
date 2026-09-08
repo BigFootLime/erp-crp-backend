@@ -14,7 +14,10 @@ export type IncomingInspectionDecision = "LIBERE" | "BLOQUE"
 export type ReceptionFournisseur = {
   id: string
   reception_no: string
-  fournisseur_id: string
+  fournisseur_id: string|null
+  origin_type?:string
+  client_proprietaire_id?:string|null
+  client_name?:string|null
   status: string
   reception_date: string
   supplier_reference: string | null
@@ -28,7 +31,10 @@ export type ReceptionFournisseur = {
 export type ReceptionFournisseurListItem = {
   id: string
   reception_no: string
-  fournisseur_id: string
+  fournisseur_id: string|null
+  origin_type?:string
+  client_proprietaire_id?:string|null
+  client_name?:string|null
   fournisseur_code: string
   fournisseur_nom: string
   status: string

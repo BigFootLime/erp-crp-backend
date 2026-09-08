@@ -4,6 +4,7 @@ import type {AuditContext} from "./production.repository";
 import {repoCreateStockReservation} from "../../stock/repository/stock-reservation.repository";
 import {preparationAudit} from "./production-preparation.repository";
 import {quantity} from "../domain/of-material";
+import {transferCustomerMaterialReceiptTx} from './customer-material-receipts.repository';
 
 /** The receipt owner calls this before locking stock. The planning lock serializes
  * coverage confirmation with a receipt; OF locks precede reservation/lot locks. */
@@ -15,6 +16,8 @@ export async function lockMaterialReceiptRecipientsTx(tx:PoolClient,lineId:strin
     SELECT b.besoin_of_id FROM public.commande_fournisseur_ligne_besoin b
     JOIN public.reception_fournisseur_lignes r ON r.commande_fournisseur_ligne_id=b.ligne_id
     WHERE r.id=$1::uuid AND NOT b.annule AND b.material_need_id IS NOT NULL
+    UNION SELECT n.of_id FROM public.reception_fournisseur_lignes r JOIN public.of_customer_material_calls c ON c.id=r.customer_material_call_id
+      JOIN public.of_material_needs n ON n.id=c.need_id WHERE r.id=$1::uuid
   ) ORDER BY o.id FOR UPDATE`,[lineId]);
   return true;
 }
@@ -28,7 +31,7 @@ export async function transferMaterialReceiptTx(tx:PoolClient,receiptId:string,a
     FROM public.reception_fournisseur_stock_receipts s JOIN public.reception_fournisseur_lignes r ON r.id=s.reception_line_id
     JOIN public.stock_movements m ON m.id=s.stock_movement_id
     JOIN public.stock_movement_lines ml ON ml.movement_id=m.id AND ml.line_no=1 WHERE s.id=$1::uuid`,[receiptId])).rows[0];
-  if(!receipt?.line_id)return [];
+  if(!receipt?.line_id)return transferCustomerMaterialReceiptTx(tx,receiptId,audit);
   if(receipt.movement_status!=="POSTED")throw new HttpError(409,"MATERIAL_RECEIPT_NOT_POSTED","La mise en stock doit être comptabilisée avant l’affectation.");
   const allocations=(await tx.query(`SELECT b.id::text,b.material_need_id::text,b.besoin_of_id AS of_id,
     (CASE WHEN b.besoin_type='OF_MATERIAL' THEN b.quantite_couverte ELSE b.quantite_couverte*COALESCE(l.coef_conversion,1) END)::float8 AS assigned,

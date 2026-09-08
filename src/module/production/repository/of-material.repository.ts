@@ -9,6 +9,7 @@ import {preparationAudit} from "./production-preparation.repository";
 import type {AuditContext} from "./production.repository";
 import {materialPropertiesFingerprint,coverageFingerprint,debitQuantity,proposeMaterialCoverage,purchaseQuantity,quantity,type MaterialNeed,type MaterialLot,type MaterialRequirements,type DebitRule} from "../domain/of-material";
 import {readFutureMaterialSupplyTx,futureSupplyCompatibility} from './material-future-supply.repository';
+import {readCustomerMaterialCallsTx} from './customer-material-read.repository';
 
 const emptyRequirements=():MaterialRequirements=>({grade:null,condition:null,ownerClientId:null,dimensions:{},certificates:[],manualChecks:[]});
 type Purchase={id:string;article_id:string|null;nom?:string;designation?:string;quantite:number;unite_prix:string|null;fournisseur_id:string|null;pu_achat?:number|null;type_achat:string;gamme_operation_id?:string|null};
@@ -24,6 +25,7 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
     FROM public.ordres_fabrication o WHERE o.id=$1`,[ofId])).rows[0];
   const purchases=(of.purchases as Purchase[]).filter(p=>p.type_achat==="MATIERE");
   const saved=(await tx.query<NeedRow>("SELECT * FROM public.of_material_needs WHERE of_id=$1 ORDER BY created_at,id",[ofId])).rows;
+  const customerCalls=await readCustomerMaterialCallsTx(tx,ofId);
   const reservations=(await tx.query(`SELECT r.id::text,r.material_need_id::text,r.article_id::text,r.qty_reserved::float8,r.qty_consumed::float8,r.status,r.row_version,r.lot_id::text,
     r.stock_batch_id::text,(r.expires_at IS NULL OR r.expires_at>now()) AS unexpired,
     l.lot_status FROM public.stock_reservations r LEFT JOIN public.lots l ON l.id=r.lot_id
@@ -88,12 +90,13 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
     const attached=reservations.filter(r=>r.material_need_id===row?.id||!r.material_need_id&&r.article_id===p.article_id&&!usedLegacy.has(r.id));
     attached.filter(r=>!r.material_need_id).forEach(r=>usedLegacy.add(r.id));
     const expected=promises.filter(b=>b.material_need_id===row?.id||!b.material_need_id&&b.besoin_ref===p.id);
+    const customer=customerCalls.filter(c=>c.need_id===row?.id&&c.status!=='CANCELLED');
     let required=Number(p.quantite)*dossier.quantity;
     if(row?.debit_rule)required=debitQuantity(row.debit_rule,dossier.quantity);
     const physical=attached.filter(r=>r.status==="ACTIVE"&&r.unexpired).reduce((sum,r)=>sum+Math.max(0,r.qty_reserved-r.qty_consumed),0);
     const consumed=attached.reduce((sum,r)=>sum+(r.status==="CONSUMED"?r.qty_reserved:r.qty_consumed),0);
     const need:MaterialNeed={key:p.id,articleId:p.article_id,unit:row?.unit??p.unite_prix??article?.unite??null,required,requirements,
-      reserved:physical,consumed,expected:expected.reduce((sum,b)=>sum+Math.max(0,b.assigned-b.received),0),receivedBlocked:expected.reduce((sum,b)=>sum+Math.max(0,b.received-b.transferred),0)};
+      reserved:physical,consumed,expected:expected.reduce((sum,b)=>sum+Math.max(0,b.assigned-b.received),0)+customer.reduce((sum,c)=>sum+Math.max(0,c.quantity-c.received),0),receivedBlocked:expected.reduce((sum,b)=>sum+Math.max(0,b.received-b.transferred),0)+customer.reduce((sum,c)=>sum+Math.max(0,c.received-c.transferred),0)};
     const blockers:string[]=[];
     if(!of.hash)blockers.push("Valider et figer la définition technique de cet OF.");
     if(!row?.specification_reviewed_at)blockers.push("Confirmer les exigences et l’opération consommatrice.");
@@ -122,7 +125,7 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
   });
   return {enabled:true as const,ofId,number:dossier.number,quantity:dossier.quantity,dossierStatus:dossier.status,technicalVersion:of.revision as string|null,
     technicalHash:of.hash as string|null,clientId:of.client_id as string|null,operations:dossier.operations,
-    version:coverageFingerprint({dossier:dossier.version,saved,reservations,promises,lots,checks,catalogs,documents,futureSupplies}),needs:coverage,
+    version:coverageFingerprint({dossier:dossier.version,saved,reservations,promises,lots,checks,catalogs,documents,futureSupplies,customerCalls}),needs:coverage,customerCalls,
     previousNeeds:saved.filter(n=>n.technical_version_id!==of.revision||n.superseded_at),
     suppliers:(await tx.query("SELECT id::text,COALESCE(nom,raison_sociale) AS name FROM public.fournisseurs WHERE actif IS NOT FALSE ORDER BY COALESCE(nom,raison_sociale)")).rows,
     destinations:(await tx.query("SELECT id::text,COALESCE(code,code_magasin) AS name FROM public.magasins ORDER BY COALESCE(code,code_magasin)")).rows};
@@ -155,6 +158,8 @@ export async function configureOfMaterial(ofId:number,sourceRef:string,body:{exp
     const need=current.needs.find(n=>n.key===sourceRef),c=body.configuration;
     if(!need||!current.technicalVersion||!current.technicalHash)throw new HttpError(409,"MATERIAL_DEFINITION_REQUIRED","La matière doit être définie dans la version technique figée.");
     if(!current.operations.some(o=>o.id===c.operationId))throw new HttpError(422,"MATERIAL_OPERATION_INVALID","Choisissez une opération de cet OF.");
+    if(current.customerCalls.some(call=>call.need_id===need.id&&call.status!=='CANCELLED')&&(c.supplyMode!=='CUSTOMER'||c.requirements.ownerClientId!==need.requirements.ownerClientId))
+      throw new HttpError(409,'CUSTOMER_MATERIAL_CALL_ACTIVE','Un appel client existe : conservez son propriétaire et son origine, ou annulez l’appel non réceptionné avant de modifier la fourniture.');
     if(c.supplyMode==="CUSTOMER"&&(!current.clientId||c.requirements.ownerClientId!==current.clientId))throw new HttpError(422,"MATERIAL_OWNER_REQUIRED","La matière fournie par le client doit conserver ce client propriétaire.");
     if(c.supplyMode==="PURCHASE"&&c.requirements.ownerClientId)throw new HttpError(422,"MATERIAL_OWNER_INVALID","La matière achetée par CERP ne peut pas utiliser les lots appartenant à un client.");
     const article=(await tx.query("SELECT unite FROM public.articles WHERE id=$1::uuid",[need.articleId])).rows[0];

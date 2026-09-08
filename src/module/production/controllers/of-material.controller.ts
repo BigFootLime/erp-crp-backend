@@ -10,10 +10,12 @@ import {roleHasCommandeFournisseurCapability} from "../../commande-fournisseur/d
 import {requestHasGrantedAccountModuleAccess} from "../../access-control/context/account-module-access.context";
 import {materialDebitSchema} from '../validators/of-material.validators';
 import {debitOfMaterial} from '../services/of-material.service';
+import {customerMaterialCommandSchema} from '../validators/customer-material.validators';
+import {commandCustomerMaterial} from '../services/of-material.service';
 
 function rights(req:Request){
   const granted=requestHasGrantedAccountModuleAccess(req);
-  return {canConfigure:granted||roleHasOfCapability(req.user?.role,"edit_prelaunch"),canVerifyLot:granted||roleHasStockCapability(req.user?.role,"lot_quality"),canConfirm:granted||roleHasStockCapability(req.user?.role,"reservation_manage"),canPurchase:granted||roleHasCommandeFournisseurCapability(req.user?.role,"create"),canReadPrices:granted||roleHasCommandeFournisseurCapability(req.user?.role,"prices")};
+  return {canConfigure:granted||roleHasOfCapability(req.user?.role,"edit_prelaunch"),canVerifyLot:granted||roleHasStockCapability(req.user?.role,"lot_quality"),canConfirm:granted||roleHasStockCapability(req.user?.role,"reservation_manage"),canPurchase:granted||roleHasCommandeFournisseurCapability(req.user?.role,"create"),canReadPrices:granted||roleHasCommandeFournisseurCapability(req.user?.role,"prices"),canReceive:granted||roleHasStockCapability(req.user?.role,'movement_create')};
 }
 function present(data:Awaited<ReturnType<typeof getOfMaterial>>,req:Request){
   const access=rights(req);
@@ -21,6 +23,12 @@ function present(data:Awaited<ReturnType<typeof getOfMaterial>>,req:Request){
   return {...data,permissions:access,needs:data.needs.map(n=>({...n,price:access.canReadPrices?n.price:null,catalog:n.catalog?{...n.catalog,prix_unitaire:access.canReadPrices?n.catalog.prix_unitaire:null}:null}))};
 }
 export const readMaterial=asyncHandler(async(req,res)=>{res.json(present(await getOfMaterial(identity.parse(req.params).id),req));});
+export const customerMaterial=asyncHandler(async(req,res)=>{
+  const body=customerMaterialCommandSchema.parse(req.body);
+  if(!rights(req).canConfirm||body.action==='RECEIVE'&&!roleHasStockCapability(req.user?.role,'movement_create'))throw new HttpError(403,'CUSTOMER_MATERIAL_FORBIDDEN','Les droits de réservation et, pour réceptionner, de réception stock sont nécessaires.');
+  const result=await commandCustomerMaterial(identity.parse(req.params).id,body,buildAuditContext(req));
+  res.json({...result,coverage:present(result.coverage,req)});
+});
 export const debitMaterial=asyncHandler(async(req,res)=>{
   const result=await debitOfMaterial(identity.parse(req.params).id,materialDebitSchema.parse(req.body),buildAuditContext(req));
   res.json({...result,coverage:present(result.coverage,req)});

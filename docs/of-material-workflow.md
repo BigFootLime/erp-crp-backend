@@ -94,3 +94,16 @@ Les anciennes affectations en unité d’achat sont converties avant comparaison
 Le démarrage réel de la découpe OF 852 et le débit de 20 bruts ont réussi sur cerp_test : nécessaire 100, réservé 40, consommé 20, attendu 40. Le pointage a été arrêté par interface, sans terminer l’opération. Le programme du tournage reste un prérequis indépendant.
 
 La première lecture UI a révélé une validation trop large des colonnes descriptives de la ligne achat. Le contrôle porte désormais sur les cinq quantités uniquement ; un test sur la forme réelle de la ligne protège ce cas. 19 tests ciblés et compilation complète réussis après correction.
+
+
+### Bruts client — préparation de la recette du 8 septembre
+
+Appels client rattachés aux besoins, exigences figées, demande préparée/transmise/date annoncée, annulation motivée avant toute réception et réceptions partielles. La référence de transmission est enregistrée ; aucun message externe n’est envoyé par cette commande. Une réception client utilise le registre existant des réceptions, avec origine CUSTOMER, fournisseur absent et client propriétaire explicite. Ligne, lot en attente, audits et commande d’idempotence partagent la transaction. Les certificats et contrôles utilisent les parcours existants ; les quantités libérées seront automatiquement réservées au besoin destinataire dans la même transaction que la mise en stock.
+
+Migration additive 20260908_customer_material_calls.sql préparée, pas encore appliquée à ce point. Garde SQL d’origine client/article/unité et conservation du propriétaire sur les lots. Les routes historiques ne peuvent ajouter une ligne client sans son appel. Pas de nouvelle source de vérité stock ni de fournisseur fictif.
+
+20 tests serveur spécifiques réussis, plus 23 tests de non-régression réception/qualité/confirmation. 10 tests frontend réception réussis, TypeScript frontend/backend et compilation complète backend vérifiés. La recette UI reste à faire avant de déclarer ce circuit livré.
+
+Couverture future effectivement exercée par UI sur OF-906 : préparation pour 30 pièces, réservation de 5 bruts et affectation de 25 du BCF-0924 existant, zéro nouveau brouillon. Une seconde confirmation conserve 5 réservés / 25 attendus et ne crée rien. BCF-0924 garde 25 unités libres. OF-852 conserve 40 réservés / 20 consommés / 40 attendus.
+
+Migration client appliquée et vérifiée sur cerp_test : empreinte 7d9076748d36f5fe31b4415d8f9706a530a5890798f28717d535d350c77eab0c. Sauvegarde préalable d2d62c0eaf832c9599d4a728a393711abeed7e2ac0f58f51880df5c322d65964. Aucune migration de production. Compilation complète : 1229 opérations HTTP inventoriées et contrat validé.

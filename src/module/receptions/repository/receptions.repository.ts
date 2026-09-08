@@ -172,7 +172,10 @@ async function reserveReceptionNo(client: Pick<PoolClient, "query">): Promise<st
 type ReceptionRow = {
   id: string
   reception_no: string
-  fournisseur_id: string
+  fournisseur_id: string|null
+  origin_type?:string
+  client_proprietaire_id?:string|null
+  client_name?:string|null
   status: string
   reception_date: string
   supplier_reference: string | null
@@ -188,6 +191,7 @@ function mapReceptionRow(r: ReceptionRow): ReceptionFournisseur {
     id: r.id,
     reception_no: r.reception_no,
     fournisseur_id: r.fournisseur_id,
+    origin_type:r.origin_type,client_proprietaire_id:r.client_proprietaire_id,client_name:r.client_name,
     status: r.status,
     reception_date: r.reception_date,
     supplier_reference: r.supplier_reference,
@@ -202,7 +206,10 @@ function mapReceptionRow(r: ReceptionRow): ReceptionFournisseur {
 type ReceptionListRow = {
   id: string
   reception_no: string
-  fournisseur_id: string
+  fournisseur_id: string|null
+  origin_type?:string
+  client_proprietaire_id?:string|null
+  client_name?:string|null
   fournisseur_code: string
   fournisseur_nom: string
   status: string
@@ -402,6 +409,7 @@ export async function repoListReceptions(filters: ListReceptionsQueryDTO): Promi
       r.reception_no ILIKE ${p}
       OR COALESCE(r.supplier_reference,'') ILIKE ${p}
       OR f.code ILIKE ${p}
+      OR c.company_name ILIKE ${p}
       OR f.nom ILIKE ${p}
     )`)
   }
@@ -418,7 +426,7 @@ export async function repoListReceptions(filters: ListReceptionsQueryDTO): Promi
   const orderDir = sortDirection(filters.sortDir)
 
   const countRes = await db.query<{ total: number }>(
-    `SELECT COUNT(*)::int AS total FROM public.receptions_fournisseurs r JOIN public.fournisseurs f ON f.id = r.fournisseur_id ${whereSql}`,
+    `SELECT COUNT(*)::int AS total FROM public.receptions_fournisseurs r LEFT JOIN public.fournisseurs f ON f.id = r.fournisseur_id LEFT JOIN public.clients c ON c.client_id=r.client_proprietaire_id ${whereSql}`,
     values
   )
   const total = countRes.rows[0]?.total ?? 0
@@ -427,9 +435,9 @@ export async function repoListReceptions(filters: ListReceptionsQueryDTO): Promi
     SELECT
       r.id::text AS id,
       r.reception_no,
-      r.fournisseur_id::text AS fournisseur_id,
-      f.code AS fournisseur_code,
-      f.nom AS fournisseur_nom,
+      r.fournisseur_id::text AS fournisseur_id,r.origin_type,r.client_proprietaire_id,c.company_name AS client_name,
+      COALESCE(f.code,c.client_code,c.client_id) AS fournisseur_code,
+      COALESCE(f.nom,c.company_name,c.client_id) AS fournisseur_nom,
       r.status,
       r.reception_date::text AS reception_date,
       r.supplier_reference,
@@ -438,7 +446,8 @@ export async function repoListReceptions(filters: ListReceptionsQueryDTO): Promi
       COALESCE(agg.blocked_lines_count, 0)::int AS blocked_lines_count,
       r.updated_at::text AS updated_at
     FROM public.receptions_fournisseurs r
-    JOIN public.fournisseurs f ON f.id = r.fournisseur_id
+    LEFT JOIN public.fournisseurs f ON f.id = r.fournisseur_id
+    LEFT JOIN public.clients c ON c.client_id=r.client_proprietaire_id
     LEFT JOIN (
       SELECT
         l.reception_id,
@@ -502,7 +511,7 @@ export async function repoGetReception(id: string): Promise<ReceptionFournisseur
       SELECT
         id::text AS id,
         reception_no,
-        fournisseur_id::text AS fournisseur_id,
+        fournisseur_id::text AS fournisseur_id,origin_type,client_proprietaire_id,(SELECT company_name FROM public.clients WHERE client_id=receptions_fournisseurs.client_proprietaire_id) AS client_name,
         status,
         reception_date::text AS reception_date,
         supplier_reference,
@@ -737,7 +746,7 @@ export async function repoCreateReception(body: CreateReceptionBodyDTO, audit: A
         RETURNING
           id::text AS id,
           reception_no,
-          fournisseur_id::text AS fournisseur_id,
+          fournisseur_id::text AS fournisseur_id,origin_type,client_proprietaire_id,(SELECT company_name FROM public.clients WHERE client_id=receptions_fournisseurs.client_proprietaire_id) AS client_name,
           status,
           reception_date::text AS reception_date,
           supplier_reference,
@@ -771,6 +780,23 @@ export async function repoCreateReception(body: CreateReceptionBodyDTO, audit: A
   })
 }
 
+/** Trusted orchestration from a customer material call. Receipt lines, lots,
+ * inspections, documents and later IN posting use the existing receipt flow. */
+export async function createCustomerMaterialReceiptTx(tx:PoolClient,input:{callId:string;clientId:string;articleId:string;designation:string;quantity:number;unit:string;date:string;reference:string;note:string},audit:AuditContext){
+  const receptionNo=await reserveReceptionNo(tx)
+  const reception=(await tx.query<{id:string;reception_no:string}>(`INSERT INTO public.receptions_fournisseurs
+    (reception_no,origin_type,client_proprietaire_id,fournisseur_id,status,reception_date,supplier_reference,commentaire,created_by,updated_by)
+    VALUES($1,'CUSTOMER',$2,NULL,'OPEN',$3::date,$4,$5,$6,$6) RETURNING id::text,reception_no`,
+    [receptionNo,input.clientId,input.date,input.reference,input.note,audit.user_id])).rows[0]
+  await insertAuditLog(tx,audit,{action:'receptions.customer.create',entity_type:'RECEPTION_FOURNISSEUR',entity_id:reception.id,
+    details:{reception_no:reception.reception_no,client_id:input.clientId,call_id:input.callId}})
+  const line=await repoCreateLine(reception.id,{article_id:input.articleId,designation:input.designation,qty_received:input.quantity,unite:input.unit,supplier_lot_code:input.reference,notes:input.note},audit,{client:tx,customerCallId:input.callId})
+  if(!line)throw new Error('Customer receipt line was not created')
+  const lot=await repoCreateLotForLine(reception.id,line.id,{supplier_lot_code:input.reference,received_at:input.date,notes:input.note},audit,tx)
+  if(!lot?.lot_id)throw new Error('Customer receipt lot was not created')
+  return {receptionId:reception.id,receptionNo:reception.reception_no,lineId:line.id,lotId:lot.lot_id}
+}
+
 export async function repoPatchReception(id: string, patch: PatchReceptionBodyDTO, audit: AuditContext): Promise<ReceptionFournisseur | null> {
   const client = await db.connect()
   const sets: string[] = []
@@ -796,7 +822,7 @@ export async function repoPatchReception(id: string, patch: PatchReceptionBodyDT
         RETURNING
           id::text AS id,
           reception_no,
-          fournisseur_id::text AS fournisseur_id,
+          fournisseur_id::text AS fournisseur_id,origin_type,client_proprietaire_id,(SELECT company_name FROM public.clients WHERE client_id=receptions_fournisseurs.client_proprietaire_id) AS client_name,
           status,
           reception_date::text AS reception_date,
           supplier_reference,
@@ -822,14 +848,16 @@ export async function repoPatchReception(id: string, patch: PatchReceptionBodyDT
   })
 }
 
-export async function repoCreateLine(receptionId: string, body: CreateLineBodyDTO, audit: AuditContext): Promise<ReceptionFournisseurLine | null> {
-  const client = await db.connect()
-  return withRealtimeOutboxTransaction(client, async (tx) => {
-    const lockReception = await tx.query<{ ok: number }>(
-      `SELECT 1::int AS ok FROM public.receptions_fournisseurs WHERE id = $1::uuid FOR UPDATE`,
+export async function repoCreateLine(receptionId: string, body: CreateLineBodyDTO, audit: AuditContext, internal?:{client:PoolClient;customerCallId:string}): Promise<ReceptionFournisseurLine | null> {
+  const execute=async (tx:PoolClient) => {
+    const lockReception = await tx.query<{ ok: number;origin_type:string;status:string }>(
+      `SELECT 1::int AS ok,origin_type,status FROM public.receptions_fournisseurs WHERE id = $1::uuid FOR UPDATE`,
       [receptionId]
     )
     if (!lockReception.rows[0]?.ok) return null
+    if(lockReception.rows[0].status!=='OPEN')throw new HttpError(409,'RECEPTION_NOT_OPEN','Rouvrez la réception avant d’ajouter une ligne.')
+    if(lockReception.rows[0].origin_type==='CUSTOMER'&&!internal?.customerCallId)
+      throw new HttpError(409,'CUSTOMER_MATERIAL_CALL_REQUIRED','Enregistrez les bruts reçus depuis leur appel client dans le dossier OF.')
 
     const next = await tx.query<{ next_no: number }>(
       `
@@ -911,9 +939,10 @@ export async function repoCreateLine(receptionId: string, body: CreateLineBodyDT
           created_by,
           updated_by,
           stock_unit,
-          stock_conversion_coef
+          stock_conversion_coef,
+          customer_material_call_id
         )
-        VALUES ($1::uuid,$2,$3::uuid,$4,$5,$6,$7,$8,$9::uuid,$10,$10,$11,$12)
+        VALUES ($1::uuid,$2,$3::uuid,$4,$5,$6,$7,$8,$9::uuid,$10,$10,$11,$12,$13::uuid)
         RETURNING id::text AS id
       `,
       [
@@ -929,6 +958,7 @@ export async function repoCreateLine(receptionId: string, body: CreateLineBodyDT
         audit.user_id,
         conversion.stockUnit,
         conversion.coefficient,
+        internal?.customerCallId??null,
       ]
     )
     const lineId = ins.rows[0]?.id
@@ -960,17 +990,18 @@ export async function repoCreateLine(receptionId: string, body: CreateLineBodyDT
     const detail = await selectLineDetail(tx, lineId)
 
     return detail
-  })
+  }
+  return internal?execute(internal.client):withRealtimeOutboxTransaction(await db.connect(),execute)
 }
 
 export async function repoCreateLotForLine(
   receptionId: string,
   lineId: string,
   body: CreateLotForLineBodyDTO,
-  audit: AuditContext
+  audit: AuditContext,
+  transactionClient?:PoolClient
 ): Promise<ReceptionFournisseurLine | null> {
-  const client = await db.connect()
-  return withRealtimeOutboxTransaction(client, async (tx) => {
+  const execute=async (tx:PoolClient) => {
     const row = await tx.query<{
       id: string
       reception_id: string
@@ -979,6 +1010,7 @@ export async function repoCreateLotForLine(
       supplier_lot_code: string | null
       lot_id: string | null
       reception_no: string
+      owner_client_id:string|null
     }>(
       `
         SELECT
@@ -988,7 +1020,7 @@ export async function repoCreateLotForLine(
           l.article_id::text AS article_id,
           l.supplier_lot_code,
           l.lot_id::text AS lot_id,
-          r.reception_no
+          r.reception_no,r.client_proprietaire_id AS owner_client_id
         FROM public.reception_fournisseur_lignes l
         JOIN public.receptions_fournisseurs r ON r.id = l.reception_id
         WHERE l.id = $1::uuid
@@ -1022,9 +1054,10 @@ export async function repoCreateLotForLine(
             lot_status,
             lot_status_note,
             created_by,
-            updated_by
+            updated_by,
+            client_proprietaire_id
           )
-          VALUES ($1::uuid,$2,$3,$4::date,$5::date,$6::date,$7,$8,$9,$10,$10)
+          VALUES ($1::uuid,$2,$3,$4::date,$5::date,$6::date,$7,$8,$9,$10,$10,$11)
           RETURNING id::text AS id
         `,
         [
@@ -1038,6 +1071,7 @@ export async function repoCreateLotForLine(
           "EN_ATTENTE",
           null,
           audit.user_id,
+          line.owner_client_id,
         ]
       )
       lotId = ins.rows[0]?.id ?? ""
@@ -1072,7 +1106,8 @@ export async function repoCreateLotForLine(
     const detail = await selectLineDetail(tx, lineId)
 
     return detail
-  })
+  }
+  return transactionClient?execute(transactionClient):withRealtimeOutboxTransaction(await db.connect(),execute)
 }
 
 export async function repoAttachDocuments(
