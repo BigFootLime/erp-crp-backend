@@ -4,6 +4,7 @@ import {
     authenticateToken,
   } from '../middlewares/auth.middleware';
 import { getProfile } from '../controllers/user.controller';
+import { getNavigationPreferences, putNavigationPreferences } from '../controllers/navigation-preferences.controller';
 import { getAccessProfile } from '../../access-control/controllers/access-control.controller';
 import {
   forgotPasswordRateLimit,
@@ -40,6 +41,8 @@ router.get(
 // Profil d'accès module (#326) — volontairement SANS authorizeRole : chaque compte,
 // opérateur compris, doit pouvoir charger la navigation à laquelle il a droit.
 router.get('/access-profile', authenticateToken, getAccessProfile);
+router.get('/me/navigation-preferences', authenticateToken, getNavigationPreferences);
+router.put('/me/navigation-preferences', authenticateToken, putNavigationPreferences);
 router.get('/mfa/status', authenticateToken, status);
 router.post('/mfa/step-up', authenticateToken, mfaRateLimit, stepUp);
 router.post('/mfa/enrollment', authenticateToken, mfaRateLimit, startEnrollment);
