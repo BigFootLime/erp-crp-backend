@@ -8,7 +8,7 @@ import {commandCustomerMaterial} from './customer-material.repository';
 import type {CustomerMaterialCommand} from '../validators/customer-material.validators';
 const requirements={ownerClientId:'client',grade:'6082',condition:'T651',dimensions:{},certificates:[],manualChecks:[]};
 function coverage(){return {version:'v1',clientId:'client',needs:[{id:'need',key:'source',articleId:'article',designation:'Matière',unit:'u',requirements:{...requirements},blockers:[],supplyMode:'CUSTOMER',required:100,reserved:0,consumed:0,expected:40,receivedBlocked:0}],
-  previousNeeds:[] as unknown[],customerCalls:[{id:'call',need_id:'need',client_id:'client',unit:'u',status:'SENT',quantity:40,received:10}]};}
+  retainedNeeds:[] as Array<{id:string;supply_mode:string;article_id:string;designation:string;requirements:typeof requirements}>,previousNeeds:[] as unknown[],customerCalls:[{id:'call',need_id:'need',client_id:'client',unit:'u',status:'SENT',quantity:40,received:10}]};}
 const body:CustomerMaterialCommand={action:'RECEIVE',expectedVersion:'v1',idempotencyKey:'command',callId:'call',quantity:15,date:'2026-09-08',reference:'LOT-CLIENT-TEST',note:'Réception fictive de recette'};
 const audit={user_id:1} as never;
 let current:ReturnType<typeof coverage>;
@@ -19,6 +19,15 @@ beforeEach(()=>{
   m.read.mockImplementation(async()=>current);m.receive.mockResolvedValue({receptionId:'receipt',receptionNo:'RF-TEST',lineId:'line',lotId:'lot'});
 });
 describe('customer material calls',()=>{
+  it('receives a separately retained call against its original definition and owner',async()=>{
+    current.needs=[];current.retainedNeeds=[{id:'need',supply_mode:'CUSTOMER',article_id:'old-article',designation:'Ancien brut',requirements}];
+    await commandCustomerMaterial(19,body,audit);
+    expect(m.receive).toHaveBeenCalledWith(tx,expect.objectContaining({articleId:'old-article',clientId:'client',quantity:15}),audit);
+  });
+  it('cannot receive an unresolved previous need',async()=>{
+    current.needs=[];current.previousNeeds=[{id:'need'}];
+    await expect(commandCustomerMaterial(19,body,audit)).rejects.toMatchObject({code:'CUSTOMER_MATERIAL_REVISION_CHANGED'});expect(m.receive).not.toHaveBeenCalled();
+  });
   it('blocks a new call until earlier commitments have been reconciled',async()=>{
     current.previousNeeds=[{id:'previous'}];
     await expect(commandCustomerMaterial(19,{action:'PREPARE',expectedVersion:'v1',idempotencyKey:'command',needKey:'source',quantity:60,needDate:'2026-09-18',note:'Appel client de recette'},audit)).rejects.toMatchObject({code:'CUSTOMER_MATERIAL_RECONCILIATION_REQUIRED'});

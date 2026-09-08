@@ -11,6 +11,10 @@ beforeEach(()=>{
   tx={query:vi.fn(async(sql:string)=>sql.startsWith('SELECT c.id')?{rows:[row]}:sql.startsWith('SELECT 1 FROM public.of_customer_material_receipt_transfers')?{rowCount:replayed?1:0,rows:[]}:{rows:[]})};
 });
 describe('customer receipt allocation',()=>{
+  it('keeps a separately retained receipt in client-owned stock without a new reservation',async()=>{
+    Object.assign(row,{superseded_at:'2026-09-08',kept_separate:true});
+    expect(await transferCustomerMaterialReceiptTx(tx as never,'receipt',audit)).toEqual([]);expect(m.reserve).not.toHaveBeenCalled();
+  });
   it('reserves exactly the released physical receipt for its existing OF need',async()=>{
     const result=await transferCustomerMaterialReceiptTx(tx as never,'receipt',audit);
     expect(result).toEqual([{ofId:19,reservationId:'reservation',quantity:15}]);

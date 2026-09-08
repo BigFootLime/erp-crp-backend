@@ -32,7 +32,8 @@ export async function commandCustomerMaterial(ofId:number,body:CustomerMaterialC
       }else{
         if(call.status==='PREPARED')throw new HttpError(409,'CUSTOMER_MATERIAL_SEND_REQUIRED','Enregistrez la référence de la demande transmise avant réception.');
         if(body.quantity>quantity(call.quantity-call.received))throw new HttpError(409,'CUSTOMER_MATERIAL_OVER_RECEIPT','La quantité reçue dépasse le solde de cet appel.');
-        const need=current.needs.find(n=>n.id===call.need_id);
+        const retained=current.retainedNeeds?.find(n=>n.id===call.need_id);
+        const need=current.needs.find(n=>n.id===call.need_id)??(retained?{supplyMode:retained.supply_mode,requirements:retained.requirements,articleId:retained.article_id,designation:retained.designation}:undefined);
         if(!need||need.supplyMode!=='CUSTOMER'||need.requirements.ownerClientId!==call.client_id)
           throw new HttpError(409,'CUSTOMER_MATERIAL_REVISION_CHANGED','Le besoin a changé : rapprochez la révision et le client propriétaire avant réception.');
         reception=await createCustomerMaterialReceiptTx(tx,{callId:call.id,clientId:call.client_id,articleId:need.articleId!,designation:need.designation,quantity:body.quantity,unit:call.unit,date:body.date,reference:body.reference,note:body.note},audit);

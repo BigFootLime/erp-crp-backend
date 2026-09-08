@@ -142,7 +142,7 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
     for(const s of proposal.selections){remainingQuality.set(s.lotId,quantity((remainingQuality.get(s.lotId)??0)-s.quantity));remaining.set(s.batchId,quantity((remaining.get(s.batchId)??0)-s.quantity));const levelId=lots.find(l=>l.batchId===s.batchId)?.stockLevelId;if(levelId)remainingLevels.set(levelId,quantity((remainingLevels.get(levelId)??0)-s.quantity));}
     return {...need,...proposal,futureSupplies:futureSupplies.filter(s=>s.articleId===need.articleId).map(s=>({...s,reasons:futureSupplyCompatibility(need,s)})),purchase:purchaseQuantity(proposal.purchaseMissing,need.catalog?.moq??null,need.catalog?.lot_achat??null)};
   });
-  const previousNeeds=saved.filter(n=>!needs.some(current=>current.id===n.id)&&!reconciliations.some(r=>r.previous_need_id===n.id)).map(n=>{
+  const historicalNeeds=saved.filter(n=>!needs.some(current=>current.id===n.id)).map(n=>{
     const attached=reservations.filter(r=>effectiveNeed(r.material_need_id)===n.id),expected=promises.filter(p=>effectiveNeed(p.material_need_id)===n.id);
     const calls=customerCalls.filter(c=>c.need_id===n.id&&c.status!=='CANCELLED');
     const consumed=attached.reduce((sum,r)=>sum+Number(r.status==='CONSUMED'?r.qty_reserved:r.qty_consumed),0);
@@ -156,7 +156,8 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
   return {enabled:true as const,ofId,number:dossier.number,quantity:dossier.quantity,dossierStatus:dossier.status,technicalVersion:of.revision as string|null,
     technicalHash:of.hash as string|null,clientId:of.client_id as string|null,operations:dossier.operations,
     version:coverageFingerprint({dossier:dossier.version,saved,reservations,promises,lots,checks,catalogs,documents,futureSupplies,customerCalls,debitAdjustments,debits,destinations,reconciliations}),needs:coverage,customerCalls,debits,
-    previousNeeds,reconciliations,
+    previousNeeds:historicalNeeds.filter(n=>!reconciliations.some(r=>r.previous_need_id===n.id)),
+    retainedNeeds:historicalNeeds.filter(n=>reconciliations.some(r=>r.previous_need_id===n.id&&r.disposition==='KEEP_SEPARATE')),reconciliations,
     suppliers:(await tx.query("SELECT id::text,COALESCE(nom,raison_sociale) AS name FROM public.fournisseurs WHERE actif IS NOT FALSE ORDER BY COALESCE(nom,raison_sociale)")).rows,
     destinations:(await tx.query("SELECT id::text,COALESCE(code,code_magasin) AS name FROM public.magasins ORDER BY COALESCE(code,code_magasin)")).rows};
 }

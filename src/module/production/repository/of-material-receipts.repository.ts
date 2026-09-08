@@ -42,6 +42,7 @@ export async function transferMaterialReceiptTx(tx:PoolClient,receiptId:string,a
   const allocations=(await tx.query(`SELECT b.id::text,b.material_need_id::text,b.besoin_of_id AS of_id,
     (CASE WHEN b.besoin_type='OF_MATERIAL' THEN b.quantite_couverte ELSE b.quantite_couverte*COALESCE(l.coef_conversion,1) END)::float8 AS assigned,b.stock_receipt_offset::float8 AS receipt_offset,
     n.article_id::text,n.unit,n.operation_id::text,
+    EXISTS(SELECT 1 FROM public.of_material_revision_resolutions resolution WHERE resolution.previous_need_id=n.id AND resolution.disposition='KEEP_SEPARATE') AS kept_separate,
     COALESCE((SELECT sum(sr.qty_reserved) FROM public.of_material_receipt_transfers t JOIN public.stock_reservations sr ON sr.id=t.reservation_id WHERE t.purchase_need_id=b.id),0)::float8 AS transferred
     FROM public.commande_fournisseur_ligne_besoin b JOIN public.commande_fournisseur_ligne l ON l.id=b.ligne_id
     LEFT JOIN public.v_of_material_need_destinations destination ON destination.source_need_id=b.material_need_id
@@ -56,7 +57,7 @@ export async function transferMaterialReceiptTx(tx:PoolClient,receiptId:string,a
   for(const allocation of allocations){
     const entitlement=receivedAllocationQuantity(receipt.receipt_start,receipt.qty,allocation.receipt_offset??earlier,allocation.assigned);
     earlier=quantity(earlier+allocation.assigned);
-    if(!allocation.material_need_id)continue;
+    if(!allocation.material_need_id||allocation.kept_separate)continue;
     const here=(await tx.query(`SELECT COALESCE(sum(r.qty_reserved),0)::float8 AS qty FROM public.of_material_receipt_transfers t
       JOIN public.stock_reservations r ON r.id=t.reservation_id WHERE t.receipt_id=$1::uuid AND t.purchase_need_id=$2::uuid`,[receiptId,allocation.id])).rows[0].qty as number;
     const qty=quantity(Math.min(remaining,Math.max(0,entitlement-here),Math.max(0,allocation.assigned-allocation.transferred)));
