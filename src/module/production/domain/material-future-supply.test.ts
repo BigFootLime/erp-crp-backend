@@ -1,6 +1,7 @@
 import {describe,it,expect} from 'vitest';
 import {futureSupplyBalance} from './material-future-supply';
 describe('future supply in stock units',()=>{
+  it('accepts the purchase repository row with its descriptive columns',()=>{const row={id:'purchase-line',code:'BCF-TEST',due:null,ordered:100,cancelled:0,coefficient:1,assigned:75,received:0};expect(futureSupplyBalance(row).available).toBe(25)});
   it('makes 25 of 100 free when 75 are already promised',()=>expect(futureSupplyBalance({ordered:100,cancelled:0,coefficient:1,assigned:75,received:0})).toEqual({capacity:100,available:25,unassignedReceived:0}));
   it('does not subtract fulfilled promises twice',()=>expect(futureSupplyBalance({ordered:100,cancelled:0,coefficient:1,assigned:75,received:40}).available).toBe(25));
   it('distinguishes unassigned received quantities from future stock',()=>expect(futureSupplyBalance({ordered:100,cancelled:0,coefficient:1,assigned:25,received:40})).toEqual({capacity:100,available:60,unassignedReceived:15}));

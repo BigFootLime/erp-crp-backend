@@ -92,3 +92,5 @@ Les anciennes affectations en unité d’achat sont converties avant comparaison
 36 tests ciblés réussis (calculs et orchestration future, couverture, transaction de réception). Ces tests avec doubles ne prouvent pas la concurrence PostgreSQL. Compilation TypeScript réussie avant activation ; recette UI de la couverture future à réaliser.
 
 Le démarrage réel de la découpe OF 852 et le débit de 20 bruts ont réussi sur cerp_test : nécessaire 100, réservé 40, consommé 20, attendu 40. Le pointage a été arrêté par interface, sans terminer l’opération. Le programme du tournage reste un prérequis indépendant.
+
+La première lecture UI a révélé une validation trop large des colonnes descriptives de la ligne achat. Le contrôle porte désormais sur les cinq quantités uniquement ; un test sur la forme réelle de la ligne protège ce cas. 19 tests ciblés et compilation complète réussis après correction.
