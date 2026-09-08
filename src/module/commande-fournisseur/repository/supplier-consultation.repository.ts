@@ -25,8 +25,8 @@ async function snapshotTx(tx:Queryer,commandeId:string):Promise<ConsultationSnap
     magasin_livraison_id::text AS destination_id,tva_frais_pct::float8 AS freight_vat_pct FROM public.commande_fournisseur WHERE id=$1::uuid`,[commandeId])).rows[0];
   const lines=(await tx.query<ConsultationRequestedLine>(`SELECT l.id::text,l.designation,l.article_id::text,a.code AS article_code,
     l.quantite::float8 AS quantity,l.unite AS unit,l.unite_stock AS stock_unit,l.coef_conversion::float8 AS coefficient,
-    l.tva_pct::float8 AS vat_pct,l.date_besoin::text AS need_date,l.exigences_qualite AS requirements,l.documents_attendus AS documents,
-    l.operation_libelle AS operation,l.of_id FROM public.commande_fournisseur_ligne l LEFT JOIN public.articles a ON a.id=l.article_id
+    l.tva_pct::float8 AS vat_pct,COALESCE(l.date_besoin,cf.date_besoin)::text AS need_date,l.exigences_qualite AS requirements,l.documents_attendus AS documents,
+    l.operation_libelle AS operation,l.of_id FROM public.commande_fournisseur_ligne l JOIN public.commande_fournisseur cf ON cf.id=l.commande_id LEFT JOIN public.articles a ON a.id=l.article_id
     WHERE l.commande_id=$1::uuid AND l.statut_ligne='ACTIVE' ORDER BY l.position,l.id`,[commandeId])).rows;
   if(!lines.length||lines.length>200)throw new HttpError(409,'CONSULTATION_LINES_REQUIRED','Préparez entre une et 200 lignes avant de consulter les fournisseurs.');
   if(lines.some(l=>!l.unit?.trim()))throw new HttpError(409,'CONSULTATION_UNIT_REQUIRED','Complétez l’unité de chaque ligne avant la consultation.');

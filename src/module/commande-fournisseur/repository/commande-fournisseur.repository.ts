@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg";
+import {assertPurchaseLineCoveragePatch,type AllocatedPurchaseLine} from '../domain/purchase-line-coverage';
 import {assertLegacyMaterialWrite} from "../../stock/repository/of-material-write-guard";
 import crypto from "node:crypto";
 
@@ -1115,15 +1116,20 @@ export async function repoUpdateLigne(
   const client = await db.connect();
   try {
     await client.query("BEGIN");
+    await client.query("SELECT revision FROM public.planning_central_settings WHERE singleton FOR UPDATE");
     const header = await lockHeader(client, id);
     assertOptimisticToken(body.expected_updated_at, header.updated_at_token);
     assertDraft(header.statut);
 
-    const exists = await client.query<{ id: string }>(
-      `SELECT id FROM public.commande_fournisseur_ligne WHERE id = $1::uuid AND commande_id = $2::uuid FOR UPDATE`,
+    const exists = await client.query<AllocatedPurchaseLine&{id:string}>(
+      `SELECT id,type,article_id::text,unite,unite_stock,coef_conversion::float8,quantite::float8,qty_annulee::float8 FROM public.commande_fournisseur_ligne WHERE id = $1::uuid AND commande_id = $2::uuid FOR UPDATE`,
       [ligneId, id]
     );
     if (!exists.rows[0]) throw new HttpError(404, "LIGNE_NOT_FOUND", "Ligne introuvable sur cette commande.");
+
+    const allocation=(await client.query<{qty:number}>(`SELECT COALESCE(sum(CASE WHEN besoin_type='OF_MATERIAL' THEN quantite_couverte ELSE quantite_couverte*$2 END),0)::float8 AS qty
+      FROM public.commande_fournisseur_ligne_besoin WHERE ligne_id=$1::uuid AND NOT annule`,[ligneId,exists.rows[0].coef_conversion??1])).rows[0];
+    assertPurchaseLineCoveragePatch(exists.rows[0],body.patch,allocation.qty);
 
     const sets: string[] = [];
     const values: unknown[] = [ligneId];
