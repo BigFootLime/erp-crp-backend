@@ -2582,7 +2582,7 @@ export function assertStockConsumptionAllowed(
     throw new HttpError(
       409,
       "LOT_NOT_RELEASED",
-      `Lot status ${state.lot_status} does not allow stock consumption`
+      "Ce lot n’est pas libéré pour une consommation de stock. Ouvrez son contrôle qualité."
     );
   }
 
@@ -8231,9 +8231,16 @@ export async function repoPostMovement(
       stockTargetKey({ stock_level_id: m.stock_level_id, stock_batch_id: m.stock_batch_id })
     );
     if (!sourceState) throw new Error("Locked stock state missing");
+    // A full reversal of an untouched remnant is a stock correction, not an
+    // authorization to manufacture with unreleased material. Only the shared
+    // production correction transaction can post it. The immutable remnant
+    // proof must match the original IN, lot, location and exact quantity.
+    const remnantReversal = !!externalClient && m.movement_type === 'ADJUSTMENT' && m.qty < 0
+      && await isMaterialRemnantReversalTx(client, id);
     assertStockConsumptionAllowed(sourceState, {
       movement_type: m.movement_type,
       qty: m.qty,
+      allow_nonreleased_adjustment: remnantReversal,
       negative_stock_override: body.negative_stock_override,
     });
 
@@ -8295,6 +8302,7 @@ export async function repoPostMovement(
         quality_gates: directOutQualityDecisions,
         reserved_quality_gate:reservedQualityDecision,
         consumed_reservation_id:reservedConsumption?.reservationId??null,
+        material_remnant_reversal: remnantReversal,
         traceability_consumptions_recorded: consumption.recorded,
         traceability_consumptions_compensated: consumption.compensated,
       },
@@ -8321,6 +8329,24 @@ export async function repoPostMovement(
   } finally {
     if (ownsTransaction) client.release();
   }
+}
+
+export async function isMaterialRemnantReversalTx(client: PoolClient, movementId: string): Promise<boolean> {
+  const proof = await client.query(`SELECT r.id FROM public.stock_movements m
+    JOIN public.stock_movements original ON original.id=m.reversal_of_id
+    JOIN public.production_material_remnants r ON r.stock_movement_id=original.id
+    JOIN public.production_material_debits d ON d.id=r.debit_id AND d.compensates_id IS NULL
+    JOIN public.stock_batches b ON b.id=m.stock_batch_id AND b.lot_id=r.lot_id
+    WHERE m.id=$1::uuid AND m.status='DRAFT' AND m.movement_type='ADJUSTMENT' AND m.qty<0
+      AND original.status='POSTED' AND original.movement_type='IN'
+      AND m.article_id=original.article_id AND m.stock_level_id=original.stock_level_id
+      AND m.stock_batch_id=original.stock_batch_id AND m.qty=-original.qty AND abs(m.qty)=r.quantity
+      AND m.source_document_type='STOCK_COMPENSATION' AND m.source_document_id=original.id::text
+      AND NOT EXISTS(SELECT 1 FROM public.stock_reservations s WHERE s.lot_id=r.lot_id AND(s.status='ACTIVE' OR s.qty_consumed>0))
+      AND NOT EXISTS(SELECT 1 FROM public.stock_lot_genealogy_edges e WHERE e.parent_lot_id=r.lot_id)
+      AND NOT EXISTS(SELECT 1 FROM public.stock_movement_lines ml JOIN public.stock_movements used ON used.id=ml.movement_id
+        WHERE ml.lot_id=r.lot_id AND used.id NOT IN(m.id,original.id) AND used.status<>'CANCELLED')`, [movementId]);
+  return proof.rows.length === 1;
 }
 
 export async function repoCancelMovement(

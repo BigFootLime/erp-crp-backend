@@ -132,3 +132,6 @@ KEENAN demande explicitement ensuite la mise en production et le déploiement. C
 
 ### Lecture du lot et reprise de contexte — 8 septembre
 Le dossier de lot expose le propriétaire client, les propriétés matière et les quantités physiques/réservées issues de stock_batches. La généalogie des chutes reste reliée à ses écritures. Aucun statut qualité n’est déduit de la filiation. Lecture vérifiée avec PREPARE/EXPLAIN PostgreSQL sous cerp_app dans une transaction READ ONLY annulée ; compilation et contrat OpenAPI complets réussis.
+
+### Reprise de chute non libérée lors d’une compensation
+La recette UI OF-856 a refusé la compensation du débit 4 bruts / 5 u / chute 0,5 u, sans conserver d’écriture partielle. Correction : la comptabilisation canonique reconnaît uniquement une reprise intégrale de chute par sa preuve immuable, son entrée initiale, sa quantité, son lot et son emplacement. Elle exige la transaction de compensation OF et refuse une chute déplacée, utilisée ou réservée. Le statut qualité demeure inchangé ; aucune sortie de fabrication ordinaire n’est autorisée. Quinze tests ciblés réussis, 60 requêtes PREPARE/EXPLAIN testées sans exécution, compilation complète réussie. Nouvelle recette UI à poursuivre après activation test.
