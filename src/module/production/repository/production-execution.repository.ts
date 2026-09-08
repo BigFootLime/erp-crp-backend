@@ -15,6 +15,7 @@
 import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
+import {PLANNED_OPERATION_DURATION_MINUTES_SQL} from '../domain/planned-operation-duration';
 import {assertMaterialOperationStartTx,usesOperationReadiness,lockMaterialExecutionTx,assertMaterialQuantityTx,syncMaterialOfQuantitiesTx} from "./operation-readiness.repository";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
@@ -793,6 +794,12 @@ export async function repoOperatorBoard(params: {
   const active = await pool.query(`${EXECUTION_SELECT} WHERE p.operator_user_id = $1::int AND p.status = 'RUNNING'`, [
     params.operatorUserId,
   ]);
+  const paused=await pool.query(`${EXECUTION_SELECT} WHERE p.operator_user_id=$1::int AND p.status='DONE' AND p.validated_at IS NULL
+    AND o.statut IN ('EN_COURS','EN_PAUSE') AND op.status<>'DONE'
+    AND($2::bigint IS NULL OR p.of_id=$2::bigint) AND($3::uuid IS NULL OR p.operation_id=$3::uuid)
+    AND(SELECT e.event_type FROM public.production_pointage_events e WHERE e.pointage_id=p.id ORDER BY e.created_at DESC,e.id DESC LIMIT 1)='PAUSE'
+    AND NOT EXISTS(SELECT 1 FROM public.production_pointages successor WHERE successor.previous_segment_id=p.id)
+    ORDER BY p.end_ts DESC,p.id LIMIT 25`,[params.operatorUserId,params.query.of_id??null,params.query.operation_id??null]);
 
   // Opérations réellement pointables : OF exécutable, opération non terminée
   // ni bloquée. La liste est bornée côté serveur, jamais filtrée côté page.
@@ -816,9 +823,9 @@ export async function repoOperatorBoard(params: {
         op.phase,
         op.designation,
         op.status::text                 AS status,
-        op.temps_total_planned::float8  AS temps_total_planned,
+        (${PLANNED_OPERATION_DURATION_MINUTES_SQL})/60.0 AS temps_total_planned,
         op.temps_total_real::float8     AS temps_total_real,
-        GREATEST(0,o.quantite_lancee-COALESCE((SELECT sum(d.qty_good+d.qty_scrap+d.qty_pending_control) FROM public.production_quantity_declarations d WHERE d.operation_id=op.id),0))::float8 AS remaining_quantity,
+        GREATEST(0,o.quantite_lancee-COALESCE((SELECT sum(d.qty_good+d.qty_scrap+d.qty_pending_control+d.qty_rework) FROM public.production_quantity_declarations d WHERE d.operation_id=op.id),0))::float8 AS remaining_quantity,
         o.id                            AS of_id,
         o.numero                        AS of_numero,
         o.statut::text                  AS of_statut,
@@ -855,6 +862,7 @@ export async function repoOperatorBoard(params: {
   return {
     operator_user_id: params.operatorUserId,
     active: active.rows.map(mapExecutionRow),
+    paused:paused.rows.map(mapExecutionRow),
     candidates: candidates.rows.map((r) => ({
       operation_id: r.operation_id as string,
       phase: Number(r.phase),
