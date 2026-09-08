@@ -5260,6 +5260,12 @@ export async function repoGetLot(id: string): Promise<StockLotDetail | null> {
         l.article_id::text AS article_id,
         a.code AS article_code,
         a.designation AS article_designation,
+        a.unite AS unit_code,
+        l.client_proprietaire_id::text AS client_proprietaire_id,
+        c.company_name AS owner_client_name,
+        COALESCE(l.material_properties, '{}'::jsonb) AS material_properties,
+        (SELECT COALESCE(sum(b.qty_total),0)::float8 FROM public.stock_batches b WHERE b.lot_id=l.id) AS quantity_on_hand,
+        (SELECT COALESCE(sum(b.qty_reserved),0)::float8 FROM public.stock_batches b WHERE b.lot_id=l.id) AS quantity_reserved,
         l.lot_code,
         l.lot_status,
         l.lot_status_note,
@@ -5273,6 +5279,7 @@ export async function repoGetLot(id: string): Promise<StockLotDetail | null> {
         l.created_at::text AS created_at
       FROM public.lots l
       JOIN public.articles a ON a.id = l.article_id
+      LEFT JOIN public.clients c ON c.client_id = l.client_proprietaire_id
       WHERE l.id = $1::uuid
     `,
     [id]
