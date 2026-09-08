@@ -85,7 +85,7 @@ export function schedule(input: {
       for (const d of input.dependencies.filter(d => d.successorId === t.id)) {
         const parent = byId.get(d.predecessorId);
         if (d.transferQuantity !== null && d.releasedQuantity >= d.transferQuantity) continue;
-        const date = result.forecasts[d.predecessorId] ?? parent?.forecast ?? parent?.committed;
+        const date = parent?.commitment==='DONE'&&parent.actual?.end?{start:parent.actual.end,end:parent.actual.end}:result.forecasts[d.predecessorId] ?? parent?.forecast ?? parent?.committed;
         if (!date || result.conflicts.some(c => c.taskId === d.predecessorId)) {
           conflict(t.id, "PREDECESSOR_UNAVAILABLE", "Un prérequis n'a pas de disponibilité réalisable.", d.predecessorId); blocked = true; break;
         }

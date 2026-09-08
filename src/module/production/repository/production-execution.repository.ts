@@ -15,6 +15,8 @@
 import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
+import {PLANNED_OPERATION_DURATION_MINUTES_SQL} from '../domain/planned-operation-duration';
+import {assertMaterialOperationStartTx,usesOperationReadiness,lockMaterialExecutionTx,assertMaterialQuantityTx,syncMaterialOfQuantitiesTx} from "./operation-readiness.repository";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
@@ -788,14 +790,22 @@ export async function repoOperatorBoard(params: {
   operatorUserId: number;
   query: OperatorBoardQueryDTO;
 }) {
+  const materialEnabled=await usesOperationReadiness(pool,params.query.of_id??0);
   const active = await pool.query(`${EXECUTION_SELECT} WHERE p.operator_user_id = $1::int AND p.status = 'RUNNING'`, [
     params.operatorUserId,
   ]);
+  const paused=await pool.query(`${EXECUTION_SELECT} WHERE p.operator_user_id=$1::int AND p.status='DONE' AND p.validated_at IS NULL
+    AND o.statut IN ('EN_COURS','EN_PAUSE') AND op.status<>'DONE'
+    AND($2::bigint IS NULL OR p.of_id=$2::bigint) AND($3::uuid IS NULL OR p.operation_id=$3::uuid)
+    AND(SELECT e.event_type FROM public.production_pointage_events e WHERE e.pointage_id=p.id ORDER BY e.created_at DESC,e.id DESC LIMIT 1)='PAUSE'
+    AND NOT EXISTS(SELECT 1 FROM public.production_pointages successor WHERE successor.previous_segment_id=p.id)
+    ORDER BY p.end_ts DESC,p.id LIMIT 25`,[params.operatorUserId,params.query.of_id??null,params.query.operation_id??null]);
 
   // Opérations réellement pointables : OF exécutable, opération non terminée
   // ni bloquée. La liste est bornée côté serveur, jamais filtrée côté page.
   const values: unknown[] = [params.operatorUserId];
   let filter = "";
+  if(params.query.operation_id){values.push(params.query.operation_id);filter+=` AND op.id=$${values.length}::uuid`;}
   if (params.query.of_id) {
     values.push(params.query.of_id);
     filter += ` AND o.id = $${values.length}::bigint`;
@@ -813,8 +823,9 @@ export async function repoOperatorBoard(params: {
         op.phase,
         op.designation,
         op.status::text                 AS status,
-        op.temps_total_planned::float8  AS temps_total_planned,
+        (${PLANNED_OPERATION_DURATION_MINUTES_SQL})/60.0 AS temps_total_planned,
         op.temps_total_real::float8     AS temps_total_real,
+        GREATEST(0,o.quantite_lancee-COALESCE((SELECT sum(d.qty_good+d.qty_scrap+d.qty_pending_control+d.qty_rework) FROM public.production_quantity_declarations d WHERE d.operation_id=op.id),0))::float8 AS remaining_quantity,
         o.id                            AS of_id,
         o.numero                        AS of_numero,
         o.statut::text                  AS of_statut,
@@ -837,8 +848,9 @@ export async function repoOperatorBoard(params: {
       FROM public.of_operations op
       JOIN public.ordres_fabrication o ON o.id = op.of_id
       LEFT JOIN public.machines m ON m.id = op.machine_id
-      WHERE o.statut IN ('EN_COURS', 'EN_PAUSE')
+      WHERE (o.statut IN ('EN_COURS', 'EN_PAUSE') ${materialEnabled?"OR (o.statut IN ('BROUILLON','PLANIFIE') AND EXISTS(SELECT 1 FROM public.of_dossier_validations v WHERE v.of_id=o.id AND v.invalidated_at IS NULL))":""})
         AND op.status <> 'DONE'
+        AND(op.revision_id IS NULL OR EXISTS(SELECT 1 FROM public.of_revisions r WHERE r.id=op.revision_id AND r.statut='ACTIVE'))
         AND $1::int IS NOT NULL
         ${filter}
       ORDER BY o.numero, op.phase
@@ -850,6 +862,7 @@ export async function repoOperatorBoard(params: {
   return {
     operator_user_id: params.operatorUserId,
     active: active.rows.map(mapExecutionRow),
+    paused:paused.rows.map(mapExecutionRow),
     candidates: candidates.rows.map((r) => ({
       operation_id: r.operation_id as string,
       phase: Number(r.phase),
@@ -857,6 +870,7 @@ export async function repoOperatorBoard(params: {
       status: r.status as string,
       temps_total_planned: Number(r.temps_total_planned ?? 0),
       temps_total_real: Number(r.temps_total_real ?? 0),
+      remaining_quantity:Number(r.remaining_quantity??0),
       of: {
         id: Number(r.of_id),
         numero: r.of_numero as string,
@@ -1034,6 +1048,7 @@ export async function repoStartExecution(params: {
       return existing;
     }
 
+    const materialAuthorization = await assertMaterialOperationStartTx(client,params.body.of_id,params.body.operation_id,params.body.expected_readiness_version,params.body.machine_id);
     const { of, operation } = await lockExecutionContext(client, {
       of_id: params.body.of_id,
       operation_id: params.body.operation_id ?? null,
@@ -1041,7 +1056,7 @@ export async function repoStartExecution(params: {
       machine_id: params.body.machine_id ?? null,
     });
 
-    assertOfExecutable(of.statut);
+    if (!materialAuthorization) assertOfExecutable(of.statut);
     assertOperationExecutable(operation);
     await assertMachineAvailable(client, params.body.machine_id);
 
@@ -1051,6 +1066,9 @@ export async function repoStartExecution(params: {
     // Saisie rétroactive : bornée et motivée. Sans motif, on refuse plutôt que
     // d'accepter silencieusement un horodatage fourni par le client.
     const isRetroactive = Boolean(params.body.start_ts);
+    if (isRetroactive && materialAuthorization && ["BROUILLON","PLANIFIE"].includes(of.statut)) {
+      throw new HttpError(409,"OPERATION_FIRST_START_REQUIRED","Le premier démarrage de fabrication doit être enregistré au moment de l’action. Les corrections restent disponibles après démarrage.");
+    }
     if (isRetroactive) {
       if (!params.body.retroactive_reason) {
         throw new HttpError(
@@ -1075,6 +1093,7 @@ export async function repoStartExecution(params: {
       operation_phase: operation?.phase ?? null,
       activity_code: activity.code,
       activity_label: activity.label,
+      material_authorization: materialAuthorization,
     };
 
     const sessionId = params.sessionId ?? null;
@@ -1149,8 +1168,23 @@ export async function repoStartExecution(params: {
       note: params.body.retroactive_reason ?? params.body.for_other_reason ?? null,
     });
 
-    // The only transition into execution is POST /ofs/:id/release. Pointage
-    // never promotes a draft/planned OF implicitly.
+    // With the material workflow, Complet prepares the dossier and this real,
+    // guarded operation start enters fabrication. Legacy dossiers keep their
+    // previous explicit-release policy.
+    if (materialAuthorization) {
+      // Keep the existing immutable manufacturing-entry ledger. This decision
+      // records the operator's first real start and its operation/quantity scope;
+      // it does not authorize every later operation of the OF.
+      await client.query(`INSERT INTO public.of_release_decisions(of_id,decision,override,evidence,decided_by)
+        SELECT o.id,'RELEASED',false,jsonb_build_object('scope','OPERATION_START','pointage_id',$2::text,
+          'operation_authorization',$3::jsonb,'dossier_validation_id',v.id::text),$4
+        FROM public.ordres_fabrication o JOIN public.of_dossier_validations v ON v.of_id=o.id AND v.invalidated_at IS NULL
+        WHERE o.id=$1 AND o.statut IN ('BROUILLON','PLANIFIE')
+        ON CONFLICT(of_id) DO NOTHING`,[params.body.of_id,id,JSON.stringify(materialAuthorization),params.audit.user_id]);
+      await client.query(`UPDATE public.ordres_fabrication
+      SET statut='EN_COURS'::public.of_status,date_lancement_reelle=COALESCE(date_lancement_reelle,CURRENT_DATE),updated_at=now(),updated_by=$2
+      WHERE id=$1 AND statut IN ('BROUILLON','PLANIFIE','EN_PAUSE')`,[params.body.of_id,params.audit.user_id]);
+    }
 
     if (operation && operation.status !== "RUNNING") {
       await client.query(
@@ -1400,6 +1434,10 @@ export async function repoTransitionSegment(params: {
       return existing;
     }
 
+    if(params.kind==='RESUME'||params.kind==='CHANGE'){
+      const hint=(await client.query<{of_id:number;operation_id:string|null;machine_id:string|null}>('SELECT of_id::int,operation_id::text,machine_id::text FROM public.production_pointages WHERE id=$1::uuid',[params.id])).rows[0];
+      if(hint)await assertMaterialOperationStartTx(client,hint.of_id,hint.operation_id,undefined,'machine_id' in params.body?params.body.machine_id:hint.machine_id);
+    }
     const current = await lockPointage(client, params.id);
     assertOwnershipOrSupervision({
       actorUserId: params.audit.user_id,
@@ -1409,7 +1447,13 @@ export async function repoTransitionSegment(params: {
     });
     assertMutable(current);
 
-    if (current.status !== "RUNNING") {
+    const resumingPause=params.kind==='RESUME'&&current.status==='DONE';
+    if(resumingPause){
+      const last=(await client.query<{event_type:string}>(`SELECT event_type FROM public.production_pointage_events WHERE pointage_id=$1::uuid ORDER BY created_at DESC,id DESC LIMIT 1`,[params.id])).rows[0];
+      const successor=(await client.query('SELECT id FROM public.production_pointages WHERE previous_segment_id=$1::uuid LIMIT 1',[params.id])).rows[0];
+      if(last?.event_type!=='PAUSE'||successor)throw new HttpError(409,'PRODUCTION_EXECUTION_PAUSE_CHANGED','Cette pause a déjà été reprise ou ne peut plus être reprise. Actualisez l’opération.');
+    }
+    if (current.status !== "RUNNING"&&!resumingPause) {
       throw new HttpError(
         409,
         "PRODUCTION_EXECUTION_NOT_RUNNING",
@@ -1421,7 +1465,7 @@ export async function repoTransitionSegment(params: {
 
     // 1) Clôture du segment courant. La convention [début, fin) garantit que la
     // minute de bascule n'est comptée qu'une fois.
-    const closed = await client.query<{ duration_minutes: number | null; end_ts: string }>(
+    const closed = resumingPause?{rows:[{duration_minutes:null,end_ts:current.end_ts}]}:await client.query<{ duration_minutes: number | null; end_ts: string }>(
       `
         UPDATE public.production_pointages
         SET status = 'DONE'::production_pointage_status,
@@ -1512,7 +1556,7 @@ export async function repoTransitionSegment(params: {
             $2::uuid, COALESCE($3::uuid, p.poste_id), $4::int,
             COALESCE($5::production_pointage_time_type, p.time_type),
             $6::text,
-            p.end_ts,
+            now(),
             'RUNNING'::production_pointage_status,
             $7,
             COALESCE(p.session_id, p.id),
@@ -1594,7 +1638,7 @@ export type FinishOperationPreview = {
   operation: { id: string; phase: number; designation: string; status: string; temps_total_real: number };
   active_segment: { id: string; elapsed_minutes: number } | null;
   declared: { qty_good: number; qty_scrap: number; qty_rework: number; qty_pending_control: number };
-  already_declared: { qty_good: number; qty_scrap: number; qty_rework: number };
+  already_declared: { qty_good: number; qty_scrap: number; qty_rework: number; qty_pending_control: number };
   remaining_before: number;
   remaining_after: number;
   will_stop_segment: boolean;
@@ -1653,7 +1697,8 @@ async function buildFinishPreview(
     `
       SELECT COALESCE(SUM(qty_good), 0)::float8 AS qty_good,
              COALESCE(SUM(qty_scrap), 0)::float8 AS qty_scrap,
-             COALESCE(SUM(qty_rework), 0)::float8 AS qty_rework
+             COALESCE(SUM(qty_rework), 0)::float8 AS qty_rework,
+             COALESCE(SUM(qty_pending_control), 0)::float8 AS qty_pending_control
       FROM public.production_quantity_declarations
       WHERE operation_id = $1::uuid
     `,
@@ -1670,10 +1715,13 @@ async function buildFinishPreview(
     qty_good: Number(declaredRes.rows[0]?.qty_good ?? 0),
     qty_scrap: Number(declaredRes.rows[0]?.qty_scrap ?? 0),
     qty_rework: Number(declaredRes.rows[0]?.qty_rework ?? 0),
+    qty_pending_control: Number(declaredRes.rows[0]?.qty_pending_control ?? 0),
   };
 
-  const remainingBefore = Number(of.quantite_lancee) - already.qty_good - already.qty_scrap;
-  const remainingAfter = remainingBefore - declared.qty_good - declared.qty_scrap;
+  const guarded=await usesOperationReadiness(tx,params.body.of_id);
+  const authorization=guarded?await assertMaterialQuantityTx(tx,params.body.of_id,params.body.operation_id,declared):null;
+  const remainingBefore = Number(of.quantite_lancee) - already.qty_good - already.qty_scrap-(guarded?already.qty_rework+already.qty_pending_control:0);
+  const remainingAfter = remainingBefore - declared.qty_good - declared.qty_scrap-(guarded?declared.qty_rework+declared.qty_pending_control:0);
 
   const warnings: string[] = [];
   if (declared.qty_scrap > 0) {
@@ -1728,6 +1776,7 @@ async function buildFinishPreview(
     already_declared: preview.already_declared,
     active_segment_id: preview.active_segment?.id ?? null,
     will_complete_operation: preview.will_complete_operation,
+    ...(authorization?{authorization_version:authorization.version}:{}),
   });
 
   return { ...preview, preview_hash };
@@ -1737,7 +1786,9 @@ export async function repoPreviewFinishOperation(params: {
   body: FinishOperationPreviewBodyDTO;
   operatorUserId: number;
 }): Promise<FinishOperationPreview> {
-  return buildFinishPreview(pool, params);
+  const tx=await pool.connect();
+  try{await tx.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');const result=await buildFinishPreview(tx,params);await tx.query('COMMIT');return result;}
+  catch(error){await tx.query('ROLLBACK');throw error;}finally{tx.release();}
 }
 
 /**
@@ -1771,6 +1822,7 @@ export async function repoFinishOperation(params: {
       return replay.body;
     }
 
+    const materialExecution=await lockMaterialExecutionTx(client,params.body.of_id);
     await lockExecutionContext(client, {
       of_id: params.body.of_id,
       operation_id: params.body.operation_id,
@@ -1899,7 +1951,8 @@ export async function repoFinishOperation(params: {
       // 3) Progression cumulée de l'OF. Les quantités en attente de contrôle
       // n'y entrent PAS : elles ne sont ni bonnes ni rebutées tant que la
       // Qualité n'a pas décidé.
-      await client.query(
+      if(materialExecution)await syncMaterialOfQuantitiesTx(client,params.body.of_id,params.audit.user_id);
+      else await client.query(
         `
           UPDATE public.ordres_fabrication
           SET quantite_bonne = quantite_bonne + $2,
@@ -1991,10 +2044,16 @@ export async function repoDeclareQuantity(params: {
   audit: AuditContext;
   sourceContext?: ProductionQuantitySourceContext;
   transactionHooks?: ProductionExecutionTransactionHooks<{ id: string }>;
+  /** Server-owned transaction for the material debit; never accepted over HTTP. */
+  transactionClient?: PoolClient;
+  /** Prelinked by the material debit proof in that same transaction. */
+  declarationId?: string;
 }): Promise<{ id: string }> {
-  const client = await pool.connect();
+  if(params.declarationId&&!params.transactionClient)throw new HttpError(409,'MATERIAL_DECLARATION_TRANSACTION_REQUIRED','La preuve du débit et sa déclaration doivent partager la transaction.');
+  const client = params.transactionClient ?? await pool.connect();
+  const ownsTransaction = !params.transactionClient;
   try {
-    await client.query("BEGIN");
+    if (ownsTransaction) await client.query("BEGIN");
     await params.transactionHooks?.beforeEffect(client);
 
     const replay = await reserveIdempotencyKey<{ id: string }>(client, {
@@ -2007,7 +2066,7 @@ export async function repoDeclareQuantity(params: {
     });
     if (replay.replayed) {
       await params.transactionHooks?.beforeCommit(client, replay.body);
-      await client.query("COMMIT");
+      if (ownsTransaction) await client.query("COMMIT");
       return replay.body;
     }
 
@@ -2038,6 +2097,7 @@ export async function repoDeclareQuantity(params: {
       operationId = hint.rows[0].operation_id;
     }
 
+    const materialExecution=await lockMaterialExecutionTx(client,params.body.of_id);
     const { of, operation } = await lockExecutionContext(client, {
       of_id: params.body.of_id,
       operation_id: operationId,
@@ -2116,6 +2176,7 @@ export async function repoDeclareQuantity(params: {
       qty_pending_control: params.body.qty_pending_control ?? 0,
     };
     assertFiniteQuantities(delta);
+    if(materialExecution)await assertMaterialQuantityTx(client,params.body.of_id,operationId,delta);
 
     if (delta.qty_scrap > 0 && !params.body.scrap_reason_code) {
       throw new HttpError(422, "PRODUCTION_QUANTITY_SCRAP_REASON_REQUIRED", "Une cause de rebut est obligatoire.");
@@ -2152,9 +2213,9 @@ export async function repoDeclareQuantity(params: {
           pointage_id, of_id, operation_id,
           qty_good, qty_scrap, qty_rework, qty_pending_control,
           unite, scrap_reason_code, rework_reason_code, note,
-          idempotency_key, declared_by
+          idempotency_key, declared_by, id
         )
-        VALUES ($1::uuid, $2::bigint, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::int)
+        VALUES ($1::uuid, $2::bigint, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::int,COALESCE($14::uuid,gen_random_uuid()))
         RETURNING id::text AS id
       `,
       [
@@ -2171,11 +2232,13 @@ export async function repoDeclareQuantity(params: {
         params.body.note ?? null,
         params.idempotencyKey,
         params.audit.user_id,
+        params.declarationId??null,
       ]
     );
     const id = ins.rows[0]!.id;
 
-    await client.query(
+    if(materialExecution)await syncMaterialOfQuantitiesTx(client,params.body.of_id,params.audit.user_id);
+    else await client.query(
       `
         UPDATE public.ordres_fabrication
         SET quantite_bonne = quantite_bonne + $2, quantite_rebut = quantite_rebut + $3,
@@ -2204,13 +2267,13 @@ export async function repoDeclareQuantity(params: {
 
     await storeIdempotentResponse(client, params.idempotencyKey, { id });
     await params.transactionHooks?.beforeCommit(client, { id });
-    await client.query("COMMIT");
+    if (ownsTransaction) await client.query("COMMIT");
     return { id };
   } catch (err) {
-    await client.query("ROLLBACK");
+    if (ownsTransaction) await client.query("ROLLBACK");
     return translateConcurrencyError(err);
   } finally {
-    client.release();
+    if (ownsTransaction) client.release();
   }
 }
 

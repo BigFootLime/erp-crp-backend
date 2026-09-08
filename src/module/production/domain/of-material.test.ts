@@ -1,0 +1,28 @@
+import {describe,it,expect} from "vitest";
+import {materialPropertiesFingerprint,materialBalance,proposeMaterialCoverage,lotCompatibility,purchaseQuantity,debitQuantity,type MaterialNeed,type MaterialLot} from "./of-material";
+const need:MaterialNeed={key:"n",articleId:"a",unit:"u",required:100,reserved:0,consumed:0,expected:0,receivedBlocked:0,requirements:{grade:null,condition:null,ownerClientId:null,dimensions:{},certificates:[],manualChecks:[]}};
+const lot:MaterialLot={id:"l",batchId:"b",articleId:"a",code:"LOT-1",unit:"u",quality:"LIBERE",available:60,receivedAt:"2026-09-01",grade:null,condition:null,ownerClientId:null,dimensions:{},certificates:[],manualVerified:false};
+describe("Material coverage",()=>{
+  it("shares a finite quality release across locations and needs for the same lot",()=>{
+    const result=proposeMaterialCoverage([{...need,required:50},{...need,key:"second",required:50}],[{...lot,qualityAvailable:70},{...lot,batchId:"b2",qualityAvailable:70}]);
+    expect(result[0].selections.map(s=>s.quantity)).toEqual([50]);
+    expect(result[1].selections.map(s=>s.quantity)).toEqual([10,10]);
+    expect(result[1].purchaseMissing).toBe(30);
+  });
+  it("excludes a quality-blocked lot before asking the operator to confirm",()=>{
+    const result=proposeMaterialCoverage([need],[{...lot,qualityAvailable:60,qualityBlocks:["Contrôle obligatoire en attente."]}])[0];
+    expect(result.selections).toEqual([]);
+    expect(result.candidates[0].reasons).toContain("Contrôle obligatoire en attente.");
+  });
+  it("keeps evidence stable after JSONB reorders nested keys",()=>{expect(materialPropertiesFingerprint({unit:"u",properties:{dimensions:{diameter:25,length:35},grade:"6082"}})).toBe(materialPropertiesFingerprint({properties:{grade:"6082",dimensions:{length:35,diameter:25}},unit:"u"}));});
+  it("respects reservations recorded at location level across distinct batches",()=>{const result=proposeMaterialCoverage([need],[{...lot,stockLevelId:"s",levelAvailable:70},{...lot,id:"l2",batchId:"b2",stockLevelId:"s",levelAvailable:70}])[0];expect(result.selections.map(s=>s.quantity)).toEqual([60,10]);expect(result.purchaseMissing).toBe(30);});
+  it("reserves 60 and buys 40, or only 15 when 25 are already assigned",()=>{expect(proposeMaterialCoverage([need],[lot])[0].purchaseMissing).toBe(40);expect(proposeMaterialCoverage([{...need,expected:25}],[lot])[0].purchaseMissing).toBe(15);});
+  it("does not reserve or buy again after confirmation",()=>{const result=proposeMaterialCoverage([{...need,reserved:60,expected:40}],[lot])[0];expect(result.purchaseMissing).toBe(0);expect(result.selections).toEqual([]);});
+  it("transfers expected to physical and then consumed without creating a new need",()=>{expect(materialBalance({...need,reserved:80,expected:20}).missing).toBe(0);expect(materialBalance({...need,reserved:30,consumed:50,expected:20}).missing).toBe(0);});
+  it("keeps quarantine visible without buying replacements silently",()=>{expect(materialBalance({...need,reserved:60,expected:20,receivedBlocked:20}).missing).toBe(0);expect(lotCompatibility(need,{...lot,quality:"QUARANTAINE"})).not.toEqual([]);});
+  it("uses compatible FIFO and a shared pool across distinct needs",()=>{const result=proposeMaterialCoverage([{...need,required:40},{...need,key:"n2",required:40}],[{...lot,id:"old",batchId:"old",ownerClientId:"another",receivedAt:"2026-08-01"},lot]);expect(result[0].selections).toEqual([{lotId:"l",batchId:"b",quantity:40}]);expect(result[1].purchaseMissing).toBe(20);});
+  it("blocks missing certificates, unknown constraints and mismatched units",()=>{expect(lotCompatibility({...need,requirements:{...need.requirements,certificates:["3.1"],manualChecks:["Origine UE"]}},lot)).toHaveLength(2);expect(lotCompatibility({...need,unit:null},lot)).toHaveLength(1);expect(lotCompatibility({...need,requirements:{...need.requirements,dimensions:{diameter:25}}},lot)).toHaveLength(1);});
+  it("shows procurement surplus without assigning it",()=>{expect(purchaseQuantity(15,20,12)).toEqual({ordered:24,assigned:15,surplus:9});expect(purchaseQuantity(0,20,12)).toEqual({ordered:0,assigned:0,surplus:0});});
+  it("keeps decimal balances exact",()=>{expect(materialBalance({...need,required:.3,reserved:.1,consumed:.1,expected:.1}).missing).toBe(0);});
+  it("requires a methods decision for sheets and an explicit debit conversion",()=>{expect(()=>debitQuantity({form:"SHEET",stockUnit:"mm²",unitsPerBlank:100,kerfPerBlank:2,yieldValidated:false},3)).toThrow(/méthodes/);expect(debitQuantity({form:"BAR",stockUnit:"mm",unitsPerBlank:35,kerfPerBlank:2,yieldValidated:true},20)).toBe(740);});
+});

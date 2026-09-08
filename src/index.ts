@@ -14,6 +14,7 @@ import { startSupplierInvoiceMaintenance } from "./module/supplier-invoices/supp
 import { startEReportingMaintenance } from "./module/facturation/electronic-invoicing/electronic-invoice-reporting.service";
 import { startWebhookDeliveryMaintenance } from "./module/integrations/webhooks/webhook.service";
 import { startAuthoritativePdfArchiveMaintenance } from "./shared/authoritative-documents/authoritative-document.worker";
+import { startPlanningForecastMaintenance } from "./module/planning/services/planning-forecast.worker";
 import { createApplicationShutdown } from "./shared/runtime/application-shutdown";
 import { preflightCriticalStorageAtStartup } from "./shared/runtime/critical-storage-preflight";
 import { preflightSecureUploadStorageRoots } from "./shared/uploads/secure-upload";
@@ -62,6 +63,7 @@ async function start(): Promise<void> {
   const stopEReportingMaintenance = startEReportingMaintenance();
   const stopWebhookDeliveryMaintenance = startWebhookDeliveryMaintenance();
   const stopAuthoritativePdfArchiveMaintenance = startAuthoritativePdfArchiveMaintenance();
+  const stopPlanningForecastMaintenance = startPlanningForecastMaintenance();
 
   initSocketServer(httpServer);
   const stopExpiredLockMaintenance = startExpiredLockMaintenance();
@@ -93,6 +95,7 @@ async function start(): Promise<void> {
       stopEReportingMaintenance,
       stopWebhookDeliveryMaintenance,
       stopAuthoritativePdfArchiveMaintenance,
+      stopPlanningForecastMaintenance,
     ],
     closeDatabase: () => pool.end(),
     log: (type, fields) => logger.error(type, fields),

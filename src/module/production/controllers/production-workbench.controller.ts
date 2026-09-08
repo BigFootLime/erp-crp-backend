@@ -178,5 +178,6 @@ export const downloadSelfInspection = asyncHandler(async (req, res) => {
 });
 
 export const productionWorkbenchConfig = asyncHandler(async (_req, res) => {
-  res.json(await svcProductionWorkbenchConfig());
+  const {materialWorkflowEnabled}=await import('../services/of-dossier.service');
+  res.json({...await svcProductionWorkbenchConfig(),material_workflow_enabled:await materialWorkflowEnabled()});
 });

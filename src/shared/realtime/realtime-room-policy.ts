@@ -27,6 +27,7 @@ const ENTITY_MODULES: Readonly<Record<string, string>> = {
   BON_LIVRAISON: "livraisons",
   CAPA: "qualite",
   COMMANDE_CLIENT: "commandes-clients",
+  COMMANDE_FOURNISSEUR: "commandes-fournisseurs",
   METROLOGIE_EQUIPEMENT: "metrologie",
   NCR: "qualite",
   OF: "production",

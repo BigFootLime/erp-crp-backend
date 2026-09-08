@@ -97,7 +97,7 @@ export type CommandeFournisseurLigne = {
 
 export type CommandeFournisseurLigneBesoin = {
   id: string;
-  besoin_type: "PIECE_TECHNIQUE_ACHAT" | "STOCK_LEVEL" | "MANUEL";
+  besoin_type: "PIECE_TECHNIQUE_ACHAT" | "STOCK_LEVEL" | "MANUEL" | "OF_MATERIAL";
   besoin_ref: string;
   of_id: number | null;
   quantite_couverte: number;

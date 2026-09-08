@@ -75,6 +75,7 @@ import { enqueueProductionOfChanged, productionRealtimeActionFromAudit } from ".
 import { findAssetIdsByStorageKeys } from "../../operational-media/repository/operational-media.repository";
 import { promoteOperationalImage } from "../../operational-media/services/operational-media-promotion.service";
 import { assertOfPreparationReady, evaluateOfPreparation, usesPreparationRules } from './production-preparation.repository';
+import {assertMaterialOperationStartTx,usesOperationReadiness,lockMaterialExecutionTx} from './operation-readiness.repository';
 
 export type AuditContext = {
   user_id: number;
@@ -285,6 +286,7 @@ export async function repoReleaseOrdreFabrication(params: { id: number; body: Re
   let committedDecisionAt: string | null = null;
   try {
     await client.query("BEGIN");
+    if(await usesOperationReadiness(client,params.id))throw new HttpError(409,'OF_OPERATION_START_REQUIRED','Le dossier Complet prépare cet OF. Démarrez une opération disponible pour commencer la fabrication.');
     const locked = await client.query<{ statut: string; updated_at: string | null }>(
       `SELECT statut::text AS statut, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at FROM public.ordres_fabrication WHERE id = $1::bigint FOR UPDATE`, [params.id]);
     const of = locked.rows[0];
@@ -3720,6 +3722,9 @@ export async function repoUpdateOrdreFabrication(params: {
 }): Promise<OrdreFabricationDetail | null> {
   const client = await pool.connect();
   const updated = await withRealtimeOutboxTransaction(client, async (client) => {
+    const materialExecution=await lockMaterialExecutionTx(client,params.id);
+    if(materialExecution&&(params.patch.quantite_bonne!==undefined||params.patch.quantite_rebut!==undefined))
+      throw new HttpError(409,'OPERATION_QUANTITY_REQUIRED','Déclarez les quantités sur leur opération. Le cumul de l’OF est calculé à partir de la dernière étape.');
     const exists = await client.query<{
       id: string;
       commande_id: string | null;
@@ -3767,6 +3772,8 @@ export async function repoUpdateOrdreFabrication(params: {
     const currentStatut = ofRow.statut as OfStatut;
     const requestedStatut = (params.patch.statut ?? currentStatut) as OfStatut;
     const statutChanges = params.patch.statut !== undefined && requestedStatut !== currentStatut;
+    if(materialExecution&&statutChanges&&isOfPrelaunch(currentStatut)&&requestedStatut==='EN_COURS')
+      throw new HttpError(409,'OF_OPERATION_START_REQUIRED','Démarrez une opération disponible pour commencer la fabrication.');
 
     // #170 : machine d'état serveur — aucune transition libre.
     if (statutChanges && !canTransitionOfStatut(currentStatut, requestedStatut)) {
@@ -3983,6 +3990,9 @@ export async function repoUpdateOrdreFabricationOperation(params: {
 }): Promise<OfOperation | null> {
   const client = await pool.connect();
   const updated = await withRealtimeOutboxTransaction(client, async (client) => {
+    const materialExecution=await lockMaterialExecutionTx(client,params.of_id);
+    if(materialExecution&&(params.patch.status==='RUNNING'||params.patch.status==='DONE'))
+      throw new HttpError(409,'OPERATION_EXECUTION_REQUIRED','Utilisez Démarrer ou Terminer dans l’atelier pour conserver les quantités et les contrôles de cette opération.');
     const before = await client.query<{ id: string; status: OfOperation["status"] }>(
       `
         SELECT id::text AS id, status::text AS status
@@ -4092,9 +4102,7 @@ export async function repoStartOfOperationTimeLog(params: {
   const client = await pool.connect();
   try {
     const updated = await withRealtimeOutboxTransaction(client, async (client) => {
-    // The OF is locked before a time log is opened. Since #617 only the
-    // explicit release command may enter execution; this path never promotes
-    // BROUILLON/PLANIFIE.
+    const materialAuthorization=await assertMaterialOperationStartTx(client,params.of_id,params.op_id,undefined,params.body.machine_id);
     const ofRes = await client.query<{ id: string; statut: string }>(
       `
         SELECT id::text AS id, statut::text AS statut
@@ -4109,7 +4117,7 @@ export async function repoStartOfOperationTimeLog(params: {
       return false;
     }
     const ofStatut = ofRow.statut as OfStatut;
-    if (!ofStatutAllowsExecution(ofStatut)) {
+    if (!materialAuthorization && !ofStatutAllowsExecution(ofStatut)) {
       throw new HttpError(
         409,
         "OF_EXECUTION_NOT_ALLOWED",
@@ -4188,12 +4196,13 @@ export async function repoStartOfOperationTimeLog(params: {
       `
         UPDATE ordres_fabrication
         SET
-          statut = CASE WHEN statut = 'EN_PAUSE' THEN 'EN_COURS'::of_status ELSE statut END,
+          statut = CASE WHEN statut = 'EN_PAUSE' OR $3::boolean THEN 'EN_COURS'::of_status ELSE statut END,
+          date_lancement_reelle = CASE WHEN $3::boolean THEN COALESCE(date_lancement_reelle,CURRENT_DATE) ELSE date_lancement_reelle END,
           updated_at = now(),
           updated_by = $2
         WHERE id = $1::bigint
       `,
-      [params.of_id, params.audit.user_id]
+      [params.of_id, params.audit.user_id,Boolean(materialAuthorization)]
     );
 
     await insertAuditLog(client, params.audit, {
@@ -4207,6 +4216,7 @@ export async function repoStartOfOperationTimeLog(params: {
         type: params.body.type,
         of_statut_before: ofStatut,
         of_auto_resumed: autoResumed,
+        material_authorization: materialAuthorization,
       },
     });
 

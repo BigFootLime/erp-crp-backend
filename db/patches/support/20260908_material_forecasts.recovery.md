@@ -1,0 +1,1 @@
+Arrêter le processus de calcul en reprenant le code précédent ou en désactivant le parcours matière. Les événements à recalculer restent en base pour la reprise. Conserver la projection et son journal ; ne pas restaurer ni déplacer les créneaux engagés, qui ne sont jamais écrits par ce calcul. Les colonnes et déclencheurs ajoutés restent compatibles avec la version précédente.

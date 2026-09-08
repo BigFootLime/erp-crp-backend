@@ -93,6 +93,7 @@ export const executionCenterQuerySchema = z.object({
 export type ExecutionCenterQueryDTO = z.infer<typeof executionCenterQuerySchema>;
 
 export const operatorBoardQuerySchema = z.object({
+  operation_id: uuid.optional(),
   // Le tableau de bord du poste opérateur est TOUJOURS celui de l'appelant.
   // Consulter celui d'un tiers exige `create_for_other`, contrôlé côté service.
   operator_user_id: z.coerce.number().int().positive().optional(),
@@ -119,6 +120,7 @@ export const startExecutionSchema = z.object({
     poste_id: uuid.nullable().optional(),
     activity_code: activityCode,
     time_type: z.enum(["OPERATEUR", "MACHINE", "PROGRAMMATION"]).optional(),
+    expected_readiness_version: z.string().regex(/^[a-f0-9]{64}$/).optional(),
     comment: z.string().trim().max(2000).nullable().optional(),
 
     operator_user_id: z.coerce.number().int().positive().optional(),
