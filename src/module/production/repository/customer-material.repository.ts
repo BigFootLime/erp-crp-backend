@@ -9,6 +9,7 @@ export async function commandCustomerMaterial(ofId:number,body:CustomerMaterialC
   return materialCommand(ofId,`CUSTOMER_${body.action}`,body,audit,async(tx,current)=>{
     let reception:{receptionId:string;receptionNo:string;lineId:string;lotId:string}|undefined;
     if(body.action==='PREPARE'){
+      if(current.previousNeeds?.length)throw new HttpError(409,'CUSTOMER_MATERIAL_RECONCILIATION_REQUIRED','Rapprochez les engagements de la préparation précédente avant un nouvel appel client.');
       const need=current.needs.find(n=>n.key===body.needKey);
       if(!need?.id||need.supplyMode!=='CUSTOMER'||need.blockers.length||!current.clientId||need.requirements.ownerClientId!==current.clientId)
         throw new HttpError(409,'CUSTOMER_MATERIAL_PREPARATION_REQUIRED','Confirmez le besoin, sa règle de débit et le client propriétaire.');

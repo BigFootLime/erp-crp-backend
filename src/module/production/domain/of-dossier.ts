@@ -25,8 +25,9 @@ export function evaluateDossier(f: DossierFacts, validation?: {source_hash:strin
     blockers.push({code:"OPERATION_NOT_PLANNED",message:`Planifier la phase ${operation.phase} : ${operation.label}.`,operationId:operation.id});
   const fingerprint=dossierSourceHash(f);
   const valid=!!validation && !validation.invalidated_at && validation.source_hash===fingerprint && !blockers.length;
+  const mayValidate=["BROUILLON","PLANIFIE"].includes(f.status) || (!!validation && ["EN_COURS","EN_PAUSE"].includes(f.status));
   return {status:valid?"COMPLETE" as const:validation?"REVALIDATION_REQUIRED" as const:"INCOMPLETE" as const,
-    sourceHash:fingerprint,blockers,canComplete:["BROUILLON","PLANIFIE"].includes(f.status)&&!blockers.length,
+    sourceHash:fingerprint,blockers,canComplete:mayValidate&&!blockers.length,
     invalidationReason:validation?.invalidation_reason ?? null,
     planning:{total:f.operations.length,planned:f.operations.filter(o=>o.planned||["RUNNING","DONE"].includes(o.status)).length},
     loadMinutes:f.operations.reduce((sum,o)=>sum+Math.round((o.setup+o.unit*o.base*f.quantity*o.coefficient)*60),0)};

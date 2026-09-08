@@ -8,7 +8,7 @@ import {commandCustomerMaterial} from './customer-material.repository';
 import type {CustomerMaterialCommand} from '../validators/customer-material.validators';
 const requirements={ownerClientId:'client',grade:'6082',condition:'T651',dimensions:{},certificates:[],manualChecks:[]};
 function coverage(){return {version:'v1',clientId:'client',needs:[{id:'need',key:'source',articleId:'article',designation:'Matière',unit:'u',requirements:{...requirements},blockers:[],supplyMode:'CUSTOMER',required:100,reserved:0,consumed:0,expected:40,receivedBlocked:0}],
-  customerCalls:[{id:'call',need_id:'need',client_id:'client',unit:'u',status:'SENT',quantity:40,received:10}]};}
+  previousNeeds:[] as unknown[],customerCalls:[{id:'call',need_id:'need',client_id:'client',unit:'u',status:'SENT',quantity:40,received:10}]};}
 const body:CustomerMaterialCommand={action:'RECEIVE',expectedVersion:'v1',idempotencyKey:'command',callId:'call',quantity:15,date:'2026-09-08',reference:'LOT-CLIENT-TEST',note:'Réception fictive de recette'};
 const audit={user_id:1} as never;
 let current:ReturnType<typeof coverage>;
@@ -19,6 +19,11 @@ beforeEach(()=>{
   m.read.mockImplementation(async()=>current);m.receive.mockResolvedValue({receptionId:'receipt',receptionNo:'RF-TEST',lineId:'line',lotId:'lot'});
 });
 describe('customer material calls',()=>{
+  it('blocks a new call until earlier commitments have been reconciled',async()=>{
+    current.previousNeeds=[{id:'previous'}];
+    await expect(commandCustomerMaterial(19,{action:'PREPARE',expectedVersion:'v1',idempotencyKey:'command',needKey:'source',quantity:60,needDate:'2026-09-18',note:'Appel client de recette'},audit)).rejects.toMatchObject({code:'CUSTOMER_MATERIAL_RECONCILIATION_REQUIRED'});
+    expect(tx.query.mock.calls.some(([sql])=>sql.includes('INSERT INTO public.of_customer_material_calls'))).toBe(false);
+  });
   it('receives only the partial quantity under the caller transaction and the true owner',async()=>{
     const result=await commandCustomerMaterial(19,body,audit);
     expect(result.reception?.receptionId).toBe('receipt');expect(m.receive).toHaveBeenCalledWith(tx,expect.objectContaining({quantity:15,clientId:'client',callId:'call',articleId:'article',unit:'u'}),audit);

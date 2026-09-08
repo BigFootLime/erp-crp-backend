@@ -9,4 +9,10 @@ describe("Dossier completion",()=>{
   it("keeps completion after moving slots, invalidates quantity and routing edits",()=>{const v={source_hash:dossierSourceHash(facts),invalidated_at:null,invalidation_reason:null};expect(evaluateDossier({...facts,operations:[{...facts.operations[0],start:"2026-09-09T07:00Z"}]},v).status).toBe("COMPLETE");expect(evaluateDossier({...facts,quantity:101},v).status).toBe("REVALIDATION_REQUIRED");expect(evaluateDossier({...facts,operations:[{...facts.operations[0],unit:.02}]},v).status).toBe("REVALIDATION_REQUIRED");});
   it("withdrawn and explicitly invalidated dossiers need revalidation",()=>{const v={source_hash:dossierSourceHash(facts),invalidated_at:null,invalidation_reason:null};expect(evaluateDossier({...facts,operations:[{...facts.operations[0],planned:false}]},v).status).toBe("REVALIDATION_REQUIRED");expect(evaluateDossier(facts,{...v,invalidated_at:"now",invalidation_reason:"Retrait"}).status).toBe("REVALIDATION_REQUIRED");});
   it("does not retroactively complete started or closed work",()=>{for(const status of ["EN_COURS","TERMINE","CLOTURE","ANNULE"])expect(evaluateDossier({...facts,status}).canComplete).toBe(false);});
+  it("revalidates a previously completed dossier during execution without reopening closed work",()=>{
+    const validation={source_hash:dossierSourceHash(facts),invalidated_at:"now",invalidation_reason:"Préparation matière revue"};
+    for(const status of ["EN_COURS","EN_PAUSE"]){const result=evaluateDossier({...facts,status},validation);expect(result.canComplete).toBe(true);expect(result.status).toBe("REVALIDATION_REQUIRED");}
+    for(const status of ["TERMINE","CLOTURE","ANNULE"])expect(evaluateDossier({...facts,status},validation).canComplete).toBe(false);
+    expect(evaluateDossier({...facts,status:"EN_COURS",operations:[{...facts.operations[0],planned:false}]},validation).canComplete).toBe(false);
+  });
 });
