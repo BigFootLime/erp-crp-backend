@@ -8,6 +8,8 @@ import {roleHasOfCapability} from "../domain/of-rbac";
 import {roleHasStockCapability} from "../../stock/domain/stock-rbac";
 import {roleHasCommandeFournisseurCapability} from "../../commande-fournisseur/domain/commande-fournisseur-rbac";
 import {requestHasGrantedAccountModuleAccess} from "../../access-control/context/account-module-access.context";
+import {materialDebitSchema} from '../validators/of-material.validators';
+import {debitOfMaterial} from '../services/of-material.service';
 
 function rights(req:Request){
   const granted=requestHasGrantedAccountModuleAccess(req);
@@ -19,6 +21,10 @@ function present(data:Awaited<ReturnType<typeof getOfMaterial>>,req:Request){
   return {...data,permissions:access,needs:data.needs.map(n=>({...n,price:access.canReadPrices?n.price:null,catalog:n.catalog?{...n.catalog,prix_unitaire:access.canReadPrices?n.catalog.prix_unitaire:null}:null}))};
 }
 export const readMaterial=asyncHandler(async(req,res)=>{res.json(present(await getOfMaterial(identity.parse(req.params).id),req));});
+export const debitMaterial=asyncHandler(async(req,res)=>{
+  const result=await debitOfMaterial(identity.parse(req.params).id,materialDebitSchema.parse(req.body),buildAuditContext(req));
+  res.json({...result,coverage:present(result.coverage,req)});
+});
 export const readOperationReadiness=asyncHandler(async(req,res)=>{res.json(await getOperationReadiness(identity.parse(req.params).id));});
 export const verifyMaterialLot=asyncHandler(async(req,res)=>{
   if(!rights(req).canVerifyLot)throw new HttpError(403,"MATERIAL_LOT_VERIFICATION_FORBIDDEN","Les droits de vérification qualité des lots sont nécessaires.");

@@ -28,7 +28,7 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
   const reservations=(await tx.query(`SELECT r.id::text,r.material_need_id::text,r.article_id::text,r.qty_reserved::float8,r.qty_consumed::float8,r.status,r.row_version,r.lot_id::text,
     r.stock_batch_id::text,(r.expires_at IS NULL OR r.expires_at>now()) AS unexpired,
     l.lot_status FROM public.stock_reservations r LEFT JOIN public.lots l ON l.id=r.lot_id
-    WHERE(r.of_id=$1 OR(r.source_type='OF' AND r.source_id=$1::text)) AND r.status IN ('ACTIVE','CONSUMED')
+    WHERE(r.of_id=$1 OR(r.source_type='OF' AND r.source_id=$1::text)) AND(r.status IN ('ACTIVE','CONSUMED') OR r.qty_consumed>0)
       AND(r.status='CONSUMED' OR r.qty_consumed>0 OR r.expires_at IS NULL OR r.expires_at>now()) ORDER BY r.created_at,r.id`,[ofId])).rows;
   // Allocate receipts along promised quantities in the stable allocation order.
   // The same physical receipt can never be subtracted from each recipient.
@@ -131,7 +131,7 @@ export async function getOfMaterial(ofId:number){
   try{await tx.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");const result=await materialWorkflowEnabled(tx)?await readMaterialTx(tx,ofId):{enabled:false as const};await tx.query("COMMIT");return result;}
   catch(error){await tx.query("ROLLBACK");throw error;}finally{tx.release();}
 }
-async function materialCommand<T>(ofId:number,type:string,body:{expectedVersion:string;idempotencyKey:string;sourceRef?:string},audit:AuditContext,action:(tx:PoolClient,current:Awaited<ReturnType<typeof readMaterialTx>>)=>Promise<T>){
+export async function materialCommand<T>(ofId:number,type:string,body:{expectedVersion:string;idempotencyKey:string;sourceRef?:string},audit:AuditContext,action:(tx:PoolClient,current:Awaited<ReturnType<typeof readMaterialTx>>)=>Promise<T>){
   return withRealtimeOutboxTransaction(await pool.connect(),async tx=>{
     await tx.query("SELECT revision FROM public.planning_central_settings WHERE singleton FOR UPDATE");
     await tx.query("SELECT id FROM public.ordres_fabrication WHERE id=$1 FOR UPDATE",[ofId]);

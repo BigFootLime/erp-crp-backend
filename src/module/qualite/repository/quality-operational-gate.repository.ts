@@ -134,10 +134,10 @@ async function inspectOperationalLotQualityEligibility(params: {
   // reservations cannot both spend the same released quantity.
   const commitments = await params.client.query<{ qty: string }>(
     `
-      SELECT qty_reserved::text AS qty
+      SELECT (CASE WHEN status='CONSUMED' OR(status='ACTIVE' AND(expires_at IS NULL OR expires_at>now())) THEN qty_reserved ELSE qty_consumed END)::text AS qty
       FROM public.stock_reservations
       WHERE lot_id = $1::uuid
-        AND status IN ('ACTIVE', 'CONSUMED')
+        AND(status IN ('ACTIVE', 'CONSUMED') OR qty_consumed>0)
       ${params.lockRows ? "FOR SHARE" : ""}
     `,
     [params.lotId]

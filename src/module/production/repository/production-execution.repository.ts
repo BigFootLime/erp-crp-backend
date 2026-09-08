@@ -2033,10 +2033,13 @@ export async function repoDeclareQuantity(params: {
   audit: AuditContext;
   sourceContext?: ProductionQuantitySourceContext;
   transactionHooks?: ProductionExecutionTransactionHooks<{ id: string }>;
+  /** Server-owned transaction for the material debit; never accepted over HTTP. */
+  transactionClient?: PoolClient;
 }): Promise<{ id: string }> {
-  const client = await pool.connect();
+  const client = params.transactionClient ?? await pool.connect();
+  const ownsTransaction = !params.transactionClient;
   try {
-    await client.query("BEGIN");
+    if (ownsTransaction) await client.query("BEGIN");
     await params.transactionHooks?.beforeEffect(client);
 
     const replay = await reserveIdempotencyKey<{ id: string }>(client, {
@@ -2049,7 +2052,7 @@ export async function repoDeclareQuantity(params: {
     });
     if (replay.replayed) {
       await params.transactionHooks?.beforeCommit(client, replay.body);
-      await client.query("COMMIT");
+      if (ownsTransaction) await client.query("COMMIT");
       return replay.body;
     }
 
@@ -2249,13 +2252,13 @@ export async function repoDeclareQuantity(params: {
 
     await storeIdempotentResponse(client, params.idempotencyKey, { id });
     await params.transactionHooks?.beforeCommit(client, { id });
-    await client.query("COMMIT");
+    if (ownsTransaction) await client.query("COMMIT");
     return { id };
   } catch (err) {
-    await client.query("ROLLBACK");
+    if (ownsTransaction) await client.query("ROLLBACK");
     return translateConcurrencyError(err);
   } finally {
-    client.release();
+    if (ownsTransaction) client.release();
   }
 }
 

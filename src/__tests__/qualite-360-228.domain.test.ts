@@ -1449,9 +1449,9 @@ describe("#228 décision de libération", () => {
     expect(err.code).toBe("QUALITY_NOTHING_TO_HOLD");
   });
 
-  it("laisse le registre inchangé sur un refus", () => {
+  it("conserve une quantité refusée dans le restant retenu sans la libérer", () => {
     const out = evaluateReleaseRequest({ ...base, decision: "REJECT", qty: 10 });
-    expect(out.ledger).toEqual(base.ledger);
+    expect(out.ledger).toEqual({ ...base.ledger, held: 10 });
     expect(out.qty_released).toBe(0);
   });
 

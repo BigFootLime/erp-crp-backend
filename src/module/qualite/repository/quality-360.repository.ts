@@ -15,6 +15,7 @@ import { enqueueEntityChanged } from "../../../shared/realtime/realtime-outbox.s
 import { generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
+import { repoIsSuperadmin } from "../../access-control/repository/access-control.repository";
 
 import {
   assertDerogationApprovalSeparation,
@@ -26,7 +27,7 @@ import {
   assertPlanContentMutable,
   assertPlanTransition,
   assertPreviewFresh,
-  assertReleaseSeparation,
+  assertJustifiedSelfRelease,
   decideQualityReceipt,
   executionStatusForVerdict,
   legacyResultToVerdict,
@@ -2158,10 +2159,13 @@ export async function repoDecideExecution(params: {
     }
     assertSnapshotIntegrity(before.plan_snapshot, before.plan_snapshot_sha256);
 
-    // L'auteur de l'exécution ne prononce pas lui-même la libération.
-    assertReleaseSeparation({
+    // Use the current account in this transaction, never a role supplied by the UI.
+    const selfApprovalBySuperadmin = assertJustifiedSelfRelease({
       executorUserId: before.controlled_by,
       deciderUserId: params.actor.user_id,
+      isSuperadmin: before.controlled_by === params.actor.user_id
+        && await repoIsSuperadmin(params.actor.user_id, client),
+      justification: params.body.justification,
     });
     if (params.body.object_type !== before.source_type || params.body.object_id !== before.source_id) {
       throw new HttpError(
@@ -2336,6 +2340,8 @@ export async function repoDecideExecution(params: {
         derogation_id: derogation?.id ?? null,
         delivery_lot_released: deliveryLotReleased,
         material_lot_decision: materialLotDecision,
+        self_approval_by_superadmin: selfApprovalBySuperadmin,
+        approval_policy: "quality-767-justified-self-release",
       },
       correlation_id: before.correlation_id,
       idempotency_key: idem.idempotencyKey,
@@ -2351,6 +2357,9 @@ export async function repoDecideExecution(params: {
         qty: params.body.qty,
         verdict: requestedVerdict,
         derogation_id: derogation?.id ?? null,
+        self_approval_by_superadmin: selfApprovalBySuperadmin,
+        approval_policy: "quality-767-justified-self-release",
+        justification: params.body.justification ?? null,
       },
     });
     await saveReceipt({

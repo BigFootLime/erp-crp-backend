@@ -7810,7 +7810,8 @@ export async function repoPostMovement(
   body: PostMovementBodyDTO,
   audit: AuditContext,
   idempotencyKey: string,
-  externalClient?: PoolClient
+  externalClient?: PoolClient,
+  reservedConsumption?: {reservationId:string}
 ): Promise<StockMovementDetail | null> {
   const client = externalClient ?? await db.connect();
   const ownsTransaction = !externalClient;
@@ -7901,7 +7902,24 @@ export async function repoPostMovement(
     // very transaction that posts the OUT movement.  Transfers merely change
     // location and quality dispositions (SCRAP/ADJUSTMENT) remain dedicated
     // workflows, so neither is treated as a released-material consumption.
-    const directOutQualityDecisions = m.movement_type === "OUT"
+    // Server-owned reservation consumption only. The caller has atomically
+    // linked this exact movement and reduced physical reserved stock. An HTTP
+    // request cannot supply this context or spend the quality release again.
+    let reservedQualityDecision:Awaited<ReturnType<typeof assertOperationalLotQualityEligibility>>|null=null;
+    if(reservedConsumption){
+      if(!externalClient||m.movement_type!=='OUT'||draftLines.rows.length!==1)
+        throw new HttpError(409,'RESERVED_MOVEMENT_CONTEXT_INVALID','La consommation réservée exige une transaction et une ligne de sortie uniques.');
+      const line=draftLines.rows[0];
+      const matching=(await client.query<{lot_id:string}>(`SELECT r.lot_id::text FROM public.stock_reservations r
+        JOIN public.stock_movements mv ON mv.id=r.consumed_stock_movement_id
+        WHERE r.id=$1::uuid AND mv.id=$2::uuid AND r.status IN ('ACTIVE','CONSUMED')
+          AND r.article_id=mv.article_id AND r.stock_batch_id=mv.stock_batch_id AND r.qty_consumed>=abs(mv.qty)
+          AND r.lot_id=$3::uuid AND mv.source_document_type='OF' AND mv.source_document_id=r.of_id::text
+          AND abs(mv.qty)=$4 AND(r.expires_at IS NULL OR r.expires_at>now()) FOR SHARE OF r`,[reservedConsumption.reservationId,id,line.lot_id,Math.abs(Number(line.qty))])).rows[0];
+      if(!matching)throw new HttpError(409,'RESERVED_MOVEMENT_MISMATCH','Le mouvement ne correspond pas à la consommation enregistrée sur cette réservation.');
+      reservedQualityDecision=await assertOperationalLotQualityEligibility({client,lotId:matching.lot_id,qty:0,unit:line.unite,purpose:'RESERVE'});
+    }
+    const directOutQualityDecisions = m.movement_type === "OUT"&&!reservedConsumption
       ? await assertDirectOutMovementQualityEligibility({ client, lines: draftLines.rows })
       : [];
 
@@ -8256,6 +8274,8 @@ export async function repoPostMovement(
         movement_type: m.movement_type,
         negative_stock_override: body.negative_stock_override ?? null,
         quality_gates: directOutQualityDecisions,
+        reserved_quality_gate:reservedQualityDecision,
+        consumed_reservation_id:reservedConsumption?.reservationId??null,
         traceability_consumptions_recorded: consumption.recorded,
         traceability_consumptions_compensated: consumption.compensated,
       },
