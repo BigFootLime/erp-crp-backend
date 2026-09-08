@@ -99,7 +99,8 @@ export async function readOperationReadinessTx(tx:DossierDb,ofId:number){
       programRequired:row?.program_required===true,programReady:row?.program_ready===true,qualityBlocked:!row||row.quality_blocked,
       componentsMissing:row?.kind==='ASSEMBLAGE'&&componentMissing,materials:materialFacts.get(op.id)??[],
       predecessors:dependencies.filter(d=>d.successor===op.id).map(d=>({id:d.predecessor,label:d.label,done:d.status==='DONE',good:d.good,transferred:Math.min(d.good,d.transferred),partial:d.partial,minimum:d.minimum??1}))};
-    return {...evaluateOperationReadiness(facts),machineId:row?.machine_id??null,materialOperation:facts.materials.length>0};
+    return {...evaluateOperationReadiness(facts),machineId:row?.machine_id??null,materialOperation:facts.materials.length>0,
+      successors:dependencies.filter(d=>d.predecessor===op.id).flatMap(d=>{const next=dossier.operations.find(o=>o.id===d.successor);return next?[{id:next.id,label:next.label,minimum:d.minimum??1}]:[]})};
   });
   return {enabled:true as const,ofId,number:dossier.number,version:materialPropertiesFingerprint({coverage:coverage.version,operations,dependencies,componentMissing,quality:[...quality].map(([id,q])=>[id,q.target,q.already_committed_qty]),results}),operations:results};
 }

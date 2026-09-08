@@ -30,10 +30,11 @@ export async function transferMaterialReceiptTx(tx:PoolClient,receiptId:string,a
     JOIN public.stock_movement_lines ml ON ml.movement_id=m.id AND ml.line_no=1 WHERE s.id=$1::uuid`,[receiptId])).rows[0];
   if(!receipt?.line_id)return [];
   if(receipt.movement_status!=="POSTED")throw new HttpError(409,"MATERIAL_RECEIPT_NOT_POSTED","La mise en stock doit être comptabilisée avant l’affectation.");
-  const allocations=(await tx.query(`SELECT b.id::text,b.material_need_id::text,b.besoin_of_id AS of_id,b.quantite_couverte::float8 AS assigned,
+  const allocations=(await tx.query(`SELECT b.id::text,b.material_need_id::text,b.besoin_of_id AS of_id,
+    (CASE WHEN b.besoin_type='OF_MATERIAL' THEN b.quantite_couverte ELSE b.quantite_couverte*COALESCE(l.coef_conversion,1) END)::float8 AS assigned,
     n.article_id::text,n.unit,n.operation_id::text,
     COALESCE((SELECT sum(sr.qty_reserved) FROM public.of_material_receipt_transfers t JOIN public.stock_reservations sr ON sr.id=t.reservation_id WHERE t.purchase_need_id=b.id),0)::float8 AS transferred
-    FROM public.commande_fournisseur_ligne_besoin b LEFT JOIN public.of_material_needs n ON n.id=b.material_need_id
+    FROM public.commande_fournisseur_ligne_besoin b JOIN public.commande_fournisseur_ligne l ON l.id=b.ligne_id LEFT JOIN public.of_material_needs n ON n.id=b.material_need_id
     WHERE b.ligne_id=$1::uuid AND NOT b.annule ORDER BY b.created_at,b.id FOR UPDATE OF b`,[receipt.line_id])).rows;
   const posted=(await tx.query(`SELECT COALESCE(sum(ml.qty),0)::float8 AS qty FROM public.reception_fournisseur_stock_receipts s
     JOIN public.reception_fournisseur_lignes r ON r.id=s.reception_line_id JOIN public.stock_movements m ON m.id=s.stock_movement_id AND m.status='POSTED'

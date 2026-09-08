@@ -7,15 +7,14 @@ import {withRealtimeOutboxTransaction} from "../../../shared/realtime/realtime-o
 import {materialWorkflowEnabled,readOfDossierTx,type DossierDb} from "./of-dossier.repository";
 import {preparationAudit} from "./production-preparation.repository";
 import type {AuditContext} from "./production.repository";
-import {materialPropertiesFingerprint,coverageFingerprint,debitQuantity,materialBalance,lotCompatibility,proposeMaterialCoverage,purchaseQuantity,quantity,type MaterialNeed,type MaterialLot,type MaterialRequirements,type DebitRule} from "../domain/of-material";
-import {repoCreateStockReservation} from "../../stock/repository/stock-reservation.repository";
-import {createMaterialDraftsTx,type MaterialDraftLine} from "../../commande-fournisseur/repository/commande-fournisseur.repository";
+import {materialPropertiesFingerprint,coverageFingerprint,debitQuantity,proposeMaterialCoverage,purchaseQuantity,quantity,type MaterialNeed,type MaterialLot,type MaterialRequirements,type DebitRule} from "../domain/of-material";
+import {readFutureMaterialSupplyTx,futureSupplyCompatibility} from './material-future-supply.repository';
 
 const emptyRequirements=():MaterialRequirements=>({grade:null,condition:null,ownerClientId:null,dimensions:{},certificates:[],manualChecks:[]});
 type Purchase={id:string;article_id:string|null;nom?:string;designation?:string;quantite:number;unite_prix:string|null;fournisseur_id:string|null;pu_achat?:number|null;type_achat:string;gamme_operation_id?:string|null};
 type NeedRow={id:string;source_ref:string;technical_version_id:string;technical_hash:string;operation_id:string|null;article_id:string|null;required_qty:number;unit:string|null;supply_mode:"PURCHASE"|"CUSTOMER";requirements:MaterialRequirements;specification_reviewed_at:string|null;debit_rule:DebitRule|null;allow_partial:boolean;supplier_id:string|null;destination_id:string|null;row_version:number;superseded_at:string|null};
 export type NeedConfiguration={operationId:string;requirements:MaterialRequirements;supplyMode:"PURCHASE"|"CUSTOMER";debitRule:DebitRule;allowPartial:boolean;supplierId:string|null;destinationId:string|null};
-type Candidate=MaterialLot&{magasinId:string;emplacementId:number;version:string;properties:Record<string,unknown>;propertiesHash:string;qualityControlId:string|null;qualityExplanation:string[];documents:Array<{id:string;label:string;receptionId:string}>};
+export type Candidate=MaterialLot&{magasinId:string;emplacementId:number;version:string;properties:Record<string,unknown>;propertiesHash:string;qualityControlId:string|null;qualityExplanation:string[];documents:Array<{id:string;label:string;receptionId:string}>};
 
 export async function readMaterialTx(tx:DossierDb,ofId:number){
   const dossier=await readOfDossierTx(tx,ofId);
@@ -33,17 +32,19 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
   // Allocate receipts along promised quantities in the stable allocation order.
   // The same physical receipt can never be subtracted from each recipient.
   const promises=(await tx.query(`WITH allocations AS(
-    SELECT b.*,sum(b.quantite_couverte) OVER(PARTITION BY b.ligne_id ORDER BY b.created_at,b.id ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS earlier
-    FROM public.commande_fournisseur_ligne_besoin b WHERE NOT b.annule)
-    SELECT b.id::text,b.material_need_id::text,b.besoin_ref,b.quantite_couverte::float8 AS assigned,c.id::text AS command_id,c.code,c.statut,
-      COALESCE(l.date_promesse,c.date_promesse)::text AS due,l.article_id::text,l.unite,l.updated_at::text,
-      LEAST(b.quantite_couverte,GREATEST(0,COALESCE(r.received,0)-COALESCE(b.earlier,0)))::float8 AS received,
+    SELECT b.*,(CASE WHEN b.besoin_type='OF_MATERIAL' THEN b.quantite_couverte ELSE b.quantite_couverte*COALESCE(pl.coef_conversion,1) END) AS stock_assigned,
+      sum(CASE WHEN b.besoin_type='OF_MATERIAL' THEN b.quantite_couverte ELSE b.quantite_couverte*COALESCE(pl.coef_conversion,1) END) OVER(PARTITION BY b.ligne_id ORDER BY b.created_at,b.id ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS earlier
+    FROM public.commande_fournisseur_ligne_besoin b JOIN public.commande_fournisseur_ligne pl ON pl.id=b.ligne_id WHERE NOT b.annule)
+    SELECT b.id::text,b.material_need_id::text,b.besoin_ref,b.stock_assigned::float8 AS assigned,c.id::text AS command_id,c.code,c.statut,
+      COALESCE(l.date_promesse,c.date_promesse)::text AS due,l.article_id::text,COALESCE(l.unite_stock,l.unite) AS unite,l.updated_at::text,
+      LEAST(b.stock_assigned,GREATEST(0,COALESCE(r.received,0)-COALESCE(b.earlier,0)))::float8 AS received,
       COALESCE(t.transferred,0)::float8 AS transferred
     FROM allocations b JOIN public.commande_fournisseur_ligne l ON l.id=b.ligne_id JOIN public.commande_fournisseur c ON c.id=l.commande_id
     LEFT JOIN LATERAL(SELECT sum(rl.qty_received*COALESCE(rl.stock_conversion_coef,l.coef_conversion,1)) AS received FROM public.reception_fournisseur_lignes rl WHERE rl.commande_fournisseur_ligne_id=l.id) r ON true
     LEFT JOIN LATERAL(SELECT sum(sr.qty_reserved) AS transferred FROM public.of_material_receipt_transfers t JOIN public.stock_reservations sr ON sr.id=t.reservation_id WHERE t.purchase_need_id=b.id) t ON true
     WHERE b.besoin_of_id=$1 AND c.statut<>'ANNULEE' AND l.statut_ligne<>'ANNULEE' ORDER BY b.created_at,b.id`,[ofId])).rows;
   const articleIds=[...new Set(purchases.flatMap(p=>p.article_id?[p.article_id]:[]))];
+  const futureSupplies=await readFutureMaterialSupplyTx(tx,articleIds);
   const articles=(await tx.query(`SELECT a.id::text,a.code,a.unite,m.client_proprietaire_id FROM public.articles a LEFT JOIN public.articles_matiere m ON m.article_id=a.id WHERE a.id=ANY($1::uuid[])`,[articleIds])).rows;
   const lots=(await tx.query<Candidate>(`SELECT l.id::text,b.id::text AS "batchId",l.article_id::text AS "articleId",l.lot_code AS code,a.unite AS unit,l.lot_status AS quality,
     GREATEST(0,LEAST(b.qty_total-b.qty_reserved-b.qty_depreciated,s.qty_total-s.qty_reserved-s.qty_depreciated))::float8 AS available,s.id::text AS "stockLevelId",GREATEST(0,s.qty_total-s.qty_reserved-s.qty_depreciated)::float8 AS "levelAvailable",
@@ -117,11 +118,11 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
     const candidates=lots.map(l=>({...l,available:remaining.get(l.batchId)??0,qualityAvailable:remainingQuality.get(l.id)??0,levelAvailable:l.stockLevelId?remainingLevels.get(l.stockLevelId):undefined,manualVerified:checks.some(c=>c.need_id===need.id&&c.lot_id===l.id&&c.requirements_hash===coverageFingerprint(need.requirements)&&c.lot_properties_hash===l.propertiesHash&&c.manual_checks_confirmed)}));
     const proposal=proposeMaterialCoverage([need],candidates)[0];
     for(const s of proposal.selections){remainingQuality.set(s.lotId,quantity((remainingQuality.get(s.lotId)??0)-s.quantity));remaining.set(s.batchId,quantity((remaining.get(s.batchId)??0)-s.quantity));const levelId=lots.find(l=>l.batchId===s.batchId)?.stockLevelId;if(levelId)remainingLevels.set(levelId,quantity((remainingLevels.get(levelId)??0)-s.quantity));}
-    return {...need,...proposal,purchase:purchaseQuantity(proposal.purchaseMissing,need.catalog?.moq??null,need.catalog?.lot_achat??null)};
+    return {...need,...proposal,futureSupplies:futureSupplies.filter(s=>s.articleId===need.articleId).map(s=>({...s,reasons:futureSupplyCompatibility(need,s)})),purchase:purchaseQuantity(proposal.purchaseMissing,need.catalog?.moq??null,need.catalog?.lot_achat??null)};
   });
   return {enabled:true as const,ofId,number:dossier.number,quantity:dossier.quantity,dossierStatus:dossier.status,technicalVersion:of.revision as string|null,
     technicalHash:of.hash as string|null,clientId:of.client_id as string|null,operations:dossier.operations,
-    version:coverageFingerprint({dossier:dossier.version,saved,reservations,promises,lots,checks,catalogs,documents}),needs:coverage,
+    version:coverageFingerprint({dossier:dossier.version,saved,reservations,promises,lots,checks,catalogs,documents,futureSupplies}),needs:coverage,
     previousNeeds:saved.filter(n=>n.technical_version_id!==of.revision||n.superseded_at),
     suppliers:(await tx.query("SELECT id::text,COALESCE(nom,raison_sociale) AS name FROM public.fournisseurs WHERE actif IS NOT FALSE ORDER BY COALESCE(nom,raison_sociale)")).rows,
     destinations:(await tx.query("SELECT id::text,COALESCE(code,code_magasin) AS name FROM public.magasins ORDER BY COALESCE(code,code_magasin)")).rows};
@@ -165,40 +166,6 @@ export async function configureOfMaterial(ofId:number,sourceRef:string,body:{exp
       [ofId,sourceRef,current.technicalVersion,current.technicalHash,c.operationId,need.articleId,need.designation,total,c.debitRule.stockUnit,c.supplyMode,JSON.stringify(c.requirements),audit.user_id,JSON.stringify(c.debitRule),c.allowPartial,c.supplierId,c.destinationId]);
     await tx.query("UPDATE public.of_dossier_validations SET invalidated_at=now(),invalidation_reason='La préparation matière ou les règles de débit ont changé.' WHERE of_id=$1 AND invalidated_at IS NULL",[ofId]);
     return readMaterialTx(tx,ofId);
-  });
-}
-
-export async function confirmOfMaterial(ofId:number,body:{expectedVersion:string;idempotencyKey:string;selections:Array<{needKey:string;batchId:string;quantity:number}>},audit:AuditContext,canPurchase:boolean){
-  return materialCommand(ofId,"CONFIRM",body,audit,async(tx,current)=>{
-    if(current.needs.some(n=>n.blockers.length))throw new HttpError(409,"MATERIAL_PREPARATION_REQUIRED","Complétez les besoins matière avant de confirmer la couverture.");
-    if(current.previousNeeds.length)throw new HttpError(409,"MATERIAL_PREVIOUS_REVISION","Les affectations de l’ancienne version doivent être revues avant une nouvelle couverture.");
-    if(new Set(body.selections.map(s=>`${s.needKey}:${s.batchId}`)).size!==body.selections.length)throw new HttpError(422,"MATERIAL_DUPLICATE_SELECTION","Le même lot est présent deux fois pour ce besoin.");
-    // Stabilize quality and material properties before rechecking the preview.
-    const batchIds=body.selections.map(s=>s.batchId);
-    await tx.query("SELECT id FROM public.lots WHERE id IN (SELECT lot_id FROM public.stock_batches WHERE id=ANY($1::uuid[])) ORDER BY id FOR UPDATE",[batchIds]);
-    const locked=await readMaterialTx(tx,ofId);
-    if(locked.version!==current.version)throw new HttpError(409,"MATERIAL_COVERAGE_CHANGED","Un lot ou un approvisionnement a changé. Actualisez la proposition.");
-    const drafts:MaterialDraftLine[]=[],reservedIds:string[]=[],pending:Array<{needKey:string;message:string}>=[];
-    for(const need of current.needs){
-      const selections=body.selections.filter(s=>s.needKey===need.key),total=quantity(selections.reduce((sum,s)=>sum+s.quantity,0));
-      if(total>materialBalance(need).missing)throw new HttpError(409,"MATERIAL_OVER_COVERAGE","La sélection dépasse le manque restant.");
-      for(const selection of selections){
-        const candidate=need.candidates.find(c=>c.lot.batchId===selection.batchId);
-        if(!candidate||lotCompatibility(need,candidate.lot).length||selection.quantity>candidate.available)throw new HttpError(409,"MATERIAL_LOT_CHANGED","Un lot sélectionné n’est plus compatible ou disponible.");
-        const lot=candidate.lot as Candidate;
-        const result=await repoCreateStockReservation({article_id:need.articleId!,magasin_id:lot.magasinId,emplacement_id:lot.emplacementId,lot_id:lot.id,qty:selection.quantity,source:{source_type:"OF",of_id:ofId},reason:`Matière ${current.number} · ${need.operationLabel}`},audit,`${body.idempotencyKey}:${need.key}:${lot.batchId}`,tx,need.id!);
-        reservedIds.push(result.reservation.id);
-      }
-      const buy=purchaseQuantity(quantity(materialBalance(need).missing-total),need.catalog?.moq??null,need.catalog?.lot_achat??null);
-      if(!buy.assigned)continue;
-      if(need.supplyMode==="CUSTOMER"){pending.push({needKey:need.key,message:`Préparer l’appel de ${buy.assigned} ${need.unit} au client.`});continue;}
-      if(!canPurchase){pending.push({needKey:need.key,message:"Faire préparer le brouillon par un utilisateur habilité aux achats."});continue;}
-      if(!need.supplierId||need.price===null){pending.push({needKey:need.key,message:!need.supplierId?"Choisir le fournisseur pour préparer le brouillon.":"Renseigner le prix fournisseur ou consulter les fournisseurs."});continue;}
-      drafts.push({needId:need.id!,sourceRef:need.key,ofId,articleId:need.articleId!,designation:need.designation,supplierId:need.supplierId,currency:need.currency,destinationId:need.destinationId,unit:need.unit!,quantity:buy.ordered,assigned:buy.assigned,price:need.price,due:current.operations.find(o=>o.id===need.operationId)?.start?.slice(0,10)??null,operation:need.operationLabel!,requirements:[need.requirements.grade,need.requirements.condition,...need.requirements.certificates,...need.requirements.manualChecks].filter((x):x is string=>!!x)});
-    }
-    if(body.selections.some(s=>!current.needs.some(n=>n.key===s.needKey)))throw new HttpError(422,"MATERIAL_NEED_NOT_FOUND","Le besoin sélectionné n’existe plus.");
-    const commands=await createMaterialDraftsTx(tx,drafts,audit);
-    return {coverage:await readMaterialTx(tx,ofId),commands,reservedIds,pending};
   });
 }
 

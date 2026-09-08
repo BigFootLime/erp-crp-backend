@@ -81,3 +81,14 @@ Activation test 1d7ccba6 : sauvegarde 485a66febffacbbab2eb02115f36dc1e192ebeba12
 CQ-921 : refus UI sans justification, puis libération de 79 u avec justification explicite de recette. OF-852 : réservation confirmée de 60 u et création du brouillon BCF-2026-0925 de 40 u. La découpe affiche 60 utilisables ; le tournage conserve ses blocages programme et transfert.
 
 Le démarrage a révélé deux backstops historiques : programme global SQL puis preuve immuable de libération de l’OF. Le premier est désormais limité à l’opération figée pour un dossier Complet ; la vérification PostgreSQL annulée autorise la découpe et refuse toujours le tournage. Le démarrage effectif enregistre désormais sa portée opération/quantité dans le registre immuable existant of_release_decisions, avant de passer l’OF En cours. Aucun trigger ni contrôle de libération n’est retiré. La poursuite de la recette vérifie ces corrections.
+
+
+### Reprise du 8 septembre — stock futur fournisseur
+
+La confirmation accepte des futureSelections facultatives (compatibilité des anciennes requêtes conservée) avec ligne, quantité en unité de stock et vérification explicite des exigences. Les affectations utilisent le registre existant commande_fournisseur_ligne_besoin, sans création de commande supplémentaire pour ces quantités. Les achats et lignes sont verrouillés, la version est relue, le disponible est partagé entre besoins ; une erreur de réservation annule aussi les affectations futures. Le disponible vaut quantité nette convertie moins le maximum des affectations et des réceptions, sans double déduction.
+
+Les anciennes affectations en unité d’achat sont converties avant comparaison et rapprochement de réception. Une réception déjà arrivée sans destinataire doit d’abord être traitée au stock : elle n’est pas réattribuée rétroactivement comme une promesse future. Le serveur conserve les blocages de propriété, unité et destination ; les exigences particulières restent à contrôler sur le lot physique. Les dimensions minimales figurent désormais dans les exigences des nouveaux brouillons.
+
+36 tests ciblés réussis (calculs et orchestration future, couverture, transaction de réception). Ces tests avec doubles ne prouvent pas la concurrence PostgreSQL. Compilation TypeScript réussie avant activation ; recette UI de la couverture future à réaliser.
+
+Le démarrage réel de la découpe OF 852 et le débit de 20 bruts ont réussi sur cerp_test : nécessaire 100, réservé 40, consommé 20, attendu 40. Le pointage a été arrêté par interface, sans terminer l’opération. Le programme du tournage reste un prérequis indépendant.

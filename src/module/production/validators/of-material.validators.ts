@@ -8,7 +8,11 @@ export const materialConfigurationSchema=materialCommandSchema.extend({configura
   supplyMode:z.enum(["PURCHASE","CUSTOMER"]),debitRule:z.object({form:z.enum(["UNIT","BAR","SHEET"]),stockUnit:z.string().trim().min(1).max(20),unitsPerBlank:z.number().finite().positive().max(1e9),kerfPerBlank:z.number().finite().min(0).max(1e9),yieldValidated:z.boolean()}).strict(),
   allowPartial:z.boolean(),supplierId:z.string().uuid().nullable(),destinationId:z.string().uuid().nullable(),
 }).strict()}).strict();
-export const materialConfirmationSchema=materialCommandSchema.extend({selections:z.array(z.object({needKey:z.string().uuid(),batchId:z.string().uuid(),quantity:z.number().finite().positive().max(1e9).multipleOf(.001)}).strict()).max(100)}).strict();
+export const materialConfirmationSchema=materialCommandSchema.extend({
+  selections:z.array(z.object({needKey:z.string().uuid(),batchId:z.string().uuid(),quantity:z.number().finite().positive().max(1e9).multipleOf(.001)}).strict()).max(100),
+  futureSelections:z.array(z.object({needKey:z.string().uuid(),lineId:z.string().uuid(),quantity:z.number().finite().positive().max(1e9).multipleOf(.001),requirementsReviewed:z.literal(true)}).strict()).max(100).default([]),
+}).strict();
+export type MaterialConfirmation=z.infer<typeof materialConfirmationSchema>;
 export const materialLotVerificationSchema=materialCommandSchema.extend({
   batchId:z.string().uuid(),grade:text.nullable(),condition:text.nullable(),
   dimensions:z.record(z.string().min(1).max(40),z.number().finite().positive().max(1e9)),
