@@ -1,17 +1,18 @@
 import {beforeEach,describe,expect,it,vi} from 'vitest';
-const m=vi.hoisted(()=>({read:vi.fn(),command:vi.fn(),readiness:vi.fn(),consume:vi.fn(),quality:vi.fn(),declare:vi.fn()}));
+const m=vi.hoisted(()=>({read:vi.fn(),command:vi.fn(),readiness:vi.fn(),consume:vi.fn(),quality:vi.fn(),declare:vi.fn(),remnant:vi.fn()}));
 vi.mock('./of-material.repository',()=>({materialCommand:m.command,readMaterialTx:m.read}));
 vi.mock('./operation-readiness.repository',()=>({readOperationReadinessTx:m.readiness}));
 vi.mock('../../stock/repository/partial-reservation-consumption.repository',()=>({consumeMaterialReservationTx:m.consume}));
 vi.mock('../../qualite/repository/quality-operational-gate.repository',()=>({assertOperationalLotQualityEligibility:m.quality}));
 vi.mock('./production-execution.repository',()=>({repoDeclareQuantity:m.declare}));
+vi.mock('../../stock/repository/material-remnant.repository',()=>({createMaterialRemnantTx:m.remnant}));
 vi.mock('../../../config/database',()=>({default:{connect:vi.fn()}}));
 import {withRealtimeOutboxTransaction} from '../../../shared/realtime/realtime-outbox-transaction';
 import {debitOfMaterial} from './of-material-debit.repository';
 import type {MaterialDebit} from '../validators/of-material.validators';
 const requirements={grade:null,condition:null,ownerClientId:null,dimensions:{},certificates:[],manualChecks:[]};
 const lot={id:'lot',batchId:'batch',articleId:'article',quality:'LIBERE',unit:'u',...requirements,manualVerified:true};
-const body={expectedVersion:'v1',idempotencyKey:'command',operationId:'cut',good:18,scrap:2,scrapReason:'REGLAGE',note:'Débit de recette documenté',sources:[{reservationId:'reservation',quantity:20,expectedVersion:4}],successorOperationId:'turn'} satisfies MaterialDebit;
+const body={expectedVersion:'v1',idempotencyKey:'command',operationId:'cut',good:18,scrap:2,scrapReason:'REGLAGE',note:'Débit de recette documenté',remnants:[],sources:[{reservationId:'reservation',quantity:20,expectedVersion:4}],successorOperationId:'turn'} satisfies MaterialDebit;
 const audit={user_id:1} as never;
 function coverage(){return {version:'v1',technicalVersion:'technical',operations:[{id:'cut',phase:10},{id:'turn',phase:20}],needs:[{id:'need',key:'purchase',operationId:'cut',articleId:'article',unit:'u',designation:'Matière',requirements,blockers:[],debitRule:{form:'UNIT',stockUnit:'u',unitsPerBlank:1,kerfPerBlank:0,yieldValidated:true},reservations:[{id:'reservation',stock_batch_id:'batch'}],candidates:[{lot}]}]};}
 let current:ReturnType<typeof coverage>;
@@ -23,6 +24,8 @@ beforeEach(()=>{
   m.readiness.mockResolvedValue({operations:[{id:'cut',status:'RUNNING',canStart:true,availableQuantity:60}]});
   m.consume.mockResolvedValue({reservationId:'reservation',stockMovementId:'movement',quantity:20,remaining:40,status:'ACTIVE'});
   m.declare.mockResolvedValue({id:'declaration'});
+  tx.query.mockImplementation(async(sql:string)=>({rows:sql.startsWith('SELECT id::text,phase')?current.operations:
+    sql.startsWith('SELECT q.qty_good')?[{good:18,released:0,edge_released:0}]:sql.includes('INSERT INTO public.production_transfer_batches')?[{id:'transfer'}]:[]}));
 });
 describe('débit matière, déclaration et transfert',()=>{
   it('consomme 20, déclare 18 bons et 2 rebuts, transfère 18 dans la même transaction',async()=>{
@@ -39,7 +42,8 @@ describe('débit matière, déclaration et transfert',()=>{
     m.declare.mockRejectedValue(new Error('déclaration refusée'));
     await expect(debitOfMaterial(19,body,audit)).rejects.toThrow('déclaration refusée');
     expect(m.consume).toHaveBeenCalled();expect(tx.query).toHaveBeenCalledWith('ROLLBACK');
-    expect(tx.query.mock.calls.some(([sql])=>sql==='COMMIT'||sql.includes('INSERT INTO public.production_material_debits'))).toBe(false);
+    expect(tx.query.mock.calls.some(([sql])=>sql==='COMMIT')).toBe(false);
+    expect(m.remnant).not.toHaveBeenCalled();
   });
   it('annule aussi la déclaration et le stock si le successeur est invalide',async()=>{
     await expect(debitOfMaterial(19,{...body,successorOperationId:'foreign'},audit)).rejects.toMatchObject({code:'MATERIAL_TRANSFER_SUCCESSOR_INVALID'});
@@ -65,5 +69,10 @@ describe('débit matière, déclaration et transfert',()=>{
   it('ne crée pas de transfert quand les bruts sont conservés au poste',async()=>{
     await debitOfMaterial(19,{...body,successorOperationId:null},audit);
     expect(tx.query.mock.calls.some(([sql])=>sql.includes('INSERT INTO public.production_transfer_batches'))).toBe(false);
+  });
+  it('rolls back consumption, quantity and proof if creating the reusable remnant fails',async()=>{
+    current.needs[0].debitRule.form='BAR';m.remnant.mockRejectedValue(new Error('remnant stock failed'));
+    await expect(debitOfMaterial(19,{...body,varianceReason:'Barre entière sortie avec une chute réutilisable.',sources:[{...body.sources[0],quantity:25}],remnants:[{reservationId:'reservation',quantity:5,dimensions:{longueur_mm:500}}]},audit)).rejects.toThrow('remnant stock failed');
+    expect(m.declare).toHaveBeenCalled();expect(tx.query).toHaveBeenCalledWith('ROLLBACK');expect(tx.query).not.toHaveBeenCalledWith('COMMIT');
   });
 });

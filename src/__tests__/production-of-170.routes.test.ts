@@ -60,6 +60,17 @@ vi.mock("../module/auth/middlewares/auth.middleware", () => ({
 
 import app from "../config/app";
 
+describe('material debit follow-up HTTP boundaries',()=>{
+  it.each(['debit-corrections','transfers'])('requires workshop capability for %s',async(action)=>{
+    const response=await request(app).post(`/api/v1/production/ofs/5/material/${action}`).set('x-test-role','Comptabilite').send({});
+    expect(response.status).toBe(403);expect(response.body.code).toBe('OF_FORBIDDEN');
+  });
+  it.each(['debit-corrections','transfers'])('validates a reason, version and command identity for %s',async(action)=>{
+    const response=await request(app).post(`/api/v1/production/ofs/5/material/${action}`).set('x-test-role','Operateur Atelier').send({reason:'court'});
+    expect(response.status).toBe(400);
+  });
+});
+
 const OF_UPDATED_AT = "2026-07-22T10:00:00.000+02:00";
 const PIECE_ROOT = "22222222-2222-2222-2222-222222222222";
 const PIECE_A = "33333333-3333-3333-3333-333333333333";

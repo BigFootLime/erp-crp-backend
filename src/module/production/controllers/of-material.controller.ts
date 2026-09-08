@@ -9,6 +9,8 @@ import {roleHasStockCapability} from "../../stock/domain/stock-rbac";
 import {roleHasCommandeFournisseurCapability} from "../../commande-fournisseur/domain/commande-fournisseur-rbac";
 import {requestHasGrantedAccountModuleAccess} from "../../access-control/context/account-module-access.context";
 import {materialDebitSchema} from '../validators/of-material.validators';
+import {materialDebitCorrectionSchema,materialTransferSchema} from '../validators/of-material.validators';
+import {correctMaterialDebit,commandMaterialTransfer} from '../services/of-material.service';
 import {debitOfMaterial} from '../services/of-material.service';
 import {customerMaterialCommandSchema} from '../validators/customer-material.validators';
 import {commandCustomerMaterial} from '../services/of-material.service';
@@ -25,12 +27,21 @@ function present(data:Awaited<ReturnType<typeof getOfMaterial>>,req:Request){
 export const readMaterial=asyncHandler(async(req,res)=>{res.json(present(await getOfMaterial(identity.parse(req.params).id),req));});
 export const customerMaterial=asyncHandler(async(req,res)=>{
   const body=customerMaterialCommandSchema.parse(req.body);
-  if(!rights(req).canConfirm||body.action==='RECEIVE'&&!roleHasStockCapability(req.user?.role,'movement_create'))throw new HttpError(403,'CUSTOMER_MATERIAL_FORBIDDEN','Les droits de réservation et, pour réceptionner, de réception stock sont nécessaires.');
+  const access=rights(req);
+  if(!access.canConfirm||body.action==='RECEIVE'&&!access.canReceive)throw new HttpError(403,'CUSTOMER_MATERIAL_FORBIDDEN','Les droits de réservation et, pour réceptionner, de réception stock sont nécessaires.');
   const result=await commandCustomerMaterial(identity.parse(req.params).id,body,buildAuditContext(req));
   res.json({...result,coverage:present(result.coverage,req)});
 });
 export const debitMaterial=asyncHandler(async(req,res)=>{
   const result=await debitOfMaterial(identity.parse(req.params).id,materialDebitSchema.parse(req.body),buildAuditContext(req));
+  res.json({...result,coverage:present(result.coverage,req)});
+});
+export const correctDebitMaterial=asyncHandler(async(req,res)=>{
+  const result=await correctMaterialDebit(identity.parse(req.params).id,materialDebitCorrectionSchema.parse(req.body),buildAuditContext(req));
+  res.json({...result,coverage:present(result.coverage,req)});
+});
+export const transferMaterial=asyncHandler(async(req,res)=>{
+  const result=await commandMaterialTransfer(identity.parse(req.params).id,materialTransferSchema.parse(req.body),buildAuditContext(req));
   res.json({...result,coverage:present(result.coverage,req)});
 });
 export const readOperationReadiness=asyncHandler(async(req,res)=>{res.json(await getOperationReadiness(identity.parse(req.params).id));});

@@ -86,7 +86,7 @@ export async function readOperationReadinessTx(tx:DossierDb,ofId:number){
       else usable+=Math.max(0,Number(reservation.qty_reserved)-Number(reservation.qty_consumed));
     }
     const perBlank=need.debitRule ? need.debitRule.unitsPerBlank+need.debitRule.kerfPerBlank : 0;
-    const entry={label:need.designation,availableBlanks:perBlank>0?Math.floor((usable+need.consumed)/perBlank+1e-9):0,allowPartial:need.allowPartial,blockers:[...new Set(reasons)]};
+    const entry={label:need.designation,availableBlanks:perBlank>0?Math.floor((usable+need.consumed-(need.consumptionAdjustment??0))/perBlank+1e-9):0,allowPartial:need.allowPartial,blockers:[...new Set(reasons)]};
     materialFacts.set(need.operationId,[...(materialFacts.get(need.operationId)??[]),entry]);
   }
   const statuses=['HORS_SERVICE','OUT_OF_SERVICE','MAINTENANCE','EN_MAINTENANCE','IN_MAINTENANCE','INDISPONIBLE'];
@@ -155,7 +155,7 @@ export async function assertMaterialQuantityTx(tx:DossierDb,ofId:number,operatio
   const needs=coverage.needs.filter(n=>n.operationId===operationId);
   const consumedAvailable=needs.length?Math.max(0,Math.min(...needs.map(n=>{
     const perBlank=n.debitRule?n.debitRule.unitsPerBlank+n.debitRule.kerfPerBlank:0;
-    return perBlank>0?Math.floor(n.consumed/perBlank+1e-9)-operation.processedQuantity:0;
+    return perBlank>0?Math.floor((n.consumed-(n.consumptionAdjustment??0))/perBlank+1e-9)-operation.processedQuantity:0;
   }))):null;
   const state=(await tx.query<{status:string}>('SELECT statut::text AS status FROM public.ordres_fabrication WHERE id=$1',[ofId])).rows[0];
   assertOperationQuantityCeiling({executionStatus:state?.status??'',operationStatus:operation.status,available:operation.availableQuantity,consumedAvailable,

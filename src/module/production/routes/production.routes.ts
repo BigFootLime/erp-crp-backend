@@ -16,7 +16,7 @@ import { authenticateToken } from "../../auth/middlewares/auth.middleware";
 import { HttpError } from "../../../utils/httpError";
 import { roleHasMachineCapability, type MachineCapability } from "../domain/machine-rbac";
 import { roleHasOfCapability, type OfCapability } from "../domain/of-rbac";
-import {readMaterial,configureMaterial,confirmMaterial,verifyMaterialLot,readOperationReadiness,debitMaterial,customerMaterial} from "../controllers/of-material.controller";
+import {readMaterial,configureMaterial,confirmMaterial,verifyMaterialLot,readOperationReadiness,debitMaterial,customerMaterial,correctDebitMaterial,transferMaterial} from "../controllers/of-material.controller";
 import {
   archiveMachine,
   archivePoste,
@@ -240,6 +240,8 @@ router.post('/ofs/:id/material/:sourceRef/configure',requireOfCapability('read')
 router.post('/ofs/:id/material/:sourceRef/verify-lot',requireOfCapability('read'),verifyMaterialLot);
 router.post('/ofs/:id/material/confirm',requireOfCapability('read'),confirmMaterial);
 router.post('/ofs/:id/material/debits',requireOfCapability('operate'),debitMaterial);
+router.post('/ofs/:id/material/debit-corrections',requireOfCapability('operate'),correctDebitMaterial);
+router.post('/ofs/:id/material/transfers',requireOfCapability('operate'),transferMaterial);
 router.post('/ofs/:id/material/customer-calls',requireOfCapability('read'),customerMaterial);
 router.post('/ofs/:id/complete',requireOfCapability('release'),completeDossier);
 router.post('/ofs/:id/workbench/children/synchronize',requireOfCapability('generate'),synchronizePreparationChildren);

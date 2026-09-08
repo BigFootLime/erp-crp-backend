@@ -2046,7 +2046,10 @@ export async function repoDeclareQuantity(params: {
   transactionHooks?: ProductionExecutionTransactionHooks<{ id: string }>;
   /** Server-owned transaction for the material debit; never accepted over HTTP. */
   transactionClient?: PoolClient;
+  /** Prelinked by the material debit proof in that same transaction. */
+  declarationId?: string;
 }): Promise<{ id: string }> {
+  if(params.declarationId&&!params.transactionClient)throw new HttpError(409,'MATERIAL_DECLARATION_TRANSACTION_REQUIRED','La preuve du débit et sa déclaration doivent partager la transaction.');
   const client = params.transactionClient ?? await pool.connect();
   const ownsTransaction = !params.transactionClient;
   try {
@@ -2210,9 +2213,9 @@ export async function repoDeclareQuantity(params: {
           pointage_id, of_id, operation_id,
           qty_good, qty_scrap, qty_rework, qty_pending_control,
           unite, scrap_reason_code, rework_reason_code, note,
-          idempotency_key, declared_by
+          idempotency_key, declared_by, id
         )
-        VALUES ($1::uuid, $2::bigint, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::int)
+        VALUES ($1::uuid, $2::bigint, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::int,COALESCE($14::uuid,gen_random_uuid()))
         RETURNING id::text AS id
       `,
       [
@@ -2229,6 +2232,7 @@ export async function repoDeclareQuantity(params: {
         params.body.note ?? null,
         params.idempotencyKey,
         params.audit.user_id,
+        params.declarationId??null,
       ]
     );
     const id = ins.rows[0]!.id;

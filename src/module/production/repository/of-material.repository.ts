@@ -10,6 +10,7 @@ import type {AuditContext} from "./production.repository";
 import {materialPropertiesFingerprint,coverageFingerprint,debitQuantity,proposeMaterialCoverage,purchaseQuantity,quantity,type MaterialNeed,type MaterialLot,type MaterialRequirements,type DebitRule} from "../domain/of-material";
 import {readFutureMaterialSupplyTx,futureSupplyCompatibility} from './material-future-supply.repository';
 import {readCustomerMaterialCallsTx} from './customer-material-read.repository';
+import {readMaterialDebitsTx} from './material-debit-history.repository';
 
 const emptyRequirements=():MaterialRequirements=>({grade:null,condition:null,ownerClientId:null,dimensions:{},certificates:[],manualChecks:[]});
 type Purchase={id:string;article_id:string|null;nom?:string;designation?:string;quantite:number;unite_prix:string|null;fournisseur_id:string|null;pu_achat?:number|null;type_achat:string;gamme_operation_id?:string|null};
@@ -26,6 +27,11 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
   const purchases=(of.purchases as Purchase[]).filter(p=>p.type_achat==="MATIERE");
   const saved=(await tx.query<NeedRow>("SELECT * FROM public.of_material_needs WHERE of_id=$1 ORDER BY created_at,id",[ofId])).rows;
   const customerCalls=await readCustomerMaterialCallsTx(tx,ofId);
+  const debits=await readMaterialDebitsTx(tx,ofId);
+  const debitAdjustments=(await tx.query<{need_id:string;adjustment:number}>(`SELECT s.need_id::text,
+    sum(COALESCE(s.actual_qty,abs(m.qty))-COALESCE(s.planned_qty,abs(m.qty)))::float8 AS adjustment
+    FROM public.production_material_debit_sources s JOIN public.production_material_debits d ON d.id=s.debit_id
+    JOIN public.stock_movements m ON m.id=s.stock_movement_id WHERE d.of_id=$1 GROUP BY s.need_id`,[ofId])).rows;
   const reservations=(await tx.query(`SELECT r.id::text,r.material_need_id::text,r.article_id::text,r.qty_reserved::float8,r.qty_consumed::float8,r.status,r.row_version,r.lot_id::text,
     r.stock_batch_id::text,(r.expires_at IS NULL OR r.expires_at>now()) AS unexpired,
     l.lot_status FROM public.stock_reservations r LEFT JOIN public.lots l ON l.id=r.lot_id
@@ -70,9 +76,13 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
     const decision=qualityByLot.get(lot.id)!;
     lot.qualityAvailable=decision.available;lot.qualityBlocks=decision.blocks;lot.qualityExplanation=decision.explanation;lot.qualityControlId=decision.controlId;
   }
-  const documents=(await tx.query(`SELECT DISTINCT rl.lot_id::text,d.id::text,COALESCE(d.label,d.original_name) AS label,d.reception_id::text AS "receptionId",d.sha256
+  const documents=(await tx.query(`WITH RECURSIVE ancestry(lot_id,ancestor_id) AS(
+    SELECT id,id FROM public.lots WHERE id=ANY($1::uuid[])
+    UNION SELECT a.lot_id,e.parent_lot_id FROM ancestry a JOIN public.stock_lot_genealogy_edges e ON e.child_lot_id=a.ancestor_id
+      JOIN public.production_material_remnants r ON r.lot_id=e.child_lot_id AND r.stock_movement_id=e.stock_movement_id)
+    SELECT DISTINCT a.lot_id::text,d.id::text,COALESCE(d.label,d.original_name) AS label,d.reception_id::text AS "receptionId",d.sha256
     FROM public.reception_fournisseur_documents d JOIN public.reception_fournisseur_lignes rl ON rl.reception_id=d.reception_id AND(d.reception_line_id IS NULL OR d.reception_line_id=rl.id)
-    WHERE rl.lot_id=ANY($1::uuid[]) AND d.removed_at IS NULL AND d.document_type='CERTIFICAT_MATIERE' ORDER BY 2`,[lots.map(l=>l.id)])).rows;
+    JOIN ancestry a ON a.ancestor_id=rl.lot_id WHERE d.removed_at IS NULL AND d.document_type='CERTIFICAT_MATIERE' ORDER BY 2`,[lots.map(l=>l.id)])).rows;
   for(const lot of lots){
     lot.documents=documents.filter(d=>d.lot_id===lot.id);
     lot.propertiesHash=materialPropertiesFingerprint({articleId:lot.articleId,unit:lot.unit,ownerClientId:lot.ownerClientId,properties:lot.properties});
@@ -93,6 +103,8 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
     const customer=customerCalls.filter(c=>c.need_id===row?.id&&c.status!=='CANCELLED');
     let required=Number(p.quantite)*dossier.quantity;
     if(row?.debit_rule)required=debitQuantity(row.debit_rule,dossier.quantity);
+    const consumptionAdjustment=debitAdjustments.find(d=>d.need_id===row?.id)?.adjustment??0;
+    required=quantity(Math.max(0,required+consumptionAdjustment));
     const physical=attached.filter(r=>r.status==="ACTIVE"&&r.unexpired).reduce((sum,r)=>sum+Math.max(0,r.qty_reserved-r.qty_consumed),0);
     const consumed=attached.reduce((sum,r)=>sum+(r.status==="CONSUMED"?r.qty_reserved:r.qty_consumed),0);
     const need:MaterialNeed={key:p.id,articleId:p.article_id,unit:row?.unit??p.unite_prix??article?.unite??null,required,requirements,
@@ -111,7 +123,7 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
       operationId:operation?.id??null,operationLabel:operation?.label??null,supplyMode:row?.supply_mode??"PURCHASE",allowPartial:row?.allow_partial??false,
       debitRule:row?.debit_rule??null,reviewed:!!row?.specification_reviewed_at,supplierId,destinationId:row?.destination_id??null,
       catalog,price,currency:catalog?.devise??"EUR",blockers,reservations:attached,promises:expected,
-      rowVersion:row?.row_version??null};
+      rowVersion:row?.row_version??null,consumptionAdjustment};
   });
   // Per-need checks are never generalized to another reference or revision.
   const remaining=new Map(lots.map(l=>[l.batchId,l.available]));
@@ -125,7 +137,7 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
   });
   return {enabled:true as const,ofId,number:dossier.number,quantity:dossier.quantity,dossierStatus:dossier.status,technicalVersion:of.revision as string|null,
     technicalHash:of.hash as string|null,clientId:of.client_id as string|null,operations:dossier.operations,
-    version:coverageFingerprint({dossier:dossier.version,saved,reservations,promises,lots,checks,catalogs,documents,futureSupplies,customerCalls}),needs:coverage,customerCalls,
+    version:coverageFingerprint({dossier:dossier.version,saved,reservations,promises,lots,checks,catalogs,documents,futureSupplies,customerCalls,debitAdjustments,debits}),needs:coverage,customerCalls,debits,
     previousNeeds:saved.filter(n=>n.technical_version_id!==of.revision||n.superseded_at),
     suppliers:(await tx.query("SELECT id::text,COALESCE(nom,raison_sociale) AS name FROM public.fournisseurs WHERE actif IS NOT FALSE ORDER BY COALESCE(nom,raison_sociale)")).rows,
     destinations:(await tx.query("SELECT id::text,COALESCE(code,code_magasin) AS name FROM public.magasins ORDER BY COALESCE(code,code_magasin)")).rows};

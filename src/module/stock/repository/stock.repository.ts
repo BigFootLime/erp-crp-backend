@@ -5606,11 +5606,13 @@ export async function repoGetLotGenealogy(id: string): Promise<StockLotGenealogy
 export async function repoCreateLotGenealogy(
   body: CreateLotGenealogyBodyDTO,
   audit: AuditContext,
-  idempotencyKey: string
+  idempotencyKey: string,
+  transactionClient?: PoolClient
 ): Promise<{ correlation_id: string; edges: StockLotGenealogyEdge[] }> {
-  const client = await db.connect();
+  const client = transactionClient ?? await db.connect();
+  const ownsTransaction = !transactionClient;
   try {
-    await client.query("BEGIN");
+    if (ownsTransaction) await client.query("BEGIN");
     const command = await beginStockCommand(client, {
       audit,
       idempotency_key: idempotencyKey,
@@ -5618,7 +5620,7 @@ export async function repoCreateLotGenealogy(
       request_payload: body,
     });
     if (command.existing) {
-      const edges = await db.query<StockLotGenealogyEdge>(
+      const edges = await client.query<StockLotGenealogyEdge>(
         `
           WITH genealogy AS (
             SELECT *
@@ -5630,7 +5632,7 @@ export async function repoCreateLotGenealogy(
         `,
         [command.existing.correlation_id]
       );
-      await client.query("COMMIT");
+      if (ownsTransaction) await client.query("COMMIT");
       return { correlation_id: command.existing.correlation_id, edges: edges.rows };
     }
 
@@ -5756,9 +5758,9 @@ export async function repoCreateLotGenealogy(
         edges_count: contributions.length,
       },
     });
-    await client.query("COMMIT");
+    if (ownsTransaction) await client.query("COMMIT");
 
-    const edges = await db.query<StockLotGenealogyEdge>(
+    const edges = await client.query<StockLotGenealogyEdge>(
       `
         WITH genealogy AS (
           SELECT *
@@ -5772,10 +5774,10 @@ export async function repoCreateLotGenealogy(
     );
     return { correlation_id: command.correlation_id, edges: edges.rows };
   } catch (error) {
-    await client.query("ROLLBACK");
+    if (ownsTransaction) await client.query("ROLLBACK");
     throw error;
   } finally {
-    client.release();
+    if (ownsTransaction) client.release();
   }
 }
 
@@ -7211,6 +7213,9 @@ export async function repoPreviewMovementCompensation(
     [id]
   );
   const built = buildCompensatingMovementBody(detail, body);
+  const materialOwned=(await db.query(`SELECT 1 FROM public.production_material_debit_sources WHERE stock_movement_id=$1::uuid
+    UNION ALL SELECT 1 FROM public.production_material_remnants WHERE stock_movement_id=$1::uuid LIMIT 1`,[id])).rows.length>0;
+  if(materialOwned)built.blockers.push({code:'MATERIAL_DEBIT_CORRECTION_REQUIRED',message:'Corrigez ce mouvement depuis le débit matière de l’OF pour conserver ensemble stock, bruts et transferts.'});
   const existingCompensation = existing.rows[0] ?? null;
   const noExistingCompensation = !existingCompensation;
   const existingMessage = existingCompensation
@@ -7868,6 +7873,13 @@ export async function repoPostMovement(
     }
     if (m.status !== "DRAFT") {
       throw new HttpError(409, "INVALID_STATUS", "Only DRAFT movements can be posted");
+    }
+
+    if(!externalClient){
+      const materialReversal=(await client.query(`SELECT 1 FROM public.stock_movements m WHERE m.id=$1::uuid AND (
+        EXISTS(SELECT 1 FROM public.production_material_debit_sources s WHERE s.stock_movement_id=m.reversal_of_id) OR
+        EXISTS(SELECT 1 FROM public.production_material_remnants r WHERE r.stock_movement_id=m.reversal_of_id))`,[id])).rows.length>0;
+      if(materialReversal)throw new HttpError(409,'MATERIAL_DEBIT_CORRECTION_REQUIRED','La compensation de ce mouvement doit partager la correction du débit matière de l’OF.');
     }
 
     await ensureArticleStockManaged(client, m.article_id);

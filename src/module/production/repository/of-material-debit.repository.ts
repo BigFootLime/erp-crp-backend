@@ -4,10 +4,13 @@ import type {AuditContext} from './production.repository';
 import type {MaterialDebit} from '../validators/of-material.validators';
 import {materialCommand,readMaterialTx} from './of-material.repository';
 import {readOperationReadinessTx} from './operation-readiness.repository';
-import {debitQuantity,lotCompatibility,quantity} from '../domain/of-material';
+import {lotCompatibility} from '../domain/of-material';
+import {actualDebitBalance} from '../domain/material-debit-balance';
+import {createMaterialRemnantTx} from '../../stock/repository/material-remnant.repository';
 import {consumeMaterialReservationTx} from '../../stock/repository/partial-reservation-consumption.repository';
 import {assertOperationalLotQualityEligibility} from '../../qualite/repository/quality-operational-gate.repository';
 import {repoDeclareQuantity} from './production-execution.repository';
+import {releaseMaterialTransferTx} from './material-transfer.repository';
 
 /** One owner for reservation consumption, stock posting, produced WIP and its
  * transfer proof. A failed declaration or transfer rolls back the whole debit. */
@@ -37,38 +40,43 @@ export async function debitOfMaterial(ofId:number,body:MaterialDebit,audit:Audit
     const operation=readiness.operations.find(op=>op.id===body.operationId);
     if(!operation||operation.status!=='RUNNING'||!operation.canStart)
       throw new HttpError(409,'MATERIAL_DEBIT_OPERATION_NOT_STARTED','Démarrez cette opération et vérifiez ses prérequis avant de débiter.',{operation});
-    if(body.good+body.scrap>operation.availableQuantity)
+    const measured=needs.some(n=>n.debitRule?.form!=='UNIT');
+    if(body.good+body.scrap>(measured?operation.remainingQuantity:operation.availableQuantity))
       throw new HttpError(409,'MATERIAL_DEBIT_QUANTITY_EXCEEDED','Les bruts déclarés dépassent la quantité utilisable.',{available:operation.availableQuantity});
-    for(const need of needs){
-      const actual=quantity(sources.filter(s=>s.need.id===need.id).reduce((sum,s)=>sum+s.source.quantity,0));
-      const required=debitQuantity(need.debitRule!,body.good+body.scrap);
-      if(actual!==required)throw new HttpError(422,'MATERIAL_DEBIT_CONVERSION_MISMATCH',`${need.designation} : la règle validée exige ${required} ${need.unit} pour ces bruts.`,{needKey:need.key,required,actual});
+    const remnants=body.remnants??[];
+    const balances=needs.map(need=>({need,balance:actualDebitBalance({rule:need.debitRule!,blanks:body.good+body.scrap,varianceReason:body.varianceReason,
+      sources:sources.filter(s=>s.need.id===need.id).map(s=>({id:s.source.reservationId,quantity:s.source.quantity,remnant:remnants.find(r=>r.reservationId===s.source.reservationId)?.quantity??0}))})}));
+    for(const remnant of remnants){
+      const need=sources.find(s=>s.source.reservationId===remnant.reservationId)?.need;
+      if(!need||!remnant.dimensions.longueur_mm||need.debitRule?.form==='SHEET'&&!remnant.dimensions.largeur_mm)
+        throw new HttpError(422,'MATERIAL_REMNANT_DIMENSIONS_REQUIRED','Précisez la longueur de chaque chute et la largeur des chutes de tôle.');
     }
     const consumed=[];
     for(const s of [...sources].sort((a,b)=>a.source.reservationId.localeCompare(b.source.reservationId)))
       consumed.push({needId:s.need.id!,...await consumeMaterialReservationTx(tx,{...s.source,ofId,operationId:body.operationId,
         idempotencyKey:`${body.idempotencyKey}:${s.source.reservationId}`,reason:body.note},audit)});
-    const declaration=await repoDeclareQuantity({transactionClient:tx,idempotencyKey:body.idempotencyKey,audit,
+    const debitId=randomUUID(),declarationId=randomUUID();
+    // The deferred declaration FK allows the measured yield proof to exist
+    // before the canonical declaration rechecks its material quantity credit.
+    await tx.query(`INSERT INTO public.production_material_debits(id,of_id,operation_id,technical_version_id,declaration_id,command_key,source_version,note,created_by)
+      VALUES($1::uuid,$2,$3::uuid,$4::uuid,$5::uuid,$6::uuid,$7,$8,$9)`,[debitId,ofId,body.operationId,current.technicalVersion,declarationId,body.idempotencyKey,current.version,[body.note,body.varianceReason].filter(Boolean).join('\n'),audit.user_id]);
+    for(const s of consumed)await tx.query(`INSERT INTO public.production_material_debit_sources(debit_id,need_id,reservation_id,stock_movement_id,planned_qty,actual_qty)
+      VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6)`,[debitId,s.needId,s.reservationId,s.stockMovementId,
+      balances.find(b=>b.need.id===s.needId)!.balance.sources.find(source=>source.id===s.reservationId)!.planned,s.quantity]);
+    const declaration=await repoDeclareQuantity({transactionClient:tx,declarationId,idempotencyKey:body.idempotencyKey,audit,
       body:{of_id:ofId,operation_id:body.operationId,qty_good:body.good,qty_scrap:body.scrap,qty_pending_control:0,qty_rework:0,
         scrap_reason_code:body.scrapReason,unite:'u',note:body.note}});
-    const debitId=randomUUID();
-    await tx.query(`INSERT INTO public.production_material_debits(id,of_id,operation_id,technical_version_id,declaration_id,command_key,source_version,note,created_by)
-      VALUES($1::uuid,$2,$3::uuid,$4::uuid,$5::uuid,$6::uuid,$7,$8,$9)`,[debitId,ofId,body.operationId,current.technicalVersion,declaration.id,body.idempotencyKey,current.version,body.note,audit.user_id]);
-    for(const s of consumed)await tx.query(`INSERT INTO public.production_material_debit_sources(debit_id,need_id,reservation_id,stock_movement_id)
-      VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid)`,[debitId,s.needId,s.reservationId,s.stockMovementId]);
-    if(body.successorOperationId){
-      const sorted=[...current.operations].sort((a,b)=>a.phase-b.phase||a.id.localeCompare(b.id));
-      const explicit=(await tx.query<{successor:string;minimum:number|null}>(`SELECT substring(successor_id from 4) AS successor,transfer_quantity::float8 AS minimum
-        FROM public.planning_operation_dependencies WHERE predecessor_id='op:'||$1`,[body.operationId])).rows;
-      const successor=explicit.length?explicit.find(s=>s.successor===body.successorOperationId):
-        sorted[sorted.findIndex(op=>op.id===body.operationId)+1]?.id===body.successorOperationId?{successor:body.successorOperationId,minimum:null}:null;
-      if(!successor||body.good<=0||!sorted.some(op=>op.id===body.successorOperationId))
-        throw new HttpError(422,'MATERIAL_TRANSFER_SUCCESSOR_INVALID','Choisissez une étape suivante de cet OF et une quantité bonne positive.');
-      if(successor.minimum&&body.good<successor.minimum)
-        throw new HttpError(409,'MATERIAL_TRANSFER_MINIMUM',`Le lot de transfert exige ${successor.minimum} pièces minimum.`);
-      await tx.query(`INSERT INTO public.production_transfer_batches(operation_id,successor_operation_id,quantity,released_quantity,material_debit_id,created_by)
-        VALUES($1::uuid,$2::uuid,$3,$3,$4::uuid,$5)`,[body.operationId,body.successorOperationId,body.good,debitId,audit.user_id]);
+    const createdRemnants=[];
+    for(const remnant of remnants){
+      const result=await createMaterialRemnantTx(tx,{...remnant,ofId,note:[body.note,body.varianceReason].filter(Boolean).join('\n'),key:`${body.idempotencyKey}:remnant:${remnant.reservationId}`},audit);
+      await tx.query(`INSERT INTO public.production_material_remnants(debit_id,source_reservation_id,lot_id,stock_movement_id,quantity,unit,dimensions,created_by)
+        VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6,$7::jsonb,$8)`,[debitId,remnant.reservationId,result.lotId,result.stockMovementId,result.quantity,result.unit,JSON.stringify(remnant.dimensions),audit.user_id]);
+      createdRemnants.push(result);
     }
-    return {coverage:await readMaterialTx(tx,ofId),debitId,declarationId:declaration.id,consumed};
+    if(body.successorOperationId){
+      await releaseMaterialTransferTx(tx,{ofId,debitId,operationId:body.operationId,successorOperationId:body.successorOperationId,
+        quantity:body.good,key:body.idempotencyKey,reason:body.note},audit);
+    }
+    return {coverage:await readMaterialTx(tx,ofId),debitId,declarationId:declaration.id,consumed,remnants:createdRemnants};
   });
 }
