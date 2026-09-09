@@ -785,6 +785,7 @@ export async function repoOpenSession(params: {
   identification_method: IdentificationMethod;
   app_version?: string | null;
   request_id?: string | null;
+  beforeCommit?: (client: PoolClient, session: SessionRow) => Promise<void>;
 }): Promise<{ session: SessionRow; token: string }> {
   const token = generateSessionToken();
   const client = await pool.connect();
@@ -858,6 +859,7 @@ export async function repoOpenSession(params: {
       client
     );
 
+    await params.beforeCommit?.(client, session);
     await client.query("COMMIT");
     return { session, token };
   } catch (error) {

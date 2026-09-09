@@ -118,7 +118,7 @@ export const ligneInputSchema = z
     unite_stock: z.string().trim().max(20).nullish(),
     coef_conversion: z.number().finite().gt(0).max(1_000_000).nullish(),
     quantite: qty,
-    prix_unitaire_ht: money.default(0),
+    prix_unitaire_ht: money.nullable().default(0),
     remise_pct: pct.default(0),
     tva_pct: pct.default(20),
     frais_ht: money.default(0),

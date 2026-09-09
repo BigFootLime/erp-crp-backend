@@ -2,6 +2,7 @@ import { Router, type RequestHandler } from "express";
 import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 
 import { authenticateToken, authorizeRole } from "../../auth/middlewares/auth.middleware";
+import { SUPPLIER_WRITE_ROLES } from "../../fournisseurs/fournisseurs.permissions";
 import { createSecureUpload } from "../../../shared/uploads/secure-upload";
 import { HttpError } from "../../../utils/httpError";
 import {
@@ -100,6 +101,7 @@ import {
   ARTICLE_WRITE_ROLES,
 } from "../stock-article.permissions";
 import { roleHasStockCapability, type StockCapability } from "../domain/stock-rbac";
+import {readConsumableSupply,prepareConsumableSupply,finishConsumablePack,findScannedConsumable} from '../controllers/consumable-supply.controller';
 import {
   createStockIntelligencePolicy,
   simulateStockIntelligence,
@@ -113,6 +115,10 @@ const upload = createSecureUpload("business-document");
 router.use(authenticateToken);
 
 const requireArticleWrite = authorizeRole(...ARTICLE_WRITE_ROLES);
+const requireSupplierConditionsWrite: RequestHandler = (req,res,next) => {
+  if (req.body?.supplier_conditions?.length) return authorizeRole(...SUPPLIER_WRITE_ROLES)(req,res,next);
+  next();
+};
 const requireArticleArchive = authorizeRole(...ARTICLE_ARCHIVE_ROLES);
 const requireArticleApprove = authorizeRole(...ARTICLE_APPROVE_ROLES);
 const requireArticleDocumentWrite = authorizeRole(...ARTICLE_DOCUMENT_WRITE_ROLES);
@@ -129,6 +135,10 @@ const requireStockCapability = (capability: StockCapability): RequestHandler => 
 };
 
 router.get("/analytics", requireStockCapability("read"), getStockAnalytics);
+router.get('/consumables/resolve',requireStockCapability('read'),findScannedConsumable);
+router.get('/consumables/:id/supply',requireStockCapability('read'),readConsumableSupply);
+router.post('/consumables/:id/replenish',requireStockCapability('read'),prepareConsumableSupply);
+router.post('/consumables/:id/finish-pack',requireStockCapability('read'),finishConsumablePack);
 router.get("/intelligence/overview", requireStockCapability("read"), stockIntelligenceOverview);
 router.post("/intelligence/simulate", requireStockCapability("read"), simulateStockIntelligence);
 router.post(
@@ -158,7 +168,7 @@ router.get("/articles/export.csv", requireStockCapability("read"), exportStockAr
 // #226 — Déclarée AVANT `/articles/:id` : sans cela, « similaires » serait lu
 // comme un identifiant d'article.
 router.get("/articles/similaires", requireStockCapability("read"), listSimilarStockArticles);
-router.post("/articles", requireArticleWrite, createStockArticle);
+router.post("/articles", requireArticleWrite, requireSupplierConditionsWrite, createStockArticle);
 // Automatic root-creation snapshot only; movements/lots remain excluded by design.
 router.get("/articles/:id/creation-snapshot", requireStockCapability("read"), getStockArticleCreationSnapshot);
 router.get("/articles/:id/creation-snapshot/:documentId/preview", requireStockCapability("read"), previewStockArticleCreationSnapshot);
@@ -166,7 +176,7 @@ router.get("/articles/:id/creation-snapshot/:documentId/download", requireStockC
 router.post("/articles/:id/creation-snapshot/:documentId/print-intents", requireStockCapability("read"), printStockArticleCreationSnapshot);
 router.get("/articles/:id", requireStockCapability("read"), getStockArticle);
 router.get("/articles/:id/available-lots", requireStockCapability("read"), listAvailableStockArticleLots);
-router.patch("/articles/:id", requireArticleWrite, updateStockArticle);
+router.patch("/articles/:id", requireArticleWrite, requireSupplierConditionsWrite, updateStockArticle);
 router.post("/articles/:id/validate", requireArticleApprove, validateStockArticle);
 router.post("/articles/:id/archive", requireArticleArchive, archiveStockArticle);
 router.post("/articles/:id/reactivate", requireArticleArchive, reactivateStockArticle);

@@ -28,6 +28,7 @@ export type PreparationDecisions = {
   manufacturing_plan_required?: boolean;
 };
 export type PurchaseEvidence = {
+  article_policy?: {stock_managed:boolean;consumption_mode:"UNIT"|"GLOBAL_PACK";receipt_quality_required:boolean;unit:string|null;consumable:boolean}|null;
   id: string;
   type_achat: string;
   article_id: string | null;
@@ -186,6 +187,10 @@ export function evaluatePreparation(f: PreparationFacts): PreparationItem[] {
       !notRequired,
     );
   }
+  const consumables=f.purchases.filter(p=>p.type_achat==="CONSOMMABLE");
+  if(consumables.length) add("consumables","Consommables",consumables.every(p=>p.article_id&&p.quantite>0&&p.designation?.trim()
+    &&p.article_policy?.consumable&&p.article_policy.unit&&p.piece_technique_version_id===f.version_id),
+    "Article consommable, quantité et unité définis pour cet indice. Le fournisseur et le prix se confirment lors de l’achat.");
   add(
     "structure",
     "Structure de fabrication",

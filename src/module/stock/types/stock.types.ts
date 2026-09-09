@@ -19,6 +19,7 @@ export type ConsolidatedInventoryRow = {
 export type ArticleType = "PIECE_TECHNIQUE" | "PURCHASED";
 export type ArticleCategory = "fabrique" | "matiere" | "traitement" | "achat";
 export type ArticleBusinessCategory =
+  | "consommable"
   | "matiere_premiere"
   | "traitement_surface"
   | "achat_revente"
@@ -152,6 +153,9 @@ export type ArticleProcurementProfile = {
 };
 
 export type ArticleSupplierReference = {
+  lot_achat?: number | null;
+  stock_unit?: string | null;
+  conversion_coefficient?: number | null;
   catalogue_id: string;
   supplier_id: string;
   supplier_code: string | null;
@@ -194,6 +198,10 @@ export type ArticleOpenSupplierOrder = {
 };
 
 export type StockArticleListItem = {
+  internal_reference?: string | null;
+  consumption_mode?: "UNIT" | "GLOBAL_PACK";
+  purchase_pack_qty?: number;
+  receipt_quality_required?: boolean;
   id: string;
   root_article_id: string;
   parent_article_id: string | null;

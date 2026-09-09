@@ -16,6 +16,7 @@ beforeEach(()=>{
   vi.resetAllMocks();lotCreated=false;m.audit.mockResolvedValue({id:'audit',created_at:'2026-09-08'});m.code.mockResolvedValue('LOT-TEST');
   tx={release:vi.fn(),query:vi.fn(async(sql:string)=>{
     if(['BEGIN','COMMIT','ROLLBACK'].includes(sql))return {rows:[]};
+    if(sql.includes('FROM public.planning_central_settings'))return {rows:[{revision:1}]};
     if(sql.includes('nextval'))return {rows:[{n:'3'}]};
     if(sql.includes('INSERT INTO public.receptions_fournisseurs'))return {rows:[{id:'receipt',reception_no:'RF-TEST'}]};
     if(sql.includes('SELECT 1::int AS ok,origin_type,status'))return {rows:[{ok:1,origin_type:'CUSTOMER',status:'OPEN'}]};

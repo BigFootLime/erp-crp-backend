@@ -118,6 +118,7 @@ export type TypeAchat =
   | "MATIERE"
   | "VISSERIE"
   | "COMPOSANT_CATALOGUE"
+  | "CONSOMMABLE"
   | "TRAITEMENT"
   | "SOUS_TRAITANCE"
   | "CERTIFICAT"

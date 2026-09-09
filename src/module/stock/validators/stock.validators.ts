@@ -1,4 +1,10 @@
+import { createCatalogueSchema } from "../../fournisseurs/validators/fournisseurs.validators";
 import { z } from "zod";
+
+export const articleSupplierConditionSchema = createCatalogueSchema.shape.body.omit({article_id:true,type:true,designation:true}).partial().extend({
+  supplier_id: z.string().uuid(), catalogue_id: z.string().uuid().optional(), preferred: z.boolean().default(false),
+});
+export type ArticleSupplierCondition = z.infer<typeof articleSupplierConditionSchema>;
 
 const uuid = z.string().uuid();
 
@@ -37,6 +43,7 @@ export type ArticleTypeDTO = z.infer<typeof articleTypeSchema>;
 export const articleCategorySchema = z.enum(["fabrique", "matiere", "traitement", "achat"]);
 export type ArticleCategoryDTO = z.infer<typeof articleCategorySchema>;
 export const articleBusinessCategorySchema = z.enum([
+  "consommable",
   "matiere_premiere",
   "traitement_surface",
   "achat_revente",
@@ -85,6 +92,7 @@ export const listArticlesQuerySchema = z.object({
   client_code: z.string().trim().min(1).max(40).optional(),
   article_type: articleTypeSchema.optional(),
   article_category: articleCategorySchema.optional(),
+  business_category: z.string().trim().min(1).max(60).optional(),
   status: articleWorkflowStatusSchema.optional(),
   projet_id: z.coerce.number().int().positive().optional(),
   family_code: z.string().trim().min(1).max(40).optional(),
@@ -325,6 +333,11 @@ const articleProcurementSchema = z
 export const createArticleSchema = z.object({
   body: z
     .object({
+      supplier_conditions: z.array(articleSupplierConditionSchema).max(30).optional(),
+      internal_reference: z.string().trim().min(1).max(160).nullable().optional(),
+      consumption_mode: z.enum(["UNIT", "GLOBAL_PACK"]).optional(),
+      purchase_pack_qty: z.number().finite().positive().multipleOf(0.001).optional(),
+      receipt_quality_required: z.boolean().optional(),
       /**
        * Facultative pour une MATIÈRE uniquement : l'écran n'expose plus de champ
        * Désignation et le serveur produit la forme canonique depuis la
@@ -433,6 +446,11 @@ export type CreateArticleBodyDTO = z.infer<typeof createArticleSchema>["body"];
 export const updateArticleSchema = z.object({
   body: z
     .object({
+      supplier_conditions: z.array(articleSupplierConditionSchema).max(30).optional(),
+      internal_reference: z.string().trim().min(1).max(160).nullable().optional(),
+      consumption_mode: z.enum(["UNIT", "GLOBAL_PACK"]).optional(),
+      purchase_pack_qty: z.number().finite().positive().multipleOf(0.001).optional(),
+      receipt_quality_required: z.boolean().optional(),
       expected_row_version: positiveInt,
       designation: z.string().trim().min(1).max(400).optional(),
       designation_secondary: z.string().trim().min(1).max(400).optional().nullable(),

@@ -12,3 +12,6 @@
 
 # Rendus PDF de verification (CERP_PDF_PREVIEW=1), regenerables
 /outputs/
+
+# Local, reproducible QA bundles and synthetic evidence (never application source).
+/.qa/

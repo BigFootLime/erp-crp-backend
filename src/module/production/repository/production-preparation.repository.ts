@@ -251,7 +251,11 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
       AND q.archived_at IS NULL AND (q.effective_from IS NULL OR q.effective_from<=now()) AND (q.effective_to IS NULL OR q.effective_to>now())
       AND q.trigger_type IN ('IN_PROCESS','FINAL','FIRST_ARTICLE') ORDER BY q.published_at DESC,q.id LIMIT 1)
     SELECT jsonb_build_object('version',(SELECT to_jsonb(v)||jsonb_build_object('effective',v.date_effet IS NULL OR v.date_effet<=CURRENT_DATE) FROM v),'gamme',(SELECT to_jsonb(g) FROM g),
-      'purchases',COALESCE((SELECT jsonb_agg(to_jsonb(p) ORDER BY p.phase,p.id) FROM public.pieces_techniques_achats p WHERE p.piece_technique_id=$2::uuid AND p.piece_technique_version_id=$1::uuid),'[]'),
+      'purchases',COALESCE((SELECT jsonb_agg(to_jsonb(p) || CASE WHEN p.type_achat='CONSOMMABLE' THEN
+        jsonb_build_object('article_policy',(SELECT jsonb_build_object('stock_managed',a.stock_managed,'consumption_mode',a.consumption_mode,
+          'receipt_quality_required',a.receipt_quality_required,'unit',a.unite,'consumable',
+          EXISTS(SELECT 1 FROM public.article_category_link acl WHERE acl.article_id=a.id AND acl.category_code='consommable')) FROM public.articles a WHERE a.id=p.article_id))
+        ELSE '{}'::jsonb END ORDER BY p.phase,p.id) FROM public.pieces_techniques_achats p WHERE p.piece_technique_id=$2::uuid AND p.piece_technique_version_id=$1::uuid),'[]'),
       'documents',COALESCE((SELECT jsonb_agg(to_jsonb(docs) ORDER BY docs.id,docs.role) FROM docs),'[]'),
       'operations',COALESCE((SELECT jsonb_agg(to_jsonb(op) ORDER BY op.phase,op.id) FROM public.pieces_techniques_operations op WHERE op.gamme_id=(SELECT id FROM g)),'[]'),
       'components',COALESCE((SELECT jsonb_agg(to_jsonb(b)||jsonb_build_object('child_code',COALESCE(cp.code_piece,ca.code),'child_designation',COALESCE(cp.designation,ca.designation)) ORDER BY b.rang,b.id) FROM public.pieces_techniques_nomenclature b LEFT JOIN public.pieces_techniques cp ON cp.id=b.child_piece_technique_id LEFT JOIN public.articles ca ON ca.id=b.child_article_id WHERE b.parent_piece_technique_version_id=$1::uuid),'[]'),
