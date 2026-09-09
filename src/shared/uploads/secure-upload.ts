@@ -89,10 +89,12 @@ type UploadDestination = {
 export type UploadDestinationIdentity = Readonly<{
   dev: string;
   ino: string;
+  birthtimeNs?: string;
 }>;
 type UploadDestinationIdentityInput = Readonly<{
   dev: string | number | bigint;
   ino: string | number | bigint;
+  birthtimeNs?: string | number | bigint;
 }>;
 export type UploadFileReference = Readonly<{ path: string }>;
 const uploadDestinations = new Map<string, Map<string, UploadDestination>>();
@@ -1000,14 +1002,21 @@ export function preflightSecureUploadStorageRoots(): readonly string[] {
 function normalizeUploadDestinationIdentity(
   identity: UploadDestinationIdentityInput
 ): UploadDestinationIdentity {
-  return { dev: String(identity.dev), ino: String(identity.ino) };
+  return {
+    dev: String(identity.dev),
+    ino: String(identity.ino),
+    ...(identity.birthtimeNs !== undefined ? { birthtimeNs: String(identity.birthtimeNs) } : {}),
+  };
 }
 
 function sameUploadDestinationIdentity(
   expected: UploadDestinationIdentity,
   actual: UploadDestinationIdentityInput
 ): boolean {
-  return expected.dev === String(actual.dev) && expected.ino === String(actual.ino);
+  // Linux may immediately recycle an unlinked inode. Its creation timestamp
+  // distinguishes a replacement and, unlike ctime, survives our rename/link.
+  return expected.dev === String(actual.dev) && expected.ino === String(actual.ino)
+    && (expected.birthtimeNs === undefined || expected.birthtimeNs === String(actual.birthtimeNs));
 }
 
 type OwnedPathRemovalHook = (context: Readonly<{
