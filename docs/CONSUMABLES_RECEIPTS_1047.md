@@ -24,7 +24,7 @@ Le terminal est rattaché à un site et éventuellement à un magasin ; le magas
 
 ## Migrations et exploitation
 
-Préparer une sauvegarde puis exécuter chaque `support/*.preflight.sql`, le patch correspondant et son `verify.sql`. Ordre :
+Préparer une sauvegarde puis exécuter chaque `support/*.preflight.sql`, le patch correspondant avec `node scripts/db-patches.js up --only NOM_DU_PATCH.sql`, puis son `verify.sql`. Les huit empreintes LF sont enregistrées dans le runner : il conserve le verrou global, le contrôle de l’inventaire et le journal transactionnel. Ne pas relancer en production les scripts QA ni un `up` global non sélectionné. Ordre :
 
 1. `20260909_consumables.sql`
 2. `20260909_consumable_procurement.sql`
