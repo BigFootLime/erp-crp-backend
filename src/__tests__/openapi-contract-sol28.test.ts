@@ -62,6 +62,17 @@ describe("SOL-28 generated OpenAPI contract", () => {
       } else if (route.middleware.includes("authenticateClientPortal")) {
         expect(security, `${route.method} ${route.path}`).toEqual([{ clientPortalBearerAuth: [] }]);
         expect(operation["x-cerp-rbac"]).toEqual(["clientPortalTenantBoundary"]);
+      } else if (route.middleware.includes("requireTerminalDevice")) {
+        const sessionRequired = route.middleware.includes("requireTerminalSession");
+        expect(security, `${route.method} ${route.path}`).toEqual([
+          sessionRequired ? { terminalDevice: [], terminalSession: [] } : { terminalDevice: [] },
+        ]);
+        expect(operation["x-cerp-rbac"]).toEqual(
+          sessionRequired
+            ? ["terminalDeviceScope", "terminalSessionScope", "terminalKindScope"]
+            : ["terminalDeviceScope"]
+        );
+        expect(operation["x-cerp-public-reason"]).toBeUndefined();
       } else {
         expect(operation["x-cerp-public-reason"], `${route.method} ${route.path}`).toBeTypeOf("string");
       }
