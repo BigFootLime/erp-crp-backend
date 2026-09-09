@@ -34,13 +34,13 @@ function orderedPatches() {
   const files = fs.readdirSync(PATCH_DIR, { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith('.sql'))
     .map((entry) => entry.name);
-  return files.sort((left, right) => {
+  return require('../migrations/patch-dependencies').orderPatchDependencies(files.sort((left, right) => {
     const a = left.slice(0, -4);
     const b = right.slice(0, -4);
     if (b.startsWith(`${a}_`)) return -1;
     if (a.startsWith(`${b}_`)) return 1;
     return a.localeCompare(b, 'en', { numeric: true, sensitivity: 'base' });
-  });
+  }));
 }
 
 function runPatch(filename, command) {

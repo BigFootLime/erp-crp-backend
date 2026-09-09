@@ -31,6 +31,7 @@ export type OperationalQualityDecision = {
     control_ids: string[];
     release_decision_ids: string[];
     derogation_ids: string[];
+    receipt_admission_ids?: string[];
   };
 };
 
@@ -102,11 +103,19 @@ async function inspectOperationalLotQualityEligibility(params: {
   // control exactly as the delivery-release aggregate does; summing historical
   // controls for the same population would over-authorize physical stock.
   const controlIds = controls.rows.map((row) => row.id);
-  if(params.receiptLineId&&(!controls.rows[0]||controls.rows[0].trigger_type!=="RECEPTION"||controls.rows[0].reception_ligne_id!==params.receiptLineId))
+  const admission=!controls.rows.length?(await params.client.query<{id:string;quantity:number;unit:string;receipt_line_id:string;direct_consumed:number}>(`
+    SELECT d.id::text,d.quantity::float8,d.unit,d.receipt_line_id::text,
+      COALESCE((SELECT sum(abs(sl.qty)) FROM public.stock_movement_lines sl JOIN public.stock_movements sm ON sm.id=sl.movement_id
+        WHERE sl.lot_id=d.lot_id AND sm.status='POSTED' AND sm.movement_type='OUT'
+          AND NOT EXISTS(SELECT 1 FROM public.of_material_consumptions mc WHERE mc.stock_movement_line_id=sl.id AND mc.reservation_id IS NOT NULL)),0)::float8 AS direct_consumed
+    FROM public.consumable_receipt_admissions d JOIN public.reception_fournisseur_lignes rl ON rl.id=d.receipt_line_id
+    WHERE d.lot_id=$1::uuid AND rl.lot_id=d.lot_id AND NOT rl.receipt_quality_required`,[params.lotId])).rows[0]:null;
+  if(params.receiptLineId&&admission?.receipt_line_id!==params.receiptLineId&&(!controls.rows[0]||controls.rows[0].trigger_type!=="RECEPTION"||controls.rows[0].reception_ligne_id!==params.receiptLineId))
     throw new HttpError(409,"QUALITY_RECEIPT_CONTROL_REQUIRED","Ouvrez le contrôle qualité de cette réception et libérez la quantité acceptée avant la mise en stock.");
   const normalizedUnit = (value: string | null | undefined) => value?.trim().toUpperCase() || null;
   const articleUnit = normalizedUnit(lot.article_unit);
   const requestedUnit = normalizedUnit(params.unit);
+  if(admission&&normalizedUnit(admission.unit)!==articleUnit)throw new HttpError(409,'QUALITY_ADMISSION_UNIT_MISMATCH','L’admission enregistrée utilise une unité différente de celle de l’article.');
   if (requestedUnit && articleUnit && requestedUnit !== articleUnit) {
     throw new HttpError(
       409,
@@ -183,9 +192,9 @@ async function inspectOperationalLotQualityEligibility(params: {
     label: lot.lot_code,
     qty_requested: params.qty,
     lot_status: lot.lot_status,
-    qty_released: controls.rows.reduce((sum, row) => sum + numeric(row.qty_released), 0),
+    qty_released: admission?admission.quantity:controls.rows.reduce((sum, row) => sum + numeric(row.qty_released), 0),
     qty_held: controls.rows.reduce((sum, row) => sum + numeric(row.qty_held), 0),
-    qty_consumed: params.receiptLineId?0:controls.rows.reduce((sum, row) => sum + numeric(row.qty_consumed), 0),
+    qty_consumed: params.receiptLineId?0:admission?admission.direct_consumed:controls.rows.reduce((sum, row) => sum + numeric(row.qty_consumed), 0),
     open_nc_without_disposition: Number(nc.rows[0]?.total ?? 0),
     pending_mandatory_controls: controls.rows.filter((row) => row.pending).length,
     derogation: derogation.rows[0] ?? null,
@@ -213,6 +222,7 @@ async function inspectOperationalLotQualityEligibility(params: {
       control_ids: controlIds,
       release_decision_ids: concessions.rows.map((row) => row.decision_id),
       derogation_ids: concessions.rows.map((row) => row.derogation_id),
+      receipt_admission_ids:admission?[admission.id]:[],
     },
   };
 }
@@ -252,6 +262,9 @@ export async function recordDirectLotQualityConsumption(params: {
   }
   const controlId = params.decision.evidence.control_ids[0] ?? null;
   if (!controlId) {
+    // The posted OUT is the consumption ledger for a dispensed receipt. The
+    // gate already bounded it under the lot lock; never create a fake QC row.
+    if(params.decision.evidence.receipt_admission_ids?.length)return;
     // The assertion cannot normally succeed without a current control, but do
     // not silently turn an unexpected data shape into an unbounded release.
     throw new HttpError(409, "QUALITY_CONTROL_MISSING", "Aucun contrôle Qualité ne peut enregistrer cette consommation.");

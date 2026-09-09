@@ -158,7 +158,7 @@ const achatInputSchema = z.object({
   // GPAO B3.5/B4 — catégorie de nomenclature d'achat (défaut DIVERS). Additif : les payloads
   // existants sans type_achat restent valides.
   type_achat: z
-    .enum(["MATIERE", "VISSERIE", "COMPOSANT_CATALOGUE", "TRAITEMENT", "SOUS_TRAITANCE", "CERTIFICAT", "DIVERS"])
+    .enum(["MATIERE", "CONSOMMABLE", "VISSERIE", "COMPOSANT_CATALOGUE", "TRAITEMENT", "SOUS_TRAITANCE", "CERTIFICAT", "DIVERS"])
     .optional()
     .default("DIVERS"),
   famille_piece_id: uuid.optional().nullable(),

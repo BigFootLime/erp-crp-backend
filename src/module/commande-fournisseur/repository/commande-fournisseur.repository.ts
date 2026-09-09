@@ -22,6 +22,7 @@ import {
   roleHasCommandeFournisseurCapability,
 } from "../domain/commande-fournisseur-rbac";
 import { computeCommandeTotaux, computeLigneTotaux, roundMoney } from "../domain/commande-fournisseur-totaux";
+import {assertConsumableOrderReadyTx} from './consumable-order-validation.repository';
 import { repoRecordInitialPromiseEvent } from "../../procurement-reliability/repository/procurement-reliability.repository";
 import { readIssuerParty } from "../../../shared/documents/issuer-identity.repository";
 import { authoritativePdfFilename } from "../../../shared/authoritative-documents/authoritative-document.filename";
@@ -588,11 +589,11 @@ async function fetchLignes(tx: DbQueryer, commandeId: string): Promise<CommandeF
       unite_stock: r.unite_stock,
       coef_conversion: numOrNull(r.coef_t),
       quantite,
-      prix_unitaire_ht: num(r.pu_t),
+      prix_unitaire_ht: numOrNull(r.pu_t),
       remise_pct: num(r.remise_t),
       tva_pct: num(r.tva_t),
       frais_ht: num(r.frais_t),
-      net_ht: net,
+      net_ht: r.pu_t == null ? null : net,
       date_besoin: r.date_besoin_t,
       date_promesse: r.date_promesse_t,
       delai_jours: r.delai_jours == null ? null : Number(r.delai_jours),
@@ -778,7 +779,7 @@ async function insertLigneTx(
   userId: number,
   materialCoverageConfirmed = false
 ): Promise<string> {
-  if(ligne.type==="MATIERE"&&ligne.of_id&&!materialCoverageConfirmed)await assertLegacyMaterialWrite(tx,ligne.of_id,ligne.article_id??null);
+  if(ligne.of_id&&!materialCoverageConfirmed&&(ligne.type==="MATIERE"||ligne.type==="ARTICLE"))await assertLegacyMaterialWrite(tx,ligne.of_id,ligne.article_id??null);
   const res = await tx.query<{ id: string }>(
     `INSERT INTO public.commande_fournisseur_ligne (
         commande_id, position, type, article_id, catalogue_id, reference_fournisseur,
@@ -822,6 +823,9 @@ async function insertLigneTx(
     ]
   );
   const ligneId = res.rows[0].id;
+  await tx.query(`UPDATE public.commande_fournisseur_ligne l SET receipt_stock_managed=a.stock_managed,
+    receipt_quality_required=a.receipt_quality_required,receipt_consumption_mode=a.consumption_mode FROM public.articles a
+    WHERE l.id=$1::uuid AND a.id=l.article_id AND EXISTS(SELECT 1 FROM public.article_category_link ac WHERE ac.article_id=a.id AND ac.category_code='consommable')`,[ligneId]);
 
   for (const besoin of ligne.besoins ?? []) {
     try {
@@ -1351,6 +1355,10 @@ export async function repoTransitionCommandeFournisseur(
 
     // Préconditions métier par nature de transition.
     if (kind === "submit" || kind === "approve") {
+      const incomplete=(await client.query<{id:string}>(`SELECT id::text FROM public.commande_fournisseur_ligne
+        WHERE commande_id=$1::uuid AND statut_ligne='ACTIVE' AND prix_unitaire_ht IS NULL`,[id])).rows;
+      if(incomplete.length)throw new HttpError(422,"SUPPLIER_PRICE_REQUIRED","Complétez les prix inconnus dans le brouillon avant sa validation.",{line_ids:incomplete.map(l=>l.id)});
+      await assertConsumableOrderReadyTx(client,id);
       const nbLignes = await countLignesActives(client, id);
       if (nbLignes === 0) {
         throw new HttpError(422, "COMMANDE_SANS_LIGNE", "Impossible sans au moins une ligne active.");
@@ -2216,10 +2224,12 @@ export async function repoConfirmPropositions(
 /* ----------------------------------- duplication ----------------------------------- */
 
 export type MaterialDraftLine = {
-  needId: string; sourceRef: string; ofId: number; articleId: string; designation: string;
+  needId: string | null; sourceRef: string; ofId: number | null; articleId: string; designation: string;
   supplierId: string; currency: string; destinationId: string | null; unit: string;
-  quantity: number; assigned: number; price: number; due: string | null;
+  quantity: number; assigned: number; price: number | null; due: string | null;
+  type?:"MATIERE"|"ARTICLE";stockUnit?:string;coefficient?:number;catalogueId?:string|null;supplierReference?:string|null;delay?:number|null;
   requirements: string[]; operation: string;
+  allocations?: Array<{needId:string;sourceRef:string;ofId:number;assigned:number}>;
 };
 /** Called inside the coverage transaction, after reservations and net-shortage checks. */
 export async function createMaterialDraftsTx(tx: PoolClient, lines: MaterialDraftLine[], audit: AuditContext) {
@@ -2232,23 +2242,25 @@ export async function createMaterialDraftsTx(tx: PoolClient, lines: MaterialDraf
   for (const group of groups.values()) {
     const first = group[0];
     assertFournisseurCommandable(await fetchFournisseurMini(tx, first.supplierId));
-    const reusable = await findUntouchedMaterialDraftTx(tx,first);
+    const reusable = first.ofId ? await findUntouchedMaterialDraftTx(tx,first) : null;
     const code = reusable?.code ?? await generateCommandeFournisseurCode(tx);
     const id = reusable?.id ?? (await tx.query<{id:string}>(`INSERT INTO public.commande_fournisseur
       (code,origine,fournisseur_id,devise,magasin_livraison_id,note_interne,created_by,updated_by)
-      VALUES($1,'RUPTURE_OF',$2::uuid,$3,$4::uuid,'Préparé après confirmation de la couverture matière. À relire avant validation.', $5,$5) RETURNING id`,
-      [code,first.supplierId,first.currency,first.destinationId,audit.user_id])).rows[0].id;
+      VALUES($1,$6,$2::uuid,$3,$4::uuid,'Approvisionnement préparé. Confirmer les quantités, prix et délais avant validation.', $5,$5) RETURNING id`,
+      [code,first.supplierId,first.currency,first.destinationId,audit.user_id,group.some(l=>l.ofId)?'RUPTURE_OF':'MANUEL'])).rows[0].id;
     const position = reusable ? Number((await tx.query('SELECT COALESCE(max(position),0) AS position FROM public.commande_fournisseur_ligne WHERE commande_id=$1::uuid',[id])).rows[0].position) : 0;
     for (const [index,line] of group.entries()) {
       const lineId = await insertLigneTx(tx,id,position+index+1,{
-        type:"MATIERE",article_id:line.articleId,designation:line.designation,unite:line.unit,unite_stock:line.unit,coef_conversion:1,
-        quantite:line.quantity,prix_unitaire_ht:line.price,remise_pct:0,tva_pct:20,frais_ht:0,date_besoin:line.due,
+        type:line.type??"MATIERE",article_id:line.articleId,designation:line.designation,unite:line.unit,unite_stock:line.stockUnit??line.unit,coef_conversion:line.coefficient??1,
+        catalogue_id:line.catalogueId,reference_fournisseur:line.supplierReference,
+        quantite:line.quantity,prix_unitaire_ht:line.price,remise_pct:0,tva_pct:20,frais_ht:0,date_besoin:line.due,delai_jours:line.delay,
         of_id:line.ofId,operation_libelle:line.operation,magasin_id:line.destinationId,
         exigences_qualite:line.requirements.map(valeur=>({type:"SPECIFICATION" as const,valeur,obligatoire:true})),documents_attendus:[],besoins:[],
       },audit.user_id,true);
-      await tx.query(`INSERT INTO public.commande_fournisseur_ligne_besoin
+      const allocations=line.allocations??(line.needId&&line.ofId?[{needId:line.needId,sourceRef:line.sourceRef,ofId:line.ofId,assigned:line.assigned}]:[]);
+      for(const allocation of allocations)await tx.query(`INSERT INTO public.commande_fournisseur_ligne_besoin
         (ligne_id,besoin_type,besoin_ref,besoin_of_id,of_id,quantite_couverte,material_need_id)
-        VALUES($1::uuid,'OF_MATERIAL',$2,$3,$3,$4,$5::uuid)`,[lineId,line.sourceRef,line.ofId,line.assigned,line.needId]);
+        VALUES($1::uuid,'OF_MATERIAL',$2,$3,$3,$4,$5::uuid)`,[lineId,allocation.sourceRef,allocation.ofId,allocation.assigned,allocation.needId]);
     }
     await recomputeTotauxTx(tx,id);
     if(!reusable){
@@ -2256,7 +2268,7 @@ export async function createMaterialDraftsTx(tx: PoolClient, lines: MaterialDraf
       await queueSupplierPurchaseOrderCreationPdfTx(tx,{commandeId:id,code,actorUserId:audit.user_id});
     }
     await recordMaterialDraftBaselineTx(tx,id);
-    await insertAuditLog(tx,audit,{action:"commandes_fournisseurs.material.draft",entity_type:"commande_fournisseur",entity_id:id,details:{code,extended:!!reusable,needs:group.map(l=>({needId:l.needId,ordered:l.quantity,assigned:l.assigned,surplus:l.quantity-l.assigned}))}});
+    await insertAuditLog(tx,audit,{action:"commandes_fournisseurs.material.draft",entity_type:"commande_fournisseur",entity_id:id,details:{code,extended:!!reusable,needs:group.map(l=>({needId:l.needId,ordered:l.quantity,assigned:l.assigned,surplus:l.quantity*(l.coefficient??1)-l.assigned}))}});
     commands.push({id,code});
   }
   return commands;
@@ -2315,6 +2327,11 @@ export async function repoDuplicateAsDraft(
         WHERE commande_id = $1::uuid AND statut_ligne = 'ACTIVE'`,
       [id, newId, audit.user_id]
     );
+
+    // A new draft uses the current consumable policy; historical receipts keep their snapshot.
+    await client.query(`UPDATE public.commande_fournisseur_ligne l SET receipt_stock_managed=a.stock_managed,
+      receipt_quality_required=a.receipt_quality_required,receipt_consumption_mode=a.consumption_mode FROM public.articles a
+      WHERE l.commande_id=$1::uuid AND a.id=l.article_id AND EXISTS(SELECT 1 FROM public.article_category_link ac WHERE ac.article_id=a.id AND ac.category_code='consommable')`,[newId]);
 
     await recomputeTotauxTx(client, newId);
     await insertTransitionRow(client, newId, null, "BROUILLON", `Duplication de ${source.code}`, audit.user_id);

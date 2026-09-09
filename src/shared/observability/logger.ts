@@ -37,6 +37,7 @@ function isSensitiveKey(key: string): boolean {
     "filename", "filepath", "storagekey", "storagepath", "absolutepath", "stack", "message", "userid",
     "actorid", "accountid", "customerid", "ip", "clientip", "useragent", "username", "usernameattempt",
     "sql", "query", "statement", "details", "document", "documentname",
+    "pin", "pinhash", "pairingcode", "xterminaldevice", "xstationsession",
   ].includes(compact)) return true;
   return compact.includes("password")
     || compact.includes("passphrase")

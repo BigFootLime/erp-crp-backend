@@ -71,6 +71,18 @@ afterEach(async () => {
 });
 
 describe("shared upload transaction lifecycle", () => {
+  it("préserve un fichier dont le numéro d'inode a été réutilisé", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "cerp-upload-inode-reused-"));
+    roots.push(root);
+    const destination = path.join(root, "replacement.pdf");
+    await fs.writeFile(destination, "replacement B", { mode: 0o600 });
+    const stat = await fs.stat(destination, { bigint: true });
+    const { removeOwnedPathSafely } = await import("../shared/uploads/secure-upload");
+    await expect(removeOwnedPathSafely(destination, {
+      dev: stat.dev, ino: stat.ino, birthtimeNs: stat.birthtimeNs - 1n,
+    })).rejects.toMatchObject({ code: "UPLOAD_CLEANUP_FAILED" });
+    await expect(fs.readFile(destination, "utf8")).resolves.toBe("replacement B");
+  });
   it("publie un buffer via une ownership opaque puis vérifie SHA, taille et inode", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "cerp-upload-buffer-owned-"));
     roots.push(root);

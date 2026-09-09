@@ -314,7 +314,7 @@ export async function deleteQuarantinedFile(quarantineKey: string): Promise<void
   if (!stat.isFile()) {
     throw new HttpError(409, "GED_QUARANTINE_FILE_CHANGED", "Le fichier de quarantaine a changé.");
   }
-  await removeOwnedPathSafely(filePath, { dev: String(stat.dev), ino: String(stat.ino) });
+  await removeOwnedPathSafely(filePath, stat);
 }
 
 export async function stageQuarantinedFileForRelease(
@@ -363,7 +363,7 @@ export async function cleanupQuarantineReleaseStaging(stagingPath: string): Prom
   if (!stat.isFile()) {
     throw new HttpError(409, "GED_QUARANTINE_FILE_CHANGED", "Le staging de quarantaine a changé.");
   }
-  await removeOwnedPathSafely(resolved, { dev: String(stat.dev), ino: String(stat.ino) });
+  await removeOwnedPathSafely(resolved, stat);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -384,19 +384,22 @@ export type VaultBlobOwnership =
       destination: string;
       dev: string;
       ino: string;
+      birthtimeNs?: string;
     }>
   | Readonly<{ kind: "deduplicated" }>;
 
 function vaultIdentityMatches(
   ownership: Extract<VaultBlobOwnership, { kind: "created" }>,
-  stat: Readonly<{ dev: string | number | bigint; ino: string | number | bigint }>
+  stat: VaultIdentityInput
 ): boolean {
-  return ownership.dev === String(stat.dev) && ownership.ino === String(stat.ino);
+  return ownership.dev === String(stat.dev) && ownership.ino === String(stat.ino)
+    && (ownership.birthtimeNs === undefined || ownership.birthtimeNs === String(stat.birthtimeNs));
 }
 
 type VaultIdentityInput = Readonly<{
   dev: string | number | bigint;
   ino: string | number | bigint;
+  birthtimeNs?: string | number | bigint;
 }>;
 
 function createdVaultOwnership(
@@ -408,6 +411,7 @@ function createdVaultOwnership(
     destination,
     dev: String(identity.dev),
     ino: String(identity.ino),
+    ...(identity.birthtimeNs !== undefined ? { birthtimeNs: String(identity.birthtimeNs) } : {}),
   };
 }
 
@@ -429,6 +433,7 @@ async function assertVaultPathIdentity(
     !current.isFile()
     || String(current.dev) !== String(identity.dev)
     || String(current.ino) !== String(identity.ino)
+    || (identity.birthtimeNs !== undefined && String(current.birthtimeNs) !== String(identity.birthtimeNs))
   ) {
     throw new HttpError(
       409,
@@ -499,6 +504,7 @@ export async function writeBlob(buffer: Buffer): Promise<WrittenBlob> {
         destination,
         dev: String(stagingStat.dev),
         ino: String(stagingStat.ino),
+        birthtimeNs: String(stagingStat.birthtimeNs),
       };
     } catch (publishError) {
       if ((publishError as NodeJS.ErrnoException).code !== "EEXIST") throw publishError;

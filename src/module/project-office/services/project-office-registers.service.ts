@@ -12,6 +12,7 @@ import { HttpError } from "../../../utils/httpError";
 import logger from "../../../utils/logger";
 import {
   cleanupSecureBufferDestination,
+  releaseSecureBufferDestination,
   verifySecureBufferDestination,
   writeSecureBufferToDestination,
   type SecureBufferDestinationOwnership,
@@ -648,6 +649,8 @@ export async function uploadEvidenceFile(
       throw new HttpError(409, "PO_EVIDENCE_FILE_DUPLICATE", "Ce fichier est déjà enregistré dans ce projet.");
     }
     throw err;
+  } finally {
+    if (ownership) releaseSecureBufferDestination(ownership);
   }
 }
 

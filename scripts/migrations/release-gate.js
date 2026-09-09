@@ -53,7 +53,7 @@ function sha256(content) {
 }
 
 function orderedPatches() {
-  return fs.readdirSync(PATCH_DIR, { withFileTypes: true })
+  return require('./patch-dependencies').orderPatchDependencies(fs.readdirSync(PATCH_DIR, { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith(".sql"))
     .map((entry) => entry.name)
     .sort((left, right) => {
@@ -62,7 +62,7 @@ function orderedPatches() {
       if (b.startsWith(`${a}_`)) return -1;
       if (a.startsWith(`${b}_`)) return 1;
       return a.localeCompare(b, "en", { numeric: true, sensitivity: "base" });
-    });
+    }));
 }
 
 function expectedRehearsalPatches() {
@@ -818,6 +818,10 @@ async function rehearse(options = {}) {
     await verifyClient.connect();
     const verifyStarted = Date.now();
     try {
+      // Historical privilege observed in production, absent from the additive
+      // ledger. The disposable source stops before this table exists, so its
+      // legacy grant must be restored after migration, before role verification.
+      await verifyClient.query("GRANT SELECT ON public.article_category_referential TO cerp_app");
       for (const patch of expectedPending) {
         const verifySql = patchSupportSql(patch, "verify");
         if (verifySql) await runSqlFile(verifyClient, verifySql);

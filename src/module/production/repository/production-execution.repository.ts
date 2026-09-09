@@ -1416,10 +1416,13 @@ export async function repoTransitionSegment(params: {
   idempotencyKey: string;
   actorRole: string | null | undefined;
   audit: AuditContext;
+  transactionHooks?: ProductionExecutionTransactionHooks<{id:string}>;
 }): Promise<ExecutionListItem> {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+
+    await params.transactionHooks?.beforeEffect(client);
 
     const replay = await reserveIdempotencyKey<{ id: string }>(client, {
       key: params.idempotencyKey,

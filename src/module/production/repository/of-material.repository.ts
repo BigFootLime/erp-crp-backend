@@ -26,7 +26,7 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
       (SELECT jsonb_agg(to_jsonb(p)) FROM public.pieces_techniques_achats p WHERE p.piece_technique_id=o.piece_technique_id AND p.piece_technique_version_id=o.piece_technique_version_id),'[]'::jsonb) AS purchases
     FROM public.ordres_fabrication o WHERE o.id=$1`,[ofId])).rows[0];
   const purchases=(of.purchases as Purchase[]).filter(p=>p.type_achat==="MATIERE");
-  const saved=(await tx.query<NeedRow>("SELECT * FROM public.of_material_needs WHERE of_id=$1 ORDER BY created_at,id",[ofId])).rows;
+  const saved=(await tx.query<NeedRow>("SELECT * FROM public.of_material_needs WHERE of_id=$1 AND need_kind='MATIERE' ORDER BY created_at,id",[ofId])).rows;
   const destinations=(await tx.query<{source_need_id:string;target_need_id:string}>("SELECT source_need_id::text,target_need_id::text FROM public.v_of_material_need_destinations WHERE of_id=$1",[ofId])).rows;
   const reconciliations=(await tx.query<{id:string;previous_need_id:string;target_need_id:string|null;disposition:'CARRY'|'KEEP_SEPARATE';reason:string;created_at:string;actor:string;reviewed_snapshot:Record<string,unknown>}>(`SELECT r.*,r.created_at::text,u.username AS actor FROM public.of_material_revision_resolutions r JOIN public.users u ON u.id=r.created_by WHERE r.of_id=$1 ORDER BY r.created_at,r.id`,[ofId])).rows;
   const destinationByNeed=new Map(destinations.map(d=>[d.source_need_id,d.target_need_id]));

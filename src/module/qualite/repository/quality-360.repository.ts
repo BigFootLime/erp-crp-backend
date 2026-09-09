@@ -961,13 +961,14 @@ export async function repoPlanApplicability(query: PlanApplicabilityQueryDTO): P
 
 async function buildExecutionSnapshot(
   q: DbQueryer,
-  body: ExecutionPreviewBodyDTO
+  body: ExecutionPreviewBodyDTO,
+  ofSnapshotOnly = false
 ): Promise<{
   plan: PlanCandidate;
   characteristics: QualityCharacteristicSpec[];
   snapshot: { payload: Record<string, unknown>; sha256: string };
 }> {
-  const applicability = await resolveApplicablePlan(q, {
+  const applicability = ofSnapshotOnly ? await frozenOfPlan(q,body) : await resolveApplicablePlan(q, {
     trigger: body.trigger,
     article_id: body.article_id ?? undefined,
     piece_technique_id: body.piece_technique_id ?? undefined,
@@ -1001,6 +1002,19 @@ async function buildExecutionSnapshot(
   });
 
   return { plan: applicability.plan, characteristics: applicability.characteristics, snapshot };
+}
+
+// Native terminals use the quality plan released with the OF, or the plan
+// already snapshotted by a control of this OF and trigger. No latest revision.
+async function frozenOfPlan(q:DbQueryer,body:ExecutionPreviewBodyDTO) {
+  if(!body.of_id)throw new HttpError(422,'QUALITY_OF_REQUIRED','OF obligatoire.');
+  const frozen=(await q.query<{plan_id:string|null}>(`SELECT COALESCE(
+    (SELECT c.plan_id::text FROM public.quality_control c WHERE c.of_id=o.id AND c.trigger_type=$2 AND c.plan_id IS NOT NULL ORDER BY c.control_date,c.id LIMIT 1),
+    o.technical_snapshot->'preparation_evidence'->'quality_plan'->>'id') AS plan_id
+    FROM public.ordres_fabrication o WHERE o.id=$1`,[body.of_id,body.trigger])).rows[0];
+  const row=frozen?.plan_id?await selectPlanRow(q,frozen.plan_id):null;
+  if(!row||row.trigger_type!==body.trigger||!['PUBLISHED','ARCHIVED'].includes(row.status))throw new HttpError(409,'QUALITY_OF_PLAN_MISSING','Aucun plan de contrôle applicable figé pour ce déclencheur. La qualité doit compléter le dossier de l’OF.');
+  return {plan:planRowToCandidate(row),label:row.label,published_at:row.published_at,characteristics:await selectPlanCharacteristics(q,row.id)};
 }
 
 /**
@@ -1133,10 +1147,10 @@ async function resolveLotReleaseAllocation(
   };
 }
 
-export async function repoPreviewExecution(body: ExecutionPreviewBodyDTO): Promise<ExecutionPreview> {
+export async function repoPreviewExecution(body: ExecutionPreviewBodyDTO,ofSnapshotOnly=false): Promise<ExecutionPreview> {
   assertSourceRef({ source_type: body.source_type, source_id: body.source_id });
   const scopedBody = await resolveStockLotContext(pool, await resolveLotReleaseAllocation(pool, body));
-  const built = await buildExecutionSnapshot(pool, scopedBody);
+  const built = await buildExecutionSnapshot(pool, scopedBody,ofSnapshotOnly);
   return {
     plan: { id: built.plan.id, code: built.plan.code, version: built.plan.version },
     snapshot_sha256: built.snapshot.sha256,
@@ -1397,6 +1411,7 @@ export async function repoCreateExecution(params: {
   body: CreateExecutionBodyDTO;
   actor: QualityActor;
   idempotencyKey: string | null | undefined;
+  ofSnapshotOnly?: boolean;
 }): Promise<ExecutionDetail> {
   const source = assertSourceRef({
     source_type: params.body.source_type,
@@ -1421,7 +1436,7 @@ export async function repoCreateExecution(params: {
       const pending=(await client.query<{id:string;reference:string}>("SELECT id::text,reference FROM public.quality_control WHERE lot_id=$1::uuid AND validation_date IS NULL ORDER BY control_date DESC,id DESC LIMIT 1",[scopedBody.lot_id])).rows[0];
       if(pending)throw new HttpError(409,"QUALITY_LOT_CONTROL_PENDING",`Le contrôle ${pending.reference} est déjà ouvert pour ce lot. Terminez-le avant d’en créer un autre.`,{control_id:pending.id});
     }
-    const built = await buildExecutionSnapshot(client, scopedBody);
+    const built = await buildExecutionSnapshot(client, scopedBody,params.ofSnapshotOnly);
     // L'aperçu doit encore correspondre au plan applicable : sinon le référentiel
     // a bougé entre l'aperçu et la confirmation.
     assertPreviewFresh({
@@ -1630,8 +1645,16 @@ export async function repoRecordMeasurements(params: {
   id: string;
   body: RecordMeasurementsBodyDTO;
   actor: QualityActor;
+  idempotencyKey?: string;
 }): Promise<ExecutionDetail | null> {
   return withTransaction(async (client) => {
+    const idem = params.idempotencyKey ? await acquireIdempotency({client,actor:params.actor,
+      idempotencyKeyRaw:params.idempotencyKey,commandType:'quality.execution.measurements',
+      requestPayload:{id:params.id,...params.body}}) : null;
+    if(idem?.replay) {
+      const row=await selectExecutionRow(client,params.id);
+      return row ? buildExecutionDetail(row,await selectMeasurements(client,params.id)) : null;
+    }
     const before = await selectExecutionRow(client, params.id, true);
     if (!before) return null;
 
@@ -1851,6 +1874,10 @@ export async function repoRecordMeasurements(params: {
       entity_id: params.id,
       details: { recorded: params.body.measurements.length, verdict_computed: computed.verdict },
     });
+
+    if(idem) await saveReceipt({client,actor:params.actor,idempotencyKey:idem.idempotencyKey,requestHash:idem.requestHash,
+      commandType:'quality.execution.measurements',aggregateType:'CONTROL',aggregateId:params.id,
+      requestPayload:{id:params.id,...params.body},resultPayload:{control_id:params.id},correlationId:before.correlation_id});
 
     const after = await selectExecutionRow(client, params.id);
     return buildExecutionDetail(after!, await selectMeasurements(client, params.id));

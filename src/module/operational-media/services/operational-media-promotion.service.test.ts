@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import path from "node:path";
+import os from "node:os";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ lstat: vi.fn(), realpath: vi.fn(), open: vi.fn() }));
@@ -10,7 +12,7 @@ vi.mock("../../../utils/imageStorage", () => ({
 
 import { promoteOperationalImage } from "./operational-media-promotion.service";
 
-const root = "C:\\generated\\images";
+const root = path.join(os.tmpdir(), "cerp-promotion-fixture", "images");
 const assetId = "4a99e772-4496-4c0d-a5a2-2b82c1f8c5c1";
 const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
 const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]);
@@ -24,7 +26,7 @@ function file(data: Buffer, scanStatus: "clean" | "unavailable" | "pending" | "i
 }
 function stat(data: Buffer, ino = 5) { return { dev: 1n, ino: BigInt(ino), size: BigInt(data.length), isFile: () => true, isSymbolicLink: () => false }; }
 function arrange(data: Buffer, suffix = "a.png") {
-  const candidate = `${root}\\outillage\\${suffix}`;
+  const candidate = path.join(root, "outillage", suffix);
   const handle = {
     stat: vi.fn().mockResolvedValue(stat(data)),
     read: vi.fn(async (buffer: Buffer, _offset: number, length: number, position: number) => {

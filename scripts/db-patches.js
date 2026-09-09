@@ -11,6 +11,22 @@ const DEFAULT_PATCH_DIR = path.join(ROOT_DIR, "db", "patches");
 const MIGRATION_TABLE = "public.cerp_schema_migrations";
 const LOCK_NAME = "cerp_schema_migrations";
 const IMMUTABLE_ONLY_PATCHES = Object.freeze({
+  "20260909_consumables.sql":
+    "4568d0e60c950efa952fa998a3779640bf8419682a067bceb349e60cff98c8bf",
+  "20260909_consumable_procurement.sql":
+    "e0a11776c9245f7eb87729b54e6facc7e88eeebeb3f395815183bba6ac126fec",
+  "20260909_grouped_supplier_receipts.sql":
+    "efe536e8a6cd60c358ed296d0fc673a3d0f246335a61a950b61f64330a7d6ffc",
+  "20260909_consumable_need_reservations.sql":
+    "952f3d69ed129df856864a68c0c89bec2f74e8703ca4543a4ef0c1a0fd8b095a",
+  "20260908_android_terminals_1038.sql":
+    "5372c1d596f41a34e379beea58fc1da8ef020ee13dc31330a76a44b168c754a4",
+  "20260908_android_automatic_time_1038.sql":
+    "5d001ab0c47347302635dc882ed04f65308746723ca5994dfe940a5051907ff4",
+  "20260909_supply_terminals.sql":
+    "51416563b6a98006569c930d86a6d53f2526793b0d4b207790680bab6241341d",
+  "20260909_consumable_of_revision.sql":
+    "ca2bdffeac30ae585a9cc69fa51bd56f39a463f8076b04b9919f2a6410ad254c",
   "20260906_planning_central.sql":
     "efeb375ee3ba8116d54c13dc5fec8ea21fd991e29536f7fdb0756119740506d8",
   "20260906_planning_central_batch_constraints.sql":
@@ -232,10 +248,10 @@ function listPatches(patchDir) {
     throw new Error(`Patch directory not found: ${patchDir}`);
   }
 
-  return fs.readdirSync(patchDir)
+  const filenames = fs.readdirSync(patchDir)
     .filter((name) => name.endsWith(".sql"))
-    .sort((a, b) => a.localeCompare(b))
-    .map((filename) => {
+    .sort((a, b) => a.localeCompare(b));
+  return require("./migrations/patch-dependencies").orderPatchDependencies(filenames).map((filename) => {
       const fullPath = path.join(patchDir, filename);
       const sql = fs.readFileSync(fullPath, "utf8");
       const sha256 = sha256Sql(sql);

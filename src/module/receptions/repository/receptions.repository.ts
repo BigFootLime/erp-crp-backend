@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg"
+import { readOffStockSurplusTx } from './off-stock-surplus.repository'
 import {receiptUnitConversion,convertedStockQuantity} from "../domain/receipt-unit-conversion"
 import {assertReceiptLotQualityEligibility,readReceiptLotQualityEligibility} from "../../qualite/repository/quality-operational-gate.repository"
 import {lockMaterialReceiptRecipientsTx,transferMaterialReceiptTx} from "../../production/repository/of-material-receipts.repository"
@@ -170,6 +171,7 @@ async function reserveReceptionNo(client: Pick<PoolClient, "query">): Promise<st
 }
 
 type ReceptionRow = {
+  confirmation_state?: "DRAFT" | "CONFIRMED" | null
   id: string
   reception_no: string
   fournisseur_id: string|null
@@ -188,6 +190,7 @@ type ReceptionRow = {
 
 function mapReceptionRow(r: ReceptionRow): ReceptionFournisseur {
   return {
+    confirmation_state:r.confirmation_state,
     id: r.id,
     reception_no: r.reception_no,
     fournisseur_id: r.fournisseur_id,
@@ -204,6 +207,7 @@ function mapReceptionRow(r: ReceptionRow): ReceptionFournisseur {
 }
 
 type ReceptionListRow = {
+  confirmation_state?: "DRAFT" | "CONFIRMED" | null
   id: string
   reception_no: string
   fournisseur_id: string|null
@@ -222,6 +226,10 @@ type ReceptionListRow = {
 }
 
 type LineRow = {
+  destination_magasin_id?:string|null
+  destination_emplacement_id?:number|null
+  stock_managed?:boolean
+  receipt_quality_required?:boolean
   stock_unit:string|null
   stock_conversion_coef:number|null
   id: string
@@ -368,7 +376,7 @@ async function selectLineDetail(tx: DbQueryer, lineId: string): Promise<Receptio
         a.designation AS article_designation,
         l.designation,
         l.qty_received::float8 AS qty_received,
-        l.stock_unit,l.stock_conversion_coef::float8,
+        l.stock_unit,l.stock_conversion_coef::float8,l.stock_managed,l.receipt_quality_required,l.destination_magasin_id::text,l.destination_emplacement_id::int,
         l.unite,
         l.supplier_lot_code,
         l.lot_id::text AS lot_id,
@@ -438,7 +446,7 @@ export async function repoListReceptions(filters: ListReceptionsQueryDTO): Promi
       r.fournisseur_id::text AS fournisseur_id,r.origin_type,r.client_proprietaire_id,c.company_name AS client_name,
       COALESCE(f.code,c.client_code,c.client_id) AS fournisseur_code,
       COALESCE(f.nom,c.company_name,c.client_id) AS fournisseur_nom,
-      r.status,
+      r.status,r.confirmation_state,
       r.reception_date::text AS reception_date,
       r.supplier_reference,
       COALESCE(agg.lines_count, 0)::int AS lines_count,
@@ -513,7 +521,7 @@ export async function repoGetReception(id: string): Promise<ReceptionFournisseur
         reception_no,
         fournisseur_id::text AS fournisseur_id,origin_type,client_proprietaire_id,(SELECT company_name FROM public.clients WHERE client_id=receptions_fournisseurs.client_proprietaire_id) AS client_name,
         status,
-        reception_date::text AS reception_date,
+        reception_date::text AS reception_date,confirmation_state,
         supplier_reference,
         commentaire,
         created_at::text AS created_at,
@@ -540,7 +548,7 @@ export async function repoGetReception(id: string): Promise<ReceptionFournisseur
         a.designation AS article_designation,
         l.designation,
         l.qty_received::float8 AS qty_received,
-        l.stock_unit,l.stock_conversion_coef::float8,
+        l.stock_unit,l.stock_conversion_coef::float8,l.stock_managed,l.receipt_quality_required,l.destination_magasin_id::text,l.destination_emplacement_id::int,
         l.unite,
         l.supplier_lot_code,
         l.lot_id::text AS lot_id,
@@ -670,8 +678,10 @@ export async function repoGetReception(id: string): Promise<ReceptionFournisseur
   )
 
   const enrichedLines:ReceptionFournisseurLine[]=[]
+  const offStockSurplus=await readOffStockSurplusTx(db,lines.rows.filter(line=>line.stock_managed===false).map(line=>line.id))
   for(const row of lines.rows){
     const line=mapLineRow(row)
+    line.unallocated_off_stock=offStockSurplus.get(line.id)??null
     if(line.lot_id){
       const unit=line.stock_unit??line.unite,coefficient=line.stock_conversion_coef??1
       try{
@@ -698,9 +708,8 @@ export async function repoGetReception(id: string): Promise<ReceptionFournisseur
   }
 }
 
-export async function repoCreateReception(body: CreateReceptionBodyDTO, audit: AuditContext): Promise<ReceptionFournisseur> {
-  const client = await db.connect()
-  return withRealtimeOutboxTransaction(client, async (tx) => {
+export async function repoCreateReception(body: CreateReceptionBodyDTO, audit: AuditContext,transactionClient?:PoolClient): Promise<ReceptionFournisseur> {
+  const execute=async (tx:PoolClient) => {
     const receptionNo = await reserveReceptionNo(tx)
 
     // #172 — rattachement facultatif à une commande fournisseur : même fournisseur, et la
@@ -748,7 +757,7 @@ export async function repoCreateReception(body: CreateReceptionBodyDTO, audit: A
           reception_no,
           fournisseur_id::text AS fournisseur_id,origin_type,client_proprietaire_id,(SELECT company_name FROM public.clients WHERE client_id=receptions_fournisseurs.client_proprietaire_id) AS client_name,
           status,
-          reception_date::text AS reception_date,
+          reception_date::text AS reception_date,confirmation_state,
           supplier_reference,
           commentaire,
           created_at::text AS created_at,
@@ -777,7 +786,8 @@ export async function repoCreateReception(body: CreateReceptionBodyDTO, audit: A
     })
 
     return mapReceptionRow(row)
-  })
+  }
+  return transactionClient?execute(transactionClient):withRealtimeOutboxTransaction(await db.connect(),execute)
 }
 
 /** Trusted orchestration from a customer material call. Receipt lines, lots,
@@ -814,6 +824,9 @@ export async function repoPatchReception(id: string, patch: PatchReceptionBodyDT
   sets.push(`updated_by = ${push(audit.user_id)}`)
 
   return withRealtimeOutboxTransaction(client, async (tx) => {
+    const workflow=(await tx.query<{confirmation_state:string|null}>('SELECT confirmation_state FROM public.receptions_fournisseurs WHERE id=$1::uuid FOR UPDATE',[id])).rows[0];
+    if(workflow?.confirmation_state==='CONFIRMED'&&(patch.status==='CANCELLED'||patch.supplier_reference!==undefined||patch.reception_date!==undefined))
+      throw new HttpError(409,'RECEIPT_CONFIRMED_IMMUTABLE','La réception validée et son BL sont tracés. Corrigez les écarts par le parcours de régularisation, sans réécrire la livraison.')
     const upd = await tx.query<ReceptionRow>(
       `
         UPDATE public.receptions_fournisseurs
@@ -824,7 +837,7 @@ export async function repoPatchReception(id: string, patch: PatchReceptionBodyDT
           reception_no,
           fournisseur_id::text AS fournisseur_id,origin_type,client_proprietaire_id,(SELECT company_name FROM public.clients WHERE client_id=receptions_fournisseurs.client_proprietaire_id) AS client_name,
           status,
-          reception_date::text AS reception_date,
+          reception_date::text AS reception_date,confirmation_state,
           supplier_reference,
           commentaire,
           created_at::text AS created_at,
@@ -848,14 +861,17 @@ export async function repoPatchReception(id: string, patch: PatchReceptionBodyDT
   })
 }
 
-export async function repoCreateLine(receptionId: string, body: CreateLineBodyDTO, audit: AuditContext, internal?:{client:PoolClient;customerCallId:string}): Promise<ReceptionFournisseurLine | null> {
+export async function repoCreateLine(receptionId: string, body: CreateLineBodyDTO, audit: AuditContext, internal?:{client:PoolClient;customerCallId?:string;batchConfirmation?:boolean}): Promise<ReceptionFournisseurLine | null> {
   const execute=async (tx:PoolClient) => {
-    const lockReception = await tx.query<{ ok: number;origin_type:string;status:string }>(
-      `SELECT 1::int AS ok,origin_type,status FROM public.receptions_fournisseurs WHERE id = $1::uuid FOR UPDATE`,
+    await tx.query('SELECT revision FROM public.planning_central_settings WHERE singleton FOR UPDATE')
+    const lockReception = await tx.query<{ ok: number;origin_type:string;status:string;confirmation_state:string|null }>(
+      `SELECT 1::int AS ok,origin_type,status,confirmation_state FROM public.receptions_fournisseurs WHERE id = $1::uuid FOR UPDATE`,
       [receptionId]
     )
     if (!lockReception.rows[0]?.ok) return null
     if(lockReception.rows[0].status!=='OPEN')throw new HttpError(409,'RECEPTION_NOT_OPEN','Rouvrez la réception avant d’ajouter une ligne.')
+    if(lockReception.rows[0].confirmation_state&&!internal?.batchConfirmation)
+      throw new HttpError(409,'GROUPED_RECEIPT_CONFIRMATION_REQUIRED','Cette réception se confirme depuis la vue À réceptionner avec son BL.')
     if(lockReception.rows[0].origin_type==='CUSTOMER'&&!internal?.customerCallId)
       throw new HttpError(409,'CUSTOMER_MATERIAL_CALL_REQUIRED','Enregistrez les bruts reçus depuis leur appel client dans le dossier OF.')
 
@@ -906,7 +922,7 @@ export async function repoCreateLine(receptionId: string, body: CreateLineBodyDT
       if (link.cf_fournisseur_id !== link.reception_fournisseur_id) {
         throw new HttpError(422, "COMMANDE_FOURNISSEUR_MISMATCH", "La ligne de commande n'appartient pas au fournisseur de cette réception.")
       }
-      if (!["ENVOYEE", "ACCUSE_RECU", "PARTIELLEMENT_RECUE"].includes(link.cf_statut)) {
+      if (!["ENVOYEE", "ACCUSE_RECU", "PARTIELLEMENT_RECUE",...(internal?.batchConfirmation?["RECUE"]:[])].includes(link.cf_statut)) {
         throw new HttpError(
           422,
           "COMMANDE_FOURNISSEUR_NON_RECEVABLE",
@@ -963,6 +979,11 @@ export async function repoCreateLine(receptionId: string, body: CreateLineBodyDT
     )
     const lineId = ins.rows[0]?.id
     if (!lineId) throw new Error("Failed to create reception line")
+    await tx.query(`UPDATE public.reception_fournisseur_lignes r SET
+      stock_managed=COALESCE(l.receipt_stock_managed,a.stock_managed),
+      receipt_quality_required=COALESCE(l.receipt_quality_required,a.receipt_quality_required)
+      FROM public.articles a LEFT JOIN public.commande_fournisseur_ligne l ON l.id=$2::uuid
+      WHERE r.id=$1::uuid AND a.id=r.article_id`,[lineId,body.commande_fournisseur_ligne_id??null])
 
     await insertAuditLog(tx, audit, {
       action: "receptions.lines.create",
@@ -1265,6 +1286,9 @@ export async function repoRemoveDocument(receptionId: string, documentId: string
   return withRealtimeOutboxTransaction(client, async (tx) => {
     const exists = await ensureReceptionExists(tx, receptionId)
     if (!exists) return null
+    const workflow=(await tx.query<{confirmation_state:string|null}>('SELECT confirmation_state FROM public.receptions_fournisseurs WHERE id=$1::uuid FOR UPDATE',[receptionId])).rows[0];
+    if(workflow?.confirmation_state==='CONFIRMED'&&(await tx.query("SELECT 1 FROM public.reception_fournisseur_documents WHERE id=$1::uuid AND reception_id=$2::uuid AND document_type='BON_LIVRAISON' AND removed_at IS NULL",[documentId,receptionId])).rows.length)
+      throw new HttpError(409,'RECEIPT_DELIVERY_NOTE_FROZEN','Le BL d’une réception validée doit rester dans son historique. Ajoutez un document rectificatif si nécessaire.')
 
     const current = await tx.query<Pick<DocumentRow, "original_name" | "storage_path">>(
       `
@@ -1692,7 +1716,7 @@ async function sumReceiptedQty(tx:PoolClient,lineId: string): Promise<number> {
   return res.rows[0]?.qty ?? 0
 }
 
-async function repoCreateStockReceiptLocked(
+export async function repoCreateStockReceiptLocked(
   tx:PoolClient,
   materialInstalled:boolean,
   receptionId: string,
@@ -1723,6 +1747,7 @@ async function repoCreateStockReceiptLocked(
     stock_unit:string|null
     stock_conversion_coef:number|null
     article_unit:string|null
+    stock_managed:boolean
   }>(
     `
       SELECT
@@ -1732,7 +1757,7 @@ async function repoCreateStockReceiptLocked(
         l.unite,
         l.lot_id::text AS lot_id,
         lot.lot_status,
-        r.reception_no, r.status AS reception_status,l.stock_unit,l.stock_conversion_coef::float8,article.unite AS article_unit
+        r.reception_no, r.status AS reception_status,l.stock_unit,l.stock_conversion_coef::float8,article.unite AS article_unit,l.stock_managed
       FROM public.reception_fournisseur_lignes l
       JOIN public.receptions_fournisseurs r ON r.id = l.reception_id
       LEFT JOIN public.lots lot ON lot.id = l.lot_id
@@ -1744,6 +1769,7 @@ async function repoCreateStockReceiptLocked(
   )
   const line = lineRes.rows[0] ?? null
   if (!line) return null
+  if(line.stock_managed===false)throw new HttpError(409,'RECEIPT_NOT_STOCK_MANAGED','Cette réception est hors stock ; aucune entrée en magasin ne doit être enregistrée.')
   if (!line.lot_id) throw new HttpError(409, "LOT_REQUIRED", "Veuillez d'abord creer le lot")
 
   const sameUnit=(a:string|null|undefined,b:string|null|undefined)=>Boolean(a&&b&&a.trim().toUpperCase()===b.trim().toUpperCase())

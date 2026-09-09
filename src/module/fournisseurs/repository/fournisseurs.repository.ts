@@ -1279,6 +1279,7 @@ type CatalogueRow = {
   id: string; fournisseur_id: string; type: string; article_id: string | null; designation: string
   reference_fournisseur: string | null; unite: string | null; prix_unitaire: number | null; devise: string | null
   pricing_basis: "NONE" | "KG" | "M"
+  lot_achat: number | null; unite_stock: string | null; coef_conversion: number | null
   delai_jours: number | null; moq: number | null; conditions: string | null
   incoterm: string | null; prix_multiple: number | null; valid_from: string | null; valid_to: string | null
   exigence_qualite: string | null; requiert_controle_reception: boolean; actif: boolean
@@ -1288,7 +1289,7 @@ const CATALOGUE_SELECT = `
   id::text AS id, fournisseur_id::text AS fournisseur_id, type, article_id::text AS article_id, designation,
   reference_fournisseur, unite, prix_unitaire::float8 AS prix_unitaire,
   COALESCE(to_jsonb(fournisseur_catalogue) ->> 'pricing_basis', 'NONE') AS pricing_basis,
-  devise, delai_jours, moq::float8 AS moq, conditions,
+  devise, delai_jours, moq::float8 AS moq, conditions, lot_achat::float8, unite_stock, coef_conversion::float8,
   incoterm, prix_multiple::float8 AS prix_multiple, valid_from::text AS valid_from, valid_to::text AS valid_to,
   exigence_qualite, requiert_controle_reception, actif,
   created_at::text AS created_at, updated_at::text AS updated_at, created_by, updated_by`
@@ -1304,6 +1305,7 @@ function mapCatalogueRow(r: CatalogueRow): FournisseurCatalogueItem {
     pricing_basis: r.pricing_basis ?? "NONE",
     devise: r.devise,
     delai_jours: r.delai_jours === null ? null : Number(r.delai_jours),
+    lot_achat: r.lot_achat, unite_stock: r.unite_stock, coef_conversion: r.coef_conversion,
     moq: r.moq === null ? null : Number(r.moq), conditions: r.conditions,
     incoterm: r.incoterm, prix_multiple: r.prix_multiple === null ? null : Number(r.prix_multiple),
     valid_from: r.valid_from, valid_to: r.valid_to, exigence_qualite: r.exigence_qualite,
@@ -1364,23 +1366,23 @@ async function tableColumnExists(
 }
 
 export async function repoCreateFournisseurCatalogueItem(
-  fournisseurId: string, body: CreateCatalogueBodyDTO, audit: AuditContext
+  fournisseurId: string, body: CreateCatalogueBodyDTO, audit: AuditContext, transaction?: PoolClient
 ): Promise<FournisseurCatalogueItem | null> {
-  const client = await db.connect()
+  const client = transaction ?? await db.connect()
   try {
-    await client.query("BEGIN")
-    if (!(await ensureFournisseurExists(client, fournisseurId))) { await client.query("ROLLBACK"); return null }
+    if (!transaction) await client.query("BEGIN")
+    if (!(await ensureFournisseurExists(client, fournisseurId))) { if (!transaction) await client.query("ROLLBACK"); return null }
     const ins = await client.query<CatalogueRow>(
       `INSERT INTO public.fournisseur_catalogue
          (fournisseur_id, type, article_id, designation, reference_fournisseur, unite, prix_unitaire, devise,
           delai_jours, moq, conditions, incoterm, prix_multiple, valid_from, valid_to, exigence_qualite,
-          requiert_controle_reception, actif, created_by, updated_by)
-       VALUES ($1::uuid,$2,$3::uuid,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::date,$15::date,$16,$17,$18,$19,$19)
+          requiert_controle_reception, actif, created_by, updated_by, lot_achat, unite_stock, coef_conversion)
+       VALUES ($1::uuid,$2,$3::uuid,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::date,$15::date,$16,$17,$18,$19,$19,$20,$21,$22)
        RETURNING ${CATALOGUE_SELECT}`,
       [fournisseurId, body.type, body.article_id ?? null, body.designation, body.reference_fournisseur ?? null,
        body.unite ?? null, body.prix_unitaire ?? null, body.devise ?? "EUR", body.delai_jours ?? null, body.moq ?? null,
        body.conditions ?? null, body.incoterm ?? null, body.prix_multiple ?? null, body.valid_from ?? null,
-       body.valid_to ?? null, body.exigence_qualite ?? null, body.requiert_controle_reception ?? false, body.actif ?? true, audit.user_id]
+       body.valid_to ?? null, body.exigence_qualite ?? null, body.requiert_controle_reception ?? false, body.actif ?? true, audit.user_id, body.lot_achat ?? null, body.unite_stock ?? null, body.coef_conversion ?? null]
     )
     const row = ins.rows[0]
     if (!row) throw new Error("Failed to create catalogue item")
@@ -1406,20 +1408,20 @@ export async function repoCreateFournisseurCatalogueItem(
       action: "fournisseurs.catalogue.create", entity_type: "FOURNISSEUR", entity_id: fournisseurId,
       details: { catalogue_id: row.id, type: row.type, designation: row.designation },
     })
-    await client.query("COMMIT")
+    if (!transaction) await client.query("COMMIT")
     return mapCatalogueRow(row)
   } catch (err) {
-    await client.query("ROLLBACK")
+    if (!transaction) await client.query("ROLLBACK")
     throw err
   } finally {
-    client.release()
+    if (!transaction) client.release()
   }
 }
 
 export async function repoUpdateFournisseurCatalogueItem(
-  fournisseurId: string, catalogueId: string, patch: UpdateCatalogueBodyDTO, audit: AuditContext
+  fournisseurId: string, catalogueId: string, patch: UpdateCatalogueBodyDTO, audit: AuditContext, transaction?: PoolClient
 ): Promise<FournisseurCatalogueItem | null | false> {
-  const client = await db.connect()
+  const client = transaction ?? await db.connect()
   const sets: string[] = []
   const values: unknown[] = []
   const push = (v: unknown) => { values.push(v); return `$${values.length}` }
@@ -1431,6 +1433,9 @@ export async function repoUpdateFournisseurCatalogueItem(
   if (patch.prix_unitaire !== undefined) sets.push(`prix_unitaire = ${push(patch.prix_unitaire)}`)
   if (patch.devise !== undefined) sets.push(`devise = ${push(patch.devise)}`)
   if (patch.delai_jours !== undefined) sets.push(`delai_jours = ${push(patch.delai_jours)}`)
+  if (patch.lot_achat !== undefined) sets.push(`lot_achat = ${push(patch.lot_achat)}`)
+  if (patch.unite_stock !== undefined) sets.push(`unite_stock = ${push(patch.unite_stock)}`)
+  if (patch.coef_conversion !== undefined) sets.push(`coef_conversion = ${push(patch.coef_conversion)}`)
   if (patch.moq !== undefined) sets.push(`moq = ${push(patch.moq)}`)
   if (patch.conditions !== undefined) sets.push(`conditions = ${push(patch.conditions)}`)
   if (patch.incoterm !== undefined) sets.push(`incoterm = ${push(patch.incoterm)}`)
@@ -1443,7 +1448,7 @@ export async function repoUpdateFournisseurCatalogueItem(
   sets.push("updated_at = now()")
   sets.push(`updated_by = ${push(audit.user_id)}`)
   try {
-    await client.query("BEGIN")
+    if (!transaction) await client.query("BEGIN")
     if (patch.pricing_basis !== undefined) {
       if (!(await tableColumnExists(client, "fournisseur_catalogue", "pricing_basis"))) {
         throw new HttpError(
@@ -1454,27 +1459,27 @@ export async function repoUpdateFournisseurCatalogueItem(
       }
       sets.unshift(`pricing_basis = ${push(patch.pricing_basis)}`)
     }
-    if (!(await ensureFournisseurExists(client, fournisseurId))) { await client.query("ROLLBACK"); return null }
+    if (!(await ensureFournisseurExists(client, fournisseurId))) { if (!transaction) await client.query("ROLLBACK"); return null }
     const res = await client.query<CatalogueRow>(
       `UPDATE public.fournisseur_catalogue SET ${sets.join(", ")}
        WHERE id = ${push(catalogueId)}::uuid AND fournisseur_id = ${push(fournisseurId)}::uuid RETURNING ${CATALOGUE_SELECT}`,
       values
     )
     const row = res.rows[0] ?? null
-    if (!row) { await client.query("ROLLBACK"); return false }
+    if (!row) { if (!transaction) await client.query("ROLLBACK"); return false }
     const priceTouched = patch.prix_unitaire !== undefined || patch.pricing_basis !== undefined || patch.delai_jours !== undefined || patch.moq !== undefined || patch.devise !== undefined
     if (priceTouched && row.prix_unitaire !== null) await recordCataloguePrice(client, row.id, row, audit.user_id)
     await insertAuditLog(client, audit, {
       action: "fournisseurs.catalogue.update", entity_type: "FOURNISSEUR_CATALOGUE", entity_id: catalogueId,
       details: { fournisseur_id: fournisseurId, patch },
     })
-    await client.query("COMMIT")
+    if (!transaction) await client.query("COMMIT")
     return mapCatalogueRow(row)
   } catch (err) {
-    await client.query("ROLLBACK")
+    if (!transaction) await client.query("ROLLBACK")
     throw err
   } finally {
-    client.release()
+    if (!transaction) client.release()
   }
 }
 

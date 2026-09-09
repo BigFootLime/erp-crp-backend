@@ -2,6 +2,7 @@ import { Router } from "express"
 
 import { authenticateToken } from "../../auth/middlewares/auth.middleware"
 import { createSecureUpload } from "../../../shared/uploads/secure-upload"
+import {expectedReceiptLines,stageGroupedReceipt,validateGroupedReceipt} from '../controllers/grouped-receipts.controller';
 import {
   addIncomingMeasurement,
   attachReceptionDocuments,
@@ -25,6 +26,9 @@ const router = Router()
 router.use(authenticateToken)
 
 router.get("/kpis", getReceptionsKpis)
+router.get('/expected-lines',expectedReceiptLines)
+router.post('/grouped',stageGroupedReceipt)
+router.post('/:id/confirm',validateGroupedReceipt)
 router.get("/", listReceptions)
 router.post("/", createReception)
 router.get("/:id", getReception)
