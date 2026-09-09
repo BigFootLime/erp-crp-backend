@@ -52,7 +52,15 @@ describe("SOL-06 migration release gate", () => {
     expect(entry?.support).toEqual({ preflight: true, verify: true, rollback: true });
     expect(entry?.sha256).toMatch(/^[a-f0-9]{64}$/);
     const filenames = report.patches.map((patch) => patch.filename);
-    expect(filenames).toEqual([...filenames].sort());
+    expect(new Set(filenames).size).toBe(filenames.length);
+    const { DEPENDENCIES } = require('../../scripts/migrations/patch-dependencies.js') as {
+      DEPENDENCIES: Record<string, string[]>;
+    };
+    for (const [filename, prerequisites] of Object.entries(DEPENDENCIES)) {
+      for (const prerequisite of prerequisites) {
+        expect(filenames.indexOf(prerequisite), `${prerequisite} before ${filename}`).toBeLessThan(filenames.indexOf(filename));
+      }
+    }
     expect(filenames.indexOf(gate.SOL06_PATCH)).toBeGreaterThanOrEqual(0);
     expect(gate.expectedRehearsalPatches()).toEqual(filenames.slice(filenames.indexOf(gate.SOL06_PATCH)));
     expect(gate.expectedRehearsalPatches()).toContain("20260811_production_readiness_center.sql");

@@ -36,6 +36,8 @@ Préparer une sauvegarde puis exécuter chaque `support/*.preflight.sql`, le pat
 
 Les précontrôles et procédures de récupération accompagnent les nouveaux patches. Après des écritures, privilégier une correction additive et conserver les journaux. Ne pas supprimer les allocations, réceptions, décisions qualité ou mouvements pour revenir en arrière.
 
+Le runner canonique, la création isolée E2E et la répétition de release partagent `scripts/migrations/patch-dependencies.js`. Les dépendances explicites font passer la création des tables avant leurs extensions, notamment les consultations fournisseur et les consommables. Les noms SQL et leurs empreintes restent inchangés ; un inventaire sélectionné conserve son périmètre et le journal empêche toute réapplication.
+
 Le socle Android provient du travail #1038 (backend `f90a09a`, web `3f37e948`, mobile basé sur `444169e`). Il fait partie des prérequis de cette branche. Activer les terminaux avec la configuration #1038, un secret PIN administré et une URL web HTTPS ; le PIN est défini par son propriétaire depuis le compte web. Les secrets ne figurent pas dans ce document.
 
 Les imports BL passent par le traitement antivirus existant. La recette doit utiliser le même contrôle ; aucun mode de contournement n’a été ajouté.

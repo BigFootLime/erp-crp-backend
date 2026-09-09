@@ -53,7 +53,7 @@ function sha256(content) {
 }
 
 function orderedPatches() {
-  return fs.readdirSync(PATCH_DIR, { withFileTypes: true })
+  return require('./patch-dependencies').orderPatchDependencies(fs.readdirSync(PATCH_DIR, { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith(".sql"))
     .map((entry) => entry.name)
     .sort((left, right) => {
@@ -62,7 +62,7 @@ function orderedPatches() {
       if (b.startsWith(`${a}_`)) return -1;
       if (a.startsWith(`${b}_`)) return 1;
       return a.localeCompare(b, "en", { numeric: true, sensitivity: "base" });
-    });
+    }));
 }
 
 function expectedRehearsalPatches() {
