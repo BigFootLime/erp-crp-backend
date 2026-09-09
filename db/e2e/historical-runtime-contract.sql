@@ -13,6 +13,11 @@ BEGIN
 END
 $guard$;
 
+-- Historical application privileges precede the additive ledger. Production
+-- grants CRUD on this table to cerp_app; reproduce that baseline only here so
+-- the typed-lot verify script checks the real application role.
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.quality_control TO cerp_app;
+
 -- The account administration repositories still consume these columns from
 -- the historical users table. They predate the additive patch ledger, so the
 -- reduced bootstrap must restore them explicitly for the disposable runtime.
