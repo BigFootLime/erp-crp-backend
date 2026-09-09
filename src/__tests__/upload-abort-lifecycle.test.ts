@@ -205,6 +205,12 @@ describe("upload abort lifecycle", () => {
     await scanAborted
     await waitForNoStoredFiles(temporaryRoot)
 
+    // Removing the last file precedes the cleanup audit. Wait for that event
+    // before inspecting it, independently of the filesystem scheduling.
+    await vi.waitFor(() => expect(infoSpy.mock.calls.filter((args) =>
+      args.join(" ").includes('"outcome":"cleaned"')
+    )).toHaveLength(1), { timeout: 2_000 })
+
     const cleanupEvents = infoSpy.mock.calls
       .map((args) => args.join(" "))
       .filter((line) => line.includes('"outcome":"cleaned"'))
@@ -247,7 +253,9 @@ describe("upload abort lifecycle", () => {
 
     await hashStarted
     testRequest.abort()
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    await vi.waitFor(() => expect(infoSpy.mock.calls.filter((args) =>
+      args.join(" ").includes('"outcome":"cleaned"')
+    )).toHaveLength(1), { timeout: 2_000 })
 
     const cleanupEvents = infoSpy.mock.calls
       .map((args) => args.join(" "))
