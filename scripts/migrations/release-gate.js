@@ -818,6 +818,10 @@ async function rehearse(options = {}) {
     await verifyClient.connect();
     const verifyStarted = Date.now();
     try {
+      // Historical privilege observed in production, absent from the additive
+      // ledger. The disposable source stops before this table exists, so its
+      // legacy grant must be restored after migration, before role verification.
+      await verifyClient.query("GRANT SELECT ON public.article_category_referential TO cerp_app");
       for (const patch of expectedPending) {
         const verifySql = patchSupportSql(patch, "verify");
         if (verifySql) await runSqlFile(verifyClient, verifySql);

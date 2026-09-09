@@ -22,7 +22,12 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
   public.receptions_fournisseurs, public.reception_fournisseur_lignes,
   public.reception_fournisseur_stock_receipts
 TO cerp_app;
-GRANT SELECT ON public.article_category_referential TO cerp_app;
+DO $$ BEGIN
+  -- This reference table is introduced after the rehearsal's source boundary.
+  IF to_regclass('public.article_category_referential') IS NOT NULL THEN
+    GRANT SELECT ON public.article_category_referential TO cerp_app;
+  END IF;
+END $$;
 
 -- The account administration repositories still consume these columns from
 -- the historical users table. They predate the additive patch ledger, so the
