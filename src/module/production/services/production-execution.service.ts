@@ -214,6 +214,7 @@ export async function svcPauseExecution(params: {
   body: PauseExecutionBodyDTO;
   idempotencyKey: string;
   audit: AuditContext;
+  transactionHooks?: ProductionExecutionTransactionHooks<{id:string}>;
 }) {
   assertProductionExecutionCapability(params.actor.role, "pause_self");
   return repoTransitionSegment({
@@ -223,6 +224,7 @@ export async function svcPauseExecution(params: {
     idempotencyKey: params.idempotencyKey,
     actorRole: params.actor.role,
     audit: params.audit,
+    transactionHooks: params.transactionHooks,
   });
 }
 
@@ -232,6 +234,7 @@ export async function svcResumeExecution(params: {
   body: ResumeExecutionBodyDTO;
   idempotencyKey: string;
   audit: AuditContext;
+  transactionHooks?: ProductionExecutionTransactionHooks<{id:string}>;
 }) {
   assertProductionExecutionCapability(params.actor.role, "pause_self");
   return repoTransitionSegment({
@@ -241,6 +244,7 @@ export async function svcResumeExecution(params: {
     idempotencyKey: params.idempotencyKey,
     actorRole: params.actor.role,
     audit: params.audit,
+    transactionHooks: params.transactionHooks,
   });
 }
 
@@ -250,6 +254,7 @@ export async function svcChangeExecution(params: {
   body: ChangeExecutionBodyDTO;
   idempotencyKey: string;
   audit: AuditContext;
+  transactionHooks?: ProductionExecutionTransactionHooks<{id:string}>;
 }) {
   assertProductionExecutionCapability(params.actor.role, "start_self");
   // Transmettre le travail à quelqu'un d'autre engage un tiers : capacité dédiée.
@@ -270,6 +275,7 @@ export async function svcChangeExecution(params: {
     idempotencyKey: params.idempotencyKey,
     actorRole: params.actor.role,
     audit: params.audit,
+    transactionHooks: params.transactionHooks,
   });
 }
 
@@ -279,6 +285,7 @@ export async function svcDeclareIncident(params: {
   body: IncidentExecutionBodyDTO;
   idempotencyKey: string;
   audit: AuditContext;
+  transactionHooks?: ProductionExecutionTransactionHooks<{id:string}>;
 }) {
   assertProductionExecutionCapability(params.actor.role, "declare_incident");
   return repoTransitionSegment({
@@ -288,6 +295,7 @@ export async function svcDeclareIncident(params: {
     idempotencyKey: params.idempotencyKey,
     actorRole: params.actor.role,
     audit: params.audit,
+    transactionHooks: params.transactionHooks,
   });
 }
 

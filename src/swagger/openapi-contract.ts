@@ -11,6 +11,7 @@ type OpenApiOperation = Record<string, unknown>;
 type OpenApiPathItem = Record<string, OpenApiOperation>;
 
 const PUBLIC_ROUTE_POLICIES: Readonly<Record<string, string>> = {
+  "post /terminals/pair": "Appairage par secret temporaire aléatoire de 128 bits, à usage unique, valable quinze minutes et lié à un terminal enregistré.",
   "post /auth/activate": "Activation par jeton administratif à usage unique avec limitation de débit.",
   "post /auth/forgot-password": "Demande de récupération non révélatrice avec limitation de débit.",
   "post /auth/login": "Échange d’identifiants contre une session avec limitation de débit distribuée.",
@@ -42,6 +43,31 @@ const IDEMPOTENT_OPERATIONS = new Set([
   "post /admin/webhooks/subscriptions/{id}/rotate-secret",
   "post /admin/webhooks/subscriptions/{id}/test",
   "post /admin/webhooks/deliveries/{id}/replay",
+]);
+
+const TERMINAL_DEVICE_OPERATIONS = new Set(["get /terminals/bootstrap", "post /terminals/identify"]);
+const TERMINAL_SESSION_OPERATIONS = new Set([
+  "get /terminals/logistics/article-categories", "get /terminals/logistics/magasins", "get /terminals/logistics/emplacements",
+  "get /terminals/reception/expected-lines", "get /terminals/reception/drafts", "get /terminals/reception/scan",
+  "post /terminals/reception/grouped", "get /terminals/reception/{id}",
+  "post /terminals/reception/{id}/confirm", "post /terminals/reception/{id}/documents",
+  "get /terminals/procurement/ofs", "get /terminals/procurement/ofs/{id}",
+  "post /terminals/procurement/ofs/{id}/configure", "post /terminals/procurement/ofs/{id}/prepare",
+  "post /terminals/procurement/ofs/{id}/withdraw", "post /terminals/procurement/ofs/{id}/reconcile",
+  "get /terminals/procurement/consumables/resolve", "get /terminals/procurement/consumables/{id}/supply",
+  "post /terminals/procurement/consumables/{id}/replenish", "post /terminals/procurement/consumables/{id}/finish-pack",
+  "get /terminals/session", "post /terminals/session/activity", "post /terminals/session/lock", "post /terminals/session/close",
+  "get /terminals/operator/worklist", "get /terminals/operator/activities", "post /terminals/operator/scan",
+  "get /terminals/operator/ofs/{of_id}/operations/{operation_id}",
+  "get /terminals/operator/ofs/{of_id}/operations/{operation_id}/documents/{id}",
+  "post /terminals/operator/ofs/{of_id}/operations/{operation_id}/handover",
+  "post /terminals/operator/ofs/{of_id}/operations/{operation_id}/program/confirm",
+  "post /terminals/operator/ofs/{of_id}/operations/{operation_id}/start",
+  "post /terminals/operator/executions/{id}/{action}",
+  "post /terminals/operator/ofs/{of_id}/operations/{operation_id}/declaration/preview",
+  "post /terminals/operator/ofs/{of_id}/operations/{operation_id}/declaration/confirm",
+  "post /terminals/operator/ofs/{of_id}/operations/{operation_id}/controls/{action}",
+  "post /terminals/operator/ofs/{of_id}/operations/{operation_id}/controls/{id}/measurements",
 ]);
 
 function operationKey(route: GeneratedRouteContract): string {
@@ -99,6 +125,8 @@ function generatedOperation(route: GeneratedRouteContract): OpenApiOperation {
   const publicReason = PUBLIC_ROUTE_POLICIES[key];
   const providerSigned = key === "post /electronic-invoicing/webhooks/{providerCode}";
   const clientPortalAuthenticated = CLIENT_PORTAL_AUTH_OPERATIONS.has(key);
+  const terminalSession = TERMINAL_SESSION_OPERATIONS.has(key);
+  const terminalDevice = TERMINAL_DEVICE_OPERATIONS.has(key) || terminalSession;
   const idempotent = IDEMPOTENT_OPERATIONS.has(key);
   const parameters = pathParameters(route);
   if (idempotent) parameters.push({ $ref: "#/components/parameters/IdempotencyKey" });
@@ -107,8 +135,10 @@ function generatedOperation(route: GeneratedRouteContract): OpenApiOperation {
     summary: `${route.method.toUpperCase()} ${route.path}`,
     operationId: operationId(route),
     parameters,
-    responses: genericResponses(route, route.authenticated || clientPortalAuthenticated),
-    security: route.authenticated
+    responses: genericResponses(route, route.authenticated || clientPortalAuthenticated || terminalDevice),
+    security: terminalSession ? [{terminalDevice:[], terminalSession:[]}]
+      : terminalDevice ? [{terminalDevice:[]}]
+      : route.authenticated
       ? [{ bearerAuth: [] }]
       : clientPortalAuthenticated
         ? [{ clientPortalBearerAuth: [] }]
@@ -116,14 +146,17 @@ function generatedOperation(route: GeneratedRouteContract): OpenApiOperation {
         ? [{ providerSignature: [] }]
         : [],
     "x-cerp-source": route.source,
-    "x-cerp-authentication": route.authenticated
+    "x-cerp-authentication": terminalSession ? "Appareil appairé + session PIN active liée à cet appareil + compte et droits vérifiés"
+      : terminalDevice ? "Secret d’appareil appairé et non révoqué"
+      : route.authenticated
       ? "JWT Bearer + compte actif"
       : clientPortalAuthenticated
         ? "JWT Bearer portail + compte client actif + session_epoch"
         : providerSigned
           ? "signature prestataire"
           : "public contrôlé",
-    "x-cerp-rbac": route.rbac.length > 0
+    "x-cerp-rbac": terminalDevice ? ["terminalDeviceScope", ...(terminalSession ? ["terminalSessionScope", "terminalKindScope"] : [])]
+      : route.rbac.length > 0
       ? [...route.rbac]
       : route.authenticated
         ? ["moduleAccessGate"]
@@ -237,6 +270,8 @@ function componentSchemas(legacy: OpenApiObject): OpenApiObject {
   return {
     ...legacyComponents,
     securitySchemes: {
+      terminalDevice: {type:"apiKey",in:"header",name:"X-Terminal-Device",description:"Secret aléatoire du terminal appairé."},
+      terminalSession: {type:"apiKey",in:"header",name:"X-Station-Session",description:"Jeton opérateur en mémoire, lié au terminal."},
       bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "JWT" },
       clientPortalBearerAuth: {
         type: "http",
@@ -409,6 +444,8 @@ function componentSchemas(legacy: OpenApiObject): OpenApiObject {
 export function assertOpenApiRouteSecurity(): void {
   const undocumentedPublic = GENERATED_ROUTE_INVENTORY
     .filter((route) => !route.authenticated
+      && !TERMINAL_DEVICE_OPERATIONS.has(operationKey(route))
+      && !TERMINAL_SESSION_OPERATIONS.has(operationKey(route))
       && !CLIENT_PORTAL_AUTH_OPERATIONS.has(operationKey(route))
       && !PUBLIC_ROUTE_POLICIES[operationKey(route)])
     .map((route) => operationKey(route));

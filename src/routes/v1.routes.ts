@@ -1,6 +1,7 @@
 // src/routes/v1.routes.ts
 import { Router } from "express"
 import authRoutes from "../module/auth/routes/auth.routes"
+import terminalRoutes from "../module/terminals/routes/terminals.routes"
 import { authenticateToken } from "../module/auth/middlewares/auth.middleware"
 import outilRoutes from "../module/outils/routes/outil.routes"
 import bankingInfoRoutes from "../module/banking-info/routes/banking-info.routes"
@@ -84,6 +85,7 @@ router.use((_req, _res, next) => runWithAccountModuleAccessScope(next))
 
 // --- Routes publiques (avant authentification) ---
 router.use("/auth", authRoutes)
+router.use("/terminals", terminalRoutes)
 router.use("/portal", clientPortalRoutes)
 router.use("/electronic-invoicing/webhooks", electronicInvoiceWebhookRoutes)
 router.use(openApiRoutes)

@@ -12,6 +12,7 @@ export type IncomingInspectionStatus = "IN_PROGRESS" | "DECIDED"
 export type IncomingInspectionDecision = "LIBERE" | "BLOQUE"
 
 export type ReceptionFournisseur = {
+  confirmation_state?:'DRAFT'|'CONFIRMED'|null
   id: string
   reception_no: string
   fournisseur_id: string|null
@@ -29,6 +30,7 @@ export type ReceptionFournisseur = {
 }
 
 export type ReceptionFournisseurListItem = {
+  confirmation_state?:'DRAFT'|'CONFIRMED'|null
   id: string
   reception_no: string
   fournisseur_id: string|null
@@ -47,6 +49,11 @@ export type ReceptionFournisseurListItem = {
 }
 
 export type ReceptionFournisseurLine = {
+  unallocated_off_stock?:number|null
+  destination_magasin_id?:string|null
+  destination_emplacement_id?:number|null
+  stock_managed?:boolean
+  receipt_quality_required?:boolean
   quality?:{controlId:string|null;released:number;held:number;unit:string|null;stockable:number;blocking:string[]}
   stock_unit?:string|null
   stock_conversion_coef?:number|null

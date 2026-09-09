@@ -8,7 +8,7 @@ export type FutureMaterialSupply={id:string;commandId:string;code:string;status:
   coefficient:number;ordered:number;cancelled:number;assigned:number;received:number;destinationId:string|null;ownerClientId:string|null;due:string|null;
   requirements:Array<{type:string;valeur:string;obligatoire:boolean}>;documents:string[];version:string;allocatedNeedIds:string[];allocationEnd:number};
 
-export async function readFutureMaterialSupplyTx(tx:DossierDb,articleIds:string[]){
+export async function readFutureMaterialSupplyTx(tx:DossierDb,articleIds:string[],includeCommitted=false){
   const rows=(await tx.query<FutureMaterialSupply>(`SELECT l.id::text,c.id::text AS "commandId",c.code,c.statut AS status,l.article_id::text AS "articleId",l.designation,
     COALESCE(l.unite_stock,l.unite) AS unit,l.unite AS "purchaseUnit",COALESCE(l.coef_conversion,1)::float8 AS coefficient,l.quantite::float8 AS ordered,l.qty_annulee::float8 AS cancelled,
     COALESCE(b.assigned,0)::float8 AS assigned,COALESCE(b.allocation_end,0)::float8 AS "allocationEnd",COALESCE(r.received,0)::float8 AS received,COALESCE(l.magasin_id,c.magasin_livraison_id)::text AS "destinationId",
@@ -25,7 +25,7 @@ export async function readFutureMaterialSupplyTx(tx:DossierDb,articleIds:string[
     LEFT JOIN LATERAL(SELECT sum(rl.qty_received*COALESCE(rl.stock_conversion_coef,l.coef_conversion,1)) AS received FROM public.reception_fournisseur_lignes rl WHERE rl.commande_fournisseur_ligne_id=l.id) r ON true
     WHERE l.article_id=ANY($1::uuid[]) AND l.statut_ligne='ACTIVE' AND c.statut NOT IN ('ANNULEE','CLOTUREE')
     ORDER BY COALESCE(l.date_promesse,c.date_promesse) NULLS LAST,c.created_at,l.position,l.id`,[articleIds])).rows;
-  return rows.map(row=>({...row,...futureSupplyBalance(row)})).filter(row=>row.available>0);
+  return rows.map(row=>({...row,...futureSupplyBalance(row)})).filter(row=>row.available>0||(includeCommitted&&row.ordered*row.coefficient-row.cancelled*row.coefficient>row.received));
 }
 
 export function futureSupplyCompatibility(need:{id:string|null;articleId:string|null;unit:string|null;destinationId:string|null;supplyMode:string;requirements:MaterialRequirements},source:Awaited<ReturnType<typeof readFutureMaterialSupplyTx>>[number]){

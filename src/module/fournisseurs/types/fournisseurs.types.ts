@@ -131,6 +131,7 @@ export type FournisseurCatalogueType =
   | "AUTRE"
 
 export type FournisseurCatalogueItem = {
+  lot_achat?: number | null; unite_stock?: string | null; coef_conversion?: number | null;
   id: string
   fournisseur_id: string
   type: FournisseurCatalogueType

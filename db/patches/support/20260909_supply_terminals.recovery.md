@@ -1,0 +1,1 @@
+Keep the additive constraints and revoke the affected terminals through the administrative API if rollback is required. Disable the Android terminal rollout while restoring the preceding application version. Do not remove PINs, audit records, receipts or stock writes. Restore a verified database backup only as a coordinated recovery operation.

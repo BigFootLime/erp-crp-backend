@@ -1,3 +1,6 @@
+import { syncArticleSupplierConditionsTx } from "./article-supplier-conditions.repository";
+import { consumableWithdrawalOwnsMovement } from "./consumable-movement-guard";
+import { syncConsumablePolicyTx, consumablePolicyPatch } from "./consumable-article.repository";
 import {reconcileReleasedConsolidationLot} from '../../production/repository/production-receipts.repository';
 import type { PoolClient } from "pg";
 import crypto from "node:crypto";
@@ -342,6 +345,7 @@ const ARTICLE_PRIMARY_CATEGORY_OPTIONS: Array<{ code: ArticleCategory }> = [
  * en stock, active et reliée à une pièce technique est éligible (BUG-CERP-0015).
  */
 const ARTICLE_CATEGORY_OPTIONS: StockArticleCategoryOption[] = [
+  {code: "consommable", label: "Consommable", code_segment: "ACH", stock_managed_default: true, piece_technique_required: false, commande_client_selectable: false, is_active: true, sort_order: 45},
   {
     code: "piece_finie_fabriquee",
     label: "Pièce finie / Fabriquée",
@@ -583,7 +587,7 @@ export function normalizeArticleCategories(
     throw new HttpError(400, "INVALID_ARTICLE_CATEGORY", `Unknown article category ${raw}`);
   };
 
-  push(defaultBusinessCategoryForPrimary(primaryCategory));
+  push(primaryCategory === "achat" && requested?.includes("consommable") ? "consommable" : defaultBusinessCategoryForPrimary(primaryCategory));
   for (const value of requested ?? []) push(value);
   return out;
 }
@@ -2792,6 +2796,7 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
     const p = push(q);
     where.push(`(
       a.code ILIKE ${p}
+      OR a.internal_reference ILIKE ${p}
       OR a.designation ILIKE ${p}
       OR a.family_code ILIKE ${p}
       OR COALESCE(pt.code_piece, '') ILIKE ${p}
@@ -2841,6 +2846,10 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
           AND aclf.category_code = ${push(filters.article_category)}
       )
     )`);
+  }
+  if (filters.business_category) {
+    where.push(`EXISTS (SELECT 1 FROM public.article_category_link business_filter
+      WHERE business_filter.article_id = a.id AND business_filter.category_code = ${push(filters.business_category)})`);
   }
   if (filters.status) where.push(`a.status = ${push(filters.status)}`);
   if (filters.projet_id) where.push(`a.projet_id = ${push(filters.projet_id)}`);
@@ -2898,6 +2907,7 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
       article_material.epaisseur_mm::float8 AS material_epaisseur_mm,
       article_material.diametre_mm::float8 AS material_diametre_mm,
       a.designation_secondary,
+      a.internal_reference, a.consumption_mode, a.purchase_pack_qty::float8 AS purchase_pack_qty, a.receipt_quality_required,
       CASE WHEN ${normalizedArticleCategorySql("a.article_category")} = 'fabrique' THEN 'PIECE_TECHNIQUE' ELSE 'PURCHASED' END AS article_type,
       ${normalizedArticleCategorySql("a.article_category")} AS article_category,
       COALESCE(ac.categories, ARRAY[${normalizedBusinessCategorySql("a.article_category")}]::text[]) AS article_categories,
@@ -3068,6 +3078,7 @@ export async function repoGetArticle(id: string, includeCosts = false): Promise<
         a.code,
         a.designation,
         a.designation_secondary,
+        a.internal_reference, a.consumption_mode, a.purchase_pack_qty::float8 AS purchase_pack_qty, a.receipt_quality_required,
         CASE WHEN ${normalizedArticleCategorySql("a.article_category")} = 'fabrique' THEN 'PIECE_TECHNIQUE' ELSE 'PURCHASED' END AS article_type,
         ${normalizedArticleCategorySql("a.article_category")} AS article_category,
       COALESCE(ac.categories, ARRAY[${normalizedBusinessCategorySql("a.article_category")}]::text[]) AS article_categories,
@@ -3203,7 +3214,7 @@ export async function repoGetArticle(id: string, includeCosts = false): Promise<
     article.article_category === "matiere" ||
     (Array.isArray(article.article_categories) && article.article_categories.includes("matiere_premiere"));
 
-  const openSupplierOrdersPromise = isMaterialArticle
+  const openSupplierOrdersPromise = isMaterialArticle || article.article_categories?.includes("consommable")
     ? db.query<{
         order_id: string;
         order_code: string;
@@ -3427,6 +3438,7 @@ export async function repoGetArticle(id: string, includeCosts = false): Promise<
          CASE WHEN $2::boolean THEN fc.devise ELSE NULL END AS currency,
          fc.delai_jours::int AS lead_time_days,
          fc.moq::float8 AS moq,
+         fc.lot_achat::float8 AS lot_achat, fc.unite_stock AS stock_unit, fc.coef_conversion::float8 AS conversion_coefficient,
          fc.conditions,
          (app.preferred_catalogue_id = fc.id) AS preferred,
          fc.actif AS active
@@ -3727,6 +3739,7 @@ export async function repoCreateArticleTx(
   const id = createdRow?.id;
   if (!id) throw new Error("Failed to create article");
   await syncArticleCategories(client, id, normalized.article_categories, audit.user_id);
+  await syncConsumablePolicyTx(client, id, consumablePolicyPatch(body), normalized);
 
   await syncPieceTechniqueArticleLink(client, {
     article_id: id,
@@ -3743,6 +3756,7 @@ export async function repoCreateArticleTx(
       fourniture_client: body.fourniture_client,
   });
   await syncArticleProcurementProfile(client, id, body.procurement, audit.user_id);
+  await syncArticleSupplierConditionsTx(client, id, body.supplier_conditions, audit);
   if (body.sale_price_reference != null) {
     await seedArticleSheetSalePriceTx(client, {
       article_id: id,
@@ -4074,6 +4088,10 @@ export async function repoUpdateArticle(
     sets.push(`updated_by = ${push(audit.user_id)}`);
     sets.push(`row_version = row_version + 1`);
 
+    // Change tracking flags together with consumption mode, before the general
+    // article UPDATE, so a valid GLOBAL_PACK -> NONE transition satisfies the DB constraint.
+    await syncConsumablePolicyTx(client, id, consumablePolicyPatch(patch), normalized);
+
     const sql = `
       UPDATE public.articles
       SET ${sets.join(", ")}
@@ -4102,6 +4120,7 @@ export async function repoUpdateArticle(
       fourniture_client: patch.fourniture_client,
     });
     await syncArticleProcurementProfile(client, id, patch.procurement, audit.user_id);
+    await syncArticleSupplierConditionsTx(client, id, patch.supplier_conditions, audit);
 
     await insertAuditLog(client, audit, {
       action: "stock.articles.update",
@@ -4109,7 +4128,7 @@ export async function repoUpdateArticle(
       entity_id: id,
       details: {
         before: current,
-        after: { ...normalized, designation_secondary: patch.designation_secondary ?? current.designation_secondary, is_sold: patch.is_sold ?? current.is_sold },
+        after: { ...normalized, ...consumablePolicyPatch(patch), designation_secondary: patch.designation_secondary ?? current.designation_secondary, is_sold: patch.is_sold ?? current.is_sold },
       },
     });
 
@@ -7220,6 +7239,7 @@ export async function repoPreviewMovementCompensation(
     [id]
   );
   const built = buildCompensatingMovementBody(detail, body);
+  if(await consumableWithdrawalOwnsMovement(db,id))built.blockers.push({code:'CONSUMABLE_WITHDRAWAL_CORRECTION_REQUIRED',message:'Ce mouvement est lié à un prélèvement OF. Sa correction doit rapprocher la sortie et la réservation consommée.'});
   const materialOwned=(await db.query(`SELECT 1 FROM public.production_material_debit_sources WHERE stock_movement_id=$1::uuid
     UNION ALL SELECT 1 FROM public.production_material_remnants WHERE stock_movement_id=$1::uuid LIMIT 1`,[id])).rows.length>0;
   if(materialOwned)built.blockers.push({code:'MATERIAL_DEBIT_CORRECTION_REQUIRED',message:'Corrigez ce mouvement depuis le débit matière de l’OF pour conserver ensemble stock, bruts et transferts.'});
@@ -7883,6 +7903,8 @@ export async function repoPostMovement(
     }
 
     if(!externalClient){
+      const reversal=(await client.query<{reversal_of_id:string|null}>('SELECT reversal_of_id::text FROM public.stock_movements WHERE id=$1::uuid',[id])).rows[0];
+      if(reversal?.reversal_of_id&&await consumableWithdrawalOwnsMovement(client,reversal.reversal_of_id))throw new HttpError(409,'CONSUMABLE_WITHDRAWAL_CORRECTION_REQUIRED','La compensation de ce prélèvement doit partager la correction de la réservation consommée de l’OF.');
       const materialReversal=(await client.query(`SELECT 1 FROM public.stock_movements m WHERE m.id=$1::uuid AND (
         EXISTS(SELECT 1 FROM public.production_material_debit_sources s WHERE s.stock_movement_id=m.reversal_of_id) OR
         EXISTS(SELECT 1 FROM public.production_material_remnants r WHERE r.stock_movement_id=m.reversal_of_id))`,[id])).rows.length>0;
@@ -7929,14 +7951,14 @@ export async function repoPostMovement(
       if(!externalClient||m.movement_type!=='OUT'||draftLines.rows.length!==1)
         throw new HttpError(409,'RESERVED_MOVEMENT_CONTEXT_INVALID','La consommation réservée exige une transaction et une ligne de sortie uniques.');
       const line=draftLines.rows[0];
-      const matching=(await client.query<{lot_id:string}>(`SELECT r.lot_id::text FROM public.stock_reservations r
+      const matching=(await client.query<{lot_id:string|null}>(`SELECT r.lot_id::text FROM public.stock_reservations r
         JOIN public.stock_movements mv ON mv.id=r.consumed_stock_movement_id
         WHERE r.id=$1::uuid AND mv.id=$2::uuid AND r.status IN ('ACTIVE','CONSUMED')
-          AND r.article_id=mv.article_id AND r.stock_batch_id=mv.stock_batch_id AND r.qty_consumed>=abs(mv.qty)
-          AND r.lot_id=$3::uuid AND mv.source_document_type='OF' AND mv.source_document_id=r.of_id::text
+          AND r.article_id=mv.article_id AND r.stock_batch_id IS NOT DISTINCT FROM mv.stock_batch_id AND r.qty_consumed>=abs(mv.qty)
+          AND r.lot_id IS NOT DISTINCT FROM $3::uuid AND mv.source_document_type='OF' AND mv.source_document_id=r.of_id::text
           AND abs(mv.qty)=$4 AND(r.expires_at IS NULL OR r.expires_at>now()) FOR SHARE OF r`,[reservedConsumption.reservationId,id,line.lot_id,Math.abs(Number(line.qty))])).rows[0];
       if(!matching)throw new HttpError(409,'RESERVED_MOVEMENT_MISMATCH','Le mouvement ne correspond pas à la consommation enregistrée sur cette réservation.');
-      reservedQualityDecision=await assertOperationalLotQualityEligibility({client,lotId:matching.lot_id,qty:0,unit:line.unite,purpose:'RESERVE'});
+      if(matching.lot_id)reservedQualityDecision=await assertOperationalLotQualityEligibility({client,lotId:matching.lot_id,qty:0,unit:line.unite,purpose:'RESERVE'});
     }
     const directOutQualityDecisions = m.movement_type === "OUT"&&!reservedConsumption
       ? await assertDirectOutMovementQualityEligibility({ client, lines: draftLines.rows })

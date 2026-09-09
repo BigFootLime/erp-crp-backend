@@ -236,12 +236,13 @@ export async function repoCreateStockReservation(
 
     if(body.source.source_type==="OF"&&!materialNeedId)await assertLegacyMaterialWrite(client,body.source.of_id,body.article_id);
 
-    const article = await client.query<{ stock_managed: boolean; lot_tracking: boolean }>(
-      `SELECT stock_managed, lot_tracking FROM public.articles WHERE id = $1::uuid`,
+    const article = await client.query<{ stock_managed: boolean; lot_tracking: boolean; consumption_mode:string }>(
+      `SELECT stock_managed, lot_tracking, consumption_mode FROM public.articles WHERE id = $1::uuid`,
       [body.article_id]
     );
     const articleSettings = article.rows[0] ?? null;
     if (!articleSettings) throw new HttpError(400, "INVALID_ARTICLE", "Unknown article_id");
+    if(articleSettings.consumption_mode==="GLOBAL_PACK")throw new HttpError(409,"SHARED_CONSUMABLE_RESERVATION_FORBIDDEN","Ce consommable est partagé : aucune quantité n’est réservée à un OF.");
     if (!articleSettings.stock_managed) {
       throw new HttpError(409, "ARTICLE_NOT_STOCK_MANAGED", "Article is not managed in stock");
     }
