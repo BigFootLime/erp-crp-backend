@@ -53,6 +53,10 @@ Les imports BL passent par le traitement antivirus existant. La recette doit uti
 
 ## Validation encore requise
 
-L’import BL web et Android est bloqué sur le serveur de recette : le compte de service utilisé ne peut pas joindre le socket ClamAV (`Permission denied`). L’envoi natif de photo a été corrigé pour Expo 57 (`File`), puis testé jusqu’au refus antivirus HTTP 503. La réparation de cette infrastructure n’est pas simulée. Rejouer ensuite le parcours HTTP complet, la libération qualité et son entrée de stock, ainsi que les sur-réceptions autorisées/refusées.
+Le blocage antivirus de la recette a été résolu le 9 septembre en exécutant le runtime isolé sous le compte de service `cerp`, membre du groupe ClamAV. Aucun contrôle antivirus n’a été désactivé. Les imports HTTP de BL ont reçu un verdict CLEAN ; les réceptions successives de 60 puis 40, le hors stock et le rejeu idempotent ont réussi sur `cerp_test` (`BCF-2026-1026`). Une sur-réception sans autorisation a été refusée.
+
+Le parcours qualité HTTP a également réussi : entrée de stock refusée avant libération, mesures conformes, refus de l’auto-libération par l’auteur du contrôle, libération par un second compte fictif autorisé, puis entrée de 100 unités (`CQ-2026-001148`, mouvement `SM-00000589`). Ces identifiants appartiennent uniquement à la base de test. Les comptes fictifs sont désactivés après les essais.
+
+Le contrat OpenAPI vérifie explicitement les deux protections cumulatives des routes Android : secret d’appareil et session personnelle. Les routes de bootstrap ne requièrent que l’appareil ; elles ne sont pas déclarées publiques. Sur un runner Linux exécuté comme root, fournir un `TMPDIR` privé à 0700 : la protection documentaire refuse à juste titre un ancêtre appartenant au service et accessible en écriture à tous, tel que `/tmp` dans cette configuration.
 
 Les APK et essais sur émulateur ne remplacent pas la recette sur tablette, caméra et scannette physiques. Le chantier reste en cours jusqu’à ces validations.
