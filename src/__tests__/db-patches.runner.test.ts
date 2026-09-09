@@ -39,6 +39,20 @@ type RunnerModule = {
 
 const require = createRequire(import.meta.url);
 const runner = require(resolve(repoRoot, "scripts/db-patches.js")) as RunnerModule;
+it("orders immutable dependent patches identically for the canonical runner and release rehearsal", () => {
+  const files = runner.listPatches(resolve(repoRoot, "db/patches")).map((patch) => patch.filename);
+  const gate = require(resolve(repoRoot, "scripts/migrations/release-gate.js"));
+  const { orderPatchDependencies } = require(resolve(repoRoot, "scripts/migrations/patch-dependencies.js"));
+  expect(files.filter((name) => name >= "20260908")).toEqual(
+    gate.inventory().patches.map((patch: Patch) => patch.filename).filter((name: string) => name >= "20260908")
+  );
+  expect(files.indexOf("20260909_consumables.sql")).toBeLessThan(files.indexOf("20260909_consumable_procurement.sql"));
+  expect(files.indexOf("20260909_consumable_procurement.sql")).toBeLessThan(files.indexOf("20260909_grouped_supplier_receipts.sql"));
+  expect(files.indexOf("20260908_supplier_consultations.sql")).toBeLessThan(files.indexOf("20260908_consultation_documents.sql"));
+  const selection = ["20260909_consumable_procurement.sql"];
+  expect(orderPatchDependencies(selection)).toEqual(selection);
+  expect(orderPatchDependencies(["legacy-a.sql", "legacy-b.sql"])).toEqual(["legacy-a.sql", "legacy-b.sql"]);
+});
 const patchFilename = "20260804_auth_rate_limit_buckets.sql";
 const planningPatchFilename = "20260805_planning_convergence_governance.sql";
 const stockNavigationPatchFilename = "20260810_stock_old_new_navigation_446.sql";

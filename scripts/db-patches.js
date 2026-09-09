@@ -248,10 +248,10 @@ function listPatches(patchDir) {
     throw new Error(`Patch directory not found: ${patchDir}`);
   }
 
-  return fs.readdirSync(patchDir)
+  const filenames = fs.readdirSync(patchDir)
     .filter((name) => name.endsWith(".sql"))
-    .sort((a, b) => a.localeCompare(b))
-    .map((filename) => {
+    .sort((a, b) => a.localeCompare(b));
+  return require("./migrations/patch-dependencies").orderPatchDependencies(filenames).map((filename) => {
       const fullPath = path.join(patchDir, filename);
       const sql = fs.readFileSync(fullPath, "utf8");
       const sha256 = sha256Sql(sql);
