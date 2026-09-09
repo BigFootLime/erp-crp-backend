@@ -1,3 +1,4 @@
+/// <reference lib="es2021.weakref" />
 import { createHash, randomUUID } from "node:crypto";
 import nodeFs, { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
