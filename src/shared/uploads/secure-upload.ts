@@ -1,3 +1,4 @@
+/// <reference lib="es2021.weakref" />
 import { createHash, randomUUID } from "node:crypto";
 import nodeFs, { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
@@ -83,16 +84,19 @@ export type UploadDestinationState =
 type UploadDestination = {
   destination: string;
   identity: UploadDestinationIdentity;
+  descriptor: number | null;
   state: UploadDestinationState;
   responseReleased: boolean;
 };
 export type UploadDestinationIdentity = Readonly<{
   dev: string;
   ino: string;
+  birthtimeNs?: string;
 }>;
 type UploadDestinationIdentityInput = Readonly<{
   dev: string | number | bigint;
   ino: string | number | bigint;
+  birthtimeNs?: string | number | bigint;
 }>;
 export type UploadFileReference = Readonly<{ path: string }>;
 const uploadDestinations = new Map<string, Map<string, UploadDestination>>();
@@ -107,8 +111,12 @@ export type SecureBufferDestinationOwnership = Readonly<{
 type SecureBufferDestinationRecord = Readonly<{
   destination: string;
   identity: UploadDestinationIdentity;
+  descriptor: number;
 }>;
 const secureBufferDestinations = new WeakMap<object, SecureBufferDestinationRecord>();
+const bufferOwnershipFinalizer = new FinalizationRegistry<number>((descriptor) => {
+  try { nodeFs.closeSync(descriptor); } catch { /* already released */ }
+});
 
 class UploadRequestAbortedError extends Error {
   constructor() {
@@ -1000,14 +1008,21 @@ export function preflightSecureUploadStorageRoots(): readonly string[] {
 function normalizeUploadDestinationIdentity(
   identity: UploadDestinationIdentityInput
 ): UploadDestinationIdentity {
-  return { dev: String(identity.dev), ino: String(identity.ino) };
+  return {
+    dev: String(identity.dev),
+    ino: String(identity.ino),
+    ...(identity.birthtimeNs !== undefined ? { birthtimeNs: String(identity.birthtimeNs) } : {}),
+  };
 }
 
 function sameUploadDestinationIdentity(
   expected: UploadDestinationIdentity,
   actual: UploadDestinationIdentityInput
 ): boolean {
-  return expected.dev === String(actual.dev) && expected.ino === String(actual.ino);
+  // Linux may immediately recycle an unlinked inode. Its creation timestamp
+  // distinguishes a replacement and, unlike ctime, survives our rename/link.
+  return expected.dev === String(actual.dev) && expected.ino === String(actual.ino)
+    && (expected.birthtimeNs === undefined || expected.birthtimeNs === String(actual.birthtimeNs));
 }
 
 type OwnedPathRemovalHook = (context: Readonly<{
@@ -1165,7 +1180,9 @@ export async function writeSecureBufferToDestination(
     secureBufferDestinations.set(ownership, {
       destination: resolvedDestination,
       identity: normalizeUploadDestinationIdentity(stagingStat),
+      descriptor: nodeFs.openSync(stagingPath, "r"),
     });
+    bufferOwnershipFinalizer.register(ownership, secureBufferDestinations.get(ownership)!.descriptor, ownership);
     const current = await fs.lstat(resolvedDestination, { bigint: true });
     if (
       !current.isFile()
@@ -1206,12 +1223,24 @@ export async function cleanupSecureBufferDestination(
   const record = secureBufferRecord(ownership);
   try {
     const outcome = await removeOwnedPathSafely(record.destination, record.identity);
-    secureBufferDestinations.delete(ownership);
     return outcome;
   } catch (error) {
     if (error instanceof UploadDestinationCleanupError) throw error;
     throw new UploadDestinationCleanupError(1);
+  } finally {
+    releaseSecureBufferDestination(ownership);
   }
+}
+
+/** Release the inode lease after the transaction/reconciliation, without deletion. */
+export function releaseSecureBufferDestination(
+  ownership: SecureBufferDestinationOwnership
+): void {
+  const record = secureBufferDestinations.get(ownership);
+  if (!record) return;
+  bufferOwnershipFinalizer.unregister(ownership);
+  secureBufferDestinations.delete(ownership);
+  nodeFs.closeSync(record.descriptor);
 }
 
 /** Fresh physical identity, size, and SHA verification for COMMIT reconciliation. */
@@ -1247,13 +1276,22 @@ export function registerUploadDestination(
   // Actual transfer paths pass the fstat identity from the exclusively
   // acquired handle. The synchronous fallback keeps legacy/manual callers
   // identity-safe while they migrate to handle-based acquisition.
-  const identity = normalizeUploadDestinationIdentity(
-    acquiredIdentity ?? nodeFs.statSync(resolved, { bigint: true })
-  );
+  // Keep the original inode alive until the transaction has resolved. Timestamps
+  // can share one filesystem clock tick and are not an inode generation counter.
+  const descriptor = nodeFs.openSync(resolved, nodeFs.constants.O_RDONLY | (nodeFs.constants.O_NOFOLLOW ?? 0));
+  const physical = nodeFs.fstatSync(descriptor, { bigint: true });
+  const identity = normalizeUploadDestinationIdentity(acquiredIdentity ?? physical);
+  if (!sameUploadDestinationIdentity(identity, physical)) {
+    nodeFs.closeSync(descriptor);
+    throw new HttpError(409, "UPLOAD_FILE_CHANGED", "Le fichier durable a été remplacé pendant son transfert.");
+  }
   const destinations = uploadDestinations.get(source) ?? new Map<string, UploadDestination>();
+  const previous = destinations.get(resolved);
+  if (previous?.descriptor !== null && previous?.descriptor !== undefined) nodeFs.closeSync(previous.descriptor);
   destinations.set(resolved, {
     destination: resolved,
     identity,
+    descriptor,
     state: "transferred",
     responseReleased: responseReleasedFiles.has(file),
   });
@@ -1270,6 +1308,12 @@ function releaseTerminalDestinationState(
     "commit-uncertain",
     "rollback-uncertain",
   ]);
+  for (const record of destinations.values()) {
+    if (terminal.has(record.state) && record.descriptor !== null) {
+      nodeFs.closeSync(record.descriptor);
+      record.descriptor = null;
+    }
+  }
   if (Array.from(destinations.values()).every((record) => record.responseReleased && terminal.has(record.state))) {
     uploadDestinations.delete(source);
   }
@@ -1315,6 +1359,9 @@ export function getRegisteredUploadDestinationCountForTests(): number {
 }
 
 export function clearRegisteredUploadDestinationsForTests(): void {
+  for (const destinations of uploadDestinations.values()) {
+    for (const record of destinations.values()) if (record.descriptor !== null) nodeFs.closeSync(record.descriptor);
+  }
   uploadDestinations.clear();
 }
 

@@ -61,4 +61,8 @@ Le parcours qualité HTTP a également réussi : entrée de stock refusée avant
 
 Le contrat OpenAPI vérifie explicitement les deux protections cumulatives des routes Android : secret d’appareil et session personnelle. Les routes de bootstrap ne requièrent que l’appareil ; elles ne sont pas déclarées publiques. Sur un runner Linux exécuté comme root, fournir un `TMPDIR` privé à 0700 : la protection documentaire refuse à juste titre un ancêtre appartenant au service et accessible en écriture à tous, tel que `/tmp` dans cette configuration.
 
+La recette Linux a également reproduit la réutilisation immédiate d’un numéro d’inode après remplacement d’un fichier. Les identités documentaires conservent maintenant sa date de création en nanosecondes quand elle est fournie par le système de fichiers. L’annulation conserve ainsi le remplacement et signale une erreur de nettoyage ; le renommage et les liens du fichier d’origine restent autorisés. Les tests comprennent ce cas déterministe et les courses de remplacement réelles.
+
+Comme deux créations peuvent partager le même tick du système de fichiers, les destinations enregistrées gardent aussi un descripteur ouvert jusqu’à la résolution de leur transaction. Cet ancrage empêche le recyclage de l’inode pendant toute la période où une compensation reste possible. Les buffers Project Office libèrent explicitement ce descripteur après transaction ou rapprochement, y compris sur erreur, sans supprimer le document conservé.
+
 Les APK et essais sur émulateur ne remplacent pas la recette sur tablette, caméra et scannette physiques. Le chantier reste en cours jusqu’à ces validations.

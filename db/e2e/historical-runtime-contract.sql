@@ -16,7 +16,18 @@ $guard$;
 -- Historical application privileges precede the additive ledger. Production
 -- grants CRUD on this table to cerp_app; reproduce that baseline only here so
 -- the typed-lot verify script checks the real application role.
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.quality_control TO cerp_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON
+  public.quality_control, public.articles, public.lots,
+  public.stock_reservations, public.commande_fournisseur_ligne,
+  public.receptions_fournisseurs, public.reception_fournisseur_lignes,
+  public.reception_fournisseur_stock_receipts
+TO cerp_app;
+DO $$ BEGIN
+  -- This reference table is introduced after the rehearsal's source boundary.
+  IF to_regclass('public.article_category_referential') IS NOT NULL THEN
+    GRANT SELECT ON public.article_category_referential TO cerp_app;
+  END IF;
+END $$;
 
 -- The account administration repositories still consume these columns from
 -- the historical users table. They predate the additive patch ledger, so the
