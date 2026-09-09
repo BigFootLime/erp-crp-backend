@@ -22,6 +22,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
   public.receptions_fournisseurs, public.reception_fournisseur_lignes,
   public.reception_fournisseur_stock_receipts
 TO cerp_app;
+GRANT SELECT ON public.article_category_referential TO cerp_app;
 
 -- The account administration repositories still consume these columns from
 -- the historical users table. They predate the additive patch ledger, so the
