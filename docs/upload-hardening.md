@@ -461,4 +461,13 @@ ajoute la référence de requête aux cas nécessitant un rapprochement.
 
 ## Vérification minimale
 
+Le téléchargement transmet le `FileHandle` déjà vérifié à son propre flux de
+lecture, qui devient responsable de la fermeture. Ne pas transmettre seulement
+son numéro de descripteur à un second propriétaire : une annulation ou la fin de
+réponse pourrait alors fermer deux fois ce numéro, éventuellement déjà réutilisé
+par une autre requête. La finalisation attend la fermeture du flux et observe ses
+erreurs jusqu'à cette fermeture. La recette comprend vingt téléchargements en
+groupes concurrents, avec vérification du contenu et de la libération des handles,
+ainsi que les annulations pendant l'intégrité et juste avant la diffusion.
+
 Les fixtures doivent être inoffensives. Vérifier : PDF valide, extension trompeuse, MIME incohérent, zéro octet, dépassement de limite, doublon dans un lot, nom avec traversal, rollback après déplacement final, les deux ordres du verrou entre cleanup et second writer du même SHA, double rollback, ACK de COMMIT perdu, writer OF concurrent, blob dédupliqué non possédé, scanner indisponible en `enforce`, téléchargement historique sans extension et tentative de téléchargement hors racine.
