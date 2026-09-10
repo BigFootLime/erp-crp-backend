@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { constants, createReadStream } from "node:fs";
+import { constants, type ReadStream } from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
+import { finished } from "node:stream/promises";
 
 import type { Response } from "express";
 
@@ -191,7 +192,7 @@ export async function sendSecureStoredFile(
   }
 ): Promise<SecureStoredFileSendOutcome> {
   let opened: SecureOpenedFile | null = null;
-  let stream: ReturnType<typeof createReadStream> | null = null;
+  let stream: ReadStream | null = null;
   let responseClosed = res.destroyed;
   let settleStreaming: ((outcome: SecureStoredFileSendOutcome) => void) | null = null;
   let closeHandlePromise: Promise<void> | null = null;
@@ -307,12 +308,18 @@ export async function sendSecureStoredFile(
       });
     }
 
-    stream = createReadStream(opened.realPath, {
-      fd: opened.handle.fd,
-      autoClose: false,
+    // Transfer ownership through FileHandle, never through its numeric fd:
+    // otherwise ReadStream.destroy() and FileHandle.close() can close the same
+    // descriptor twice (or close a descriptor already reused by another request).
+    stream = opened.handle.createReadStream({
+      autoClose: true,
       start: 0,
       end: opened.size - 1,
     });
+    // Observe errors until stream closure, including cancellation after the
+    // response has finished. The streaming promise below reports read errors;
+    // this promise owns cleanup and prevents late, unhandled stream errors.
+    closeHandlePromise = finished(stream, { cleanup: true }).catch(() => undefined);
 
     return await new Promise<SecureStoredFileSendOutcome>((resolve, reject) => {
       let settled = false;

@@ -763,6 +763,33 @@ describe("téléchargement sécurisé et compatibilité historique", () => {
     expect(Buffer.from(response.text, "utf8")).toEqual(content);
   });
 
+  it("termine les téléchargements répétés sans double fermeture ni descripteur encore ouvert", async () => {
+    const candidate = path.join(root, "repeated-download.txt");
+    const content = "document GED\n".repeat(10_000);
+    await fs.writeFile(candidate, content);
+    const handles: Awaited<ReturnType<typeof fs.open>>[] = [];
+    const closed = vi.fn();
+    setSecureDownloadHookForTests((phase, context) => {
+      if (phase === "after-open" && context.fileHandle) {
+        handles.push(context.fileHandle);
+        context.fileHandle.once("close", closed);
+      }
+    });
+    const settled = vi.fn();
+    const app = downloadApp(candidate, undefined, settled);
+
+    for (let round = 0; round < 5; round += 1) {
+      const responses = await Promise.all(Array.from({ length: 4 }, () => request(app).get("/download")));
+      for (const response of responses) {
+        expect(response.status).toBe(200);
+        expect(response.text).toBe(content);
+      }
+      await vi.waitFor(() => expect(settled).toHaveBeenCalledTimes((round + 1) * 4));
+      expect(handles.every((handle) => handle.fd === -1)).toBe(true);
+      expect(closed).toHaveBeenCalledTimes(handles.length);
+    }
+  });
+
   it("diffuse le snapshot vérifié même si le même inode est réécrit avant l'envoi", async () => {
     const candidate = path.join(root, "operational-media.png");
     const verified = Buffer.from("verified-operational-bytes");
