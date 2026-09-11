@@ -3567,8 +3567,7 @@ async function insertCommandeLignes(
             reconciliation_sources = $24::jsonb,
             reconciliation_decisions = $25::jsonb,
             reconciliation_resolved_at = $26::timestamptz,
-            reconciliation_resolved_by = $27::bigint,
-            updated_at = now()
+            reconciliation_resolved_by = $27::bigint
           WHERE $28::bigint IS NOT NULL
             AND id = $28::bigint
             AND commande_id = $1::bigint
