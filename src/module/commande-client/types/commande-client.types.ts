@@ -191,6 +191,7 @@ export type CommandeToAffaire = {
 };
 
 export type CommandeLigneInput = {
+  id?: number;
   article_id?: string | null;
   piece_technique_id?: string | null;
   piece_technique_version_id?: string | null;

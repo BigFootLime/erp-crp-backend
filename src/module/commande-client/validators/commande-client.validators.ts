@@ -71,6 +71,7 @@ const boolFromQuery = z.preprocess((value) => {
 }, z.boolean());
 
 export const commandeLigneInputSchema = z.object({
+  id: z.coerce.number().int().positive().optional(),
   designation: z.string().min(1),
   article_id: z.string().uuid().optional().nullable(),
   piece_technique_id: z.string().uuid().optional().nullable(),

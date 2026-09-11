@@ -561,7 +561,7 @@ describe("/api/v1/commandes", () => {
     expect(pieceCreateCalls[0]?.[1]?.[9]).toBe(0);
   });
 
-  it("PATCH /api/v1/commandes/:id works and replaces lignes", async () => {
+  it("PATCH /api/v1/commandes/:id updates existing lignes without replacing their ids", async () => {
     const ARTICLE_ID = "11111111-1111-1111-1111-111111111111";
     const PIECE_ID = "22222222-2222-2222-2222-222222222222";
     mocks.clientQuery
@@ -577,11 +577,13 @@ describe("/api/v1/commandes", () => {
             cadre_end_date: null,
             dest_stock_magasin_id: null,
             dest_stock_emplacement_id: null,
+            ar_sent_at: null,
+            creation_flow_version: 1,
           },
         ],
       }) // SELECT existing commande_client
       .mockResolvedValueOnce({ rows: [{ id: "123" }] }) // UPDATE commande_client
-      .mockResolvedValueOnce({ rows: [] }) // DELETE lignes
+      .mockResolvedValueOnce({ rows: [{ id: "501" }] }) // SELECT existing line ids
       .mockResolvedValueOnce({ rows: [] }) // DELETE echeances
       .mockResolvedValueOnce({
         rows: [{
@@ -602,7 +604,7 @@ describe("/api/v1/commandes", () => {
       .mockResolvedValueOnce({
         rows: [{ sale_price_reference: 100, sale_price_currency: "EUR", sale_price_source: "CUSTOMER_ORDER" }],
       }) // lock reference sale price
-      .mockResolvedValueOnce({ rows: [] }) // INSERT commande_ligne
+      .mockResolvedValueOnce({ rows: [{ id: "501" }] }) // UPDATE commande_ligne in place
       .mockResolvedValueOnce({ rows: [] }); // COMMIT
 
     const payload = {
@@ -612,6 +614,7 @@ describe("/api/v1/commandes", () => {
       date_commande: "2026-02-01",
       lignes: [
         {
+          id: 501,
           article_id: ARTICLE_ID,
           designation: "Line updated",
           quantite: 2,
@@ -628,10 +631,69 @@ describe("/api/v1/commandes", () => {
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ id: 123 });
 
-    const deleteLignesCall = mocks.clientQuery.mock.calls.find((c) =>
-      String(c[0]).includes("DELETE FROM commande_ligne")
+    const syncLigneCall = mocks.clientQuery.mock.calls.find((c) =>
+      String(c[0]).includes("WITH updated_line AS")
     );
-    expect(deleteLignesCall).toBeTruthy();
+    expect(syncLigneCall).toBeTruthy();
+    expect(syncLigneCall?.[1]?.[27]).toBe(501);
+    expect(mocks.clientQuery.mock.calls.some((c) =>
+      String(c[0]).includes("DELETE FROM commande_ligne")
+    )).toBe(false);
+  });
+
+  it("PATCH /api/v1/commandes/:id returns a business conflict when removing a reserved line", async () => {
+    const ARTICLE_ID = "11111111-1111-1111-1111-111111111111";
+    const reservationError = Object.assign(new Error("foreign key violation"), {
+      code: "23503",
+      constraint: "stock_reservations_commande_ligne_fkey",
+    });
+    mocks.clientQuery
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({
+        rows: [{
+          numero: "CC-123",
+          client_id: "001",
+          devis_id: null,
+          order_type: "FERME",
+          adresse_facturation_id: null,
+          cadre_start_date: null,
+          cadre_end_date: null,
+          dest_stock_magasin_id: null,
+          dest_stock_emplacement_id: null,
+          ar_sent_at: null,
+          creation_flow_version: 1,
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [{ id: "123" }] }) // UPDATE commande_client
+      .mockResolvedValueOnce({ rows: [{ id: "501" }, { id: "502" }] }) // SELECT existing line ids
+      .mockRejectedValueOnce(reservationError) // DELETE omitted reserved line
+      .mockResolvedValueOnce({ rows: [] }); // ROLLBACK
+
+    const res = await request(app)
+      .patch("/api/v1/commandes/123")
+      .field("data", JSON.stringify({
+        numero: "CC-123",
+        client_id: "001",
+        code_client: "PO-TEST-004",
+        date_commande: "2026-02-01",
+        lignes: [{
+          id: 501,
+          article_id: ARTICLE_ID,
+          designation: "Line kept",
+          quantite: 2,
+          prix_unitaire_ht: 100,
+          delai_client: "2026-02-15",
+        }],
+      }));
+
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({
+      code: "COMMANDE_LINE_IN_USE",
+      details: {
+        line_ids: [502],
+        constraint: "stock_reservations_commande_ligne_fkey",
+      },
+    });
   });
 
   it("POST /api/v1/commandes/:id/status is disabled in favor of checkpoint actions", async () => {
