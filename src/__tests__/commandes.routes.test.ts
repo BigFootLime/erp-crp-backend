@@ -367,6 +367,13 @@ describe("/api/v1/commandes", () => {
     expect(res.body).toMatchObject({ id: 123 });
     expect(mocks.poolConnect).toHaveBeenCalledTimes(1);
 
+    const insertLigneCall = mocks.clientQuery.mock.calls.find((c) =>
+      String(c[0]).includes("WITH updated_line AS")
+    );
+    expect(insertLigneCall).toBeTruthy();
+    expect(String(insertLigneCall?.[0])).not.toMatch(/\bupdated_at\s*=/);
+    expect(insertLigneCall?.[1]?.[27]).toBeNull();
+
     const insertDocClientCall = mocks.clientQuery.mock.calls.find((c) =>
       String(c[0]).includes("INSERT INTO documents_clients")
     );
