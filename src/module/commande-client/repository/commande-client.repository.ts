@@ -3186,6 +3186,7 @@ type InsertCommandeLignesOptions = {
   actor_user_id: number | null;
   creation_flow_version: 1 | 2;
   save_intent: "DRAFT" | "VALIDATE";
+  existing_line_ids?: ReadonlySet<number>;
 };
 
 const RECONCILIATION_REQUIRED_FIELDS = [
@@ -3400,6 +3401,15 @@ async function insertCommandeLignes(
   if (!lignes.length) return;
 
   for (const [lineIndex, l] of lignes.entries()) {
+    const requestedLineId = l.id ?? null;
+    if (requestedLineId !== null && !options.existing_line_ids?.has(requestedLineId)) {
+      throw new HttpError(
+        409,
+        "COMMANDE_LINE_ID_INVALID",
+        "Une ligne modifiée n'appartient plus à cette commande. Rechargez la commande avant de réessayer.",
+        { field: `lignes.${lineIndex}.id`, line_id: requestedLineId }
+      );
+    }
     const hasPreparatory = lineHasPreparatorySource(l);
     if (hasPreparatory && !options.officialize_preparatory_data) {
       throw new HttpError(
@@ -3529,7 +3539,42 @@ async function insertCommandeLignes(
 
     const insertRes = await client.query<{ id: string }>(
       `
-        INSERT INTO commande_ligne (
+        WITH updated_line AS (
+          UPDATE commande_ligne
+          SET
+            article_id = $2::uuid,
+            piece_technique_id = $3::uuid,
+            designation = $4,
+            code_piece = $5,
+            quantite = $6,
+            unite = $7,
+            prix_unitaire_ht = $8,
+            remise_ligne = $9,
+            taux_tva = $10,
+            delai_client = $11,
+            delai_interne = $12,
+            devis_numero = $13,
+            famille = $14,
+            source_article_devis_id = $15::uuid,
+            source_dossier_devis_id = $16::uuid,
+            sale_price_reference_at_entry = $17,
+            sale_price_reference_source = $18,
+            sale_price_decision = $19,
+            sale_price_history_id = $20::uuid,
+            piece_technique_version_id = $21::uuid,
+            source_devis_ligne_id = $22::bigint,
+            reconciliation_status = $23,
+            reconciliation_sources = $24::jsonb,
+            reconciliation_decisions = $25::jsonb,
+            reconciliation_resolved_at = $26::timestamptz,
+            reconciliation_resolved_by = $27::bigint,
+            updated_at = now()
+          WHERE $28::bigint IS NOT NULL
+            AND id = $28::bigint
+            AND commande_id = $1::bigint
+          RETURNING id::bigint::text AS id
+        ), inserted_line AS (
+          INSERT INTO commande_ligne (
           commande_id,
           article_id,
           piece_technique_id,
@@ -3557,7 +3602,8 @@ async function insertCommandeLignes(
           ,reconciliation_decisions
           ,reconciliation_resolved_at
           ,reconciliation_resolved_by
-        ) VALUES (
+          )
+          SELECT
           $1,
           $2::uuid,
           $3::uuid,
@@ -3585,8 +3631,12 @@ async function insertCommandeLignes(
           $25::jsonb,
           $26::timestamptz,
           $27::bigint
+          WHERE $28::bigint IS NULL
+          RETURNING id::bigint::text AS id
         )
-        RETURNING id::bigint::text AS id
+        SELECT id FROM updated_line
+        UNION ALL
+        SELECT id FROM inserted_line
       `,
       [
         commandeId,
@@ -3616,6 +3666,7 @@ async function insertCommandeLignes(
         JSON.stringify(reconciliation?.decisions ?? {}),
         reconciliation?.status === "RESOLVED" ? new Date().toISOString() : null,
         reconciliation?.status === "RESOLVED" ? options.actor_user_id : null,
+        requestedLineId,
       ]
     );
 
@@ -3645,6 +3696,110 @@ async function insertCommandeLignes(
       );
     }
   }
+}
+
+async function prepareCommandeLineSync(
+  client: PoolClient,
+  commandeId: string,
+  lignes: CreateCommandeInput["lignes"]
+): Promise<ReadonlySet<number>> {
+  const existingRes = await client.query<{
+    id: string;
+    article_id: string | null;
+    quantite: number;
+    has_fulfillment_links: boolean;
+  }>(
+    `SELECT
+        line.id::bigint::text AS id,
+        line.article_id::text AS article_id,
+        line.quantite::float8 AS quantite,
+        (
+          EXISTS (
+            SELECT 1
+              FROM public.stock_reservations reservation
+             WHERE reservation.commande_ligne_id = line.id
+          )
+          OR EXISTS (
+            SELECT 1
+              FROM public.commande_ligne_affaire_allocation allocation
+             WHERE allocation.commande_ligne_id = line.id
+          )
+        ) AS has_fulfillment_links
+       FROM commande_ligne line
+      WHERE line.commande_id = $1::bigint
+      FOR UPDATE`,
+    [commandeId]
+  );
+  const existingLineIds = new Set(existingRes.rows.map((row) => toInt(row.id, "commande_ligne.id")));
+  const existingLinesById = new Map(existingRes.rows.map((row) => [toInt(row.id, "commande_ligne.id"), row]));
+  const submittedLineIds = new Set<number>();
+
+  for (const [lineIndex, line] of lignes.entries()) {
+    if (line.id === undefined) continue;
+    if (submittedLineIds.has(line.id)) {
+      throw new HttpError(400, "COMMANDE_LINE_ID_DUPLICATE", "Une même ligne est présente plusieurs fois.", {
+        field: `lignes.${lineIndex}.id`,
+        line_id: line.id,
+      });
+    }
+    if (!existingLineIds.has(line.id)) {
+      throw new HttpError(
+        409,
+        "COMMANDE_LINE_ID_INVALID",
+        "Une ligne modifiée n'appartient plus à cette commande. Rechargez la commande avant de réessayer.",
+        { field: `lignes.${lineIndex}.id`, line_id: line.id }
+      );
+    }
+    const existingLine = existingLinesById.get(line.id);
+    const articleChanged = (line.article_id ?? null) !== (existingLine?.article_id ?? null);
+    const quantityChanged = Math.abs(line.quantite - Number(existingLine?.quantite ?? line.quantite)) > 0.000001;
+    if (existingLine?.has_fulfillment_links && (articleChanged || quantityChanged)) {
+      throw new HttpError(
+        409,
+        "COMMANDE_LINE_FULFILLMENT_LOCKED",
+        "L'article ou la quantité d'une ligne déjà lancée ne peut plus être modifié. Les autres informations de la commande restent modifiables.",
+        { field: `lignes.${lineIndex}`, line_id: line.id }
+      );
+    }
+    submittedLineIds.add(line.id);
+  }
+
+  const omittedLineIds = [...existingLineIds].filter((lineId) => !submittedLineIds.has(lineId));
+  const linkedOmittedLineIds = omittedLineIds.filter(
+    (lineId) => existingLinesById.get(lineId)?.has_fulfillment_links
+  );
+  if (linkedOmittedLineIds.length > 0) {
+    throw new HttpError(
+      409,
+      "COMMANDE_LINE_IN_USE",
+      "Cette ligne est déjà liée au stock ou à la production et ne peut pas être supprimée.",
+      { line_ids: linkedOmittedLineIds }
+    );
+  }
+  if (omittedLineIds.length > 0) {
+    try {
+      await client.query(
+        `DELETE FROM commande_ligne
+          WHERE commande_id = $1::bigint
+            AND id = ANY($2::bigint[])`,
+        [commandeId, omittedLineIds]
+      );
+    } catch (error) {
+      const code = isObject(error) && typeof error.code === "string" ? error.code : null;
+      const constraint = isObject(error) && typeof error.constraint === "string" ? error.constraint : null;
+      if (code === "23503") {
+        throw new HttpError(
+          409,
+          "COMMANDE_LINE_IN_USE",
+          "Cette ligne est déjà liée au stock ou à la production et ne peut pas être supprimée.",
+          { line_ids: omittedLineIds, constraint }
+        );
+      }
+      throw error;
+    }
+  }
+
+  return existingLineIds;
 }
 
 async function insertCommandeEcheances(
@@ -4326,8 +4481,9 @@ export async function repoUpdateCommande(
       return null;
     }
 
-    // Safe strategy: replace all lignes + echeances from payload.
-    await client.query(`DELETE FROM commande_ligne WHERE commande_id = $1`, [id]);
+    // Preserve existing line identifiers: reservations, allocations and OFs keep
+    // their immutable traceability links while commercial fields are edited.
+    const existingLineIds = await prepareCommandeLineSync(client, id, input.lignes);
     await client.query(`DELETE FROM commande_echeance WHERE commande_id = $1`, [id]);
     await insertCommandeLignes(client, id, input.lignes, {
       officialize_preparatory_data: input.officialize_preparatory_data ?? false,
@@ -4335,6 +4491,7 @@ export async function repoUpdateCommande(
       actor_user_id: actorUserId,
       creation_flow_version: existingFlowVersion,
       save_intent: input.save_intent ?? "VALIDATE",
+      existing_line_ids: existingLineIds,
     });
     await insertCommandeEcheances(client, id, input.echeances ?? []);
     await insertCommandeDocuments(client, id, documents, movedDocuments);
