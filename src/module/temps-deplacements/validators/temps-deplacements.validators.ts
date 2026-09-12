@@ -31,7 +31,12 @@ export type CreateTimeEventBody = z.infer<typeof createTimeEventSchema>;
 export const deviceEventSchema = z
   .object({
     badge_uid: z.string().min(1, "badge_uid requis").max(256),
-    event_type: z.enum(HR_EVENT_TYPES, { errorMap: () => ({ message: "event_type invalide" }) }),
+    // AUTO est le mode courant. Les types historiques restent acceptés le temps
+    // que les bornes déjà installées reçoivent leur mise à jour automatique.
+    event_type: z.union([
+      z.literal("AUTO"),
+      z.enum(HR_EVENT_TYPES, { errorMap: () => ({ message: "event_type invalide" }) }),
+    ]),
     event_time: eventTime,
     idempotency_key: z.string().min(8, "idempotency_key requis (min 8 caractères)").max(200),
     device_token: z.string().min(1).max(512).optional(),

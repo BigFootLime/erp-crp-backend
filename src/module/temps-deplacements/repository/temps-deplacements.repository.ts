@@ -147,6 +147,17 @@ export async function repoGetLastEvent(employeeId: string, q: DbQueryer = pool):
   return res.rows[0] ? mapEvent(res.rows[0]) : null;
 }
 
+export async function repoGetLastAttendanceEvent(employeeId: string, q: DbQueryer = pool): Promise<HrTimeEvent | null> {
+  const res = await q.query(
+    `SELECT id::text, employee_id::text, device_id::text, event_type::text, event_time::text, source::text, created_at::text
+       FROM public.hr_time_events
+      WHERE employee_id = $1::uuid AND event_type IN ('IN'::hr_event_type, 'OUT'::hr_event_type)
+      ORDER BY event_time DESC, created_at DESC LIMIT 1`,
+    [employeeId]
+  );
+  return res.rows[0] ? mapEvent(res.rows[0]) : null;
+}
+
 export async function repoFindEventByIdempotencyKey(key: string, q: DbQueryer = pool): Promise<HrTimeEvent | null> {
   const res = await q.query(
     `SELECT id::text, employee_id::text, device_id::text, event_type::text, event_time::text, source::text, created_at::text

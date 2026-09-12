@@ -13,6 +13,7 @@ vi.mock("../module/temps-deplacements/repository/temps-deplacements.repository",
   repoFindEventByIdempotencyKey: vi.fn(),
   repoLockEmployeeTimeEvents: vi.fn(),
   repoGetLastEvent: vi.fn(),
+  repoGetLastAttendanceEvent: vi.fn(),
   repoInsertAnomaly: vi.fn(),
   insertAuditLog: vi.fn(),
   repoInsertTimeEvent: vi.fn(),
@@ -23,7 +24,7 @@ vi.mock("../module/temps-deplacements/repository/temps-deplacements.repository",
 }));
 
 import * as repo from "../module/temps-deplacements/repository/temps-deplacements.repository";
-import { createTimeEvent } from "../module/temps-deplacements/services/temps-deplacements.service";
+import { createTimeEvent, resolveAutomaticEventType } from "../module/temps-deplacements/services/temps-deplacements.service";
 
 const mockedRepo = vi.mocked(repo);
 const employeeId = "11111111-1111-4111-8111-111111111111";
@@ -70,5 +71,55 @@ describe("pointage — anti-double scan physique", () => {
 
     expect(result).toMatchObject({ event: previous, deduplicated: true, double_badge: false });
     expect(mockedRepo.repoLockEmployeeTimeEvents).not.toHaveBeenCalled();
+  });
+
+  it("ignore un second scan AUTO rapproché au lieu de transformer l'entrée en sortie", async () => {
+    mockedRepo.repoFindEventByIdempotencyKey.mockResolvedValue(null);
+    mockedRepo.repoGetLastAttendanceEvent.mockResolvedValue(previous);
+
+    const result = await createTimeEvent({
+      employee_id: employeeId,
+      device_id: "device-1",
+      event_type: "AUTO",
+      event_time: "2026-09-12T06:00:30.000Z",
+      source: "BADGE",
+      idempotency_key: "auto-second-scan",
+    }, audit);
+
+    expect(result).toMatchObject({ event: previous, deduplicated: true, double_badge: true });
+    expect(mockedRepo.repoInsertTimeEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe("pointage automatique entrée / sortie", () => {
+  it("commence par une entrée et alterne ensuite", () => {
+    expect(resolveAutomaticEventType(null, "2026-09-12T06:00:00.000Z")).toBe("IN");
+    expect(resolveAutomaticEventType(previous, "2026-09-12T15:00:00.000Z")).toBe("OUT");
+    expect(resolveAutomaticEventType({ ...previous, event_type: "OUT" }, "2026-09-12T15:00:00.000Z")).toBe("IN");
+  });
+
+  it("repart sur une entrée au changement de journée Paris", () => {
+    expect(resolveAutomaticEventType(previous, "2026-09-13T06:00:00.000Z")).toBe("IN");
+  });
+
+  it("persiste le type résolu et jamais la valeur AUTO", async () => {
+    mockedRepo.repoFindEventByIdempotencyKey.mockResolvedValue(null);
+    mockedRepo.repoGetLastAttendanceEvent.mockResolvedValue(previous);
+    mockedRepo.repoInsertTimeEvent.mockImplementation(async (_client, input) => ({
+      event: { ...previous, id: "event-2", event_type: input.event_type, event_time: input.event_time ?? previous.event_time },
+      deduplicated: false,
+    }));
+
+    const result = await createTimeEvent({
+      employee_id: employeeId,
+      device_id: "device-1",
+      event_type: "AUTO",
+      event_time: "2026-09-12T15:00:00.000Z",
+      source: "BADGE",
+      idempotency_key: "auto-out-scan",
+    }, audit);
+
+    expect(mockedRepo.repoInsertTimeEvent).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ event_type: "OUT" }));
+    expect(result.event.event_type).toBe("OUT");
   });
 });
