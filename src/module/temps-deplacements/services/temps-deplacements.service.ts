@@ -25,7 +25,8 @@ const MIN_BREAK_MINUTES = 20;
 const TZ = "Europe/Paris";
 
 export function hashBadgeUid(uid: string): string {
-  return crypto.createHash("sha256").update(uid.trim()).digest("hex");
+  const canonicalUid = uid.trim().replace(/[\s:-]+/g, "").toUpperCase();
+  return crypto.createHash("sha256").update(canonicalUid).digest("hex");
 }
 export function hashDeviceToken(token: string): string {
   return crypto.createHash("sha256").update(token).digest("hex");
@@ -66,27 +67,33 @@ export async function createTimeEvent(input: CreateTimeEventInput, audit: AuditC
   const result = await repo.withTransaction(async (client) => {
     const evtTimeMs = input.event_time ? new Date(input.event_time).getTime() : Date.now();
 
-    // Double badge rapproché (même type, < fenêtre) — hors retry idempotent explicite.
-    if (!input.idempotency_key) {
-      const last = await repo.repoGetLastEvent(input.employee_id, client);
-      if (last && last.event_type === input.event_type) {
-        const delta = Math.abs(evtTimeMs - new Date(last.event_time).getTime());
-        if (delta < DOUBLE_BADGE_WINDOW_MS) {
-          await repo.repoInsertAnomaly(client, {
-            employee_id: input.employee_id,
-            date: parisDay(last.event_time),
-            anomaly_type: "DOUBLE_BADGE",
-            severity: "WARNING",
-            message: `Double badge ${input.event_type} rapproché ignoré`,
-          });
-          await repo.insertAuditLog(client, audit, {
-            action: input.source === "BADGE" ? "temps-deplacements.event.double_badge_badge" : "temps-deplacements.event.double_badge_web",
-            entity_type: "hr_time_events",
-            entity_id: last.id,
-            details: { event_type: input.event_type, source: input.source },
-          });
-          return { event: last, deduplicated: true, double_badge: true };
-        }
+    // Un retry réseau avec la même clé renvoie strictement le premier événement.
+    if (input.idempotency_key) {
+      const existing = await repo.repoFindEventByIdempotencyKey(input.idempotency_key, client);
+      if (existing) return { event: existing, deduplicated: true, double_badge: false };
+    }
+
+    await repo.repoLockEmployeeTimeEvents(input.employee_id, client);
+
+    // Une nouvelle lecture physique génère une nouvelle clé : elle doit tout de même être bloquée.
+    const last = await repo.repoGetLastEvent(input.employee_id, client);
+    if (last && last.event_type === input.event_type) {
+      const delta = Math.abs(evtTimeMs - new Date(last.event_time).getTime());
+      if (delta < DOUBLE_BADGE_WINDOW_MS) {
+        await repo.repoInsertAnomaly(client, {
+          employee_id: input.employee_id,
+          date: parisDay(last.event_time),
+          anomaly_type: "DOUBLE_BADGE",
+          severity: "WARNING",
+          message: `Double badge ${input.event_type} rapproché ignoré`,
+        });
+        await repo.insertAuditLog(client, audit, {
+          action: input.source === "BADGE" ? "temps-deplacements.event.double_badge_badge" : "temps-deplacements.event.double_badge_web",
+          entity_type: "hr_time_events",
+          entity_id: last.id,
+          details: { event_type: input.event_type, source: input.source },
+        });
+        return { event: last, deduplicated: true, double_badge: true };
       }
     }
 

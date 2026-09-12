@@ -4,9 +4,11 @@ import {
   repoGetContractById,
   repoGetRuleSetById,
   repoInsertContract,
+  repoInsertEmployee,
   repoInsertRuleSet,
   repoInsertSchedule,
   repoListContracts,
+  repoListEmployeeCandidates,
   repoListEmployees,
   repoListRuleSets,
   repoListSchedules,
@@ -16,6 +18,7 @@ import {
   repoUpdateRuleSet,
   repoUpdateSchedule,
   type ContractInput,
+  type EmployeeInput,
   type RuleSetInput,
   type ScheduleInput,
 } from "../repository/temps-deplacements-rules.repository";
@@ -38,6 +41,31 @@ async function audit(actor: Actor, ctx: AuditContext, action: string, entityType
 export async function listEmployees(actor: Actor) {
   assertPrivileged(actor);
   return repoListEmployees();
+}
+export async function listEmployeeCandidates(actor: Actor) {
+  assertPrivileged(actor);
+  return repoListEmployeeCandidates();
+}
+export async function createEmployee(actor: Actor, input: EmployeeInput, ctx: AuditContext) {
+  assertPrivileged(actor);
+  try {
+    const row = await withTransaction(async (client) => {
+      const created = await repoInsertEmployee(client, input);
+      await insertAuditLog(client, ctx, {
+        action: "temps-deplacements.employee.create",
+        entity_type: "hr_employees",
+        entity_id: created.id,
+        details: { user_id: input.user_id, matricule: input.matricule, status: input.status },
+      });
+      return created;
+    });
+    return row;
+  } catch (err) {
+    if (isPgUniqueViolation(err)) {
+      throw new HttpError(409, "HR_EMPLOYEE_ALREADY_EXISTS", "Ce compte ou ce matricule est déjà rattaché à un salarié.");
+    }
+    throw err;
+  }
 }
 
 // -------------------------------------------------------------- Rule sets

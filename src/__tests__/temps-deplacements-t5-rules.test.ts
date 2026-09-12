@@ -3,6 +3,7 @@ import {
   applyRounding,
   effectiveRuleSetFromRows,
   enforceMinimumBreak,
+  parseBreakRule,
   splitWeeklyOvertime,
   weeklyAggregate,
   type ContractRow,
@@ -91,5 +92,10 @@ describe("T5 — arrondis & pause minimale", () => {
     expect(enforceMinimumBreak(480, 10, { min_break_minutes: 30, auto_deduct_after_minutes: 360 })).toBe(460); // déduit 20
     expect(enforceMinimumBreak(300, 0, { min_break_minutes: 30, auto_deduct_after_minutes: 360 })).toBe(300); // sous le seuil
     expect(enforceMinimumBreak(480, 30, { min_break_minutes: 30, auto_deduct_after_minutes: 360 })).toBe(480); // pause suffisante
+  });
+  it("dérive le minimum de la pause atelier 15 min + midi 60 min", () => {
+    const rule = parseBreakRule({ short_break_minutes: 15, lunch_break_minutes: 60, auto_deduct_after_minutes: 360 });
+    expect(rule).toMatchObject({ short_break_minutes: 15, lunch_break_minutes: 60, min_break_minutes: 75, auto_deduct_after_minutes: 360 });
+    expect(enforceMinimumBreak(480, 45, rule)).toBe(450);
   });
 });

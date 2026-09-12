@@ -47,6 +47,8 @@ router.get("/team/operations-queue", ops.getOperationsQueue);
 
 // T5 — administration RH (règles / contrats / horaires). Réservé aux rôles privilégiés (service).
 router.get("/admin/employees", adm.getEmployees);
+router.get("/admin/employee-candidates", adm.getEmployeeCandidates);
+router.post("/admin/employees", adm.postEmployee);
 router.get("/admin/rule-sets", adm.getRuleSets);
 router.post("/admin/rule-sets", adm.postRuleSet);
 router.put("/admin/rule-sets/:id", adm.putRuleSet);
