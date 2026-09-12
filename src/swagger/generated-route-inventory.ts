@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "aa184cfc4f5f724cd2249303e474b52a2c15edf4b396199a3bbf51d277fc9ef0";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "67d109f2e1ea44af8e013d051fbebc3f4e0af341759aafaa4adc029836566dda";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -21611,7 +21611,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/time-clock/admin/badges",
-    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:88",
+    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:90",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -21626,7 +21626,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/time-clock/admin/badges",
-    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:89",
+    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:91",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -21641,7 +21641,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/time-clock/admin/badges/{id}/revoke",
-    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:90",
+    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:92",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -21656,7 +21656,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/time-clock/admin/contracts",
-    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:54",
+    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:56",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -21671,7 +21671,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/time-clock/admin/contracts",
-    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:55",
+    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:57",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -21686,7 +21686,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/time-clock/admin/contracts/{id}",
-    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:56",
+    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:58",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -21701,7 +21701,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/time-clock/admin/contracts/{id}/active",
-    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:57",
+    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:59",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -21716,7 +21716,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/time-clock/admin/devices",
-    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:84",
+    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:86",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -21731,7 +21731,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/time-clock/admin/devices",
-    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:85",
+    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:87",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -21746,7 +21746,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/time-clock/admin/devices/{id}/rotate-token",
-    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:87",
+    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:89",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -21761,12 +21761,27 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/time-clock/admin/devices/{id}/status",
-    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:86",
+    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:88",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
       "dev.patchDeviceStatus"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/time-clock/admin/employee-candidates",
+    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:50",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "adm.getEmployeeCandidates"
     ],
     "authenticated": true,
     "rbac": [
@@ -21789,9 +21804,24 @@ export const GENERATED_ROUTE_INVENTORY = [
     ]
   },
   {
+    "method": "post",
+    "path": "/time-clock/admin/employees",
+    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:51",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "adm.postEmployee"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
     "method": "get",
     "path": "/time-clock/admin/exports",
-    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:64",
+    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:66",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -21806,7 +21836,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/time-clock/admin/exports",
-    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:65",
+    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:67",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -21821,7 +21851,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/time-clock/admin/exports/{id}/download",
-    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:66",
+    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:68",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -21836,7 +21866,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/time-clock/admin/kilometer-rates",
-    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:80",
+    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:82",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -21851,7 +21881,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/time-clock/admin/kilometer-rates",
-    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:81",
+    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:83",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -21866,7 +21896,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/time-clock/admin/period-closures",
-    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:77",
+    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:79",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -21881,7 +21911,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/time-clock/admin/period-closures",
-    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:78",
+    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:80",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -21896,7 +21926,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/time-clock/admin/period-closures/{id}/reopen",
-    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:79",
+    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:81",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -21911,7 +21941,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/time-clock/admin/rule-sets",
-    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:50",
+    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:52",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -21926,7 +21956,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/time-clock/admin/rule-sets",
-    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:51",
+    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:53",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -21941,7 +21971,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/time-clock/admin/rule-sets/{id}",
-    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:52",
+    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:54",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -21956,7 +21986,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/time-clock/admin/rule-sets/{id}/active",
-    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:53",
+    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:55",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -21971,7 +22001,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/time-clock/admin/schedules",
-    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:58",
+    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:60",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -21986,7 +22016,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/time-clock/admin/schedules",
-    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:59",
+    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:61",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -22001,7 +22031,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "delete",
     "path": "/time-clock/admin/schedules/{id}",
-    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:61",
+    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:63",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -22016,7 +22046,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/time-clock/admin/schedules/{id}",
-    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:60",
+    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:62",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -22031,7 +22061,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/time-clock/admin/vehicles",
-    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:76",
+    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:78",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -22151,7 +22181,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/time-clock/kilometers",
-    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:70",
+    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:72",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -22166,7 +22196,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/time-clock/kilometers/{id}/reject",
-    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:75",
+    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:77",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -22181,7 +22211,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/time-clock/kilometers/{id}/submit",
-    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:72",
+    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:74",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -22196,7 +22226,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/time-clock/kilometers/{id}/validate",
-    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:74",
+    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:76",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -22211,7 +22241,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/time-clock/kilometers/me",
-    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:71",
+    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:73",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -22226,7 +22256,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/time-clock/kilometers/team",
-    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:73",
+    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:75",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -22241,7 +22271,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/time-clock/kilometers/vehicles",
-    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:69",
+    "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:71",
     "middleware": [
       "anonymous",
       "authenticateToken",

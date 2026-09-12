@@ -88,6 +88,7 @@ describe("T2 — hachage badge/token (jamais en clair)", () => {
     expect(h).toMatch(/^[0-9a-f]{64}$/);
     expect(h).not.toBe("04AABBCCDD");
     expect(hashBadgeUid("04AABBCCDD")).toBe(h);
+    expect(hashBadgeUid("04-aa-bb-cc-dd")).toBe(h);
     expect(hashBadgeUid("other")).not.toBe(h);
   });
   it("device token haché aussi", () => {

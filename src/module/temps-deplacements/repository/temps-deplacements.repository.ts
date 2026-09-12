@@ -132,6 +132,12 @@ export async function repoTouchDeviceHeartbeat(deviceId: string, q: DbQueryer = 
 }
 
 // -------------------------------------------------------------- Événements (append-only)
+export async function repoLockEmployeeTimeEvents(employeeId: string, q: DbQueryer): Promise<void> {
+  // Sérialise les scans d'un même salarié dans la transaction : deux bornes ne peuvent plus
+  // insérer simultanément le même type d'événement avec des clés d'idempotence différentes.
+  await q.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [employeeId]);
+}
+
 export async function repoGetLastEvent(employeeId: string, q: DbQueryer = pool): Promise<HrTimeEvent | null> {
   const res = await q.query(
     `SELECT id::text, employee_id::text, device_id::text, event_type::text, event_time::text, source::text, created_at::text

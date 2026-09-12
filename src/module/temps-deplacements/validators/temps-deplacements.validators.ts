@@ -79,6 +79,35 @@ const nonNegInt = z.number().int().min(0);
 const timeOfDay = z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/, "Heure attendue HH:MM").nullable();
 
 export const HR_CONTRACT_TYPES = ["H35", "H39", "PARTIAL", "OTHER"] as const;
+export const HR_EMPLOYEE_STATUSES = ["ACTIVE", "SUSPENDED", "LEFT"] as const;
+
+export const employeeBodySchema = z
+  .object({
+    user_id: z.number().int().positive(),
+    matricule: z.string().trim().min(1).max(100),
+    service: z.string().trim().max(200).nullable().default(null),
+    manager_user_id: z.number().int().positive().nullable().default(null),
+    status: z.enum(HR_EMPLOYEE_STATUSES).default("ACTIVE"),
+  })
+  .strict()
+  .refine((value) => value.manager_user_id !== value.user_id, {
+    message: "Un salarié ne peut pas être son propre responsable.",
+    path: ["manager_user_id"],
+  });
+export type EmployeeBody = z.infer<typeof employeeBodySchema>;
+
+const breakRuleSchema = z
+  .object({
+    short_break_minutes: nonNegInt.max(240).default(15),
+    lunch_break_minutes: nonNegInt.max(360).default(60),
+    min_break_minutes: nonNegInt.max(600).optional(),
+    auto_deduct_after_minutes: nonNegInt.max(1440).default(360),
+  })
+  .strict()
+  .transform((value) => ({
+    ...value,
+    min_break_minutes: value.min_break_minutes ?? value.short_break_minutes + value.lunch_break_minutes,
+  }));
 
 // Règle de calcul — JAMAIS de 35/39 en dur : les cibles sont saisies ici (minutes).
 export const ruleSetBodySchema = z
@@ -91,7 +120,11 @@ export const ruleSetBodySchema = z
     overtime_threshold_2_minutes: nonNegInt.max(10080).nullable().default(null),
     overtime_rate_2: z.number().min(1).max(5).nullable().default(null),
     rounding_rule: z.record(z.unknown()).default({}),
-    break_rule: z.record(z.unknown()).default({}),
+    break_rule: breakRuleSchema.default({
+      short_break_minutes: 15,
+      lunch_break_minutes: 60,
+      auto_deduct_after_minutes: 360,
+    }),
   })
   .strict();
 export type RuleSetBody = z.infer<typeof ruleSetBodySchema>;
