@@ -22,6 +22,16 @@ export function buildAuditContext(req: Request): AuditContext {
   if (!user || typeof user.id !== "number") {
     throw new HttpError(401, "UNAUTHORIZED", "Authentication required");
   }
+  return buildRequestAuditContext(req, user.id);
+}
+
+// Les routes publiques de borne sont authentifiées par un token opaque de
+// terminal. Elles ne doivent ni exiger ni fabriquer une session utilisateur.
+export function buildDeviceAuditContext(req: Request): AuditContext {
+  return buildRequestAuditContext(req, typeof req.user?.id === "number" ? req.user.id : null);
+}
+
+function buildRequestAuditContext(req: Request, userId: number | null): AuditContext {
   const userAgent = typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : null;
   const ip = getClientIp(req);
   const device = parseDevice(userAgent);
@@ -33,7 +43,7 @@ export function buildAuditContext(req: Request): AuditContext {
         ? req.headers["x-session-id"]
         : null;
   return {
-    user_id: user.id,
+    user_id: userId,
     ip,
     user_agent: userAgent,
     device_type: device.device_type,
@@ -126,7 +136,7 @@ export const getEmployeeWeek = asyncHandler(async (req: Request, res: Response) 
   res.json(await svc.computeWeeklyTimesheet(target.id, week_start ?? mondayOf(svc.todayParis())));
 });
 
-// ------------------------------------------------------------------ Borne / device (JWT socle + device_token)
+// ------------------------------------------------------------------ Borne / device (device_token autonome)
 async function authenticateDevice(deviceToken: string | undefined): Promise<{ id: string }> {
   if (!deviceToken) throw new HttpError(401, "HR_DEVICE_UNAUTHORIZED", "device_token requis.");
   const device = await repo.repoGetActiveDeviceByTokenHash(svc.hashDeviceToken(deviceToken));
@@ -135,10 +145,9 @@ async function authenticateDevice(deviceToken: string | undefined): Promise<{ id
 }
 
 export const postDeviceEvent = asyncHandler(async (req: Request, res: Response) => {
-  requireUser(req);
   const body = deviceEventSchema.parse(req.body);
   const device = await authenticateDevice(body.device_token);
-  const audit = buildAuditContext(req);
+  const audit = buildDeviceAuditContext(req);
   let emp: HrEmployeeLite;
   try {
     emp = await svc.resolveEmployeeFromBadge(body.badge_uid); // badge_uid haché serveur ; jamais loggé
@@ -169,12 +178,11 @@ export const postDeviceEvent = asyncHandler(async (req: Request, res: Response) 
 });
 
 export const postDeviceHeartbeat = asyncHandler(async (req: Request, res: Response) => {
-  requireUser(req);
   const body = deviceHeartbeatSchema.parse(req.body);
   const device = await authenticateDevice(body.device_token);
   await repo.repoTouchDeviceHeartbeat(device.id);
   await repo.withTransaction((client) =>
-    repo.insertAuditLog(client, buildAuditContext(req), {
+    repo.insertAuditLog(client, buildDeviceAuditContext(req), {
       action: "temps-deplacements.device.heartbeat",
       entity_type: "hr_time_clock_devices",
       entity_id: device.id,

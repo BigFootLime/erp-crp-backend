@@ -18,6 +18,8 @@ const PUBLIC_ROUTE_POLICIES: Readonly<Record<string, string>> = {
   "post /auth/mfa/verify": "Vérification d’un challenge MFA signé, court, à usage unique et limité en débit avant émission de session.",
   "post /auth/reset-password": "Réinitialisation par jeton à usage unique avec limitation de débit.",
   "post /electronic-invoicing/webhooks/{providerCode}": "Webhook prestataire authentifié par signature sur le corps brut et limité en débit.",
+  "post /time-clock/device-events": "Ingestion de badge authentifiée par le token opaque aléatoire de 192 bits d’une borne active ; UID haché côté serveur et commande idempotente.",
+  "post /time-clock/device-heartbeat": "Présence d’une borne authentifiée par son token opaque aléatoire de 192 bits ; aucune donnée RH n’est retournée.",
   "get /environment": "Signal public minimal de routage de base, sans secret ni donnée métier.",
   "get /openapi.json": "Contrat public de la version API déployée.",
   "get /realtime/readiness": "Signal public booléen de disponibilité temps réel, sans détail d’infrastructure.",
