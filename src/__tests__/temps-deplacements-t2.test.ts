@@ -104,9 +104,10 @@ describe("T2 — validateurs (anti-IDOR structurel + idempotency)", () => {
     expect(() => createTimeEventSchema.parse({ event_type: "NOPE" })).toThrow();
   });
   it("deviceEventSchema EXIGE idempotency_key (min 8)", () => {
-    expect(() => deviceEventSchema.parse({ badge_uid: "abc", event_type: "IN" })).toThrow();
-    expect(() => deviceEventSchema.parse({ badge_uid: "abc", event_type: "IN", idempotency_key: "short" })).toThrow();
-    expect(deviceEventSchema.parse({ badge_uid: "abc", event_type: "IN", idempotency_key: "abcd1234" }).idempotency_key).toBe("abcd1234");
+    expect(() => deviceEventSchema.parse({ badge_uid: "abc", event_type: "AUTO" })).toThrow();
+    expect(() => deviceEventSchema.parse({ badge_uid: "abc", event_type: "AUTO", idempotency_key: "short" })).toThrow();
+    expect(deviceEventSchema.parse({ badge_uid: "abc", event_type: "AUTO", idempotency_key: "abcd1234" }).idempotency_key).toBe("abcd1234");
+    expect(deviceEventSchema.parse({ badge_uid: "abc", event_type: "IN", idempotency_key: "legacy1234" }).event_type).toBe("IN");
   });
 });
 

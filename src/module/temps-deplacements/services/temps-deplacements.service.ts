@@ -11,10 +11,15 @@ import type {
   CreateTimeEventResult,
   HrDailyTimesheet,
   HrEmployeeLite,
+  HrEventType,
   HrTimeAnomaly,
   HrTimeEvent,
   HrWeeklyTimesheet,
 } from "../types/temps-deplacements.types";
+
+type CreateTimeEventRequestInput = Omit<CreateTimeEventInput, "event_type"> & {
+  event_type: HrEventType | "AUTO";
+};
 
 // Seuils d'anomalie = défauts MVP (déplaçables dans hr_time_rule_sets en T5).
 // L'attendu contractuel (35h/39h) vient DÉJÀ de la base (repoGetDailyTargetMinutes) — jamais en dur.
@@ -61,7 +66,12 @@ export async function resolveEmployeeFromBadge(badgeUid: string): Promise<HrEmpl
 }
 
 // -------------------------------------------------------------- Création d'événement (append-only)
-export async function createTimeEvent(input: CreateTimeEventInput, audit: AuditContext): Promise<CreateTimeEventResult> {
+export function resolveAutomaticEventType(last: HrTimeEvent | null, eventTime: string | number | Date): "IN" | "OUT" {
+  if (!last || parisDay(last.event_time) !== parisDay(eventTime)) return "IN";
+  return last.event_type === "IN" ? "OUT" : "IN";
+}
+
+export async function createTimeEvent(input: CreateTimeEventRequestInput, audit: AuditContext): Promise<CreateTimeEventResult> {
   const eventDate = parisDay(input.event_time ?? Date.now());
   await assertPeriodOpen(input.employee_id, eventDate);
   const result = await repo.withTransaction(async (client) => {
@@ -76,8 +86,10 @@ export async function createTimeEvent(input: CreateTimeEventInput, audit: AuditC
     await repo.repoLockEmployeeTimeEvents(input.employee_id, client);
 
     // Une nouvelle lecture physique génère une nouvelle clé : elle doit tout de même être bloquée.
-    const last = await repo.repoGetLastEvent(input.employee_id, client);
-    if (last && last.event_type === input.event_type) {
+    const last = input.event_type === "AUTO"
+      ? await repo.repoGetLastAttendanceEvent(input.employee_id, client)
+      : await repo.repoGetLastEvent(input.employee_id, client);
+    if (last && (input.event_type === "AUTO" || last.event_type === input.event_type)) {
       const delta = Math.abs(evtTimeMs - new Date(last.event_time).getTime());
       if (delta < DOUBLE_BADGE_WINDOW_MS) {
         await repo.repoInsertAnomaly(client, {
@@ -85,25 +97,34 @@ export async function createTimeEvent(input: CreateTimeEventInput, audit: AuditC
           date: parisDay(last.event_time),
           anomaly_type: "DOUBLE_BADGE",
           severity: "WARNING",
-          message: `Double badge ${input.event_type} rapproché ignoré`,
+          message: `Double badge ${input.event_type === "AUTO" ? last.event_type : input.event_type} rapproché ignoré`,
         });
         await repo.insertAuditLog(client, audit, {
           action: input.source === "BADGE" ? "temps-deplacements.event.double_badge_badge" : "temps-deplacements.event.double_badge_web",
           entity_type: "hr_time_events",
           entity_id: last.id,
-          details: { event_type: input.event_type, source: input.source },
+          details: { event_type: last.event_type, requested_event_type: input.event_type, source: input.source },
         });
         return { event: last, deduplicated: true, double_badge: true };
       }
     }
 
-    const inserted = await repo.repoInsertTimeEvent(client, input);
+    const eventType = input.event_type === "AUTO"
+      ? resolveAutomaticEventType(last, input.event_time ?? Date.now())
+      : input.event_type;
+    const resolvedInput: CreateTimeEventInput = { ...input, event_type: eventType };
+    const inserted = await repo.repoInsertTimeEvent(client, resolvedInput);
     await repo.insertAuditLog(client, audit, {
       action: input.source === "BADGE" ? "temps-deplacements.event.create_badge" : "temps-deplacements.event.create_web",
       entity_type: "hr_time_events",
       entity_id: inserted.event.id,
       // JAMAIS de badge_uid/token/payload sensible dans l'audit.
-      details: { event_type: input.event_type, source: input.source, deduplicated: inserted.deduplicated },
+      details: {
+        event_type: eventType,
+        requested_event_type: input.event_type,
+        source: input.source,
+        deduplicated: inserted.deduplicated,
+      },
     });
     return { event: inserted.event, deduplicated: inserted.deduplicated, double_badge: false };
   });

@@ -191,7 +191,7 @@ export const getDeviceConfig = asyncHandler(async (req: Request, res: Response) 
   const device = await authenticateDevice(token);
   res.json({
     device_id: device.id,
-    event_types: ["IN", "OUT", "BREAK_START", "BREAK_END"],
+    event_types: ["AUTO"],
     heartbeat_interval_seconds: 60,
   });
 });
