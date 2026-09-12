@@ -13,7 +13,10 @@ export type DbQueryer = Pick<PoolClient, "query">;
 
 // Contexte d'audit (même forme que le reste de l'ERP). Jamais de secret/PII sensible dedans.
 export type AuditContext = {
-  user_id: number;
+  // Les commandes utilisateur ont toujours un user_id. Une borne authentifiée
+  // par son token n'en a pas : l'identité du terminal reste portée par
+  // entity_id/details dans l'audit, sans inventer de compte technique.
+  user_id: number | null;
   ip: string | null;
   user_agent: string | null;
   device_type: string | null;
