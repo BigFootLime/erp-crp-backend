@@ -3,6 +3,7 @@ import { asyncHandler } from "../../../utils/asyncHandler";
 import * as svc from "../services/temps-deplacements-admin.service";
 import {
   contractBodySchema,
+  employeeBodySchema,
   listContractsQuerySchema,
   listSchedulesQuerySchema,
   ruleSetBodySchema,
@@ -15,6 +16,13 @@ import { buildAuditContext, requireUser } from "./temps-deplacements.controller"
 // -------------------------------------------------------------- Employés (pickers)
 export const getEmployees = asyncHandler(async (req: Request, res: Response) => {
   res.json(await svc.listEmployees(requireUser(req)));
+});
+export const getEmployeeCandidates = asyncHandler(async (req: Request, res: Response) => {
+  res.json(await svc.listEmployeeCandidates(requireUser(req)));
+});
+export const postEmployee = asyncHandler(async (req: Request, res: Response) => {
+  const body = employeeBodySchema.parse(req.body);
+  res.status(201).json(await svc.createEmployee(requireUser(req), body, buildAuditContext(req)));
 });
 
 // -------------------------------------------------------------- Rule sets

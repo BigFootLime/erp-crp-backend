@@ -6,7 +6,9 @@ export interface RoundingRule {
   mode?: "nearest" | "up" | "down";
 }
 export interface BreakRule {
-  min_break_minutes?: number; // pause minimale imposée
+  short_break_minutes?: number; // pause courte de la politique (ex. 15 min)
+  lunch_break_minutes?: number; // pause déjeuner de la politique (ex. 60 min)
+  min_break_minutes?: number; // minimum total, dérivé des deux pauses si absent
   auto_deduct_after_minutes?: number; // au-delà de ce temps travaillé, la pause minimale est déduite
 }
 
@@ -60,10 +62,19 @@ export function parseRoundingRule(raw: unknown): RoundingRule {
 }
 export function parseBreakRule(raw: unknown): BreakRule {
   const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const shortBreak = toNum(r.short_break_minutes);
+  const lunchBreak = toNum(r.lunch_break_minutes);
   const minB = toNum(r.min_break_minutes);
   const after = toNum(r.auto_deduct_after_minutes);
+  const derivedMinimum = Math.max(0, shortBreak ?? 0) + Math.max(0, lunchBreak ?? 0);
   return {
-    ...(minB && minB > 0 ? { min_break_minutes: minB } : {}),
+    ...(shortBreak != null && shortBreak >= 0 ? { short_break_minutes: shortBreak } : {}),
+    ...(lunchBreak != null && lunchBreak >= 0 ? { lunch_break_minutes: lunchBreak } : {}),
+    ...(minB != null && minB >= 0
+      ? { min_break_minutes: minB }
+      : derivedMinimum > 0
+        ? { min_break_minutes: derivedMinimum }
+        : {}),
     ...(after && after > 0 ? { auto_deduct_after_minutes: after } : {}),
   };
 }
