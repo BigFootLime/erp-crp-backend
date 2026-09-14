@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../module/temps-deplacements/repository/temps-deplacements-rules.repository", () => ({
   repoListRuleSets: vi.fn(),
+  repoListEmployees: vi.fn(),
+  repoListEmployeeCandidates: vi.fn(),
+  repoInsertEmployee: vi.fn(),
   repoInsertRuleSet: vi.fn(),
   repoUpdateRuleSet: vi.fn(),
   repoSetRuleSetActive: vi.fn(),
@@ -47,6 +50,12 @@ const CONTRACT = {
 beforeEach(() => vi.clearAllMocks());
 
 describe("T5 — admin RH : Responsable RH autorisé", () => {
+  it("crée une fiche salarié + audit dans la même transaction", async () => {
+    rules.repoInsertEmployee.mockResolvedValue({ id: "employee-1", user_id: 42, matricule: "AT-042", service: "Atelier", manager_user_id: null, status: "ACTIVE" });
+    const result = await admin.createEmployee(RH, { user_id: 42, matricule: "AT-042", service: "Atelier", manager_user_id: null, status: "ACTIVE" }, AUDIT);
+    expect(result.id).toBe("employee-1");
+    expect(base.insertAuditLog).toHaveBeenCalledWith(expect.anything(), AUDIT, expect.objectContaining({ action: "temps-deplacements.employee.create" }));
+  });
   it("crée une règle + audit", async () => {
     rules.repoInsertRuleSet.mockResolvedValue({ id: "rs1", ...RULE });
     const r = await admin.createRuleSet(RH, RULE, AUDIT);
@@ -65,6 +74,11 @@ describe("T5 — admin RH : anti-IDOR (salarié refusé)", () => {
   it("un salarié ne peut PAS créer de règle → 403", async () => {
     await expect(admin.createRuleSet(SALARIE, RULE, AUDIT)).rejects.toMatchObject({ status: 403, code: "HR_FORBIDDEN" });
     expect(rules.repoInsertRuleSet).not.toHaveBeenCalled();
+  });
+  it("un salarié ne peut PAS provisionner un collègue → 403", async () => {
+    await expect(admin.createEmployee(SALARIE, { user_id: 42, matricule: "AT-042", service: null, manager_user_id: null, status: "ACTIVE" }, AUDIT))
+      .rejects.toMatchObject({ status: 403, code: "HR_FORBIDDEN" });
+    expect(rules.repoInsertEmployee).not.toHaveBeenCalled();
   });
   it("un salarié ne peut PAS lister les contrats → 403", async () => {
     await expect(admin.listContracts(SALARIE)).rejects.toMatchObject({ status: 403, code: "HR_FORBIDDEN" });

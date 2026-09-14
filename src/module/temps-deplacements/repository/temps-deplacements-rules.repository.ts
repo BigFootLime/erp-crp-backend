@@ -35,6 +35,13 @@ export interface ScheduleInput {
   flexible_end_window: number;
   active: boolean;
 }
+export interface EmployeeInput {
+  user_id: number;
+  matricule: string;
+  service: string | null;
+  manager_user_id: number | null;
+  status: "ACTIVE" | "SUSPENDED" | "LEFT";
+}
 
 const RS_COLS = `id::text, name, weekly_target_minutes, daily_target_minutes,
   overtime_threshold_1_minutes, overtime_rate_1, overtime_threshold_2_minutes, overtime_rate_2,
@@ -96,6 +103,34 @@ export async function repoListEmployees(q: DbQueryer = pool) {
       ORDER BY e.matricule ASC LIMIT 1000`
   );
   return res.rows;
+}
+
+export async function repoListEmployeeCandidates(q: DbQueryer = pool) {
+  const res = await q.query(
+    `SELECT u.id AS user_id, u.username, u.name, u.surname, u.role, u.status AS account_status
+       FROM public.users u
+       LEFT JOIN public.hr_employees e ON e.user_id = u.id
+      WHERE e.id IS NULL
+      ORDER BY u.surname ASC NULLS LAST, u.name ASC NULLS LAST, u.username ASC
+      LIMIT 1000`
+  );
+  return res.rows;
+}
+
+export async function repoInsertEmployee(q: DbQueryer, input: EmployeeInput) {
+  const res = await q.query(
+    `WITH inserted AS (
+       INSERT INTO public.hr_employees (user_id, matricule, service, manager_user_id, status)
+       VALUES ($1, $2, $3, $4, $5::hr_employee_status)
+       RETURNING *
+     )
+     SELECT i.id::text, i.user_id, i.matricule, i.service, i.manager_user_id, i.status::text,
+            i.created_at::text, i.updated_at::text, u.name, u.surname
+       FROM inserted i
+       LEFT JOIN public.users u ON u.id = i.user_id`,
+    [input.user_id, input.matricule, input.service, input.manager_user_id, input.status]
+  );
+  return res.rows[0];
 }
 
 // -------------------------------------------------------------- Rule sets (CRUD)
