@@ -64,6 +64,7 @@ import traceability360Routes from "../module/traceability/routes/traceability-36
 import asbuiltRoutes from "../module/asbuilt/routes/asbuilt.routes"
 import locksRoutes from "../module/locks/routes/locks.routes"
 import tempsDeplacementsRoutes from "../module/temps-deplacements/routes/temps-deplacements.routes"
+import tempsDeplacementsDeviceRoutes from "../module/temps-deplacements/routes/temps-deplacements-device.routes"
 import projectOfficeRoutes from "../module/project-office/routes/project-office.routes"
 import gedRoutes from "../module/ged/routes/ged.routes"
 import gammesRoutes from "../module/gammes/routes/gammes.routes"
@@ -89,6 +90,9 @@ router.use("/terminals", terminalRoutes)
 router.use("/portal", clientPortalRoutes)
 router.use("/electronic-invoicing/webhooks", electronicInvoiceWebhookRoutes)
 router.use(openApiRoutes)
+// Borne physique : les commandes sont authentifiées par le token opaque de la
+// borne. Ce routeur n'expose ni données RH ni administration.
+router.use("/time-clock", tempsDeplacementsDeviceRoutes)
 
 // 🔒 Socle d'authentification : toute route sous /api/v1 définie APRÈS cette
 // ligne exige un JWT valide. Les rôles restent descriptifs ; l'autorisation

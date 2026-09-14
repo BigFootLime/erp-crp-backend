@@ -88,6 +88,7 @@ describe("T2 — hachage badge/token (jamais en clair)", () => {
     expect(h).toMatch(/^[0-9a-f]{64}$/);
     expect(h).not.toBe("04AABBCCDD");
     expect(hashBadgeUid("04AABBCCDD")).toBe(h);
+    expect(hashBadgeUid("04-aa-bb-cc-dd")).toBe(h);
     expect(hashBadgeUid("other")).not.toBe(h);
   });
   it("device token haché aussi", () => {
@@ -103,9 +104,10 @@ describe("T2 — validateurs (anti-IDOR structurel + idempotency)", () => {
     expect(() => createTimeEventSchema.parse({ event_type: "NOPE" })).toThrow();
   });
   it("deviceEventSchema EXIGE idempotency_key (min 8)", () => {
-    expect(() => deviceEventSchema.parse({ badge_uid: "abc", event_type: "IN" })).toThrow();
-    expect(() => deviceEventSchema.parse({ badge_uid: "abc", event_type: "IN", idempotency_key: "short" })).toThrow();
-    expect(deviceEventSchema.parse({ badge_uid: "abc", event_type: "IN", idempotency_key: "abcd1234" }).idempotency_key).toBe("abcd1234");
+    expect(() => deviceEventSchema.parse({ badge_uid: "abc", event_type: "AUTO" })).toThrow();
+    expect(() => deviceEventSchema.parse({ badge_uid: "abc", event_type: "AUTO", idempotency_key: "short" })).toThrow();
+    expect(deviceEventSchema.parse({ badge_uid: "abc", event_type: "AUTO", idempotency_key: "abcd1234" }).idempotency_key).toBe("abcd1234");
+    expect(deviceEventSchema.parse({ badge_uid: "abc", event_type: "IN", idempotency_key: "legacy1234" }).event_type).toBe("IN");
   });
 });
 

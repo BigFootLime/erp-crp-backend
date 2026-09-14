@@ -1,6 +1,8 @@
 import { syncArticleSupplierConditionsTx } from "./article-supplier-conditions.repository";
 import { consumableWithdrawalOwnsMovement } from "./consumable-movement-guard";
+import { assertPieceReceiptMovement } from '../../receptions/repository/receipt-processing-guard';
 import { syncConsumablePolicyTx, consumablePolicyPatch } from "./consumable-article.repository";
+import { syncArticleCommercialTx } from './article-commercial.repository';
 import {reconcileReleasedConsolidationLot} from '../../production/repository/production-receipts.repository';
 import type { PoolClient } from "pg";
 import crypto from "node:crypto";
@@ -2797,6 +2799,9 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
     where.push(`(
       a.code ILIKE ${p}
       OR a.internal_reference ILIKE ${p}
+      OR a.commercial_scope ILIKE ${p}
+      OR EXISTS(SELECT 1 FROM public.article_client_links acl JOIN public.clients cl ON cl.client_id=acl.client_id
+        WHERE acl.article_id=a.id AND concat_ws(' ',cl.client_code,cl.company_name,cl.client_id) ILIKE ${p})
       OR a.designation ILIKE ${p}
       OR a.family_code ILIKE ${p}
       OR COALESCE(pt.code_piece, '') ILIKE ${p}
@@ -2826,7 +2831,8 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
     )`);
   }
   if (filters.client_code) {
-    where.push(`LOWER(TRIM(COALESCE(pt.code_client, ''))) = LOWER(TRIM(${push(filters.client_code)}))`);
+    where.push(`EXISTS(SELECT 1 FROM public.article_client_links acl JOIN public.clients cl ON cl.client_id=acl.client_id
+      WHERE acl.article_id=a.id AND LOWER(TRIM(cl.client_code))=LOWER(TRIM(${push(filters.client_code)})))`);
   }
   if (filters.article_type) {
     where.push(
@@ -2908,6 +2914,11 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
       article_material.diametre_mm::float8 AS material_diametre_mm,
       a.designation_secondary,
       a.internal_reference, a.consumption_mode, a.purchase_pack_qty::float8 AS purchase_pack_qty, a.receipt_quality_required,
+      a.commercial_scope,
+      ARRAY(SELECT client_id FROM public.article_client_links c WHERE c.article_id=a.id ORDER BY client_id) AS client_ids,
+      COALESCE((SELECT jsonb_agg(jsonb_build_object('id',c.client_id,'code',c.client_code,'name',c.company_name) ORDER BY c.client_code) FROM public.article_client_links l JOIN public.clients c ON c.client_id=l.client_id WHERE l.article_id=a.id),'[]'::jsonb) AS associated_clients,
+      (SELECT tool_id FROM public.article_tool_links t WHERE t.article_id=a.id) AS tool_id,
+      (SELECT stock_article_id::text FROM public.article_receipt_mp_links p WHERE p.article_id=a.id) AS receipt_mp_article_id,
       CASE WHEN ${normalizedArticleCategorySql("a.article_category")} = 'fabrique' THEN 'PIECE_TECHNIQUE' ELSE 'PURCHASED' END AS article_type,
       ${normalizedArticleCategorySql("a.article_category")} AS article_category,
       COALESCE(ac.categories, ARRAY[${normalizedBusinessCategorySql("a.article_category")}]::text[]) AS article_categories,
@@ -3079,6 +3090,11 @@ export async function repoGetArticle(id: string, includeCosts = false): Promise<
         a.designation,
         a.designation_secondary,
         a.internal_reference, a.consumption_mode, a.purchase_pack_qty::float8 AS purchase_pack_qty, a.receipt_quality_required,
+        a.commercial_scope,
+        ARRAY(SELECT client_id FROM public.article_client_links c WHERE c.article_id=a.id ORDER BY client_id) AS client_ids,
+        COALESCE((SELECT jsonb_agg(jsonb_build_object('id',c.client_id,'code',c.client_code,'name',c.company_name) ORDER BY c.client_code) FROM public.article_client_links l JOIN public.clients c ON c.client_id=l.client_id WHERE l.article_id=a.id),'[]'::jsonb) AS associated_clients,
+        (SELECT tool_id FROM public.article_tool_links t WHERE t.article_id=a.id) AS tool_id,
+        (SELECT stock_article_id::text FROM public.article_receipt_mp_links p WHERE p.article_id=a.id) AS receipt_mp_article_id,
         CASE WHEN ${normalizedArticleCategorySql("a.article_category")} = 'fabrique' THEN 'PIECE_TECHNIQUE' ELSE 'PURCHASED' END AS article_type,
         ${normalizedArticleCategorySql("a.article_category")} AS article_category,
       COALESCE(ac.categories, ARRAY[${normalizedBusinessCategorySql("a.article_category")}]::text[]) AS article_categories,
@@ -3740,6 +3756,7 @@ export async function repoCreateArticleTx(
   if (!id) throw new Error("Failed to create article");
   await syncArticleCategories(client, id, normalized.article_categories, audit.user_id);
   await syncConsumablePolicyTx(client, id, consumablePolicyPatch(body), normalized);
+  await syncArticleCommercialTx(client, id, body, audit.user_id, true);
 
   await syncPieceTechniqueArticleLink(client, {
     article_id: id,
@@ -4104,6 +4121,7 @@ export async function repoUpdateArticle(
     if (!rowId) return null;
 
     await syncArticleCategories(client, id, normalized.article_categories, audit.user_id);
+    await syncArticleCommercialTx(client, id, patch, audit.user_id);
 
     await syncPieceTechniqueArticleLink(client, {
       article_id: id,
@@ -6087,7 +6105,9 @@ export async function repoCreateHistoricalImport(body: HistoricalImportBodyDTO, 
         if (existing.rows[0]?.id) articleId = existing.rows[0].id;
         else {
           const family = body.family_code ?? defaultFamilyCodeForCategory("fabrique");
-          articleId = (await repoCreateArticleTx(client, { designation: body.designation, article_type: "PIECE_TECHNIQUE", article_category: "fabrique", article_categories: ["piece_finie_fabriquee"], family_code: family, piece_technique_id: ptId, stock_managed: true, lot_tracking: true, is_sold: true, is_active: true, status: "VALIDE" }, audit)).id;
+          const historicalClient = (await client.query<{client_id:string}>("SELECT client_id FROM public.pieces_techniques WHERE id=$1::uuid",[ptId])).rows[0]?.client_id;
+          if(!historicalClient)throw new HttpError(422,"ARTICLE_CLIENT_REQUIRED","La reprise doit identifier le client de cet article fini.");
+          articleId = (await repoCreateArticleTx(client, { designation: body.designation, article_type: "PIECE_TECHNIQUE", article_category: "fabrique", article_categories: ["piece_finie_fabriquee"], commercial_scope:"CLIENTS", client_ids:[historicalClient], family_code: family, piece_technique_id: ptId, stock_managed: true, lot_tracking: true, is_sold: true, is_active: true, status: "VALIDE" }, audit)).id;
         }
       }
       shelf = body.client_number.trim();
@@ -7936,6 +7956,7 @@ export async function repoPostMovement(
       [id]
     );
     await ensureLotTrackingRespected(client, m.article_id, draftLines.rows);
+    await assertPieceReceiptMovement(client, id, m.movement_type, draftLines.rows);
 
     // A direct material issue does not have to be created through a stock
     // reservation.  It is nevertheless an irreversible physical use of a

@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import {RECEIPT_PROCESSING_ACTIONS,receiptProcessingOperation,receiptProcessingSchemas} from "./receipt-processing-contract";
 
 import {
   GENERATED_ROUTE_INVENTORY,
@@ -18,6 +19,8 @@ const PUBLIC_ROUTE_POLICIES: Readonly<Record<string, string>> = {
   "post /auth/mfa/verify": "Vérification d’un challenge MFA signé, court, à usage unique et limité en débit avant émission de session.",
   "post /auth/reset-password": "Réinitialisation par jeton à usage unique avec limitation de débit.",
   "post /electronic-invoicing/webhooks/{providerCode}": "Webhook prestataire authentifié par signature sur le corps brut et limité en débit.",
+  "post /time-clock/device-events": "Ingestion de badge authentifiée par le token opaque aléatoire de 192 bits d’une borne active ; UID haché côté serveur et commande idempotente.",
+  "post /time-clock/device-heartbeat": "Présence d’une borne authentifiée par son token opaque aléatoire de 192 bits ; aucune donnée RH n’est retournée.",
   "get /environment": "Signal public minimal de routage de base, sans secret ni donnée métier.",
   "get /openapi.json": "Contrat public de la version API déployée.",
   "get /realtime/readiness": "Signal public booléen de disponibilité temps réel, sans détail d’infrastructure.",
@@ -47,6 +50,13 @@ const IDEMPOTENT_OPERATIONS = new Set([
 
 const TERMINAL_DEVICE_OPERATIONS = new Set(["get /terminals/bootstrap", "post /terminals/identify"]);
 const TERMINAL_SESSION_OPERATIONS = new Set([
+  "get /terminals/reception/processing","get /terminals/reception/{id}/lines/{lineId}/processing","get /terminals/reception/mp-articles",
+  "get /terminals/reception/{id}/documents/{docId}/download",
+  ...RECEIPT_PROCESSING_ACTIONS.map(action=>`post /terminals/reception/{id}/lines/{lineId}/${action}`),
+  "post /terminals/reception/{id}/lines/{lineId}/stock-receipt","post /terminals/reception/{id}/lines/{lineId}/create-lot",
+  "get /terminals/reception/quality/executions/{id}","get /terminals/reception/quality/instruments",
+  "post /terminals/reception/quality/executions/preview","post /terminals/reception/quality/executions",
+  "post /terminals/reception/quality/executions/{id}/measurements","get /terminals/reception/quality/executions/{id}/verdict-preview","post /terminals/reception/quality/executions/{id}/decision",
   "get /terminals/logistics/article-categories", "get /terminals/logistics/magasins", "get /terminals/logistics/emplacements",
   "get /terminals/reception/expected-lines", "get /terminals/reception/drafts", "get /terminals/reception/scan",
   "post /terminals/reception/grouped", "get /terminals/reception/{id}",
@@ -180,7 +190,7 @@ function generatedOperation(route: GeneratedRouteContract): OpenApiOperation {
       },
     };
   }
-  return webhookOperation(key, operation);
+  return receiptProcessingOperation(key,webhookOperation(key, operation));
 }
 
 function jsonSchemaResponse(description: string, schemaRef: string): OpenApiObject {
@@ -308,6 +318,7 @@ function componentSchemas(legacy: OpenApiObject): OpenApiObject {
       },
     },
     schemas: {
+      ...receiptProcessingSchemas,
       ...legacySchemas,
       ApiRequest: {
         type: "object",

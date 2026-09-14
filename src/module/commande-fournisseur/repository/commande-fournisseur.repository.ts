@@ -1437,6 +1437,8 @@ export async function repoTransitionCommandeFournisseur(
       pushSet("motif_annulation =", motif);
     }
     if (kind === "close") {
+      const { assertReceiptProcessingClosed } = await import('../../receptions/repository/receipt-processing-guard');
+      await assertReceiptProcessingClosed(client, { orderId: id });
       pushSet("date_cloture = now()");
       pushSet("motif_cloture =", motif);
     }

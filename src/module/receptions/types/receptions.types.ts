@@ -49,6 +49,7 @@ export type ReceptionFournisseurListItem = {
 }
 
 export type ReceptionFournisseurLine = {
+  processing?: import('../repository/receipt-processing.repository').ProcessingLine
   unallocated_off_stock?:number|null
   destination_magasin_id?:string|null
   destination_emplacement_id?:number|null

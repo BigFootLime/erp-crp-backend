@@ -1,14 +1,13 @@
+import { assertDeliveryNoteTx } from "./receipt-delivery-note.repository";
 import type { PoolClient } from 'pg';
-import fs from 'node:fs/promises';
-import { createHash } from 'node:crypto';
 import { HttpError } from '../../../utils/httpError';
-import { getDocumentStoragePath,resolveCerpStoragePath } from '../../../utils/cerpStorage';
 import { consumableCommand } from '../../production/repository/consumable-command.repository';
 import { lockFutureMaterialSupplyTx } from '../../production/repository/material-future-supply.repository';
 import { lockMaterialReceiptRecipientsTx } from '../../production/repository/of-material-receipts.repository';
 import { repoCreateReception,repoCreateLine,repoCreateLotForLine,repoCreateStockReceiptLocked,type AuditContext } from './receptions.repository';
 import { readExpectedReceiptLinesTx } from './expected-receipts.repository';
 import { readOffStockSurplusTx } from './off-stock-surplus.repository';
+import {postToolReceiptTx} from './receipt-tool-stock.repository';
 import type { PrepareGroupedReceipt,ConfirmGroupedReceipt } from '../validators/grouped-receipts.validators';
 import { roleHasCommandeFournisseurCapability } from '../../commande-fournisseur/domain/commande-fournisseur-rbac';
 
@@ -20,20 +19,6 @@ export async function prepareGroupedReceipt(body:PrepareGroupedReceipt,audit:Aud
     await tx.query("UPDATE public.receptions_fournisseurs SET confirmation_state='DRAFT' WHERE id=$1::uuid",[receipt.id]);
     return {id:receipt.id,number:receipt.reception_no,state:'DRAFT' as const};
   });
-}
-
-async function assertDeliveryNoteTx(tx:PoolClient,receiptId:string){
-  const docs=(await tx.query<{id:string;storage_path:string;sha256:string;size_bytes:number}>(`SELECT id::text,storage_path,sha256,size_bytes FROM public.reception_fournisseur_documents
-    WHERE reception_id=$1::uuid AND removed_at IS NULL AND document_type='BON_LIVRAISON' FOR SHARE`,[receiptId])).rows;
-  if(!docs.length)throw new HttpError(422,'RECEIPT_DELIVERY_NOTE_REQUIRED','Ajoutez au moins une photo ou un document BL avant de valider la réception.');
-  for(const doc of docs){
-    const file=resolveCerpStoragePath(doc.storage_path,getDocumentStoragePath('receptions'));
-    let content:Buffer;
-    try{content=await fs.readFile(file);}catch{throw new HttpError(409,'RECEIPT_DELIVERY_NOTE_UNAVAILABLE','Le BL n’est pas enregistré correctement. Importez-le à nouveau avant validation.');}
-    if(content.byteLength!==Number(doc.size_bytes)||!doc.sha256||createHash('sha256').update(content).digest('hex')!==doc.sha256)
-      throw new HttpError(409,'RECEIPT_DELIVERY_NOTE_CHANGED','L’intégrité du BL ne peut pas être confirmée. Importez-le à nouveau.');
-  }
-  return docs.map(d=>d.id);
 }
 
 export async function confirmGroupedReceipt(receiptId:string,body:ConfirmGroupedReceipt,audit:AuditContext){
@@ -91,11 +76,12 @@ export async function confirmGroupedReceipt(receiptId:string,body:ConfirmGrouped
             unite:expected.unit!,notes:`Réception ${receipt.number} · BL confirmé`},audit,`${body.idempotencyKey}:${choice.lineId}:${index}`);
           if(!posted)throw new HttpError(409,'RECEIPT_STOCK_NOT_POSTED','L’entrée en stock n’a pas pu être enregistrée.');
         }
-        results.push({orderLineId:choice.lineId,receiptLineId:created.id,quantity:portion.quantity,lotId,lotCode,state:expected.qualityRequired?'QUALITY_PENDING':expected.stockManaged?'STOCKED':'ACCEPTED_OFF_STOCK'});
+        if(expected.toolId&&!expected.qualityRequired)await postToolReceiptTx(tx,receiptId,created.id,portion.quantity,audit);
+        results.push({orderLineId:choice.lineId,receiptLineId:created.id,quantity:portion.quantity,lotId,lotCode,state:expected.qualityRequired?'QUALITY_PENDING':expected.stockManaged||expected.toolId?'STOCKED':'ACCEPTED_OFF_STOCK'});
       }
     }
     await tx.query("UPDATE public.receptions_fournisseurs SET confirmation_state='CONFIRMED',confirmation_key=$2::uuid,confirmed_at=now(),confirmed_by=$3,updated_at=now(),updated_by=$3 WHERE id=$1::uuid",[receiptId,body.idempotencyKey,audit.user_id]);
-    const surplus=await readOffStockSurplusTx(tx,results.filter(r=>!current.items.find(l=>l.id===r.orderLineId)!.stockManaged).map(r=>r.receiptLineId));
+    const surplus=await readOffStockSurplusTx(tx,results.filter(r=>{const l=current.items.find(l=>l.id===r.orderLineId)!;return !l.stockManaged&&!l.toolId;}).map(r=>r.receiptLineId));
     return {id:receiptId,number:receipt.number,state:'CONFIRMED' as const,documentIds,lines:results.map(r=>({...r,unallocatedOffStock:surplus.get(r.receiptLineId)??null}))};
   });
 }

@@ -9,7 +9,7 @@ import type { CreateAuditLogBodyDTO, ListAuditLogsQueryDTO } from "../validators
 type DbQueryer = Pick<PoolClient, "query">;
 
 export async function repoInsertAuditLog(params: {
-  user_id: number;
+  user_id: number | null;
   body: CreateAuditLogBodyDTO;
   ip: string | null;
   user_agent: string | null;

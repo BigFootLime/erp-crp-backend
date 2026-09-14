@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-08-23T15:32:41.521Z",
+  "generated_at": "2026-09-14T18:16:40.161Z",
   "source": "filesystem scan of db/patches and db/patches/support",
-  "patch_count": 174,
-  "support_file_count": 314,
-  "recent_patch_count": 116,
+  "patch_count": 231,
+  "support_file_count": 438,
+  "recent_patch_count": 173,
   "recent_support_gaps": [
     {
       "filename": "20260706_affaire_allow_projet.sql",
@@ -204,14 +204,302 @@
         "verify": true,
         "rollback": true
       }
+    },
+    {
+      "filename": "20260826_commandes_stock_reservations_livraisons_atomic.sql",
+      "support": {
+        "preflight": false,
+        "verify": true,
+        "rollback": true
+      }
+    },
+    {
+      "filename": "20260826_pt_article_lot_reference_enrichment.sql",
+      "support": {
+        "preflight": false,
+        "verify": true,
+        "rollback": false
+      }
+    },
+    {
+      "filename": "20260826_z_lots_scope_canonicalization.sql",
+      "support": {
+        "preflight": false,
+        "verify": true,
+        "rollback": false
+      }
+    },
+    {
+      "filename": "20260826_zz_historical_stock_imports.sql",
+      "support": {
+        "preflight": false,
+        "verify": true,
+        "rollback": true
+      }
+    },
+    {
+      "filename": "20260831_stock_article_inventory_revision_ux.sql",
+      "support": {
+        "preflight": false,
+        "verify": true,
+        "rollback": true
+      }
+    },
+    {
+      "filename": "20260905_production_preparation_consolidation_01.sql",
+      "support": {
+        "preflight": false,
+        "verify": false,
+        "rollback": false
+      }
+    },
+    {
+      "filename": "20260905_production_preparation_consolidation_02.sql",
+      "support": {
+        "preflight": false,
+        "verify": false,
+        "rollback": false
+      }
+    },
+    {
+      "filename": "20260905_production_preparation_consolidation_03.sql",
+      "support": {
+        "preflight": false,
+        "verify": false,
+        "rollback": false
+      }
+    },
+    {
+      "filename": "20260905_production_preparation_consolidation_04.sql",
+      "support": {
+        "preflight": false,
+        "verify": false,
+        "rollback": false
+      }
+    },
+    {
+      "filename": "20260905_production_preparation_consolidation_05_grants.sql",
+      "support": {
+        "preflight": false,
+        "verify": false,
+        "rollback": false
+      }
+    },
+    {
+      "filename": "20260907_finish_code_scope_749.sql",
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      }
+    },
+    {
+      "filename": "20260907_ged_superadmin_approval_758.sql",
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      }
+    },
+    {
+      "filename": "20260907_inventory_trace_grant_752.sql",
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      }
+    },
+    {
+      "filename": "20260907_of_dossier_completion.sql",
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      }
+    },
+    {
+      "filename": "20260907_of_material_coverage.sql",
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      }
+    },
+    {
+      "filename": "20260907_of_material_lot_verification.sql",
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      }
+    },
+    {
+      "filename": "20260908_android_automatic_time_1038.sql",
+      "support": {
+        "preflight": false,
+        "verify": false,
+        "rollback": false
+      }
+    },
+    {
+      "filename": "20260908_android_terminals_1038.sql",
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      }
+    },
+    {
+      "filename": "20260908_supplier_consultations.sql",
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      }
+    },
+    {
+      "filename": "20260908_consultation_documents.sql",
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      }
+    },
+    {
+      "filename": "20260908_customer_material_calls.sql",
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      }
+    },
+    {
+      "filename": "20260908_material_debits.sql",
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      }
+    },
+    {
+      "filename": "20260908_material_forecasts.sql",
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      }
+    },
+    {
+      "filename": "20260908_material_future_offsets.sql",
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      }
+    },
+    {
+      "filename": "20260908_material_need_history.sql",
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      }
+    },
+    {
+      "filename": "20260908_material_remnants.sql",
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      }
+    },
+    {
+      "filename": "20260908_material_revision_reconciliation.sql",
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      }
+    },
+    {
+      "filename": "20260908_operation_program_guard.sql",
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      }
+    },
+    {
+      "filename": "20260908_quality_lot_context.sql",
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      }
+    },
+    {
+      "filename": "20260908_receipt_unit_snapshot.sql",
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      }
+    },
+    {
+      "filename": "20260909_consumables.sql",
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      }
+    },
+    {
+      "filename": "20260909_consumable_procurement.sql",
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      }
+    },
+    {
+      "filename": "20260909_grouped_supplier_receipts.sql",
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      }
+    },
+    {
+      "filename": "20260909_consumable_need_reservations.sql",
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      }
+    },
+    {
+      "filename": "20260909_consumable_of_revision.sql",
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      }
+    },
+    {
+      "filename": "20260909_supply_terminals.sql",
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      }
     }
   ],
   "risk_totals": {
-    "destructive_ddl": 2,
+    "destructive_ddl": 3,
     "destructive_dml": 10,
-    "data_rewrite": 106,
-    "table_lock": 132,
-    "blocking_index": 129,
+    "data_rewrite": 135,
+    "table_lock": 172,
+    "blocking_index": 159,
     "enum_change": 1
   },
   "patches": [
@@ -3130,6 +3418,52 @@
     },
     {
       "order": 171,
+      "filename": "20260823_authoritative_pdf_ged_compatibility_bridge.sql",
+      "sha256": "863b173abeb17f925d47381bb97a3f981d4e7694e540c55b1f9e2c811b258e71",
+      "bytes": 5722,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite"
+      ]
+    },
+    {
+      "order": 172,
+      "filename": "20260823_authoritative_pdf_ged_entity_contract.sql",
+      "sha256": "edc5705f1ddca0587cfcc747cddabcce99801eaa71f3f9e86425e59ee1d6f79e",
+      "bytes": 3079,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": []
+    },
+    {
+      "order": 173,
+      "filename": "20260823_authoritative_pdf_ged_legacy_profile_cleanup.sql",
+      "sha256": "bf159fa5297e6011c35b2c25cbf667982f3d91b3096ae9404bbc006a9cb4eb8b",
+      "bytes": 2555,
+      "transaction_wrapped": true,
+      "replay_markers": false,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "destructive-ddl"
+      ]
+    },
+    {
+      "order": 174,
       "filename": "20260823_finance_ged_archive_625.sql",
       "sha256": "486ded479fa78d3020f53f3cb9920abc492e1ccd13f9f0e60ebdef0ee0fa9d39",
       "bytes": 4318,
@@ -3145,7 +3479,23 @@
       ]
     },
     {
-      "order": 172,
+      "order": 175,
+      "filename": "20260823_ged_authoritative_pdf_access_events_634.sql",
+      "sha256": "ce3b7f95e56de4e1f70ae42cfd3b511d2b2fc55c9e6018d3dbe0c942e4b6e419",
+      "bytes": 2393,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "table-lock"
+      ]
+    },
+    {
+      "order": 176,
       "filename": "20260823_of_readiness_release_617.sql",
       "sha256": "4188766f7466b912c583b2437d53015fc2fd85bc4c49af31bac00559732cbdfa",
       "bytes": 4693,
@@ -3164,7 +3514,7 @@
       ]
     },
     {
-      "order": 173,
+      "order": 177,
       "filename": "20260823_operational_media_access_611.sql",
       "sha256": "cad0368b00c3bff67a9390a0e1e9669bca37d0fa8bd4f89b4854aef5a1505415",
       "bytes": 11961,
@@ -3183,7 +3533,7 @@
       ]
     },
     {
-      "order": 174,
+      "order": 178,
       "filename": "20260823_subcontract_work_packages_626.sql",
       "sha256": "0e91cdb25aaa69da4db64984f08d10d8ada34b52f98d4c7dece3bd31b6ee11b2",
       "bytes": 6852,
@@ -3196,6 +3546,893 @@
       },
       "risks": [
         "data-rewrite",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 179,
+      "filename": "20260824_ged_entity_attachments_203.sql",
+      "sha256": "72d2bb893efa2fa9c25ffd26c90e674d79a426f781dc71a15538877565aaeddd",
+      "bytes": 1656,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite"
+      ]
+    },
+    {
+      "order": 180,
+      "filename": "20260826_commande_ar_versioning_and_send_guard.sql",
+      "sha256": "b0d4aacaf17c6de07a0ae27c067aafd0717f575d27f57e52bb93cba2b653305d",
+      "bytes": 7859,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite",
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 181,
+      "filename": "20260826_commandes_stock_reservations_livraisons_atomic.sql",
+      "sha256": "a196f42bfc3f365181cb4c15d8dda2e3638e6f3985a805979920b2e3749797e4",
+      "bytes": 24710,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": false,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite",
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 182,
+      "filename": "20260826_pt_article_lot_reference_enrichment.sql",
+      "sha256": "714d0f614970c4b752413123cff0bf8b06ad24d57997507430a490d68dc5bbe7",
+      "bytes": 3040,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": false,
+        "verify": true,
+        "rollback": false
+      },
+      "risks": [
+        "data-rewrite",
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 183,
+      "filename": "20260826_z_lots_scope_canonicalization.sql",
+      "sha256": "abd77db52fcc70874a0b18f69a5275e68534cfc33ead019d6f1afbfed010646f",
+      "bytes": 3412,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": false,
+        "verify": true,
+        "rollback": false
+      },
+      "risks": [
+        "data-rewrite",
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 184,
+      "filename": "20260826_zz_historical_stock_imports.sql",
+      "sha256": "f42328cd7cfccd2491f8c1d9f1ac125d6361d8d91264faa5aacefce6871cf1eb",
+      "bytes": 1453,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": false,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 185,
+      "filename": "20260826_zzz_internal_order_auto_destination_883.sql",
+      "sha256": "ccc8323a5560e8a75e6c2848f2a4d70e1eb88de58bf543dc86cb163c901be67f",
+      "bytes": 319,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "table-lock"
+      ]
+    },
+    {
+      "order": 186,
+      "filename": "20260827_article_sale_price_financial_analysis_672.sql",
+      "sha256": "6428bc92c2b734f69218117943688d0809ce42bb25b25c41f9faa2ceb49793b0",
+      "bytes": 6190,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 187,
+      "filename": "20260827_einvoice_regulatory_data_599.sql",
+      "sha256": "76f06374a17e0679e16befde6926068d1d012cf8e83dbb0deba77e2aedb56f0f",
+      "bytes": 11846,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite",
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 188,
+      "filename": "20260827_supplier_invoices_675.sql",
+      "sha256": "4e3f6747bab9a649d6dd93a0c62c6314c098254249319f65375aeedd2a58c8d1",
+      "bytes": 17293,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 189,
+      "filename": "20260827_z_accounting_export_supplier_677.sql",
+      "sha256": "0344c68426dbf7437e1db7e077df68499e11f7d989cd53e1cb131042755f4f16",
+      "bytes": 2138,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "table-lock"
+      ]
+    },
+    {
+      "order": 190,
+      "filename": "20260827_z_einvoice_credit_reporting_676.sql",
+      "sha256": "1021100ef8b8d912dfaf690b1057d357582b73675e907fd5464d860d61ded5fe",
+      "bytes": 12346,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite",
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 191,
+      "filename": "20260831_stock_article_inventory_revision_ux.sql",
+      "sha256": "6eed117fb4cd8f76fe178eea4bf9ba0c3083683dcf73075da3dab105d9f139d0",
+      "bytes": 3667,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": false,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite",
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 192,
+      "filename": "20260901_stock_inventory_draft_adjustments.sql",
+      "sha256": "d1e06779acbf657dd68521762d45432a81f8aefdec870541bb38e4c9fab81117",
+      "bytes": 1052,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 193,
+      "filename": "20260902_customer_order_reconciliation_698.sql",
+      "sha256": "df4b000e8db91dc7bf37fb0bb54b37a48cc1cc404427276faef409bd5c60d6c1",
+      "bytes": 3296,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 194,
+      "filename": "20260903_customer_order_technical_maturation.sql",
+      "sha256": "7a1e9221563f6b92c4e3e4f9c8c75a2f586ba9f15a9a0739c57e02bbe6fefb9e",
+      "bytes": 9863,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite",
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 195,
+      "filename": "20260904_customer_order_assembly_planning.sql",
+      "sha256": "a491d2198814b9bf2e339b1d435579c5871d01654d819db38645987c70c3e657",
+      "bytes": 12365,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite",
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 196,
+      "filename": "20260905_production_preparation_consolidation_01.sql",
+      "sha256": "7ba3fad285c5ed5f6123d826a7763d1a64b2ca95eb7c0104aaad165bf603a6d7",
+      "bytes": 11538,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": false,
+        "verify": false,
+        "rollback": false
+      },
+      "risks": [
+        "data-rewrite",
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 197,
+      "filename": "20260905_production_preparation_consolidation_02.sql",
+      "sha256": "f13bb056b0ffcc0ada6f1d40da1ba13bd48e89ba76bcc4fd681286ddd985bcb9",
+      "bytes": 7991,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": false,
+        "verify": false,
+        "rollback": false
+      },
+      "risks": [
+        "data-rewrite"
+      ]
+    },
+    {
+      "order": 198,
+      "filename": "20260905_production_preparation_consolidation_03.sql",
+      "sha256": "051f4ca60fd5ee45075cb402a7e0ea9f892e1d1d2986b2833b38e039d402b718",
+      "bytes": 2207,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": false,
+        "verify": false,
+        "rollback": false
+      },
+      "risks": [
+        "table-lock"
+      ]
+    },
+    {
+      "order": 199,
+      "filename": "20260905_production_preparation_consolidation_04.sql",
+      "sha256": "78e0700d50c65ba05565b9cb042fa6cc75ef6d00839f5ae4bf8e961752d4ef6b",
+      "bytes": 1059,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": false,
+        "verify": false,
+        "rollback": false
+      },
+      "risks": []
+    },
+    {
+      "order": 200,
+      "filename": "20260905_production_preparation_consolidation_05_grants.sql",
+      "sha256": "05f1a5c11c9e2f319f593501d9a4187b429a2b9a035ef581523f9ab63cf65bd1",
+      "bytes": 918,
+      "transaction_wrapped": true,
+      "replay_markers": false,
+      "support": {
+        "preflight": false,
+        "verify": false,
+        "rollback": false
+      },
+      "risks": [
+        "data-rewrite"
+      ]
+    },
+    {
+      "order": 201,
+      "filename": "20260906_planning_central.sql",
+      "sha256": "efeb375ee3ba8116d54c13dc5fec8ea21fd991e29536f7fdb0756119740506d8",
+      "bytes": 12621,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 202,
+      "filename": "20260906_planning_central_batch_constraints.sql",
+      "sha256": "4624da2fcfe8c41ed31a667b53c20009d999b3bcd4118ea05589a8b98b66435d",
+      "bytes": 939,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "table-lock"
+      ]
+    },
+    {
+      "order": 203,
+      "filename": "20260906_planning_resource_invalidation.sql",
+      "sha256": "4e5bc5f12c1269507bf2b31d12b2751a9504e73332be1cad9b18d0ee9997502a",
+      "bytes": 1228,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite"
+      ]
+    },
+    {
+      "order": 204,
+      "filename": "20260907_finish_code_scope_749.sql",
+      "sha256": "e5624f88eb2a4ae84fb6344c1a3e351a33b95c5bc7996e4c60480c51e02a0173",
+      "bytes": 1065,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      },
+      "risks": []
+    },
+    {
+      "order": 205,
+      "filename": "20260907_ged_superadmin_approval_758.sql",
+      "sha256": "8833385b72b3c13fc8d90c948e3f5d0961bc3ffb2644bfb3e77db5234241c86f",
+      "bytes": 1739,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      },
+      "risks": []
+    },
+    {
+      "order": 206,
+      "filename": "20260907_inventory_trace_grant_752.sql",
+      "sha256": "41f5dce48ae1cf3af942721788adb78611915ada472b399ff653a1997070a0d9",
+      "bytes": 683,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      },
+      "risks": []
+    },
+    {
+      "order": 207,
+      "filename": "20260907_of_dossier_completion.sql",
+      "sha256": "ea6c3e9c0f9c92543e2a03f8e8109512dbd6165093fe4041b827980885736f64",
+      "bytes": 5370,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      },
+      "risks": [
+        "data-rewrite",
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 208,
+      "filename": "20260907_of_material_coverage.sql",
+      "sha256": "3ecd4841bd7adbb55afd1146a71aefeb4c2076869be829093141b7e02ae2f0ca",
+      "bytes": 4314,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      },
+      "risks": [
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 209,
+      "filename": "20260907_of_material_lot_verification.sql",
+      "sha256": "11fe3803f4ca51d281b9a660577768312739135dd54eee91541831ce146de74e",
+      "bytes": 446,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      },
+      "risks": [
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 210,
+      "filename": "20260908_android_automatic_time_1038.sql",
+      "sha256": "5d001ab0c47347302635dc882ed04f65308746723ca5994dfe940a5051907ff4",
+      "bytes": 2074,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": false,
+        "verify": false,
+        "rollback": false
+      },
+      "risks": [
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 211,
+      "filename": "20260908_android_terminals_1038.sql",
+      "sha256": "5372c1d596f41a34e379beea58fc1da8ef020ee13dc31330a76a44b168c754a4",
+      "bytes": 4003,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      },
+      "risks": [
+        "data-rewrite",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 212,
+      "filename": "20260908_supplier_consultations.sql",
+      "sha256": "e26671562e74de61675f42a4015ceded02d4699e14664fe17b2a7503801cfadd",
+      "bytes": 3327,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      },
+      "risks": [
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 213,
+      "filename": "20260908_consultation_documents.sql",
+      "sha256": "6e9c0b3d122c356f9212584620e176ffc5d48ca57c9406fe820a889878b761de",
+      "bytes": 256,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      },
+      "risks": [
+        "table-lock"
+      ]
+    },
+    {
+      "order": 214,
+      "filename": "20260908_customer_material_calls.sql",
+      "sha256": "7d9076748d36f5fe31b4415d8f9706a530a5890798f28717d535d350c77eab0c",
+      "bytes": 3777,
+      "transaction_wrapped": true,
+      "replay_markers": false,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      },
+      "risks": [
+        "data-rewrite",
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 215,
+      "filename": "20260908_material_debits.sql",
+      "sha256": "a0f2b27de7395a906de806164bd4078e68a1ffd58d2ebd6c5c5b412461c5a32d",
+      "bytes": 2906,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      },
+      "risks": [
+        "data-rewrite",
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 216,
+      "filename": "20260908_material_forecasts.sql",
+      "sha256": "010fafc836ceecfa6d115b45a2c0db097ef8d3451bcb7c603bea7f2e71f5730b",
+      "bytes": 1668,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      },
+      "risks": [
+        "data-rewrite",
+        "table-lock"
+      ]
+    },
+    {
+      "order": 217,
+      "filename": "20260908_material_future_offsets.sql",
+      "sha256": "2161f1e3bf219e53bec35d9eb3f34bf1a03602fa8b6737aa913b606bac524773",
+      "bytes": 663,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      },
+      "risks": [
+        "table-lock"
+      ]
+    },
+    {
+      "order": 218,
+      "filename": "20260908_material_need_history.sql",
+      "sha256": "6c93b8adcecac5be35a39690f2f29ca885929e3640db38e07df93e734904c51d",
+      "bytes": 710,
+      "transaction_wrapped": true,
+      "replay_markers": false,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      },
+      "risks": [
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 219,
+      "filename": "20260908_material_remnants.sql",
+      "sha256": "c415ec926ecc9c22cfb448c6f318cfb2952f90e926285bcc745d70b54ce28797",
+      "bytes": 2682,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      },
+      "risks": [
+        "data-rewrite",
+        "table-lock"
+      ]
+    },
+    {
+      "order": 220,
+      "filename": "20260908_material_revision_reconciliation.sql",
+      "sha256": "1d259598b055e62df4d12bcca7b714dd4c4dde0df3c5d3ee68bd75e28ec1327f",
+      "bytes": 2147,
+      "transaction_wrapped": true,
+      "replay_markers": false,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      },
+      "risks": [
+        "data-rewrite",
+        "table-lock"
+      ]
+    },
+    {
+      "order": 221,
+      "filename": "20260908_operation_program_guard.sql",
+      "sha256": "3b62d6ad55c266c5d71e9db3a989150b77d639a78bb151b2b96003a41991880a",
+      "bytes": 3420,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      },
+      "risks": []
+    },
+    {
+      "order": 222,
+      "filename": "20260908_quality_lot_context.sql",
+      "sha256": "a0c6a263e7d9f0dc7c9e397918119a57e81e25e5425d93427b1961e25757434a",
+      "bytes": 935,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      },
+      "risks": [
+        "table-lock"
+      ]
+    },
+    {
+      "order": 223,
+      "filename": "20260908_receipt_unit_snapshot.sql",
+      "sha256": "b4ce037e989368379d8363938115ef64dc5dec9f95c22b058b67aaf7ae50c5e3",
+      "bytes": 1963,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      },
+      "risks": [
+        "data-rewrite",
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 224,
+      "filename": "20260908_user_navigation_preferences.sql",
+      "sha256": "dbfb57583f22e50da0833d3bd98cbd12333ed2cc939d487375314de45186573f",
+      "bytes": 1011,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite"
+      ]
+    },
+    {
+      "order": 225,
+      "filename": "20260909_consumables.sql",
+      "sha256": "4568d0e60c950efa952fa998a3779640bf8419682a067bceb349e60cff98c8bf",
+      "bytes": 2637,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      },
+      "risks": [
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 226,
+      "filename": "20260909_consumable_procurement.sql",
+      "sha256": "e0a11776c9245f7eb87729b54e6facc7e88eeebeb3f395815183bba6ac126fec",
+      "bytes": 1947,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      },
+      "risks": [
+        "data-rewrite",
+        "table-lock"
+      ]
+    },
+    {
+      "order": 227,
+      "filename": "20260909_grouped_supplier_receipts.sql",
+      "sha256": "efe536e8a6cd60c358ed296d0fc673a3d0f246335a61a950b61f64330a7d6ffc",
+      "bytes": 988,
+      "transaction_wrapped": true,
+      "replay_markers": false,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      },
+      "risks": [
+        "table-lock"
+      ]
+    },
+    {
+      "order": 228,
+      "filename": "20260909_consumable_need_reservations.sql",
+      "sha256": "952f3d69ed129df856864a68c0c89bec2f74e8703ca4543a4ef0c1a0fd8b095a",
+      "bytes": 1033,
+      "transaction_wrapped": true,
+      "replay_markers": false,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      },
+      "risks": [
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 229,
+      "filename": "20260909_consumable_of_revision.sql",
+      "sha256": "ca2bdffeac30ae585a9cc69fa51bd56f39a463f8076b04b9919f2a6410ad254c",
+      "bytes": 525,
+      "transaction_wrapped": true,
+      "replay_markers": false,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      },
+      "risks": [
+        "data-rewrite",
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 230,
+      "filename": "20260909_supply_terminals.sql",
+      "sha256": "51416563b6a98006569c930d86a6d53f2526793b0d4b207790680bab6241341d",
+      "bytes": 668,
+      "transaction_wrapped": true,
+      "replay_markers": false,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": false
+      },
+      "risks": [
+        "table-lock"
+      ]
+    },
+    {
+      "order": 231,
+      "filename": "20260914_receipt_processing_1069.sql",
+      "sha256": "72e3665019f649c8cbf9c9b919973bad7e046b37529c37313b88dd6f1f0721b2",
+      "bytes": 24879,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite",
+        "table-lock",
         "blocking-index"
       ]
     }

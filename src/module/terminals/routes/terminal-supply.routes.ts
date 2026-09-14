@@ -9,7 +9,13 @@ import { parseIdentificationPayload } from '../../identification/domain/identifi
 import { repoFindLabelByPublicId } from '../../identification/identification.repository';
 import { resolveTerminalIdentification } from '../services/terminal-scan.service';
 import * as receipts from '../../receptions/controllers/grouped-receipts.controller';
-import { getReception,attachReceptionDocuments } from '../../receptions/controllers/receptions.controller';
+import { getReception,attachReceptionDocuments,downloadReceptionDocument,createReceptionStockReceipt,createLotForReceptionLine } from '../../receptions/controllers/receptions.controller';
+import * as processing from '../../receptions/controllers/receipt-processing.controller';
+import * as quality from '../../qualite/controllers/quality-360.controller';
+import { requireQualityCapability } from '../../qualite/middlewares/quality-authorization.middleware';
+import { listStockArticles } from '../../stock/controllers/stock.controller';
+import { evaluateEligibility as instrumentEligibility } from '../../metrologie/controllers/metrology-360.controller';
+import { requireMetrologyCapability } from '../../metrologie/middlewares/metrology-authorization.middleware';
 import * as procurement from '../../production/controllers/consumable-procurement.controller';
 import * as supply from '../../stock/controllers/consumable-supply.controller';
 import { listStockMagasins,listStockEmplacements,listStockArticleCategories } from '../../stock/controllers/stock.controller';
@@ -25,6 +31,33 @@ const moduleAccess=(module:string):RequestHandler=>(req,_res,next)=>{void requir
 // an ERP JWT, and the operator terminal cannot invoke logistics commands.
 router.use('/reception',kind('RECEPTION'),moduleAccess('qualite'));
 router.get('/reception/expected-lines',receipts.expectedReceiptLines);
+router.get('/reception/processing',processing.listProcessing);
+router.get('/reception/:id/lines/:lineId/processing',processing.getProcessing);
+router.post('/reception/:id/lines/:lineId/pack',processing.packProcessing);
+router.post('/reception/:id/lines/:lineId/stock',processing.stockProcessing);
+router.post('/reception/:id/lines/:lineId/tool-stock',processing.toolStockProcessing);
+router.post('/reception/:id/lines/:lineId/subcontract-origins',processing.subcontractProcessing);
+router.get('/reception/mp-articles',moduleAccess('stock'),listStockArticles);
+// Reuse the quality service and its capability guards; retain terminal identity.
+// Logistics commands carry their stable key in the body. Quality uses a header.
+const qualityCommand: RequestHandler = (req,_res,next) => {
+  const { idempotencyKey, ...body } = req.body ?? {};
+  if (idempotencyKey) req.headers['idempotency-key'] = z.string().uuid().parse(idempotencyKey);
+  req.body = body;
+  next();
+};
+router.get('/reception/quality/executions/:id',requireQualityCapability('read'),quality.getExecution);
+router.get('/reception/quality/instruments',requireMetrologyCapability('read'),instrumentEligibility);
+router.post('/reception/quality/executions/preview',requireQualityCapability('execution_run'),qualityCommand,quality.previewExecution);
+router.post('/reception/quality/executions',requireQualityCapability('execution_run'),qualityCommand,quality.createExecution);
+router.post('/reception/quality/executions/:id/measurements',requireQualityCapability('measurement_write'),qualityCommand,quality.recordMeasurements);
+router.get('/reception/quality/executions/:id/verdict-preview',requireQualityCapability('read'),quality.previewVerdict);
+router.post('/reception/quality/executions/:id/decision',requireQualityCapability('release_decide'),qualityCommand,quality.decideExecution);
+router.post('/reception/:id/lines/:lineId/stock-article',processing.mapProcessing);
+router.post('/reception/:id/lines/:lineId/reconcile-processing',processing.reconcileProcessing);
+router.post('/reception/:id/lines/:lineId/void-packaging',processing.voidProcessing);
+router.post('/reception/:id/lines/:lineId/stock-receipt',createReceptionStockReceipt);
+router.post('/reception/:id/lines/:lineId/create-lot',createLotForReceptionLine);
 router.get('/reception/drafts',asyncHandler(async(req,res)=>{
   const items=(await pool.query(`SELECT r.id,r.reception_no AS number,r.fournisseur_id AS "supplierId",r.supplier_reference AS reference,r.reception_date::text AS date,
     COALESCE(f.nom,f.raison_sociale) AS "supplierName"
@@ -47,6 +80,7 @@ router.get('/reception/scan',asyncHandler(async(req,res)=>{
 }));
 router.post('/reception/grouped',receipts.stageGroupedReceipt);
 router.get('/reception/:id',getReception);
+router.get('/reception/:id/documents/:docId/download',asyncHandler(async(req,_res,next)=>{await processing.requireReceiptProcessingAccess(req);next();}),downloadReceptionDocument);
 router.post('/reception/:id/confirm',receipts.validateGroupedReceipt);
 router.post('/reception/:id/documents',createSecureUpload('quality-document').array('documents[]'),attachReceptionDocuments);
 
