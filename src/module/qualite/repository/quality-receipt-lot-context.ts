@@ -11,8 +11,11 @@ export async function resolveReceiptLotContext(q:Pick<PoolClient,"query">,body:E
   const row=(await q.query<{
     lot_id:string;article_id:string;piece_id:string|null;famille_id:string|null;fournisseur_id:string;
     status:string;unit:string|null;stock_unit:string|null;stock_conversion_coef:number|null;article_unit:string|null;qty:number;
+    subcontract_unlinked:boolean;
   }>(`SELECT r.lot_id::text,r.article_id::text,a.piece_technique_id::text AS piece_id,p.famille_id::text,
-      reception.fournisseur_id::text,reception.status,r.unite AS unit,r.stock_unit,r.stock_conversion_coef::float8,a.unite AS article_unit,r.qty_received::float8 AS qty
+      reception.fournisseur_id::text,reception.status,r.unite AS unit,r.stock_unit,r.stock_conversion_coef::float8,a.unite AS article_unit,r.qty_received::float8 AS qty,
+      (EXISTS(SELECT 1 FROM public.commande_fournisseur_ligne c WHERE c.id=r.commande_fournisseur_ligne_id AND c.type='SOUS_TRAITANCE')
+       AND NOT EXISTS(SELECT 1 FROM public.reception_subcontract_origins b WHERE b.receipt_line_id=r.id)) AS subcontract_unlinked
     FROM public.reception_fournisseur_lignes r JOIN public.receptions_fournisseurs reception ON reception.id=r.reception_id
     JOIN public.articles a ON a.id=r.article_id LEFT JOIN public.pieces_techniques p ON p.id=a.piece_technique_id
     WHERE r.id=$1::uuid ${lock?"FOR UPDATE OF r,reception":""}`,[body.reception_ligne_id])).rows[0];
@@ -20,6 +23,7 @@ export async function resolveReceiptLotContext(q:Pick<PoolClient,"query">,body:E
       ||(body.piece_technique_id&&body.piece_technique_id!==row.piece_id)||(body.famille_id&&body.famille_id!==row.famille_id))
     throw new HttpError(409,"QUALITY_RECEIPT_SCOPE_CHANGED","Le lot, l’article ou le fournisseur ne correspond pas à la ligne de réception.");
   if(row.status==="CANCELLED")throw new HttpError(409,"QUALITY_RECEIPT_CANCELLED","Cette réception est annulée.");
+  if(row.subcontract_unlinked)throw new HttpError(409,"SUBCONTRACT_RECEIPT_ORIGINS_REQUIRED","Rattachez le retour aux lots expédiés avant de démarrer le contrôle qualité.");
   const conversion=row.stock_unit&&row.stock_conversion_coef
     ?{stockUnit:row.stock_unit,coefficient:row.stock_conversion_coef}
     :receiptUnitConversion({receiptUnit:row.unit,articleUnit:row.article_unit});

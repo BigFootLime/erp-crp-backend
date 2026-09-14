@@ -46,6 +46,9 @@ import type {
   ReceptionStockReceipt,
 } from "../types/receptions.types"
 import { enqueueReceptionChanged, receptionRealtimeActionFromAudit } from "./receptions-realtime.repository"
+import { postPieceReceiptStockTx } from './receipt-processing-stock.repository'
+import {readProcessingLine} from './receipt-processing.repository'
+import { assertReceiptProcessingClosed } from './receipt-processing-guard'
 
 export type AuditContext = {
   user_id: number
@@ -696,6 +699,9 @@ export async function repoGetReception(id: string): Promise<ReceptionFournisseur
         line.quality={controlId:null,released:0,held:0,unit,stockable:0,blocking:[error.message]}
       }
     }
+    line.processing=await readProcessingLine(db,line.id,id)
+    if(line.processing.policy==='PIECES_CONTROLE_EMBALLAGE'&&line.quality)line.quality.stockable=Math.min(line.quality.stockable,line.processing.queues.TO_STOCK)
+    if(line.processing.toolId)line.unallocated_off_stock=null
     enrichedLines.push(line)
   }
 
@@ -825,6 +831,7 @@ export async function repoPatchReception(id: string, patch: PatchReceptionBodyDT
 
   return withRealtimeOutboxTransaction(client, async (tx) => {
     const workflow=(await tx.query<{confirmation_state:string|null}>('SELECT confirmation_state FROM public.receptions_fournisseurs WHERE id=$1::uuid FOR UPDATE',[id])).rows[0];
+    if (patch.status === 'CLOSED') await assertReceiptProcessingClosed(tx, { receptionId: id });
     if(workflow?.confirmation_state==='CONFIRMED'&&(patch.status==='CANCELLED'||patch.supplier_reference!==undefined||patch.reception_date!==undefined))
       throw new HttpError(409,'RECEIPT_CONFIRMED_IMMUTABLE','La réception validée et son BL sont tracés. Corrigez les écarts par le parcours de régularisation, sans réécrire la livraison.')
     const upd = await tx.query<ReceptionRow>(
@@ -1032,6 +1039,7 @@ export async function repoCreateLotForLine(
       lot_id: string | null
       reception_no: string
       owner_client_id:string|null
+      processing_policy:string
     }>(
       `
         SELECT
@@ -1041,7 +1049,7 @@ export async function repoCreateLotForLine(
           l.article_id::text AS article_id,
           l.supplier_lot_code,
           l.lot_id::text AS lot_id,
-          r.reception_no,r.client_proprietaire_id AS owner_client_id
+          r.reception_no,r.client_proprietaire_id AS owner_client_id,l.processing_policy
         FROM public.reception_fournisseur_lignes l
         JOIN public.receptions_fournisseurs r ON r.id = l.reception_id
         WHERE l.id = $1::uuid
@@ -1089,7 +1097,7 @@ export async function repoCreateLotForLine(
           body.manufactured_at ?? null,
           body.expiry_at ?? null,
           body.notes ?? null,
-          "EN_ATTENTE",
+          line.processing_policy==='PIECES_CONTROLE_EMBALLAGE'?'QUARANTAINE':'EN_ATTENTE',
           null,
           audit.user_id,
           line.owner_client_id,
@@ -1121,7 +1129,7 @@ export async function repoCreateLotForLine(
       action: "receptions.lines.create_lot",
       entity_type: "lots",
       entity_id: lotId,
-      details: { reception_id: receptionId, line_id: lineId, lot_code: lotCode, lot_status: "EN_ATTENTE" },
+      details: { reception_id: receptionId, line_id: lineId, lot_code: lotCode, lot_status: line.processing_policy==='PIECES_CONTROLE_EMBALLAGE'?'QUARANTAINE':'EN_ATTENTE' },
     })
 
     const detail = await selectLineDetail(tx, lineId)
@@ -1735,6 +1743,8 @@ export async function repoCreateStockReceiptLocked(
     if(!posted)throw new Error("Receipt command points to a missing stock movement")
     return {stock_movement_id:posted.movement.id,movement_no:posted.movement.movement_no,posted}
   }
+  const processing = (await tx.query<{ processing_policy: string }>('SELECT processing_policy FROM public.reception_fournisseur_lignes WHERE id=$1::uuid AND reception_id=$2::uuid', [lineId, receptionId])).rows[0];
+  if (processing?.processing_policy === 'PIECES_CONTROLE_EMBALLAGE') return postPieceReceiptStockTx(tx, receptionId, lineId, body, audit, idempotencyKey);
   const lineRes = await tx.query<{
     id: string
     qty_received: number
@@ -1748,6 +1758,7 @@ export async function repoCreateStockReceiptLocked(
     stock_conversion_coef:number|null
     article_unit:string|null
     stock_managed:boolean
+    processing_version:number
   }>(
     `
       SELECT
@@ -1757,7 +1768,7 @@ export async function repoCreateStockReceiptLocked(
         l.unite,
         l.lot_id::text AS lot_id,
         lot.lot_status,
-        r.reception_no, r.status AS reception_status,l.stock_unit,l.stock_conversion_coef::float8,article.unite AS article_unit,l.stock_managed
+        r.reception_no, r.status AS reception_status,l.stock_unit,l.stock_conversion_coef::float8,article.unite AS article_unit,l.stock_managed,l.processing_version
       FROM public.reception_fournisseur_lignes l
       JOIN public.receptions_fournisseurs r ON r.id = l.reception_id
       LEFT JOIN public.lots lot ON lot.id = l.lot_id
@@ -1769,6 +1780,8 @@ export async function repoCreateStockReceiptLocked(
   )
   const line = lineRes.rows[0] ?? null
   if (!line) return null
+  if(body.expected_processing_version !== undefined && line.processing_version !== body.expected_processing_version)
+    throw new HttpError(409,'RECEIPT_PROCESSING_CHANGED','Une étape a changé. Relisez les quantités avant de confirmer.');
   if(line.stock_managed===false)throw new HttpError(409,'RECEIPT_NOT_STOCK_MANAGED','Cette réception est hors stock ; aucune entrée en magasin ne doit être enregistrée.')
   if (!line.lot_id) throw new HttpError(409, "LOT_REQUIRED", "Veuillez d'abord creer le lot")
 
@@ -1888,6 +1901,7 @@ export async function repoCreateStockReceiptLocked(
     [receptionId, lineId, posted.movement.id, body.qty, audit.user_id,normalizedReceiptKey,rawRequestHash]
   )
 
+  await tx.query("UPDATE public.reception_fournisseur_lignes SET processing_version=processing_version+1 WHERE id=$1::uuid",[lineId]);
   if(materialInstalled)await transferMaterialReceiptTx(tx,receiptInsert.rows[0].id,audit)
 
   await insertAuditLog(tx, audit, {

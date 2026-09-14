@@ -3035,7 +3035,8 @@ export async function repoCreateNonConformityDisposition(params: {
 
     const lotId = row.lot_id;
     const needsMovement = body.disposition_type === "SCRAP" || body.disposition_type === "RETURN_SUPPLIER";
-    if (needsMovement) {
+    const preStock=needsMovement && await recordPreStockReceiptDisposition(tx,{ncId:id,dispositionId,lotId,quantity:body.qty??null,unit:body.unite??null,type:body.disposition_type,audit});
+    if (needsMovement && !preStock) {
       if (!lotId) throw new HttpError(409, "LOT_REQUIRED", "Cette disposition necessite un lot lie a la NC");
       const qty = body.qty ?? null;
       if (!qty || !Number.isFinite(qty) || qty <= 0) {
@@ -3552,3 +3553,4 @@ export async function repoPatchAction(params: { id: string; body: PatchActionBod
   });
   return updated ? repoGetAction(id) : null;
 }
+import {recordPreStockReceiptDisposition} from "../../receptions/repository/receipt-disposition.repository";

@@ -15,6 +15,8 @@ let client:{query:ReturnType<typeof vi.fn>;release:ReturnType<typeof vi.fn>};
 beforeEach(()=>{
   vi.clearAllMocks();
   client={release:vi.fn(),query:vi.fn(async(sql:string,_values?:unknown[])=>{
+    if(sql.startsWith("UPDATE public.reception_fournisseur_lignes SET processing_version"))return {rows:[]};
+    if(sql.startsWith("SELECT processing_policy"))return {rows:[{processing_policy:"STANDARD"}]};
     if(sql.includes("l.qty_received::float8"))return {rows:[{id:"line",qty_received:3,article_id:"article",unite:"barre",stock_unit:"mm",stock_conversion_coef:3000,article_unit:"mm",lot_id:"lot",lot_status:"LIBERE",reception_no:"RF-TEST",reception_status:"OPEN"}]};
     if(sql.includes("FROM public.stock_command_receipts"))return {rows:[]};
     if(sql.includes("SELECT request_hash,stock_movement_id"))return {rows:[]};

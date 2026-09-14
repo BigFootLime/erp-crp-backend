@@ -1,4 +1,5 @@
 import { Router } from "express"
+import * as processing from '../controllers/receipt-processing.controller';
 
 import { authenticateToken } from "../../auth/middlewares/auth.middleware"
 import { createSecureUpload } from "../../../shared/uploads/secure-upload"
@@ -26,6 +27,15 @@ const router = Router()
 router.use(authenticateToken)
 
 router.get("/kpis", getReceptionsKpis)
+router.get('/processing', processing.listProcessing)
+router.get('/:id/lines/:lineId/processing', processing.getProcessing)
+router.post('/:id/lines/:lineId/pack', processing.packProcessing)
+router.post('/:id/lines/:lineId/stock', processing.stockProcessing)
+router.post('/:id/lines/:lineId/tool-stock', processing.toolStockProcessing)
+router.post('/:id/lines/:lineId/subcontract-origins', processing.subcontractProcessing)
+router.post('/:id/lines/:lineId/stock-article', processing.mapProcessing)
+router.post('/:id/lines/:lineId/reconcile-processing', processing.reconcileProcessing)
+router.post('/:id/lines/:lineId/void-packaging', processing.voidProcessing)
 router.get('/expected-lines',expectedReceiptLines)
 router.post('/grouped',stageGroupedReceipt)
 router.post('/:id/confirm',validateGroupedReceipt)

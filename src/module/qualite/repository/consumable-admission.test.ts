@@ -3,6 +3,7 @@ import { assertOperationalLotQualityEligibility,assertReceiptLotQualityEligibili
 
 function client(options:{admitted?:number;consumed?:number;reserved?:number;blocked?:boolean;nc?:boolean;control?:boolean}={}){
   return {query:vi.fn(async(sql:string)=>{
+    if(sql.includes('FROM public.reception_stock_portions'))return {rows:[]};
     if(sql.includes('FROM public.lots'))return {rows:[{lot_code:'PAL-1',lot_status:options.blocked?'BLOQUE':'LIBERE',article_unit:'U'}]};
     if(sql.includes('FROM public.quality_control qc'))return {rows:options.control?[{id:'qc',qty_released:0,qty_consumed:0,qty_held:0,unite:'U',pending:true}]:[]};
     if(sql.includes('FROM public.consumable_receipt_admissions'))return {rows:options.admitted===0?[]:[{id:'admission',quantity:options.admitted??100,unit:'U',receipt_line_id:'receipt-line',direct_consumed:options.consumed??0}]};

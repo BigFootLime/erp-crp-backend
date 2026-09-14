@@ -8,6 +8,7 @@ import {reconcileReleasedConsolidationLot} from '../../production/repository/pro
 import type { PoolClient } from "pg";
 import {resolveStockLotContext} from "./quality-stock-lot-context";
 import {applyMaterialLotDecision} from "./quality-material-lot-decision";
+import { lockReceiptReleaseScope, assertReceiptReleaseAvailable } from "../../receptions/repository/receipt-quality-release.repository";
 
 import pool from "../../../config/database";
 import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
@@ -1237,6 +1238,7 @@ type ExecutionRow = {
   controlled_by: number;
   lot_id: string | null;
   article_id: string | null;
+  reception_ligne_id: string | null;
   bon_livraison_id: string | null;
   delivery_allocation_id: string | null;
   correlation_id: string;
@@ -1249,7 +1251,7 @@ const EXECUTION_COLUMNS = `
   qc.unite, qc.qty_population, qc.qty_controlled, qc.qty_conforming, qc.qty_released, qc.qty_held,
   qc.qty_scrapped, qc.qty_reworked, qc.qty_sorted, qc.qty_returned, qc.qty_consumed,
   qc.control_date, qc.validation_date, qc.created_at, qc.updated_at, qc.controlled_by,
-  qc.lot_id, qc.article_id,
+  qc.lot_id, qc.article_id, qc.reception_ligne_id,
   qc.bon_livraison_id, qc.delivery_allocation_id, qc.correlation_id,
   p.code AS plan_code
 `;
@@ -2158,6 +2160,7 @@ export async function repoDecideExecution(params: {
   return withTransaction(async (client) => {
     // Stock writes lock the lot before its control. Keep the same order here.
     const scope=await selectExecutionRow(client,params.id);
+    const receiptReleaseScope=await lockReceiptReleaseScope(client,scope?.reception_ligne_id ?? null);
     if(scope?.lot_id)await client.query("SELECT id FROM public.lots WHERE id=$1::uuid FOR UPDATE",[scope.lot_id]);
     const before = await selectExecutionRow(client, params.id, true);
     if (!before) return null;
@@ -2271,6 +2274,8 @@ export async function repoDecideExecution(params: {
       hasDerogation: derogation !== null,
       evidenceCount,
     });
+
+    await assertReceiptReleaseAvailable(client,receiptReleaseScope,outcome.ledger.released,params.body.unite);
 
     await client.query(
       `
