@@ -22,6 +22,7 @@ function queryClient(input: {
   concession?: { status: string; valid_to: string | null } | null;
 }) {
   const query = vi.fn(async (sql: string) => {
+    if (sql.includes('FROM public.reception_stock_portions')) return { rows: [] };
     if (sql.includes("FROM public.lots")) return { rows: [{ lot_code: "LOT-616", lot_status: input.status ?? "LIBERE", article_unit: input.articleUnit ?? "PCS" }] };
     if (sql.includes("FROM public.quality_control qc")) {
       return {

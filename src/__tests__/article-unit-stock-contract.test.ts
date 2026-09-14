@@ -85,6 +85,7 @@ describe("#475 article/stock unit contract", () => {
     const client = {
       query: async (sql: string, values?: unknown[]) => {
         queries.push({ sql, values });
+        if (sql.includes("SELECT a.commercial_scope")) return { rows: [{ commercial_scope: null, internal_reference: null, article_category: "achat", client_ids: [], categories: ["achat_revente"], tool_id: null, consumption_mode: "UNIT" }] };
         if (sql.includes("FROM public.units")) return { rows: [{ id: MILLIMETRE_UNIT_ID }] };
         if (sql.includes("fn_next_issued_code_value")) return { rows: [{ v: "42" }] };
         if (sql.includes("INSERT INTO public.articles (")) {
@@ -157,6 +158,7 @@ describe("#475 article/stock unit contract", () => {
       const text = String(sql);
       const values = rawValues ?? [];
       state.queries.push({ sql: text, values });
+      if (text.includes("SELECT a.commercial_scope")) return { rows: state.article ? [{ ...state.article, commercial_scope: null, internal_reference: null, client_ids: [], categories: state.article.article_categories, tool_id: null, consumption_mode: "UNIT" }] : [], rowCount: state.article ? 1 : 0 };
 
       if (text === "BEGIN" || text === "COMMIT" || text === "ROLLBACK") return { rows: [], rowCount: 0 };
       if (text.includes("pg_advisory_xact_lock")) return { rows: [], rowCount: 1 };

@@ -8,6 +8,7 @@ import { HttpError } from '../../../utils/httpError';
 export type ExpectedReceiptLine={id:string;orderId:string;orderCode:string;supplierId:string;supplierName:string;supplierCode:string|null;articleId:string|null;articleCode:string|null;crpReference:string|null;supplierReference:string|null;
   designation:string;type:string;categories:string[];unit:string|null;stockUnit:string|null;coefficient:number;ordered:number;received:number;remaining:number;accepted:number;stocked:number;
   stockManaged:boolean;qualityRequired:boolean;consumptionMode:string;lotTracking:boolean;due:string|null;destinationId:string|null;price:number|null;currency:string;
+  processingPolicy?:'STANDARD'|'PIECES_CONTROLE_EMBALLAGE';toolId?:number|null;
   ofs:Array<{id:number;number:string}>;version:string;orderVersion:string;articleVersion:string;status:string;total:number};
 export async function readExpectedReceiptLinesTx(tx:Pick<PoolClient,'query'>,filters:ExpectedReceiptsQuery,lineIds?:string[]){
   const values:unknown[]=[],conditions=["l.statut_ligne='ACTIVE'","c.statut IN('ENVOYEE','ACCUSE_RECU','PARTIELLEMENT_RECUE','RECUE')"];
@@ -28,6 +29,8 @@ export async function readExpectedReceiptLinesTx(tx:Pick<PoolClient,'query'>,fil
   const limit=lineIds?'':`LIMIT ${bind(filters.pageSize)} OFFSET ${bind((filters.page-1)*filters.pageSize)}`;
   const items=(await tx.query<ExpectedReceiptLine>(`SELECT l.id::text,c.id::text AS "orderId",c.code AS "orderCode",c.statut AS status,f.id::text AS "supplierId",COALESCE(f.nom,f.raison_sociale) AS "supplierName",COALESCE(f.code,f.code_fournisseur) AS "supplierCode",
     l.article_id::text AS "articleId",a.code AS "articleCode",a.internal_reference AS "crpReference",l.reference_fournisseur AS "supplierReference",l.designation,l.type,COALESCE(categories.codes,'{}'::text[]) AS categories,
+    COALESCE(l.receipt_processing_policy,public.receipt_piece_policy_1069(a.id,l.type),'STANDARD') AS "processingPolicy",
+    COALESCE(l.receipt_tool_id,(SELECT tool_id FROM public.article_tool_links t WHERE t.article_id=a.id)) AS "toolId",
     l.unite AS unit,COALESCE(l.unite_stock,a.unite,l.unite) AS "stockUnit",COALESCE(l.coef_conversion,1)::float8 AS coefficient,l.quantite::float8 AS ordered,
     COALESCE(r.received,0)::float8 AS received,GREATEST(0,l.quantite-l.qty_annulee-COALESCE(r.received,0))::float8 AS remaining,
     COALESCE(s.qty,0)::float8 AS stocked,COALESCE(l.receipt_stock_managed,a.stock_managed,false) AS "stockManaged",
@@ -45,6 +48,7 @@ export async function readExpectedReceiptLinesTx(tx:Pick<PoolClient,'query'>,fil
     r.stock_unit AS "stockUnit",COALESCE(r.stock_conversion_coef,1)::float8 AS coefficient,r.receipt_quality_required AS "qualityRequired"
     FROM public.reception_fournisseur_lignes r WHERE r.commande_fournisseur_ligne_id=ANY($1::uuid[])`,[items.map(i=>i.id)])).rows;
   for(const item of items){
+    if(item.processingPolicy==='PIECES_CONTROLE_EMBALLAGE'){item.qualityRequired=true;item.stockManaged=true;}
     item.accepted=0;
     for(const receipt of receipts.filter(r=>r.orderLineId===item.id)){
       if(!receipt.qualityRequired){item.accepted+=receipt.quantity;continue;}

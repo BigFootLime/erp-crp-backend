@@ -333,6 +333,9 @@ const articleProcurementSchema = z
 export const createArticleSchema = z.object({
   body: z
     .object({
+      commercial_scope: z.enum(['CLIENTS', 'CRP']).nullable().optional(),
+      client_ids: z.array(z.string().regex(/^[0-9]{3}$/)).max(500).optional(),
+      tool_id: z.number().int().positive().nullable().optional(),
       supplier_conditions: z.array(articleSupplierConditionSchema).max(30).optional(),
       internal_reference: z.string().trim().min(1).max(160).nullable().optional(),
       consumption_mode: z.enum(["UNIT", "GLOBAL_PACK"]).optional(),
@@ -446,6 +449,9 @@ export type CreateArticleBodyDTO = z.infer<typeof createArticleSchema>["body"];
 export const updateArticleSchema = z.object({
   body: z
     .object({
+      commercial_scope: z.enum(['CLIENTS', 'CRP']).nullable().optional(),
+      client_ids: z.array(z.string().regex(/^[0-9]{3}$/)).max(500).optional(),
+      tool_id: z.number().int().positive().nullable().optional(),
       supplier_conditions: z.array(articleSupplierConditionSchema).max(30).optional(),
       internal_reference: z.string().trim().min(1).max(160).nullable().optional(),
       consumption_mode: z.enum(["UNIT", "GLOBAL_PACK"]).optional(),

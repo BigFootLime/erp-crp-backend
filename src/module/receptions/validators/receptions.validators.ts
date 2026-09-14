@@ -150,6 +150,7 @@ export type DecideInspectionBodyDTO = z.infer<typeof decideInspectionSchema>["bo
 export const stockReceiptSchema = z.object({
   body: z
     .object({
+      expected_processing_version: z.number().int().positive().optional(),
       qty: z.coerce.number().positive(),
       dst_magasin_id: uuid,
       dst_emplacement_id: z.coerce.number().int().positive(),

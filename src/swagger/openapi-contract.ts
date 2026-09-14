@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import {RECEIPT_PROCESSING_ACTIONS,receiptProcessingOperation,receiptProcessingSchemas} from "./receipt-processing-contract";
 
 import {
   GENERATED_ROUTE_INVENTORY,
@@ -47,6 +48,13 @@ const IDEMPOTENT_OPERATIONS = new Set([
 
 const TERMINAL_DEVICE_OPERATIONS = new Set(["get /terminals/bootstrap", "post /terminals/identify"]);
 const TERMINAL_SESSION_OPERATIONS = new Set([
+  "get /terminals/reception/processing","get /terminals/reception/{id}/lines/{lineId}/processing","get /terminals/reception/mp-articles",
+  "get /terminals/reception/{id}/documents/{docId}/download",
+  ...RECEIPT_PROCESSING_ACTIONS.map(action=>`post /terminals/reception/{id}/lines/{lineId}/${action}`),
+  "post /terminals/reception/{id}/lines/{lineId}/stock-receipt","post /terminals/reception/{id}/lines/{lineId}/create-lot",
+  "get /terminals/reception/quality/executions/{id}","get /terminals/reception/quality/instruments",
+  "post /terminals/reception/quality/executions/preview","post /terminals/reception/quality/executions",
+  "post /terminals/reception/quality/executions/{id}/measurements","get /terminals/reception/quality/executions/{id}/verdict-preview","post /terminals/reception/quality/executions/{id}/decision",
   "get /terminals/logistics/article-categories", "get /terminals/logistics/magasins", "get /terminals/logistics/emplacements",
   "get /terminals/reception/expected-lines", "get /terminals/reception/drafts", "get /terminals/reception/scan",
   "post /terminals/reception/grouped", "get /terminals/reception/{id}",
@@ -180,7 +188,7 @@ function generatedOperation(route: GeneratedRouteContract): OpenApiOperation {
       },
     };
   }
-  return webhookOperation(key, operation);
+  return receiptProcessingOperation(key,webhookOperation(key, operation));
 }
 
 function jsonSchemaResponse(description: string, schemaRef: string): OpenApiObject {
@@ -308,6 +316,7 @@ function componentSchemas(legacy: OpenApiObject): OpenApiObject {
       },
     },
     schemas: {
+      ...receiptProcessingSchemas,
       ...legacySchemas,
       ApiRequest: {
         type: "object",

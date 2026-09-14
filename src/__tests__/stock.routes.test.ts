@@ -146,6 +146,8 @@ describe("/api/v1/stock", () => {
   it("POST /api/v1/stock/articles creates fabricated article without projet_id and syncs reverse piece technique link", async () => {
     mocks.clientQuery.mockImplementation(async (sql: unknown) => {
       const q = String(sql);
+      if(q.includes("SELECT a.commercial_scope"))return {rows:[{commercial_scope:null,internal_reference:null,article_category:"fabrique",client_ids:[],categories:["piece_finie_fabriquee"],tool_id:null,consumption_mode:"UNIT"}]};
+      if(q.includes("SELECT client_id FROM public.clients"))return {rows:[{client_id:"001"}]};
       if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
       if (q.includes("FROM public.pieces_techniques pt") && q.includes("LEFT JOIN LATERAL")) {
         return {
@@ -225,6 +227,8 @@ describe("/api/v1/stock", () => {
       .send({
         projet_id: null,
         designation: "Pièce stockée",
+        commercial_scope: "CLIENTS",
+        client_ids: ["001"],
         article_category: "fabrique",
         article_categories: ["fabrique"],
         family_code: "PT",
@@ -236,6 +240,7 @@ describe("/api/v1/stock", () => {
 
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({ article_category: "fabrique", family_code: "PT", stock_managed: true });
+    expect(mocks.clientQuery.mock.calls.some(([sql, values]) => String(sql).includes("INSERT INTO public.article_client_links") && JSON.stringify(values).includes("001"))).toBe(true);
     expect(
       mocks.clientQuery.mock.calls.some((call) =>
         Array.isArray(call[1]) && call[1].includes("ART-FAB-001-PT-001-A")
@@ -324,6 +329,7 @@ describe("/api/v1/stock", () => {
 
     mocks.clientQuery.mockImplementation(async (sql: unknown) => {
       const q = String(sql);
+      if(q.includes("SELECT a.commercial_scope"))return {rows:[{commercial_scope:null,internal_reference:null,article_category:"fabrique",client_ids:[],categories:["piece_finie_fabriquee"],tool_id:null,consumption_mode:"UNIT"}]};
       if (q.includes("FROM public.pieces_techniques pt") && q.includes("LEFT JOIN LATERAL")) {
         throw new Error("A normal fabricated-article PATCH must not recalculate its immutable code");
       }
@@ -429,6 +435,7 @@ describe("/api/v1/stock", () => {
     const articleId = "11111111-1111-1111-1111-111111111111";
     mocks.clientQuery.mockImplementation(async (sql: unknown) => {
       const q = String(sql);
+      if(q.includes("SELECT a.commercial_scope"))return {rows:[{commercial_scope:null,internal_reference:null,article_category:"achat",client_ids:[],categories:["achat_transforme"],tool_id:null,consumption_mode:"UNIT"}]};
       if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
       if (q.includes("FROM public.articles") && q.includes("FOR UPDATE")) {
         return {
@@ -523,6 +530,7 @@ describe("/api/v1/stock", () => {
   it("POST /api/v1/stock/articles persists article_matiere payload", async () => {
     mocks.clientQuery.mockImplementation(async (sql: unknown) => {
       const q = String(sql);
+      if(q.includes("SELECT a.commercial_scope"))return {rows:[{commercial_scope:null,internal_reference:null,article_category:"matiere",client_ids:[],categories:["matiere_premiere"],tool_id:null,consumption_mode:"UNIT"}]};
       if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
     if (q.includes("public.fn_next_issued_code_value")) return { rows: [{ v: "1" }] };
       if (q.includes("INSERT INTO public.articles (") || q.includes("INSERT INTO public.articles\n")) {

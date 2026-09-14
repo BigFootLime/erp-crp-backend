@@ -1,9 +1,9 @@
 {
   "scope": "/api/v1",
-  "source_sha256": "aa184cfc4f5f724cd2249303e474b52a2c15edf4b396199a3bbf51d277fc9ef0",
-  "discovered_operations": 1296,
-  "documented_operations": 1296,
+  "source_sha256": "66dffb4e72f3ca9749688c883d3a98fd05c0d9d0c0127ae4baf38c280f1a0271",
+  "discovered_operations": 1325,
+  "documented_operations": 1325,
   "coverage_percent": 100,
-  "authenticated_operations": 1236,
-  "public_operations": 60
+  "authenticated_operations": 1245,
+  "public_operations": 80
 }

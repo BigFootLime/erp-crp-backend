@@ -298,6 +298,8 @@ export const decideIncomingInspection: RequestHandler = async (req, res, next) =
 
 export const createReceptionStockReceipt: RequestHandler = async (req, res, next) => {
   try {
+    const { requireReceiptProcessingAccess } = await import('./receipt-processing.controller');
+    await requireReceiptProcessingAccess(req, true);
     const audit = buildAuditContext(req)
     const { id, lineId } = lineIdParamSchema.parse({ params: req.params }).params
     const body = stockReceiptSchema.parse({ body: req.body }).body

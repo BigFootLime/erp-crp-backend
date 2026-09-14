@@ -12,6 +12,7 @@ import {
   assertQualityEligibility,
   evaluateQualityEligibility,
   type EligibilityTarget,
+  type EligibilityVerdict,
   type QualityEligibilityPurpose,
 } from "../domain/quality-release";
 
@@ -32,6 +33,7 @@ export type OperationalQualityDecision = {
     release_decision_ids: string[];
     derogation_ids: string[];
     receipt_admission_ids?: string[];
+    receipt_portion_ids?: string[];
   };
 };
 
@@ -54,7 +56,7 @@ async function inspectOperationalLotQualityEligibility(params: {
   purpose: QualityEligibilityPurpose;
   lockRows:boolean;
   receiptLineId?:string;
-}) {
+}): Promise<OperationalQualityDecision & {eligibility:EligibilityVerdict;evaluationTarget:EligibilityTarget;available:number}> {
   const lotRes = await params.client.query<{
     lot_code: string;
     lot_status: EligibilityTarget["lot_status"];
@@ -103,6 +105,21 @@ async function inspectOperationalLotQualityEligibility(params: {
   // control exactly as the delivery-release aggregate does; summing historical
   // controls for the same population would over-authorize physical stock.
   const controlIds = controls.rows.map((row) => row.id);
+  // A received MP sub-lot inherits the actual source control, bounded by the
+  // packed portion. No synthetic control or duplicate release is created.
+  const portion = !params.receiptLineId ? (await params.client.query<{
+    id: string; source_lot_id: string; receipt_line_id: string; stock_quantity: number; admitted_quantity: number; unit: string; direct_consumed: number;
+  }>(`SELECT p.id::text,p.source_lot_id::text,p.receipt_line_id::text,p.stock_quantity::float8,l.stock_unit AS unit,
+      (SELECT sum(p2.stock_quantity) FROM public.reception_stock_portions p2 JOIN public.stock_movements m2 ON m2.id=p2.stock_movement_id WHERE p2.receipt_line_id=p.receipt_line_id AND m2.status='POSTED')::float8 AS admitted_quantity,
+      COALESCE((SELECT sum(abs(sl.qty)) FROM public.stock_movement_lines sl JOIN public.stock_movements sm ON sm.id=sl.movement_id
+        WHERE sl.lot_id=p.stock_lot_id AND sm.status='POSTED' AND sm.movement_type='OUT'
+        AND NOT EXISTS(SELECT 1 FROM public.of_material_consumptions mc WHERE mc.stock_movement_line_id=sl.id AND mc.reservation_id IS NOT NULL)),0)::float8 AS direct_consumed
+    FROM public.reception_stock_portions p JOIN public.stock_movements m ON m.id=p.stock_movement_id
+    JOIN public.reception_fournisseur_lignes l ON l.id=p.receipt_line_id JOIN public.reception_packaging k ON k.id=p.packaging_id
+    WHERE p.stock_lot_id=$1::uuid AND m.status='POSTED' AND k.voided_at IS NULL`, [params.lotId])).rows[0] : null;
+  const sourceDecision = portion ? await inspectOperationalLotQualityEligibility({
+    ...params, lotId: portion.source_lot_id, receiptLineId: portion.receipt_line_id, qty: portion.admitted_quantity, unit: portion.unit,
+  }) : null;
   const admission=!controls.rows.length?(await params.client.query<{id:string;quantity:number;unit:string;receipt_line_id:string;direct_consumed:number}>(`
     SELECT d.id::text,d.quantity::float8,d.unit,d.receipt_line_id::text,
       COALESCE((SELECT sum(abs(sl.qty)) FROM public.stock_movement_lines sl JOIN public.stock_movements sm ON sm.id=sl.movement_id
@@ -167,18 +184,18 @@ async function inspectOperationalLotQualityEligibility(params: {
     [params.lotId]
   );
   const concessions = controlIds.length === 0
-    ? { rows: [] as Array<{ decision_id: string; derogation_id: string }> }
-    : await params.client.query<{ decision_id: string; derogation_id: string }>(
+    ? { rows: [] as Array<{ decision_id: string; derogation_id: string | null }> }
+    : await params.client.query<{ decision_id: string; derogation_id: string | null }>(
       `
         SELECT rd.id::text AS decision_id, rd.derogation_id::text AS derogation_id
         FROM public.quality_release_decision rd
-        JOIN public.quality_derogation d ON d.id = rd.derogation_id
+        LEFT JOIN public.quality_derogation d ON d.id = rd.derogation_id
         WHERE rd.quality_control_id = ANY($1::uuid[])
         ORDER BY rd.decided_at DESC, rd.id DESC
       `,
       [controlIds]
     );
-  const activeConcession = concessions.rows[0] ?? null;
+  const activeConcession = concessions.rows.find(row => row.derogation_id !== null) ?? null;
   const derogation = activeConcession
     ? await params.client.query<{ status: string; valid_to: string | null }>(
       `SELECT status, valid_to::text AS valid_to FROM public.quality_derogation WHERE id = $1::uuid`,
@@ -192,9 +209,10 @@ async function inspectOperationalLotQualityEligibility(params: {
     label: lot.lot_code,
     qty_requested: params.qty,
     lot_status: lot.lot_status,
-    qty_released: admission?admission.quantity:controls.rows.reduce((sum, row) => sum + numeric(row.qty_released), 0),
+    qty_released: portion ? Math.min(portion.stock_quantity, sourceDecision?.eligibility.allowed ? portion.stock_quantity : 0,
+      controls.rows.length ? numeric(controls.rows[0].qty_released) : portion.stock_quantity) : admission?admission.quantity:controls.rows.reduce((sum, row) => sum + numeric(row.qty_released), 0),
     qty_held: controls.rows.reduce((sum, row) => sum + numeric(row.qty_held), 0),
-    qty_consumed: params.receiptLineId?0:admission?admission.direct_consumed:controls.rows.reduce((sum, row) => sum + numeric(row.qty_consumed), 0),
+    qty_consumed: params.receiptLineId?0:portion?portion.direct_consumed:admission?admission.direct_consumed:controls.rows.reduce((sum, row) => sum + numeric(row.qty_consumed), 0),
     open_nc_without_disposition: Number(nc.rows[0]?.total ?? 0),
     pending_mandatory_controls: controls.rows.filter((row) => row.pending).length,
     derogation: derogation.rows[0] ?? null,
@@ -219,10 +237,11 @@ async function inspectOperationalLotQualityEligibility(params: {
     already_committed_qty: alreadyCommittedQty,
     evaluated_at: at.toISOString(),
     evidence: {
-      control_ids: controlIds,
-      release_decision_ids: concessions.rows.map((row) => row.decision_id),
-      derogation_ids: concessions.rows.map((row) => row.derogation_id),
+      control_ids: [...new Set([...controlIds, ...(sourceDecision?.evidence.control_ids ?? [])])],
+      release_decision_ids: [...new Set([...concessions.rows.map((row) => row.decision_id), ...(sourceDecision?.evidence.release_decision_ids ?? [])])],
+      derogation_ids: [...new Set([...concessions.rows.map((row) => row.derogation_id).filter((id): id is string => id !== null), ...(sourceDecision?.evidence.derogation_ids ?? [])])],
       receipt_admission_ids:admission?[admission.id]:[],
+      receipt_portion_ids:portion?[portion.id]:[],
     },
   };
 }
@@ -261,6 +280,9 @@ export async function recordDirectLotQualityConsumption(params: {
     throw new HttpError(422, "QUALITY_MOVEMENT_QTY_INVALID", "Quantité de sortie invalide pour le contrôle Qualité.");
   }
   const controlId = params.decision.evidence.control_ids[0] ?? null;
+  // A portion's posted OUT ledger is authoritative, just as for direct
+  // admissions. Incrementing the parent QC would charge the receipt twice.
+  if (params.decision.evidence.receipt_portion_ids?.length) return;
   if (!controlId) {
     // The posted OUT is the consumption ledger for a dispensed receipt. The
     // gate already bounded it under the lot lock; never create a fake QC row.

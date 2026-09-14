@@ -199,6 +199,11 @@ export type ArticleOpenSupplierOrder = {
 
 export type StockArticleListItem = {
   internal_reference?: string | null;
+  commercial_scope?: 'CLIENTS' | 'CRP' | null;
+  client_ids?: string[];
+  associated_clients?: Array<{ id: string; code: string; name: string }>;
+  tool_id?: number | null;
+  receipt_mp_article_id?: string | null;
   consumption_mode?: "UNIT" | "GLOBAL_PACK";
   purchase_pack_qty?: number;
   receipt_quality_required?: boolean;

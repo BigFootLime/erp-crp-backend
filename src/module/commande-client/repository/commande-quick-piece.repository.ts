@@ -154,6 +154,8 @@ export async function repoCreateQuickTechnicalPiece(
         article_type: "PIECE_TECHNIQUE",
         article_category: "fabrique",
         article_categories: ["piece_finie_fabriquee"],
+        commercial_scope: "CLIENTS",
+        client_ids: [body.client_id],
         family_code: "PT",
         status: "VALIDE",
         projet_id: null,

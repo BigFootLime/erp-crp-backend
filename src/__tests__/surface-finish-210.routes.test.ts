@@ -189,6 +189,7 @@ function installQueryRouter(scenario: Scenario = {}) {
     sqlLog.push(sql);
     const empty = { rows: [] as Row[], rowCount: 0 };
     const one = (row: Row) => ({ rows: [row], rowCount: 1 });
+    if (sql.includes("SELECT a.commercial_scope")) return one({ commercial_scope: null, internal_reference: null, article_category: "traitement", client_ids: [], categories: ["traitement_surface"], tool_id: null, consumption_mode: "UNIT" });
     const authoritativePdf = authoritativePdfQueueDbMock(sql, params);
     if (authoritativePdf) return authoritativePdf;
 
@@ -796,6 +797,7 @@ describe("#210 confirmation", () => {
     const { body: preview } = await fetchPreview();
     mocks.clientQuery.mockImplementation((sql: string) => {
       sqlLog.push(sql);
+      if(sql.includes("SELECT a.commercial_scope"))return Promise.resolve({rows:[{commercial_scope:null,internal_reference:null,article_category:"traitement",client_ids:[],categories:["traitement_surface"],tool_id:null,consumption_mode:"UNIT"}],rowCount:1});
       if (/UPDATE public\.articles_traitement/.test(sql)) {
         return Promise.reject(Object.assign(new Error("duplicate key"), { code: "23505" }));
       }

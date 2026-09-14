@@ -26,18 +26,28 @@ export async function lockMaterialReceiptRecipientsTx(tx:PoolClient,lineId:strin
 /** No new quantity register: every transfer links to one canonical reservation.
  * Quality liberation and the IN movement have already succeeded in this tx.
  * A later specification check can block execution, without losing the promise. */
-export async function transferMaterialReceiptTx(tx:PoolClient,receiptId:string,audit:AuditContext){
-  const receipt=(await tx.query(`SELECT s.id::text,ml.qty::float8,r.commande_fournisseur_ligne_id::text AS line_id,
+export async function transferMaterialReceiptTx(tx:PoolClient,receiptId:string,audit:AuditContext,portionId?:string){
+  const receipt=portionId ? (await tx.query(`SELECT s.id::text,p.stock_quantity::float8 AS qty,r.commande_fournisseur_ligne_id::text AS line_id,
+    r.article_id::text AS source_article_id,r.stock_article_id::text AS article_id,p.stock_lot_id::text AS lot_id,ml.unite,m.status AS movement_status,ml.dst_magasin_id::text,ml.dst_emplacement_id,
+    (COALESCE((SELECT sum(previous.qty_received*COALESCE(previous.stock_conversion_coef,1)) FROM public.reception_fournisseur_lignes previous
+      WHERE previous.commande_fournisseur_ligne_id=r.commande_fournisseur_ligne_id AND (previous.created_at,previous.id)<(r.created_at,r.id)),0)
+      +COALESCE((SELECT sum(ps.qty*COALESCE(r.stock_conversion_coef,1)) FROM public.reception_fournisseur_stock_receipts ps JOIN public.stock_movements pm ON pm.id=ps.stock_movement_id AND pm.status='POSTED'
+        WHERE ps.reception_line_id=r.id AND (ps.created_at,ps.id)<(s.created_at,s.id)),0)+p.receipt_stock_offset)::float8 AS receipt_start
+    FROM public.reception_fournisseur_stock_receipts s JOIN public.reception_fournisseur_lignes r ON r.id=s.reception_line_id
+    JOIN public.reception_stock_portions p ON p.receipt_line_id=r.id AND p.stock_movement_id=s.stock_movement_id
+    JOIN public.stock_movements m ON m.id=s.stock_movement_id
+    JOIN public.stock_movement_lines ml ON ml.movement_id=m.id AND ml.lot_id=p.stock_lot_id
+    WHERE s.id=$1::uuid AND p.id=$2::uuid`,[receiptId,portionId])).rows[0] : (await tx.query(`SELECT s.id::text,ml.qty::float8,r.commande_fournisseur_ligne_id::text AS line_id,
     r.article_id::text,r.lot_id::text,ml.unite,m.status AS movement_status,ml.dst_magasin_id::text,ml.dst_emplacement_id,
     (COALESCE((SELECT sum(previous.qty_received*COALESCE(previous.stock_conversion_coef,pl.coef_conversion,1)) FROM public.reception_fournisseur_lignes previous
       JOIN public.commande_fournisseur_ligne pl ON pl.id=previous.commande_fournisseur_ligne_id
       WHERE previous.commande_fournisseur_ligne_id=r.commande_fournisseur_ligne_id AND(previous.created_at,previous.id)<(r.created_at,r.id)),0)
       +COALESCE((SELECT sum(pml.qty) FROM public.reception_fournisseur_stock_receipts ps JOIN public.stock_movements pm ON pm.id=ps.stock_movement_id AND pm.status='POSTED'
-        JOIN public.stock_movement_lines pml ON pml.movement_id=pm.id AND pml.line_no=1 WHERE ps.reception_line_id=r.id AND(ps.created_at,ps.id)<(s.created_at,s.id)),0))::float8 AS receipt_start
+        JOIN public.stock_movement_lines pml ON pml.movement_id=pm.id WHERE ps.reception_line_id=r.id AND(ps.created_at,ps.id)<(s.created_at,s.id)),0))::float8 AS receipt_start
     FROM public.reception_fournisseur_stock_receipts s JOIN public.reception_fournisseur_lignes r ON r.id=s.reception_line_id
     JOIN public.stock_movements m ON m.id=s.stock_movement_id
     JOIN public.stock_movement_lines ml ON ml.movement_id=m.id AND ml.line_no=1 WHERE s.id=$1::uuid`,[receiptId])).rows[0];
-  if(!receipt?.line_id)return transferCustomerMaterialReceiptTx(tx,receiptId,audit);
+  if(!receipt?.line_id)return portionId ? [] : transferCustomerMaterialReceiptTx(tx,receiptId,audit);
   if(receipt.movement_status!=="POSTED")throw new HttpError(409,"MATERIAL_RECEIPT_NOT_POSTED","La mise en stock doit être comptabilisée avant l’affectation.");
   const allocations=(await tx.query(`SELECT b.id::text,b.material_need_id::text,b.besoin_of_id AS of_id,
     (CASE WHEN b.besoin_type='OF_MATERIAL' THEN b.quantite_couverte ELSE b.quantite_couverte*COALESCE(l.coef_conversion,1) END)::float8 AS assigned,b.stock_receipt_offset::float8 AS receipt_offset,
@@ -51,7 +61,7 @@ export async function transferMaterialReceiptTx(tx:PoolClient,receiptId:string,a
   // Each posted quantity occupies its own receipt interval. A later conforming
   // receipt cannot silently take the allocation of an earlier quarantined lot.
   const alreadyHere=(await tx.query(`SELECT COALESCE(sum(r.qty_reserved),0)::float8 AS qty FROM public.of_material_receipt_transfers t
-    JOIN public.stock_reservations r ON r.id=t.reservation_id WHERE t.receipt_id=$1::uuid`,[receiptId])).rows[0].qty as number;
+    JOIN public.stock_reservations r ON r.id=t.reservation_id WHERE t.receipt_id=$1::uuid ${portionId ? "AND t.stock_portion_id=$2::uuid" : ""}`,portionId?[receiptId,portionId]:[receiptId])).rows[0].qty as number;
   let remaining=quantity(receipt.qty-alreadyHere),earlier=0;
   const transfers:Array<{ofId:number;reservationId:string;quantity:number}>=[];
   for(const allocation of allocations){
@@ -59,15 +69,16 @@ export async function transferMaterialReceiptTx(tx:PoolClient,receiptId:string,a
     earlier=quantity(earlier+allocation.assigned);
     if(!allocation.material_need_id||allocation.kept_separate)continue;
     const here=(await tx.query(`SELECT COALESCE(sum(r.qty_reserved),0)::float8 AS qty FROM public.of_material_receipt_transfers t
-      JOIN public.stock_reservations r ON r.id=t.reservation_id WHERE t.receipt_id=$1::uuid AND t.purchase_need_id=$2::uuid`,[receiptId,allocation.id])).rows[0].qty as number;
+      JOIN public.stock_reservations r ON r.id=t.reservation_id WHERE t.receipt_id=$1::uuid AND t.purchase_need_id=$2::uuid ${portionId ? "AND t.stock_portion_id=$3::uuid" : ""}`,portionId?[receiptId,allocation.id,portionId]:[receiptId,allocation.id])).rows[0].qty as number;
     const qty=quantity(Math.min(remaining,Math.max(0,entitlement-here),Math.max(0,allocation.assigned-allocation.transferred)));
     if(qty<=0)continue;
-    if(allocation.article_id!==receipt.article_id||allocation.unit?.trim().toUpperCase()!==receipt.unite?.trim().toUpperCase())
+    if((allocation.article_id!==receipt.article_id && allocation.article_id!==receipt.source_article_id)||allocation.unit?.trim().toUpperCase()!==receipt.unite?.trim().toUpperCase())
       throw new HttpError(409,"MATERIAL_RECEIPT_UNIT_MISMATCH","L’article ou l’unité de réception diffère du besoin affecté. Corrigez la réception avant mise en stock.");
     const result=await repoCreateStockReservation({article_id:receipt.article_id,magasin_id:receipt.dst_magasin_id,emplacement_id:Number(receipt.dst_emplacement_id),
       lot_id:receipt.lot_id,qty,source:{source_type:"OF",of_id:Number(allocation.of_id)},reason:"Affectation de la réception au besoin matière déjà destinataire"},
-      audit,`material-receipt:${receiptId}:${allocation.id}`,tx,allocation.material_need_id);
-    await tx.query("INSERT INTO public.of_material_receipt_transfers(receipt_id,purchase_need_id,reservation_id) VALUES($1::uuid,$2::uuid,$3::uuid)",[receiptId,allocation.id,result.reservation.id]);
+      audit,`material-receipt:${receiptId}:${allocation.id}${portionId ? `:${portionId}` : ""}`,tx,allocation.material_need_id);
+    if(portionId) await tx.query("INSERT INTO public.of_material_receipt_transfers(receipt_id,purchase_need_id,reservation_id,stock_portion_id) VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid)",[receiptId,allocation.id,result.reservation.id,portionId]);
+    else await tx.query("INSERT INTO public.of_material_receipt_transfers(receipt_id,purchase_need_id,reservation_id) VALUES($1::uuid,$2::uuid,$3::uuid)",[receiptId,allocation.id,result.reservation.id]);
     await preparationAudit(tx,audit,Number(allocation.of_id),"production.of.material.receipt_transferred",{receiptId,purchaseNeedId:allocation.id,reservationId:result.reservation.id,quantity:qty});
     transfers.push({ofId:Number(allocation.of_id),reservationId:result.reservation.id,quantity:qty});
     remaining=quantity(remaining-qty);
