@@ -3,16 +3,19 @@ import { createHash, randomUUID } from "node:crypto";
 import pool from "../../../config/database";
 import { readCentralResources, readCentralSnapshot } from "./planning-central.repository";
 import { applyCentralSimulation, createCentralSimulation, unplanCentral } from "../services/planning-central.service";
+import {readMaterialTx} from '../../production/repository/of-material.repository';
 import type { AuditContext } from "./planning.repository";
 const databaseUrl=new URL(process.env.DATABASE_URL || "http://invalid");
 const managed=process.env.CERP_E2E_MANAGED_STACK==="1" && databaseUrl.hostname==="127.0.0.1" && databaseUrl.port==="55432" && databaseUrl.pathname==="/cerp_test" && databaseUrl.username==="cerp_e2e";
-const isolated=process.env.CERP_E2E_ISOLATED==="1" && (managed || process.env.DATABASE_URL==="postgresql://cerp_e2e@127.0.0.1:55636/cerp_test");
+const localCoverage=process.env.CERP_PLANNING_COVERAGE_PG==='1'&&process.env.DATABASE_URL==='postgresql://cerp_e2e@127.0.0.1:5197/cerp_test';
+const isolated=process.env.CERP_E2E_ISOLATED==="1" && (managed || localCoverage || process.env.DATABASE_URL==="postgresql://cerp_e2e@127.0.0.1:55636/cerp_test");
 const from="2026-09-07T06:00:00.000Z",to="2026-09-14T18:00:00.000Z";
 describe.skipIf(!isolated)("Planning central — PostgreSQL réel isolé",()=>{
   let actor:number, previousActivation:string;
   const audit=():AuditContext=>({user_id:actor,role:"Responsable Programmation",ip:null,user_agent:null,device_type:null,os:null,browser:null,path:"/planning/v2",page_key:"planning",client_session_id:null});
   beforeAll(async()=>{
-    if(managed) expect((await pool.query("SELECT current_database() AS db,current_user AS role")).rows[0]).toEqual({db:"cerp_test",role:"cerp_e2e"});
+    if(localCoverage)expect((await pool.query('SHOW data_directory')).rows[0].data_directory).toBe('/tmp/cerp-planning-963-pg');
+    else if(managed) expect((await pool.query("SELECT current_database() AS db,current_user AS role")).rows[0]).toEqual({db:"cerp_test",role:"cerp_e2e"});
     else expect((await pool.query("SHOW data_directory")).rows[0].data_directory).toBe("/tmp/cerp-planning-20260906-pg/data");
     actor=Number((await pool.query("SELECT id FROM public.users WHERE username='E2E_PLANNER'")).rows[0].id);
     previousActivation=(await pool.query("SELECT activation FROM public.planning_central_settings WHERE singleton")).rows[0].activation;
@@ -34,9 +37,10 @@ describe.skipIf(!isolated)("Planning central — PostgreSQL réel isolé",()=>{
       VALUES($1,$2,$3,2,$3)`,[task,version,user]);
     return {task:"version-program:"+task,user,calendar,piece,version};
   }
-  async function operationFixture() {
+  async function operationFixture(purchase?:{sourceRef:string;article:string;supplier:string}) {
     const f=await fixture(),machine=randomUUID(),revision=randomUUID(),operations=[randomUUID(),randomUUID()];
-    const snapshot=JSON.stringify({operations:[{phase:10,machine_family_code:"F"},{phase:20,machine_family_code:"F"}]}),sha=createHash("sha256").update(snapshot).digest("hex");
+    const snapshot=JSON.stringify({operations:[{phase:10,machine_family_code:"F"},{phase:20,machine_family_code:"F"}],
+      ...(purchase?{preparation_evidence:{purchases:[{id:purchase.sourceRef,article_id:purchase.article,type_achat:'MATIERE',quantite:10,unite_prix:'u',fournisseur_id:purchase.supplier}]}}:{})}),sha=createHash("sha256").update(snapshot).digest("hex");
     const tx=await pool.connect();
     try {
       await tx.query("BEGIN");
@@ -46,14 +50,73 @@ describe.skipIf(!isolated)("Planning central — PostgreSQL réel isolé",()=>{
       const of=Number((await tx.query(`INSERT INTO public.ordres_fabrication(numero,piece_technique_id,piece_technique_version_id,quantite_lancee,statut,technical_snapshot,technical_snapshot_sha256,technical_snapshot_at,technical_readiness,created_by)
         VALUES($1,$2,$3,10,'BROUILLON',$4,$5,now(),'INCOMPLETE',$6) RETURNING id`,["P717-OF-"+machine.slice(0,8),f.piece,f.version,snapshot,sha,actor])).rows[0].id);
       await tx.query("INSERT INTO public.of_technical_snapshots(of_id,piece_technique_version_id,snapshot,snapshot_sha256,created_by) VALUES($1,$2,$3,$4,$5)",[of,f.version,snapshot,sha,actor]);
-      await tx.query("INSERT INTO public.of_revisions(id,of_id,revision_rank,revision_code,snapshot,snapshot_sha256,author_user_id) VALUES($1,$2,0,'R00',$3,$4,$5)",[revision,of,snapshot,sha,actor]);
+      await tx.query("INSERT INTO public.of_revisions(id,of_id,revision_rank,revision_code,snapshot,snapshot_sha256,author_user_id,statut) VALUES($1,$2,0,'R00',$3,$4,$5,'ACTIVE')",[revision,of,snapshot,sha,actor]);
       for(let i=0;i<operations.length;i++) await tx.query(`INSERT INTO public.of_operations(id,of_id,revision_id,phase,designation,machine_id,machine_family_code,tp,tf_unit,qte,coef)
         VALUES($1,$2,$3,$4,$5,$6,'F',1,0.1,1,1)`,[operations[i],of,revision,(i+1)*10,"Opération synthétique "+i,machine]);
       await tx.query("INSERT INTO public.planning_operation_dependencies(predecessor_id,successor_id) VALUES($1,$2)",operations.map(id=>"op:"+id));
       await tx.query("COMMIT");
-      return {of,operations,machine,calendar:f.calendar};
+      return {of,operations,machine,calendar:f.calendar,piece:f.piece,version:f.version,snapshotHash:sha};
     } catch(error) {await tx.query("ROLLBACK");throw error;} finally {tx.release();}
   }
+  it('projects real material ledgers without reusing receipts allocated to an OF outside the page',async()=>{
+    const article=randomUUID(),order=randomUUID(),line=randomUUID(),sourceRef=randomUUID(),supplier=(await pool.query("SELECT id FROM public.fournisseurs WHERE code='E2E-FOURN-001'")).rows[0].id;
+    const previous=(await pool.query("SELECT enabled FROM public.app_feature_flags WHERE key='PRODUCTION_MATERIAL_WORKFLOW'")).rows[0].enabled;
+    await pool.query("UPDATE public.app_feature_flags SET enabled=true WHERE key='PRODUCTION_MATERIAL_WORKFLOW'");
+    try{
+      await pool.query(`INSERT INTO public.articles(id,root_article_id,code,designation,family_code,version_number,plan_index,status,article_type,article_category,unite,stock_managed,lot_tracking,created_by,updated_by)
+        VALUES($1,$1,$2,'Matière synthétique 963','TEST963',1,1,'VALIDE','PURCHASED','matiere','u',true,true,$3,$3)`,[article,'963-'+article.slice(0,8),actor]);
+      const purchase={sourceRef,article,supplier};
+      const a=await operationFixture(purchase),b=await operationFixture(purchase),c=await operationFixture(purchase);
+      const needs:string[]=[];
+      for(const f of [a,b,c]){
+        const need=randomUUID();needs.push(need);
+        await pool.query(`INSERT INTO public.of_material_needs(id,of_id,source_ref,technical_version_id,technical_hash,operation_id,article_id,designation,required_qty,unit,requirements,specification_reviewed_at)
+          VALUES($1,$2,$3,$4,$5,$6,$7,'Bruts synthétiques',100,'u',$8,now())`,[need,f.of,sourceRef,f.version,f.snapshotHash,f.operations[0],article,JSON.stringify({grade:null,condition:null,ownerClientId:null,dimensions:{},certificates:[],manualChecks:[]})]);
+      }
+      await pool.query("INSERT INTO public.commande_fournisseur(id,code,fournisseur_id,statut,date_promesse) VALUES($1,$2,$3,'ACCUSE_RECU','2026-09-20')",[order,'963-'+order.slice(0,8),supplier]);
+      await pool.query("INSERT INTO public.commande_fournisseur_ligne(id,commande_id,article_id,designation,quantite,unite,unite_stock,coef_conversion) VALUES($1,$2,$3,'Bruts',200,'u','u',1)",[line,order,article]);
+      const hidden=randomUUID(),visible=randomUUID();
+      for(const [id,f,need,qty,offset] of [[hidden,b,needs[1],60,0],[visible,a,needs[0],70,60]] as const){
+        await pool.query(`INSERT INTO public.commande_fournisseur_ligne_besoin(id,ligne_id,besoin_type,besoin_ref,besoin_of_id,material_need_id,quantite_couverte,stock_receipt_offset)
+          VALUES($1,$2,'OF_MATERIAL',$3,$4,$5,$6,$7)`,[id,line,sourceRef,f.of,need,qty,offset]);
+      }
+      const receipt=randomUUID();
+      await pool.query("INSERT INTO public.receptions_fournisseurs(id,reception_no,fournisseur_id,status,created_by,updated_by) VALUES($1,$2,$3,'OPEN',$4,$4)",[receipt,'963-'+receipt.slice(0,8),supplier,actor]);
+      await pool.query(`INSERT INTO public.reception_fournisseur_lignes(reception_id,line_no,article_id,qty_received,unite,stock_unit,stock_conversion_coef,commande_fournisseur_ligne_id,created_by,updated_by)
+        VALUES($1,1,$2,40,'u','u',1,$3,$4,$4)`,[receipt,article,line,actor]);
+      const snapshot=await readCentralSnapshot({from,to,limit:1,of_id:a.of});
+      expect(snapshot.coverageAvailable).toBe(true);expect(snapshot.nextCursor).not.toBeNull();
+      expect(snapshot.tasks.every(t=>t.ofId===a.of)).toBe(true);
+      const demand=snapshot.demands.find(d=>d.coverage?.sourceRef===sourceRef)!;
+      const canonical=(await readMaterialTx(pool,a.of)).needs[0];
+      expect(demand.coverage).toMatchObject({expected:canonical.expected,receivedBlocked:canonical.receivedBlocked,reserved:canonical.reserved,missing:canonical.missing,toPrepare:canonical.purchaseMissing});
+      expect(demand.coverage).toMatchObject({expected:70,receivedBlocked:0,missing:30});
+      const other=(await readMaterialTx(pool,b.of)).needs[0];
+      expect(other).toMatchObject({expected:20,receivedBlocked:40});
+      const unassigned=await readCentralSnapshot({from,to,limit:1,of_id:c.of});
+      expect(unassigned.sources.find(s=>s.id===`purchase-line:${line}:free`)?.quantity).toBe(70);
+      expect(unassigned.allocations).toHaveLength(0);
+      const reader=await pool.connect();
+      try{
+        await reader.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+        const before=await readCentralSnapshot({from,to,limit:1,of_id:c.of},reader);
+        await pool.query(`INSERT INTO public.commande_fournisseur_ligne_besoin(ligne_id,besoin_type,besoin_ref,besoin_of_id,quantite_couverte,stock_receipt_offset)
+          VALUES($1,'MANUEL','concurrent-963',$2,20,130)`,[line,b.of]);
+        const during=await readCentralSnapshot({from,to,limit:1,of_id:c.of},reader);
+        expect(during.sources).toEqual(before.sources);
+        await reader.query('COMMIT');
+        expect((await readCentralSnapshot({from,to,limit:1,of_id:c.of})).sources.find(s=>s.id===`purchase-line:${line}:free`)?.quantity).toBe(50);
+      }catch(error){await reader.query('ROLLBACK');throw error;}finally{reader.release();}
+      await pool.query("UPDATE public.receptions_fournisseurs SET status='CANCELLED' WHERE id=$1",[receipt]);
+      expect((await readMaterialTx(pool,b.of)).needs[0]).toMatchObject({expected:60,receivedBlocked:0});
+      expect((await readCentralSnapshot({from,to,limit:1,of_id:b.of})).demands[0].coverage).toMatchObject({expected:60,receivedBlocked:0});
+      await pool.query("UPDATE public.commande_fournisseur_ligne SET date_promesse='2026-09-23' WHERE id=$1",[line]);
+      expect((await readCentralSnapshot({from,to,limit:1,of_id:a.of})).sources.find(s=>s.scope==='ASSIGNED')?.availableAt).toBe('2026-09-23');
+      await pool.query('UPDATE public.commande_fournisseur_ligne_besoin SET annule=true WHERE id=$1',[visible]);
+      expect((await readCentralSnapshot({from,to,limit:1,of_id:a.of})).demands[0].coverage).toMatchObject({expected:0,missing:100});
+      expect((await pool.query("SELECT count(*)::int AS n FROM public.planning_recalculation_jobs WHERE processed_at IS NULL AND entity_table='commande_fournisseur_ligne'")).rows[0].n).toBeGreaterThan(0);
+    }finally{await pool.query("UPDATE public.app_feature_flags SET enabled=$1 WHERE key='PRODUCTION_MATERIAL_WORKFLOW'",[previous]);}
+  });
   async function intent(taskId:string) {
     const snapshot=await readCentralSnapshot({from,to,limit:1000});
     const task=snapshot.tasks.find(t=>t.id===taskId)!;

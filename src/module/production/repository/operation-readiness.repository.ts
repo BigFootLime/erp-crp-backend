@@ -3,7 +3,8 @@ import pool from "../../../config/database";
 import {HttpError} from "../../../utils/httpError";
 import {readMaterialTx} from "./of-material.repository";
 import {materialWorkflowEnabled,readOfDossierTx,type DossierDb} from "./of-dossier.repository";
-import {lotCompatibility,materialPropertiesFingerprint} from "../domain/of-material";
+import {materialPropertiesFingerprint} from "../domain/of-material";
+import {readMaterialReservationAvailabilityTx,type MaterialReservationAvailability} from './material-reservation-availability.repository';
 import {assertOperationQuantityCeiling,evaluateOperationReadiness,type OperationReadinessFacts} from "../domain/operation-readiness";
 import {readOperationalLotQualityEligibility,assertOperationalLotQualityEligibility} from "../../qualite/repository/quality-operational-gate.repository";
 
@@ -17,7 +18,7 @@ export async function usesOperationReadiness(tx:DossierDb,ofId:number){
     OR EXISTS(SELECT 1 FROM public.of_material_needs WHERE of_id=$1) AS guarded`,[ofId])).rows[0]?.guarded===true;
 }
 
-export async function readOperationReadinessTx(tx:DossierDb,ofId:number,material?:Awaited<ReturnType<typeof readMaterialTx>>){
+export async function readOperationReadinessTx(tx:DossierDb,ofId:number,material?:Awaited<ReturnType<typeof readMaterialTx>>,reservationAvailability?:MaterialReservationAvailability){
   const dossier=await readOfDossierTx(tx,ofId);
   const coverage=material??await readMaterialTx(tx,ofId);
   const operations=(await tx.query<OperationRow>(`
@@ -71,20 +72,11 @@ export async function readOperationReadinessTx(tx:DossierDb,ofId:number,material
       if(quality.get(component.lot_id)!.eligibility.blocks.length)componentMissing=true;
     }
   }
+  const availableReservations=reservationAvailability??await readMaterialReservationAvailabilityTx(tx,coverage);
   for(const need of coverage.needs){
     if(!need.operationId)continue;
-    const reasons=[...need.blockers];
-    let usable=0;
-    for(const reservation of need.reservations){
-      if(reservation.status!=='ACTIVE'||!reservation.unexpired||Number(reservation.qty_reserved)<=Number(reservation.qty_consumed))continue;
-      const candidate=need.candidates.find(c=>c.lot.id===reservation.lot_id&&c.lot.batchId===reservation.stock_batch_id);
-      if(!candidate){reasons.push('Le lot réservé n’est plus physiquement disponible.');continue;}
-      if(!quality.has(candidate.lot.id))quality.set(candidate.lot.id,await readOperationalLotQualityEligibility({client:tx,lotId:candidate.lot.id,qty:0,unit:need.unit,purpose:'RESERVE'}));
-      const decision=quality.get(candidate.lot.id)!;
-      const incompatible=lotCompatibility(need,{...candidate.lot,qualityBlocks:decision.eligibility.blocks.map(b=>b.message)});
-      if(incompatible.length)reasons.push(...incompatible);
-      else usable+=Math.max(0,Number(reservation.qty_reserved)-Number(reservation.qty_consumed));
-    }
+    const available=availableReservations.get(need.key)!;
+    const reasons=[...need.blockers,...available.blockers],usable=available.usable;
     const perBlank=need.debitRule ? need.debitRule.unitsPerBlank+need.debitRule.kerfPerBlank : 0;
     const entry={label:need.designation,availableBlanks:perBlank>0?Math.floor((usable+need.consumed-(need.consumptionAdjustment??0))/perBlank+1e-9):0,allowPartial:need.allowPartial,blockers:[...new Set(reasons)]};
     materialFacts.set(need.operationId,[...(materialFacts.get(need.operationId)??[]),entry]);
@@ -102,7 +94,7 @@ export async function readOperationReadinessTx(tx:DossierDb,ofId:number,material
     return {...evaluateOperationReadiness(facts),machineId:row?.machine_id??null,materialOperation:facts.materials.length>0,
       successors:dependencies.filter(d=>d.predecessor===op.id).flatMap(d=>{const next=dossier.operations.find(o=>o.id===d.successor);return next?[{id:next.id,label:next.label,minimum:d.minimum??1}]:[]})};
   });
-  return {enabled:true as const,ofId,number:dossier.number,version:materialPropertiesFingerprint({coverage:coverage.version,operations,dependencies,componentMissing,quality:[...quality].map(([id,q])=>[id,q.target,q.already_committed_qty]),results}),operations:results};
+  return {enabled:true as const,ofId,number:dossier.number,version:materialPropertiesFingerprint({coverage:coverage.version,operations,dependencies,componentMissing,quality:[...quality].map(([id,q])=>[id,q.target,q.already_committed_qty]),materialAvailability:[...availableReservations].map(([key,a])=>[key,a.usable,a.blockers]),results}),operations:results};
 }
 
 export async function getOperationReadiness(ofId:number){
