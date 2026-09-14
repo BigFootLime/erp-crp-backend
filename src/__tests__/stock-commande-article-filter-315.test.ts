@@ -46,7 +46,7 @@ describe("BUG-CERP-0015 - filtre GET /stock/articles", () => {
     await repoListArticles({ client_code: "CLI-0042" });
 
     expect(normalized(queryMock.mock.calls[0]?.[0])).toContain(
-      "LOWER(TRIM(COALESCE(pt.code_client, ''))) = LOWER(TRIM($1))"
+      "FROM public.article_client_links acl JOIN public.clients cl ON cl.client_id=acl.client_id WHERE acl.article_id=a.id AND LOWER(TRIM(cl.client_code))=LOWER(TRIM($1))"
     );
     expect(queryMock.mock.calls[0]?.[1]).toEqual(["CLI-0042"]);
     expect(normalized(queryMock.mock.calls[1]?.[0])).toContain("latest_version.plan_reference AS piece_plan_reference");
