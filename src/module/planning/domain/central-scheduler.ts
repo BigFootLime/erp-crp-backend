@@ -95,10 +95,12 @@ export function schedule(input: {
       // Unresolved physical blockers require a dated availability supplied by the owning module.
       if (t.blockers.length && !t.earliestStart) { conflict(t.id, "PREREQUISITE_MISSING", t.blockers.join(" · ")); continue; }
       const alternatives = req?.autoAssign ? resources.flatMap(resource => {
-        const slot = capacitySlot([resource], occupied, earliest, t.estimate!.remainingMinutes);
+        const minutes = t.resourceEstimates?.[resource.id]?.remainingMinutes ?? t.estimate!.remainingMinutes;
+        const slot = capacitySlot([resource], occupied, earliest, minutes);
         return slot ? [{ slot, id: resource.id }] : [];
       }).sort((a,b) => ms(a.slot.end)-ms(b.slot.end) || ms(a.slot.start)-ms(b.slot.start) || a.id.localeCompare(b.id)) : [];
-      const slot = req?.autoAssign ? alternatives[0]?.slot : capacitySlot(resources, occupied, earliest, t.estimate.remainingMinutes);
+      const duration = ids.length === 1 ? t.resourceEstimates?.[ids[0]]?.remainingMinutes ?? t.estimate.remainingMinutes : t.estimate.remainingMinutes;
+      const slot = req?.autoAssign ? alternatives[0]?.slot : capacitySlot(resources, occupied, earliest, duration);
       if (!slot) { conflict(t.id, "NO_CAPACITY", "Aucun créneau réalisable dans les calendriers chargés."); continue; }
       if (req?.autoAssign) ids = [alternatives[0].id];
       reserve(ids, slot); result.forecasts[t.id] = slot;

@@ -15,6 +15,7 @@ import { startEReportingMaintenance } from "./module/facturation/electronic-invo
 import { startWebhookDeliveryMaintenance } from "./module/integrations/webhooks/webhook.service";
 import { startAuthoritativePdfArchiveMaintenance } from "./shared/authoritative-documents/authoritative-document.worker";
 import { startPlanningForecastMaintenance } from "./module/planning/services/planning-forecast.worker";
+import { startDurationLearningMaintenance } from "./module/planning/services/duration-learning.worker";
 import { createApplicationShutdown } from "./shared/runtime/application-shutdown";
 import { preflightCriticalStorageAtStartup } from "./shared/runtime/critical-storage-preflight";
 import { preflightSecureUploadStorageRoots } from "./shared/uploads/secure-upload";
@@ -64,6 +65,7 @@ async function start(): Promise<void> {
   const stopWebhookDeliveryMaintenance = startWebhookDeliveryMaintenance();
   const stopAuthoritativePdfArchiveMaintenance = startAuthoritativePdfArchiveMaintenance();
   const stopPlanningForecastMaintenance = startPlanningForecastMaintenance();
+  const stopDurationLearningMaintenance = startDurationLearningMaintenance();
 
   initSocketServer(httpServer);
   const stopExpiredLockMaintenance = startExpiredLockMaintenance();
@@ -96,6 +98,7 @@ async function start(): Promise<void> {
       stopWebhookDeliveryMaintenance,
       stopAuthoritativePdfArchiveMaintenance,
       stopPlanningForecastMaintenance,
+      stopDurationLearningMaintenance,
     ],
     closeDatabase: () => pool.end(),
     log: (type, fields) => logger.error(type, fields),

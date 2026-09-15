@@ -9,6 +9,7 @@ import {projectMaterialCoverage} from '../domain/planning-material-coverage';
 import {readMaterialReservationAvailabilityTx} from '../../production/repository/material-reservation-availability.repository';
 import {schedule} from '../domain/central-scheduler';
 import {HttpError} from '../../../utils/httpError';
+import {recordDurationPredictions} from '../repository/duration-learning.repository';
 
 /** Durable queue, single DB writer, bounded calculation. Only forecast columns
  * are written: no planning_event, assignment, commitment or actual date. */
@@ -36,6 +37,7 @@ export async function runPlanningForecastOnce(){
     if(included.size>10000)throw new HttpError(503,'FORECAST_WINDOW_TOO_DENSE','Calcul trop volumineux.');
     const snapshot=await readCentralSnapshot({from:now,to,limit:10000,includeTaskIds:[...included]},tx,false);
     if(snapshot.nextCursor)throw new HttpError(503,'FORECAST_WINDOW_TOO_DENSE','Calcul trop volumineux.');
+    await recordDurationPredictions(tx,snapshot);
     const activeIds=new Set(ids),ofIds=[...new Set(snapshot.tasks.filter(t=>activeIds.has(t.id)).flatMap(t=>t.ofId?[t.ofId]:[]))];
     const tasks=snapshot.tasks.map(t=>({...t,blockers:[...t.blockers]}));
     for(const ofId of ofIds){

@@ -1,4 +1,5 @@
 import { Router } from "express";
+import {compensateQuantity} from '../controllers/production-execution.controller';
 
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
 import {
@@ -133,6 +134,7 @@ router.post("/:id/submit", requireProductionExecutionCapability("submit"), submi
 router.post("/:id/validate", requireProductionExecutionCapability("validate"), validateExecution);
 router.post("/:id/reject", requireProductionExecutionCapability("reject"), rejectExecution);
 router.post("/:id/correct", requireProductionExecutionCapability("correct"), correctExecution);
+router.post('/quantities/:id/compensate',requireIdempotencyKey,requireProductionExecutionCapability('correct'),compensateQuantity);
 router.post("/:id/cancel", requireProductionExecutionCapability("cancel"), cancelExecution);
 
 export default router;

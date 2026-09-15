@@ -1,5 +1,8 @@
 # Planning central — première publication (#717)
 
+L’apprentissage des durées (#965) est décrit dans [le runbook dédié](duration-learning-965.md) :
+mesures validées, correction, reprise d’historique et activation `LEARN`.
+
 L’API `/planning/v2` lit les opérations canoniques, conserve les commandes avec pièce brouillon et propose des créneaux avant validation. Les commandes de simulation/application sont transactionnelles, versionnées, idempotentes et soumises aux droits existants. Un pointage ou une modification de ressource invalide un aperçu devenu ancien.
 
 Depuis #721, les ressources machines affichent uniquement leur nom dans les lignes et les sélecteurs du planning central. Le code et l’identifiant machine restent conservés dans le référentiel ; les affectations et capacités utilisent toujours les mêmes identifiants.

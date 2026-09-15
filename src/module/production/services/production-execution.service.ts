@@ -16,6 +16,7 @@ import type { AuditContext } from "../repository/production.repository";
 import {
   repoCancelExecution,
   repoCorrectExecution,
+  repoCompensateQuantity,
   repoDeclareQuantity,
   repoExecutionCenter,
   repoExecutionIndicators,
@@ -394,15 +395,23 @@ export async function svcCorrectExecution(params: {
   id: string;
   body: CorrectExecutionBodyDTO;
   audit: AuditContext;
+  idempotencyKey?: string;
 }) {
   assertProductionExecutionCapability(params.actor.role, "correct");
   return repoCorrectExecution({
     id: params.id,
     correction_reason: params.body.correction_reason,
     patch: params.body.patch,
+    expectedUpdatedAt: params.body.expected_updated_at,
+    idempotencyKey: params.idempotencyKey,
     actorRole: params.actor.role,
     audit: params.audit,
   });
+}
+
+export async function svcCompensateQuantity(params:{actor:Actor;id:string;reason:string;idempotencyKey:string;audit:AuditContext}){
+  assertProductionExecutionCapability(params.actor.role,'correct');
+  return repoCompensateQuantity(params);
 }
 
 export async function svcCancelExecution(params: {

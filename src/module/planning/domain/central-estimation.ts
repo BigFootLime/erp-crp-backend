@@ -1,7 +1,7 @@
 import type { Estimate } from "../types/planning-central.types";
 
 export const ESTIMATION_POLICY = Object.freeze({
-  version: "cerp-duration-v1", historyWindow: 20, historyPrior: 5, currentPriorPieces: 10,
+  version: "cerp-duration-v2", historyWindow: 20, historyPrior: 5, currentPriorPieces: 10,
   consolidatedObservations: 10,
 });
 export type DurationObservation = {
@@ -48,13 +48,16 @@ export function estimateDuration(input: {
     unit = unit * (1 - weight) + current.productiveMinutes / current.attributableQuantity * weight;
     provenance = "CURRENT"; provisional = true;
   }
-  const historicalSetup = median(comparable.map(o => o.setupMinutes).filter((n): n is number => n !== null && Number.isFinite(n) && n >= 0));
+  const setups = comparable.map(o => o.setupMinutes).filter((n): n is number => n !== null && Number.isFinite(n) && n >= 0);
+  const historicalSetup = median(setups), setupWeight = setups.length / (setups.length + ESTIMATION_POLICY.historyPrior);
   const setup = historicalSetup === null ? input.routingSetupMinutes :
-    input.routingSetupMinutes * (1 - historyWeight) + historicalSetup * historyWeight;
+    input.routingSetupMinutes * (1 - setupWeight) + historicalSetup * setupWeight;
   // Scrap completes processing of a physical piece; replacements need an explicit new authorization.
   const remainingPieces = Math.max(0, input.quantity - input.good - input.scrap);
   return {
     policy: ESTIMATION_POLICY.version, setupMinutes: setup, unitMinutes: unit,
+    routingSetupMinutes: input.routingSetupMinutes, routingUnitMinutes: input.routingUnitMinutes,
+    setupObservations: setups.length,
     remainingMinutes: Math.max(0, setup - (input.setupCompletedMinutes ?? 0)) + (remainingPieces + input.rework) * unit,
     provenance, confidence: count >= ESTIMATION_POLICY.consolidatedObservations ? "CONSOLIDATED" : count ? "LIMITED" : "INITIAL",
     observations: count, dispersionMinutes: historical === null ? null : median(units.map(v => Math.abs(v - historical))),
