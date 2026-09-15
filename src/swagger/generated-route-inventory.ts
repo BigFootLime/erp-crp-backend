@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "4d9e44c02765dd2a79418e0a506a3cfcda970aef378c76c5d4e097913fc76c7f";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "9f2e82b44d90037f71d1bcf5b68d2b81c65df8b2c8948bff9b468f668aa0ec36";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -11564,9 +11564,29 @@ export const GENERATED_ROUTE_INVENTORY = [
     ]
   },
   {
+    "method": "get",
+    "path": "/planning/v2/operations/{operationId}/observations",
+    "source": "src/module/planning/routes/planning-central.routes.ts:8",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireProductionOrAdmin",
+      "requirePlanningCapability(read)",
+      "centralObservations"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireProductionOrAdmin",
+      "requirePlanningCapability(read)"
+    ]
+  },
+  {
     "method": "post",
     "path": "/planning/v2/simulations",
-    "source": "src/module/planning/routes/planning-central.routes.ts:8",
+    "source": "src/module/planning/routes/planning-central.routes.ts:9",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11586,7 +11606,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/planning/v2/simulations/{id}",
-    "source": "src/module/planning/routes/planning-central.routes.ts:9",
+    "source": "src/module/planning/routes/planning-central.routes.ts:10",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11606,7 +11626,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/planning/v2/simulations/{id}/apply",
-    "source": "src/module/planning/routes/planning-central.routes.ts:10",
+    "source": "src/module/planning/routes/planning-central.routes.ts:11",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11666,7 +11686,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/planning/v2/unplan",
-    "source": "src/module/planning/routes/planning-central.routes.ts:11",
+    "source": "src/module/planning/routes/planning-central.routes.ts:12",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11974,7 +11994,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/production/execution",
-    "source": "src/module/production/routes/production-execution.routes.ts:61",
+    "source": "src/module/production/routes/production-execution.routes.ts:62",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11992,7 +12012,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/production/execution",
-    "source": "src/module/production/routes/production-execution.routes.ts:66",
+    "source": "src/module/production/routes/production-execution.routes.ts:67",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -12012,7 +12032,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/production/execution/{id}",
-    "source": "src/module/production/routes/production-execution.routes.ts:62",
+    "source": "src/module/production/routes/production-execution.routes.ts:63",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -12030,7 +12050,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/production/execution/{id}/cancel",
-    "source": "src/module/production/routes/production-execution.routes.ts:136",
+    "source": "src/module/production/routes/production-execution.routes.ts:138",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -12048,7 +12068,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/production/execution/{id}/change",
-    "source": "src/module/production/routes/production-execution.routes.ts:86",
+    "source": "src/module/production/routes/production-execution.routes.ts:87",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -12068,7 +12088,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/production/execution/{id}/correct",
-    "source": "src/module/production/routes/production-execution.routes.ts:135",
+    "source": "src/module/production/routes/production-execution.routes.ts:136",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -12086,7 +12106,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/production/execution/{id}/incidents",
-    "source": "src/module/production/routes/production-execution.routes.ts:92",
+    "source": "src/module/production/routes/production-execution.routes.ts:93",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -12106,7 +12126,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/production/execution/{id}/pause",
-    "source": "src/module/production/routes/production-execution.routes.ts:72",
+    "source": "src/module/production/routes/production-execution.routes.ts:73",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -12126,7 +12146,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/production/execution/{id}/reject",
-    "source": "src/module/production/routes/production-execution.routes.ts:134",
+    "source": "src/module/production/routes/production-execution.routes.ts:135",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -12144,7 +12164,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/production/execution/{id}/resume",
-    "source": "src/module/production/routes/production-execution.routes.ts:78",
+    "source": "src/module/production/routes/production-execution.routes.ts:79",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -12164,7 +12184,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/production/execution/{id}/stop",
-    "source": "src/module/production/routes/production-execution.routes.ts:98",
+    "source": "src/module/production/routes/production-execution.routes.ts:99",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -12184,7 +12204,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/production/execution/{id}/submit",
-    "source": "src/module/production/routes/production-execution.routes.ts:130",
+    "source": "src/module/production/routes/production-execution.routes.ts:131",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -12202,7 +12222,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/production/execution/{id}/validate",
-    "source": "src/module/production/routes/production-execution.routes.ts:133",
+    "source": "src/module/production/routes/production-execution.routes.ts:134",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -12220,7 +12240,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/production/execution/activity-categories",
-    "source": "src/module/production/routes/production-execution.routes.ts:52",
+    "source": "src/module/production/routes/production-execution.routes.ts:53",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -12238,7 +12258,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/production/execution/capabilities",
-    "source": "src/module/production/routes/production-execution.routes.ts:56",
+    "source": "src/module/production/routes/production-execution.routes.ts:57",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -12254,7 +12274,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/production/execution/center",
-    "source": "src/module/production/routes/production-execution.routes.ts:58",
+    "source": "src/module/production/routes/production-execution.routes.ts:59",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -12272,7 +12292,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/production/execution/indicators",
-    "source": "src/module/production/routes/production-execution.routes.ts:59",
+    "source": "src/module/production/routes/production-execution.routes.ts:60",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -12290,7 +12310,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/production/execution/operations/finish",
-    "source": "src/module/production/routes/production-execution.routes.ts:121",
+    "source": "src/module/production/routes/production-execution.routes.ts:122",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -12310,7 +12330,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/production/execution/operations/finish/preview",
-    "source": "src/module/production/routes/production-execution.routes.ts:115",
+    "source": "src/module/production/routes/production-execution.routes.ts:116",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -12328,7 +12348,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/production/execution/operator-board",
-    "source": "src/module/production/routes/production-execution.routes.ts:60",
+    "source": "src/module/production/routes/production-execution.routes.ts:61",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -12346,7 +12366,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/production/execution/quantities",
-    "source": "src/module/production/routes/production-execution.routes.ts:107",
+    "source": "src/module/production/routes/production-execution.routes.ts:108",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -12361,6 +12381,26 @@ export const GENERATED_ROUTE_INVENTORY = [
       "moduleAccessGate",
       "requireIdempotencyKey",
       "requireProductionExecutionCapability(declare_quantity)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/production/execution/quantities/{id}/compensate",
+    "source": "src/module/production/routes/production-execution.routes.ts:137",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireIdempotencyKey",
+      "requireProductionExecutionCapability(correct)",
+      "compensateQuantity"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireIdempotencyKey",
+      "requireProductionExecutionCapability(correct)"
     ]
   },
   {

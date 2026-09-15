@@ -16,12 +16,14 @@ export type Dependency = {
   releasedQuantity: number; lagMinutes: number;
 };
 export type Estimate = {
+  routingSetupMinutes?: number; routingUnitMinutes?: number; setupObservations?: number; learnedAt?: string | null;
   policy: string; setupMinutes: number; unitMinutes: number; remainingMinutes: number;
   provenance: "ROUTING" | "HISTORY" | "CURRENT"; confidence: "INITIAL" | "LIMITED" | "CONSOLIDATED";
   observations: number; dispersionMinutes: number | null; provisional: boolean;
   excluded: Array<{ id: string; reason: string }>;
 };
 export type CentralTask = {
+  resourceEstimates?: Record<string, Estimate>;
   id: string; source: "OPERATION" | "PROGRAMMING" | "DRAFT";
   operationId: string | null; programmingId: string | null; ofId: number | null; orderId: number | null;
   ofNumber: string | null; reference: string; revision: string | null; label: string;
@@ -59,6 +61,7 @@ export type CoverageProposal = {
   existing: number; missing: number; risks: string[];
 };
 export type CentralSnapshot = {
+  learningState?: { calculated_at: string | null; last_error: string | null; pending: number; oldest_pending_at: string | null; processed_operations: string };
   forecastState?: import('../repository/planning-forecast.repository').ForecastState;
   apiVersion: 2; revision: string; generatedAt: string; stale: boolean;
   activation: "OBSERVE" | "READ" | "SIMULATE" | "COMMIT" | "EXECUTE" | "LEARN";

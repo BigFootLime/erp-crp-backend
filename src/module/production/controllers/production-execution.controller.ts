@@ -25,12 +25,14 @@ import {
   stopExecutionSchema,
   submitExecutionSchema,
   validateExecutionSchema,
+  compensateQuantitySchema,
 } from "../validators/production-execution.validators";
 import {
   svcCancelExecution,
   svcCapabilities,
   svcChangeExecution,
   svcCorrectExecution,
+  svcCompensateQuantity,
   svcDeclareIncident,
   svcDeclareQuantity,
   svcExecutionCenter,
@@ -280,9 +282,16 @@ export const correctExecution = asyncHandler(async (req, res) => {
       actor: requireActor(req),
       id: executionId(req),
       body,
+      idempotencyKey: typeof req.headers['idempotency-key']==='string'?req.headers['idempotency-key']:undefined,
       audit: buildAuditContext(req),
     })
   );
+});
+
+export const compensateQuantity = asyncHandler(async(req,res)=>{
+  const {body}=compensateQuantitySchema.parse({body:req.body});
+  res.status(201).json(await svcCompensateQuantity({actor:requireActor(req),id:executionId(req),reason:body.reason,
+    idempotencyKey:idempotencyKey(req),audit:buildAuditContext(req)}));
 });
 
 export const cancelExecution = asyncHandler(async (req, res) => {

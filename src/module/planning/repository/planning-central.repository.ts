@@ -7,6 +7,7 @@ import { expandCalendar, type CalendarDefinition } from "../domain/central-calen
 import type { CentralSnapshot, CentralTask, Dependency, Resource } from "../types/planning-central.types";
 import type { CentralWindow } from "../validators/planning-central.validators";
 import {readForecastState} from './planning-forecast.repository';
+import {hydrateDurationEstimates,readLearningState} from './duration-learning.repository';
 
 export type CentralQuery = Pick<PoolClient, "query">;
 type Row = Record<string, unknown>;
@@ -276,10 +277,14 @@ export async function readCentralSnapshot(query: CentralWindow & { includeTaskId
     }
   }
   const resources = await readCentralResources(tx,query.from,query.to);
+  await hydrateDurationEstimates(tx,tasks,resources,settings.activation==='LEARN');
+  if(settings.activation==='LEARN') for(const task of tasks) task.version=createHash('sha256')
+    .update(task.version+JSON.stringify(task.estimate)+JSON.stringify(task.resourceEstimates)).digest('hex');
   const dependencies = await readCentralDependencies(tx);
   // Future allocation writes ship in a separate milestone; their unfinished projection is not published.
   const coverage = {sources:[],demands:[],allocations:[],coverageAvailable:false};
   return {apiVersion:2,revision:settings.revision,generatedAt:new Date().toISOString(),stale:false,activation:settings.activation,
-    tasks,resources,dependencies,...coverage,forecastState:await readForecastState(tx),total:num(rows[0]?.total),
+    tasks,resources,dependencies,...coverage,forecastState:await readForecastState(tx),
+    ...(settings.activation==='LEARN'?{learningState:await readLearningState(tx)}:{}),total:num(rows[0]?.total),
     nextCursor:more ? String(visible[visible.length-1].id) : null};
 }
