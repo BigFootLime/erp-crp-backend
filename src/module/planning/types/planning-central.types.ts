@@ -46,10 +46,30 @@ export type CoverageSource = {
   id: string; kind: "PHYSICAL" | "PURCHASE" | "PRODUCTION" | "FORECAST";
   articleId: string; revision: string | null; unit: string; contractId: string | null;
   quantity: number; usable: boolean; availableAt: string | null; version: string;
+  /** Disjoint existing commitment slices, or net free supply after ALL OFs.
+   * Free supply is shared evidence, never a new allocation or an additive OF total. */
+  scope?: "ASSIGNED" | "FREE";
+  state?: "PHYSICAL" | "EXPECTED" | "BLOCKED" | "DRAFT";
+  label?: string; referenceId?: string; lineId?: string;
+  ownerClientId?: string | null;
+};
+export type DemandCoverage = {
+  ofId: number; operationId: string | null; sourceRef: string; label: string;
+  kind: "MATERIAL";
+  consumed: number; reserved: number; usableReserved: number; reservedBlocked: number;
+  /** Existing module proposal: not reserved, not counted in the forecast. */
+  stockAvailable: number;
+  expected: number; receivedBlocked: number; draft: number;
+  /** Still without any commitment; drafts and blocked receipts avoid duplicate buying. */
+  missing: number; toPrepare: number;
+  /** Includes draft/blocked commitments which cannot secure a start. */
+  unsecured: number;
+  availableAt: string | null; issues: string[]; sourceIds: string[];
 };
 export type Demand = {
   id: string; articleId: string; compatibleRevisions: Array<string | null>; unit: string;
   contractId: string | null; quantity: number; due: string | null;
+  coverage?: DemandCoverage;
 };
 export type Allocation = {
   id: string; sourceId: string; demandId: string; quantity: number;
@@ -67,5 +87,6 @@ export type CentralSnapshot = {
   activation: "OBSERVE" | "READ" | "SIMULATE" | "COMMIT" | "EXECUTE" | "LEARN";
   tasks: CentralTask[]; resources: Resource[]; dependencies: Dependency[];
   sources: CoverageSource[]; demands: Demand[]; allocations: Allocation[];
+  coverageAvailable: boolean;
   total: number; nextCursor: string | null;
 };

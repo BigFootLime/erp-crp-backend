@@ -22,7 +22,8 @@ export async function readFutureMaterialSupplyTx(tx:DossierDb,articleIds:string[
           sum(CASE WHEN besoin_type='OF_MATERIAL' THEN quantite_couverte ELSE quantite_couverte*COALESCE(l.coef_conversion,1) END)
             OVER(ORDER BY created_at,id ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS earlier
         FROM public.commande_fournisseur_ligne_besoin WHERE ligne_id=l.id AND NOT annule) assigned_rows) b ON true
-    LEFT JOIN LATERAL(SELECT sum(rl.qty_received*COALESCE(rl.stock_conversion_coef,l.coef_conversion,1)) AS received FROM public.reception_fournisseur_lignes rl WHERE rl.commande_fournisseur_ligne_id=l.id) r ON true
+    LEFT JOIN LATERAL(SELECT sum(rl.qty_received*COALESCE(rl.stock_conversion_coef,l.coef_conversion,1)) AS received FROM public.reception_fournisseur_lignes rl
+      JOIN public.receptions_fournisseurs rh ON rh.id=rl.reception_id WHERE rl.commande_fournisseur_ligne_id=l.id AND rh.status<>'CANCELLED') r ON true
     WHERE l.article_id=ANY($1::uuid[]) AND l.statut_ligne='ACTIVE' AND c.statut NOT IN ('ANNULEE','CLOTUREE')
     ORDER BY COALESCE(l.date_promesse,c.date_promesse) NULLS LAST,c.created_at,l.position,l.id`,[articleIds])).rows;
   return rows.map(row=>({...row,...futureSupplyBalance(row)})).filter(row=>row.available>0||(includeCommitted&&row.ordered*row.coefficient-row.cancelled*row.coefficient>row.received));
