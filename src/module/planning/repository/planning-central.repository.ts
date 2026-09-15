@@ -10,6 +10,7 @@ import {readForecastState} from './planning-forecast.repository';
 import {hydrateDurationEstimates,readLearningState} from './duration-learning.repository';
 import {readPlanningCoverageTx} from './planning-coverage.repository';
 import {emptyPlanningCoverage} from '../domain/planning-material-coverage';
+import {hydrateExternalPlanning} from './planning-external.repository';
 
 export type CentralQuery = Pick<PoolClient, "query">;
 type Row = Record<string, unknown>;
@@ -40,7 +41,8 @@ WITH operation_rows AS (
         WHEN e.poste_id IS NOT NULL THEN 'poste:'||e.poste_id::text
         WHEN op.machine_id IS NOT NULL THEN 'machine:'||op.machine_id::text
         WHEN op.poste_id IS NOT NULL THEN 'poste:'||op.poste_id::text END AS resource_id,
-   e.start_ts AS committed_start,e.end_ts AS committed_end,op.started_at AS actual_start,op.ended_at AS actual_end,
+   COALESCE(e.start_ts,CASE WHEN frozen.value->>'type_operation'='SOUS_TRAITANCE' THEN t.committed_start END) AS committed_start,
+   COALESCE(e.end_ts,CASE WHEN frozen.value->>'type_operation'='SOUS_TRAITANCE' THEN t.committed_end END) AS committed_end,op.started_at AS actual_start,op.ended_at AS actual_end,
    op.status::text AS status,o.technical_readiness AS readiness,
    CASE WHEN cc.order_type='INTERNE' THEN COALESCE(cl.delai_interne,cl.delai_client)::text ELSE cl.delai_client::text END AS due,
    CASE o.priority::text WHEN 'CRITICAL' THEN 3 WHEN 'HIGH' THEN 2 WHEN 'LOW' THEN 0 ELSE 1 END AS priority,
@@ -267,7 +269,7 @@ export async function readCentralSnapshot(query: CentralWindow & { includeTaskId
         ON r.family=upper(NULLIF(btrim(op.machine_family_code),''))
       WHERE op.id=ANY($1::uuid[]) GROUP BY op.id,p.id,frozen.operation_type`,[operationIds]);
     const byId = new Map(qualifications.map(row => [row.id,row]));
-    for (const task of tasks) if (task.operationId) {
+    for (const task of tasks) if (task.operationId && task.view!=='external') {
       const qualification = byId.get(task.operationId);
       task.eligibleResourceIds = qualification?.eligible ?? [];
       if (!qualification?.family) {
@@ -283,6 +285,7 @@ export async function readCentralSnapshot(query: CentralWindow & { includeTaskId
   if(settings.activation==='LEARN') for(const task of tasks) task.version=createHash('sha256')
     .update(task.version+JSON.stringify(task.estimate)+JSON.stringify(task.resourceEstimates)).digest('hex');
   const dependencies = await readCentralDependencies(tx);
+  await hydrateExternalPlanning(tx,tasks,resources,dependencies,query.from,query.to);
   const coverage = includeCoverage ? await readPlanningCoverageTx(tx,tasks,new Date().toISOString()) : emptyPlanningCoverage();
   return {apiVersion:2,revision:settings.revision,generatedAt:new Date().toISOString(),stale:false,activation:settings.activation,
     tasks,resources,dependencies,...coverage,forecastState:await readForecastState(tx),

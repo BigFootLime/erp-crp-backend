@@ -7,6 +7,7 @@ import {materialPropertiesFingerprint} from "../domain/of-material";
 import {readMaterialReservationAvailabilityTx,type MaterialReservationAvailability} from './material-reservation-availability.repository';
 import {assertOperationQuantityCeiling,evaluateOperationReadiness,type OperationReadinessFacts} from "../domain/operation-readiness";
 import {readOperationalLotQualityEligibility,assertOperationalLotQualityEligibility} from "../../qualite/repository/quality-operational-gate.repository";
+import {readSubcontractFlows,readExternalTransfers,subcontractFlowInstalled} from '../../subcontract/subcontract-flow.repository';
 
 type OperationRow = {id:string;kind:string|null;machine_id:string|null;machine_status:string|null;good:number;scrap:number;pending:number;rework:number;updated_at:string;program_required:boolean;program_ready:boolean;quality_blocked:boolean};
 type DependencyRow = {successor:string;predecessor:string;label:string;status:string;good:number;transferred:number;minimum:number|null;partial:boolean};
@@ -53,6 +54,8 @@ export async function readOperationReadinessTx(tx:DossierDb,ofId:number,material
       COALESCE((SELECT sum(b.released_quantity) FROM public.production_transfer_batches b WHERE b.operation_id=p.id AND b.successor_operation_id=e.successor),0)::float8 AS transferred,
       e.minimum::float8,(e.minimum IS NOT NULL OR EXISTS(SELECT 1 FROM public.of_material_needs n WHERE n.operation_id=p.id AND n.allow_partial AND n.superseded_at IS NULL)) AS partial
     FROM edges e JOIN public.of_operations p ON p.id=e.predecessor ORDER BY e.successor,p.phase,p.id`,[dossier.operations.map(o=>o.id)])).rows;
+  const external=await readSubcontractFlows(tx,[...new Set(dependencies.map(d=>d.predecessor))]);
+  const externalTransfers=await readExternalTransfers(tx,external);
   let componentMissing=(await tx.query<{missing:boolean}>(`SELECT EXISTS(SELECT 1 FROM public.of_component_requirements n
     WHERE n.consuming_of_id=$1 AND n.status NOT IN ('CANCELLED','CONSUMED') AND n.required_qty>COALESCE((
       SELECT sum(GREATEST(0,r.qty_reserved-r.qty_consumed)) FROM public.stock_reservations r WHERE r.of_component_requirement_id=n.id
@@ -90,11 +93,20 @@ export async function readOperationReadinessTx(tx:DossierDb,ofId:number,material
       preparationMissing:coverage.needs.some(n=>!n.id||!n.operationId||!n.reviewed)||coverage.previousNeeds.length>0,
       programRequired:row?.program_required===true,programReady:row?.program_ready===true,qualityBlocked:!row||row.quality_blocked,
       componentsMissing:row?.kind==='ASSEMBLAGE'&&componentMissing,materials:materialFacts.get(op.id)??[],
-      predecessors:dependencies.filter(d=>d.successor===op.id).map(d=>({id:d.predecessor,label:d.label,done:d.status==='DONE',good:d.good,transferred:Math.min(d.good,d.transferred),partial:d.partial,minimum:d.minimum??1}))};
+      predecessors:dependencies.filter(d=>d.successor===op.id).map(d=>{
+        const packages=external.filter(p=>p.operationId===d.predecessor);
+        if(operations.some(source=>source.id===d.predecessor&&source.kind==='SOUS_TRAITANCE')){
+          const good=packages.reduce((n,p)=>n+p.released,0);
+          return {id:d.predecessor,label:d.label,done:good>=dossier.quantity,good,
+            transferred:externalTransfers.filter(b=>b.operation_id===d.predecessor&&b.successor_operation_id===op.id).reduce((n,b)=>n+b.effective,0),
+            partial:d.minimum!==null,minimum:d.minimum??1,requireTransfer:true};
+        }
+        return {id:d.predecessor,label:d.label,done:d.status==='DONE',good:d.good,transferred:Math.min(d.good,d.transferred),partial:d.partial,minimum:d.minimum??1};
+      })};
     return {...evaluateOperationReadiness(facts),machineId:row?.machine_id??null,materialOperation:facts.materials.length>0,
       successors:dependencies.filter(d=>d.predecessor===op.id).flatMap(d=>{const next=dossier.operations.find(o=>o.id===d.successor);return next?[{id:next.id,label:next.label,minimum:d.minimum??1}]:[]})};
   });
-  return {enabled:true as const,ofId,number:dossier.number,version:materialPropertiesFingerprint({coverage:coverage.version,operations,dependencies,componentMissing,quality:[...quality].map(([id,q])=>[id,q.target,q.already_committed_qty]),materialAvailability:[...availableReservations].map(([key,a])=>[key,a.usable,a.blockers]),results}),operations:results};
+  return {enabled:true as const,ofId,number:dossier.number,version:materialPropertiesFingerprint({coverage:coverage.version,operations,dependencies,external,componentMissing,quality:[...quality].map(([id,q])=>[id,q.target,q.already_committed_qty]),materialAvailability:[...availableReservations].map(([key,a])=>[key,a.usable,a.blockers]),results}),operations:results};
 }
 
 export async function getOperationReadiness(ofId:number){
@@ -119,6 +131,12 @@ export async function assertMaterialOperationStartTx(tx:PoolClient,ofId:number,o
         JOIN public.ordres_fabrication o ON o.id=op.of_id CROSS JOIN LATERAL jsonb_array_elements(o.technical_snapshot->'operations') f
         WHERE op.id=$2::uuid AND f->>'phase'=op.phase::text AND f->>'type_operation'='ASSEMBLAGE'))) ORDER BY 1`,[ofId,operationId])).rows;
   for(const r of reservations)await assertOperationalLotQualityEligibility({client:tx,lotId:r.lot_id,qty:0,purpose:'RESERVE'});
+  if(await subcontractFlowInstalled(tx)){
+    const externalLots=(await tx.query<{id:string}>(`SELECT DISTINCT e.lot_id::text AS id
+      FROM public.subcontract_work_package_ledger e JOIN public.subcontract_work_packages p ON p.id=e.package_id
+      JOIN public.of_operations op ON op.id=p.of_operation_id WHERE op.of_id=$1 AND e.event_type='RETURN' ORDER BY 1`,[ofId])).rows;
+    for(const lot of externalLots)await tx.query('SELECT id FROM public.lots WHERE id=$1::uuid FOR UPDATE',[lot.id]);
+  }
   const current=await readOperationReadinessTx(tx,ofId);
   if(expectedVersion&&expectedVersion!==current.version)throw new HttpError(409,'OPERATION_READINESS_CHANGED','La matière, le programme ou le planning a changé. Relisez les disponibilités avant de démarrer.');
   const operation=current.operations.find(o=>o.id===operationId);

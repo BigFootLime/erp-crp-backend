@@ -1,4 +1,5 @@
 import type { CentralTask, Dependency, Interval, Resource, ScheduleResult } from "../types/planning-central.types";
+import {externalCompletion} from './external-schedule';
 const ms = (v: string) => Date.parse(v);
 const iso = (v: number) => new Date(v).toISOString();
 function intersects(a: Interval, b: Interval) { return ms(a.start) < ms(b.end) && ms(b.start) < ms(a.end); }
@@ -48,10 +49,19 @@ export function schedule(input: {
     .forEach(id => occupied.set(id, [...(occupied.get(id) ?? []), interval]));
   for (const t of input.tasks) {
     const fixed = !affected.has(t.id) || t.locked || t.commitment === "STARTED" || t.commitment === "DONE";
-    if (fixed && t.committed) { result.forecasts[t.id] = t.committed; reserve(t.resourceIds, t.committed); }
+    if (fixed && t.committed) { result.forecasts[t.id] = t.committed; if(!t.external)reserve(t.resourceIds, t.committed); }
   }
   const conflict = (taskId: string, code: string, message: string, relatedTaskId?: string) =>
     result.conflicts.push({ taskId, code, message, ...(relatedTaskId ? { relatedTaskId } : {}) });
+  const predecessorDate = (parent: CentralTask | undefined) => {
+    if (!parent) return null;
+    if (parent.external) {
+      if (affected.has(parent.id)) return result.forecasts[parent.id];
+      const projected=externalCompletion(parent.external.packages,parent.quantity,parent.actual?.start??parent.committed?.start??input.from,input.resources,input.from);
+      return projected.fullReadyAt ? {start:parent.actual?.start??parent.committed?.start??input.from,end:projected.fullReadyAt} : null;
+    }
+    return parent.commitment==='DONE'&&parent.actual?.end ? {start:parent.actual.end,end:parent.actual.end} : result.forecasts[parent.id]??parent.forecast??parent.committed;
+  };
   const pending = new Set(affected);
   const compare = (a: CentralTask, b: CentralTask) => b.priority - a.priority ||
     (a.due ?? "9999").localeCompare(b.due ?? "9999") || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id);
@@ -63,6 +73,27 @@ export function schedule(input: {
     if (!ready.length) { for (const id of pending) conflict(id, "DEPENDENCY_CYCLE", "Les dépendances forment un cycle."); break; }
     for (const t of ready) {
       pending.delete(t.id);
+      if(t.external){
+        let earliest=Math.max(ms(input.from),ms(requests.get(t.id)?.earliestStart??input.from));
+        let unavailable=false;
+        for(const d of input.dependencies.filter(d=>d.successorId===t.id)){
+          if(d.releasedQuantity>=t.quantity)continue;
+          const parent=byId.get(d.predecessorId),date=predecessorDate(parent);
+          if(!date||result.conflicts.some(c=>c.taskId===d.predecessorId)){conflict(t.id,'PREDECESSOR_UNAVAILABLE','Le départ attend une étape précédente.',d.predecessorId);unavailable=true;break;}
+          earliest=Math.max(earliest,ms(date.end)+d.lagMinutes*60000);
+        }
+        if(unavailable)continue;
+        const requested=requests.get(t.id),actual=t.external.packages.flatMap(p=>p.departedAt?[p.departedAt]:[]).sort()[0];
+        const projection=externalCompletion(t.external.packages,t.quantity,actual??iso(earliest),input.resources,input.from);
+        if(!projection.fullReadyAt){for(const issue of projection.issues)conflict(t.id,'EXTERNAL_RETURN_UNAVAILABLE',issue);continue;}
+        if(requested?.resourceIds && requested.resourceIds.join('|')!==t.resourceIds.join('|')){conflict(t.id,'EXTERNAL_SUPPLIER_FIXED','Le fournisseur est celui de la commande liée.');continue;}
+        const slot={start:actual??iso(earliest),end:projection.fullReadyAt};
+        if(ms(slot.end)<=ms(slot.start))slot.end=iso(ms(slot.start)+1);
+        result.forecasts[t.id]=slot;
+        if(!actual&&!t.locked&&t.commitment!=='DONE'&&t.commitment!=='STARTED'&&(!t.committed||t.committed.start!==slot.start||t.committed.end!==slot.end))
+          result.changes.push({taskId:t.id,before:t.committed,beforeResourceIds:t.resourceIds,after:slot,resourceIds:t.resourceIds});
+        continue;
+      }
       if (t.locked || t.commitment === "STARTED" || t.commitment === "DONE") {
         if (requests.has(t.id)) conflict(t.id, "LOCKED", "Une opération commencée ou verrouillée conserve son créneau.");
         continue;
@@ -84,8 +115,11 @@ export function schedule(input: {
       let blocked = false;
       for (const d of input.dependencies.filter(d => d.successorId === t.id)) {
         const parent = byId.get(d.predecessorId);
-        if (d.transferQuantity !== null && d.releasedQuantity >= d.transferQuantity) continue;
-        const date = parent?.commitment==='DONE'&&parent.actual?.end?{start:parent.actual.end,end:parent.actual.end}:result.forecasts[d.predecessorId] ?? parent?.forecast ?? parent?.committed;
+        // A partial transfer permits execution of that batch; the full-operation
+        // finish forecast still waits for the balance from an external operation.
+        if (d.transferQuantity !== null && d.releasedQuantity >= d.transferQuantity &&
+          (!parent?.external || d.releasedQuantity>=t.quantity)) continue;
+        const date = predecessorDate(parent);
         if (!date || result.conflicts.some(c => c.taskId === d.predecessorId)) {
           conflict(t.id, "PREDECESSOR_UNAVAILABLE", "Un prérequis n'a pas de disponibilité réalisable.", d.predecessorId); blocked = true; break;
         }
@@ -112,8 +146,8 @@ export function schedule(input: {
   for (const d of input.dependencies) {
     const child = byId.get(d.successorId);
     const before = result.forecasts[d.predecessorId], after = result.forecasts[d.successorId];
-    if (child?.locked && before && after && ms(before.end) + d.lagMinutes * 60000 > ms(after.start) &&
-      !(d.transferQuantity !== null && d.releasedQuantity >= d.transferQuantity))
+    if ((child?.locked||child?.commitment==='STARTED') && before && after && ms(before.end) + d.lagMinutes * 60000 > ms(after.start) &&
+      !(d.transferQuantity !== null && d.releasedQuantity >= d.transferQuantity && (!byId.get(d.predecessorId)?.external||d.releasedQuantity>=child.quantity)))
       conflict(child.id, "LOCKED_DEPENDENCY", "Le créneau verrouillé précède la disponibilité du prérequis.", d.predecessorId);
   }
   result.feasible = !result.conflicts.length;
