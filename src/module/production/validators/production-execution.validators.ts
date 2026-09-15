@@ -276,6 +276,7 @@ export type RejectExecutionBodyDTO = z.infer<typeof rejectExecutionSchema>["body
 export const correctExecutionSchema = z.object({
   body: z.object({
     correction_reason: reason,
+    expected_updated_at: isoDateTime.optional(),
     patch: z
       .object({
         start_ts: isoDateTime.optional(),
@@ -290,6 +291,8 @@ export const correctExecutionSchema = z.object({
   }),
 });
 export type CorrectExecutionBodyDTO = z.infer<typeof correctExecutionSchema>["body"];
+
+export const compensateQuantitySchema = z.object({body:z.object({reason})});
 
 export const cancelExecutionSchema = z.object({
   body: z.object({ reason }),

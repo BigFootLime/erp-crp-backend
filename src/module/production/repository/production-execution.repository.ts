@@ -56,6 +56,58 @@ import type {
 
 type DbQueryer = Pick<PoolClient, "query">;
 
+/** Compensation changes only the declaration ledger, never downstream stock or quality decisions. */
+export async function repoCompensateQuantity(params:{id:string;reason:string;idempotencyKey:string;audit:AuditContext}){
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const replay=await reserveIdempotencyKey<{id:string}>(client,{key:params.idempotencyKey,scope:'compensate-quantity',
+      payload:{id:params.id,reason:params.reason},user_id:params.audit.user_id});
+    if(replay.replayed){await client.query('COMMIT');return replay.body;}
+    const hint=(await client.query<{of_id:number;operation_id:string|null}>(
+      'SELECT of_id,operation_id FROM public.production_quantity_declarations WHERE id=$1::uuid',[params.id])).rows[0];
+    if(!hint)throw new HttpError(404,'PRODUCTION_QUANTITY_NOT_FOUND','Déclaration introuvable.');
+    const material=await lockMaterialExecutionTx(client,Number(hint.of_id));
+    await client.query('SELECT id FROM public.ordres_fabrication WHERE id=$1 FOR UPDATE',[hint.of_id]);
+    if(hint.operation_id)await client.query('SELECT id FROM public.of_operations WHERE id=$1 FOR UPDATE',[hint.operation_id]);
+    const original=(await client.query<{id:string;pointage_id:string|null;compensates_id:string|null;non_conformity_id:string|null}>(
+      'SELECT id,pointage_id,compensates_id,non_conformity_id FROM public.production_quantity_declarations WHERE id=$1 FOR UPDATE',[params.id])).rows[0];
+    if(original.compensates_id || (await client.query('SELECT 1 FROM public.production_quantity_declarations WHERE compensates_id=$1',[params.id])).rowCount)
+      throw new HttpError(409,'PRODUCTION_QUANTITY_ALREADY_COMPENSATED','Cette déclaration est déjà compensée.');
+    const downstream=await client.query(`SELECT 1 WHERE
+      EXISTS(SELECT 1 FROM public.of_receipts WHERE of_id=$1)
+      OR EXISTS(SELECT 1 FROM public.production_material_debits WHERE declaration_id=$3::uuid)
+      OR EXISTS(SELECT 1 FROM public.quality_control WHERE of_id=$1 AND (operation_id IS NULL OR operation_id=$2::uuid))
+      OR EXISTS(SELECT 1 FROM public.quality_release_decision
+        WHERE (object_type='OF' AND object_id=$1::text) OR (object_type='OF_OPERATION' AND object_id=$2::text))
+      OR EXISTS(SELECT 1 FROM public.of_quality_logs WHERE of_id=$1 AND (of_operation_id IS NULL OR of_operation_id=$2::uuid))
+      OR EXISTS(SELECT 1 FROM public.ordres_fabrication WHERE id=$1 AND statut::text IN ('CLOTURE','ANNULE'))
+      OR EXISTS(SELECT 1 FROM public.production_transfer_batches WHERE operation_id=$2::uuid AND released_quantity>0)
+      OR EXISTS(SELECT 1 FROM public.of_operations next JOIN public.of_operations current ON current.id=$2::uuid
+        WHERE next.of_id=current.of_id AND next.phase>current.phase
+          AND (next.started_at IS NOT NULL OR EXISTS(SELECT 1 FROM public.production_quantity_declarations d WHERE d.operation_id=next.id)))`,
+      [hint.of_id,hint.operation_id,params.id]);
+    if(original.non_conformity_id || downstream.rowCount)
+      throw new HttpError(409,'PRODUCTION_QUANTITY_DOWNSTREAM_LOCKED','Une réception, un débit matière, un contrôle ou un transfert utilise ce contexte. Réconciliez cet usage dans son circuit avant de corriger les quantités.');
+    const inserted=await client.query<{id:string}>(`INSERT INTO public.production_quantity_declarations(
+      pointage_id,of_id,operation_id,qty_good,qty_scrap,qty_rework,qty_pending_control,unite,
+      compensates_id,compensation_reason,note,idempotency_key,declared_by)
+      SELECT pointage_id,of_id,operation_id,-qty_good,-qty_scrap,-qty_rework,-qty_pending_control,unite,
+        id,$2,$2,$3,$4 FROM public.production_quantity_declarations WHERE id=$1 RETURNING id`,
+      [params.id,params.reason,params.idempotencyKey,params.audit.user_id]);
+    if(material)await syncMaterialOfQuantitiesTx(client,Number(hint.of_id),params.audit.user_id);
+    else await client.query(`UPDATE public.ordres_fabrication o SET quantite_bonne=o.quantite_bonne-d.qty_good,
+      quantite_rebut=o.quantite_rebut-d.qty_scrap,updated_at=now(),updated_by=$2
+      FROM public.production_quantity_declarations d WHERE d.id=$1 AND o.id=d.of_id`,[params.id,params.audit.user_id]);
+    await insertAuditLog(client,params.audit,{action:'production.execution.compensate-quantity',
+      entity_type:'production_quantity_declarations',entity_id:params.id,details:{compensation_id:inserted.rows[0].id,reason:params.reason}});
+    if(original.pointage_id)await insertExecutionEvent(client,{pointage_id:original.pointage_id,event_type:'DECLARE_QUANTITY',
+      user_id:params.audit.user_id,new_values:{compensates:params.id,declaration_id:inserted.rows[0].id},note:params.reason});
+    await storeIdempotentResponse(client,params.idempotencyKey,inserted.rows[0]);
+    await client.query('COMMIT');return inserted.rows[0];
+  }catch(error){await client.query('ROLLBACK');return translateConcurrencyError(error);}finally{client.release();}
+}
+
 export type ProductionExecutionTransactionHooks<T extends { id: string }> = {
   beforeEffect: (tx: PoolClient) => Promise<void>;
   beforeCommit: (tx: PoolClient, result: T) => Promise<void>;
@@ -194,6 +246,7 @@ async function reserveIdempotencyKey<T>(
   tx: DbQueryer,
   params: { key: string; scope: string; payload: unknown; user_id: number }
 ): Promise<IdempotentReplay<T>> {
+  await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`production-execution:${params.key}`]);
   const fingerprint = fingerprintPayload(params.scope, params.payload);
 
   const existing = await tx.query<{
@@ -589,6 +642,11 @@ export async function repoGetExecution(params: {
 
   const declarations = await pool.query(
     `
+      WITH RECURSIVE lineage AS (
+        SELECT id,corrects_pointage_id FROM public.production_pointages WHERE id=$1::uuid
+        UNION
+        SELECT p.id,p.corrects_pointage_id FROM public.production_pointages p JOIN lineage l ON p.id=l.corrects_pointage_id
+      )
       SELECT d.id::text AS id, d.qty_good::float8 AS qty_good, d.qty_scrap::float8 AS qty_scrap,
              d.qty_rework::float8 AS qty_rework, d.qty_pending_control::float8 AS qty_pending_control,
              d.unite, d.scrap_reason_code, d.rework_reason_code, d.note,
@@ -597,7 +655,7 @@ export async function repoGetExecution(params: {
              d.declared_at, u.username AS declared_by_username
       FROM public.production_quantity_declarations d
       JOIN public.users u ON u.id = d.declared_by
-      WHERE d.pointage_id = $1::uuid
+      WHERE d.pointage_id IN (SELECT id FROM lineage)
       ORDER BY d.declared_at, d.id
     `,
     [params.id]
@@ -1376,6 +1434,7 @@ type LockedPointage = {
   segment_index: number;
   validated_at: string | null;
   submitted_at: string | null;
+  updated_at: string;
 };
 
 async function lockPointage(tx: DbQueryer, id: string): Promise<LockedPointage> {
@@ -1386,7 +1445,7 @@ async function lockPointage(tx: DbQueryer, id: string): Promise<LockedPointage> 
              operator_user_id, activity_code, time_type::text AS time_type,
              status::text AS status, start_ts, end_ts,
              session_id::text AS session_id, segment_index,
-             validated_at, submitted_at
+             validated_at, submitted_at, updated_at
       FROM public.production_pointages
       WHERE id = $1::uuid
       FOR UPDATE
@@ -2448,8 +2507,23 @@ async function simpleTransition(params: {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const cancelKey=params.action==='cancel'
+      ? fingerprintPayload('cancel',{id:params.id,reason:params.note,actor:params.audit.user_id}) : null;
+    if(cancelKey) {
+      const replay=await reserveIdempotencyKey<{id:string}>(client,{key:cancelKey,scope:'cancel',
+        payload:{id:params.id,reason:params.note},user_id:params.audit.user_id});
+      if(replay.replayed) {
+        await client.query('COMMIT');
+        const result=await repoGetExecution({id:params.id});
+        if(!result)throw new HttpError(404,'PRODUCTION_EXECUTION_NOT_FOUND','Pointage introuvable.');
+        return result;
+      }
+    }
     const current = await lockPointage(client, params.id);
-    assertMutable(current);
+    // A supervised cancellation preserves the validated measurements and their audit.
+    if(params.action==='cancel' && current.validated_at && current.status==='DONE') {
+      // Only cancellation may bypass the generic edit lock.
+    } else assertMutable(current);
 
     const { event, details } = await params.apply(client, current);
 
@@ -2469,6 +2543,7 @@ async function simpleTransition(params: {
       details: { of_id: current.of_id, operation_id: current.operation_id, ...details },
     });
 
+    if(cancelKey)await storeIdempotentResponse(client,cancelKey,{id:params.id});
     await client.query("COMMIT");
     const updated = await repoGetExecution({ id: params.id });
     if (!updated) throw new HttpError(500, "PRODUCTION_EXECUTION_READ_BACK_FAILED", "Relecture impossible.");
@@ -2491,12 +2566,21 @@ export async function repoCorrectExecution(params: {
   patch: Record<string, unknown>;
   actorRole: string | null | undefined;
   audit: AuditContext;
+  idempotencyKey?: string;
+  expectedUpdatedAt?: string;
 }): Promise<ExecutionListItem> {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const commandKey=params.idempotencyKey??fingerprintPayload('correct',{id:params.id,patch:params.patch,reason:params.correction_reason,actor:params.audit.user_id});
+    const replay=await reserveIdempotencyKey<{id:string}>(client,{key:commandKey,scope:'correct',
+      payload:{id:params.id,patch:params.patch,reason:params.correction_reason,expectedUpdatedAt:params.expectedUpdatedAt},user_id:params.audit.user_id});
+    if(replay.replayed){await client.query('COMMIT');const result=await repoGetExecution({id:replay.body.id});
+      if(!result)throw new HttpError(404,'PRODUCTION_EXECUTION_NOT_FOUND','Correction introuvable.');return result;}
     const current = await lockPointage(client, params.id);
-    assertMutable(current);
+    if(current.status!=='DONE')assertMutable(current);
+    if(params.expectedUpdatedAt && new Date(current.updated_at).getTime()!==Date.parse(params.expectedUpdatedAt))
+      throw new HttpError(409,'PRODUCTION_EXECUTION_STALE','Le pointage a changé. Actualisez avant de corriger.');
     if (current.status === "RUNNING") {
       throw new HttpError(
         409,
@@ -2516,8 +2600,29 @@ export async function repoCorrectExecution(params: {
     };
 
     if (patch.activity_code) await loadActivity(client, patch.activity_code);
-    if (patch.start_ts && patch.end_ts) {
-      assertPlausibleDuration(computeDurationMinutes(patch.start_ts, patch.end_ts));
+    const nextStart=patch.start_ts??current.start_ts,nextEnd=patch.end_ts===undefined?current.end_ts:patch.end_ts;
+    if(!nextEnd || Date.parse(nextEnd)<=Date.parse(nextStart))throw new HttpError(422,'PRODUCTION_EXECUTION_INVALID_INTERVAL','La correction doit conserver un intervalle terminé et positif.');
+    assertPlausibleDuration(computeDurationMinutes(nextStart,nextEnd));
+    if(patch.operation_id!==undefined&&patch.operation_id!==current.operation_id){
+      if(!patch.operation_id || !(await client.query('SELECT 1 FROM public.of_operations WHERE id=$1::uuid AND of_id=$2',[patch.operation_id,current.of_id])).rowCount)
+        throw new HttpError(422,'PRODUCTION_EXECUTION_OPERATION_MISMATCH','Choisissez une opération du même OF.');
+      const quantities=await client.query(`WITH RECURSIVE lineage AS (
+        SELECT id,corrects_pointage_id FROM public.production_pointages WHERE id=$1
+        UNION SELECT p.id,p.corrects_pointage_id FROM public.production_pointages p JOIN lineage l ON p.id=l.corrects_pointage_id)
+        SELECT 1 FROM public.production_quantity_declarations WHERE pointage_id IN (SELECT id FROM lineage)
+        HAVING COALESCE(sum(qty_good),0)<>0 OR COALESCE(sum(qty_scrap),0)<>0 OR COALESCE(sum(qty_rework),0)<>0 OR COALESCE(sum(qty_pending_control),0)<>0`,[current.id]);
+      if(quantities.rowCount)throw new HttpError(409,'PRODUCTION_EXECUTION_QUANTITIES_LINKED','Compensez les quantités rattachées avant de changer leur opération.');
+    }
+    if(patch.machine_id!==undefined || patch.poste_id!==undefined) {
+      const machineId=patch.machine_id===undefined?current.machine_id:patch.machine_id;
+      const posteId=patch.poste_id===undefined?current.poste_id:patch.poste_id;
+      if(machineId && !(await client.query('SELECT 1 FROM public.machines WHERE id=$1',[machineId])).rowCount)
+        throw new HttpError(422,'MACHINE_NOT_FOUND','Machine introuvable.');
+      if(posteId) {
+        const poste=(await client.query<{machine_id:string|null}>('SELECT machine_id FROM public.postes WHERE id=$1',[posteId])).rows[0];
+        if(!poste || (machineId && poste.machine_id && poste.machine_id!==machineId))
+          throw new HttpError(422,'PRODUCTION_EXECUTION_RESOURCE_MISMATCH','Le poste doit correspondre à la machine corrigée.');
+      }
     }
 
     // L'original bascule en CORRECTED : il reste lisible et traçable.
@@ -2541,7 +2646,7 @@ export async function repoCorrectExecution(params: {
           machine_id, poste_id, operator_user_id, time_type, activity_code,
           start_ts, end_ts, status, comment, correction_reason,
           session_id, previous_segment_id, segment_index, source,
-          context_snapshot, created_by, updated_by
+          context_snapshot, created_by, updated_by, corrects_pointage_id
         )
         SELECT
           p.of_id,
@@ -2557,7 +2662,7 @@ export async function repoCorrectExecution(params: {
           COALESCE($10, p.comment),
           $11,
           COALESCE(p.session_id, p.id), p.id, p.segment_index + 1, 'CANONICAL',
-          p.context_snapshot, $12::int, $12::int
+          p.context_snapshot, $12::int, $12::int, p.id
         FROM public.production_pointages p
         WHERE p.id = $1::uuid
         RETURNING id::text AS id
@@ -2600,6 +2705,8 @@ export async function repoCorrectExecution(params: {
         current.operation_id,
       ]);
     }
+    if(patch.operation_id && patch.operation_id!==current.operation_id)
+      await client.query('SELECT public.fn_production_recompute_operation_real_time($1::uuid)',[patch.operation_id]);
 
     await insertAuditLog(client, params.audit, {
       action: "production.execution.correct",
@@ -2608,6 +2715,7 @@ export async function repoCorrectExecution(params: {
       details: { replaced_by: newId, reason: params.correction_reason, patch },
     });
 
+    await storeIdempotentResponse(client,commandKey,{id:newId});
     await client.query("COMMIT");
     const updated = await repoGetExecution({ id: newId });
     if (!updated) throw new HttpError(500, "PRODUCTION_EXECUTION_READ_BACK_FAILED", "Relecture impossible.");

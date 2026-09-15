@@ -1091,10 +1091,10 @@ describe("#274 cycle de validation", () => {
     );
   });
 
-  it("refuse 409 toute action sur un pointage déjà validé", async () => {
+  it("refuse 409 le rejet ordinaire d'un pointage déjà validé", async () => {
     mockLockedPointage({ validated_at: "2026-07-26T10:00:00.000Z" });
     const res = await request(app)
-      .post(`${BASE}/${POINTAGE_ID}/cancel`)
+      .post(`${BASE}/${POINTAGE_ID}/reject`)
       .set("x-test-role", CHEF)
       .send({ reason: "erreur de saisie" });
     expect(res.status).toBe(409);
