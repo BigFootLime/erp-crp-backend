@@ -50,12 +50,16 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
     SELECT b.*,(CASE WHEN b.besoin_type='OF_MATERIAL' THEN b.quantite_couverte ELSE b.quantite_couverte*COALESCE(pl.coef_conversion,1) END) AS stock_assigned,
       sum(CASE WHEN b.besoin_type='OF_MATERIAL' THEN b.quantite_couverte ELSE b.quantite_couverte*COALESCE(pl.coef_conversion,1) END) OVER(PARTITION BY b.ligne_id ORDER BY b.created_at,b.id ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS earlier
     FROM public.commande_fournisseur_ligne_besoin b JOIN public.commande_fournisseur_ligne pl ON pl.id=b.ligne_id WHERE NOT b.annule)
-    SELECT b.id::text,b.material_need_id::text,b.besoin_ref,b.stock_assigned::float8 AS assigned,c.id::text AS command_id,c.code,c.statut,
+    SELECT b.id::text,b.ligne_id::text AS line_id,b.material_need_id::text,b.besoin_ref,b.stock_assigned::float8 AS assigned,c.id::text AS command_id,c.code,c.statut,
       COALESCE(l.date_promesse,c.date_promesse)::text AS due,l.article_id::text,COALESCE(l.unite_stock,l.unite) AS unite,l.updated_at::text,
+      l.unite AS purchase_unit,COALESCE(l.coef_conversion,1)::float8 AS coefficient,m.client_proprietaire_id AS owner_client_id,
+      COALESCE(l.magasin_id,c.magasin_livraison_id)::text AS destination_id,
       LEAST(b.stock_assigned,GREATEST(0,COALESCE(r.received,0)-COALESCE(b.stock_receipt_offset,b.earlier,0)))::float8 AS received,
       COALESCE(t.transferred,0)::float8 AS transferred
     FROM allocations b JOIN public.commande_fournisseur_ligne l ON l.id=b.ligne_id JOIN public.commande_fournisseur c ON c.id=l.commande_id
-    LEFT JOIN LATERAL(SELECT sum(rl.qty_received*COALESCE(rl.stock_conversion_coef,l.coef_conversion,1)) AS received FROM public.reception_fournisseur_lignes rl WHERE rl.commande_fournisseur_ligne_id=l.id) r ON true
+    LEFT JOIN public.articles_matiere m ON m.article_id=l.article_id
+    LEFT JOIN LATERAL(SELECT sum(rl.qty_received*COALESCE(rl.stock_conversion_coef,l.coef_conversion,1)) AS received FROM public.reception_fournisseur_lignes rl
+      JOIN public.receptions_fournisseurs rh ON rh.id=rl.reception_id WHERE rl.commande_fournisseur_ligne_id=l.id AND rh.status<>'CANCELLED') r ON true
     LEFT JOIN LATERAL(SELECT sum(sr.qty_reserved) AS transferred FROM public.of_material_receipt_transfers t JOIN public.stock_reservations sr ON sr.id=t.reservation_id WHERE t.purchase_need_id=b.id) t ON true
     WHERE b.besoin_of_id=$1 AND c.statut<>'ANNULEE' AND l.statut_ligne<>'ANNULEE' ORDER BY b.created_at,b.id`,[ofId])).rows;
   const articleIds=[...new Set(purchases.flatMap(p=>p.article_id?[p.article_id]:[]))];
