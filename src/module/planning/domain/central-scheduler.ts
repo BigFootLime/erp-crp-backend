@@ -1,30 +1,66 @@
 import type { CentralTask, Dependency, Interval, Resource, ScheduleResult } from "../types/planning-central.types";
 import {externalCompletion} from './external-schedule';
+import { dependencyClosure, dependencyIndex } from './central-dependencies';
 const ms = (v: string) => Date.parse(v);
 const iso = (v: number) => new Date(v).toISOString();
 function intersects(a: Interval, b: Interval) { return ms(a.start) < ms(b.end) && ms(b.start) < ms(a.end); }
-/** Find capacity across shared open intervals, excluding all reservations. Returns elapsed span (including closed shifts). */
+type NumericInterval = { start: number; end: number };
+function normalized(intervals: NumericInterval[]): NumericInterval[] {
+  const result: NumericInterval[] = [];
+  for (const interval of intervals.filter(w => w.end > w.start).sort((a,b) => a.start-b.start || a.end-b.end)) {
+    const last = result[result.length-1];
+    if (last && interval.start <= last.end) last.end = Math.max(last.end,interval.end);
+    else result.push({...interval});
+  }
+  return result;
+}
+const calendarCache = new WeakMap<Interval[], NumericInterval[]>();
+function calendarWindows(resource: Resource) {
+  let result = calendarCache.get(resource.availability);
+  if (!result) {
+    result = normalized(resource.availability.map(i => ({start:ms(i.start),end:ms(i.end)})));
+    calendarCache.set(resource.availability,result);
+  }
+  return result;
+}
+/** Sweep shared opening intervals and reservations once; closed shifts may be bridged, reservations may not. */
 export function capacitySlot(resources: Resource[], occupied: Map<string, Interval[]>, earliest: number, minutes: number): Interval | null {
   if (!resources.length || minutes <= 0 || !Number.isFinite(minutes) || !Number.isFinite(earliest)) return null;
-  let windows = resources[0].availability.map(i => ({ start: ms(i.start), end: ms(i.end) }));
+  let windows = calendarWindows(resources[0]);
   for (const r of resources.slice(1)) {
-    windows = windows.flatMap(a => r.availability.map(b => ({ start: Math.max(a.start, ms(b.start)), end: Math.min(a.end, ms(b.end)) })))
-      .filter(a => a.end > a.start);
-  }
-  const blocked = resources.flatMap(r => occupied.get(r.capacityId ?? r.id) ?? []).map(i => ({ start: ms(i.start), end: ms(i.end) }));
-  windows = windows.sort((a, b) => a.start - b.start).map(w => ({ start: Math.max(w.start, earliest), end: w.end })).filter(w => w.end > w.start);
-  for (const b of blocked) windows = windows.flatMap(w => b.end <= w.start || b.start >= w.end ? [w] :
-    [{ start: w.start, end: Math.min(w.end, b.start) }, { start: Math.max(w.start, b.end), end: w.end }].filter(w => w.end > w.start));
-  windows.sort((a, b) => a.start - b.start);
-  // A resource is reserved for the span of an operation; do not bridge another operation.
-  for (let i = 0; i < windows.length; i++) {
-    let remaining = minutes * 60000, end = windows[i].start;
-    for (let j = i; j < windows.length; j++) {
-      if (j > i && blocked.some(b => b.start < windows[j].start && b.end > end)) break;
-      const use = Math.min(remaining, windows[j].end - windows[j].start);
-      remaining -= use; end = windows[j].start + use;
-      if (remaining <= 0) return { start: iso(windows[i].start), end: iso(end) };
+    const other = calendarWindows(r), shared: NumericInterval[] = [];
+    let a = 0, b = 0;
+    while (a < windows.length && b < other.length) {
+      const start = Math.max(windows[a].start,other[b].start), end = Math.min(windows[a].end,other[b].end);
+      if (end > start) shared.push({start,end});
+      if (windows[a].end < other[b].end) a++; else b++;
     }
+    windows = shared;
+  }
+  const blocked = normalized([...new Set(resources.map(r => r.capacityId ?? r.id))]
+    .flatMap(id => occupied.get(id) ?? []).map(i => ({start:ms(i.start),end:ms(i.end)})).filter(i => i.end > earliest));
+  const free: NumericInterval[] = [];
+  let blockIndex = 0;
+  for (const window of windows) {
+    let start = Math.max(window.start,earliest);
+    if (window.end <= start) continue;
+    while (blockIndex < blocked.length && blocked[blockIndex].end <= start) blockIndex++;
+    for (let i = blockIndex; i < blocked.length && blocked[i].start < window.end; i++) {
+      if (blocked[i].start > start) free.push({start,end:blocked[i].start});
+      start = Math.max(start,blocked[i].end);
+      if (start >= window.end) break;
+    }
+    if (start < window.end) free.push({start,end:window.end});
+  }
+  let remaining = minutes * 60000, first: number | null = null, lastEnd = earliest, barrier = 0;
+  for (const window of free) {
+    while (barrier < blocked.length && blocked[barrier].end <= lastEnd) barrier++;
+    if (blocked[barrier]?.start < window.start && blocked[barrier].end > lastEnd) { first = null; remaining = minutes * 60000; }
+    if (first === null) first = window.start;
+    const used = Math.min(remaining,window.end-window.start);
+    remaining -= used;
+    if (remaining <= 0) return {start:iso(first),end:iso(window.start+used)};
+    lastEnd = window.end;
   }
   return null;
 }
@@ -37,22 +73,20 @@ export function schedule(input: {
   const byId = new Map(input.tasks.map(t => [t.id, t]));
   const resourceMap = new Map(input.resources.map(r => [r.id, r]));
   const requests = new Map(input.requested.map(r => [r.taskId, r]));
-  const affected = new Set(requests.keys());
-  // Downstream closure; unaffected committed tasks remain capacity constraints.
-  let grew = true;
-  while (grew) { grew = false; for (const d of input.dependencies) if (affected.has(d.predecessorId) && !affected.has(d.successorId)) {
-    affected.add(d.successorId); grew = true;
-  } }
+  const { incoming, outgoing } = dependencyIndex(input.dependencies);
+  const affected = dependencyClosure(input.dependencies,[...requests.keys()],'downstream');
   result.affected = [...affected].sort();
   const occupied = new Map<string, Interval[]>();
   const reserve = (ids: string[], interval: Interval) => new Set(ids.map(id => resourceMap.get(id)?.capacityId ?? id))
-    .forEach(id => occupied.set(id, [...(occupied.get(id) ?? []), interval]));
+    .forEach(id => { if (!occupied.has(id)) occupied.set(id,[]); occupied.get(id)!.push(interval); });
   for (const t of input.tasks) {
     const fixed = !affected.has(t.id) || t.locked || t.commitment === "STARTED" || t.commitment === "DONE";
     if (fixed && t.committed) { result.forecasts[t.id] = t.committed; if(!t.external)reserve(t.resourceIds, t.committed); }
   }
-  const conflict = (taskId: string, code: string, message: string, relatedTaskId?: string) =>
-    result.conflicts.push({ taskId, code, message, ...(relatedTaskId ? { relatedTaskId } : {}) });
+  const conflicted = new Set<string>();
+  const conflict = (taskId: string, code: string, message: string, relatedTaskId?: string) => {
+    conflicted.add(taskId); result.conflicts.push({ taskId, code, message, ...(relatedTaskId ? { relatedTaskId } : {}) });
+  };
   const predecessorDate = (parent: CentralTask | undefined) => {
     if (!parent) return null;
     if (parent.external) {
@@ -66,20 +100,27 @@ export function schedule(input: {
   const compare = (a: CentralTask, b: CentralTask) => b.priority - a.priority ||
     (a.due ?? "9999").localeCompare(b.due ?? "9999") || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id);
   for (const id of [...pending]) if (!byId.has(id)) { conflict(id, "NOT_FOUND", "Opération introuvable."); pending.delete(id); }
+  const waiting = new Map([...pending].map(id => [id,(incoming.get(id) ?? []).filter(d => pending.has(d.predecessorId)).length]));
+  let readyIds = [...pending].filter(id => waiting.get(id) === 0);
   while (pending.size) {
     if (input.signal?.aborted) throw new Error("SIMULATION_CANCELLED");
-    const ready = [...pending].map(id => byId.get(id)!).filter(t =>
-      input.dependencies.filter(d => d.successorId === t.id).every(d => !pending.has(d.predecessorId))).sort(compare);
+    const ready = readyIds.map(id => byId.get(id)!).sort(compare);
+    readyIds = [];
     if (!ready.length) { for (const id of pending) conflict(id, "DEPENDENCY_CYCLE", "Les dépendances forment un cycle."); break; }
     for (const t of ready) {
       pending.delete(t.id);
+      for (const d of outgoing.get(t.id) ?? []) if (pending.has(d.successorId)) {
+        const remaining = waiting.get(d.successorId)! - 1;
+        waiting.set(d.successorId,remaining);
+        if (remaining === 0) readyIds.push(d.successorId);
+      }
       if(t.external){
         let earliest=Math.max(ms(input.from),ms(requests.get(t.id)?.earliestStart??input.from));
         let unavailable=false;
-        for(const d of input.dependencies.filter(d=>d.successorId===t.id)){
+        for(const d of incoming.get(t.id) ?? []){
           if(d.releasedQuantity>=t.quantity)continue;
           const parent=byId.get(d.predecessorId),date=predecessorDate(parent);
-          if(!date||result.conflicts.some(c=>c.taskId===d.predecessorId)){conflict(t.id,'PREDECESSOR_UNAVAILABLE','Le départ attend une étape précédente.',d.predecessorId);unavailable=true;break;}
+          if(!date||conflicted.has(d.predecessorId)){conflict(t.id,'PREDECESSOR_UNAVAILABLE','Le départ attend une étape précédente.',d.predecessorId);unavailable=true;break;}
           earliest=Math.max(earliest,ms(date.end)+d.lagMinutes*60000);
         }
         if(unavailable)continue;
@@ -113,14 +154,14 @@ export function schedule(input: {
       let earliest = Math.max(ms(input.from), t.earliestStart ? ms(t.earliestStart) : 0, req ? ms(req.earliestStart) : 0);
       if (!Number.isFinite(earliest)) { conflict(t.id, "DATE_INVALID", "Date de disponibilité manquante."); continue; }
       let blocked = false;
-      for (const d of input.dependencies.filter(d => d.successorId === t.id)) {
+      for (const d of incoming.get(t.id) ?? []) {
         const parent = byId.get(d.predecessorId);
         // A partial transfer permits execution of that batch; the full-operation
         // finish forecast still waits for the balance from an external operation.
         if (d.transferQuantity !== null && d.releasedQuantity >= d.transferQuantity &&
           (!parent?.external || d.releasedQuantity>=t.quantity)) continue;
         const date = predecessorDate(parent);
-        if (!date || result.conflicts.some(c => c.taskId === d.predecessorId)) {
+        if (!date || conflicted.has(d.predecessorId)) {
           conflict(t.id, "PREDECESSOR_UNAVAILABLE", "Un prérequis n'a pas de disponibilité réalisable.", d.predecessorId); blocked = true; break;
         }
         earliest = Math.max(earliest, ms(date.end) + d.lagMinutes * 60000);
