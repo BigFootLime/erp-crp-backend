@@ -10,7 +10,22 @@ import { roleHasPlanningCapability } from "../domain/planning-rbac";
 import pool from '../../../config/database';
 import { readTaskObservations } from '../repository/duration-learning.repository';
 import { HttpError } from '../../../utils/httpError';
+import { previewCentralWindow } from '../services/planning-central.service';
+import { centralPreviewSchema } from '../validators/planning-central.validators';
+import {readCentralPage} from '../services/central-snapshot-pages';
 const key = (value: unknown) => typeof value === "string" ? value : "";
+export const centralPreview: RequestHandler = asyncHandler(async(req,res)=>{
+  const input=centralPreviewSchema.parse(req.body), abort=new AbortController();
+  const onClose=()=>{if(!res.writableEnded)abort.abort();};
+  res.on('close',onClose);
+  const start=performance.now();
+  try {
+    const result=await previewCentralWindow(input,abort.signal);
+    res.setHeader('Cache-Control','no-store');
+    res.setHeader('Server-Timing',`planning;dur=${(performance.now()-start).toFixed(1)}`);
+    res.json(result);
+  } finally {res.off('close',onClose);}
+});
 export const centralObservations: RequestHandler = asyncHandler(async(req,res)=>{
   const operationId=z.string().uuid().parse(req.params.operationId);
   const query=z.object({offset:z.coerce.number().int().min(0).default(0),limit:z.coerce.number().int().min(1).max(100).default(20)}).parse(req.query);
@@ -27,7 +42,7 @@ export const centralStatus: RequestHandler = asyncHandler(async (req,res)=>{
 });
 export const centralSnapshot: RequestHandler = asyncHandler(async(req,res)=>{
   const query=centralWindowSchema.parse(req.query);
-  const snapshot=await readCentralSnapshot(query);
+  const snapshot=await readCentralPage(query);
   assertCentralActivation(snapshot.activation,"READ");
   res.setHeader("Cache-Control","no-store");res.json(snapshot);
 });
