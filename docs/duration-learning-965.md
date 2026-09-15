@@ -69,7 +69,9 @@ de sources conservent la traçabilité sous les droits du module.
 
 1. Sauvegarder la base cible et vérifier la restauration selon le runbook de l’environnement.
    Aucune sauvegarde ni migration de production n’a été exécutée pour cette livraison locale.
-2. Exécuter le preflight, appliquer la migration additive sur la cible autorisée, puis verify.
+2. Exécuter le preflight, puis `node scripts/db-patches.js up --only 20260915_duration_learning_965.sql --dry-run`.
+   Appliquer cette même sélection sans `--dry-run`, puis exécuter verify. Le runner
+   contrôle l’empreinte immuable et l’inventaire ; le verrou SQL expire après dix secondes.
 3. Après build backend, utiliser `node dist/module/planning/cli/duration-learning.js --limit 100`.
    Par défaut, le programme analyse sans écrire et détaille les motifs d’exclusion.
 4. Ajouter `--apply --run` pour mettre la page en file et traiter un lot. Continuer avec

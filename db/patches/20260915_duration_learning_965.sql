@@ -1,4 +1,5 @@
 BEGIN;
+SET LOCAL lock_timeout = '10s';
 
 ALTER TABLE public.production_pointages ADD COLUMN IF NOT EXISTS corrects_pointage_id uuid
   REFERENCES public.production_pointages(id) ON DELETE RESTRICT;
