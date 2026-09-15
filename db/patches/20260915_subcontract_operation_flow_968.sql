@@ -2,6 +2,7 @@
 -- Existing custody entries are immutable and are not inferred/backfilled.
 BEGIN;
 SET LOCAL lock_timeout='5s';
+SET LOCAL statement_timeout='120s';
 DO $$ BEGIN
   IF to_regclass('public.subcontract_work_package_ledger') IS NULL
     OR to_regclass('public.production_transfer_batches') IS NULL
@@ -90,6 +91,7 @@ DO $$ DECLARE t text; BEGIN
   END LOOP;
 END $$;
 DO $$ BEGIN IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='cerp_app') THEN
+  ALTER TABLE public.subcontract_supplier_calendars OWNER TO cerp_app;
   GRANT SELECT,INSERT,UPDATE ON public.subcontract_supplier_calendars TO cerp_app;
 END IF; END $$;
 COMMIT;
