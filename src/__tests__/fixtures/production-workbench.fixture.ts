@@ -11,8 +11,10 @@ export async function seedProductionWorkbenchFixture(
   } = {},
 ) {
   const url = new URL(process.env.DATABASE_URL || "http://invalid");
+  const managedPort = process.env.CERP_E2E_DB_PORT || "55432";
   const managedSol05 = process.env.CERP_E2E_MANAGED_STACK === "1"
-    && url.hostname === "127.0.0.1" && url.port === "55432"
+    && /^\d+$/.test(managedPort) && Number(managedPort) >= 1024 && Number(managedPort) <= 65535
+    && url.hostname === "127.0.0.1" && url.port === String(Number(managedPort))
     && url.pathname === "/cerp_test" && url.username === "cerp_e2e";
   if (process.env.CERP_E2E_ISOLATED !== "1" || (!managedSol05 &&
     process.env.DATABASE_URL !== "postgresql://cerp_712@127.0.0.1:55432/cerp_test"))
