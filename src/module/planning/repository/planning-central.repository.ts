@@ -7,6 +7,8 @@ import { expandCalendar, type CalendarDefinition } from "../domain/central-calen
 import type { CentralSnapshot, CentralTask, Dependency, Resource } from "../types/planning-central.types";
 import type { CentralWindow } from "../validators/planning-central.validators";
 import {readForecastState} from './planning-forecast.repository';
+import {readPlanningCoverageTx} from './planning-coverage.repository';
+import {emptyPlanningCoverage} from '../domain/planning-material-coverage';
 
 export type CentralQuery = Pick<PoolClient, "query">;
 type Row = Record<string, unknown>;
@@ -220,12 +222,12 @@ export async function readCentralDependencies(tx: CentralQuery): Promise<Depende
     releasedQuantity:num(r.released_quantity),lagMinutes:num(r.lag_minutes) }));
 }
 
-export async function readCentralSnapshot(query: CentralWindow & { includeTaskIds?: string[] }, tx?: CentralQuery): Promise<CentralSnapshot> {
+export async function readCentralSnapshot(query: CentralWindow & { includeTaskIds?: string[] }, tx?: CentralQuery, includeCoverage = true): Promise<CentralSnapshot> {
   if (!tx) {
     const client = await pool.connect();
     try {
       await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
-      const out = await readCentralSnapshot(query,client);
+      const out = await readCentralSnapshot(query,client,includeCoverage);
       await client.query("COMMIT");return out;
     } catch(e) {await client.query("ROLLBACK");throw e;} finally {client.release();}
   }
@@ -277,8 +279,7 @@ export async function readCentralSnapshot(query: CentralWindow & { includeTaskId
   }
   const resources = await readCentralResources(tx,query.from,query.to);
   const dependencies = await readCentralDependencies(tx);
-  // Future allocation writes ship in a separate milestone; their unfinished projection is not published.
-  const coverage = {sources:[],demands:[],allocations:[],coverageAvailable:false};
+  const coverage = includeCoverage ? await readPlanningCoverageTx(tx,tasks,new Date().toISOString()) : emptyPlanningCoverage();
   return {apiVersion:2,revision:settings.revision,generatedAt:new Date().toISOString(),stale:false,activation:settings.activation,
     tasks,resources,dependencies,...coverage,forecastState:await readForecastState(tx),total:num(rows[0]?.total),
     nextCursor:more ? String(visible[visible.length-1].id) : null};

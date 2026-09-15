@@ -8,4 +8,5 @@ describe('full quantity forecast',()=>{
     for(const promises of [[{quantity:40,date:'2026-09-07'}],[{quantity:40,date:null}],[{quantity:25,date:'2026-09-18'}]])expect(available({...base,promises}).date).toBeNull();
   });
   it('requires quality release and reviewed preparation before a usable forecast',()=>{expect(available({...base,blocked:15}).reason).toContain('libération');expect(available({...base,preparation:['Revoir la nuance']}).date).toBeNull();});
+  it('does not delay an already secured need because of a surplus blocked receipt',()=>{expect(available({...base,required:60,blocked:15}).date).toBe(base.now);});
 });

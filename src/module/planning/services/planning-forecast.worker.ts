@@ -5,7 +5,8 @@ import {readCentralSnapshot,readCentralDependencies} from '../repository/plannin
 import {materialWorkflowEnabled} from '../../production/repository/of-dossier.repository';
 import {readMaterialTx} from '../../production/repository/of-material.repository';
 import {readOperationReadinessTx} from '../../production/repository/operation-readiness.repository';
-import {materialForecastAvailability} from '../domain/material-forecast';
+import {projectMaterialCoverage} from '../domain/planning-material-coverage';
+import {readMaterialReservationAvailabilityTx} from '../../production/repository/material-reservation-availability.repository';
 import {schedule} from '../domain/central-scheduler';
 import {HttpError} from '../../../utils/httpError';
 
@@ -33,12 +34,14 @@ export async function runPlanningForecastOnce(){
     let grew=true;
     while(grew){grew=false;for(const edge of dependencies)if(included.has(edge.successorId)&&!included.has(edge.predecessorId)){included.add(edge.predecessorId);grew=true;}}
     if(included.size>10000)throw new HttpError(503,'FORECAST_WINDOW_TOO_DENSE','Calcul trop volumineux.');
-    const snapshot=await readCentralSnapshot({from:now,to,limit:10000,includeTaskIds:[...included]},tx);
+    const snapshot=await readCentralSnapshot({from:now,to,limit:10000,includeTaskIds:[...included]},tx,false);
     if(snapshot.nextCursor)throw new HttpError(503,'FORECAST_WINDOW_TOO_DENSE','Calcul trop volumineux.');
     const activeIds=new Set(ids),ofIds=[...new Set(snapshot.tasks.filter(t=>activeIds.has(t.id)).flatMap(t=>t.ofId?[t.ofId]:[]))];
     const tasks=snapshot.tasks.map(t=>({...t,blockers:[...t.blockers]}));
     for(const ofId of ofIds){
-      const coverage=await readMaterialTx(tx,ofId),readiness=await readOperationReadinessTx(tx,ofId,coverage);
+      const coverage=await readMaterialTx(tx,ofId),availability=await readMaterialReservationAvailabilityTx(tx,coverage);
+      const readiness=await readOperationReadinessTx(tx,ofId,coverage,availability);
+      const projection=projectMaterialCoverage(coverage,tasks,availability,now);
       for(const task of tasks.filter(t=>t.ofId===ofId&&activeIds.has(t.id)&&t.commitment!=='DONE')){
         const op=readiness.operations.find(o=>o.id===task.operationId);
         if(!op){task.blockers.push('Disponibilité opération inconnue.');task.earliestStart=null;continue;}
@@ -48,12 +51,11 @@ export async function runPlanningForecastOnce(){
         const blocking=op.blockers.filter(b=>!timedCodes.includes(b.code)&&b.code!=='QUANTITY_COMPLETE');
         task.blockers.push(...blocking.map(b=>b.message));
         let earliest=now;
-        for(const need of coverage.needs.filter(n=>n.operationId===task.operationId)){
-          const supply=materialForecastAvailability({now,required:need.required,consumed:need.consumed,reserved:need.reserved,blocked:need.receivedBlocked,preparation:need.blockers,
-            promises:[...need.promises.map(p=>({quantity:Math.max(0,p.assigned-p.received),date:p.due})),
-              ...coverage.customerCalls.filter(c=>c.need_id===need.id&&c.status==='ANNOUNCED').map(c=>({quantity:Math.max(0,c.quantity-c.received),date:c.announced_date}))]});
-          if(supply.reason)task.blockers.push(supply.reason);
-          if(supply.date&&supply.date>earliest)earliest=supply.date;
+        for(const demand of projection.demands.filter(n=>n.coverage?.operationId===task.operationId)){
+          const supply=demand.coverage!;
+          // A late but confirmed date shifts the forecast, not the commitment.
+          if(!supply.availableAt)task.blockers.push(...supply.issues);
+          if(supply.availableAt&&supply.availableAt>earliest)earliest=supply.availableAt;
         }
         task.earliestStart=task.blockers.length?null:earliest;
         // Remaining duration of an operation already started is projected from
