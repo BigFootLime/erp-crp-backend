@@ -5,6 +5,9 @@ export const centralWindowSchema = z.object({
   limit: z.coerce.number().int().min(1).max(1000).default(250),
   of_id: z.coerce.number().int().positive().optional(), search: z.string().trim().max(100).optional(),
   resource_id: z.string().max(100).optional(),
+  placement: z.enum(['all','placed','backlog']).optional(),
+  snapshot_revision: z.string().regex(/^\d+$/).optional(),
+  include_coverage: z.enum(['true','false']).optional().transform(v=>v!=='false'),
 }).refine(q => Date.parse(q.to) > Date.parse(q.from) && Date.parse(q.to) - Date.parse(q.from) <= 367 * 86400000,
   { message: "La fenêtre doit couvrir entre un instant et douze mois." });
 export const centralSimulationSchema = z.object({
@@ -32,3 +35,12 @@ export const centralTaskConfigSchema = z.object({
 });
 export type CentralWindow = z.infer<typeof centralWindowSchema>;
 export type CentralSimulationInput = z.infer<typeof centralSimulationSchema>;
+
+/** Whole-window analytical preview. Application remains the versioned, bounded simulation/apply protocol. */
+export const centralPreviewSchema = z.object({
+  from: instant, to: instant, revision: z.string().regex(/^\d+$/),
+  search: z.string().trim().max(100).optional(), resource_id: z.string().max(100).optional(),
+  earliestStart: instant, autoAssign: z.boolean().default(false),
+}).strict().refine(q=>Date.parse(q.to)>Date.parse(q.from)&&Date.parse(q.to)-Date.parse(q.from)<=367*86400000,
+  {message:'Fenêtre de simulation invalide.'});
+export type CentralPreviewInput = z.infer<typeof centralPreviewSchema>;

@@ -1,9 +1,11 @@
 import type { PoolClient } from "pg";
+import { computeSchedule } from './central-compute';
+import { dependencyClosure } from '../domain/central-dependencies';
+import type { CentralPreviewInput } from '../validators/planning-central.validators';
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
 import { withPlanningCommand as command } from "../repository/planning-command.repository";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
-import { schedule } from "../domain/central-scheduler";
 import { centralCanonicalJson } from "../domain/central-canonical-json";
 import { readCentralDependencies, readCentralSettings, readCentralSnapshot } from "../repository/planning-central.repository";
 import { assertOperationResourceCompatible, assertResourceSchedulable, repoArchivePlanningEvent, syncPlanningCoordinates, type AuditContext } from "../repository/planning.repository";
@@ -12,6 +14,10 @@ import type { CentralSnapshot, ScheduleResult } from "../types/planning-central.
 import { PROGRAMMING_ASSIGNEE_PREDICATE_SQL } from "../../production/repository/production-preparation.repository";
 
 const levels: CentralSnapshot["activation"][] = ["OBSERVE","READ","SIMULATE","COMMIT","EXECUTE","LEARN"];
+function commandResult(result:ScheduleResult):ScheduleResult {
+  const affected=new Set(result.affected);
+  return {...result,forecasts:Object.fromEntries(Object.entries(result.forecasts).filter(([id])=>affected.has(id)))};
+}
 export async function unplanCentral(input: CentralUnplanInput, audit: AuditContext, key: string) {
   return command(audit,key,"unplan",input,async tx => {
     await tx.query("SELECT revision FROM public.planning_central_settings WHERE singleton FOR UPDATE");
@@ -61,31 +67,70 @@ export function assertCentralActivation(actual: CentralSnapshot["activation"], r
 function stale() { return new HttpError(409,"PLANNING_SIMULATION_OBSOLETE",
   "Les données ont changé. Recalculez la simulation avant de l'appliquer.",{recalculate:true}); }
 async function simulationSnapshot(input:CentralSimulationInput,tx:PoolClient) {
-  const dependencies=await readCentralDependencies(tx),included=new Set(input.changes.map(change=>change.taskId));
-  let grew=true;
-  while(grew) {
-    grew=false;
-    for(const dependency of dependencies) if(included.has(dependency.predecessorId)||included.has(dependency.successorId)) {
-      for(const id of [dependency.predecessorId,dependency.successorId]) if(!included.has(id)) {included.add(id);grew=true;}
-    }
-    if(included.size>10000)throw new HttpError(422,"PLANNING_CHAIN_TOO_DENSE","Cette chaîne dépasse la capacité de simulation. Planifiez-la par groupes.");
+  const dependencies=await readCentralDependencies(tx);
+  let included: Set<string>;
+  try { included=dependencyClosure(dependencies,input.changes.map(c=>c.taskId),'both'); }
+  catch { throw new HttpError(422,'PLANNING_CHAIN_TOO_DENSE','Cette chaîne dépasse 10 000 opérations.'); }
+  const query={from:input.from,to:input.to,limit:10000,includeTaskIds:[...included]};
+  const selected=await readCentralSnapshot({...query,taskIdsOnly:true},tx,false);
+  if(selected.nextCursor)throw new HttpError(422,'PLANNING_CHAIN_TOO_DENSE','Cette chaîne dépasse 10 000 opérations.');
+  const byId=new Map(selected.tasks.map(t=>[t.id,t]));
+  const ids=new Set(selected.tasks.flatMap(t=>t.resourceIds));
+  for(const change of input.changes){
+    for(const id of change.resourceIds??[])ids.add(id);
+    if(change.autoAssign)for(const id of byId.get(change.taskId)?.eligibleResourceIds??[])ids.add(id);
   }
-  return readCentralSnapshot({from:input.from,to:input.to,limit:10000,includeTaskIds:[...included]},tx);
+  // A machine and its posts can share physical capacity. Include every alias,
+  // all competing reservations, and the complete dependency closure.
+  const capacities=new Set(selected.resources.filter(r=>ids.has(r.id)).map(r=>r.capacityId??r.id));
+  const capacityResourceIds=selected.resources.filter(r=>ids.has(r.id)||capacities.has(r.capacityId??r.id)).map(r=>r.id);
+  return readCentralSnapshot({...query,capacityResourceIds},tx,false);
+}
+
+export async function previewCentralWindow(input: CentralPreviewInput, signal?: AbortSignal) {
+  const tx = await pool.connect();
+  let snapshot: CentralSnapshot;
+  try {
+    await tx.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    snapshot = await readCentralSnapshot({from:input.from,to:input.to,limit:10000,snapshot_revision:input.revision},tx,false);
+    assertCentralActivation(snapshot.activation,'SIMULATE');
+    if (snapshot.nextCursor) throw new HttpError(422,'PLANNING_WINDOW_TOO_DENSE','La fenêtre dépasse 10 000 opérations.');
+    let included: Set<string>;
+    try { included=dependencyClosure(await readCentralDependencies(tx),snapshot.tasks.map(t=>t.id),'both'); }
+    catch { throw new HttpError(422,'PLANNING_CHAIN_TOO_DENSE','Cette chaîne dépasse 10 000 opérations.'); }
+    if (included.size > snapshot.tasks.length) snapshot = await readCentralSnapshot({from:input.from,to:input.to,limit:10000,includeTaskIds:[...included]},tx,false);
+    if (snapshot.nextCursor) throw new HttpError(422,'PLANNING_CHAIN_TOO_DENSE','La chaîne dépasse 10 000 opérations.');
+    await tx.query('COMMIT');
+  } catch (error) { await tx.query('ROLLBACK'); throw error; } finally { tx.release(); }
+  const search = input.search?.toLocaleLowerCase('fr') ?? '';
+  const requested = snapshot.tasks.filter(t=>!t.committed&&!t.locked&&t.commitment!=='DONE'&&t.commitment!=='STARTED'&&
+    (!input.resource_id||t.resourceIds.includes(input.resource_id))&&
+    [t.reference,t.ofNumber,t.label].some(v=>v?.toLocaleLowerCase('fr').includes(search)))
+    .map(t=>({taskId:t.id,earliestStart:input.earliestStart,autoAssign:input.autoAssign&&t.source==='OPERATION'}));
+  const result = await computeSchedule({tasks:snapshot.tasks,resources:snapshot.resources,dependencies:snapshot.dependencies,from:input.from,requested},signal);
+  const current = await readCentralSettings();
+  return {readOnly:true as const,revision:snapshot.revision,stale:current.revision!==snapshot.revision,
+    examined:snapshot.tasks.length,requested:requested.length,result,
+    tasks:snapshot.tasks.map(({id,label,ofNumber,reference})=>({id,label,ofNumber,reference}))};
 }
 export async function createCentralSimulation(input:CentralSimulationInput,audit:AuditContext,key:string) {
   return command(audit,key,"simulate",input,async tx=>{
-    // A repeatable snapshot is ensured by the shared revision lock; legacy writers invalidate it too.
-    await tx.query("SELECT revision FROM public.planning_central_settings WHERE singleton FOR SHARE");
+    // Optimistic reads avoid blocking another planner's commit while calculating.
+    // Every canonical writer advances the durable revision; check both boundaries.
+    const before=await readCentralSettings(tx);
     const snapshot=await simulationSnapshot(input,tx);
     assertCentralActivation(snapshot.activation,"SIMULATE");
-    if(snapshot.revision!==input.revision)throw stale();
+    if(snapshot.revision!==input.revision||before.revision!==input.revision||(await readCentralSettings(tx)).revision!==input.revision)throw stale();
     if(snapshot.nextCursor)throw new HttpError(422,"PLANNING_WINDOW_TOO_DENSE","Réduisez la fenêtre de simulation.");
+    const tasksById=new Map(snapshot.tasks.map(t=>[t.id,t]));
     for(const change of input.changes) {
-      const task=snapshot.tasks.find(t=>t.id===change.taskId);
+      const task=tasksById.get(change.taskId);
       if(!task || task.version!==change.expectedVersion)throw stale();
     }
-    const result=schedule({tasks:snapshot.tasks,resources:snapshot.resources,dependencies:snapshot.dependencies,
-      from:input.from,requested:input.changes});
+    const result=commandResult(await computeSchedule({tasks:snapshot.tasks,resources:snapshot.resources,dependencies:snapshot.dependencies,
+      from:input.from,requested:input.changes}));
+    const latest=(await tx.query<{revision:string}>('SELECT revision::text FROM public.planning_central_settings WHERE singleton FOR SHARE')).rows[0];
+    if(latest.revision!==input.revision)throw stale();
     const {rows}=await tx.query<{id:string}>(`INSERT INTO public.planning_simulations(created_by,base_revision,request,result)
       VALUES($1,$2,$3::jsonb,$4::jsonb) RETURNING id::text`,[audit.user_id,snapshot.revision,JSON.stringify(input),JSON.stringify(result)]);
     return {id:rows[0].id,revision:snapshot.revision,result};
@@ -119,12 +164,13 @@ export async function applyCentralSimulation(id:string,revision:string,audit:Aud
     const input=simulation.request;
     const current=await simulationSnapshot(input,tx);
     // Recompute from canonical state, never trust a client-supplied or outdated schedule result.
-    const result=schedule({tasks:current.tasks,resources:current.resources,dependencies:current.dependencies,from:input.from,requested:input.changes});
+    const result=commandResult(await computeSchedule({tasks:current.tasks,resources:current.resources,dependencies:current.dependencies,from:input.from,requested:input.changes}));
     if(!result.feasible || centralCanonicalJson(result.changes)!==centralCanonicalJson(simulation.result.changes))throw stale();
     // Batch moves can exchange slots; exclusions are checked against the final transaction state.
     await tx.query("SET CONSTRAINTS planning_events_machine_no_overlap,planning_events_poste_no_overlap DEFERRED");
+    const tasksById=new Map(current.tasks.map(t=>[t.id,t]));
     for(const change of result.changes) {
-      const task=current.tasks.find(t=>t.id===change.taskId)!;
+      const task=tasksById.get(change.taskId)!;
       if(task.locked || task.commitment==="STARTED" || task.commitment==="DONE")throw stale();
       if(task.source==="DRAFT")throw new HttpError(409,"PLANNING_DRAFT_NOT_COMMITTABLE","Définissez les opérations avant d'engager la capacité.");
       if(task.external){

@@ -20,10 +20,18 @@ beforeEach(()=>{
   m.snapshot.mockResolvedValue({revision:'2',nextCursor:null,dependencies:[],resources:[{id:'m',label:'Machine',kind:'MACHINE',timezone:'UTC',availability:[{start,end}]}],tasks:[{id:'op:1',ofId:1,operationId:'1',source:'OPERATION',commitment:'COMMITTED',committed:{start:'2026-09-08T08:00:00Z',end:'2026-09-08T09:00:00Z'},resourceIds:['m'],eligibleResourceIds:['m'],blockers:[],estimate:{remainingMinutes:60},locked:false,createdAt:'2026-09-01',priority:1}]});
 });
 describe('durable planning projection',()=>{
+  it('discards an obsolete result without acknowledging queued work',async()=>{
+    const original=m.query.getMockImplementation()!;
+    m.query.mockImplementation(async(sql:string,...args:unknown[])=>sql.includes('FOR UPDATE')?{rows:[{revision:'3'}],rowCount:1}:original(sql,...args));
+    await expect(runPlanningForecastOnce()).resolves.toBe(false);
+    expect(m.query).toHaveBeenCalledWith('ROLLBACK');
+    expect(m.query.mock.calls.some(([sql])=>sql.includes('SET forecast_start=')||sql.includes('SET processed_at='))).toBe(false);
+    expect(m.event).not.toHaveBeenCalled();vi.useRealTimers();
+  });
   it('projects after material arrival and preserves the original commitment',async()=>{
     await expect(runPlanningForecastOnce()).resolves.toBe(true);
     const update=m.query.mock.calls.find(([sql])=>sql.includes('SET forecast_start='));
-    expect(update?.[1]).toEqual(['op:1',start,'2026-09-14T09:00:00.000Z','[]']);
+    expect(JSON.parse(update?.[1][0])).toEqual([{id:'op:1',start,end:'2026-09-14T09:00:00.000Z',issues:[]}]);
     expect(m.snapshot.mock.results[0]).toBeDefined();
     expect(m.snapshot.mock.calls[0][0].includeTaskIds).toContain('program:done');
     expect(m.query.mock.calls.some(([sql])=>/UPDATE public.planning_events|SET committed_|SET.*machine_id/.test(sql))).toBe(false);
@@ -42,8 +50,9 @@ describe('durable planning projection',()=>{
     const material=await m.material();material.needs[0].promises[0].statut='BROUILLON';
     await runPlanningForecastOnce();
     const update=m.query.mock.calls.find(([sql])=>sql.includes('SET forecast_start='));
-    expect(update?.[1].slice(0,3)).toEqual(['op:1',null,null]);
-    expect(update?.[1][3]).toContain('Matière restante');
+    const projection=JSON.parse(update?.[1][0])[0];
+    expect(projection).toMatchObject({id:'op:1',start:null,end:null});
+    expect(projection.issues.join(' ')).toContain('Matière restante');
     expect(m.query.mock.calls.some(([sql])=>/UPDATE public.planning_events|SET committed_/.test(sql))).toBe(false);
     vi.useRealTimers();
   });

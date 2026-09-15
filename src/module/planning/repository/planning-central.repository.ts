@@ -109,15 +109,21 @@ WITH operation_rows AS (
    OR EXISTS(SELECT 1 FROM public.ordres_fabrication consumer
      WHERE consumer.piece_technique_version_id=v.id AND consumer.statut::text NOT IN ('ANNULE','TERMINE'))
 ), tasks AS (SELECT * FROM operation_rows UNION ALL SELECT * FROM draft_rows UNION ALL
- SELECT * FROM legacy_program_rows UNION ALL SELECT * FROM version_program_rows)
-SELECT *,count(*) OVER()::int AS total FROM tasks
+ SELECT * FROM legacy_program_rows UNION ALL SELECT * FROM version_program_rows), filtered AS (
+SELECT * FROM tasks
  WHERE ($3::bigint IS NULL OR of_id=$3)
  AND ($4::text IS NULL OR reference ILIKE '%'||$4||'%' OR of_number ILIKE '%'||$4||'%' OR label ILIKE '%'||$4||'%')
  AND ($5::text IS NULL OR resource_id=$5)
- AND (id=ANY($8::text[]) OR COALESCE(forecast_start,committed_start) IS NULL OR
+ AND (NOT $10::boolean OR id=ANY($8::text[]))
+ AND ($11::text[] IS NULL OR resource_id=ANY($11::text[]) OR id=ANY($8::text[]))
+ AND ($9::text IS NULL OR $9='all' OR ($9='backlog' AND committed_start IS NULL)
+      OR ($9='placed' AND (committed_start IS NOT NULL OR forecast_start IS NOT NULL)))
+ AND ($9='backlog' OR id=ANY($8::text[]) OR COALESCE(forecast_start,committed_start) IS NULL OR
       (committed_start<$2::timestamptz AND committed_end>$1::timestamptz) OR
       (forecast_start<$2::timestamptz AND forecast_end>$1::timestamptz))
- AND ($6::text IS NULL OR id>$6)
+)
+SELECT *, (SELECT count(*)::int FROM filtered) AS total FROM filtered
+ WHERE ($6::text IS NULL OR id>$6)
  ORDER BY id LIMIT $7::int
 `;
 
@@ -225,7 +231,9 @@ export async function readCentralDependencies(tx: CentralQuery): Promise<Depende
     releasedQuantity:num(r.released_quantity),lagMinutes:num(r.lag_minutes) }));
 }
 
-export async function readCentralSnapshot(query: CentralWindow & { includeTaskIds?: string[] }, tx?: CentralQuery, includeCoverage = true): Promise<CentralSnapshot> {
+export async function readCentralSnapshot(query: Omit<CentralWindow,'include_coverage'> & {
+  includeTaskIds?: string[]; include_coverage?: boolean; taskIdsOnly?:boolean; capacityResourceIds?:string[]
+}, tx?: CentralQuery, includeCoverage = true): Promise<CentralSnapshot> {
   if (!tx) {
     const client = await pool.connect();
     try {
@@ -235,8 +243,11 @@ export async function readCentralSnapshot(query: CentralWindow & { includeTaskId
     } catch(e) {await client.query("ROLLBACK");throw e;} finally {client.release();}
   }
   const settings = await readCentralSettings(tx);
+  if (query.snapshot_revision && query.snapshot_revision !== settings.revision)
+    throw new HttpError(409,'PLANNING_SNAPSHOT_OBSOLETE','Le planning a changé. Actualisez la liste.');
   const { rows } = await tx.query<Row>(TASK_QUERY,[query.from,query.to,query.of_id ?? null,query.search ?? null,
-    query.resource_id ?? null,query.cursor ?? null,query.limit+1,query.includeTaskIds ?? []]);
+    query.resource_id ?? null,query.cursor ?? null,query.limit+1,query.includeTaskIds ?? [],query.placement ?? null,
+    query.taskIdsOnly??false,query.capacityResourceIds??null]);
   const more = rows.length > query.limit;
   const visible = more ? rows.slice(0,query.limit) : rows;
   const tasks = visible.map(row => taskFromRow(row));
@@ -284,9 +295,11 @@ export async function readCentralSnapshot(query: CentralWindow & { includeTaskId
   await hydrateDurationEstimates(tx,tasks,resources,settings.activation==='LEARN');
   if(settings.activation==='LEARN') for(const task of tasks) task.version=createHash('sha256')
     .update(task.version+JSON.stringify(task.estimate)+JSON.stringify(task.resourceEstimates)).digest('hex');
-  const dependencies = await readCentralDependencies(tx);
+  const taskIds = new Set(tasks.map(task=>task.id));
+  // Keep boundary edges for the inspector and scheduler, without sending the complete graph on every UI page.
+  const dependencies = (await readCentralDependencies(tx)).filter(d=>taskIds.has(d.predecessorId)||taskIds.has(d.successorId));
   await hydrateExternalPlanning(tx,tasks,resources,dependencies,query.from,query.to);
-  const coverage = includeCoverage ? await readPlanningCoverageTx(tx,tasks,new Date().toISOString()) : emptyPlanningCoverage();
+  const coverage = includeCoverage && query.include_coverage !== false ? await readPlanningCoverageTx(tx,tasks,new Date().toISOString()) : emptyPlanningCoverage();
   return {apiVersion:2,revision:settings.revision,generatedAt:new Date().toISOString(),stale:false,activation:settings.activation,
     tasks,resources,dependencies,...coverage,forecastState:await readForecastState(tx),
     ...(settings.activation==='LEARN'?{learningState:await readLearningState(tx)}:{}),total:num(rows[0]?.total),
