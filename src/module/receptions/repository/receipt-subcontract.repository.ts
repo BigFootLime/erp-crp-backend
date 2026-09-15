@@ -45,8 +45,9 @@ export async function readReceiptSubcontract(tx: Queryable, lineId: string) {
       available: number;
       package_id: string;
       unit: string;
+      lot_id: string;
     }>(
-      `SELECT e.id::text,lot.lot_code,e.package_id::text,e.unit,
+      `SELECT e.id::text,e.lot_id::text,lot.lot_code,e.package_id::text,e.unit,
     (e.qty-COALESCE((SELECT sum(b.quantity) FROM public.reception_subcontract_origins b WHERE b.return_event_id=e.id),0))::float8 AS available
     FROM public.subcontract_work_package_ledger e JOIN public.subcontract_work_packages p ON p.id=e.package_id JOIN public.lots lot ON lot.id=e.lot_id
     WHERE p.supplier_order_line_id=$1::uuid AND e.event_type='RETURN' ORDER BY e.created_at,e.id`,
@@ -85,6 +86,7 @@ export async function bindReceiptSubcontract(
     payload,
     audit,
     async (tx) => {
+      await tx.query("SELECT revision FROM public.planning_central_settings WHERE singleton FOR UPDATE");
       const line = (
         await tx.query<{
           lot_id: string;
@@ -166,6 +168,7 @@ export async function bindReceiptSubcontract(
         if (
           body.returnEventId &&
           (!existing ||
+            existing.lot_id !== line.lot_id ||
             qty > existing.available + 0.000001 ||
             existing.unit.trim().toUpperCase() !==
               line.unit.trim().toUpperCase())

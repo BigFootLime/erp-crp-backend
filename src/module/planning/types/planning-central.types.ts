@@ -23,6 +23,7 @@ export type Estimate = {
   excluded: Array<{ id: string; reason: string }>;
 };
 export type CentralTask = {
+  external?: { packages: import('../../subcontract/subcontract-flow.types').SubcontractFlow[]; fullReadyAt:string|null; firstBatchReadyAt:string|null; issues:string[] };
   resourceEstimates?: Record<string, Estimate>;
   id: string; source: "OPERATION" | "PROGRAMMING" | "DRAFT";
   operationId: string | null; programmingId: string | null; ofId: number | null; orderId: number | null;

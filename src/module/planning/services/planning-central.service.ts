@@ -30,8 +30,12 @@ export async function unplanCentral(input: CentralUnplanInput, audit: AuditConte
     });
     for(const task of selected) {
       if(task.source==="OPERATION") {
+        if(task.external){
+          const frozen=await tx.query("SELECT cc.ar_sent_at FROM public.ordres_fabrication o LEFT JOIN public.commande_client cc ON cc.id=o.commande_id WHERE o.id=$1 FOR UPDATE OF o",[task.ofId]);
+          if(frozen.rows[0]?.ar_sent_at)throw new HttpError(409,"PLANNING_LOCKED_AFTER_AR","Le dossier figé nécessite le parcours de révision de l'OF.");
+        }
         const events=await tx.query<{id:string;status:string}>("SELECT id::text,status::text FROM public.planning_events WHERE of_operation_id=$1::uuid AND archived_at IS NULL AND status<>'CANCELLED' FOR UPDATE",[task.operationId]);
-        if(!events.rows.length || events.rows.some(event=>event.status!=="PLANNED"))
+        if((!events.rows.length&&!task.external) || events.rows.some(event=>event.status!=="PLANNED"))
           throw new HttpError(409,"PLANNING_UNPLAN_LOCKED","Un créneau commencé ou terminé ne peut pas être retiré.");
         for(const event of events.rows) await repoArchivePlanningEvent({id:event.id,audit,tx});
       }
@@ -123,7 +127,20 @@ export async function applyCentralSimulation(id:string,revision:string,audit:Aud
       const task=current.tasks.find(t=>t.id===change.taskId)!;
       if(task.locked || task.commitment==="STARTED" || task.commitment==="DONE")throw stale();
       if(task.source==="DRAFT")throw new HttpError(409,"PLANNING_DRAFT_NOT_COMMITTABLE","Définissez les opérations avant d'engager la capacité.");
-      if(task.source==="OPERATION") {
+      if(task.external){
+        if(task.external.packages.some(p=>p.departedAt))throw stale();
+        const orderLock=await tx.query("SELECT cc.ar_sent_at FROM public.ordres_fabrication o LEFT JOIN public.commande_client cc ON cc.id=o.commande_id WHERE o.id=$1 FOR UPDATE OF o",[task.ofId]);
+        if(orderLock.rows[0]?.ar_sent_at)throw new HttpError(409,"PLANNING_LOCKED_AFTER_AR","Le dossier figé nécessite le parcours de révision de l'OF.");
+        const lock=await tx.query('SELECT id FROM public.of_operations WHERE id=$1::uuid FOR UPDATE',[task.operationId]);
+        if(!lock.rowCount)throw stale();
+        const legacy=await tx.query<{id:string;status:string}>("SELECT id::text,status::text FROM public.planning_events WHERE of_operation_id=$1::uuid AND archived_at IS NULL AND status<>'CANCELLED' FOR UPDATE",[task.operationId]);
+        if(legacy.rows.some(event=>event.status!=='PLANNED'))throw stale();
+        for(const event of legacy.rows)await repoArchivePlanningEvent({id:event.id,audit,tx});
+        await tx.query(`UPDATE public.planning_tasks SET committed_start=$2,committed_end=$3,version=version+1,updated_at=clock_timestamp() WHERE id=$1`,[task.id,change.after.start,change.after.end]);
+        await tx.query('UPDATE public.planning_central_settings SET revision=revision+1,updated_at=clock_timestamp() WHERE singleton');
+        await tx.query(`INSERT INTO public.planning_recalculation_jobs(entity_table,entity_id,source_revision)
+          SELECT 'planning_tasks',$1,revision FROM public.planning_central_settings WHERE singleton`,[task.id]);
+      } else if(task.source==="OPERATION") {
         const r=change.resourceIds[0],resource={machine_id:r.startsWith("machine:")?r.slice(8):null,poste_id:r.startsWith("poste:")?r.slice(6):null};
         if(change.resourceIds.length!==1 || (!resource.machine_id && !resource.poste_id))
           throw new HttpError(422,"PLANNING_RESOURCE_INVALID","Ressource d'opération incompatible.");

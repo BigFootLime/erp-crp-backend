@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg";
+import {receiptTransferInstalled} from '../../subcontract/subcontract-receipt-allocation.repository';
 import { HttpError } from "../../../utils/httpError";
 
 /** Shared entry boundary, including manually created and compensating movements. */
@@ -74,6 +75,7 @@ export async function assertReceiptProcessingClosed(
   tx: Pick<PoolClient, "query">,
   where: { receptionId?: string; orderId?: string; orderLineId?: string },
 ) {
+  const transferredSql=await receiptTransferInstalled(tx)?'public.subcontract_receipt_transferred_968(l.id)':'0';
   const pending = (
     await tx.query(
       `SELECT l.id FROM public.reception_fournisseur_lignes l
@@ -81,7 +83,7 @@ export async function assertReceiptProcessingClosed(
     LEFT JOIN public.receipt_processing_dispositions_1069 d ON d.receipt_line_id=l.id
     WHERE ($1::uuid IS NULL OR l.reception_id=$1::uuid) AND ($2::uuid IS NULL OR cl.commande_id=$2::uuid)
       AND ($3::uuid IS NULL OR cl.id=$3::uuid)
-      AND l.processing_policy='PIECES_CONTROLE_EMBALLAGE' AND (l.processing_reconciliation_required OR COALESCE(d.open_nc,0)>0 OR l.qty_received > COALESCE(d.disposed,0)+COALESCE((
+      AND l.processing_policy='PIECES_CONTROLE_EMBALLAGE' AND (l.processing_reconciliation_required OR COALESCE(d.open_nc,0)>0 OR l.qty_received > COALESCE(d.disposed,0)+${transferredSql}+COALESCE((
         SELECT sum(s.qty) FROM public.reception_fournisseur_stock_receipts s JOIN public.stock_movements m ON m.id=s.stock_movement_id WHERE s.reception_line_id=l.id AND m.status='POSTED'),0)) LIMIT 1`,
       [
         where.receptionId ?? null,

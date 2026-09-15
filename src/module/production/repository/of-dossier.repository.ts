@@ -22,8 +22,14 @@ export async function readOfDossierTx(tx:DossierDb,id:number) {
   if(!row) throw new HttpError(404,"OF_NOT_FOUND","Ordre de fabrication introuvable.");
   const operations=(await tx.query<DossierOperation>(`SELECT p.id::text,p.phase,p.designation AS label,p.status::text,
     p.tp::float8 AS setup,p.tf_unit::float8 AS unit,p.qte::float8 AS base,p.coef::float8 AS coefficient,
-    e.count>0 AS planned,e.start_ts::text AS start,e.end_ts::text AS end,e.resource
-    FROM public.of_operations p LEFT JOIN LATERAL(SELECT count(*) AS count,min(e.start_ts) AS start_ts,max(e.end_ts) AS end_ts,
+    (e.count>0 OR ext.committed_start IS NOT NULL) AS planned,
+    COALESCE(e.start_ts,ext.committed_start)::text AS start,COALESCE(e.end_ts,ext.committed_end)::text AS end,
+    COALESCE(e.resource,CASE WHEN ext.committed_start IS NOT NULL THEN 'Sous-traitant' END) AS resource
+    FROM public.of_operations p
+    LEFT JOIN public.planning_tasks ext ON ext.operation_id=p.id AND EXISTS(SELECT 1 FROM public.ordres_fabrication owner,
+      LATERAL jsonb_array_elements(COALESCE(owner.technical_snapshot->'operations','[]')) f
+      WHERE owner.id=p.of_id AND f->>'phase'=p.phase::text AND f->>'type_operation'='SOUS_TRAITANCE')
+    LEFT JOIN LATERAL(SELECT count(*) AS count,min(e.start_ts) AS start_ts,max(e.end_ts) AS end_ts,
       string_agg(DISTINCT COALESCE(m.name,s.label),' · ') AS resource FROM public.planning_events e
       LEFT JOIN public.machines m ON m.id=e.machine_id LEFT JOIN public.postes s ON s.id=e.poste_id
       WHERE e.of_operation_id=p.id AND e.archived_at IS NULL AND e.status<>'CANCELLED' AND e.end_ts>e.start_ts
