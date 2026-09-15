@@ -1,7 +1,9 @@
 // Completes the existing workbench fixture in the managed, disposable SOL-05 DB.
 const url = new URL(process.env.DATABASE_URL || "http://invalid");
+const managedPort = process.env.CERP_E2E_DB_PORT || "55432";
 if (process.env.CERP_E2E_ISOLATED !== "1" || process.env.CERP_E2E_MANAGED_STACK !== "1"
-  || url.hostname !== "127.0.0.1" || url.port !== "55432"
+  || !/^\d+$/.test(managedPort) || Number(managedPort) < 1024 || Number(managedPort) > 65535
+  || url.hostname !== "127.0.0.1" || url.port !== String(Number(managedPort))
   || url.pathname !== "/cerp_test" || url.username !== "cerp_e2e") {
   throw Error("Managed disposable SOL-05 database required");
 }
