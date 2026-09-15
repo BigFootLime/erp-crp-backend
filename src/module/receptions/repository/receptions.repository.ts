@@ -1721,7 +1721,7 @@ async function sumReceiptedQty(tx:PoolClient,lineId: string): Promise<number> {
     `,
     [lineId]
   )
-  return res.rows[0]?.qty ?? 0
+  return (res.rows[0]?.qty ?? 0) + await receiptTransferred(tx,lineId)
 }
 
 export async function repoCreateStockReceiptLocked(
@@ -1932,3 +1932,4 @@ export async function repoCreateStockReceipt(
     return repoCreateStockReceiptLocked(tx,materialInstalled,receptionId,lineId,body,audit,receiptKey)
   })
 }
+import {receiptTransferred} from '../../subcontract/subcontract-receipt-allocation.repository';

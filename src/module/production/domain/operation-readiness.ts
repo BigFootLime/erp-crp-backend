@@ -8,7 +8,7 @@ export type OperationReadinessFacts = {
   preparationMissing: boolean; programRequired: boolean; programReady: boolean; qualityBlocked: boolean;
   componentsMissing: boolean;
   materials: Array<{label: string; availableBlanks: number; allowPartial: boolean; blockers: string[]}>;
-  predecessors: Array<{id: string; label: string; done: boolean; good: number; transferred: number; partial: boolean; minimum: number}>;
+  predecessors: Array<{id: string; label: string; done: boolean; good: number; transferred: number; partial: boolean; minimum: number; requireTransfer?:boolean}>;
 };
 
 export function evaluateOperationReadiness(f: OperationReadinessFacts) {
@@ -33,9 +33,9 @@ export function evaluateOperationReadiness(f: OperationReadinessFacts) {
   for (const p of f.predecessors) {
     // An explicit released transfer is required for an unfinished predecessor.
     // A good quantity declaration alone never means the batch was transferred.
-    const available = p.done ? Math.max(0,p.good) : p.partial ? Math.max(0,p.transferred) : 0;
+    const available = p.requireTransfer ? Math.max(0,p.transferred) : p.done ? Math.max(0,p.good) : p.partial ? Math.max(0,p.transferred) : 0;
     ceiling = Math.min(ceiling, available);
-    if (!p.done && (!p.partial || available < p.minimum)) block("PREDECESSOR_REQUIRED", `Attente de ${p.label}${p.partial ? ` : lot transférable de ${p.minimum} pièces minimum.` : " : opération complète requise."}`, "Consulter l’étape précédente", "operations");
+    if ((p.requireTransfer && available < (p.partial ? p.minimum : f.targetQuantity)) || (!p.done && (!p.partial || available < p.minimum))) block("PREDECESSOR_REQUIRED", `Attente de ${p.label}${p.partial ? ` : lot transférable de ${p.minimum} pièces minimum.` : " : opération complète requise."}`, "Consulter l’étape précédente", "operations");
   }
   const availableQuantity = Math.max(0, Math.min(remaining, Math.floor(ceiling - f.processedQuantity)));
   if (!remaining) block("QUANTITY_COMPLETE", "Toute la quantité de cette opération est déjà déclarée.", "Vérifier puis terminer l’opération", "operations");

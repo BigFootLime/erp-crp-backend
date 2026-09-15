@@ -1,4 +1,5 @@
 import { assertDeliveryNoteTx } from "./receipt-delivery-note.repository";
+import {receiptTransferred} from '../../subcontract/subcontract-receipt-allocation.repository';
 import { transferMaterialReceiptTx } from "../../production/repository/of-material-receipts.repository";
 import { randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
@@ -73,7 +74,7 @@ export async function postPieceReceiptStockTx(
     client: tx,
     lotId: line.lotId,
     receiptLineId: lineId,
-    qty: (line.stocked + body.qty) * line.coefficient,
+    qty: (line.stocked + body.qty + await receiptTransferred(tx,lineId)) * line.coefficient,
     unit: line.stockUnit,
   });
 

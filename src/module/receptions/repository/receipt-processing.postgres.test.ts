@@ -25,6 +25,18 @@ import { stockToolReceipt } from "./receipt-tool-stock.repository";
 import { syncArticleCommercialTx } from "../../stock/repository/article-commercial.repository";
 import { assertReceiptProcessingClosed } from "./receipt-processing-guard";
 import { bindReceiptSubcontract } from "./receipt-subcontract.repository";
+import {
+  getSubcontractFlow,
+  transferSubcontractReturn,
+} from "../../subcontract/subcontract-flow.service";
+import { readCentralSnapshot } from "../../planning/repository/planning-central.repository";
+import { hydrateExternalPlanning } from "../../planning/repository/planning-external.repository";
+import { getSubcontractCreationOptions } from "../../subcontract/subcontract-flow.service";
+import {
+  createCentralSimulation,
+  applyCentralSimulation,
+  unplanCentral,
+} from "../../planning/services/planning-central.service";
 import { repoCreateNonConformityDisposition } from "../../qualite/repository/qualite.repository";
 import {
   lockReceiptReleaseScope,
@@ -32,10 +44,15 @@ import {
 } from "./receipt-quality-release.repository";
 
 // Full migrated schema, opt-in and restricted to the dedicated local rehearsal.
+const externalEnabled =
+  process.env.CERP_EXTERNAL_FLOW_PG_TEST === "1" &&
+  process.env.DATABASE_URL ===
+    "postgresql://postgres@127.0.0.1:62168/cerp_test";
 const enabled =
-  process.env.CERP_RECEIPT_PG_TEST === "1" &&
-  new URL(process.env.DATABASE_URL ?? "postgresql://localhost/unused")
-    .pathname === "/cerp_1069_test";
+  externalEnabled ||
+  (process.env.CERP_RECEIPT_PG_TEST === "1" &&
+    new URL(process.env.DATABASE_URL ?? "postgresql://localhost/unused")
+      .pathname === "/cerp_1069_test");
 const suite = enabled ? describe : describe.skip;
 let user: number, warehouse: string, place: number;
 const audit = (): AuditContext => ({
@@ -189,7 +206,10 @@ async function technicalPiece() {
   );
   return id;
 }
-async function subcontractFixture() {
+async function subcontractFixture(
+  issue = true,
+  technicalSnapshot?: Record<string, unknown>,
+) {
   const f = await fixture(60),
     pt = await technicalPiece();
   // Restore the received lot's physical quarantine before recording custody.
@@ -207,14 +227,48 @@ async function subcontractFixture() {
     sourceLot = randomUUID(),
     revision = randomUUID(),
     document = randomUUID();
-  const ofId = Number(
-    (
-      await pool.query(
-        "INSERT INTO public.ordres_fabrication(numero,piece_technique_id,quantite_lancee) VALUES($1,$2::uuid,100) RETURNING id",
-        [`OF-T-${randomUUID().slice(0, 16)}`, pt],
-      )
-    ).rows[0].id,
-  );
+  const createOf = async () => {
+    if (!technicalSnapshot)
+      return Number(
+        (
+          await pool.query(
+            "INSERT INTO public.ordres_fabrication(numero,piece_technique_id,quantite_lancee) VALUES($1,$2::uuid,100) RETURNING id",
+            [`OF-T-${randomUUID().slice(0, 16)}`, pt],
+          )
+        ).rows[0].id,
+      );
+    const tx = await pool.connect(),
+      version = randomUUID(),
+      snapshot = JSON.stringify(technicalSnapshot),
+      sha = createHash("sha256").update(snapshot).digest("hex");
+    try {
+      await tx.query("BEGIN");
+      await tx.query(
+        "INSERT INTO public.piece_technique_versions(id,piece_technique_id,indice,plan_reference,statut,is_current,version_interne,code_metier,code_metier_normalise,document_requirements_policy) VALUES($1,$2,'C',$3,'BROUILLON',true,1,$3,$3,'NONE')",
+        [version, pt, "TEST-" + version],
+      );
+      const id = Number(
+        (
+          await tx.query(
+            "INSERT INTO public.ordres_fabrication(numero,piece_technique_id,piece_technique_version_id,quantite_lancee,technical_snapshot,technical_snapshot_sha256,technical_snapshot_at) VALUES($1,$2,$3,100,$4,$5,now()) RETURNING id",
+            [`OF-T-${randomUUID().slice(0, 16)}`, pt, version, snapshot, sha],
+          )
+        ).rows[0].id,
+      );
+      await tx.query(
+        "INSERT INTO public.of_technical_snapshots(of_id,piece_technique_version_id,snapshot,snapshot_sha256,created_by) VALUES($1,$2,$3,$4,$5)",
+        [id, version, snapshot, sha, user],
+      );
+      await tx.query("COMMIT");
+      return id;
+    } catch (error) {
+      await tx.query("ROLLBACK");
+      throw error;
+    } finally {
+      tx.release();
+    }
+  };
+  const ofId = await createOf();
   await pool.query(
     "INSERT INTO public.of_revisions(id,of_id,revision_rank,revision_code,snapshot,snapshot_sha256) VALUES($1::uuid,$2,0,'R00','{}', $3)",
     [revision, ofId, createHash("sha256").update("{}").digest("hex")],
@@ -254,10 +308,11 @@ async function subcontractFixture() {
     "INSERT INTO public.lots(id,article_id,lot_code,lot_status,created_by,updated_by) VALUES($1::uuid,$2::uuid,$3,'LIBERE',$4,$4)",
     [sourceLot, f.mp, `LOT-T-${sourceLot}`, user],
   );
-  await pool.query(
-    "INSERT INTO public.subcontract_work_package_ledger(id,package_id,event_type,lot_id,qty,unit,idempotency_key,created_by) VALUES($1::uuid,$2::uuid,'ISSUE',$3::uuid,100,'u',$4,$5)",
-    [issueEventId, packageId, sourceLot, randomUUID(), user],
-  );
+  if (issue)
+    await pool.query(
+      "INSERT INTO public.subcontract_work_package_ledger(id,package_id,event_type,lot_id,qty,unit,idempotency_key,created_by) VALUES($1::uuid,$2::uuid,'ISSUE',$3::uuid,100,'u',$4,$5)",
+      [issueEventId, packageId, sourceLot, randomUUID(), user],
+    );
   return { ...f, ofId, operationId, packageId, issueEventId, sourceLot };
 }
 const manualMovement = (f: Awaited<ReturnType<typeof fixture>>) => ({
@@ -278,7 +333,7 @@ suite("Received pieces on the full PostgreSQL schema (#1069)", () => {
   beforeAll(async () => {
     expect(
       (await pool.query("SELECT current_database() AS db")).rows[0].db,
-    ).toBe("cerp_1069_test");
+    ).toBe(externalEnabled ? "cerp_test" : "cerp_1069_test");
     await pool.query(
       "INSERT INTO public.units(code,label) VALUES('u','Unité'),('mm','Millimètre'),('m','Mètre'),('kg','Kilogramme') ON CONFLICT(code) DO NOTHING",
     );
@@ -320,6 +375,233 @@ suite("Received pieces on the full PostgreSQL schema (#1069)", () => {
     await pool.end();
     await Promise.all(createdFiles.map((file) => fs.unlink(file)));
   });
+  it.skipIf(!externalEnabled)(
+    "accumulates small transfers toward a downstream threshold",
+    async () => {
+      const f = await subcontractFixture(),
+        next = randomUUID();
+      await pool.query(
+        "UPDATE public.of_revisions SET statut='ACTIVE' WHERE of_id=$1",
+        [f.ofId],
+      );
+      await pool.query(
+        "INSERT INTO public.of_operations(id,of_id,revision_id,phase,designation) SELECT $1,$2,revision_id,20,'Reprise après traitement' FROM public.of_operations WHERE id=$3",
+        [next, f.ofId, f.operationId],
+      );
+      await pool.query(
+        "INSERT INTO public.planning_operation_dependencies(predecessor_id,successor_id,transfer_quantity) VALUES($1,$2,20)",
+        ["op:" + f.operationId, "op:" + next],
+      );
+      await bindReceiptSubcontract(
+        f.receipt,
+        f.line,
+        {
+          idempotencyKey: randomUUID(),
+          expectedVersion: 1,
+          origins: [{ issueEventId: f.issueEventId, quantity: 100 }],
+        },
+        audit(),
+      );
+      await pool.query(
+        "UPDATE public.lots SET lot_status='LIBERE' WHERE id=$1",
+        [f.lot],
+      );
+      for (const total of [10, 20]) {
+        const before = (await getSubcontractFlow(f.packageId)).flow!;
+        await transferSubcontractReturn(
+          f.packageId,
+          {
+            return_id: before.returns[0].id,
+            successor_operation_id: next,
+            quantity: 10,
+            expected_version: before.version,
+            reason: "Lot de dix pièces",
+            action: "RELEASE",
+          },
+          audit(),
+          randomUUID(),
+        );
+        expect((await getSubcontractFlow(f.packageId)).flow!.transferred).toBe(
+          total,
+        );
+      }
+    },
+  );
+  it.skipIf(!externalEnabled)(
+    "caps external WIP, rejects concurrent over-allocation and replays one transfer without stock duplication",
+    async () => {
+      const f = await subcontractFixture(),
+        next = randomUUID();
+      await pool.query(
+        "UPDATE public.of_revisions SET statut='ACTIVE' WHERE of_id=$1",
+        [f.ofId],
+      );
+      await pool.query(
+        "INSERT INTO public.of_operations(id,of_id,revision_id,phase,designation) SELECT $1,$2,revision_id,20,'Reprise après traitement' FROM public.of_operations WHERE id=$3",
+        [next, f.ofId, f.operationId],
+      );
+      await pool.query(
+        "INSERT INTO public.planning_operation_dependencies(predecessor_id,successor_id,transfer_quantity) VALUES($1,$2,20)",
+        ["op:" + f.operationId, "op:" + next],
+      );
+      await bindReceiptSubcontract(
+        f.receipt,
+        f.line,
+        {
+          idempotencyKey: randomUUID(),
+          expectedVersion: 1,
+          origins: [{ issueEventId: f.issueEventId, quantity: 100 }],
+        },
+        audit(),
+      );
+      expect((await getSubcontractFlow(f.packageId)).flow?.released).toBe(0);
+      await pool.query(
+        "UPDATE public.lots SET lot_status='LIBERE' WHERE id=$1",
+        [f.lot],
+      );
+      const state = await getSubcontractFlow(f.packageId);
+      expect(state.flow).toMatchObject({
+        returned: 100,
+        released: 60,
+        transferred: 0,
+      });
+      expect(state.successors).toContainEqual(
+        expect.objectContaining({ id: next, minimum: 20 }),
+      );
+      const body = {
+          return_id: state.flow!.returns[0].id,
+          successor_operation_id: next,
+          quantity: 40,
+          expected_version: state.flow!.version,
+          reason: "Transfert du premier lot",
+          action: "RELEASE" as const,
+        },
+        key = randomUUID();
+      const results = await Promise.allSettled([
+        transferSubcontractReturn(f.packageId, body, audit(), key),
+        transferSubcontractReturn(f.packageId, body, audit(), randomUUID()),
+      ]);
+      expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+      // Replay the winning payload even though the flow version has changed.
+      if (results[0].status === "fulfilled")
+        expect(
+          await transferSubcontractReturn(f.packageId, body, audit(), key),
+        ).toEqual(results[0].value);
+      expect((await getSubcontractFlow(f.packageId)).flow).toMatchObject({
+        released: 60,
+        transferred: 40,
+      });
+      const processing = await readProcessingLine(pool, f.line);
+      expect(processing.transferred).toBe(40);
+      expect(processing.queues.TO_PACK).toBe(20);
+      expect(
+        Number(
+          (
+            await pool.query(
+              "SELECT count(*) FROM public.stock_movement_lines WHERE lot_id=$1",
+              [f.lot],
+            )
+          ).rows[0].count,
+        ),
+      ).toBe(0);
+      const current = (await getSubcontractFlow(f.packageId)).flow!;
+      await expect(
+        transferSubcontractReturn(
+          f.packageId,
+          { ...body, quantity: 21, expected_version: current.version },
+          audit(),
+          randomUUID(),
+        ),
+      ).rejects.toMatchObject({
+        code: "SUBCONTRACT_TRANSFER_QUANTITY_EXCEEDED",
+      });
+      await packReceipt(
+        f.receipt,
+        f.line,
+        {
+          idempotencyKey: randomUUID(),
+          expectedVersion: processing.version,
+          quantity: 20,
+          packaging: "Bac de solde",
+          packageCount: 1,
+        },
+        audit(),
+      );
+      await repoCreateStockReceipt(
+        f.receipt,
+        f.line,
+        { qty: 20, dst_magasin_id: warehouse, dst_emplacement_id: place },
+        audit(),
+        randomUUID(),
+      );
+      const shared = (await getSubcontractFlow(f.packageId)).flow!;
+      expect(shared).toMatchObject({ released: 40, transferred: 40 });
+      expect(shared.returns[0].transferable).toBe(0);
+      await expect(
+        transferSubcontractReturn(
+          f.packageId,
+          { ...body, quantity: 1, expected_version: shared.version },
+          audit(),
+          randomUUID(),
+        ),
+      ).rejects.toMatchObject({
+        code: "SUBCONTRACT_TRANSFER_QUANTITY_EXCEEDED",
+      });
+      await pool.query(
+        "UPDATE public.lots SET lot_status='QUARANTAINE' WHERE id=$1",
+        [f.lot],
+      );
+      expect((await getSubcontractFlow(f.packageId)).flow).toMatchObject({
+        released: 0,
+        transferred: 40,
+      });
+      await expect(
+        transferSubcontractReturn(
+          f.packageId,
+          { ...body, expected_version: current.version },
+          audit(),
+          randomUUID(),
+        ),
+      ).rejects.toMatchObject({ code: "SUBCONTRACT_FLOW_CHANGED" });
+      const changed = (await getSubcontractFlow(f.packageId)).flow!;
+      await transferSubcontractReturn(
+        f.packageId,
+        {
+          ...body,
+          action: "RETURN",
+          quantity: 40,
+          expected_version: changed.version,
+        },
+        audit(),
+        randomUUID(),
+      );
+      expect((await getSubcontractFlow(f.packageId)).flow?.transferred).toBe(0);
+      const snapshot = await readCentralSnapshot({
+        from: new Date().toISOString(),
+        to: new Date(Date.now() + 30 * 86400000).toISOString(),
+        limit: 10000,
+        includeTaskIds: ["op:" + f.operationId],
+      });
+      expect(snapshot.tasks.some((t) => t.operationId === f.operationId)).toBe(
+        true,
+      );
+      const task = snapshot.tasks.find((t) => t.operationId === f.operationId)!;
+      task.view = "external";
+      await hydrateExternalPlanning(
+        pool,
+        [task],
+        snapshot.resources,
+        snapshot.dependencies,
+        new Date().toISOString(),
+        new Date(Date.now() + 30 * 86400000).toISOString(),
+      );
+      expect(task.external?.packages).toHaveLength(1);
+      expect(task.resourceIds[0]).toMatch(/^supplier:/);
+      expect((await getSubcontractCreationOptions(f.ofId)).lines).toHaveLength(
+        1,
+      );
+    },
+  );
   it("physical receipt never creates stock and forces the piece policy", async () => {
     const f = await fixture(),
       line = await readProcessingLine(pool, f.line);
@@ -330,6 +612,162 @@ suite("Received pieces on the full PostgreSQL schema (#1069)", () => {
       repoCreateStockReceipt(f.receipt, f.line, body(1), audit(), randomUUID()),
     ).rejects.toMatchObject({ code: "RECEIPT_PACKAGING_REQUIRED" });
   });
+  it.skipIf(!externalEnabled)(
+    "commits an external preview only on human apply and can unplan without creating factory capacity",
+    async () => {
+      const f = await subcontractFixture(false, {
+          operations: [{ phase: 10, type_operation: "SOUS_TRAITANCE" }],
+        }),
+        from = new Date().toISOString(),
+        to = new Date(Date.now() + 30 * 86400000).toISOString();
+      await pool.query(
+        "UPDATE public.commande_fournisseur_ligne SET date_promesse=CURRENT_DATE+10 WHERE id=(SELECT supplier_order_line_id FROM public.subcontract_work_packages WHERE id=$1)",
+        [f.packageId],
+      );
+      await pool.query(
+        "UPDATE public.of_revisions SET statut='ACTIVE' WHERE of_id=$1",
+        [f.ofId],
+      );
+      await pool.query(
+        "UPDATE public.planning_central_settings SET activation='COMMIT' WHERE singleton",
+      );
+      const snapshot = await readCentralSnapshot({
+          from,
+          to,
+          limit: 10000,
+          includeTaskIds: ["op:" + f.operationId],
+        }),
+        task = snapshot.tasks.find((t) => t.operationId === f.operationId)!;
+      expect(task.external?.packages).toHaveLength(1);
+      const preview = await createCentralSimulation(
+        {
+          from,
+          to,
+          revision: snapshot.revision,
+          changes: [
+            {
+              taskId: task.id,
+              expectedVersion: task.version,
+              earliestStart: from,
+            },
+          ],
+        },
+        audit(),
+        randomUUID(),
+      );
+      expect(preview.result.feasible).toBe(true);
+      expect(
+        (
+          await pool.query(
+            "SELECT committed_start FROM public.planning_tasks WHERE id=$1",
+            [task.id],
+          )
+        ).rows[0].committed_start,
+      ).toBeNull();
+      await applyCentralSimulation(
+        preview.id,
+        preview.revision,
+        audit(),
+        randomUUID(),
+      );
+      const committed = await readCentralSnapshot({
+          from,
+          to,
+          limit: 10000,
+          includeTaskIds: [task.id],
+        }),
+        current = committed.tasks.find((t) => t.id === task.id)!;
+      expect(current.commitment).toBe("COMMITTED");
+      expect(current.committed).not.toBeNull();
+      expect(
+        Number(
+          (
+            await pool.query(
+              "SELECT count(*) FROM public.planning_events WHERE of_operation_id=$1",
+              [f.operationId],
+            )
+          ).rows[0].count,
+        ),
+      ).toBe(0);
+      await unplanCentral(
+        {
+          from,
+          to,
+          revision: committed.revision,
+          tasks: [{ id: current.id, expectedVersion: current.version }],
+        },
+        audit(),
+        randomUUID(),
+      );
+      expect(
+        (
+          await pool.query(
+            "SELECT committed_start FROM public.planning_tasks WHERE id=$1",
+            [task.id],
+          )
+        ).rows[0].committed_start,
+      ).toBeNull();
+    },
+  );
+  it.skipIf(!externalEnabled)(
+    "keeps 60 at the supplier after a partial return of 40 and invalidates the forecast on a new promise",
+    async () => {
+      const f = await subcontractFixture();
+      await pool.query(
+        "UPDATE public.reception_fournisseur_lignes SET qty_received=40 WHERE id=$1",
+        [f.line],
+      );
+      await bindReceiptSubcontract(
+        f.receipt,
+        f.line,
+        {
+          idempotencyKey: randomUUID(),
+          expectedVersion: 1,
+          origins: [{ issueEventId: f.issueEventId, quantity: 40 }],
+        },
+        audit(),
+      );
+      const before = (await getSubcontractFlow(f.packageId)).flow!;
+      expect(before).toMatchObject({
+        issued: 100,
+        returned: 40,
+        custody: 60,
+        released: 0,
+        transferred: 0,
+      });
+      await expect(
+        pool.query(
+          "UPDATE public.subcontract_work_packages SET status='CLOSED',closed_at=now(),close_reason='Test refus clôture' WHERE id=$1",
+          [f.packageId],
+        ),
+      ).rejects.toMatchObject({ code: "23514" });
+      await expect(
+        pool.query(
+          "INSERT INTO public.subcontract_work_package_ledger(package_id,event_type,lot_id,qty,unit,idempotency_key) VALUES($1,'ISSUE',$2,1,'u',$3)",
+          [f.packageId, f.sourceLot, randomUUID()],
+        ),
+      ).rejects.toMatchObject({ code: "23514" });
+      const revision = (
+        await pool.query(
+          "SELECT revision::text FROM public.planning_central_settings WHERE singleton",
+        )
+      ).rows[0].revision;
+      await pool.query(
+        "UPDATE public.commande_fournisseur_ligne SET date_promesse='2026-10-01' WHERE id=(SELECT supplier_order_line_id FROM public.subcontract_work_packages WHERE id=$1)",
+        [f.packageId],
+      );
+      const after = (await getSubcontractFlow(f.packageId)).flow!;
+      expect(after.promisedDate).toBe("2026-10-01");
+      expect(after.version).not.toBe(before.version);
+      expect(
+        (
+          await pool.query(
+            "SELECT revision::text FROM public.planning_central_settings WHERE singleton",
+          )
+        ).rows[0].revision,
+      ).not.toBe(revision);
+    },
+  );
   it("quality alone cannot post stock; 100/60/50 allows exactly 50 with MP genealogy", async () => {
     const f = await fixture(60);
     await expect(

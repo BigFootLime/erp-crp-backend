@@ -27,6 +27,7 @@ import {
 
 type Queryable = Pick<PoolClient, "query">;
 export type ProcessingLine = {
+  transferred?: number;
   id: string;
   receptionId: string;
   receptionNumber: string;
@@ -209,18 +210,19 @@ export async function readProcessingLine(
       [lineId],
     )
   ).rows;
+  const transferred=await receiptTransferred(tx,lineId);
   const progress = receiptProcessingState(
-    { ...row, accepted },
+    { ...row, accepted,packed:row.packed+transferred,stocked:row.stocked+transferred },
     blocking.length > 0,
   );
   if (row.policy === "STANDARD") {
     progress.queues.TO_PACK = 0;
     progress.queues.TO_STOCK =
-      row.stockManaged || row.toolId ? Math.max(0, accepted - row.stocked) : 0;
+      row.stockManaged || row.toolId ? Math.max(0, accepted - row.stocked - transferred) : 0;
     progress.stage = blocking.length
       ? "BLOCKED"
       : accepted >= row.received &&
-          (!(row.stockManaged || row.toolId) || row.stocked >= row.received)
+          (!(row.stockManaged || row.toolId) || row.stocked + transferred >= row.received)
         ? "DONE"
         : progress.queues.TO_STOCK > 0
           ? "TO_STOCK"
@@ -235,12 +237,13 @@ export async function readProcessingLine(
       !row.reconciliationRequired &&
       row.receiptStatus !== "CANCELLED" &&
       row.openNc === 0 &&
-      Math.abs(row.stocked + row.disposed - row.received) < 0.000001
+      Math.abs(row.stocked + transferred + row.disposed - row.received) < 0.000001
     )
       progress.stage = "DONE";
   }
   return {
     ...row,
+    transferred,
     accepted,
     controlId,
     blocking,
@@ -555,12 +558,13 @@ export async function listProcessingLines(filters: ProcessingQuery) {
   const tx = await pool.connect();
   try {
     await tx.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+    const wip=await receiptTransferInstalled(tx)?'public.subcontract_receipt_transferred_968(v.id)':'0';
     const stagePredicate: Record<string, string> = {
       TO_CONTROL: "v.received > v.accepted+COALESCE(d.disposed,0)",
-      TO_PACK: "v.policy='PIECES_CONTROLE_EMBALLAGE' AND v.accepted > v.packed",
+      TO_PACK: `v.policy='PIECES_CONTROLE_EMBALLAGE' AND v.accepted > v.packed+${wip}`,
       TO_STOCK:
-        "CASE WHEN v.policy='PIECES_CONTROLE_EMBALLAGE' THEN v.packed ELSE v.accepted END > v.stocked AND (v.stock_managed OR v.receipt_tool_id IS NOT NULL)",
-      DONE: "NOT v.reconciliation_required AND ((v.stocked+COALESCE(d.disposed,0) >= v.received AND COALESCE(d.open_nc,0)=0) OR (NOT v.stock_managed AND v.receipt_tool_id IS NULL AND v.accepted>=v.received))",
+        `LEAST(v.accepted,CASE WHEN v.policy='PIECES_CONTROLE_EMBALLAGE' THEN v.packed+${wip} ELSE v.accepted END) > v.stocked+${wip} AND (v.stock_managed OR v.receipt_tool_id IS NOT NULL)`,
+      DONE: `NOT v.reconciliation_required AND ((v.stocked+${wip}+COALESCE(d.disposed,0) >= v.received AND COALESCE(d.open_nc,0)=0) OR (NOT v.stock_managed AND v.receipt_tool_id IS NULL AND v.accepted>=v.received))`,
       BLOCKED: `v.reconciliation_required OR COALESCE(d.open_nc,0)>0 OR v.lot_status='BLOQUE' OR v.packed>v.accepted
         OR EXISTS(SELECT 1 FROM public.reception_fournisseur_lignes r LEFT JOIN public.commande_fournisseur_ligne cl ON cl.id=r.commande_fournisseur_ligne_id WHERE r.id=v.id
           AND ((r.receipt_quality_required AND (r.lot_id IS NULL OR v.lot_status IN('EN_ATTENTE','QUARANTAINE') OR NOT EXISTS(SELECT 1 FROM public.quality_control q WHERE q.lot_id=r.lot_id AND q.reception_ligne_id=r.id AND q.trigger_type='RECEPTION')))
@@ -594,3 +598,4 @@ export async function listProcessingLines(filters: ProcessingQuery) {
     tx.release();
   }
 }
+import {receiptTransferred,receiptTransferInstalled} from '../../subcontract/subcontract-receipt-allocation.repository';

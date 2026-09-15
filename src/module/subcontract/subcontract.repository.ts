@@ -9,6 +9,7 @@ export async function repoListSubcontractWorkPackagesForOf(ofId: number) {
   const result = await pool.query(`
     SELECT
       o.of_id,
+      o.designation AS operation_label,
       p.id, p.supplier_order_line_id, p.of_operation_id, p.status, p.unit,
       p.qty_planned, p.row_version, p.ged_evidence_document_id, p.created_at,
       p.closed_at, p.close_reason,
@@ -26,7 +27,7 @@ export async function repoListSubcontractWorkPackagesForOf(ofId: number) {
     JOIN public.of_operations o ON o.id = p.of_operation_id
     LEFT JOIN public.subcontract_work_package_ledger e ON e.package_id = p.id
     WHERE o.of_id = $1
-    GROUP BY o.of_id, p.id
+    GROUP BY o.of_id, o.designation, p.id
     ORDER BY p.created_at DESC, p.id DESC
   `, [ofId]);
   return result.rows;
