@@ -1,4 +1,7 @@
 import type { PoolClient } from "pg";
+import { applyAcknowledgementPricesTx } from "./supplier-acknowledgement.repository";
+import { readCatalogueLinePriceTx } from "./catalogue-line-pricing.repository";
+import { priceCatalogueLine, changesCataloguePricing, type CataloguePriceSnapshot } from "../domain/catalogue-line-pricing";
 import {findUntouchedMaterialDraftTx,recordMaterialDraftBaselineTx} from './material-draft-baseline.repository';
 import {assertPurchaseLineCoveragePatch,type AllocatedPurchaseLine} from '../domain/purchase-line-coverage';
 import {assertLegacyMaterialWrite} from "../../stock/repository/of-material-write-guard";
@@ -524,6 +527,7 @@ async function fetchLignes(tx: DbQueryer, commandeId: string): Promise<CommandeF
             l.coef_conversion::text AS coef_t, l.qty_confirmee::text AS qtyc_t, l.qty_annulee::text AS qtya_t,
             l.date_besoin::text AS date_besoin_t, l.date_promesse::text AS date_promesse_t,
             a.code AS article_code, a.designation AS article_designation,
+            (SELECT updated_at::text FROM public.fournisseur_catalogue WHERE id=l.catalogue_id) AS catalogue_updated_at,
             COALESCE(rc.qty_recue, 0)::text AS qty_recue_t,
             COALESCE(rc.qty_nc, 0)::text AS qty_nc_t
        FROM public.commande_fournisseur_ligne l
@@ -582,6 +586,7 @@ async function fetchLignes(tx: DbQueryer, commandeId: string): Promise<CommandeF
       article_code: r.article_code ?? null,
       article_designation: r.article_designation ?? null,
       catalogue_id: r.catalogue_id,
+      catalogue_updated_at: r.catalogue_updated_at ?? null,
       reference_fournisseur: r.reference_fournisseur,
       designation: r.designation,
       designation_interne: r.designation_interne,
@@ -779,6 +784,8 @@ async function insertLigneTx(
   userId: number,
   materialCoverageConfirmed = false
 ): Promise<string> {
+  const cataloguePricing=ligne.apply_catalogue_pricing?await readCatalogueLinePriceTx(tx,commandeId,ligne):null;
+  if(cataloguePricing)ligne={...ligne,...cataloguePricing.price};
   if(ligne.of_id&&!materialCoverageConfirmed&&(ligne.type==="MATIERE"||ligne.type==="ARTICLE"))await assertLegacyMaterialWrite(tx,ligne.of_id,ligne.article_id??null);
   const res = await tx.query<{ id: string }>(
     `INSERT INTO public.commande_fournisseur_ligne (
@@ -823,6 +830,7 @@ async function insertLigneTx(
     ]
   );
   const ligneId = res.rows[0].id;
+  if(cataloguePricing)await tx.query(`UPDATE public.commande_fournisseur_ligne SET catalogue_pricing_snapshot=$2::jsonb WHERE id=$1::uuid`,[ligneId,JSON.stringify(cataloguePricing.snapshot)]);
   await tx.query(`UPDATE public.commande_fournisseur_ligne l SET receipt_stock_managed=a.stock_managed,
     receipt_quality_required=a.receipt_quality_required,receipt_consumption_mode=a.consumption_mode FROM public.articles a
     WHERE l.id=$1::uuid AND a.id=l.article_id AND EXISTS(SELECT 1 FROM public.article_category_link ac WHERE ac.article_id=a.id AND ac.category_code='consommable')`,[ligneId]);
@@ -1126,8 +1134,9 @@ export async function repoUpdateLigne(
     assertOptimisticToken(body.expected_updated_at, header.updated_at_token);
     assertDraft(header.statut);
 
-    const exists = await client.query<AllocatedPurchaseLine&{id:string}>(
-      `SELECT id,type,article_id::text,unite,unite_stock,coef_conversion::float8,quantite::float8,qty_annulee::float8 FROM public.commande_fournisseur_ligne WHERE id = $1::uuid AND commande_id = $2::uuid FOR UPDATE`,
+    const exists = await client.query<AllocatedPurchaseLine&{id:string;catalogue_id:string|null;catalogue_pricing_snapshot:CataloguePriceSnapshot|null;prix_unitaire_ht:number|null;frais_ht:number;remise_pct:number}>(
+      `SELECT id,type,article_id::text,catalogue_id::text,catalogue_pricing_snapshot,unite,unite_stock,coef_conversion::float8,quantite::float8,qty_annulee::float8,
+        prix_unitaire_ht::float8,frais_ht::float8,remise_pct::float8 FROM public.commande_fournisseur_ligne WHERE id = $1::uuid AND commande_id = $2::uuid FOR UPDATE`,
       [ligneId, id]
     );
     if (!exists.rows[0]) throw new HttpError(404, "LIGNE_NOT_FOUND", "Ligne introuvable sur cette commande.");
@@ -1136,8 +1145,20 @@ export async function repoUpdateLigne(
       FROM public.commande_fournisseur_ligne_besoin WHERE ligne_id=$1::uuid AND NOT annule`,[ligneId,exists.rows[0].coef_conversion??1])).rows[0];
     assertPurchaseLineCoveragePatch(exists.rows[0],body.patch,allocation.qty);
 
+    const existing=exists.rows[0];
+    let pricingSnapshot=existing.catalogue_pricing_snapshot;
+    if(body.patch.apply_catalogue_pricing){
+      const quoted=await readCatalogueLinePriceTx(client,id,{...existing,...body.patch});
+      body.patch={...body.patch,...quoted.price};pricingSnapshot=quoted.snapshot;
+    }else if(changesCataloguePricing(existing,body.patch)){
+      pricingSnapshot=null;
+    }else if(pricingSnapshot&&body.patch.quantite!==undefined){
+      body.patch={...body.patch,...priceCatalogueLine(pricingSnapshot,body.patch.quantite)};
+    }
+
     const sets: string[] = [];
     const values: unknown[] = [ligneId];
+    if(pricingSnapshot!==undefined){values.push(pricingSnapshot?JSON.stringify(pricingSnapshot):null);sets.push(`catalogue_pricing_snapshot=$${values.length}::jsonb`);}
     for (const [key, column] of Object.entries(LIGNE_PATCH_COLUMNS)) {
       if (!(key in body.patch)) continue;
       const raw = (body.patch as Record<string, unknown>)[key];
@@ -1502,6 +1523,8 @@ export async function repoAccuseReception(
       });
     }
 
+    const priceChanges=await applyAcknowledgementPricesTx(client,id,body.lignes,audit);
+    if(priceChanges.length)await recomputeTotauxTx(client,id);
     await client.query(
       `UPDATE public.commande_fournisseur
           SET statut = 'ACCUSE_RECU',
@@ -1528,6 +1551,7 @@ export async function repoAccuseReception(
       entity_id: id,
       details: {
         reference_fournisseur: body.reference_fournisseur,
+        price_changes: priceChanges,
         promised_date: body.date_promesse ?? header.date_promesse,
         promise_versioned: Boolean(body.date_promesse),
       },
@@ -2318,13 +2342,13 @@ export async function repoDuplicateAsDraft(
           quantite, prix_unitaire_ht, remise_pct, tva_pct, frais_ht,
           date_besoin, date_promesse, delai_jours, affaire_id, commande_client_id, of_id,
           piece_technique_id, operation_libelle, magasin_id, exigences_qualite, documents_attendus,
-          created_by, updated_by)
+          created_by, updated_by, catalogue_pricing_snapshot)
        SELECT $2::uuid, position, type, article_id, catalogue_id, reference_fournisseur,
               designation, designation_interne, unite, unite_stock, coef_conversion,
               quantite, prix_unitaire_ht, remise_pct, tva_pct, frais_ht,
               date_besoin, date_promesse, delai_jours, affaire_id, commande_client_id, of_id,
               piece_technique_id, operation_libelle, magasin_id, exigences_qualite, documents_attendus,
-              $3, $3
+               $3, $3, catalogue_pricing_snapshot
          FROM public.commande_fournisseur_ligne
         WHERE commande_id = $1::uuid AND statut_ligne = 'ACTIVE'`,
       [id, newId, audit.user_id]

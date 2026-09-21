@@ -28,7 +28,7 @@ import { HttpError } from "../../utils/httpError";
 /** Segment de tête, aligné sur `code_segment` du référentiel des catégories. */
 export const MATERIAL_CODE_PREFIX = "MP";
 
-export type MaterialProfileCode = "PL" | "RO" | "U" | "FOND" | "TUBE" | "PROFIL" | "BRUTCL";
+export type MaterialProfileCode = "PL" | "RO" | "U" | "FOND" | "TUBE" | "TUBERECT" | "HEXA" | "L" | "PROFIL" | "BRUTCL";
 
 export const MATERIAL_PROFILE_CODES: readonly MaterialProfileCode[] = [
   "PL",
@@ -36,6 +36,9 @@ export const MATERIAL_PROFILE_CODES: readonly MaterialProfileCode[] = [
   "U",
   "FOND",
   "TUBE",
+  "TUBERECT",
+  "HEXA",
+  "L",
   "PROFIL",
   "BRUTCL",
 ] as const;
@@ -47,6 +50,9 @@ const MATERIAL_PROFILE_LABELS: Record<MaterialProfileCode, string> = {
   U: "U",
   FOND: "ACHAT FONDERIE",
   TUBE: "TUBE",
+  TUBERECT: "TUBE RECTANGULAIRE",
+  HEXA: "HEXAGONAL",
+  L: "L",
   PROFIL: "PROFILS DIVERS",
   BRUTCL: "BRUT CLIENT",
 };
@@ -70,6 +76,12 @@ const MATERIAL_PROFILE_ALIASES: Record<string, MaterialProfileCode> = {
   ACHATFONDERIE: "FOND",
   TUBE: "TUBE",
   TU: "TUBE",
+  TUBEROND: "TUBE",
+  TUBERECT: "TUBERECT",
+  TUBERECTANGULAIRE: "TUBERECT",
+  HEXA: "HEXA",
+  HEXAGONAL: "HEXA",
+  L: "L",
   PROFIL: "PROFIL",
   PROFI: "PROFIL",
   PR: "PROFIL",
@@ -214,7 +226,11 @@ export function buildMaterialDimensionsSegment(
       case "TUBE":
         return [diametre, epaisseur, longueur];
       case "U":
+      case "L":
+      case "TUBERECT":
         return [largeur, hauteur, epaisseur, longueur];
+      case "HEXA":
+        return [toPositiveInt(dims.largeur_plat_mm), longueur];
       default:
         return [longueur];
     }
@@ -244,7 +260,7 @@ export function buildMaterialArticleCode(input: MaterialCodeInput): MaterialCode
       );
     }
 
-    const clientSegment = profile === "BRUTCL" ? normalizeSegment(input.client_code) : "";
+    const clientSegment = normalizeSegment(input.client_code);
     if (profile === "BRUTCL" && !clientSegment) {
       throw new HttpError(
         400,
@@ -278,11 +294,15 @@ export function buildMaterialArticleCode(input: MaterialCodeInput): MaterialCode
     );
   }
   const sousEtat = normalizeSegment(input.sous_etat_code);
+  // The physical shape and ownership are independent. Customer material must
+  // not collide with the same geometry purchased for CRP or another customer.
+  const clientSegment = normalizeSegment(input.client_code);
   const dimensionsSegment = buildMaterialDimensionsSegment(profile, input.dimensions);
 
   const segments = [
     MATERIAL_CODE_PREFIX,
     profile,
+    ...(clientSegment ? [clientSegment] : []),
     nuance,
     etat,
     ...(sousEtat ? [sousEtat] : []),
@@ -291,6 +311,7 @@ export function buildMaterialArticleCode(input: MaterialCodeInput): MaterialCode
 
   const designation = [
     MATERIAL_PROFILE_LABELS[profile],
+    clientSegment ? `CLIENT ${clientSegment}` : null,
     nuance,
     etat,
     sousEtat || null,

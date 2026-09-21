@@ -233,6 +233,7 @@ export const accuseReception: RequestHandler = async (req, res, next) => {
   try {
     const { params } = commandeIdParamSchema.parse({ params: req.params });
     const { body } = accuseSchema.parse({ body: req.body });
+    if(body.lignes?.length && !includePricesFor(req))throw new HttpError(403,"PRICES_FORBIDDEN","L’accès aux prix est requis pour confirmer les montants de l’AR.");
     const audit = buildAuditContext(req);
     res.json(await accuseReceptionSVC(params.id, body, audit));
   } catch (err) {

@@ -1,4 +1,5 @@
 import { assertDeliveryNoteTx } from "./receipt-delivery-note.repository";
+import { receiptArticleContextSql } from './receipt-article-context';
 import type { PoolClient } from "pg";
 import { enqueueEntityChanged } from "../../../shared/realtime/realtime-outbox.service";
 import pool from "../../../config/database";
@@ -133,7 +134,8 @@ export async function readProcessingLine(
       l.processing_policy AS policy,l.processing_version AS version,l.processing_reconciliation_required AS "reconciliationRequired",
       l.receipt_tool_id AS "toolId",l.stock_managed AS "stockManaged",l.receipt_quality_required AS "qualityRequired",
       COALESCE(d.disposed,0)::float8 AS disposed,COALESCE(d.open_nc,0)::integer AS "openNc",
-      l.article_id::text AS "articleId",a.code AS "articleCode",COALESCE(l.designation,a.designation) AS designation,
+       l.article_id::text AS "articleId",a.code AS "articleCode",COALESCE(l.designation,a.designation) AS designation,
+       ${receiptArticleContextSql('a','lot.client_proprietaire_id')} AS "flowContext",
       l.stock_article_id::text AS "stockArticleId",mp.code AS "stockArticleCode",COALESCE(f.nom,f.raison_sociale,'') AS "supplierName",c.code AS "orderCode",
       l.lot_id::text AS "lotId",lot.lot_code AS "lotCode",lot.lot_status AS "lotStatus",l.unite AS unit,l.stock_unit AS "stockUnit",
       COALESCE(l.stock_conversion_coef,1)::float8 AS coefficient,l.destination_magasin_id::text AS "destinationMagasinId",l.destination_emplacement_id AS "destinationEmplacementId",

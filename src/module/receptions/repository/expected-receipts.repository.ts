@@ -1,4 +1,5 @@
 import type { PoolClient } from 'pg';
+import { receiptArticleContextSql } from './receipt-article-context';
 import pool from '../../../config/database';
 import { coverageFingerprint,quantity } from '../../production/domain/of-material';
 import type { ExpectedReceiptsQuery } from '../validators/grouped-receipts.validators';
@@ -29,6 +30,7 @@ export async function readExpectedReceiptLinesTx(tx:Pick<PoolClient,'query'>,fil
   const limit=lineIds?'':`LIMIT ${bind(filters.pageSize)} OFFSET ${bind((filters.page-1)*filters.pageSize)}`;
   const items=(await tx.query<ExpectedReceiptLine>(`SELECT l.id::text,c.id::text AS "orderId",c.code AS "orderCode",c.statut AS status,f.id::text AS "supplierId",COALESCE(f.nom,f.raison_sociale) AS "supplierName",COALESCE(f.code,f.code_fournisseur) AS "supplierCode",
     l.article_id::text AS "articleId",a.code AS "articleCode",a.internal_reference AS "crpReference",l.reference_fournisseur AS "supplierReference",l.designation,l.type,COALESCE(categories.codes,'{}'::text[]) AS categories,
+    ${receiptArticleContextSql('a')} AS "flowContext",
     COALESCE(l.receipt_processing_policy,public.receipt_piece_policy_1069(a.id,l.type),'STANDARD') AS "processingPolicy",
     COALESCE(l.receipt_tool_id,(SELECT tool_id FROM public.article_tool_links t WHERE t.article_id=a.id)) AS "toolId",
     l.unite AS unit,COALESCE(l.unite_stock,a.unite,l.unite) AS "stockUnit",COALESCE(l.coef_conversion,1)::float8 AS coefficient,l.quantite::float8 AS ordered,

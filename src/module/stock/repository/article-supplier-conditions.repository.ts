@@ -10,22 +10,30 @@ export async function syncArticleSupplierConditionsTx(tx: PoolClient, articleId:
   conditions: ArticleSupplierCondition[] | undefined, audit: AuditContext) {
   if (conditions === undefined) return;
   const article = (await tx.query(`SELECT a.designation,a.unite,a.receipt_quality_required,
-    EXISTS(SELECT 1 FROM public.article_category_link WHERE article_id=a.id AND category_code='consommable') AS consumable
+    CASE
+      WHEN EXISTS(SELECT 1 FROM public.article_category_link WHERE article_id=a.id AND category_code IN ('matiere','matiere_premiere')) THEN 'MATIERE'
+      WHEN EXISTS(SELECT 1 FROM public.article_category_link WHERE article_id=a.id AND category_code IN ('sous_traitance','traitement','traitement_surface')) THEN 'SOUS_TRAITANCE'
+      WHEN EXISTS(SELECT 1 FROM public.article_category_link WHERE article_id=a.id AND category_code='consommable') THEN 'CONSOMMABLE'
+      ELSE 'AUTRE'
+    END AS catalogue_type
     FROM public.articles a WHERE a.id=$1::uuid`,[articleId])).rows[0];
-  if (!article?.consumable) throw new HttpError(422,"CONSUMABLE_CATEGORY_REQUIRED","Ces conditions sont réservées aux consommables.");
+  if (!article) throw new HttpError(404,"ARTICLE_NOT_FOUND","L’article n’existe plus.");
   if (conditions.filter(c=>c.preferred).length>1) throw new HttpError(422,"PREFERRED_SUPPLIER_AMBIGUOUS","Choisissez un seul fournisseur préféré.");
   if (!conditions.some(c=>c.preferred)) await tx.query(`UPDATE public.article_procurement_profile
     SET preferred_catalogue_id=NULL,updated_at=now(),updated_by=$2 WHERE article_id=$1::uuid`,[articleId,audit.user_id]);
   for (const condition of conditions) {
-    const {supplier_id,catalogue_id,preferred,...input}=condition;
-    if (catalogue_id && !(await tx.query(`SELECT id FROM public.fournisseur_catalogue WHERE id=$1::uuid
-      AND article_id=$2::uuid AND fournisseur_id=$3::uuid FOR UPDATE`,[catalogue_id,articleId,supplier_id])).rowCount)
-      throw new HttpError(409,"ARTICLE_CATALOGUE_CHANGED","La référence fournisseur ne correspond plus à cet article.");
+    const {supplier_id,catalogue_id,preferred,expected_catalogue_updated_at,...input}=condition;
+    if (catalogue_id) {
+      const current=(await tx.query(`SELECT id,updated_at::text AS version FROM public.fournisseur_catalogue WHERE id=$1::uuid
+        AND article_id=$2::uuid AND fournisseur_id=$3::uuid FOR UPDATE`,[catalogue_id,articleId,supplier_id])).rows[0];
+      if(!current || (expected_catalogue_updated_at && current.version!==expected_catalogue_updated_at))
+        throw new HttpError(409,"ARTICLE_CATALOGUE_CHANGED","Les conditions fournisseur ont changé. Actualisez la fiche avant d’enregistrer.");
+    }
     const unit=input.unite??article.unite;
     const stockUnit=input.unite_stock??article.unite;
     if(stockUnit!==article.unite || (unit!==stockUnit && !input.coef_conversion))
       throw new HttpError(422,"SUPPLIER_CONVERSION_REQUIRED","Précisez la conversion vers l’unité de stock de l’article.");
-    const body={...input,type:"CONSOMMABLE" as const,article_id:articleId,designation:article.designation,
+    const body={...input,type:article.catalogue_type as "MATIERE" | "SOUS_TRAITANCE" | "CONSOMMABLE" | "AUTRE",article_id:articleId,designation:article.designation,
       unite:unit,unite_stock:stockUnit,coef_conversion:input.coef_conversion??1};
     const saved=catalogue_id
       ? await repoUpdateFournisseurCatalogueItem(supplier_id,catalogue_id,body,audit,tx)

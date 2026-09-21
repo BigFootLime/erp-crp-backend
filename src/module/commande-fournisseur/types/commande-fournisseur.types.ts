@@ -62,6 +62,7 @@ export type CommandeFournisseurLigne = {
   article_code: string | null;
   article_designation: string | null;
   catalogue_id: string | null;
+  catalogue_updated_at?: string | null;
   reference_fournisseur: string | null;
   designation: string;
   designation_interne: string | null;

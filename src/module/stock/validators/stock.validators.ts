@@ -1,8 +1,10 @@
+import { subcontractDefinitionSchema } from "./subcontract-definition";
 import { createCatalogueSchema } from "../../fournisseurs/validators/fournisseurs.validators";
 import { z } from "zod";
 
 export const articleSupplierConditionSchema = createCatalogueSchema.shape.body.omit({article_id:true,type:true,designation:true}).partial().extend({
   supplier_id: z.string().uuid(), catalogue_id: z.string().uuid().optional(), preferred: z.boolean().default(false),
+  expected_catalogue_updated_at: z.string().trim().min(1).max(100).optional(),
 });
 export type ArticleSupplierCondition = z.infer<typeof articleSupplierConditionSchema>;
 
@@ -337,6 +339,7 @@ export const createArticleSchema = z.object({
       client_ids: z.array(z.string().regex(/^[0-9]{3}$/)).max(500).optional(),
       tool_id: z.number().int().positive().nullable().optional(),
       supplier_conditions: z.array(articleSupplierConditionSchema).max(30).optional(),
+      subcontract_definition: subcontractDefinitionSchema.optional(),
       internal_reference: z.string().trim().min(1).max(160).nullable().optional(),
       consumption_mode: z.enum(["UNIT", "GLOBAL_PACK"]).optional(),
       purchase_pack_qty: z.number().finite().positive().multipleOf(0.001).optional(),
@@ -453,6 +456,7 @@ export const updateArticleSchema = z.object({
       client_ids: z.array(z.string().regex(/^[0-9]{3}$/)).max(500).optional(),
       tool_id: z.number().int().positive().nullable().optional(),
       supplier_conditions: z.array(articleSupplierConditionSchema).max(30).optional(),
+      subcontract_definition: subcontractDefinitionSchema.optional(),
       internal_reference: z.string().trim().min(1).max(160).nullable().optional(),
       consumption_mode: z.enum(["UNIT", "GLOBAL_PACK"]).optional(),
       purchase_pack_qty: z.number().finite().positive().multipleOf(0.001).optional(),
