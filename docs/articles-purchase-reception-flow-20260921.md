@@ -24,6 +24,8 @@ Référence de travail : FLUX-ARTICLES-ACHATS-RECEPTION-20260921 (demande utilis
 
 ## Retour arrière
 
+L’image Docker embarque aussi `scripts/migrations/patch-dependencies.js`, requis par le runner pour retrouver l’ordre canonique des migrations.
+
 Revenir aux versions précédentes de l’API, du web et de l’application mobile en conservant le schéma additif. Ne pas supprimer les colonnes ou la table : elles peuvent déjà contenir des conditions ou définitions saisies. Les nouvelles références matière et les montants de commande enregistrés restent des données métier. Toute restauration complète exige une décision distincte et une sauvegarde vérifiée.
 
 ## Vérification et limites

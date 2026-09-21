@@ -57,6 +57,7 @@ RUN npm ci --omit=dev
 # keeps operator-driven preflight/apply/status commands pinned to SOURCE_COMMIT
 # instead of relying on an unrelated host checkout.
 COPY scripts/db-patches.js ./scripts/db-patches.js
+COPY scripts/migrations/patch-dependencies.js ./scripts/migrations/patch-dependencies.js
 COPY db/patches ./db/patches
 
 # ...
