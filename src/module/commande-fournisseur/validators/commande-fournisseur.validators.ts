@@ -111,6 +111,7 @@ export const ligneInputSchema = z
     type: z.enum(LIGNE_TYPES).default("ARTICLE"),
     article_id: uuid.nullish(),
     catalogue_id: uuid.nullish(),
+    apply_catalogue_pricing: z.boolean().optional(),
     reference_fournisseur: z.string().trim().max(120).nullish(),
     designation: shortText,
     designation_interne: z.string().trim().max(200).nullish(),
@@ -265,11 +266,25 @@ export const transitionSchema = z.object({
 });
 export type TransitionBodyDTO = z.infer<typeof transitionSchema>["body"];
 
+export const acknowledgementLineSchema = z.object({
+  ligne_id: uuid,
+  prix_unitaire_ht: money,
+  frais_ht: money.optional(),
+  update_catalogue: z.boolean().optional(),
+  expected_catalogue_updated_at: revisionToken.optional(),
+}).strict().superRefine((line,ctx)=>{
+  if(line.update_catalogue && !line.expected_catalogue_updated_at)
+    ctx.addIssue({code:"custom",path:["expected_catalogue_updated_at"],message:"Actualisez les conditions fournisseur avant de les confirmer."});
+});
 export const accuseSchema = z.object({
   body: z
     .object({
       reference_fournisseur: shortText,
       date_accuse: isoDateTime.optional(),
+      lignes: z.array(acknowledgementLineSchema).max(500).optional().superRefine((lines,ctx)=>{
+        if(lines && new Set(lines.map(l=>l.ligne_id)).size!==lines.length)
+          ctx.addIssue({code:"custom",message:"Une ligne ne peut être confirmée qu’une fois."});
+      }),
       date_promesse: dateOnly.nullish(),
       expected_updated_at: revisionToken.optional(),
     })

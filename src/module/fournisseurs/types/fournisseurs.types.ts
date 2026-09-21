@@ -131,6 +131,8 @@ export type FournisseurCatalogueType =
   | "AUTRE"
 
 export type FournisseurCatalogueItem = {
+  forfait_ht?: number | null; minimum_facturation_ht?: number | null; price_tiers?: Array<{ qty_min: number; qty_max: number | null; unit_price: number }>;
+
   lot_achat?: number | null; unite_stock?: string | null; coef_conversion?: number | null;
   id: string
   fournisseur_id: string

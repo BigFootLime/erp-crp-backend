@@ -19,8 +19,8 @@ import { createArticleSchema, previewMaterialArticleCodeSchema } from "../module
  * est refusé au lieu de produire une référence illisible.
  */
 describe("Référence matière — profils", () => {
-  it("expose exactement les sept profils du besoin", () => {
-    expect([...MATERIAL_PROFILE_CODES]).toEqual(["PL", "RO", "U", "FOND", "TUBE", "PROFIL", "BRUTCL"]);
+  it("expose les neuf formes matière et conserve le profil historique brut client", () => {
+    expect([...MATERIAL_PROFILE_CODES]).toEqual(["PL", "RO", "U", "FOND", "TUBE", "TUBERECT", "HEXA", "L", "PROFIL", "BRUTCL"]);
   });
 
   it("ramène les orthographes historiques au code canonique", () => {
@@ -45,6 +45,15 @@ describe("Référence matière — profils", () => {
 });
 
 describe("Référence matière — segment dimensionnel", () => {
+  it("garde les nouvelles géométries et distingue deux clients propriétaires",()=>{
+    expect(buildMaterialDimensionsSegment("TUBERECT",{largeur_mm:50,hauteur_mm:30,epaisseur_mm:3,longueur_brut_mm:100})).toBe("50x30x3x100");
+    expect(buildMaterialDimensionsSegment("HEXA",{largeur_plat_mm:20,longueur_brut_mm:100})).toBe("20x100");
+    expect(buildMaterialDimensionsSegment("L",{largeur_mm:40,hauteur_mm:40,epaisseur_mm:4})).toBe("40x40x4");
+    const base={profile:"RO" as const,nuance_code:"S235",etat_code:"BRUT",dimensions:{diametre_mm:20}};
+    const internal=buildMaterialArticleCode(base).code;
+    const a=buildMaterialArticleCode({...base,client_code:"001"}).code,b=buildMaterialArticleCode({...base,client_code:"002"}).code;
+    expect(new Set([internal,a,b]).size).toBe(3);expect(a).toContain("001");expect(b).toContain("002");
+  });
   it("ordonne les cotes par profil", () => {
     expect(
       buildMaterialDimensionsSegment("PL", { largeur_mm: 100, epaisseur_mm: 10, longueur_brut_mm: 3000 })

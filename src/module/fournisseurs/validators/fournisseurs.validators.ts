@@ -1,3 +1,4 @@
+import { supplierPriceTiersSchema } from "./supplier-price-tiers";
 import { z } from "zod"
 
 const uuid = z.string().uuid()
@@ -318,6 +319,9 @@ export const createCatalogueSchema = z.object({
       reference_fournisseur: z.string().trim().min(1).max(200).optional().nullable(),
       unite: z.string().trim().min(1).max(30).optional().nullable(),
       prix_unitaire: z.number().finite().min(0).optional().nullable(),
+      forfait_ht: z.number().finite().min(0).optional().nullable(),
+      minimum_facturation_ht: z.number().finite().min(0).optional().nullable(),
+      price_tiers: supplierPriceTiersSchema.optional(),
       pricing_basis: z.enum(["NONE", "KG", "M"]).optional().default("NONE"),
       devise: z.string().trim().min(1).max(10).optional().default("EUR"),
       delai_jours: z.number().int().min(0).optional().nullable(),
@@ -348,6 +352,9 @@ export const updateCatalogueSchema = z.object({
       reference_fournisseur: z.string().trim().min(1).max(200).optional().nullable(),
       unite: z.string().trim().min(1).max(30).optional().nullable(),
       prix_unitaire: z.number().finite().min(0).optional().nullable(),
+      forfait_ht: z.number().finite().min(0).optional().nullable(),
+      minimum_facturation_ht: z.number().finite().min(0).optional().nullable(),
+      price_tiers: supplierPriceTiersSchema.optional(),
       pricing_basis: z.enum(["NONE", "KG", "M"]).optional(),
       devise: z.string().trim().min(1).max(10).optional(),
       delai_jours: z.number().int().min(0).optional().nullable(),

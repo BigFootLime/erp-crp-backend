@@ -1039,6 +1039,8 @@ export async function repoCreateLotForLine(
       lot_id: string | null
       reception_no: string
       owner_client_id:string|null
+      article_owner_client_id:string|null
+      receipt_owner_client_id:string|null
       processing_policy:string
     }>(
       `
@@ -1049,18 +1051,22 @@ export async function repoCreateLotForLine(
           l.article_id::text AS article_id,
           l.supplier_lot_code,
           l.lot_id::text AS lot_id,
-          r.reception_no,r.client_proprietaire_id AS owner_client_id,l.processing_policy
+          r.reception_no,COALESCE(r.client_proprietaire_id,am.client_proprietaire_id) AS owner_client_id,l.processing_policy,
+          am.client_proprietaire_id AS article_owner_client_id,r.client_proprietaire_id AS receipt_owner_client_id
         FROM public.reception_fournisseur_lignes l
         JOIN public.receptions_fournisseurs r ON r.id = l.reception_id
+        LEFT JOIN public.articles_matiere am ON am.article_id=l.article_id
         WHERE l.id = $1::uuid
           AND l.reception_id = $2::uuid
-        FOR UPDATE
+        FOR UPDATE OF l,r
       `,
       [lineId, receptionId]
     )
     const line = row.rows[0] ?? null
     if (!line) return null
     if (line.lot_id) throw new HttpError(409, "LOT_ALREADY_SET", "Un lot est deja rattache a cette ligne")
+    if(line.article_owner_client_id && line.receipt_owner_client_id && line.article_owner_client_id!==line.receipt_owner_client_id)
+      throw new HttpError(409,"MATERIAL_OWNER_MISMATCH","Le client propriétaire du brut diffère de celui de la réception.");
 
     if (body.lot_code?.trim()) {
       throw new HttpError(400, "LOT_CODE_SERVER_MANAGED", "Le numéro de lot interne est attribué automatiquement.")

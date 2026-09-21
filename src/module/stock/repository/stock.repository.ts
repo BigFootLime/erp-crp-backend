@@ -1,3 +1,4 @@
+import { syncSubcontractDefinitionTx } from "./article-subcontract-definition.repository";
 import { syncArticleSupplierConditionsTx } from "./article-supplier-conditions.repository";
 import { consumableWithdrawalOwnsMovement } from "./consumable-movement-guard";
 import { assertPieceReceiptMovement } from '../../receptions/repository/receipt-processing-guard';
@@ -719,7 +720,7 @@ export async function resolveMaterialCodeInput(
     : null;
 
   let clientCode: string | null = null;
-  if (profile === "BRUTCL") {
+  if (profile === "BRUTCL" || request.client_proprietaire_id?.trim()) {
     const clientId = (request.client_proprietaire_id ?? "").trim();
     if (!clientId) {
       throw new HttpError(
@@ -3455,6 +3456,10 @@ export async function repoGetArticle(id: string, includeCosts = false): Promise<
          fc.delai_jours::int AS lead_time_days,
          fc.moq::float8 AS moq,
          fc.lot_achat::float8 AS lot_achat, fc.unite_stock AS stock_unit, fc.coef_conversion::float8 AS conversion_coefficient,
+         fc.updated_at::text AS catalogue_updated_at,
+         CASE WHEN $2::boolean THEN (to_jsonb(fc)->>'forfait_ht')::float8 ELSE NULL END AS forfait_ht,
+         CASE WHEN $2::boolean THEN (to_jsonb(fc)->>'minimum_facturation_ht')::float8 ELSE NULL END AS minimum_facturation_ht,
+         CASE WHEN $2::boolean THEN COALESCE(to_jsonb(fc)->'price_tiers','[]'::jsonb) ELSE '[]'::jsonb END AS price_tiers,
          fc.conditions,
          (app.preferred_catalogue_id = fc.id) AS preferred,
          fc.actif AS active
@@ -3474,6 +3479,9 @@ export async function repoGetArticle(id: string, includeCosts = false): Promise<
 
   return {
     ...article,
+    subcontract_definition: (await db.query(`SELECT s.*,p.code_piece AS piece_reference,p.designation AS piece_designation,v.indice
+      FROM public.article_subcontract_definition s JOIN public.pieces_techniques p ON p.id=s.piece_technique_id
+      JOIN public.piece_technique_versions v ON v.id=s.piece_technique_version_id WHERE s.article_id=$1::uuid`,[id])).rows[0]??null,
     procurement: procurementRes.rows[0] ?? null,
     suppliers: suppliersRes.rows,
     open_supplier_orders: openSupplierOrdersRes.rows.map((row) => ({
@@ -3774,6 +3782,7 @@ export async function repoCreateArticleTx(
   });
   await syncArticleProcurementProfile(client, id, body.procurement, audit.user_id);
   await syncArticleSupplierConditionsTx(client, id, body.supplier_conditions, audit);
+  await syncSubcontractDefinitionTx(client,id,body.subcontract_definition,audit.user_id);
   if (body.sale_price_reference != null) {
     await seedArticleSheetSalePriceTx(client, {
       article_id: id,
@@ -4139,6 +4148,7 @@ export async function repoUpdateArticle(
     });
     await syncArticleProcurementProfile(client, id, patch.procurement, audit.user_id);
     await syncArticleSupplierConditionsTx(client, id, patch.supplier_conditions, audit);
+    await syncSubcontractDefinitionTx(client,id,patch.subcontract_definition,audit.user_id);
 
     await insertAuditLog(client, audit, {
       action: "stock.articles.update",

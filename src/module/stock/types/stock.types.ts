@@ -153,10 +153,13 @@ export type ArticleProcurementProfile = {
 };
 
 export type ArticleSupplierReference = {
+  forfait_ht?: number | null; minimum_facturation_ht?: number | null; price_tiers?: Array<{ qty_min: number; qty_max: number | null; unit_price: number }>;
+
   lot_achat?: number | null;
   stock_unit?: string | null;
   conversion_coefficient?: number | null;
   catalogue_id: string;
+  catalogue_updated_at?: string;
   supplier_id: string;
   supplier_code: string | null;
   supplier_name: string;
@@ -274,6 +277,7 @@ export type StockAvailableLotItem = {
 };
 
 export type StockArticleDetail = StockArticleListItem & {
+  subcontract_definition?: import("../validators/subcontract-definition").SubcontractDefinition & {piece_reference:string;piece_designation:string;indice:string} | null;
   notes: string | null;
   article_matiere: ArticleMatierePayload | null;
   fourniture_client: {
