@@ -82,6 +82,7 @@ describe("Dockerfile storage permissions", () => {
 
   it("ships the commit-pinned migration runner and canonical patch inventory", () => {
     expect(dockerfile).toContain("COPY scripts/db-patches.js ./scripts/db-patches.js");
+    expect(dockerfile).toContain("COPY scripts/migrations/patch-dependencies.js ./scripts/migrations/patch-dependencies.js");
     expect(dockerfile).toContain("COPY db/patches ./db/patches");
     expect(dockerfile.indexOf("COPY scripts/db-patches.js ./scripts/db-patches.js"))
       .toBeLessThan(dockerfile.indexOf("COPY --from=builder /app/dist ./dist"));
