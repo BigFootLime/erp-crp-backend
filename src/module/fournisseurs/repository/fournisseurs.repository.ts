@@ -1278,6 +1278,7 @@ export async function repoUpdateFournisseurHomologation(
 type CatalogueRow = {
   id: string; fournisseur_id: string; type: string; article_id: string | null; designation: string
   reference_fournisseur: string | null; unite: string | null; prix_unitaire: number | null; devise: string | null
+  forfait_ht: number | null; minimum_facturation_ht: number | null; price_tiers: import("../validators/supplier-price-tiers").SupplierPriceTier[]
   pricing_basis: "NONE" | "KG" | "M"
   lot_achat: number | null; unite_stock: string | null; coef_conversion: number | null
   delai_jours: number | null; moq: number | null; conditions: string | null
@@ -1288,6 +1289,9 @@ type CatalogueRow = {
 const CATALOGUE_SELECT = `
   id::text AS id, fournisseur_id::text AS fournisseur_id, type, article_id::text AS article_id, designation,
   reference_fournisseur, unite, prix_unitaire::float8 AS prix_unitaire,
+  (to_jsonb(fournisseur_catalogue)->>'forfait_ht')::float8 AS forfait_ht,
+  (to_jsonb(fournisseur_catalogue)->>'minimum_facturation_ht')::float8 AS minimum_facturation_ht,
+  COALESCE(to_jsonb(fournisseur_catalogue)->'price_tiers','[]'::jsonb) AS price_tiers,
   COALESCE(to_jsonb(fournisseur_catalogue) ->> 'pricing_basis', 'NONE') AS pricing_basis,
   devise, delai_jours, moq::float8 AS moq, conditions, lot_achat::float8, unite_stock, coef_conversion::float8,
   incoterm, prix_multiple::float8 AS prix_multiple, valid_from::text AS valid_from, valid_to::text AS valid_to,
@@ -1302,6 +1306,7 @@ function mapCatalogueRow(r: CatalogueRow): FournisseurCatalogueItem {
     id: r.id, fournisseur_id: r.fournisseur_id, type, article_id: r.article_id, designation: r.designation,
     reference_fournisseur: r.reference_fournisseur, unite: r.unite,
     prix_unitaire: r.prix_unitaire === null ? null : Number(r.prix_unitaire),
+    forfait_ht: r.forfait_ht ?? null, minimum_facturation_ht: r.minimum_facturation_ht ?? null, price_tiers: r.price_tiers ?? [],
     pricing_basis: r.pricing_basis ?? "NONE",
     devise: r.devise,
     delai_jours: r.delai_jours === null ? null : Number(r.delai_jours),
@@ -1376,13 +1381,13 @@ export async function repoCreateFournisseurCatalogueItem(
       `INSERT INTO public.fournisseur_catalogue
          (fournisseur_id, type, article_id, designation, reference_fournisseur, unite, prix_unitaire, devise,
           delai_jours, moq, conditions, incoterm, prix_multiple, valid_from, valid_to, exigence_qualite,
-          requiert_controle_reception, actif, created_by, updated_by, lot_achat, unite_stock, coef_conversion)
-       VALUES ($1::uuid,$2,$3::uuid,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::date,$15::date,$16,$17,$18,$19,$19,$20,$21,$22)
+          requiert_controle_reception, actif, created_by, updated_by, lot_achat, unite_stock, coef_conversion, forfait_ht, minimum_facturation_ht, price_tiers)
+       VALUES ($1::uuid,$2,$3::uuid,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::date,$15::date,$16,$17,$18,$19,$19,$20,$21,$22,$23,$24,$25::jsonb)
        RETURNING ${CATALOGUE_SELECT}`,
       [fournisseurId, body.type, body.article_id ?? null, body.designation, body.reference_fournisseur ?? null,
        body.unite ?? null, body.prix_unitaire ?? null, body.devise ?? "EUR", body.delai_jours ?? null, body.moq ?? null,
        body.conditions ?? null, body.incoterm ?? null, body.prix_multiple ?? null, body.valid_from ?? null,
-       body.valid_to ?? null, body.exigence_qualite ?? null, body.requiert_controle_reception ?? false, body.actif ?? true, audit.user_id, body.lot_achat ?? null, body.unite_stock ?? null, body.coef_conversion ?? null]
+       body.valid_to ?? null, body.exigence_qualite ?? null, body.requiert_controle_reception ?? false, body.actif ?? true, audit.user_id, body.lot_achat ?? null, body.unite_stock ?? null, body.coef_conversion ?? null, body.forfait_ht ?? null, body.minimum_facturation_ht ?? null, JSON.stringify(body.price_tiers ?? [])]
     )
     const row = ins.rows[0]
     if (!row) throw new Error("Failed to create catalogue item")
@@ -1431,6 +1436,9 @@ export async function repoUpdateFournisseurCatalogueItem(
   if (patch.reference_fournisseur !== undefined) sets.push(`reference_fournisseur = ${push(patch.reference_fournisseur)}`)
   if (patch.unite !== undefined) sets.push(`unite = ${push(patch.unite)}`)
   if (patch.prix_unitaire !== undefined) sets.push(`prix_unitaire = ${push(patch.prix_unitaire)}`)
+  if (patch.forfait_ht !== undefined) sets.push(`forfait_ht = ${push(patch.forfait_ht)}`)
+  if (patch.minimum_facturation_ht !== undefined) sets.push(`minimum_facturation_ht = ${push(patch.minimum_facturation_ht)}`)
+  if (patch.price_tiers !== undefined) sets.push(`price_tiers = ${push(JSON.stringify(patch.price_tiers))}::jsonb`)
   if (patch.devise !== undefined) sets.push(`devise = ${push(patch.devise)}`)
   if (patch.delai_jours !== undefined) sets.push(`delai_jours = ${push(patch.delai_jours)}`)
   if (patch.lot_achat !== undefined) sets.push(`lot_achat = ${push(patch.lot_achat)}`)

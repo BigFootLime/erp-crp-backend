@@ -8,12 +8,13 @@ vi.mock('../../commande-fournisseur/repository/commande-fournisseur.repository',
 vi.mock('../../audit-logs/repository/audit-logs.repository',()=>({repoInsertAuditLog:m.audit}));
 vi.mock('./receptions-realtime.repository',()=>({enqueueReceptionChanged:vi.fn(),receptionRealtimeActionFromAudit:()=> 'updated'}));
 import {withRealtimeOutboxTransaction} from '../../../shared/realtime/realtime-outbox-transaction';
-import {createCustomerMaterialReceiptTx,repoCreateLine,type AuditContext} from './receptions.repository';
+import {createCustomerMaterialReceiptTx,repoCreateLine,repoCreateLotForLine,type AuditContext} from './receptions.repository';
 const audit:AuditContext={user_id:1,ip:null,user_agent:null,device_type:null,os:null,browser:null,path:null,page_key:null,client_session_id:null};
 const input={callId:'call',clientId:'client',articleId:'article',designation:'Matière client',quantity:15,unit:'u',date:'2026-09-08',reference:'LOT-CLIENT-TEST',note:'Réception partielle fictive'};
 let tx:{query:ReturnType<typeof vi.fn>;release:ReturnType<typeof vi.fn>},lotCreated:boolean;
+let receiptOwner:string|null,articleOwner:string|null;
 beforeEach(()=>{
-  vi.resetAllMocks();lotCreated=false;m.audit.mockResolvedValue({id:'audit',created_at:'2026-09-08'});m.code.mockResolvedValue('LOT-TEST');
+  vi.resetAllMocks();lotCreated=false;receiptOwner='client';articleOwner='client';m.audit.mockResolvedValue({id:'audit',created_at:'2026-09-08'});m.code.mockResolvedValue('LOT-TEST');
   tx={release:vi.fn(),query:vi.fn(async(sql:string)=>{
     if(['BEGIN','COMMIT','ROLLBACK'].includes(sql))return {rows:[]};
     if(sql.includes('FROM public.planning_central_settings'))return {rows:[{revision:1}]};
@@ -24,13 +25,24 @@ beforeEach(()=>{
     if(sql.includes('SELECT unite FROM public.articles'))return {rows:[{unite:'u'}]};
     if(sql.includes('INSERT INTO public.reception_fournisseur_lignes'))return {rows:[{id:'line'}]};
     if(sql.includes('a.code AS article_code'))return {rows:[{id:'line',article_id:'article',qty_received:15,lot_id:lotCreated?'lot':null}]};
-    if(sql.includes('r.client_proprietaire_id AS owner_client_id'))return {rows:[{id:'line',reception_id:'receipt',article_id:'article',lot_id:null,owner_client_id:'client'}]};
+    if(sql.includes(' AS owner_client_id'))return {rows:[{id:'line',reception_id:'receipt',article_id:'article',lot_id:null,owner_client_id:receiptOwner??articleOwner,article_owner_client_id:articleOwner,receipt_owner_client_id:receiptOwner}]};
     if(sql.includes('INSERT INTO public.lots')){lotCreated=true;return {rows:[{id:'lot'}]};}
     if(sql.includes('UPDATE public.reception_fournisseur_lignes'))return {rows:[]};
     throw new Error(`Unexpected customer receipt query: ${sql}`);
   })};m.connect.mockResolvedValue(tx);
 });
 describe('customer receipt transaction and ownership',()=>{
+  it('inherits a client-owned material lot from the article when the supplier receipt has no owner',async()=>{
+    receiptOwner=null;
+    await repoCreateLotForLine('receipt','line',{},audit,tx as never);
+    const lot=tx.query.mock.calls.find(([sql])=>sql.includes('INSERT INTO public.lots'));
+    expect(lot?.[1]?.[10]).toBe('client');
+  });
+  it('refuses conflicting material owners before a lot is created',async()=>{
+    receiptOwner='another-client';
+    await expect(repoCreateLotForLine('receipt','line',{},audit,tx as never)).rejects.toMatchObject({code:'MATERIAL_OWNER_MISMATCH'});
+    expect(tx.query.mock.calls.some(([sql])=>sql.includes('INSERT INTO public.lots'))).toBe(false);
+  });
   it('uses the canonical receipt, line and lot in one transaction with no supplier',async()=>{
     const result=await withRealtimeOutboxTransaction(tx as never,client=>createCustomerMaterialReceiptTx(client,input,audit));
     expect(result).toEqual({receptionId:'receipt',receptionNo:'RF-TEST',lineId:'line',lotId:'lot'});
