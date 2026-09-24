@@ -161,6 +161,23 @@ export async function repoGetLastAttendanceEvent(employeeId: string, q: DbQuerye
   return res.rows[0] ? mapEvent(res.rows[0]) : null;
 }
 
+// Resolve local working hours in PostgreSQL so DST follows Europe/Paris.
+export async function repoGetAttendanceSchedule(employeeId: string, date: string, q: DbQueryer = pool): Promise<{
+  start_at: string; end_at: string;
+} | null> {
+  const result = await q.query<{ start_at: string; end_at: string }>(
+    `SELECT (($2::date + expected_start) AT TIME ZONE 'Europe/Paris')::text AS start_at,
+            (($2::date + expected_end) AT TIME ZONE 'Europe/Paris')::text AS end_at
+       FROM public.hr_work_schedules
+      WHERE employee_id = $1::uuid AND active
+        AND day_of_week = extract(dow FROM $2::date)
+        AND expected_start IS NOT NULL AND expected_end > expected_start
+      ORDER BY id LIMIT 1`,
+    [employeeId, date]
+  );
+  return result.rows[0] ?? null;
+}
+
 export async function repoFindEventByIdempotencyKey(key: string, q: DbQueryer = pool): Promise<HrTimeEvent | null> {
   const res = await q.query(
     `SELECT id::text, employee_id::text, device_id::text, event_type::text, event_time::text, source::text, created_at::text

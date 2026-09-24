@@ -2015,14 +2015,14 @@ describe("/api/v1/commandes", () => {
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({
       principal_affaire_id: 6,
-      affaire_ids: [7, 8],
+      affaire_ids: [7],
       livraison_affaire_id: 7,
-      production_livraison_affaire_id: 8,
-      automatic_stock_production_split: true,
+      production_livraison_affaire_id: 7,
+      automatic_stock_production_split: false,
       warnings: ["RECOVERED_PLANNING_WITHOUT_OF_OR_DELIVERY"],
     });
     expect(ofInsertCalls.some((params) => params.includes(3))).toBe(true);
-    expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO affaire"))).toBe(true);
+    expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO affaire"))).toBe(false);
     expect(
       mocks.clientQuery.mock.calls.some(
         (call) =>

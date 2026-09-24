@@ -38,14 +38,19 @@ const line: CommandeStockAnalysisLine = {
 
 describe("resolveDeliveryAffairPlan", () => {
   it("creates one stock affair and one production affair for a partial delivery", () => {
-    expect(resolveDeliveryAffairPlan([line], 1)).toEqual({
+    expect(resolveDeliveryAffairPlan([line], 1, "SHIP_AVAILABLE_NOW")).toEqual({
       automatic_stock_production_split: true,
       affaire_count: 2,
     });
-    expect(resolveDeliveryAffairPlan([line], 4)).toEqual({
+    expect(resolveDeliveryAffairPlan([line], 4, "SHIP_AVAILABLE_NOW")).toEqual({
       automatic_stock_production_split: true,
       affaire_count: 2,
     });
+  });
+
+  it("keeps stock and production together unless separate delivery was chosen", () => {
+    expect(resolveDeliveryAffairPlan([line], 1, "SHIP_ALL_TOGETHER")).toEqual({ automatic_stock_production_split: false, affaire_count: 1 });
+    expect(resolveDeliveryAffairPlan([line], 1)).toEqual({ automatic_stock_production_split: false, affaire_count: 1 });
   });
 
   it("keeps the requested cadence count when the order is fully covered or fully missing", () => {
