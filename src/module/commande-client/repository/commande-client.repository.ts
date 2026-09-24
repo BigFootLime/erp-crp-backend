@@ -5216,7 +5216,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         "Le stock, la composition ou la couverture contrat a changé. Relancez l'analyse avant de valider."
       );
     }
-    const deliveryAffairPlan = resolveDeliveryAffairPlan(stockAnalysis.lines, requestedLivraisonCount);
+    const deliveryAffairPlan = resolveDeliveryAffairPlan(stockAnalysis.lines, requestedLivraisonCount, body.decision ?? null);
     const effectiveLivraisonCount =
       orderType === "INTERNE" ? 0 : deliveryAffairPlan.affaire_count;
 
@@ -6243,12 +6243,13 @@ export type DeliveryAffairPlan = {
  */
 export function resolveDeliveryAffairPlan(
   lines: readonly Pick<CommandeStockAnalysisLine, "available_used_qty" | "shortage_qty">[],
-  requestedCount: number
+  requestedCount: number,
+  decision: "SHIP_AVAILABLE_NOW" | "SHIP_ALL_TOGETHER" | null = null
 ): DeliveryAffairPlan {
   const boundedRequestedCount = Math.max(1, Math.min(10, Math.trunc(requestedCount) || 1));
   const hasStock = lines.some((line) => Number(line.available_used_qty) > 1e-9);
   const hasProduction = lines.some((line) => Number(line.shortage_qty) > 1e-9);
-  const automaticSplit = hasStock && hasProduction;
+  const automaticSplit = hasStock && hasProduction && decision === "SHIP_AVAILABLE_NOW";
   return {
     automatic_stock_production_split: automaticSplit,
     affaire_count: automaticSplit ? 2 : boundedRequestedCount,

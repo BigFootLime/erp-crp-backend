@@ -73,6 +73,7 @@ export function resolveAutomaticEventType(last: HrTimeEvent | null, eventTime: s
 
 export async function createTimeEvent(input: CreateTimeEventRequestInput, audit: AuditContext): Promise<CreateTimeEventResult> {
   const eventDate = parisDay(input.event_time ?? Date.now());
+  const repairedDates = new Set<string>();
   await assertPeriodOpen(input.employee_id, eventDate);
   const result = await repo.withTransaction(async (client) => {
     const evtTimeMs = input.event_time ? new Date(input.event_time).getTime() : Date.now();
@@ -84,6 +85,12 @@ export async function createTimeEvent(input: CreateTimeEventRequestInput, audit:
     }
 
     await repo.repoLockEmployeeTimeEvents(input.employee_id, client);
+
+    // Another terminal may have committed this same request while we waited.
+    if (input.idempotency_key) {
+      const existing = await repo.repoFindEventByIdempotencyKey(input.idempotency_key, client);
+      if (existing) return { event: existing, deduplicated: true, double_badge: false };
+    }
 
     // Une nouvelle lecture physique génère une nouvelle clé : elle doit tout de même être bloquée.
     const last = input.event_type === "AUTO"
@@ -109,9 +116,60 @@ export async function createTimeEvent(input: CreateTimeEventRequestInput, audit:
       }
     }
 
-    const eventType = input.event_type === "AUTO"
+    let eventType = input.event_type === "AUTO"
       ? resolveAutomaticEventType(last, input.event_time ?? Date.now())
       : input.event_type;
+
+    // Repair only in response to a real badge, never in a nightly batch. Keep
+    // inferred events append-only, separately identified and fully audited.
+    if (input.source === "BADGE" && ["AUTO", "IN", "OUT"].includes(input.event_type)) {
+      const attendance = input.event_type === "AUTO" ? last : await repo.repoGetLastAttendanceEvent(input.employee_id, client);
+      const currentSchedule = await repo.repoGetAttendanceSchedule(input.employee_id, eventDate, client);
+      if (!currentSchedule) throw new HttpError(422, "HR_SCHEDULE_REQUIRED", "Renseignez obligatoirement les horaires d’arrivée et de départ du salarié pour ce jour avant de badger.");
+      const repair = async (type: "IN" | "OUT", time: string, date: string) => {
+        try {
+          await assertPeriodOpen(input.employee_id, date);
+        } catch (error) {
+          if (!(error instanceof HttpError) || error.code !== "HR_PERIOD_CLOSED") throw error;
+          await repo.insertAuditLog(client, audit, {
+            action: "temps-deplacements.event.repair_period_closed", entity_type: "hr_time_events",
+            entity_id: attendance?.id ?? input.employee_id, details: { date, event_type: type },
+          });
+          return;
+        }
+        const inserted = await repo.repoInsertTimeEvent(client, {
+          employee_id: input.employee_id, event_type: type, event_time: time, source: "ADMIN",
+          idempotency_key: `badge-repair:${input.employee_id}:${date}:${type}`,
+          raw_payload: { automatic_correction: true, reason: type === "IN" ? "MISSING_IN" : "MISSING_OUT", trigger: "NEXT_BADGE", schedule_date: date },
+        });
+        await repo.insertAuditLog(client, audit, {
+          action: "temps-deplacements.event.automatic_correction", entity_type: "hr_time_events",
+          entity_id: inserted.event.id, details: { date, event_type: type, event_time: time, trigger: "NEXT_BADGE", deduplicated: inserted.deduplicated },
+        });
+        repairedDates.add(date);
+      };
+      if (attendance?.event_type === "IN" && parisDay(attendance.event_time) < eventDate) {
+        const date = parisDay(attendance.event_time);
+        const schedule = await repo.repoGetAttendanceSchedule(input.employee_id, date, client);
+        if (!schedule) throw new HttpError(422, "HR_SCHEDULE_REQUIRED", "Renseignez les horaires du dernier jour badgé pour rectifier la sortie oubliée.");
+        if (schedule && new Date(schedule.end_at).getTime() > new Date(attendance.event_time).getTime()
+          && new Date(schedule.end_at).getTime() < evtTimeMs) {
+          await repair("OUT", schedule.end_at, date);
+        }
+      }
+      if (!attendance || parisDay(attendance.event_time) < eventDate) {
+        const schedule = currentSchedule;
+        if (schedule) {
+          const start = new Date(schedule.start_at).getTime();
+          const end = new Date(schedule.end_at).getTime();
+          // A first scan closer to the scheduled departure is an evening scan.
+          if (evtTimeMs > start && (input.event_type === "OUT" || (input.event_type === "AUTO" && evtTimeMs >= (start + end) / 2))) {
+            await repair("IN", schedule.start_at, eventDate);
+            eventType = "OUT";
+          }
+        }
+      }
+    }
     const resolvedInput: CreateTimeEventInput = { ...input, event_type: eventType };
     const inserted = await repo.repoInsertTimeEvent(client, resolvedInput);
     await repo.insertAuditLog(client, audit, {
@@ -130,13 +188,14 @@ export async function createTimeEvent(input: CreateTimeEventRequestInput, audit:
   });
 
   // Recalcul du jour (best-effort ; ne doit jamais faire échouer l'enregistrement de l'événement).
-  try {
-    await computeDailyTimesheet(input.employee_id, parisDay(result.event.event_time));
+  repairedDates.add(parisDay(result.event.event_time));
+  for (const date of repairedDates) try {
+    await computeDailyTimesheet(input.employee_id, date);
   } catch (error) {
     console.error(JSON.stringify({
       type: "hr_timesheet_recompute_failed",
       employeeId: input.employee_id,
-      date: parisDay(result.event.event_time),
+      date,
       eventId: result.event.id,
       error: error instanceof Error ? error.message : String(error),
     }));

@@ -630,6 +630,17 @@ export async function repoCreateNextVersion(
     )
     copied.version_nomenclature_lines = copiedBom.rowCount ?? 0
 
+    await client.query(
+      `INSERT INTO public.pieces_techniques_achats
+        (piece_technique_id,piece_technique_version_id,phase,nom,designation,article_id,
+         fournisseur_id,fournisseur_nom,quantite,quantite_pieces,pu_achat,unite_prix,type_achat)
+       SELECT piece_technique_id,$2::uuid,phase,nom,designation,article_id,
+              fournisseur_id,fournisseur_nom,quantite,quantite_pieces,pu_achat,unite_prix,type_achat
+       FROM public.pieces_techniques_achats
+       WHERE piece_technique_id=$1::uuid AND piece_technique_version_id=$3::uuid`,
+      [pieceTechniqueId, row.id, sourceVersionId]
+    )
+
     await insertAudit(client, audit, "pieces-techniques.version.create-next", row.id, {
       piece_technique_id: pieceTechniqueId,
       source_version_id: sourceVersionId,

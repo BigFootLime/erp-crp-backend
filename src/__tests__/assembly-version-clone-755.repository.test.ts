@@ -26,6 +26,9 @@ describe("#755 — clonage d'assemblage", () => {
     expect(result.copied.version_nomenclature_lines).toBe(2)
     const copy = mocks.query.mock.calls.find(([sql]) => sql.includes("INSERT INTO public.pieces_techniques_nomenclature"))!
     expect(copy[1]).toEqual(["piece", "new", "source"])
+    const purchases = mocks.query.mock.calls.find(([sql]) => sql.includes("INSERT INTO public.pieces_techniques_achats"))!
+    expect(purchases[1]).toEqual(["piece", "new", "source"])
+    expect(purchases[0]).toContain("type_achat")
     const lockIndex = mocks.query.mock.calls.findIndex(([sql]) => sql.includes("pg_advisory_xact_lock"))
     expect(lockIndex).toBeGreaterThan(0)
     expect(lockIndex).toBeLessThan(mocks.query.mock.calls.indexOf(copy))
