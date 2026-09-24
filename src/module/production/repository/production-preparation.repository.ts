@@ -566,7 +566,8 @@ export async function repoSelectPreparationVersion(
         "Cette révision ne correspond pas à la pièce de l’OF.",
       );
     await tx.query(
-      `UPDATE public.ordres_fabrication SET technical_preparation=technical_preparation||jsonb_build_object('selected_version_id',$2::text),
+      `UPDATE public.ordres_fabrication SET piece_technique_version_id=$2::uuid,
+      technical_preparation=technical_preparation||jsonb_build_object('selected_version_id',$2::text),
       preparation_rules_version=$3,technical_readiness='INCOMPLETE',updated_at=now(),updated_by=$4 WHERE id=$1`,
       [id, input.version_id, PREPARATION_RULES_VERSION, audit.user_id],
     );

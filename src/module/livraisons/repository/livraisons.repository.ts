@@ -3496,6 +3496,8 @@ export type PreparationCartItem = {
   // truth is the applicable PT version and the ordered article respectively.
   plan_reference: string | null
   plan_index: number | null
+  article_indice?: string | null
+  delai_client?: string | null
   designation: string | null
   requested_qty: number
   reserved_qty: number
@@ -3615,6 +3617,8 @@ export async function repoListPreparationCart(filters: PreparationCartQueryDTO):
     article_code: string | null
     plan_reference: string | null
     plan_index: number | null
+    article_indice: string | null
+    delai_client: string | null
     designation: string | null
     requested_qty: number
     reserved_qty: number
@@ -3651,6 +3655,8 @@ export async function repoListPreparationCart(filters: PreparationCartQueryDTO):
         art.code AS article_code,
         applicable_version.plan_reference,
         art.plan_index::int AS plan_index,
+        applicable_version.indice AS article_indice,
+        cl.delai_client::text AS delai_client,
         COALESCE(cl.designation, art.designation) AS designation,
         a.qty_ordered::float8 AS requested_qty,
         r.qty_reserved::float8 AS reserved_qty,
@@ -3731,10 +3737,11 @@ export async function repoListPreparationCart(filters: PreparationCartQueryDTO):
           ) AS tr_reference
       ) lot_trace ON r.lot_id IS NOT NULL
       LEFT JOIN LATERAL (
-        SELECT pv.plan_reference
+        SELECT pv.plan_reference, pv.indice
         FROM public.piece_technique_versions pv
         WHERE pv.piece_technique_id = COALESCE(cl.piece_technique_id, art.piece_technique_id)
         ORDER BY
+          (pv.id = COALESCE(l.piece_technique_version_id, cl.piece_technique_version_id)) DESC NULLS LAST,
           pv.is_current DESC,
           (lower(pv.statut) = 'applicable') DESC,
           pv.updated_at DESC,
@@ -3771,8 +3778,11 @@ export async function repoListPreparationCart(filters: PreparationCartQueryDTO):
   return {
     items: rows.rows.map((row) => {
       const snapshot = isRecord(row.verification_snapshot) ? row.verification_snapshot : {}
+      const provenanceMatches = (snapshot.mp_reference ?? null) === (row.mp_reference ?? null)
+        && (snapshot.tr_reference ?? null) === (row.tr_reference ?? null)
+        && snapshot.lot_code === row.lot_code
       const verifiedQty =
-        typeof snapshot.verified_qty === "number" && Number.isFinite(snapshot.verified_qty)
+        provenanceMatches && typeof snapshot.verified_qty === "number" && Number.isFinite(snapshot.verified_qty)
           ? snapshot.verified_qty
           : 0
       return {
@@ -3792,6 +3802,8 @@ export async function repoListPreparationCart(filters: PreparationCartQueryDTO):
         article_code: row.article_code,
         plan_reference: row.plan_reference,
         plan_index: row.plan_index === null ? null : Number(row.plan_index),
+        article_indice: row.article_indice ?? null,
+        delai_client: row.delai_client ?? null,
         designation: row.designation,
         requested_qty: Number(row.requested_qty),
         reserved_qty: Number(row.reserved_qty),
@@ -3808,19 +3820,12 @@ export async function repoListPreparationCart(filters: PreparationCartQueryDTO):
           typeof snapshot.of_number === "string" && snapshot.of_number.trim() !== ""
             ? snapshot.of_number
             : row.of_numero,
-        // Before the first scan, expose the authoritative lot provenance.  A
-        // later verification/correction snapshot is still preferred because it
-        // is the immutable evidence used by the prepared BL.
-        mp_reference:
-          typeof snapshot.mp_reference === "string" && snapshot.mp_reference.trim() !== ""
-            ? snapshot.mp_reference
-            : row.mp_reference,
-        tr_reference:
-          typeof snapshot.tr_reference === "string" && snapshot.tr_reference.trim() !== ""
-            ? snapshot.tr_reference
-            : row.tr_reference,
+        // Active reservations use the current lot. Historical evidence remains
+        // in the immutable snapshots and cannot override a subsequent correction.
+        mp_reference: row.mp_reference,
+        tr_reference: row.tr_reference,
         verified_qty: verifiedQty,
-        verified_at: row.verified_at,
+        verified_at: provenanceMatches ? row.verified_at : null,
       }
     }),
     total: Number(count.rows[0]?.total ?? 0),
@@ -4610,6 +4615,28 @@ export async function repoCorrectPreparationStock(params: {
     const correctedTrReference =
       params.body.tr_reference === undefined ? reservation.tr_reference : params.body.tr_reference
     if (params.body.mp_reference !== undefined || params.body.tr_reference !== undefined) {
+      const updates = [
+        ["MP_LOT", params.body.mp_reference],
+        ["TRAITEMENT_LOT", params.body.tr_reference],
+      ] as const
+      const previousReferences = await db.query<{ reference_type: string; reference_value: string }>(
+        `SELECT reference_type, reference_value FROM public.stock_lot_trace_references
+         WHERE lot_id = $1::uuid AND reference_type = ANY($2::text[])
+         ORDER BY reference_type, reference_value`,
+        [reservation.lot_id, updates.filter(([, value]) => value !== undefined).map(([type]) => type)]
+      )
+      previousSnapshot.trace_references = previousReferences.rows
+      // These are the mutable current references, not the immutable history.
+      // Keep the replaced values in the correction audit and shipped snapshots.
+      for (const [type, value] of updates) {
+        if (value === undefined) continue
+        await db.query(`DELETE FROM public.stock_lot_trace_references WHERE lot_id = $1::uuid AND reference_type = $2`, [reservation.lot_id, type])
+        if (value?.trim()) await db.query(
+          `INSERT INTO public.stock_lot_trace_references (lot_id, reference_type, reference_value, created_by)
+           VALUES ($1::uuid, $2, $3, $4) ON CONFLICT DO NOTHING`,
+          [reservation.lot_id, type, value.trim(), params.user_id]
+        )
+      }
       // This is the controlled, audited point at which a physical provenance
       // correction becomes authoritative for future scans.  Historical BL
       // snapshots remain untouched by the later propagation guard below.
@@ -4674,6 +4701,10 @@ export async function repoCorrectPreparationStock(params: {
         qty_delta: qtyDelta,
       },
     }
+    if (previousSnapshot.trace_references) correctedSnapshot.trace_references = [
+      ...(params.body.mp_reference === undefined || !params.body.mp_reference ? [] : [{ reference_type: "MP_LOT", reference_value: params.body.mp_reference }]),
+      ...(params.body.tr_reference === undefined || !params.body.tr_reference ? [] : [{ reference_type: "TRAITEMENT_LOT", reference_value: params.body.tr_reference }]),
+    ]
 
     let movementId: string | null = null
     if (Math.abs(qtyDelta) > 1e-9) {
@@ -4775,6 +4806,13 @@ export async function repoCorrectPreparationStock(params: {
       )
     }
 
+    const lotProvenanceChanged = params.body.lot_code !== undefined || params.body.mp_reference !== undefined || params.body.tr_reference !== undefined
+    const provenancePatch = {
+      ...(params.body.lot_code === undefined ? {} : { lot_code: correctedLotCode }),
+      ...(params.body.mp_reference === undefined ? {} : { mp_reference: correctedMpReference }),
+      ...(params.body.tr_reference === undefined ? {} : { tr_reference: correctedTrReference }),
+      verified_qty: 0, verified_at: null,
+    }
     const affectedBlRes = await db.query<{ id: string }>(
       `
         UPDATE public.bon_livraison bl
@@ -4788,29 +4826,29 @@ export async function repoCorrectPreparationStock(params: {
             FROM public.bon_livraison_ligne bll
             JOIN public.bon_livraison_ligne_allocations bla ON bla.bon_livraison_ligne_id = bll.id
             WHERE bll.bon_livraison_id = bl.id
-              AND bla.reservation_id = $1::uuid
+              AND (bla.reservation_id = $1::uuid OR ($3::boolean AND bla.lot_id = $4::uuid))
           )
         RETURNING bl.id::text AS id
       `,
-      [reservation.reservation_id, params.user_id]
+      [reservation.reservation_id, params.user_id, lotProvenanceChanged, reservation.lot_id]
     )
     const affectedBonLivraisonIds = affectedBlRes.rows.map((row) => row.id)
     if (affectedBonLivraisonIds.length > 0) {
       await db.query(
         `
           UPDATE public.bon_livraison_ligne_allocations bla
-          SET verification_snapshot = $2::jsonb,
-              verified_at = CASE WHEN $3::numeric > 0 THEN now() ELSE bla.verified_at END,
+          SET verification_snapshot = CASE WHEN bla.reservation_id = $1::uuid THEN $2::jsonb ELSE COALESCE(bla.verification_snapshot,'{}'::jsonb) || $7::jsonb END,
+              verified_at = CASE WHEN bla.reservation_id = $1::uuid AND $3::numeric > 0 THEN now() ELSE NULL END,
               verified_by = $4,
               updated_at = now(),
               updated_by = $4
           FROM public.bon_livraison_ligne bll
           JOIN public.bon_livraison bl ON bl.id = bll.bon_livraison_id
           WHERE bla.bon_livraison_ligne_id = bll.id
-            AND bla.reservation_id = $1::uuid
+            AND (bla.reservation_id = $1::uuid OR ($5::boolean AND bla.lot_id = $6::uuid))
             AND bl.statut IN ('DRAFT', 'READY')
         `,
-        [reservation.reservation_id, JSON.stringify(correctedSnapshot), previousVerifiedQty, params.user_id]
+        [reservation.reservation_id, JSON.stringify(correctedSnapshot), previousVerifiedQty, params.user_id, lotProvenanceChanged, reservation.lot_id, JSON.stringify(provenancePatch)]
       )
       for (const bonLivraisonId of affectedBonLivraisonIds) {
         await insertEvent(db, {
