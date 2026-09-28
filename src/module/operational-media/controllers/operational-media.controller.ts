@@ -5,10 +5,29 @@ import { sendSecureStoredFile } from "../../../shared/uploads/secure-download";
 import { mediaFilename } from "../repository/operational-media.repository";
 import { collectOperationalMediaCapabilities } from "../services/operational-media-health.service";
 import { authorizeOperationalMediaRead } from "../services/operational-media.service";
+import { isDemoMode } from "../../../config/demo-mode";
 import logger from "../../../utils/logger";
 
 export const getMediaCapabilities: RequestHandler = async (_req, res, next) => {
   try {
+    // The normal probe creates a short-lived storage file and can invoke the
+    // scanner process.  Demo users may only inspect UI state: expose a static
+    // disabled contract instead of touching any storage or integration.
+    if (isDemoMode()) {
+      res.json({
+        contract_version: 1,
+        status: "degraded",
+        authenticated_fetch_required: true,
+        direct_img_src_supported: false,
+        content_endpoint: "/api/v1/operational-media/:assetId/content",
+        preview_supported: false,
+        download_supported: false,
+        upload_promotion_supported: false,
+        storage: { ready: false, readable: false, writable: false, reason_code: "demo_disabled" },
+        antivirus: { ready: false, reason_code: "demo_disabled" },
+      });
+      return;
+    }
     res.json(await collectOperationalMediaCapabilities());
   } catch (error) {
     next(error);

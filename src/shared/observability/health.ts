@@ -10,6 +10,7 @@ import { getRealtimeReadiness } from "../../sockets/sockeServer";
 import { checkOperationalMediaStorage } from "../../module/operational-media/services/operational-media-health.service";
 import { setDependencyState, setGedCapacity, setGedQuarantineMetrics } from "./metrics";
 import { runtimeMetadata } from "./runtime";
+import { isDemoMode } from "../../config/demo-mode";
 
 export type HealthStatus = "up" | "down" | "degraded";
 export type HealthDependency = "database" | "ged_storage" | "operational_media_storage" | "antivirus" | "realtime";
@@ -24,6 +25,7 @@ export type HealthCheck = Readonly<{
   source: string;
   freshness_seconds: number;
   reliability: "MEASURED" | "STARTUP_PROBE";
+  disabled?: boolean;
 }>;
 
 export type ReadinessReport = Readonly<{
@@ -59,6 +61,7 @@ export function setScannerStartupState(state: UploadScannerStartupConfiguration)
 }
 
 function requiredDependencies(environment = process.env): Set<HealthDependency> {
+  if (isDemoMode(environment)) return new Set(["database"]);
   const configured = environment.CERP_READINESS_REQUIRED_DEPENDENCIES
     ?.split(",")
     .map((value) => value.trim())
@@ -102,7 +105,8 @@ function buildCheck(
   required: boolean,
   latencyMs: number,
   reasonCode: string | null,
-  reliability: HealthCheck["reliability"] = "MEASURED"
+  reliability: HealthCheck["reliability"] = "MEASURED",
+  disabled = false
 ): HealthCheck {
   return {
     status,
@@ -122,6 +126,7 @@ function buildCheck(
             : "realtime_control_plane",
     freshness_seconds: 0,
     reliability,
+    ...(disabled ? { disabled: true } : {}),
   };
 }
 
@@ -141,6 +146,32 @@ export async function collectReadiness(
     realtime: getRealtimeReadiness,
     ...overrides,
   };
+
+  if (isDemoMode(environment)) {
+    const databaseProbe = await timedProbe(dependencies.queryDatabase);
+    const checks: Record<HealthDependency, HealthCheck> = {
+      database: buildCheck(
+        "database",
+        databaseProbe.error ? "down" : "up",
+        true,
+        databaseProbe.latencyMs,
+        databaseProbe.error ? ((databaseProbe.error as { code?: string }).code ?? "DB_PROBE_FAILED") : null
+      ),
+      ged_storage: buildCheck("ged_storage", "degraded", false, 0, "DEMO_DISABLED", "STARTUP_PROBE", true),
+      operational_media_storage: buildCheck("operational_media_storage", "degraded", false, 0, "DEMO_DISABLED", "STARTUP_PROBE", true),
+      antivirus: buildCheck("antivirus", "degraded", false, 0, "DEMO_DISABLED", "STARTUP_PROBE", true),
+      realtime: buildCheck("realtime", "degraded", false, 0, "DEMO_DISABLED", "STARTUP_PROBE", true),
+    };
+    for (const name of ALL_DEPENDENCIES) {
+      setDependencyState(name, checks[name].status === "up", checks[name].latency_ms);
+    }
+    return {
+      status: databaseProbe.error ? "not_ready" : "ready",
+      ...runtimeMetadata,
+      observed_at: new Date().toISOString(),
+      checks,
+    };
+  }
 
   const [databaseProbe, gedProbe, mediaProbe, scannerProbe, quarantineProbe] = await Promise.all([
     timedProbe(dependencies.queryDatabase),

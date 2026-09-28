@@ -8,6 +8,8 @@ const rateLimitMocks = vi.hoisted(() => ({
 // 🛑 Place les mocks AVANT d'importer app
 vi.mock('../module/auth/controllers/auth.controller', () => ({
   login: vi.fn((req, res) => res.status(200).json({ token: 'fake-jwt-token' })),
+  demoLogin: vi.fn((req, res) => res.status(200).json({ token: 'fake-demo-jwt-token' })),
+  demoLoginRateLimitIdentity: (_req, _res, next) => next(),
   forgotPassword: vi.fn((req, res) =>
     res.status(200).json({ message: 'Si ce compte existe, un lien de réinitialisation a été envoyé.' })
   ),

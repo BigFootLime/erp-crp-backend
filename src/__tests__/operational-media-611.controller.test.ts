@@ -186,6 +186,29 @@ describe("#611 operational media HTTP boundary", () => {
     expect(mocks.capabilities).toHaveBeenCalledTimes(1);
   });
 
+  it("returns static disabled capabilities in demo mode without probing storage or scanner", async () => {
+    const previous = process.env.CERP_DEMO_MODE;
+    process.env.CERP_DEMO_MODE = "true";
+    try {
+      const response = await request(makeApp())
+        .get("/api/v1/operational-media/capabilities")
+        .set("x-test-user", "authenticated")
+        .expect(200);
+
+      expect(response.body).toMatchObject({
+        status: "degraded",
+        preview_supported: false,
+        download_supported: false,
+        upload_promotion_supported: false,
+        storage: { reason_code: "demo_disabled" },
+      });
+      expect(mocks.capabilities).not.toHaveBeenCalled();
+    } finally {
+      if (previous === undefined) delete process.env.CERP_DEMO_MODE;
+      else process.env.CERP_DEMO_MODE = previous;
+    }
+  });
+
   it("returns 401 before the media service for an unauthenticated request", async () => {
     const response = await request(makeApp()).get(`/api/v1/operational-media/${ASSET_ID}/content`);
 

@@ -16,6 +16,9 @@ import { resolveTrustProxySetting } from "./trust-proxy";
 import { getRealtimeReadiness } from "../sockets/sockeServer";
 import { installStructuredConsole, logger } from "../shared/observability/logger";
 import { createObservabilityRouter } from "../shared/observability/routes";
+import { DEMO_CAPABILITIES, isDemoMode } from "./demo-mode";
+import { authenticateToken } from "../module/auth/middlewares/auth.middleware";
+import { isCorsOriginAllowed } from "./cors-policy";
 
 installStructuredConsole();
 const app = express();
@@ -29,7 +32,7 @@ app.use(requestIdMiddleware);
 
 app.use(helmet());
 
-const staticAllowedOrigins = new Set<string>([
+const defaultAllowedOrigins = [
   "https://cerp.croix-rousse-precision.fr",
   "http://cerp.croix-rousse-precision.fr",
   "http://localhost:5173",
@@ -39,18 +42,23 @@ const staticAllowedOrigins = new Set<string>([
   "http://127.0.0.1:5137",
   "http://127.0.0.1:4173",
   "app://cerp",
-]);
+];
 
 const envOrigins = (process.env.CORS_ORIGINS ?? "")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
 
-for (const o of envOrigins) staticAllowedOrigins.add(o);
+if (isDemoMode() && envOrigins.length === 0) {
+  throw new Error("[demo] CORS_ORIGINS must contain the demo frontend origin");
+}
 
-const isAllowedOrigin = (origin: string): boolean => {
-  return staticAllowedOrigins.has(origin) || /^http:\/\/(localhost|127\.0\.0\.1):\d+$/i.test(origin);
-};
+const staticAllowedOrigins = new Set<string>(isDemoMode() ? envOrigins : defaultAllowedOrigins);
+if (!isDemoMode()) {
+  for (const o of envOrigins) staticAllowedOrigins.add(o);
+}
+
+const isAllowedOrigin = (origin: string): boolean => isCorsOriginAllowed(origin, staticAllowedOrigins, isDemoMode());
 
 const corsOptionsDelegate: cors.CorsOptionsDelegate = (req, cb) => {
   const originHeader = req.headers.origin;
@@ -141,13 +149,15 @@ app.use(
 
 /* ------------------ 3) Swagger / Docs ------------------ */
 
-app.use(
-  "/docs",
-  swaggerUi.serve,
-  swaggerUi.setup(swaggerSpec, {
-    swaggerOptions: { persistAuthorization: true },
-  })
-);
+if (!isDemoMode()) {
+  app.use(
+    "/docs",
+    swaggerUi.serve,
+    swaggerUi.setup(swaggerSpec, {
+      swaggerOptions: { persistAuthorization: true },
+    })
+  );
+}
 
 /* ------------------ 4) Routes ------------------ */
 
@@ -162,14 +172,25 @@ app.get("/api/v1", (_req, res) => {
 // Environnement runtime (public) — source de vérité pour le badge front.
 // Renvoie la base RÉELLEMENT connectée (SELECT current_database()), impossible à mentir :
 // permet à l'UI d'afficher "cerp_test" quand l'API sert la base de test, et non la sélection front.
-app.get("/api/v1/environment", async (_req, res) => {
+app.get("/api/v1/environment", (req, res, next) => {
+  // A demo session may only attest its own dedicated environment. Production
+  // keeps this legacy endpoint public for compatibility.
+  if (!isDemoMode()) return next();
+  return authenticateToken(req, res, next);
+}, async (req, res) => {
+  if (isDemoMode() && req.headers["x-cerp-database"] !== "cerp_demo") {
+    res.status(403).json({ error: "DEMO_RESTRICTED", message: "Cette action n'est pas disponible dans la démo." });
+    return;
+  }
   try {
     const { rows } = await pool.query<{ database: string }>(
       "SELECT current_database() AS database"
     );
     const database = rows[0]?.database ?? null;
     const environment =
-      database === "cerp_prod"
+      isDemoMode() && database === "cerp_demo"
+        ? "demo"
+        : database === "cerp_prod"
         ? "production"
         : database === "cerp_test"
         ? "test"
@@ -180,10 +201,12 @@ app.get("/api/v1/environment", async (_req, res) => {
       database,
       environment,
       appEnv: process.env.NODE_ENV ?? null,
+      demo: isDemoMode() && database === "cerp_demo",
+      capabilities: isDemoMode() && database === "cerp_demo" ? DEMO_CAPABILITIES : undefined,
     });
   } catch {
     // Base injoignable : on ne ment pas, on répond "unknown" (le badge se masquera).
-    res.status(503).json({ database: null, environment: "unknown", appEnv: process.env.NODE_ENV ?? null });
+    res.status(503).json({ database: null, environment: "unknown", appEnv: process.env.NODE_ENV ?? null, demo: false });
   }
 });
 
@@ -192,6 +215,10 @@ app.get("/api/v1/environment", async (_req, res) => {
 // readiness before the mandatory privileged backstops are installed.
 app.get("/api/v1/realtime/readiness", (_req, res) => {
   const readiness = getRealtimeReadiness();
+  if (isDemoMode()) {
+    res.status(200).json({ ...readiness, disabled: true });
+    return;
+  }
   res.status(readiness.ready ? 200 : 503).json(readiness);
 });
 
@@ -212,9 +239,11 @@ app.use(validationErrorMiddleware);
 logger.info("image_storage_configured", { delivery: "authenticated_operational_media" });
 
 // Vérifie que le dossier réseau est bien monté
-checkNetworkDrive().catch(() => {
-  logger.error("image_storage_unavailable", { affected_scope: "product_images" });
-});
+if (!isDemoMode()) {
+  checkNetworkDrive().catch(() => {
+    logger.error("image_storage_unavailable", { affected_scope: "product_images" });
+  });
+}
 
 /* ------------------ 6) Error handler (TOUJOURS EN DERNIER) ------------------ */
 

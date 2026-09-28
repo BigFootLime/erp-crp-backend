@@ -87,6 +87,7 @@ import { withRealtimeOutboxDbMock } from "./helpers/realtime-outbox-db-mock";
 const defaultState = () => ({
   // Colonnes optionnelles sondées par hasPublicColumn (code_piece legacy absent par défaut).
   columns: { code_piece: false, position: true, total_ht: true, total_ttc: true } as Record<string, boolean>,
+  generatedColumns: new Set<string>(),
   idempotenceTable: true,
   idemRow: null as null | { action: string; payload_hash: string; resultat: Record<string, unknown> },
   listTotal: 1,
@@ -123,7 +124,8 @@ function dispatch(sqlRaw: unknown, params?: unknown[]): { rows: unknown[]; rowCo
 
   if (/information_schema\.columns/.test(sql)) {
     const column = String(params?.[1] ?? "");
-    return { rows: [{ exists: state.columns[column] === true }] };
+    const writableOnly = /is_generated\s*<>\s*'ALWAYS'/.test(sql);
+    return { rows: [{ exists: state.columns[column] === true && (!writableOnly || !state.generatedColumns.has(column)) }] };
   }
   if (/information_schema\.tables/.test(sql)) return { rows: [{ exists: state.idempotenceTable }] };
 
@@ -784,6 +786,22 @@ describe("/api/v1/devis", () => {
     const insertLigneCall = mocks.clientQuery.mock.calls.find((c) => String(c[0]).includes("INSERT INTO devis_ligne"));
     expect(String(insertLigneCall?.[0])).toContain("position");
 
+  });
+
+  it("POST /api/v1/devis omits generated line totals from the INSERT", async () => {
+    state.generatedColumns = new Set(["total_ht", "total_ttc"]);
+    const res = await request(app)
+      .post("/api/v1/devis")
+      .set("Idempotency-Key", "devis-generated-totals-0001")
+      .field("data", JSON.stringify({
+        client_id: "001",
+        user_id: 1,
+        lignes: [{ description: "Line", quantite: 1, prix_unitaire_ht: 100 }],
+      }));
+
+    expect(res.status).toBe(201);
+    const insertSql = String(mocks.clientQuery.mock.calls.find((c) => String(c[0]).includes("INSERT INTO devis_ligne"))?.[0]);
+    expect(insertSql).not.toMatch(/total_ht|total_ttc/);
   });
 
   it("POST /api/v1/devis requires an idempotency key before any write", async () => {

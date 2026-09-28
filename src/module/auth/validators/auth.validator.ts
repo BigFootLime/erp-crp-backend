@@ -6,6 +6,7 @@ import {
   preserveOpaqueAuthToken,
 } from "../domain/auth-identity";
 import { MFA_POLICIES } from "../domain/mfa-policy";
+import { isDemoDatabaseId, isDemoMode } from "../../../config/demo-mode";
 
 export const loginSchema = z.object({
   username: trimString(3, "Nom d'utilisateur requis (min 3 caractères)")
@@ -13,8 +14,15 @@ export const loginSchema = z.object({
   password: z
     .string({ required_error: "Mot de passe requis" })
     .min(1, "Mot de passe requis"),
-  database: z.enum(["cerp_prod", "cerp_test"]).optional(),
-}).strict();
+  database: z.enum(["cerp_prod", "cerp_test", "cerp_demo"]).optional(),
+}).strict().superRefine((value, ctx) => {
+  if (isDemoDatabaseId(value.database) && !isDemoMode()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["database"], message: "Base de démonstration indisponible" });
+  }
+  if (isDemoMode() && value.database !== "cerp_demo") {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["database"], message: "La démo requiert la base cerp_demo" });
+  }
+});
 
 export type LoginDTO = z.infer<typeof loginSchema>;
 

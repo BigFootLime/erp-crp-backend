@@ -1,8 +1,10 @@
 import { Pool } from 'pg';
 import dotenv from 'dotenv';
 import { errorFingerprint, logger, safeErrorCode } from '../shared/observability/logger';
+import { assertDemoDatabaseIsolation } from './demo-mode';
 
 dotenv.config();
+assertDemoDatabaseIsolation();
 
 function readPositiveIntEnv(name: string, fallback: number): number {
   const raw = process.env[name];

@@ -4,6 +4,7 @@ import { requestHasGrantedAccountModuleAccess } from "../../access-control/conte
 import { z } from "zod";
 import { HttpError } from "../../../utils/httpError";
 import { createSecureUpload } from "../../../shared/uploads/secure-upload";
+import { isDemoMode } from "../../../config/demo-mode";
 import {
   DEVIS_TRANSITION_CAPABILITIES,
   roleHasDevisCapability,
@@ -70,6 +71,41 @@ const parseMultipartData = (schema: z.ZodTypeAny): RequestHandler => {
 };
 
 /**
+ * The public demo deliberately never accepts multipart quote creation. This
+ * runs before the upload middleware, so files cannot reach temporary storage.
+ */
+const parseDemoDraftJson: RequestHandler = (req, _res, next) => {
+  if (!isDemoMode()) return next();
+  if (!req.is("application/json")) {
+    next(new HttpError(403, "DEMO_RESTRICTED", "Cette action n'est pas disponible dans la démo."));
+    return;
+  }
+  const parsed = createDevisBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    const msg = parsed.error.issues?.[0]?.message ?? "Invalid request";
+    next(new HttpError(422, "VALIDATION_ERROR", msg, parsed.error.flatten()));
+    return;
+  }
+  if (parsed.data.statut !== "BROUILLON") {
+    next(new HttpError(403, "DEMO_RESTRICTED", "Cette action n'est pas disponible dans la démo."));
+    return;
+  }
+  req.parsedDevisBody = parsed.data;
+  next();
+};
+
+/** Preserve legacy multipart uploads outside the isolated demo only. */
+const uploadCreateDevis: RequestHandler = (req, res, next) => {
+  if (isDemoMode()) return next();
+  return upload.array("documents[]")(req, res, next);
+};
+
+const parseCreateDevisData: RequestHandler = (req, res, next) => {
+  if (isDemoMode()) return parseDemoDraftJson(req, res, next);
+  return parseMultipartData(createDevisBodySchema)(req, res, next);
+};
+
+/**
  * Gardes RBAC devis (#167) — montées derrière le socle default-deny (`authenticateToken`
  * global de v1.routes.ts). Chaque action porte une garde de capacité refusée par défaut ;
  * le RBAC fin dépendant de l'état (transition de statut) est re-vérifié dans le repository
@@ -117,7 +153,7 @@ router.get("/:id/official-documents/:documentId", requireCapability("export"), g
 router.get("/:id/official-documents/:documentId/preview", requireCapability("export"), previewDevisOfficialDocument);
 router.get("/:id/official-documents/:documentId/download", requireCapability("export"), downloadDevisOfficialDocument);
 router.post("/:id/official-documents/:documentId/print-intents", requireCapability("export"), printDevisOfficialDocument);
-router.post("/", requireCapability("create"), upload.array("documents[]"), parseMultipartData(createDevisBodySchema), createDevis);
+router.post("/", requireCapability("create"), parseDemoDraftJson, uploadCreateDevis, parseCreateDevisData, createDevis);
 router.post("/:id/convert-to-commande", requireCapability("convert"), convertDevisToCommande);
 router.post("/:id/revise", requireCapability("revise"), upload.array("documents[]"), parseMultipartData(updateDevisBodySchema), reviseDevis);
 router.patch("/:id", requireUpdateOrTransitionCapability, upload.array("documents[]"), parseMultipartData(updateDevisBodySchema), updateDevis);

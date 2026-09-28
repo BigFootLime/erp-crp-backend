@@ -80,9 +80,11 @@ import commercialReferencesRoutes from "../module/commercial-references/routes/c
 import { moduleAccessGate } from "../module/access-control/middlewares/module-access-gate"
 import { runWithAccountModuleAccessScope } from "../module/access-control/context/account-module-access.context"
 import documentServiceCapabilitiesRoutes from "../shared/document-services/document-service-capabilities.routes"
+import { demoAccessGuard, demoPublicBoundaryGuard } from "../middlewares/demo-access.middleware"
 const router = Router()
 
 router.use((_req, _res, next) => runWithAccountModuleAccessScope(next))
+router.use(demoPublicBoundaryGuard)
 
 // --- Routes publiques (avant authentification) ---
 router.use("/auth", authRoutes)
@@ -98,6 +100,7 @@ router.use("/time-clock", tempsDeplacementsDeviceRoutes)
 // ligne exige un JWT valide. Les rôles restent descriptifs ; l'autorisation
 // métier est portée par le compte et le module au middleware suivant.
 router.use(authenticateToken)
+router.use(demoAccessGuard)
 
 // 🔒 Tour de contrôle des accès (#326) : filtrage module par compte, monté avant tout
 // module métier pour qu'aucune surface future n'y échappe par oubli. Une fois le

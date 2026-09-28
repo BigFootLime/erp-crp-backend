@@ -24,21 +24,27 @@ import { initSocketServer, shutdownRealtimeSocketServer } from "./sockets/sockeS
 import { runWithObservabilityContext } from "./shared/observability/context";
 import { setScannerStartupState } from "./shared/observability/health";
 import { errorFingerprint, installStructuredConsole, logger, safeErrorCode } from "./shared/observability/logger";
+import { isDemoMode } from "./config/demo-mode";
 
 installStructuredConsole();
 
 async function start(): Promise<void> {
   assertE2EIsolation();
-  assertMfaStartupConfiguration();
+  const demoMode = isDemoMode();
+  if (!demoMode) assertMfaStartupConfiguration();
   // Run the GED identity/RW proof before the generic upload-root preflight:
   // otherwise a missing mount could be replaced by a newly created directory
   // on the system disk before the sentinel has been checked.
-  const criticalStorage = await preflightCriticalStorageAtStartup();
-  logger.info("critical_storage_preflight_succeeded", criticalStorage);
+  if (!demoMode) {
+    const criticalStorage = await preflightCriticalStorageAtStartup();
+    logger.info("critical_storage_preflight_succeeded", criticalStorage);
+  }
   // Run before importing routes: several upload middlewares allocate their
   // private quarantine during module initialization.
-  const uploadRoots = preflightSecureUploadStorageRoots();
-  logger.info("upload_storage_preflight_succeeded", { root_count: uploadRoots.length });
+  if (!demoMode) {
+    const uploadRoots = preflightSecureUploadStorageRoots();
+    logger.info("upload_storage_preflight_succeeded", { root_count: uploadRoots.length });
+  }
 
   const [{ default: app }, uploadScanner] = await Promise.all([
     import("./config/app"),
@@ -56,19 +62,20 @@ async function start(): Promise<void> {
 
   const port = Number.parseInt(process.env.PORT || "5000", 10);
   const httpServer = createServer(app);
-  const stopAuthRateLimitMaintenance = startAuthRateLimitMaintenance();
-  const stopMfaArtifactMaintenance = startMfaArtifactMaintenance();
-  const stopReminderMaintenance = startReminderMaintenance();
-  const stopElectronicInvoiceMaintenance = startElectronicInvoiceMaintenance();
-  const stopSupplierInvoiceMaintenance = startSupplierInvoiceMaintenance();
-  const stopEReportingMaintenance = startEReportingMaintenance();
-  const stopWebhookDeliveryMaintenance = startWebhookDeliveryMaintenance();
-  const stopAuthoritativePdfArchiveMaintenance = startAuthoritativePdfArchiveMaintenance();
-  const stopPlanningForecastMaintenance = startPlanningForecastMaintenance();
-  const stopDurationLearningMaintenance = startDurationLearningMaintenance();
+  const disabledMaintenance = () => undefined;
+  const stopAuthRateLimitMaintenance = demoMode ? disabledMaintenance : startAuthRateLimitMaintenance();
+  const stopMfaArtifactMaintenance = demoMode ? disabledMaintenance : startMfaArtifactMaintenance();
+  const stopReminderMaintenance = demoMode ? disabledMaintenance : startReminderMaintenance();
+  const stopElectronicInvoiceMaintenance = demoMode ? disabledMaintenance : startElectronicInvoiceMaintenance();
+  const stopSupplierInvoiceMaintenance = demoMode ? disabledMaintenance : startSupplierInvoiceMaintenance();
+  const stopEReportingMaintenance = demoMode ? disabledMaintenance : startEReportingMaintenance();
+  const stopWebhookDeliveryMaintenance = demoMode ? disabledMaintenance : startWebhookDeliveryMaintenance();
+  const stopAuthoritativePdfArchiveMaintenance = demoMode ? disabledMaintenance : startAuthoritativePdfArchiveMaintenance();
+  const stopPlanningForecastMaintenance = demoMode ? disabledMaintenance : startPlanningForecastMaintenance();
+  const stopDurationLearningMaintenance = demoMode ? disabledMaintenance : startDurationLearningMaintenance();
 
-  initSocketServer(httpServer);
-  const stopExpiredLockMaintenance = startExpiredLockMaintenance();
+  if (!demoMode) initSocketServer(httpServer);
+  const stopExpiredLockMaintenance = demoMode ? disabledMaintenance : startExpiredLockMaintenance();
 
   const listenHost = e2eListenHost();
   httpServer.listen(port, listenHost, () => {

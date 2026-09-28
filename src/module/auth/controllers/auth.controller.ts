@@ -1,7 +1,8 @@
-import { Request, Response } from "express";
+import { NextFunction, Request, Response } from "express";
 import {
   activateAccountSchema,
   forgotPasswordSchema,
+  type LoginDTO,
   loginSchema,
   resetPasswordSchema,
 } from "../validators/auth.validator";
@@ -13,15 +14,26 @@ import {
 } from "../services/auth.service";
 import { asyncHandler } from "../../../utils/asyncHandler";
 import { getClientIp, parseDevice } from "../../../utils/requestMeta";
+import { isDemoMode } from "../../../config/demo-mode";
+import { HttpError } from "../../../utils/httpError";
 
-export const login = asyncHandler(async (req: Request, res: Response) => {
-  const { username, password } = loginSchema.parse(req.body);
+function selectedDatabase(req: Request): string | undefined {
+  return typeof req.headers["x-cerp-database"] === "string"
+    ? req.headers["x-cerp-database"]
+    : undefined;
+}
+
+async function respondWithLogin(
+  req: Request,
+  res: Response,
+  credentials: Pick<LoginDTO, "username" | "password">,
+) {
+  const { username, password } = credentials;
 
   const ip = getClientIp(req);
   const user_agent = req.headers["user-agent"]?.toString() ?? null;
   const device = parseDevice(user_agent);
 
-  // Rate-limit anti-bruteforce (A.8.5) : par IP + identifiant, avant toute vérification.
   const data = await loginUser(username, password, {
     ip,
     user_agent,
@@ -34,7 +46,51 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
     message: "Connexion réussie",
     ...data,
   });
+}
+
+export const login = asyncHandler(async (req: Request, res: Response) => {
+  const database = selectedDatabase(req);
+  const parsed = loginSchema.parse({
+    ...req.body,
+    database: isDemoMode() ? database : req.body?.database ?? database,
+  });
+  return respondWithLogin(req, res, parsed);
 });
+
+function demoCredential(name: "DEMO_SEED_USERNAME" | "DEMO_SEED_PASSWORD"): string {
+  const value = process.env[name]?.trim();
+  if (!value) {
+    throw new HttpError(503, "DEMO_UNAVAILABLE", "La démonstration est temporairement indisponible.");
+  }
+  return value;
+}
+
+/**
+ * Server-only visitor login for the isolated CERP demo. The credentials are
+ * deliberately never read from the request and this delegates to the normal
+ * password login flow, preserving its JWT, account-state and audit checks.
+ */
+export const demoLogin = asyncHandler(async (req: Request, res: Response) => {
+  if (!isDemoMode()) {
+    throw new HttpError(404, "NOT_FOUND", "Route introuvable.");
+  }
+  const credentials = loginSchema.parse({
+    username: demoCredential("DEMO_SEED_USERNAME"),
+    password: demoCredential("DEMO_SEED_PASSWORD"),
+    database: selectedDatabase(req),
+  });
+  return respondWithLogin(req, res, credentials);
+});
+
+/** Places the server-only visitor identity into the existing login limiter. */
+export function demoLoginRateLimitIdentity(req: Request, res: Response, next: NextFunction): void {
+  if (!isDemoMode()) {
+    res.sendStatus(404);
+    return;
+  }
+  req.body = { ...(req.body ?? {}), username: process.env.DEMO_SEED_USERNAME?.trim() || "DEMO" };
+  next();
+}
 
 const FORGOT_PASSWORD_GENERIC_MESSAGE = "Si ce compte existe, un lien de réinitialisation a été envoyé.";
 const FORGOT_PASSWORD_MIN_RESPONSE_MS = 600;
