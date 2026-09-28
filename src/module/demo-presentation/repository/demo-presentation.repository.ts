@@ -106,12 +106,10 @@ export async function createOrResumePresentation(userId: number, startKey: strin
        WHERE user_id = $1 AND start_key = $2 LIMIT 1
     `, [userId, startKey]);
     if (sameStart.rows[0]) return mapScenario(sameStart.rows[0]);
-    const existing = await pool.query<ScenarioDbRow>(`
-      SELECT ${scenarioColumns} FROM public.demo_presentation_scenarios
-       WHERE user_id = $1 AND status <> 'COMPLETED'
-       ORDER BY created_at DESC LIMIT 1
-    `, [userId]);
-    if (existing.rows[0]) return mapScenario(existing.rows[0]);
+
+    // The caller holds the per-user presentation advisory lock. Resuming only
+    // the same start key keeps concurrent browser sessions independent while
+    // retaining idempotency for a retry of that specific session.
 
     const rate = await pool.query<{ count: string }>(`
       SELECT count(*)::text AS count FROM public.demo_presentation_scenarios

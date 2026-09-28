@@ -112,6 +112,14 @@ refuse toute autre base. Il ne fait pas partie du ledger global de migrations
 des instances métier : conserver le SHA du fichier appliqué dans le journal de
 déploiement de la démo avec la sauvegarde correspondante.
 
+Pour le parcours natif v3, appliquer ensuite, toujours après sauvegarde et sur
+`cerp_demo` seulement, `20260928_cerp_demo_native_presentation_v3.sql` puis
+`20260928_cerp_demo_presentation_start_key.sql`. Le second patch retire la
+contrainte historique d'un seul scénario actif par compte sans effacer de
+scénario : chaque onglet reprend exclusivement la même paire compte + clé de
+démarrage. Le verrou applicatif par compte et la limite de 30 nouveaux
+scénarios par heure restent en place.
+
 ## Connexion visiteur
 
 Le bouton visiteur appelle `POST /api/v1/auth/demo/login` avec l'en-tête exact
@@ -131,8 +139,9 @@ restent fermées.
 Le parcours guidé authentifié `POST /api/v1/demo/presentation/run` est une
 exception bornée, réservée au scénario synthétique et au registre
 `demo_presentation_scenarios`. Il orchestre les services métier existants pour
-créer un client, un devis, une commande, une affaire, un OF, son créneau et un
-pointage. Il demande une clé d'idempotence et l'en-tête
+adopter un client et un devis créés par les formulaires natifs, puis créer une
+commande, une affaire, un OF, son créneau et un pointage. Il demande une clé
+d'idempotence et l'en-tête
 `X-CERP-Database: cerp_demo`, limite les nouveaux scénarios et refuse les
 actions concurrentes. Les actions de suppression, d'administration,
 d'intégration, d'email, de fichier et de paiement restent interdites.

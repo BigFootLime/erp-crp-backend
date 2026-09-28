@@ -141,6 +141,14 @@ describe("presentation lock", () => {
     expect(source).toContain("DEMO_SCENARIO_BUSY");
     expect(source).not.toContain("pg_advisory_lock(hashtextextended");
   });
+
+  it("resumes only the exact browser start key while serializing starts per account", () => {
+    const repository = readFileSync(resolve(process.cwd(), "src/module/demo-presentation/repository/demo-presentation.repository.ts"), "utf8");
+    const service = readFileSync(resolve(process.cwd(), "src/module/demo-presentation/services/demo-presentation.service.ts"), "utf8");
+    expect(repository).toContain("WHERE user_id = $1 AND start_key = $2");
+    expect(repository).not.toContain("WHERE user_id = $1 AND status <> 'COMPLETED'");
+    expect(service).toContain("start:${params.actor.id}");
+  });
 });
 
 describe("presentation fixture selection", () => {

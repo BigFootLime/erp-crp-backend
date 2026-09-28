@@ -30,10 +30,6 @@ CREATE TABLE IF NOT EXISTS public.demo_presentation_scenarios (
   completed_at timestamptz NULL
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS demo_presentation_one_active_per_user
-  ON public.demo_presentation_scenarios(user_id)
-  WHERE status <> 'COMPLETED';
-
 CREATE UNIQUE INDEX IF NOT EXISTS demo_presentation_start_key_per_user
   ON public.demo_presentation_scenarios(user_id, start_key);
 
