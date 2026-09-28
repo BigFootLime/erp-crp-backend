@@ -36,6 +36,7 @@ const scenarioColumns = `
   machine_id::text AS machine_id, client_id::text AS client_id,
   gamme_id::text AS gamme_id, article_id::text AS article_id,
   receipt_id::text AS receipt_id, lot_id::text AS lot_id, stock_movement_id::text AS stock_movement_id, reservation_id::text AS reservation_id,
+  quality_control_id::text AS quality_control_id, quality_release_decision_id::text AS quality_release_decision_id, livraison_id::text AS livraison_id,
   devis_id::bigint AS devis_id, commande_id::bigint AS commande_id,
   affaire_id::bigint AS affaire_id, of_id::bigint AS of_id,
   operation_id::text AS operation_id, execution_id::text AS execution_id`;
@@ -132,6 +133,21 @@ export async function findFixtureArticleId(pieceTechniqueId: string): Promise<st
   return result.rows[0].id;
 }
 
+/** A real, selectable resource preset for the visible native gamme dialog. */
+export async function findPresentationGammePreset(machineId: string) {
+  const result = await pool.query<{ machine_id: string; cf_id: string; machine_family_code: string }>(`
+    SELECT m.id::text AS machine_id, cf.id::text AS cf_id, m.machine_family_code
+      FROM public.machines m
+      JOIN public.centres_frais cf ON cf.machine_family_code = m.machine_family_code
+       AND cf.archived_at IS NULL AND cf.statut::text = 'ACTIF'
+     WHERE m.id = $1::uuid AND m.archived_at IS NULL AND m.status::text = 'ACTIVE'
+       AND m.is_available IS NOT FALSE AND NULLIF(btrim(m.machine_family_code),'') IS NOT NULL
+     ORDER BY cf.id LIMIT 1
+  `, [machineId])
+  if (!result.rows[0]) throw new HttpError(503, "DEMO_GAMME_RESOURCE_MISSING", "La ressource de gamme de démonstration est indisponible.")
+  return result.rows[0]
+}
+
 export async function createOrResumePresentation(userId: number, startKey: string): Promise<PresentationScenario> {
   try {
     const sameStart = await pool.query<ScenarioDbRow>(`
@@ -201,7 +217,7 @@ export async function getPresentationScenario(id: string, userId: number): Promi
 export async function updatePresentationScenario(
   id: string,
   userId: number,
-  patch: Partial<Pick<PresentationScenario, "status" | "client_id" | "gamme_id" | "article_id" | "receipt_id" | "lot_id" | "stock_movement_id" | "reservation_id" | "piece_technique_id" | "piece_technique_version_id" | "machine_id" | "devis_id" | "commande_id" | "affaire_id" | "of_id" | "operation_id" | "execution_id">>
+  patch: Partial<Pick<PresentationScenario, "status" | "client_id" | "gamme_id" | "article_id" | "receipt_id" | "lot_id" | "stock_movement_id" | "reservation_id" | "quality_control_id" | "quality_release_decision_id" | "livraison_id" | "piece_technique_id" | "piece_technique_version_id" | "machine_id" | "devis_id" | "commande_id" | "affaire_id" | "of_id" | "operation_id" | "execution_id">>
 ): Promise<PresentationScenario> {
   const fields = Object.entries(patch).filter(([, value]) => value !== undefined);
   if (!fields.length) return getPresentationScenario(id, userId);
@@ -245,6 +261,55 @@ export async function adoptNativeReceipt(params: { scenario: PresentationScenari
   const receipt=row.rows[0];
   if(!receipt || receipt.qty_ok!==3 || receipt.quality_status!=="QUARANTAINE") throw new HttpError(409,"DEMO_RECEIPT_NOT_READY","La réception native doit concerner l'OF, trois unités et un lot en quarantaine.");
   return receipt;
+}
+
+/** Read-only registry adoption: BL, control and release are always produced by
+ * their native modules. Every link is rechecked against this exact scenario. */
+export async function adoptNativeDelivery(params: { scenario: PresentationScenario; livraisonId?: string }) {
+  const row = await pool.query<{ livraison_id: string }>(`
+    SELECT bl.id::text AS livraison_id
+      FROM public.bon_livraison bl
+      JOIN public.bon_livraison_ligne bll ON bll.bon_livraison_id = bl.id
+      JOIN public.bon_livraison_ligne_allocations bla ON bla.bon_livraison_ligne_id = bll.id
+     WHERE bl.id = $1::uuid
+       AND bl.commande_id = $2::bigint
+       AND bla.lot_id = $3::uuid
+     GROUP BY bl.id
+    HAVING sum(bla.quantite) = 3
+     LIMIT 1
+  `, [params.livraisonId, params.scenario.commande_id, params.scenario.lot_id])
+  if (!row.rows[0]) throw new HttpError(409, "DEMO_DELIVERY_NOT_READY", "Le bon de livraison natif doit allouer les trois pièces du lot du scénario.")
+  return row.rows[0]
+}
+
+export async function adoptNativeQualityRelease(params: { scenario: PresentationScenario; qualityControlId?: string; decisionId?: string }) {
+  const row = await pool.query<{ quality_control_id: string; decision_id: string }>(`
+    SELECT qc.id::text AS quality_control_id, rd.id::text AS decision_id
+      FROM public.quality_control qc
+      JOIN public.quality_release_decision rd ON rd.quality_control_id = qc.id
+     WHERE qc.id = $1::uuid AND ($2::uuid IS NULL OR rd.id = $2::uuid)
+       AND qc.lot_id = $3::uuid
+       AND qc.of_id = $4::bigint
+       AND rd.decision IN ('FULL','PARTIAL')
+       AND rd.qty = 3
+     ORDER BY rd.decided_at DESC LIMIT 1
+  `, [params.qualityControlId, params.decisionId ?? null, params.scenario.lot_id, params.scenario.of_id])
+  if (!row.rows[0]) throw new HttpError(409, "DEMO_QUALITY_NOT_READY", "Le contrôle natif doit libérer les trois pièces du lot du scénario.")
+  return row.rows[0]
+}
+
+export async function assertNativeDeliveryShipped(params: { scenario: PresentationScenario }) {
+  const row = await pool.query<{ shipped: boolean }>(`
+    SELECT EXISTS(
+      SELECT 1 FROM public.bon_livraison bl
+      JOIN public.bon_livraison_ligne bll ON bll.bon_livraison_id = bl.id
+      JOIN public.bon_livraison_ligne_allocations bla ON bla.bon_livraison_ligne_id = bll.id
+     WHERE bl.id = $1::uuid AND bl.commande_id = $2::bigint AND bla.lot_id = $3::uuid
+       AND upper(bl.statut::text) IN ('EXPEDIE','SHIPPED','LIVRE')
+     GROUP BY bl.id HAVING sum(bla.quantite) = 3
+    ) AS shipped
+  `, [params.scenario.livraison_id, params.scenario.commande_id, params.scenario.lot_id])
+  if (!row.rows[0]?.shipped) throw new HttpError(409, "DEMO_SHIPMENT_NOT_READY", "Expédiez le bon de livraison natif avant de terminer la présentation.")
 }
 
 export async function assertNativeProductionFinished(scenario: PresentationScenario, requireOfFinished: boolean): Promise<void> {

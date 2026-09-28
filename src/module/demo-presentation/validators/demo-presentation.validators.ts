@@ -9,6 +9,9 @@ export const presentationRunSchema = z.object({
   gamme_id: z.string().uuid().optional(),
   article_id: z.string().uuid().optional(),
   receipt_id: z.string().uuid().optional(),
+  livraison_id: z.string().uuid().optional(),
+  quality_control_id: z.string().uuid().optional(),
+  quality_release_decision_id: z.string().uuid().optional(),
   devis_id: z.coerce.number().int().positive().optional(),
 }).strict().superRefine((value, ctx) => {
   if ((value.action === "prepare_client" || value.action === "start") && value.scenario_id !== undefined) {
@@ -22,6 +25,9 @@ export const presentationRunSchema = z.object({
   if (value.action !== "adopt_gamme" && value.gamme_id !== undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["gamme_id"], message: "gamme_id is only accepted for adopt_gamme." });
   if (value.action !== "adopt_article" && value.article_id !== undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["article_id"], message: "article_id is only accepted for adopt_article." });
   if (value.action !== "adopt_receipt" && value.receipt_id !== undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["receipt_id"], message: "receipt_id is only accepted for adopt_receipt." });
+  if (value.action !== "adopt_delivery" && value.livraison_id !== undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["livraison_id"], message: "livraison_id is only accepted for adopt_delivery." });
+  if (value.action !== "adopt_quality_release" && value.quality_control_id !== undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["quality_control_id"], message: "quality_control_id is only accepted for adopt_quality_release." });
+  if (value.action !== "adopt_quality_release" && value.quality_release_decision_id !== undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["quality_release_decision_id"], message: "quality_release_decision_id is only accepted for adopt_quality_release." });
   if (value.action !== "adopt_devis" && value.devis_id !== undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["devis_id"], message: "devis_id is only accepted for adopt_devis." });
 });
 

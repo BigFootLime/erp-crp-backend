@@ -103,6 +103,35 @@ describe("CERP-DEMO-01 API guard", () => {
     else process.env.CERP_DEMO_MODE = previous;
   });
 
+  it("permits only the native full-journey form writes", () => {
+    const previous = process.env.CERP_DEMO_MODE;
+    process.env.CERP_DEMO_MODE = "true";
+    const headers = { "x-cerp-database": "cerp_demo" };
+    for (const [method, path] of [
+      ["POST", "/pieces-techniques"], ["POST", "/stock/articles"],
+      ["POST", "/production/ofs/7/receipt"], ["POST", "/livraisons"],
+      ["POST", "/livraisons/11111111-1111-4111-8111-111111111111/ship"],
+      ["POST", "/quality-360/executions"], ["POST", "/quality-360/executions/11111111-1111-4111-8111-111111111111/decision"],
+    ]) {
+      const next = vi.fn();
+      demoAccessGuard({ method, path, headers, is: vi.fn(() => false) } as any, response(), next);
+      expect(next).toHaveBeenCalledOnce();
+    }
+    const finishNext = vi.fn();
+    demoAccessGuard({ method: "PATCH", path: "/production/ofs/7", body: { statut: "TERMINE" }, headers, is: vi.fn(() => false) } as any, response(), finishNext);
+    expect(finishNext).toHaveBeenCalledOnce();
+    const arbitraryStatus = response();
+    demoAccessGuard({ method: "PATCH", path: "/production/ofs/7", body: { statut: "ANNULE" }, headers, is: vi.fn(() => false) } as any, arbitraryStatus, vi.fn());
+    expect(arbitraryStatus.status).toHaveBeenCalledWith(403);
+    for (const path of ["/stock/lots", "/livraisons/11111111-1111-4111-8111-111111111111/status", "/quality-360/plans"]) {
+      const denied = response();
+      demoAccessGuard({ method: "POST", path, headers, is: vi.fn(() => false) } as any, denied, vi.fn());
+      expect(denied.status).toHaveBeenCalledWith(403);
+    }
+    if (previous === undefined) delete process.env.CERP_DEMO_MODE;
+    else process.env.CERP_DEMO_MODE = previous;
+  });
+
   it("permits login and access-profile but blocks reset flows", () => {
     const previous = process.env.CERP_DEMO_MODE;
     process.env.CERP_DEMO_MODE = "true";

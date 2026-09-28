@@ -13,7 +13,7 @@ const base: PresentationScenario = {
 };
 
 describe("demo presentation contract", () => {
-  it("keeps the linear quantity-to-stop terminal transition", () => {
+  it("keeps the native quantity-to-shipment transition", () => {
     expect(nextPresentationAction("QUOTE_DRAFT")).toBe("convert_quote");
     expect(nextPresentationAction("COMMANDE_CREATED")).toBe("generate_affaires");
     expect(nextPresentationAction("AFFAIRE_CREATED")).toBe("generate_ofs");
@@ -21,10 +21,17 @@ describe("demo presentation contract", () => {
     expect(nextPresentationAction("PLANNED")).toBe("release_operator");
     expect(nextPresentationAction("OPERATOR_READY")).toBe("start_operator");
     expect(nextPresentationAction("RUNNING")).toBe("declare_quantity");
-    expect(nextPresentationAction("QUANTITY_DECLARED")).toBe("stop_operator");
+    expect(nextPresentationAction("QUANTITY_DECLARED")).toBe("finish_operation");
+    expect(nextPresentationAction("OPERATION_FINISHED")).toBe("finish_of");
+    expect(nextPresentationAction("OF_FINISHED")).toBe("prepare_receipt");
+    expect(nextPresentationAction("RECEIPTED")).toBe("prepare_delivery");
+    expect(nextPresentationAction("DELIVERY_PREPARED")).toBe("adopt_delivery");
+    expect(nextPresentationAction("DELIVERY_CREATED")).toBe("prepare_quality_release");
+    expect(nextPresentationAction("QUALITY_RELEASE_PREPARED")).toBe("adopt_quality_release");
+    expect(nextPresentationAction("QUALITY_RELEASED")).toBe("ship_delivery");
     expect(nextPresentationAction("COMPLETED")).toBe("prepare_receipt");
     expect(presentationResponse({ ...base, status: "QUANTITY_DECLARED" })).toMatchObject({
-      scenario: { status: "ACTIVE", step: "quantity_declared" }, next_action: "stop_operator",
+      scenario: { status: "ACTIVE", step: "quantity_declared" }, next_action: "finish_operation",
       entities: { commande: { id: 13 }, of: { id: 15 }, execution: { id: base.execution_id } },
     });
   });
@@ -47,6 +54,10 @@ describe("demo presentation contract", () => {
     expect(presentationRunSchema.safeParse({ action: "adopt_client", scenario_id: base.id, devis_id: 12 }).success).toBe(false);
     expect(presentationRunSchema.safeParse({ action: "prepare_devis", scenario_id: base.id }).success).toBe(true);
     expect(presentationRunSchema.safeParse({ action: "adopt_devis", scenario_id: base.id, devis_id: 12 }).success).toBe(true);
+    expect(presentationRunSchema.safeParse({ action: "adopt_delivery", scenario_id: base.id, livraison_id: base.id }).success).toBe(true);
+    expect(presentationRunSchema.safeParse({ action: "adopt_delivery", scenario_id: base.id, receipt_id: base.id }).success).toBe(false);
+    expect(presentationRunSchema.safeParse({ action: "adopt_quality_release", scenario_id: base.id, quality_control_id: base.id }).success).toBe(true);
+    expect(presentationRunSchema.safeParse({ action: "adopt_quality_release", scenario_id: base.id, livraison_id: base.id }).success).toBe(false);
   });
 
   it("keeps the native quote preset available on a prepared-step retry", () => {
@@ -109,7 +120,7 @@ describe("operator continuation", () => {
     expect(source).toContain("svcPreviewFinishOperation");
     expect(source).toContain("svcFinishOperation");
     expect(source).toContain("preview_hash: preview.preview_hash");
-    expect(source).toContain("stop_active_segment: true, complete_operation: false");
+    expect(source).toContain("stop_active_segment: true, complete_operation: nativeJourney");
     expect(source).toContain('note: null');
   });
 
@@ -131,6 +142,9 @@ describe("presentation recovery", () => {
     expect(source).toContain("max(dl.quantite) = 3");
     expect(source).toContain("max(dl.prix_unitaire_ht) = 240");
     expect(source).toContain("bool_and(dl.piece_technique_id = $6::uuid)");
+    expect(source).toContain("bl.commande_id = $2::bigint");
+    expect(source).toContain("bla.lot_id = $3::uuid");
+    expect(source).toContain("qc.of_id = $4::bigint");
   });
 
   it("uses the persisted quote and planning state rather than repeating a write", () => {

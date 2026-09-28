@@ -7,7 +7,7 @@ import { svcGetOfReadiness, svcGetOfReceiptContext, svcReleaseOrdreFabrication }
 import { svcFinishOperation, svcPauseExecution, svcPreviewFinishOperation, svcResumeExecution, svcStartExecution, svcStopExecution } from "../../production/services/production-execution.service";
 import { isDemoMode } from "../../../config/demo-mode";
 import type { PresentationAction, PresentationActor, PresentationScenario, PresentationStatus } from "../types/demo-presentation.types";
-import { adoptNativeArticle, adoptNativeGamme, adoptNativePiece, adoptNativeReceipt, assertNativeProductionFinished, assertPresentationFixture, createOrResumePresentation, findExistingPresentationProduction, findFixtureArticleId, findPreparedClient, findPreparedQuote, findScenarioOfAffaire, findScenarioOfStatus, findScenarioOperation, getPresentationScenario, hasPresentationReceipt, recordPresentationReceipt, updatePresentationScenario, withPresentationLock } from "../repository/demo-presentation.repository";
+import { adoptNativeArticle, adoptNativeDelivery, adoptNativeGamme, adoptNativePiece, adoptNativeQualityRelease, adoptNativeReceipt, assertNativeDeliveryShipped, assertNativeProductionFinished, assertPresentationFixture, createOrResumePresentation, findExistingPresentationProduction, findFixtureArticleId, findPresentationGammePreset, findPreparedClient, findPreparedQuote, findScenarioOfAffaire, findScenarioOfStatus, findScenarioOperation, getPresentationScenario, hasPresentationReceipt, recordPresentationReceipt, updatePresentationScenario, withPresentationLock } from "../repository/demo-presentation.repository";
 
 type RequestContext = { ip: string | null; user_agent: string | null; path: string | null; page_key: string | null; client_session_id: string | null };
 
@@ -56,6 +56,11 @@ export function nextPresentationAction(status: PresentationStatus): Presentation
     case "OF_FINISHED": return "prepare_receipt";
     case "COMPLETED": return "prepare_receipt";
     case "RECEIPT_PREPARED": return "adopt_receipt";
+    case "RECEIPTED": return "prepare_delivery";
+    case "DELIVERY_PREPARED": return "adopt_delivery";
+    case "DELIVERY_CREATED": return "prepare_quality_release";
+    case "QUALITY_RELEASE_PREPARED": return "adopt_quality_release";
+    case "QUALITY_RELEASED": return "ship_delivery";
     default: return null;
   }
 }
@@ -74,7 +79,7 @@ export function presentationResponse(scenario: PresentationScenario) {
   const steps: Record<PresentationStatus, string> = {
     INITIALIZING: "client_prepared", CLIENT_PREPARED: "client_prepared", CLIENT_CREATED: "client_created", PIECE_PREPARED: "piece_prepared", PIECE_CREATED: "piece_created", GAMME_PREPARED: "gamme_prepared", GAMME_APPLICABLE: "gamme_applicable", ARTICLE_PREPARED: "article_prepared", ARTICLE_CREATED: "article_created", QUOTE_PREPARED: "quote_prepared", QUOTE_DRAFT: "quote_created", COMMANDE_CREATED: "quote_converted",
     AFFAIRE_CREATED: "affaires_generated", PRODUCTION_READY: "ofs_generated", PLANNED: "planned", OPERATOR_READY: "operator_released",
-    RUNNING: "operator_started", PAUSED: "operator_paused", QUANTITY_DECLARED: "quantity_declared", OPERATION_FINISHED:"operation_finished", OF_FINISHED:"of_finished", COMPLETED: "operator_stopped", RECEIPT_PREPARED:"receipt_prepared", RECEIPTED:"receipted",
+    RUNNING: "operator_started", PAUSED: "operator_paused", QUANTITY_DECLARED: "quantity_declared", OPERATION_FINISHED:"operation_finished", OF_FINISHED:"of_finished", COMPLETED: "operator_stopped", RECEIPT_PREPARED:"receipt_prepared", RECEIPTED:"receipted", DELIVERY_PREPARED:"delivery_prepared", DELIVERY_CREATED:"delivery_created", QUALITY_RELEASE_PREPARED:"quality_release_prepared", QUALITY_RELEASED:"quality_released", SHIPPED:"shipped",
   };
   return {
     scenario: { id: scenario.id, status: scenario.status === "COMPLETED" ? "COMPLETED" : "ACTIVE", step: steps[scenario.status] },
@@ -91,6 +96,8 @@ export function presentationResponse(scenario: PresentationScenario) {
       execution: scenario.execution_id ? { id: scenario.execution_id } : null,
       receipt: scenario.receipt_id ? { id: scenario.receipt_id } : null,
       lot: scenario.lot_id ? { id: scenario.lot_id } : null,
+      livraison: scenario.livraison_id ? { id: scenario.livraison_id } : null,
+      quality: scenario.quality_control_id ? { id: scenario.quality_control_id, decision_id: scenario.quality_release_decision_id } : null,
     },
     next_action: nextPresentationAction(scenario.status),
     ...(scenario.status === "INITIALIZING" || scenario.status === "CLIENT_PREPARED" ? { prepared: { client: preparedClient(scenario) } } : {}),
@@ -173,6 +180,11 @@ async function prepareArticle(s: PresentationScenario, actor: PresentationActor)
 async function adoptArticle(s: PresentationScenario, actor: PresentationActor, id?: string) { requireState(s,["ARTICLE_PREPARED"]); const a=await adoptNativeArticle({scenario:s,userId:actor.id,articleId:id}); return updatePresentationScenario(s.id,actor.id,{article_id:a.article_id,status:"ARTICLE_CREATED"}); }
 async function prepareReceipt(s: PresentationScenario, actor: PresentationActor) { requireState(s,["COMPLETED"]); if(!s.of_id) throw new HttpError(409,"DEMO_SCENARIO_INCOMPLETE","OF absent."); const c=await svcGetOfReceiptContext({of_id:s.of_id}); if(c.qty_ok_receivable<3 || !c.default_location_id) throw new HttpError(409,"DEMO_RECEIPT_NOT_READY","La réception native n'est pas prête."); return updatePresentationScenario(s.id,actor.id,{status:"RECEIPT_PREPARED"}); }
 async function adoptReceipt(s: PresentationScenario, actor: PresentationActor, id?: string) { requireState(s,["RECEIPT_PREPARED"]); const r=await adoptNativeReceipt({scenario:s,receiptId:id}); return updatePresentationScenario(s.id,actor.id,{receipt_id:r.receipt_id,lot_id:r.lot_id,stock_movement_id:r.stock_movement_id,reservation_id:r.reservation_id,status:"RECEIPTED"}); }
+async function prepareDelivery(s: PresentationScenario, actor: PresentationActor) { requireState(s,["RECEIPTED"]); if(!s.lot_id || !s.commande_id) throw new HttpError(409,"DEMO_SCENARIO_INCOMPLETE","Lot ou commande absent."); return updatePresentationScenario(s.id,actor.id,{status:"DELIVERY_PREPARED"}); }
+async function adoptDelivery(s: PresentationScenario, actor: PresentationActor, id?: string) { requireState(s,["DELIVERY_PREPARED"]); const d=await adoptNativeDelivery({scenario:s,livraisonId:id}); return updatePresentationScenario(s.id,actor.id,{livraison_id:d.livraison_id,status:"DELIVERY_CREATED"}); }
+async function prepareQualityRelease(s: PresentationScenario, actor: PresentationActor) { requireState(s,["DELIVERY_CREATED"]); if(!s.livraison_id || !s.lot_id) throw new HttpError(409,"DEMO_SCENARIO_INCOMPLETE","Bon de livraison ou lot absent."); return updatePresentationScenario(s.id,actor.id,{status:"QUALITY_RELEASE_PREPARED"}); }
+async function adoptQualityRelease(s: PresentationScenario, actor: PresentationActor, qualityControlId?: string, decisionId?: string) { requireState(s,["QUALITY_RELEASE_PREPARED"]); const q=await adoptNativeQualityRelease({scenario:s,qualityControlId,decisionId}); return updatePresentationScenario(s.id,actor.id,{quality_control_id:q.quality_control_id,quality_release_decision_id:q.decision_id,status:"QUALITY_RELEASED"}); }
+async function shipDelivery(s: PresentationScenario, actor: PresentationActor) { requireState(s,["QUALITY_RELEASED"]); await assertNativeDeliveryShipped({scenario:s}); return updatePresentationScenario(s.id,actor.id,{status:"SHIPPED"}); }
 async function finishOperation(s: PresentationScenario, actor: PresentationActor) { requireState(s,["QUANTITY_DECLARED"]); await assertNativeProductionFinished(s,false); return updatePresentationScenario(s.id,actor.id,{status:"OPERATION_FINISHED"}); }
 async function finishOf(s: PresentationScenario, actor: PresentationActor) { requireState(s,["OPERATION_FINISHED"]); await assertNativeProductionFinished(s,true); return updatePresentationScenario(s.id,actor.id,{status:"OF_FINISHED"}); }
 
@@ -349,7 +361,7 @@ const completedActionStates: Partial<Record<PresentationAction, PresentationStat
   adopt_client: "CLIENT_CREATED", prepare_piece: "PIECE_PREPARED", adopt_piece: "PIECE_CREATED", prepare_gamme: "GAMME_PREPARED", adopt_gamme: "GAMME_APPLICABLE", prepare_article: "ARTICLE_PREPARED", adopt_article: "ARTICLE_CREATED", prepare_devis: "QUOTE_PREPARED", adopt_devis: "QUOTE_DRAFT",
   convert_quote: "COMMANDE_CREATED", generate_affaires: "AFFAIRE_CREATED", generate_ofs: "PRODUCTION_READY",
   plan: "PLANNED", release_operator: "OPERATOR_READY", start_operator: "RUNNING", pause_operator: "PAUSED", resume_operator: "RUNNING",
-  declare_quantity: "QUANTITY_DECLARED", stop_operator: "COMPLETED", finish_operation:"OPERATION_FINISHED", finish_of:"OF_FINISHED", prepare_receipt:"RECEIPT_PREPARED", adopt_receipt:"RECEIPTED",
+  declare_quantity: "QUANTITY_DECLARED", stop_operator: "COMPLETED", finish_operation:"OPERATION_FINISHED", finish_of:"OF_FINISHED", prepare_receipt:"RECEIPT_PREPARED", adopt_receipt:"RECEIPTED", prepare_delivery:"DELIVERY_PREPARED", adopt_delivery:"DELIVERY_CREATED", prepare_quality_release:"QUALITY_RELEASE_PREPARED", adopt_quality_release:"QUALITY_RELEASED", ship_delivery:"SHIPPED",
 };
 
 export function actionHasCompleted(scenario: PresentationScenario, action: Exclude<PresentationAction, "prepare_client">): boolean {
@@ -363,18 +375,24 @@ export function shouldIncludePreparedQuote(action: PresentationAction, status: P
 async function responseForAction(action: PresentationAction, scenario: PresentationScenario) {
   const response = presentationResponse(scenario);
   if (action === "prepare_piece" && scenario.status === "PIECE_PREPARED") return { ...response, prepared: { piece: { client_id: scenario.client_id, name_piece: `Pièce présentation ${scenario.id.slice(0,8)}`, designation: `Pièce présentation ${scenario.id.slice(0,8)}`, plan_reference: `DEMO-${scenario.id.slice(0,8)}`, indice_externe: "A", statut: "DRAFT" } } };
-  if (action === "prepare_gamme" && scenario.status === "GAMME_PREPARED") return { ...response, prepared: { gamme: { piece_technique_version_id: scenario.piece_technique_version_id, type_operation: "USINAGE", designation: "Fraisage démonstration", qte: 3, coef: 1, temps_preparation_minutes: 5, temps_unitaire_minutes: 3 } } };
+  if (action === "prepare_gamme" && scenario.status === "GAMME_PREPARED") { const resource = await findPresentationGammePreset(scenario.machine_id); return { ...response, prepared: { gamme: { piece_technique_version_id: scenario.piece_technique_version_id, machine_id: resource.machine_id, cf_id: resource.cf_id, machine_family_code: resource.machine_family_code, type_operation: "FRAISAGE", designation: "Fraisage démonstration", qte: 3, coef: 1, temps_preparation_minutes: 5, temps_unitaire_minutes: 3 } } }; }
   if (action === "prepare_article" && scenario.status === "ARTICLE_PREPARED") return { ...response, prepared: { article: { piece_technique_id: scenario.piece_technique_id, article_category: "fabrique", unite: "U", commercial_scope: "CLIENTS", client_ids: scenario.client_id ? [scenario.client_id] : [] } } };
   if (action === "prepare_receipt" && scenario.status === "RECEIPT_PREPARED") {
     const c=await svcGetOfReceiptContext({of_id:scenario.of_id!});
     return {...response,prepared:{receipt:{article_id:c.article_id,qty_ok:3,qty_scrap:0,qty_rework:0,unite:c.unite,location_id:c.default_location_id,lot_mode:"NEW",lot_id:null,lot_number:null,quality_status:"QUARANTAINE",quality_reason:"Présentation CERP+",expected_of_updated_at:c.of.updated_at,commentaire:null}}};
+  }
+  if (action === "prepare_delivery" && scenario.status === "DELIVERY_PREPARED") {
+    return { ...response, prepared: { delivery: { commande_id: scenario.commande_id, lot_id: scenario.lot_id, article_id: scenario.article_id, quantite: 3, unite: "U" } } }
+  }
+  if (action === "prepare_quality_release" && scenario.status === "QUALITY_RELEASE_PREPARED") {
+    return { ...response, prepared: { quality: { lot_id: scenario.lot_id, of_id: scenario.of_id, livraison_id: scenario.livraison_id, quantite: 3, unite: "U", decision: "FULL" } } }
   }
   return shouldIncludePreparedQuote(action, scenario.status)
     ? { ...response, prepared: { devis: await preparedQuote(scenario) } }
     : response;
 }
 
-async function runScenarioAction(params: { action: Exclude<PresentationAction, "prepare_client">; scenarioId: string; requestKey: string; actor: PresentationActor; context: RequestContext; clientId?: string; pieceTechniqueId?: string; gammeId?: string; articleId?: string; receiptId?: string; devisId?: number }) {
+async function runScenarioAction(params: { action: Exclude<PresentationAction, "prepare_client">; scenarioId: string; requestKey: string; actor: PresentationActor; context: RequestContext; clientId?: string; pieceTechniqueId?: string; gammeId?: string; articleId?: string; receiptId?: string; livraisonId?: string; qualityControlId?: string; qualityReleaseDecisionId?: string; devisId?: number }) {
   return withPresentationLock(`scenario:${params.scenarioId}`, async () => {
     let scenario = await getPresentationScenario(params.scenarioId, params.actor.id);
     if (await hasPresentationReceipt(scenario.id, params.action, params.requestKey)) return responseForAction(params.action, scenario);
@@ -393,6 +411,11 @@ async function runScenarioAction(params: { action: Exclude<PresentationAction, "
     if (params.action === "adopt_article") scenario = await adoptArticle(scenario, params.actor, params.articleId);
     if (params.action === "prepare_receipt") scenario = await prepareReceipt(scenario, params.actor);
     if (params.action === "adopt_receipt") scenario = await adoptReceipt(scenario, params.actor, params.receiptId);
+    if (params.action === "prepare_delivery") scenario = await prepareDelivery(scenario, params.actor);
+    if (params.action === "adopt_delivery") scenario = await adoptDelivery(scenario, params.actor, params.livraisonId);
+    if (params.action === "prepare_quality_release") scenario = await prepareQualityRelease(scenario, params.actor);
+    if (params.action === "adopt_quality_release") scenario = await adoptQualityRelease(scenario, params.actor, params.qualityControlId, params.qualityReleaseDecisionId);
+    if (params.action === "ship_delivery") scenario = await shipDelivery(scenario, params.actor);
     if (params.action === "finish_operation") scenario = await finishOperation(scenario, params.actor);
     if (params.action === "finish_of") scenario = await finishOf(scenario, params.actor);
     if (params.action === "prepare_devis") scenario = await prepareQuote(scenario, params.actor);
@@ -414,7 +437,7 @@ async function runScenarioAction(params: { action: Exclude<PresentationAction, "
   });
 }
 
-export async function runPresentation(params: { action: PresentationAction; scenarioId?: string; clientId?: string; pieceTechniqueId?: string; gammeId?: string; articleId?: string; receiptId?: string; devisId?: number; requestKey: string; actor: PresentationActor; context: RequestContext }) {
+export async function runPresentation(params: { action: PresentationAction; scenarioId?: string; clientId?: string; pieceTechniqueId?: string; gammeId?: string; articleId?: string; receiptId?: string; livraisonId?: string; qualityControlId?: string; qualityReleaseDecisionId?: string; devisId?: number; requestKey: string; actor: PresentationActor; context: RequestContext }) {
   if (!isDemoMode()) throw new HttpError(404, "NOT_FOUND", "Not found");
   if (params.action === "start") {
     return withPresentationLock(`start:${params.actor.id}`, async () =>

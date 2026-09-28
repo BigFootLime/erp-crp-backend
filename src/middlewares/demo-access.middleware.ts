@@ -51,7 +51,24 @@ function isDraftDevis(req: Request): boolean {
 }
 
 function isSafeWrite(req: Request): boolean {
-  if (req.method !== "POST" || req.is("multipart/form-data")) return false;
+  if (req.is("multipart/form-data")) return false;
+  // Native presentation writes: this is deliberately a closed list of the
+  // exact forms replayed by the demo. It does not grant generic module write
+  // access and remains behind JWT/RBAC plus the isolated demo database.
+  if (req.method === "POST" || req.method === "PATCH" || req.method === "PUT") {
+    const path = req.path;
+    if (req.method === "POST" && (path === "/pieces-techniques" || path === "/pieces-techniques/drafts" || path === "/stock/articles" || path === "/livraisons" || path === "/quality-360/executions")) return true;
+    if (req.method === "PUT" && /^\/pieces-techniques\/drafts\/[0-9a-f-]{36}$/.test(path)) return true;
+    if (req.method === "POST" && /^\/(piece-technique-versions|pieces-techniques\/[0-9a-f-]{36}\/versions)\/[0-9a-f-]{36}\/gammes$/.test(path)) return true;
+    if (req.method === "POST" && /^\/pieces-techniques\/[0-9a-f-]{36}\/versions\/[0-9a-f-]{36}\/publish$/.test(path)) return true;
+    if (req.method === "POST" && /^\/gammes\/[0-9a-f-]{36}\/(operations|publish)$/.test(path)) return true;
+    if (req.method === "POST" && /^\/production\/ofs\/\d+\/receipt$/.test(path)) return true;
+    if (req.method === "PATCH" && /^\/production\/ofs\/\d+$/.test(path) && String(req.body?.statut ?? "").toUpperCase() === "TERMINE") return true;
+    if (req.method === "POST" && /^\/livraisons\/[0-9a-f-]{36}\/(lines|prepare|confirm|ship)$/.test(path)) return true;
+    if (req.method === "POST" && /^\/livraisons\/[0-9a-f-]{36}\/lines\/[0-9a-f-]{36}\/allocations$/.test(path)) return true;
+    if (req.method === "POST" && /^\/quality-360\/executions\/[0-9a-f-]{36}\/(measurements|decision)$/.test(path)) return true;
+  }
+  if (req.method !== "POST") return false;
   // The onboarding wizard checks a name/SIREN before it creates a client.
   // This endpoint is a validated lookup; it does not persist data.
   if (req.path === "/clients" || req.path === "/clients/duplicate-check") return true;
