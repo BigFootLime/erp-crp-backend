@@ -28,6 +28,7 @@ vi.mock("../module/auth/middlewares/auth.middleware", () => ({
 
 vi.mock("../module/auth/middlewares/auth-rate-limit.middleware", () => ({
   loginRateLimit: (_req: unknown, _res: unknown, next: () => void) => next(),
+  demoLoginRateLimit: (_req: unknown, _res: unknown, next: () => void) => next(),
   mfaRateLimit: (_req: unknown, _res: unknown, next: () => void) => next(),
   forgotPasswordRateLimit: (_req: unknown, _res: unknown, next: () => void) => next(),
   resetPasswordRateLimit: (_req: unknown, _res: unknown, next: () => void) => next(),
