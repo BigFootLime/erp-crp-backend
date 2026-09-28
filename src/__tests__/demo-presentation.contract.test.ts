@@ -26,7 +26,9 @@ describe("demo presentation contract", () => {
     expect(nextPresentationAction("OF_FINISHED")).toBe("prepare_receipt");
     expect(nextPresentationAction("RECEIPTED")).toBe("prepare_delivery");
     expect(nextPresentationAction("DELIVERY_PREPARED")).toBe("adopt_delivery");
-    expect(nextPresentationAction("DELIVERY_CREATED")).toBe("prepare_quality_release");
+    expect(nextPresentationAction("DELIVERY_CREATED")).toBe("prepare_quality_plan");
+    expect(nextPresentationAction("QUALITY_PLAN_PREPARED")).toBe("adopt_quality_plan");
+    expect(nextPresentationAction("QUALITY_PLAN_PUBLISHED")).toBe("prepare_quality_release");
     expect(nextPresentationAction("QUALITY_RELEASE_PREPARED")).toBe("adopt_quality_release");
     expect(nextPresentationAction("QUALITY_RELEASED")).toBe("ship_delivery");
     expect(nextPresentationAction("COMPLETED")).toBe("prepare_receipt");
@@ -56,6 +58,7 @@ describe("demo presentation contract", () => {
     expect(presentationRunSchema.safeParse({ action: "adopt_devis", scenario_id: base.id, devis_id: 12 }).success).toBe(true);
     expect(presentationRunSchema.safeParse({ action: "adopt_delivery", scenario_id: base.id, livraison_id: base.id }).success).toBe(true);
     expect(presentationRunSchema.safeParse({ action: "adopt_delivery", scenario_id: base.id, receipt_id: base.id }).success).toBe(false);
+    expect(presentationRunSchema.safeParse({ action: "adopt_quality_plan", scenario_id: base.id, plan_id: base.id }).success).toBe(true);
     expect(presentationRunSchema.safeParse({ action: "adopt_quality_release", scenario_id: base.id, quality_control_id: base.id }).success).toBe(true);
     expect(presentationRunSchema.safeParse({ action: "adopt_quality_release", scenario_id: base.id, livraison_id: base.id }).success).toBe(false);
   });

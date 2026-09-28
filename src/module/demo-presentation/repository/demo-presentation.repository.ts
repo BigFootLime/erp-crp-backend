@@ -36,7 +36,7 @@ const scenarioColumns = `
   machine_id::text AS machine_id, client_id::text AS client_id,
   gamme_id::text AS gamme_id, article_id::text AS article_id,
   receipt_id::text AS receipt_id, lot_id::text AS lot_id, stock_movement_id::text AS stock_movement_id, reservation_id::text AS reservation_id,
-  quality_control_id::text AS quality_control_id, quality_release_decision_id::text AS quality_release_decision_id, livraison_id::text AS livraison_id,
+  quality_plan_id::text AS quality_plan_id, quality_control_id::text AS quality_control_id, quality_release_decision_id::text AS quality_release_decision_id, livraison_id::text AS livraison_id,
   devis_id::bigint AS devis_id, commande_id::bigint AS commande_id,
   affaire_id::bigint AS affaire_id, of_id::bigint AS of_id,
   operation_id::text AS operation_id, execution_id::text AS execution_id`;
@@ -217,7 +217,7 @@ export async function getPresentationScenario(id: string, userId: number): Promi
 export async function updatePresentationScenario(
   id: string,
   userId: number,
-  patch: Partial<Pick<PresentationScenario, "status" | "client_id" | "gamme_id" | "article_id" | "receipt_id" | "lot_id" | "stock_movement_id" | "reservation_id" | "quality_control_id" | "quality_release_decision_id" | "livraison_id" | "piece_technique_id" | "piece_technique_version_id" | "machine_id" | "devis_id" | "commande_id" | "affaire_id" | "of_id" | "operation_id" | "execution_id">>
+  patch: Partial<Pick<PresentationScenario, "status" | "client_id" | "gamme_id" | "article_id" | "receipt_id" | "lot_id" | "stock_movement_id" | "reservation_id" | "quality_plan_id" | "quality_control_id" | "quality_release_decision_id" | "livraison_id" | "piece_technique_id" | "piece_technique_version_id" | "machine_id" | "devis_id" | "commande_id" | "affaire_id" | "of_id" | "operation_id" | "execution_id">>
 ): Promise<PresentationScenario> {
   const fields = Object.entries(patch).filter(([, value]) => value !== undefined);
   if (!fields.length) return getPresentationScenario(id, userId);
@@ -282,6 +282,18 @@ export async function adoptNativeDelivery(params: { scenario: PresentationScenar
   return row.rows[0]
 }
 
+export async function adoptNativeQualityPlan(params: { scenario: PresentationScenario; userId: number; qualityPlanId?: string }) {
+  const row = await pool.query<{ quality_plan_id: string }>(`
+    SELECT p.id::text AS quality_plan_id
+      FROM public.quality_control_plan p
+      JOIN public.quality_control_plan_characteristic c ON c.plan_id = p.id
+     WHERE p.id = $1::uuid AND p.created_by = $2
+       AND p.status = 'PUBLISHED' AND p.trigger_type = 'LOT_RELEASE'
+       AND p.article_id = $3::uuid
+     GROUP BY p.id LIMIT 1`, [params.qualityPlanId, params.userId, params.scenario.article_id]);
+  if (!row.rows[0]) throw new HttpError(409, "DEMO_QUALITY_PLAN_NOT_READY", "Le plan de libération doit être publié, lié à l’article du scénario et contenir une caractéristique.");
+  return row.rows[0];
+}
 export async function adoptNativeQualityRelease(params: { scenario: PresentationScenario; qualityControlId?: string; decisionId?: string }) {
   const row = await pool.query<{ quality_control_id: string; decision_id: string }>(`
     SELECT qc.id::text AS quality_control_id, rd.id::text AS decision_id

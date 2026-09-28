@@ -57,7 +57,7 @@ function isSafeWrite(req: Request): boolean {
   // access and remains behind JWT/RBAC plus the isolated demo database.
   if (req.method === "POST" || req.method === "PATCH" || req.method === "PUT") {
     const path = req.path;
-    if (req.method === "POST" && (path === "/pieces-techniques" || path === "/pieces-techniques/drafts" || path === "/stock/articles" || path === "/livraisons" || path === "/quality-360/executions")) return true;
+    if (req.method === "POST" && (path === "/pieces-techniques" || path === "/pieces-techniques/drafts" || path === "/stock/articles" || path === "/livraisons" || path === "/quality-360/executions" || path === "/quality-360/plans")) return true;
     if (req.method === "PUT" && /^\/pieces-techniques\/drafts\/[0-9a-f-]{36}$/.test(path)) return true;
     if (req.method === "POST" && /^\/(piece-technique-versions|pieces-techniques\/[0-9a-f-]{36}\/versions)\/[0-9a-f-]{36}\/gammes$/.test(path)) return true;
     if (req.method === "POST" && /^\/pieces-techniques\/[0-9a-f-]{36}\/versions\/[0-9a-f-]{36}\/publish$/.test(path)) return true;

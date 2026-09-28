@@ -29,6 +29,7 @@ export const runDemoPresentation: RequestHandler = async (req, res, next) => {
       articleId: input.article_id,
       receiptId: input.receipt_id,
       livraisonId: input.livraison_id,
+      qualityPlanId: input.plan_id,
       qualityControlId: input.quality_control_id,
       qualityReleaseDecisionId: input.quality_release_decision_id,
       devisId: input.devis_id,

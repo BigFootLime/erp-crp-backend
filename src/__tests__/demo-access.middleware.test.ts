@@ -112,6 +112,7 @@ describe("CERP-DEMO-01 API guard", () => {
       ["POST", "/production/ofs/7/receipt"], ["POST", "/livraisons"],
       ["POST", "/livraisons/11111111-1111-4111-8111-111111111111/ship"],
       ["POST", "/quality-360/executions"], ["POST", "/quality-360/executions/11111111-1111-4111-8111-111111111111/decision"],
+      ["POST", "/quality-360/plans"],
     ]) {
       const next = vi.fn();
       demoAccessGuard({ method, path, headers, is: vi.fn(() => false) } as any, response(), next);
@@ -123,7 +124,7 @@ describe("CERP-DEMO-01 API guard", () => {
     const arbitraryStatus = response();
     demoAccessGuard({ method: "PATCH", path: "/production/ofs/7", body: { statut: "ANNULE" }, headers, is: vi.fn(() => false) } as any, arbitraryStatus, vi.fn());
     expect(arbitraryStatus.status).toHaveBeenCalledWith(403);
-    for (const path of ["/stock/lots", "/livraisons/11111111-1111-4111-8111-111111111111/status", "/quality-360/plans"]) {
+    for (const path of ["/stock/lots", "/livraisons/11111111-1111-4111-8111-111111111111/status"]) {
       const denied = response();
       demoAccessGuard({ method: "POST", path, headers, is: vi.fn(() => false) } as any, denied, vi.fn());
       expect(denied.status).toHaveBeenCalledWith(403);
