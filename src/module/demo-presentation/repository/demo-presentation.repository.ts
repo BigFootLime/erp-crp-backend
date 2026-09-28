@@ -35,6 +35,7 @@ const scenarioColumns = `
   piece_technique_version_id::text AS piece_technique_version_id,
   machine_id::text AS machine_id, client_id::text AS client_id,
   gamme_id::text AS gamme_id, article_id::text AS article_id,
+  receipt_id::text AS receipt_id, lot_id::text AS lot_id, stock_movement_id::text AS stock_movement_id, reservation_id::text AS reservation_id,
   devis_id::bigint AS devis_id, commande_id::bigint AS commande_id,
   affaire_id::bigint AS affaire_id, of_id::bigint AS of_id,
   operation_id::text AS operation_id, execution_id::text AS execution_id`;
@@ -200,7 +201,7 @@ export async function getPresentationScenario(id: string, userId: number): Promi
 export async function updatePresentationScenario(
   id: string,
   userId: number,
-  patch: Partial<Pick<PresentationScenario, "status" | "client_id" | "gamme_id" | "article_id" | "piece_technique_id" | "piece_technique_version_id" | "machine_id" | "devis_id" | "commande_id" | "affaire_id" | "of_id" | "operation_id" | "execution_id">>
+  patch: Partial<Pick<PresentationScenario, "status" | "client_id" | "gamme_id" | "article_id" | "receipt_id" | "lot_id" | "stock_movement_id" | "reservation_id" | "piece_technique_id" | "piece_technique_version_id" | "machine_id" | "devis_id" | "commande_id" | "affaire_id" | "of_id" | "operation_id" | "execution_id">>
 ): Promise<PresentationScenario> {
   const fields = Object.entries(patch).filter(([, value]) => value !== undefined);
   if (!fields.length) return getPresentationScenario(id, userId);
@@ -237,6 +238,13 @@ export async function findExistingPresentationProduction(commandeId: number): Pr
   `, [commandeId]);
   const row = result.rows[0];
   return row ? { affaire_id: Number(row.affaire_id), of_id: Number(row.of_id) } : null;
+}
+
+export async function adoptNativeReceipt(params: { scenario: PresentationScenario; receiptId?: string }) {
+  const row = await pool.query<{ receipt_id:string; lot_id:string; stock_movement_id:string; reservation_id:string|null; qty_ok:number; quality_status:string }>(`SELECT id::text receipt_id,lot_id::text lot_id,stock_movement_id::text stock_movement_id,reservation_id::text reservation_id,qty_ok::float8 qty_ok,quality_status FROM public.of_receipts WHERE id=$1::uuid AND of_id=$2::bigint LIMIT 1`,[params.receiptId,params.scenario.of_id]);
+  const receipt=row.rows[0];
+  if(!receipt || receipt.qty_ok!==3 || receipt.quality_status!=="QUARANTAINE") throw new HttpError(409,"DEMO_RECEIPT_NOT_READY","La réception native doit concerner l'OF, trois unités et un lot en quarantaine.");
+  return receipt;
 }
 
 export async function adoptNativePiece(params: { scenario: PresentationScenario; userId: number; pieceId?: string }) {

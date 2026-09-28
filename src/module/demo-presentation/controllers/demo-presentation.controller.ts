@@ -27,6 +27,7 @@ export const runDemoPresentation: RequestHandler = async (req, res, next) => {
       pieceTechniqueId: input.piece_technique_id,
       gammeId: input.gamme_id,
       articleId: input.article_id,
+      receiptId: input.receipt_id,
       devisId: input.devis_id,
       requestKey,
       actor: { id: user.id, role: user.role },

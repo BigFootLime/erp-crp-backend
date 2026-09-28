@@ -22,7 +22,7 @@ describe("demo presentation contract", () => {
     expect(nextPresentationAction("OPERATOR_READY")).toBe("start_operator");
     expect(nextPresentationAction("RUNNING")).toBe("declare_quantity");
     expect(nextPresentationAction("QUANTITY_DECLARED")).toBe("stop_operator");
-    expect(nextPresentationAction("COMPLETED")).toBeNull();
+    expect(nextPresentationAction("COMPLETED")).toBe("prepare_receipt");
     expect(presentationResponse({ ...base, status: "QUANTITY_DECLARED" })).toMatchObject({
       scenario: { status: "ACTIVE", step: "quantity_declared" }, next_action: "stop_operator",
       entities: { commande: { id: 13 }, of: { id: 15 }, execution: { id: base.execution_id } },

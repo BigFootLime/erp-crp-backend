@@ -8,6 +8,7 @@ export const presentationRunSchema = z.object({
   piece_technique_id: z.string().uuid().optional(),
   gamme_id: z.string().uuid().optional(),
   article_id: z.string().uuid().optional(),
+  receipt_id: z.string().uuid().optional(),
   devis_id: z.coerce.number().int().positive().optional(),
 }).strict().superRefine((value, ctx) => {
   if ((value.action === "prepare_client" || value.action === "start") && value.scenario_id !== undefined) {
@@ -20,6 +21,7 @@ export const presentationRunSchema = z.object({
   if (value.action !== "adopt_piece" && value.piece_technique_id !== undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["piece_technique_id"], message: "piece_technique_id is only accepted for adopt_piece." });
   if (value.action !== "adopt_gamme" && value.gamme_id !== undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["gamme_id"], message: "gamme_id is only accepted for adopt_gamme." });
   if (value.action !== "adopt_article" && value.article_id !== undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["article_id"], message: "article_id is only accepted for adopt_article." });
+  if (value.action !== "adopt_receipt" && value.receipt_id !== undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["receipt_id"], message: "receipt_id is only accepted for adopt_receipt." });
   if (value.action !== "adopt_devis" && value.devis_id !== undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["devis_id"], message: "devis_id is only accepted for adopt_devis." });
 });
 
