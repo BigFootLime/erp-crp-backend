@@ -321,15 +321,26 @@ export function actionHasCompleted(scenario: PresentationScenario, action: Exclu
   return scenario.status === completedActionStates[action];
 }
 
+export function shouldIncludePreparedQuote(action: PresentationAction, status: PresentationStatus): boolean {
+  return action === "prepare_devis" && status === "QUOTE_PREPARED";
+}
+
+async function responseForAction(action: PresentationAction, scenario: PresentationScenario) {
+  const response = presentationResponse(scenario);
+  return shouldIncludePreparedQuote(action, scenario.status)
+    ? { ...response, prepared: { devis: await preparedQuote(scenario) } }
+    : response;
+}
+
 async function runScenarioAction(params: { action: Exclude<PresentationAction, "prepare_client">; scenarioId: string; requestKey: string; actor: PresentationActor; context: RequestContext; clientId?: string; devisId?: number }) {
   return withPresentationLock(`scenario:${params.scenarioId}`, async () => {
     let scenario = await getPresentationScenario(params.scenarioId, params.actor.id);
-    if (await hasPresentationReceipt(scenario.id, params.action, params.requestKey)) return presentationResponse(scenario);
+    if (await hasPresentationReceipt(scenario.id, params.action, params.requestKey)) return responseForAction(params.action, scenario);
     // A process can fail after the domain action and registry state update but before
     // its receipt write. The persisted target state makes that retry read-only.
     if (actionHasCompleted(scenario, params.action)) {
       await recordPresentationReceipt(scenario.id, params.action, params.requestKey);
-      return presentationResponse(scenario);
+      return responseForAction(params.action, scenario);
     }
     if (params.action === "adopt_client") scenario = await adoptClient(scenario, params.actor, params.clientId);
     if (params.action === "prepare_devis") scenario = await prepareQuote(scenario, params.actor);
@@ -347,8 +358,7 @@ async function runScenarioAction(params: { action: Exclude<PresentationAction, "
       scenario = await operatorAction(scenario, params.action, params.actor, params.context);
     }
     await recordPresentationReceipt(scenario.id, params.action, params.requestKey);
-    const response = presentationResponse(scenario);
-    return params.action === "prepare_devis" ? { ...response, prepared: { devis: await preparedQuote(scenario) } } : response;
+    return responseForAction(params.action, scenario);
   });
 }
 

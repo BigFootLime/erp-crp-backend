@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { actionHasCompleted, isPermittedPresentationReleaseOverride, nextPresentationAction, presentationResponse } from "../module/demo-presentation/services/demo-presentation.service";
+import { actionHasCompleted, isPermittedPresentationReleaseOverride, nextPresentationAction, presentationResponse, shouldIncludePreparedQuote } from "../module/demo-presentation/services/demo-presentation.service";
 import { presentationRunSchema } from "../module/demo-presentation/validators/demo-presentation.validators";
 import type { PresentationScenario } from "../module/demo-presentation/types/demo-presentation.types";
 
@@ -46,6 +46,12 @@ describe("demo presentation contract", () => {
     expect(presentationRunSchema.safeParse({ action: "adopt_client", scenario_id: base.id, devis_id: 12 }).success).toBe(false);
     expect(presentationRunSchema.safeParse({ action: "prepare_devis", scenario_id: base.id }).success).toBe(true);
     expect(presentationRunSchema.safeParse({ action: "adopt_devis", scenario_id: base.id, devis_id: 12 }).success).toBe(true);
+  });
+
+  it("keeps the native quote preset available on a prepared-step retry", () => {
+    expect(shouldIncludePreparedQuote("prepare_devis", "QUOTE_PREPARED")).toBe(true);
+    expect(shouldIncludePreparedQuote("prepare_devis", "CLIENT_CREATED")).toBe(false);
+    expect(shouldIncludePreparedQuote("adopt_devis", "QUOTE_PREPARED")).toBe(false);
   });
 });
 
