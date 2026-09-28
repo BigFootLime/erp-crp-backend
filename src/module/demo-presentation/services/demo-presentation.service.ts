@@ -7,7 +7,7 @@ import { svcGetOfReadiness, svcReleaseOrdreFabrication } from "../../production/
 import { svcFinishOperation, svcPauseExecution, svcPreviewFinishOperation, svcResumeExecution, svcStartExecution, svcStopExecution } from "../../production/services/production-execution.service";
 import { isDemoMode } from "../../../config/demo-mode";
 import type { PresentationAction, PresentationActor, PresentationScenario, PresentationStatus } from "../types/demo-presentation.types";
-import { createOrResumePresentation, findExistingPresentationProduction, findFixtureArticleId, findPreparedClient, findPreparedQuote, findScenarioOfAffaire, findScenarioOfStatus, findScenarioOperation, getPresentationScenario, hasPresentationReceipt, recordPresentationReceipt, updatePresentationScenario, withPresentationLock } from "../repository/demo-presentation.repository";
+import { assertPresentationFixture, createOrResumePresentation, findExistingPresentationProduction, findFixtureArticleId, findPreparedClient, findPreparedQuote, findScenarioOfAffaire, findScenarioOfStatus, findScenarioOperation, getPresentationScenario, hasPresentationReceipt, recordPresentationReceipt, updatePresentationScenario, withPresentationLock } from "../repository/demo-presentation.repository";
 
 type RequestContext = { ip: string | null; user_agent: string | null; path: string | null; page_key: string | null; client_session_id: string | null };
 
@@ -160,6 +160,7 @@ async function adoptQuote(scenario: PresentationScenario, actor: PresentationAct
 async function convertQuote(scenario: PresentationScenario, actor: PresentationActor, context: RequestContext): Promise<PresentationScenario> {
   requireState(scenario, ["QUOTE_DRAFT"]);
   if (!scenario.devis_id) throw new HttpError(409, "DEMO_SCENARIO_INCOMPLETE", "Le devis de démonstration est absent.");
+  await assertPresentationFixture(scenario);
   const ctx = { audit: audit(actor, context) };
   // Recover a timeout after either durable commercial transition without trying
   // to move an accepted quote backwards to ENVOYE.
@@ -171,7 +172,14 @@ async function convertQuote(scenario: PresentationScenario, actor: PresentationA
   if (afterSend !== "ENVOYE" && afterSend !== "ACCEPTE") {
     throw new HttpError(409, "DEMO_QUOTE_STATE_INVALID", "Le devis de démonstration ne peut pas être converti dans son état actuel.", { statut });
   }
-  const commande = await svcConvertDevisToCommande(scenario.devis_id, { idempotency_key: key(scenario, "convert"), audit: audit(actor, context) });
+  const commande = await svcConvertDevisToCommande(scenario.devis_id, {
+    idempotency_key: key(scenario, "convert"),
+    audit: audit(actor, context),
+    presentation_fixture: {
+      piece_technique_id: scenario.piece_technique_id,
+      piece_technique_version_id: scenario.piece_technique_version_id,
+    },
+  });
   if (!commande) throw new HttpError(409, "DEMO_COMMANDE_NOT_CREATED", "La commande de démonstration n'a pas pu être créée.");
   return updatePresentationScenario(scenario.id, actor.id, { commande_id: commande.id, status: "COMMANDE_CREATED" });
 }

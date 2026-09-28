@@ -20,6 +20,7 @@ import {
   repoReviseDevis,
   repoUpdateDevis,
   repoQueueDevisOfficialDocument,
+  type DevisConversionContext,
   type DevisWriteContext,
 } from "../repository/devis.repository";
 
@@ -66,7 +67,7 @@ export const svcFindDevisByArticleDevisCode = (code: string, limit: number) =>
 
 export const svcConvertDevisToCommande = (
   id: number,
-  opts: { expected_updated_at?: string } & DevisWriteContext = {}
+  opts: DevisConversionContext = {}
 ) => repoConvertDevisToCommande(id, opts);
 
 const devisOfficialBase = (id: number) => `/devis/${id}/official-documents`;

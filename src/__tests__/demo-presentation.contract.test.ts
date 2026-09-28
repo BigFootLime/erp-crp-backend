@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { pinPresentationFixtureVersion } from "../module/devis/repository/devis.repository";
 import { actionHasCompleted, isPermittedPresentationReleaseOverride, nextPresentationAction, presentationResponse, shouldIncludePreparedQuote } from "../module/demo-presentation/services/demo-presentation.service";
 import { presentationRunSchema } from "../module/demo-presentation/validators/demo-presentation.validators";
 import type { PresentationScenario } from "../module/demo-presentation/types/demo-presentation.types";
@@ -163,5 +164,25 @@ describe("presentation fixture selection", () => {
     expect(source).toContain("v.date_effet IS NULL OR v.date_effet <= CURRENT_DATE");
     expect(source).toContain("upper(btrim(pto.machine_family_code)) = upper(btrim(m.machine_family_code))");
     expect(source).toContain("upper(btrim(pto.machine_family_code)) = upper(btrim(cf.machine_family_code))");
+  });
+
+  it("pins the applicable scenario version without changing another commercial line", () => {
+    const draft = {
+      lignes: [
+        { piece_technique_id: base.piece_technique_id, piece_technique_version_id: "draft-version" },
+        { piece_technique_id: "77777777-7777-4777-8777-777777777777", piece_technique_version_id: "other-version" },
+      ],
+    } as Parameters<typeof pinPresentationFixtureVersion>[0];
+    const pinned = pinPresentationFixtureVersion(draft, {
+      piece_technique_id: base.piece_technique_id,
+      piece_technique_version_id: base.piece_technique_version_id,
+    });
+    expect(pinned.lignes[0]?.piece_technique_version_id).toBe(base.piece_technique_version_id);
+    expect(pinned.lignes[1]?.piece_technique_version_id).toBe("other-version");
+    expect(pinPresentationFixtureVersion(draft, undefined)).toBe(draft);
+    expect(() => pinPresentationFixtureVersion(draft, {
+      piece_technique_id: "88888888-8888-4888-8888-888888888888",
+      piece_technique_version_id: base.piece_technique_version_id,
+    })).toThrow("Le devis de démonstration ne correspond pas à la pièce technique préparée.");
   });
 });

@@ -85,6 +85,37 @@ async function loadFixture(): Promise<Fixture> {
   return fixture;
 }
 
+/** Recheck the persisted fixture immediately before the commercial conversion.
+ * A presentation can stay open while a technical revision changes; pinning an
+ * obsolete or unroutable version would create an OF without usable operations. */
+export async function assertPresentationFixture(scenario: Pick<PresentationScenario, "piece_technique_id" | "piece_technique_version_id" | "machine_id">): Promise<void> {
+  const result = await pool.query<{ ready: boolean }>(`
+    SELECT EXISTS (
+      SELECT 1
+        FROM public.piece_technique_versions v
+        JOIN public.gammes g
+          ON g.piece_technique_version_id = v.id AND g.statut = 'APPLICABLE' AND g.is_current = true
+        JOIN public.pieces_techniques_operations pto
+          ON pto.gamme_id = g.id AND pto.machine_id = $3::uuid
+        JOIN public.machines m
+          ON m.id = pto.machine_id AND m.archived_at IS NULL AND m.status::text = 'ACTIVE' AND m.is_available IS NOT FALSE
+        JOIN public.centres_frais cf
+          ON cf.id = pto.cf_id AND cf.archived_at IS NULL AND cf.statut::text = 'ACTIF'
+       WHERE v.id = $2::uuid
+         AND v.piece_technique_id = $1::uuid
+         AND v.statut = 'APPLICABLE'
+         AND v.is_current = true
+         AND (v.date_effet IS NULL OR v.date_effet <= CURRENT_DATE)
+         AND NULLIF(btrim(pto.machine_family_code), '') IS NOT NULL
+         AND upper(btrim(pto.machine_family_code)) = upper(btrim(m.machine_family_code))
+         AND upper(btrim(pto.machine_family_code)) = upper(btrim(cf.machine_family_code))
+    ) AS ready
+  `, [scenario.piece_technique_id, scenario.piece_technique_version_id, scenario.machine_id]);
+  if (!result.rows[0]?.ready) {
+    throw new HttpError(409, "DEMO_PRESENTATION_FIXTURE_STALE", "La version technique de démonstration n'est plus applicable.");
+  }
+}
+
 export async function findFixtureArticleId(pieceTechniqueId: string): Promise<string> {
   const result = await pool.query<{ id: string }>(`
     SELECT a.id::text AS id

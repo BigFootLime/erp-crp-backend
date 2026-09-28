@@ -325,6 +325,21 @@ export type DevisWriteContext = {
   audit?: AuditContext;
 };
 
+/**
+ * Internal-only context for the guided CERP+ presentation. It is never parsed
+ * from an HTTP request: the presentation service supplies the version selected
+ * by its server-side fixture after validating the piece/version/resource
+ * relation. Native quote forms may legitimately carry a preparatory dossier;
+ * that dossier must not replace the already-applicable demo routing.
+ */
+export type DevisConversionContext = DevisWriteContext & {
+  expected_updated_at?: string;
+  presentation_fixture?: {
+    piece_technique_id: string;
+    piece_technique_version_id: string;
+  };
+};
+
 type DbQueryer = Pick<PoolClient, "query">;
 
 async function insertDevisAuditLog(
@@ -2893,6 +2908,23 @@ export type ConvertDevisResult = {
   idempotent_replay: boolean;
 };
 
+export function pinPresentationFixtureVersion(
+  draft: CommandeDraftFromDevis["draft"],
+  fixture: DevisConversionContext["presentation_fixture"]
+): CommandeDraftFromDevis["draft"] {
+  if (!fixture) return draft;
+  let matched = 0;
+  const lignes = draft.lignes.map((ligne) => {
+    if (ligne.piece_technique_id !== fixture.piece_technique_id) return ligne;
+    matched += 1;
+    return { ...ligne, piece_technique_version_id: fixture.piece_technique_version_id };
+  });
+  if (matched !== 1) {
+    throw new HttpError(409, "DEMO_QUOTE_FIXTURE_MISMATCH", "Le devis de démonstration ne correspond pas à la pièce technique préparée.");
+  }
+  return { ...draft, lignes };
+}
+
 /**
  * #167 — conversion contrôlée : cette voie DÉLÈGUE la création au moteur unique
  * `repoCreateCommande` (module commande-client) — mêmes garanties que le parcours
@@ -2905,7 +2937,7 @@ export type ConvertDevisResult = {
  */
 export async function repoConvertDevisToCommande(
   devisId: number,
-  opts: { expected_updated_at?: string } & DevisWriteContext = {}
+  opts: DevisConversionContext = {}
 ): Promise<ConvertDevisResult | null> {
   const idempotencyPayloadHash = opts.idempotency_key
     ? devisIdempotencyPayloadHash({ devis_id: devisId, expected_updated_at: opts.expected_updated_at ?? null })
@@ -2967,7 +2999,7 @@ export async function repoConvertDevisToCommande(
   // article/pièce, mêmes liens préparatoires que « Préparer la commande ».
   const draftBundle = await repoGetCommandeDraftFromDevis(devisId);
   if (!draftBundle) return null;
-  const draft = draftBundle.draft;
+  const draft = pinPresentationFixtureVersion(draftBundle.draft, opts.presentation_fixture);
 
   if (!Array.isArray(draft.lignes) || draft.lignes.length === 0) {
     throw new HttpError(400, "DEVIS_EMPTY", "Devis has no lines to convert");
