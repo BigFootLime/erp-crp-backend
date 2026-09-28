@@ -302,10 +302,11 @@ export async function adoptNativeQualityRelease(params: { scenario: Presentation
      WHERE qc.id = $1::uuid AND ($2::uuid IS NULL OR rd.id = $2::uuid)
        AND qc.lot_id = $3::uuid
        AND qc.of_id = $4::bigint
+       AND qc.plan_id = $5::uuid
        AND rd.decision IN ('FULL','PARTIAL')
        AND rd.qty = 3
      ORDER BY rd.decided_at DESC LIMIT 1
-  `, [params.qualityControlId, params.decisionId ?? null, params.scenario.lot_id, params.scenario.of_id])
+  `, [params.qualityControlId, params.decisionId ?? null, params.scenario.lot_id, params.scenario.of_id, params.scenario.quality_plan_id])
   if (!row.rows[0]) throw new HttpError(409, "DEMO_QUALITY_NOT_READY", "Le contrôle natif doit libérer les trois pièces du lot du scénario.")
   return row.rows[0]
 }
