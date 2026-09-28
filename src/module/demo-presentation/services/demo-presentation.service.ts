@@ -7,7 +7,7 @@ import { svcGetOfReadiness, svcReleaseOrdreFabrication } from "../../production/
 import { svcFinishOperation, svcPauseExecution, svcPreviewFinishOperation, svcResumeExecution, svcStartExecution, svcStopExecution } from "../../production/services/production-execution.service";
 import { isDemoMode } from "../../../config/demo-mode";
 import type { PresentationAction, PresentationActor, PresentationScenario, PresentationStatus } from "../types/demo-presentation.types";
-import { assertPresentationFixture, createOrResumePresentation, findExistingPresentationProduction, findFixtureArticleId, findPreparedClient, findPreparedQuote, findScenarioOfAffaire, findScenarioOfStatus, findScenarioOperation, getPresentationScenario, hasPresentationReceipt, recordPresentationReceipt, updatePresentationScenario, withPresentationLock } from "../repository/demo-presentation.repository";
+import { adoptNativeArticle, adoptNativeGamme, adoptNativePiece, assertPresentationFixture, createOrResumePresentation, findExistingPresentationProduction, findFixtureArticleId, findPreparedClient, findPreparedQuote, findScenarioOfAffaire, findScenarioOfStatus, findScenarioOperation, getPresentationScenario, hasPresentationReceipt, recordPresentationReceipt, updatePresentationScenario, withPresentationLock } from "../repository/demo-presentation.repository";
 
 type RequestContext = { ip: string | null; user_agent: string | null; path: string | null; page_key: string | null; client_session_id: string | null };
 
@@ -35,7 +35,13 @@ export function nextPresentationAction(status: PresentationStatus): Presentation
   switch (status) {
     case "INITIALIZING":
     case "CLIENT_PREPARED": return "adopt_client";
-    case "CLIENT_CREATED": return "prepare_devis";
+    case "CLIENT_CREATED": return "prepare_piece";
+    case "PIECE_PREPARED": return "adopt_piece";
+    case "PIECE_CREATED": return "prepare_gamme";
+    case "GAMME_PREPARED": return "adopt_gamme";
+    case "GAMME_APPLICABLE": return "prepare_article";
+    case "ARTICLE_PREPARED": return "adopt_article";
+    case "ARTICLE_CREATED": return "prepare_devis";
     case "QUOTE_PREPARED": return "adopt_devis";
     case "QUOTE_DRAFT": return "convert_quote";
     case "COMMANDE_CREATED": return "generate_affaires";
@@ -62,7 +68,7 @@ export function isPermittedPresentationReleaseOverride(blockers: readonly string
 
 export function presentationResponse(scenario: PresentationScenario) {
   const steps: Record<PresentationStatus, string> = {
-    INITIALIZING: "client_prepared", CLIENT_PREPARED: "client_prepared", CLIENT_CREATED: "client_created", QUOTE_PREPARED: "quote_prepared", QUOTE_DRAFT: "quote_created", COMMANDE_CREATED: "quote_converted",
+    INITIALIZING: "client_prepared", CLIENT_PREPARED: "client_prepared", CLIENT_CREATED: "client_created", PIECE_PREPARED: "piece_prepared", PIECE_CREATED: "piece_created", GAMME_PREPARED: "gamme_prepared", GAMME_APPLICABLE: "gamme_applicable", ARTICLE_PREPARED: "article_prepared", ARTICLE_CREATED: "article_created", QUOTE_PREPARED: "quote_prepared", QUOTE_DRAFT: "quote_created", COMMANDE_CREATED: "quote_converted",
     AFFAIRE_CREATED: "affaires_generated", PRODUCTION_READY: "ofs_generated", PLANNED: "planned", OPERATOR_READY: "operator_released",
     RUNNING: "operator_started", PAUSED: "operator_paused", QUANTITY_DECLARED: "quantity_declared", COMPLETED: "operator_stopped",
   };
@@ -113,7 +119,7 @@ function preparedClient(scenario: PresentationScenario) {
 
 async function preparedQuote(scenario: PresentationScenario) {
   if (!scenario.client_id) throw new HttpError(409, "DEMO_SCENARIO_INCOMPLETE", "Le client de démonstration est absent.");
-  const articleId = await findFixtureArticleId(scenario.piece_technique_id);
+  const articleId = scenario.article_id ?? await findFixtureArticleId(scenario.piece_technique_id);
   return { client_id: scenario.client_id, statut: "BROUILLON" as const, remise_globale: 0, total_ht: 0, total_ttc: 0,
     lignes: [{ article_id: articleId, piece_technique_id: scenario.piece_technique_id, code_piece: "DEMO-PT-001", description: "Support de guidage — démonstration", quantite: 3, unite: "U", prix_unitaire_ht: 240, remise_ligne: 0, taux_tva: 20 }] };
 }
@@ -146,9 +152,16 @@ async function adoptClient(scenario: PresentationScenario, actor: PresentationAc
 }
 
 async function prepareQuote(scenario: PresentationScenario, actor: PresentationActor): Promise<PresentationScenario> {
-  requireState(scenario, ["CLIENT_CREATED"]);
+  requireState(scenario, ["ARTICLE_CREATED"]);
   return updatePresentationScenario(scenario.id, actor.id, { status: "QUOTE_PREPARED" });
 }
+
+async function preparePiece(s: PresentationScenario, actor: PresentationActor) { requireState(s,["CLIENT_CREATED"]); return updatePresentationScenario(s.id,actor.id,{status:"PIECE_PREPARED"}); }
+async function adoptPiece(s: PresentationScenario, actor: PresentationActor, id?: string) { requireState(s,["PIECE_PREPARED"]); const p=await adoptNativePiece({scenario:s,userId:actor.id,pieceId:id}); return updatePresentationScenario(s.id,actor.id,{piece_technique_id:p.piece_id,piece_technique_version_id:p.version_id,status:"PIECE_CREATED"}); }
+async function prepareGamme(s: PresentationScenario, actor: PresentationActor) { requireState(s,["PIECE_CREATED"]); return updatePresentationScenario(s.id,actor.id,{status:"GAMME_PREPARED"}); }
+async function adoptGamme(s: PresentationScenario, actor: PresentationActor, id?: string) { requireState(s,["GAMME_PREPARED"]); const g=await adoptNativeGamme({scenario:s,userId:actor.id,gammeId:id}); return updatePresentationScenario(s.id,actor.id,{gamme_id:id,machine_id:g.machine_id,status:"GAMME_APPLICABLE"}); }
+async function prepareArticle(s: PresentationScenario, actor: PresentationActor) { requireState(s,["GAMME_APPLICABLE"]); return updatePresentationScenario(s.id,actor.id,{status:"ARTICLE_PREPARED"}); }
+async function adoptArticle(s: PresentationScenario, actor: PresentationActor, id?: string) { requireState(s,["ARTICLE_PREPARED"]); const a=await adoptNativeArticle({scenario:s,userId:actor.id,articleId:id}); return updatePresentationScenario(s.id,actor.id,{article_id:a.article_id,status:"ARTICLE_CREATED"}); }
 
 async function adoptQuote(scenario: PresentationScenario, actor: PresentationActor, devisId?: number): Promise<PresentationScenario> {
   requireState(scenario, ["QUOTE_PREPARED"]);
@@ -319,7 +332,7 @@ async function operatorAction(scenario: PresentationScenario, action: Presentati
 }
 
 const completedActionStates: Partial<Record<PresentationAction, PresentationStatus>> = {
-  adopt_client: "CLIENT_CREATED", prepare_devis: "QUOTE_PREPARED", adopt_devis: "QUOTE_DRAFT",
+  adopt_client: "CLIENT_CREATED", prepare_piece: "PIECE_PREPARED", adopt_piece: "PIECE_CREATED", prepare_gamme: "GAMME_PREPARED", adopt_gamme: "GAMME_APPLICABLE", prepare_article: "ARTICLE_PREPARED", adopt_article: "ARTICLE_CREATED", prepare_devis: "QUOTE_PREPARED", adopt_devis: "QUOTE_DRAFT",
   convert_quote: "COMMANDE_CREATED", generate_affaires: "AFFAIRE_CREATED", generate_ofs: "PRODUCTION_READY",
   plan: "PLANNED", release_operator: "OPERATOR_READY", start_operator: "RUNNING", pause_operator: "PAUSED", resume_operator: "RUNNING",
   declare_quantity: "QUANTITY_DECLARED", stop_operator: "COMPLETED",
@@ -335,12 +348,15 @@ export function shouldIncludePreparedQuote(action: PresentationAction, status: P
 
 async function responseForAction(action: PresentationAction, scenario: PresentationScenario) {
   const response = presentationResponse(scenario);
+  if (action === "prepare_piece" && scenario.status === "PIECE_PREPARED") return { ...response, prepared: { piece: { client_id: scenario.client_id, name_piece: `Pièce présentation ${scenario.id.slice(0,8)}`, designation: `Pièce présentation ${scenario.id.slice(0,8)}`, plan_reference: `DEMO-${scenario.id.slice(0,8)}`, indice_externe: "A", statut: "DRAFT" } } };
+  if (action === "prepare_gamme" && scenario.status === "GAMME_PREPARED") return { ...response, prepared: { gamme: { piece_technique_version_id: scenario.piece_technique_version_id, type_operation: "USINAGE", designation: "Fraisage démonstration", qte: 3, coef: 1, temps_preparation_minutes: 5, temps_unitaire_minutes: 3 } } };
+  if (action === "prepare_article" && scenario.status === "ARTICLE_PREPARED") return { ...response, prepared: { article: { piece_technique_id: scenario.piece_technique_id, article_category: "fabrique", unite: "U", commercial_scope: "CLIENTS", client_ids: scenario.client_id ? [scenario.client_id] : [] } } };
   return shouldIncludePreparedQuote(action, scenario.status)
     ? { ...response, prepared: { devis: await preparedQuote(scenario) } }
     : response;
 }
 
-async function runScenarioAction(params: { action: Exclude<PresentationAction, "prepare_client">; scenarioId: string; requestKey: string; actor: PresentationActor; context: RequestContext; clientId?: string; devisId?: number }) {
+async function runScenarioAction(params: { action: Exclude<PresentationAction, "prepare_client">; scenarioId: string; requestKey: string; actor: PresentationActor; context: RequestContext; clientId?: string; pieceTechniqueId?: string; gammeId?: string; articleId?: string; devisId?: number }) {
   return withPresentationLock(`scenario:${params.scenarioId}`, async () => {
     let scenario = await getPresentationScenario(params.scenarioId, params.actor.id);
     if (await hasPresentationReceipt(scenario.id, params.action, params.requestKey)) return responseForAction(params.action, scenario);
@@ -351,6 +367,12 @@ async function runScenarioAction(params: { action: Exclude<PresentationAction, "
       return responseForAction(params.action, scenario);
     }
     if (params.action === "adopt_client") scenario = await adoptClient(scenario, params.actor, params.clientId);
+    if (params.action === "prepare_piece") scenario = await preparePiece(scenario, params.actor);
+    if (params.action === "adopt_piece") scenario = await adoptPiece(scenario, params.actor, params.pieceTechniqueId);
+    if (params.action === "prepare_gamme") scenario = await prepareGamme(scenario, params.actor);
+    if (params.action === "adopt_gamme") scenario = await adoptGamme(scenario, params.actor, params.gammeId);
+    if (params.action === "prepare_article") scenario = await prepareArticle(scenario, params.actor);
+    if (params.action === "adopt_article") scenario = await adoptArticle(scenario, params.actor, params.articleId);
     if (params.action === "prepare_devis") scenario = await prepareQuote(scenario, params.actor);
     if (params.action === "adopt_devis") scenario = await adoptQuote(scenario, params.actor, params.devisId);
     if (params.action === "convert_quote") scenario = await convertQuote(scenario, params.actor, params.context);
@@ -370,7 +392,7 @@ async function runScenarioAction(params: { action: Exclude<PresentationAction, "
   });
 }
 
-export async function runPresentation(params: { action: PresentationAction; scenarioId?: string; clientId?: string; devisId?: number; requestKey: string; actor: PresentationActor; context: RequestContext }) {
+export async function runPresentation(params: { action: PresentationAction; scenarioId?: string; clientId?: string; pieceTechniqueId?: string; gammeId?: string; articleId?: string; devisId?: number; requestKey: string; actor: PresentationActor; context: RequestContext }) {
   if (!isDemoMode()) throw new HttpError(404, "NOT_FOUND", "Not found");
   if (params.action === "start") {
     return withPresentationLock(`start:${params.actor.id}`, async () =>

@@ -1,12 +1,12 @@
 export const presentationActions = [
-  "start", "prepare_client", "adopt_client", "prepare_devis", "adopt_devis", "convert_quote", "generate_affaires", "generate_ofs", "plan", "release_operator",
+  "start", "prepare_client", "adopt_client", "prepare_piece", "adopt_piece", "prepare_gamme", "adopt_gamme", "prepare_article", "adopt_article", "prepare_devis", "adopt_devis", "convert_quote", "generate_affaires", "generate_ofs", "plan", "release_operator",
   "start_operator", "pause_operator", "resume_operator", "declare_quantity", "stop_operator",
 ] as const;
 
 export type PresentationAction = (typeof presentationActions)[number];
 
 export type PresentationStatus =
-  | "INITIALIZING" | "CLIENT_PREPARED" | "CLIENT_CREATED" | "QUOTE_PREPARED" | "QUOTE_DRAFT" | "COMMANDE_CREATED" | "AFFAIRE_CREATED" | "PRODUCTION_READY"
+  | "INITIALIZING" | "CLIENT_PREPARED" | "CLIENT_CREATED" | "PIECE_PREPARED" | "PIECE_CREATED" | "GAMME_PREPARED" | "GAMME_APPLICABLE" | "ARTICLE_PREPARED" | "ARTICLE_CREATED" | "QUOTE_PREPARED" | "QUOTE_DRAFT" | "COMMANDE_CREATED" | "AFFAIRE_CREATED" | "PRODUCTION_READY"
   | "PLANNED" | "OPERATOR_READY" | "RUNNING" | "PAUSED" | "QUANTITY_DECLARED" | "COMPLETED";
 
 export type PresentationScenario = {
@@ -17,6 +17,8 @@ export type PresentationScenario = {
   piece_technique_id: string;
   piece_technique_version_id: string;
   machine_id: string;
+  gamme_id?: string | null;
+  article_id?: string | null;
   client_id: string | null;
   devis_id: number | null;
   commande_id: number | null;

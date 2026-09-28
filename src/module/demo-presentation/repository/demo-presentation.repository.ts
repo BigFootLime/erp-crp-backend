@@ -34,6 +34,7 @@ const scenarioColumns = `
   piece_technique_id::text AS piece_technique_id,
   piece_technique_version_id::text AS piece_technique_version_id,
   machine_id::text AS machine_id, client_id::text AS client_id,
+  gamme_id::text AS gamme_id, article_id::text AS article_id,
   devis_id::bigint AS devis_id, commande_id::bigint AS commande_id,
   affaire_id::bigint AS affaire_id, of_id::bigint AS of_id,
   operation_id::text AS operation_id, execution_id::text AS execution_id`;
@@ -199,7 +200,7 @@ export async function getPresentationScenario(id: string, userId: number): Promi
 export async function updatePresentationScenario(
   id: string,
   userId: number,
-  patch: Partial<Pick<PresentationScenario, "status" | "client_id" | "devis_id" | "commande_id" | "affaire_id" | "of_id" | "operation_id" | "execution_id">>
+  patch: Partial<Pick<PresentationScenario, "status" | "client_id" | "gamme_id" | "article_id" | "piece_technique_id" | "piece_technique_version_id" | "machine_id" | "devis_id" | "commande_id" | "affaire_id" | "of_id" | "operation_id" | "execution_id">>
 ): Promise<PresentationScenario> {
   const fields = Object.entries(patch).filter(([, value]) => value !== undefined);
   if (!fields.length) return getPresentationScenario(id, userId);
@@ -236,6 +237,24 @@ export async function findExistingPresentationProduction(commandeId: number): Pr
   `, [commandeId]);
   const row = result.rows[0];
   return row ? { affaire_id: Number(row.affaire_id), of_id: Number(row.of_id) } : null;
+}
+
+export async function adoptNativePiece(params: { scenario: PresentationScenario; userId: number; pieceId?: string }) {
+  const row = await pool.query<{ piece_id: string; version_id: string }>(`SELECT pt.id::text piece_id,v.id::text version_id FROM public.pieces_techniques pt JOIN public.piece_technique_versions v ON v.piece_technique_id=pt.id WHERE pt.id=$1::uuid AND pt.client_id=$2 AND pt.created_by=$3 ORDER BY v.created_at DESC LIMIT 1`, [params.pieceId, params.scenario.client_id, params.userId]);
+  if (!row.rows[0]) throw new HttpError(409, "DEMO_PIECE_NOT_READY", "La pièce doit être créée pour ce client avec le formulaire natif.");
+  return row.rows[0];
+}
+
+export async function adoptNativeGamme(params: { scenario: PresentationScenario; userId: number; gammeId?: string }) {
+  const row = await pool.query<{ gamme_id: string; machine_id: string }>(`SELECT g.id::text gamme_id,pto.machine_id::text machine_id FROM public.gammes g JOIN public.pieces_techniques_operations pto ON pto.gamme_id=g.id JOIN public.machines m ON m.id=pto.machine_id AND m.archived_at IS NULL AND m.status::text='ACTIVE' AND m.is_available IS NOT FALSE WHERE g.id=$1::uuid AND g.piece_technique_version_id=$2::uuid AND g.statut='APPLICABLE' AND g.is_current=true AND pto.cf_id IS NOT NULL AND pto.machine_id IS NOT NULL LIMIT 1`, [params.gammeId, params.scenario.piece_technique_version_id]);
+  if (!row.rows[0]) throw new HttpError(409, "DEMO_GAMME_NOT_READY", "La gamme applicable doit contenir une opération machine prête.");
+  return row.rows[0];
+}
+
+export async function adoptNativeArticle(params: { scenario: PresentationScenario; userId: number; articleId?: string }) {
+  const row = await pool.query<{ article_id: string }>(`SELECT id::text article_id FROM public.articles WHERE id=$1::uuid AND piece_technique_id=$2::uuid AND article_category='fabrique' AND is_active=true LIMIT 1`, [params.articleId, params.scenario.piece_technique_id]);
+  if (!row.rows[0]) throw new HttpError(409, "DEMO_ARTICLE_NOT_READY", "L'article fabriqué doit être lié à la pièce du scénario.");
+  return row.rows[0];
 }
 
 export async function findScenarioOfAffaire(ofId: number): Promise<number> {

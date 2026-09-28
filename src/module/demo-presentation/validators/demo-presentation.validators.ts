@@ -5,6 +5,9 @@ export const presentationRunSchema = z.object({
   action: z.enum(presentationActions),
   scenario_id: z.string().uuid().optional(),
   client_id: z.string().trim().min(1).optional(),
+  piece_technique_id: z.string().uuid().optional(),
+  gamme_id: z.string().uuid().optional(),
+  article_id: z.string().uuid().optional(),
   devis_id: z.coerce.number().int().positive().optional(),
 }).strict().superRefine((value, ctx) => {
   if ((value.action === "prepare_client" || value.action === "start") && value.scenario_id !== undefined) {
@@ -14,6 +17,9 @@ export const presentationRunSchema = z.object({
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["scenario_id"], message: "scenario_id is required after prepare_client." });
   }
   if (value.action !== "adopt_client" && value.client_id !== undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["client_id"], message: "client_id is only accepted for adopt_client." });
+  if (value.action !== "adopt_piece" && value.piece_technique_id !== undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["piece_technique_id"], message: "piece_technique_id is only accepted for adopt_piece." });
+  if (value.action !== "adopt_gamme" && value.gamme_id !== undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["gamme_id"], message: "gamme_id is only accepted for adopt_gamme." });
+  if (value.action !== "adopt_article" && value.article_id !== undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["article_id"], message: "article_id is only accepted for adopt_article." });
   if (value.action !== "adopt_devis" && value.devis_id !== undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["devis_id"], message: "devis_id is only accepted for adopt_devis." });
 });
 
