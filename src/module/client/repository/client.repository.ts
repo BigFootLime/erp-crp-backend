@@ -31,6 +31,41 @@ type DbQueryer = Pick<PoolClient, "query">;
 const clientCodeExistsMessage = "Un client avec ce code existe déjà.";
 const clientSiretExistsMessage = "Un client avec ce SIRET existe déjà.";
 
+type InitialClientContact = NonNullable<CreateClientDTO["contacts"]>[number] | NonNullable<CreateClientDTO["primary_contact"]>;
+
+function contactIdentity(contact: InitialClientContact): string | null {
+  const email = contact.email?.trim().toLocaleLowerCase();
+  if (!email) return null;
+  return [
+    email,
+    contact.first_name.trim().toLocaleLowerCase(),
+    contact.last_name.trim().toLocaleLowerCase(),
+  ].join("\u0000");
+}
+
+/**
+ * `primary_contact` and `contacts` are two views of the same creation form.
+ * Persist one row when the same contact appears in both, matching the active
+ * contact identity constraint without weakening it.
+ */
+export function deduplicateInitialContacts(
+  primaryContact: CreateClientDTO["primary_contact"],
+  contacts: CreateClientDTO["contacts"]
+): NonNullable<CreateClientDTO["contacts"]> {
+  const seen = new Set<string>();
+  const primaryIdentity = primaryContact ? contactIdentity(primaryContact) : null;
+  if (primaryIdentity) seen.add(primaryIdentity);
+
+  return (contacts ?? []).filter((contact) => {
+    const identity = contactIdentity(contact);
+    if (!identity || !seen.has(identity)) {
+      if (identity) seen.add(identity);
+      return true;
+    }
+    return false;
+  });
+}
+
 function getPgErrorInfo(err: unknown): { code: string | null; constraint: string | null } {
   const e = err as { code?: unknown; constraint?: unknown } | null;
   return {
@@ -647,9 +682,10 @@ export async function repoCreateClient(
       await db.query(`UPDATE clients SET contact_id = $1 WHERE client_id = $2`, [contactId, clientId]);
     }
 
-    if (Array.isArray(dto.contacts) && dto.contacts.length) {
+    const contacts = deduplicateInitialContacts(dto.primary_contact, dto.contacts);
+    if (contacts.length) {
   const ids: string[] = [];
-  for (const c of dto.contacts) {
+  for (const c of contacts) {
     const id = await insertContact(db, c, clientId);
     ids.push(id);
   }
@@ -678,7 +714,7 @@ export async function repoCreateClient(
         company_name: dto.company_name,
         status: dto.status,
         blocked: dto.blocked,
-        contacts_count: Array.isArray(dto.contacts) ? dto.contacts.length : 0,
+        contacts_count: contacts.length + (contactId ? 1 : 0),
         payment_modes_count: Array.isArray(dto.payment_mode_ids) ? dto.payment_mode_ids.length : 0,
       },
     });

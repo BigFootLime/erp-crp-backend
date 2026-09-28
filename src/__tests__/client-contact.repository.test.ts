@@ -15,7 +15,7 @@ vi.mock("../module/audit-logs/repository/audit-logs.repository", () => ({
   repoInsertAuditLog: mocks.insertAuditLog,
 }));
 
-import { repoCreateClientContact } from "../module/client/repository/client.repository";
+import { deduplicateInitialContacts, repoCreateClientContact } from "../module/client/repository/client.repository";
 
 const audit = {
   user_id: 1,
@@ -63,6 +63,17 @@ beforeEach(() => {
 });
 
 describe("repoCreateClientContact (#184)", () => {
+  it("stores a primary contact once when the creation form also lists it", () => {
+    const camille = { first_name: "Camille", last_name: "Martin", email: "camille.martin@atelier-demo.invalid" };
+    const contacts = deduplicateInitialContacts(camille, [camille, {
+      first_name: "Jean", last_name: "Dupont", email: "jean.dupont@atelier-demo.invalid",
+    }]);
+
+    expect(contacts).toEqual([{
+      first_name: "Jean", last_name: "Dupont", email: "jean.dupont@atelier-demo.invalid",
+    }]);
+  });
+
   it("compare le client_id historique varchar(3) comme du texte lors de la reprise idempotente", async () => {
     await repoCreateClientContact(
       "003",
