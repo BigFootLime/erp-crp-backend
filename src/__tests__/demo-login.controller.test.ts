@@ -43,6 +43,14 @@ describe("CERP-DEMO-01 visitor login", () => {
     service.loginUser.mockClear();
   });
 
+  it("uses a fixed separate quality reviewer through the normal login service",async()=>{
+    process.env.CERP_DEMO_MODE="true";
+    process.env.DEMO_SEED_USERNAME="DEMO";
+    process.env.DEMO_SEED_PASSWORD="test-visitor-password";
+    await request(app()).post("/auth/demo/login").set("X-CERP-Database","cerp_demo").send({persona:"quality-reviewer",username:"ADMIN"}).expect(200);
+    expect(service.loginUser).toHaveBeenCalledWith("DEMO_QUALITE","test-visitor-password",expect.anything());
+  });
+
   it("does not exist outside demo mode", async () => {
     process.env.CERP_DEMO_MODE = "false";
     await request(app()).post("/auth/demo/login").expect(404);

@@ -318,7 +318,7 @@ export async function repoTransitionDeliveryPolicy(params: {
       }
     }
 
-    const eventType = params.body.target_status === "IN_REVIEW" ? "SUBMITTED" : params.body.target_status;
+    const eventType = params.body.target_status === "IN_REVIEW" ? "SUBMITTED" : params.body.target_status === "ACTIVE" ? "ACTIVATED" : params.body.target_status;
     await client.query(
       `UPDATE public.quality_delivery_release_policy
        SET status = $2,

@@ -226,7 +226,7 @@ export async function updatePresentationScenario(
     values.push(value);
     return `${key} = $${values.length}`;
   });
-  if (patch.status === "COMPLETED") assignments.push("completed_at = now()");
+  if (patch.status === "COMPLETED" || patch.status === "SHIPPED") assignments.push("completed_at = now()");
   assignments.push("updated_at = now()");
   try {
     const result = await pool.query<ScenarioDbRow>(`
@@ -263,6 +263,21 @@ export async function adoptNativeReceipt(params: { scenario: PresentationScenari
   return receipt;
 }
 
+export async function findPresentationDeliveryPreset(s: PresentationScenario) {
+  const result=await pool.query<{reservation_id:string;lot_code:string}>(`SELECT sr.id::text reservation_id,l.lot_code FROM public.of_receipts r JOIN public.lots l ON l.id=r.lot_id JOIN public.stock_reservations sr ON sr.of_id=r.of_id AND sr.lot_id=r.lot_id AND sr.status='ACTIVE' AND sr.qty_reserved>=3 WHERE r.id=$1::uuid AND r.of_id=$2::bigint AND l.id=$3::uuid LIMIT 1`,[s.receipt_id,s.of_id,s.lot_id]);
+  const row=result.rows[0];
+  if(!row?.reservation_id)throw new HttpError(409,"DEMO_RESERVATION_NOT_READY","La libération qualité doit réserver le lot pour la commande.");
+  return {reservation_id:row.reservation_id,scanned_lot_code:row.lot_code};
+}
+
+export async function findPresentationQualityPreset(s: PresentationScenario) {
+  const row=(await pool.query<{unite:string}>(`SELECT a.unite FROM public.of_receipts r JOIN public.lots l ON l.id=r.lot_id JOIN public.articles a ON a.id=l.article_id WHERE r.id=$1::uuid AND r.of_id=$2::bigint AND l.id=$3::uuid AND a.id=$4::uuid`,[s.receipt_id,s.of_id,s.lot_id,s.article_id])).rows[0];
+  if(!row?.unite)throw new HttpError(409,"DEMO_RECEIPT_NOT_READY","La réception et l’unité du lot doivent être confirmées.");
+  const allocation = s.livraison_id ? (await pool.query<{id:string;unite:string}>(`SELECT a.id::text,a.unite FROM public.bon_livraison_ligne_allocations a JOIN public.bon_livraison_ligne l ON l.id=a.bon_livraison_ligne_id WHERE l.bon_livraison_id=$1::uuid AND a.lot_id=$2::uuid AND a.article_id=$3::uuid AND a.quantite=3 LIMIT 1`,[s.livraison_id,s.lot_id,s.article_id])).rows[0] : null;
+  if(s.livraison_id && !allocation)throw new HttpError(409,"DEMO_ALLOCATION_NOT_READY","L’allocation des trois pièces doit être confirmée.");
+  return {...(allocation ? {bon_livraison_id:s.livraison_id,allocation_id:allocation.id}:{}),article_id:s.article_id,lot_id:s.lot_id,qty:3,unite:allocation?.unite ?? row.unite,decision:"FULL",measurement:{characteristic_key:"CONFORMITE",value_text:"true",unit:""},justification:"Contrôle visuel conforme des trois pièces de présentation."};
+}
+
 /** Read-only registry adoption: BL, control and release are always produced by
  * their native modules. Every link is rechecked against this exact scenario. */
 export async function adoptNativeDelivery(params: { scenario: PresentationScenario; livraisonId?: string }) {
@@ -288,9 +303,9 @@ export async function adoptNativeQualityPlan(params: { scenario: PresentationSce
       FROM public.quality_control_plan p
       JOIN public.quality_control_plan_characteristic c ON c.plan_id = p.id
      WHERE p.id = $1::uuid AND p.created_by = $2
-       AND p.status = 'PUBLISHED' AND p.trigger_type = 'LOT_RELEASE'
+       AND p.status = 'PUBLISHED' AND p.trigger_type = $4
        AND p.article_id = $3::uuid
-     GROUP BY p.id LIMIT 1`, [params.qualityPlanId, params.userId, params.scenario.article_id]);
+     GROUP BY p.id LIMIT 1`, [params.qualityPlanId, params.userId, params.scenario.article_id, params.scenario.livraison_id ? "LOT_RELEASE" : "RECHECK"]);
   if (!row.rows[0]) throw new HttpError(409, "DEMO_QUALITY_PLAN_NOT_READY", "Le plan de libération doit être publié, lié à l’article du scénario et contenir une caractéristique.");
   return row.rows[0];
 }
@@ -301,7 +316,7 @@ export async function adoptNativeQualityRelease(params: { scenario: Presentation
       JOIN public.quality_release_decision rd ON rd.quality_control_id = qc.id
      WHERE qc.id = $1::uuid AND ($2::uuid IS NULL OR rd.id = $2::uuid)
        AND qc.lot_id = $3::uuid
-       AND qc.of_id = $4::bigint
+       AND EXISTS (SELECT 1 FROM public.of_receipts r WHERE r.lot_id=qc.lot_id AND r.of_id=$4::bigint)
        AND qc.plan_id = $5::uuid
        AND rd.decision IN ('FULL','PARTIAL')
        AND rd.qty = 3

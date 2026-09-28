@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  reconcileReleasedConsolidationLot,
   reserveProducedComponentForParentOf,
   reserveProducedQtyForCommandeLine,
 } from "./production-receipts.repository";
@@ -145,3 +146,23 @@ describe("reserveProducedComponentForParentOf", () => {
     })).resolves.toEqual({ matched: false, reservation_id: null, qty_reserved: 0, reservation_ids: [] });
   });
 });
+
+describe("quality release after a quarantined customer OF receipt",()=>{
+  it("creates the order reservation once without mutating the immutable receipt",async()=>{
+    const base=transactionClient({activeCommandeReservation:0,plannedBlQty:0})
+    let reconciled=false
+    const client={query:vi.fn(async(sql:unknown,args?:unknown[])=>{
+      const text=String(sql)
+      if(text.includes("r.id::text receipt_id"))return {rows:reconciled?[]:[{receipt_id:"receipt",of_id:11,commande_ligne_id:10,article_id:ids.article,location_id:ids.location,stock_level_id:ids.level,stock_batch_id:ids.batch,qty_ok:3}]}
+      if(text.includes("INSERT INTO public.stock_reservations"))reconciled=true
+      if(text.includes("JOIN public.production_consolidations c"))return {rows:[]}
+      return base.query(sql,args)
+    })}
+    await reconcileReleasedConsolidationLot(client as never,ids.lot,7)
+    await reconcileReleasedConsolidationLot(client as never,ids.lot,7)
+    expect(base.query.mock.calls.filter(([sql])=>String(sql).includes("INSERT INTO public.stock_reservations"))).toHaveLength(1)
+    const updates=client.query.mock.calls.filter(([sql])=>String(sql).includes("UPDATE public.of_receipts SET reservation_id"))
+    expect(updates).toHaveLength(0)
+    expect(base.query.mock.calls.find(([sql])=>String(sql).includes("UPDATE public.stock_levels"))?.[1]).toEqual([ids.level,3,7])
+  })
+})

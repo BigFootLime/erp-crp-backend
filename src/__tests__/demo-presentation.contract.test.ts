@@ -24,13 +24,15 @@ describe("demo presentation contract", () => {
     expect(nextPresentationAction("QUANTITY_DECLARED")).toBe("finish_operation");
     expect(nextPresentationAction("OPERATION_FINISHED")).toBe("finish_of");
     expect(nextPresentationAction("OF_FINISHED")).toBe("prepare_receipt");
-    expect(nextPresentationAction("RECEIPTED")).toBe("prepare_delivery");
+    expect(nextPresentationAction("RECEIPTED")).toBe("prepare_quality_plan");
     expect(nextPresentationAction("DELIVERY_PREPARED")).toBe("adopt_delivery");
     expect(nextPresentationAction("DELIVERY_CREATED")).toBe("prepare_quality_plan");
     expect(nextPresentationAction("QUALITY_PLAN_PREPARED")).toBe("adopt_quality_plan");
     expect(nextPresentationAction("QUALITY_PLAN_PUBLISHED")).toBe("prepare_quality_release");
     expect(nextPresentationAction("QUALITY_RELEASE_PREPARED")).toBe("adopt_quality_release");
-    expect(nextPresentationAction("QUALITY_RELEASED")).toBe("ship_delivery");
+    expect(nextPresentationAction("QUALITY_RELEASED")).toBe("prepare_delivery");
+    expect(presentationResponse({...base,status:"QUALITY_RELEASED",livraison_id:base.id}).next_action).toBe("ship_delivery");
+    expect(presentationResponse({...base,status:"SHIPPED",livraison_id:base.id}).scenario).toMatchObject({status:"COMPLETED",step:"shipped"});
     expect(nextPresentationAction("COMPLETED")).toBe("prepare_receipt");
     expect(presentationResponse({ ...base, status: "QUANTITY_DECLARED" })).toMatchObject({
       scenario: { status: "ACTIVE", step: "quantity_declared" }, next_action: "finish_operation",
@@ -147,7 +149,7 @@ describe("presentation recovery", () => {
     expect(source).toContain("bool_and(dl.piece_technique_id = $6::uuid)");
     expect(source).toContain("bl.commande_id = $2::bigint");
     expect(source).toContain("bla.lot_id = $3::uuid");
-    expect(source).toContain("qc.of_id = $4::bigint");
+    expect(source).toContain("r.lot_id=qc.lot_id AND r.of_id=$4::bigint");
   });
 
   it("uses the persisted quote and planning state rather than repeating a write", () => {
@@ -203,3 +205,4 @@ describe("presentation fixture selection", () => {
     })).toThrow("Le devis de démonstration ne correspond pas à la pièce technique préparée.");
   });
 });
+

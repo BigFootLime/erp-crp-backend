@@ -7,6 +7,34 @@ function response() {
 }
 
 describe("CERP-DEMO-01 API guard", () => {
+  it("supports the exact native routing, quality and shipment contracts", () => {
+    const previous = process.env.CERP_DEMO_MODE;
+    process.env.CERP_DEMO_MODE = "true";
+    const id = "11111111-1111-4111-8111-111111111111";
+    const cases: Array<[string, string, Record<string, string>?]> = [
+      ["GET", `/piece-technique-versions/${id}/gammes`],
+      ["GET", `/livraisons/${id}/pack/preview`],
+      ["POST", "/qualite/v2/plans"], ["PATCH", `/qualite/v2/plans/${id}`],
+      ["POST", `/qualite/v2/plans/${id}/transitions`, { target_status: "PUBLISHED" }],
+      ["POST", "/qualite/v2/executions/preview"], ["POST", "/qualite/v2/executions"],
+      ["POST", `/qualite/v2/executions/${id}/measurements`], ["POST", `/qualite/v2/executions/${id}/decision`],
+      ["POST", "/livraisons/preparation-cart/verify-lot"], ["POST", "/livraisons/from-reservations"],
+      ["POST", `/livraisons/${id}/status`, { statut: "READY" }],
+      ["POST", `/livraisons/${id}/pack/generate`], ["POST", `/livraisons/${id}/quality-dossier/freeze`],
+    ];
+    try {
+      for (const [method, path, body] of cases) {
+        const next = vi.fn();
+        demoAccessGuard({ method, path, body, headers: { "x-cerp-database": "cerp_demo" }, is: () => false } as any, response(), next);
+        expect(next, `${method} ${path}`).toHaveBeenCalledOnce();
+      }
+      for (const [path, body] of [[`/qualite/v2/plans/${id}/transitions`, { target_status: "ARCHIVED" }], [`/livraisons/${id}/status`, { statut: "CANCELLED" }]] as const) {
+        const denied = response();
+        demoAccessGuard({ method: "POST", path, body, headers: { "x-cerp-database": "cerp_demo" }, is: () => false } as any, denied, vi.fn());
+        expect(denied.status).toHaveBeenCalledWith(403);
+      }
+    } finally { if (previous === undefined) delete process.env.CERP_DEMO_MODE; else process.env.CERP_DEMO_MODE = previous; }
+  });
   it("allows a main-module read and rejects an administration read", () => {
     const previous = process.env.CERP_DEMO_MODE;
     process.env.CERP_DEMO_MODE = "true";

@@ -17,6 +17,7 @@ const READ_PREFIXES = [
 const SAFE_EXACT_READ_PATHS = new Set([
   "/billers", "/payment-modes", "/conditions-paiement", "/compte-vente",
   "/service-status/documents", "/operational-media/capabilities",
+  "/traceability/identification/labels",
 ]);
 
 // A GET can still generate, export or disclose a retained document. These
@@ -42,6 +43,9 @@ function hasSensitiveReadSegment(path: string): boolean {
 
 function isReadAllowed(path: string): boolean {
   if (SAFE_EXACT_READ_PATHS.has(path.toLowerCase())) return true;
+  if (/^\/piece-technique-versions\/[0-9a-f-]{36}\/gammes$/.test(path)) return true;
+  // Read-only eligibility preview used by the native shipment confirmation.
+  if (/^\/livraisons\/[0-9a-f-]{36}\/pack\/preview$/.test(path)) return true;
   return !hasSensitiveReadSegment(path) && READ_PREFIXES.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
 }
 
@@ -57,6 +61,12 @@ function isSafeWrite(req: Request): boolean {
   // access and remains behind JWT/RBAC plus the isolated demo database.
   if (req.method === "POST" || req.method === "PATCH" || req.method === "PUT") {
     const path = req.path;
+    if (req.method === "POST" && ["/qualite/v2/plans", "/qualite/v2/executions", "/qualite/v2/executions/preview", "/livraisons/preparation-cart/verify-lot", "/livraisons/from-reservations"].includes(path)) return true;
+    if (req.method === "PATCH" && /^\/qualite\/v2\/plans\/[0-9a-f-]{36}$/.test(path)) return true;
+    if (req.method === "POST" && /^\/qualite\/v2\/plans\/[0-9a-f-]{36}\/transitions$/.test(path) && req.body?.target_status === "PUBLISHED") return true;
+    if (req.method === "POST" && /^\/qualite\/v2\/executions\/[0-9a-f-]{36}\/(measurements|decision)$/.test(path)) return true;
+    if (req.method === "POST" && /^\/livraisons\/[0-9a-f-]{36}\/status$/.test(path) && req.body?.statut === "READY") return true;
+    if (req.method === "POST" && /^\/livraisons\/[0-9a-f-]{36}\/(pack\/generate|quality-dossier\/freeze)$/.test(path)) return true;
     if (req.method === "POST" && (path === "/pieces-techniques" || path === "/pieces-techniques/drafts" || path === "/stock/articles" || path === "/livraisons" || path === "/quality-360/executions" || path === "/quality-360/plans")) return true;
     if (req.method === "PUT" && /^\/pieces-techniques\/drafts\/[0-9a-f-]{36}$/.test(path)) return true;
     if (req.method === "POST" && /^\/(piece-technique-versions|pieces-techniques\/[0-9a-f-]{36}\/versions)\/[0-9a-f-]{36}\/gammes$/.test(path)) return true;
@@ -65,7 +75,7 @@ function isSafeWrite(req: Request): boolean {
     if (req.method === "POST" && /^\/production\/ofs\/\d+\/receipt$/.test(path)) return true;
     if (req.method === "PATCH" && /^\/production\/ofs\/\d+$/.test(path) && String(req.body?.statut ?? "").toUpperCase() === "TERMINE") return true;
     if (req.method === "POST" && /^\/livraisons\/[0-9a-f-]{36}\/(lines|prepare|confirm|ship)$/.test(path)) return true;
-    if (req.method === "POST" && /^\/livraisons\/[0-9a-f-]{36}\/lines\/[0-9a-f-]{36}\/allocations$/.test(path)) return true;
+    if (req.method === "POST" && /^\/livraisons\/[0-9a-f-]{36}\/(?:lines|lignes)\/[0-9a-f-]{36}\/allocations$/.test(path)) return true;
     if (req.method === "POST" && /^\/quality-360\/executions\/[0-9a-f-]{36}\/(measurements|decision)$/.test(path)) return true;
   }
   if (req.method !== "POST") return false;

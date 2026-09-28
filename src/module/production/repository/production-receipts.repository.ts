@@ -124,6 +124,28 @@ export async function reconcileReleasedConsolidationLot(
   lotId: string,
   userId: number,
 ) {
+  // Ordinary customer OFs also enter quarantine first. Once Quality releases
+  // that exact lot, restore the same reservation that a released receipt makes.
+  const ordinary=(await tx.query<{receipt_id:string;of_id:number;commande_ligne_id:number;article_id:string;location_id:string;stock_level_id:string;stock_batch_id:string;qty_ok:number}>(`
+    SELECT r.id::text receipt_id,r.of_id::int,o.commande_ligne_id::int,l.article_id::text,sl.location_id::text,r.stock_level_id::text,r.stock_batch_id::text,r.qty_ok::float8
+    FROM public.of_receipts r JOIN public.ordres_fabrication o ON o.id=r.of_id
+    JOIN public.commande_client commande ON commande.id=o.commande_id
+    JOIN public.lots l ON l.id=r.lot_id JOIN public.stock_levels sl ON sl.id=r.stock_level_id
+    WHERE r.lot_id=$1::uuid AND l.lot_status='LIBERE' AND r.reservation_id IS NULL
+      AND o.commande_ligne_id IS NOT NULL AND COALESCE(commande.order_type,'FERME')<>'INTERNE'
+      AND NOT EXISTS(SELECT 1 FROM public.production_consolidations c WHERE c.producer_of_id=o.id AND c.state='ACTIVE')
+      AND NOT EXISTS(SELECT 1 FROM public.stock_reservations sr WHERE sr.of_id=o.id AND sr.lot_id=r.lot_id AND sr.status='ACTIVE' AND sr.qty_reserved>=r.qty_ok)
+    ORDER BY r.id FOR UPDATE OF r`,[lotId])).rows;
+  for(const r of ordinary){
+    const gate=await assertOperationalLotQualityEligibility({client:tx,lotId,qty:0,purpose:"RESERVE"});
+    const qty=Math.min(r.qty_ok,Math.max(0,gate.target.qty_released-gate.target.qty_consumed-gate.already_committed_qty));
+    if(qty<=0)continue;
+    await reserveProducedQtyForCommandeLine(tx,{...r,lot_id:lotId,qty_ok:qty,actor_user_id:userId,quality_gate_already_held:true});
+  }
+  await tx.query(`UPDATE public.affaire af SET delivery_readiness_state='READY_FOR_BL',updated_at=now()
+    WHERE af.is_principal=false AND af.delivery_readiness_state='WAITING_STOCK'
+      AND EXISTS(SELECT 1 FROM public.stock_reservations r WHERE r.livraison_affaire_id=af.id AND r.lot_id=$1::uuid AND r.status='ACTIVE' AND r.qty_reserved>r.qty_consumed+r.qty_prepared)
+      AND NOT EXISTS(SELECT 1 FROM public.ordres_fabrication o WHERE o.affaire_id=af.id AND o.statut::text NOT IN ('TERMINE','CLOTURE','ANNULE'))`,[lotId]);
   const receipts = (
     await tx.query<{
       of_id: number;

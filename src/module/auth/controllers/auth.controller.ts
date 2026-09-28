@@ -75,7 +75,7 @@ export const demoLogin = asyncHandler(async (req: Request, res: Response) => {
     throw new HttpError(404, "NOT_FOUND", "Route introuvable.");
   }
   const credentials = loginSchema.parse({
-    username: demoCredential("DEMO_SEED_USERNAME"),
+    username: `${demoCredential("DEMO_SEED_USERNAME")}${req.body?.persona === "quality-reviewer" ? "_QUALITE" : ""}`,
     password: demoCredential("DEMO_SEED_PASSWORD"),
     database: selectedDatabase(req),
   });
